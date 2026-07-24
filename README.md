@@ -896,7 +896,7 @@ Create IMPLEMENTATION_SUMMARY.md with what we did
 
 1. Create `platform/<name>/` with platform-specific configs
 2. Add a setup guide to `docs/platforms/<name>.md`
-3. Extend `scripts/install.mjs` and `scripts/sync-platforms.mjs`
+3. Extend `npx pantheon-opencode init` and `scripts/sync-platforms.mjs`
 
 ---
 

@@ -38,7 +38,7 @@
 
 ```
 @pantheon/cli (npm)
-├── npx pantheon init / update / doctor / status
+├── npx pantheon-opencode init / update / doctor / status
 ├── TUI interativo de setup
 └── Plugin OpenCode: 14 agentes + 14 skills + 14 comandos + 3 MCPs
 ```
@@ -121,7 +121,7 @@ por 5 agentes — 2.717 linhas de análise.**
 ├── Plugin template repo (pantheon-org/plugin-template)
 ├── Publicar agentes como templates (canais comunitários)
 ├── Cross-orchestrator adapters
-├── Skill registry leve (YAML catalog + npx pantheon install)
+├── Skill registry leve (YAML catalog + npx pantheon-opencode install)
 └── Plugin API contract documentado
 ```
 

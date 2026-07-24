@@ -14,6 +14,13 @@ import {
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+const REQUIRED_NODE_MAJOR = 18;
+if (parseInt(process.versions.node.split('.')[0], 10) < REQUIRED_NODE_MAJOR) {
+  console.error(`❌ Node.js >= ${REQUIRED_NODE_MAJOR} required (current: ${process.versions.node})`);
+  process.exit(1);
+}
+
 import yaml from 'js-yaml'
 
 export const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -62,20 +69,20 @@ export const summary = {
 
 export function showHelp() {
   console.log(`
-install.mjs — Multi-platform Pantheon agent installer
+pantheon-init.mjs — Pantheon OpenCode installer
 
 Usage:
-  node scripts/install.mjs                                     auto-detect, cwd
-  node scripts/install.mjs --target /path/to/project           auto-detect, target
-  node scripts/install.mjs --platforms opencode,claude         specific platforms, cwd
-  node scripts/install.mjs --target /path --platforms all      all platforms
-  node scripts/install.mjs --detect                            detect platforms without installing
-  node scripts/install.mjs --dry-run                           preview without writing
-  node scripts/install.mjs --backup                            create timestamped backup before writing
-  node scripts/install.mjs --clean                             wipe + fresh install (all components)
-  node scripts/install.mjs --clean --components agents,skills  wipe only agents+skills, reinstall
-  node scripts/install.mjs --components agents                 install only agents (no skills/instructions)
-  node scripts/install.mjs --help                              show this help
+  npx pantheon-opencode init                                        auto-detect, cwd
+  npx pantheon-opencode init --project                              auto-detect, project
+  npx pantheon-opencode init --project --platforms opencode,claude  specific platforms
+  npx pantheon-opencode init --project --platforms all              all platforms
+  npx pantheon-opencode init --detect                               detect platforms without installing
+  npx pantheon-opencode init --project --dry-run                    preview without writing
+  npx pantheon-opencode init --project --backup                     create timestamped backup before writing
+  npx pantheon-opencode init --project --clean                      wipe + fresh install (all components)
+  npx pantheon-opencode init --project --clean --components agents,skills  wipe only agents+skills, reinstall
+  npx pantheon-opencode init --project --components agents          install only agents (no skills/instructions)
+  npx pantheon-opencode init --help                                 show this help
 
 Components (--components):
   Comma-separated list of what to install. Default: agents,skills,instructions,commands,plugins
@@ -238,7 +245,7 @@ export function detectAndReport(target) {
   console.log(`\n  📊 ${detected.length} of ${results.length} platforms detected.`)
   if (detected.length > 0) {
     const names = detected.map((r) => r.platform).join(',')
-    console.log(`  → Install with: node scripts/install.mjs --platforms ${names}`)
+    console.log(`  → Install with: npx pantheon-opencode init --platforms ${names}`)
   }
 
   return detected.map((r) => r.platform)

@@ -343,7 +343,7 @@ format:
 A template adapter is at `platform/_template/adapter.json`. To add a new platform:
 1. Create `platform/<name>/adapter.json` with translation rules
 2. Add a setup guide to `docs/platforms/<name>.md`
-3. Extend `scripts/install.mjs` and `scripts/sync-platforms.mjs` for the new platform
+3. Extend `npx pantheon-opencode init` and `scripts/sync-platforms.mjs` for the new platform
 4. Run `node scripts/sync-platforms.mjs <name>` to generate the first set of files
 
 ---

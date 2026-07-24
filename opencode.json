@@ -1,0 +1,24 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "zeus",
+  "agent": {},
+  "permission": {
+    "skill": {
+      "*": "allow"
+    },
+    "bash": {
+      "git *": "allow",
+      "npm *": "allow",
+      "npx *": "allow",
+      "pytest *": "allow",
+      "ruff *": "allow",
+      "pip *": "allow"
+    }
+  },
+  "instructions": [
+    "AGENTS.md",
+    "instructions/*.instructions.md"
+  ],
+  "plugin": [],
+  "mcp": {}
+}

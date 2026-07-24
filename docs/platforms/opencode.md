@@ -29,7 +29,7 @@ Pantheon ships a hooks plugin at `.opencode/plugins/pantheon-hooks.ts`. OpenCode
 The fastest way to set up Pantheon in any project is with the universal install script:
 
 ```bash
-node scripts/install.mjs --target /path/to/your-project
+npx pantheon-opencode init --project
 ```
 
 This auto-detects the platform (OpenCode, VS Code, Cursor, etc.), installs agents to the correct directories, and creates platform config files. The generated `opencode.json` includes only `$schema`, `permission`, and `instructions` — model overrides are stripped and resolved at runtime via plan files.

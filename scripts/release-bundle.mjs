@@ -68,8 +68,8 @@ copy('plugin.json')
 // Shell helper
 copy('sync-opencode.sh')
 
-// Install script exposed at root (not nested under scripts/)
-copy('scripts/install.mjs', 'install.mjs')
+// Entry point exposed at root
+copy('bin/pantheon-init.mjs', 'pantheon-init.mjs')
 
 // Agent definitions
 copy('agents')

@@ -72,10 +72,15 @@ function isGlobalConfigDir(target) {
 
 export function installOpenCode(
   target,
-  dryRun,
+  dryRun = false,
   clean = false,
   components = ['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime'],
 ) {
+  // Default target if not provided (global ~/.config/opencode)
+  if (!target) {
+    target = join(homedir(), '.config', 'opencode')
+  }
+
   const componentSet = new Set(components)
   const stats = summary.opencode
 

@@ -11,10 +11,10 @@ git clone https://github.com/ils15/pantheon.git
 cd pantheon
 
 # Auto-detect and install for your current platform
-node scripts/install.mjs
+npx pantheon-opencode init
 
 # Or target a specific project
-node scripts/install.mjs --target /path/to/your-project
+npx pantheon-opencode init --project
 ```
 
 ---
@@ -29,7 +29,7 @@ node scripts/install.mjs --target /path/to/your-project
 | **Cursor** | [`cursor.md`](cursor.md) | `cp -r platform/cursor/rules/ .cursor/` | `.cursor/rules/` |
 | **Windsurf** | [`windsurf.md`](windsurf.md) | `cp -r platform/windsurf/rules/ .windsurf/rules/` | `.windsurf/rules/` |
 | **Continue.dev** | [`continue.md`](continue.md) | `cp -r platform/continue/rules/ .continue/` | `config.yaml` |
-| **Cline** | [`cline.md`](cline.md) | Via `scripts/install.mjs cline` | `.clinerules/` |
+| **Cline** | [`cline.md`](cline.md) | Via `npx pantheon-opencode init --platforms cline` | `.clinerules/` |
 
 ---
 

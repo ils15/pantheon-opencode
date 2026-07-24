@@ -1,11 +1,11 @@
 # Pantheon Installation Guide — v1.0 (OpenCode)
 
-Pantheon v1.0 is **OpenCode-only**. It installs globally via `npx pantheon init` and works across all your projects.
+Pantheon v1.0 is **OpenCode-only**. It installs globally via `npx pantheon-opencode init` and works across all your projects.
 
 ## Prerequisites
 
 - **OpenCode v1.18.4+** — [Install OpenCode](https://opencode.ai/docs/install)
-- **Node.js 18+** — for `npx pantheon init`
+- **Node.js 18+** — for `npx pantheon-opencode init`
 - **Python 3.11+** — for MCP servers (optional, `npm run install`)
 - **Git** — for version detection in TUI sidebar
 
@@ -13,7 +13,7 @@ Pantheon v1.0 is **OpenCode-only**. It installs globally via `npx pantheon init`
 
 ```bash
 # 1. Install Pantheon agents globally
-npx pantheon init
+npx pantheon-opencode init
 
 # 2. (Optional) Install MCP servers + skills + TUI plugin
 npm run install
@@ -30,16 +30,16 @@ opencode
 
 | Mode | Command | Installs | Time | Dependencies |
 |------|---------|----------|------|-------------|
-| **Agents only** 🟢 | `npx pantheon init` | agents + commands | ~2s | None |
-| **Full** 🔵 | `npx pantheon init && npm run install` | agents + MCPs + skills + TUI | ~60s | Python 3.11+ |
+| **Agents only** 🟢 | `npx pantheon-opencode init` | agents + commands | ~2s | None |
+| **Full** 🔵 | `npx pantheon-opencode init` | agents + MCPs + skills + TUI | ~60s | Python 3.11+ |
 | **Runtime** 🟡 | `npm run install` | MCP servers + venv | ~30s | Python 3.11+ |
 
 ```bash
 # Agents only — just the agent rules, no Python dependencies
-npx pantheon init
+npx pantheon-opencode init
 
 # Full setup — agents + MCP servers (memory, persistence, resources)
-npx pantheon init
+npx pantheon-opencode init
 npm run install
 
 # Add MCP servers to an existing agents-only install
@@ -48,12 +48,12 @@ npm run install
 
 ## Global vs Project-Local
 
-By default, `npx pantheon init` installs agents **globally** to `~/.config/opencode/agents/`. This makes Pantheon available in all your projects.
+By default, `npx pantheon-opencode init` installs agents **globally** to `~/.config/opencode/agents/`. This makes Pantheon available in all your projects.
 
 For project-local installation (e.g., team-shared config):
 
 ```bash
-npx pantheon init --project
+npx pantheon-opencode init --project
 ```
 
 This installs to `.opencode/agents/` in the current project directory.
@@ -153,7 +153,7 @@ opencode
 
 | Problem | Solution |
 |---------|----------|
-| Agents not found | Run `npx pantheon init` again |
+| Agents not found | Run `npx pantheon-opencode init` again |
 | MCP servers not starting | Check Python 3.11+, run `npm run install` |
 | Background delegation not available | Set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` before launching OpenCode |
 | TUI sidebar not showing | Check `~/.config/opencode/tui.json` has `"plugins/pantheon-tui"` |
@@ -163,7 +163,7 @@ opencode
 
 ```mermaid
 flowchart LR
-    A["npx pantheon init"] --> B{"--project?"}
+    A["npx pantheon-opencode init"] --> B{"--project?"}
     B -->|No| C["~/.config/opencode/agents/ (global)"]
     B -->|Yes| D[".opencode/agents/ (project-local)"]
     C --> E["npm run install"]

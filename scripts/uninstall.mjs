@@ -4,7 +4,7 @@
  * uninstall.mjs — Multi-platform Pantheon agent uninstaller
  *
  * Removes Pantheon agent files and config from a project directory.
- * The reverse of install.mjs.
+ * The reverse of the installer.
  *
  * Usage:
  *   node scripts/uninstall.mjs                                  auto-detect, cwd
@@ -958,7 +958,7 @@ function printUninstallSummary(target, platforms) {
   console.log('')
   if (totalRemoved > 0) {
     console.log('   📖 To verify, check the target directory for remaining Pantheon files.')
-    console.log(`   📚 Reinstall: node scripts/install.mjs --target ${target}`)
+    console.log(`   📚 Reinstall: npx pantheon-opencode init --project  (in ${target})`)
   }
   console.log('')
 }

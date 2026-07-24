@@ -7,13 +7,13 @@ v1.0 removes all multi-platform support. Pantheon now runs exclusively on OpenCo
 
 ### Breaking Changes
 1. **No longer supports**: Claude Code, Cursor, Windsurf, Cline, Continue.dev, VS Code Copilot
-2. **Installation changed**: Use `npx pantheon init` instead of per-platform scripts
+2. **Installation changed**: Use `npx pantheon-opencode init` instead of per-platform scripts
 3. **Background delegation**: Requires `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`
 4. **Commands reduced**: 14 → 11 (install, update, cancel, sketch, consolidate removed)
 
 ### Migration Steps
 1. Uninstall old platform-specific configs
-2. Run `npx pantheon init` to install agents globally
+2. Run `npx pantheon-opencode init` to install agents globally
 3. Run `npm run install` for MCP servers + skills + TUI
 4. Add `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` to your shell profile
 

@@ -1,39 +1,36 @@
 #!/usr/bin/env node
+/**
+ * pantheon-init.mjs — Pantheon OpenCode CLI entry point
+ *
+ * Usage: npx pantheon-opencode init [options]
+ *
+ * Thin CLI wrapper that parses arguments and delegates to
+ * installOpenCode() from scripts/install/opencode.mjs.
+ */
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { homedir, platform } from 'os';
-import { execSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const CFG = path.join(homedir(), '.config', 'opencode');
+
+const REQUIRED_NODE_MAJOR = 18;
+if (parseInt(process.versions.node.split('.')[0], 10) < REQUIRED_NODE_MAJOR) {
+  console.error(`❌ Node.js >= ${REQUIRED_NODE_MAJOR} required (current: ${process.versions.node})`);
+  process.exit(1);
+}
 
 function printUsage() {
-  console.log('Pantheon Orchestrator — Multi-agent orchestration platform');
+  console.log('Pantheon OpenCode — Multi-agent orchestration platform');
   console.log('');
   console.log('Usage:');
-  console.log('  npx pantheon-orchestrator init              # Install globally');
-  console.log('  npx pantheon-orchestrator init --project    # Install in project');
-  console.log('  npx pantheon-orchestrator init --dry-run    # Preview only');
-  console.log('  npx pantheon-orchestrator init --no-mcp     # Skip MCP + venv');
-  console.log('  npx pantheon-orchestrator init --force      # Overwrite + recreate venv');
-  console.log('  npx pantheon-orchestrator --help            # Show this help');
-}
-
-function getPkgVersion() {
-  try {
-    const p = path.join(ROOT, 'package.json');
-    return JSON.parse(fs.readFileSync(p, 'utf8')).version || '?';
-  } catch { return '?'; }
-}
-
-function getAgentList() {
-  const agentsDir = path.resolve(ROOT, 'src', 'agents');
-  if (!fs.existsSync(agentsDir)) return [];
-  return fs.readdirSync(agentsDir)
-    .filter(f => f.endsWith('.md') && f !== 'README.md')
-    .map(f => f.replace('.md', ''));
+  console.log('  npx pantheon-opencode init              # Install globally');
+  console.log('  npx pantheon-opencode init --project    # Install in project');
+  console.log('  npx pantheon-opencode init --dry-run    # Preview only');
+  console.log('  npx pantheon-opencode init --no-mcp     # Skip MCP + venv');
+  console.log('  npx pantheon-opencode init --force      # Overwrite + recreate venv');
+  console.log('  npx pantheon-opencode init --doctor     # Run health check after install');
+  console.log('  npx pantheon-opencode --help            # Show this help');
 }
 
 async function main() {
@@ -47,132 +44,56 @@ async function main() {
     const isDryRun = args.includes('--dry-run');
     const skipMCP = args.includes('--no-mcp');
     const forceReinstall = args.includes('--force');
-    const base = isProject
-      ? path.join(process.cwd(), '.opencode')
-      : CFG;
+    const runDoctor = args.includes('--doctor');
 
-    const version = getPkgVersion();
-    console.log(`Pantheon Orchestrator v${version} — ${isDryRun ? 'DRY RUN' : 'Installing...'}`);
-    if (forceReinstall && !isDryRun) console.log('  🔄 Force mode — overwriting existing files + recreating venv');
-    console.log(`Target: ${base}${isProject ? ' (project-local)' : ' (global)'}`);
+    const components = ['agents', 'skills', 'instructions', 'commands', 'plugins'];
+    if (!skipMCP) components.push('runtime');
+
+    // Version info
+    let version = '?';
+    try {
+      const pkgPath = path.join(ROOT, 'package.json');
+      version = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || '?';
+    } catch { /* use default */ }
+
+    console.log(`Pantheon OpenCode v${version} — ${isDryRun ? 'DRY RUN' : 'Installing...'}`);
     console.log('');
 
-    // Force: delete old venv to force clean install
-    if (forceReinstall && !isDryRun) {
-      const venvPath = path.join(base, '.venv');
-      if (fs.existsSync(venvPath)) {
-        fs.rmSync(venvPath, { recursive: true, force: true });
-      }
+    try {
+      const { installOpenCode } = await import('../scripts/install/opencode.mjs');
+      const target = isProject ? process.cwd() : undefined;
+      installOpenCode(target, isDryRun, forceReinstall, components);
+    } catch (err) {
+      console.error(`❌ Installation failed:\n${err.stack}`);
+      process.exit(1);
     }
 
-    // 1. Agents
-    console.log('  Agents:');
-    const agentList = getAgentList();
-    let count = 0;
-    for (const agent of agentList) {
-      const s = path.join(ROOT, 'src', 'agents', `${agent}.md`);
-      const d = path.join(base, 'agents', `${agent}.md`);
-      if (fs.existsSync(s)) {
-        if (!isDryRun) {
-          fs.mkdirSync(path.join(base, 'agents'), { recursive: true });
-          fs.copyFileSync(s, d);
-        }
-        count++;
-      }
-    }
-    console.log(`    ${count} agent files → ${isDryRun ? '(preview)' : `${base}/agents/`}`);
-
-    // 2. Skills
-    console.log('  Skills:');
-    const skillsSrc = path.resolve(ROOT, 'src', 'skills');
-    if (fs.existsSync(skillsSrc)) {
-      const skills = fs.readdirSync(skillsSrc).filter(f => fs.statSync(path.join(skillsSrc, f)).isDirectory());
-      if (!isDryRun) {
-        for (const skill of skills) {
-          const s = path.join(skillsSrc, skill);
-          const d = path.join(base, 'skills', skill);
-          fs.cpSync(s, d, { recursive: true, force: true });
-        }
-      }
-      console.log(`    ${skills.length} skills → ${isDryRun ? '(preview)' : `${base}/skills/`}`);
-    }
-
-    // 3. Instructions
-    console.log('  Instructions:');
-    const instrSrc = path.resolve(ROOT, 'src', 'instructions');
-    if (fs.existsSync(instrSrc)) {
-      const instrs = fs.readdirSync(instrSrc).filter(f => f.endsWith('.instructions.md'));
-      if (!isDryRun) {
-        fs.mkdirSync(path.join(base, 'instructions'), { recursive: true });
-        for (const f of instrs) {
-          fs.copyFileSync(path.join(instrSrc, f), path.join(base, 'instructions', f));
-        }
-      }
-      console.log(`    ${instrs.length} files → ${isDryRun ? '(preview)' : `${base}/instructions/`}`);
-    }
-
-    // 4. Commands
-    console.log('  Commands:');
-    const cmdSrc = path.resolve(ROOT, 'commands');
-    if (fs.existsSync(cmdSrc)) {
-      const cmds = fs.readdirSync(cmdSrc).filter(f => f.endsWith('.md'));
-      if (!isDryRun) {
-        fs.mkdirSync(path.join(base, 'commands'), { recursive: true });
-        for (const f of cmds) {
-          fs.copyFileSync(path.join(cmdSrc, f), path.join(base, 'commands', f));
-        }
-      }
-      console.log(`    ${cmds.length} commands → ${isDryRun ? '(preview)' : `${base}/commands/`}`);
-    }
-
-    // 5. TUI plugin
-    console.log('  TUI Plugin:');
-    const tuiSrc = path.resolve(ROOT, 'src', 'plugins', 'tui');
-    if (fs.existsSync(tuiSrc)) {
-      if (!isDryRun) {
-        fs.cpSync(tuiSrc, path.join(base, 'plugins', 'pantheon-tui'), { recursive: true, force: true });
-        const tuiJson = path.join(base, 'tui.json');
-        const tuiConfig = { $schema: 'https://opencode.ai/tui.json', plugin: ['plugins/pantheon-tui'] };
-        fs.writeFileSync(tuiJson, JSON.stringify(tuiConfig, null, 2));
-      }
-      console.log(`    Plugin → ${isDryRun ? '(preview)' : `${base}/plugins/pantheon-tui/`}`);
-      console.log(`    tui.json → ${isDryRun ? '(preview)' : `${base}/tui.json`}`);
-    }
-
-    // 6. AGENTS.md
-    const agentsMd = path.resolve(ROOT, 'AGENTS.md');
-    if (fs.existsSync(agentsMd) && !isDryRun) {
-      fs.copyFileSync(agentsMd, path.join(base, 'AGENTS.md'));
-    }
-
-    // 7. .venv + MCP servers (skip if --no-mcp)
-    if (!skipMCP && !isDryRun) {
+    if (runDoctor && !isDryRun) {
       console.log('');
-      console.log('  MCP Servers + .venv...');
-      const installScript = path.resolve(ROOT, 'scripts', 'install.mjs');
-      if (fs.existsSync(installScript)) {
-        try {
-          execSync(`node "${installScript}" "${base}"`, { stdio: 'inherit', cwd: ROOT });
-        } catch (e) {
-          console.log('  ⚠️  MCP install issue (non-fatal):', e.message.split('\n')[0]);
-        }
+      console.log('  Running health check...');
+      try {
+        const { spawnSync } = await import('child_process');
+        const doctorScript = path.join(ROOT, 'scripts', 'doctor.mjs');
+        spawnSync(process.execPath, [doctorScript], { stdio: 'inherit', cwd: ROOT });
+      } catch {
+        console.log('  ⚠️  Could not run doctor.mjs');
       }
     }
 
-    // 8. Done
     console.log('');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`  ✅ Pantheon Orchestrator v${version} installed!`);
+    console.log(`  ✅ Pantheon OpenCode v${version} installed!`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('');
     console.log('  Next steps:');
-    console.log('  1. Enable background subagents:');
-    console.log('     echo \'export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true\' >> ~/.zshrc');
-    console.log('  2. Launch OpenCode:');
-    console.log('     source ~/.zshrc && opencode');
-    console.log('  3. Test background delegation:');
-    console.log('     @zeus, dispatch 2 apollo in parallel to research');
+    console.log('  1. Verify installation:');
+    console.log('     npx pantheon-opencode doctor');
+    console.log('  2. Launch your AI coding tool (OpenCode, Claude Code, Cursor, etc.)');
+    console.log('  3. Invoke agents with @agent-name in chat');
+    console.log('  4. For project-local install:');
+    console.log('     npx pantheon-opencode init --project');
     console.log('');
+
     return;
   }
 
@@ -180,4 +101,4 @@ async function main() {
   process.exit(1);
 }
 
-main().catch(err => { console.error('Error:', err.message); process.exit(1); });
+main().catch(err => { console.error('Error:', err.stack); process.exit(1); });

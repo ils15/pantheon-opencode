@@ -40,11 +40,11 @@ All agents live as **canonical `.agent.md` files** in `agents/` and are auto-gen
 |---|---|---|---|
 | ** ** | `.agent.md` | ✅ Active | Plugin marketplace, `/pantheon-install`, or `./sync-platform.sh copilot` |
 | **OpenCode** | `.md` + `opencode.json` | ✅ Active | `/pantheon-install` or `./sync-platform.sh opencode` |
-| **** | `.md` (comma-separated tools) | ✅ Active | `node scripts/install.mjs claude` or `./sync-platform.sh claude` |
-| **** | `.mdc` rules | ✅ Active | `node scripts/install.mjs cursor` or `./sync-platform.sh cursor` |
-| **** | `.md` (stub) | ✅ Active | `node scripts/install.mjs windsurf` or `./sync-platform.sh windsurf` |
-| **** | `.md` | ✅ Active | `node scripts/install.mjs cline` or `./sync-platform.sh cline` |
-| **** | `.md` rules | ✅ Active | `node scripts/install.mjs continue` or `./sync-platform.sh continue` |
+| **** | `.md` (comma-separated tools) | ✅ Active | `npx pantheon-opencode init --platforms claude` or `./sync-platform.sh claude` |
+| **** | `.mdc` rules | ✅ Active | `npx pantheon-opencode init --platforms cursor` or `./sync-platform.sh cursor` |
+| **** | `.md` (stub) | ✅ Active | `npx pantheon-opencode init --platforms windsurf` or `./sync-platform.sh windsurf` |
+| **** | `.md` | ✅ Active | `npx pantheon-opencode init --platforms cline` or `./sync-platform.sh cline` |
+| **** | `.md` rules | ✅ Active | `npx pantheon-opencode init --platforms continue` or `./sync-platform.sh continue` |
 
 ---
 
