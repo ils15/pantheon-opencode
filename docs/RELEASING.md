@@ -215,7 +215,7 @@ Users can consume Pantheon in several ways:
 |---|---|---|
 | **GitHub Template** | New projects | Click "Use this template" on GitHub — creates a fresh repo with full Pantheon copy |
 | **GitHub Release** | Downloads/CI | Download `Source code (tar.gz)` from [Releases page](https://github.com/ils15/pantheon/releases) |
-| **VS Code Plugin** | Existing projects | Add `ils15/pantheon` to `chat.plugins.marketplaces` |
+| **Pantheon Installer** | New / existing projects | `npx pantheon-opencode init` |
 | **Git clone + copy** | Selective setup | `git clone` and copy only what you need |
 | **npm package** (future) | Dev workflow | `npm install @ils15/pantheon` |
 

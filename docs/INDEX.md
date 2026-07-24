@@ -1,6 +1,6 @@
 # Pantheon Documentation Index
 
-> **A multi-agent orchestration framework** — 14 specialized agents, OpenCode, 40 skills.
+> **A multi-agent orchestration framework** — 14 specialized agents, OpenCode, 14 skills.
 
 ---
 
@@ -30,21 +30,13 @@
 - **Themis** reviews every phase (mandatory quality gate); **Mnemosyne** documents decisions
 - **Iris** manages GitHub; **Talos** handles hotfixes; **Gaia** analyzes remote sensing
 
-All agents live as **canonical `.agent.md` files** in `agents/` and are auto-generated into platform-specific formats via the [sync engine](../scripts/sync-platforms.mjs).
+All agents live as **canonical `.agent.md` files** in `src/agents/` and are deployed via the installer.
 
 ---
 
-## Platform Support Matrix
+## Platform Support
 
-| Platform | Format | Status | Install Method |
-|---|---|---|---|
-| ** ** | `.agent.md` | ✅ Active | Plugin marketplace, `/pantheon-install`, or `./sync-platform.sh copilot` |
-| **OpenCode** | `.md` + `opencode.json` | ✅ Active | `/pantheon-install` or `./sync-platform.sh opencode` |
-| **** | `.md` (comma-separated tools) | ✅ Active | `npx pantheon-opencode init --platforms claude` or `./sync-platform.sh claude` |
-| **** | `.mdc` rules | ✅ Active | `npx pantheon-opencode init --platforms cursor` or `./sync-platform.sh cursor` |
-| **** | `.md` (stub) | ✅ Active | `npx pantheon-opencode init --platforms windsurf` or `./sync-platform.sh windsurf` |
-| **** | `.md` | ✅ Active | `npx pantheon-opencode init --platforms cline` or `./sync-platform.sh cline` |
-| **** | `.md` rules | ✅ Active | `npx pantheon-opencode init --platforms continue` or `./sync-platform.sh continue` |
+Pantheon v1.0 is **OpenCode-only**. See [PLATFORMS.md](PLATFORMS.md) for details.
 
 ---
 
@@ -68,14 +60,8 @@ All agents live as **canonical `.agent.md` files** in `agents/` and are auto-gen
 
 ---
 
-## Platform READMEs
+## Platform Configuration
 
-Each platform has its own README with installation notes and format details:
+Pantheon runs exclusively on **OpenCode**. Platform configuration lives under `platform/opencode/`.
 
-- [OpenCode](../platform/opencode/README.md)
-- [](../platform/claude/README.md)
-- [](../platform/cursor/README.md)
-- [](../platform/windsurf/README.md)
-- [](../platform/cline/README.md) *(coming soon)*
-- [Continue](../platform/continue/README.md)
-- [Template (add new platform)](../platform/_template/README.md)
+For installation instructions, see [INSTALLATION.md](INSTALLATION.md).

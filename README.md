@@ -7,11 +7,11 @@
 <p align="center">
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.0.0-blue" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
-  <a href="docs/platforms/"><img src="https://img.shields.io/badge/platforms-vscode|opencode|claude|cursor|windsurf|cline|continue-green" alt="Platforms"></a>
+  <a href="docs/platforms/"><img src="https://img.shields.io/badge/platforms-opencode-green" alt="Platforms"></a>
   <a href="agents/README.md"><img src="https://img.shields.io/badge/agents-14-purple" alt="Agents"></a>
   <a href="skills/README.md"><img src="https://img.shields.io/badge/skills-14-orange" alt="Skills"></a>
   <a href="commands/"><img src="https://img.shields.io/badge/commands-14-red" alt="Commands"></a>
-  <a href="docs/platforms/"><img src="https://img.shields.io/badge/built%20with-copilot|opencode|claude|cursor|windsurf|cline|continue-8250DF" alt="Built with"></a>
+  <a href="docs/platforms/"><img src="https://img.shields.io/badge/built%20with-opencode-8250DF" alt="Built with"></a>
   <a href="https://github.com/ils15/pantheon/actions"><img src="https://img.shields.io/github/actions/workflow/status/ils15/pantheon/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="https://github.com/ils15/pantheon/actions"><img src="https://img.shields.io/github/actions/workflow/status/ils15/pantheon/release.yml?branch=main&label=release" alt="Release"></a>
 </p>
@@ -20,7 +20,7 @@
 
 Stop settling for generalist single-agent coding. Pantheon's conductor-delegate architecture dispatches expert agents with isolated context windows — parallel execution, zero context bleed, and quality gates that block anything below 80% coverage.
 
-Supports **VS Code Copilot**, **OpenCode**, **Claude Code**, **Cursor**, **Windsurf**, **Cline**, and **Continue.dev**.
+Supports **OpenCode** — multi-agent orchestration for your editor.
 
 ---
 
@@ -51,13 +51,7 @@ Supports **VS Code Copilot**, **OpenCode**, **Claude Code**, **Cursor**, **Winds
 | 🔌 **MCP User Guide** | [docs/mcp-user-guide.md](docs/mcp-user-guide.md) — adding custom MCP servers |
 | 🗂️ **MCP Tiers** | `.pantheon/tiers.json` — 4-tier MCP selection (none/essential/recommended/full) |
 | ⚡ **Quick Start** | [docs/QUICKSTART.md](docs/QUICKSTART.md) |
-| 🖥️ **VS Code** | [docs/platforms/vscode.md](docs/platforms/vscode.md) |
 | ⚡ **OpenCode** | [docs/platforms/opencode.md](docs/platforms/opencode.md) |
-| 🤖 **Claude Code** | [docs/platforms/claude.md](docs/platforms/claude.md) |
-| 🔧 **Cursor** | [docs/platforms/cursor.md](docs/platforms/cursor.md) |
-| 🌊 **Windsurf** | [docs/platforms/windsurf.md](docs/platforms/windsurf.md) |
-| 🤖 **Cline** | [docs/platforms/cline.md](docs/platforms/cline.md) |
-| 🔄 **Continue.dev** | [docs/platforms/continue.md](docs/platforms/continue.md) |
 
 ---
 
@@ -194,26 +188,18 @@ flowchart TD
 - **OpenCode** — Pantheon v1.0 is OpenCode-only. [Installation guide](docs/INSTALLATION.md).
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/ils15/pantheon.git
-cd pantheon
-npm install
+# Install Pantheon globally
+npx pantheon-opencode init
 
-# 2. Install Pantheon (choose your mode)
-npm run install:lite        # agents + skills + instructions only (no MCP, no deps)
-npm run install:full        # everything: agents + skills + MCP servers + venv
-npm run install:runtime     # just MCP infrastructure (if agents already installed)
+# (Optional) Install MCP servers + skills + TUI plugin
+npm run setup
 
-# 3. Open your editor and test
-# OpenCode: @zeus in chat
-# Claude Code: @zeus
-# Cursor: @zeus in Agent mode
-# VS Code: @zeus in Copilot Chat
-# Cline: @zeus
-# Windsurf: @zeus in Cascade
+# Launch OpenCode with background subagents
+export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
+opencode
 ```
 
-> **Lite vs Full:** `install:lite` is fast (~5s) and installs only the agent files. `install:full` also creates a Python venv and installs MCP servers (includes `pantheon-memory` for vector search and `pantheon-persistence` for KV cache). Choose lite if you just want the agents without MCP infrastructure.
+> **Minimal vs Full:** `npx pantheon-opencode init --no-mcp` installs only agents (~2s). `npx pantheon-opencode init` (without `--no-mcp`) also creates a Python venv and installs MCP servers (includes `pantheon-memory` for vector search and `pantheon-persistence` for KV cache).
 
 ---
 
@@ -509,37 +495,30 @@ See `platform/forge.json` for full preset definitions and `docs/platforms/` for 
 
 ## Quick Start
 
-### 1. Choose your platform
+### 1. Install Pantheon
 
-Pantheon supports OpenCode. Pick the one that matches your editor:
-
-- **VS Code Copilot** — native `.agent.md` files, full subagent orchestration, lifecycle hooks
-- **OpenCode** — config-based agent loading, permission blocks, tool mapping adapter
-- **Claude Code** — CLI-based, agent handoff workflow, skills via markdown rules
-- **Cursor** — `.mdc` rules with `alwaysApply` and `globs` for Agent mode
-- **Windsurf** — markdown agent definitions with workflow support (preview)
-- **Cline** — custom agent definitions with skills via instruction files
-- **Continue.dev** — IDE-agnostic rule-based agent configuration with markdown skills
-
-> Follow the [Platform Setup Guides](docs/platforms/) for your chosen platform.
-
-### 2. Set up the framework
-
-Installation varies by platform, but generally involves:
+Pantheon runs on **OpenCode**. Install it globally:
 
 ```bash
-git clone https://github.com/ils15/pantheon.git
-cd pantheon
-
-# Optional: install dependencies for sync/install tools
-npm install
+npx pantheon-opencode init
 ```
 
-Then run the platform-specific installer from the guides above.
+For MCP servers (memory, persistence):
+
+```bash
+npm run setup
+```
+
+### 2. Launch OpenCode
+
+```bash
+export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
+opencode
+```
 
 ### 3. Run your first feature
 
-Once agents are loaded in your editor, invoke the orchestrator:
+Once agents are loaded, invoke the orchestrator:
 
 ```
 @zeus: Implement JWT authentication with refresh tokens and rate limiting
@@ -555,24 +534,25 @@ Zeus will:
 
 ## Commands
 
-Pantheon provides slash commands via OpenCode. On other platforms (Copilot, Cursor, Claude Code), use natural language with the agent name.
+Type these in the OpenCode chat:
 
-| Command | Agent | Description |
-|---------|-------|-------------|
-| `/pantheon` | zeus | Multi-perspective synthesis (Council) via inline agents |
-| `/pantheon-install` | zeus | Sync + install + verify pipeline with `--tier` (none/essential/recommended/full), `--backup`, `--detect`, `--dry-run` |
-| `/pantheon-update` | iris | Version bump + changelog + git tag + GitHub Release |
-| `/pantheon-deepwork` | zeus | Heavy multi-phase task with persisted checkpoints |
-| `/pantheon-reflect` | zeus | Analyze repeated work friction, suggest improvements |
-| `/pantheon-focus` | zeus | Pin a session goal |
-| `/pantheon-sketch` | athena | Turn rough idea into spec |
-| `/pantheon-audit` | themis | Code review + security audit |
-| `/pantheon-optimize` | zeus | Context optimization & token audit |
-| `/pantheon-metamorphosis` | zeus | Intelligent refactoring with TDD |
-| `/pantheon-status` | zeus | Show system health and agent status |
-| `/cancel` | zeus | Stop auto-continuation |
+| Command | Description |
+|---------|-------------|
+| `/pantheon` | Multi-perspective synthesis (Council) via inline agents |
+| `/pantheon-audit` | Code review + security audit |
+| `/pantheon-bg` | List background tasks |
+| `/pantheon-consolidate` | Consolidate memory |
+| `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints |
+| `/pantheon-doc` | Generate documentation |
+| `/pantheon-focus` | Pin a session goal |
+| `/pantheon-forget` | Compress/consolidate memories |
+| `/pantheon-hash` | Hash edit verification |
+| `/pantheon-optimize` | Context optimization & token audit |
+| `/pantheon-remember` | Store in memory |
+| `/pantheon-search` | Search memory |
+| `/pantheon-status` | Show system health and agent status |
+| `/pantheon-todo` | Create and maintain task list |
 
-> **Multi-platform note:** Commands are native to OpenCode. On VS Code Copilot, use `@agent-name` in chat. On Cursor/Claude Code, describe the task in natural language.
 
 ### TUI Sidebar Plugin (OpenCode) — Temporarily Disabled
 
@@ -682,19 +662,13 @@ pantheon/
 │   ├── README.md
 │   └── dynamic/                * generated prompts
 │
-├── platform/                  — platform-specific configurations
+├── platform/                  — OpenCode-only configuration
 │   ├── optimize-context.sh    * context optimization script
-│   ├── copilot/               * VS Code Copilot configs
-│   ├── opencode/              * OpenCode configs
-│   ├── claude/                * Claude Code configs & agents
-│   ├── cursor/                * Cursor rules
-│   ├── windsurf/              * Windsurf configs
-│   ├── continue/              * Continue.dev rules
-│   ├── cline/                 * Cline configs
-│   └── _template/             * template for new platforms
+│   └── opencode/              * OpenCode configs
 │
 ├── scripts/                   — tooling, automation & lifecycle hooks
-│   ├── install.mjs            * multi-platform installer
+│   ├── postinstall.mjs        * npm post-install hook
+│   ├── doctor.mjs             * health check CLI
 │   ├── sync-platforms.mjs     * agent format sync engine
 │   ├── validate-sync.mjs      * sync integrity check
 │       └── hooks/                 * agent lifecycle hooks (10 .sh scripts)
@@ -709,7 +683,7 @@ pantheon/
 │       ├── validate-talos-scope.sh
 │       └── validate-tool-safety.sh
 │
-├── commands/                  # 19 interaction commands
+├── commands/                  # 14 interaction commands
 │   ├── cancel.md
 │   ├── pantheon-audit.md
 │   ├── pantheon-deepwork.md
@@ -729,14 +703,8 @@ pantheon/
 │   ├── PLATFORMS.md           — platform comparison
 │   ├── RELEASING.md           — versioning & release process
 │   ├── INDEX.md               — documentation index
-│   ├── platforms/             — platform-specific setup guides
-│   │   ├── vscode.md
-│   │   ├── opencode.md
-│   │   ├── claude.md
-│   │   ├── cursor.md
-│   │   ├── windsurf.md
-│   │   ├── cline.md
-│   │   └── continue.md
+│   ├── platforms/             — OpenCode configuration guide
+│   │   └── opencode.md
 │   └── memory-bank/           — project memory (Mnemosyne's domain)
 │       ├── 00-project.md      * project overview
 │       ├── 01-active-context.md * current sprint focus (priority file)
@@ -892,12 +860,6 @@ Create IMPLEMENTATION_SUMMARY.md with what we did
 3. Reference relevant agents in the skill body
 4. Invoke `@mnemosyne Update README skills table and count`
 
-### Adding a new platform
-
-1. Create `platform/<name>/` with platform-specific configs
-2. Add a setup guide to `docs/platforms/<name>.md`
-3. Extend `npx pantheon-opencode init` and `scripts/sync-platforms.mjs`
-
 ---
 
 ## Security & Privacy
@@ -930,16 +892,13 @@ The `.opencode/plugins/pantheon-hooks.ts` plugin bridges these shell scripts to 
 ## FAQ
 
 **How much does this cost?**
-You need an existing subscription for your AI coding editor (Copilot, Claude Pro, Cursor
-Pro, or OpenCode). Pantheon itself is free and open-source (MIT).
+You need an existing subscription for your AI coding editor (OpenCode). Pantheon itself is free and open-source (MIT).
 
-**Can I use this outside VS Code?**
-Yes — OpenCode supported (VS Code, OpenCode, Claude Code, Cursor, Windsurf, Cline, Continue.dev). See
-[Platform Setup Guides](docs/platforms/).
+**Can I use this outside OpenCode?**
+No — Pantheon v1.0 is OpenCode-only. It uses OpenCode's native agent system, permission blocks, and MCP integration.
 
 **How are platform configs synced?**
-Edit `agents/*.agent.md` (the canonical format), then run `npm run sync`.
-The sync engine transforms agents into every platform's native format.
+Edit `src/agents/*.agent.md` (the canonical format), then run the sync script to update platform copies.
 
 **Can I override Themis's code review?**
 You can proceed past the review gate even if Themis flags issues — except test coverage.
@@ -986,16 +945,9 @@ Pantheon draws from the broader multi-agent landscape while diverging in key way
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md) | Generic installation guide |
 | [docs/platforms/](docs/platforms/) | Platform-specific setup guides (OpenCode) |
-| [docs/platforms/vscode.md](docs/platforms/vscode.md) | VS Code setup |
-| [docs/platforms/opencode.md](docs/platforms/opencode.md) | OpenCode setup |
-| [docs/platforms/claude.md](docs/platforms/claude.md) | Claude Code setup |
-| [docs/platforms/cursor.md](docs/platforms/cursor.md) | Cursor setup |
-| [docs/platforms/windsurf.md](docs/platforms/windsurf.md) | Windsurf setup |
-| [docs/platforms/cline.md](docs/platforms/cline.md) | Cline setup |
-| [docs/platforms/continue.md](docs/platforms/continue.md) | Continue.dev setup |
+| [docs/platforms/opencode.md](docs/platforms/opencode.md) | OpenCode setup guide |
 | [agents/README.md](agents/README.md) | Agent directory |
 | [skills/README.md](skills/README.md) | Skill directory |
-| [docs/platforms/](docs/platforms/) | Per-platform setup guides |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | Canonical MCP tool registry |
 | [docs/mcp-user-guide.md](docs/mcp-user-guide.md) | Adding custom MCP servers |
 | [docs/mcp-recommendations.md](docs/mcp-recommendations.md) | Recommended MCP servers per project type |

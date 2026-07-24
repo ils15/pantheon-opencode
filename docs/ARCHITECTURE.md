@@ -81,7 +81,7 @@ Zeus uses explicit rules to decide whether to delegate or not:
 
 ### Problem (before v3.4.0)
 
-Each platform (OpenCode, , , , , Continue) had its own agent
+Each platform (OpenCode, Cursor, Windsurf, Cline, Continue) had its own agent
 format with different field capabilities, different tool naming conventions, and different
 configuration patterns. A single change required editing 6 files — and they were never quite
 identical. Bugs like `temis_delegate` (missing the "h") propagated across platforms because
@@ -266,10 +266,9 @@ Knowledge is categorized to prevent duplication:
 
 ### Problem
 
-Seven platforms (, OpenCode, , , , , Continue),
-each with different agent file formats, tool naming conventions, and configuration
-patterns. A design without abstraction would require maintaining 7 parallel copies of
-every agent.
+The canonical agent format (`.agent.md` with YAML frontmatter) needs to be translated
+into the platform-specific format that OpenCode expects. A design without abstraction
+would require maintaining parallel copies of every agent.
 
 ### Solution
 
@@ -330,21 +329,18 @@ format:
 
 ### Platform capability matrix
 
-| Feature |  | OpenCode |  |  |  |  | Continue |
-|---------|:-------:|:--------:|:-----------:|:-----:|:--------:|:-----:|:--------:|
-| Parallel subagents | ✅ | ✅ | ⚠️ | ✅ | ❌ | ⚠️ | ⚠️ |
-| Handoff UI | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Agent hooks | ✅ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| MCP servers | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
-| Skills system | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Feature | OpenCode |
+|---------|:--------:|
+| Parallel subagents | ✅ |
+| Handoff UI | ❌ |
+| Agent hooks | ⚠️ |
+| MCP servers | ✅ |
+| Skills system | ✅ |
 
-### Template for new platforms
+### Adapter configuration
 
-A template adapter is at `platform/_template/adapter.json`. To add a new platform:
-1. Create `platform/<name>/adapter.json` with translation rules
-2. Add a setup guide to `docs/platforms/<name>.md`
-3. Extend `npx pantheon-opencode init` and `scripts/sync-platforms.mjs` for the new platform
-4. Run `node scripts/sync-platforms.mjs <name>` to generate the first set of files
+The OpenCode adapter configuration lives in `platform/opencode/adapter.json`.
+It defines how canonical agent files are translated into OpenCode's format.
 
 ---
 
@@ -361,7 +357,7 @@ The model ID prefix determines which provider OpenCode uses:
 
 ### Reference configs
 
-Example model configurations are in `platform/examples/`.
+Example model configurations are in `.pantheon/examples/`.
 These are documentation only — not used at runtime.
 
 ---
@@ -371,10 +367,10 @@ These are documentation only — not used at runtime.
 | Decision | Problem it solves | Key benefit |
 |----------|------------------|-------------|
 | **Conductor-Delegate** | Context fragmentation in single-agent coding | 70-80% reasoning, 92% coverage |
-| **Canonical → Adapter → Sync** | 6 copies of every agent, divergent formats | Change once, deploy to all platforms |
+| **Canonical → Adapter → Sync** | Single canonical format, auto-deployed | Change agents once, installer handles the rest |
 | **DAG Wave Execution** | Sequential idle time, slow feedback | Total time = critical path only |
 | **Two-Tier Memory** | Mixed knowledge with wrong access patterns | Facts free, narrative on demand |
-| **Platform Adapter** | 7 different agent runtimes to support | Pluggable architecture, easy to extend |
+| **Platform Adapter** | OpenCode-specific format requirements | Consistent deployment across environments |
 | **Model Configuration** | Hardcoded model names across subscriptions | Any provider, no config needed |
 
 > **Design philosophy:** Pantheon is configuration, not code. There are zero framework

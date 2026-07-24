@@ -2,17 +2,52 @@
 
 Reference documentation for the Pantheon multi-agent framework.
 
-## Contents
+## Quick Start
 
-- **[model-routing.md](reference/model-routing.md)** — Deep analysis of model assignments per plan with per-plan fallback chains, cost optimization, and benchmark data (LMSYS Arena, SWE-bench, Artificial Analysis). Covers all 14 agents and 24 unique models.
+| Guide | Description |
+|-------|-------------|
+| [INSTALLATION.md](INSTALLATION.md) | Full installation guide |
+| [QUICKSTART.md](QUICKSTART.md) | 5-minute quick start |
+| [SETUP.md](SETUP.md) | Setup overview (redirects to INSTALLATION) |
 
-## Structure
+## Core Concepts
 
-| File | Purpose |
-|------|---------|
-| `reference/` | Framework reference docs (benchmark data, model analysis, architecture) |
-| `memory-bank/` | Project-specific context — **not tracked in git** (initialized by adopters) |
+| Guide | Description |
+|-------|-------------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture & design patterns |
+| [PLATFORMS.md](PLATFORMS.md) | Platform support (OpenCode-only) |
+| [UPGRADING.md](UPGRADING.md) | Version upgrade guide |
 
-## Note
+## MCP Servers
 
-The `docs/memory-bank/` directory is **not tracked in git**. It exists as a template structure for projects that adopt Pantheon. Each project initializes its own memory bank with project-specific context.
+| Guide | Description |
+|-------|-------------|
+| [MCP.md](MCP.md) | MCP server overview |
+| [mcp-tools.md](mcp-tools.md) | Canonical MCP tool registry |
+| [mcp-user-guide.md](mcp-user-guide.md) | Adding custom MCP servers |
+| [mcp-recommendations.md](mcp-recommendations.md) | Recommended MCPs per project type |
+| [AGENT-MCP.md](AGENT-MCP.md) | MCP integration for agents |
+| [persistence-mcp.md](persistence-mcp.md) | Persistence MCP server |
+
+## Memory & Data
+
+| Guide | Description |
+|-------|-------------|
+| [MEMORY.md](MEMORY.md) | Memory system overview |
+| [MIGRATION-MEMORY-BANK.md](MIGRATION-MEMORY-BANK.md) | Memory bank migration guide |
+
+## Operations
+
+| Guide | Description |
+|-------|-------------|
+| [RELEASING.md](RELEASING.md) | Release process & versioning |
+| [BRANCH-PROTECTION.md](BRANCH-PROTECTION.md) | Branch protection rules |
+| [reference/model-routing.md](reference/model-routing.md) | Model routing & provider analysis |
+
+## External
+
+| Resource | Location |
+|----------|----------|
+| Agent Reference | [AGENTS.md](../AGENTS.md) |
+| Contributing | [CONTRIBUTING.md](../CONTRIBUTING.md) |
+| Changelog | [CHANGELOG.md](../CHANGELOG.md) |

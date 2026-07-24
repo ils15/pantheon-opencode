@@ -6,7 +6,7 @@ Pantheon v1.0 is **OpenCode-only**. It installs globally via `npx pantheon-openc
 
 - **OpenCode v1.18.4+** — [Install OpenCode](https://opencode.ai/docs/install)
 - **Node.js 18+** — for `npx pantheon-opencode init`
-- **Python 3.11+** — for MCP servers (optional, `npm run install`)
+- **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
 
 ## Quick Install
@@ -16,7 +16,7 @@ Pantheon v1.0 is **OpenCode-only**. It installs globally via `npx pantheon-openc
 npx pantheon-opencode init
 
 # 2. (Optional) Install MCP servers + skills + TUI plugin
-npm run install
+npm run setup
 
 # 3. Enable background subagents
 # Add to ~/.zshrc or ~/.bashrc:
@@ -30,20 +30,19 @@ opencode
 
 | Mode | Command | Installs | Time | Dependencies |
 |------|---------|----------|------|-------------|
-| **Agents only** 🟢 | `npx pantheon-opencode init` | agents + commands | ~2s | None |
+| **Minimal** 🟢 | `npx pantheon-opencode init --no-mcp` | agents + commands | ~2s | None |
 | **Full** 🔵 | `npx pantheon-opencode init` | agents + MCPs + skills + TUI | ~60s | Python 3.11+ |
-| **Runtime** 🟡 | `npm run install` | MCP servers + venv | ~30s | Python 3.11+ |
+| **Runtime** 🟡 | `npm run setup` | MCP servers + venv | ~30s | Python 3.11+ |
 
 ```bash
-# Agents only — just the agent rules, no Python dependencies
-npx pantheon-opencode init
+# Minimal — just the agent rules, no Python dependencies
+npx pantheon-opencode init --no-mcp
 
 # Full setup — agents + MCP servers (memory, persistence, resources)
 npx pantheon-opencode init
-npm run install
 
-# Add MCP servers to an existing agents-only install
-npm run install
+# Add MCP servers to an existing minimal install
+npm run setup
 ```
 
 ## Global vs Project-Local
@@ -103,13 +102,13 @@ Pantheon includes a TUI sidebar plugin showing:
 Pantheon v1.0.0
 ⎇ main
 ▶ Sessions (N total)
-▶ Commands (11)
+▶ Commands (14)
 ▶ Agents (14)
 ▶ Config — MCPs, Compaction
 ▶ Memory — Entry count
 ```
 
-The plugin is installed automatically during `npm run install`. It appears in the right sidebar of OpenCode TUI.
+The plugin is installed automatically during `npm run setup`. It appears in the right sidebar of OpenCode TUI.
 
 ## Commands
 
@@ -117,17 +116,20 @@ Type these in the OpenCode chat:
 
 | Command | Description |
 |---------|-------------|
-| `/pantheon` | Council synthesis |
-| `/pantheon-status` | System status |
-| `/pantheon-audit` | Full audit |
+| `/pantheon` | Multi-perspective synthesis (Council) via inline agents |
+| `/pantheon-audit` | Code review + security audit |
 | `/pantheon-bg` | List background tasks |
-| `/pantheon-deepwork` | Deep work mode |
-| `/pantheon-focus` | Focus on scope |
-| `/pantheon-optimize` | Optimize memory bank |
-| `/pantheon-doc` | Generate docs |
-| `/pantheon-remember` | Memory store/recall |
-| `/pantheon-search` | Memory search |
-| `/pantheon-forget` | Compress memories |
+| `/pantheon-consolidate` | Consolidate memory |
+| `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints |
+| `/pantheon-doc` | Generate documentation |
+| `/pantheon-focus` | Pin a session goal |
+| `/pantheon-forget` | Compress/consolidate memories |
+| `/pantheon-hash` | Hash edit verification |
+| `/pantheon-optimize` | Context optimization & token audit |
+| `/pantheon-remember` | Store in memory |
+| `/pantheon-search` | Search memory |
+| `/pantheon-status` | Show system health and agent status |
+| `/pantheon-todo` | Create and maintain task list |
 
 ## Verification
 
@@ -147,6 +149,9 @@ opencode
 
 # 4. Test background delegation
 # Type: @zeus, task(background=true, subagent_type="apollo", prompt="test")
+
+# 5. Run health check
+npm run doctor
 ```
 
 ## Troubleshooting
@@ -154,10 +159,11 @@ opencode
 | Problem | Solution |
 |---------|----------|
 | Agents not found | Run `npx pantheon-opencode init` again |
-| MCP servers not starting | Check Python 3.11+, run `npm run install` |
+| MCP servers not starting | Check Python 3.11+, run `npm run setup` |
 | Background delegation not available | Set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` before launching OpenCode |
 | TUI sidebar not showing | Check `~/.config/opencode/tui.json` has `"plugins/pantheon-tui"` |
 | Plugin not loading | Ensure `~/.config/opencode/plugins/pantheon-tui/dist/tui.tsx` exists |
+| Health check fails | Run `npm run doctor` for detailed diagnostics |
 
 ## Installation Flow
 
@@ -166,7 +172,7 @@ flowchart LR
     A["npx pantheon-opencode init"] --> B{"--project?"}
     B -->|No| C["~/.config/opencode/agents/ (global)"]
     B -->|Yes| D[".opencode/agents/ (project-local)"]
-    C --> E["npm run install"]
+    C --> E["npm run setup"]
     D --> E
     E --> F["MCP servers + skills + TUI"]
     F --> G["export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true"]
@@ -205,7 +211,7 @@ block-beta
         end
         block Sessions["▶ Sessions (N total)"]
         end
-        block Commands["▶ Commands (11)"]
+        block Commands["▶ Commands (14)"]
         end
         block Agents["▶ Agents (14)"]
         end

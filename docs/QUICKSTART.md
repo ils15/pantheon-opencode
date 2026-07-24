@@ -2,48 +2,61 @@
 
 ## What is Pantheon
 
-A multi-agent framework for , OpenCode, , , , , and . 14 specialized agents with TDD enforcement, quality gates (Themis), and memory MCP. **v4.0** — 100/100 audit score.
+A multi-agent framework for **OpenCode**. 14 specialized agents with TDD enforcement, quality gates (Themis 3-layer review), and persistent memory MCP. **v1.0** — single entry point, background subagents, 14 commands.
 
 ## Installation
 
-### Option 1: CLI (recommended, coming soon)
+### Quick install (recommended)
+
 ```bash
-npx @pantheon/cli init
+npx pantheon-opencode init
 ```
 
-### Option 2: Git clone
+This installs agents globally to `~/.config/opencode/agents/`. For project-local install, add `--project`.
+
+For MCP servers (memory, persistence) and TUI plugin:
+
 ```bash
-git clone https://github.com/ils15/pantheon.git
-cd pantheon
-npm run sync
+npm run setup
 ```
 
-Then copy to your platform's config dir:
 ```bash
-# OpenCode
-cp -r .opencode/* ~/.config/opencode/
-# Or use platform-specific scripts
+# Verify installation
+npm run doctor
 ```
 
-## v4.0 What's New
+### Prerequisites
 
-- **14 commands** — all `/pantheon-*` (remember, search, consolidate, forget, audit v2, cancel...)
-- **Themis 2.0** — 3-layer review (heuristic scanner + deep review + verification planning)
-- **Memory MCP** — agents read-only, Zeus auto-stores every result
-- **TUI Plugin** — live deepwork status + activity feed + toast notifications
-- **YAGNI + Anti-overengineering** — built into every agent's workflow
-- **Background Agents** — parallel execution with `subagent_depth: 2`
+- **Node.js 18+**
+- **OpenCode v1.18.4+**
+- **Python 3.11+** (optional, for MCP servers)
+
+## v1.0 Highlights
+
+- **OpenCode-only** — unified, simplified, no multi-platform fragmentation
+- **Global install** — `npx pantheon-opencode init` works from any directory
+- **Background subagents** — up to 5 agents in parallel
+- **14 commands** — all start with `/pantheon-`
+- **Themis 3-layer review** — heuristic scanner + deep review + verification planning
+- **Persistent MCP memory** — sqlite-vec + fastembed
 
 ## Usage
 
-| Command | What it does |
+| Command | Description |
 |---------|-------------|
-| `/pantheon` | Council multi-agent synthesis |
-| `/pantheon-status` | System status & agent registry |
-| `/pantheon-audit --light` | Code quality scan (zero LLM) |
-| `/pantheon-deepwork` | Multi-phase task execution |
+| `/pantheon` | Multi-perspective synthesis (Council) via inline agents |
+| `/pantheon-audit` | Code review + security audit |
+| `/pantheon-bg` | List background tasks |
+| `/pantheon-consolidate` | Consolidate memory |
+| `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints |
+| `/pantheon-doc` | Generate documentation |
+| `/pantheon-focus` | Pin a session goal |
+| `/pantheon-forget` | Compress/consolidate memories |
+| `/pantheon-hash` | Hash edit verification |
+| `/pantheon-optimize` | Context optimization & token audit |
 | `/pantheon-remember` | Store in memory |
 | `/pantheon-search` | Search memory |
-| `/pantheon-cancel` | Stop auto-continuation |
+| `/pantheon-status` | Show system health and agent status |
+| `/pantheon-todo` | Create and maintain task list |
 
-Full list: 14 commands — all start with `/pantheon-`.
+Full details: [INSTALLATION.md](INSTALLATION.md) for setup, [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
