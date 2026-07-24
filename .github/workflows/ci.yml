@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: Install dependencies
+        run: pip install yamllint && npm ci --ignore-scripts || npm install
+
+      - name: Validate agent frontmatter
+        run: |
+          set -e
+          FAILED=0
+          for glob in "agents/*.agent.md" "platform/claude/agents/*.md" "platform/opencode/agents/*.md" "platform/windsurf/rules/*.md"; do
+            dir="${glob%/*}"
+            [ -d "$dir" ] || { echo "skip $dir"; continue; }
+            for file in $glob; do
+              [ -f "$file" ] || continue
+              fm=$(awk '/^---/{if(f){exit}else{f=1;next}} f{print}' "$file")
+              [ -z "$fm" ] && { echo "No frontmatter $file"; FAILED=1; continue; }
+              tmp=$(mktemp --suffix=.yml)
+              echo "$fm" > "$tmp"
+              yamllint -c .yamllint.yml "$tmp" && echo "OK $file" || { echo "FAIL $file"; FAILED=1; }
+              rm "$tmp"
+            done
+          done
+          [ "$FAILED" -eq 0 ] || exit 1
+
+      - name: Validate Cursor .mdc rules
+        run: |
+          set -e; FAILED=0
+          for file in platform/cursor/rules/*.mdc; do
+            [ -f "$file" ] || continue
+            fm=$(awk '/^---/{if(f){exit}else{f=1;next}} f{print}' "$file")
+            [ -z "$fm" ] && { echo "No frontmatter $file"; FAILED=1; continue; }
+            tmp=$(mktemp --suffix=.yml)
+            echo "$fm" > "$tmp"
+            yamllint -c .yamllint.yml "$tmp" && echo "OK $file" || { echo "FAIL $file"; FAILED=1; }
+            rm "$tmp"
+          done
+          [ "$FAILED" -eq 0 ] || exit 1
+
+      - name: Check AGENTS.md consistency
+        run: |
+          set -e; FAILED=0
+          for f in agents/*.agent.md; do
+            name=$(basename "$f" .agent.md)
+            grep -qiF "$name" AGENTS.md && echo "OK $name" || { echo "MISSING $name in AGENTS.md"; FAILED=1; }
+          done
+          for dir in platform/claude/agents platform/opencode/agents platform/windsurf/rules; do
+            [ -d "$dir" ] || continue
+            for f in "$dir"/*.md; do
+              [ -f "$f" ] || continue
+              name=$(basename "$f" .md)
+              grep -qF "$name" AGENTS.md 2>/dev/null && echo "OK $dir/$name" || echo "INFO $dir/$name not in AGENTS.md"
+            done
+          done
+          [ "$FAILED" -eq 0 ] || exit 1
+
+      - name: Validate platform manifests
+        run: |
+          set -e; FAILED=0
+          for dir in platform/*/; do
+            echo "$dir" | grep -q '_template' && continue
+            [ -f "${dir}adapter.json" ] || continue
+            node -e "const a=require('./${dir}adapter.json'); ['name','displayName','outputDir'].forEach(k=>{if(!a[k])throw new Error('Missing '+k)})" && echo "OK $(basename $dir)" || { echo "FAIL $(basename $dir)"; FAILED=1; }
+          done
+          npm run plugin:validate 2>&1 || FAILED=1
+          [ "$FAILED" -eq 0 ] || exit 1
+
+      - name: Validate platform sync freshness
+        run: npm run sync:check
+
+      - name: Validate skill SKILL.md frontmatter
+        run: |
+          set -e; FAILED=0
+          for file in skills/*/SKILL.md; do
+            [ -f "$file" ] || continue
+            fm=$(awk '/^---/{if(f){exit}else{f=1;next}} f{print}' "$file")
+            if [ -z "$fm" ]; then
+              echo "No frontmatter $file"; FAILED=1; continue
+            fi
+            echo "$fm" | grep -q '^name:' || { echo "Missing name $file"; FAILED=1; }
+            echo "$fm" | grep -q '^description:' || { echo "Missing description $file"; FAILED=1; }
+            tmp=$(mktemp --suffix=.yml)
+            echo "$fm" > "$tmp"
+            yamllint -c .yamllint.yml "$tmp" && echo "OK $file" || { echo "FAIL $file"; FAILED=1; }
+            rm "$tmp"
+          done
+          [ "$FAILED" -eq 0 ] || exit 1
+
+      - name: Validate routing.yml consistency
+        run: node scripts/validate-routing.mjs
+
+      - name: Run adapter conformance (all platforms)
+        run: node scripts/test-adapter-conformance.mjs

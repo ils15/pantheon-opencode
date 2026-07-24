@@ -1,0 +1,11 @@
+[    2907ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://local.adguard.org/?ts=1784811133876&type=content-script&dmn=github.com&url=https%3A%2F%2Fgithub.com%2Fcode-yeongyu%2Foh-my-openagent&app=chrome.exe&css=2&js=1&rel=1&rji=1&sbe=1:0
+[    2957ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://local.adguard.org/?ts=1784811133876&name=AdGuard%20Extra&type=user-script:0
+[    3610ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://collector.github.com/github/collect:0
+[    3678ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://collector.github.com/github/collect:0
+[    3678ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://collector.github.com/github/collect:0
+[    3908ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://collector.github.com/github/collect:0
+[    3908ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://collector.github.com/github/collect:0
+[    3941ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://collector.github.com/github/collect:0
+[    4179ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://collector.github.com/github/collect:0
+[    4291ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://collector.github.com/github/collect:0
+[    4394ms] [ERROR] Failed to load resource: the server responded with a status of 500 () @ https://api.github.com/_private/browser/stats:0

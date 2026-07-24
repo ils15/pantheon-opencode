@@ -1,0 +1,2 @@
+[console_scripts]
+pantheon = pantheon.cli.main:main

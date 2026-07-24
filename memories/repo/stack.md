@@ -1,0 +1,13 @@
+# Stack Facts
+- Runtime: Node.js 18+ (ESM, no transpilers)
+- Agent format: Markdown + YAML frontmatter (.agent.md for Copilot, .md for OpenCode)
+- Config: JSON (opencode.json)
+- CI/CD: GitHub Actions
+- Skills: SKILL.md on-demand loading
+- Memory: /memories/repo/ (facts) + .pantheon/memory-bank/ (narrative)
+- Platforms: VS Code, OpenCode, Claude Code, Cursor, Windsurf, Continue.dev, Cline
+- Sync: npm run sync -- <platform> --clean
+- Commands: commands/ (canonical source, synced to all platforms)
+- MCPs: Playwright, Browse, Context7, GitHub, Filesystem
+- Context7: Added to hermes, aphrodite, demeter, hephaestus agents
+- headerTimeout: 10000ms configured in provider

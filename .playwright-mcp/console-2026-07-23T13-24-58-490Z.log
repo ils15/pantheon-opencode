@@ -1,0 +1,2 @@
+[    2964ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://local.adguard.org/?ts=1784811133876&type=content-script&dmn=opencode.ai&url=https%3A%2F%2Fopencode.ai%2Fdocs%2Fplugins&app=chrome.exe&css=3&js=1&rel=1&rji=1&sbe=1:0
+[    2993ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://local.adguard.org/?ts=1784811133876&name=AdGuard%20Extra&name=AdGuard%20Popup%20Blocker&type=user-script:0

@@ -1,0 +1,9 @@
+node_modules/
+.venv/
+.pantheon/
+.env
+*.tgz
+*.pyc
+__pycache__/
+.DS_Store
+.vscode/

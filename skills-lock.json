@@ -1,0 +1,16 @@
+{
+  "src/skills/agent-coordination/SKILL.md": "cfd040ef29e3dd0fd5e0e67773874facf7c06e3284898afe1fddba4456c3f1aa",
+  "src/skills/artifact-management/SKILL.md": "c60e493666bedf46e9113d0dd20106489d5c5a73905e1370fcfc1c0d71c59185",
+  "src/skills/auto-continue/SKILL.md": "791b7f8d981bca571a6350cfd0f7f623ab8d9c2190b015dc63c15f8663b25e53",
+  "src/skills/code-review-checklist/SKILL.md": "0e59367c65ef4608db80a0674279f32cfc3f67dca7236f233b61a47fe506579f",
+  "src/skills/context-compression/SKILL.md": "07cfddfedeb8087794ae49ef8e60d8adca3ec2342d592cc30d0407d1b8ab1b90",
+  "src/skills/git-workflow-and-versioning/SKILL.md": "685a94041f1b4ce2a430301f517b89102055696267c369a7e8fb191606659276",
+  "src/skills/incremental-implementation/SKILL.md": "7065ddb45da3c6b6751de07f290e92e6cb072e949a2e3aaae13ee7762f0a70fc",
+  "src/skills/memory-bank/SKILL.md": "4717cf18b43550c9f02cfab810968b97a5b2584f00a15516ecba643c80cdc110",
+  "src/skills/orchestration-workflow/SKILL.md": "0eeabaf71a802d1f673f79996548cda2d394bbcc7c62eaca03482d3fa99be688",
+  "src/skills/security-hardening/SKILL.md": "6d637e122421f7bc3b751f04854ad343a5a5d35249458bc8939233138fd3f20d",
+  "src/skills/session-goal/SKILL.md": "793498265f70253c20524f6adc88bcc86db11d7160fe8232a26aedc6b1c5489f",
+  "src/skills/spec-driven-development/SKILL.md": "e93b9103d6cd1848ab01328efde82c1daf564d1cabbdc2278254b346fcf55d02",
+  "src/skills/tdd-with-agents/SKILL.md": "9880919a46b74f549f948147d8b086b008635de94fa259f76261d067772bb8e3",
+  "src/skills/visual-review-pipeline/SKILL.md": "f6e65ff75a9325c38e0e9dde8e87f09b873e14e490936ef48aa80201bb68fe10"
+}
