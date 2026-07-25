@@ -44,7 +44,7 @@ function warn(message) {
 }
 
 // Load routing.yml
-const routingPath = join(ROOT, 'routing.yml')
+const routingPath = join(ROOT, 'src', 'routing.yml')
 if (!existsSync(routingPath)) {
   console.error('❌ routing.yml not found')
   process.exit(1)
@@ -58,10 +58,10 @@ const routingAgents = Object.keys(routing.agents || {})
 console.log(`  Agents in routing.yml: ${routingAgents.length}`)
 
 // Get canonical agent files
-const agentsDir = join(ROOT, 'agents')
+const agentsDir = join(ROOT, 'src', 'agents')
 const canonicalFiles = readdirSync(agentsDir)
-  .filter((f) => f.endsWith('.agent.md'))
-  .map((f) => f.replace('.agent.md', ''))
+  .filter((f) => f.endsWith('.md'))
+  .map((f) => f.replace('.md', ''))
   .sort()
 
 console.log(`  Canonical agent files: ${canonicalFiles.length}`)
@@ -77,7 +77,7 @@ for (const name of canonicalFiles) {
 }
 
 // B. Skill validation
-const skillsDir = join(ROOT, 'skills')
+const skillsDir = join(ROOT, 'src', 'skills')
 const existingSkills = existsSync(skillsDir)
   ? readdirSync(skillsDir).filter((d) => {
       const skillDir = join(skillsDir, d)

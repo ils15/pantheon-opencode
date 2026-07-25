@@ -26,7 +26,7 @@ jobs:
         run: |
           set -e
           FAILED=0
-          for glob in "agents/*.md"; do
+          for glob in "src/agents/*.md"; do
             dir="${glob%/*}"
             [ -d "$dir" ] || { echo "skip $dir"; continue; }
             for file in $glob; do
@@ -44,24 +44,16 @@ jobs:
       - name: Check AGENTS.md consistency
         run: |
           set -e; FAILED=0
-          for f in agents/*.agent.md; do
-            name=$(basename "$f" .agent.md)
+          for f in src/agents/*.md; do
+            name=$(basename "$f" .md)
             grep -qiF "$name" AGENTS.md && echo "OK $name" || { echo "MISSING $name in AGENTS.md"; FAILED=1; }
-          done
-          for dir in platform/opencode/agents; do
-            [ -d "$dir" ] || continue
-            for f in "$dir"/*.md; do
-              [ -f "$f" ] || continue
-              name=$(basename "$f" .md)
-              grep -qF "$name" AGENTS.md 2>/dev/null && echo "OK $dir/$name" || echo "INFO $dir/$name not in AGENTS.md"
-            done
           done
           [ "$FAILED" -eq 0 ] || exit 1
 
       - name: Validate skill SKILL.md frontmatter
         run: |
           set -e; FAILED=0
-          for file in skills/*/SKILL.md; do
+          for file in src/skills/*/SKILL.md; do
             [ -f "$file" ] || continue
             fm=$(awk '/^---/{if(f){exit}else{f=1;next}} f{print}' "$file")
             if [ -z "$fm" ]; then
