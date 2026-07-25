@@ -45,12 +45,13 @@ jobs:
         id: version_check
         run: |
           TAG="v$(node -p "require('./package.json').version")"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
+          NPM_VER=$(npm view pantheon-opencode version 2>/dev/null || echo "none")
+          if git rev-parse "$TAG" >/dev/null 2>&1 && [ "v$NPM_VER" = "$TAG" ]; then
             echo "changed=false" >> $GITHUB_OUTPUT
-            echo "Tag $TAG already exists — skipping release"
+            echo "Tag $TAG exists AND npm already has v$NPM_VER — skipping"
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "Tag $TAG is new — proceeding with release"
+            echo "Tag $TAG or npm version differs — proceeding"
           fi
 
       - name: Generate release notes
