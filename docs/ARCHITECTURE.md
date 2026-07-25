@@ -81,7 +81,7 @@ Zeus uses explicit rules to decide whether to delegate or not:
 
 ### Problem (before v3.4.0)
 
-Each platform (OpenCode, Cursor, Windsurf, Cline, Continue) had its own agent
+Each platform (OpenCode) had its own agent
 format with different field capabilities, different tool naming conventions, and different
 configuration patterns. A single change required editing 6 files — and they were never quite
 identical. Bugs like `temis_delegate` (missing the "h") propagated across platforms because
@@ -94,7 +94,7 @@ A three-layer architecture:
 ```
 ┌─────────────────────────────────────────────────────┐
 │                  1. CANONICAL                        │
-│  agents/*.agent.md — single source of truth          │
+│  src/agents/*.md — single source of truth          │
 │  Rich YAML frontmatter + full body text              │
 │  Fields: name, description, tools, model, skills,     │
 │          handoffs, permission, hooks, mcpServers,      │
@@ -272,7 +272,7 @@ would require maintaining parallel copies of every agent.
 
 ### Solution
 
-A **platform adapter** is a JSON configuration file (`platform/<name>/adapter.json`)
+A **platform adapter** is a JSON configuration file
 that defines how to translate the canonical agent format into a platform-specific
 format:
 
@@ -339,8 +339,7 @@ format:
 
 ### Adapter configuration
 
-The OpenCode adapter configuration lives in `platform/opencode/adapter.json`.
-It defines how canonical agent files are translated into OpenCode's format.
+The OpenCode adapter defines how canonical agent files are translated into OpenCode's format.
 
 ---
 

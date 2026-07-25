@@ -40,7 +40,7 @@ read_mcp_resource(server="pantheon-resources", uri="pantheon://routing")
 
 ### pantheon-memory (persistent storage)
 
-Vector memory with ChromaDB + sentence-transformers. 14 tools for storing, searching, linking, compressing, and managing memories across sessions.
+Vector memory with sqlite-vec + fastembed. 14 tools for storing, searching, linking, compressing, and managing memories across sessions.
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|

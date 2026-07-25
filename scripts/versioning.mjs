@@ -25,7 +25,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 
 const MANIFEST_FILES = [
-  'platform/forge.json',
+  // 'platform/forge.json' removed in v1.0 — directory no longer exists
   'pyproject.toml',
   'package.json',
   'plugin.json',

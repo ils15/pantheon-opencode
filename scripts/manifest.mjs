@@ -184,7 +184,7 @@ ${colored('USAGE', C.cyan)}
   node scripts/manifest.mjs --help                       this help
 
 ${colored('PIPELINE', C.cyan)}
-  1. SYNC    — Generate platform agent files via sync-platforms.mjs
+  1. SYNC    — [removed in v1.0] platform sync via sync-platforms.mjs
   2. INSTALL — Deploy agents, config, skills to target directory
   3. VERIFY  — Check agent count, MCP servers, config integrity
   4. REPORT  — Structured pass/fail summary
@@ -219,35 +219,10 @@ function _step(label, fn) {
 // Step 1: Sync
 // ---------------------------------------------------------------------------
 
-function syncPlatforms(targetPlatforms) {
-  const syncScript = join(ROOT, 'scripts', 'sync-platforms.mjs')
-  if (!existsSync(syncScript)) {
-    fail(`sync-platforms.mjs not found at ${syncScript}`)
-    return false
-  }
-
-  let allOk = true
-  for (const platform of targetPlatforms) {
-    const label = platform.charAt(0).toUpperCase() + platform.slice(1)
-    console.log(`  ${colored('Syncing', C.cyan)} ${colored(label, C.bold)}...`)
-    try {
-      const result = spawnSync(process.execPath, [syncScript, platform], {
-        cwd: ROOT,
-        stdio: 'inherit',
-        timeout: 60_000,
-      })
-      if (result.status === 0) {
-        pass(`${label} sync completed`)
-      } else {
-        fail(`${label} sync failed (exit ${result.status})`)
-        allOk = false
-      }
-    } catch (err) {
-      fail(`Sync error: ${err.message}`)
-      allOk = false
-    }
-  }
-  return allOk
+function syncPlatforms(_targetPlatforms) {
+  // sync-platforms.mjs removed in v1.0 (OpenCode-only)
+  info('Platform sync step skipped — sync-platforms.mjs was removed in v1.0')
+  return true
 }
 
 // ---------------------------------------------------------------------------
