@@ -35,20 +35,16 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
-const AGENTS_DIR = join(ROOT, 'agents')
+const AGENTS_DIR = join(ROOT, "src", "agents")
 const PLATFORM_DIR = join(ROOT, 'platform')
 
 // All known platforms (must match platform/ subdirectories with adapter.json)
-const _ALL_PLATFORMS = ['opencode', 'claude', 'cursor', 'windsurf', 'copilot', 'continue', 'cline']
+const _ALL_PLATFORMS = ['opencode']
 
 const PLATFORM_LABELS = {
   opencode: 'OpenCode',
-  claude: 'Claude Code',
-  cursor: 'Cursor',
-  windsurf: 'Windsurf',
-  copilot: 'VS Code / Copilot',
-  continue: 'Continue.dev',
-  cline: 'Cline',
+}
+  opencode: 'OpenCode',
 }
 
 // ---------------------------------------------------------------------------
@@ -183,13 +179,13 @@ function showHelp() {
 // ---------------------------------------------------------------------------
 
 /**
- * Collect canonical agent names from agents/*.agent.md
+ * Collect canonical agent names from agents/*.md
  * @returns {string[]} sorted list of agent names (without extension)
  */
 function getCanonicalAgentNames() {
   if (!existsSync(AGENTS_DIR)) return []
   return readdirSync(AGENTS_DIR)
-    .filter((f) => f.endsWith('.agent.md'))
+    .filter((f) => f.endsWith('.md'))
     .map((f) => f.replace(/\.agent\.md$/, ''))
     .sort()
 }
@@ -421,7 +417,7 @@ function checkMcpConfig(args) {
  * Cross-reference agent mcpServers references with opencode.json MCP config entries.
  */
 function checkAgentMcpReferences(cfg) {
-  const agentFiles = readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.agent.md'))
+  const agentFiles = readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.md'))
   const mcpNames = new Set(Object.keys(cfg.data.mcp ?? {}))
   const referencedNames = new Set()
 
@@ -519,7 +515,7 @@ function checkPermissionMismatches(args) {
   let bodyIssues = 0
 
   for (const agent of canonical) {
-    const filePath = join(AGENTS_DIR, `${agent}.agent.md`)
+    const filePath = join(AGENTS_DIR, `${agent}.md`)
     if (!existsSync(filePath)) continue
 
     const content = readFileSync(filePath, 'utf8')
