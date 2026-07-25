@@ -13,7 +13,16 @@
     "doctor": "node scripts/doctor.mjs",
     "init": "node bin/pantheon-init.mjs init",
     "opencode": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
-    "start": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode"
+    "start": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
+    "prepublishOnly": "node scripts/doctor.mjs && node scripts/validate-routing.mjs",
+    "postpublish": "node -e \"console.log('✅ Published pantheon-opencode v' + require('./package.json').version + ' to npm')\"",
+    "version:status": "node scripts/versioning.mjs status",
+    "version:apply": "node scripts/versioning.mjs apply",
+    "release:dry-run": "node scripts/versioning.mjs status && npm pack --dry-run",
+    "publish:next": "npm publish --tag next --access public",
+    "lint": "npx biome ci .",
+    "typecheck": "npx tsc --noEmit",
+    "audit": "npm audit --audit-level=high"
   },
   "bin": {
     "pantheon-opencode": "bin/pantheon-init.mjs"

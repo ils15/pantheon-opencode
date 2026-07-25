@@ -1,0 +1,33 @@
+name: Pre-Release (next)
+
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish-next:
+    if: github.repository == 'ils15/pantheon-opencode'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci --ignore-scripts || npm install
+      - run: npm test 2>&1 || { echo "❌ Tests failed"; exit 1; }
+
+      - name: Publish next tag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            npm publish --tag next --access public --provenance 2>&1 || echo "⚠️ npm publish failed"
+          else
+            echo "⚠️ NPM_TOKEN not configured — skipping pre-release"
+          fi
