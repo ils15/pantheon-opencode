@@ -61,9 +61,8 @@ agents:
       - artifact-management
       - context-compression
       - auto-continue
-      - internet-search
       - orchestration-workflow
-      - wisdom-accumulation
+      - incremental-implementation
 
   athena:
     role: "Strategic planner"
@@ -83,11 +82,8 @@ agents:
     subagent_can_delegate_to:
       - apollo
     skills:
-      - codemap
-      - init-deep
-      - interview
-      - metis-gap-analysis
-      - plan-architecture
+      - spec-driven-development
+      - memory-bank
 
   apollo:
     role: "Investigation scout"
@@ -106,8 +102,7 @@ agents:
       - pantheon_resources
     subagent_can_delegate_to: []
     skills:
-      - internet-search
-      - codemap
+      - auto-continue
 
   hermes:
     role: "Backend specialist"
@@ -125,16 +120,11 @@ agents:
       - memory_store
       - pantheon_code_mode
     skills:
-      - api-design-patterns
-      - cache-strategy
-      - database-optimization
-      - fastapi-async-patterns
-      - file-prompts
-      - quality-gate
-      - simplify
-      - streaming-patterns
-      - test-architecture
       - tdd-with-agents
+      - file-prompts
+      - streaming-patterns
+      - git-workflow-and-versioning
+      - incremental-implementation
 
   aphrodite:
     role: "Frontend specialist"
@@ -152,11 +142,9 @@ agents:
       - memory_store
       - pantheon_resources_memory_bank
     skills:
-      - frontend-analyzer
-      - nextjs-seo-optimization
-      - quality-gate
-      - simplify
       - tdd-with-agents
+      - visual-review-pipeline
+      - file-prompts
 
   demeter:
     role: "Database specialist"
@@ -174,11 +162,8 @@ agents:
       - memory_store
       - memory_recall
     skills:
-      - database-migration
-      - database-optimization
-      - quality-gate
-      - cache-strategy
-      - simplify
+      - tdd-with-agents
+      - incremental-implementation
 
   themis:
     role: "Quality gate"
@@ -200,10 +185,9 @@ agents:
       - mnemosyne
     skills:
       - code-review-checklist
-      - quality-gate
-      - security-audit-pro
+      - security-hardening
       - tdd-with-agents
-      - mcp-security
+      - context-compression
 
   prometheus:
     role: "Infrastructure specialist"
@@ -221,8 +205,8 @@ agents:
       - pantheon_code_mode
       - memory_store
     skills:
-      - docker-best-practices
-      - agent-observability
+      - git-workflow-and-versioning
+      - incremental-implementation
 
   hephaestus:
     role: "AI pipelines"
@@ -239,12 +223,8 @@ agents:
       - ai_workflow_composition
       - memory_search
     skills:
-      - rag-pipelines
-      - mcp-server-development
-      - quality-gate
-      - agent-evaluation
-      - conversational-ai-design
-      - prompt-improver
+      - tdd-with-agents
+      - auto-continue
 
   nyx:
     role: "Observability"
@@ -261,9 +241,8 @@ agents:
       - monitoring_dashboards
       - pantheon_resources_routing
     skills:
-      - agent-evaluation
-      - agent-observability
-      - token-audit
+      - security-hardening
+      - auto-continue
 
   gaia:
     role: "Remote sensing"
@@ -280,8 +259,7 @@ agents:
       - scientific_literature_review
       - pantheon_resources
     skills:
-      - remote-sensing-analysis
-      - internet-search
+      - auto-continue
 
   iris:
     role: "GitHub operations"
@@ -300,6 +278,7 @@ agents:
     subagent_can_delegate_to:
       - mnemosyne
     skills:
+      - git-workflow-and-versioning
       - artifact-management
 
   mnemosyne:
@@ -322,9 +301,9 @@ agents:
     subagent_can_delegate_to: []
     skills:
       - artifact-management
-      - handoff
-      - task-system
+      - memory-bank
       - context-compression
+      - session-goal
 
   talos:
     role: "Hotfix agent"
@@ -342,7 +321,7 @@ agents:
       - pantheon_code_mode
     subagent_can_delegate_to: []
     skills:
-      - simplify
+      - incremental-implementation
 
 # AUTO-CONTINUE CONFIGURATION
 # Checkpoint and heartbeat settings for autonomous sessions
@@ -428,42 +407,6 @@ platforms:
       - bash_execution
       - web_fetch
       - web_search
-
-  vscode:
-    display_name: "VS Code (GitHub Copilot)"
-    tools:
-      delegate_agent: "agent"
-      delegate_subagent: "task"
-      ask_user: "vscode/askQuestions"
-      search_codebase: "search/codebase"
-      search_usages: "search/usages"
-      search_files: "search/fileSearch"
-      search_text: "search/textSearch"
-      search_changes: "search/changes"
-      list_directory: "search/listDirectory"
-      read_file: "read/readFile"
-      read_problems: "read/problems"
-      edit_file: "edit/editFiles"
-      run_terminal: "execute/runInTerminal"
-      test_failure: "execute/testFailure"
-      get_terminal_output: "execute/getTerminalOutput"
-      web_fetch: "web/fetch"
-      browser_open: "browser/openBrowserPage"
-      browser_navigate: "browser/navigatePage"
-      browser_read: "browser/readPage"
-      browser_click: "browser/clickElement"
-      browser_type: "browser/typeInPage"
-      browser_hover: "browser/hoverElement"
-      browser_drag: "browser/dragElement"
-      browser_dialog: "browser/handleDialog"
-      browser_screenshot: "browser/screenshotPage"
-    capabilities:
-      - agent_delegation
-      - subagent_delegation
-      - file_editing
-      - terminal_execution
-      - web_fetch
-      - browser_automation
 
 # ARTIFACT LIFECYCLE
 # See skill: artifact-management for full lifecycle rules.
