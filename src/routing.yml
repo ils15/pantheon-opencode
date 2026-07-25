@@ -51,7 +51,6 @@ agents:
       - prometheus
       - hephaestus
       - nyx
-      - gaia
       - iris
       - mnemosyne
       - talos
@@ -242,23 +241,6 @@ agents:
       - pantheon_resources_routing
     skills:
       - security-hardening
-      - auto-continue
-
-  gaia:
-    role: "Remote sensing"
-    model_tier: default
-    reasoning_effort: high
-    user_invocable: true
-    can_delegate: false
-    can_receive_delegation: true
-    capabilities:
-      - satellite_imagery_analysis
-      - spectral_indices
-      - land_cover_classification
-      - change_detection
-      - scientific_literature_review
-      - pantheon_resources
-    skills:
       - auto-continue
 
   iris:

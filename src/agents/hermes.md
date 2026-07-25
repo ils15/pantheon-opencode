@@ -260,9 +260,7 @@ When completing a task, provide:
 ## Inline Compression
 
 Compress working context with the `context-compression` skill (L1, Pantheon-native) when:
-- **C8**: After returning a `subtask_summary` with CRITICAL/HIGH findings → compress before the next phase.
-- **C9**: Before delegating a large context block to another agent → compress to cut tokens.
-- **C11**: At a phase boundary / session handoff → compress completed work.
+- > Inline compression: See `skill: context-compression` (C8, C9, C11)
 
 **How**: call `execute_code_script("compress-inline.py", args=["compress", "--text", "<content>"])`. Use `score` to preview priority, `batch` for multiple files. See the `context-compression` skill for the full protocol.
 
