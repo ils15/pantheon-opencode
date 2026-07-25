@@ -17,8 +17,6 @@ skills:
 permission:
   edit: deny
   bash: deny
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
   read: allow
   grep: allow
   glob: allow
@@ -42,7 +40,7 @@ Use `task` to delegate to agents that have these tools.
 ## Core Workflow
 
 1. **Understand** the user's goal and requirements
-2. **Research** codebase (use `search/codebase` directly OR delegate to @apollo if complex)
+2. **Research** codebase (use `grep` directly OR delegate to @apollo if complex)
 3. **Plan** in CONCISE phases (3-5 max, not 10+)
 4. **Validate plan quality** via @themis
 5. **Approve** via `agent/askQuestions`
@@ -53,7 +51,7 @@ Use `task` to delegate to agents that have these tools.
 Only Athena should fetch and reconcile supported-model information from:
 - https://docs.github.com/pt/copilot/reference/ai-models/supported-models
 
-Use `web/fetch` to verify availability before proposing model updates to other agents.
+Use `webfetch` to verify availability before proposing model updates to other agents.
 
 ##  Bounded Research Strategy (Fast Planning)
 
@@ -143,7 +141,7 @@ Only after explicit "yes" → delegate to @zeus with plan context.
 - Relationship analysis (how A connects to B)
 - Multiple parallel searches needed (3-10 simultaneous)
 
-**Otherwise**: Use `search/codebase` directly (faster).
+**Otherwise**: Use `grep` directly (faster).
 
 ## `/fork` for Alternative Approaches
 
@@ -154,7 +152,7 @@ This is worth exploring separately. Use /fork to compare approaches.
 
 ## Examples
 
-**Simple:** "Plan JWT auth" → Use `search/codebase` for auth files → Create 3-phase plan
+**Simple:** "Plan JWT auth" → Use `grep` for auth files → Create 3-phase plan
 
 **Complex:** "Plan microservices migration" → Delegate to `@apollo` for full discovery → Create 5-phase plan
 
@@ -174,7 +172,7 @@ Before creating a plan:
 
 ## Research with Web Fetch
 
-For external docs/specs, use `web/fetch` (see `internet-search` skill for patterns):
+For external docs/specs, use `webfetch` (see `internet-search` skill for patterns):
 - RFCs, official documentation, GitHub issues/PRs
 - Synthesize findings into plan recommendations
 

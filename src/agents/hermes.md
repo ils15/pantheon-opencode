@@ -20,9 +20,6 @@ skills:
   - incremental-implementation
 permission:
   bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  "pantheon-persistence_*": allow
   read: allow
   grep: allow
   edit: allow
@@ -81,7 +78,7 @@ See `skill: tdd-with-agents` for the full TDD cycle.
 - For codebase discovery → delegate to @apollo
 - For library documentation → Context7 is allowed for library documentation (FastAPI, SQLAlchemy, Pydantic)
 - For web research → delegate to @apollo
-- Only use `web/fetch` for specific URLs you already know (not for general search)
+- Only use `webfetch` for specific URLs you already know (not for general search)
 
 ##  MCP Security: PostgreSQL
 

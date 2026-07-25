@@ -36,14 +36,14 @@ const PANTHEON_AGENT_NAMES = [
   'themis',
   'prometheus',
   'hephaestus',
-  'chiron',
-  'echo',
+  
+  
   'nyx',
   'gaia',
   'iris',
   'mnemosyne',
   'talos',
-  'agora',
+  
 ]
 
 const PLATFORM_LABELS = {

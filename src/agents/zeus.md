@@ -7,10 +7,7 @@ permission:
   bash: allow
   task:
     "*": allow
-  pantheon-resources_*: allow
-  pantheon-memory_*: allow
   pantheon-code-mode_*: ask
-  pantheon-persistence_*: allow
 temperature: 0.2
 steps: 45
 mcp_tools:

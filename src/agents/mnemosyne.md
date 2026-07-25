@@ -32,9 +32,6 @@ skills:
   - session-goal
 permission:
   bash: deny
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  "pantheon-persistence_*": allow
   read: allow
   grep: allow
   edit: allow
