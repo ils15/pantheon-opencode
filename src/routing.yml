@@ -12,8 +12,7 @@ version: 1.0
 #     Z --> R[Prometheus]
 #     Z --> HE[Hephaestus]
 #     Z --> N[Nyx]
-#     Z --> G[Gaia]
-#     Z --> I[Iris] --> M[Mnemosyne]
+# #     Z --> I[Iris] --> M[Mnemosyne]
 #     Z --> M
 #     Z -.-> TA[Talos]
 #     T --> I
@@ -21,7 +20,7 @@ version: 1.0
 # ```
 # Removed agents: argus, chiron, echo (merged/deprecated)
 
-# AGENT REGISTRY — 14 active agents
+# AGENT REGISTRY — 13 active agents
 agents:
   zeus:
     role: "Central orchestrator"
