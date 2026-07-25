@@ -21,6 +21,5 @@
     "src/instructions/*.instructions.md"
   ],
   "plugin": [],
-  "mcp": {},
-  "experimental": {}
+  "mcp": {}
 }
