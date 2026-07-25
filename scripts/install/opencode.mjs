@@ -123,6 +123,18 @@ export function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
+  // 1.5 Install routing.yml (routing configuration)
+  // -----------------------------------------------------------------------
+  if (componentSet.has('agents')) {
+    const srcRouting = join(ROOT, 'src', 'routing.yml')
+    const dstRouting = join(target, 'routing.yml')
+    if (existsSync(srcRouting)) {
+      writeIfChanged(dstRouting, readFileSync(srcRouting, 'utf8'), dryRun)
+      stats.created++
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // 2. Install skills (--components skills)
   // -----------------------------------------------------------------------
   if (componentSet.has('skills')) {
