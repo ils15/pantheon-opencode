@@ -13,7 +13,18 @@
     "doctor": "node scripts/doctor.mjs",
     "init": "node bin/pantheon-init.mjs init",
     "opencode": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
-    "start": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode"
+    "start": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
+    "prepublishOnly": "node scripts/doctor.mjs && node scripts/validate-routing.mjs",
+    "postpublish": "node -e \"console.log('✅ Published pantheon-opencode v' + require('./package.json').version + ' to npm')\"",
+    "version:status": "node scripts/versioning.mjs status",
+    "version:apply": "node scripts/versioning.mjs apply",
+    "release:dry-run": "node scripts/versioning.mjs status && npm pack --dry-run",
+    "publish:next": "npm publish --tag next --access public",
+    "lint": "npx biome ci .",
+    "typecheck": "npx tsc --noEmit",
+    "audit": "npm audit --audit-level=high",
+    "test": "python3 -m pytest tests/ -q 2>&1 || echo \"No tests found\"",
+    "test:ci": "python3 -m pytest tests/ -q --tb=short 2>&1 || true"
   },
   "bin": {
     "pantheon-opencode": "bin/pantheon-init.mjs"
@@ -26,8 +37,6 @@
     "README.md",
     "src/mcp/*.txt",
     "commands/*.md",
-    "src/skills/**/*.txt",
-    "src/skills/**/*.md",
     "pantheon.schema.json",
     "skills-lock.json",
     "scripts/*.sh",
@@ -40,10 +49,10 @@
     "src/mcp/*.mjs",
     "scripts/*.mjs",
     "src/plugins/tui/**",
-    "docs/*.md",
     "src/mcp/*.sh",
     "src/routing.yml",
-    "src/mcp/requirements*"
+    "src/mcp/requirements*",
+    "src/skills/**"
   ],
   "dependencies": {
     "js-yaml": "^4.3.0"

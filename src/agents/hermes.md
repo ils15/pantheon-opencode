@@ -11,7 +11,7 @@ mcp_tools:
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
 temperature: 0.3
-steps: 20
+steps: 50
 skills:
   - tdd-with-agents
   - file-prompts
@@ -20,9 +20,6 @@ skills:
   - incremental-implementation
 permission:
   bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  "pantheon-persistence_*": allow
   read: allow
   grep: allow
   edit: allow
@@ -81,7 +78,7 @@ See `skill: tdd-with-agents` for the full TDD cycle.
 - For codebase discovery → delegate to @apollo
 - For library documentation → Context7 is allowed for library documentation (FastAPI, SQLAlchemy, Pydantic)
 - For web research → delegate to @apollo
-- Only use `web/fetch` for specific URLs you already know (not for general search)
+- Only use `webfetch` for specific URLs you already know (not for general search)
 
 ##  MCP Security: PostgreSQL
 
@@ -260,9 +257,7 @@ When completing a task, provide:
 ## Inline Compression
 
 Compress working context with the `context-compression` skill (L1, Pantheon-native) when:
-- **C8**: After returning a `subtask_summary` with CRITICAL/HIGH findings → compress before the next phase.
-- **C9**: Before delegating a large context block to another agent → compress to cut tokens.
-- **C11**: At a phase boundary / session handoff → compress completed work.
+- > Inline compression: See `skill: context-compression` (C8, C9, C11)
 
 **How**: call `execute_code_script("compress-inline.py", args=["compress", "--text", "<content>"])`. Use `score` to preview priority, `batch` for multiple files. See the `context-compression` skill for the full protocol.
 

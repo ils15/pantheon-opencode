@@ -15,7 +15,7 @@ This document covers the **6 built-in + external MCPs** available to Pantheon ag
 | **playwright** | Browser automation — screenshots, accessibility snapshots | aphrodite, themis, hermes | `npx -y @playwright/mcp@latest` — free, requires Playwright browsers installed |
 | **pantheon-resources** | Pantheon framework resources — agents, skills, routing, deepwork, memory bank | all agents | `python scripts/mcp_resources_server.py` — built-in, no setup needed |
 | **pantheon-code-mode** | Confined orchestration script execution via MCP | zeus, prometheus, hermes, talos | `python scripts/code_mode_server.py` — built-in, scripts in `.pantheon/code-mode/` |
-| **pantheon-memory** | Persistent memory with semantic search, recall, knowledge graph, compression, export | all agents | `python scripts/memory_mcp_server.py` — built-in, requires `chromadb` + `sentence-transformers` |
+| **pantheon-memory** | Persistent memory with semantic search, recall, knowledge graph, compression, export | all agents | `python scripts/memory_mcp_server.py` — built-in, requires `fastembed` |
 | **pantheon-persistence** | KV store with FTS5 search, TTL, namespace isolation | all agents | `python scripts/mcp_persistence_server.py` — built-in, zero deps |
 
 ---
@@ -63,7 +63,7 @@ npx playwright install chromium
 
 ### pantheon-memory (Persistent Memory)
 
-Built-in Python MCP server providing multi-strategy memory using ChromaDB + sentence-transformers.
+Built-in Python MCP server providing multi-strategy memory using sqlite-vec + fastembed (~30MB, ONNX, no PyTorch).
 
 ```bash
 # In the Pantheon project directory
@@ -72,7 +72,7 @@ python scripts/memory_mcp_server.py
 
 Requires Python packages:
 ```bash
-pip install chromadb sentence-transformers fastmcp
+pip install fastembed fastmcp
 ```
 
 **What it provides (14 tools + 2 resources):**
@@ -92,7 +92,7 @@ pip install chromadb sentence-transformers fastmcp
 - **Claim verification**: Shokunin-style freshness validation
 - **Markdown export**: formatted output for memory-bank archival
 
-**Storage:** `~/.pantheon/memory/chroma.sqlite3` (SQLite-backed ChromaDB)
+**Storage:** `~/.pantheon/memory/memory.db` (SQLite + sqlite-vec vector extension)
 
 **Used by:** All 14 agents for persistent memory across sessions. Mnemosyne has the deepest integration (export, consolidate, compress).
 
@@ -131,7 +131,7 @@ python scripts/mcp_persistence_server.py
 
 | Aspect | persistence | memory |
 |--------|-------------|--------|
-| Engine | SQLite KV | ChromaDB vector |
+| Engine | SQLite KV | sqlite-vec vector |
 | Search | FTS5 (keyword) | cosine similarity (semantic) |
 | TTL | ✅ per entry | ❌ |
 | Dependencies | zero (stdlib) | chromadb + sentence-transformers |

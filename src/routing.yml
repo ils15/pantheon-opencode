@@ -13,7 +13,7 @@ version: 1.0
 #     Z --> HE[Hephaestus]
 #     Z --> N[Nyx]
 #     Z --> G[Gaia]
-#     Z --> I[Iris] --> M[Mnemosyne]
+# #     Z --> I[Iris] --> M[Mnemosyne]
 #     Z --> M
 #     Z -.-> TA[Talos]
 #     T --> I
@@ -51,7 +51,6 @@ agents:
       - prometheus
       - hephaestus
       - nyx
-      - gaia
       - iris
       - mnemosyne
       - talos
@@ -245,21 +244,19 @@ agents:
       - auto-continue
 
   gaia:
-    role: "Remote sensing"
-    model_tier: default
-    reasoning_effort: high
-    user_invocable: true
+    role: Remote sensing domain specialist
+    model_tier: fast
+    reasoning_effort: low
+    user_invocable: false
     can_delegate: false
     can_receive_delegation: true
     capabilities:
-      - satellite_imagery_analysis
-      - spectral_indices
-      - land_cover_classification
-      - change_detection
-      - scientific_literature_review
-      - pantheon_resources
+    - remote_sensing
+    - spectral_analysis
+    - change_detection
+    - ml_classification
     skills:
-      - auto-continue
+    - auto-continue
 
   iris:
     role: "GitHub operations"

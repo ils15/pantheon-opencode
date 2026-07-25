@@ -561,59 +561,8 @@ function checkPermissionMismatches(args) {
 function checkSyncStatus(args) {
   section('D. Sync Status')
 
-  const syncScript = join(ROOT, 'scripts', 'sync-platforms.mjs')
-  if (!existsSync(syncScript)) {
-    warn('sync-platforms.mjs not found')
-    return
-  }
-
-  // Use the validate-sync approach: dry-run with clean
-  const result = spawn(process.execPath, [syncScript, '--dry-run', '--clean'])
-  // sync-platforms exits 1 when there are changes in dry-run mode
-
-  if (result.status === 0) {
-    pass('All platforms are in sync with canonical agents')
-  } else if (result.status === 1) {
-    // Parse output to determine what would change
-    const lines = (result.stdout || '').split('\n').filter(Boolean)
-    const updateLines = lines.filter((l) => l.includes('would update') || l.includes('~'))
-    const staleLines = lines.filter((l) => l.includes('stale'))
-
-    const updateCount = updateLines.length
-    const staleCount = staleLines.length
-
-    warn(
-      `Platforms are out of sync (${updateCount} file(s) would change${staleCount > 0 ? `, ${staleCount} stale` : ''})`,
-    )
-    if (args.verbose || updateCount + staleCount < 20) {
-      for (const line of updateLines) {
-        console.log(`    ${line}`)
-      }
-      for (const line of staleLines) {
-        console.log(`    ${line}`)
-      }
-    }
-
-    if (args.fix) {
-      info('Attempting --fix: running npm run sync...')
-      const syncResult = spawn('npm', ['run', 'sync'])
-      if (syncResult.status === 0) {
-        pass('Sync completed successfully')
-      } else {
-        error(`Sync failed (exit ${syncResult.status})`)
-        if (syncResult.stderr) {
-          console.log(`    ${syncResult.stderr}`)
-        }
-      }
-    } else {
-      info('Use --fix to run "npm run sync" automatically')
-    }
-  } else {
-    error(`Sync dry-run failed (exit ${result.status})`)
-    if (result.stderr) {
-      console.log(`    ${result.stderr}`)
-    }
-  }
+  // Platform sync removed in v1.0 (OpenCode-only)
+  info('Sync check skipped — platform sync was removed in v1.0')
 }
 
 // ---------------------------------------------------------------------------

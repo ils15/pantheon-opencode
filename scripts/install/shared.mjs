@@ -26,6 +26,7 @@ import yaml from 'js-yaml'
 export const __dirname = dirname(fileURLToPath(import.meta.url))
 export const ROOT = join(__dirname, '..', '..')
 export const AGENTS_DIR = join(ROOT, 'src', 'agents')
+// PLATFORM_DIR is deprecated — platform/ was removed in v1.0
 export const PLATFORM_DIR = join(ROOT, 'platform')
 
 // Auto-detect agent names from agents/ directory
@@ -40,6 +41,7 @@ export function getAgentNames() {
 // Cached constant for backward compatibility
 export const AGENT_NAMES = getAgentNames()
 
+// DEPRECATED: OpenCode-only since v1.0
 export const PLATFORM_DETECTORS = {
   opencode: (target) =>
     existsSync(join(target, 'opencode.json')) ||
@@ -282,6 +284,7 @@ export function copyFiles(srcDir, dstDir, dryRun, renameMap = null, clean = fals
 
     const dstFile = join(dstDir, dstName)
 
+    if (statSync(srcFile).isDirectory()) continue
     const content = readFileSync(srcFile, 'utf8')
     const existing = existsSync(dstFile) ? readFileSync(dstFile, 'utf8') : null
 

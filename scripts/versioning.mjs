@@ -25,7 +25,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 
 const MANIFEST_FILES = [
-  'platform/forge.json',
+  // 'platform/forge.json' removed in v1.0 — directory no longer exists
   'pyproject.toml',
   'package.json',
   'plugin.json',
@@ -225,6 +225,17 @@ switch (command) {
     updateManifests(newVersion)
     promoteUnreleased(newVersion, date)
     console.log(`\nDone. Commit with: git add -A && git commit -m "chore(release): v${newVersion}"`)
+
+    // Create git tag
+    try {
+      const tag = `v${newVersion}`
+      execSync(`git tag -a ${tag} -m "chore(release): ${tag}"`, { stdio: 'inherit' })
+      console.log(`Tag ${tag} created locally. Push: git push origin ${tag}`)
+      console.log(`Auto-release will trigger on main after merge.`)
+    } catch (e) {
+      console.warn(`Tag creation failed: ${e.message}`)
+      console.log('Create manually: git tag -a v' + newVersion + ' -m "chore(release): v' + newVersion + '"')
+    }
     break
   }
 

@@ -44,7 +44,7 @@ function warn(message) {
 }
 
 // Load routing.yml
-const routingPath = join(ROOT, 'routing.yml')
+const routingPath = join(ROOT, 'src', 'routing.yml')
 if (!existsSync(routingPath)) {
   console.error('❌ routing.yml not found')
   process.exit(1)
@@ -58,10 +58,10 @@ const routingAgents = Object.keys(routing.agents || {})
 console.log(`  Agents in routing.yml: ${routingAgents.length}`)
 
 // Get canonical agent files
-const agentsDir = join(ROOT, 'agents')
+const agentsDir = join(ROOT, 'src', 'agents')
 const canonicalFiles = readdirSync(agentsDir)
-  .filter((f) => f.endsWith('.agent.md'))
-  .map((f) => f.replace('.agent.md', ''))
+  .filter((f) => f.endsWith('.md'))
+  .map((f) => f.replace('.md', ''))
   .sort()
 
 console.log(`  Canonical agent files: ${canonicalFiles.length}`)
@@ -77,19 +77,22 @@ for (const name of canonicalFiles) {
 }
 
 // B. Skill validation
-const skillsDir = join(ROOT, 'skills')
-const existingSkills = existsSync(skillsDir)
-  ? readdirSync(skillsDir).filter((d) => {
-      const skillDir = join(skillsDir, d)
+const srcSkillsDir = join(ROOT, 'src', 'skills')
+const dotSkillsDir = join(ROOT, '.opencode', 'skills')
+const existingSkills = []
+for (const dir of [srcSkillsDir, dotSkillsDir]) {
+  if (existsSync(dir)) {
+    for (const d of readdirSync(dir)) {
+      const skillDir = join(dir, d)
       try {
-        return existsSync(join(skillDir, 'SKILL.md'))
-      } catch {
-        return false
-      }
-    })
-  : []
-
-console.log(`\n  Skills in skills/: ${existingSkills.length}`)
+        if (existsSync(join(skillDir, 'SKILL.md')) && !existingSkills.includes(d)) {
+          existingSkills.push(d)
+        }
+      } catch { /* skip */ }
+    }
+  }
+}
+console.log(`\n  Skills found: ${existingSkills.length} (src/skills/ + .opencode/skills/)`)
 
 for (const [name, info] of Object.entries(routing.agents || {})) {
   const agentSkills = info.skills || []

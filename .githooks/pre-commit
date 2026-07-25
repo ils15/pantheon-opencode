@@ -1,33 +1,14 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Pantheon pre-commit hook
-# Auto-syncs platform-specific agent files when canonical agents change.
-# 
-# Install: git config core.hooksPath .githooks
+# Validates that committed files don't contain stale platform references
+set -e
 
-set -euo pipefail
+echo "🔍 Pantheon pre-commit check..."
+stale_patterns="pantheon-orchestrator|scripts/install\\.mjs|platform/claude|platform/cursor|platform/windsurf|platform/cline|platform/continue|forge\\.json|sync-platforms\\.mjs"
 
-CHANGED_AGENTS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^agents/[a-z-]+\.agent\.md$' || true)
-
-if [ -z "$CHANGED_AGENTS" ]; then
-  exit 0
+if git diff --cached --name-only | xargs grep -ln "$stale_patterns" 2>/dev/null; then
+  echo "❌ Stale platform references found in files above. Commit blocked."
+  echo "   Replace: platform/claude → (already removed), sync-platforms.mjs → removed, etc."
+  exit 1
 fi
-
-echo "🔧 Canonical agents modified — syncing platform files..."
-node scripts/sync-platforms.mjs
-
-# Stage all generated platform files
-# Patterns for each platform's output directory
-git add platform/claude/agents/*.md
-git add platform/cline/.clinerules/*
-git add platform/continue/rules/*.md
-git add platform/cursor/rules/*.mdc
-git add platform/opencode/agents/*.md
-git add platform/windsurf/rules/*.md
-
-echo "✅ Platform files synced and staged"
-
-# Also update CHANGELOG Unreleased section if there are new commits
-if ! git diff --cached --name-only | grep -q '^CHANGELOG\.md$'; then
-  bash scripts/update-changelog.sh 2>/dev/null || true
-  git add CHANGELOG.md 2>/dev/null || true
-fi
+echo "✅ Pantheon pre-commit checks passed"

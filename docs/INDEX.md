@@ -44,8 +44,7 @@ Pantheon v1.0 is **OpenCode-only**. See [PLATFORMS.md](PLATFORMS.md) for details
 
 | Concern | Location |
 |---|---|
-| Agent definitions (edit here) | `agents/*.agent.md` |
-| Platform configs (auto-generated) | `platform/<name>/agents/` |
+| Agent definitions (edit here) | `src/agents/*.md` |
 | Shared skills | `skills/<name>/SKILL.md` |
 | Standards & instructions | `instructions/*.instructions.md` |
 | Prompt templates | `prompts/*.prompt.md` |
@@ -62,6 +61,6 @@ Pantheon v1.0 is **OpenCode-only**. See [PLATFORMS.md](PLATFORMS.md) for details
 
 ## Platform Configuration
 
-Pantheon runs exclusively on **OpenCode**. Platform configuration lives under `platform/opencode/`.
+Pantheon runs exclusively on **OpenCode**.
 
 For installation instructions, see [INSTALLATION.md](INSTALLATION.md).

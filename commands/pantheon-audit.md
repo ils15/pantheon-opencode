@@ -1,6 +1,6 @@
 ---
 description: "Audit: heuristic scan (zero LLM) + Themis review. Usage: /pantheon-audit [--light|--full|--plan]"
-agent: "themis"
+agent: "zeus"
 ---
 # /pantheon-audit — Quality & Security Audit
 

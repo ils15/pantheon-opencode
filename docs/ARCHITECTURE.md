@@ -30,7 +30,7 @@ reasoning), skipped tests, generic code, and no quality accountability.
 ### Solution
 
 **Zeus orchestrates but never implements.** Zeus has a `premium` model assignment and
-a restricted tool set (no `edit/editFiles`). His only job is routing work to the right
+a restricted tool set (no `edit`). His only job is routing work to the right
 specialist agent at the right time, managing the 3 approval gates, and conserving context.
 
 ```
@@ -81,7 +81,7 @@ Zeus uses explicit rules to decide whether to delegate or not:
 
 ### Problem (before v3.4.0)
 
-Each platform (OpenCode, Cursor, Windsurf, Cline, Continue) had its own agent
+Each platform (OpenCode) had its own agent
 format with different field capabilities, different tool naming conventions, and different
 configuration patterns. A single change required editing 6 files — and they were never quite
 identical. Bugs like `temis_delegate` (missing the "h") propagated across platforms because
@@ -94,7 +94,7 @@ A three-layer architecture:
 ```
 ┌─────────────────────────────────────────────────────┐
 │                  1. CANONICAL                        │
-│  agents/*.agent.md — single source of truth          │
+│  src/agents/*.md — single source of truth          │
 │  Rich YAML frontmatter + full body text              │
 │  Fields: name, description, tools, model, skills,     │
 │          handoffs, permission, hooks, mcpServers,      │
@@ -109,7 +109,7 @@ A three-layer architecture:
 │           bodyFilters, handoffStrategy, skillsOutput  │
 │                                                       │
 │  Example (OpenCode adapter):                          │
-│  - Canonical "execute/runInTerminal" → "bash"         │
+│  - Canonical "bash"         │
 │  - Canonical "agent" → "createAndRunTask"             │
 │  - Excluded: handoffs, disable-model-invocation       │
 └──────────────────────┬──────────────────────────────┘
@@ -132,7 +132,7 @@ A three-layer architecture:
 - **Parses frontmatter** — Extracts YAML from `---` blocks
 - **Applies adapter rules** — Includes/excludes fields per platform, transforms values
 - **Maps tools** — Converts canonical tool names to platform equivalents (e.g.,
-  `execute/runInTerminal` → `bash` for OpenCode)
+  `bash` for OpenCode)
 - **Transforms body references** — Rewrites tool references in agent body text to
   platform-correct equivalents
 - **Deploys skills** — Copies skill files to platform-specific skill directories
@@ -272,7 +272,7 @@ would require maintaining parallel copies of every agent.
 
 ### Solution
 
-A **platform adapter** is a JSON configuration file (`platform/<name>/adapter.json`)
+A **platform adapter** is a JSON configuration file
 that defines how to translate the canonical agent format into a platform-specific
 format:
 
@@ -295,9 +295,9 @@ format:
 
   // Canonical tool name → platform tool name mapping
   "toolMap": {
-    "search/codebase": "search/codebase",
-    "edit/editFiles": "edit/editFiles",
-    "execute/runInTerminal": "bash"         // <-- renamed for OpenCode
+    "grep": "grep",
+    "edit": "edit",
+    "bash": "bash"         // <-- renamed for OpenCode
   },
 
   // Body text filters (omit sections that don't apply)
@@ -320,7 +320,7 @@ format:
 | `frontmatter.include` | Fields to include in output | `["name", "tools", "skills"]` |
 | `frontmatter.exclude` | Fields to strip | `["handoffs", "hooks"]` |
 | `frontmatter.transform` | Field-level transformations | `{tools: {strategy: "map"}}` |
-| `toolMap` | Canonical → platform tool mapping | `"execute/runInTerminal": "bash"` |
+| `toolMap` | Canonical → platform tool mapping | `"bash": "bash"` |
 | `bodyFilters` | Section-level body text filtering | Omit " Workflow" section |
 | `skillsOutputDir` | Where to deploy skill files | `"skills"` |
 | `deploySkills` | Whether to sync skills | `true` / `false` |
@@ -339,8 +339,7 @@ format:
 
 ### Adapter configuration
 
-The OpenCode adapter configuration lives in `platform/opencode/adapter.json`.
-It defines how canonical agent files are translated into OpenCode's format.
+The OpenCode adapter defines how canonical agent files are translated into OpenCode's format.
 
 ---
 

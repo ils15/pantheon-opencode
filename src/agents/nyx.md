@@ -1,29 +1,23 @@
 ---
 name: nyx
-description: Observability & monitoring specialist — OpenTelemetry tracing, token/cost
-  tracking, agent performance analytics, LangSmith integration. Calls apollo for discovery,
-  sends to themis.
+description: "Observability & monitoring specialist — OpenTelemetry tracing, token/cost tracking, agent performance analytics, LangSmith integration. Calls apollo for discovery, sends to themis."
 mode: subagent
 reasoning_effort: low
-
-steps: 15
-- agent-observability
-- agent-evaluation
+permission:
+  read: allow
+  grep: allow
+  bash: allow
+  webfetch: allow
+  edit: ask
+temperature: 0.1
+steps: 25
+skills:
+  - security-hardening
+  - auto-continue
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
-skills:
-  - security-hardening
-  - auto-continue
-permission:
-  edit: ask
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  read: allow
-  grep: allow
-  webfetch: allow
 ---
 
 ## Core Capabilities

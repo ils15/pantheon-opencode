@@ -1,34 +1,23 @@
 ---
 name: hephaestus
-description: AI tooling & pipelines specialist — LangChain/LangGraph chains, RAG architecture,
-  vector stores, embedding strategies. Forges AI infrastructure. Calls apollo, sends
-  to themis.
+description: "AI tooling & pipelines specialist — LangChain/LangGraph chains, RAG architecture, vector stores, embedding strategies. Forges AI infrastructure. Calls apollo, sends to themis."
 mode: subagent
 reasoning_effort: medium
-
-steps: 20
-- rag-pipelines
-- mcp-server-development
-- quality-gate
-- agent-evaluation
-- conversational-ai-design
-- prompt-improver
-- context-compression
+permission:
+  read: allow
+  grep: allow
+  edit: allow
+  bash: allow
+  webfetch: allow
+temperature: 0.3
+steps: 40
+skills:
+  - tdd-with-agents
+  - auto-continue
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
-skills:
-  - tdd-with-agents
-  - auto-continue
-permission:
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  read: allow
-  grep: allow
-  edit: allow
-  webfetch: allow
 ---
 
 ## Core Capabilities
@@ -66,9 +55,7 @@ permission:
 ## Inline Compression
 
 Compress working context with the `context-compression` skill (L1, Pantheon-native) when:
-- **C8**: After returning a `subtask_summary` with CRITICAL/HIGH findings → compress before the next phase.
-- **C9**: Before delegating a large context block to another agent → compress to cut tokens.
-- **C11**: At a phase boundary / session handoff → compress completed work.
+- > Inline compression: See `skill: context-compression` (C8, C9, C11)
 
 **How**: call `execute_code_script("compress-inline.py", args=["compress", "--text", "<content>"])`. Use `score` to preview priority, `batch` for multiple files. See the `context-compression` skill for the full protocol.
 
