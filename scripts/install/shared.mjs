@@ -284,6 +284,7 @@ export function copyFiles(srcDir, dstDir, dryRun, renameMap = null, clean = fals
 
     const dstFile = join(dstDir, dstName)
 
+    if (statSync(srcFile).isDirectory()) continue
     const content = readFileSync(srcFile, 'utf8')
     const existing = existsSync(dstFile) ? readFileSync(dstFile, 'utf8') : null
 

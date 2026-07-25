@@ -24,5 +24,8 @@
   "mcp": {},
   "experimental": {
     "background_subagents": true
+  },
+  "env": {
+    "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS": "true"
   }
 }

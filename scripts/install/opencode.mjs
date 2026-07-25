@@ -210,6 +210,28 @@ export function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
+  // -----------------------------------------------------------------------
+  // 2.7 Merge opencode.json settings (experimental, subagent_depth, env)
+  // -----------------------------------------------------------------------
+  if (componentSet.has('agents')) {
+    const cfgPath = join(target, 'opencode.json')
+    if (existsSync(cfgPath)) {
+      try {
+        const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'))
+        let changed = false
+        if (cfg.subagent_depth === undefined) { cfg.subagent_depth = 2; changed = true }
+        if (!cfg.experimental) { cfg.experimental = { background_subagents: true }; changed = true }
+        if (!cfg.env) { cfg.env = { OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: 'true' }; changed = true }
+        if (changed && !dryRun) {
+          writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n')
+          if (VERBOSE || !dryRun) console.log('    ✅ opencode.json: background_subagents + subagent_depth configured')
+        }
+      } catch (e) {
+        console.warn(`    ⚠️  Could not update opencode.json: ${e.message}`)
+      }
+    }
+  }
+
   // 2.8 Install TUI plugins (--components plugins)
   // -----------------------------------------------------------------------
   if (componentSet.has('plugins')) {
