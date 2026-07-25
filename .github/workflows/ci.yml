@@ -20,30 +20,19 @@ jobs:
         with: { node-version: '20' }
 
       - name: Install dependencies
-        run: pip install --quiet pytest pyyaml yamllint && npm ci --ignore-scripts 2>&1 || npm install 2>&1
+        run: pip install --quiet pytest pyyaml yamllint 2>&1 && npm ci --ignore-scripts 2>&1 || npm install 2>&1
 
       - name: Validate agent YAML
-        run: |
-          python3 -c "
-import os, re, yaml
-errors = 0
-for f in sorted(os.listdir('src/agents')):
-    if not f.endswith('.md'): continue
-    fm = re.match(r'^---\\n(.*?)\\n---', open(f'src/agents/{f}').read(), re.DOTALL)
-    if fm:
-        try: yaml.safe_load(fm.group(1))
-        except yaml.YAMLError as e: print(f'FAIL: {f}: {e}'); errors += 1
-exit(errors)
-"
+        run: python3 scripts/ci-validate-yaml.py
 
       - name: Validate routing.yml
         run: node scripts/validate-routing.mjs
 
       - name: Run tests
-        run: python3 -m pytest tests/ -q --tb=short 2>&1 || echo "⚠️ test warnings"
+        run: python3 -m pytest tests/ -q --tb=short 2>&1 || echo "test warnings"
 
       - name: Security audit
-        run: npm audit --audit-level=high 2>&1 || echo "⚠️ audit warnings"
+        run: npm audit --audit-level=high 2>&1 || echo "audit warnings"
 
       - name: Verify package
         run: npm pack --dry-run 2>&1 | tail -3
