@@ -31,6 +31,22 @@ npm run doctor
 - **OpenCode v1.18.4+**
 - **Python 3.11+** (optional, for MCP servers)
 
+
+## Background Subagents
+
+Pantheon dispatches agents in parallel via OpenCode's background subagent system.
+To enable, set before launching OpenCode:
+
+```bash
+export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
+opencode
+```
+
+Or add to your shell profile (`~/.zshrc` or `~/.bashrc`):
+```bash
+echo 'export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true' >> ~/.zshrc
+```
+
 ## v1.0 Highlights
 
 - **OpenCode-only** — unified, simplified, no multi-platform fragmentation
