@@ -12,6 +12,7 @@ version: 1.0
 #     Z --> R[Prometheus]
 #     Z --> HE[Hephaestus]
 #     Z --> N[Nyx]
+#     Z --> G[Gaia]
 # #     Z --> I[Iris] --> M[Mnemosyne]
 #     Z --> M
 #     Z -.-> TA[Talos]
@@ -20,7 +21,7 @@ version: 1.0
 # ```
 # Removed agents: argus, chiron, echo (merged/deprecated)
 
-# AGENT REGISTRY — 13 active agents
+# AGENT REGISTRY — 14 active agents
 agents:
   zeus:
     role: "Central orchestrator"
@@ -241,6 +242,21 @@ agents:
     skills:
       - security-hardening
       - auto-continue
+
+  gaia:
+    role: Remote sensing domain specialist
+    model_tier: fast
+    reasoning_effort: low
+    user_invocable: false
+    can_delegate: false
+    can_receive_delegation: true
+    capabilities:
+    - remote_sensing
+    - spectral_analysis
+    - change_detection
+    - ml_classification
+    skills:
+    - auto-continue
 
   iris:
     role: "GitHub operations"
