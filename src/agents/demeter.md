@@ -1,33 +1,23 @@
 ---
 name: demeter
-description: Database specialist — SQLAlchemy 2.0, Alembic, query optimization, N+1
-  prevention, TDD migrations, modern DB libs. Calls apollo for discovery, sends to
-  themis.
-mode: subagent
+description: "Database specialist — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, TDD migrations, modern DB libs. Calls apollo for discovery, sends to themis."
+mode: primary
 reasoning_effort: medium
-
+permission:
+  read: allow
+  grep: allow
+  edit: allow
+  bash: allow
+  webfetch: allow
+temperature: 0.2
 steps: 20
-- cache-strategy
-- database-migration
-- database-optimization
-- quality-gate
-- simplify
-- context-compression
+skills:
+  - tdd-with-agents
+  - incremental-implementation
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
-skills:
-  - tdd-with-agents
-  - incremental-implementation
-permission:
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  read: allow
-  grep: allow
-  edit: allow
-  webfetch: allow
 ---
 
 ##  When NOT to Use Demeter

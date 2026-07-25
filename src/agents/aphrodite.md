@@ -1,37 +1,26 @@
 ---
 name: aphrodite
-description: Frontend specialist — React 19, TypeScript strict, WCAG accessibility,
-  responsive design, TDD, modern API patterns, deprecated npm detection. Calls apollo
-  for discovery, sends to themis for review.
-mode: subagent
+description: "Frontend specialist — React 19, TypeScript strict, WCAG accessibility, responsive design, TDD, modern API patterns, deprecated npm detection. Calls apollo for discovery, sends to themis for review."
+mode: primary
 reasoning_effort: medium
-
+permission:
+  read: allow
+  grep: allow
+  edit: allow
+  bash: allow
+  webfetch: allow
+  glob: allow
+  question: allow
+temperature: 0.3
 steps: 25
-- frontend-analyzer
-- nextjs-seo-optimization
-- quality-gate
-- simplify
-- tdd-with-agents
-- context-compression
-- visual-review-pipeline
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search]
-  pantheon-code-mode: [execute_code_script]
 skills:
   - tdd-with-agents
   - visual-review-pipeline
   - file-prompts
-permission:
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  read: allow
-  grep: allow
-  edit: allow
-  webfetch: allow
-  glob: allow
-  question: allow
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_search]
+  pantheon-code-mode: [execute_code_script]
 ---
 
 ##  When NOT to Use Aphrodite

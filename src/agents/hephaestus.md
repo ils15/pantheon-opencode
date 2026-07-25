@@ -1,34 +1,23 @@
 ---
 name: hephaestus
-description: AI tooling & pipelines specialist — LangChain/LangGraph chains, RAG architecture,
-  vector stores, embedding strategies. Forges AI infrastructure. Calls apollo, sends
-  to themis.
+description: "AI tooling & pipelines specialist — LangChain/LangGraph chains, RAG architecture, vector stores, embedding strategies. Forges AI infrastructure. Calls apollo, sends to themis."
 mode: subagent
 reasoning_effort: medium
-
+permission:
+  read: allow
+  grep: allow
+  edit: allow
+  bash: allow
+  webfetch: allow
+temperature: 0.3
 steps: 20
-- rag-pipelines
-- mcp-server-development
-- quality-gate
-- agent-evaluation
-- conversational-ai-design
-- prompt-improver
-- context-compression
+skills:
+  - tdd-with-agents
+  - auto-continue
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
-skills:
-  - tdd-with-agents
-  - auto-continue
-permission:
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  read: allow
-  grep: allow
-  edit: allow
-  webfetch: allow
 ---
 
 ## Core Capabilities

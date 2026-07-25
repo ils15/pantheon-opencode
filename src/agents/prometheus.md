@@ -1,29 +1,23 @@
 ---
 name: prometheus
-description: Infrastructure + model provider specialist — Docker, CI/CD, multi-model
-  routing, cost optimization, provider abstraction
+description: "Infrastructure + model provider specialist — Docker, CI/CD, multi-model routing, cost optimization, provider abstraction"
 mode: subagent
 reasoning_effort: medium
-
+permission:
+  read: allow
+  grep: allow
+  edit: allow
+  bash: allow
+  webfetch: allow
+temperature: 0.2
 steps: 20
-- docker-best-practices
-- agent-observability
-- context-compression
+skills:
+  - git-workflow-and-versioning
+  - incremental-implementation
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
-skills:
-  - git-workflow-and-versioning
-  - incremental-implementation
-permission:
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  read: allow
-  grep: allow
-  edit: allow
-  webfetch: allow
 ---
 
 ## Core Capabilities
