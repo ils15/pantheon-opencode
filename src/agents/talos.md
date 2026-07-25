@@ -5,32 +5,30 @@ description: Hotfix express lane — direct fixes for small bugs, CSS, typos, mi
   complex issues to zeus.
 mode: subagent
 reasoning_effort: low
-permission:
-  bash:
-    npx prettier *: allow
-    "git add *": allow
-    "git diff *": allow
-    "git log *": allow
-    "git status": allow
-    "git stash *": allow
-    "git checkout *": allow
-    "git commit *": allow
-    "git branch *": allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
 
-tools:
-  agent: true
-  read/readFile: true
-  edit/editFiles: true
-temperature: 0.3
 steps: 30
-skills:
 - simplify
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_recall]
   pantheon-code-mode: [execute_code_script]
+skills:
+  - incremental-implementation
+permission:
+  bash: 
+  npx prettier *: allow
+  "git add *": allow
+  "git diff *": allow
+  "git log *": allow
+  "git status": allow
+  "git stash *": allow
+  "git checkout *": allow
+  "git commit *": allow
+  "git branch *": allow
+  "pantheon-resources_*": allow
+  "pantheon-memory_*": allow
+  read: allow
+  edit: allow
 ---
 
 ##  Memory Protocol

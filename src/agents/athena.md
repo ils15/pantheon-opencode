@@ -5,34 +5,24 @@ description: Strategic planner & architect — research-first, plan-only, never 
   for discovery.
 mode: primary
 reasoning_effort: high
+
+steps: 15
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_search]
+  pantheon-code-mode: []
+skills:
+  - spec-driven-development
+  - memory-bank
 permission:
   edit: deny
   bash: deny
   "pantheon-resources_*": allow
   "pantheon-memory_*": allow
-
-tools:
-  agent: true
-  vscode/askQuestions: true
-  search/codebase: true
-  search/usages: true
-  search/fileSearch: true
-  search/textSearch: true
-  search/listDirectory: true
-  read/readFile: true
-  web/fetch: true
-temperature: 0.1
-steps: 15
-skills:
-  - plan-architecture
-  - codemap
-  - init-deep
-  - interview
-  - metis-gap-analysis
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search]
-  pantheon-code-mode: []
+  read: allow
+  grep: allow
+  glob: allow
+  webfetch: allow
 ---
 
 ##  Memory Protocol

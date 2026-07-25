@@ -5,26 +5,8 @@ description: Memory bank quality owner — initializes .pantheon/memory-bank/, w
   after phases.
 mode: primary
 reasoning_effort: low
-permission:
-  bash: deny
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  "pantheon-persistence_*": allow
 
-tools:
-  agent: true
-  search/codebase: true
-  search/usages: true
-  read/readFile: true
-  edit/editFiles: true
-temperature: 0.1
 steps: 10
-skills:
-  - artifact-management
-  - handoff
-  - task-system
-  - context-compression
-  - memory-bank
 mcp_tools:
   pantheon-resources: all
   pantheon-memory:
@@ -43,6 +25,19 @@ mcp_tools:
     - memory_expand
     - memory_cleanup
   pantheon-code-mode: [execute_code_script]
+skills:
+  - artifact-management
+  - memory-bank
+  - context-compression
+  - session-goal
+permission:
+  bash: deny
+  "pantheon-resources_*": allow
+  "pantheon-memory_*": allow
+  "pantheon-persistence_*": allow
+  read: allow
+  grep: allow
+  edit: allow
 ---
 
 ##  Memory Protocol

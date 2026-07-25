@@ -27,12 +27,12 @@ mcp_tools:
     - kv_search
 skills:
   - agent-coordination
-  - artifact-management
-  - auto-continue
-  - context-compression
-  - memory-bank
-  - orchestration-workflow
   - session-goal
+  - artifact-management
+  - context-compression
+  - auto-continue
+  - orchestration-workflow
+  - incremental-implementation
 ---
 
 ## Memory Protocol

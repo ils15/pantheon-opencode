@@ -5,33 +5,8 @@ description: Frontend specialist — React 19, TypeScript strict, WCAG accessibi
   for discovery, sends to themis for review.
 mode: subagent
 reasoning_effort: medium
-permission:
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
 
-tools:
-  agent: true
-  vscode/askQuestions: true
-  search/codebase: true
-  search/usages: true
-  read/readFile: true
-  read/problems: true
-  edit/editFiles: true
-  execute/runInTerminal: true
-  execute/testFailure: true
-  execute/getTerminalOutput: true
-  browser/openBrowserPage: true
-  browser/navigatePage: true
-  browser/readPage: true
-  browser/clickElement: true
-  browser/typeInPage: true
-  browser/hoverElement: true
-  browser/dragElement: true
-  browser/handleDialog: true
-temperature: 0.5
 steps: 25
-skills:
 - frontend-analyzer
 - nextjs-seo-optimization
 - quality-gate
@@ -43,6 +18,20 @@ mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
+skills:
+  - tdd-with-agents
+  - visual-review-pipeline
+  - file-prompts
+permission:
+  bash: allow
+  "pantheon-resources_*": allow
+  "pantheon-memory_*": allow
+  read: allow
+  grep: allow
+  edit: allow
+  webfetch: allow
+  glob: allow
+  question: allow
 ---
 
 ##  Memory Protocol

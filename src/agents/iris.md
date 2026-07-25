@@ -2,34 +2,29 @@
 name: iris
 description: GitHub operations specialist — branches, pull requests, issues, releases,
   tags. Called by zeus after review. Never pushes or merges without explicit human
-  approval. Integrates with VS Code GitHub Pull Requests extension.
+  approval. Integrates with GitHub CLI (gh) for operations.
 mode: subagent
 reasoning_effort: low
-permission:
-  edit: deny
-  bash:
-    git *: allow
-    gh *: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
 
-tools:
-  agent: true
-  vscode/askQuestions: true
-  vscode/runCommand: true
-  read/readFile: true
-  search/codebase: true
-  execute/runInTerminal: true
-  execute/getTerminalOutput: true
-  web/fetch: true
-temperature: 0.2
 steps: 15
-skills:
 - artifact-management
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_recall]
   pantheon-code-mode: []
+skills:
+  - git-workflow-and-versioning
+  - artifact-management
+permission:
+  edit: deny
+  bash: 
+  git *: allow
+  gh *: allow
+  "pantheon-resources_*": allow
+  "pantheon-memory_*": allow
+  read: allow
+  grep: allow
+  webfetch: allow
 ---
 
 ##  Memory Protocol

@@ -6,37 +6,8 @@ description: Quality & security gate — heuristic scan (Layer 1, zero LLM) + de
   escalates blockers to zeus.
 mode: primary
 reasoning_effort: high
-permission:
-  edit: ask
-  bash:
-    pytest *: allow
-    ruff *: allow
-    grep *: allow
-    npx vitest *: allow
-    pip-audit *: allow
-    dep-audit *: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  "pantheon-persistence_*": allow
 
-tools:
-  agent: true
-  vscode/askQuestions: true
-  search/codebase: true
-  search/usages: true
-  read/readFile: true
-  read/problems: true
-  execute/runInTerminal: true
-  execute/testFailure: true
-  edit/editFiles: true
-  browser/openBrowserPage: true
-  browser/navigatePage: true
-  browser/readPage: true
-  browser/clickElement: true
-  browser/screenshotPage: true
-temperature: 0.1
 steps: 20
-skills:
 - code-review-checklist
 - security-hardening
 - tdd-with-agents
@@ -44,6 +15,25 @@ mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
+skills:
+  - code-review-checklist
+  - security-hardening
+  - tdd-with-agents
+  - context-compression
+permission:
+  edit: ask
+  bash: 
+  pytest *: allow
+  ruff *: allow
+  grep *: allow
+  npx vitest *: allow
+  pip-audit *: allow
+  dep-audit *: allow
+  "pantheon-resources_*": allow
+  "pantheon-memory_*": allow
+  "pantheon-persistence_*": allow
+  read: allow
+  grep: allow
 ---
 ## Purpose
 

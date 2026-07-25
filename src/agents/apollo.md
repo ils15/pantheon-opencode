@@ -3,33 +3,28 @@ name: apollo
 description: 'Read-only investigation scout — 3–10 parallel searches across codebase,
   external docs, and GitHub. Called by: athena, zeus, hermes, aphrodite, demeter.
   No edits, no commands.'
-permission:
-  edit: deny
-  bash: deny
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  "pantheon-persistence_*": allow
 
-tools:
-  agent: true
-  search/codebase: true
-  search/textSearch: true
-  search/fileSearch: true
-  search/usages: true
-  read/readFile: true
-  read/listDirectory: true
-  web/fetch: true
-mode: subagent
 reasoning_effort: low
 temperature: 0.1
 steps: 15
-skills:
 - internet-search
 - codemap
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: []
+skills:
+  - auto-continue
+permission:
+  edit: deny
+  bash: deny
+  "pantheon-resources_*": allow
+  "pantheon-memory_*": allow
+  "pantheon-persistence_*": allow
+  read: allow
+  grep: allow
+  glob: allow
+  webfetch: allow
 ---
 
 ##  Memory Protocol

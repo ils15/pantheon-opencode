@@ -5,33 +5,25 @@ description: Observability & monitoring specialist — OpenTelemetry tracing, to
   sends to themis.
 mode: subagent
 reasoning_effort: low
-permission:
-  edit: ask
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
 
-tools:
-  agent: true
-  vscode/askQuestions: true
-  search/codebase: true
-  search/usages: true
-  read/readFile: true
-  read/problems: true
-  edit/editFiles: true
-  execute/runInTerminal: true
-  execute/testFailure: true
-  execute/getTerminalOutput: true
-  web/fetch: true
-temperature: 0.1
 steps: 15
-skills:
 - agent-observability
 - agent-evaluation
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
+skills:
+  - security-hardening
+  - auto-continue
+permission:
+  edit: ask
+  bash: allow
+  "pantheon-resources_*": allow
+  "pantheon-memory_*": allow
+  read: allow
+  grep: allow
+  webfetch: allow
 ---
 
 ##  Memory Protocol

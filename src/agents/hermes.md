@@ -5,40 +5,29 @@ description: Backend specialist — FastAPI, Python, async, TDD (RED→GREEN→R
   to themis.
 mode: primary
 reasoning_effort: medium
-permission:
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  "pantheon-persistence_*": allow
 
-tools:
-  agent: true
-  search/codebase: true
-  search/usages: true
-  read/readFile: true
-  read/problems: true
-  edit/editFiles: true
-  execute/runInTerminal: true
-  execute/testFailure: true
-  execute/getTerminalOutput: true
-  web/fetch: true
-skills:
-  - streaming-patterns
-  - api-design-patterns
-  - cache-strategy
-  - database-optimization
-  - fastapi-async-patterns
-  - quality-gate
-  - simplify
-  - tdd-with-agents
-  - test-architecture
-  - context-compression
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
 temperature: 0.3
 steps: 20
+skills:
+  - tdd-with-agents
+  - file-prompts
+  - streaming-patterns
+  - git-workflow-and-versioning
+  - incremental-implementation
+permission:
+  bash: allow
+  "pantheon-resources_*": allow
+  "pantheon-memory_*": allow
+  "pantheon-persistence_*": allow
+  read: allow
+  grep: allow
+  edit: allow
+  webfetch: allow
+  glob: allow
 ---
 
 ##  Memory Protocol

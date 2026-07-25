@@ -5,25 +5,24 @@ description: Remote sensing domain specialist — satellite image processing, sp
   of geospatial data.
 mode: subagent
 reasoning_effort: high
-permission:
-  edit: deny
-  bash: deny
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
 
-tools:
-  agent: true
-  read/readFile: true
-  search/codebase: true
-temperature: 0.2
 steps: 20
-skills:
 - remote-sensing-analysis
 - internet-search
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_recall]
   pantheon-code-mode: []
+skills:
+  - auto-continue
+permission:
+  edit: deny
+  bash: deny
+  "pantheon-resources_*": allow
+  "pantheon-memory_*": allow
+  read: allow
+  grep: allow
+  webfetch: allow
 ---
 
 ##  Memory Protocol

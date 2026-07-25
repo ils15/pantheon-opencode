@@ -4,26 +4,8 @@ description: Infrastructure + model provider specialist — Docker, CI/CD, multi
   routing, cost optimization, provider abstraction
 mode: subagent
 reasoning_effort: medium
-permission:
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
 
-tools:
-  agent: true
-  vscode/askQuestions: true
-  search/codebase: true
-  search/usages: true
-  read/readFile: true
-  read/problems: true
-  edit/editFiles: true
-  execute/runInTerminal: true
-  execute/testFailure: true
-  execute/getTerminalOutput: true
-  web/fetch: true
-temperature: 0.2
 steps: 20
-skills:
 - docker-best-practices
 - agent-observability
 - context-compression
@@ -31,6 +13,17 @@ mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
+skills:
+  - git-workflow-and-versioning
+  - incremental-implementation
+permission:
+  bash: allow
+  "pantheon-resources_*": allow
+  "pantheon-memory_*": allow
+  read: allow
+  grep: allow
+  edit: allow
+  webfetch: allow
 ---
 
 ##  Memory Protocol
