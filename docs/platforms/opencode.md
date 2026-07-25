@@ -198,15 +198,15 @@ argument-hint: "Backend task: endpoint, service, router, schema, or test"
 mode: subagent
 tools:
   - agent
-  - search/codebase
+  - grep
   - search/usages
   - read/readFile
-  - edit/editFiles
-  - execute/runInTerminal
+  - edit
+  - bash
   - execute/testFailure
   - execute/getTerminalOutput
   - search/changes
-  - web/fetch
+  - webfetch
 ---
 ```
 

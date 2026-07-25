@@ -12,5 +12,12 @@
   "src/skills/session-goal/SKILL.md": "793498265f70253c20524f6adc88bcc86db11d7160fe8232a26aedc6b1c5489f",
   "src/skills/spec-driven-development/SKILL.md": "e93b9103d6cd1848ab01328efde82c1daf564d1cabbdc2278254b346fcf55d02",
   "src/skills/tdd-with-agents/SKILL.md": "9880919a46b74f549f948147d8b086b008635de94fa259f76261d067772bb8e3",
-  "src/skills/visual-review-pipeline/SKILL.md": "f6e65ff75a9325c38e0e9dde8e87f09b873e14e490936ef48aa80201bb68fe10"
+  "src/skills/visual-review-pipeline/SKILL.md": "f6e65ff75a9325c38e0e9dde8e87f09b873e14e490936ef48aa80201bb68fe10",
+  "src/skills/codemap/SKILL.md": "src/skills/codemap/SKILL.md",
+  "src/skills/simplify/SKILL.md": "src/skills/simplify/SKILL.md",
+  "src/skills/reflect/SKILL.md": "src/skills/reflect/SKILL.md",
+  "src/skills/worktrees/SKILL.md": "src/skills/worktrees/SKILL.md",
+  "src/skills/verification-planning/SKILL.md": "src/skills/verification-planning/SKILL.md",
+  "src/skills/loop-engineering/SKILL.md": "src/skills/loop-engineering/SKILL.md",
+  "src/skills/clonedeps/SKILL.md": "src/skills/clonedeps/SKILL.md"
 }

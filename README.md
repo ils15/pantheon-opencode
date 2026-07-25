@@ -458,7 +458,7 @@ subscription (OpenCode Go, Copilot Pro, Claude Pro, etc.).
 ### /forge — Model Presets
 
 Pantheon ships with **`/forge`** — a model configuration command that applies named presets from
-`platform/forge.json`. Each preset maps 4 tiers to concrete models across all 14 agents.
+`built-in presets`. Each preset maps 4 tiers to concrete models across all 14 agents.
 
 **Usage:**
 ```
@@ -489,7 +489,7 @@ Pantheon ships with **`/forge`** — a model configuration command that applies 
 
 > 🤔 = thinking habilitado
 
-See `platform/forge.json` for full preset definitions and `docs/platforms/` for per-platform setup guides.
+Built-in presets available (opencode-go, deepseek-flash, etc.) and `docs/platforms/` for per-platform setup guides.
 
 ---
 
@@ -669,7 +669,7 @@ pantheon/
 ├── scripts/                   — tooling, automation & lifecycle hooks
 │   ├── postinstall.mjs        * npm post-install hook
 │   ├── doctor.mjs             * health check CLI
-│   ├── sync-platforms.mjs     * agent format sync engine
+│   
 │   ├── validate-sync.mjs      * sync integrity check
 │       └── hooks/                 * agent lifecycle hooks (10 .sh scripts)
 │       ├── audit-imports.sh
@@ -713,7 +713,7 @@ pantheon/
 │       └── _tasks/            * sprint task records
 │
 ├── template/                  — project templates
-│   ├── CLAUDE.md
+
 │   └── README.md
 │
 ├── logs/                      — agent session audit logs

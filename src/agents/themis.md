@@ -1,39 +1,24 @@
 ---
 name: themis
-description: Quality & security gate — heuristic scan (Layer 1, zero LLM) + deep
-  review (Layer 2, LLM leve) + verification planning (Layer 3). Ruff/Biome, anti-pattern
-  slop detection, hash-anchored edits, OWASP Top 10, coverage >80%. Called by implementers;
-  escalates blockers to zeus.
-mode: primary
+description: "Quality & security gate — Ruff/Biome linting, dead/legacy code detection, OWASP Top 10, coverage >80%, correctness, deprecation audit. Called by implementers; escalates blockers to zeus."
+mode: subagent
 reasoning_effort: high
-
-steps: 20
-- code-review-checklist
-- security-hardening
-- tdd-with-agents
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search]
-  pantheon-code-mode: [execute_code_script]
+permission:
+  read: allow
+  grep: allow
+  bash: allow
+  edit: ask
+temperature: 0.1
+steps: 30
 skills:
   - code-review-checklist
   - security-hardening
   - tdd-with-agents
   - context-compression
-permission:
-  edit: ask
-  bash: 
-  pytest *: allow
-  ruff *: allow
-  grep *: allow
-  npx vitest *: allow
-  pip-audit *: allow
-  dep-audit *: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  "pantheon-persistence_*": allow
-  read: allow
-  grep: allow
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_search]
+  pantheon-code-mode: [execute_code_script]
 ---
 ## Purpose
 

@@ -123,6 +123,18 @@ export function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
+  // 1.5 Install routing.yml (routing configuration)
+  // -----------------------------------------------------------------------
+  if (componentSet.has('agents')) {
+    const srcRouting = join(ROOT, 'src', 'routing.yml')
+    const dstRouting = join(target, 'routing.yml')
+    if (existsSync(srcRouting)) {
+      writeIfChanged(dstRouting, readFileSync(srcRouting, 'utf8'), dryRun)
+      stats.created++
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // 2. Install skills (--components skills)
   // -----------------------------------------------------------------------
   if (componentSet.has('skills')) {
@@ -198,6 +210,26 @@ export function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
+  // -----------------------------------------------------------------------
+  // 2.7 Ensure subagent_depth in opencode.json
+  // -----------------------------------------------------------------------
+  if (componentSet.has('agents')) {
+    const cfgPath = join(target, 'opencode.json')
+    if (existsSync(cfgPath)) {
+      try {
+        const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'))
+        let changed = false
+        if (cfg.subagent_depth === undefined) { cfg.subagent_depth = 2; changed = true }
+        if (changed && !dryRun) {
+          writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n')
+          console.log('    ✅ subagent_depth: 2 added to opencode.json')
+        }
+      } catch (e) {
+        console.warn(`    ⚠️  Could not update opencode.json: ${e.message}`)
+      }
+    }
+  }
+
   // 2.8 Install TUI plugins (--components plugins)
   // -----------------------------------------------------------------------
   if (componentSet.has('plugins')) {

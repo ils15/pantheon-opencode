@@ -166,8 +166,8 @@ execute_code_script("deploy.sh")
 
 **Script:** `scripts/memory_mcp_server.py`
 
-Persistent, multi-strategy memory server using ChromaDB + sentence-transformers
-(all-MiniLM-L6-v2) for local embeddings. Provides 14 tools and 2 resources.
+Persistent, lightweight memory server using sqlite-vec + fastembed
+(BAAI/bge-small-en-v1.5) for local embeddings (~30MB, ONNX, no PyTorch). Provides 14 tools and 2 resources.
 
 ### Tools (14)
 
@@ -199,8 +199,8 @@ Persistent, multi-strategy memory server using ChromaDB + sentence-transformers
 
 | Component | Implementation |
 |-----------|---------------|
-| Vector DB | ChromaDB `PersistentClient` → `~/.pantheon/memory/chroma.sqlite3` |
-| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` (~80MB, offline, one-time download) |
+| Vector DB | sqlite-vec (SQLite vector extension) → `~/.pantheon/memory/memory.db` |
+| Embeddings | `fastembed` (ONNX, BAAI/bge-small-en-v1.5, ~30MB, auto-download) |
 | Freshness decay | 30-day half-life (exponential, Shokunin-inspired) |
 | Compression | DCP-style range compression (deterministic, not LLM-based) |
 | Fusion scoring | Dense similarity + freshness boost + importance boost |
@@ -232,7 +232,7 @@ See `docs/MEMORY.md` for complete usage guide with examples for all 14 tools.
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | Server not found | Not in MCP config | Add to `opencode.json` → `mcp` or `.mcp.json` |
-| Connection refused | Python env issue | Verify `python3` has required deps (`chromadb`, `sentence-transformers`, `fastmcp`) |
+| Connection refused | Python env issue | Verify `python3` has required deps (`fastembed`, `fastmcp`) |
 | `memory_recall` returns empty | No entries stored yet | First call `memory_store` with some content |
 | Code-mode script not found | Wrong path | Script must be in `.pantheon/code-mode/` |
 | Path traversal error | Invalid URI segment | Use flat filenames for `pantheon://memory-bank/{path}` (no nested `../`) |

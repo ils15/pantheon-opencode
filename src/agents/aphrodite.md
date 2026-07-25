@@ -1,37 +1,27 @@
 ---
 name: aphrodite
-description: Frontend specialist — React 19, TypeScript strict, WCAG accessibility,
-  responsive design, TDD, modern API patterns, deprecated npm detection. Calls apollo
-  for discovery, sends to themis for review.
-mode: subagent
+description: "Frontend specialist — React 19, TypeScript strict, WCAG accessibility, responsive design, TDD, modern API patterns, deprecated npm detection. Calls apollo for discovery, sends to themis for review."
+mode: primary
 reasoning_effort: medium
-
-steps: 25
-- frontend-analyzer
-- nextjs-seo-optimization
-- quality-gate
-- simplify
-- tdd-with-agents
-- context-compression
-- visual-review-pipeline
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search]
-  pantheon-code-mode: [execute_code_script]
+permission:
+  read: allow
+  grep: allow
+  edit: allow
+  bash: allow
+  webfetch: allow
+  glob: allow
+  question: allow
+temperature: 0.3
+steps: 50
 skills:
   - tdd-with-agents
   - visual-review-pipeline
   - file-prompts
-permission:
-  bash: allow
-  "pantheon-resources_*": allow
-  "pantheon-memory_*": allow
-  read: allow
-  grep: allow
-  edit: allow
-  webfetch: allow
-  glob: allow
-  question: allow
+  - incremental-implementation
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_search]
+  pantheon-code-mode: [execute_code_script]
 ---
 
 ##  When NOT to Use Aphrodite
@@ -120,9 +110,7 @@ After implementing UI components:
 ## Inline Compression
 
 Compress working context with the `context-compression` skill (L1, Pantheon-native) when:
-- **C8**: After returning a `subtask_summary` with CRITICAL/HIGH findings → compress before the next phase.
-- **C9**: Before delegating a large context block to another agent → compress to cut tokens.
-- **C11**: At a phase boundary / session handoff → compress completed work.
+- > Inline compression: See `skill: context-compression` (C8, C9, C11)
 
 **How**: call `execute_code_script("compress-inline.py", args=["compress", "--text", "<content>"])`. Use `score` to preview priority, `batch` for multiple files. See the `context-compression` skill for the full protocol.
 
