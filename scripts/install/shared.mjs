@@ -415,6 +415,22 @@ export function installSkills(skills, target, dryRun, subDir = '.opencode') {
     copyDirRecursive(src, dst)
   }
 
+  // Remove stale skills that exist in dst but not in skills list
+  if (existsSync(dstSkillsDir)) {
+    const dstEntries = readdirSync(dstSkillsDir)
+    for (const entry of dstEntries) {
+      const dstPath = join(dstSkillsDir, entry)
+      if (!statSync(dstPath).isDirectory()) continue
+      if (!skills.includes(entry)) {
+        if (!dryRun) {
+          rmSync(dstPath, { recursive: true, force: true })
+          console.log(`    🗑️  Removed stale skill: ${entry}`)
+        }
+        created++
+      }
+    }
+  }
+
   return { created, skipped }
 }
 

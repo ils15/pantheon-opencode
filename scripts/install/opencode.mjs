@@ -201,7 +201,7 @@ export function installOpenCode(
   // 2.8 Install TUI plugins (--components plugins)
   // -----------------------------------------------------------------------
   if (componentSet.has('plugins')) {
-    const srcPluginDir = join(PLATFORM_DIR, 'opencode', '.opencode', 'plugins', 'pantheon-tui')
+    const srcPluginDir = join(ROOT, 'src', 'plugins', 'tui')
     const dstPluginDir = isGlobal
       ? join(target, 'plugins', 'pantheon-tui')
       : join(target, '.opencode', 'plugins', 'pantheon-tui')
@@ -210,9 +210,29 @@ export function installOpenCode(
       rmSync(dstPluginDir, { recursive: true, force: true })
       mkdirSync(dstPluginDir, { recursive: true })
     }
-    const { created, skipped } = syncDir(srcPluginDir, dstPluginDir, dryRun, false)
-    stats.created += created
-    stats.skipped += skipped
+    if (!dryRun) mkdirSync(join(dstPluginDir, "dist"), { recursive: true })
+    // Copy src/index.tsx -> index.tsx
+    const srcIdx = join(srcPluginDir, "src", "index.tsx")
+    if (existsSync(srcIdx)) {
+      writeIfChanged(join(dstPluginDir, "index.tsx"), readFileSync(srcIdx, "utf8"), dryRun)
+      stats.created++
+    }
+    // Copy dist files
+    const distSrc = join(srcPluginDir, "dist")
+    if (existsSync(distSrc)) {
+      for (const f of readdirSync(distSrc)) {
+        const c = readFileSync(join(distSrc, f), "utf8")
+        writeIfChanged(join(dstPluginDir, "dist", f), c, dryRun)
+        stats.created++
+      }
+    }
+    // Copy package.json
+    const pkgSrc = join(srcPluginDir, "package.json")
+    if (existsSync(pkgSrc)) {
+      writeIfChanged(join(dstPluginDir, "package.json"), readFileSync(pkgSrc, "utf8"), dryRun)
+      stats.created++
+    }
+
   }
 
   // -----------------------------------------------------------------------
@@ -232,8 +252,14 @@ export function installOpenCode(
   if (!Array.isArray(tuiConfig.plugin)) {
     tuiConfig.plugin = []
   }
+  // Remove stale plugin refs (old dist/tui.tsx path)
+  const staleRefs = ["plugins/pantheon-tui/dist/tui.tsx", "plugins/pantheon-tui/dist/tui.js"]
+  for (const stale of staleRefs) {
+    const idx = tuiConfig.plugin.indexOf(stale)
+    if (idx !== -1) tuiConfig.plugin.splice(idx, 1)
+  }
   // Add our plugin if not already present
-  const pluginRef = 'plugins/pantheon-tui/dist/tui.tsx'
+  const pluginRef = 'plugins/pantheon-tui'
   if (!tuiConfig.plugin.includes(pluginRef)) {
     tuiConfig.plugin.push(pluginRef)
   }
