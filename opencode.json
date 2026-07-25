@@ -20,5 +20,8 @@
     "instructions/*.instructions.md"
   ],
   "plugin": [],
-  "mcp": {}
+  "mcp": {},
+  "experimental": {
+    "background_subagents": true
+  }
 }
