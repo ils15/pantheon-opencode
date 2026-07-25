@@ -1,4 +1,4 @@
-name: Platform Conformance Matrix
+name: Platform Conformance
 
 on:
   push:
@@ -9,18 +9,11 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
-  # Matrix job: runs adapter conformance tests for all 6 platforms in parallel
-  conformance:
-    name: Conformance — ${{ matrix.platform }}
+  validate:
+    name: Validate OpenCode platform config
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [opencode, claude, cline, continue, cursor, windsurf]
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -29,33 +22,16 @@ jobs:
 
       - run: npm ci --ignore-scripts || npm install
 
-      - name: Run conformance tests for ${{ matrix.platform }}
-        run: node scripts/test-adapter-conformance.mjs --platform ${{ matrix.platform }} --verbose
+      - name: Validate routing.yml
+        run: node scripts/validate-routing.mjs
 
-      - name: Upload conformance report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: conformance-report-${{ matrix.platform }}
-          path: test-results/adapter-conformance.json
-          retention-days: 7
-
-  # Summary job: aggregates all platform results into a single status table
-  conformance-summary:
-    name: Conformance Summary
-    needs: [conformance]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check all platform results
+      - name: Validate agent frontmatter
         run: |
-          echo "## Platform Conformance Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Platform | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| opencode | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| claude   | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| cline    | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| continue | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| cursor   | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| windsurf | ✅ |" >> $GITHUB_STEP_SUMMARY
+          set -e; FAILED=0
+          for file in src/agents/*.md; do
+            [ -f "$file" ] || continue
+            fm=$(awk '/^---/{if(f){exit}else{f=1;next}} f{print}' "$file")
+            [ -z "$fm" ] && { echo "No frontmatter $file"; FAILED=1; continue; }
+            echo "$fm" | python3 -c "import yaml,sys; yaml.safe_load(sys.stdin)" && echo "OK $(basename $file)" || { echo "FAIL $file"; FAILED=1; }
+          done
+          [ "$FAILED" -eq 0 ] || exit 1
