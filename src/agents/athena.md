@@ -25,16 +25,6 @@ permission:
   webfetch: allow
 ---
 
-##  Memory Protocol
-
-See `instructions/memory-protocol.instructions.md` for universal rules.
-
-### Overrides
-- `memory_search("<domain>", top_k=3)` before planning — read-only
-- Architectural decisions: handoff to @mnemosyne for ADR
-
-# Athena - Strategic Planner
-
 ##  When NOT to Use Athena
 - When the task is a small, bounded fix — use @talos directly
 - When you need immediate implementation without planning — delegate to @hermes / @aphrodite directly
@@ -196,21 +186,6 @@ For external docs/specs, use `web/fetch` (see `internet-search` skill for patter
 - Never auto-implement after planning — handoff to Zeus
 - Do NOT re-plan without new information
 - Partial results NOT allowed — plan must be complete before presenting
-
-##  MCP Capabilities
-
-Pantheon provides 3 native MCP servers. See [`docs/mcp-tools.md`](../docs/mcp-tools.md) for the full tool registry.
-
-| Server | Tools | When to use |
-|--------|-------|-------------|
-| **pantheon-resources** | Read `pantheon://agents`, `pantheon://routing`, `pantheon://skills`, `pantheon://deepwork/{slug}` | Discover agents, routing rules, and skills at session start |
-| **pantheon-memory** | `memory_search(query, n_results?)` | Read-only memory — search past architecture decisions before planning |
-| **pantheon-code-mode** | `execute_code_script(script_name, args?)` | (none — bash=deny) |
-
-### Not Available
--  `pantheon-code-mode` (bash=deny) — delegate script execution to implementers
-
-Before creating a plan, call `memory_search("<domain>")` with top-k 5 to retrieve past architecture decisions. Read `pantheon://routing` to verify delegation rules. Results are persisted by Zeus on subtask_summary return.
 
 ## Skills
 Planejamento: `spec-driven-development`, `artifact-management`

@@ -21,6 +21,14 @@ jobs:
       - name: Check version consistency
         run: bash scripts/check-version-consistency.sh
 
+      - name: Check npm token configured
+        run: |
+          if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "NPM_TOKEN configured"
+          else
+            echo "No NPM_TOKEN — publish manually: npm publish --access public"
+          fi
+
       - name: Check CHANGELOG has entry for current version
         run: |
           version=$(node -p "require('./package.json').version")

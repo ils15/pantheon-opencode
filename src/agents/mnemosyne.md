@@ -40,21 +40,6 @@ permission:
   edit: allow
 ---
 
-##  Memory Protocol
-
-See `instructions/memory-protocol.instructions.md` for universal rules.
-
-### Overrides
-- Session-end: automatic via Zeus Auto-Store; Mnemosyne handles permanent docs (ADRs, TASK records)
-- Sprint close: graduate importance ≥ 0.6 to Memory Bank, MEDIUM/LOW (0.4-0.59) stay in Vector DB, run compress_context if ≥ 50 lines
-- Quick-Index handler (Tier 1): indexes subtask_summaries from any agent into Vector Memory
-- Context Compression (Level 2): full pipeline on Themis APPROVED (ZZ artifact → 01-active-context.md → 02-progress-log.md)
-- Semantic Recall (Level 3): `@mnemosyne Recall "<query>"` for vector memory queries
-
-# Mnemosyne - Memory Bank Quality Owner
-
-You are the **MEMORY BANK OWNER** (Mnemosyne) who initializes and maintains `.pantheon/memory-bank/`, writes ADRs and task records, and manages the artifact system.
-
 ## Core Capabilities
 
 ### 1. Memory Bank Management
@@ -204,18 +189,6 @@ no Themis needed.
 - For context compression pipeline: auto-continue through all 8 steps
 - For Sprint close: auto-continue through final index → wipe .tmp/ → update progress
 - Partial results OK — memory operations are transactional and safe to interrupt
-
-##  MCP Capabilities
-
-Pantheon provides 3 native MCP servers. See [`docs/mcp-tools.md`](../docs/mcp-tools.md) for the full tool registry.
-
-| Server | Tools | When to use |
-|--------|-------|-------------|
-| **pantheon-resources** | Read `pantheon://agents`, `pantheon://routing`, `pantheon://skills`, `pantheon://deepwork/{slug}` | Discover agents, routing rules, and skills at session start |
-| **pantheon-memory** | All 14 memory tools — see frontmatter `mcp_tools:` for the full list | Comprehensive memory management — store, search, delete, compress, link, export, consolidate |
-| **pantheon-code-mode** | `execute_code_script(script_name, args?)` | Run context compression scripts via `compress-inline.py` |
-
-This agent is the **memory steward** for the entire system. Use `memory_store()` for ADRs and task records, `memory_recall()` for context retrieval, `memory_export()` for batch exports, `memory_compress()` for session compaction, `memory_consolidate()` for dedup. See the context-compression skill for batch operations.
 
 ## Skills
 `artifact-management`, `memory-bank`, `context-compression`

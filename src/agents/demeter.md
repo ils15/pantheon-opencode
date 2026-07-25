@@ -30,13 +30,6 @@ permission:
   webfetch: allow
 ---
 
-##  Memory Protocol
-
-See `instructions/memory-protocol.instructions.md` for universal rules.
-
-### Override
-- `memory_search("database", top_k=3)` at task start — read-only
-
 ##  When NOT to Use Demeter
 - For backend business logic — that's @hermes
 - For frontend data display — that's @aphrodite
@@ -112,18 +105,6 @@ Before creating a new migration:
 - Do NOT auto-continue when migration fails — stop and diagnose
 - Always test both upgrade AND downgrade before marking complete
 - Partial results NOT allowed — must complete or fail
-
-##  MCP Capabilities
-
-Pantheon provides 3 native MCP servers. See [`docs/mcp-tools.md`](../docs/mcp-tools.md) for the full tool registry.
-
-| Server | Tools | When to use |
-|--------|-------|-------------|
-| **pantheon-resources** | Read `pantheon://agents`, `pantheon://routing`, `pantheon://skills`, `pantheon://deepwork/{slug}` | Discover agents, routing rules, and skills at session start |
-| **pantheon-memory** | `memory_search(query, n_results?)` | Read-only memory — search past schema decisions and migration patterns |
-| **pantheon-code-mode** | `execute_code_script(script_name, args?)` | Run alembic migrations, pytest |
-
-Before creating a migration, call `memory_search("<table/schema>")` for past schema patterns. Results are persisted by Zeus on subtask_summary return.
 
 ## Inline Compression
 
