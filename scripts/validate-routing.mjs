@@ -77,19 +77,22 @@ for (const name of canonicalFiles) {
 }
 
 // B. Skill validation
-const skillsDir = join(ROOT, 'src', 'skills')
-const existingSkills = existsSync(skillsDir)
-  ? readdirSync(skillsDir).filter((d) => {
-      const skillDir = join(skillsDir, d)
+const srcSkillsDir = join(ROOT, 'src', 'skills')
+const dotSkillsDir = join(ROOT, '.opencode', 'skills')
+const existingSkills = []
+for (const dir of [srcSkillsDir, dotSkillsDir]) {
+  if (existsSync(dir)) {
+    for (const d of readdirSync(dir)) {
+      const skillDir = join(dir, d)
       try {
-        return existsSync(join(skillDir, 'SKILL.md'))
-      } catch {
-        return false
-      }
-    })
-  : []
-
-console.log(`\n  Skills in skills/: ${existingSkills.length}`)
+        if (existsSync(join(skillDir, 'SKILL.md')) && !existingSkills.includes(d)) {
+          existingSkills.push(d)
+        }
+      } catch { /* skip */ }
+    }
+  }
+}
+console.log(`\n  Skills found: ${existingSkills.length} (src/skills/ + .opencode/skills/)`)
 
 for (const [name, info] of Object.entries(routing.agents || {})) {
   const agentSkills = info.skills || []
