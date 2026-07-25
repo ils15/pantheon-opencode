@@ -1,22 +1,34 @@
 module.exports = {
-  extends: ['@commitlint/config-conventional'],
-  ignores: [(message) => message.startsWith('Changes before error encountered')],
-  rules: {
-    'scope-enum': [
+  "extends": [
+    "@commitlint/config-conventional"
+  ],
+  "ignores": [
+    null
+  ],
+  "rules": {
+    "scope-enum": [
       2,
-      'always',
+      "always",
       [
-        'agents',
-        'skills',
-        'sync',
-        'platform',
-        'scripts',
-        'docs',
-        'ci',
-        'deps',
-        'release',
-        'config',
-      ],
-    ],
-  },
-}
+        "agents",
+        "skills",
+        "sync",
+        "platform",
+        "scripts",
+        "docs",
+        "ci",
+        "deps",
+        "release",
+        "config",
+        "validate",
+        "commands",
+        "config",
+        "tui",
+        "installer",
+        "routing",
+        "instructions",
+        "mcp"
+      ]
+    ]
+  }
+};
