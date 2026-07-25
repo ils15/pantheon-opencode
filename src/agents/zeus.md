@@ -12,7 +12,7 @@ permission:
   pantheon-code-mode_*: ask
   pantheon-persistence_*: allow
 temperature: 0.2
-steps: 25
+steps: 45
 mcp_tools:
   pantheon-resources: all
   pantheon-memory:

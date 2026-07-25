@@ -10,7 +10,7 @@ permission:
   bash: allow
   webfetch: allow
 temperature: 0.2
-steps: 20
+steps: 30
 skills:
   - git-workflow-and-versioning
   - incremental-implementation

@@ -6,7 +6,7 @@ description: Memory bank quality owner — initializes .pantheon/memory-bank/, w
 mode: primary
 reasoning_effort: low
 
-steps: 10
+steps: 25
 mcp_tools:
   pantheon-resources: all
   pantheon-memory:

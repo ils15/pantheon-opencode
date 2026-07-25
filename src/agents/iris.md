@@ -12,7 +12,7 @@ permission:
   webfetch: allow
   edit: deny
 temperature: 0.2
-steps: 15
+steps: 25
 skills:
   - git-workflow-and-versioning
   - artifact-management

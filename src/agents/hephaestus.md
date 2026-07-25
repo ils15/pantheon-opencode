@@ -10,7 +10,7 @@ permission:
   bash: allow
   webfetch: allow
 temperature: 0.3
-steps: 20
+steps: 40
 skills:
   - tdd-with-agents
   - auto-continue

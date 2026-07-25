@@ -10,7 +10,7 @@ permission:
   webfetch: allow
   edit: ask
 temperature: 0.1
-steps: 15
+steps: 25
 skills:
   - security-hardening
   - auto-continue

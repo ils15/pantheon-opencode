@@ -10,7 +10,7 @@ permission:
   edit: deny
   bash: deny
 temperature: 0.2
-steps: 20
+steps: 30
 skills:
   - auto-continue
 mcp_tools:

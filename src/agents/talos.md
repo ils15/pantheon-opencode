@@ -8,7 +8,7 @@ permission:
   edit: allow
   bash: allow
 temperature: 0.3
-steps: 30
+steps: 35
 skills:
   - incremental-implementation
 mcp_tools:

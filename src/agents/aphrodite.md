@@ -12,7 +12,7 @@ permission:
   glob: allow
   question: allow
 temperature: 0.3
-steps: 25
+steps: 50
 skills:
   - tdd-with-agents
   - visual-review-pipeline

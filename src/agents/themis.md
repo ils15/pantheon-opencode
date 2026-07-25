@@ -9,7 +9,7 @@ permission:
   bash: allow
   edit: ask
 temperature: 0.1
-steps: 20
+steps: 30
 skills:
   - code-review-checklist
   - security-hardening
