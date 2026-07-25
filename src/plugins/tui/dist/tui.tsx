@@ -129,14 +129,14 @@ function createSlot(api: TuiPluginApi, version: string): TuiSlotPlugin {
 
 const tui: TuiPlugin = async (api: TuiPluginApi) => {
   // Read version ONCE at startup (sincrono, evitando Promise)
-  let version = '5.0.0'
+  let version = '1.0.1'
   try {
     const wt = api.state.path?.worktree ?? ''
     const fp = wt ? `${wt}/package.json` : 'package.json'
     const r = await api.client.file.read({ query: { path: fp } })
     const m = String(r?.content ?? '').match(/"version":\s*"([^"]+)"/)
     if (m?.[1]) version = m[1]
-  } catch { /* fallback */ }
+  } catch { /* fallback to package.json version */ }
 
   api.slots.register(createSlot(api, version))
 }
