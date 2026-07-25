@@ -26,8 +26,6 @@
     "README.md",
     "src/mcp/*.txt",
     "commands/*.md",
-    "src/skills/**/*.txt",
-    "src/skills/**/*.md",
     "pantheon.schema.json",
     "skills-lock.json",
     "scripts/*.sh",
@@ -40,10 +38,10 @@
     "src/mcp/*.mjs",
     "scripts/*.mjs",
     "src/plugins/tui/**",
-    "docs/*.md",
     "src/mcp/*.sh",
     "src/routing.yml",
-    "src/mcp/requirements*"
+    "src/mcp/requirements*",
+    "src/skills/**"
   ],
   "dependencies": {
     "js-yaml": "^4.3.0"

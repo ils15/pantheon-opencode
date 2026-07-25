@@ -111,6 +111,8 @@ async def list_skills() -> str:
 async def get_routing() -> str:
     """Return the full content of routing.yml."""
     routing_file = _PANTHEON_HOME / "routing.yml"
+    if not routing_file.exists() and _PANTHEON_PROJECT:
+        routing_file = _PANTHEON_PROJECT / "src" / "routing.yml"
     if not routing_file.exists():
         return "routing.yml not found."
     return routing_file.read_text(encoding="utf-8")

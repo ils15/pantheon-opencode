@@ -17,6 +17,7 @@ skills:
   - tdd-with-agents
   - visual-review-pipeline
   - file-prompts
+  - incremental-implementation
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
