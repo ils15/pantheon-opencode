@@ -36,8 +36,8 @@ jobs:
 
       - name: Quality gates
         run: |
-          npm test 2>&1 || echo "⚠️ Test warnings"
-          npm audit --audit-level=high 2>&1 || echo "⚠️ Audit warnings"
+          npm test 2>&1 || echo "Test warnings"
+          npm audit --audit-level=high 2>&1 || echo "Audit warnings"
 
       - name: Get current version
         id: version
@@ -52,6 +52,16 @@ jobs:
           echo "from=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "to=$NEXT" >> "$GITHUB_OUTPUT"
 
+      - name: Generate release notes
+        run: |
+          cat > /tmp/beta-notes.md <<- EOF
+          Beta release from develop.
+          Install with: npm install pantheon-opencode@beta
+
+          Changes since ${{ steps.bump.outputs.from }}:
+          $(git log "${{ steps.bump.outputs.from }}..HEAD" --oneline --no-decorate 2>/dev/null || echo "See commit history")
+          EOF
+
       - name: Publish to npm (beta tag)
         run: npm publish --tag beta --access public --provenance 2>&1
 
@@ -60,7 +70,6 @@ jobs:
           git config user.name "pantheon-bot"
           git config user.email "bot@pantheon.dev"
           git add package.json
-          # Also update pyproject.toml and plugin.json if they exist
           git add pyproject.toml plugin.json .github/plugin/plugin.json 2>/dev/null || true
           git commit -m "chore(beta): v${{ steps.bump.outputs.to }} [skip ci]"
           git push
@@ -73,8 +82,5 @@ jobs:
           gh release create "$VERSION" \
             --title "Pantheon ${VERSION} (beta)" \
             --prerelease \
-            --notes "Beta release from develop. Install with: \`npm install pantheon-opencode@beta\`
-
-## Changes since ${{ steps.bump.outputs.from }}
-$(git log "${{ steps.bump.outputs.from }}..HEAD" --oneline --no-decorate 2>/dev/null || echo "See commit history")"
-          echo "✅ Published beta $VERSION"
+            --notes-file /tmp/beta-notes.md
+          echo "Published beta $VERSION"
