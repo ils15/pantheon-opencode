@@ -3,7 +3,7 @@
  * opencode.mjs — OpenCode platform installer
  */
 
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { healthCheck } from './health-check.mjs'
