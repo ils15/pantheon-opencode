@@ -10,7 +10,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -21,14 +21,23 @@ const ROOT = join(__dirname, '..', '..')
  * Set up a Python virtual environment and install MCP dependencies.
  *
  * @param {string} target - Target installation directory (e.g. ~/.config/opencode)
- * @param {{ dryRun?: boolean, skipInstall?: boolean }} [options]
+ * @param {{ dryRun?: boolean, skipInstall?: boolean, force?: boolean }} [options]
  * @returns {{ venvPath: string, python: string }}
  */
-export function setupVenv(target, { dryRun = false, skipInstall = false } = {}) {
+export function setupVenv(target, { dryRun = false, skipInstall = false, force = false } = {}) {
   const venvPath = join(target, '.venv')
   const pythonBin = join(venvPath, 'bin', 'python3')
 
-  // Step 1: Create venv if not exists
+  // Step 1: Force recreate venv if --force
+  if (force && existsSync(venvPath)) {
+    if (!dryRun) {
+      console.log('  Removing existing .venv (--force)...')
+      rmSync(venvPath, { recursive: true })
+    }
+    console.log('  ✅ .venv removed')
+  }
+
+  // Step 1b: Create venv if not exists
   if (!existsSync(pythonBin)) {
     if (!dryRun) {
       console.log('  Creating .venv...')
@@ -58,28 +67,34 @@ export function setupVenv(target, { dryRun = false, skipInstall = false } = {}) 
 
     if (!dryRun) {
       // Upgrade pip first (avoids resolver warnings)
+      // Ensure PIP_USER=0 to install into venv, not user site-packages
+      const pipEnv = { ...process.env, PIP_USER: '0' }
+
       spawnSync(pip, ['install', '--upgrade', 'pip'], {
         stdio: 'ignore',
         timeout: 30_000,
+        env: pipEnv,
       })
 
-      // Install requirements
+      // Install requirements — attempt 1: normal
       const r = spawnSync(pip, ['install', '-r', reqFile], {
         stdio: 'inherit',
         timeout: 120_000,
+        env: pipEnv,
       })
 
       if (r.status !== 0) {
-        // If failed, try with --break-system-packages (PEP 668 workaround)
+        // Attempt 2: --break-system-packages (PEP 668 / externally-managed)
         console.log('  ⚠️  First attempt failed, retrying with --break-system-packages...')
         const r2 = spawnSync(pip, ['install', '-r', reqFile, '--break-system-packages'], {
           stdio: 'inherit',
           timeout: 120_000,
+          env: pipEnv,
         })
         if (r2.status !== 0) {
           throw new Error(
             'Failed to install MCP dependencies. ' +
-            'Try: pip install -r src/mcp/requirements-mcp.txt --break-system-packages'
+            'Try: PIP_USER=0 ' + pip + ' install -r ' + reqFile + ' --break-system-packages'
           )
         }
       }
@@ -101,9 +116,10 @@ function main() {
   const target = targetIdx !== -1 ? args[targetIdx + 1] : process.cwd()
   const dryRun = args.includes('--dry-run')
   const skipInstall = args.includes('--skip-install')
+  const force = args.includes('--force')
 
   try {
-    const result = setupVenv(target, { dryRun, skipInstall })
+    const result = setupVenv(target, { dryRun, skipInstall, force })
     console.log(`  📍 Python: ${result.python}`)
   } catch (err) {
     console.error(`\n  ❌ ${err.message}`)
