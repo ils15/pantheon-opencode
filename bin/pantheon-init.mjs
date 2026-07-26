@@ -27,10 +27,13 @@ function printUsage() {
   console.log('  npx pantheon-opencode init              # Install globally');
   console.log('  npx pantheon-opencode init --project    # Install in project');
   console.log('  npx pantheon-opencode init --dry-run    # Preview only');
-  console.log('  npx pantheon-opencode init --no-mcp     # Skip MCP + venv');
-  console.log('  npx pantheon-opencode init --force      # Overwrite + recreate venv');
-  console.log('  npx pantheon-opencode init --doctor     # Run health check after install');
-  console.log('  npx pantheon-opencode --help            # Show this help');
+  console.log('  npx pantheon-opencode init --no-mcp       # Skip MCP + venv');
+  console.log('  npx pantheon-opencode init --force        # Overwrite + recreate venv');
+  console.log('  npx pantheon-opencode init --doctor       # Run health check after install');
+  console.log('  npx pantheon-opencode init --interactive  # Force interactive TUI mode');
+  console.log('  npx pantheon-opencode init --headless     # Force non-interactive mode');
+  console.log('  npx pantheon-opencode init -y             # Skip confirmations, use defaults');
+  console.log('  npx pantheon-opencode --help              # Show this help');
 }
 
 async function main() {
@@ -45,6 +48,9 @@ async function main() {
     const skipMCP = args.includes('--no-mcp');
     const forceReinstall = args.includes('--force');
     const runDoctor = args.includes('--doctor');
+    const forceInteractive = args.includes('--interactive');
+    const forceHeadless = args.includes('--headless');
+    const autoYes = args.includes('--yes') || args.includes('-y');
 
     const components = ['agents', 'skills', 'instructions', 'commands', 'plugins'];
     if (!skipMCP) components.push('runtime');
@@ -56,13 +62,20 @@ async function main() {
       version = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || '?';
     } catch { /* use default */ }
 
-    console.log(`Pantheon OpenCode v${version} — ${isDryRun ? 'DRY RUN' : 'Installing...'}`);
     console.log('');
+    if (!forceInteractive || isDryRun) {
+      console.log(`Pantheon OpenCode v${version} — ${isDryRun ? 'DRY RUN' : 'Installing...'}`);
+      console.log('');
+    }
 
     try {
       const { installOpenCode } = await import('../scripts/install/opencode.mjs');
       const target = isProject ? process.cwd() : undefined;
-      installOpenCode(target, isDryRun, forceReinstall, components);
+      await installOpenCode(target, isDryRun, forceReinstall, components, {
+        interactive: forceInteractive,
+        headless: forceHeadless,
+        yes: autoYes,
+      });
     } catch (err) {
       console.error(`❌ Installation failed: ${err.message}\n   Run with --no-mcp to skip Python dependencies:\n     npx pantheon-opencode init --no-mcp\n   Or retry with --force to recreate the venv:\n     npx pantheon-opencode init --force`);
       process.exit(1);
