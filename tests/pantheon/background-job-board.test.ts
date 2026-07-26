@@ -83,6 +83,7 @@ class InMemoryPersistence implements PersistenceAdapter {
 // REGISTER LAUNCH
 // ═══════════════════════════════════════════════════════════════════════
 
+async function main() {
 await testAsync('registerLaunch creates a running job with alias', async () => {
   const board = new BackgroundJobBoard()
   const job = await board.registerLaunch(makeLaunch())
@@ -827,16 +828,20 @@ await testAsync('list returns a snapshot (mutating does not affect board)', asyn
   assert.equal(board.list().length, 1)
 })
 
-// ═══════════════════════════════════════════════════════════════════════
-// SUMMARY
-// ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════
+  // SUMMARY
+  // ═══════════════════════════════════════════════════════════════════════
 
-const passed = results.filter(r => r.passed).length
-const failed = results.filter(r => !r.passed)
+  const passed = results.filter(r => r.passed).length
+  const failed = results.filter(r => !r.passed)
 
-console.log('')
-for (const r of results) {
-  console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? ': ' + r.error : ''}`)
+  console.log('')
+  for (const r of results) {
+    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? ': ' + r.error : ''}`)
+  }
+  console.log(`\nResults: ${passed} passed, ${failed.length} failed`)
+  process.exit(failed.length > 0 ? 1 : 0)
 }
-console.log(`\nResults: ${passed} passed, ${failed.length} failed`)
-process.exit(failed.length > 0 ? 1 : 0)
+
+main()
+
