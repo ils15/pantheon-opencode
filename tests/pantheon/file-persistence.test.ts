@@ -53,6 +53,7 @@ function makeLaunch(overrides: Partial<{
   }
 }
 
+async function main() {
 // ═══════════════════════════════════════════════════════════════════════
 // FILE PERSISTENCE ADAPTER (single state.json)
 // ═══════════════════════════════════════════════════════════════════════
@@ -491,7 +492,7 @@ await testAsync('consumeWakeSignals returns non-existent dir gracefully', async 
 })
 
 // ═══════════════════════════════════════════════════════════════════════
-// SUMMARY
+// SUMMARY (inside main)
 // ═══════════════════════════════════════════════════════════════════════
 
 const passed = results.filter(r => r.passed).length
@@ -504,3 +505,6 @@ for (const r of results) {
 console.log(`
 Results: ${passed} passed, ${failed.length} failed`)
 process.exit(failed.length > 0 ? 1 : 0)
+}
+
+main()
