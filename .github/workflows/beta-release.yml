@@ -63,7 +63,7 @@ jobs:
           EOF
 
       - name: Publish to npm (beta tag)
-        run: npm publish --tag beta --access public --provenance 2>&1
+        run: npm publish --tag beta --access public 2>&1
 
       - name: Commit version bump back to develop
         run: |
