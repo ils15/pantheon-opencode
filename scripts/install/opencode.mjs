@@ -8,7 +8,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
-import { configure, section, step, success, warning, error, info, bullet, spinner, printSummary } from './cli-ui.mjs'
+import { colors, configure, section, step, success, warning, error, info, bullet, spinner, printSummary } from './cli-ui.mjs'
 import {
   collectSkillNames,
   copyFiles,
@@ -23,6 +23,8 @@ import {
 import { setupVenv } from './venv.mjs'
 import { installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
 import { resolveComponents } from './component.mjs'
+
+const COMPONENT_NAMES = ['agents', 'skills', 'instructions', 'prompts', 'commands', 'plugins', 'runtime']
 
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
@@ -72,11 +74,12 @@ function isGlobalConfigDir(target) {
   return resolve(target) === xdgDir
 }
 
-export function installOpenCode(
+export async function installOpenCode(
   target,
   dryRun = false,
   clean = false,
   components = ['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime'],
+  opts = {},
 ) {
   // Default target if not provided (global ~/.config/opencode)
   if (!target) {
@@ -85,6 +88,35 @@ export function installOpenCode(
 
   const componentSet = new Set(components)
   const stats = summary.opencode
+
+  // Interactive mode handling
+  const stdinTTY = process.stdin.isTTY && process.stdout.isTTY
+  const forceInteractive = opts.interactive === true
+  const forceHeadless = opts.headless === true
+  const autoYes = opts.yes === true
+  const interactive = forceInteractive || (stdinTTY && !forceHeadless)
+
+  if (interactive && !dryRun) {
+    const { runInteractiveInstall } = await import('./interactive.mjs')
+    const result = await runInteractiveInstall({
+      components,
+      defaultComponents: COMPONENT_NAMES,
+    })
+
+    if (!result.confirmed && !autoYes) {
+      info('Installation canceled.')
+      return stats
+    }
+
+    // Map target selection to actual path
+    const newComponents = [...result.components]
+    componentSet.clear()
+    for (const c of newComponents) componentSet.add(c)
+
+    if (result.target === 'project') {
+      target = process.cwd()
+    }
+  }
 
   // Determine layout based on install scope.
   // Global config dir (~/.opencode or ~/.config/opencode) uses a flat layout:
@@ -679,5 +711,25 @@ export function installOpenCode(
     }
   }
 
-  printSummary(target, ['opencode'], stats)
+  if (interactive && !dryRun) {
+    const created = stats.created
+    const skipped = stats.skipped
+    const errors = stats.errors
+
+    process.stdout.write('\n')
+    process.stdout.write(`  ${colors.bold(colors.green('Installation complete'))}\n`)
+    process.stdout.write(`  ${colors.dim('\u2500'.repeat(Math.min(process.stdout.columns || 60, 60)))}\n`)
+    process.stdout.write(`  ${colors.green('\u2713')} ${created} component(s) installed\n`)
+    if (skipped > 0) process.stdout.write(`  ${colors.dim('\u2014')} ${skipped} already up-to-date\n`)
+    if (errors > 0) process.stdout.write(`  ${colors.yellow('\u26a0')} ${errors} error(s) encountered\n`)
+    process.stdout.write('\n')
+    process.stdout.write(`  ${colors.bold('Next steps:')}\n`)
+    process.stdout.write(`  ${colors.dim('\u2022')} Configure agents in opencode.json\n`)
+    process.stdout.write(`  ${colors.dim('\u2022')} Add MCP servers in mcp.json\n`)
+    process.stdout.write(`  ${colors.dim('\u2022')} Run 'opencode doctor' to verify\n`)
+    process.stdout.write(`  ${colors.dim('\u2022')} Run 'opencode' to start using Pantheon agents\n`)
+    process.stdout.write('\n')
+  } else {
+    printSummary(target, ['opencode'], stats)
+  }
 }
