@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Map — Pantheon Integration Test</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; width: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  #map { height: 100%; width: 100%; }
+  #info-panel {
+    position: absolute; top: 16px; right: 16px; z-index: 1000;
+    background: rgba(255,255,255,0.95); backdrop-filter: blur(6px);
+    border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    padding: 16px 20px; min-width: 180px; font-size: 14px;
+    pointer-events: none; border: 1px solid rgba(255,255,255,0.5);
+  }
+  #info-panel h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: #666; margin-bottom: 10px; font-weight: 600; }
+  #info-panel .row { display: flex; justify-content: space-between;
+    padding: 3px 0; border-bottom: 1px solid #eee; }
+  #info-panel .row:last-child { border-bottom: none; }
+  #info-panel .label { color: #666; font-weight: 500; }
+  #info-panel .value { color: #222; font-weight: 600; text-align: right;
+    max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #error-message {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    z-index: 2000; background: #fff0f0; color: #b22222;
+    border: 1px solid #feb2b2; border-radius: 10px;
+    padding: 24px 32px; max-width: 420px; text-align: center;
+    font-size: 15px; line-height: 1.5; box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  }
+  #error-message strong { display: block; font-size: 18px; margin-bottom: 8px; }
+  @media (max-width: 480px) {
+    #info-panel { top: 10px; right: 10px; padding: 10px 14px; min-width: 140px; font-size: 12px; }
+    #info-panel .value { max-width: 90px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="info-panel" role="region" aria-label="Map statistics" aria-live="polite">
+  <h3>World Map</h3>
+  <div class="row"><span class="label">Countries</span><span class="value" id="country-count">0</span></div>
+  <div class="row"><span class="label">Current</span><span class="value" id="current-country">None</span></div>
+  <div class="row"><span class="label">Region</span><span class="value" id="current-region">—</span></div>
+</div>
+
+<div id="map" role="application" aria-label="Interactive world map with country boundaries"></div>
+
+<div id="error-message" role="alert">
+  <strong>⚠ Map Error</strong>
+  <span id="error-text">Could not load country data. Please check your internet connection and refresh.</span>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function() {
+  const map = L.map('map', { center: [20, 0], zoom: 2, worldCopyJump: true });
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18, attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map);
+
+  window.addEventListener('resize', function() { map.invalidateSize(); });
+
+  let countryCount = 0;
+  const countryCountEl = document.getElementById('country-count');
+  const currentCountryEl = document.getElementById('current-country');
+  const currentRegionEl = document.getElementById('current-region');
+  const errorMsg = document.getElementById('error-message');
+
+  fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json')
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(data) {
+      const geoLayer = L.geoJSON(data, {
+        style: { fillColor: '#e8e8e8', weight: 1, opacity: 1, color: '#444', fillOpacity: 1 },
+        onEachFeature: function(feature, layer) {
+          countryCount++;
+          const name = (feature.properties && feature.properties.name) || 'Unknown';
+          const region = (feature.properties && (feature.properties.region || feature.properties.continent)) || '';
+
+          layer.on('click', function() {
+            layer.bindPopup('<strong>' + name + '</strong>' + (region ? '<br>' + region : '')).openPopup();
+          });
+
+          layer.on('mouseover', onFocus);
+          layer.on('mouseout', onBlur);
+          layer.on('focus', onFocus);
+          layer.on('blur', onBlur);
+
+          function onFocus(e) {
+            e.target.setStyle({ fillColor: '#ffb347', fillOpacity: 0.8 });
+            e.target.bringToFront();
+            currentCountryEl.textContent = name;
+            currentRegionEl.textContent = region || '\u2014';
+          }
+
+          function onBlur(e) {
+            geoLayer.resetStyle(e.target);
+            currentCountryEl.textContent = 'None';
+            currentRegionEl.textContent = '\u2014';
+          }
+
+          if (layer.getElement) {
+            const el = layer.getElement();
+            if (el) { el.setAttribute('tabindex', '0'); el.setAttribute('role', 'button'); }
+          }
+        }
+      }).addTo(map);
+
+      countryCountEl.textContent = countryCount;
+      try { map.fitBounds(geoLayer.getBounds(), { padding: [20, 20] }); } catch(e) { console.warn('fitBounds failed:', e); }
+    })
+    .catch(function(err) {
+      errorMsg.style.display = 'block';
+      document.getElementById('error-text').textContent = 'Failed to load country data: ' + err.message + '. Please check your internet connection and refresh.';
+      map.setView([20, 0], 2);
+    });
+})();
+</script>
+</body>
+</html>
