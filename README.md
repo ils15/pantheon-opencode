@@ -166,8 +166,11 @@ flowchart TD
 - **OpenCode** — Pantheon v1.0 is OpenCode-only. [Installation guide](docs/INSTALLATION.md).
 
 ```bash
-# Install Pantheon globally
+# Interactive TUI (default) — select components visually
 npx pantheon-opencode init
+
+# Headless mode — for CI and automation
+npx pantheon-opencode init --headless
 
 # (Optional) Install MCP servers + skills + TUI plugin
 npm run setup
@@ -177,7 +180,9 @@ export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
 opencode
 ```
 
-> **Minimal vs Full:** `npx pantheon-opencode init --no-mcp` installs only agents (~2s). `npx pantheon-opencode init` (without `--no-mcp`) also creates a Python venv and installs MCP servers (includes `pantheon-memory` for vector search and `pantheon-persistence` for KV cache).
+> **Modes:** Interactive TUI with checkbox selection (default TTY), or `--headless` for scripts/CI.
+> **Minimal:** `--headless --no-mcp` installs only agents (~2s).
+> **Full:** `--headless` also creates Python venv + MCP servers (memory, persistence, KV).
 
 ---
 

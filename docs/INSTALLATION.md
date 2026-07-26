@@ -9,11 +9,42 @@ Pantheon v1.0 is **OpenCode-only**. It installs globally via `npx pantheon-openc
 - **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
 
+## Interactive TUI Installer
+
+Since v1.1.1, the installer has an **interactive TUI mode** with component selection, visual feedback, and real-time progress:
+
+```bash
+# Default: interactive if terminal, headless if piped
+npx pantheon-opencode init
+
+# Force interactive mode (even in CI-like terminals)
+npx pantheon-opencode init --interactive
+
+# Force headless mode (for scripts and CI)
+npx pantheon-opencode init --headless
+
+# Skip confirmations, use defaults
+npx pantheon-opencode init -y
+```
+
+The interactive mode shows:
+- **Checkbox selection** — choose which components to install (agents, skills, plugins, runtime, etc.)
+- **Progress spinners** — real-time feedback during installation
+- **Config diff** — visual summary of what changed
+- **Component descriptions** — what each component does
+
+For non-interactive use (scripts, CI, automation), use `--headless`:
+
+```bash
+# CI pipeline — fully automated
+npx pantheon-opencode init --headless --no-mcp
+```
+
 ## Quick Install
 
 ```bash
 # 1. Install Pantheon agents globally
-npx pantheon-opencode init
+npx pantheon-opencode init --headless
 
 # 2. (Optional) Install MCP servers + skills + TUI plugin
 npm run setup
@@ -30,8 +61,9 @@ opencode
 
 | Mode | Command | Installs | Time | Dependencies |
 |------|---------|----------|------|-------------|
-| **Minimal** 🟢 | `npx pantheon-opencode init --no-mcp` | agents + commands | ~2s | None |
-| **Full** 🔵 | `npx pantheon-opencode init` | agents + MCPs + skills + TUI | ~60s | Python 3.11+ |
+| **Interactive** 🎯 | `npx pantheon-opencode init` (default TTY) | seletor visual de componentes | ~variavel | Node.js 18+ |
+| **Minimal** 🟢 | `npx pantheon-opencode init --headless --no-mcp` | agents + commands | ~2s | None |
+| **Full** 🔵 | `npx pantheon-opencode init --headless` | agents + MCPs + skills + TUI | ~60s | Python 3.11+ |
 | **Runtime** 🟡 | `npm run setup` | MCP servers + venv | ~30s | Python 3.11+ |
 
 ```bash
