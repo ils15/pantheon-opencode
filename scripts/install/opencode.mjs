@@ -687,7 +687,7 @@ export function installOpenCode(
   // -----------------------------------------------------------------------
   if (componentSet.has('runtime')) {
     try {
-      setupVenv(target, { dryRun })
+      setupVenv(target, { dryRun, force: clean })
       const health = healthCheck(target, { dryRun })
 
       // Print health summary
@@ -702,7 +702,7 @@ export function installOpenCode(
       }
     } catch (err) {
       console.error(`  ❌ Setup failed: ${err.message}`)
-      stats.errors++
+      throw err  // Fatal — abort installation
     }
   }
 }
