@@ -51,6 +51,7 @@
     "src/mcp/*.sh",
     "src/routing.yml",
     "src/mcp/requirements*",
+    "src/plugins/tui/**",
     "src/skills/**"
   ],
   "dependencies": {

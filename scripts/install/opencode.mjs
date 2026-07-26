@@ -264,6 +264,14 @@ export function installOpenCode(
       writeIfChanged(join(dstPluginDir, "package.json"), readFileSync(pkgSrc, "utf8"), dryRun)
       stats.created++
     }
+    // Install plugin dependencies (@opentui/core, @opentui/solid, solid-js)
+    if (!dryRun) {
+      try {
+        execSync('npm install --production --no-audit --no-fund', { cwd: dstPluginDir, stdio: 'pipe' })
+      } catch (e) {
+        console.warn('    ⚠️  Failed to install TUI plugin dependencies:', e.message)
+      }
+    }
 
   }
 
