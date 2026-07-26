@@ -3,6 +3,7 @@
  * opencode.mjs — OpenCode platform installer
  */
 
+import { execSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
