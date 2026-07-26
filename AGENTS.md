@@ -25,7 +25,7 @@ This project uses the Pantheon multi-agent framework with 14 specialized agents.
 
 See [INSTALLATION.md](docs/INSTALLATION.md) for setup instructions.
 
-- Build: `npm run build`
+- Build: `npm test`
 - Test: `npm test`
 - Lint: `npm run lint`
 
