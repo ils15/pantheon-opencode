@@ -60,7 +60,7 @@ console.log(`  Agents in routing.yml: ${routingAgents.length}`)
 // Get canonical agent files
 const agentsDir = join(ROOT, 'src', 'agents')
 const canonicalFiles = readdirSync(agentsDir)
-  .filter((f) => f.endsWith('.md'))
+  .filter((f) => f.endsWith('.md') && f.toLowerCase() !== 'readme.md')
   .map((f) => f.replace('.md', ''))
   .sort()
 
