@@ -3,17 +3,16 @@
  * opencode.mjs — OpenCode platform installer
  */
 
-import { execSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
+import { configure, section, step, success, warning, error, info, bullet, spinner, printSummary } from './cli-ui.mjs'
 import {
   collectSkillNames,
   copyFiles,
   installSkills,
-  PLATFORM_DIR,
   parseFrontmatter,
   ROOT,
   sourceDirValid,
@@ -22,6 +21,8 @@ import {
   writeIfChanged,
 } from './shared.mjs'
 import { setupVenv } from './venv.mjs'
+import { installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
+import { resolveComponents } from './component.mjs'
 
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
@@ -94,21 +95,23 @@ export function installOpenCode(
   const _subDir = isGlobal ? '' : '.opencode'
   const agentPrefix = isGlobal ? 'agents' : '.opencode/agents'
 
+  configure({ dryRun })
+
   if (isGlobal) {
-    console.log(
-      '  🌐 Global config directory detected — using flat layout (agents/, skills/, commands/)',
-    )
+    info('Global config directory detected — using flat layout (agents/, skills/, commands/)')
   }
 
   // -----------------------------------------------------------------------
   // 1. Install agents (--components agents)
   // -----------------------------------------------------------------------
   if (componentSet.has('agents')) {
+    section('\uD83D\uDCE6 Agents')
     const srcDir = join(ROOT, 'src', 'agents')
     if (!sourceDirValid(srcDir)) {
-      console.warn(`  ⚠️  Agent source directory not found: ${srcDir}`)
+      warning(`Agent source directory not found: ${srcDir}`)
       stats.errors++
     } else {
+      const agentStep = step('Installing agents')
       const dstDir = isGlobal ? join(target, 'agents') : join(target, '.opencode', 'agents')
       if (!dryRun) mkdirSync(dstDir, { recursive: true })
       if (clean && existsSync(dstDir) && !dryRun) {
@@ -120,6 +123,7 @@ export function installOpenCode(
       const { created, skipped } = copyFiles(srcDir, dstDir, dryRun)
       stats.created += created
       stats.skipped += skipped
+      agentStep(true)
     }
   }
 
@@ -139,9 +143,10 @@ export function installOpenCode(
   // 2. Install skills (--components skills)
   // -----------------------------------------------------------------------
   if (componentSet.has('skills')) {
+    section('\uD83D\uDCDA Skills')
     const skillNames = collectSkillNames()
     if (skillNames.length > 0) {
-      console.log(`  📚 Installing ${skillNames.length} skills...`)
+      const skillStep = step(`Installing ${skillNames.length} skills`)
       const dstSkillsDir = isGlobal ? join(target, 'skills') : join(target, '.opencode', 'skills')
       if (clean && existsSync(dstSkillsDir) && !dryRun) {
         const existing = readdirSync(dstSkillsDir)
@@ -158,6 +163,7 @@ export function installOpenCode(
       )
       stats.created += sCreated
       stats.skipped += sSkipped
+      skillStep(true)
     }
   }
 
@@ -165,6 +171,7 @@ export function installOpenCode(
   // 2.5 Install instructions: AGENTS.md + instructions/ (--components instructions)
   // -----------------------------------------------------------------------
   if (componentSet.has('instructions')) {
+    section('\uD83D\uDCCB Instructions')
     // AGENTS.md
     const srcAgentsMd = join(ROOT, 'AGENTS.md')
     const dstAgentsMd = join(target, 'AGENTS.md')
@@ -188,6 +195,7 @@ export function installOpenCode(
   // 2.6 Install prompts (--components prompts)
   // -----------------------------------------------------------------------
   if (componentSet.has('prompts')) {
+    section('\uD83D\uDCAC Prompts')
     const srcPrompts = join(ROOT, 'prompts')
     const dstPrompts = join(target, 'prompts')
     if (existsSync(srcPrompts)) {
@@ -201,6 +209,7 @@ export function installOpenCode(
   // 2.7 Install commands (--components commands)
   // -----------------------------------------------------------------------
   if (componentSet.has('commands')) {
+    section('\u26A1 Commands')
     const srcCmds = join(ROOT, 'commands')
     const dstCmds = isGlobal ? join(target, 'commands') : join(target, '.opencode', 'commands')
     if (existsSync(srcCmds)) {
@@ -223,10 +232,10 @@ export function installOpenCode(
         if (cfg.subagent_depth === undefined) { cfg.subagent_depth = 2; changed = true }
         if (changed && !dryRun) {
           writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n')
-          console.log('    ✅ subagent_depth: 2 added to opencode.json')
+          success('subagent_depth: 2 added to opencode.json')
         }
       } catch (e) {
-        console.warn(`    ⚠️  Could not update opencode.json: ${e.message}`)
+        warning(`Could not update opencode.json: ${e.message}`)
       }
     }
   }
@@ -234,46 +243,15 @@ export function installOpenCode(
   // 2.8 Install TUI plugins (--components plugins)
   // -----------------------------------------------------------------------
   if (componentSet.has('plugins')) {
+    section('\uD83D\uDD0C Plugins')
     const srcPluginDir = join(ROOT, 'src', 'plugins', 'tui')
     const dstPluginDir = isGlobal
       ? join(target, 'plugins', 'pantheon-tui')
       : join(target, '.opencode', 'plugins', 'pantheon-tui')
-    if (!dryRun) mkdirSync(dstPluginDir, { recursive: true })
-    if (clean && existsSync(dstPluginDir) && !dryRun) {
-      rmSync(dstPluginDir, { recursive: true, force: true })
-      mkdirSync(dstPluginDir, { recursive: true })
-    }
-    if (!dryRun) mkdirSync(join(dstPluginDir, "dist"), { recursive: true })
-    // Copy src/index.tsx -> index.tsx
-    const srcIdx = join(srcPluginDir, "src", "index.tsx")
-    if (existsSync(srcIdx)) {
-      writeIfChanged(join(dstPluginDir, "index.tsx"), readFileSync(srcIdx, "utf8"), dryRun)
-      stats.created++
-    }
-    // Copy dist files
-    const distSrc = join(srcPluginDir, "dist")
-    if (existsSync(distSrc)) {
-      for (const f of readdirSync(distSrc)) {
-        const c = readFileSync(join(distSrc, f), "utf8")
-        writeIfChanged(join(dstPluginDir, "dist", f), c, dryRun)
-        stats.created++
-      }
-    }
-    // Copy package.json
-    const pkgSrc = join(srcPluginDir, "package.json")
-    if (existsSync(pkgSrc)) {
-      writeIfChanged(join(dstPluginDir, "package.json"), readFileSync(pkgSrc, "utf8"), dryRun)
-      stats.created++
-    }
-    // Install plugin dependencies (@opentui/core, @opentui/solid, solid-js)
-    if (!dryRun) {
-      try {
-        execSync('npm install --omit=dev --no-audit', { cwd: dstPluginDir, stdio: 'pipe' })
-      } catch (e) {
-        console.warn('    ⚠️  Failed to install TUI plugin dependencies:', e.message)
-      }
-    }
-
+    const pluginStats = installPlugin(srcPluginDir, dstPluginDir, { dryRun, clean })
+    stats.created += pluginStats.created
+    stats.skipped += pluginStats.skipped
+    stats.errors += pluginStats.errors
   }
 
   // -----------------------------------------------------------------------
@@ -282,30 +260,9 @@ export function installOpenCode(
   const targetTuiConfigPath = isGlobal
     ? join(target, 'tui.json')
     : join(target, '.opencode', 'tui.json')
-  let tuiConfig = { plugin: [] }
-  if (existsSync(targetTuiConfigPath)) {
-    try {
-      tuiConfig = JSON.parse(readFileSync(targetTuiConfigPath, 'utf8'))
-    } catch {
-      /* use default */
-    }
-  }
-  if (!Array.isArray(tuiConfig.plugin)) {
-    tuiConfig.plugin = []
-  }
-  // Remove stale plugin refs (old dist/tui.tsx path)
-  const staleRefs = ["plugins/pantheon-tui/dist/tui.tsx", "plugins/pantheon-tui/dist/tui.js"]
-  for (const stale of staleRefs) {
-    const idx = tuiConfig.plugin.indexOf(stale)
-    if (idx !== -1) tuiConfig.plugin.splice(idx, 1)
-  }
-  // Add our plugin if not already present
   const pluginRef = 'plugins/pantheon-tui'
-  if (!tuiConfig.plugin.includes(pluginRef)) {
-    tuiConfig.plugin.push(pluginRef)
-  }
-  const tuiContent = `${JSON.stringify(tuiConfig, null, 2)}\n`
-  const tuiStatus = writeIfChanged(targetTuiConfigPath, tuiContent, dryRun)
+  unregisterPlugin(targetTuiConfigPath, pluginRef, { dryRun })
+  const tuiStatus = registerPlugin(targetTuiConfigPath, pluginRef, { dryRun })
   if (tuiStatus === 'created') stats.created++
   else stats.skipped++
 
@@ -314,6 +271,7 @@ export function installOpenCode(
   //      MCP server scripts, code-mode scripts, tiers.json
   // -----------------------------------------------------------------------
   if (componentSet.has('runtime')) {
+    section('\u2699\uFE0F Runtime')
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
 
     // ── MCP server scripts ──
@@ -331,7 +289,7 @@ export function installOpenCode(
     for (const script of mcpScripts) {
       const src = join(srcScriptsDir, script)
       if (!existsSync(src)) {
-        console.warn(`  ⚠️  Script not found: ${src}`)
+        warning(`Script not found: ${src}`)
         stats.errors++
         continue
       }
@@ -683,9 +641,9 @@ export function installOpenCode(
     if (currentVersion) {
       const migration = runMigrations(target, currentVersion, { dryRun })
       if (migration.applied > 0) {
-        console.log(`  ✅ Applied ${migration.applied} migration(s)`)
+        success(`Applied ${migration.applied} migration(s)`)
         for (const msg of migration.messages) {
-          console.log(`     • ${msg}`)
+          bullet(msg, 1)
         }
       }
     }
@@ -696,22 +654,30 @@ export function installOpenCode(
   // -----------------------------------------------------------------------
   if (componentSet.has('runtime')) {
     try {
+      const venvSpinner = spinner('Setting up Python virtual environment')
       setupVenv(target, { dryRun, force: clean })
+      venvSpinner(true)
       const health = healthCheck(target, { dryRun })
 
       // Print health summary
-      console.log('\n  📊 Health Check:')
-      for (const p of health.passed) console.log(`    ✅ ${p.check}: ${p.detail}`)
-      for (const w of health.warnings) console.log(`    ⚠️  ${w.check}: ${w.detail}`)
-      for (const f of health.failed) console.log(`    ❌ ${f.check}: ${f.detail}`)
+      section('\uD83D\uDD0D Health Check')
+      const healthStep = step('Running health checks')
+      for (const p of health.passed) success(`${p.check}: ${p.detail}`)
+      for (const w of health.warnings) warning(`${w.check}: ${w.detail}`)
+      for (const f of health.failed) error(`${f.check}: ${f.detail}`)
 
       if (health.failed.length > 0) {
-        console.log(`  ⚠️  ${health.failed.length} check(s) failed — review above`)
+        healthStep(false)
+        warning(`${health.failed.length} check(s) failed — review above`)
         stats.errors += health.failed.length
+      } else {
+        healthStep(true)
       }
     } catch (err) {
-      console.error(`  ❌ Setup failed: ${err.message}`)
+      error(`Setup failed: ${err.message}`)
       throw err  // Fatal — abort installation
     }
   }
+
+  printSummary(target, ['opencode'], stats)
 }
