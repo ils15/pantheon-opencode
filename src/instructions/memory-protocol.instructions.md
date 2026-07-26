@@ -65,3 +65,55 @@ Para otimizar decisoes de delegacao e reduzir gasto de tokens:
 5. **kv_get("deleg:<pattern>")** para reusar decisoes ja tomadas
 
 Isso elimina ~300 tokens de reasoning por delegacao quando o cache acerta.
+
+## Council Decisions Namespace
+
+Council synthesis decisions are persisted in a dedicated `council_decisions` namespace for precedent fast-path retrieval:
+
+### Write Path
+After every `/pantheon` council synthesis completes, Zeus stores:
+```
+memory_store({
+  namespace: "council_decisions",
+  key: "council:<yyyy-mm-dd>:<slug>",
+  value: {
+    question: "original question",
+    specialists: ["@agent1", "@agent2"],
+    recommendation: "final recommendation",
+    confidence: "High|Medium|Low",
+    agreements: ["point1", "point2"],
+    divergences: [{"issue": "...", "resolution": "..."}],
+    response_rate: "X of Y",
+    themis_audit: "approved|issues"
+  },
+  metadata: {
+    type: "council_decision",
+    specialist_count: N,
+    model_tier_used: "premium|default|fast"
+  }
+})
+```
+
+### Read Path (Precedent Fast-Path)
+Before dispatching a new council, Zeus runs:
+```
+memory_search(question, top_k=2, namespace="council_decisions")
+```
+
+Result interpretation:
+| Score | Age | Action |
+|-------|-----|--------|
+| > 0.85 | < 30 days | Return precedent as fast-path answer. Skip council dispatch entirely. |
+| > 0.85 | >= 30 days | Return with warning "Reavaliar se contexto mudou" + proceed with council |
+| 0.5 - 0.85 | Any | Include as context for specialists but still dispatch council |
+| < 0.5 | Any | Ignore, proceed with fresh council |
+
+### TTL & Maintenance
+- Council decisions are LONG-TERM (no TTL or TTL = 365 days)
+- Stale decisions (age > 90 days) should be flagged but NOT deleted — they remain as historical record
+- Purge only via explicit namespace cleanup when decisions are superseded by ADRs
+
+### When NOT to Use
+- Routine task summaries → use `default` namespace (auto-store by Zeus)
+- Sprint/progress tracking → use `session` namespace
+- ADR-level architecture decisions → delegate to @mnemosyne for permanent documentation

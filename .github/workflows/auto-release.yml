@@ -5,9 +5,8 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
-  pull-requests: write
   id-token: write
+  contents: write
 
 jobs:
   release:
@@ -20,23 +19,22 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts || npm install
+      - name: Upgrade npm (needs ≥ 11.5.1 for OIDC)
+        run: npm install -g npm@latest
 
-      - name: Run quality gates
+      - run: npm ci --ignore-scripts || npm install
+
+      - name: Quality gates
         run: |
-          echo "Running quality gates..."
           npm test 2>&1 || echo "⚠️ Test warnings"
           npm audit --audit-level=high 2>&1 || echo "⚠️ Audit warnings"
 
       - name: Get version
         id: version
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=v${VERSION}" >> $GITHUB_OUTPUT
+        run: echo "version=v$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
 
       - name: Check if release needed
         id: version_check
@@ -54,18 +52,11 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           awk -v ver="$VERSION" '/^## \['"$VERSION"'\]/{f=1;next} f&&/^## \[/{exit} f' CHANGELOG.md > release_notes.md
-          [ -s release_notes.md ] || echo "See CHANGELOG.md for details." > release_notes.md
+          [ -s release_notes.md ] && echo "Notes generated" || echo "See CHANGELOG.md" > release_notes.md
 
       - name: Publish to npm (OIDC)
         if: steps.version_check.outputs.changed == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          npm publish --access public --provenance 2>&1 && echo "✅ Published via OIDC" || {
-            [ -n "$NODE_AUTH_TOKEN" ] && npm publish --access public 2>&1 && echo "✅ Published via token" || {
-              echo "⚠️ Publish failed. Configure Trusted Publisher on npm or set NPM_TOKEN secret."
-            }
-          }
+        run: npm publish --access public --provenance 2>&1
 
       - name: Create GitHub Release
         if: steps.version_check.outputs.changed == 'true'
@@ -73,6 +64,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          gh release create "$VERSION" --title "Pantheon ${VERSION}" --notes-file release_notes.md pantheon-*.tgz 2>/dev/null || \
           gh release create "$VERSION" --title "Pantheon ${VERSION}" --notes-file release_notes.md
           echo "✅ Published Pantheon ${VERSION}"
