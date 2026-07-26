@@ -64,7 +64,7 @@ async function main() {
       const target = isProject ? process.cwd() : undefined;
       installOpenCode(target, isDryRun, forceReinstall, components);
     } catch (err) {
-      console.error(`❌ Installation failed:\n${err.stack}`);
+      console.error(`❌ Installation failed: ${err.message}\n   Run with --no-mcp to skip Python dependencies:\n     npx pantheon-opencode init --no-mcp\n   Or retry with --force to recreate the venv:\n     npx pantheon-opencode init --force`);
       process.exit(1);
     }
 
