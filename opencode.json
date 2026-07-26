@@ -4,9 +4,8 @@
   "subagent_depth": 2,
   "agent": {},
   "permission": {
-    "skill": {
-      "*": "allow"
-    },
+    "skill": { "*": "allow" },
+    "websearch": "deny",
     "bash": {
       "git *": "allow",
       "npm *": "allow",
@@ -21,5 +20,14 @@
     "src/instructions/*.instructions.md"
   ],
   "plugin": [],
-  "mcp": {}
+  "mcp": {
+    "bifrost": {
+      "type": "remote",
+      "url": "https://llm.ofertachina.cloud/mcp",
+      "enabled": true,
+      "headers": {
+        "x-bf-vk": "sk-bf-a5a9b5b0-45fc-414d-8e4d-f9beb8c49a6d"
+      }
+    }
+  }
 }
