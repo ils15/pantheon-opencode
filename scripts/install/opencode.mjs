@@ -268,7 +268,7 @@ export function installOpenCode(
     // Install plugin dependencies (@opentui/core, @opentui/solid, solid-js)
     if (!dryRun) {
       try {
-        execSync('npm install --omit=dev --no-audit --no-fund --legacy-peer-deps', { cwd: dstPluginDir, stdio: 'pipe' })
+        execSync('npm install --omit=dev --no-audit', { cwd: dstPluginDir, stdio: 'pipe' })
       } catch (e) {
         console.warn('    ⚠️  Failed to install TUI plugin dependencies:', e.message)
       }
