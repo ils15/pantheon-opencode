@@ -3,7 +3,7 @@
 /** @jsxImportSource @opentui/solid */
 
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from '@opencode-ai/plugin/tui'
-import { createMemo, createResource, createSignal, For, Show } from 'solid-js'
+import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 
 /* ─── Constants ─────────────────────────────────────────── */
 
@@ -77,7 +77,13 @@ function buildBar(pct: number): string {
 
 /* ─── Version Detection ────────────────────────────────────
  * 100% dinâmico — zero fallback hardcoded.
- * Se falhar, retorna null e a View omite a versão.            */
+ * Se falhar, retorna null e a View omite a versão.
+ *
+ * Try order:
+ *   1. api.client.file.read package.json
+ *   2. git describe --tags
+ *   3. opencode --version
+ *   4. null                                                      */
 
 async function detectVersion(api: TuiPluginApi): Promise<string | null> {
   // Try 1: package.json do projeto (via worktree path)
@@ -97,6 +103,17 @@ async function detectVersion(api: TuiPluginApi): Promise<string | null> {
       const stdout = (r.stdout ?? r.output ?? '') as string
       const tag = stdout.trim().replace(/^v/, '').replace(/-\d+-g[0-9a-f]+$/, '')
       if (tag && tag !== '5.0.0') return tag
+    }
+  } catch { /* fall through */ }
+
+  // Try 3: opencode --version
+  try {
+    const proc = (api as any).client?.process
+    if (typeof proc?.exec === 'function') {
+      const r = await proc.exec({ command: 'opencode', args: ['--version'], timeoutMs: 3000 })
+      const stdout = (r.stdout ?? r.output ?? '') as string
+      const ver = stdout.trim().replace(/^v/, '')
+      if (ver) return ver
     }
   } catch { /* fall through */ }
 
@@ -165,25 +182,32 @@ function ContextBar(props: { api: TuiPluginApi; sessionID: string }) {
   )
 }
 
-/* ─── Sessions List (loaded on expand) ───────────────────── */
+/* ─── Session Row (single session with live status indicator) ─ */
 
-async function fetchRecentSessions(api: TuiPluginApi, sessionID: string): Promise<any[] | null> {
-  try {
-    const proc = (api as any).client?.process
-    if (typeof proc?.exec !== 'function') return null
-    const result = await proc.exec({
-      command: 'opencode',
-      args: ['session', 'list', '--format', 'json', '--max-count', '20'],
-      timeoutMs: 5000,
-    })
-    const stdout = (result.stdout ?? result.output ?? '') as string
-    const sessions = JSON.parse(stdout)
-    if (!Array.isArray(sessions)) return null
-    return sessions
-      .filter((s: any) => s.id !== sessionID)
-      .sort((a: any, b: any) => (b.updated ?? 0) - (a.updated ?? 0))
-      .slice(0, 8)
-  } catch { return null }
+function SessionRow(props: { api: TuiPluginApi; session: any }) {
+  const theme = () => props.api.theme.current
+
+  const status = createMemo(() => {
+    try {
+      const s = (props.api.state as any).session?.status?.(props.session.id)
+      if (s?.type) return s.type as string
+    } catch { /* ignore */ }
+    return null
+  })
+
+  const statusIcon = createMemo(() => {
+    switch (status()) {
+      case 'busy': return '\u25cf '  // ● — running
+      case 'retry': return '\u26a0 ' // ⚠ — needs attention
+      default: return ''             // idle/unknown — no icon
+    }
+  })
+
+  return (
+    <text fg={theme().textMuted}>
+      {`${statusIcon()}${props.session?.id?.slice(0, 8) ?? '????'}... ${props.session?.title?.slice(0, 26) ?? '(untitled)'}`}
+    </text>
+  )
 }
 
 /* ─── Main Sidebar View ──────────────────────────────────── */
@@ -200,15 +224,73 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
     props.api.state.vcs?.branch ? `\u2387 ${props.api.state.vcs.branch}` : null,
   )
 
+  // ── Sessions: fetch via api.client.session.list (not proc.exec) ──
+  const [sessionList, { refetch: refetchSessions }] = createResource(async () => {
+    try {
+      const result = await (props.api.client as any)?.session?.list?.({ limit: 100 })
+      return result ?? { data: [] }
+    } catch {
+      return { data: [] }
+    }
+  })
+
+  // Total top-level sessions (excludes subagent sessions)
   const totalSessions = createMemo(() => {
-    try { return props.api.state.session.count() } catch { return 0 }
+    const result = sessionList()
+    if (!result) return 0
+    const data: any[] = (result as any).data ?? result
+    if (!Array.isArray(data)) return 0
+    return data.filter((s: any) => !s.parentID).length
   })
 
-  const memoryCount = createMemo(() => {
-    const mem = (props.api.state as any).memory
-    return safeNum(mem?.entries) || safeNum(mem?.count)
+  // Recent top-level sessions, sorted by time.updated descending
+  const recentSessions = createMemo(() => {
+    const result = sessionList()
+    if (!result) return []
+    const data: any[] = (result as any).data ?? result
+    if (!Array.isArray(data)) return []
+    return data
+      .filter((s: any) => !s.parentID && s.id !== props.sessionID)
+      .sort((a: any, b: any) => {
+        const ta = a.time?.updated ?? a.updated ?? 0
+        const tb = b.time?.updated ?? b.updated ?? 0
+        return tb - ta
+      })
+      .slice(0, 8)
   })
 
+  // ── Memory: starts at null (= "N/A"), tracks via events ──
+  const [memoryCount, setMemoryCount] = createSignal<number | null>(null)
+
+  // ── Event subscriptions for live session/memory updates ──
+  onMount(() => {
+    const cleanup: (() => void)[] = []
+
+    // Session events — triggers resource refetch
+    try {
+      cleanup.push(props.api.event.on('session.status', refetchSessions))
+      cleanup.push(props.api.event.on('session.created', refetchSessions))
+      cleanup.push(props.api.event.on('session.updated', refetchSessions))
+      cleanup.push(props.api.event.on('session.deleted', refetchSessions))
+    } catch { /* events API not available in this runtime */ }
+
+    // Memory events — tracks running counter (no api.state.memory)
+    try {
+      const ev = (props.api.event as any)
+      if (typeof ev?.on === 'function') {
+        cleanup.push(
+          ev.on('memory.created', () => setMemoryCount((c) => (c !== null ? c + 1 : 1))),
+        )
+        cleanup.push(
+          ev.on('memory.deleted', () => setMemoryCount((c) => (c !== null ? Math.max(0, c - 1) : 0))),
+        )
+      }
+    } catch { /* memory events not available */ }
+
+    onCleanup(() => cleanup.forEach((fn) => fn()))
+  })
+
+  // ── Config summary ──
   const configSummary = createMemo(() => {
     const cfg = (props.api.state as any).config
     if (!cfg) return null
@@ -218,12 +300,6 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
       autoCompaction: cfg.compaction?.auto === true,
     }
   })
-
-  // Load session list only when expanded
-  const [sessions] = createResource(
-    () => showSessions(),
-    () => fetchRecentSessions(props.api, props.sessionID),
-  )
 
   const HR = () => <text fg={theme().textMuted}>{'\u2500'.repeat(28)}</text>
 
@@ -251,20 +327,17 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
         </text>
         <text fg={theme().textMuted}>{` (${String(totalSessions())})`}</text>
       </box>
-      <Show when={showSessions() && sessions()}>
-        {(s) => (
-          <Show when={s().length > 0} fallback={<box marginLeft={1}><text fg={theme().textMuted}>No recent sessions</text></box>}>
-            <box marginLeft={1} flexDirection="column">
-              <For each={s()}>
-                {(ses: any) => (
-                  <text fg={theme().textMuted}>
-                    {`${ses.id.slice(0, 8)}... ${ses.title?.slice(0, 28) ?? '(untitled)'}`}
-                  </text>
-                )}
-              </For>
-            </box>
-          </Show>
-        )}
+      <Show when={showSessions()}>
+        <Show
+          when={recentSessions().length > 0}
+          fallback={<box marginLeft={1}><text fg={theme().textMuted}>No recent sessions</text></box>}
+        >
+          <box marginLeft={1} flexDirection="column">
+            <For each={recentSessions()}>
+              {(ses: any) => <SessionRow api={props.api} session={ses} />}
+            </For>
+          </box>
+        </Show>
       </Show>
 
       {/* ── Commands ── */}
@@ -339,7 +412,9 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
       {/* ── Memory (always visible summary) ── */}
       <box marginTop={1}>
         <text fg={theme().textMuted}>
-          {`Memory: ${memoryCount() > 0 ? `${fmtInt(memoryCount())} entries` : '0 entries'}`}
+          {memoryCount() !== null
+            ? `Memory: ${fmtInt(memoryCount()!)} entries`
+            : 'Memory: N/A'}
         </text>
       </box>
     </box>
