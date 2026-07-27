@@ -15,7 +15,7 @@ import argparse
 import re
 import sqlite3
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from _pantheon_paths import pantheon_home, pantheon_project
@@ -148,7 +148,7 @@ def _write_deletelog(db_path: Path, count: int, keys: list[str]) -> None:
     log_path = db_path.with_name(db_path.name + ".deletelog")
     _rotate_deletelog(log_path)
 
-    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     keys_str = ",".join(keys)
     with open(log_path, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] PURGED={count} KEYS=[{keys_str}]\n")
@@ -208,7 +208,7 @@ async def kv_store(
     conn = _db(scope)
     expires_at: str | None = None
     if ttl is not None:
-        expires_at = (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat()
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat()
 
     conn.execute(
         "INSERT INTO kv_store (namespace, key, value, expires_at, "
