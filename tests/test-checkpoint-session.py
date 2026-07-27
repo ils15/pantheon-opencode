@@ -253,6 +253,102 @@ class TestCmdResume:
         assert data["turn_count"] == 2  # second save  # noqa: PLR2004
 
 
+class TestCmdHealth:
+    def test_healthy_session(self, mod, tmp_slug, monkeypatch, capsys):
+        """health reports ✅ for a valid session."""
+        deepwork_root, slug = tmp_slug
+        monkeypatch.setattr(mod, "DEEPDIR", deepwork_root)
+        mod.cmd_init(slug)
+        capsys.readouterr()  # flush init output
+        mod.cmd_health(slug)
+        captured = capsys.readouterr()
+        assert "✅" in captured.out
+        assert "healthy" in captured.out
+
+    def test_missing_session(self, mod, tmp_slug, monkeypatch, capsys):
+        """health reports ❌ when session doesn't exist."""
+        deepwork_root, _slug = tmp_slug
+        monkeypatch.setattr(mod, "DEEPDIR", deepwork_root)
+        mod.cmd_health("nonexistent-slug")
+        captured = capsys.readouterr()
+        assert "Session not found" in captured.out or "❌" in captured.out
+
+    def test_corrupted_session_json(self, mod, tmp_slug, monkeypatch, capsys):
+        """health detects corrupted session.json."""
+        deepwork_root, slug = tmp_slug
+        monkeypatch.setattr(mod, "DEEPDIR", deepwork_root)
+        slug_dir = deepwork_root / slug
+        slug_dir.mkdir(parents=True, exist_ok=True)
+        (slug_dir / "session.json").write_text("{invalid json!!!}")
+        mod.cmd_health(slug)
+        captured = capsys.readouterr()
+        assert "corrupted" in captured.out or "invalid" in captured.out
+
+
+class TestCmdArchive:
+    def test_archive_moves_session(self, mod, tmp_slug, monkeypatch, capsys):
+        """archive moves slug dir to archive/."""
+        deepwork_root, slug = tmp_slug
+        monkeypatch.setattr(mod, "DEEPDIR", deepwork_root)
+        monkeypatch.setattr(mod, "ARCHIVEDIR", deepwork_root / "archive")
+        mod.cmd_init(slug)
+        capsys.readouterr()
+        mod.cmd_archive(slug)
+        captured = capsys.readouterr()
+        assert "archived" in captured.out.lower()
+        assert not (deepwork_root / slug).exists()
+        assert (deepwork_root / "archive" / slug).exists()
+
+    def test_archive_nonexistent(self, mod, tmp_slug, monkeypatch, capsys):
+        """archive errors when session doesn't exist."""
+        deepwork_root, _slug = tmp_slug
+        monkeypatch.setattr(mod, "DEEPDIR", deepwork_root)
+        monkeypatch.setattr(mod, "ARCHIVEDIR", deepwork_root / "archive")
+        mod.cmd_archive("nonexistent")
+        captured = capsys.readouterr()
+        assert "not found" in captured.out.lower()
+
+    def test_archive_already_archived(self, mod, tmp_slug, monkeypatch, capsys):
+        """archive errors when already in archive."""
+        deepwork_root, slug = tmp_slug
+        monkeypatch.setattr(mod, "DEEPDIR", deepwork_root)
+        monkeypatch.setattr(mod, "ARCHIVEDIR", deepwork_root / "archive")
+        mod.cmd_init(slug)
+        capsys.readouterr()
+        # Manually pre-create the archive destination
+        archive_dir = deepwork_root / "archive" / slug
+        archive_dir.mkdir(parents=True)
+        mod.cmd_archive(slug)
+        captured = capsys.readouterr()
+        assert "already exists" in captured.out.lower()
+
+
+class TestCmdCleanup:
+    def test_cleanup_dry_run(self, mod, tmp_slug, monkeypatch, capsys):
+        """cleanup --dry-run doesn't remove anything."""
+        deepwork_root, slug = tmp_slug
+        monkeypatch.setattr(mod, "DEEPDIR", deepwork_root)
+        monkeypatch.setattr(mod, "ARCHIVEDIR", deepwork_root / "archive")
+        # The fixture creates slug dir without session.json — it's an orphan
+        mod.cmd_cleanup(dry_run=True)
+        captured = capsys.readouterr()
+        assert "dry-run" in captured.out.lower()
+        # Orphan should still exist after dry-run
+        assert (deepwork_root / slug).exists()
+
+    def test_cleanup_removes_orphan(self, mod, tmp_slug, monkeypatch, capsys):
+        """cleanup removes directories without session.json."""
+        deepwork_root, slug = tmp_slug
+        monkeypatch.setattr(mod, "DEEPDIR", deepwork_root)
+        monkeypatch.setattr(mod, "ARCHIVEDIR", deepwork_root / "archive")
+        # The fixture creates slug dir without session.json — it's an orphan
+        mod.cmd_cleanup(dry_run=False)
+        captured = capsys.readouterr()
+        assert "orphan" in captured.out.lower()
+        # Orphan should be gone
+        assert not (deepwork_root / slug).exists()
+
+
 class TestCLI:
     def test_unknown_command(self, mod, capsys):
         with pytest.raises(SystemExit):

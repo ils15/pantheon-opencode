@@ -2,7 +2,6 @@ version: 1.0
 agents:
   zeus:
     role: Central orchestrator
-    model_tier: code
     reasoning_effort: medium
     user_invocable: true
     can_delegate: true
@@ -41,7 +40,6 @@ agents:
     - incremental-implementation
   athena:
     role: Strategic planner
-    model_tier: premium
     reasoning_effort: high
     user_invocable: true
     can_delegate: true
@@ -61,7 +59,6 @@ agents:
     - memory-bank
   apollo:
     role: Investigation scout
-    model_tier: free
     reasoning_effort: low
     user_invocable: false
     can_delegate: false
@@ -79,7 +76,6 @@ agents:
     - auto-continue
   hermes:
     role: Backend specialist
-    model_tier: code
     reasoning_effort: medium
     user_invocable: true
     can_delegate: true
@@ -92,6 +88,10 @@ agents:
     - obsolete_lib_detection
     - memory_store
     - pantheon_code_mode
+    subagent_can_delegate_to:
+    - apollo
+    - themis
+    - mnemosyne
     skills:
     - tdd-with-agents
     - file-prompts
@@ -100,7 +100,6 @@ agents:
     - incremental-implementation
   aphrodite:
     role: Frontend specialist
-    model_tier: code
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -113,13 +112,13 @@ agents:
     - deprecated_npm_detection
     - memory_store
     - pantheon_resources_memory_bank
+    - pantheon_code_mode
     skills:
     - tdd-with-agents
     - visual-review-pipeline
     - file-prompts
   demeter:
     role: Database specialist
-    model_tier: code
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -132,12 +131,12 @@ agents:
     - index_strategy
     - memory_store
     - memory_recall
+    - pantheon_code_mode
     skills:
     - tdd-with-agents
     - incremental-implementation
   themis:
     role: Quality gate
-    model_tier: premium
     reasoning_effort: high
     user_invocable: true
     can_delegate: true
@@ -151,6 +150,7 @@ agents:
     - deprecation_audit
     - memory_search
     - pantheon_resources
+    - pantheon_code_mode
     subagent_can_delegate_to:
     - mnemosyne
     skills:
@@ -160,7 +160,6 @@ agents:
     - context-compression
   prometheus:
     role: Infrastructure specialist
-    model_tier: code
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -178,7 +177,6 @@ agents:
     - incremental-implementation
   hephaestus:
     role: AI pipelines
-    model_tier: code
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -190,12 +188,12 @@ agents:
     - embedding_strategy
     - ai_workflow_composition
     - memory_search
+    - pantheon_code_mode
     skills:
     - tdd-with-agents
     - auto-continue
   nyx:
     role: Observability
-    model_tier: free
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -207,12 +205,12 @@ agents:
     - alerting
     - monitoring_dashboards
     - pantheon_resources_routing
+    - pantheon_code_mode
     skills:
     - security-hardening
     - auto-continue
   gaia:
     role: Remote sensing domain specialist
-    model_tier: free
     reasoning_effort: low
     user_invocable: false
     can_delegate: false
@@ -226,7 +224,6 @@ agents:
     - auto-continue
   iris:
     role: GitHub operations
-    model_tier: free
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -238,17 +235,14 @@ agents:
     - release_management
     - changelog_generation
     - pantheon_resources
-    subagent_can_delegate_to:
-    - mnemosyne
     skills:
     - git-workflow-and-versioning
     - artifact-management
   mnemosyne:
     role: Memory bank
-    model_tier: free
     reasoning_effort: low
     user_invocable: true
-    can_delegate: true
+    can_delegate: false
     can_receive_delegation: true
     capabilities:
     - memory_bank_management
@@ -260,6 +254,7 @@ agents:
     - memory_store
     - memory_recall
     - pantheon_resources_memory_bank
+    - pantheon_code_mode
     subagent_can_delegate_to: []
     skills:
     - artifact-management
@@ -268,7 +263,6 @@ agents:
     - session-goal
   talos:
     role: Hotfix agent
-    model_tier: free
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -379,19 +373,6 @@ platforms:
     - bash_execution
     - web_fetch
     - web_search
-fallback_chains:
-  premium_agents:
-    primary: deepseek/deepseek-v4-pro
-    secondary: mimo/v2.5
-    emergency: deepseek/deepseek-v4-pro
-  code_agents:
-    primary: deepseek/deepseek-v4-flash
-    secondary: mimo/v2.5
-    emergency: deepseek/deepseek-v4-flash
-  free_agents:
-    primary: deepseek/deepseek-v4-flash
-    secondary: mimo/v2.5
-    emergency: deepseek/deepseek-v4-flash
 background_job_board:
   max_concurrent_per_agent: 3
   signal_dir: .pantheon/deepwork/board-signals/
