@@ -1,6 +1,8 @@
 name: Commit Lint
 
 on:
+  push:
+    branches: [main, develop]
   pull_request:
     branches: [main, develop]
 
@@ -24,4 +26,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts 2>/dev/null || npm install
       - name: Validate PR commits
-        run: npx commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            npx commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
+          else
+            npx commitlint --from "${{ github.event.before }}" --to "${{ github.event.after }}" --verbose
+          fi
