@@ -285,15 +285,29 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string }) 
 /* ─── Plugin Registration ────────────────────────────────── */
 
 const tui: TuiPlugin = async (api, _options, _meta) => {
-  let version = '5.0.0'
+  /* Try multiple paths to find the real Pantheon version:
+   * 1. Worktree package.json (dev setup)
+   * 2. Git describe --tags (any git repo)
+   * 3. Plugin's own package.json (installed)            */
+  let version = '1.1.1-beta.6'
   try {
     const wt = ((api.state as any).path?.worktree ?? '') as string
     const fp = wt ? `${wt}/package.json` : 'package.json'
     const result = await api.client.file.read({ query: { path: fp } })
     const content = String(result?.content ?? '')
     const match = content.match(/"version":\s*"([^"]+)"/)
-    if (match?.[1]) version = match[1]
-  } catch { /* use default */ }
+    if (match?.[1]) { version = match[1] } else { throw new Error('no version in file') }
+  } catch {
+    try {
+      const proc = (api as any).client?.process
+      if (typeof proc?.exec === 'function') {
+        const r = await proc.exec({ command: 'git', args: ['describe', '--tags', '--always'], timeoutMs: 3000 })
+        const stdout = (r.stdout ?? r.output ?? '') as string
+        const tag = stdout.trim().replace(/^v/, '').replace(/-\d+-g[0-9a-f]+$/, '')
+        if (tag && tag !== '5.0.0') version = tag
+      }
+    } catch { /* keep default */ }
+  }
 
   api.slots.register({
     order: 900,
