@@ -3,7 +3,7 @@
 /** @jsxImportSource @opentui/solid */
 
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from '@opencode-ai/plugin/tui'
-import { createMemo, createSignal, For, Show } from 'solid-js'
+import { createMemo, createResource, createSignal, For, Show } from 'solid-js'
 
 /* ─── Constants ─────────────────────────────────────────── */
 
@@ -75,10 +75,37 @@ function buildBar(pct: number): string {
   return '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled)
 }
 
+/* ─── Version Detection ────────────────────────────────────
+ * 100% dinâmico — zero fallback hardcoded.
+ * Se falhar, retorna null e a View omite a versão.            */
+
+async function detectVersion(api: TuiPluginApi): Promise<string | null> {
+  // Try 1: package.json do projeto (via worktree path)
+  try {
+    const wt = ((api.state as any).path?.worktree ?? '') as string
+    const fp = wt ? `${wt}/package.json` : 'package.json'
+    const result = await api.client.file.read({ query: { path: fp } })
+    const match = String(result?.content ?? '').match(/"version":\s*"([^"]+)"/)
+    if (match?.[1]) return match[1]
+  } catch { /* fall through */ }
+
+  // Try 2: git describe --tags
+  try {
+    const proc = (api as any).client?.process
+    if (typeof proc?.exec === 'function') {
+      const r = await proc.exec({ command: 'git', args: ['describe', '--tags', '--always'], timeoutMs: 3000 })
+      const stdout = (r.stdout ?? r.output ?? '') as string
+      const tag = stdout.trim().replace(/^v/, '').replace(/-\d+-g[0-9a-f]+$/, '')
+      if (tag && tag !== '5.0.0') return tag
+    }
+  } catch { /* fall through */ }
+
+  return null // sem fallback — versão não aparece
+}
+
 /* ─── Context Bar ──────────────────────────────────────────
  * Inspired by streetturtle/opencode-better-sidebar (context-progress)
- * Shows: progress bar, token usage / limit, session cost
- * Always visible at the top of the sidebar                      */
+ * Shows: progress bar, token usage / limit, session cost       */
 
 function ContextBar(props: { api: TuiPluginApi; sessionID: string }) {
   const messages = createMemo((): any[] => {
@@ -101,7 +128,7 @@ function ContextBar(props: { api: TuiPluginApi; sessionID: string }) {
       ? ((props.api.state as any).provider ?? []).find((p: any) => p.id === pid)
       : null
     const ctxLimit = safeNum(provider?.models?.[mid ?? '']?.limit?.context)
-    const limit = ctxLimit > 0 ? ctxLimit : 128000
+    const limit = ctxLimit > 0 ? ctxLimit : 200000
     return { tokens, limit, percent: ctxLimit > 0 ? Math.round((tokens / ctxLimit) * 100) : 0 }
   })
 
@@ -138,13 +165,34 @@ function ContextBar(props: { api: TuiPluginApi; sessionID: string }) {
   )
 }
 
+/* ─── Sessions List (loaded on expand) ───────────────────── */
+
+async function fetchRecentSessions(api: TuiPluginApi, sessionID: string): Promise<any[] | null> {
+  try {
+    const proc = (api as any).client?.process
+    if (typeof proc?.exec !== 'function') return null
+    const result = await proc.exec({
+      command: 'opencode',
+      args: ['session', 'list', '--format', 'json', '--max-count', '20'],
+      timeoutMs: 5000,
+    })
+    const stdout = (result.stdout ?? result.output ?? '') as string
+    const sessions = JSON.parse(stdout)
+    if (!Array.isArray(sessions)) return null
+    return sessions
+      .filter((s: any) => s.id !== sessionID)
+      .sort((a: any, b: any) => (b.updated ?? 0) - (a.updated ?? 0))
+      .slice(0, 8)
+  } catch { return null }
+}
+
 /* ─── Main Sidebar View ──────────────────────────────────── */
 
-function View(props: { api: TuiPluginApi; sessionID: string; version: string }) {
+function View(props: { api: TuiPluginApi; sessionID: string; version: string | null }) {
   const [showCommands, setShowCommands] = createSignal(false)
   const [showAgents, setShowAgents] = createSignal(false)
   const [showConfig, setShowConfig] = createSignal(false)
-  const [showSubagents, setShowSubagents] = createSignal(false)
+  const [showSessions, setShowSessions] = createSignal(false)
 
   const theme = () => props.api.theme.current
 
@@ -152,7 +200,7 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string }) 
     props.api.state.vcs?.branch ? `\u2387 ${props.api.state.vcs.branch}` : null,
   )
 
-  const sessionCount = createMemo(() => {
+  const totalSessions = createMemo(() => {
     try { return props.api.state.session.count() } catch { return 0 }
   })
 
@@ -171,13 +219,19 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string }) 
     }
   })
 
+  // Load session list only when expanded
+  const [sessions] = createResource(
+    () => showSessions(),
+    () => fetchRecentSessions(props.api, props.sessionID),
+  )
+
   const HR = () => <text fg={theme().textMuted}>{'\u2500'.repeat(28)}</text>
 
   return (
     <box flexDirection="column" width="100%">
       {/* ── Header ── */}
       <text fg={theme().accent} attributes={{ bold: true }}>
-        {`Pantheon v${props.version}`}
+        {`Pantheon${props.version ? ` v${props.version}` : ''}`}
       </text>
       <Show when={branch()}>
         {(b) => <text fg={theme().textMuted}>{b()}</text>}
@@ -190,17 +244,27 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string }) 
 
       <HR />
 
-      {/* ── Subagents ── */}
-      <box onMouseDown={() => setShowSubagents((x) => !x)}>
+      {/* ── Sessions ── */}
+      <box onMouseDown={() => setShowSessions((x) => !x)}>
         <text fg={theme().text} attributes={{ bold: true }}>
-          {`${showSubagents() ? '\u25bc' : '\u25b6'} Subagents`}
+          {`${showSessions() ? '\u25bc' : '\u25b6'} Sessions`}
         </text>
-        <text fg={theme().textMuted}>{` (${String(sessionCount())})`}</text>
+        <text fg={theme().textMuted}>{` (${String(totalSessions())})`}</text>
       </box>
-      <Show when={showSubagents()}>
-        <box marginLeft={1}>
-          <text fg={theme().textMuted}>{`Active sessions: ${String(sessionCount())}`}</text>
-        </box>
+      <Show when={showSessions() && sessions()}>
+        {(s) => (
+          <Show when={s().length > 0} fallback={<box marginLeft={1}><text fg={theme().textMuted}>No recent sessions</text></box>}>
+            <box marginLeft={1} flexDirection="column">
+              <For each={s()}>
+                {(ses: any) => (
+                  <text fg={theme().textMuted}>
+                    {`${ses.id.slice(0, 8)}... ${ses.title?.slice(0, 28) ?? '(untitled)'}`}
+                  </text>
+                )}
+              </For>
+            </box>
+          </Show>
+        )}
       </Show>
 
       {/* ── Commands ── */}
@@ -265,7 +329,7 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string }) 
         <Show when={configSummary()} fallback={<box marginLeft={1}><text fg={theme().textMuted}>No config data</text></box>}>
           {(cfg) => (
             <box marginLeft={1} flexDirection="column">
-              <text fg={theme().textMuted}>{`MCP servers: ${String(cfg().mcpCount)}  Plugins: ${String(cfg().pluginCount)}`}</text>
+              <text fg={theme().textMuted}>{`MCP: ${String(cfg().mcpCount)}  Plugins: ${String(cfg().pluginCount)}`}</text>
               <text fg={theme().textMuted}>{`Auto-compaction: ${cfg().autoCompaction ? 'ON' : 'OFF'}`}</text>
             </box>
           )}
@@ -285,29 +349,7 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string }) 
 /* ─── Plugin Registration ────────────────────────────────── */
 
 const tui: TuiPlugin = async (api, _options, _meta) => {
-  /* Try multiple paths to find the real Pantheon version:
-   * 1. Worktree package.json (dev setup)
-   * 2. Git describe --tags (any git repo)
-   * 3. Plugin's own package.json (installed)            */
-  let version = '1.1.1-beta.6'
-  try {
-    const wt = ((api.state as any).path?.worktree ?? '') as string
-    const fp = wt ? `${wt}/package.json` : 'package.json'
-    const result = await api.client.file.read({ query: { path: fp } })
-    const content = String(result?.content ?? '')
-    const match = content.match(/"version":\s*"([^"]+)"/)
-    if (match?.[1]) { version = match[1] } else { throw new Error('no version in file') }
-  } catch {
-    try {
-      const proc = (api as any).client?.process
-      if (typeof proc?.exec === 'function') {
-        const r = await proc.exec({ command: 'git', args: ['describe', '--tags', '--always'], timeoutMs: 3000 })
-        const stdout = (r.stdout ?? r.output ?? '') as string
-        const tag = stdout.trim().replace(/^v/, '').replace(/-\d+-g[0-9a-f]+$/, '')
-        if (tag && tag !== '5.0.0') version = tag
-      }
-    } catch { /* keep default */ }
-  }
+  const version = await detectVersion(api)
 
   api.slots.register({
     order: 900,
