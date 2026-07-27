@@ -464,14 +464,32 @@ function View(props) {
 	})();
 }
 const tui = async (api, _options, _meta) => {
-	let version = "5.0.0";
+	let version = "1.1.1-beta.6";
 	try {
 		const wt = api.state.path?.worktree ?? "";
 		const fp = wt ? `${wt}/package.json` : "package.json";
 		const result = await api.client.file.read({ query: { path: fp } });
 		const match = String(result?.content ?? "").match(/"version":\s*"([^"]+)"/);
 		if (match?.[1]) version = match[1];
-	} catch {}
+		else throw new Error("no version in file");
+	} catch {
+		try {
+			const proc = api.client?.process;
+			if (typeof proc?.exec === "function") {
+				const r = await proc.exec({
+					command: "git",
+					args: [
+						"describe",
+						"--tags",
+						"--always"
+					],
+					timeoutMs: 3e3
+				});
+				const tag = (r.stdout ?? r.output ?? "").trim().replace(/^v/, "").replace(/-\d+-g[0-9a-f]+$/, "");
+				if (tag && tag !== "5.0.0") version = tag;
+			}
+		} catch {}
+	}
 	api.slots.register({
 		order: 900,
 		slots: { sidebar_content(_ctx, props) {
