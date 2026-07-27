@@ -12,7 +12,7 @@
     "src"
   ],
   "scripts": {
-    "build": "mkdir -p dist && cp src/index.tsx dist/tui.tsx",
+    "build": "tsdown && cp src/index.tsx dist/tui.tsx",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
@@ -22,11 +22,14 @@
     "@opentui/solid": ">=0.4.5",
     "solid-js": ">=1.9.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "rolldown-plugin-solid": "^0.2.1",
+    "tsdown": "^0.22.14"
+  },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.14.0",
-    "@opentui/core": "^0.4.5",
-    "@opentui/solid": "^0.4.5",
-    "solid-js": "^1.9.0"
+    "@opencode-ai/plugin": ">=1.14.0",
+    "@opentui/core": ">=0.4.5",
+    "@opentui/solid": ">=0.4.5",
+    "solid-js": ">=1.9.0"
   }
 }
