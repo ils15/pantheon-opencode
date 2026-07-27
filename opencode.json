@@ -3,7 +3,7 @@
   "default_agent": "zeus",
   "subagent_depth": 2,
   "model": "opencode-go/deepseek-v4-flash",
-  "small_model": "opencode-go/deepseek-v4-flash-free",
+  "small_model": "opencode-go/deepseek-v4-flash",
   "permission": {
     "skill": {
       "*": "allow"
@@ -59,22 +59,22 @@
       "model": "opencode-go/deepseek-v4-flash"
     },
     "apollo": {
-      "model": "opencode-go/deepseek-v4-flash-free"
+      "model": "opencode-go/deepseek-v4-flash"
     },
     "nyx": {
-      "model": "opencode-go/deepseek-v4-flash-free"
+      "model": "opencode-go/deepseek-v4-flash"
     },
     "gaia": {
-      "model": "opencode-go/deepseek-v4-flash-free"
+      "model": "opencode-go/deepseek-v4-flash"
     },
     "iris": {
-      "model": "opencode-go/deepseek-v4-flash-free"
+      "model": "opencode-go/deepseek-v4-flash"
     },
     "mnemosyne": {
-      "model": "opencode-go/deepseek-v4-flash-free"
+      "model": "opencode-go/deepseek-v4-flash"
     },
     "talos": {
-      "model": "opencode-go/deepseek-v4-flash-free"
+      "model": "opencode-go/deepseek-v4-flash"
     }
   }
 }
