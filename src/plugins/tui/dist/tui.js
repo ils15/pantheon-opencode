@@ -1,5 +1,5 @@
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
-import { For, Show, createMemo, createResource, createSignal } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 //#region src/index.tsx
 /** @jsxImportSource @opentui/solid */
 const BAR_WIDTH = 20;
@@ -172,6 +172,18 @@ async function detectVersion(api) {
 			if (tag && tag !== "5.0.0") return tag;
 		}
 	} catch {}
+	try {
+		const proc = api.client?.process;
+		if (typeof proc?.exec === "function") {
+			const r = await proc.exec({
+				command: "opencode",
+				args: ["--version"],
+				timeoutMs: 3e3
+			});
+			const ver = (r.stdout ?? r.output ?? "").trim().replace(/^v/, "");
+			if (ver) return ver;
+		}
+	} catch {}
 	return null;
 }
 function ContextBar(props) {
@@ -244,29 +256,28 @@ function ContextBar(props) {
 		}
 	});
 }
-async function fetchRecentSessions(api, sessionID) {
-	try {
-		const proc = api.client?.process;
-		if (typeof proc?.exec !== "function") return null;
-		const result = await proc.exec({
-			command: "opencode",
-			args: [
-				"session",
-				"list",
-				"--format",
-				"json",
-				"--max-count",
-				"20"
-			],
-			timeoutMs: 5e3
-		});
-		const stdout = result.stdout ?? result.output ?? "";
-		const sessions = JSON.parse(stdout);
-		if (!Array.isArray(sessions)) return null;
-		return sessions.filter((s) => s.id !== sessionID).sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0)).slice(0, 8);
-	} catch {
+function SessionRow(props) {
+	const theme = () => props.api.theme.current;
+	const status = createMemo(() => {
+		try {
+			const s = props.api.state.session?.status?.(props.session.id);
+			if (s?.type) return s.type;
+		} catch {}
 		return null;
-	}
+	});
+	const statusIcon = createMemo(() => {
+		switch (status()) {
+			case "busy": return "● ";
+			case "retry": return "⚠ ";
+			default: return "";
+		}
+	});
+	return (() => {
+		var _el$8 = createElement("text");
+		insert(_el$8, () => `${statusIcon()}${props.session?.id?.slice(0, 8) ?? "????"}... ${props.session?.title?.slice(0, 26) ?? "(untitled)"}`);
+		effect((_$p) => setProp(_el$8, "fg", theme().textMuted, _$p));
+		return _el$8;
+	})();
 }
 function View(props) {
 	const [showCommands, setShowCommands] = createSignal(false);
@@ -275,16 +286,47 @@ function View(props) {
 	const [showSessions, setShowSessions] = createSignal(false);
 	const theme = () => props.api.theme.current;
 	const branch = createMemo(() => props.api.state.vcs?.branch ? `\u2387 ${props.api.state.vcs.branch}` : null);
-	const totalSessions = createMemo(() => {
+	const [sessionList, { refetch: refetchSessions }] = createResource(async () => {
 		try {
-			return props.api.state.session.count();
+			return await props.api.client?.session?.list?.({ limit: 100 }) ?? { data: [] };
 		} catch {
-			return 0;
+			return { data: [] };
 		}
 	});
-	const memoryCount = createMemo(() => {
-		const mem = props.api.state.memory;
-		return safeNum(mem?.entries) || safeNum(mem?.count);
+	const totalSessions = createMemo(() => {
+		const result = sessionList();
+		if (!result) return 0;
+		const data = result.data ?? result;
+		if (!Array.isArray(data)) return 0;
+		return data.filter((s) => !s.parentID).length;
+	});
+	const recentSessions = createMemo(() => {
+		const result = sessionList();
+		if (!result) return [];
+		const data = result.data ?? result;
+		if (!Array.isArray(data)) return [];
+		return data.filter((s) => !s.parentID && s.id !== props.sessionID).sort((a, b) => {
+			const ta = a.time?.updated ?? a.updated ?? 0;
+			return (b.time?.updated ?? b.updated ?? 0) - ta;
+		}).slice(0, 8);
+	});
+	const [memoryCount, setMemoryCount] = createSignal(null);
+	onMount(() => {
+		const cleanup = [];
+		try {
+			cleanup.push(props.api.event.on("session.status", refetchSessions));
+			cleanup.push(props.api.event.on("session.created", refetchSessions));
+			cleanup.push(props.api.event.on("session.updated", refetchSessions));
+			cleanup.push(props.api.event.on("session.deleted", refetchSessions));
+		} catch {}
+		try {
+			const ev = props.api.event;
+			if (typeof ev?.on === "function") {
+				cleanup.push(ev.on("memory.created", () => setMemoryCount((c) => c !== null ? c + 1 : 1)));
+				cleanup.push(ev.on("memory.deleted", () => setMemoryCount((c) => c !== null ? Math.max(0, c - 1) : 0)));
+			}
+		} catch {}
+		onCleanup(() => cleanup.forEach((fn) => fn()));
 	});
 	const configSummary = createMemo(() => {
 		const cfg = props.api.state.config;
@@ -295,104 +337,105 @@ function View(props) {
 			autoCompaction: cfg.compaction?.auto === true
 		};
 	});
-	const [sessions] = createResource(() => showSessions(), () => fetchRecentSessions(props.api, props.sessionID));
 	const HR = () => (() => {
-		var _el$8 = createElement("text");
-		insertNode(_el$8, createTextNode(`────────────────────────────`));
-		effect((_$p) => setProp(_el$8, "fg", theme().textMuted, _$p));
-		return _el$8;
+		var _el$9 = createElement("text");
+		insertNode(_el$9, createTextNode(`────────────────────────────`));
+		effect((_$p) => setProp(_el$9, "fg", theme().textMuted, _$p));
+		return _el$9;
 	})();
 	return (() => {
-		var _el$0 = createElement("box"), _el$1 = createElement("text"), _el$10 = createElement("box"), _el$11 = createElement("text"), _el$12 = createElement("text"), _el$13 = createElement("box"), _el$14 = createElement("text"), _el$15 = createElement("text"), _el$17 = createElement("box"), _el$18 = createElement("text"), _el$19 = createElement("text"), _el$21 = createElement("box"), _el$22 = createElement("text"), _el$23 = createElement("box"), _el$24 = createElement("text");
-		insertNode(_el$0, _el$1);
-		insertNode(_el$0, _el$10);
-		insertNode(_el$0, _el$13);
-		insertNode(_el$0, _el$17);
-		insertNode(_el$0, _el$21);
-		insertNode(_el$0, _el$23);
-		setProp(_el$0, "flexDirection", "column");
-		setProp(_el$0, "width", "100%");
-		setProp(_el$1, "attributes", { bold: true });
-		insert(_el$1, () => `Pantheon${props.version ? ` v${props.version}` : ""}`);
-		insert(_el$0, createComponent(Show, {
+		var _el$1 = createElement("box"), _el$10 = createElement("text"), _el$11 = createElement("box"), _el$12 = createElement("text"), _el$13 = createElement("text"), _el$15 = createElement("box"), _el$16 = createElement("text"), _el$17 = createElement("text"), _el$19 = createElement("box"), _el$20 = createElement("text"), _el$21 = createElement("text"), _el$23 = createElement("box"), _el$24 = createElement("text"), _el$25 = createElement("box"), _el$26 = createElement("text");
+		insertNode(_el$1, _el$10);
+		insertNode(_el$1, _el$11);
+		insertNode(_el$1, _el$15);
+		insertNode(_el$1, _el$19);
+		insertNode(_el$1, _el$23);
+		insertNode(_el$1, _el$25);
+		setProp(_el$1, "flexDirection", "column");
+		setProp(_el$1, "width", "100%");
+		setProp(_el$10, "attributes", { bold: true });
+		insert(_el$10, () => `Pantheon${props.version ? ` v${props.version}` : ""}`);
+		insert(_el$1, createComponent(Show, {
 			get when() {
 				return branch();
 			},
 			children: (b) => (() => {
-				var _el$25 = createElement("text");
-				insert(_el$25, b);
-				effect((_$p) => setProp(_el$25, "fg", theme().textMuted, _$p));
-				return _el$25;
+				var _el$27 = createElement("text");
+				insert(_el$27, b);
+				effect((_$p) => setProp(_el$27, "fg", theme().textMuted, _$p));
+				return _el$27;
 			})()
-		}), _el$10);
-		insert(_el$0, createComponent(HR, {}), _el$10);
-		insert(_el$0, createComponent(ContextBar, {
+		}), _el$11);
+		insert(_el$1, createComponent(HR, {}), _el$11);
+		insert(_el$1, createComponent(ContextBar, {
 			get api() {
 				return props.api;
 			},
 			get sessionID() {
 				return props.sessionID;
 			}
-		}), _el$10);
-		insert(_el$0, createComponent(HR, {}), _el$10);
-		insertNode(_el$10, _el$11);
-		insertNode(_el$10, _el$12);
-		setProp(_el$10, "onMouseDown", () => setShowSessions((x) => !x));
-		setProp(_el$11, "attributes", { bold: true });
-		insert(_el$11, () => `${showSessions() ? "▼" : "▶"} Sessions`);
-		insert(_el$12, () => ` (${String(totalSessions())})`);
-		insert(_el$0, createComponent(Show, {
+		}), _el$11);
+		insert(_el$1, createComponent(HR, {}), _el$11);
+		insertNode(_el$11, _el$12);
+		insertNode(_el$11, _el$13);
+		setProp(_el$11, "onMouseDown", () => setShowSessions((x) => !x));
+		setProp(_el$12, "attributes", { bold: true });
+		insert(_el$12, () => `${showSessions() ? "▼" : "▶"} Sessions`);
+		insert(_el$13, () => ` (${String(totalSessions())})`);
+		insert(_el$1, createComponent(Show, {
 			get when() {
-				return memo(() => !!showSessions())() && sessions();
+				return showSessions();
 			},
-			children: (s) => createComponent(Show, {
-				get when() {
-					return s().length > 0;
-				},
-				get fallback() {
-					return (() => {
-						var _el$27 = createElement("box"), _el$28 = createElement("text");
-						insertNode(_el$27, _el$28);
-						setProp(_el$27, "marginLeft", 1);
-						insertNode(_el$28, createTextNode(`No recent sessions`));
-						effect((_$p) => setProp(_el$28, "fg", theme().textMuted, _$p));
-						return _el$27;
-					})();
-				},
-				get children() {
-					var _el$26 = createElement("box");
-					setProp(_el$26, "marginLeft", 1);
-					setProp(_el$26, "flexDirection", "column");
-					insert(_el$26, createComponent(For, {
-						get each() {
-							return s();
-						},
-						children: (ses) => (() => {
-							var _el$30 = createElement("text");
-							insert(_el$30, () => `${ses.id.slice(0, 8)}... ${ses.title?.slice(0, 28) ?? "(untitled)"}`);
-							effect((_$p) => setProp(_el$30, "fg", theme().textMuted, _$p));
-							return _el$30;
-						})()
-					}));
-					return _el$26;
-				}
-			})
-		}), _el$13);
-		insertNode(_el$13, _el$14);
-		insertNode(_el$13, _el$15);
-		setProp(_el$13, "onMouseDown", () => setShowCommands((x) => !x));
-		setProp(_el$14, "attributes", { bold: true });
-		insert(_el$14, () => `${showCommands() ? "▼" : "▶"} Commands`);
-		insert(_el$15, () => ` (${String(COMMANDS.length)})`);
-		insert(_el$0, createComponent(Show, {
+			get children() {
+				return createComponent(Show, {
+					get when() {
+						return recentSessions().length > 0;
+					},
+					get fallback() {
+						return (() => {
+							var _el$28 = createElement("box"), _el$29 = createElement("text");
+							insertNode(_el$28, _el$29);
+							setProp(_el$28, "marginLeft", 1);
+							insertNode(_el$29, createTextNode(`No recent sessions`));
+							effect((_$p) => setProp(_el$29, "fg", theme().textMuted, _$p));
+							return _el$28;
+						})();
+					},
+					get children() {
+						var _el$14 = createElement("box");
+						setProp(_el$14, "marginLeft", 1);
+						setProp(_el$14, "flexDirection", "column");
+						insert(_el$14, createComponent(For, {
+							get each() {
+								return recentSessions();
+							},
+							children: (ses) => createComponent(SessionRow, {
+								get api() {
+									return props.api;
+								},
+								session: ses
+							})
+						}));
+						return _el$14;
+					}
+				});
+			}
+		}), _el$15);
+		insertNode(_el$15, _el$16);
+		insertNode(_el$15, _el$17);
+		setProp(_el$15, "onMouseDown", () => setShowCommands((x) => !x));
+		setProp(_el$16, "attributes", { bold: true });
+		insert(_el$16, () => `${showCommands() ? "▼" : "▶"} Commands`);
+		insert(_el$17, () => ` (${String(COMMANDS.length)})`);
+		insert(_el$1, createComponent(Show, {
 			get when() {
 				return showCommands();
 			},
 			get children() {
-				var _el$16 = createElement("box");
-				setProp(_el$16, "marginLeft", 1);
-				setProp(_el$16, "flexDirection", "column");
-				insert(_el$16, createComponent(For, {
+				var _el$18 = createElement("box");
+				setProp(_el$18, "marginLeft", 1);
+				setProp(_el$18, "flexDirection", "column");
+				insert(_el$18, createComponent(For, {
 					each: COMMANDS,
 					children: (cmd) => (() => {
 						var _el$31 = createElement("box"), _el$32 = createElement("text"), _el$33 = createElement("text");
@@ -424,24 +467,24 @@ function View(props) {
 						return _el$31;
 					})()
 				}));
-				return _el$16;
+				return _el$18;
 			}
-		}), _el$17);
-		insertNode(_el$17, _el$18);
-		insertNode(_el$17, _el$19);
-		setProp(_el$17, "onMouseDown", () => setShowAgents((x) => !x));
-		setProp(_el$18, "attributes", { bold: true });
-		insert(_el$18, () => `${showAgents() ? "▼" : "▶"} Agents`);
-		insert(_el$19, () => ` (${String(AGENTS.length)})`);
-		insert(_el$0, createComponent(Show, {
+		}), _el$19);
+		insertNode(_el$19, _el$20);
+		insertNode(_el$19, _el$21);
+		setProp(_el$19, "onMouseDown", () => setShowAgents((x) => !x));
+		setProp(_el$20, "attributes", { bold: true });
+		insert(_el$20, () => `${showAgents() ? "▼" : "▶"} Agents`);
+		insert(_el$21, () => ` (${String(AGENTS.length)})`);
+		insert(_el$1, createComponent(Show, {
 			get when() {
 				return showAgents();
 			},
 			get children() {
-				var _el$20 = createElement("box");
-				setProp(_el$20, "marginLeft", 1);
-				setProp(_el$20, "flexDirection", "column");
-				insert(_el$20, createComponent(For, {
+				var _el$22 = createElement("box");
+				setProp(_el$22, "marginLeft", 1);
+				setProp(_el$22, "flexDirection", "column");
+				insert(_el$22, createComponent(For, {
 					each: AGENTS,
 					children: (agent) => (() => {
 						var _el$34 = createElement("box"), _el$35 = createElement("text"), _el$36 = createElement("text");
@@ -461,14 +504,14 @@ function View(props) {
 						return _el$34;
 					})()
 				}));
-				return _el$20;
+				return _el$22;
 			}
-		}), _el$21);
-		insertNode(_el$21, _el$22);
-		setProp(_el$21, "onMouseDown", () => setShowConfig((x) => !x));
-		setProp(_el$22, "attributes", { bold: true });
-		insert(_el$22, () => `${showConfig() ? "▼" : "▶"} Config`);
-		insert(_el$0, createComponent(Show, {
+		}), _el$23);
+		insertNode(_el$23, _el$24);
+		setProp(_el$23, "onMouseDown", () => setShowConfig((x) => !x));
+		setProp(_el$24, "attributes", { bold: true });
+		insert(_el$24, () => `${showConfig() ? "▼" : "▶"} Config`);
+		insert(_el$1, createComponent(Show, {
 			get when() {
 				return showConfig();
 			},
@@ -508,21 +551,24 @@ function View(props) {
 					})()
 				});
 			}
-		}), _el$23);
-		insertNode(_el$23, _el$24);
-		setProp(_el$23, "marginTop", 1);
-		insert(_el$24, () => `Memory: ${memoryCount() > 0 ? `${fmtInt(memoryCount())} entries` : "0 entries"}`);
+		}), _el$25);
+		insertNode(_el$25, _el$26);
+		setProp(_el$25, "marginTop", 1);
+		insert(_el$26, (() => {
+			var _c$ = memo(() => memoryCount() !== null);
+			return () => _c$() ? `Memory: ${fmtInt(memoryCount())} entries` : "Memory: N/A";
+		})());
 		effect((_p$) => {
 			var _v$3 = theme().accent, _v$4 = theme().text, _v$5 = theme().textMuted, _v$6 = theme().text, _v$7 = theme().textMuted, _v$8 = theme().text, _v$9 = theme().textMuted, _v$0 = theme().text, _v$1 = theme().textMuted;
-			_v$3 !== _p$.e && (_p$.e = setProp(_el$1, "fg", _v$3, _p$.e));
-			_v$4 !== _p$.t && (_p$.t = setProp(_el$11, "fg", _v$4, _p$.t));
-			_v$5 !== _p$.a && (_p$.a = setProp(_el$12, "fg", _v$5, _p$.a));
-			_v$6 !== _p$.o && (_p$.o = setProp(_el$14, "fg", _v$6, _p$.o));
-			_v$7 !== _p$.i && (_p$.i = setProp(_el$15, "fg", _v$7, _p$.i));
-			_v$8 !== _p$.n && (_p$.n = setProp(_el$18, "fg", _v$8, _p$.n));
-			_v$9 !== _p$.s && (_p$.s = setProp(_el$19, "fg", _v$9, _p$.s));
-			_v$0 !== _p$.h && (_p$.h = setProp(_el$22, "fg", _v$0, _p$.h));
-			_v$1 !== _p$.r && (_p$.r = setProp(_el$24, "fg", _v$1, _p$.r));
+			_v$3 !== _p$.e && (_p$.e = setProp(_el$10, "fg", _v$3, _p$.e));
+			_v$4 !== _p$.t && (_p$.t = setProp(_el$12, "fg", _v$4, _p$.t));
+			_v$5 !== _p$.a && (_p$.a = setProp(_el$13, "fg", _v$5, _p$.a));
+			_v$6 !== _p$.o && (_p$.o = setProp(_el$16, "fg", _v$6, _p$.o));
+			_v$7 !== _p$.i && (_p$.i = setProp(_el$17, "fg", _v$7, _p$.i));
+			_v$8 !== _p$.n && (_p$.n = setProp(_el$20, "fg", _v$8, _p$.n));
+			_v$9 !== _p$.s && (_p$.s = setProp(_el$21, "fg", _v$9, _p$.s));
+			_v$0 !== _p$.h && (_p$.h = setProp(_el$24, "fg", _v$0, _p$.h));
+			_v$1 !== _p$.r && (_p$.r = setProp(_el$26, "fg", _v$1, _p$.r));
 			return _p$;
 		}, {
 			e: void 0,
@@ -535,7 +581,7 @@ function View(props) {
 			h: void 0,
 			r: void 0
 		});
-		return _el$0;
+		return _el$1;
 	})();
 }
 const tui = async (api, _options, _meta) => {
