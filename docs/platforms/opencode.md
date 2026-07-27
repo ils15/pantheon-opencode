@@ -294,21 +294,48 @@ Built into every agent's workflow, the **YAGNI Ladder** prevents overengineering
 
 ### Model Configuration
 
-OpenCode uses `provider/model` format for model IDs (e.g., `opencode/kimi-k2.6`). The repo ships with a root [`opencode.json`](../../opencode.json) pre-configured with per-agent models for the **OpenCode Go** plan:
+OpenCode uses `provider/model` format for model IDs (e.g., `deepseek/deepseek-v4-pro`). The repo ships with **profile-based model configuration** — multiple `opencode.*.json` files for different use cases:
+
+| Profile | File | Use Case |
+|---------|------|----------|
+| **Go** (default) | `opencode.json` | Premium agents (Zeus, Athena, Themis, Hephaestus) use `deepseek-v4-pro`; standard agents use `deepseek-v4-flash` |
+| **Zen** | `opencode.zen.json` | All agents use the cheaper `deepseek-v4-flash` — for cost-sensitive sessions |
+| **Multimodal** | `opencode.multimodal.json` | Vision-capable agents (Zeus, Athena, Hermes, Themis, Hephaestus, Aphrodite) use `claude-sonnet-4`; others use `deepseek-v4-flash` |
+| **DeepSeek-only** | `opencode.deepseek-only.json` | All agents use DeepSeek models only (pro for premium, flash for standard) |
+
+Switch profiles by copying the desired file over `opencode.json`:
+
+```bash
+# Switch to Zen profile (all cheap models)
+cp opencode.zen.json opencode.json
+```
+
+The default **Go** profile in [`opencode.json`](../../opencode.json):
 
 ```json
 {
-  "model": "opencode/kimi-k2.6",
-  "small_model": "opencode/deepseek-v4-flash",
+  "model": "deepseek/deepseek-v4-flash",
+  "small_model": "deepseek/deepseek-v4-flash",
   "agent": {
-    "zeus":    { "model": "opencode/kimi-k2.6" },
-    "athena":  { "model": "opencode/kimi-k2.6" },
-    "apollo":  { "model": "opencode/deepseek-v4-flash" },
-    "hermes":  { "model": "opencode/kimi-k2.5" },
-    "themis":   { "model": "opencode/kimi-k2.6" }
+    "zeus":    { "model": "deepseek/deepseek-v4-pro" },
+    "athena":  { "model": "deepseek/deepseek-v4-pro" },
+    "apollo":  { "model": "deepseek/deepseek-v4-flash" },
+    "hermes":  { "model": "deepseek/deepseek-v4-flash" },
+    "aphrodite": { "model": "deepseek/deepseek-v4-flash" },
+    "demeter": { "model": "deepseek/deepseek-v4-flash" },
+    "themis":  { "model": "deepseek/deepseek-v4-pro" },
+    "prometheus": { "model": "deepseek/deepseek-v4-flash" },
+    "hephaestus": { "model": "deepseek/deepseek-v4-pro" },
+    "nyx":     { "model": "deepseek/deepseek-v4-flash" },
+    "gaia":    { "model": "deepseek/deepseek-v4-flash" },
+    "iris":    { "model": "deepseek/deepseek-v4-flash" },
+    "mnemosyne": { "model": "deepseek/deepseek-v4-flash" },
+    "talos":   { "model": "deepseek/deepseek-v4-flash" }
   }
 }
 ```
+
+> **Note:** The `model_tier` field and `fallback_chains` section have been removed from `routing.yml` — model selection is now fully managed in `opencode.json` profiles. The `routing.yml` still controls agent roles, capabilities, and delegation rules.
 
 #### Model Value Types
 

@@ -50,6 +50,16 @@ skills:
 
 **Auto-continue** só com pedido explícito do usuário.
 
+## ⚠️ Bash Scoping
+
+**`bash: allow` é para leitura e diagnóstico APENAS.**
+NUNCA use bash para:
+- Editar arquivos (use sed/echo/redirect → delegue para @hermes)
+- Instalar dependências (delegue para @prometheus)
+- Executar comandos que modificam o sistema
+
+Comandos permitidos: `ls`, `git status`, `git log`, `ps`, `python3 -c`, `cat` (leitura), `npm test` (para verificar).
+
 ---
 
 ## Delegation Cache (Otimizacao de Tokens)
