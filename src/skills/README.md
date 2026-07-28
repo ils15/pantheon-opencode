@@ -4,177 +4,110 @@
 
 Skills are reference modules loaded on demand by agents. Each skill provides domain-specific knowledge — architecture patterns, security checklists, optimization strategies, and implementation guides. Agents load skills when their task matches the skill's description, keeping context focused and token-efficient.
 
-There are **37 skills** divided into **9 domains**.
+There are **21 skills** divided into **5 domains**.
 
 ## Skills by Domain
 
 ### Domain 1: Orchestration & Workflow
 
-1. **agent-coordination** — `skills/agent-coordination/SKILL.md`
-   - Master guide to the multi-agent system with category routing, model selection, and sprint management for rapid, TDD-driven feature development.
-   - Used by: Zeus, Athena
+1. **agent-coordination** — `agent-coordination/SKILL.md`
+   - Multi-agent orchestration with model routing, category delegation, and sprint management.
+   - Used by: Zeus
 
-2. **artifact-management** — `skills/artifact-management/SKILL.md`
-   - Complete guide to the artifact trail system — plans directory structure, templates, and best practices for documenting feature implementations.
+2. **artifact-management** — `artifact-management/SKILL.md`
+   - Structured artifact trail for feature implementations — plans, implementations, reviews, and decisions.
+   - Used by: Zeus, Mnemosyne, Iris
+
+3. **auto-continue** — `auto-continue/SKILL.md`
+   - Auto-continue through todos with idle detection and safety gates for multi-step orchestration.
+   - Used by: Zeus, Apollo, Hephaestus, Nyx, Gaia
+
+4. **context-compression** — `context-compression/SKILL.md`
+   - Level 2 — Pantheon-native context compression with priority scoring, semantic summarization, budget allocation, and cross-references.
+   - Used by: Zeus, Mnemosyne, Themis
+
+5. **memory-bank** — `memory-bank/SKILL.md`
+   - Memory bank rules, structure, and optimization — complete guide to Pantheon memory management.
+   - Used by: Mnemosyne, Athena
+
+6. **orchestration-workflow** — `orchestration-workflow/SKILL.md`
+   - Practical step-by-step walkthrough for orchestrating features end-to-end using the multi-agent system, from planning through deployment.
+   - Used by: Zeus
+
+7. **session-goal** — `session-goal/SKILL.md`
+   - Pin session objectives to prevent scope creep across long multi-agent sessions.
    - Used by: Zeus, Mnemosyne
 
-3. **memory-bank** — `skills/memory-bank/SKILL.md`
-   - Complete guide to Pantheon memory bank — structure, rules, optimization, session→active-context graduation, and compression strategies.
-   - Used by: Mnemosyne, All agents
+### Domain 2: Development Tools
 
-   - Audit a repository for token waste — find redundant context files, measure baseline, and recommend optimizations.
-   - Used by: Mnemosyne, Zeus
+8. **clonedeps** — `clonedeps/SKILL.md`
+   - Clones dependency source locally so agents can inspect library internals, understand behavior, and debug integration issues.
+   - Used by: Hermes, Hephaestus
 
-   - Load prompts from external files with path expansion so prompt content stays version-controlled and reusable.
-   - Used by: All agents
+9. **git-workflow-and-versioning** — `git-workflow-and-versioning/SKILL.md`
+   - Atomic commits, conventional commits, trunk-based development workflow.
+   - Used by: Hermes, Prometheus, Iris
 
-### Domain 2: AI & Machine Learning
+10. **incremental-implementation** — `incremental-implementation/SKILL.md`
+    - Implement in thin vertical slices — one commit per task, testable, rollback-safe.
+    - Used by: Zeus, Hermes, Aphrodite, Demeter, Prometheus, Talos
 
-4. **rag-pipelines** — `skills/rag-pipelines/SKILL.md`
-   - RAG architecture, chunking strategies, embedding models, vector store selection, retrieval optimization, context window management, hallucination mitigation, and evaluation frameworks (faithfulness, answer relevance).
-   - Used by: Hephaestus
+11. **loop-engineering** — `loop-engineering/SKILL.md`
+    - Iterative refinement pattern for complex problems — solve, review, improve, repeat in controlled cycles.
+    - Used by: All agents
 
-5. **streaming-patterns** — `skills/streaming-patterns/SKILL.md`
-   - Server-Sent Events (SSE), WebSocket connections, LLM token streaming, chunked transfer encoding, backpressure handling, reconnection strategies, and real-time update patterns for observability pipelines.
-   - Used by: Nyx
+12. **reflect** — `reflect/SKILL.md`
+    - Turns repeated workflow friction into reusable skills, agents, or configuration improvements.
+    - Used by: All agents
 
-6. **agent-evaluation** — `skills/agent-evaluation/SKILL.md`
-   - Hallucination detection (factual consistency, faithfulness), output quality scoring (relevance, coherence, helpfulness), behavioral testing (edge cases, adversarial inputs), automated red-teaming, regression benchmarking, and human-in-the-loop evaluation workflows.
-   - Used by: Hephaestus, Themis
+13. **simplify** — `simplify/SKILL.md`
+    - Behavior-preserving code simplification for readability, maintainability, and reduced complexity.
+    - Used by: All agents
 
-   - Prompt injection attack taxonomy (direct, indirect, jailbreaking, leakage), detection strategies (classifier-based, LLM-as-judge, pattern matching), input sanitization, output guardrails, content filters, rate limiting on LLM calls, and red-teaming methodologies.
-   - Used by: Themis, Hephaestus
+14. **worktrees** — `worktrees/SKILL.md`
+    - Git worktrees as safe, isolated coding lanes for risky or parallel work without affecting the main workspace.
+    - Used by: All agents
 
-    - NLU pipeline design (intent classification, entity extraction, slot filling), dialogue state management, Rasa framework integration, multi-turn conversation patterns, context windowing, fallback handling, and conversation testing strategies.
-    - Used by: Hephaestus
+### Domain 3: Quality & Security
 
-### Domain 3: Backend Development
-
-12. **fastapi-async-patterns** — `skills/fastapi-async-patterns/SKILL.md`
-    - Async FastAPI endpoint design, dependency injection, service/repository pattern, Pydantic validation, error handling middleware, rate limiting, background tasks, file uploads, WebSocket support, and Gemini integration.
-    - Used by: Hermes
-
-13. **api-design-patterns** — `skills/api-design-patterns/SKILL.md`
-    - RESTful API design principles, HTTP method semantics, status code selection, pagination strategies (cursor, offset), filtering and sorting, error response formats, OpenAPI/Swagger documentation, versioning, and HATEOAS considerations.
-    - Used by: Hermes
-
-### Domain 4: Frontend Development
-
-14. **frontend-analyzer** — `skills/frontend-analyzer/SKILL.md`
-    - React/Next.js component architecture analysis, typography system extraction, color palette identification, layout pattern recognition ( flexbox, grid, spacing), responsive breakpoint mapping, font stack detection, and design token inventory.
-    - Used by: Aphrodite
-
-15. **nextjs-seo-optimization** — `skills/nextjs-seo-optimization/SKILL.md`
-    - Next.js App Router metadata API, JSON-LD structured data (schema.org), auto-generated XML sitemaps, Open Graph and Twitter Card tags, canonical URL strategy, dynamic OG image generation, Core Web Vitals optimization for SEO, and i18n SEO patterns.
-    - Used by: Aphrodite
-
-### Domain 5: Database & Storage
-
-16. **database-migration** — `skills/database-migration/SKILL.md`
-    - Alembic migration workflows, zero-downtime migration strategies (expand-contract), backward-compatible schema changes, data migration with batch processing, rollback procedures, merge conflict resolution, and migration testing.
-    - Used by: Demeter
-
-17. **database-optimization** — `skills/database-optimization/SKILL.md`
-    - Index analysis and recommendation (B-tree, GiST, GIN, BRIN), N+1 query detection using SQLAlchemy event listeners, query execution plan analysis (EXPLAIN ANALYZE), connection pooling configuration, caching layers, materialized views, read replica offloading, async query batching, and profiling.
-    - Used by: Demeter, Prometheus
-
-### Domain 6: Quality & Security
-
-18. **code-review-checklist** — `skills/code-review-checklist/SKILL.md`
-    - Systematic code review process with quality gates (trailing whitespace, hard tabs, wild imports), SOLID principles validation, error handling patterns (explicit vs silent), test coverage analysis, type safety verification, and structured feedback with severity levels.
+15. **code-review-checklist** — `code-review-checklist/SKILL.md`
+    - Systematic code review with quality gates, security audit, and parallel checks for structured feedback.
     - Used by: Themis
 
-19. **security-audit-pro** — `skills/security-audit-pro/SKILL.md`
-    - Professional security audit — SAST, SCA, container security, SBOM, PII detection, and compliance (GDPR, LGPD, HIPAA).
-    - Used by: Themis, Hermes, Demeter
+16. **security-hardening** — `security-hardening/SKILL.md`
+    - Security gate — OWASP, SAST, secrets detection, MCP hardening, dependency audit.
+    - Used by: Themis, Nyx
 
-20. **tdd-with-agents** — `skills/tdd-with-agents/SKILL.md`
-    - TDD lifecycle enforcement (RED → GREEN → REFACTOR), test-first development across all layers, advanced testing patterns (E2E, load, mutation, contract, visual regression), coverage thresholds (>80%).
-    - Used by: Hermes, Aphrodite, Demeter, Themis
+17. **tdd-with-agents** — `tdd-with-agents/SKILL.md`
+    - TDD enforcement with RED→GREEN→REFACTOR cycle and advanced testing patterns across all layers.
+    - Used by: Hermes, Aphrodite, Demeter, Themis, Hephaestus
 
-21. **docker-best-practices** — `skills/docker-best-practices/SKILL.md`
-    - Multi-stage Docker builds, layer caching optimization, .dockerignore patterns, non-root user execution, health check configuration, GPU container setup (CUDA), memory and CPU limits, secrets management (Docker secrets, not env vars), and docker-compose patterns for dev/prod parity.
-    - Used by: Prometheus
+### Domain 4: Planning
 
-22. **mcp-server-development** — `skills/mcp-server-development/SKILL.md`
-    - Model Context Protocol (MCP) architecture, server creation with FastMCP/ Python SDK, tool definition and registration, resource exposure, prompt templates, transport layer configuration (stdio, SSE), authentication, error handling, and testing MCP servers.
-    - Used by: Hephaestus, Prometheus, Nyx
-
-23. **agent-observability** — `skills/agent-observability/SKILL.md`
-    - OpenTelemetry instrumentation (traces, metrics, logs), LangSmith integration for LLM call tracing, Prometheus metric exposition, Grafana dashboard design, cost tracking per agent/feature, token usage attribution, structured JSON logging with correlation IDs, and alerting rules.
-    - Used by: Nyx, Prometheus
-
-24. **cache-strategy** — `skills/cache-strategy/SKILL.md`
-    - Cache architecture patterns — Redis (read-through, write-through, write-behind), CDN, TTL strategies, invalidation patterns, session stores.
-    - Used by: Demeter, Hermes
-
-### Domain 8: Domain Specialists
-
-25. **remote-sensing-analysis** — `skills/remote-sensing-analysis/SKILL.md`
-    - Complete remote sensing pipeline: spectral indices (NDVI, EVI, NBR, NDWI, MNDWI), SAR processing, change detection algorithms, time series analysis, land use/land cover (LULC) product inter-comparison (MapBiomas, CGLS, ESRI, GLAD, ESA WorldCover), accuracy metrics (Kappa, OA, F1, Dice), and ML/DL model training for RS imagery.
-    - Used by: Gaia
-
-26. **internet-search** — `skills/internet-search/SKILL.md`
-    - Web research methodology with source trust hierarchy (official docs > academic > community), structured API patterns for general web (DuckDuckGo, Wikipedia, Jina Reader), tech community (Stack Overflow, Hacker News, Reddit, Dev.to), official vendor docs, academic databases (Semantic Scholar, CrossRef, arXiv), GitHub search, package registries, and remote sensing data sources. All sources free, no API key required.
-    - Used by: Athena, Apollo, Gaia, Zeus
-
-27. **prompt-improver** — `skills/prompt-improver/SKILL.md`
-    - Prompt analysis and optimization: clarity and specificity evaluation, context window management, output format specification, NLU optimization for intent/entity extraction, chain-of-thought prompting, token efficiency, few-shot example selection, and systematic prompt testing.
-    - Used by: All agents
-
-28. **interview** — `skills/interview/SKILL.md`
-    - Turn a rough idea into a structured spec through a short Q&A interview. Ask 3–5 targeted questions one at a time, then produce a complete markdown spec with goals, requirements, constraints, and open questions.
-    - Used by: Athena, Zeus
-    - Domain: Planning
-
-29. **session-goal** — `skills/session-goal/SKILL.md`
-    - Pin a session objective so all todos, delegation decisions, and verification steps stay aligned with a single stated goal. Prevents scope creep and drift across long multi-agent sessions.
-    - Used by: Zeus, Athena
-    - Domain: Orchestration
-
-30. **auto-continue** — `skills/auto-continue/SKILL.md`
-    - Safe auto-continue pattern for multi-step orchestration — how to automatically work through todo lists without unnecessary interruptions while always stopping at mandatory safety gates (plan approval, phase review, git commit).
-    - Used by: Zeus, Hermes, Aphrodite, Demeter
-    - Domain: Orchestration
-
-31. **metis-gap-analysis** — `skills/metis-gap-analysis/SKILL.md`
-    - Pre-plan gap analysis — catch hidden intentions, ambiguities, missing acceptance criteria, AI slop patterns, and edge cases before the plan is delivered to the user.
-    - Used by: Athena, Zeus
-    - Domain: Planning
-
-32. **codemap** — `skills/codemap/SKILL.md`
-    - Hierarchical codebase map generation — directory trees, entry points, module relationships and dependency analysis.
+18. **codemap** — `codemap/SKILL.md`
+    - Generates hierarchical repository maps so agents understand codebase structure without re-reading every file.
     - Used by: Apollo, Zeus
 
-33. **init-deep** — `skills/init-deep/SKILL.md`
-    - Generate hierarchical AGENTS.md files throughout the project directory tree. Each directory gets context-specific instructions for agents working in that scope.
-    - Used by: Athena, Prometheus
-    - Domain: Planning
+19. **spec-driven-development** — `spec-driven-development/SKILL.md`
+    - Define requirements via spec-first before any code — PRD, edge cases, acceptance criteria.
+    - Used by: Athena
 
-34. **handoff** — `skills/handoff/SKILL.md`
-    - Generate structured session handoff for continuing work in a new session. Captures current state, what was done, what remains, decisions, and relevant files.
-    - Used by: All agents
-    - Domain: Orchestration
-
-35. **task-system** — `skills/task-system/SKILL.md`
-    - File-backed task management with dependencies (blockedBy/blocks), automatic parallel execution, and session persistence. For complex work with 3+ interdependent tasks.
-    - Used by: Zeus, Athena
-    - Domain: Orchestration
-
-    - Extract and pass learnings between implementation waves — conventions, successes, failures, gotchas, and commands. Temporary, scoped to feature, deleted after merge.
-    - Used by: All agents
-    - Domain: Utilities
-
-    - Plan feature architecture with component breakdown, data flow, and dependency mapping. Use before implementation to define contracts between layers.
+20. **verification-planning** — `verification-planning/SKILL.md`
+    - Plans an evidence path before non-trivial changes, ensuring changes are testable and verifiable.
     - Used by: Athena, Zeus
-    - Domain: Planning
+
+### Domain 5: Frontend Development
+
+21. **visual-review-pipeline** — `visual-review-pipeline/SKILL.md`
+    - Automated visual review pipeline — Playwright screenshots, self-analysis, fix loop, escalation.
+    - Used by: Aphrodite
 
 ## Skills File Structure
 
 Each skill follows a consistent layout:
 
 ```
-skills/[skill-name]/
+src/skills/[skill-name]/
 ├── SKILL.md          — main reference document (YAML frontmatter + content)
 ├── scripts/          — optional helper scripts (if any)
 └── examples/         — optional example files, templates, or configs (if any)
@@ -194,36 +127,27 @@ The `SKILL.md` file contains YAML frontmatter with `name`, `description`, and pl
 
 | # | Skill Name | Domain | Used By |
 |---|------------|--------|---------|
-| 1 | agent-coordination | Orchestration & Workflow | Zeus, Athena |
-| 2 | artifact-management | Orchestration & Workflow | Zeus, Mnemosyne |
-| 3 | memory-bank | Orchestration & Workflow | Mnemosyne, All agents |
-| 6 | auto-continue | Orchestration | Zeus, Hermes, Aphrodite, Demeter |
-| 7 | session-goal | Orchestration | Zeus, Athena |
-| 8 | task-system | Orchestration | Zeus, Athena |
-| 9 | rag-pipelines | AI & Machine Learning | Hephaestus |
-
-| 12 | agent-evaluation | AI & Machine Learning | Hephaestus, Themis |
-| 15 | fastapi-async-patterns | Backend Development | Hermes |
-| 16 | api-design-patterns | Backend Development | Hermes |
-| 17 | frontend-analyzer | Frontend Development | Aphrodite |
-| 18 | nextjs-seo-optimization | Frontend Development | Aphrodite |
-| 19 | database-migration | Database & Storage | Demeter |
-| 20 | database-optimization | Database & Storage | Demeter, Prometheus |
-| 21 | cache-strategy | Database & Storage | Demeter, Hermes |
-| 22 | code-review-checklist | Quality & Security | Themis |
-| 23 | security-audit-pro | Quality & Security | Themis, Hermes, Demeter |
-| 24 | tdd-with-agents | Quality & Security | Hermes, Aphrodite, Demeter, Themis |
-| 25 | docker-best-practices | Infrastructure & DevOps | Prometheus |
-| 26 | mcp-server-development | Infrastructure & DevOps | Hephaestus, Prometheus, Nyx |
-| 27 | agent-observability | Infrastructure & DevOps | Nyx, Prometheus |
-| 28 | remote-sensing-analysis | Domain Specialists | Gaia |
-| 29 | internet-search | Domain Specialists | Athena, Apollo, Gaia, Zeus |
-| 30 | prompt-improver | Domain Specialists | All agents |
-| 31 | interview | Planning | Athena, Zeus |
-| 32 | metis-gap-analysis | Planning | Athena, Zeus |
-| 33 | codemap | Planning | Apollo, Zeus |
-| 34 | init-deep | Planning | Athena, Prometheus |
-| 35 | handoff | Utilities | All agents |
+| 1 | agent-coordination | Orchestration & Workflow | Zeus |
+| 2 | artifact-management | Orchestration & Workflow | Zeus, Mnemosyne, Iris |
+| 3 | auto-continue | Orchestration & Workflow | Zeus, Apollo, Hephaestus, Nyx, Gaia |
+| 4 | context-compression | Orchestration & Workflow | Zeus, Mnemosyne, Themis |
+| 5 | memory-bank | Orchestration & Workflow | Mnemosyne, Athena |
+| 6 | orchestration-workflow | Orchestration & Workflow | Zeus |
+| 7 | session-goal | Orchestration & Workflow | Zeus, Mnemosyne |
+| 8 | clonedeps | Development Tools | Hermes, Hephaestus |
+| 9 | git-workflow-and-versioning | Development Tools | Hermes, Prometheus, Iris |
+| 10 | incremental-implementation | Development Tools | Zeus, Hermes, Aphrodite, Demeter, Prometheus, Talos |
+| 11 | loop-engineering | Development Tools | All agents |
+| 12 | reflect | Development Tools | All agents |
+| 13 | simplify | Development Tools | All agents |
+| 14 | worktrees | Development Tools | All agents |
+| 15 | code-review-checklist | Quality & Security | Themis |
+| 16 | security-hardening | Quality & Security | Themis, Nyx |
+| 17 | tdd-with-agents | Quality & Security | Hermes, Aphrodite, Demeter, Themis, Hephaestus |
+| 18 | codemap | Planning | Apollo, Zeus |
+| 19 | spec-driven-development | Planning | Athena |
+| 20 | verification-planning | Planning | Athena, Zeus |
+| 21 | visual-review-pipeline | Frontend Development | Aphrodite |
 
 ---
 

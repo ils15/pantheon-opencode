@@ -171,11 +171,11 @@ const MCPS = {
     name: 'Pantheon Resources',
     description: 'Pantheon framework resources — agents, skills, routing, deepwork, memory bank',
     platforms: {
-      opencode: { type: 'local', command: 'python', args: ['scripts/mcp_resources_server.py'] },
-      vscode: { type: 'stdio', command: 'python', args: ['scripts/mcp_resources_server.py'] },
-      cursor: { type: 'local', command: 'python', args: ['scripts/mcp_resources_server.py'] },
-      claude: { type: 'local', command: 'python', args: ['scripts/mcp_resources_server.py'] },
-      windsurf: { type: 'local', command: 'python', args: ['scripts/mcp_resources_server.py'] },
+      opencode: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/mcp_resources_server.py')] },
+      vscode: { type: 'stdio', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/mcp_resources_server.py')] },
+      cursor: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/mcp_resources_server.py')] },
+      claude: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/mcp_resources_server.py')] },
+      windsurf: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/mcp_resources_server.py')] },
     },
     env: [],
     validate: async () => {
@@ -191,11 +191,11 @@ const MCPS = {
     name: 'Pantheon Code Mode',
     description: 'Execute orchestration scripts from .pantheon/code-mode/ directory',
     platforms: {
-      opencode: { type: 'local', command: 'python', args: ['scripts/code_mode_server.py'] },
-      vscode: { type: 'stdio', command: 'python', args: ['scripts/code_mode_server.py'] },
-      cursor: { type: 'local', command: 'python', args: ['scripts/code_mode_server.py'] },
-      claude: { type: 'local', command: 'python', args: ['scripts/code_mode_server.py'] },
-      windsurf: { type: 'local', command: 'python', args: ['scripts/code_mode_server.py'] },
+      opencode: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/code_mode_server.py')] },
+      vscode: { type: 'stdio', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/code_mode_server.py')] },
+      cursor: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/code_mode_server.py')] },
+      claude: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/code_mode_server.py')] },
+      windsurf: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/code_mode_server.py')] },
     },
     env: [],
     validate: async () => {
@@ -214,23 +214,23 @@ const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: '.venv/bin/python3',
-        args: ['scripts/memory_mcp_server.py'],
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/memory_mcp_server.py')],
       },
       claude: {
         type: 'local',
-        command: '.venv/bin/python3',
-        args: ['scripts/memory_mcp_server.py'],
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/memory_mcp_server.py')],
       },
       cursor: {
         type: 'local',
-        command: '.venv/bin/python3',
-        args: ['scripts/memory_mcp_server.py'],
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/memory_mcp_server.py')],
       },
       windsurf: {
         type: 'local',
-        command: '.venv/bin/python3',
-        args: ['scripts/memory_mcp_server.py'],
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/memory_mcp_server.py')],
       },
     },
     env: [],
@@ -240,6 +240,42 @@ const MCPS = {
         return { ok: true, message: 'server script present' }
       }
       return { ok: false, message: 'scripts/memory_mcp_server.py not found' }
+    },
+  },
+  'pantheon-persistence': {
+    tier: 1,
+    name: 'Pantheon Persistence',
+    description:
+      'Pantheon Persistence MCP Server — key-value store with FTS5 full-text search, TTL-based expiration, and namespace isolation',
+    platforms: {
+      opencode: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/mcp_persistence_server.py')],
+      },
+      claude: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/mcp_persistence_server.py')],
+      },
+      cursor: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/mcp_persistence_server.py')],
+      },
+      windsurf: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/mcp_persistence_server.py')],
+      },
+    },
+    env: [],
+    validate: async () => {
+      const scriptPath = join(ROOT, 'scripts', 'mcp_persistence_server.py')
+      if (existsSync(scriptPath)) {
+        return { ok: true, message: 'server script present' }
+      }
+      return { ok: false, message: 'scripts/mcp_persistence_server.py not found' }
     },
   },
   docker: {

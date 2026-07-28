@@ -2,9 +2,12 @@
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "zeus",
   "subagent_depth": 2,
-  "agent": {},
+  "model": "opencode-go/deepseek-v4-flash",
+  "small_model": "opencode-go/deepseek-v4-flash",
   "permission": {
-    "skill": { "*": "allow" },
+    "skill": {
+      "*": "allow"
+    },
     "websearch": "deny",
     "bash": {
       "git *": "allow",
@@ -28,6 +31,50 @@
       "headers": {
         "x-bf-vk": "sk-bf-a5a9b5b0-45fc-414d-8e4d-f9beb8c49a6d"
       }
+    }
+  },
+  "agent": {
+    "athena": {
+      "model": "opencode-go/kimi-k3"
+    },
+    "themis": {
+      "model": "opencode-go/deepseek-v4-pro"
+    },
+    "zeus": {
+      "model": "opencode-go/deepseek-v4-pro"
+    },
+    "hephaestus": {
+      "model": "opencode-go/deepseek-v4-pro"
+    },
+    "hermes": {
+      "model": "opencode-go/deepseek-v4-flash"
+    },
+    "aphrodite": {
+      "model": "opencode-go/deepseek-v4-flash"
+    },
+    "demeter": {
+      "model": "opencode-go/deepseek-v4-flash"
+    },
+    "prometheus": {
+      "model": "opencode-go/deepseek-v4-flash"
+    },
+    "apollo": {
+      "model": "opencode-go/deepseek-v4-flash"
+    },
+    "nyx": {
+      "model": "opencode-go/deepseek-v4-flash"
+    },
+    "gaia": {
+      "model": "opencode-go/deepseek-v4-flash"
+    },
+    "iris": {
+      "model": "opencode-go/deepseek-v4-flash"
+    },
+    "mnemosyne": {
+      "model": "opencode-go/deepseek-v4-flash"
+    },
+    "talos": {
+      "model": "opencode-go/deepseek-v4-flash"
     }
   }
 }

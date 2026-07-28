@@ -9,10 +9,19 @@ A multi-agent framework for **OpenCode**. 14 specialized agents with TDD enforce
 ### Quick install (recommended)
 
 ```bash
+# Interactive (default TTY) — component selection, progress spinners
 npx pantheon-opencode init
+
+# Headless mode — for CI and scripts
+npx pantheon-opencode init --headless
 ```
 
-This installs agents globally to `~/.config/opencode/agents/`. For project-local install, add `--project`.
+Flags:
+- `--interactive` — force interactive TUI even if piped
+- `--headless` — force non-interactive (default for CI)
+- `-y` / `--yes` — skip confirmations, use defaults
+- `--project` — install locally in `./.opencode/`
+- `--no-mcp` — skip Python/MCP setup
 
 For MCP servers (memory, persistence) and TUI plugin:
 

@@ -7,3 +7,6 @@ node_modules/
 __pycache__/
 .DS_Store
 .vscode/
+opencode.zen.json
+opencode.multimodal.json
+opencode.deepseek-only.json

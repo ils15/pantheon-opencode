@@ -8,7 +8,7 @@ permission:
   grep: allow
   bash: allow
   webfetch: allow
-  edit: ask
+  edit: deny
 temperature: 0.1
 steps: 25
 skills:
@@ -19,6 +19,12 @@ mcp_tools:
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
 ---
+
+## ⚠️ ABSOLUTE CONSTRAINT
+
+**ANALYSIS ONLY — NEVER implement, never edit files, never write code.**
+Your role is to observe, trace, and report. If you identify a configuration change needed, report the finding — do not implement it yourself.
+Delegate all implementation to @hermes, @prometheus, or @demeter.
 
 ## Core Capabilities
 
