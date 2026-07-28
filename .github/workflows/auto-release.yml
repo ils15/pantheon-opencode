@@ -13,6 +13,7 @@ permissions:
 jobs:
   release:
     name: Auto Release
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     concurrency:
       group: auto-release-${{ github.ref_name }}
@@ -108,7 +109,7 @@ jobs:
           git config user.email "bot@pantheon.dev"
           git add package.json
           git add pyproject.toml plugin.json .github/plugin/plugin.json 2>/dev/null || true
-          git commit -m "chore(beta): v${{ steps.bump.outputs.to }} [skip ci]"
+          git commit -m "chore(release): v${{ steps.bump.outputs.to }}"
           git push
 
       # ── GITHUB RELEASE (both) ──────────────────────────────────
