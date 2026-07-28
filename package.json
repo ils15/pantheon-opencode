@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.1.0",
+  "version": "1.1.1-beta.18",
   "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "publishConfig": {
     "access": "public",
@@ -48,10 +48,10 @@
     "src/instructions/*.instructions.md",
     "src/mcp/*.mjs",
     "scripts/*.mjs",
-    "src/plugins/tui/**",
     "src/mcp/*.sh",
     "src/routing.yml",
     "src/mcp/requirements*",
+    "src/plugins/tui/**",
     "src/skills/**"
   ],
   "dependencies": {

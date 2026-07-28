@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://pantheon.orchestrator/schema.json",
   "title": "Pantheon Configuration Schema",
-  "description": "Configuration schema for Pantheon multi-agent orchestration platform",
+  "description": "Pantheon Orchestration Configuration Schema — NOT the OpenCode config schema. This schema defines Pantheon-specific configuration (routing, presets, fallback chains). For OpenCode config, see https://opencode.ai/config.json",
   "type": "object",
   "properties": {
     "version": {

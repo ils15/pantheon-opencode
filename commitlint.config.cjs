@@ -5,7 +5,7 @@ module.exports = {
     'scope-enum': [2, 'always', [
       'agents', 'skills', 'scripts', 'docs', 'ci', 'deps', 'release',
       'config', 'validate', 'commands', 'tui', 'installer', 'routing',
-      'instructions', 'mcp',
+      'instructions', 'mcp', 'beta',
     ]],
     'header-max-length': [2, 'always', 120],
   },
