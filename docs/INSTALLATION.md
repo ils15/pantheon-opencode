@@ -134,7 +134,7 @@ Pantheon includes a TUI sidebar plugin showing:
 Pantheon v1.0.0
 ⎇ main
 ▶ Sessions (N total)
-▶ Commands (14)
+▶ Commands (5)
 ▶ Agents (14)
 ▶ Config — MCPs, Compaction
 ▶ Memory — Entry count
@@ -148,20 +148,11 @@ Type these in the OpenCode chat:
 
 | Command | Description |
 |---------|-------------|
-| `/pantheon` | Multi-perspective synthesis (Council) via inline agents |
-| `/pantheon-audit` | Code review + security audit |
-| `/pantheon-bg` | List background tasks |
-| `/pantheon-consolidate` | Consolidate memory |
-| `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints |
-| `/pantheon-doc` | Generate documentation |
-| `/pantheon-focus` | Pin a session goal |
-| `/pantheon-forget` | Compress/consolidate memories |
-| `/pantheon-hash` | Hash edit verification |
-| `/pantheon-optimize` | Context optimization & token audit |
-| `/pantheon-remember` | Store in memory |
-| `/pantheon-search` | Search memory |
-| `/pantheon-status` | Show system health and agent status |
-| `/pantheon-todo` | Create and maintain task list |
+| `/pantheon` | Multi-perspective council synthesis via inline agents |
+| `/pantheon-audit` | 3-layer code audit: heuristic scan → Themis deep review → OWASP Top 10 |
+| `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints and Themis review gates |
+| `/pantheon-optimize` | Project optimization: bloat scan, deepwork archive, cache migration, token report |
+| `/pantheon-consolidate` | Merge and deduplicate memory entries in the vector database |
 
 ## Verification
 
@@ -243,7 +234,7 @@ block-beta
         end
         block Sessions["▶ Sessions (N total)"]
         end
-        block Commands["▶ Commands (14)"]
+        block Commands["▶ Commands (5)"]
         end
         block Agents["▶ Agents (14)"]
         end
