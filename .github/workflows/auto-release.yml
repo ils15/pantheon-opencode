@@ -97,20 +97,37 @@ jobs:
         if: steps.type.outputs.channel == 'stable' && steps.version_check.outputs.changed == 'true'
         run: npm publish --access public --provenance 2>&1
 
-      - name: Publish beta to npm
+      - name: Check if beta version exists on npm
+        id: npm_check
         if: steps.type.outputs.channel == 'beta'
+        run: |
+          NPM_VER=$(npm view pantheon-opencode version --tag beta 2>/dev/null || echo "none")
+          LOCAL_VER="${{ steps.bump.outputs.to }}"
+          if [ "$NPM_VER" = "$LOCAL_VER" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "⚠️ Version $LOCAL_VER already published — skipping publish"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish beta to npm
+        if: steps.type.outputs.channel == 'beta' && steps.npm_check.outputs.exists == 'false'
         run: npm publish --tag beta --access public --provenance 2>&1
 
       # ── COMMIT BACK (beta only) ────────────────────────────────
       - name: Commit beta version bump
-        if: steps.type.outputs.channel == 'beta'
+        if: steps.type.outputs.channel == 'beta' && steps.npm_check.outputs.exists == 'false'
         run: |
           git config user.name "pantheon-bot"
           git config user.email "bot@pantheon.dev"
           git add package.json
           git add pyproject.toml plugin.json .github/plugin/plugin.json 2>/dev/null || true
-          git commit -m "chore(release): v${{ steps.bump.outputs.to }}"
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to commit — version already current"
+          else
+            git commit -m "chore(release): v${{ steps.bump.outputs.to }}"
+            git push
+          fi
 
       # ── GITHUB RELEASE (both) ──────────────────────────────────
       - name: Create GitHub Release (stable)
@@ -125,7 +142,7 @@ jobs:
           echo "Published Pantheon ${VERSION}"
 
       - name: Create GitHub Pre-release (beta)
-        if: steps.type.outputs.channel == 'beta'
+        if: steps.type.outputs.channel == 'beta' && steps.npm_check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
