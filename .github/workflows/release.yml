@@ -74,7 +74,6 @@ jobs:
           NPM_VER=$(npm view pantheon-opencode version --tag ${{ steps.type.outputs.tag }} 2>/dev/null || echo "none")
           if [ "$NPM_VER" = "$VER" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "⚠️ Version $VER already published"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -82,7 +81,6 @@ jobs:
       - name: Publish to npm
         if: steps.npm_check.outputs.exists == 'false'
         run: npm publish --tag ${{ steps.type.outputs.tag }} --access public --provenance 2>&1
-        env:
 
       - name: Create GitHub Release
         if: steps.npm_check.outputs.exists == 'false'
