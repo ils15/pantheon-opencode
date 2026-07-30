@@ -36,7 +36,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
 
       - run: npm ci --ignore-scripts 2>/dev/null || npm install
 
@@ -79,11 +78,14 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Configure npm auth
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
+          echo "registry=https://registry.npmjs.org/" >> .npmrc
+
       - name: Publish to npm
         if: steps.npm_check.outputs.exists == 'false'
         run: npm publish --tag ${{ steps.type.outputs.tag }} --access public --provenance 2>&1
-        env:
-          NODE_AUTH_TOKEN: \${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         if: steps.npm_check.outputs.exists == 'false'
