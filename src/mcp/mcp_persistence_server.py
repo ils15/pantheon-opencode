@@ -575,22 +575,29 @@ async def context_save(
     slug: str,
     key: str,
     content: str,
+    session_id: str | None = None,
     ttl: int | None = None,
     scope: str = "project",
 ) -> dict:
-    """Save a context checkpoint.
+    """Save a context checkpoint with session-level isolation.
+
+    If session_id is provided, namespace becomes "checkpoint:{slug}:{session_id}"
+    preventing cross-session reads. If omitted, a random UUID is auto-generated
+    and returned so the caller can pass it to subsequent calls.
 
     Args:
         slug: Session identifier (e.g. "auth-refactor").
         key: Checkpoint key (e.g. "phase:3", "latest", "heartbeat").
         content: JSON-serializable string or any text content.
+        session_id: Unique session ID for namespace isolation (auto-generated if None).
         ttl: TTL in seconds (default 4h / 14400). None = session duration.
         scope: 'project' (default) or 'global'.
 
     Returns:
-        Status dict with namespace and key.
+        Status dict with namespace, key, and session_id for subsequent calls.
     """
-    ns = f"checkpoint:{slug}"
+    actual_session = session_id or uuid.uuid4().hex[:12]
+    ns = f"checkpoint:{slug}:{actual_session}"
     actual_ttl = ttl if ttl is not None else DEFAULT_CONTEXT_TTL
 
     conn = _db(scope)
@@ -609,6 +616,7 @@ async def context_save(
 
     # Also always update "latest" pointer
     if key != "latest":
+        # Use a larger TTL for "latest" to outlive individual phase entries
         conn.execute(
             "INSERT INTO kv_store (namespace, key, value, expires_at, "
             "created_at, updated_at) VALUES (?, 'latest', ?, ?, datetime('now'), datetime('now'))"
@@ -620,7 +628,7 @@ async def context_save(
         )
         conn.commit()
 
-    return {"status": "stored", "namespace": ns, "key": key, "ttl": actual_ttl}
+    return {"status": "stored", "namespace": ns, "key": key, "session_id": actual_session, "ttl": actual_ttl}
 
 
 @mcp.tool(
@@ -631,20 +639,22 @@ async def context_save(
 async def context_get(
     slug: str,
     key: str = "latest",
+    session_id: str | None = None,
     scope: str = "project",
 ) -> str | None:
-    """Get a context checkpoint.
+    """Get a context checkpoint with session isolation.
 
     Args:
         slug: Session identifier.
         key: Checkpoint key (default "latest").
+        session_id: Required for isolation. If None, searches without session scope.
         scope: 'project' (default) or 'global'.
 
     Returns:
         Content string or None if not found/expired.
     """
     conn = _db(scope)
-    ns = f"checkpoint:{slug}"
+    ns = f"checkpoint:{slug}:{session_id}" if session_id else f"checkpoint:{slug}"
     row = conn.execute(
         "SELECT value FROM kv_store "
         "WHERE namespace = ? AND key = ? "
@@ -662,19 +672,21 @@ async def context_get(
 )
 async def context_list(
     slug: str,
+    session_id: str | None = None,
     scope: str = "project",
 ) -> list[dict]:
     """List all checkpoints for a session.
 
     Args:
         slug: Session identifier.
+        session_id: Optional. If provided, narrows to specific session.
         scope: 'project' (default) or 'global'.
 
     Returns:
         List of dicts with key, created_at, expires_at.
     """
     conn = _db(scope)
-    ns = f"checkpoint:{slug}"
+    ns = f"checkpoint:{slug}:{session_id}" if session_id else f"checkpoint:{slug}"
     rows = conn.execute(
         "SELECT key, created_at, expires_at FROM kv_store "
         "WHERE namespace = ? "
@@ -700,19 +712,21 @@ async def context_list(
 )
 async def context_stats(
     slug: str,
+    session_id: str | None = None,
     scope: str = "project",
 ) -> dict:
     """Return storage statistics for a session's context.
 
     Args:
         slug: Session identifier.
+        session_id: Optional. If provided, narrows to specific session.
         scope: 'project' (default) or 'global'.
 
     Returns:
         Dict with entry_count, total_bytes, ttl_remaining.
     """
     conn = _db(scope)
-    ns = f"checkpoint:{slug}"
+    ns = f"checkpoint:{slug}:{session_id}" if session_id else f"checkpoint:{slug}"
 
     count = conn.execute(
         "SELECT COUNT(*) FROM kv_store "
