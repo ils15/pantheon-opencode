@@ -43,7 +43,7 @@ jobs:
       - name: Determine release type
         id: type
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "channel=stable" >> "$GITHUB_OUTPUT"
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           else
@@ -55,7 +55,7 @@ jobs:
         if: steps.type.outputs.channel == 'beta'
         id: betaver
         run: |
-          PR=${{ github.event.number }}
+          PR=${{ github.event.number || '0' }}
           SHA=$(git rev-parse --short HEAD)
           BASE=$(node -p "require('./package.json').version")
           echo "version=${BASE}-beta.${PR}.${SHA}" >> "$GITHUB_OUTPUT"
