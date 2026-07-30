@@ -1,6 +1,11 @@
 name: Release Stable
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (from package.json)'
+        required: false
   push:
     branches: [main]
 
@@ -10,7 +15,7 @@ permissions:
 
 jobs:
   stable:
-    if: startsWith(github.event.head_commit.message, 'chore(release):')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'chore(release):')
     runs-on: ubuntu-latest
     concurrency:
       group: release-stable
