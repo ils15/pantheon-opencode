@@ -54,14 +54,31 @@ On tasks expected to run > 5 turns:
 
 ## Heartbeat & Checkpoint Integration
 
+All session state lives in **pantheon-persistence** (namespace `checkpoint:<slug>`).
+No file I/O, no checkpoint_session.py — TTL (4h) handles cleanup automatically.
+
 ### Heartbeat Check
-- If `.pantheon/deepwork/<slug>/heartbeat.json` exists and `last_action` is older than 300s, log a stall warning and resume
-- Write heartbeat after every anti-stall recovery action
+- If `context_get(slug, "heartbeat")` returns a checkin older than 300s, log a stall warning and resume
+- Write heartbeat after every anti-stall recovery action:
+  ```
+  context_save(slug, "heartbeat", json({"status": "alive", "last_action": "...", "turn_count": N}))
+  ```
 
 ### Checkpoint Auto-Save
 Before ANY delegate dispatch, save a checkpoint:
-```bash
-python .pantheon/code-mode/checkpoint_session.py save <slug>
+```
+context_save(slug, "phase:N", json({
+  "phase": N, "turn_count": N, "agent": "...", "summary": "..."
+}))
+```
+All checkpoints auto-expire after 4h (TTL=14400).
+
+### Context Retrieval
+Next-phase agents retrieve previous context via:
+```
+context_get(slug, "latest")        # most recent checkpoint
+context_get(slug, "phase:3")      # specific phase
+context_list(slug)                 # all checkpoints
 ```
 
 ### Long-Session Progress
