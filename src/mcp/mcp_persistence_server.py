@@ -557,6 +557,206 @@ async def kv_delete_namespace(
 
     return {"deleted": cursor.rowcount}
 
+
+# ── Context Checkpoint Tools ────────────────────────────────────────────────────
+# Session-scoped context storage for deepwork checkpoints, phase state,
+# tool call history, and reasoning chains. All entries use namespace
+# "checkpoint:{slug}" with auto-TTL of 4 hours (session duration).
+
+DEFAULT_CONTEXT_TTL: int = 14400  # 4 hours
+
+
+@mcp.tool(
+    name="context_save",
+    description="Save a context checkpoint for a session/phase. "
+    "Stores structured JSON in persistence KV with auto-TTL of 4h.",
+)
+async def context_save(
+    slug: str,
+    key: str,
+    content: str,
+    ttl: int | None = None,
+    scope: str = "project",
+) -> dict:
+    """Save a context checkpoint.
+
+    Args:
+        slug: Session identifier (e.g. "auth-refactor").
+        key: Checkpoint key (e.g. "phase:3", "latest", "heartbeat").
+        content: JSON-serializable string or any text content.
+        ttl: TTL in seconds (default 4h / 14400). None = session duration.
+        scope: 'project' (default) or 'global'.
+
+    Returns:
+        Status dict with namespace and key.
+    """
+    ns = f"checkpoint:{slug}"
+    actual_ttl = ttl if ttl is not None else DEFAULT_CONTEXT_TTL
+
+    conn = _db(scope)
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=actual_ttl)).isoformat()
+
+    conn.execute(
+        "INSERT INTO kv_store (namespace, key, value, expires_at, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))"
+        "ON CONFLICT(namespace, key) DO UPDATE SET "
+        "  value = excluded.value, "
+        "  expires_at = excluded.expires_at, "
+        "  updated_at = datetime('now')",
+        (ns, key, content, expires_at),
+    )
+    conn.commit()
+
+    # Also always update "latest" pointer
+    if key != "latest":
+        conn.execute(
+            "INSERT INTO kv_store (namespace, key, value, expires_at, "
+            "created_at, updated_at) VALUES (?, 'latest', ?, ?, datetime('now'), datetime('now'))"
+            "ON CONFLICT(namespace, key) DO UPDATE SET "
+            "  value = excluded.value, "
+            "  expires_at = excluded.expires_at, "
+            "  updated_at = datetime('now')",
+            (ns, content, expires_at),
+        )
+        conn.commit()
+
+    return {"status": "stored", "namespace": ns, "key": key, "ttl": actual_ttl}
+
+
+@mcp.tool(
+    name="context_get",
+    description="Retrieve a context checkpoint by session slug and key. "
+    "Returns the raw content string or null if expired/not found.",
+)
+async def context_get(
+    slug: str,
+    key: str = "latest",
+    scope: str = "project",
+) -> str | None:
+    """Get a context checkpoint.
+
+    Args:
+        slug: Session identifier.
+        key: Checkpoint key (default "latest").
+        scope: 'project' (default) or 'global'.
+
+    Returns:
+        Content string or None if not found/expired.
+    """
+    conn = _db(scope)
+    ns = f"checkpoint:{slug}"
+    row = conn.execute(
+        "SELECT value FROM kv_store "
+        "WHERE namespace = ? AND key = ? "
+        "AND (expires_at IS NULL OR expires_at > datetime('now')) "
+        "AND deleted_at IS NULL",
+        (ns, key),
+    ).fetchone()
+    return row[0] if row else None
+
+
+@mcp.tool(
+    name="context_list",
+    description="List all context checkpoints for a session slug. "
+    "Returns keys, timestamps, and TTL info.",
+)
+async def context_list(
+    slug: str,
+    scope: str = "project",
+) -> list[dict]:
+    """List all checkpoints for a session.
+
+    Args:
+        slug: Session identifier.
+        scope: 'project' (default) or 'global'.
+
+    Returns:
+        List of dicts with key, created_at, expires_at.
+    """
+    conn = _db(scope)
+    ns = f"checkpoint:{slug}"
+    rows = conn.execute(
+        "SELECT key, created_at, expires_at FROM kv_store "
+        "WHERE namespace = ? "
+        "AND (expires_at IS NULL OR expires_at > datetime('now')) "
+        "AND deleted_at IS NULL "
+        "ORDER BY created_at DESC LIMIT 50",
+        (ns,),
+    ).fetchall()
+    return [
+        {
+            "key": r[0],
+            "created_at": r[1],
+            "expires_at": r[2],
+        }
+        for r in rows
+    ]
+
+
+@mcp.tool(
+    name="context_stats",
+    description="Return session context statistics: "
+    "checkpoint count, TTL remaining, total size per slug.",
+)
+async def context_stats(
+    slug: str,
+    scope: str = "project",
+) -> dict:
+    """Return storage statistics for a session's context.
+
+    Args:
+        slug: Session identifier.
+        scope: 'project' (default) or 'global'.
+
+    Returns:
+        Dict with entry_count, total_bytes, ttl_remaining.
+    """
+    conn = _db(scope)
+    ns = f"checkpoint:{slug}"
+
+    count = conn.execute(
+        "SELECT COUNT(*) FROM kv_store "
+        "WHERE namespace = ? AND deleted_at IS NULL",
+        (ns,),
+    ).fetchone()[0]
+
+    expired = conn.execute(
+        "SELECT COUNT(*) FROM kv_store "
+        "WHERE namespace = ? AND expires_at < datetime('now') "
+        "AND deleted_at IS NULL",
+        (ns,),
+    ).fetchone()[0]
+
+    size = conn.execute(
+        "SELECT COALESCE(SUM(LENGTH(value)), 0) FROM kv_store "
+        "WHERE namespace = ? AND deleted_at IS NULL",
+        (ns,),
+    ).fetchone()[0]
+
+    # Check TTL of latest entry
+    remaining: int | None = None
+    row = conn.execute(
+        "SELECT expires_at FROM kv_store "
+        "WHERE namespace = ? AND key = 'latest' AND deleted_at IS NULL",
+        (ns,),
+    ).fetchone()
+    if row and row[0]:
+        try:
+            exp = datetime.fromisoformat(row[0])
+            now = datetime.now(timezone.utc)
+            remaining = max(0, int((exp - now).total_seconds()))
+        except (ValueError, TypeError):
+            pass
+
+    return {
+        "slug": slug,
+        "namespace": ns,
+        "entry_count": count,
+        "expired_entries": expired,
+        "total_bytes": size,
+        "ttl_remaining_seconds": remaining,
+    }
+
 def _resolve_db_path(scope: str) -> Path | None:
     """Resolve the database file path for a given scope."""
     if scope == "global":
