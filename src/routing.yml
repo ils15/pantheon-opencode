@@ -354,6 +354,37 @@ handoffs:
         with priority-scored entries, write compressed entries to 01-active-context.md
         (priority-aware, budget-allocated), archive IMPL/REVIEW to 02-progress-log.md,
         update _xref/index.md cross-references.'
+
+fallback_chains:
+  apollo:
+    - athena
+    - hermes
+  hermes:
+    - talos
+    - athena
+  aphrodite:
+    - talos
+    - hermes
+  demeter:
+    - hermes
+    - athena
+  themis:
+    - zeus
+  prometheus:
+    - hermes
+    - zeus
+  talos:
+    - hermes
+  hephaestus:
+    - nyx
+    - hermes
+  nyx:
+    - hermes
+  iris:
+    - zeus
+  mnemosyne:
+    - zeus
+
 platforms:
   opencode:
     display_name: OpenCode
