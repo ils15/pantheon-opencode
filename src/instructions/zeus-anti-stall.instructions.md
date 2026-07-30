@@ -64,14 +64,35 @@ No file I/O, no checkpoint_session.py — TTL (4h) handles cleanup automatically
   context_save(slug, "heartbeat", json({"status": "alive", "last_action": "...", "turn_count": N}))
   ```
 
-### Checkpoint Auto-Save
+### Checkpoint Auto-Save (Pré-Compactação)
 Before ANY delegate dispatch, save a checkpoint:
 ```
 context_save(slug, "phase:N", json({
   "phase": N, "turn_count": N, "agent": "...", "summary": "..."
-}))
+}), session_id=SESSION_ID)
 ```
 All checkpoints auto-expire after 4h (TTL=14400).
+
+### Gatilho de Pré-Compactação (Anti-perda de estado)
+Antes da compactação nativa do OpenCode disparar (75-96% do context window),
+o Zeus DEVE salvar o estado atual:
+1. Capture session_id do primeiro `context_save` da sessão
+2. Salve heartbeat + phase atual + tarefas pendentes
+3. Só então permita que a compactação prossiga
+```
+# Ao iniciar sessão:
+result = context_save(slug, "init", session_state)
+SESSION_ID = result.session_id   # ← guarde para toda a sessão
+
+# Antes de CADA delegação:
+context_save(slug, f"pre:{agent}", current_state, session_id=SESSION_ID)
+
+# Após retorno do agente:
+context_save(slug, f"post:{agent}", result_state, session_id=SESSION_ID)
+```
+Isso garante que o estado sobreviva à compactação — o "latest" pointer
+sempre aponta para o checkpoint mais recente, mesmo após compactação.
+
 
 ### Context Retrieval
 Next-phase agents retrieve previous context via:
