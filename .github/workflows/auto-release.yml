@@ -152,3 +152,4 @@ jobs:
             --prerelease \
             --notes-file /tmp/beta-notes.md
           echo "Published beta $VERSION"
+
