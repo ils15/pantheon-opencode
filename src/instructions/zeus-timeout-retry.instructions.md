@@ -10,23 +10,60 @@ When a delegated agent does not respond in time, enforce the timeout policy from
 
 ## Timeout Behavior by Agent Role
 
-| Agent Role | Timeout | Retry Policy | Fallback | Partial Results OK? | Reasoning Effort |
+| Agent Role | Timeout | Retry Policy | Fallback Chain | Partial Results OK? | Reasoning Effort |
 |------------|---------|-------------|----------|---------------------|------------------|
-| Explorer (@apollo) | 60s | 2 retries, exponential backoff | @athena | ✅ Yes | low |
-| Implementer (@hermes, @aphrodite, @demeter) | 180s | 3 retries, exponential backoff | @talos | ❌ No | medium |
-| Reviewer (@themis) | 120s | 2 retries, exponential backoff | @zeus | ❌ No | high |
-| Infrastructure (@prometheus) | 300s | 2 retries, exponential backoff | @hermes | ❌ No | medium |
-| Hotfix (@talos) | 30s | 1 retry, no backoff | @hermes | ✅ Yes | low |
-| Remote Sensing (@gaia) | 120s | 2 retries, exponential backoff | @hermes | ✅ Yes | high |
+| Explorer (@apollo) | 60s | 2 retries, exp backoff | @athena (plan) → @hermes (impl) | ✅ Yes | low |
+| Implementer (@hermes, @aphrodite, @demeter) | 180s | 3 retries, exp backoff | @talos (hotfix) → @athena (replan) | ❌ No | medium |
+| Reviewer (@themis) | 120s | 3 retries, exp backoff | @zeus (escalate) → user | ❌ No | high |
+| Infrastructure (@prometheus) | 300s | 3 retries, exp backoff | @hermes (config) → @zeus (escalate) | ❌ No | medium |
+| Hotfix (@talos) | 30s | 2 retries, no backoff | @hermes (full fix) | ✅ Yes | low |
+| Remote Sensing (@gaia) | 120s | 2 retries, exp backoff | @hermes (generic) | ✅ Yes | high |
 
 ## Retry Flow
 
 ```
 Task dispatch → timeout elapsed → log timeout
-  ├─ retry_count > 0 → retry with backoff → decrement retry_count
-  ├─ fallback_agent exists → dispatch to fallback
-  └─ no retries + no fallback → return TIMEOUT error to user
+  ├─ retry_count > 0 → retry with exponential backoff → decrement retry_count
+  │    └─ still failing? → retry again (up to retry_count limit)
+  │
+  ├─ retries exhausted → FALLBACK CHAIN:
+  │    ├─ fallback[0] exists? → dispatch to fallback agent
+  │    │    └─ keep original task spec + context; add error context
+  │    ├─ fallback[1] exists? → dispatch to second fallback
+  │    └─ all fallbacks failed? → ESCALATE
+  │
+  ├─ no fallbacks defined → return TIMEOUT error to user
+  │
+  └─ ESCALATE: "Agent X failed after N retries. Fallbacks Y, Z also failed.
+                 Options: (a) try different agent, (b) simplify scope, (c) manual"
 ```
+
+
+
+## Fallback Chain Definitions
+
+Each fallback chain is evaluated left-to-right: if the first fallback fails, try the second, etc.
+
+| Agent | Fallback[0] | Fallback[1] | Escalate To |
+|-------|------------|------------|-------------|
+| @apollo | @athena (plan scoped task) | @hermes (implement search) | @zeus |
+| @hermes | @talos (minimal fix) | @athena (replan + simplify) | @zeus |
+| @aphrodite | @talos (CSS/UX fix) | @hermes (generic fallback) | @zeus |
+| @demeter | @hermes (generic backend) | @athena (replan schema) | @zeus |
+| @themis | @zeus (direct escalation) | — | user |
+| @prometheus | @hermes (config/deploy) | @zeus | user |
+| @talos | @hermes (full implementation) | — | @zeus |
+| @hephaestus | @nyx (observability debug) | @hermes (generic) | @zeus |
+| @nyx | @hermes (generic) | — | @zeus |
+| @iris | @zeus (manual override) | — | user |
+| @mnemosyne | @zeus (manual) | — | user |
+
+### Escalation Protocol
+When ALL fallbacks fail:
+1. Log the full failure chain: which agents were tried, what error each returned
+2. Report to user: "Task [X] failed. Tried: [agent list]. Error: [summary]."
+3. Offer options: (a) try different approach, (b) simplify scope, (c) manual fix
+4. NEVER retry the same chain automatically — break the cycle
 
 ### Session Reuse Check
 Before dispatching a task, check if a reusable session exists:
