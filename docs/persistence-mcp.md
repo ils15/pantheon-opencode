@@ -25,7 +25,14 @@ pantheon-persistence MCP
 - **Global**: dados cross-projeto (cache de agentes, preferências)
 - **Project**: dados específicos do projeto atual
 
-## Tools (6)
+## Tools (8)
+
+### kv_stats
+Return storage statistics with total entries, expired count, per-namespace breakdown, and DB file size.
+
+`kv_stats(scope?)`
+- `scope`: "project" (default) or "global"
+- Returns `{"scope": ..., "total_entries": N, "expired_entries": N, "namespaces": {...}, "db_size_bytes": N}`
 
 ### kv_store
 Store a key-value pair with optional TTL.
@@ -33,6 +40,7 @@ Store a key-value pair with optional TTL.
 `kv_store(namespace, key, value, ttl?, scope?)`
 - `ttl`: seconds. null = forever
 - `scope`: "project" (default) or "global"
+- Auto-purges expired entries when namespace exceeds 500 items
 - Returns `{"status": "stored", "namespace": ns, "key": k}`
 
 ### kv_get
@@ -62,6 +70,13 @@ Full-text search across all namespaces using SQLite FTS5.
 - BM25-ranked results
 - Terms are sanitized and quoted for injection safety
 - Returns array of `{namespace, key, value, created_at, score}`
+
+### kv_delete_namespace
+Delete all entries in a namespace. Optionally filter by age.
+
+`kv_delete_namespace(namespace, scope?, older_than_days?)`
+- `older_than_days`: if set, only delete entries older than N days
+- Returns `{"deleted": count}`
 
 ### purge_expired
 Remove expired entries and rotate deletelog.
@@ -107,5 +122,5 @@ purge_expired(scope="project")
 | Namespace | ✅ Coluna + scope | ✅ Session + category |
 | Deploys | stdlib, 0 deps | chromadb + sentence-transformers |
 | Startup | <0.5s | 3-8s |
-| Tools | 6 | 14 |
-| Lines | 449 | 1,344 |
+| Tools | 8 | 14 |
+| Lines | ~530 | 1,344 |
