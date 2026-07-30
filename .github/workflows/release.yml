@@ -19,6 +19,7 @@ permissions:
 jobs:
   release:
     if: >
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
       (github.event_name == 'pull_request' && github.event.label.name == 'release:beta')
     runs-on: ubuntu-latest
