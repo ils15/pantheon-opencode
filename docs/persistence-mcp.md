@@ -25,7 +25,14 @@ pantheon-persistence MCP
 - **Global**: dados cross-projeto (cache de agentes, preferências)
 - **Project**: dados específicos do projeto atual
 
-## Tools (6)
+## Tools (12)
+
+### kv_stats
+Return storage statistics with total entries, expired count, per-namespace breakdown, and DB file size.
+
+`kv_stats(scope?)`
+- `scope`: "project" (default) or "global"
+- Returns `{"scope": ..., "total_entries": N, "expired_entries": N, "namespaces": {...}, "db_size_bytes": N}`
 
 ### kv_store
 Store a key-value pair with optional TTL.
@@ -33,6 +40,7 @@ Store a key-value pair with optional TTL.
 `kv_store(namespace, key, value, ttl?, scope?)`
 - `ttl`: seconds. null = forever
 - `scope`: "project" (default) or "global"
+- Auto-purges expired entries when namespace exceeds 500 items
 - Returns `{"status": "stored", "namespace": ns, "key": k}`
 
 ### kv_get
@@ -63,6 +71,13 @@ Full-text search across all namespaces using SQLite FTS5.
 - Terms are sanitized and quoted for injection safety
 - Returns array of `{namespace, key, value, created_at, score}`
 
+### kv_delete_namespace
+Delete all entries in a namespace. Optionally filter by age.
+
+`kv_delete_namespace(namespace, scope?, older_than_days?)`
+- `older_than_days`: if set, only delete entries older than N days
+- Returns `{"deleted": count}`
+
 ### purge_expired
 Remove expired entries and rotate deletelog.
 
@@ -70,6 +85,44 @@ Remove expired entries and rotate deletelog.
 - Soft-delete with deletelog audit trail
 - dry_run previews without purging
 - Deletelog rotates at 1MB (keeps last 3)
+
+## Context Checkpoint Tools
+
+Session-scoped checkpoint storage for deepwork phases, heartbeat, and reasoning state.
+All entries use namespace `checkpoint:{slug}` with **auto-TTL of 4 hours**.
+No cleanup needed — TTL handles expiry automatically.
+
+### context_save
+Save a context checkpoint for a session/phase.
+
+`context_save(slug, key, content, ttl?, scope?)`
+- `slug`: session identifier (e.g. "auth-refactor")
+- `key`: checkpoint key (e.g. "phase:3", "latest", "heartbeat")
+- `content`: JSON-serializable string
+- `ttl`: seconds (default 4h / 14400)
+- Auto-updates a "latest" pointer on every save
+- Returns `{"status": "stored", "namespace": "...", "key": "...", "ttl": N}`
+
+### context_get
+Retrieve a context checkpoint by slug and key.
+
+`context_get(slug, key?, scope?)`
+- `key`: defaults to "latest" (most recent checkpoint)
+- Returns raw content string or `null` if expired/not found
+
+### context_list
+List all checkpoints for a session slug.
+
+`context_list(slug, scope?)`
+- Returns keys, created_at, expires_at
+- Ordered by most recent first, max 50
+
+### context_stats
+Return storage statistics for a session's context.
+
+`context_stats(slug, scope?)`
+- Returns slug, namespace, entry_count, expired_entries, total_bytes, ttl_remaining_seconds
+
 
 ## TTL Lifecycle
 
@@ -107,5 +160,5 @@ purge_expired(scope="project")
 | Namespace | ✅ Coluna + scope | ✅ Session + category |
 | Deploys | stdlib, 0 deps | chromadb + sentence-transformers |
 | Startup | <0.5s | 3-8s |
-| Tools | 6 | 14 |
-| Lines | 449 | 1,344 |
+| Tools | 12 | 14 |
+| Lines | ~530 | 1,344 |

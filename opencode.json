@@ -40,41 +40,8 @@
     "themis": {
       "model": "opencode-go/deepseek-v4-pro"
     },
-    "zeus": {
-      "model": "opencode-go/deepseek-v4-pro"
-    },
     "hephaestus": {
       "model": "opencode-go/deepseek-v4-pro"
-    },
-    "hermes": {
-      "model": "opencode-go/deepseek-v4-flash"
-    },
-    "aphrodite": {
-      "model": "opencode-go/deepseek-v4-flash"
-    },
-    "demeter": {
-      "model": "opencode-go/deepseek-v4-flash"
-    },
-    "prometheus": {
-      "model": "opencode-go/deepseek-v4-flash"
-    },
-    "apollo": {
-      "model": "opencode-go/deepseek-v4-flash"
-    },
-    "nyx": {
-      "model": "opencode-go/deepseek-v4-flash"
-    },
-    "gaia": {
-      "model": "opencode-go/deepseek-v4-flash"
-    },
-    "iris": {
-      "model": "opencode-go/deepseek-v4-flash"
-    },
-    "mnemosyne": {
-      "model": "opencode-go/deepseek-v4-flash"
-    },
-    "talos": {
-      "model": "opencode-go/deepseek-v4-flash"
     }
   }
 }
