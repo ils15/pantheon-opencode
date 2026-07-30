@@ -13,6 +13,7 @@ All implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) M
 **summary:** What was done, in 2-3 sentences
 **tests:** ✅ All passing / ⚠️ X failing / ❌ Not run (reason)
 **coverage:** X% (if applicable)
+**tokens:** ~N input / ~M output (estimated)
 **status:** complete | partial (reason) | escalated (reason)
 **blockers:** [list any blockers or null]
 
