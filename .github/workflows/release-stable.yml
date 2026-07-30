@@ -1,0 +1,49 @@
+name: Release Stable
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  stable:
+    if: startsWith(github.event.head_commit.message, 'chore(release):')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-stable
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci --ignore-scripts 2>/dev/null || npm install
+
+      - name: Verify version
+        run: |
+          echo "Publishing: $(node -p "require('./package.json').version")"
+          npm pack --dry-run 2>&1 | tail -3
+
+      - name: Publish stable to npm
+        run: npm publish --access public --provenance 2>&1
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          gh release create "$VERSION" \
+            --title "Pantheon ${VERSION}" \
+            --notes-file CHANGELOG.md
+          echo "Published Pantheon ${VERSION}"
