@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS kv_store (
     UNIQUE(namespace, key)
 );
 
+CREATE INDEX IF NOT EXISTS idx_kv_namespace_expires
+ON kv_store(namespace, expires_at);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS kv_store_fts USING fts5(
     namespace, key, value,
     content='kv_store', content_rowid='id',
@@ -49,6 +52,14 @@ END;
 CREATE TRIGGER IF NOT EXISTS kv_store_ad AFTER DELETE ON kv_store BEGIN
     INSERT INTO kv_store_fts(kv_store_fts, rowid, namespace, key, value)
     VALUES('delete', old.id, old.namespace, old.key, old.value);
+END;
+
+CREATE TRIGGER IF NOT EXISTS kv_store_softdelete_ad
+AFTER UPDATE OF deleted_at ON kv_store
+WHEN new.deleted_at IS NOT NULL AND old.deleted_at IS NULL
+BEGIN
+    INSERT INTO kv_store_fts(kv_store_fts, rowid)
+    VALUES('delete', old.id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS kv_store_au AFTER UPDATE ON kv_store BEGIN
@@ -219,6 +230,10 @@ async def kv_store(
         (namespace, key, value, expires_at),
     )
     conn.commit()
+
+    # Opportunistic auto-purge: if namespace has >500 entries, purge expired
+    _opportunistic_auto_purge(conn, namespace)
+    
     return {"status": "stored", "namespace": namespace, "key": key}
 
 
@@ -252,6 +267,52 @@ async def kv_get(
     ).fetchone()
     return str(row[0]) if row else None
 
+
+@mcp.tool(
+    name="kv_stats",
+    description="Return storage statistics: total entries, expired count, per-namespace breakdown, DB file size.",
+)
+async def kv_stats(
+    scope: str = "project",
+) -> dict:
+    """Return storage statistics for the given scope.
+
+    Args:
+        scope: 'project' (default) or 'global'.
+
+    Returns:
+        Dict with total_entries, expired_entries, namespaces breakdown, db_size_bytes.
+    """
+    conn = _db(scope)
+
+    total = conn.execute("SELECT COUNT(*) FROM kv_store WHERE deleted_at IS NULL").fetchone()[0]
+    expired = conn.execute(
+        "SELECT COUNT(*) FROM kv_store "
+        "WHERE expires_at IS NOT NULL AND expires_at < datetime('now') "
+        "AND deleted_at IS NULL"
+    ).fetchone()[0]
+
+    ns_rows = conn.execute(
+        "SELECT namespace, COUNT(*) as cnt, "
+        "SUM(CASE WHEN expires_at IS NOT NULL AND expires_at < datetime('now') THEN 1 ELSE 0 END) as expired_count "
+        "FROM kv_store WHERE deleted_at IS NULL GROUP BY namespace ORDER BY cnt DESC"
+    ).fetchall()
+
+    namespaces = {
+        r[0]: {"count": r[1], "expired": r[2]}
+        for r in ns_rows
+    }
+
+    db_path = _resolve_db_path(scope)
+    db_size = db_path.stat().st_size if db_path and db_path.exists() else 0
+
+    return {
+        "scope": scope,
+        "total_entries": total,
+        "expired_entries": expired,
+        "namespaces": namespaces,
+        "db_size_bytes": db_size,
+    }
 
 @mcp.tool(
     name="kv_delete",
@@ -352,6 +413,7 @@ async def kv_search(
 
     # Sanitize: extract up to 10 word tokens, wrap each in quotes
     terms = re.findall(r"\w+", query)[:10]
+    terms = [re.escape(t) for t in terms]
     if not terms:
         return []
     fts_query = " OR ".join(f'"{t}"' for t in terms)
@@ -439,6 +501,61 @@ async def purge_expired(
 
     return {"purged": count, "dry_run": False}
 
+
+
+def _opportunistic_auto_purge(conn: sqlite3.Connection, namespace: str, threshold: int = 500) -> None:
+    """Lightweight auto-purge: if namespace exceeds threshold, soft-delete expired entries."""
+    count = conn.execute(
+        "SELECT COUNT(*) FROM kv_store WHERE namespace = ? AND deleted_at IS NULL",
+        (namespace,),
+    ).fetchone()[0]
+    if count <= threshold:
+        return
+
+    conn.execute(
+        "UPDATE kv_store SET deleted_at = datetime('now') "
+        "WHERE namespace = ? AND expires_at IS NOT NULL "
+        "AND expires_at < datetime('now') AND deleted_at IS NULL",
+        (namespace,),
+    )
+    conn.commit()
+
+
+@mcp.tool(
+    name="kv_delete_namespace",
+    description="Delete all entries in a namespace. Optionally limit to entries older than N days.",
+)
+async def kv_delete_namespace(
+    namespace: str,
+    scope: str = "project",
+    older_than_days: int | None = None,
+) -> dict:
+    """Delete all entries in a namespace, optionally old entries only.
+
+    Args:
+        namespace: Namespace to clear.
+        scope: 'project' (default) or 'global'.
+        older_than_days: If set, only delete entries older than this many days.
+
+    Returns:
+        Dict with deleted count.
+    """
+    conn = _db(scope)
+
+    if older_than_days is not None:
+        cursor = conn.execute(
+            "DELETE FROM kv_store WHERE namespace = ? "
+            "AND datetime(created_at) < datetime('now', ? || ' days')",
+            (namespace, f"-{older_than_days}"),
+        )
+    else:
+        cursor = conn.execute(
+            "DELETE FROM kv_store WHERE namespace = ?",
+            (namespace,),
+        )
+    conn.commit()
+
+    return {"deleted": cursor.rowcount}
 
 def _resolve_db_path(scope: str) -> Path | None:
     """Resolve the database file path for a given scope."""
