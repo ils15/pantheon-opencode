@@ -82,6 +82,8 @@ jobs:
       - name: Publish to npm
         if: steps.npm_check.outputs.exists == 'false'
         run: npm publish --tag ${{ steps.type.outputs.tag }} --access public --provenance 2>&1
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         if: steps.npm_check.outputs.exists == 'false'
