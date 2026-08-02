@@ -63,7 +63,7 @@ function mergeMissing(target, source) {
  * Global installs use a flat layout: agents/ skills/ commands/ plugins/
  * Project installs use the .opencode/ sub-directory layout.
  */
-function isGlobalConfigDir(target) {
+export function isGlobalConfigDir(target) {
   // Primary: ~/.opencode (actual OpenCode installation)
   const homeDir = resolve(join(homedir(), '.opencode'))
   if (resolve(target) === homeDir) return true
@@ -731,5 +731,19 @@ export async function installOpenCode(
     process.stdout.write('\n')
   } else {
     printSummary(target, ['opencode'], stats)
+  }
+
+  // -----------------------------------------------------------------------
+  // 5. Model preset selection (--components agents). Interactive picker runs
+  //    unless autoYes (use defaults) or an explicit --preset was given.
+  // -----------------------------------------------------------------------
+  if (interactive && !dryRun && !autoYes && !opts.preset) {
+    const { runModelPicker } = await import('./model-picker.mjs')
+    await runModelPicker({ presetDir: target, logger: console })
+  }
+
+  if (opts.preset && !dryRun) {
+    const { writeActivePreset } = await import('./model-picker.mjs')
+    writeActivePreset(target, opts.preset, { source: 'cli' })
   }
 }

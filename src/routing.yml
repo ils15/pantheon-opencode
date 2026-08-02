@@ -1,4 +1,81 @@
 version: 1.0
+presets:
+  go-deepseek:
+    description: "Tiered DeepSeek routing: V4 Pro for planners/reviewers, V4 Flash for implementers and scouts. Prices verified 2026-07-26."
+    providers:
+      deepseek: { baseURL: https://api.deepseek.com/v1, apiKeyEnv: PANTHEON_DEEPSEEK_API_KEY }
+    agents:
+      athena:     { model: deepseek/deepseek-v4-pro,   reasoning_effort: high,   fallback_models: [mimo/v2.5] }
+      themis:     { model: deepseek/deepseek-v4-pro,   reasoning_effort: high,   fallback_models: [mimo/v2.5] }
+      zeus:       { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
+      hermes:     { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
+      aphrodite:  { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
+      demeter:    { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
+      prometheus: { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
+      hephaestus: { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
+      apollo:     { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
+      nyx:        { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
+      gaia:       { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
+      iris:       { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
+      mnemosyne:  { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
+      talos:      { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
+  go-premium:
+    description: "All 14 agents on DeepSeek V4 Pro, per-agent reasoning_effort from routing.yml. Max quality, highest cost. Prices verified 2026-07-26."
+    providers:
+      deepseek: { baseURL: https://api.deepseek.com/v1, apiKeyEnv: PANTHEON_DEEPSEEK_API_KEY }
+    agents:
+      athena: { model: deepseek/deepseek-v4-pro, reasoning_effort: high }
+      themis: { model: deepseek/deepseek-v4-pro, reasoning_effort: high }
+      zeus: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
+      hermes: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
+      aphrodite: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
+      demeter: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
+      prometheus: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
+      hephaestus: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
+      apollo: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
+      nyx: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
+      gaia: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
+      iris: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
+      mnemosyne: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
+      talos: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
+  go-fast:
+    description: "All 14 agents on DeepSeek V4 Flash with reasoning_effort low everywhere. Fastest paid tier. Prices verified 2026-07-26."
+    providers:
+      deepseek: { baseURL: https://api.deepseek.com/v1, apiKeyEnv: PANTHEON_DEEPSEEK_API_KEY }
+    agents:
+      athena: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      themis: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      zeus: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      hermes: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      aphrodite: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      demeter: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      prometheus: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      hephaestus: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      apollo: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      nyx: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      gaia: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      iris: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      mnemosyne: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      talos: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+  go-free:
+    description: "All 14 agents on DeepSeek free-tier endpoints, reasoning_effort low. $0 cost. Prices verified 2026-07-26."
+    providers:
+      deepseek: { baseURL: https://api.deepseek.com/v1, apiKeyEnv: PANTHEON_DEEPSEEK_API_KEY }
+    agents:
+      athena: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      themis: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      zeus: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      hermes: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      aphrodite: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      demeter: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      prometheus: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      hephaestus: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      apollo: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      nyx: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      gaia: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      iris: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      mnemosyne: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+      talos: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
 agents:
   zeus:
     role: Central orchestrator

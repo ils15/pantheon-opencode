@@ -18,6 +18,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
+import { validatePresetDefs } from '../src/pantheon/presets.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -149,6 +150,20 @@ for (const [name, info] of Object.entries(routing.agents || {})) {
     )
   }
 }
+
+// F. Model preset validation
+const presetDefs = routing.presets || {}
+console.log(`\n  Model presets: ${Object.keys(presetDefs).length} defined`)
+
+const presetKnownAgents = routingAgents.filter((a) => a !== 'zen' && a !== 'zeus_copilot')
+const presetValidation = validatePresetDefs(presetDefs, { agents: presetKnownAgents })
+for (const err of presetValidation.errors) {
+  check(false, `Preset ${err}`)
+}
+for (const w of presetValidation.warnings) {
+  warn(`Preset ${w}`)
+}
+console.log(`  Presets defined: ${Object.keys(presetDefs).length}`)
 
 // Summary
 console.log(`\n${'='.repeat(50)}`)
