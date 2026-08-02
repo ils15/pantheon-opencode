@@ -64,6 +64,10 @@ const COMMANDS = [
   { name: '/pantheon-forget', desc: 'Compress memories' },
 ] as const
 
+/** How often the sidebar re-reads .pantheon/active-preset.json so `set-tier`
+ *  changes made while opencode is open show up within ~30s. */
+const PRESET_REFRESH_MS = 30_000
+
 const AGENTS = [
   { name: 'zeus', tier: 'default' as const, role: 'Orchestrator' },
   { name: 'athena', tier: 'premium' as const, role: 'Strategic planner' },
@@ -85,6 +89,66 @@ const AGENTS = [
 
 function fmtInt(n: number): string {
   return Intl.NumberFormat('en-US').format(Math.max(0, Math.round(n)))
+}
+
+/* ─── Active Preset Detection ──────────────────────────────
+ * Inline replica of src/pantheon/presets.mjs resolveActivePreset() — the TUI
+ * plugin is self-contained (dist/tui.tsx is a raw copy of this file with no
+ * relative imports), so the resolution logic is mirrored here rather than
+ * importing presets.mjs.
+ *
+ * Priority: env PANTHEON_MODEL_PRESET > first existing candidate file > none.
+ * Custom/unknown preset names are shown as-is (a preset may be defined that
+ * is not in the built-in list). "none" disables → default.                */
+
+type PresetInfo = { name: string | null; source: 'env' | 'file' | null }
+
+/** Read .pantheon/active-preset.json — mirrors the presets.mjs file leg:
+ *  first existing candidate wins; malformed JSON or a `preset` that is
+ *  missing, empty or "none" → null (no fall-through to lower candidates). */
+async function readActivePresetFile(cwd: string): Promise<{ name: string; source: 'file' } | null> {
+  const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config')
+  const candidates = [
+    join(cwd, '.pantheon', 'active-preset.json'),
+    join(xdgConfig, 'opencode', '.pantheon', 'active-preset.json'),
+    join(homedir(), '.opencode', '.pantheon', 'active-preset.json'),
+  ]
+  for (const candidate of candidates) {
+    let raw: string
+    try {
+      raw = await readFile(candidate, 'utf8')
+    } catch {
+      continue // candidate does not exist — try the next one
+    }
+    try {
+      const parsed = JSON.parse(raw) as { preset?: unknown }
+      const name = parsed && typeof parsed === 'object' ? parsed.preset : undefined
+      if (typeof name !== 'string' || name.length === 0 || name === 'none') return null
+      return { name, source: 'file' }
+    } catch {
+      return null // malformed file — treat as default (mirrors presets.mjs)
+    }
+  }
+  return null
+}
+
+/** Env leg of resolution: PANTHEON_MODEL_PRESET set and !== 'none' wins. */
+function presetFromEnv(env: Record<string, string | undefined>): PresetInfo {
+  const name = env.PANTHEON_MODEL_PRESET
+  if (name !== undefined && name !== '' && name !== 'none') {
+    return { name, source: 'env' }
+  }
+  return { name: null, source: null }
+}
+
+/** Resolve the active preset for the sidebar: env > file > default. */
+async function resolvePresetForTui(
+  env: Record<string, string | undefined>,
+  cwd: string,
+): Promise<PresetInfo> {
+  const envPreset = presetFromEnv(env)
+  if (envPreset.source === 'env') return envPreset
+  return (await readActivePresetFile(cwd)) ?? { name: null, source: null }
 }
 
 /* ─── Version Detection ────────────────────────────────────
@@ -842,6 +906,31 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
     props.api.state.vcs?.branch ? `\u2387 ${props.api.state.vcs.branch}` : null,
   )
 
+  // ── Active preset indicator ──
+  // Seeded synchronously from env (never blocks first paint), then re-checked
+  // against .pantheon/active-preset.json on mount and every 30s so `set-tier`
+  // changes made while opencode is open become visible.
+  const [preset, setPreset] = createSignal<PresetInfo>(presetFromEnv(process.env))
+
+  onMount(() => {
+    const cwd = ((props.api.state as any).path?.worktree ?? '') || process.cwd()
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const info = await resolvePresetForTui(process.env, cwd)
+        if (!cancelled) setPreset(info)
+      } catch {
+        // transient read error — keep the last known value
+      }
+    }
+    void refresh()
+    const timer = setInterval(() => void refresh(), PRESET_REFRESH_MS)
+    onCleanup(() => {
+      cancelled = true
+      clearInterval(timer)
+    })
+  })
+
   // ── Sessions: fetch via api.client.session.list (not proc.exec) ──
   const [sessionList, { refetch: refetchSessions }] = createResource(async () => {
     try {
@@ -936,6 +1025,24 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
         {`Pantheon${props.version ? ` v${props.version}` : ''}`}
       </text>
       <Show when={branch()}>{(b) => <text fg={theme().textMuted}>{b()}</text>}</Show>
+
+      {/* ── Active preset indicator ── */}
+      <Show
+        when={preset().name}
+        fallback={
+          <box flexDirection="row" gap={1}>
+            <text fg={theme().textMuted}>Preset: default</text>
+          </box>
+        }
+      >
+        {(name) => (
+          <box flexDirection="row" gap={1}>
+            <text fg={theme().textMuted}>{'\u26a1 Preset:'}</text>
+            <text fg={theme().accent}>{name()}</text>
+            <text fg={theme().textMuted}>{`(${preset().source ?? ''})`}</text>
+          </box>
+        )}
+      </Show>
 
       <HR />
 
