@@ -2,14 +2,15 @@ import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
-import {
-  createImageTransform,
-  imageCacheKey,
-  isImageFilePart,
-  parseImageResponse,
-  replaceImagePartInPlace,
-} from './pantheon/multimodal.ts'
 import { applyPreset, resolveActivePreset } from './pantheon/presets.mjs'
+import {
+  createVisionHandler,
+  generateInjectionPrompt,
+  isImageFilePart,
+  matchesModelPattern,
+  matchesWildcardPattern,
+  modelMatchesAnyPattern,
+} from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
 
@@ -47,21 +48,25 @@ function activePresetCandidates(): string[] {
   ]
 }
 
-const DEFAULT_VISION_MODEL = 'opencode-go/mimo-v2.5'
-
 // Keep pure helpers available to the dependency-free test harness. OpenCode
 // requires named runtime exports to be functions, which all of these are.
-export { imageCacheKey, isImageFilePart, parseImageResponse, replaceImagePartInPlace }
+export {
+  generateInjectionPrompt,
+  isImageFilePart,
+  matchesModelPattern,
+  matchesWildcardPattern,
+  modelMatchesAnyPattern,
+}
 
 /**
- * Pantheon plugin for OpenCode. Image FileParts are transformed before the
- * provider conversion; the active model is never changed for the user turn.
+ * Pantheon plugin for OpenCode. Pasted images are intercepted via the
+ * `chat.message` hook (proven to fire in opencode 1.18.11) and replaced with
+ * a text instruction telling the model to call a vision MCP tool (default
+ * `mcp__bifrost__describe_image`). The image never reaches the provider, so
+ * text-only models cannot fail with an `image_url` error.
  */
 const plugin: Plugin = async (input: PluginInput) => {
-  const transformImages = createImageTransform(input.client, input.directory, () => {
-    const resolved = resolveActivePreset({ candidates: activePresetCandidates() })
-    return resolved?.vision?.model ?? DEFAULT_VISION_MODEL
-  })
+  const vision = createVisionHandler(input)
 
   return {
     config: async (config: PluginConfig) => {
@@ -87,9 +92,8 @@ const plugin: Plugin = async (input: PluginInput) => {
         }
       }
     },
-    'experimental.chat.messages.transform': async (_hookInput, output) => {
-      await transformImages(output.messages)
-    },
+    'chat.message': vision.chatMessage,
+    event: vision.event,
   }
 }
 
