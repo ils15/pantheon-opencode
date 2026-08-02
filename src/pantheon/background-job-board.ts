@@ -229,7 +229,7 @@ export class BackgroundJobBoard {
       parentSessionID: input.parentSessionID,
       agent: input.agent,
       description: input.description,
-      objective: input.objective,
+      ...(input.objective !== undefined ? { objective: input.objective } : {}),
       state: 'running',
       timedOut: false,
       alias: `${prefix}-${counter}`,
