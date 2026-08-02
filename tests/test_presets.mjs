@@ -616,7 +616,7 @@ const failed = results.filter((r) => !r.passed)
 
 console.log('')
 for (const r of results) {
-  console.log(`  ${r.passed ? '✅' : '❌'} ${r.name}${r.error ? `: ${r.error}` : ''}`)
+  console.log(`  ${r.passed ? '✅' : '❌'} ${r.name}${r.error ? ': [redacted]' : ''}`)
 }
 console.log(`\n📊 Results: ${passed} passed, ${failed.length} failed`)
 process.exit(failed.length > 0 ? 1 : 0)
