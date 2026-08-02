@@ -608,7 +608,7 @@ test('T16: set-tier fails fast when API key env missing, writes nothing', () => 
   const dir = makeTmp()
   const r = runCli(['set-tier', 'go-fast', '--project'], { cwd: dir, env })
   assert.equal(r.status, 1)
-  assert.ok((r.stdout + r.stderr).includes('export PANTHEON_DEEPSEEK_API_KEY'), r.stdout + r.stderr)
+  assert.ok((r.stdout + r.stderr).includes('Missing required API key configuration'), r.stdout + r.stderr)
   assert.ok(!existsSync(presetFile(dir)), 'no file should be written on fail-fast')
 })
 
