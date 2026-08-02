@@ -90,6 +90,9 @@ const COMMANDS = [
 		desc: "Compress memories"
 	}
 ];
+/** How often the sidebar re-reads .pantheon/active-preset.json so `set-tier`
+*  changes made while opencode is open show up within ~30s. */
+const PRESET_REFRESH_MS = 3e4;
 const AGENTS = [
 	{
 		name: "zeus",
@@ -164,6 +167,58 @@ const AGENTS = [
 ];
 function fmtInt(n) {
 	return Intl.NumberFormat("en-US").format(Math.max(0, Math.round(n)));
+}
+/** Read .pantheon/active-preset.json — mirrors the presets.mjs file leg:
+*  first existing candidate wins; malformed JSON or a `preset` that is
+*  missing, empty or "none" → null (no fall-through to lower candidates). */
+async function readActivePresetFile(cwd) {
+	const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
+	const candidates = [
+		join(cwd, ".pantheon", "active-preset.json"),
+		join(xdgConfig, "opencode", ".pantheon", "active-preset.json"),
+		join(homedir(), ".opencode", ".pantheon", "active-preset.json")
+	];
+	for (const candidate of candidates) {
+		let raw;
+		try {
+			raw = await readFile(candidate, "utf8");
+		} catch {
+			continue;
+		}
+		try {
+			const parsed = JSON.parse(raw);
+			const name = parsed && typeof parsed === "object" ? parsed.preset : void 0;
+			if (typeof name !== "string" || name.length === 0 || name === "none") return null;
+			return {
+				name,
+				source: "file"
+			};
+		} catch {
+			return null;
+		}
+	}
+	return null;
+}
+/** Env leg of resolution: PANTHEON_MODEL_PRESET set and !== 'none' wins. */
+function presetFromEnv(env) {
+	const name = env.PANTHEON_MODEL_PRESET;
+	if (name !== void 0 && name !== "" && name !== "none") return {
+		name,
+		source: "env"
+	};
+	return {
+		name: null,
+		source: null
+	};
+}
+/** Resolve the active preset for the sidebar: env > file > default. */
+async function resolvePresetForTui(env, cwd) {
+	const envPreset = presetFromEnv(env);
+	if (envPreset.source === "env") return envPreset;
+	return await readActivePresetFile(cwd) ?? {
+		name: null,
+		source: null
+	};
 }
 async function detectVersion(api) {
 	try {
@@ -791,6 +846,23 @@ function View(props) {
 	const [showSessions, setShowSessions] = createSignal(false);
 	const theme = () => props.api.theme.current;
 	const branch = createMemo(() => props.api.state.vcs?.branch ? `\u2387 ${props.api.state.vcs.branch}` : null);
+	const [preset, setPreset] = createSignal(presetFromEnv(process.env));
+	onMount(() => {
+		const cwd = (props.api.state.path?.worktree ?? "") || process.cwd();
+		let cancelled = false;
+		const refresh = async () => {
+			try {
+				const info = await resolvePresetForTui(process.env, cwd);
+				if (!cancelled) setPreset(info);
+			} catch {}
+		};
+		refresh();
+		const timer = setInterval(() => void refresh(), PRESET_REFRESH_MS);
+		onCleanup(() => {
+			cancelled = true;
+			clearInterval(timer);
+		});
+	});
 	const [sessionList, { refetch: refetchSessions }] = createResource(async () => {
 		try {
 			return await props.api.client?.session?.list?.({ limit: 100 }) ?? { data: [] };
@@ -873,6 +945,45 @@ function View(props) {
 				return _el$40;
 			})()
 		}), _el$24);
+		insert(_el$22, createComponent(Show, {
+			get when() {
+				return preset().name;
+			},
+			get fallback() {
+				return (() => {
+					var _el$41 = createElement("box"), _el$42 = createElement("text");
+					insertNode(_el$41, _el$42);
+					setProp(_el$41, "flexDirection", "row");
+					setProp(_el$41, "gap", 1);
+					insertNode(_el$42, createTextNode(`Preset: default`));
+					effect((_$p) => setProp(_el$42, "fg", theme().textMuted, _$p));
+					return _el$41;
+				})();
+			},
+			children: (name) => (() => {
+				var _el$44 = createElement("box"), _el$45 = createElement("text"), _el$47 = createElement("text"), _el$48 = createElement("text");
+				insertNode(_el$44, _el$45);
+				insertNode(_el$44, _el$47);
+				insertNode(_el$44, _el$48);
+				setProp(_el$44, "flexDirection", "row");
+				setProp(_el$44, "gap", 1);
+				insertNode(_el$45, createTextNode(`⚡ Preset:`));
+				insert(_el$47, name);
+				insert(_el$48, () => `(${preset().source ?? ""})`);
+				effect((_p$) => {
+					var _v$15 = theme().textMuted, _v$16 = theme().accent, _v$17 = theme().textMuted;
+					_v$15 !== _p$.e && (_p$.e = setProp(_el$45, "fg", _v$15, _p$.e));
+					_v$16 !== _p$.t && (_p$.t = setProp(_el$47, "fg", _v$16, _p$.t));
+					_v$17 !== _p$.a && (_p$.a = setProp(_el$48, "fg", _v$17, _p$.a));
+					return _p$;
+				}, {
+					e: void 0,
+					t: void 0,
+					a: void 0
+				});
+				return _el$44;
+			})()
+		}), _el$24);
 		insert(_el$22, createComponent(HR, {}), _el$24);
 		insertNode(_el$24, _el$25);
 		insertNode(_el$24, _el$26);
@@ -891,12 +1002,12 @@ function View(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$41 = createElement("box"), _el$42 = createElement("text");
-							insertNode(_el$41, _el$42);
-							setProp(_el$41, "marginLeft", 1);
-							insertNode(_el$42, createTextNode(`No recent sessions`));
-							effect((_$p) => setProp(_el$42, "fg", theme().textMuted, _$p));
-							return _el$41;
+							var _el$49 = createElement("box"), _el$50 = createElement("text");
+							insertNode(_el$49, _el$50);
+							setProp(_el$49, "marginLeft", 1);
+							insertNode(_el$50, createTextNode(`No recent sessions`));
+							effect((_$p) => setProp(_el$50, "fg", theme().textMuted, _$p));
+							return _el$49;
 						})();
 					},
 					get children() {
@@ -936,10 +1047,10 @@ function View(props) {
 				insert(_el$31, createComponent(For, {
 					each: COMMANDS,
 					children: (cmd) => (() => {
-						var _el$44 = createElement("box"), _el$45 = createElement("text"), _el$46 = createElement("text");
-						insertNode(_el$44, _el$45);
-						insertNode(_el$44, _el$46);
-						setProp(_el$44, "onMouseDown", (e) => {
+						var _el$52 = createElement("box"), _el$53 = createElement("text"), _el$54 = createElement("text");
+						insertNode(_el$52, _el$53);
+						insertNode(_el$52, _el$54);
+						setProp(_el$52, "onMouseDown", (e) => {
 							e.stopPropagation();
 							try {
 								const cmdApi = props.api.command;
@@ -951,18 +1062,18 @@ function View(props) {
 								message: `Type ${cmd.name} in chat`
 							});
 						});
-						insert(_el$45, () => cmd.name);
-						insert(_el$46, () => ` \u2014 ${cmd.desc}`);
+						insert(_el$53, () => cmd.name);
+						insert(_el$54, () => ` \u2014 ${cmd.desc}`);
 						effect((_p$) => {
-							var _v$15 = cmd.name === "/pantheon" ? theme().accent : theme().textMuted, _v$16 = theme().textMuted;
-							_v$15 !== _p$.e && (_p$.e = setProp(_el$45, "fg", _v$15, _p$.e));
-							_v$16 !== _p$.t && (_p$.t = setProp(_el$46, "fg", _v$16, _p$.t));
+							var _v$18 = cmd.name === "/pantheon" ? theme().accent : theme().textMuted, _v$19 = theme().textMuted;
+							_v$18 !== _p$.e && (_p$.e = setProp(_el$53, "fg", _v$18, _p$.e));
+							_v$19 !== _p$.t && (_p$.t = setProp(_el$54, "fg", _v$19, _p$.t));
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$44;
+						return _el$52;
 					})()
 				}));
 				return _el$31;
@@ -985,21 +1096,21 @@ function View(props) {
 				insert(_el$35, createComponent(For, {
 					each: AGENTS,
 					children: (agent) => (() => {
-						var _el$47 = createElement("box"), _el$48 = createElement("text"), _el$49 = createElement("text");
-						insertNode(_el$47, _el$48);
-						insertNode(_el$47, _el$49);
-						insert(_el$48, () => `${agent.tier === "premium" ? "✦ " : "· "}${agent.name}`);
-						insert(_el$49, () => ` \u2014 ${agent.role}`);
+						var _el$55 = createElement("box"), _el$56 = createElement("text"), _el$57 = createElement("text");
+						insertNode(_el$55, _el$56);
+						insertNode(_el$55, _el$57);
+						insert(_el$56, () => `${agent.tier === "premium" ? "✦ " : "· "}${agent.name}`);
+						insert(_el$57, () => ` \u2014 ${agent.role}`);
 						effect((_p$) => {
-							var _v$17 = agent.tier === "premium" ? theme().accent : theme().textMuted, _v$18 = theme().textMuted;
-							_v$17 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$17, _p$.e));
-							_v$18 !== _p$.t && (_p$.t = setProp(_el$49, "fg", _v$18, _p$.t));
+							var _v$20 = agent.tier === "premium" ? theme().accent : theme().textMuted, _v$21 = theme().textMuted;
+							_v$20 !== _p$.e && (_p$.e = setProp(_el$56, "fg", _v$20, _p$.e));
+							_v$21 !== _p$.t && (_p$.t = setProp(_el$57, "fg", _v$21, _p$.t));
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$47;
+						return _el$55;
 					})()
 				}));
 				return _el$35;
@@ -1020,32 +1131,32 @@ function View(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$50 = createElement("box"), _el$51 = createElement("text");
-							insertNode(_el$50, _el$51);
-							setProp(_el$50, "marginLeft", 1);
-							insertNode(_el$51, createTextNode(`No config data`));
-							effect((_$p) => setProp(_el$51, "fg", theme().textMuted, _$p));
-							return _el$50;
+							var _el$58 = createElement("box"), _el$59 = createElement("text");
+							insertNode(_el$58, _el$59);
+							setProp(_el$58, "marginLeft", 1);
+							insertNode(_el$59, createTextNode(`No config data`));
+							effect((_$p) => setProp(_el$59, "fg", theme().textMuted, _$p));
+							return _el$58;
 						})();
 					},
 					children: (cfg) => (() => {
-						var _el$53 = createElement("box"), _el$54 = createElement("text"), _el$55 = createElement("text");
-						insertNode(_el$53, _el$54);
-						insertNode(_el$53, _el$55);
-						setProp(_el$53, "marginLeft", 1);
-						setProp(_el$53, "flexDirection", "column");
-						insert(_el$54, () => `MCP: ${String(cfg().mcpCount)}  Plugins: ${String(cfg().pluginCount)}`);
-						insert(_el$55, () => `Auto-compaction: ${cfg().autoCompaction ? "ON" : "OFF"}`);
+						var _el$61 = createElement("box"), _el$62 = createElement("text"), _el$63 = createElement("text");
+						insertNode(_el$61, _el$62);
+						insertNode(_el$61, _el$63);
+						setProp(_el$61, "marginLeft", 1);
+						setProp(_el$61, "flexDirection", "column");
+						insert(_el$62, () => `MCP: ${String(cfg().mcpCount)}  Plugins: ${String(cfg().pluginCount)}`);
+						insert(_el$63, () => `Auto-compaction: ${cfg().autoCompaction ? "ON" : "OFF"}`);
 						effect((_p$) => {
-							var _v$19 = theme().textMuted, _v$20 = theme().textMuted;
-							_v$19 !== _p$.e && (_p$.e = setProp(_el$54, "fg", _v$19, _p$.e));
-							_v$20 !== _p$.t && (_p$.t = setProp(_el$55, "fg", _v$20, _p$.t));
+							var _v$22 = theme().textMuted, _v$23 = theme().textMuted;
+							_v$22 !== _p$.e && (_p$.e = setProp(_el$62, "fg", _v$22, _p$.e));
+							_v$23 !== _p$.t && (_p$.t = setProp(_el$63, "fg", _v$23, _p$.t));
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$53;
+						return _el$61;
 					})()
 				});
 			}
