@@ -1,5 +1,15 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "opencode-go": {
+      "models": {
+        "mimo-v2.5": {
+          "attachment": true,
+          "modalities": { "input": ["text", "image"] }
+        }
+      }
+    }
+  },
   "default_agent": "zeus",
   "subagent_depth": 2,
   "model": "opencode-go/deepseek-v4-flash",
