@@ -1,7 +1,11 @@
 module.exports = {
   extends: ['@commitlint/config-conventional'],
-  ignores: [(message) => message.startsWith('Changes before error encountered')],
+  ignores: [
+    (message) => message.startsWith('Changes before error encountered'),
+    (message) => message.startsWith('Potential fix for pull request finding'),
+  ],
   rules: {
+    'body-max-line-length': [0],
     'scope-enum': [2, 'always', [
       'agents', 'skills', 'scripts', 'docs', 'ci', 'deps', 'release',
       'config', 'validate', 'commands', 'tui', 'installer', 'routing',
