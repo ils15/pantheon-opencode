@@ -1,3 +1,4 @@
+import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
@@ -34,18 +35,30 @@ board.onTerminal((taskID: string) => {
  *
  * All modules (Zeus, auto-wake, etc.) should access the board through this
  * function to ensure a single consistent state machine across the plugin.
+ *
+ * NOTE: opencode loads plugins by calling the module and applying its
+ * function-export check to EVERY export — each export must be a function
+ * (or `{ server: fn }`). Keeping this as a function export is required.
  */
 export function getBackgroundJobBoard(): BackgroundJobBoard {
   return board
 }
 
-export default {
-  name: 'pantheon',
-  version: '5.0.0',
-  description: 'Pantheon multi-agent orchestration platform',
-
-  hooks: {
+/**
+ * Pantheon plugin for opencode.
+ *
+ * opencode 1.18.x requires the plugin default export to be a FUNCTION
+ * `(input: PluginInput, options?: PluginOptions) => Promise<Hooks>` — a plain
+ * object export fails to load with "Plugin export is not a function".
+ * The `config` hook receives the mutable Config object by reference and
+ * mutates it in place (its return value is discarded by the runtime).
+ */
+const plugin: Plugin = async (_input: PluginInput) => {
+  return {
     config: async (config: PluginConfig) => {
+      // Agents/skills path injection (legacy fields; no-ops in opencode 1.18.x
+      // which loads agents/skills by directory convention, but kept for
+      // backwards compatibility with earlier opencode versions).
       config.agentsPath = config.agentsPath ?? []
       config.agentsPath.push(new URL('./agents', import.meta.url).pathname)
 
@@ -63,7 +76,7 @@ export default {
           `${home}/.opencode/.pantheon/active-preset.json`,
         ]
         const resolved = resolveActivePreset({ candidates })
-        if (!resolved) return config
+        if (!resolved) return
         applyPreset(config, resolved)
         console.log(`[Pantheon Plugin] Model preset active: ${resolved.name} (source: ${resolved.source})`)
       } catch (err: any) {
@@ -75,8 +88,8 @@ export default {
           console.warn('[Pantheon Plugin] Model preset ignored due to invalid preset configuration')
         }
       }
-
-      return config
     },
-  },
-} satisfies PluginConfig
+  }
+}
+
+export default plugin
