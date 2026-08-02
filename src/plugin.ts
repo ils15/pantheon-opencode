@@ -77,11 +77,21 @@ function isImagePart(part: unknown): boolean {
 }
 
 /**
- * Modality routing: when a USER turn carries an image attachment and the
- * active preset defines a vision fallback model, route ONLY that turn to the
- * vision model by mutating `output.message.model` (per-turn mutation — the
- * next turn reverts to the preset's text model). Text-only turns and turns
- * without a vision fallback pass through untouched.
+ * Default multimodal model used when an image turn arrives with no active
+ * preset (or an active preset without a `vision` key) — e.g. "Preset: default".
+ * opencode-go/qwen3.7-plus is multimodal + tool_call:true (verified via
+ * models.dev). Overridable per-user via PANTHEON_VISION_MODEL for different
+ * providers.
+ */
+const DEFAULT_VISION_MODEL = process.env.PANTHEON_VISION_MODEL ?? 'opencode-go/qwen3.7-plus'
+
+/**
+ * Modality routing: when a USER turn carries an image attachment, route ONLY
+ * that turn to a multimodal model by mutating `output.message.model` (per-turn
+ * mutation — the next turn reverts to the preset's text model). The active
+ * preset's `vision` model wins when it defines one; otherwise image turns fall
+ * back to DEFAULT_VISION_MODEL so they still route with no preset active
+ * ("Preset: default"). Text-only turns pass through untouched.
  *
  * NOTE: the chat.message hook signature is `(input, output) => Promise<void>`
  * (mutate output in place) — NOT `Promise<output>`. The `chat.message`
@@ -109,18 +119,21 @@ async function routeVisionTurn(
     // Resolve lazily — only image turns touch the filesystem/registry.
     // `vision` is typed on ResolvedPreset (presets.d.mts): { model, reasoning_effort? } | null.
     const resolved = resolveActivePreset({ candidates: activePresetCandidates() })
-    const vision = resolved?.vision ?? null
-    if (!vision || typeof vision.model !== 'string') return
+    // Preset vision model wins when the active preset defines one; otherwise
+    // fall back to the default multimodal model so image turns route even with
+    // no preset active. (vision.reasoning_effort remains unused — chat.message
+    // output has no params/options slot to apply it through.)
+    const visionModel = resolved?.vision?.model ?? DEFAULT_VISION_MODEL
 
     // Vision model strings are "provider/model" (e.g. "opencode-go/qwen3.7-plus")
     // while UserMessage.model is { providerID, modelID } — split on first '/'.
-    const slash = vision.model.indexOf('/')
-    if (slash <= 0 || slash >= vision.model.length - 1) return
+    const slash = visionModel.indexOf('/')
+    if (slash <= 0 || slash >= visionModel.length - 1) return
     output.message.model = {
-      providerID: vision.model.slice(0, slash),
-      modelID: vision.model.slice(slash + 1),
+      providerID: visionModel.slice(0, slash),
+      modelID: visionModel.slice(slash + 1),
     }
-    console.log(`[Pantheon Plugin] Image detected — routing turn to vision model ${vision.model}`)
+    console.log(`[Pantheon Plugin] Image detected — routing turn to vision model ${visionModel}`)
   } catch (err) {
     console.warn(
       '[Pantheon Plugin] Vision routing skipped:',
