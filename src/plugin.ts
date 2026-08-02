@@ -133,12 +133,8 @@ async function routeVisionTurn(
       providerID: visionModel.slice(0, slash),
       modelID: visionModel.slice(slash + 1),
     }
-    console.log(`[Pantheon Plugin] Image detected — routing turn to vision model ${visionModel}`)
-  } catch (err) {
-    console.warn(
-      '[Pantheon Plugin] Vision routing skipped:',
-      err instanceof Error ? err.message : String(err),
-    )
+  } catch {
+    // Silent degradation — hook fault must not crash or block a turn.
   }
 }
 
