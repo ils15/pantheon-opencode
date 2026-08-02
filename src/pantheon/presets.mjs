@@ -35,10 +35,10 @@ export const EFFORT_RANK = { low: 0, medium: 1, high: 2 }
  *
  * `vision` flags mark models that accept image input. Verified against
  * models.dev api.json on 2026-08-02 (council decision): qwen3.7-max,
- * minimax-m2.5, minimax-m2.7 and glm-5.1/glm-5.2 are TEXT-ONLY (vision:
- * false); mimo-v2.5 / mimo-v2.5-free / qwen3.7-plus and the o-series
- * (o1/o3/o4) are multimodal (models.dev input: text+image). claude-* and
- * gpt-5.6-* carry native image support.
+ * minimax-m2.5 and minimax-m2.7 and glm-5.1/glm-5.2 are TEXT-ONLY (vision:
+ * false); mimo-v2.5 / mimo-v2.5-free / qwen3.7-plus / minimax-m3 and the
+ * o-series (o1/o3/o4) are multimodal (models.dev input: text+image).
+ * claude-* and gpt-5.6-* carry native image support.
  */
 export const CAPABILITY_TABLE = [
   { prefix: 'deepseek/deepseek-v4-pro', maxEffort: 'high', stripEffort: false, vision: false },
@@ -75,12 +75,17 @@ export const CAPABILITY_TABLE = [
   // qwen3.7-max is text-only per models.dev api.json (2026-08-02); the
   // multimodal variant is qwen3.7-plus.
   { prefix: 'qwen3.7-max', maxEffort: 'high', stripEffort: false, vision: false },
+  // qwen3.7-plus IS multimodal (models.dev input: text+image) but image
+  // turns through the OpenCode Go gateway return HTTP 500 (opencode#33942
+  // + #29956). Flag stays true per models.dev; presets must NOT use it as a
+  // vision fallback — minimax-m3 is the confirmed opencode-go fallback.
   { prefix: 'qwen3.7-plus', maxEffort: 'medium', stripEffort: false, vision: true },
   // minimax-m2.7 / minimax-m2.5 are text-only per models.dev api.json
-  // (2026-08-02) — vision-capable MiniMax lives on the mimo-v2.5 family
-  // (mimo/, mimo-v2.5 above).
+  // (2026-08-02). minimax-m3 is the vision-capable MiniMax on opencode-go
+  // (confirmed multimodal via the Go gateway, opencode#29956).
   { prefix: 'minimax-m2.7', maxEffort: 'medium', stripEffort: false, vision: false },
   { prefix: 'minimax-m2.5', maxEffort: 'medium', stripEffort: false, vision: false },
+  { prefix: 'minimax-m3', maxEffort: 'high', stripEffort: false, vision: true },
   // BARE prefix — needed for opencode-go/deepseek-v4-flash (segment match);
   // provider-scoped deepseek/deepseek-v4-flash entry still wins by length
   // for deepseek/ models. Covers -free suffix too.
