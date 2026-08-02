@@ -50,6 +50,7 @@
     "scripts/*.mjs",
     "src/mcp/*.sh",
     "src/routing.yml",
+    "src/pantheon/**",
     "src/mcp/requirements*",
     "src/plugins/tui/**",
     "src/skills/**"
@@ -60,6 +61,7 @@
   "devDependencies": {
     "@commitlint/cli": "^19.8.0",
     "@commitlint/config-conventional": "^19.8.0",
+    "@opencode-ai/plugin": "1.18.11",
     "husky": "^9.1.7"
   },
   "repository": {

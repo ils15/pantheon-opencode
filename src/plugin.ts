@@ -1,6 +1,7 @@
 import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
+import { applyPreset, resolveActivePreset } from './pantheon/presets.mjs'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
 
@@ -50,6 +51,30 @@ export default {
 
       config.skillsPaths = config.skillsPaths ?? []
       config.skillsPaths.push(new URL('./skills', import.meta.url).pathname)
+
+      // Model preset injection (resolveActivePreset reads env/file, applyPreset
+      // mutates config). Kept after agents/skills paths; never blocks startup.
+      try {
+        const home = process.env.HOME ?? ''
+        const xdg = process.env.XDG_CONFIG_HOME ?? `${home}/.config`
+        const candidates = [
+          `${process.cwd()}/.pantheon/active-preset.json`,
+          `${xdg}/opencode/.pantheon/active-preset.json`,
+          `${home}/.opencode/.pantheon/active-preset.json`,
+        ]
+        const resolved = resolveActivePreset({ candidates })
+        if (!resolved) return config
+        applyPreset(config, resolved)
+        console.log(`[Pantheon Plugin] Model preset active: ${resolved.name} (source: ${resolved.source})`)
+      } catch (err: any) {
+        if (err?.code === 'PANTHEON_MISSING_API_KEY') {
+          console.error(
+            `[Pantheon Plugin] Preset requires env ${err.envVar}. Set it (export ${err.envVar}=...) or clear the preset: pantheon-opencode set-tier none`,
+          )
+        } else {
+          console.warn(`[Pantheon Plugin] Model preset ignored: ${err?.message ?? err}`)
+        }
+      }
 
       return config
     },

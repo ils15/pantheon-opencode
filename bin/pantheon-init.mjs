@@ -8,6 +8,7 @@
  * installOpenCode() from scripts/install/opencode.mjs.
  */
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -33,6 +34,9 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --interactive  # Force interactive TUI mode');
   console.log('  npx pantheon-opencode init --headless     # Force non-interactive mode');
   console.log('  npx pantheon-opencode init -y             # Skip confirmations, use defaults');
+  console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset');
+  console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)');
+  console.log('  npx pantheon-opencode set-tier <name> --project  # Set active model preset (project)');
   console.log('  npx pantheon-opencode --help              # Show this help');
 }
 
@@ -41,6 +45,78 @@ async function main() {
   const command = args[0];
 
   if (args.includes('--help')) { printUsage(); process.exit(0); }
+
+  if (command === 'set-tier') {
+    const isProject = args.includes('--project');
+    const isDryRun = args.includes('--dry-run');
+    const name = args[1];
+
+    const { loadPresetDefs } = await import('../src/pantheon/presets.mjs');
+    const { writeActivePreset } = await import('../scripts/install/model-picker.mjs');
+    const presets = loadPresetDefs();
+    const presetList = `none, ${Object.keys(presets).join(', ')}`;
+
+    if (!name) {
+      console.error('❌ set-tier requires a preset name');
+      console.error(`   Available: ${presetList}`);
+      process.exit(1);
+    }
+    if (name !== 'none' && !presets[name]) {
+      console.error(`❌ Unknown preset "${name}"`);
+      console.error(`   Available: ${presetList}`);
+      process.exit(1);
+    }
+
+    // Fail-fast: every provider's API key env var must be set before writing
+    if (name !== 'none') {
+      for (const [pid, provider] of Object.entries(presets[name].providers || {})) {
+        if (!process.env[provider.apiKeyEnv]) {
+          console.error(`❌ Missing env ${provider.apiKeyEnv} for provider "${pid}"`);
+          console.error(`   export ${provider.apiKeyEnv}=...`);
+          process.exit(1);
+        }
+      }
+    }
+
+    const presetDir = isProject
+      ? process.cwd()
+      : path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'opencode');
+    const filePath = path.join(presetDir, '.pantheon', 'active-preset.json');
+    const bakPath = path.join(presetDir, '.pantheon', 'active-preset.json.bak');
+
+    let prevName = '(none)';
+    if (fs.existsSync(filePath)) {
+      try {
+        prevName = JSON.parse(fs.readFileSync(filePath, 'utf8')).preset || '(unknown)';
+      } catch { prevName = '(unknown)'; }
+    }
+
+    if (name === 'none') {
+      if (isDryRun) {
+        console.log('[dry-run] Would clear model preset');
+      } else {
+        if (fs.existsSync(filePath)) {
+          fs.mkdirSync(path.dirname(bakPath), { recursive: true });
+          fs.copyFileSync(filePath, bakPath);
+          fs.rmSync(filePath, { force: true });
+        }
+        console.log('Model preset cleared. Using opencode defaults.');
+        console.log(`   Backup: ${bakPath}`);
+      }
+      return;
+    }
+
+    const result = writeActivePreset(presetDir, name, { dryRun: isDryRun, source: 'cli' });
+
+    console.log(`Model preset set: ${prevName} → ${name}`);
+    for (const [agent, spec] of Object.entries(presets[name].agents || {})) {
+      console.log(`   ${agent}: ${spec.model} [${spec.reasoning_effort}]`);
+    }
+    const providerNames = Object.keys(presets[name].providers || {});
+    console.log(`   Providers: ${providerNames.join(', ') || 'none'}`);
+    if (result.backupPath) console.log(`   Backup: ${result.backupPath}`);
+    return;
+  }
 
   if (command === 'init' || !command) {
     const isProject = args.includes('--project');
@@ -51,6 +127,8 @@ async function main() {
     const forceInteractive = args.includes('--interactive');
     const forceHeadless = args.includes('--headless');
     const autoYes = args.includes('--yes') || args.includes('-y');
+    const presetIndex = args.indexOf('--preset');
+    const presetOpt = presetIndex >= 0 ? (args[presetIndex + 1] ?? null) : null;
 
     const components = ['agents', 'skills', 'instructions', 'commands', 'plugins'];
     if (!skipMCP) components.push('runtime');
@@ -75,6 +153,7 @@ async function main() {
         interactive: forceInteractive,
         headless: forceHeadless,
         yes: autoYes,
+        preset: presetOpt,
       });
     } catch (err) {
       console.error(`❌ Installation failed: ${err.message}\n   Run with --no-mcp to skip Python dependencies:\n     npx pantheon-opencode init --no-mcp\n   Or retry with --force to recreate the venv:\n     npx pantheon-opencode init --force`);
