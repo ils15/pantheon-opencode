@@ -1,43 +1,26 @@
 version: 1.0
 presets:
   go-deepseek:
-    description: "Tiered DeepSeek routing: V4 Pro for planners/reviewers, V4 Flash for implementers and scouts. Prices verified 2026-07-26."
+    description: "DeepSeek tiering via OpenCode Zen: V4 Pro for planners/reviewers (free on Zen), V4 Flash for implementers, V4 Flash Free for scouts. Prices verified 2026-08."
     providers:
-      deepseek: { baseURL: https://api.deepseek.com/v1, apiKeyEnv: PANTHEON_DEEPSEEK_API_KEY }
+      opencode:
+        baseURL: https://opencode.ai/zen/v1
+        apiKeyEnv: PANTHEON_OPENCODE_API_KEY
     agents:
-      athena:     { model: deepseek/deepseek-v4-pro,   reasoning_effort: high,   fallback_models: [mimo/v2.5] }
-      themis:     { model: deepseek/deepseek-v4-pro,   reasoning_effort: high,   fallback_models: [mimo/v2.5] }
-      zeus:       { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
-      hermes:     { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
-      aphrodite:  { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
-      demeter:    { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
-      prometheus: { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
-      hephaestus: { model: deepseek/deepseek-v4-flash, reasoning_effort: medium, fallback_models: [mimo/v2.5] }
-      apollo:     { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
-      nyx:        { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
-      gaia:       { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
-      iris:       { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
-      mnemosyne:  { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
-      talos:      { model: deepseek/deepseek-v4-flash, reasoning_effort: low,    fallback_models: [mimo/v2.5] }
-  go-premium:
-    description: "All 14 agents on DeepSeek V4 Pro, per-agent reasoning_effort from routing.yml. Max quality, highest cost. Prices verified 2026-07-26."
-    providers:
-      deepseek: { baseURL: https://api.deepseek.com/v1, apiKeyEnv: PANTHEON_DEEPSEEK_API_KEY }
-    agents:
-      athena: { model: deepseek/deepseek-v4-pro, reasoning_effort: high }
-      themis: { model: deepseek/deepseek-v4-pro, reasoning_effort: high }
-      zeus: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
-      hermes: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
-      aphrodite: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
-      demeter: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
-      prometheus: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
-      hephaestus: { model: deepseek/deepseek-v4-pro, reasoning_effort: medium }
-      apollo: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
-      nyx: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
-      gaia: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
-      iris: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
-      mnemosyne: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
-      talos: { model: deepseek/deepseek-v4-pro, reasoning_effort: low }
+      athena:     { model: opencode/deepseek-v4-pro,       reasoning_effort: high,   fallback_models: [opencode/mimo-v2.5] }
+      themis:     { model: opencode/deepseek-v4-pro,       reasoning_effort: high,   fallback_models: [opencode/mimo-v2.5] }
+      zeus:       { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
+      hermes:     { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
+      aphrodite:  { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
+      demeter:    { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
+      prometheus: { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
+      hephaestus: { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
+      apollo:     { model: opencode/deepseek-v4-flash-free, reasoning_effort: low,   fallback_models: [opencode/mimo-v2.5] }
+      nyx:        { model: opencode/deepseek-v4-flash-free, reasoning_effort: low,   fallback_models: [opencode/mimo-v2.5] }
+      gaia:       { model: opencode/deepseek-v4-flash-free, reasoning_effort: low,   fallback_models: [opencode/mimo-v2.5] }
+      iris:       { model: opencode/deepseek-v4-flash-free, reasoning_effort: low,   fallback_models: [opencode/mimo-v2.5] }
+      mnemosyne:  { model: opencode/deepseek-v4-flash-free, reasoning_effort: low,   fallback_models: [opencode/mimo-v2.5] }
+      talos:      { model: opencode/deepseek-v4-flash-free, reasoning_effort: low,   fallback_models: [opencode/mimo-v2.5] }
   go-fast:
     description: "All 14 agents on DeepSeek V4 Flash with reasoning_effort low everywhere. Fastest paid tier. Prices verified 2026-07-26."
     providers:
@@ -57,25 +40,6 @@ presets:
       iris: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
       mnemosyne: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
       talos: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-  go-free:
-    description: "All 14 agents on DeepSeek free-tier endpoints, reasoning_effort low. $0 cost. Prices verified 2026-07-26."
-    providers:
-      deepseek: { baseURL: https://api.deepseek.com/v1, apiKeyEnv: PANTHEON_DEEPSEEK_API_KEY }
-    agents:
-      athena: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      themis: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      zeus: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      hermes: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      aphrodite: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      demeter: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      prometheus: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      hephaestus: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      apollo: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      nyx: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      gaia: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      iris: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      mnemosyne: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
-      talos: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
   go-claude:
     description: "Anthropic Claude tiering: Opus 4.8 for planners/reviewers, Sonnet 5 for implementers, Haiku 4.5 for scouts. Prices verified 2026-07."
     providers:
@@ -140,7 +104,7 @@ presets:
       mnemosyne:  { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
       talos:      { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
   go-muses:
-    description: "Pantheon free-tier lineup (Muses) ported from Oh-My-OpenAgent 'zen-free' preset: OpenCode Zen free tier, $0. Big Pickle orchestrator, Nemotron 3 Ultra Free planner, North Mini Code scouts. CAUTION: nemotron-3-ultra-free has known intermittent failures (opencode#38028) — switch to go-free if flaky. Prices verified 2026-08."
+    description: "Pantheon free-tier lineup (Muses) ported from Oh-My-OpenAgent 'zen-free' preset: OpenCode Zen free tier, $0. Big Pickle orchestrator, Nemotron 3 Ultra Free planner, North Mini Code scouts. CAUTION: nemotron-3-ultra-free has known intermittent failures (opencode#38028) — switch to go-fast if flaky. Prices verified 2026-08."
     providers:
       opencode:
         baseURL: https://opencode.ai/zen/v1
