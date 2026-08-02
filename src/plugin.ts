@@ -72,8 +72,7 @@ export default {
             '[Pantheon Plugin] Preset requires a provider API key environment variable. Set the required key for your selected provider or clear the preset: pantheon-opencode set-tier none',
           )
         } else {
-          const codeSuffix = err?.code ? ` (code: ${String(err.code)})` : ''
-          console.warn(`[Pantheon Plugin] Model preset ignored due to invalid preset configuration${codeSuffix}`)
+          console.warn('[Pantheon Plugin] Model preset ignored due to invalid preset configuration')
         }
       }
 
