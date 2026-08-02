@@ -69,7 +69,7 @@ export default {
       } catch (err: any) {
         if (err?.code === 'PANTHEON_MISSING_API_KEY') {
           console.error(
-            `[Pantheon Plugin] Preset requires env ${err.envVar}. Set it (export ${err.envVar}=...) or clear the preset: pantheon-opencode set-tier none`,
+            '[Pantheon Plugin] Preset requires a provider API key environment variable. Set the required key for your selected provider or clear the preset: pantheon-opencode set-tier none',
           )
         } else {
           console.warn(`[Pantheon Plugin] Model preset ignored: ${err?.message ?? err}`)
