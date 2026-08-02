@@ -76,6 +76,90 @@ presets:
       iris: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
       mnemosyne: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
       talos: { model: deepseek/deepseek-v4-flash-free, reasoning_effort: low }
+  go-claude:
+    description: "Anthropic Claude tiering: Opus 4.8 for planners/reviewers, Sonnet 5 for implementers, Haiku 4.5 for scouts. Prices verified 2026-07."
+    providers:
+      anthropic:
+        baseURL: https://api.anthropic.com
+        apiKeyEnv: PANTHEON_ANTHROPIC_API_KEY
+    agents:
+      athena:     { model: anthropic/claude-opus-4-8, reasoning_effort: high }
+      themis:     { model: anthropic/claude-opus-4-8, reasoning_effort: high }
+      zeus:       { model: anthropic/claude-sonnet-5, reasoning_effort: medium }
+      hermes:     { model: anthropic/claude-sonnet-5, reasoning_effort: medium }
+      aphrodite:  { model: anthropic/claude-sonnet-5, reasoning_effort: medium }
+      demeter:    { model: anthropic/claude-sonnet-5, reasoning_effort: medium }
+      prometheus: { model: anthropic/claude-sonnet-5, reasoning_effort: medium }
+      hephaestus: { model: anthropic/claude-sonnet-5, reasoning_effort: medium }
+      apollo:     { model: anthropic/claude-haiku-4-5, reasoning_effort: low }
+      nyx:        { model: anthropic/claude-haiku-4-5, reasoning_effort: low }
+      gaia:       { model: anthropic/claude-haiku-4-5, reasoning_effort: low }
+      iris:       { model: anthropic/claude-haiku-4-5, reasoning_effort: low }
+      mnemosyne:  { model: anthropic/claude-haiku-4-5, reasoning_effort: low }
+      talos:      { model: anthropic/claude-haiku-4-5, reasoning_effort: low }
+  go-openai:
+    description: "OpenAI GPT-5.6 family tiering: Sol for planners/reviewers, Terra for implementers, Luna Fast for scouts. Prices verified 2026-07."
+    providers:
+      openai:
+        baseURL: https://api.openai.com/v1
+        apiKeyEnv: PANTHEON_OPENAI_API_KEY
+    agents:
+      athena:     { model: openai/gpt-5.6-sol, reasoning_effort: high }
+      themis:     { model: openai/gpt-5.6-sol, reasoning_effort: high }
+      zeus:       { model: openai/gpt-5.6-terra, reasoning_effort: medium }
+      hermes:     { model: openai/gpt-5.6-terra, reasoning_effort: medium }
+      aphrodite:  { model: openai/gpt-5.6-terra, reasoning_effort: medium }
+      demeter:    { model: openai/gpt-5.6-terra, reasoning_effort: medium }
+      prometheus: { model: openai/gpt-5.6-terra, reasoning_effort: medium }
+      hephaestus: { model: openai/gpt-5.6-terra, reasoning_effort: medium }
+      apollo:     { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
+      nyx:        { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
+      gaia:       { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
+      iris:       { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
+      mnemosyne:  { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
+      talos:      { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
+  go-olympus:
+    description: "Pantheon flagship lineup (Olympus) ported from Oh-My-OpenAgent 'opencode-go' preset: GLM-5.1 orchestrator, DeepSeek V4 Pro planner, Qwen3.7 Max reviewer, Kimi K2.6 designer, MiniMax M2.7 implementers, DeepSeek V4 Flash scouts. Requires OpenCode Go subscription. Prices verified 2026-08."
+    providers:
+      opencode-go:
+        baseURL: https://opencode.ai/zen/go/v1
+        apiKeyEnv: PANTHEON_OPENCODE_API_KEY
+    agents:
+      zeus:       { model: opencode-go/glm-5.1,           reasoning_effort: medium }
+      athena:     { model: opencode-go/deepseek-v4-pro,   reasoning_effort: high }
+      themis:     { model: opencode-go/qwen3.7-max,       reasoning_effort: high }
+      hermes:     { model: opencode-go/minimax-m2.7,      reasoning_effort: medium }
+      aphrodite:  { model: opencode-go/kimi-k2.6,         reasoning_effort: medium }
+      demeter:    { model: opencode-go/qwen3.7-plus,      reasoning_effort: medium }
+      prometheus: { model: opencode-go/glm-5.2,           reasoning_effort: medium }
+      hephaestus: { model: opencode-go/minimax-m2.7,      reasoning_effort: medium }
+      apollo:     { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      nyx:        { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      gaia:       { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      iris:       { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      mnemosyne:  { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      talos:      { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+  go-muses:
+    description: "Pantheon free-tier lineup (Muses) ported from Oh-My-OpenAgent 'zen-free' preset: OpenCode Zen free tier, $0. Big Pickle orchestrator, Nemotron 3 Ultra Free planner, North Mini Code scouts. CAUTION: nemotron-3-ultra-free has known intermittent failures (opencode#38028) — switch to go-free if flaky. Prices verified 2026-08."
+    providers:
+      opencode:
+        baseURL: https://opencode.ai/zen/v1
+        apiKeyEnv: PANTHEON_OPENCODE_API_KEY
+    agents:
+      zeus:       { model: opencode/big-pickle,             reasoning_effort: medium }
+      athena:     { model: opencode/nemotron-3-ultra-free,  reasoning_effort: high }
+      themis:     { model: opencode/deepseek-v4-flash-free, reasoning_effort: high }
+      hermes:     { model: opencode/deepseek-v4-flash-free, reasoning_effort: medium }
+      aphrodite:  { model: opencode/deepseek-v4-flash-free, reasoning_effort: medium }
+      demeter:    { model: opencode/deepseek-v4-flash-free, reasoning_effort: medium }
+      prometheus: { model: opencode/deepseek-v4-flash-free, reasoning_effort: medium }
+      hephaestus: { model: opencode/deepseek-v4-flash-free, reasoning_effort: medium }
+      apollo:     { model: opencode/north-mini-code-free,   reasoning_effort: low }
+      nyx:        { model: opencode/north-mini-code-free,   reasoning_effort: low }
+      gaia:       { model: opencode/north-mini-code-free,   reasoning_effort: low }
+      iris:       { model: opencode/north-mini-code-free,   reasoning_effort: low }
+      mnemosyne:  { model: opencode/north-mini-code-free,   reasoning_effort: low }
+      talos:      { model: opencode/north-mini-code-free,   reasoning_effort: low }
 agents:
   zeus:
     role: Central orchestrator
