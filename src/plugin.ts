@@ -79,11 +79,11 @@ function isImagePart(part: unknown): boolean {
 /**
  * Default multimodal model used when an image turn arrives with no active
  * preset (or an active preset without a `vision` key) — e.g. "Preset: default".
- * opencode-go/qwen3.7-plus is multimodal + tool_call:true (verified via
- * models.dev). Overridable per-user via PANTHEON_VISION_MODEL for different
- * providers.
+ * opencode-go/mimo-v2.5 is multimodal text+image+audio+video with tool
+ * calling, cheaper than qwen3.7-plus — models.dev verified 2026-08.
+ * Overridable per-user via PANTHEON_VISION_MODEL for different providers.
  */
-const DEFAULT_VISION_MODEL = process.env.PANTHEON_VISION_MODEL ?? 'opencode-go/qwen3.7-plus'
+const DEFAULT_VISION_MODEL = process.env.PANTHEON_VISION_MODEL ?? 'opencode-go/mimo-v2.5'
 
 /**
  * Modality routing: when a USER turn carries an image attachment, route ONLY
