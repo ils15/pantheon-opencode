@@ -317,6 +317,94 @@ test('T10: normalizeCapability matrix', () => {
     variant: 'medium',
     clamped: true,
   })
+  // gpt-5.6 family: longest-prefix wins (luna-fast → low, not generic medium)
+  assert.deepEqual(presets.normalizeCapability('openai/gpt-5.6-sol', 'high'), {
+    variant: 'high',
+    clamped: false,
+  })
+  assert.deepEqual(presets.normalizeCapability('openai/gpt-5.6-luna-fast', 'high'), {
+    variant: 'low',
+    clamped: true,
+  })
+  assert.deepEqual(presets.normalizeCapability('openai/gpt-5.6-terra', 'high'), {
+    variant: 'medium',
+    clamped: true,
+  })
+  assert.deepEqual(presets.normalizeCapability('openai/gpt-5.6-luna', 'medium'), {
+    variant: 'low',
+    clamped: true,
+  })
+  assert.deepEqual(presets.normalizeCapability('openai/gpt-5.6', 'high'), {
+    variant: 'medium',
+    clamped: true,
+  })
+  // claude strip applies to the new 2026 models too (no per-model entries)
+  assert.deepEqual(presets.normalizeCapability('anthropic/claude-opus-4-8', 'high'), {
+    variant: null,
+    clamped: true,
+  })
+  assert.deepEqual(presets.normalizeCapability('anthropic/claude-sonnet-5', undefined), {
+    variant: null,
+    clamped: false,
+  })
+  // opencode-go (OpenCode Go subscription): bare segment prefix matches
+  // opencode-go/deepseek-v4-flash via segment; provider-scoped deepseek/
+  // entry still wins by length for deepseek/ models
+  assert.deepEqual(presets.normalizeCapability('opencode-go/deepseek-v4-flash', 'medium'), {
+    variant: 'medium',
+    clamped: false,
+  })
+  assert.deepEqual(presets.normalizeCapability('deepseek/deepseek-v4-flash', 'high'), {
+    variant: 'medium',
+    clamped: true,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode-go/deepseek-v4-pro', 'high'), {
+    variant: 'high',
+    clamped: false,
+  })
+  // opencode-go model families
+  assert.deepEqual(presets.normalizeCapability('opencode-go/kimi-k2.6', 'high'), {
+    variant: 'high',
+    clamped: false,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode-go/qwen3.7-plus', 'high'), {
+    variant: 'medium',
+    clamped: true,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode-go/qwen3.7-max', 'high'), {
+    variant: 'high',
+    clamped: false,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode-go/minimax-m2.7', 'medium'), {
+    variant: 'medium',
+    clamped: false,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode-go/glm-5.1', 'medium'), {
+    variant: 'medium',
+    clamped: false,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode-go/glm-5.2', 'medium'), {
+    variant: 'medium',
+    clamped: false,
+  })
+  // opencode (Zen free tier): big-pickle clamps high→medium; nemotron
+  // accepts high; north-mini-code-free accepts low
+  assert.deepEqual(presets.normalizeCapability('opencode/big-pickle', 'high'), {
+    variant: 'medium',
+    clamped: true,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode/nemotron-3-ultra-free', 'high'), {
+    variant: 'high',
+    clamped: false,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode/north-mini-code-free', 'low'), {
+    variant: 'low',
+    clamped: false,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode/deepseek-v4-flash-free', 'medium'), {
+    variant: 'medium',
+    clamped: false,
+  })
   // unknown model throws
   assert.throws(() => presets.normalizeCapability('unknown/model-x', 'low'), /no capability entry/)
 })
@@ -362,7 +450,20 @@ test('T12: validatePresetDefs passes on repo routing.yml presets', () => {
   const result = presets.validatePresetDefs(defs, { agents: repoAgents() })
   assert.equal(result.ok, true)
   assert.deepEqual(result.errors, [])
-  assert.equal(Object.keys(defs).length, 4)
+  assert.equal(Object.keys(defs).length, 8)
+  // go-claude / go-openai validate clean (claude strip rule, gpt entries exist)
+  for (const name of ['go-claude', 'go-openai']) {
+    const r = presets.validatePresetDefs({ [name]: defs[name] }, { agents: repoAgents() })
+    assert.equal(r.ok, true, `preset "${name}" should validate clean: ${JSON.stringify(r.errors)}`)
+    assert.deepEqual(r.errors, [])
+  }
+  // go-olympus / go-muses validate clean (all models have capability entries,
+  // providers valid)
+  for (const name of ['go-olympus', 'go-muses']) {
+    const r = presets.validatePresetDefs({ [name]: defs[name] }, { agents: repoAgents() })
+    assert.equal(r.ok, true, `preset "${name}" should validate clean: ${JSON.stringify(r.errors)}`)
+    assert.deepEqual(r.errors, [])
+  }
 })
 
 // ─── T13: validator fail fixtures ──────────────────────────────────────
@@ -574,14 +675,14 @@ await testAsync('T19: picker persists; opencode.mjs gates on autoYes/opts.preset
   assert.ok(src.includes('runModelPicker'), 'opencode.mjs must import/use runModelPicker')
 })
 
-// ─── T20: validate-routing passes with 4 presets ───────────────────────
-test('T20: validate-routing exits 0 and reports 4 presets', () => {
+// ─── T20: validate-routing passes with 8 presets ───────────────────────
+test('T20: validate-routing exits 0 and reports 8 presets', () => {
   const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'validate-routing.mjs')], {
     cwd: ROOT,
     encoding: 'utf8',
   })
   assert.equal(r.status, 0, r.stdout + r.stderr)
-  assert.ok(r.stdout.includes('Presets defined: 4'), r.stdout)
+  assert.ok(r.stdout.includes('Presets defined: 8'), r.stdout)
 })
 
 // ─── T21: packaging smoke ──────────────────────────────────────────────
@@ -608,6 +709,151 @@ test('T21: npm pack includes presets.mjs + model-picker.mjs', () => {
     files.includes('scripts/install/model-picker.mjs'),
     `model-picker.mjs missing from pack: ${files.join(',')}`,
   )
+})
+
+// ─── T22: applyPreset go-openai (repo presets) ─────────────────────────
+test('T22: applyPreset go-openai injects OpenAI provider + gpt-5.6 agents', () => {
+  const resolved = presets.resolveActivePreset({
+    env: { PANTHEON_MODEL_PRESET: 'go-openai' },
+    candidates: [],
+    logger: silent,
+  })
+  assert.ok(resolved, 'go-openai should resolve from repo presets')
+  assert.equal(resolved.name, 'go-openai')
+  assert.equal(resolved.source, 'env')
+
+  const config = {}
+  presets.applyPreset(config, resolved, { env: { PANTHEON_OPENAI_API_KEY: 'sk-openai' } })
+  assert.deepEqual(config.provider.openai.options, {
+    baseURL: 'https://api.openai.com/v1',
+    apiKey: 'sk-openai',
+  })
+  // tiering: sol → high, terra → medium, luna-fast → low
+  assert.equal(config.agent.athena.model, 'openai/gpt-5.6-sol')
+  assert.equal(config.agent.athena.variant, 'high')
+  assert.equal(config.agent.hermes.model, 'openai/gpt-5.6-terra')
+  assert.equal(config.agent.hermes.variant, 'medium')
+  assert.equal(config.agent.apollo.model, 'openai/gpt-5.6-luna-fast')
+  assert.equal(config.agent.apollo.variant, 'low')
+  assert.equal(config.agent.talos.model, 'openai/gpt-5.6-luna-fast')
+  assert.equal(config.agent.talos.variant, 'low')
+
+  let thrown = null
+  try {
+    presets.applyPreset({}, resolved, { env: {} })
+  } catch (e) {
+    thrown = e
+  }
+  assert.ok(thrown, 'should throw on missing OpenAI key')
+  assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
+  assert.equal(thrown.envVar, 'PANTHEON_OPENAI_API_KEY')
+})
+
+// ─── T23: applyPreset go-claude (repo presets) ─────────────────────────
+test('T23: applyPreset go-claude strips variant for claude models', () => {
+  const resolved = presets.resolveActivePreset({
+    env: { PANTHEON_MODEL_PRESET: 'go-claude' },
+    candidates: [],
+    logger: silent,
+  })
+  assert.ok(resolved, 'go-claude should resolve from repo presets')
+  assert.equal(resolved.name, 'go-claude')
+
+  const config = {}
+  presets.applyPreset(config, resolved, { env: { PANTHEON_ANTHROPIC_API_KEY: 'sk-ant' } })
+  assert.deepEqual(config.provider.anthropic.options, {
+    baseURL: 'https://api.anthropic.com',
+    apiKey: 'sk-ant',
+  })
+  assert.equal(config.agent.athena.model, 'anthropic/claude-opus-4-8')
+  assert.ok(!('variant' in config.agent.athena), 'claude variant key must be stripped')
+  assert.equal(config.agent.hermes.model, 'anthropic/claude-sonnet-5')
+  assert.ok(!('variant' in config.agent.hermes), 'claude variant key must be stripped')
+  assert.equal(config.agent.apollo.model, 'anthropic/claude-haiku-4-5')
+  assert.ok(!('variant' in config.agent.apollo), 'claude variant key must be stripped')
+})
+
+// ─── T24: applyPreset go-olympus (repo presets) ────────────────────────
+test('T24: applyPreset go-olympus injects opencode-go provider + tiered agents', () => {
+  const resolved = presets.resolveActivePreset({
+    env: { PANTHEON_MODEL_PRESET: 'go-olympus' },
+    candidates: [],
+    logger: silent,
+  })
+  assert.ok(resolved, 'go-olympus should resolve from repo presets')
+  assert.equal(resolved.name, 'go-olympus')
+  assert.equal(resolved.source, 'env')
+
+  const config = {}
+  presets.applyPreset(config, resolved, { env: { PANTHEON_OPENCODE_API_KEY: 'sk-gogo' } })
+  assert.deepEqual(config.provider['opencode-go'].options, {
+    baseURL: 'https://opencode.ai/zen/go/v1',
+    apiKey: 'sk-gogo',
+  })
+  // tiering: GLM-5.1 zeus, V4 Pro athena (high), Qwen3.7 Max themis,
+  // MiniMax M2.7 hermes, Kimi K2.6 aphrodite, V4 Flash apollo (low)
+  assert.equal(config.agent.zeus.model, 'opencode-go/glm-5.1')
+  assert.equal(config.agent.zeus.variant, 'medium')
+  assert.equal(config.agent.athena.model, 'opencode-go/deepseek-v4-pro')
+  assert.equal(config.agent.athena.variant, 'high')
+  assert.equal(config.agent.themis.model, 'opencode-go/qwen3.7-max')
+  assert.equal(config.agent.themis.variant, 'high')
+  assert.equal(config.agent.hermes.model, 'opencode-go/minimax-m2.7')
+  assert.equal(config.agent.hermes.variant, 'medium')
+  assert.equal(config.agent.aphrodite.model, 'opencode-go/kimi-k2.6')
+  assert.equal(config.agent.aphrodite.variant, 'medium')
+  assert.equal(config.agent.apollo.model, 'opencode-go/deepseek-v4-flash')
+  assert.equal(config.agent.apollo.variant, 'low')
+  assert.equal(config.agent.talos.model, 'opencode-go/deepseek-v4-flash')
+  assert.equal(config.agent.talos.variant, 'low')
+
+  let thrown = null
+  try {
+    presets.applyPreset({}, resolved, { env: {} })
+  } catch (e) {
+    thrown = e
+  }
+  assert.ok(thrown, 'should throw on missing OpenCode Go key')
+  assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
+  assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
+})
+
+// ─── T25: applyPreset go-muses (repo presets) ──────────────────────────
+test('T25: applyPreset go-muses injects opencode provider + free models', () => {
+  const resolved = presets.resolveActivePreset({
+    env: { PANTHEON_MODEL_PRESET: 'go-muses' },
+    candidates: [],
+    logger: silent,
+  })
+  assert.ok(resolved, 'go-muses should resolve from repo presets')
+  assert.equal(resolved.name, 'go-muses')
+
+  const config = {}
+  presets.applyPreset(config, resolved, { env: { PANTHEON_OPENCODE_API_KEY: 'sk-zen' } })
+  assert.deepEqual(config.provider.opencode.options, {
+    baseURL: 'https://opencode.ai/zen/v1',
+    apiKey: 'sk-zen',
+  })
+  // Big Pickle zeus (medium), Nemotron 3 Ultra Free athena (high),
+  // North Mini Code apollo (low), flash-free implementers
+  assert.equal(config.agent.zeus.model, 'opencode/big-pickle')
+  assert.equal(config.agent.zeus.variant, 'medium')
+  assert.equal(config.agent.athena.model, 'opencode/nemotron-3-ultra-free')
+  assert.equal(config.agent.athena.variant, 'high')
+  assert.equal(config.agent.apollo.model, 'opencode/north-mini-code-free')
+  assert.equal(config.agent.apollo.variant, 'low')
+  assert.equal(config.agent.hermes.model, 'opencode/deepseek-v4-flash-free')
+  assert.equal(config.agent.hermes.variant, 'medium')
+
+  let thrown = null
+  try {
+    presets.applyPreset({}, resolved, { env: {} })
+  } catch (e) {
+    thrown = e
+  }
+  assert.ok(thrown, 'should throw on missing OpenCode Zen key')
+  assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
+  assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
 })
 
 // ─── Summary ───────────────────────────────────────────────────────────

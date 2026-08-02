@@ -34,10 +34,37 @@ export const CAPABILITY_TABLE = [
   // prefix also covers -free suffix (e.g. deepseek/deepseek-v4-flash-free)
   { prefix: 'deepseek/deepseek-v4-flash', maxEffort: 'medium', stripEffort: false },
   { prefix: 'claude', maxEffort: null, stripEffort: true },
+  // gpt-5.6 family: longest-prefix match picks luna-fast over generic gpt-5.6
+  { prefix: 'gpt-5.6-sol', maxEffort: 'high', stripEffort: false },
+  { prefix: 'gpt-5.6-terra', maxEffort: 'medium', stripEffort: false },
+  { prefix: 'gpt-5.6-luna-fast', maxEffort: 'low', stripEffort: false },
+  { prefix: 'gpt-5.6-luna', maxEffort: 'low', stripEffort: false },
+  { prefix: 'gpt-5.6', maxEffort: 'medium', stripEffort: false },
   { prefix: 'o1', maxEffort: 'high', stripEffort: false },
   { prefix: 'o3', maxEffort: 'high', stripEffort: false },
   { prefix: 'o4', maxEffort: 'high', stripEffort: false },
   { prefix: 'mimo/', maxEffort: 'low', stripEffort: false },
+  // opencode-go (OpenCode Go subscription) — bare segment prefixes so
+  // opencode-go/<model> IDs match; the provider-scoped deepseek/ entries
+  // above still win by length for deepseek/ models.
+  { prefix: 'glm-5.2', maxEffort: 'medium', stripEffort: false },
+  { prefix: 'glm-5.1', maxEffort: 'medium', stripEffort: false },
+  { prefix: 'kimi-k2.6', maxEffort: 'high', stripEffort: false },
+  { prefix: 'qwen3.7-max', maxEffort: 'high', stripEffort: false },
+  { prefix: 'qwen3.7-plus', maxEffort: 'medium', stripEffort: false },
+  { prefix: 'minimax-m2.7', maxEffort: 'medium', stripEffort: false },
+  { prefix: 'minimax-m2.5', maxEffort: 'medium', stripEffort: false },
+  // BARE prefix — needed for opencode-go/deepseek-v4-flash (segment match);
+  // provider-scoped deepseek/deepseek-v4-flash entry still wins by length
+  // for deepseek/ models. Covers -free suffix too.
+  { prefix: 'deepseek-v4-flash', maxEffort: 'medium', stripEffort: false },
+  // BARE prefix — needed for opencode-go/deepseek-v4-pro (segment match);
+  // provider-scoped deepseek/deepseek-v4-pro entry still wins by length.
+  { prefix: 'deepseek-v4-pro', maxEffort: 'high', stripEffort: false },
+  // opencode (Zen free tier) — bare segment prefixes for opencode/<model>.
+  { prefix: 'big-pickle', maxEffort: 'medium', stripEffort: false },
+  { prefix: 'nemotron-3-ultra-free', maxEffort: 'high', stripEffort: false },
+  { prefix: 'north-mini-code-free', maxEffort: 'high', stripEffort: false },
 ]
 
 /**
