@@ -17,13 +17,19 @@ import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount
 *   - sidebar_content        (order 900) — Pantheon sidebar (header/version/
 *     branch, Sessions, Commands, Agents, Config, Memory).
 *   - app_bottom             (order 60)  — AI subscription usage gauges
-*     (Anthropic/OpenAI quotas + provider status incidents).
+*     (Anthropic/OpenAI quotas, OpenCode Go/Zen dollar limits + provider
+*     status incidents).
 *
 * ─────────────────────────────────────────────────────────────────────────────
 * VENDORED FEATURES (MIT) — incorporated with their license headers preserved:
 *
 *   • satas20/opencode-usage-bar (MIT)
 *       https://github.com/satas20/opencode-usage-bar
+*
+*   v1.2.0 added an OpenCode Go/Zen usage provider (`opencodego`) on top of
+*   the vendored base — dollar-denominated rolling limits ($12/5h, $30/7d,
+*   $60/month) via the same key used for inference. Still MIT-credited to
+*   satas20 for the original bar/config/poll code.
 *
 * satas20/opencode-todo-progress was vendored in v1.1.0 alongside the
 * usage-bar but has since been REMOVED as redundant — the native session
@@ -269,6 +275,10 @@ async function detectVersion(api) {
 * Providers:
 *   anthropic — Claude Pro/Max via the OAuth token in ~/.claude/.credentials.json
 *   openai    — ChatGPT Plus/Pro via the Codex CLI login in ~/.codex/auth.json
+*   opencodego— OpenCode Go/Zen dollar limits ($12/5h, $30/7d, $60/mo) via
+*               PANTHEON_OPENCODE_API_KEY (fallback OPENCODE_API_KEY). No
+*               status page — the provider hides silently when unconfigured
+*               or when the (not yet public) usage endpoint is unavailable.
 *
 * When a provider's public status page reports an incident, a colored `!`
 * marker appears next to its prefix (red = major/critical, amber = minor,
@@ -448,7 +458,36 @@ function parseWhamWindow(w, fallback) {
 		resetsAt
 	};
 }
-const providers = [anthropicProvider, openaiProvider];
+const providers = [
+	anthropicProvider,
+	openaiProvider,
+	{
+		id: "opencodego",
+		short: "go",
+		async fetchUsage(_cfg) {
+			const token = process.env.PANTHEON_OPENCODE_API_KEY ?? process.env.OPENCODE_API_KEY;
+			if (!token) return null;
+			const data = await fetchJson("https://opencode.ai/zen/go/v1/usage", { authorization: `Bearer ${token}` });
+			if (!data) return null;
+			const windows = [];
+			const push = (w, category) => {
+				if (!w) return;
+				if (typeof w.usagePercent !== "number" || !Number.isFinite(w.usagePercent)) return;
+				if (typeof w.resetInSec !== "number" || !Number.isFinite(w.resetInSec)) return;
+				windows.push({
+					category,
+					label: category,
+					percent: Math.round(w.usagePercent),
+					resetsAt: Date.now() + w.resetInSec * 1e3
+				});
+			};
+			push(data.rolling5h, "5h");
+			push(data.weekly, "7d");
+			push(data.monthly, "1m");
+			return windows.length > 0 ? windows : null;
+		}
+	}
+];
 const DEFAULT_TOML = `# opencode-usage-bar configuration
 # Read once at startup — restart opencode after editing.
 
@@ -469,11 +508,19 @@ enabled = false       # ChatGPT Plus/Pro via the Codex CLI login
 show_5h = true
 show_7d = false
 # codex_auth_path = "~/.codex/auth.json"
+
+[opencodego]
+enabled = true        # OpenCode Go/Zen dollar usage via PANTHEON_OPENCODE_API_KEY
+show_5h = true        # rolling 5-hour window ($12)
+show_7d = true        # rolling 7-day window ($30)
+show_1m = false       # subscription-month window ($60) — opt-in
+# Falls back to OPENCODE_API_KEY when PANTHEON_OPENCODE_API_KEY is unset.
 `;
 function defaultConfig() {
 	const show = (over = {}) => ({
 		"5h": true,
 		"7d": false,
+		"1m": false,
 		model: false,
 		...over
 	});
@@ -488,6 +535,10 @@ function defaultConfig() {
 			openai: {
 				enabled: false,
 				show: show()
+			},
+			opencodego: {
+				enabled: true,
+				show: show({ "7d": true })
 			}
 		}
 	};
@@ -511,12 +562,17 @@ function parseConfig(raw) {
 	cfg.showStatus = bool(ui["show_status"], cfg.showStatus);
 	const rawWidth = ui["bar_width"];
 	if (typeof rawWidth === "number" && Number.isFinite(rawWidth) && rawWidth >= 1) cfg.barWidth = Math.min(40, Math.floor(rawWidth));
-	for (const id of ["anthropic", "openai"]) {
+	for (const id of [
+		"anthropic",
+		"openai",
+		"opencodego"
+	]) {
 		const t = asTable(root[id]);
 		const p = cfg.providers[id];
 		p.enabled = bool(t["enabled"], p.enabled);
 		p.show["5h"] = bool(t["show_5h"], p.show["5h"]);
 		p.show["7d"] = bool(t["show_7d"], p.show["7d"]);
+		p.show["1m"] = bool(t["show_1m"], p.show["1m"]);
 		p.show.model = bool(t["show_model"], p.show.model);
 		const credentialsPath = str(t["credentials_path"]);
 		if (credentialsPath !== void 0) p.credentialsPath = credentialsPath;
