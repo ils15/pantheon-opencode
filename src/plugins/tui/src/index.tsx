@@ -12,21 +12,19 @@
  * Slots:
  *   - sidebar_content        (order 900) — Pantheon sidebar (header/version/
  *     branch, Sessions, Commands, Agents, Config, Memory).
- *   - session_prompt_right   (order 60)  — live todo progress bar, next to the
- *     model name.
  *   - app_bottom             (order 60)  — AI subscription usage gauges
  *     (Anthropic/OpenAI quotas + provider status incidents).
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * VENDORED FEATURES (MIT) — incorporated with their license headers preserved:
  *
- *   • satas20/opencode-todo-progress (MIT)
- *       https://github.com/satas20/opencode-todo-progress
  *   • satas20/opencode-usage-bar (MIT)
  *       https://github.com/satas20/opencode-usage-bar
  *
- * Both were vendored and adapted to merge into this single file (imports
- * unified, config key name `usage-bar.toml` and poll/backoff behavior kept).
+ * satas20/opencode-todo-progress was vendored in v1.1.0 alongside the
+ * usage-bar but has since been REMOVED as redundant — the native session
+ * footer already surfaces todo/context state, so its todo bar slot was
+ * dropped entirely. Only usage-bar code remains.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * LIMITATION — native context/tokens statusline:
@@ -208,78 +206,6 @@ async function detectVersion(api: TuiPluginApi): Promise<string | null> {
   }
 
   return null // sem fallback — versão não aparece
-}
-
-/* ──────────────────────────────────────────────────────────
- * VENDORED: opencode-todo-progress (MIT) — satas20
- * https://github.com/satas20/opencode-todo-progress
- * ────────────────────────────────────────────────────────── */
-
-/**
- * todo-progress — persistent todo progress bar for the opencode TUI.
- *
- * Renders a compact `▓▓▓▓▓▓▓▓░░ 3/10 · current task` bar on the right side
- * of the session prompt's agent/model row, next to the model name. Updates
- * live via the `todo.updated` SSE event (already wired into the TUI state
- * store). Hides entirely when the active session has no todos.
- *
- * Loaded via tui.json, e.g.:
- *   { "plugin": ["opencode-todo-progress"] }        // published npm package
- *   { "plugin": ["/abs/path/to/src/index.tsx"] }    // local file (no build)
- */
-
-const TODO_BAR_WIDTH = 10
-const TASK_MAX = 30
-
-function truncate(text: string, max: number) {
-  const chars = Array.from(text)
-  return chars.length > max ? chars.slice(0, max - 1).join('') + '…' : text
-}
-
-function setupTodoProgress(api: TuiPluginApi) {
-  api.slots.register({
-    order: 60,
-    slots: {
-      // `session_prompt_right` renders on the right of the agent/model row,
-      // opposite the model name. It receives the active session id directly.
-      session_prompt_right(_ctx, props) {
-        const theme = () => api.theme.current
-
-        const todos = createMemo(() =>
-          api.state.session.todo(props.session_id).filter((t) => t.status !== 'cancelled'),
-        )
-
-        const total = createMemo(() => todos().length)
-        const done = createMemo(() => todos().filter((t) => t.status === 'completed').length)
-        const current = createMemo(() => todos().find((t) => t.status === 'in_progress')?.content)
-
-        const filled = createMemo(() => {
-          if (total() === 0) return 0
-          const ratio = done() / total()
-          if (ratio <= 0) return 0
-          if (ratio >= 1) return TODO_BAR_WIDTH
-          return Math.min(TODO_BAR_WIDTH - 1, Math.max(1, Math.round(ratio * TODO_BAR_WIDTH)))
-        })
-
-        return (
-          <Show when={total() > 0 && done() < total()}>
-            <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
-              <box flexDirection="row">
-                <text fg={theme().warning}>{'▓'.repeat(filled())}</text>
-                <text fg={theme().textMuted}>{'░'.repeat(TODO_BAR_WIDTH - filled())}</text>
-              </box>
-              <text fg={theme().text}>
-                {done()}/{total()}
-              </text>
-              {current() ? (
-                <text fg={theme().textMuted}>{`· ${truncate(current() ?? '', TASK_MAX)}`}</text>
-              ) : null}
-            </box>
-          </Show>
-        )
-      },
-    },
-  })
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -1169,8 +1095,7 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
 const tui: TuiPlugin = async (api, _options, _meta) => {
   const version = await detectVersion(api)
 
-  // Vendored features (MIT): todo progress bar + usage gauges.
-  setupTodoProgress(api)
+  // Vendored feature (MIT): AI subscription usage gauges.
   void setupUsageBar(api) // async init — never blocks sidebar registration
 
   api.slots.register({

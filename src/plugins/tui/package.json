@@ -1,8 +1,8 @@
 {
   "name": "pantheon-tui",
   "type": "module",
-  "version": "1.1.0",
-  "description": "Pantheon TUI plugin \u2014 sidebar (agents, sessions, commands, config, memory) + session todo progress bar + AI subscription usage gauges (vendored, MIT)",
+  "version": "1.1.1",
+  "description": "Pantheon TUI plugin \u2014 sidebar (agents, sessions, commands, config, memory, active preset) + AI subscription usage gauges (vendored, MIT)",
   "license": "MIT",
   "exports": {
     "./tui": "./dist/tui.tsx"
