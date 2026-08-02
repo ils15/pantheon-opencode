@@ -82,8 +82,8 @@ presets:
       iris:       { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
       mnemosyne:  { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
       talos:      { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
-  go-olympus:
-    description: "Pantheon flagship lineup (Olympus) ported from Oh-My-OpenAgent 'opencode-go' preset: GLM-5.1 orchestrator, DeepSeek V4 Pro planner, Qwen3.7 Max reviewer, Kimi K2.6 designer, MiniMax M2.7 implementers, DeepSeek V4 Flash scouts. Requires OpenCode Go subscription. Prices verified 2026-08."
+  go-premium:
+    description: "Pantheon premium lineup on OpenCode Go (subscription): GLM-5.1 orchestrator, DeepSeek V4 Pro planner, Qwen3.7 Max reviewer, Kimi K2.6 designer, MiniMax M2.7 implementers, DeepSeek V4 Flash scouts. Ported from Oh-My-OpenAgent 'opencode-go' preset. Requires OpenCode Go subscription. Prices verified 2026-08."
     providers:
       opencode-go:
         baseURL: https://opencode.ai/zen/go/v1
@@ -103,8 +103,8 @@ presets:
       iris:       { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
       mnemosyne:  { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
       talos:      { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
-  go-muses:
-    description: "Pantheon free-tier lineup (Muses) ported from Oh-My-OpenAgent 'zen-free' preset: OpenCode Zen free tier, $0. Big Pickle orchestrator, Nemotron 3 Ultra Free planner, North Mini Code scouts. CAUTION: nemotron-3-ultra-free has known intermittent failures (opencode#38028) — switch to go-fast if flaky. Prices verified 2026-08."
+  go-free:
+    description: "Pantheon free lineup on OpenCode Zen free tier, $0: Big Pickle orchestrator, Nemotron 3 Ultra Free planner, North Mini Code scouts. Ported from Oh-My-OpenAgent 'zen-free' preset. CAUTION: nemotron-3-ultra-free has known intermittent failures (opencode#38028) — switch to go-fast if flaky. Prices verified 2026-08."
     providers:
       opencode:
         baseURL: https://opencode.ai/zen/v1
