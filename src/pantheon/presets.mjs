@@ -44,6 +44,10 @@ export const CAPABILITY_TABLE = [
   { prefix: 'o3', maxEffort: 'high', stripEffort: false },
   { prefix: 'o4', maxEffort: 'high', stripEffort: false },
   { prefix: 'mimo/', maxEffort: 'low', stripEffort: false },
+  // opencode/mimo-v2.5 fallback (OpenCode Zen): bare segment — the 'mimo/'
+  // entry above matches 'mimo/v2.5' (full-string) but NOT 'mimo-v2.5'
+  // (segment 'mimo-v2.5' has no slash, so 'mimo/' prefix cannot match).
+  { prefix: 'mimo-v2.5', maxEffort: 'low', stripEffort: false },
   // opencode-go (OpenCode Go subscription) — bare segment prefixes so
   // opencode-go/<model> IDs match; the provider-scoped deepseek/ entries
   // above still win by length for deepseek/ models.
