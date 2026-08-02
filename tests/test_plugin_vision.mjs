@@ -1,7 +1,11 @@
 /**
- * Vision-tool plugin tests — the DavidEasden-style interception pattern:
- * pasted images are replaced by a text instruction pointing the model at a
- * vision MCP tool, so the image never reaches the provider.
+ * Vision plugin tests — image interception in `chat.message`:
+ *  - NATIVE path (preferred): with a provider key, the multimodal model is
+ *    called directly via the opencode Zen OpenAI-compatible endpoint and the
+ *    image is replaced by the returned text description (no MCP tool).
+ *  - TOOL path (fallback): without a key / on native failure, the DavidEasden
+ *    pattern applies — the image is replaced by a text instruction pointing
+ *    the model at a vision MCP tool, so the image never reaches the provider.
  *
  * Run: node tests/test_plugin_vision.mjs
  */
@@ -25,16 +29,27 @@ if (!process.execArgv.includes('--experimental-strip-types')) {
 const {
   default: plugin,
   generateInjectionPrompt,
+  generateNativeInjection,
+  getVisionMode,
   isImageFilePart,
   matchesModelPattern,
   matchesWildcardPattern,
   modelMatchesAnyPattern,
+  resolveNativeVisionConfig,
 } = await import('../src/plugin.ts')
 
 const VISION_DIR = join(tmpdir(), 'pantheon-vision')
 const previousXdg = process.env.XDG_CONFIG_HOME
 const xdgDir = mkdtempSync(join(tmpdir(), 'pantheon-xdg-'))
 process.env.XDG_CONFIG_HOME = xdgDir
+// Hermetic: keep existing tool-pattern tests on the TOOL path regardless of
+// the developer's shell (native vision only activates when a key is set).
+const previousOpenCodeKey = process.env.PANTHEON_OPENCODE_API_KEY
+const previousOaiKey = process.env.OPENCODE_API_KEY
+const previousMode = process.env.PANTHEON_VISION_MODE
+delete process.env.PANTHEON_OPENCODE_API_KEY
+delete process.env.OPENCODE_API_KEY
+delete process.env.PANTHEON_VISION_MODE
 delete process.env.PANTHEON_VISION_TOOL
 
 const tempDirs = []
@@ -103,6 +118,40 @@ async function withEnv(name, value, fn) {
     else process.env[name] = previous
   }
 }
+
+// ─── fetch mock (native vision) ────────────────────────────────────────────
+
+const savedFetch = globalThis.fetch
+
+/** Stub globalThis.fetch, recording each call. handler(call) → Response-like. */
+function installFetchMock(handler) {
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    const call = { url, options }
+    calls.push(call)
+    return handler(call)
+  }
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = savedFetch
+    },
+  }
+}
+
+const okJson = (content) => ({
+  ok: true,
+  status: 200,
+  json: async () => ({ choices: [{ message: { content } }] }),
+})
+
+const errResponse = (status) => ({
+  ok: false,
+  status,
+  json: async () => ({}),
+})
+
+const bodyOf = (call) => JSON.parse(call.options.body)
 
 // ─── Unit tests: type guard + wildcards ───────────────────────────────────
 
@@ -348,11 +397,295 @@ await (async () => {
   assert.ok(injected.includes('pedido'), 'userText variable rendered')
 })()
 
+// ─── Native vision: unit helpers ───────────────────────────────────────────
+
+// getVisionMode: default auto; explicit native/tool honored; junk → auto.
+assert.equal(getVisionMode({}), 'auto')
+assert.equal(getVisionMode({ PANTHEON_VISION_MODE: 'native' }), 'native')
+assert.equal(getVisionMode({ PANTHEON_VISION_MODE: 'tool' }), 'tool')
+assert.equal(getVisionMode({ PANTHEON_VISION_MODE: '  TOOL  ' }), 'tool')
+assert.equal(getVisionMode({ PANTHEON_VISION_MODE: 'bogus' }), 'auto')
+
+// generateNativeInjection carries the description, no tool instruction.
+const nativePrompt = generateNativeInjection(
+  'Um gato laranja.',
+  'o que é?',
+  'opencode-go/mimo-v2.5',
+)
+assert.ok(nativePrompt.includes('Um gato laranja.'), 'description present')
+assert.ok(nativePrompt.includes('o que é?'), 'user text present')
+assert.ok(nativePrompt.includes('opencode-go/mimo-v2.5'), 'model ID present')
+assert.ok(!nativePrompt.includes('mcp__'), 'no tool instruction in native injection')
+
+// ─── Test N1: presets vision model resolution ──────────────────────────────
+
+await (async () => {
+  const key = { PANTHEON_OPENCODE_API_KEY: 'test-key' }
+
+  // explicit preset → vision model + zen/go endpoint
+  const fromPreset = resolveNativeVisionConfig(
+    { vision: { model: 'opencode-go/minimax-m3', reasoning_effort: 'medium' } },
+    key,
+  )
+  assert.equal(fromPreset.modelID, 'opencode-go/minimax-m3', 'preset vision model used')
+  assert.equal(fromPreset.baseURL, 'https://opencode.ai/zen/go/v1', 'zen go baseURL')
+  assert.equal(fromPreset.apiKey, 'test-key', 'key passthrough')
+
+  // no preset → DEFAULT_VISION_MODEL
+  const defaultTarget = resolveNativeVisionConfig(null, key)
+  assert.equal(defaultTarget.modelID, 'opencode-go/mimo-v2.5', 'default vision model')
+  assert.equal(defaultTarget.baseURL, 'https://opencode.ai/zen/go/v1', 'default zen go baseURL')
+
+  // env PANTHEON_MODEL_PRESET resolves through the repo routing.yml
+  const viaEnv = resolveNativeVisionConfig(null, {
+    PANTHEON_MODEL_PRESET: 'go-deepseek',
+    PANTHEON_OPENCODE_API_KEY: 'test-key',
+  })
+  assert.equal(viaEnv.modelID, 'opencode-go/minimax-m3', 'env preset go-deepseek → minimax-m3')
+  assert.equal(viaEnv.baseURL, 'https://opencode.ai/zen/go/v1', 'env preset uses zen go')
+
+  // opencode (Zen) provider → zen/v1 endpoint
+  const zenFree = resolveNativeVisionConfig({ vision: { model: 'opencode/mimo-v2.5-free' } }, key)
+  assert.equal(zenFree.modelID, 'opencode/mimo-v2.5-free')
+  assert.equal(zenFree.baseURL, 'https://opencode.ai/zen/v1', 'zen baseURL')
+
+  // anthropic/openai → phase 2, null (fall back to MCP tool)
+  assert.equal(
+    resolveNativeVisionConfig({ vision: { model: 'anthropic/claude-sonnet-5' } }, key),
+    null,
+    'anthropic vision is phase 2 → null',
+  )
+  assert.equal(
+    resolveNativeVisionConfig({ vision: { model: 'openai/gpt-5.6-sol' } }, key),
+    null,
+    'openai vision is phase 2 → null',
+  )
+
+  // no key → null (fall back to MCP tool)
+  assert.equal(
+    resolveNativeVisionConfig({ vision: { model: 'opencode-go/minimax-m3' } }, {}),
+    null,
+    'missing key → null',
+  )
+
+  // OPENCODE_API_KEY fallback accepted when PANTHEON_OPENCODE_API_KEY unset
+  const oaiKey = resolveNativeVisionConfig(null, { OPENCODE_API_KEY: 'k' })
+  assert.equal(oaiKey.modelID, 'opencode-go/mimo-v2.5', 'OPENCODE_API_KEY fallback model')
+  assert.equal(oaiKey.apiKey, 'k', 'OPENCODE_API_KEY fallback key')
+  assert.equal(
+    resolveNativeVisionConfig(null, {
+      PANTHEON_OPENCODE_API_KEY: 'primary',
+      OPENCODE_API_KEY: 'fallback',
+    }).apiKey,
+    'primary',
+    'PANTHEON_OPENCODE_API_KEY wins over OPENCODE_API_KEY',
+  )
+})()
+
+// ─── Test N2: native 200 → description injected, no tool instruction ───────
+
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  const mock = installFetchMock(() => okJson('Uma foto de um gato laranja sobre um sofá.'))
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+      const hooks = await makeHooks()
+      const output = await runTurn(hooks, [imagePart(), textPart('o que tem aqui?')])
+      assert.equal(output.parts.some(isImageFilePart), false, 'image file part removed')
+      const injected = injectedText(output.parts)
+      assert.ok(injected.includes('Uma foto de um gato laranja'), 'native description injected')
+      assert.ok(injected.includes('o que tem aqui?'), 'user text preserved')
+      assert.ok(injected.includes('opencode-go/mimo-v2.5'), 'model ID in injection')
+      assert.ok(!injected.includes('mcp__'), 'no tool instruction on native success')
+    })
+
+    assert.equal(mock.calls.length, 1, 'exactly one native vision call')
+    const call = mock.calls[0]
+    assert.equal(call.url, 'https://opencode.ai/zen/go/v1/chat/completions', 'zen go chat URL')
+    assert.equal(call.options.headers.Authorization, 'Bearer test-key-123', 'bearer key header')
+    assert.equal(call.options.headers['Content-Type'], 'application/json')
+    const body = bodyOf(call)
+    assert.equal(body.model, 'opencode-go/mimo-v2.5', 'default vision model')
+    assert.equal(body.max_tokens, 500, 'max_tokens capped')
+    assert.equal(body.messages[0].role, 'user')
+    assert.equal(body.messages[0].content[0].type, 'text', 'prompt text first')
+    assert.equal(body.messages[0].content[1].type, 'image_url')
+    assert.equal(
+      bodyOf(call).messages[0].content[1].image_url.url.startsWith('data:image/png;base64,'),
+      true,
+      'data URI used in payload',
+    )
+    assert.equal(
+      call.options.body.includes('test-key-123'),
+      false,
+      'key never in request body (header only)',
+    )
+    assert.equal(call.options.body.includes('ZmFrZQ=='), true, 'base64 image in request body')
+  } finally {
+    mock.restore()
+  }
+})()
+
+// ─── Test N3: no key → tool pattern (no native call) ───────────────────────
+
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  const mock = installFetchMock(() => {
+    throw new Error('fetch must not be called without a key')
+  })
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', undefined, async () => {
+      const hooks = await makeHooks()
+      const output = await runTurn(hooks, [imagePart()])
+      assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
+      const injected = injectedText(output.parts)
+      assert.ok(injected.includes('mcp__bifrost__describe_image'), 'tool instruction without key')
+      assert.ok(injected.includes(VISION_DIR), 'temp path in tool instruction')
+    })
+    assert.equal(mock.calls.length, 0, 'no native call without key')
+  } finally {
+    mock.restore()
+  }
+})()
+
+// ─── Test N4: native failure (500 / network error) → tool fallback ─────────
+
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  // HTTP 500
+  const mock500 = installFetchMock(() => errResponse(500))
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+      const hooks = await makeHooks()
+      const output = await runTurn(hooks, [imagePart()])
+      assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
+      assert.ok(
+        injectedText(output.parts).includes('mcp__bifrost__describe_image'),
+        'tool fallback on HTTP 500',
+      )
+    })
+  } finally {
+    mock500.restore()
+  }
+
+  // network error (fetch rejects)
+  const mockErr = installFetchMock(() => {
+    throw new Error('ECONNREFUSED')
+  })
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+      const hooks = await makeHooks()
+      const output = await runTurn(hooks, [imagePart()])
+      assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
+      assert.ok(
+        injectedText(output.parts).includes('mcp__bifrost__describe_image'),
+        'tool fallback on network error',
+      )
+    })
+  } finally {
+    mockErr.restore()
+  }
+})()
+
+// ─── Test N5: file:// read+converted; http kept in native payload ──────────
+
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  const pngPath = join(tmpdir(), `pantheon-native-${Date.now()}.png`)
+  writeFileSync(pngPath, Buffer.from('not-really-png-bytes'))
+
+  // file:// → read bytes, converted to data URI
+  const mockFile = installFetchMock(() => okJson('descrição do arquivo'))
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+      const hooks = await makeHooks()
+      await runTurn(hooks, [imagePart({ url: `file://${pngPath}` })])
+    })
+    assert.equal(mockFile.calls.length, 1, 'native call for file:// image')
+    const filePayload = bodyOf(mockFile.calls[0]).messages[0].content[1].image_url.url
+    assert.ok(filePayload.startsWith('data:image/png;base64,'), 'file:// converted to data URI')
+    const expected = Buffer.from('not-really-png-bytes').toString('base64')
+    assert.ok(filePayload.endsWith(expected), 'file bytes encoded in payload')
+  } finally {
+    mockFile.restore()
+  }
+
+  // http(s) → URL passed through unchanged
+  const mockHttp = installFetchMock(() => okJson('descrição remota'))
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+      const hooks = await makeHooks()
+      await runTurn(hooks, [imagePart({ url: 'https://example.com/img.png' })])
+    })
+    assert.equal(mockHttp.calls.length, 1, 'native call for http image')
+    const httpUrl = bodyOf(mockHttp.calls[0]).messages[0].content[1].image_url.url
+    assert.equal(httpUrl, 'https://example.com/img.png', 'http URL kept as-is')
+  } finally {
+    mockHttp.restore()
+  }
+
+  rmSync(pngPath, { force: true })
+})()
+
+// ─── Test N6: mode 'tool' forces the tool pattern even with a key ──────────
+
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  const mock = installFetchMock(() => {
+    throw new Error('fetch must not be called in tool mode')
+  })
+  try {
+    await withEnv('PANTHEON_VISION_MODE', 'tool', async () => {
+      await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+        const hooks = await makeHooks()
+        const output = await runTurn(hooks, [imagePart()])
+        assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
+        assert.ok(
+          injectedText(output.parts).includes('mcp__bifrost__describe_image'),
+          'tool mode forces tool instruction',
+        )
+      })
+    })
+    assert.equal(mock.calls.length, 0, 'no native call in tool mode')
+  } finally {
+    mock.restore()
+  }
+})()
+
+// ─── Test N7: no image → nothing changes (even with a key) ─────────────────
+
+await (async () => {
+  const mock = installFetchMock(() => {
+    throw new Error('fetch must not be called without images')
+  })
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+      const hooks = await makeHooks()
+      const parts = [textPart('normal turn')]
+      const message = userMessage(parts)
+      const output = { message, parts }
+      await hooks['chat.message']({ sessionID: 'session-1', model: message.model }, output)
+      assert.equal(output.parts, parts, 'same array reference')
+      assert.equal(output.parts.length, 1, 'no parts added')
+      assert.equal(output.parts[0].text, 'normal turn')
+    })
+    assert.equal(mock.calls.length, 0, 'no native call without images')
+  } finally {
+    mock.restore()
+  }
+})()
+
 // ─── Teardown ──────────────────────────────────────────────────────────────
 
 rmSync(VISION_DIR, { recursive: true, force: true })
 for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
 if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME
 else process.env.XDG_CONFIG_HOME = previousXdg
+if (previousOpenCodeKey === undefined) delete process.env.PANTHEON_OPENCODE_API_KEY
+else process.env.PANTHEON_OPENCODE_API_KEY = previousOpenCodeKey
+if (previousOaiKey === undefined) delete process.env.OPENCODE_API_KEY
+else process.env.OPENCODE_API_KEY = previousOaiKey
+if (previousMode === undefined) delete process.env.PANTHEON_VISION_MODE
+else process.env.PANTHEON_VISION_MODE = previousMode
 
 console.log('✅ vision-tool plugin tests passed')

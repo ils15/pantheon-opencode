@@ -4,12 +4,16 @@ import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
 import { applyPreset, resolveActivePreset } from './pantheon/presets.mjs'
 import {
+  activePresetCandidates,
   createVisionHandler,
   generateInjectionPrompt,
+  generateNativeInjection,
+  getVisionMode,
   isImageFilePart,
   matchesModelPattern,
   matchesWildcardPattern,
   modelMatchesAnyPattern,
+  resolveNativeVisionConfig,
 } from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
@@ -37,33 +41,30 @@ export function getBackgroundJobBoard(): BackgroundJobBoard {
   return board
 }
 
-/** Resolve active-preset files in the same order used by the config hook. */
-function activePresetCandidates(): string[] {
-  const home = process.env.HOME ?? ''
-  const xdg = process.env.XDG_CONFIG_HOME ?? `${home}/.config`
-  return [
-    `${process.cwd()}/.pantheon/active-preset.json`,
-    `${xdg}/opencode/.pantheon/active-preset.json`,
-    `${home}/.opencode/.pantheon/active-preset.json`,
-  ]
-}
-
 // Keep pure helpers available to the dependency-free test harness. OpenCode
 // requires named runtime exports to be functions, which all of these are.
 export {
+  activePresetCandidates,
   generateInjectionPrompt,
+  generateNativeInjection,
+  getVisionMode,
   isImageFilePart,
   matchesModelPattern,
   matchesWildcardPattern,
   modelMatchesAnyPattern,
+  resolveNativeVisionConfig,
 }
 
 /**
  * Pantheon plugin for OpenCode. Pasted images are intercepted via the
- * `chat.message` hook (proven to fire in opencode 1.18.11) and replaced with
- * a text instruction telling the model to call a vision MCP tool (default
- * `mcp__bifrost__describe_image`). The image never reaches the provider, so
- * text-only models cannot fail with an `image_url` error.
+ * `chat.message` hook (proven to fire in opencode 1.18.11). When a provider
+ * key is available (PANTHEON_OPENCODE_API_KEY / OPENCODE_API_KEY) the image is
+ * described NATIVELY by the multimodal model via the opencode Zen
+ * OpenAI-compatible endpoint, and replaced with the text description — no MCP
+ * tool required. Without a key the legacy pattern applies: the image is
+ * replaced with a text instruction telling the model to call a vision MCP tool
+ * (default `mcp__bifrost__describe_image`). Either way the image never reaches
+ * the main provider, so text-only models cannot fail with an `image_url` error.
  */
 const plugin: Plugin = async (input: PluginInput) => {
   const vision = createVisionHandler(input)
