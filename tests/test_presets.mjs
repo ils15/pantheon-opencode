@@ -105,12 +105,12 @@ test('T2: PANTHEON_MODEL_PRESET wins over existing file', () => {
     }),
   )
   const resolved = presets.resolveActivePreset({
-    env: { PANTHEON_MODEL_PRESET: 'go-olympus' },
+    env: { PANTHEON_MODEL_PRESET: 'go-premium' },
     candidates: [file],
     logger: silent,
   })
   assert.ok(resolved)
-  assert.equal(resolved.name, 'go-olympus')
+  assert.equal(resolved.name, 'go-premium')
   assert.equal(resolved.source, 'env')
 })
 
@@ -470,8 +470,8 @@ test('T12: validatePresetDefs passes on repo routing.yml presets', () => {
     'go-fast',
     'go-claude',
     'go-openai',
-    'go-olympus',
-    'go-muses',
+    'go-premium',
+    'go-free',
   ]) {
     const r = presets.validatePresetDefs({ [name]: defs[name] }, { agents: repoAgents() })
     assert.equal(r.ok, true, `preset "${name}" should validate clean: ${JSON.stringify(r.errors)}`)
@@ -597,13 +597,13 @@ test('T14: set-tier writes active-preset.json + .bak on second run', () => {
   assert.ok(!Number.isNaN(Date.parse(data.updated_at)), 'updated_at must be ISO')
 
   const firstContent = readFileSync(file, 'utf8')
-  r = runCli(['set-tier', 'go-muses', '--project'], { cwd: dir, env: cliEnv() })
+  r = runCli(['set-tier', 'go-free', '--project'], { cwd: dir, env: cliEnv() })
   assert.equal(r.status, 0, r.stdout + r.stderr)
   const bak = presetBak(dir)
   assert.ok(existsSync(bak), 'backup should exist')
   assert.equal(readFileSync(bak, 'utf8'), firstContent, 'backup must equal previous file')
   const data2 = JSON.parse(readFileSync(file, 'utf8'))
-  assert.equal(data2.preset, 'go-muses')
+  assert.equal(data2.preset, 'go-free')
 })
 
 // ─── T15: unknown name → exit 1, lists presets ─────────────────────────
@@ -789,15 +789,15 @@ test('T23: applyPreset go-claude strips variant for claude models', () => {
   assert.ok(!('variant' in config.agent.apollo), 'claude variant key must be stripped')
 })
 
-// ─── T24: applyPreset go-olympus (repo presets) ────────────────────────
-test('T24: applyPreset go-olympus injects opencode-go provider + tiered agents', () => {
+// ─── T24: applyPreset go-premium (repo presets) ────────────────────────
+test('T24: applyPreset go-premium injects opencode-go provider + tiered agents', () => {
   const resolved = presets.resolveActivePreset({
-    env: { PANTHEON_MODEL_PRESET: 'go-olympus' },
+    env: { PANTHEON_MODEL_PRESET: 'go-premium' },
     candidates: [],
     logger: silent,
   })
-  assert.ok(resolved, 'go-olympus should resolve from repo presets')
-  assert.equal(resolved.name, 'go-olympus')
+  assert.ok(resolved, 'go-premium should resolve from repo presets')
+  assert.equal(resolved.name, 'go-premium')
   assert.equal(resolved.source, 'env')
 
   const config = {}
@@ -834,15 +834,15 @@ test('T24: applyPreset go-olympus injects opencode-go provider + tiered agents',
   assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
 })
 
-// ─── T25: applyPreset go-muses (repo presets) ──────────────────────────
-test('T25: applyPreset go-muses injects opencode provider + free models', () => {
+// ─── T25: applyPreset go-free (repo presets) ──────────────────────────
+test('T25: applyPreset go-free injects opencode provider + free models', () => {
   const resolved = presets.resolveActivePreset({
-    env: { PANTHEON_MODEL_PRESET: 'go-muses' },
+    env: { PANTHEON_MODEL_PRESET: 'go-free' },
     candidates: [],
     logger: silent,
   })
-  assert.ok(resolved, 'go-muses should resolve from repo presets')
-  assert.equal(resolved.name, 'go-muses')
+  assert.ok(resolved, 'go-free should resolve from repo presets')
+  assert.equal(resolved.name, 'go-free')
 
   const config = {}
   presets.applyPreset(config, resolved, { env: { PANTHEON_OPENCODE_API_KEY: 'sk-zen' } })
