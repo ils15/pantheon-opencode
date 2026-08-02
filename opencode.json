@@ -6,6 +6,10 @@
         "mimo-v2.5": {
           "attachment": true,
           "modalities": { "input": ["text", "image"] }
+        },
+        "deepseek-v4-flash": {
+          "attachment": true,
+          "modalities": { "input": ["text", "image"] }
         }
       }
     }
