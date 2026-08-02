@@ -22,24 +22,26 @@ presets:
       mnemosyne:  { model: opencode/deepseek-v4-flash-free, reasoning_effort: low,   fallback_models: [opencode/mimo-v2.5] }
       talos:      { model: opencode/deepseek-v4-flash-free, reasoning_effort: low,   fallback_models: [opencode/mimo-v2.5] }
   go-fast:
-    description: "All 14 agents on DeepSeek V4 Flash with reasoning_effort low everywhere. Fastest paid tier. Prices verified 2026-07-26."
+    description: "All 14 agents on DeepSeek V4 Flash via OpenCode Go with reasoning_effort low everywhere. Fastest tier. Prices verified 2026-08."
     providers:
-      deepseek: { baseURL: https://api.deepseek.com/v1, apiKeyEnv: PANTHEON_DEEPSEEK_API_KEY }
+      opencode-go:
+        baseURL: https://opencode.ai/zen/go/v1
+        apiKeyEnv: PANTHEON_OPENCODE_API_KEY
     agents:
-      athena: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      themis: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      zeus: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      hermes: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      aphrodite: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      demeter: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      prometheus: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      hephaestus: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      apollo: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      nyx: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      gaia: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      iris: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      mnemosyne: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
-      talos: { model: deepseek/deepseek-v4-flash, reasoning_effort: low }
+      athena:     { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      themis:     { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      zeus:       { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      hermes:     { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      aphrodite:  { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      demeter:    { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      prometheus: { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      hephaestus: { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      apollo:     { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      nyx:        { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      gaia:       { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      iris:       { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      mnemosyne:  { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
+      talos:      { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
   go-claude:
     description: "Anthropic Claude tiering: Opus 4.8 for planners/reviewers, Sonnet 5 for implementers, Haiku 4.5 for scouts. Prices verified 2026-07."
     providers:

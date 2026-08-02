@@ -68,7 +68,6 @@ function runCli(args, { cwd, env } = {}) {
 function cliEnv() {
   const env = {
     ...process.env,
-    PANTHEON_DEEPSEEK_API_KEY: 'dummy',
     PANTHEON_OPENCODE_API_KEY: 'dummy',
   }
   delete env.PANTHEON_MODEL_PRESET
@@ -191,9 +190,11 @@ test('T7: only listed agents mutated; others untouched/absent', () => {
   const routing = fixtureRouting(`presets:
   partial:
     providers:
-      deepseek: { baseURL: https://api.deepseek.com/v1, apiKeyEnv: PANTHEON_DEEPSEEK_API_KEY }
+      opencode-go:
+        baseURL: https://opencode.ai/zen/go/v1
+        apiKeyEnv: PANTHEON_OPENCODE_API_KEY
     agents:
-      hermes: { model: deepseek/deepseek-v4-flash, reasoning_effort: medium }
+      hermes: { model: opencode-go/deepseek-v4-flash, reasoning_effort: medium }
 `)
   const resolved = presets.resolveActivePreset({
     env: { PANTHEON_MODEL_PRESET: 'partial' },
@@ -202,11 +203,11 @@ test('T7: only listed agents mutated; others untouched/absent', () => {
     logger: silent,
   })
   const config = { agent: { apollo: { model: 'x/y', variant: 'high' } } }
-  presets.applyPreset(config, resolved, { env: { PANTHEON_DEEPSEEK_API_KEY: 'k' } })
+  presets.applyPreset(config, resolved, { env: { PANTHEON_OPENCODE_API_KEY: 'k' } })
   // pre-existing agent untouched (not listed in preset)
   assert.deepEqual(config.agent.apollo, { model: 'x/y', variant: 'high' })
   // listed agent created from preset
-  assert.equal(config.agent.hermes.model, 'deepseek/deepseek-v4-flash')
+  assert.equal(config.agent.hermes.model, 'opencode-go/deepseek-v4-flash')
   assert.equal(config.agent.hermes.variant, 'medium')
   // unlisted agent never created
   assert.equal(config.agent.athena, undefined)
@@ -217,7 +218,9 @@ test('T8: provider options injected; missing key throws PANTHEON_MISSING_API_KEY
   const routing = fixtureRouting(`presets:
   prov:
     providers:
-      deepseek: { baseURL: https://api.deepseek.com/v1, apiKeyEnv: PANTHEON_DEEPSEEK_API_KEY }
+      opencode-go:
+        baseURL: https://opencode.ai/zen/go/v1
+        apiKeyEnv: PANTHEON_OPENCODE_API_KEY
     agents: {}
 `)
   const resolved = presets.resolveActivePreset({
@@ -227,9 +230,9 @@ test('T8: provider options injected; missing key throws PANTHEON_MISSING_API_KEY
     logger: silent,
   })
   const config = {}
-  presets.applyPreset(config, resolved, { env: { PANTHEON_DEEPSEEK_API_KEY: 'secret' } })
-  assert.deepEqual(config.provider.deepseek.options, {
-    baseURL: 'https://api.deepseek.com/v1',
+  presets.applyPreset(config, resolved, { env: { PANTHEON_OPENCODE_API_KEY: 'secret' } })
+  assert.deepEqual(config.provider['opencode-go'].options, {
+    baseURL: 'https://opencode.ai/zen/go/v1',
     apiKey: 'secret',
   })
 
@@ -241,7 +244,7 @@ test('T8: provider options injected; missing key throws PANTHEON_MISSING_API_KEY
   }
   assert.ok(thrown, 'should throw on missing key')
   assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
-  assert.equal(thrown.envVar, 'PANTHEON_DEEPSEEK_API_KEY')
+  assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
 })
 
 // ─── T9: claude variant strip ──────────────────────────────────────────
@@ -617,7 +620,7 @@ test('T15: set-tier unknown name exits 1 and lists go-deepseek', () => {
 test('T16: set-tier fails fast when API key env missing, writes nothing', () => {
   const env = { ...process.env }
   delete env.PANTHEON_MODEL_PRESET
-  delete env.PANTHEON_DEEPSEEK_API_KEY
+  delete env.PANTHEON_OPENCODE_API_KEY
   const dir = makeTmp()
   const r = runCli(['set-tier', 'go-fast', '--project'], { cwd: dir, env })
   assert.equal(r.status, 1)
@@ -906,6 +909,56 @@ test('T26: applyPreset go-deepseek injects opencode provider + Zen tiered models
     thrown = e
   }
   assert.ok(thrown, 'should throw on missing OpenCode Zen key')
+  assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
+  assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
+})
+
+// ─── T27: applyPreset go-fast (repo presets) ───────────────────────────
+test('T27: applyPreset go-fast injects opencode-go provider + all-flash agents', () => {
+  const resolved = presets.resolveActivePreset({
+    env: { PANTHEON_MODEL_PRESET: 'go-fast' },
+    candidates: [],
+    logger: silent,
+  })
+  assert.ok(resolved, 'go-fast should resolve from repo presets')
+  assert.equal(resolved.name, 'go-fast')
+  assert.equal(resolved.source, 'env')
+
+  const config = {}
+  presets.applyPreset(config, resolved, { env: { PANTHEON_OPENCODE_API_KEY: 'sk-go' } })
+  assert.deepEqual(config.provider['opencode-go'].options, {
+    baseURL: 'https://opencode.ai/zen/go/v1',
+    apiKey: 'sk-go',
+  })
+  // all 14 agents on deepseek-v4-flash via OpenCode Go, reasoning low
+  const flashAgents = [
+    'athena',
+    'themis',
+    'zeus',
+    'hermes',
+    'aphrodite',
+    'demeter',
+    'prometheus',
+    'hephaestus',
+    'apollo',
+    'nyx',
+    'gaia',
+    'iris',
+    'mnemosyne',
+    'talos',
+  ]
+  for (const name of flashAgents) {
+    assert.equal(config.agent[name].model, 'opencode-go/deepseek-v4-flash', name)
+    assert.equal(config.agent[name].variant, 'low', name)
+  }
+
+  let thrown = null
+  try {
+    presets.applyPreset({}, resolved, { env: {} })
+  } catch (e) {
+    thrown = e
+  }
+  assert.ok(thrown, 'should throw on missing OpenCode Go key')
   assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
   assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
 })
