@@ -966,11 +966,14 @@ test('T27: applyPreset go-fast injects opencode-go provider + all-flash agents',
 // ─── T28: resolveActivePreset returns vision fallback per preset ───────
 test('T28: resolveActivePreset returns vision for all 6 presets', () => {
   const expected = {
-    'go-deepseek': { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'medium' },
+    // opencode#29956: qwen3.7-plus image input 500s on the Go gateway;
+    // go-deepseek vision fallback moved to confirmed multimodal minimax-m3.
+    'go-deepseek': { model: 'opencode-go/minimax-m3', reasoning_effort: 'medium' },
     'go-fast': { model: 'opencode-go/mimo-v2.5', reasoning_effort: 'low' },
     // council 2026-08-02: qwen3.7-max is text-only (models.dev api.json);
-    // go-premium vision fallback moved to multimodal qwen3.7-plus.
-    'go-premium': { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'high' },
+    // go-premium vision fallback moved to multimodal minimax-m3 (strong
+    // generalist; medium effort keeps premium tier costs in check).
+    'go-premium': { model: 'opencode-go/minimax-m3', reasoning_effort: 'medium' },
     'go-free': { model: 'opencode/mimo-v2.5-free', reasoning_effort: 'low' },
     'go-claude': { model: 'anthropic/claude-sonnet-5', reasoning_effort: 'medium' },
     'go-openai': { model: 'openai/gpt-5.6-sol', reasoning_effort: 'high' },
@@ -994,8 +997,12 @@ test('T28: resolveActivePreset returns vision for all 6 presets', () => {
 // ─── T29: hasVision matrix ─────────────────────────────────────────────
 test('T29: hasVision matrix (image input per CAPABILITY_TABLE)', () => {
   assert.equal(presets.hasVision('deepseek/deepseek-v4-flash'), false)
+  // qwen3.7-plus stays vision:true per models.dev even though the Go
+  // gateway 500s on image input (opencode#33942/#29956) — capability-table
+  // truth, not a recommendation for vision fallback.
   assert.equal(presets.hasVision('opencode-go/qwen3.7-plus'), true)
   assert.equal(presets.hasVision('opencode-go/qwen3.7-max'), false)
+  assert.equal(presets.hasVision('opencode-go/minimax-m3'), true)
   assert.equal(presets.hasVision('opencode/mimo-v2.5-free'), true)
   assert.equal(presets.hasVision('opencode-go/glm-5.2'), false)
   assert.equal(presets.hasVision('anthropic/claude-sonnet-5'), true)
