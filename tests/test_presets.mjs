@@ -963,6 +963,202 @@ test('T27: applyPreset go-fast injects opencode-go provider + all-flash agents',
   assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
 })
 
+// ─── T28: resolveActivePreset returns vision fallback per preset ───────
+test('T28: resolveActivePreset returns vision for all 6 presets', () => {
+  const expected = {
+    'go-deepseek': { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'medium' },
+    'go-fast': { model: 'opencode-go/mimo-v2.5', reasoning_effort: 'low' },
+    // council 2026-08-02: qwen3.7-max is text-only (models.dev api.json);
+    // go-premium vision fallback moved to multimodal qwen3.7-plus.
+    'go-premium': { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'high' },
+    'go-free': { model: 'opencode/mimo-v2.5-free', reasoning_effort: 'low' },
+    'go-claude': { model: 'anthropic/claude-sonnet-5', reasoning_effort: 'medium' },
+    'go-openai': { model: 'openai/gpt-5.6-sol', reasoning_effort: 'high' },
+  }
+  for (const [name, vision] of Object.entries(expected)) {
+    const resolved = presets.resolveActivePreset({
+      env: { PANTHEON_MODEL_PRESET: name },
+      candidates: [],
+      logger: silent,
+    })
+    assert.ok(resolved, `${name} should resolve from repo presets`)
+    assert.deepEqual(resolved.vision, vision, `${name} vision mismatch`)
+    assert.equal(
+      presets.hasVision(vision.model),
+      true,
+      `${name} vision model "${vision.model}" must be vision-capable`,
+    )
+  }
+})
+
+// ─── T29: hasVision matrix ─────────────────────────────────────────────
+test('T29: hasVision matrix (image input per CAPABILITY_TABLE)', () => {
+  assert.equal(presets.hasVision('deepseek/deepseek-v4-flash'), false)
+  assert.equal(presets.hasVision('opencode-go/qwen3.7-plus'), true)
+  assert.equal(presets.hasVision('opencode-go/qwen3.7-max'), false)
+  assert.equal(presets.hasVision('opencode/mimo-v2.5-free'), true)
+  assert.equal(presets.hasVision('opencode-go/glm-5.2'), false)
+  assert.equal(presets.hasVision('anthropic/claude-sonnet-5'), true)
+  assert.equal(presets.hasVision('openai/gpt-5.6-sol'), true)
+  assert.throws(() => presets.hasVision('unknown/model-x'), /no capability entry/)
+})
+
+// ─── T30: validator vision checks ──────────────────────────────────────
+test('T30: validatePresetDefs enforces vision model capability + effort', () => {
+  // valid provider def so capability/effort errors are isolated from the
+  // provider-declared rule (council 2026-08-02)
+  const prov = {
+    'opencode-go': {
+      baseURL: 'https://opencode.ai/zen/go/v1',
+      apiKeyEnv: 'PANTHEON_OPENCODE_API_KEY',
+    },
+  }
+
+  // non-vision model in vision → error
+  let r = presets.validatePresetDefs({
+    p: {
+      vision: { model: 'opencode-go/deepseek-v4-flash', reasoning_effort: 'medium' },
+      providers: prov,
+      agents: {},
+    },
+  })
+  assert.equal(r.ok, false)
+  assert.ok(
+    r.errors.some((e) => e.includes('vision') && e.includes('not vision-capable')),
+    JSON.stringify(r.errors),
+  )
+
+  // valid vision passes clean
+  r = presets.validatePresetDefs({
+    p: {
+      vision: { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'medium' },
+      providers: prov,
+      agents: {},
+    },
+  })
+  assert.equal(r.ok, true, JSON.stringify(r.errors))
+  assert.deepEqual(r.errors, [])
+
+  // unknown vision effort → error
+  r = presets.validatePresetDefs({
+    p: {
+      vision: { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'extreme' },
+      providers: prov,
+      agents: {},
+    },
+  })
+  assert.equal(r.ok, false)
+  assert.ok(
+    r.errors.some((e) => e.includes('vision') && e.includes('reasoning_effort')),
+    JSON.stringify(r.errors),
+  )
+
+  // NEW (council 2026-08-02): vision model whose provider is NOT declared → error
+  r = presets.validatePresetDefs({
+    p: { vision: { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'medium' }, agents: {} },
+  })
+  assert.equal(r.ok, false)
+  assert.ok(
+    r.errors.some(
+      (e) => e.includes('vision') && e.includes('provider') && e.includes('not declared'),
+    ),
+    JSON.stringify(r.errors),
+  )
+})
+
+// ─── T31: overrides.vision shallow-merges with preset vision ───────────
+test('T31: overrides.vision merges shallowly with preset vision (null clears)', () => {
+  // full override replaces both fields (unchanged behavior)
+  const file = join(makeTmp(), 'active-preset.json')
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      preset: 'go-fast',
+      source: 'cli',
+      updated_at: '2026-08-02T00:00:00.000Z',
+      overrides: { vision: { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'high' } },
+    }),
+  )
+  const resolved = presets.resolveActivePreset({ env: {}, candidates: [file], logger: silent })
+  assert.ok(resolved)
+  assert.deepEqual(resolved.vision, { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'high' })
+
+  // partial override {model} preserves preset's reasoning_effort (shallow merge)
+  const partialFile = join(makeTmp(), 'active-preset.json')
+  writeFileSync(
+    partialFile,
+    JSON.stringify({
+      version: 1,
+      preset: 'go-fast',
+      source: 'cli',
+      updated_at: '2026-08-02T00:00:00.000Z',
+      overrides: { vision: { model: 'opencode-go/qwen3.7-plus' } },
+    }),
+  )
+  const partial = presets.resolveActivePreset({
+    env: {},
+    candidates: [partialFile],
+    logger: silent,
+  })
+  assert.deepEqual(
+    partial.vision,
+    { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'low' },
+    'partial vision override must keep preset reasoning_effort',
+  )
+
+  // without override the preset default applies
+  const plain = presets.resolveActivePreset({
+    env: { PANTHEON_MODEL_PRESET: 'go-fast' },
+    candidates: [],
+    logger: silent,
+  })
+  assert.deepEqual(plain.vision, { model: 'opencode-go/mimo-v2.5', reasoning_effort: 'low' })
+
+  // explicit null clears the vision fallback
+  const clearFile = join(makeTmp(), 'active-preset.json')
+  writeFileSync(
+    clearFile,
+    JSON.stringify({ version: 1, preset: 'go-fast', source: 'cli', overrides: { vision: null } }),
+  )
+  const cleared = presets.resolveActivePreset({ env: {}, candidates: [clearFile], logger: silent })
+  assert.equal(cleared.vision, null)
+})
+
+// ─── T32: validator provider-declared rule (council 2026-08-02) ────────
+test('T32: validator rejects vision model whose provider is not declared', () => {
+  const declared = {
+    'opencode-go': {
+      baseURL: 'https://opencode.ai/zen/go/v1',
+      apiKeyEnv: 'PANTHEON_OPENCODE_API_KEY',
+    },
+  }
+
+  // provider declared → valid
+  let r = presets.validatePresetDefs({
+    p: {
+      vision: { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'high' },
+      providers: declared,
+      agents: {},
+    },
+  })
+  assert.equal(r.ok, true, JSON.stringify(r.errors))
+
+  // provider declared under a DIFFERENT id → error names the provider
+  r = presets.validatePresetDefs({
+    p: {
+      vision: { model: 'opencode-go/qwen3.7-plus', reasoning_effort: 'high' },
+      providers: { opencode: declared['opencode-go'] },
+      agents: {},
+    },
+  })
+  assert.equal(r.ok, false)
+  assert.ok(
+    r.errors.some((e) => e.includes('vision') && e.includes('uses provider opencode-go')),
+    JSON.stringify(r.errors),
+  )
+})
+
 // ─── Summary ───────────────────────────────────────────────────────────
 const passed = results.filter((r) => r.passed).length
 const failed = results.filter((r) => !r.passed)

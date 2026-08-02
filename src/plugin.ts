@@ -16,9 +16,9 @@ const persistence = new FilePersistenceAdapter('.pantheon/board/state.json')
 board.setPersistence(persistence)
 
 // Recover on startup — any jobs left in "running" state become "error"
-board.recoverRunningJobs().catch((err) =>
-  console.error('[Pantheon Plugin] Failed to recover running jobs:', err),
-)
+board
+  .recoverRunningJobs()
+  .catch((err) => console.error('[Pantheon Plugin] Failed to recover running jobs:', err))
 
 // Log board state changes to console for observability
 board.onTerminal((taskID: string) => {
@@ -42,6 +42,91 @@ board.onTerminal((taskID: string) => {
  */
 export function getBackgroundJobBoard(): BackgroundJobBoard {
   return board
+}
+
+// ─── Active Preset Resolution (shared by config + chat.message hooks) ───
+
+/**
+ * Active-preset candidate files in priority order: project cwd, XDG config,
+ * HOME .opencode. Mirrors the resolution the config hook performs at startup.
+ */
+function activePresetCandidates(): string[] {
+  const home = process.env.HOME ?? ''
+  const xdg = process.env.XDG_CONFIG_HOME ?? `${home}/.config`
+  return [
+    `${process.cwd()}/.pantheon/active-preset.json`,
+    `${xdg}/opencode/.pantheon/active-preset.json`,
+    `${home}/.opencode/.pantheon/active-preset.json`,
+  ]
+}
+
+/**
+ * True when a message part carries an image attachment.
+ *
+ * In @opencode-ai/plugin 1.18.11 / @opencode-ai/sdk the Part union has NO
+ * `type: "image"` member — images arrive as FilePart with `type: "file"` and
+ * an `image/*` mime (e.g. "image/png"). The bare `type === "image"` check is
+ * tolerated for forward-compat should the SDK add a dedicated image part.
+ */
+function isImagePart(part: unknown): boolean {
+  if (!part || typeof part !== 'object') return false
+  const p = part as { type?: unknown; mime?: unknown }
+  if (p.type === 'image') return true
+  if (p.type === 'file' && typeof p.mime === 'string') return p.mime.startsWith('image/')
+  return false
+}
+
+/**
+ * Modality routing: when a USER turn carries an image attachment and the
+ * active preset defines a vision fallback model, route ONLY that turn to the
+ * vision model by mutating `output.message.model` (per-turn mutation — the
+ * next turn reverts to the preset's text model). Text-only turns and turns
+ * without a vision fallback pass through untouched.
+ *
+ * NOTE: the chat.message hook signature is `(input, output) => Promise<void>`
+ * (mutate output in place) — NOT `Promise<output>`. The `chat.message`
+ * output has no params/options slot (that lives on the separate `chat.params`
+ * hook), so the preset's vision `reasoning_effort` is intentionally not
+ * applied here.
+ *
+ * NEVER throws: any error degrades to passthrough so a hook fault can't
+ * crash or block a turn.
+ */
+async function routeVisionTurn(
+  _input: unknown,
+  output: {
+    message?: { role?: string; model: { providerID: string; modelID: string } }
+    parts?: unknown[]
+  },
+): Promise<void> {
+  try {
+    // output.message is a UserMessage; guard role defensively and only look
+    // at user-role messages (never assistant/tool traffic).
+    if (!output?.message || output.message.role !== 'user') return
+    const parts = Array.isArray(output.parts) ? output.parts : []
+    if (!parts.some(isImagePart)) return
+
+    // Resolve lazily — only image turns touch the filesystem/registry.
+    // `vision` is typed on ResolvedPreset (presets.d.mts): { model, reasoning_effort? } | null.
+    const resolved = resolveActivePreset({ candidates: activePresetCandidates() })
+    const vision = resolved?.vision ?? null
+    if (!vision || typeof vision.model !== 'string') return
+
+    // Vision model strings are "provider/model" (e.g. "opencode-go/qwen3.7-plus")
+    // while UserMessage.model is { providerID, modelID } — split on first '/'.
+    const slash = vision.model.indexOf('/')
+    if (slash <= 0 || slash >= vision.model.length - 1) return
+    output.message.model = {
+      providerID: vision.model.slice(0, slash),
+      modelID: vision.model.slice(slash + 1),
+    }
+    console.log(`[Pantheon Plugin] Image detected — routing turn to vision model ${vision.model}`)
+  } catch (err) {
+    console.warn(
+      '[Pantheon Plugin] Vision routing skipped:',
+      err instanceof Error ? err.message : String(err),
+    )
+  }
 }
 
 /**
@@ -68,19 +153,14 @@ const plugin: Plugin = async (_input: PluginInput) => {
       // Model preset injection (resolveActivePreset reads env/file, applyPreset
       // mutates config). Kept after agents/skills paths; never blocks startup.
       try {
-        const home = process.env.HOME ?? ''
-        const xdg = process.env.XDG_CONFIG_HOME ?? `${home}/.config`
-        const candidates = [
-          `${process.cwd()}/.pantheon/active-preset.json`,
-          `${xdg}/opencode/.pantheon/active-preset.json`,
-          `${home}/.opencode/.pantheon/active-preset.json`,
-        ]
-        const resolved = resolveActivePreset({ candidates })
+        const resolved = resolveActivePreset({ candidates: activePresetCandidates() })
         if (!resolved) return
         applyPreset(config, resolved)
-        console.log(`[Pantheon Plugin] Model preset active: ${resolved.name} (source: ${resolved.source})`)
-      } catch (err: any) {
-        if (err?.code === 'PANTHEON_MISSING_API_KEY') {
+        console.log(
+          `[Pantheon Plugin] Model preset active: ${resolved.name} (source: ${resolved.source})`,
+        )
+      } catch (err) {
+        if ((err as { code?: string } | null)?.code === 'PANTHEON_MISSING_API_KEY') {
           console.error(
             '[Pantheon Plugin] Preset requires a provider API key environment variable. Set the required key for your selected provider or clear the preset: pantheon-opencode set-tier none',
           )
@@ -89,6 +169,7 @@ const plugin: Plugin = async (_input: PluginInput) => {
         }
       }
     },
+    'chat.message': routeVisionTurn,
   }
 }
 

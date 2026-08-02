@@ -11,6 +11,7 @@ export interface CapabilityEntry {
   prefix: string
   maxEffort: Effort | null
   stripEffort: boolean
+  vision: boolean
 }
 
 export declare const CAPABILITY_TABLE: CapabilityEntry[]
@@ -41,6 +42,7 @@ export interface ResolvedPreset {
   agents: Record<string, PresetAgentSpec>
   providers: Record<string, PresetProviderDef>
   overrides: unknown
+  vision: { model: string; reasoning_effort?: string } | null
 }
 
 export interface PresetFileOverrides {
@@ -73,6 +75,8 @@ export declare function normalizeCapability(
   model: string,
   requestedEffort?: Effort | null,
 ): { variant: Effort | null; clamped: boolean }
+
+export declare function hasVision(model: string): boolean
 
 export declare function loadPresetDefs(routingPath?: string): Record<string, PresetDef>
 

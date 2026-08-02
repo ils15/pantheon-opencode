@@ -1,10 +1,16 @@
 version: 1.0
 presets:
   go-deepseek:
-    description: "DeepSeek tiering via OpenCode Zen: V4 Pro for planners/reviewers (free on Zen), V4 Flash for implementers, V4 Flash Free for scouts. Prices verified 2026-08."
+    description: "DeepSeek tiering via OpenCode Zen: V4 Pro for planners/reviewers (free on Zen), V4 Flash for implementers, V4 Flash Free for scouts. Vision turns route to Qwen3.7 Plus (opencode-go). Prices verified 2026-08."
+    vision:
+      model: opencode-go/qwen3.7-plus
+      reasoning_effort: medium
     providers:
       opencode:
         baseURL: https://opencode.ai/zen/v1
+        apiKeyEnv: PANTHEON_OPENCODE_API_KEY
+      opencode-go:
+        baseURL: https://opencode.ai/zen/go/v1
         apiKeyEnv: PANTHEON_OPENCODE_API_KEY
     agents:
       athena:     { model: opencode/deepseek-v4-pro,       reasoning_effort: high,   fallback_models: [opencode/mimo-v2.5] }
@@ -22,7 +28,10 @@ presets:
       mnemosyne:  { model: opencode/deepseek-v4-flash-free, reasoning_effort: low,   fallback_models: [opencode/mimo-v2.5] }
       talos:      { model: opencode/deepseek-v4-flash-free, reasoning_effort: low,   fallback_models: [opencode/mimo-v2.5] }
   go-fast:
-    description: "All 14 agents on DeepSeek V4 Flash via OpenCode Go with reasoning_effort low everywhere. Fastest tier. Prices verified 2026-08."
+    description: "All 14 agents on DeepSeek V4 Flash via OpenCode Go with reasoning_effort low everywhere. Fastest tier. Vision turns route to MiniMax M2.5 (mimo-v2.5). Prices verified 2026-08."
+    vision:
+      model: opencode-go/mimo-v2.5
+      reasoning_effort: low
     providers:
       opencode-go:
         baseURL: https://opencode.ai/zen/go/v1
@@ -43,7 +52,10 @@ presets:
       mnemosyne:  { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
       talos:      { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
   go-claude:
-    description: "Anthropic Claude tiering: Opus 4.8 for planners/reviewers, Sonnet 5 for implementers, Haiku 4.5 for scouts. Prices verified 2026-07."
+    description: "Anthropic Claude tiering: Opus 4.8 for planners/reviewers, Sonnet 5 for implementers, Haiku 4.5 for scouts. Vision turns route to Sonnet 5 (native image support). Prices verified 2026-07."
+    vision:
+      model: anthropic/claude-sonnet-5
+      reasoning_effort: medium
     providers:
       anthropic:
         baseURL: https://api.anthropic.com
@@ -64,7 +76,10 @@ presets:
       mnemosyne:  { model: anthropic/claude-haiku-4-5, reasoning_effort: low }
       talos:      { model: anthropic/claude-haiku-4-5, reasoning_effort: low }
   go-openai:
-    description: "OpenAI GPT-5.6 family tiering: Sol for planners/reviewers, Terra for implementers, Luna Fast for scouts. Prices verified 2026-07."
+    description: "OpenAI GPT-5.6 family tiering: Sol for planners/reviewers, Terra for implementers, Luna Fast for scouts. Vision turns route to GPT-5.6 Sol. Prices verified 2026-07."
+    vision:
+      model: openai/gpt-5.6-sol
+      reasoning_effort: high
     providers:
       openai:
         baseURL: https://api.openai.com/v1
@@ -85,7 +100,10 @@ presets:
       mnemosyne:  { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
       talos:      { model: openai/gpt-5.6-luna-fast, reasoning_effort: low }
   go-premium:
-    description: "Pantheon premium lineup on OpenCode Go (subscription): GLM-5.1 orchestrator, DeepSeek V4 Pro planner, Qwen3.7 Max reviewer, Kimi K2.6 designer, MiniMax M2.7 implementers, DeepSeek V4 Flash scouts. Ported from Oh-My-OpenAgent 'opencode-go' preset. Requires OpenCode Go subscription. Prices verified 2026-08."
+    description: "Pantheon premium lineup on OpenCode Go (subscription): GLM-5.1 orchestrator, DeepSeek V4 Pro planner, Qwen3.7 Max reviewer, Kimi K2.6 designer, MiniMax M2.7 implementers, DeepSeek V4 Flash scouts. Vision turns route to Qwen3.7 Plus (multimodal; Qwen3.7 Max is text-only). Ported from Oh-My-OpenAgent 'opencode-go' preset. Requires OpenCode Go subscription. Prices verified 2026-08."
+    vision:
+      model: opencode-go/qwen3.7-plus
+      reasoning_effort: high
     providers:
       opencode-go:
         baseURL: https://opencode.ai/zen/go/v1
@@ -106,7 +124,10 @@ presets:
       mnemosyne:  { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
       talos:      { model: opencode-go/deepseek-v4-flash, reasoning_effort: low }
   go-free:
-    description: "Pantheon free lineup on OpenCode Zen free tier, $0: Big Pickle orchestrator, Nemotron 3 Ultra Free planner, North Mini Code scouts. Ported from Oh-My-OpenAgent 'zen-free' preset. CAUTION: nemotron-3-ultra-free has known intermittent failures (opencode#38028) — switch to go-fast if flaky. Prices verified 2026-08."
+    description: "Pantheon free lineup on OpenCode Zen free tier, $0: Big Pickle orchestrator, Nemotron 3 Ultra Free planner, North Mini Code scouts. Vision turns route to MiniMax M2.5 Free (mimo-v2.5-free, multimodal on Zen free). Ported from Oh-My-OpenAgent 'zen-free' preset. CAUTION: nemotron-3-ultra-free has known intermittent failures (opencode#38028) — switch to go-fast if flaky. Prices verified 2026-08."
+    vision:
+      model: opencode/mimo-v2.5-free
+      reasoning_effort: low
     providers:
       opencode:
         baseURL: https://opencode.ai/zen/v1
