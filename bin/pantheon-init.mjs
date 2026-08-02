@@ -71,8 +71,8 @@ async function main() {
     if (name !== 'none') {
       for (const [pid, provider] of Object.entries(presets[name].providers || {})) {
         if (!process.env[provider.apiKeyEnv]) {
-          console.error(`❌ Missing env ${provider.apiKeyEnv} for provider "${pid}"`);
-          console.error(`   export ${provider.apiKeyEnv}=...`);
+          console.error(`❌ Missing required API key configuration for provider "${pid}"`);
+          console.error('   Set the provider API key environment variable and retry.');
           process.exit(1);
         }
       }
