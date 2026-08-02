@@ -6,10 +6,6 @@
         "mimo-v2.5": {
           "attachment": true,
           "modalities": { "input": ["text", "image"] }
-        },
-        "deepseek-v4-flash": {
-          "attachment": true,
-          "modalities": { "input": ["text", "image"] }
         }
       }
     }
@@ -32,10 +28,7 @@
       "pip *": "allow"
     }
   },
-  "instructions": [
-    "AGENTS.md",
-    "src/instructions/*.instructions.md"
-  ],
+  "instructions": ["AGENTS.md", "src/instructions/*.instructions.md"],
   "plugin": [],
   "mcp": {
     "bifrost": {
