@@ -13,6 +13,7 @@ import {
   matchesModelPattern,
   matchesWildcardPattern,
   modelMatchesAnyPattern,
+  readOpencodeAuthToken,
   resolveNativeVisionConfig,
 } from './pantheon/vision.ts'
 
@@ -41,6 +42,9 @@ export function getBackgroundJobBoard(): BackgroundJobBoard {
   return board
 }
 
+// Re-exported directly so the dependency-free test harness can import it
+// without a separate unused import in the plugin body.
+export { resolveNativeVisionTarget } from './pantheon/vision.ts'
 // Keep pure helpers available to the dependency-free test harness. OpenCode
 // requires named runtime exports to be functions, which all of these are.
 export {
@@ -52,19 +56,26 @@ export {
   matchesModelPattern,
   matchesWildcardPattern,
   modelMatchesAnyPattern,
+  readOpencodeAuthToken,
   resolveNativeVisionConfig,
 }
 
 /**
  * Pantheon plugin for OpenCode. Pasted images are intercepted via the
  * `chat.message` hook (proven to fire in opencode 1.18.11). When a provider
- * key is available (PANTHEON_OPENCODE_API_KEY / OPENCODE_API_KEY) the image is
+ * key is available — env PANTHEON_OPENCODE_API_KEY / OPENCODE_API_KEY, or the
+ * opencode auth store for `opencode auth login` users — the image is
  * described NATIVELY by the multimodal model via the opencode Zen
  * OpenAI-compatible endpoint, and replaced with the text description — no MCP
  * tool required. Without a key the legacy pattern applies: the image is
  * replaced with a text instruction telling the model to call a vision MCP tool
- * (default `mcp__bifrost__describe_image`). Either way the image never reaches
+ * (default `mcp__pantheon-vision__vision_describe`). Either way the image never reaches
  * the main provider, so text-only models cannot fail with an `image_url` error.
+ *
+ * The canonical `pantheon-vision` MCP owns the standalone describe/OCR/analyze
+ * tools. The experimental history transform is an additional gatekeeper for
+ * runtimes that retain image parts from earlier turns; older runtimes simply
+ * ignore that optional hook.
  */
 const plugin: Plugin = async (input: PluginInput) => {
   const vision = createVisionHandler(input)
@@ -94,6 +105,7 @@ const plugin: Plugin = async (input: PluginInput) => {
       }
     },
     'chat.message': vision.chatMessage,
+    'experimental.chat.messages.transform': vision.messagesTransform,
     event: vision.event,
   }
 }
