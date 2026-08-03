@@ -17,7 +17,7 @@ module.exports = {
       'mnemosyne', 'talos', 'persistence', 'memory', 'council',
       'deepwork', 'audit', 'optimize', 'consolidate', 'merge',
       'model', 'auth', 'compaction', 'checkpoint',
-      'plugin', 'vision', 'presets', 'install', 'security',
+      'plugin', 'vision', 'presets', 'install', 'hooks', 'security',
     ]],
     'header-max-length': [2, 'always', 120],
   },
