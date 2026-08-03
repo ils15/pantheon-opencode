@@ -35,6 +35,7 @@ const {
   matchesModelPattern,
   matchesWildcardPattern,
   modelMatchesAnyPattern,
+  readOpencodeAuthToken,
   resolveNativeVisionConfig,
 } = await import('../src/plugin.ts')
 
@@ -42,14 +43,22 @@ const VISION_DIR = join(tmpdir(), 'pantheon-vision')
 const previousXdg = process.env.XDG_CONFIG_HOME
 const xdgDir = mkdtempSync(join(tmpdir(), 'pantheon-xdg-'))
 process.env.XDG_CONFIG_HOME = xdgDir
+// Hermetic HOME: isolate the opencode auth store default path
+// (~/.local/share/opencode/auth.json) so auth-store tests never touch the
+// developer's real `opencode auth login` credentials.
+const previousHome = process.env.HOME
+const homeDir = mkdtempSync(join(tmpdir(), 'pantheon-home-'))
+process.env.HOME = homeDir
 // Hermetic: keep existing tool-pattern tests on the TOOL path regardless of
 // the developer's shell (native vision only activates when a key is set).
 const previousOpenCodeKey = process.env.PANTHEON_OPENCODE_API_KEY
 const previousOaiKey = process.env.OPENCODE_API_KEY
 const previousMode = process.env.PANTHEON_VISION_MODE
+const previousVisionModel = process.env.PANTHEON_VISION_MODEL
 delete process.env.PANTHEON_OPENCODE_API_KEY
 delete process.env.OPENCODE_API_KEY
 delete process.env.PANTHEON_VISION_MODE
+delete process.env.PANTHEON_VISION_MODEL
 delete process.env.PANTHEON_VISION_TOOL
 
 const tempDirs = []
@@ -81,9 +90,9 @@ const textPart = (text, overrides = {}) => ({
   ...overrides,
 })
 
-const userMessage = (_parts, model) => ({
+const userMessage = (_parts, model, sessionID = 'session-1') => ({
   id: 'message-1',
-  sessionID: 'session-1',
+  sessionID,
   role: 'user',
   agent: 'zeus',
   model: model ?? { providerID: 'opencode-go', modelID: 'deepseek-v4-flash' },
@@ -95,7 +104,7 @@ async function makeHooks(client = {}, directory = '/tmp') {
 
 /** Drive one chat.message turn through the hook and return the mutated output. */
 async function runTurn(hooks, parts, model, sessionID = 'session-1') {
-  const message = userMessage(parts, model)
+  const message = userMessage(parts, model, sessionID)
   const output = { message, parts }
   await hooks['chat.message']({ sessionID, model: message.model }, output)
   return output
@@ -107,6 +116,14 @@ const injectedText = (parts) =>
     .map((p) => p.text)
     .join('\n')
 
+async function sanitizeHistory(hooks, messages) {
+  const transform = hooks['experimental.chat.messages.transform']
+  assert.equal(typeof transform, 'function', 'experimental history transform is exposed')
+  const output = { messages }
+  await transform({}, output)
+  return output
+}
+
 async function withEnv(name, value, fn) {
   const previous = process.env[name]
   if (value === undefined) delete process.env[name]
@@ -116,6 +133,25 @@ async function withEnv(name, value, fn) {
   } finally {
     if (previous === undefined) delete process.env[name]
     else process.env[name] = previous
+  }
+}
+
+/** Isolated opencode auth store path under the hermetic HOME. */
+const authStoreDir = join(homeDir, '.local', 'share', 'opencode')
+const authStorePath = join(authStoreDir, 'auth.json')
+
+/** Write (or remove) the mock auth.json; returns the file path. */
+function writeAuthStore(entries) {
+  mkdirSync(authStoreDir, { recursive: true })
+  writeFileSync(authStorePath, JSON.stringify(entries))
+  return authStorePath
+}
+
+const clearAuthStore = () => {
+  try {
+    rmSync(authStoreDir, { recursive: true, force: true })
+  } catch {
+    // best effort
   }
 }
 
@@ -157,7 +193,7 @@ const bodyOf = (call) => JSON.parse(call.options.body)
 
 assert.equal(isImageFilePart(imagePart()), true)
 assert.equal(isImageFilePart({ ...imagePart(), mime: 'application/pdf' }), false)
-assert.equal(isImageFilePart({ ...imagePart(), mime: 'image/gif' }), false)
+assert.equal(isImageFilePart({ ...imagePart(), mime: 'image/gif' }), true)
 assert.equal(isImageFilePart({ ...imagePart(), type: 'text', text: 'x' }), false)
 assert.equal(isImageFilePart(null), false)
 
@@ -205,10 +241,10 @@ assert.equal(
 const defaultPrompt = generateInjectionPrompt(
   [{ path: '/tmp/x.png' }],
   'o que é isso?',
-  'mcp__bifrost__describe_image',
+  'mcp__pantheon-vision__vision_describe',
 )
 assert.ok(defaultPrompt.includes('/tmp/x.png'))
-assert.ok(defaultPrompt.includes('mcp__bifrost__describe_image'))
+assert.ok(defaultPrompt.includes('mcp__pantheon-vision__vision_describe'))
 assert.ok(defaultPrompt.includes('o que é isso?'))
 
 // ─── Test 1: data: URI → saved to /tmp/pantheon-vision + injected TextPart ──
@@ -220,7 +256,7 @@ await (async () => {
 
   assert.equal(output.parts.some(isImageFilePart), false, 'image file parts removed')
   const injected = injectedText(output.parts)
-  assert.ok(injected.includes('mcp__bifrost__describe_image'), 'tool name in injection')
+  assert.ok(injected.includes('mcp__pantheon-vision__vision_describe'), 'tool name in injection')
   assert.ok(injected.includes(VISION_DIR), 'temp dir path in injection')
   assert.ok(injected.includes('Analise a imagem'), 'user text preserved in injection')
 
@@ -286,6 +322,75 @@ await (async () => {
   assert.equal(output.parts[0].text, 'normal turn')
 })()
 
+// ─── History wire tests: no residual image reaches a text provider ──────────
+
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  const hooks = await makeHooks()
+
+  // Turn 1 caches the generated MCP instruction for the image part.
+  await runTurn(hooks, [imagePart(), textPart('primeiro pedido')], undefined, 'session-wire')
+  const history = [
+    {
+      info: { id: 'message-1', sessionID: 'session-wire' },
+      parts: [imagePart(), textPart('primeiro pedido')],
+    },
+    {
+      info: { id: 'message-2', sessionID: 'session-wire' },
+      parts: [textPart('segundo turno textual')],
+    },
+  ]
+  const transformed = await sanitizeHistory(hooks, history)
+  const wire = JSON.stringify(transformed.messages)
+  assert.equal(wire.includes('image_url'), false, 'history wire has no image_url')
+  assert.equal(transformed.messages[0].parts.some(isImageFilePart), false, 'turn 1 image replaced')
+  assert.ok(
+    transformed.messages[0].parts.some(
+      (part) => part.type === 'text' && part.text.includes('mcp__pantheon-vision__vision_describe'),
+    ),
+    'cached text reused',
+  )
+  assert.ok(wire.includes('segundo turno textual'), 'textual turn remains in history')
+
+  // Contract wire: a text-only provider rejects image_url content. The
+  // transform must run before serialization, so this mock accepts the
+  // sanitized history and would throw if any image payload leaked through.
+  const rejectingTextProvider = async (messages) => {
+    if (JSON.stringify(messages).includes('image_url')) {
+      throw new Error('text provider rejects image_url')
+    }
+    return 'textual turn accepted'
+  }
+  assert.equal(await rejectingTextProvider(transformed.messages), 'textual turn accepted')
+
+  // A second image in the same session receives its own cached replacement.
+  const secondImage = imagePart({ id: 'image-2', url: 'file:///tmp/second.png' })
+  await runTurn(hooks, [secondImage, textPart('segunda imagem')], undefined, 'session-wire')
+  const secondHistory = [
+    {
+      info: { id: 'message-3', sessionID: 'session-wire' },
+      parts: [secondImage],
+    },
+  ]
+  const secondTransformed = await sanitizeHistory(hooks, secondHistory)
+  assert.equal(JSON.stringify(secondTransformed.messages).includes('image_url'), false)
+  assert.equal(secondTransformed.messages[0].parts.some(isImageFilePart), false)
+
+  // A new session cannot reuse turn 1's cache, but still gets a safe text part.
+  const newSession = await sanitizeHistory(hooks, [
+    {
+      info: { id: 'message-new', sessionID: 'new-session' },
+      parts: [imagePart()],
+    },
+  ])
+  assert.equal(JSON.stringify(newSession.messages).includes('image_url'), false)
+  assert.equal(newSession.messages[0].parts.some(isImageFilePart), false)
+  assert.ok(
+    JSON.stringify(newSession.messages).includes('Imagem removida do histórico'),
+    'new session has no inherited cache',
+  )
+})()
+
 // ─── Test 6: tool name from env / config / dynamic detection / default ─────
 
 await (async () => {
@@ -295,7 +400,7 @@ await (async () => {
   const hooksDefault = await makeHooks()
   const outDefault = await runTurn(hooksDefault, [imagePart()])
   assert.ok(
-    injectedText(outDefault.parts).includes('mcp__bifrost__describe_image'),
+    injectedText(outDefault.parts).includes('mcp__pantheon-vision__vision_describe'),
     'default tool name used',
   )
 
@@ -319,11 +424,15 @@ await (async () => {
 
   // dynamic detection via client.tool.ids — prefer describe_image
   const hooksDyn = await makeHooks({
-    tool: { ids: async () => ({ data: ['mcp__other__vision', 'mcp__bifrost__describe_image'] }) },
+    tool: {
+      ids: async () => ({
+        data: ['mcp__other__vision', 'mcp__pantheon-vision__vision_describe'],
+      }),
+    },
   })
   const outDyn = await runTurn(hooksDyn, [imagePart()])
   assert.ok(
-    injectedText(outDyn.parts).includes('mcp__bifrost__describe_image'),
+    injectedText(outDyn.parts).includes('mcp__pantheon-vision__vision_describe'),
     'dynamic detection picks describe_image',
   )
 })()
@@ -393,7 +502,7 @@ await (async () => {
   const output = await runTurn(hooks, [imagePart(), textPart('pedido')])
   const injected = injectedText(output.parts)
   assert.ok(injected.includes('Descreva:'), 'custom template used')
-  assert.ok(injected.includes('mcp__bifrost__describe_image'), 'tool variable rendered')
+  assert.ok(injected.includes('mcp__pantheon-vision__vision_describe'), 'tool variable rendered')
   assert.ok(injected.includes('pedido'), 'userText variable rendered')
 })()
 
@@ -530,6 +639,7 @@ await (async () => {
 
 await (async () => {
   rmSync(VISION_DIR, { recursive: true, force: true })
+  clearAuthStore() // no auth store either → guaranteed tool path
   const mock = installFetchMock(() => {
     throw new Error('fetch must not be called without a key')
   })
@@ -539,7 +649,10 @@ await (async () => {
       const output = await runTurn(hooks, [imagePart()])
       assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
       const injected = injectedText(output.parts)
-      assert.ok(injected.includes('mcp__bifrost__describe_image'), 'tool instruction without key')
+      assert.ok(
+        injected.includes('mcp__pantheon-vision__vision_describe'),
+        'tool instruction without key',
+      )
       assert.ok(injected.includes(VISION_DIR), 'temp path in tool instruction')
     })
     assert.equal(mock.calls.length, 0, 'no native call without key')
@@ -560,7 +673,7 @@ await (async () => {
       const output = await runTurn(hooks, [imagePart()])
       assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
       assert.ok(
-        injectedText(output.parts).includes('mcp__bifrost__describe_image'),
+        injectedText(output.parts).includes('mcp__pantheon-vision__vision_describe'),
         'tool fallback on HTTP 500',
       )
     })
@@ -578,7 +691,7 @@ await (async () => {
       const output = await runTurn(hooks, [imagePart()])
       assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
       assert.ok(
-        injectedText(output.parts).includes('mcp__bifrost__describe_image'),
+        injectedText(output.parts).includes('mcp__pantheon-vision__vision_describe'),
         'tool fallback on network error',
       )
     })
@@ -641,7 +754,7 @@ await (async () => {
         const output = await runTurn(hooks, [imagePart()])
         assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
         assert.ok(
-          injectedText(output.parts).includes('mcp__bifrost__describe_image'),
+          injectedText(output.parts).includes('mcp__pantheon-vision__vision_describe'),
           'tool mode forces tool instruction',
         )
       })
@@ -675,17 +788,263 @@ await (async () => {
   }
 })()
 
+// ─── Test N8: auth store fallback (no env key) ─────────────────────────────
+// A user connected via `opencode auth login` must NOT need to export anything:
+// the plugin reads <data dir>/auth.json and uses the 'opencode-go' entry
+// (preferred over 'opencode') when no env key is set.
+
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  clearAuthStore()
+  writeAuthStore({
+    'opencode-go': { access: 'auth-store-go-key', expires: 0 },
+    opencode: { access: 'auth-store-zen-key', expires: 0 },
+  })
+  const mock = installFetchMock(() => okJson('descrição via auth store'))
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', undefined, async () => {
+      await withEnv('OPENCODE_API_KEY', undefined, async () => {
+        const hooks = await makeHooks()
+        const output = await runTurn(hooks, [imagePart()])
+        assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
+        assert.ok(
+          injectedText(output.parts).includes('descrição via auth store'),
+          'native description injected from auth-store key',
+        )
+      })
+    })
+    assert.equal(mock.calls.length, 1, 'one native call with auth-store key')
+    assert.equal(
+      mock.calls[0].options.headers.Authorization,
+      'Bearer auth-store-go-key',
+      'opencode-go auth entry preferred over opencode',
+    )
+  } finally {
+    mock.restore()
+    clearAuthStore()
+  }
+})()
+
+// readOpencodeAuthToken unit: precedence, expiry, missing/corrupted file.
+
+assert.equal(
+  await readOpencodeAuthToken(['opencode-go', 'opencode'], authStoreDir),
+  null,
+  'missing auth.json → null (no crash)',
+)
+
+writeAuthStore({ 'opencode-go': { access: 'go-token' }, opencode: { access: 'zen-token' } })
+assert.equal(
+  await readOpencodeAuthToken(['opencode-go', 'opencode'], authStoreDir),
+  'go-token',
+  'first provider entry wins',
+)
+assert.equal(
+  await readOpencodeAuthToken(['opencode'], authStoreDir),
+  'zen-token',
+  'second provider entry reachable when first missing',
+)
+writeAuthStore({
+  'opencode-go': { access: 'expired-token', expires: 1 }, // epoch ms in the past
+  opencode: { access: 'fresh-token', expires: 0 },
+})
+assert.equal(
+  await readOpencodeAuthToken(['opencode-go', 'opencode'], authStoreDir),
+  'fresh-token',
+  'expired entry skipped, next non-expired used',
+)
+writeAuthStore({ 'opencode-go': { access: '   ' } })
+assert.equal(
+  await readOpencodeAuthToken(['opencode-go', 'opencode'], authStoreDir),
+  null,
+  'blank access token ignored',
+)
+writeAuthStore('this is not json {{')
+assert.equal(
+  await readOpencodeAuthToken(['opencode-go', 'opencode'], authStoreDir),
+  null,
+  'corrupted auth.json → null (no crash)',
+)
+clearAuthStore()
+
+// ─── Test N9: env key wins over auth store ─────────────────────────────────
+
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  writeAuthStore({ 'opencode-go': { access: 'auth-store-go-key', expires: 0 } })
+  const mock = installFetchMock(() => okJson('descrição via env key'))
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'env-key-wins', async () => {
+      const hooks = await makeHooks()
+      const output = await runTurn(hooks, [imagePart()])
+      assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
+      assert.ok(
+        injectedText(output.parts).includes('descrição via env key'),
+        'native description injected from env key',
+      )
+    })
+    assert.equal(mock.calls.length, 1, 'one native call')
+    assert.equal(
+      mock.calls[0].options.headers.Authorization,
+      'Bearer env-key-wins',
+      'env key beats auth store',
+    )
+  } finally {
+    mock.restore()
+    clearAuthStore()
+  }
+})()
+
+// ─── Test N10: config file mode/visionModel precedence ─────────────────────
+// mode: env PANTHEON_VISION_MODE > config `mode` > default auto.
+// visionModel: env PANTHEON_VISION_MODEL > config `visionModel` > preset
+// `vision.model` > default opcode-go/mimo-v2.5.
+
+// getVisionMode with a config mode: env wins, then config, then auto.
+assert.equal(getVisionMode({}, 'tool'), 'tool', 'config mode tool honored')
+assert.equal(getVisionMode({}, 'auto'), 'auto', 'config mode auto')
+assert.equal(getVisionMode({}, 'bogus'), 'auto', 'invalid config mode → auto')
+assert.equal(
+  getVisionMode({ PANTHEON_VISION_MODE: 'native' }, 'tool'),
+  'native',
+  'env mode wins over config mode',
+)
+assert.equal(
+  getVisionMode({ PANTHEON_VISION_MODE: 'tool' }, 'native'),
+  'tool',
+  'env tool wins over config native',
+)
+
+// resolveNativeVisionConfig with configVisionModel param.
+assert.equal(
+  resolveNativeVisionConfig(null, { PANTHEON_OPENCODE_API_KEY: 'k' }, 'opencode-go/minimax-m3')
+    ?.modelID,
+  'opencode-go/minimax-m3',
+  'config visionModel used',
+)
+assert.equal(
+  resolveNativeVisionConfig(
+    null,
+    { PANTHEON_OPENCODE_API_KEY: 'k', PANTHEON_VISION_MODEL: 'opencode-go/mimo-v2.5' },
+    'opencode-go/minimax-m3',
+  )?.modelID,
+  'opencode-go/mimo-v2.5',
+  'env PANTHEON_VISION_MODEL beats config visionModel',
+)
+assert.equal(
+  resolveNativeVisionConfig(
+    { vision: { model: 'opencode-go/minimax-m3' } },
+    { PANTHEON_OPENCODE_API_KEY: 'k' },
+    'opencode-go/mimo-v2.5',
+  )?.modelID,
+  'opencode-go/mimo-v2.5',
+  'config visionModel beats preset vision model',
+)
+assert.equal(
+  resolveNativeVisionConfig(null, { PANTHEON_OPENCODE_API_KEY: 'k', PANTHEON_VISION_MODEL: '  ' })
+    ?.modelID,
+  'opencode-go/mimo-v2.5',
+  'blank env PANTHEON_VISION_MODEL ignored → default',
+)
+
+// End-to-end: config file `mode: tool` forces tool pattern even with a key.
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  const cfgDir = makeTempDir()
+  mkdirSync(join(cfgDir, '.opencode'), { recursive: true })
+  writeFileSync(join(cfgDir, '.opencode', 'opencode-vision.json'), JSON.stringify({ mode: 'tool' }))
+  const mock = installFetchMock(() => {
+    throw new Error('fetch must not be called when config mode is tool')
+  })
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+      const hooks = await makeHooks({}, cfgDir)
+      const output = await runTurn(hooks, [imagePart()])
+      assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
+      assert.ok(
+        injectedText(output.parts).includes('mcp__pantheon-vision__vision_describe'),
+        'config mode tool forces tool instruction',
+      )
+    })
+    assert.equal(mock.calls.length, 0, 'no native call in config-mode tool')
+  } finally {
+    mock.restore()
+  }
+})()
+
+// End-to-end: config file `visionModel` used for the native call.
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  const cfgDir = makeTempDir()
+  mkdirSync(join(cfgDir, '.opencode'), { recursive: true })
+  writeFileSync(
+    join(cfgDir, '.opencode', 'opencode-vision.json'),
+    JSON.stringify({ visionModel: 'opencode-go/minimax-m3' }),
+  )
+  const mock = installFetchMock(() => okJson('descrição minimax'))
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+      const hooks = await makeHooks({}, cfgDir)
+      const output = await runTurn(hooks, [imagePart()])
+      assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
+      assert.ok(
+        injectedText(output.parts).includes('descrição minimax'),
+        'native description injected',
+      )
+    })
+    assert.equal(mock.calls.length, 1, 'one native call')
+    assert.equal(bodyOf(mock.calls[0]).model, 'opencode-go/minimax-m3', 'config visionModel used')
+  } finally {
+    mock.restore()
+  }
+})()
+
+// End-to-end: env PANTHEON_VISION_MODEL beats config visionModel.
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  const cfgDir = makeTempDir()
+  mkdirSync(join(cfgDir, '.opencode'), { recursive: true })
+  writeFileSync(
+    join(cfgDir, '.opencode', 'opencode-vision.json'),
+    JSON.stringify({ visionModel: 'opencode-go/minimax-m3' }),
+  )
+  const mock = installFetchMock(() => okJson('descrição mimo'))
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+      await withEnv('PANTHEON_VISION_MODEL', 'opencode-go/mimo-v2.5', async () => {
+        const hooks = await makeHooks({}, cfgDir)
+        const output = await runTurn(hooks, [imagePart()])
+        assert.equal(output.parts.some(isImageFilePart), false, 'image removed')
+        assert.ok(injectedText(output.parts).includes('descrição mimo'), 'description injected')
+      })
+    })
+    assert.equal(mock.calls.length, 1, 'one native call')
+    assert.equal(
+      bodyOf(mock.calls[0]).model,
+      'opencode-go/mimo-v2.5',
+      'env PANTHEON_VISION_MODEL beats config visionModel',
+    )
+  } finally {
+    mock.restore()
+  }
+})()
+
 // ─── Teardown ──────────────────────────────────────────────────────────────
 
 rmSync(VISION_DIR, { recursive: true, force: true })
 for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
+rmSync(homeDir, { recursive: true, force: true })
 if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME
 else process.env.XDG_CONFIG_HOME = previousXdg
+if (previousHome === undefined) delete process.env.HOME
+else process.env.HOME = previousHome
 if (previousOpenCodeKey === undefined) delete process.env.PANTHEON_OPENCODE_API_KEY
 else process.env.PANTHEON_OPENCODE_API_KEY = previousOpenCodeKey
 if (previousOaiKey === undefined) delete process.env.OPENCODE_API_KEY
 else process.env.OPENCODE_API_KEY = previousOaiKey
 if (previousMode === undefined) delete process.env.PANTHEON_VISION_MODE
 else process.env.PANTHEON_VISION_MODE = previousMode
+if (previousVisionModel === undefined) delete process.env.PANTHEON_VISION_MODEL
+else process.env.PANTHEON_VISION_MODEL = previousVisionModel
 
 console.log('✅ vision-tool plugin tests passed')
