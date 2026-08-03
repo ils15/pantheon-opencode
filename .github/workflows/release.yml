@@ -1,6 +1,12 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number for beta release labeling'
+        required: false
+        default: '9'
   pull_request:
     types: [labeled]
   push:
@@ -15,7 +21,8 @@ jobs:
   release:
     if: >
       (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
-      (github.event_name == 'pull_request' && github.event.label.name == 'release:beta')
+      (github.event_name == 'pull_request' && github.event.label.name == 'release:beta') ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     concurrency:
       group: release-${{ github.ref_name }}
@@ -49,7 +56,7 @@ jobs:
         if: steps.type.outputs.channel == 'beta'
         id: betaver
         run: |
-          PR=${{ github.event.number }}
+          PR=${{ github.event.number || github.event.inputs.pr_number }}
           SHA=$(git rev-parse --short HEAD)
           BASE=$(node -p "require('./package.json').version")
           echo "version=${BASE}-beta.${PR}.${SHA}" >> "$GITHUB_OUTPUT"
@@ -86,7 +93,7 @@ jobs:
         run: |
           VERSION="v$(node -p "require('./package.json').version")"
           if [ "${{ steps.type.outputs.channel }}" = "beta" ]; then
-            PR=${{ github.event.number }}
+            PR=${{ github.event.number || github.event.inputs.pr_number }}
             gh release create "$VERSION" \
               --title "Pantheon ${VERSION} (PR #${PR})" \
               --prerelease \
@@ -104,7 +111,7 @@ jobs:
         with:
           script: |
             const ver = '${{ steps.betaver.outputs.version }}';
-            const pr = ${{ github.event.number }};
+            const pr = ${{ github.event.number || github.event.inputs.pr_number }};
             github.rest.issues.createComment({
               ...context.repo,
               issue_number: pr,
