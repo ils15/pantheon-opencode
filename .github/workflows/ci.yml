@@ -37,5 +37,8 @@ jobs:
       - name: Security audit
         run: npm audit --audit-level=high 2>&1 || echo "audit warnings"
 
+      - name: Scan versionable files for credentials
+        run: npm run test:security
+
       - name: Verify package
         run: npm pack --dry-run 2>&1 | tail -3
