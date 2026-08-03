@@ -844,4 +844,3 @@ await testAsync('list returns a snapshot (mutating does not affect board)', asyn
 }
 
 main()
-

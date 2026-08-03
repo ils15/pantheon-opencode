@@ -225,10 +225,10 @@ sequenceDiagram
     Z->>+A: task(background=true, "discover")
     Z->>+D: task(background=true, "schema")
     Note over Z: Max 5 concurrent
-    
+
     A-->>Z: task_status(wait=true) → result
     D-->>Z: task_status(wait=true) → result
-    
+
     Z->>+T: task("review")
     Note over T: Athena/Themis NEVER background
     T-->>-Z: review complete

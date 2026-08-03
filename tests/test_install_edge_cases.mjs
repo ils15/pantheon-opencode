@@ -72,7 +72,7 @@ test('PIP_USER appears only in the pipEnv object (not as system env mutation)', 
   // Should set PIP_USER on the spawned process env, not on process.env
   const pipEnvAssignments = (src.match(/PIP_USER/g) || []).length
   assert.ok(pipEnvAssignments >= 1, 'Should have at least one PIP_USER reference')
-  
+
   // Check it's not modifying process.env directly
   const processEnvMod = src.match(/process\.env\s*=/g)
   assert.equal(processEnvMod, null, 'Should not reassign process.env')

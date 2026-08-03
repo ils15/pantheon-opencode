@@ -14,9 +14,9 @@ Practical walkthrough for using the multi-agent system end-to-end. This is your 
 
 ## Your First Feature (Real Example)
 
-**Scenario:** You want to add JWT authentication to your app.  
-**Time:** ~6-8 hours total (spread across 1-2 days)  
-**Team:** All agents working together  
+**Scenario:** You want to add JWT authentication to your app.
+**Time:** ~6-8 hours total (spread across 1-2 days)
+**Team:** All agents working together
 **Result:** Complete feature with 95% coverage, security audit passed, ready to deploy
 
 ---
@@ -287,14 +287,14 @@ Result:      10x faster queries (~2 hours)
 
 ## Pro Tips
 
-🎯 **Plan First** — Saves 2-3x rework time  
-🎯 **Use Pause Points** — You control when to proceed  
-🎯 **Trust Themis** — Code review catches issues early  
-🎯 **Commit Atomically** — One phase = one commit  
-🎯 **Test First** — RED tests before code  
-🎯 **Coverage Matters** — <80% = blocked, no exceptions  
-🎯 **Security First** — Themis enforces OWASP compliance  
-🎯 **Background Dispatch** — Use OpenCode v1.16.2+ background agents to run independent phases in parallel without polling  
+🎯 **Plan First** — Saves 2-3x rework time
+🎯 **Use Pause Points** — You control when to proceed
+🎯 **Trust Themis** — Code review catches issues early
+🎯 **Commit Atomically** — One phase = one commit
+🎯 **Test First** — RED tests before code
+🎯 **Coverage Matters** — <80% = blocked, no exceptions
+🎯 **Security First** — Themis enforces OWASP compliance
+🎯 **Background Dispatch** — Use OpenCode v1.16.2+ background agents to run independent phases in parallel without polling
 
 ---
 

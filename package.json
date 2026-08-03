@@ -24,6 +24,8 @@
     "typecheck": "npx tsc --noEmit",
     "audit": "npm audit --audit-level=high",
     "secret-scan": "node scripts/secret-scan.mjs",
+    "hooks:install": "pre-commit install",
+    "hooks:update": "pre-commit autoupdate",
     "test:security": "npm run secret-scan && node tests/test_install_mcp_vision.mjs",
     "test": "python3 -m pytest tests/ -q 2>&1 || echo \"No tests found\"",
     "test:ci": "python3 -m pytest tests/ -q --tb=short 2>&1 || true"

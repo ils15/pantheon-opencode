@@ -765,7 +765,7 @@ Context: {{context}}
 
 Consult these specialists:
 - @athena for planning
-- @hermes for implementation feasibility  
+- @hermes for implementation feasibility
 - @demeter for database impact
 
 Synthesize their perspectives into a single recommendation.

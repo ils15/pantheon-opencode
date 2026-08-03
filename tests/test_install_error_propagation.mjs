@@ -27,7 +27,7 @@ const fnStr = opencodeSrc.installOpenCode.toString()
 test('opencode.mjs: catch block re-throws fatal error', () => {
   const catchIdx = fnStr.indexOf('Setup failed')
   assert.ok(catchIdx >= 0, 'Should have "Setup failed" error message')
-  
+
   const afterCatch = fnStr.substring(catchIdx, catchIdx + 120)
   assert.ok(afterCatch.includes('throw err'),
     `Catch block should re-throw. Got: ${afterCatch.substring(0, 80)}`)
@@ -55,11 +55,11 @@ test('pantheon-init.mjs: error message shows recovery suggestions', () => {
 test('pantheon-init.mjs: success banner only after try block (not inside catch)', () => {
   const tryIdx = pantheonInit.indexOf('try {')
   const installedBanner = pantheonInit.indexOf('installed!')
-  
+
   assert.ok(tryIdx >= 0, 'Should have try block')
   assert.ok(installedBanner >= 0, 'Should have installed banner')
   assert.ok(installedBanner > tryIdx, 'Success banner should be after the try block')
-  
+
   // Verify there's no success banner INSIDE the catch
   const catchIdx = pantheonInit.indexOf('} catch')
   const afterCatchEnd = pantheonInit.indexOf('process.exit', catchIdx)

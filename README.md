@@ -751,6 +751,31 @@ Edit README.md line 11: agents-17 → agents-18
 
 The `.opencode/plugins/pantheon-hooks.ts` plugin bridges these shell scripts to OpenCode events. OpenCode auto-discovers plugins from `.opencode/plugins/` when running from the project directory.
 
+### Pre-commit hooks (local secret gate)
+
+Pre-commit blocks **secrets and hygiene issues locally**, before anything reaches CI — the same fail-closed policy as the `Security / security-scan` CI gate, one layer earlier.
+
+**Install (one-time, per clone):**
+
+```bash
+pip install pre-commit
+npm run hooks:install   # -> pre-commit install
+```
+
+**What the hooks verify (`.pre-commit-config.yaml`):**
+
+| Hook | Checks |
+|---|---|
+| `gitleaks` (v8.24.3) | Hardcoded secrets in the staged diff — Bifrost credential values (`sk-bf-*`), private keys, GitHub/npm/AWS/Google/Slack tokens, `sk-*` keys. Uses `.gitleaks.toml`, redacted output, exit code 2 |
+| `secret-scan` (local, `scripts/secret-scan.mjs`) | Bifrost MCP credential header + value patterns + literal API key / `Authorization: Bearer` values in versionable files |
+| `trailing-whitespace`, `end-of-file-fixer` | Formatting hygiene (auto-fixed) |
+| `check-json`, `check-yaml`, `check-toml` | Config file syntax |
+| `check-merge-conflict`, `check-added-large-files` (max 5 MB), `forbid-new-submodules` | Repo hygiene |
+
+**Security policy:** any secret found **blocks the commit** (fail-fast, no `--no-verify` exceptions). If a secret is flagged, **rotate it immediately** — do not "fix" the scan, do not force the commit.
+
+**Update hooks:** `npm run hooks:update` (runs `pre-commit autoupdate`).
+
 ---
 
 ## FAQ
@@ -818,6 +843,6 @@ Pantheon draws from the broader multi-agent landscape while diverging in key way
 
 ---
 
-**License:** MIT  
-**Architecture Pattern:** Conductor-Delegate  
+**License:** MIT
+**Architecture Pattern:** Conductor-Delegate
 **Mythology:** Greek (Zeus, Athena, Apollo, Hermes, Aphrodite, Talos, Themis, Mnemosyne, Gaia, Hephaestus, Nyx, Prometheus, Demeter, Iris)

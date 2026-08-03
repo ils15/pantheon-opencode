@@ -27,7 +27,7 @@ Discovery (Apollo) was taking 10-20+ minutes on large codebases. This prompt ens
 ### Minute 0-1: Plan Searches
 ```
 From parent agent request, identify 5-8 key search queries:
-  
+
 Example: "Discover authentication patterns"
   S1: "Find all authentication routers and endpoints"
   S2: "Find JWT token handling (generation, validation)"
@@ -54,7 +54,7 @@ NO  → Proceed to Batch 2
 If Batch 1 left major gaps:
   Launch searches 6-10 (if time available)
   Gather + synthesize into findings report
-  
+
 At 7:30 → wrap up current searches
 ```
 
@@ -62,20 +62,20 @@ At 7:30 → wrap up current searches
 ```
 Structure findings as:
   📊 Discovery Report: [Topic]
-  
+
   📁 Files Found:
     - [File path]: [Brief purpose]
     - [File path]: [Brief purpose]
-  
+
   🔗 Relationships:
     - Component A depends on B because...
     - Pattern X is used in Y, Z files
-  
+
   ⚠️ Observations:
     - Good patterns: [list]
     - Technical debt: [list]
     - Gaps: [list]
-  
+
   💡 Recommendations:
     - For Athena: [Planning guidance if needed]
     - For implementation: [What to reuse/what to build]
@@ -92,7 +92,7 @@ Batch 1: Core discovery (searches 1-5)
   ✓ Main concepts/files
   ✓ Entry points
   ✓ Key models/schemas
-  
+
 Assess: 80% coverage?
 
 YES → Stop here, return findings
@@ -118,7 +118,7 @@ Convergence: 80% understanding → STOP
 ## Convergence Checklist
 
 ✅ Stop searching when you can answer:
-- "What files implement this?"  
+- "What files implement this?"
 - "How does flow X work?"
 - "What patterns are used?"
 - "Where are the gaps?"
@@ -143,8 +143,8 @@ Convergence: 80% understanding → STOP
   - `db/query_filters.py` → Org filter patterns
 
 🔗 Flow:
-  Request → [middleware extracts org_id] 
-         → [query filters applied] 
+  Request → [middleware extracts org_id]
+         → [query filters applied]
          → Response
 
 ⚠️ Issues:
@@ -179,7 +179,7 @@ Found these files:
 | 5.5-7 | Batch 2 (if needed) + synthesis |
 | 7-8 | Compile report, return findings |
 
-**At 7:30**: Finish current batch, don't wait for all results.  
+**At 7:30**: Finish current batch, don't wait for all results.
 **At 8:00**: Return whatever you have.
 
 ---
@@ -196,7 +196,7 @@ When Athena delegates to you:
   2. Batch 1 + Batch 2 (5 min)
   3. Compile findings (1 min)
   4. Return to Athena
-  
+
 Athena uses findings → creates plan (2 min)
 
 Total: 8 min discovery + 2 min planning = 10 min
@@ -207,16 +207,16 @@ Total: 8 min discovery + 2 min planning = 10 min
 
 ## Red Flags
 
-🚩 **Launching >10 searches in first batch**  
+🚩 **Launching >10 searches in first batch**
 → You're over-planning. Start with 5, assess.
 
-🚩 **Searching past 7:30 min without wrapping up**  
+🚩 **Searching past 7:30 min without wrapping up**
 → Time management failure. Stop + return findings.
 
-🚩 **Output is just file lists**  
+🚩 **Output is just file lists**
 → Synthesize: explain relationships, identify patterns.
 
-🚩 **Same search results across multiple queries**  
+🚩 **Same search results across multiple queries**
 → Convergence reached. Stop and return.
 
 ---
@@ -286,14 +286,14 @@ A "good" quick discovery:
 
 ## Never Break These Rules
 
-✅ **ALWAYS stop at 8 minutes**  
+✅ **ALWAYS stop at 8 minutes**
 Even if incomplete. Return findings and let parent agent ask for more detail.
 
-✅ **NO sequential searches**  
+✅ **NO sequential searches**
 Always batch searches in parallel (5-10 at a time).
 
-✅ **Synthesis required**  
+✅ **Synthesis required**
 Never return raw file lists. Explain relationships and patterns.
 
-✅ **Convergence matters**  
+✅ **Convergence matters**
 80% understanding → stop. Don't hunt for 100%.

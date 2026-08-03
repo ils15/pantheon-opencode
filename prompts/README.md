@@ -38,5 +38,3 @@ Reusable prompt templates for common development workflows. Each prompt specifie
 /project:pantheon Redis vs PostgreSQL for session storage?
 /project:sketch Add notification system
 ```
-
-

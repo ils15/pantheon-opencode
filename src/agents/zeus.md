@@ -81,7 +81,7 @@ Antes de usar a arvore de roteamento, consulte o memory:
 
 ```
 memory_search(task_prompt, top_k=2)
-  → score > 0.85? 
+  → score > 0.85?
     SIM → usa resultado cacheado (agent, background, pattern)
     NAO → aplica arvore de roteamento + memory_store() pra proxima vez
 ```
