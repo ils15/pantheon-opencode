@@ -5,6 +5,7 @@ node_modules/
 *.tgz
 *.pyc
 __pycache__/
+.coverage*
 .DS_Store
 .vscode/
 opencode.zen.json

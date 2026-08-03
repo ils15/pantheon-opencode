@@ -63,11 +63,11 @@ function errorMessage(event) {
 }
 
 /** Named export consumed by the opencode plugin runtime. */
-export const NotifyPlugin = async ({ project, client, $, directory, worktree }) => {
+export const NotifyPlugin = async ({ client, $ }) => {
   return {
     event: async ({ event }) => {
       try {
-        const { type, ctx, payload } = event
+        const { type, ctx } = event
 
         switch (type) {
           case 'session.created':
