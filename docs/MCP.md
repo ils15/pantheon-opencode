@@ -1,9 +1,9 @@
 # Pantheon MCP Servers
 
-Pantheon provides 3 built-in MCP (Model Context Protocol) servers that enhance
-AI agent capabilities with persistent memory, resource discovery, and
-confined script execution. All three are local Python servers that auto-start
-with OpenCode.
+Pantheon provides 5 built-in MCP (Model Context Protocol) servers that enhance
+AI agent capabilities with persistent memory, resource discovery, vision, and
+confined script execution. All five are local Python stdio servers that
+auto-start with OpenCode.
 
 ---
 
@@ -14,6 +14,8 @@ with OpenCode.
 | **pantheon-resources** | — | 3 static + 5 templates | Agent discovery, skills, routing, deepwork plans, memory-bank |
 | **pantheon-code-mode** | 1 | 1 static + 1 template | Confined script execution from `.pantheon/code-mode/` |
 | **pantheon-memory** | 14 | 2 static | Persistent memory with semantic search, recall, knowledge graph |
+| **pantheon-persistence** | 6 | — | Namespaced key-value storage with FTS5 search and TTL |
+| **pantheon-vision** | 3 | — | Image description, OCR, and structured analysis through OpenCode |
 
 ---
 
@@ -35,6 +37,14 @@ Add to your platform config (e.g., `opencode.json` or `.mcp.json`):
     "pantheon-memory": {
       "command": "python3",
       "args": ["scripts/memory_mcp_server.py"]
+    },
+    "pantheon-persistence": {
+      "command": "python3",
+      "args": ["scripts/mcp_persistence_server.py"]
+    },
+    "pantheon-vision": {
+      "command": "python3",
+      "args": ["src/mcp/pantheon_vision_server.py"]
     }
   }
 }
@@ -51,7 +61,9 @@ In `opencode.json`, set auto-approve levels:
   "mcp": {
     "pantheon-resources": "allow",
     "pantheon-code-mode": "ask",
-    "pantheon-memory": "allow"
+    "pantheon-memory": "allow",
+    "pantheon-persistence": "allow",
+    "pantheon-vision": "ask"
   }
 }
 ```
@@ -59,6 +71,8 @@ In `opencode.json`, set auto-approve levels:
 - **pantheon-resources** → `allow` (read-only, same trust boundary as repo)
 - **pantheon-code-mode** → `ask` (script execution needs explicit confirmation)
 - **pantheon-memory** → `allow` (read/write within agent sandbox)
+- **pantheon-persistence** → `allow` (namespaced local key-value storage)
+- **pantheon-vision** → `ask` (sends image data or URLs to the configured vision gateway)
 
 ---
 
@@ -211,6 +225,38 @@ See `docs/MEMORY.md` for complete usage guide with examples for all 14 tools.
 
 ---
 
+## pantheon-persistence
+
+**Script:** `scripts/mcp_persistence_server.py`
+
+Namespaced local key-value storage with FTS5 search, TTL expiration, and scope
+isolation. See `docs/persistence-mcp.md` for the complete tool reference.
+
+---
+
+## pantheon-vision
+
+**Canonical source:** `src/mcp/pantheon_vision_server.py`
+
+Lightweight image MCP server. The installer deploys a runtime copy under
+`scripts/pantheon_vision_server.py` from the canonical source; do not maintain
+a second source copy under `scripts/`.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `vision_describe(path, prompt?)` | Describe image content, text, layout, and objects |
+| `vision_ocr(path)` | Extract visible text |
+| `vision_analyze(path)` | Return metadata, description, and OCR as JSON |
+
+The server resolves `PANTHEON_OPENCODE_API_KEY` or `OPENCODE_API_KEY`, then the
+standard OpenCode auth store. The plugin uses native vision as a fast-path and
+injects this MCP when native vision is unavailable. Bifrost is opt-in only via
+`PANTHEON_VISION_TOOL` or an explicit `imageAnalysisTool` configuration.
+
+---
+
 ## When to Use Which Server
 
 | Need | Server |
@@ -224,6 +270,7 @@ See `docs/MEMORY.md` for complete usage guide with examples for all 14 tools.
 | Link related memories into a graph | pantheon-memory |
 | Auto-recall context at session start | pantheon-memory |
 | Export session memories as markdown | pantheon-memory |
+| Describe, OCR, or analyze an image | pantheon-vision |
 
 ---
 
@@ -235,4 +282,5 @@ See `docs/MEMORY.md` for complete usage guide with examples for all 14 tools.
 | Connection refused | Python env issue | Verify `python3` has required deps (`fastembed`, `fastmcp`) |
 | `memory_recall` returns empty | No entries stored yet | First call `memory_store` with some content |
 | Code-mode script not found | Wrong path | Script must be in `.pantheon/code-mode/` |
+| Vision server not connecting | Runtime script or Python dependency issue | Run `npm run setup`, then `npm run doctor` |
 | Path traversal error | Invalid URI segment | Use flat filenames for `pantheon://memory-bank/{path}` (no nested `../`) |
