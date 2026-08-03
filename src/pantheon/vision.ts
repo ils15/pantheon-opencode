@@ -1,24 +1,51 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Hooks, PluginInput } from '@opencode-ai/plugin'
 import type { FilePart, Part, TextPart, UserMessage } from '@opencode-ai/sdk'
 import type { ResolvedPreset } from './presets.mjs'
-import { resolveActivePreset } from './presets.mjs'
+import { hasVision, resolveActivePreset } from './presets.mjs'
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
 const CONFIG_FILENAME = 'opencode-vision.json'
 const TEMP_DIR_NAME = 'pantheon-vision'
 
+/**
+ * Temp images younger than this survive a `session.idle` fired between
+ * auto-continue turns; abandoned files are swept by the next idle.
+ */
+export const TEMP_FILE_GRACE_MS = 120_000
+
+/**
+ * Global cap on temp images in `/tmp/pantheon-vision`. When the LRU registry
+ * (see `enforceTempFileCap`) exceeds this, the least-recently-used files older
+ * than TEMP_FILE_GRACE_MS are unlinked — never a young file that an active
+ * turn may still reference.
+ */
+export const TEMP_MAX_FILES = 200
+
 // Tool the model is instructed to call. Configurable via:
 //   1. env PANTHEON_VISION_TOOL
 //   2. config file imageAnalysisTool (project > user)
 //   3. dynamic detection of an available MCP vision tool
 //   4. the canonical Pantheon Vision MCP tool
-const DEFAULT_IMAGE_ANALYSIS_TOOL = 'mcp__pantheon-vision__vision_describe'
+//
+// OpenCode 1.18.11 generates MCP tool IDs as sanitize(clientName) + '_' +
+// sanitize(name): the `pantheon-vision` MCP (FastMCP name) yields
+// `pantheon_vision_vision_describe` (underscores) — there is no `mcp__` prefix
+// in that version. The legacy `mcp__pantheon-vision__vision_describe` form is
+// still accepted when explicitly configured or detected.
+const DEFAULT_IMAGE_ANALYSIS_TOOL = 'pantheon_vision_vision_describe'
+
+/** True for IDs referencing the Pantheon Vision MCP — hyphen OR underscore server form. */
+const isPantheonVisionServerTool = (id: string): boolean => /[pP]antheon[-_]vision/.test(id)
+
+/** True for the describe/ocr/analyze tool suffix (sanitized MCP tool name). */
+const isPantheonVisionActionTool = (id: string): boolean =>
+  /vision_(describe|ocr|analyze)/i.test(id)
 
 // Enabled for ALL models by default ("paste and ask" universal). The config
 // file can restrict this with wildcard patterns.
@@ -66,6 +93,15 @@ const NATIVE_TIMEOUT_MS = 20_000
 const NATIVE_MAX_TOKENS = 500
 const MAX_NATIVE_IMAGE_BYTES = 25 * 1024 * 1024
 
+/**
+ * Descriptions produced by the native path are cached per session, keyed by
+ * the user prompt + the content hashes of the attached images (see
+ * `buildDescriptionCacheKey`). TTL bounds staleness: an identical re-ask
+ * within the window reuses the stored text without another gateway call;
+ * after expiry the multimodal model is called again.
+ */
+export const DESCRIPTION_CACHE_TTL_MS = 30 * 60 * 1000
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 type VisionConfig = {
@@ -83,6 +119,17 @@ export type NativeVisionTarget = { modelID: string; baseURL: string; apiKey: str
 type NativeVisionEndpoint = { modelID: string; baseURL: string }
 
 export type VisionMode = 'native' | 'tool' | 'auto'
+
+/** Return whether OpenCode's current model is known to accept image input. */
+export function modelAcceptsImages(model: ModelInfo | undefined): boolean {
+  if (!model) return true
+  try {
+    return hasVision(`${model.providerID}/${model.modelID}`)
+  } catch {
+    // Unknown providers/models should retain OpenCode's native behavior.
+    return true
+  }
+}
 
 type SavedImage = {
   path: string
@@ -284,6 +331,10 @@ function isTextPart(part: Part): part is TextPart {
   return part.type === 'text'
 }
 
+function syntheticPartId(): string {
+  return `prt${randomUUID()}`
+}
+
 // ─── Image target resolution ───────────────────────────────────────────────
 // file:// → local path used directly; data: → decoded + saved to temp;
 // http(s):// → URL passed through unchanged.
@@ -312,15 +363,65 @@ export function getMimeForPath(path: string): string | null {
   return EXTENSION_TO_MIME[extension] ?? null
 }
 
-async function saveDataUrlImage(dataUrl: string, mime: string): Promise<string | null> {
+// ─── Temp-image LRU (global disk cap) ─────────────────────────────────────
+// Content-hash filenames mean identical re-pasted images share one file; the
+// LRU registry keeps the total on disk bounded. Insertion order = recency:
+// touching a path deletes + re-sets it so the oldest entries sit at the front.
+
+/** LRU registry: temp image path → last touch time. Exposed for tests. */
+export const tempFileLRU = new Map<string, number>()
+
+/** Mark a temp file as recently used (recency = map insertion order). */
+export function touchTempFile(path: string, now: number = Date.now()): void {
+  tempFileLRU.delete(path)
+  tempFileLRU.set(path, now)
+}
+
+/** Drop a temp file from the registry (after it has been unlinked). */
+export function forgetTempFile(path: string): void {
+  tempFileLRU.delete(path)
+}
+
+/**
+ * Enforce the global temp-file cap: when the registry exceeds `maxFiles`,
+ * unlink the least-recently-used files — but NEVER a file younger than
+ * `graceMs`, because an active auto-continue turn may still reference it.
+ * The temp directory itself is never removed (other sessions/processes may
+ * share it). Returns how many files were evicted.
+ */
+export async function enforceTempFileCap(
+  maxFiles: number = TEMP_MAX_FILES,
+  graceMs: number = TEMP_FILE_GRACE_MS,
+  now: number = Date.now(),
+): Promise<number> {
+  let evicted = 0
+  for (const [path, touchedAt] of tempFileLRU) {
+    if (tempFileLRU.size <= maxFiles) break
+    if (now - touchedAt <= graceMs) continue
+    tempFileLRU.delete(path)
+    try {
+      await unlink(path)
+    } catch {
+      // Best effort.
+    }
+    evicted += 1
+  }
+  return evicted
+}
+
+export async function saveDataUrlImage(dataUrl: string, mime: string): Promise<string | null> {
   const match = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl)
   if (!match) return null
   const data = Buffer.from(match[2] ?? '', 'base64')
   if (data.length === 0) return null
   const dir = join(tmpdir(), TEMP_DIR_NAME)
   await mkdir(dir, { recursive: true })
-  const filePath = join(dir, `${randomUUID()}.${getExtensionForMime(mime)}`)
-  await writeFile(filePath, data)
+  // Content-hash filename: identical re-pasted images reuse the same file
+  // (dedup — less disk, and it stabilizes the per-image description cache).
+  const filePath = join(dir, `${hashContent(data)}.${getExtensionForMime(mime)}`)
+  if (!existsSync(filePath)) await writeFile(filePath, data)
+  touchTempFile(filePath)
+  await enforceTempFileCap()
   return filePath
 }
 
@@ -479,6 +580,18 @@ async function buildNativeImagePayloads(
 }
 
 /**
+ * Strip the provider prefix from a model ID before sending it to the Zen
+ * gateway. The endpoint URL already encodes the provider (see
+ * `resolveNativeVisionEndpoint`), and a qualified model ID such as
+ * `opencode-go/mimo-v2.5` is rejected by the gateway with a 401
+ * ("Model ... is not supported"). Models without a `/` are returned unchanged.
+ */
+export function stripProviderPrefix(modelID: string): string {
+  const slash = modelID.lastIndexOf('/')
+  return slash === -1 ? modelID : modelID.slice(slash + 1)
+}
+
+/**
  * Call the multimodal model directly (OpenAI-compatible /chat/completions on
  * the opencode Zen endpoint). Returns the raw description text, or null on any
  * failure (HTTP error, network error, timeout, empty content) — the caller
@@ -511,7 +624,7 @@ export async function describeImagesNative(
         Authorization: `Bearer ${target.apiKey}`,
       },
       body: JSON.stringify({
-        model: target.modelID,
+        model: stripProviderPrefix(target.modelID),
         messages: [
           {
             role: 'user',
@@ -543,6 +656,63 @@ export async function describeImagesNative(
   }
 }
 
+// ─── Session description cache ─────────────────────────────────────────────
+// The native path stores the gateway's text answer per session, keyed by the
+// user prompt + the sorted content hashes of every image payload. An identical
+// re-ask within the TTL reuses the stored text and never contacts the gateway.
+// Only textual descriptions are cached — never image bytes — and a cached
+// description is injected as text (it is never re-sent as an image payload).
+
+export type DescriptionCacheEntry = { text: string; storedAt: number }
+
+/** sha256 hex of arbitrary content (prompt, data-URI, mime+bytes). */
+export function hashContent(content: string | Buffer): string {
+  return createHash('sha256').update(content).digest('hex')
+}
+
+/**
+ * Composite cache key: hash of the user prompt + the sorted content hashes of
+ * every image payload. The prompt is part of the key so a NEW question about
+ * the same image never reuses a stale description; sorting makes the key
+ * order-insensitive (the same image set in any order maps to one key). For
+ * data-URI/local payloads the URL encodes both mime and bytes, so hashing it
+ * covers "mime+bytes"; remote URLs hash the URL itself.
+ */
+export function buildDescriptionCacheKey(
+  prompt: string,
+  payloads: readonly { url: string }[],
+): string {
+  const promptHash = hashContent(prompt)
+  const imageHashes = payloads.map((payload) => hashContent(payload.url)).sort()
+  return [promptHash, ...imageHashes].join(':')
+}
+
+/**
+ * Look up a cached description. Returns null on miss or when the entry is
+ * older than `ttlMs` — callers then hit the gateway and store the result.
+ */
+export function getCachedDescription(
+  cache: ReadonlyMap<string, DescriptionCacheEntry>,
+  key: string,
+  now: number = Date.now(),
+  ttlMs: number = DESCRIPTION_CACHE_TTL_MS,
+): string | null {
+  const entry = cache.get(key)
+  if (!entry) return null
+  if (now - entry.storedAt >= ttlMs) return null
+  return entry.text
+}
+
+/** Store a description with the current timestamp (overwrites on re-ask). */
+export function setCachedDescription(
+  cache: Map<string, DescriptionCacheEntry>,
+  key: string,
+  text: string,
+  now: number = Date.now(),
+): void {
+  cache.set(key, { text, storedAt: now })
+}
+
 // ─── Prompt generation ─────────────────────────────────────────────────────
 
 export function generateInjectionPrompt(
@@ -551,6 +721,9 @@ export function generateInjectionPrompt(
   toolName: string,
   template?: string,
 ): string {
+  if (!Array.isArray(images)) {
+    throw new TypeError('Vision image resolution must return an array')
+  }
   const imageList = images.map((image, index) => `- Image ${index + 1}: ${image.path}`).join('\n')
   if (template && PROMPT_TEMPLATE_VARIABLES.some((variable) => template.includes(variable))) {
     return template
@@ -592,6 +765,205 @@ export function generateNativeInjection(
   ].join('\n')
 }
 
+// ─── Intent-calibrated native prompts + structured responses ───────────────
+// The native vision path calibrates its prompt to the user's actual request
+// (compare / ocr / reconstruct / bugs / describe) and asks the multimodal
+// model for a structured, parseable answer: one `<item id="N"><description>…`
+// block per image plus an optional `<context>` block for cross-image analysis.
+// The parser maps each item back to its image in the text injected into the
+// main model; any parse failure falls back to treating the whole gateway
+// answer as a single description — the turn never breaks.
+
+export type VisionIntent = 'compare' | 'ocr' | 'reconstruct' | 'bugs' | 'describe'
+
+const INTENT_PATTERNS: Record<Exclude<VisionIntent, 'describe'>, RegExp> = {
+  compare:
+    /\b(compare|comparar|comparação|diferença|diferenças|difference|differences|qual é melhor|qual e melhor|which is better|versus|vs)\b/i,
+  ocr: /\b(texto|ler|read|ocr|extrair|extraia|extract|transcrever|transcreva|transcribe)\b/i,
+  reconstruct:
+    /\b(código|codigo|code|implementar|implemente|reconstruir|reconstrua|html|css|component|ui|tela|screen)\b/i,
+  bugs: /\b(bug|erro|problema|issue|debug|não funciona|nao funciona|not working)\b/i,
+}
+
+/**
+ * Classify the user's request into a vision intent, in priority order:
+ * `compare` (requires 2+ images) → `ocr` → `reconstruct` → `bugs` → `describe`.
+ * Term matching is case-insensitive, word-boundary based, PT + EN.
+ */
+export function detectVisionIntent(userText: string, imageCount: number): VisionIntent {
+  if (imageCount >= 2 && INTENT_PATTERNS.compare.test(userText)) return 'compare'
+  if (INTENT_PATTERNS.ocr.test(userText)) return 'ocr'
+  if (INTENT_PATTERNS.reconstruct.test(userText)) return 'reconstruct'
+  if (INTENT_PATTERNS.bugs.test(userText)) return 'bugs'
+  return 'describe'
+}
+
+/** Escape `&`, `<`, `>` as XML entities (& first) — for template interpolation. */
+export function escapeXml(text: string): string {
+  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
+
+/** Reverse of `escapeXml` — applied to parsed `<description>`/`<context>` bodies. */
+function unescapeXml(text: string): string {
+  return text.replaceAll('&amp;', '&').replaceAll('&lt;', '<').replaceAll('&gt;', '>')
+}
+
+const INTENT_TASK_INSTRUCTIONS: Record<VisionIntent, string> = {
+  describe:
+    'Descreva cada imagem fielmente e em detalhes: texto visível verbatim, cores, layout, objetos.',
+  compare:
+    'Descreva cada imagem no seu próprio bloco <item>; depois coloque uma comparação direta e exaustiva no <context> (diferenças por região/elemento), terminando com um veredito claro.',
+  ocr: 'Transcreva literalmente todo o texto visível em cada imagem, preservando ordem e estrutura. A transcrição vai dentro do <description> da imagem correspondente.',
+  reconstruct:
+    'Descreva cada imagem com detalhe de reconstrução para reprodução em código: layout completo (regiões, alinhamento, espaçamento), todo texto visível verbatim, paleta de cores exata em hex, fontes/tamanhos/pesos por elemento, estrutura de componentes e estados.',
+  bugs: 'Descreva o sintoma visual observado em cada imagem: o que está errado, onde, esperado vs real, com referências de região precisas e contexto suficiente para localizar e reproduzir.',
+}
+
+const INTENT_CONTEXT_INSTRUCTIONS: Record<VisionIntent, string> = {
+  compare:
+    'Depois dos itens, adicione UM bloco <context> com a análise cruzada das imagens (comparação, veredito).',
+  describe: '',
+  ocr: '',
+  reconstruct: '',
+  bugs: '',
+}
+
+/**
+ * Build the calibrated prompt for the native vision gateway call. The model is
+ * instructed to reply with N `<item id="N"><description>…</description></item>`
+ * blocks (N = imageCount) and, for `compare`, one extra `<context>` block.
+ * The user's text is XML-escaped when interpolated so it cannot break the
+ * format instructions. `intent` is auto-detected from `userText` +
+ * `imageCount` when omitted.
+ */
+export function buildNativeVisionPrompt(
+  userText: string,
+  imageCount: number,
+  intent: VisionIntent = detectVisionIntent(userText, imageCount),
+): string {
+  const count = Math.max(1, imageCount)
+  const request =
+    escapeXml(userText.trim()) || '(sem pedido explícito — descreva as imagens com precisão)'
+  const contextInstruction = INTENT_CONTEXT_INSTRUCTIONS[intent]
+  const contextLine = contextInstruction ? ` ${contextInstruction}` : ''
+  return [
+    'You are a multimodal analysis specialist embedded inside a coding assistant. The coding',
+    'assistant CANNOT perceive the images in this turn — your output is its ONLY view of them.',
+    'It will act on exactly what you write.',
+    '',
+    "READ THE USER REQUEST FIRST: infer the user's goal and calibrate the depth of each",
+    'description to it.',
+    '',
+    INTENT_TASK_INSTRUCTIONS[intent],
+    '',
+    'OUTPUT FORMAT — binding, no exceptions:',
+    `Responda com UM bloco <item id="N"> para cada uma das ${count} imagens anexadas`,
+    `(N = 1..${count}), em ordem. Cada bloco contém um <description>.${contextLine}`,
+    '',
+    '<item id="1">',
+    '<description>...apenas fatos sobre a imagem 1...</description>',
+    '</item>',
+    '<item id="2">',
+    '<description>...apenas fatos sobre a imagem 2...</description>',
+    '</item>',
+    '',
+    'RULES',
+    '- O primeiro caractere da sua resposta deve ser "<". Sem preâmbulo, sem "Aqui está",',
+    '  sem observações finais, sem wrap em blocos de código.',
+    '- ESCAPING — obrigatório: dentro dos corpos de <description> e <context>, escape TODO',
+    '  "&", "<" e ">" literais como "&amp;", "&lt;", "&gt;". Isso vale para qualquer texto',
+    '  tag-like reproduzido verbatim (HTML, XML, erros com colchetes angulares). NÃO escape',
+    '  as tags estruturais <item>, <description>, <context>.',
+    '- Nunca invente detalhes que não consegue perceber. Se um texto estiver ilegível,',
+    '  escreva "ilegível". Coloque análises cruzadas (comparação, veredito) no <context>,',
+    '  nunca dentro de um <description>.',
+    '',
+    `User's request: ${request}`,
+  ].join('\n')
+}
+
+export type StructuredVisionItem = { id: number; description: string }
+export type StructuredVisionResponse = { items: StructuredVisionItem[]; context: string | null }
+
+const ITEM_BLOCK_RE = /<item\b[^>]*>([\s\S]*?)<\/item>/gi
+const OPEN_TAG_RE = /<item\b[^>]*>/i
+const DESCRIPTION_BODY_RE = /<description>([\s\S]*?)<\/description>/i
+const CONTEXT_BODY_RE = /<context>([\s\S]*?)<\/context>/i
+const ITEM_ID_ATTR_RE = /id\s*=\s*["']?(\d+)["']?/i
+const BARE_DESCRIPTION_RE = /<description>([\s\S]*?)<\/description>/gi
+
+/**
+ * Parse the gateway's structured answer into per-image `<item>` descriptions
+ * plus an optional `<context>` block. Resistant to formatting variations
+ * (whitespace, quotes, tag case, missing id → sequential ids, markdown fences
+ * around the XML). XML entities in the bodies are unescaped for the main
+ * model. Returns null when no `<item>`/`<description>` block is found —
+ * callers then treat the whole answer as a single description (the
+ * pre-structured behavior, no extra gateway call).
+ */
+export function parseStructuredVisionResponse(text: string): StructuredVisionResponse | null {
+  const items: StructuredVisionItem[] = []
+  let match = ITEM_BLOCK_RE.exec(text)
+  while (match !== null) {
+    const desc = DESCRIPTION_BODY_RE.exec(match[1] ?? '')
+    if (desc) {
+      const openTag = OPEN_TAG_RE.exec(match[0] ?? '')?.[0] ?? ''
+      const rawId = ITEM_ID_ATTR_RE.exec(openTag)?.[1]
+      const description = unescapeXml((desc[1] ?? '').trim())
+      items.push({
+        id: rawId !== undefined ? Number(rawId) : items.length + 1,
+        description,
+      })
+    }
+    match = ITEM_BLOCK_RE.exec(text)
+  }
+  if (items.length === 0) {
+    let bareMatch = BARE_DESCRIPTION_RE.exec(text)
+    while (bareMatch !== null) {
+      items.push({
+        id: items.length + 1,
+        description: unescapeXml((bareMatch[1] ?? '').trim()),
+      })
+      bareMatch = BARE_DESCRIPTION_RE.exec(text)
+    }
+  }
+  const contextMatch = CONTEXT_BODY_RE.exec(text)
+  const context = contextMatch ? unescapeXml((contextMatch[1] ?? '').trim()) : null
+  return items.length > 0 ? { items, context } : null
+}
+
+/**
+ * Build the text injected into the main model from a parsed structured
+ * response: each `<item id>` is mapped to its image (by id, falling back to
+ * position when an id is missing), followed by the optional cross-image
+ * `<context>` block. The fallback single-description path stays in
+ * `generateNativeInjection`.
+ */
+export function buildStructuredInjection(
+  items: readonly StructuredVisionItem[],
+  context: string | null,
+  userText: string,
+  modelID: string,
+  imageCount: number,
+): string {
+  const count = Math.max(1, imageCount)
+  const byId = new Map(items.map((item) => [item.id, item.description]))
+  const header =
+    count > 1
+      ? `The user shared ${count} images. Vision descriptions (native, ${modelID}):`
+      : `The user shared an image. Vision description (native, ${modelID}):`
+  const lines = [header]
+  for (let i = 1; i <= count; i += 1) {
+    const description = byId.get(i) ?? items[i - 1]?.description
+    lines.push(`- Image ${i}: ${description ?? '(no description provided)'}`)
+  }
+  if (context) {
+    lines.push('', 'Cross-image context:', context)
+  }
+  lines.push('', `User's request: ${userText || '(analyze the image)'}`)
+  return lines.join('\n')
+}
+
 // ─── Tool name resolution ──────────────────────────────────────────────────
 // env PANTHEON_VISION_TOOL > config imageAnalysisTool > dynamic detection
 // (prefer the canonical Pantheon MCP) > canonical Pantheon MCP default.
@@ -600,7 +972,7 @@ async function resolveImageAnalysisTool(
   client: PluginInput['client'],
   directory: string,
   configPromise: Promise<VisionConfig>,
-): Promise<string> {
+): Promise<string | null> {
   const envTool = process.env.PANTHEON_VISION_TOOL?.trim()
   if (envTool) return envTool
   const config = await configPromise
@@ -609,58 +981,88 @@ async function resolveImageAnalysisTool(
     const response = await client.tool?.ids?.({ query: { directory } })
     const ids = response?.data
     if (Array.isArray(ids)) {
+      // Exact canonical ID first (fast path), then the underscore form and the
+      // legacy mcp__ hyphen form (both match the pantheon[-_]vision + action
+      // regexes), then the loose describe fallback for older ID shapes.
       const match =
-        ids.find((id) => id === 'mcp__pantheon-vision__vision_describe') ??
-        ids.find(
-          (id) => /pantheon-vision/i.test(id) && /vision_(describe|ocr|analyze)/i.test(id),
-        ) ??
-        ids.find((id) => /pantheon-vision/i.test(id) && /describe/i.test(id))
-      if (match) return match
+        ids.find((id) => id === DEFAULT_IMAGE_ANALYSIS_TOOL) ??
+        ids.find((id) => isPantheonVisionServerTool(id) && isPantheonVisionActionTool(id)) ??
+        ids.find((id) => isPantheonVisionServerTool(id) && /describe/i.test(id))
+      // OpenCode 1.18.11 keeps MCP tools in the MCP service, NOT in
+      // client.tool.ids() — an empty/absent list is the NORMAL runtime state,
+      // so it must resolve to the canonical default tool instead of the
+      // 'Vision fallback unavailable' message. Only a thrown exception (the
+      // detection genuinely failed) returns null below.
+      return match ?? DEFAULT_IMAGE_ANALYSIS_TOOL
     }
   } catch {
-    // Dynamic detection is best-effort; fall back to the default tool.
+    // Detection failed (network/MCP error). Returning null keeps the explicit
+    // 'Vision fallback unavailable' safe-failure message in the turn instead
+    // of guessing at a tool we could not verify — the turn never breaks
+    // (interception is best-effort). Returning DEFAULT here too would hide
+    // real detection failures behind a tool name the model might not have.
+    return null
   }
   return DEFAULT_IMAGE_ANALYSIS_TOOL
 }
 
 // ─── Temp image lifecycle ──────────────────────────────────────────────────
 
-async function cleanupSessionTempImages(
-  sessionTempFiles: Map<string, Set<string>>,
+/**
+ * Age-guarded cleanup of a session's temp images.
+ *
+ * A `session.idle` can fire between auto-continue turns — not just at real
+ * session end — so a temp file referenced by the next turn (seconds old) must
+ * survive. Only paths older than `graceMs` are unlinked; younger paths stay
+ * registered and are swept by the next idle. `server.instance.disposed` and
+ * `session.deleted` pass `graceMs = 0` to unlink everything while the session
+ * is gone / process is dying. The temp directory itself is never removed: it
+ * may hold files from other sessions or processes. The session's description
+ * cache is always dropped (cache is per-session state).
+ */
+export async function cleanupSessionTempImages(
+  sessionTempFiles: Map<string, Map<string, number>>,
   sessionVisionText: Map<string, Map<string, string>>,
+  nativeVisionSessions: Set<string>,
   sessionID: string,
+  graceMs: number = TEMP_FILE_GRACE_MS,
+  sessionDescriptionCache?: Map<string, Map<string, DescriptionCacheEntry>>,
 ): Promise<void> {
-  const paths = sessionTempFiles.get(sessionID)
-  sessionTempFiles.delete(sessionID)
-  sessionVisionText.delete(sessionID)
-  if (paths) {
-    for (const path of paths) {
+  const files = sessionTempFiles.get(sessionID)
+  if (files) {
+    const now = Date.now()
+    for (const [path, createdAt] of files) {
+      // graceMs === 0 means "unlink everything now" (session gone / process
+      // dying); a positive grace skips files younger than the threshold so the
+      // next auto-continue turn can still read them.
+      if (graceMs > 0 && now - createdAt <= graceMs) continue
       try {
         await unlink(path)
       } catch {
         // Best effort.
       }
+      forgetTempFile(path)
+      files.delete(path)
     }
+    if (files.size === 0) sessionTempFiles.delete(sessionID)
   }
-  if (sessionTempFiles.size === 0) {
-    try {
-      await rm(join(tmpdir(), TEMP_DIR_NAME), { recursive: true, force: true })
-    } catch {
-      // Best effort.
-    }
-  }
+  sessionVisionText.delete(sessionID)
+  nativeVisionSessions.delete(sessionID)
+  sessionDescriptionCache?.delete(sessionID)
 }
 
 type VisionHistoryMessage = {
   info?: { sessionID?: string; id?: string }
-  parts: Part[]
+  sessionID?: string
+  id?: string
+  parts?: unknown
+  content?: unknown
+  [key: string]: unknown
 }
 
-function syntheticHistoryPart(message: VisionHistoryMessage, part: Part, text: string): TextPart {
-  const partID =
-    typeof (part as { id?: unknown }).id === 'string' ? (part as { id: string }).id : randomUUID()
+function syntheticHistoryPart(message: VisionHistoryMessage, text: string): TextPart {
   return {
-    id: `vision-history-${partID}`,
+    id: syntheticPartId(),
     sessionID: message.info?.sessionID ?? '',
     messageID: message.info?.id ?? '',
     type: 'text',
@@ -675,35 +1077,47 @@ function syntheticHistoryPart(message: VisionHistoryMessage, part: Part, text: s
  * reuses text cached by chat.message and never calls a vision tool/model.
  */
 export function sanitizeVisionHistory(
-  output: { messages: VisionHistoryMessage[] },
+  output: { messages?: unknown },
   sessionVisionText: ReadonlyMap<string, ReadonlyMap<string, string>>,
+  nativeVisionSessions: ReadonlySet<string> = new Set(),
 ): void {
+  if (!Array.isArray(output.messages)) return
+
   for (const message of output.messages) {
-    const sessionID = message.info?.sessionID ?? ''
+    if (!message || typeof message !== 'object') continue
+    const historyMessage = message as VisionHistoryMessage
+    const sessionID = historyMessage.info?.sessionID ?? historyMessage.sessionID ?? ''
+    if (nativeVisionSessions.has(sessionID)) continue
     const descriptions = sessionVisionText.get(sessionID)
-    const sanitized: Part[] = []
-    for (const part of message.parts) {
-      const raw = part as { type?: unknown; id?: unknown; mime?: unknown }
+    const sanitize = (value: unknown, inParts: boolean): unknown => {
+      if (Array.isArray(value)) return value.map((item) => sanitize(item, inParts))
+      if (!value || typeof value !== 'object') return value
+
+      const raw = value as { type?: unknown; id?: unknown; mime?: unknown }
       const isImageUrl = raw.type === 'image_url'
       const isImageFile =
         raw.type === 'file' &&
         typeof raw.mime === 'string' &&
         raw.mime.toLowerCase().startsWith('image/')
-      if (!isImageUrl && !isImageFile) {
-        sanitized.push(part)
-        continue
+      if (isImageUrl || isImageFile) {
+        const partID = typeof raw.id === 'string' ? raw.id : ''
+        const text =
+          descriptions?.get(partID) ??
+          'Imagem removida do histórico antes do envio ao provedor textual.'
+        return inParts ? syntheticHistoryPart(historyMessage, text) : { type: 'text', text }
       }
-      const partID = typeof raw.id === 'string' ? raw.id : ''
-      const description = descriptions?.get(partID)
-      sanitized.push(
-        syntheticHistoryPart(
-          message,
-          part,
-          description ?? 'Imagem removida do histórico antes do envio ao provedor textual.',
-        ),
-      )
+
+      const copy: Record<string, unknown> = {}
+      for (const [key, child] of Object.entries(value)) {
+        copy[key] = sanitize(child, key === 'parts')
+      }
+      return copy
     }
-    message.parts.splice(0, message.parts.length, ...sanitized)
+
+    const sanitized = sanitize(historyMessage, false) as VisionHistoryMessage
+    for (const [key, value] of Object.entries(sanitized)) {
+      historyMessage[key] = value
+    }
   }
 }
 
@@ -711,17 +1125,19 @@ export function sanitizeVisionHistory(
 
 export function createVisionHandler(input: PluginInput) {
   const { client, directory } = input
-  const sessionTempFiles = new Map<string, Set<string>>()
+  const sessionTempFiles = new Map<string, Map<string, number>>()
   const sessionVisionText = new Map<string, Map<string, string>>()
+  const nativeVisionSessions = new Set<string>()
+  const sessionDescriptionCache = new Map<string, Map<string, DescriptionCacheEntry>>()
   let configPromise: Promise<VisionConfig> | null = null
-  let toolNamePromise: Promise<string> | null = null
+  let toolNamePromise: Promise<string | null> | null = null
 
   const getConfig = (): Promise<VisionConfig> => {
     configPromise ??= loadVisionConfig(directory)
     return configPromise
   }
 
-  const getToolName = (): Promise<string> => {
+  const getToolName = (): Promise<string | null> => {
     toolNamePromise ??= resolveImageAnalysisTool(client, directory, getConfig())
     return toolNamePromise
   }
@@ -731,14 +1147,35 @@ export function createVisionHandler(input: PluginInput) {
       const message: UserMessage | undefined = output?.message
       if (!message || message.role !== 'user') return
       const model = hookInput?.model ?? message.model
+      if (modelAcceptsImages(model)) {
+        nativeVisionSessions.add(hookInput.sessionID)
+        return
+      }
+      nativeVisionSessions.delete(hookInput.sessionID)
       const config = await getConfig()
       const patterns =
         config.models && config.models.length > 0 ? config.models : DEFAULT_MODEL_PATTERNS
-      if (!modelMatchesAnyPattern(model, patterns)) return
+      if (!modelMatchesAnyPattern(model, patterns)) {
+        // Pattern configuration may disable enrichment, but it must never
+        // disable the text-only provider safety boundary.
+        const currentTurn = { messages: [{ ...message, parts: output.parts }] }
+        sanitizeVisionHistory(currentTurn, sessionVisionText)
+        const sanitized = currentTurn.messages as VisionHistoryMessage[]
+        output.parts.splice(0, output.parts.length, ...((sanitized[0]?.parts as Part[]) ?? []))
+        return
+      }
 
       const parts: Part[] = Array.isArray(output.parts) ? output.parts : []
       const images = parts.filter(isImageFilePart)
-      if (images.length === 0) return
+      if (images.length === 0) {
+        // Some runtimes hand the current turn to plugins already serialized as
+        // provider content. Do not let that shape bypass the final sanitizer.
+        const currentTurn = { messages: [{ ...message, parts: output.parts }] }
+        sanitizeVisionHistory(currentTurn, sessionVisionText)
+        const sanitized = currentTurn.messages as VisionHistoryMessage[]
+        output.parts.splice(0, output.parts.length, ...((sanitized[0]?.parts as Part[]) ?? []))
+        return
+      }
 
       const userText = parts
         .filter(isTextPart)
@@ -755,14 +1192,23 @@ export function createVisionHandler(input: PluginInput) {
 
       const tempPaths = saved.filter((item) => item.temporary).map((item) => item.path)
       if (tempPaths.length > 0) {
-        const existing = sessionTempFiles.get(hookInput.sessionID) ?? new Set<string>()
-        for (const path of tempPaths) existing.add(path)
+        const createdAt = Date.now()
+        const existing = sessionTempFiles.get(hookInput.sessionID) ?? new Map<string, number>()
+        for (const path of tempPaths) existing.set(path, createdAt)
         sessionTempFiles.set(hookInput.sessionID, existing)
       }
 
       // Native-first: call the multimodal model directly when a key exists
       // (mode auto/native). Any failure — no key, unsupported provider,
       // oversized/invalid image, HTTP/network error — falls back to the tool.
+      // The prompt is calibrated to the user's intent (compare/ocr/
+      // reconstruct/bugs/describe) and asks for a structured answer
+      // (<item>/<context>), which is parsed and mapped back to each image.
+      // Descriptions are cached per session: the key is the calibrated prompt
+      // + the content hashes of the images, so an identical re-ask within the
+      // TTL reuses the stored (possibly structured) text without another
+      // gateway call, while a new question about the same image misses and is
+      // answered freshly.
       let injection: string | null = null
       if (getVisionMode(process.env, config.mode) !== 'tool') {
         try {
@@ -770,9 +1216,30 @@ export function createVisionHandler(input: PluginInput) {
           if (target) {
             const payloads = await buildNativeImagePayloads(resolved)
             if (payloads) {
-              const description = await describeImagesNative(payloads, target)
-              if (description) {
-                injection = generateNativeInjection(description, userText, target.modelID)
+              let sessionCache = sessionDescriptionCache.get(hookInput.sessionID)
+              if (!sessionCache) {
+                sessionCache = new Map()
+                sessionDescriptionCache.set(hookInput.sessionID, sessionCache)
+              }
+              const intent = detectVisionIntent(userText, payloads.length)
+              const prompt = buildNativeVisionPrompt(userText, payloads.length, intent)
+              const cacheKey = buildDescriptionCacheKey(prompt, payloads)
+              let rawText = getCachedDescription(sessionCache, cacheKey)
+              if (rawText === null) {
+                rawText = await describeImagesNative(payloads, target, prompt)
+                if (rawText !== null) setCachedDescription(sessionCache, cacheKey, rawText)
+              }
+              if (rawText !== null) {
+                const structured = parseStructuredVisionResponse(rawText)
+                injection = structured
+                  ? buildStructuredInjection(
+                      structured.items,
+                      structured.context,
+                      userText,
+                      target.modelID,
+                      payloads.length,
+                    )
+                  : generateNativeInjection(rawText, userText, target.modelID)
               }
             }
           }
@@ -783,7 +1250,9 @@ export function createVisionHandler(input: PluginInput) {
 
       if (injection === null && saved.length > 0) {
         const toolName = await getToolName()
-        injection = generateInjectionPrompt(saved, userText, toolName, config.promptTemplate)
+        injection = toolName
+          ? generateInjectionPrompt(saved, userText, toolName, config.promptTemplate)
+          : 'Vision fallback unavailable: pantheon-vision MCP is unavailable. The image was removed safely; please configure the MCP server and retry.'
       }
       if (injection === null) {
         injection = 'A imagem compartilhada foi removida antes do envio ao provedor textual.'
@@ -794,7 +1263,7 @@ export function createVisionHandler(input: PluginInput) {
       sessionVisionText.set(hookInput.sessionID, descriptions)
 
       const injectionPart: TextPart = {
-        id: `vision-${randomUUID()}`,
+        id: syntheticPartId(),
         sessionID: message.sessionID,
         messageID: message.id,
         type: 'text',
@@ -805,6 +1274,7 @@ export function createVisionHandler(input: PluginInput) {
       // Mutate in place: drop image parts, lead with the vision text
       // (native description or tool instruction).
       output.parts.splice(0, output.parts.length, injectionPart, ...kept)
+      sanitizeVisionHistory({ messages: [{ ...message, parts: output.parts }] }, sessionVisionText)
     } catch {
       // Vision interception is best-effort; never fail a user turn.
     }
@@ -812,14 +1282,45 @@ export function createVisionHandler(input: PluginInput) {
 
   const event: NonNullable<Hooks['event']> = async ({ event: ev }) => {
     if (ev.type === 'session.idle') {
+      // An idle can fire between auto-continue turns: temp files younger than
+      // the grace period survive, but the per-session description cache is
+      // dropped (it is pure optimization, safe to reset on every idle).
       const sessionID = ev.properties?.sessionID
-      if (sessionID) await cleanupSessionTempImages(sessionTempFiles, sessionVisionText, sessionID)
+      if (sessionID)
+        await cleanupSessionTempImages(
+          sessionTempFiles,
+          sessionVisionText,
+          nativeVisionSessions,
+          sessionID,
+          TEMP_FILE_GRACE_MS,
+          sessionDescriptionCache,
+        )
+    } else if (ev.type === 'session.deleted') {
+      // The session is gone for good: no active turn can reference its temp
+      // images, so unlink them all immediately and drop its cached state.
+      const sessionID = ev.properties.info.id
+      await cleanupSessionTempImages(
+        sessionTempFiles,
+        sessionVisionText,
+        nativeVisionSessions,
+        sessionID,
+        0,
+        sessionDescriptionCache,
+      )
     } else if (ev.type === 'server.instance.disposed') {
       const sessions = [...sessionTempFiles.keys()]
       for (const sessionID of sessions) {
-        await cleanupSessionTempImages(sessionTempFiles, sessionVisionText, sessionID)
+        await cleanupSessionTempImages(
+          sessionTempFiles,
+          sessionVisionText,
+          nativeVisionSessions,
+          sessionID,
+          0, // The process is dying: unlink everything immediately.
+          sessionDescriptionCache,
+        )
       }
       sessionVisionText.clear()
+      sessionDescriptionCache.clear()
     }
   }
 
@@ -828,7 +1329,7 @@ export function createVisionHandler(input: PluginInput) {
     output,
   ) => {
     try {
-      sanitizeVisionHistory(output, sessionVisionText)
+      sanitizeVisionHistory(output, sessionVisionText, nativeVisionSessions)
     } catch {
       // History sanitization is best effort; never break runtimes that expose
       // the experimental hook with a partial output shape.

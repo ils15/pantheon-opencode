@@ -35,7 +35,7 @@ not being described, switching between native and tool mode.
      or an explicit override (precedence: env `PANTHEON_VISION_MODEL` > config
      `visionModel` > active preset `vision.model` > default `opencode-go/mimo-v2.5`).
     - **Tool fallback:** `imageAnalysisTool` (default
-      `mcp__pantheon-vision__vision_describe`). Bifrost is opt-in only when
+      `pantheon_vision_vision_describe`). Bifrost is opt-in only when
       explicitly selected here or through `PANTHEON_VISION_TOOL`.
 
 4. **Save the config**
@@ -48,7 +48,7 @@ not being described, switching between native and tool mode.
      {
        "mode": "auto",
        "visionModel": "opencode-go/mimo-v2.5",
-        "imageAnalysisTool": "mcp__pantheon-vision__vision_describe"
+        "imageAnalysisTool": "pantheon_vision_vision_describe"
      }
      ```
    - Optional fields also supported: `models` (model wildcard patterns),

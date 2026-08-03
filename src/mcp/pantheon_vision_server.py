@@ -12,9 +12,11 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import mimetypes
 import os
 import struct
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,34 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("pantheon-vision")
+
+# MCP talks JSON-RPC over stdout; all diagnostic logging must go to stderr so
+# the stdio protocol never sees it.
+_logger = logging.getLogger("pantheon.vision")
+
+
+class _LateStderr:
+    """File-like object resolving ``sys.stderr`` at write time.
+
+    A plain ``logging.StreamHandler`` binds the import-time stderr, which
+    pytest's capsys (or any runtime that swaps stderr) cannot observe.
+    Resolving at emit time keeps diagnostics off stdout while remaining
+    observable and redirectable.
+    """
+
+    def write(self, message: str) -> int:
+        return sys.stderr.write(message)
+
+    def flush(self) -> None:
+        sys.stderr.flush()
+
+
+if not _logger.handlers:
+    _handler = logging.StreamHandler(_LateStderr())
+    _handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    _logger.addHandler(_handler)
+    _logger.setLevel(logging.INFO)
+    _logger.propagate = False
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 REQUEST_TIMEOUT_SECONDS = 20.0
@@ -238,6 +268,19 @@ def _endpoint_for_model(model: str) -> str:
     return OPENCODE_ENDPOINT if model.startswith("opencode/") else GO_ENDPOINT
 
 
+def _strip_provider_prefix(model: str) -> str:
+    """Return the model ID without its provider prefix.
+
+    The Zen gateway already encodes the provider in the endpoint URL (see
+    ``_endpoint_for_model``); the /chat/completions payload must carry the bare
+    model name, e.g. ``opencode-go/mimo-v2.5`` → ``mimo-v2.5``. A qualified
+    model ID is rejected by the gateway with a 401 ("Model ... is not
+    supported"). Models without a ``/`` are returned unchanged.
+    """
+    prefix, separator, model_name = model.rpartition("/")
+    return model_name if separator else model
+
+
 def _resolve_auth() -> tuple[str | None, str]:
     """Resolve auth in env-first, then OpenCode auth-store order."""
     model = os.getenv("PANTHEON_VISION_MODEL") or DEFAULT_MODEL
@@ -297,6 +340,27 @@ def _scrub(value: str, key: str | None) -> str:
     return value.replace(key, "[redacted]") if key else value
 
 
+def _sanitized_gateway_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Non-sensitive summary of a gateway request body (no keys, no image bytes)."""
+    messages = body.get("messages")
+    content = messages[0].get("content") if isinstance(messages, list) and messages else None
+    chunks = content if isinstance(content, list) else [content]
+    parts: list[dict[str, Any]] = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        if chunk.get("type") == "image_url":
+            parts.append({"type": "image_url"})
+        else:
+            text = chunk.get("text")
+            parts.append({"type": "text", "chars": len(text) if isinstance(text, str) else 0})
+    return {
+        "model": body.get("model"),
+        "response_format": body.get("response_format"),
+        "content": parts,
+    }
+
+
 def _parse_json_object(value: str) -> dict[str, Any] | None:
     """Parse strict JSON and the fenced JSON commonly returned by models."""
     candidates = [value.strip()]
@@ -323,7 +387,7 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
         {"type": "image_url", "image_url": {"url": image.source}},
     ]
     body: dict[str, Any] = {
-        "model": _model(),
+        "model": _strip_provider_prefix(_model()),
         "messages": [{"role": "user", "content": content}],
     }
     if structured:
@@ -336,6 +400,19 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
                 json=body,
             )
         if response.status_code >= HTTP_ERROR_STATUS:
+            # Sanitized diagnostic: status, endpoint, bare model, truncated
+            # gateway detail (scrubbed), and a body summary with no keys or
+            # image bytes. Logged to stderr so the MCP stdio protocol is
+            # never corrupted.
+            detail = _scrub(str(getattr(response, "text", "")), key)
+            _logger.warning(
+                "vision gateway error status=%s endpoint=%s model=%s detail=%s body=%s",
+                response.status_code,
+                endpoint,
+                body.get("model"),
+                detail[:200] or "no detail",
+                json.dumps(_sanitized_gateway_body(body)),
+            )
             raise VisionError("Vision gateway returned an HTTP error.")
         payload = response.json()
         choices = payload.get("choices") if isinstance(payload, dict) else None

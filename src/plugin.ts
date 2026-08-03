@@ -2,20 +2,7 @@ import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
-import { applyPreset, resolveActivePreset } from './pantheon/presets.mjs'
-import {
-  activePresetCandidates,
-  createVisionHandler,
-  generateInjectionPrompt,
-  generateNativeInjection,
-  getVisionMode,
-  isImageFilePart,
-  matchesModelPattern,
-  matchesWildcardPattern,
-  modelMatchesAnyPattern,
-  readOpencodeAuthToken,
-  resolveNativeVisionConfig,
-} from './pantheon/vision.ts'
+import { createVisionHandler } from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
 
@@ -37,29 +24,6 @@ board.onTerminal((taskID: string) => {
   }
 })
 
-/** Return the process-wide BackgroundJobBoard used by Pantheon agents. */
-export function getBackgroundJobBoard(): BackgroundJobBoard {
-  return board
-}
-
-// Re-exported directly so the dependency-free test harness can import it
-// without a separate unused import in the plugin body.
-export { resolveNativeVisionTarget } from './pantheon/vision.ts'
-// Keep pure helpers available to the dependency-free test harness. OpenCode
-// requires named runtime exports to be functions, which all of these are.
-export {
-  activePresetCandidates,
-  generateInjectionPrompt,
-  generateNativeInjection,
-  getVisionMode,
-  isImageFilePart,
-  matchesModelPattern,
-  matchesWildcardPattern,
-  modelMatchesAnyPattern,
-  readOpencodeAuthToken,
-  resolveNativeVisionConfig,
-}
-
 /**
  * Pantheon plugin for OpenCode. Pasted images are intercepted via the
  * `chat.message` hook (proven to fire in opencode 1.18.11). When a provider
@@ -69,13 +33,22 @@ export {
  * OpenAI-compatible endpoint, and replaced with the text description — no MCP
  * tool required. Without a key the legacy pattern applies: the image is
  * replaced with a text instruction telling the model to call a vision MCP tool
- * (default `mcp__pantheon-vision__vision_describe`). Either way the image never reaches
+ * (default `pantheon_vision_vision_describe`). Either way the image never reaches
  * the main provider, so text-only models cannot fail with an `image_url` error.
  *
  * The canonical `pantheon-vision` MCP owns the standalone describe/OCR/analyze
- * tools. The experimental history transform is an additional gatekeeper for
- * runtimes that retain image parts from earlier turns; older runtimes simply
- * ignore that optional hook.
+ * tools. The installed OpenCode plugin API exposes no stable pre-provider
+ * message hook (1.18.11 only exposes the experimental history transform), so
+ * that transform is retained as the runtime-compatible fallback. If a stable
+ * provider-bound hook is added, register the same sanitizer there instead of
+ * assuming this experimental hook is guaranteed to run.
+ *
+ * IMPORTANT (OpenCode 1.18.11 legacy loader): this module must export EXACTLY
+ * ONE function-valued export — the default plugin. The legacy loader does
+ * `Object.values(mod)` and invokes every function export as a plugin factory;
+ * any named function export (e.g. a re-exported helper like
+ * generateInjectionPrompt) is called with a PluginInput object and can throw.
+ * Helpers live in src/pantheon/vision.ts and are imported from there directly.
  */
 const plugin: Plugin = async (input: PluginInput) => {
   const vision = createVisionHandler(input)
@@ -87,22 +60,8 @@ const plugin: Plugin = async (input: PluginInput) => {
       config.skillsPaths = config.skillsPaths ?? []
       config.skillsPaths.push(new URL('./skills', import.meta.url).pathname)
 
-      try {
-        const resolved = resolveActivePreset({ candidates: activePresetCandidates() })
-        if (!resolved) return
-        applyPreset(config, resolved)
-        console.log(
-          `[Pantheon Plugin] Model preset active: ${resolved.name} (source: ${resolved.source})`,
-        )
-      } catch (err) {
-        if ((err as { code?: string } | null)?.code === 'PANTHEON_MISSING_API_KEY') {
-          console.error(
-            '[Pantheon Plugin] Preset requires a provider API key environment variable. Set the required key for your selected provider or clear the preset: pantheon-opencode set-tier none',
-          )
-        } else {
-          console.warn('[Pantheon Plugin] Preset ignored due to invalid configuration')
-        }
-      }
+      // Do not mutate OpenCode's model/provider defaults here. Presets are
+      // explicit CLI/configuration concerns, not a per-turn routing policy.
     },
     'chat.message': vision.chatMessage,
     'experimental.chat.messages.transform': vision.messagesTransform,

@@ -31,6 +31,11 @@ class FakeResponse:
         self.status_code = status_code
         self._content = content
 
+    @property
+    def text(self) -> str:
+        """Body text surfaced by httpx responses (used for error detail logs)."""
+        return self._content
+
     def json(self) -> dict[str, Any]:
         return {"choices": [{"message": {"content": self._content}}]}
 
@@ -144,7 +149,7 @@ async def test_auth_store_fallback_and_gateway_request(
     assert request["endpoint"] == vision.OPENCODE_ENDPOINT
     assert request["headers"]["Authorization"] == "Bearer store-key"
     body = request["json"]
-    assert body["model"] == "opencode-go/mimo-v2.5"
+    assert body["model"] == "mimo-v2.5"
     assert "store-key" not in json.dumps(body)
     assert body["messages"][0]["content"][1]["image_url"]["url"].startswith(
         "https://"
@@ -216,3 +221,31 @@ async def test_key_never_appears_in_tool_response(
         "vision_describe", {"path": "https://example.test/photo.jpg"}
     )
     assert secret not in _tool_text(result)
+
+
+def test_strip_provider_prefix() -> None:
+    assert vision._strip_provider_prefix("opencode-go/mimo-v2.5") == "mimo-v2.5"
+    assert vision._strip_provider_prefix("opencode/deepseek-v4-flash") == "deepseek-v4-flash"
+    assert vision._strip_provider_prefix("mimo-v2.5") == "mimo-v2.5"
+
+
+@pytest.mark.asyncio
+async def test_gateway_error_logs_sanitized_status_and_model(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secret = "super-secret-token"
+    monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", secret)
+    monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
+    FakeClient.response = FakeResponse(
+        status_code=401, content=json.dumps({"error": "Model mimo-v2.5 is not supported"})
+    )
+    result = await vision.mcp.call_tool(
+        "vision_describe", {"path": "https://example.test/photo.jpg"}
+    )
+    assert "gateway" in _tool_text(result).lower()
+    stderr = capsys.readouterr().err
+    assert "401" in stderr
+    assert "mimo-v2.5" in stderr
+    assert "not supported" in stderr
+    assert secret not in stderr
+    assert "data:image" not in stderr
