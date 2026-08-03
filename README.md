@@ -185,7 +185,7 @@ opencode
 
 > **Modes:** Interactive TUI with checkbox selection (default TTY), or `--headless` for scripts/CI.
 > **Minimal:** `--headless --no-mcp` installs only agents (~2s).
-> **Full:** `--headless` also creates Python venv + MCP servers (memory, persistence, KV).
+> **Full:** `--headless` also creates Python venv + MCP servers (memory, persistence, KV, vision).
 
 ---
 

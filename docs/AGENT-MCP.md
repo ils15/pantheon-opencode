@@ -1,7 +1,7 @@
 # Per-Agent MCP Reference
 
-How each Pantheon agent uses the 3 built-in MCP servers (pantheon-resources,
-pantheon-code-mode, pantheon-memory) plus the optional third-party servers.
+How each Pantheon agent uses the 5 built-in MCP servers (including
+pantheon-persistence and pantheon-vision) plus the optional third-party servers.
 
 ---
 
@@ -23,6 +23,10 @@ pantheon-code-mode, pantheon-memory) plus the optional third-party servers.
 | **iris** | ✅ agents | — | minimal | — | — |
 | **mnemosyne** | ✅ memory-bank | ✅ — | ✅ full (store, recall, export) | — | — |
 | **talos** | ✅ agents, skills | ✅ hotfix scripts | ✅ recall | ✅ | — |
+
+`pantheon-vision` is installed for the runtime, but is not automatically bound
+to every agent. Agents that need image analysis should request its tools
+explicitly and use the `ask` permission tier.
 
 ---
 
@@ -187,6 +191,8 @@ mcpServers:
 | **pantheon-resources** | Low | Read-only. Same trust boundary as repository |
 | **pantheon-code-mode** | Medium | Executes scripts. Permission: `ask` (user confirms each execution) |
 | **pantheon-memory** | Low | Read/write within agent sandbox. No system access |
+| **pantheon-persistence** | Low | Namespaced local SQLite KV with FTS5 and TTL |
+| **pantheon-vision** | Medium | Sends image data or URLs to the configured OpenCode vision gateway; permission: `ask` |
 | **context7** | Low | Read-only library documentation. No auth needed |
 | ~~exa~~ | *Removed in v3.15.0* | Use `websearch` tool instead |
 | **playwright** | Medium | Runs headless Chromium. Permission: `ask` recommended |
