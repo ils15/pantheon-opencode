@@ -15,7 +15,7 @@
 import { copyFileSync, existsSync, mkdirSync, symlinkSync, unlinkSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { type Plugin, tool } from '@opencode-ai/plugin'
+import { tool } from '@opencode-ai/plugin'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -151,7 +151,7 @@ function syncProject(sourceDir, targetDir, agents, dryRun) {
 // ---------------------------------------------------------------------------
 
 /** Named export consumed by the opencode plugin runtime. */
-export const SyncPlugin = async ({ project, client, $, directory, worktree }) => {
+export const SyncPlugin = async ({ client, directory }) => {
   // Track known target projects in memory (reset each session).
   // In a production version this could read from a config file.
   /** @type {Set<string>} */
@@ -266,7 +266,7 @@ export const SyncPlugin = async ({ project, client, $, directory, worktree }) =>
         if (!AGENTS.includes(agentName)) return
 
         console.log('')
-        console.log(`[pantheon-sync] Detected change to ${agentName}.md in ` + `src/agents/.`)
+        console.log(`[pantheon-sync] Detected change to ${agentName}.md in src/agents/.`)
 
         if (knownProjects.size === 0) {
           console.log(

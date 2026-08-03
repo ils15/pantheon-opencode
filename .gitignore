@@ -5,8 +5,12 @@ node_modules/
 *.tgz
 *.pyc
 __pycache__/
+.coverage*
 .DS_Store
 .vscode/
 opencode.zen.json
 opencode.multimodal.json
 opencode.deepseek-only.json
+opencode.local.json
+opencode.json.backup
+.mcp.json.backup

@@ -23,6 +23,8 @@
     "lint": "npx biome ci .",
     "typecheck": "npx tsc --noEmit",
     "audit": "npm audit --audit-level=high",
+    "secret-scan": "node scripts/secret-scan.mjs",
+    "test:security": "npm run secret-scan && node tests/test_install_mcp_vision.mjs",
     "test": "python3 -m pytest tests/ -q 2>&1 || echo \"No tests found\"",
     "test:ci": "python3 -m pytest tests/ -q --tb=short 2>&1 || true"
   },
@@ -50,6 +52,7 @@
     "scripts/*.mjs",
     "src/mcp/*.sh",
     "src/routing.yml",
+    "src/pantheon/**",
     "src/mcp/requirements*",
     "src/plugins/tui/**",
     "src/skills/**"
@@ -60,6 +63,7 @@
   "devDependencies": {
     "@commitlint/cli": "^19.8.0",
     "@commitlint/config-conventional": "^19.8.0",
+    "@opencode-ai/plugin": "1.18.11",
     "husky": "^9.1.7"
   },
   "repository": {

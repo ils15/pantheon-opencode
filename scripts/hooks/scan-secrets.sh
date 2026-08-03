@@ -18,6 +18,15 @@ SECRET_PATTERNS=(
     "eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*"
 )
 
+# Keep provider-specific markers assembled so this scanner is not self-matched
+# by the repository secret test.
+BIFROST_HEADER="x""-bf-""vk"
+BIFROST_TOKEN_PREFIX="sk""-bf-"
+SECRET_PATTERNS+=(
+    "$BIFROST_HEADER"
+    "${BIFROST_TOKEN_PREFIX}[A-Za-z0-9_-]{8,}"
+)
+
 INPUT="${1:-${TOOL_INPUT:-}}"
 if [[ -z "$INPUT" ]] && [[ ! -t 0 ]]; then
     INPUT=$(cat)

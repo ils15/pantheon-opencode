@@ -172,6 +172,9 @@ npx pantheon-opencode init
 # Headless mode — for CI and automation
 npx pantheon-opencode init --headless
 
+# (Optional) Install + activate a model routing preset
+npx pantheon-opencode init --preset go-fast
+
 # (Optional) Install MCP servers + skills + TUI plugin
 npm run setup
 
@@ -182,7 +185,7 @@ opencode
 
 > **Modes:** Interactive TUI with checkbox selection (default TTY), or `--headless` for scripts/CI.
 > **Minimal:** `--headless --no-mcp` installs only agents (~2s).
-> **Full:** `--headless` also creates Python venv + MCP servers (memory, persistence, KV).
+> **Full:** `--headless` also creates Python venv + MCP servers (memory, persistence, KV, vision).
 
 ---
 
@@ -415,6 +418,76 @@ subscription (OpenCode Go, Copilot Pro, Claude Pro, etc.).
 | `default` | Balanced quality/speed | Hermes, Aphrodite, Demeter, Prometheus, Hephaestus, Gaia | Kimi K2.6, Claude Sonnet, GPT-4o |
 | `coding` | Heavy coding tasks | Hermes, Aphrodite, Demeter, Prometheus, Hephaestus, Talos | DeepSeek V4 Flash, Claude Sonnet |
 | `fast` | Quick, cheap ops | Apollo, Iris, Mnemosyne, Talos, Nyx | DeepSeek V4 Flash, MiniMax M2.7, Gemini Flash |
+
+---
+
+## Model Routing Presets
+
+The abstract tiers above are pinned to concrete `provider/model` IDs by **6 built-in model presets**. Each preset maps all 14 agents to a specific model plus a reasoning effort per role (planners/reviewers, implementers, scouts). **Zero-mutation default**: without an active preset, agents run on OpenCode's default model — behavior is unchanged.
+
+### Presets
+
+| Preset | Provider | Planners/Reviewers | Implementers | Scouts |
+|--------|----------|--------------------|--------------|--------|
+| `go-deepseek` | opencode (Zen) | `opencode/deepseek-v4-pro` | `opencode/deepseek-v4-flash` | `opencode/deepseek-v4-flash-free` |
+| `go-fast` | opencode-go | `opencode-go/deepseek-v4-flash` — all 14 agents, effort `low` | | |
+| `go-claude` | anthropic | `anthropic/claude-opus-4-8` | `anthropic/claude-sonnet-5` | `anthropic/claude-haiku-4-5` |
+| `go-openai` | openai | `openai/gpt-5.6-sol` | `openai/gpt-5.6-terra` | `openai/gpt-5.6-luna-fast` |
+| `go-premium` | opencode-go | GLM-5.1 (zeus), DeepSeek V4 Pro (athena), Qwen3.7 Max (themis) | MiniMax M2.7 (hermes, hephaestus), Kimi K2.6 (aphrodite), Qwen3.7 Plus (demeter), GLM-5.2 (prometheus) | DeepSeek V4 Flash (scouts) |
+| `go-free` | opencode (Zen free, $0) | Big Pickle (zeus), Nemotron 3 Ultra Free (athena) | DeepSeek V4 Flash Free | North Mini Code Free (scouts) |
+
+The exact per-agent mapping (model + reasoning effort + fallbacks) lives in the `presets:` block of [src/routing.yml](src/routing.yml).
+
+### Requirements
+
+- **Env vars** — checked fail-fast (CLI and plugin) when the selected preset uses the provider:
+  - `PANTHEON_OPENCODE_API_KEY` — `opencode` + `opencode-go` providers (`go-deepseek`, `go-fast`, `go-premium`, `go-free`)
+  - `PANTHEON_ANTHROPIC_API_KEY` — `anthropic` provider (`go-claude`)
+  - `PANTHEON_OPENAI_API_KEY` — `openai` provider (`go-openai`)
+- **OpenCode Go subscription** required for `go-fast` / `go-premium`.
+- **OpenCode Zen free tier** for `go-free` — note `nemotron-3-ultra-free` has known intermittent failures ([opencode#38028](https://github.com/opencode/opencode/issues/38028)); fall back to `go-fast` if flaky.
+
+### Commands
+
+```bash
+# Install + activate a preset
+npx pantheon-opencode init --preset go-fast
+
+# Switch preset (global config; --project for project-local; --dry-run to preview)
+pantheon-opencode set-tier go-deepseek
+pantheon-opencode set-tier go-fast --project
+pantheon-opencode set-tier go-fast --dry-run
+
+# Clear preset — back to the zero-mutation default
+pantheon-opencode set-tier none
+
+# No name → lists available presets (none, go-deepseek, go-fast, go-claude, go-openai, go-premium, go-free)
+pantheon-opencode set-tier
+```
+
+**Env override (CI/headless)** — wins over the file:
+
+```bash
+export PANTHEON_MODEL_PRESET=go-deepseek
+```
+
+### How it works
+
+- The active selection is persisted to `.pantheon/active-preset.json` — `{version, preset, source, updated_at}` — written atomically (tmp file + rename) with a `.bak` backup of the previous file. It applies on the next OpenCode startup (no hot-swap); the plugin's `hooks.config` injects it.
+- **Resolution precedence**: `PANTHEON_MODEL_PRESET` env → first existing `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) → **none** (defaults).
+- **Partial semantics**: a preset overrides only the agents it lists; unlisted agents inherit the invoking primary agent's model.
+- Interactive picker during `init`: one prompt listing the 6 presets (select by number or name, blank to skip). It never touches your `opencode.json` — the choice is injected at startup instead. The file format also supports an optional `overrides` block (per-agent `model`/`variant`, per-provider `baseURL`/`apiKeyEnv`) merged over the preset definition.
+- **Capability normalization**: requested reasoning effort is clamped to each model family's ceiling (`deepseek-v4-flash` max `medium`; claude models strip the variant entirely — Anthropic uses thinking).
+- **fallback_models**: per-agent ordered fallback list where configured (e.g. `go-deepseek` sets `[opencode/mimo-v2.5]` for every agent).
+
+### Quick smoke test
+
+```bash
+export PANTHEON_OPENCODE_API_KEY=...
+pantheon-opencode set-tier go-fast --project
+opencode run "hello" 2>&1 | grep "Pantheon"
+# expect: [Pantheon Plugin] Model preset active: go-fast (source: file)
+```
 
 ---
 

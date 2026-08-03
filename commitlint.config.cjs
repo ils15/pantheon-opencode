@@ -1,7 +1,13 @@
 module.exports = {
   extends: ['@commitlint/config-conventional'],
-  ignores: [(message) => message.startsWith('Changes before error encountered')],
+  ignores: [
+    (message) => message.startsWith('Changes before error encountered'),
+    (message) => message.startsWith('Potential fix for pull request finding'),
+  ],
   rules: {
+    'type-enum': [2, 'always', ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test', 'security']],
+    'body-max-line-length': [0],
+    'footer-max-line-length': [0],
     'scope-enum': [2, 'always', [
       'agents', 'skills', 'scripts', 'docs', 'ci', 'deps', 'release',
       'config', 'validate', 'commands', 'tui', 'installer', 'routing',
@@ -11,6 +17,7 @@ module.exports = {
       'mnemosyne', 'talos', 'persistence', 'memory', 'council',
       'deepwork', 'audit', 'optimize', 'consolidate', 'merge',
       'model', 'auth', 'compaction', 'checkpoint',
+      'plugin', 'vision', 'presets', 'install', 'security',
     ]],
     'header-max-length': [2, 'always', 120],
   },
