@@ -805,7 +805,7 @@ export function escapeXml(text: string): string {
 
 /** Reverse of `escapeXml` — applied to parsed `<description>`/`<context>` bodies. */
 function unescapeXml(text: string): string {
-  return text.replaceAll('&amp;', '&').replaceAll('&lt;', '<').replaceAll('&gt;', '>')
+  return text.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&')
 }
 
 const INTENT_TASK_INSTRUCTIONS: Record<VisionIntent, string> = {
