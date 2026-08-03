@@ -5,7 +5,9 @@ module.exports = {
     (message) => message.startsWith('Potential fix for pull request finding'),
   ],
   rules: {
+    'type-enum': [2, 'always', ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test', 'security']],
     'body-max-line-length': [0],
+    'footer-max-line-length': [0],
     'scope-enum': [2, 'always', [
       'agents', 'skills', 'scripts', 'docs', 'ci', 'deps', 'release',
       'config', 'validate', 'commands', 'tui', 'installer', 'routing',
