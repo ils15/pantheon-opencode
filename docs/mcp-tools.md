@@ -1,6 +1,6 @@
 # MCP Tool Registry
 
-Canonical reference for Pantheon agents. Lists every tool across the 3 native MCP servers, with signatures, descriptions, and which agents use them.
+Canonical reference for Pantheon agents. Lists every tool across the 5 native MCP servers, with signatures, descriptions, and which agents use them.
 
 > **Agent tip:** Tool names are platform-dependent. See [Platform Naming Conventions](#platform-naming-conventions) below to map these names to your runtime.
 
@@ -8,7 +8,7 @@ Canonical reference for Pantheon agents. Lists every tool across the 3 native MC
 
 ## Servers
 
-Pantheon provides 4 native MCP servers. See below for full tool registries.
+Pantheon provides 5 native MCP servers. See below for full tool registries.
 
 ### pantheon-resources (read-only)
 
@@ -119,6 +119,26 @@ execute_code_script("lint-and-test.sh", args=["backend/"])
 
 ---
 
+### pantheon-vision (image analysis)
+
+The local vision server accepts local paths, `file:` URIs, data URIs, and HTTP(S)
+image URLs. The plugin first tries its configured native gateway, then falls
+back to this MCP. Bifrost is not a default dependency; use it only through an
+explicit `PANTHEON_VISION_TOOL` or `imageAnalysisTool` setting.
+
+| Tool | Signature | Description |
+|------|-----------|-------------|
+| `vision_describe` | `(path: str, prompt?: str)` | Describe image content, visible text, layout, and objects |
+| `vision_ocr` | `(path: str)` | Extract visible text while preserving line formatting |
+| `vision_analyze` | `(path: str)` | Return image metadata, description, and OCR as JSON |
+
+**Permission:** `ask` is recommended because images or remote URLs are sent to
+the configured gateway. The server reads `PANTHEON_OPENCODE_API_KEY` or
+`OPENCODE_API_KEY`, then the OpenCode auth store; no API key is stored in the
+repository configuration.
+
+---
+
 ## Platform Naming Conventions
 
 Each platform exposes MCP tools with different naming. The same tool `memory_recall` from server `pantheon-memory` gets different names:
@@ -143,6 +163,7 @@ Each platform exposes MCP tools with different naming. The same tool `memory_rec
 | pantheon-code-mode | `ask` | Executes scripts — needs user confirmation |
 | pantheon-memory | `allow` | Read/write within agent sandbox, no system access |
 | pantheon-persistence | `allow` | SQLite KV, same trust boundary as repo |
+| pantheon-vision | `ask` | Sends image input to the configured vision gateway |
 
 ---
 
@@ -152,5 +173,6 @@ Each platform exposes MCP tools with different naming. The same tool `memory_rec
 - **pantheon-code-mode** — only `.sh`/`.py` in `.pantheon/code-mode/`, 30s timeout, no `../` escape
 - **pantheon-memory** — all data in `~/.pantheon/memory/chroma.sqlite3`, no system-level access
 - **pantheon-persistence** — SQLite KV in `~/.pantheon/persistence/`, TTL auto-purge, namespace isolation
+- **pantheon-vision** — 25 MB image cap, supported-format validation, safe errors, and API-key redaction
 
 See `skill: mcp-security` for complete rules.

@@ -23,7 +23,7 @@
 import { execSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 
@@ -171,11 +171,31 @@ const MCPS = {
     name: 'Pantheon Resources',
     description: 'Pantheon framework resources — agents, skills, routing, deepwork, memory bank',
     platforms: {
-      opencode: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/mcp_resources_server.py')] },
-      vscode: { type: 'stdio', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/mcp_resources_server.py')] },
-      cursor: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/mcp_resources_server.py')] },
-      claude: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/mcp_resources_server.py')] },
-      windsurf: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/mcp_resources_server.py')] },
+      opencode: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/mcp_resources_server.py')],
+      },
+      vscode: {
+        type: 'stdio',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/mcp_resources_server.py')],
+      },
+      cursor: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/mcp_resources_server.py')],
+      },
+      claude: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/mcp_resources_server.py')],
+      },
+      windsurf: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/mcp_resources_server.py')],
+      },
     },
     env: [],
     validate: async () => {
@@ -191,11 +211,31 @@ const MCPS = {
     name: 'Pantheon Code Mode',
     description: 'Execute orchestration scripts from .pantheon/code-mode/ directory',
     platforms: {
-      opencode: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/code_mode_server.py')] },
-      vscode: { type: 'stdio', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/code_mode_server.py')] },
-      cursor: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/code_mode_server.py')] },
-      claude: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/code_mode_server.py')] },
-      windsurf: { type: 'local', command: join(ROOT, '.venv/bin/python3'), args: [join(ROOT, 'scripts/code_mode_server.py')] },
+      opencode: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/code_mode_server.py')],
+      },
+      vscode: {
+        type: 'stdio',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/code_mode_server.py')],
+      },
+      cursor: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/code_mode_server.py')],
+      },
+      claude: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/code_mode_server.py')],
+      },
+      windsurf: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'scripts/code_mode_server.py')],
+      },
     },
     env: [],
     validate: async () => {
@@ -276,6 +316,49 @@ const MCPS = {
         return { ok: true, message: 'server script present' }
       }
       return { ok: false, message: 'scripts/mcp_persistence_server.py not found' }
+    },
+  },
+  'pantheon-vision': {
+    tier: 1,
+    name: 'Pantheon Vision',
+    description:
+      'Image description, OCR, and structured analysis through the OpenCode vision gateway',
+    requirements: join(ROOT, 'src', 'mcp', 'requirements-vision.txt'),
+    platforms: {
+      opencode: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')],
+      },
+      vscode: {
+        type: 'stdio',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')],
+      },
+      claude: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')],
+      },
+      cursor: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')],
+      },
+      windsurf: {
+        type: 'local',
+        command: join(ROOT, '.venv/bin/python3'),
+        args: [join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')],
+      },
+    },
+    env: [],
+    validate: async () => {
+      const sourcePath = join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')
+      const requirementsPath = join(ROOT, 'src', 'mcp', 'requirements-vision.txt')
+      if (existsSync(sourcePath) && existsSync(requirementsPath)) {
+        return { ok: true, message: 'canonical server source and isolated requirements present' }
+      }
+      return { ok: false, message: 'canonical vision source or requirements not found' }
     },
   },
   docker: {
@@ -790,7 +873,7 @@ function logValidation(mcpKey, result) {
 // Main
 // ---------------------------------------------------------------------------
 
-async function main() {
+export async function main() {
   const args = parseArgs(process.argv)
 
   if (args.help) {
@@ -918,4 +1001,6 @@ async function main() {
   process.exit(progress.errors.length > 0 ? 1 : 0)
 }
 
-main()
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  main()
+}
