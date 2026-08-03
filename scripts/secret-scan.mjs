@@ -14,6 +14,17 @@ const authorizationName = ['Author', 'ization'].join('')
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+// Files that may reference credential PATTERN NAMES (not values): gitleaks
+// config, security policy, scan tooling and its fixtures. Keep in sync with
+// the [allowlist] paths in .gitleaks.toml.
+export const allowlistedFiles = new Set([
+  '.gitleaks.toml',
+  '.gitleaksignore',
+  'SECURITY.md',
+  'scripts/secret-scan.mjs',
+  'tests/test_secret_scan.mjs',
+])
+
 const patterns = [
   { label: 'Bifrost credential header', regex: new RegExp(escapeRegExp(bifrostHeader), 'i') },
   {
@@ -52,6 +63,7 @@ export function versionableFiles() {
 export function scanVersionableFiles() {
   const findings = []
   for (const file of versionableFiles()) {
+    if (allowlistedFiles.has(file)) continue
     let text
     try {
       const content = readFileSync(file)

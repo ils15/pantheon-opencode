@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
-import { scanText, scanVersionableFiles } from '../scripts/secret-scan.mjs'
+import { scanText, scanVersionableFiles, allowlistedFiles } from '../scripts/secret-scan.mjs'
 
 // Pattern names built from parts (never the real secret value).
 const bifrostHeader = ['x', '-bf-', 'vk'].join('')
@@ -11,6 +11,12 @@ const dummyBifrostValue = ['sk', '-bf-', 'test-do-not-use'].join('')
 
 // Working tree must be clean: no versionable file contains a Bifrost/API credential.
 assert.deepEqual(scanVersionableFiles(), [])
+
+// Allowlist must cover files that reference pattern NAMES (not values):
+// gitleaks config and security policy document the x-bf-vk / sk-bf-* patterns.
+for (const file of ['.gitleaks.toml', 'SECURITY.md']) {
+  assert.ok(allowlistedFiles.has(file), `${file} must be allowlisted`)
+}
 
 // Scan must flag a test dummy occurrence of the Bifrost header name.
 assert.ok(scanText(`headers: { "${bifrostHeader}": "<redacted>" }`, 'fixture').length > 0)
