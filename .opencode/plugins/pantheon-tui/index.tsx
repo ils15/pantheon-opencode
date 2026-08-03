@@ -162,7 +162,7 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string }) 
               <text fg={cmd.name === '/pantheon' ? theme().accent : theme().textMuted}>
                 {cmd.name}
               </text>
-                <text fg={theme().textMuted}>{` — ${cmd.desc}`}</text>
+              <text fg={theme().textMuted}>{` — ${cmd.desc}`}</text>
             </box>
           )}
         </For>
@@ -210,7 +210,9 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string }) 
               <text fg={theme().textMuted}>
                 {`Plugins: ${cfg().plugins.length > 0 ? cfg().plugins.join(', ') : '(none)'}`}
               </text>
-              <text fg={theme().textMuted}>{`MCP servers configured: ${String(cfg().mcpCount)}`}</text>
+              <text
+                fg={theme().textMuted}
+              >{`MCP servers configured: ${String(cfg().mcpCount)}`}</text>
               <text fg={theme().textMuted}>
                 {`Auto-compaction: ${cfg().autoCompaction ? 'ON' : 'OFF'}`}
               </text>
