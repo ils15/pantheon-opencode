@@ -78,11 +78,18 @@ const plugin: Plugin = async (input: PluginInput) => {
             `[Pantheon Plugin] Applied model preset: ${resolved.name} (${resolved.source})`,
           )
         }
-      } catch (err) {
-        // Only the error name is logged — never the message, which may embed
-        // env var names (e.g. PANTHEON_OPENCODE_API_KEY) and trip CodeQL's
-        // clear-text logging taint analysis.
-        console.warn(`[Pantheon Plugin] Active preset skipped: ${(err as Error)?.name ?? 'error'}`)
+      } catch {
+        // Fully STATIC warning — the thrown error object is tainted because
+        // presets.mjs constructs it with the provider's apiKeyEnv name (e.g.
+        // PANTHEON_OPENCODE_API_KEY), and CodeQL's clear-text logging dataflow
+        // flags ANY interpolation derived from it — including err.name and
+        // err.message. The env var name is not itself sensitive to log, but
+        // the scanner cannot distinguish it, so nothing derived from the error
+        // may appear here. Diagnostics (provider id + env var) are already
+        // emitted by applyActivePresetToConfig's own logger before it throws.
+        // The catch binding is intentionally omitted so no tainted value can
+        // ever reach this log line (CodeQL alert #11).
+        console.warn('[plugin] preset application failed (see logs for details)')
       }
     },
     'chat.message': vision.chatMessage,
