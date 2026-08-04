@@ -21,7 +21,7 @@ Controlled iterative refinement for complex problems. Each loop tightens the sol
 Loop 1: Baseline → Implement simplest working version
    ↓ review
 Loop 2: Improve → Optimize for <metric>
-   ↓ review  
+   ↓ review
 Loop 3: Polish → Edge cases, error handling, DX
    ↓ review
 Done

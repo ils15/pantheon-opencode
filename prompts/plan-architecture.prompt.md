@@ -31,7 +31,7 @@ Your plan MUST have:
   - Minimal code (GREEN)
   - Files to modify
   - External dependencies
-  
+
 - **Risks & Mitigation**: What could go wrong?
 
 ### 4. Web Research Integration

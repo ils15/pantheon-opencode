@@ -1,5 +1,15 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "opencode-go": {
+      "models": {
+        "mimo-v2.5": {
+          "attachment": true,
+          "modalities": { "input": ["text", "image"] }
+        }
+      }
+    }
+  },
   "default_agent": "zeus",
   "subagent_depth": 2,
   "model": "opencode-go/deepseek-v4-flash",
@@ -18,19 +28,13 @@
       "pip *": "allow"
     }
   },
-  "instructions": [
-    "AGENTS.md",
-    "src/instructions/*.instructions.md"
-  ],
+  "instructions": ["AGENTS.md", "src/instructions/*.instructions.md"],
   "plugin": [],
   "mcp": {
     "bifrost": {
       "type": "remote",
       "url": "https://llm.ofertachina.cloud/mcp",
-      "enabled": true,
-      "headers": {
-        "x-bf-vk": "***REMOVED***"
-      }
+      "enabled": true
     }
   },
   "agent": {

@@ -18,6 +18,25 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..', '..')
 
 /**
+ * Resolve the python executable of the venv that setupVenv creates for a
+ * target. Single source of truth for the venv layout: the venv always lives
+ * at <target>/.venv — even for PROJECT installs, where the runtime payload
+ * goes to <target>/.opencode. MCP commands and health checks MUST derive
+ * their python from here (never from a runtime sub-directory), or a project
+ * install would point at <target>/.opencode/.venv/bin/python3, which
+ * setupVenv never creates (P1-3).
+ *
+ * @param {string} target - target installation directory
+ * @returns {string} absolute path to the venv python executable
+ */
+export function venvPythonPath(target) {
+  const venvPath = join(target, '.venv')
+  return process.platform === 'win32'
+    ? join(venvPath, 'Scripts', 'python.exe')
+    : join(venvPath, 'bin', 'python3')
+}
+
+/**
  * Set up a Python virtual environment and install MCP dependencies.
  *
  * @param {string} target - Target installation directory (e.g. ~/.config/opencode)
@@ -26,7 +45,7 @@ const ROOT = join(__dirname, '..', '..')
  */
 export function setupVenv(target, { dryRun = false, skipInstall = false, force = false } = {}) {
   const venvPath = join(target, '.venv')
-  const pythonBin = join(venvPath, 'bin', 'python3')
+  const pythonBin = venvPythonPath(target)
 
   // Step 1: Force recreate venv if --force
   if (force && existsSync(venvPath)) {
@@ -94,7 +113,11 @@ export function setupVenv(target, { dryRun = false, skipInstall = false, force =
         if (r2.status !== 0) {
           throw new Error(
             'Failed to install MCP dependencies. ' +
-            'Try: PIP_USER=0 ' + pip + ' install -r ' + reqFile + ' --break-system-packages'
+              'Try: PIP_USER=0 ' +
+              pip +
+              ' install -r ' +
+              reqFile +
+              ' --break-system-packages',
           )
         }
       }

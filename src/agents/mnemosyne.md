@@ -98,7 +98,7 @@ Mnemosyne executes the expanded compression pipeline. When Zeus delegates compre
 
 5. **Archive IMPL/REVIEW**: Append to `02-progress-log.md` (same as Level 1)
 
-6. **Update Cross-References**: 
+6. **Update Cross-References**:
    - Append new entries to `_xref/index.md`
    - Increment `_xref/_next_id.json`
 

@@ -233,7 +233,7 @@ async def kv_store(
 
     # Opportunistic auto-purge: if namespace has >500 entries, purge expired
     _opportunistic_auto_purge(conn, namespace)
-    
+
     return {"status": "stored", "namespace": namespace, "key": key}
 
 

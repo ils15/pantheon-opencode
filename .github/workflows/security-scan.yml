@@ -1,0 +1,106 @@
+# security gates
+# Fail-closed secret scanning gates.
+#
+# - gitleaks (action v2): PR diff on pull_request, pushed commit range on
+#   push, full repo scan on workflow_dispatch. Auto-uses .gitleaks.toml.
+# - gitleaks CLI full-history scan on push to main (the action only covers
+#   the pushed range; this guarantees the entire reachable history is clean).
+# - Custom Bifrost/API credential scan (scripts/secret-scan.mjs) + its
+#   regression test (tests/test_secret_scan.mjs).
+# - Critical-pattern grep scan over tracked files (private keys, GitHub/npm/
+#   AWS/Google/Slack tokens, sk-* keys, tracked .env files).
+#
+# ANY finding (any severity) fails the job: exit != 0.
+
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  security-scan:
+    name: security-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks (action) — PR diff / pushed commits / dispatch
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.24.3
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_COMMENTS: 'false'
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
+
+      - name: gitleaks CLI — full history scan on push to main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          gitleaks detect --config .gitleaks.toml --redact -v \
+            --exit-code=2 --log-opts=--all --log-level=info
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Custom credential scan (Bifrost + API keys)
+        run: |
+          node scripts/secret-scan.mjs
+          node tests/test_secret_scan.mjs
+
+      - name: Critical secret patterns scan (tracked files)
+        run: |
+          set -uo pipefail
+          LEAKS=0
+          # Tracked files, excluding allowlisted test fixtures / scan tooling
+          FILES="$(git ls-files | grep -vE '(^|/)(tests/test_secret_scan\.mjs|scripts/secret-scan\.mjs|\.gitleaks\.toml|\.gitleaksignore|SECURITY\.md)$' || true)"
+
+          PATTERNS=(
+            '-----BEGIN (RSA|EC|OPENSSH|PRIVATE) KEY'
+            'ghp_[A-Za-z0-9]{36}'
+            'github_pat_[A-Za-z0-9_]{22,}'
+            'npm_[A-Za-z0-9]{36}'
+            'AKIA[0-9A-Z]{16}'
+            'AIza[0-9A-Za-z_-]{35}'
+            'xox[baprs]-'
+            'sk-[A-Za-z0-9]{20,}'
+          )
+
+          if [ -n "$FILES" ]; then
+            for PAT in "${PATTERNS[@]}"; do
+              while IFS= read -r HIT; do
+                echo "::error::CRITICAL-SECRET ${HIT} (pattern: ${PAT})"
+                LEAKS=1
+              done < <(grep -nIE -e "$PAT" $FILES | cut -d: -f1,2)
+            done
+          fi
+
+          # Tracked .env files (allow documented templates only)
+          ENVHITS="$(git ls-files | grep -E '(^|/)\.env([.-]|$)' | grep -vE '\.env\.(example|sample|template)($|\.)' || true)"
+          if [ -n "$ENVHITS" ]; then
+            while IFS= read -r F; do
+              echo "::error::TRACKED-ENV-FILE ${F}"
+              LEAKS=1
+            done <<< "$ENVHITS"
+          fi
+
+          if [ "$LEAKS" -ne 0 ]; then
+            echo "::error::Critical secret pattern scan FAILED — rotate or remove secrets before committing."
+            exit 1
+          fi
+          echo "Critical secret pattern scan passed: no high-risk patterns in tracked files."

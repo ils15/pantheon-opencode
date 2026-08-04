@@ -44,8 +44,6 @@ const _ALL_PLATFORMS = ['opencode']
 const PLATFORM_LABELS = {
   opencode: 'OpenCode',
 }
-  opencode: 'OpenCode',
-}
 
 // ---------------------------------------------------------------------------
 // State
@@ -236,6 +234,10 @@ function checkAgentFiles(args) {
   pass(`${canonical.length} canonical agents found in agents/`)
 
   // Determine which platforms to check
+  if (!existsSync(PLATFORM_DIR)) {
+    warn('Platform component not distributed in this package — skipping platform agent check')
+    return
+  }
   const platformDirs = readdirSync(PLATFORM_DIR, { withFileTypes: true })
     .filter((d) => d.isDirectory() && d.name !== '_template' && d.name !== 'plans')
     .map((d) => d.name)

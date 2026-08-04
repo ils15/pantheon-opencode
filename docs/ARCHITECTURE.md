@@ -225,7 +225,7 @@ Three tiers with distinct storage, loading policies, and update frequency:
 
 ```
 Tier 1: Native Memory (Facts)
-  Location:  /memories/repo/                ← auto-managed by 
+  Location:  /memories/repo/                ← auto-managed by
   Content:   Stack, test commands, directory structure, immutable truths
   Access:    ✅ Auto-loaded — zero token cost
   Updated:   Rarely (when stack changes)
@@ -241,7 +241,7 @@ Tier 2: Reference Memory (Narrative)
   Written by: Mnemosyne (on explicit request)
 
 Tier 3: Session Memory (Ephemeral)
-  Location:  /memories/session/             ← auto-managed by 
+  Location:  /memories/session/             ← auto-managed by
   Content:   Current conversation plans, work-in-progress, temporary findings
   Access:    One read per conversation session
   Updated:   Continuously within session

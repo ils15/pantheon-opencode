@@ -9,7 +9,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -24,6 +24,7 @@ import { join } from 'node:path'
 export function healthCheck(target, { dryRun = false } = {}) {
   const results = { passed: [], failed: [], warnings: [] }
   const python = findPython(target)
+  const visionServer = resolveVisionServer(target)
 
   // Check 1: Critical runtime scripts exist
   const scripts = ['mcp_persistence_server.py', '_pantheon_paths.py']
@@ -38,8 +39,69 @@ export function healthCheck(target, { dryRun = false } = {}) {
       })
     }
   }
+  if (visionServer) {
+    results.passed.push({
+      check: visionServer.check,
+      detail: visionServer.detail,
+    })
+    const installedVisionServer = join(target, 'scripts', 'pantheon_vision_server.py')
+    const canonicalVisionServer = join(target, 'src', 'mcp', 'pantheon_vision_server.py')
+    if (existsSync(installedVisionServer) && existsSync(canonicalVisionServer)) {
+      try {
+        if (
+          readFileSync(installedVisionServer, 'utf8') !==
+          readFileSync(canonicalVisionServer, 'utf8')
+        ) {
+          results.failed.push({
+            check: 'pantheon-vision source drift',
+            detail: 'installed script differs from src/mcp/pantheon_vision_server.py',
+          })
+        }
+      } catch {
+        results.failed.push({
+          check: 'pantheon-vision source drift',
+          detail: 'could not compare installed script with src/mcp source',
+        })
+      }
+    }
+  } else {
+    results.failed.push({
+      check: 'src/mcp/pantheon_vision_server.py',
+      detail: 'NOT FOUND — canonical vision server source is unavailable',
+    })
+  }
 
   if (dryRun) return results
+
+  // Check 1.5: Vision keeps a small, isolated dependency manifest.
+  const visionRequirements = [
+    join(target, 'src', 'mcp', 'requirements-vision.txt'),
+    join(target, 'requirements-vision.txt'),
+    join(target, '.opencode', 'requirements-vision.txt'),
+  ].find((path) => existsSync(path))
+  if (!visionRequirements) {
+    results.failed.push({
+      check: 'requirements-vision.txt',
+      detail: 'NOT FOUND — vision dependency isolation is incomplete',
+    })
+  } else {
+    const requirements = readFileSync(visionRequirements, 'utf8').toLowerCase()
+    const forbidden = ['pillow', 'paddle', 'gemini', 'torch']
+    const unwanted = forbidden.filter((name) =>
+      new RegExp(`^${name}(?:[<>=!~]|$)`, 'm').test(requirements),
+    )
+    if (unwanted.length > 0) {
+      results.failed.push({
+        check: 'requirements-vision.txt',
+        detail: `forbidden MVP dependencies: ${unwanted.join(', ')}`,
+      })
+    } else {
+      results.passed.push({
+        check: 'requirements-vision.txt',
+        detail: 'isolated and free of heavyweight vision runtimes',
+      })
+    }
+  }
 
   // Check 2: Syntax check on each MCP server script
   const mcpScripts = [
@@ -65,6 +127,22 @@ export function healthCheck(target, { dryRun = false } = {}) {
           detail: result.stderr.toString().trim().split('\n').slice(-1)[0],
         })
       }
+    }
+  }
+  if (visionServer && python) {
+    const result = spawnSync(python, ['-m', 'py_compile', visionServer.path], {
+      stdio: 'pipe',
+    })
+    if (result.status === 0) {
+      results.passed.push({
+        check: 'syntax:pantheon_vision_server.py',
+        detail: 'valid',
+      })
+    } else {
+      results.failed.push({
+        check: 'syntax:pantheon_vision_server.py',
+        detail: result.stderr.toString().trim().split('\n').slice(-1)[0],
+      })
     }
   }
 
@@ -148,6 +226,28 @@ export function healthCheck(target, { dryRun = false } = {}) {
   }
 
   return results
+}
+
+/**
+ * Resolve the canonical source when checking the repository, or the generated
+ * runtime copy when checking an installed target.
+ * @param {string} target
+ * @returns {{path: string, check: string, detail: string}|null}
+ */
+function resolveVisionServer(target) {
+  const candidates = [
+    {
+      path: join(target, 'src', 'mcp', 'pantheon_vision_server.py'),
+      check: 'src/mcp/pantheon_vision_server.py',
+      detail: 'canonical source exists',
+    },
+    {
+      path: join(target, 'scripts', 'pantheon_vision_server.py'),
+      check: 'scripts/pantheon_vision_server.py',
+      detail: 'installed copy exists (deployed from src/mcp)',
+    },
+  ]
+  return candidates.find(({ path }) => existsSync(path)) ?? null
 }
 
 /**

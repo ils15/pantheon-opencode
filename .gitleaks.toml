@@ -1,0 +1,99 @@
+# Pantheon OpenCode — gitleaks configuration (fail-closed secret scan)
+#
+# Used by .github/workflows/security.yml (job: security-scan).
+# Auto-discovered by the gitleaks-action from the repo root and by the
+# gitleaks CLI full-history scan.
+#
+# Policy: ANY finding (any severity) fails the scan. No .gitleaksignore.
+
+title = "Pantheon OpenCode gitleaks config"
+
+# Merge the embedded default gitleaks ruleset (no network access needed).
+[extend]
+useDefault = true
+
+# --- Bifrost MCP credentials (incident 2026-08-03, keys revoked) ---
+# Only the VALUE pattern is scanned here (sk-bf-*). The header NAME
+# (x-bf-vk) is intentionally NOT a gitleaks rule: it remains a legitimate
+# config key in old commits (values were scrubbed), and its detection is
+# enforced on the working tree by scripts/secret-scan.mjs.
+[[rules]]
+id = "bifrost-mcp-token"
+description = "Bifrost MCP credential token value (sk-bf- prefix)"
+regex = '''(?i)sk-bf-[A-Za-z0-9_-]{8,}'''
+keywords = ["sk-bf-"]
+
+# --- Critical infrastructure credentials ---
+[[rules]]
+id = "pem-private-key"
+description = "PEM/OpenSSH private key block (RSA/EC/OPENSSH/PRIVATE)"
+regex = '''-----BEGIN (?:RSA|EC|OPENSSH|PRIVATE) KEY-----'''
+keywords = ["BEGIN"]
+
+[[rules]]
+id = "github-classic-pat"
+description = "GitHub classic personal access token (ghp_)"
+regex = '''ghp_[A-Za-z0-9]{36}'''
+keywords = ["ghp_"]
+
+[[rules]]
+id = "github-fine-grained-pat"
+description = "GitHub fine-grained personal access token (github_pat_)"
+regex = '''github_pat_[A-Za-z0-9_]{22,}'''
+keywords = ["github_pat_"]
+
+[[rules]]
+id = "npm-access-token"
+description = "npm access token (npm_)"
+regex = '''npm_[A-Za-z0-9]{36}'''
+keywords = ["npm_"]
+
+[[rules]]
+id = "aws-access-key-id"
+description = "AWS Access Key ID (AKIA)"
+regex = '''AKIA[0-9A-Z]{16}'''
+keywords = ["AKIA"]
+
+[[rules]]
+id = "google-api-key"
+description = "Google API key (AIza)"
+regex = '''AIza[0-9A-Za-z_-]{35}'''
+keywords = ["AIza"]
+
+[[rules]]
+id = "slack-token"
+description = "Slack bot/user/app token (xox[baprs]-)"
+regex = '''xox[baprs]-[A-Za-z0-9-]{10,}'''
+keywords = ["xox"]
+
+[[rules]]
+id = "openai-style-key"
+description = "OpenAI-style secret token (sk- prefix, 20+ chars)"
+regex = '''sk-[A-Za-z0-9]{20,}'''
+keywords = ["sk-"]
+
+# Test fixtures, documentation and scan tooling intentionally contain dummy
+# credentials, documented examples and pattern literals. They must NEVER hold
+# real secrets. If a real secret is found in these files, rotate it
+# immediately — the allowlist does not make it safe.
+[allowlist]
+description = "Test fixtures, documented examples and scan tooling (dummy values only)"
+paths = [
+  '''tests/test_secret_scan\.mjs''',
+  '''scripts/secret-scan\.mjs''',
+  '''\.gitleaks\.toml''',
+  '''\.gitleaksignore''',
+  '''SECURITY\.md''',
+  # Docs example with the AWS-documented dummy key (e.g. AKIAIOSFODNN7EXAMPLE)
+  '''\.github/hooks/README\.md''',
+  # Playwright MCP snapshot fixtures (contain a JWT screenshot URL)
+  '''\.playwright-mcp/page-.*\.yml''',
+  # Committed environment template (no real values)
+  '''\.env\.example''',
+]
+regexes = [
+  # Dummy fixture values: any value that is composed of [a-z0-9_-] and
+  # contains a test/example/dummy marker. Real secrets with these markers are
+  # NOT covered — rotate them instead of relying on this.
+  '''(?i)[a-z0-9_-]*(test|example|do-not-use|dummy|fixture)[a-z0-9_-]*''',
+]

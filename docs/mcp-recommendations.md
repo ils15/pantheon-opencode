@@ -431,9 +431,9 @@ These constraints are enforced by @themis during code review.
 opencode mcp list
 opencode mcp debug context7
 
-# 
+#
 claude mcp list
 
-# 
+#
 # Command Palette → MCP: List Servers
 ```

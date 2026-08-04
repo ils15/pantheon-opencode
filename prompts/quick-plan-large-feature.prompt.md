@@ -56,17 +56,17 @@ Create 3-5 phase plan:
 Format:
   📋 Plan: [Feature Name]
   🎯 Goal: [One sentence outcome]
-  
+
   1️⃣ Phase: [Name] → @agent
      - Quick description
      - Key files: [list]
-  
+
   2️⃣ Phase: [Name] → @agent
      ...
-  
+
   ⚠️ Risks: [ONE sentence]
   🤔 Open Questions: [List if uncertain]
-  
+
   👉 Ready to approve?
 ```
 
@@ -89,17 +89,17 @@ NO  → Check: Need pattern discovery?
 
 ## Red Flags (Plan is incomplete)
 
-🚩 **More than 3 open questions**  
+🚩 **More than 3 open questions**
 → Ask user for clarification before planning
 
-🚩 **Can't identify affected modules**  
+🚩 **Can't identify affected modules**
 → Need Apollo discovery: "Unknown scope. Delegate to @apollo?"
 
-🚩 **Risk assessment uncertain**  
+🚩 **Risk assessment uncertain**
 → Document risk/unknowns clearly in plan
 
-🚩 **Implementation unclear**  
-→ Break feature into smaller sub-features:  
+🚩 **Implementation unclear**
+→ Break feature into smaller sub-features:
 "Feature too large. Recommend breaking into X, Y, Z. Plan X first?"
 
 ---
@@ -124,7 +124,7 @@ Time: 2:00-4:00 - Plan:
   Phase 1: Backend analytics API (@hermes)
   Phase 2: Dashboard component (@aphrodite)
   Phase 3: Data aggregation query (@demeter)
-  
+
   Open Question: Real-time vs. daily snapshots?
 
 Time: 4:00-5:00 - Approval + handoff to Zeus
@@ -143,7 +143,7 @@ Time: 2:00 - Assessment:
   - Understand current auth: 70%
   - Understand DB structure: 80%
   - Need tenant isolation strategy: UNCLEAR
-  
+
 Time: 2:15 - Decision:
   → "This needs architecture review. Delegate to @apollo?"
   → User: "Yes, do it"
@@ -156,16 +156,16 @@ Time: 2:15 - Decision:
 
 ## Non-Negotiable Rules
 
-✅ **You MUST stop at 5 minutes**  
+✅ **You MUST stop at 5 minutes**
 Even if uncertain. Plan with 80% knowledge, document unknowns.
 
-✅ **No re-planning**  
+✅ **No re-planning**
 One cycle per request. If Zeus discovers plan gaps, that's a new planning request.
 
-✅ **Synthesize, don't explore**  
+✅ **Synthesize, don't explore**
 Fast 1-2 min search, then make decisions with the knowledge you have.
 
-✅ **Output only in chat**  
+✅ **Output only in chat**
 No artifact files unless explicitly asked by user.
 
 ---
@@ -195,7 +195,6 @@ Perfect! Handing off to @zeus for implementation.
 A "good" quick plan:
 - ✅ Takes 5 minutes
 - ✅ Has 3-5 phases
-- ✅ <3 open questions  
+- ✅ <3 open questions
 - ✅ Clear risk assessment
 - ✅ Leads to smooth 1-pass implementation (no major revisions)
-

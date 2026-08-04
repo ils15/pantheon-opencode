@@ -1,0 +1,57 @@
+# Pantheon OpenCode — pre-commit hooks (fail-closed local secret gate)
+#
+# Local enforcement layer, one step BEFORE the CI gate
+# (.github/workflows/security.yml -> gitleaks + scripts/secret-scan.mjs).
+#
+# Policy: ANY secret finding blocks the commit. There is no exception
+# configured here; bypassing hooks with --no-verify is a security violation.
+#
+# Install (one-time, per clone):
+#   pip install pre-commit
+#   npm run hooks:install   # -> pre-commit install
+#
+# Update hooks: npm run hooks:update  # -> pre-commit autoupdate
+
+repos:
+  # --- Secret detection: gitleaks (mirrors CI .gitleaks.toml policy) ---
+  # Fails with exit code 2 on ANY finding in the staged diff. Values are
+  # redacted in output (--redact). --config pins the repo policy.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks
+        name: gitleaks — block hardcoded secrets (staged)
+        args: [--config=.gitleaks.toml, --redact, --exit-code=2]
+
+  # --- Code quality: whitespace, config syntax, repo hygiene ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-json
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=5120]  # hard cap at 5 MB
+      - id: forbid-new-submodules
+
+  # --- Local: custom Bifrost/API credential scan (header + value patterns) ---
+  # scripts/secret-scan.mjs scans the full versionable set (index + untracked)
+  # and never prints secret values, only file + label.
+  - repo: local
+    hooks:
+      - id: secret-scan
+        name: secret-scan — Bifrost/API credentials in versionable files
+        entry: node scripts/secret-scan.mjs
+        language: system
+        pass_filenames: false
+
+default_language_version:
+  python: python3
+  node: node
+
+default_stages: [pre-commit]
+# Restrictive: stop at the first failing hook.
+fail_fast: true

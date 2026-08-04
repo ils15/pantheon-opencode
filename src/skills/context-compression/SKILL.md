@@ -165,7 +165,7 @@ Score = 0.9×0.30 + 1.0×0.25 + 0.5×0.20 + 0.0×0.15 + 0.9×0.10
 
 ## 4. Semantic Summarization
 
-Zeus generates contextual summaries for CRITICAL and HIGH entries using the semantic-summarize prompt template. 
+Zeus generates contextual summaries for CRITICAL and HIGH entries using the semantic-summarize prompt template.
 Each summary costs ~50 input tokens per entry (uses the same model as Zeus). MEDIUM/LOW entries get mechanical 1-line compression without summarization.
 
 ### Template: CRITICAL (3 lines)

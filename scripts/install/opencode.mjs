@@ -3,12 +3,33 @@
  * opencode.mjs — OpenCode platform installer
  */
 
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import {
+  bullet,
+  colors,
+  configure,
+  error,
+  info,
+  printSummary,
+  section,
+  spinner,
+  step,
+  success,
+  warning,
+} from './cli-ui.mjs'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
-import { colors, configure, section, step, success, warning, error, info, bullet, spinner, printSummary } from './cli-ui.mjs'
+import { installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
 import {
   collectSkillNames,
   copyFiles,
@@ -20,11 +41,17 @@ import {
   syncDir,
   writeIfChanged,
 } from './shared.mjs'
-import { setupVenv } from './venv.mjs'
-import { installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
-import { resolveComponents } from './component.mjs'
+import { setupVenv, venvPythonPath } from './venv.mjs'
 
-const COMPONENT_NAMES = ['agents', 'skills', 'instructions', 'prompts', 'commands', 'plugins', 'runtime']
+const COMPONENT_NAMES = [
+  'agents',
+  'skills',
+  'instructions',
+  'prompts',
+  'commands',
+  'plugins',
+  'runtime',
+]
 
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
@@ -63,7 +90,7 @@ function mergeMissing(target, source) {
  * Global installs use a flat layout: agents/ skills/ commands/ plugins/
  * Project installs use the .opencode/ sub-directory layout.
  */
-function isGlobalConfigDir(target) {
+export function isGlobalConfigDir(target) {
   // Primary: ~/.opencode (actual OpenCode installation)
   const homeDir = resolve(join(homedir(), '.opencode'))
   if (resolve(target) === homeDir) return true
@@ -261,9 +288,12 @@ export async function installOpenCode(
       try {
         const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'))
         let changed = false
-        if (cfg.subagent_depth === undefined) { cfg.subagent_depth = 2; changed = true }
+        if (cfg.subagent_depth === undefined) {
+          cfg.subagent_depth = 2
+          changed = true
+        }
         if (changed && !dryRun) {
-          writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n')
+          writeFileSync(cfgPath, `${JSON.stringify(cfg, null, 2)}\n`)
           success('subagent_depth: 2 added to opencode.json')
         }
       } catch (e) {
@@ -314,12 +344,16 @@ export async function installOpenCode(
       'scrub-secrets.py',
       '_pantheon_paths.py',
       'mcp_persistence_server.py',
+      'pantheon_vision_server.py',
     ]
     const srcScriptsDir = join(ROOT, 'scripts')
+    const canonicalMcpScripts = {
+      'pantheon_vision_server.py': join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py'),
+    }
     const dstScriptsDir = join(runtimeTarget, 'scripts')
     if (!dryRun) mkdirSync(dstScriptsDir, { recursive: true })
     for (const script of mcpScripts) {
-      const src = join(srcScriptsDir, script)
+      const src = canonicalMcpScripts[script] || join(srcScriptsDir, script)
       if (!existsSync(src)) {
         warning(`Script not found: ${src}`)
         stats.errors++
@@ -339,6 +373,18 @@ export async function installOpenCode(
           }
         }
       } else stats.skipped++
+    }
+
+    // Keep Vision's dependency contract available to the installed runtime.
+    const visionRequirements = join(ROOT, 'src', 'mcp', 'requirements-vision.txt')
+    if (existsSync(visionRequirements)) {
+      const destination = join(runtimeTarget, 'requirements-vision.txt')
+      const status = writeIfChanged(destination, readFileSync(visionRequirements, 'utf8'), dryRun)
+      if (status === 'created') stats.created++
+      else stats.skipped++
+    } else {
+      warning(`Requirements file not found: ${visionRequirements}`)
+      stats.errors++
     }
 
     // ── Code-mode scripts ──
@@ -604,10 +650,16 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   if (componentSet.has('runtime')) {
     config.mcp = config.mcp || {}
+    // P1-3: derive the MCP python from the SAME venv layout setupVenv
+    // creates (<target>/.venv via venvPythonPath). For project installs the
+    // runtime payload lives under <target>/.opencode (runtimeTarget), but the
+    // venv is created at <target>/.venv — pointing MCP commands at
+    // runtimeTarget/.venv would reference an executable that never exists.
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
-    const pythonPath = process.platform === 'win32' ? 'python' : 'python3'
-    const venvPython = join(runtimeTarget, '.venv', 'bin', 'python3')
-    const memoryPython = existsSync(venvPython) ? venvPython : pythonPath
+    const venvPython = venvPythonPath(target)
+    // Point the config at the venv even on a first install; setupVenv runs
+    // later in this function and creates this path before OpenCode starts.
+    const memoryPython = venvPython
 
     // Only add if not already configured by user
     if (!config.mcp['pantheon-resources']) {
@@ -642,6 +694,14 @@ export async function installOpenCode(
         enabled: true,
       }
     }
+    if (!config.mcp['pantheon-vision']) {
+      config.mcp['pantheon-vision'] = {
+        type: 'local',
+        cwd: runtimeTarget,
+        command: [memoryPython, 'scripts/pantheon_vision_server.py'],
+        enabled: true,
+      }
+    }
 
     // Default MCP permissions
     config.permission = config.permission || {}
@@ -657,6 +717,9 @@ export async function installOpenCode(
     }
     if (!config.permission.mcp['pantheon-persistence']) {
       config.permission.mcp['pantheon-persistence'] = 'allow'
+    }
+    if (!config.permission.mcp['pantheon-vision']) {
+      config.permission.mcp['pantheon-vision'] = 'ask'
     }
   }
 
@@ -707,7 +770,7 @@ export async function installOpenCode(
       }
     } catch (err) {
       error(`Setup failed: ${err.message}`)
-      throw err  // Fatal — abort installation
+      throw err // Fatal — abort installation
     }
   }
 
@@ -718,18 +781,38 @@ export async function installOpenCode(
 
     process.stdout.write('\n')
     process.stdout.write(`  ${colors.bold(colors.green('Installation complete'))}\n`)
-    process.stdout.write(`  ${colors.dim('\u2500'.repeat(Math.min(process.stdout.columns || 60, 60)))}\n`)
+    process.stdout.write(
+      `  ${colors.dim('\u2500'.repeat(Math.min(process.stdout.columns || 60, 60)))}\n`,
+    )
     process.stdout.write(`  ${colors.green('\u2713')} ${created} component(s) installed\n`)
-    if (skipped > 0) process.stdout.write(`  ${colors.dim('\u2014')} ${skipped} already up-to-date\n`)
-    if (errors > 0) process.stdout.write(`  ${colors.yellow('\u26a0')} ${errors} error(s) encountered\n`)
+    if (skipped > 0)
+      process.stdout.write(`  ${colors.dim('\u2014')} ${skipped} already up-to-date\n`)
+    if (errors > 0)
+      process.stdout.write(`  ${colors.yellow('\u26a0')} ${errors} error(s) encountered\n`)
     process.stdout.write('\n')
     process.stdout.write(`  ${colors.bold('Next steps:')}\n`)
     process.stdout.write(`  ${colors.dim('\u2022')} Configure agents in opencode.json\n`)
     process.stdout.write(`  ${colors.dim('\u2022')} Add MCP servers in mcp.json\n`)
     process.stdout.write(`  ${colors.dim('\u2022')} Run 'opencode doctor' to verify\n`)
-    process.stdout.write(`  ${colors.dim('\u2022')} Run 'opencode' to start using Pantheon agents\n`)
+    process.stdout.write(
+      `  ${colors.dim('\u2022')} Run 'opencode' to start using Pantheon agents\n`,
+    )
     process.stdout.write('\n')
   } else {
     printSummary(target, ['opencode'], stats)
+  }
+
+  // -----------------------------------------------------------------------
+  // 5. Model preset selection (--components agents). Interactive picker runs
+  //    unless autoYes (use defaults) or an explicit --preset was given.
+  // -----------------------------------------------------------------------
+  if (interactive && !dryRun && !autoYes && !opts.preset) {
+    const { runModelPicker } = await import('./model-picker.mjs')
+    await runModelPicker({ presetDir: target, logger: console })
+  }
+
+  if (opts.preset && !dryRun) {
+    const { writeActivePreset } = await import('./model-picker.mjs')
+    writeActivePreset(target, opts.preset, { source: 'cli' })
   }
 }

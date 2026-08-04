@@ -70,7 +70,7 @@ opencode
 # Minimal — just the agent rules, no Python dependencies
 npx pantheon-opencode init --no-mcp
 
-# Full setup — agents + MCP servers (memory, persistence, resources)
+# Full setup — agents + MCP servers (memory, persistence, resources, vision)
 npx pantheon-opencode init
 
 # Add MCP servers to an existing minimal install
@@ -179,6 +179,16 @@ npm run doctor
 
 ## Troubleshooting
 
+### TUI runtime versus development build
+
+The installer copies the prebuilt `plugins/pantheon-tui/dist/tui.tsx` and only
+installs runtime dependencies. OpenCode loads that TSX entry directly and
+transpiles it at startup, so users do not need `tsconfig.json`, `tsdown`, or
+development dependencies after installation. The TUI `build` and `typecheck`
+scripts are maintainer/development tasks for the repository, not post-install
+health checks; their failure in `~/.config/opencode/plugins/pantheon-tui` does
+not indicate a broken runtime.
+
 | Problem | Solution |
 |---------|----------|
 | Agents not found | Run `npx pantheon-opencode init` again |
@@ -215,10 +225,10 @@ sequenceDiagram
     Z->>+A: task(background=true, "discover")
     Z->>+D: task(background=true, "schema")
     Note over Z: Max 5 concurrent
-    
+
     A-->>Z: task_status(wait=true) → result
     D-->>Z: task_status(wait=true) → result
-    
+
     Z->>+T: task("review")
     Note over T: Athena/Themis NEVER background
     T-->>-Z: review complete

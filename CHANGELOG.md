@@ -380,4 +380,3 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cleanup commands, fix subtask agent, add Context7 tools, improve sync script ([da6ed7c](https://github.com/ils15/pantheon/commit/da6ed7c))
 
 [3.19.0]: https://github.com/ils15/pantheon/compare/v3.18.0...v3.19.0
-

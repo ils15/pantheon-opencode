@@ -63,5 +63,3 @@ def pantheon_project() -> Path | None:
         return Path(cwd).resolve()
 
     return None
-
-

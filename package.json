@@ -1,7 +1,7 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.2.0",
-  "description": "Multi-agent orchestration for OpenCode \u2014 14 specialized agents, TDD, Themis review gates.",
+  "version": "1.2.1",
+  "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
@@ -15,7 +15,7 @@
     "opencode": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
     "start": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
     "prepublishOnly": "node scripts/validate-routing.mjs",
-    "postpublish": "node -e \"console.log('\u2705 Published pantheon-opencode v' + require('./package.json').version + ' to npm')\"",
+    "postpublish": "node -e \"console.log('✅ Published pantheon-opencode v' + require('./package.json').version + ' to npm')\"",
     "version:status": "node scripts/versioning.mjs status",
     "version:apply": "node scripts/versioning.mjs apply",
     "release:dry-run": "node scripts/versioning.mjs status && npm pack --dry-run",
@@ -23,6 +23,10 @@
     "lint": "npx biome ci .",
     "typecheck": "npx tsc --noEmit",
     "audit": "npm audit --audit-level=high",
+    "secret-scan": "node scripts/secret-scan.mjs",
+    "hooks:install": "pre-commit install",
+    "hooks:update": "pre-commit autoupdate",
+    "test:security": "npm run secret-scan && node tests/test_install_mcp_vision.mjs",
     "test": "python3 -m pytest tests/ -q 2>&1 || echo \"No tests found\"",
     "test:ci": "python3 -m pytest tests/ -q --tb=short 2>&1 || true"
   },
@@ -50,6 +54,7 @@
     "scripts/*.mjs",
     "src/mcp/*.sh",
     "src/routing.yml",
+    "src/pantheon/**",
     "src/mcp/requirements*",
     "src/plugins/tui/**",
     "src/skills/**"
@@ -60,7 +65,9 @@
   "devDependencies": {
     "@commitlint/cli": "^19.8.0",
     "@commitlint/config-conventional": "^19.8.0",
-    "husky": "^9.1.7"
+    "@opencode-ai/plugin": "1.18.11",
+    "husky": "^9.1.7",
+    "pantheon-opencode": "^1.2.0-beta.9.7bef03e"
   },
   "repository": {
     "type": "git",

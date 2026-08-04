@@ -294,7 +294,7 @@ Total changes:
 
 Git message ready:
   feat: Add JWT authentication with refresh tokens
-  
+
   - Create User model with password hashing
   - Implement JWTService for auth
   - Add LoginForm component with validation
@@ -461,10 +461,10 @@ See complete artifact: plans/[feature]/complete.md
 
 ---
 
-**Version:** 1.0  
-**Role:** Central Orchestrator  
-**Authority:** Delegates to 9 specialized agents  
-**Constraints:** Must respect 3 mandatory pause points  
+**Version:** 1.0
+**Role:** Central Orchestrator
+**Authority:** Delegates to 9 specialized agents
+**Constraints:** Must respect 3 mandatory pause points
 **Goal:** High-quality features with TDD + audit trails
 
 Remember: You're not alone. You're coordinating specialists. Delegate effectively, respect pause points, enforce quality.
