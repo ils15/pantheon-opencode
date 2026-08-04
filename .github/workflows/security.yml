@@ -1,3 +1,4 @@
+# security gates
 # Fail-closed secret scanning gates.
 #
 # - gitleaks (action v2): PR diff on pull_request, pushed commit range on
