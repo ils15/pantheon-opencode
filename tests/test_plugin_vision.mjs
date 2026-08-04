@@ -109,6 +109,70 @@ function makeTempDir() {
   return dir
 }
 
+// ─── Config hook: applies the active model preset (P1-1) ─────────────────
+// `init --preset` / `set-tier` only write .pantheon/active-preset.json; the
+// config hook must RESOLVE it and APPLY it (agent models / reasoning /
+// fallbacks + provider configs). Fail-safe: no active preset → no mutation.
+// The HOME candidate (~/.opencode/.pantheon/active-preset.json) is hermetic
+// here, so this exercises the real hook end-to-end without touching the repo.
+
+await (async () => {
+  const hooks = await makeHooks()
+  assert.equal(typeof hooks.config, 'function', 'config hook exposed')
+
+  // Fail-safe: no active preset anywhere → agents/providers untouched, but
+  // the plugin's own path wiring still happens.
+  await withEnv('PANTHEON_MODEL_PRESET', undefined, async () => {
+    const config = { agent: { zeus: { model: 'custom/manual' } } }
+    await hooks.config(config)
+    assert.equal(config.agent.zeus.model, 'custom/manual', 'no preset → no model mutation')
+    assert.equal(config.provider, undefined, 'no preset → no provider injected')
+    assert.equal(config.agent.zeus.variant, undefined, 'no preset → no variant mutation')
+    assert.ok(
+      Array.isArray(config.agentsPath) && config.agentsPath.length > 0,
+      'agentsPath still appended',
+    )
+    assert.ok(
+      Array.isArray(config.skillsPaths) && config.skillsPaths.length > 0,
+      'skillsPaths still appended',
+    )
+  })
+
+  // Preset present (hermetic HOME candidate) → agents/providers applied.
+  await withEnv('PANTHEON_MODEL_PRESET', undefined, async () => {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'hook-key', async () => {
+      const presetDir = join(homeDir, '.opencode', '.pantheon')
+      mkdirSync(presetDir, { recursive: true })
+      writeFileSync(
+        join(presetDir, 'active-preset.json'),
+        JSON.stringify({ version: 1, preset: 'go-deepseek', source: 'cli' }),
+      )
+      try {
+        const config = {}
+        await hooks.config(config)
+        assert.equal(
+          config.agent.zeus.model,
+          'opencode/deepseek-v4-flash',
+          'preset applied to agent model',
+        )
+        assert.equal(config.agent.zeus.variant, 'medium', 'preset applied to reasoning effort')
+        assert.deepEqual(
+          config.agent.zeus.fallback_models,
+          ['opencode/mimo-v2.5'],
+          'preset applied to fallback models',
+        )
+        assert.equal(
+          config.provider.opencode.options.baseURL,
+          'https://opencode.ai/zen/v1',
+          'preset provider injected',
+        )
+      } finally {
+        rmSync(join(homeDir, '.opencode', '.pantheon'), { recursive: true, force: true })
+      }
+    })
+  })
+})()
+
 // ─── Mocks ─────────────────────────────────────────────────────────────────
 
 const imagePart = (overrides = {}) => ({

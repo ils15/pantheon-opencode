@@ -10,7 +10,7 @@
  */
 import { strict as assert } from 'node:assert'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1164,6 +1164,69 @@ test('T32: validator rejects vision model whose provider is not declared', () =>
     r.errors.some((e) => e.includes('vision') && e.includes('uses provider opencode-go')),
     JSON.stringify(r.errors),
   )
+})
+
+// ─── T33: applyActivePresetToConfig present → config applied ──────────
+// P1-1: the plugin config hook calls applyActivePresetToConfig so
+// `init --preset` / `set-tier` actually changes agent models, reasoning
+// effort and fallbacks at runtime — not just the marker file.
+test('T33: applyActivePresetToConfig resolves file + applies agents/providers', () => {
+  const dir = makeTmp()
+  mkdirSync(join(dir, '.pantheon'), { recursive: true })
+  writeFileSync(
+    presetFile(dir),
+    JSON.stringify({ version: 1, preset: 'go-deepseek', source: 'cli' }),
+  )
+  const config = {}
+  const resolved = presets.applyActivePresetToConfig(config, {
+    env: { PANTHEON_OPENCODE_API_KEY: 'k' },
+    candidates: [presetFile(dir)],
+    logger: silent,
+  })
+  assert.ok(resolved, 'resolved preset returned')
+  assert.equal(resolved.name, 'go-deepseek')
+  assert.equal(resolved.source, 'file')
+  // agents: model + reasoning effort (variant) + fallback_models
+  assert.equal(config.agent.zeus.model, 'opencode/deepseek-v4-flash')
+  assert.equal(config.agent.zeus.variant, 'medium')
+  assert.deepEqual(config.agent.zeus.fallback_models, ['opencode/mimo-v2.5'])
+  assert.equal(config.agent.athena.model, 'opencode/deepseek-v4-pro')
+  assert.equal(config.agent.athena.variant, 'high')
+  // providers injected from the preset def
+  assert.equal(config.provider.opencode.options.baseURL, 'https://opencode.ai/zen/v1')
+  assert.equal(config.provider.opencode.options.apiKey, 'k')
+})
+
+// ─── T34: applyActivePresetToConfig absent → no mutation ──────────────
+test('T34: applyActivePresetToConfig without preset leaves config untouched', () => {
+  const config = { agent: { zeus: { model: 'custom/manual' } }, provider: {} }
+  const snapshot = JSON.stringify(config)
+  const resolved = presets.applyActivePresetToConfig(config, {
+    env: {},
+    candidates: [join(makeTmp(), 'missing.json')],
+    logger: silent,
+  })
+  assert.equal(resolved, null)
+  assert.equal(JSON.stringify(config), snapshot, 'no mutation without a preset')
+})
+
+// ─── T35: applyActivePresetToConfig missing key → throws ──────────────
+test('T35: applyActivePresetToConfig throws PANTHEON_MISSING_API_KEY', () => {
+  const dir = makeTmp()
+  mkdirSync(join(dir, '.pantheon'), { recursive: true })
+  writeFileSync(
+    presetFile(dir),
+    JSON.stringify({ version: 1, preset: 'go-deepseek', source: 'cli' }),
+  )
+  let thrown = null
+  try {
+    presets.applyActivePresetToConfig({}, { env: {}, candidates: [presetFile(dir)], logger: silent })
+  } catch (e) {
+    thrown = e
+  }
+  assert.ok(thrown, 'missing key throws (hook catches + skips)')
+  assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
+  assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
 })
 
 // ─── Summary ───────────────────────────────────────────────────────────

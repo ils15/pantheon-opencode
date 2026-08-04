@@ -2,7 +2,8 @@ import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
-import { createVisionHandler } from './pantheon/vision.ts'
+import { applyActivePresetToConfig } from './pantheon/presets.mjs'
+import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
 
@@ -60,8 +61,26 @@ const plugin: Plugin = async (input: PluginInput) => {
       config.skillsPaths = config.skillsPaths ?? []
       config.skillsPaths.push(new URL('./skills', import.meta.url).pathname)
 
-      // Do not mutate OpenCode's model/provider defaults here. Presets are
-      // explicit CLI/configuration concerns, not a per-turn routing policy.
+      // Apply the active model preset (`init --preset` / `set-tier` write
+      // .pantheon/active-preset.json): resolve it with the SAME candidate
+      // order the vision handler uses (project > XDG > HOME) and mutate the
+      // agent models / reasoning effort / fallback models + provider configs.
+      // Fail-safe: without an active preset the config is untouched; a missing
+      // provider key is logged and skipped — the hook must never break startup
+      // (set-tier already fail-fast validates keys at write time). Vision
+      // rotation stays in vision.ts, which resolves its model independently.
+      try {
+        const resolved = applyActivePresetToConfig(config, {
+          candidates: activePresetCandidates(),
+        })
+        if (resolved) {
+          console.log(
+            `[Pantheon Plugin] Applied model preset: ${resolved.name} (${resolved.source})`,
+          )
+        }
+      } catch (err) {
+        console.warn(`[Pantheon Plugin] Active preset skipped: ${(err as Error).message}`)
+      }
     },
     'chat.message': vision.chatMessage,
     'experimental.chat.messages.transform': vision.messagesTransform,

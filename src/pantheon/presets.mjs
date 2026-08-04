@@ -344,6 +344,39 @@ export function applyPreset(config, resolved, { env = process.env } = {}) {
   return config
 }
 
+/**
+ * Resolve the active preset and apply it to an opencode config in ONE call —
+ * the entry point used by the plugin `config` hook (P1-1) and CLI flows.
+ *
+ * Fail-safe: without an active preset (env unset, no candidate file,
+ * "none") the config is returned UNMUTATED and null is returned. When a
+ * preset resolves but its provider key env var is missing, `applyPreset`
+ * throws PANTHEON_MISSING_API_KEY — the hook catches and skips.
+ *
+ * Default candidates mirror the plugin hook (project .pantheon file); the
+ * plugin passes the full project/XDG/HOME list via `activePresetCandidates`
+ * (vision.ts) for exact agreement with the native vision model resolution.
+ *
+ * @param {object} config opencode config object (mutated on success)
+ * @param {object} [opts]
+ * @param {Record<string, string|undefined>} [opts.env]
+ * @param {Array<string|null|undefined>} [opts.candidates]
+ * @param {string} [opts.routingPath]
+ * @param {{warn?: Function, log?: Function, error?: Function}} [opts.logger]
+ * @returns {ResolvedPreset|null}
+ */
+export function applyActivePresetToConfig(config, { env = process.env, candidates, routingPath, logger } = {}) {
+  const resolved = resolveActivePreset({
+    env,
+    candidates: candidates ?? [join(process.cwd(), '.pantheon', 'active-preset.json')],
+    routingPath,
+    logger,
+  })
+  if (!resolved) return null
+  applyPreset(config, resolved, { env })
+  return resolved
+}
+
 const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/.+$/
 
 /**

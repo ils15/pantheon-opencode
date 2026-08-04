@@ -82,6 +82,11 @@ export declare function loadPresetDefs(routingPath?: string): Record<string, Pre
 
 export declare function resolveActivePreset(options?: ResolveOptions): ResolvedPreset | null
 
+export declare function applyActivePresetToConfig<C extends object>(
+  config: C,
+  options?: ResolveOptions & { env?: Record<string, string | undefined> },
+): ResolvedPreset | null
+
 export interface MissingApiKeyError extends Error {
   code: 'PANTHEON_MISSING_API_KEY'
   envVar: string
