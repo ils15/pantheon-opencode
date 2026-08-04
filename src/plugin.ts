@@ -79,7 +79,10 @@ const plugin: Plugin = async (input: PluginInput) => {
           )
         }
       } catch (err) {
-        console.warn(`[Pantheon Plugin] Active preset skipped: ${(err as Error).message}`)
+        // Only the error name is logged — never the message, which may embed
+        // env var names (e.g. PANTHEON_OPENCODE_API_KEY) and trip CodeQL's
+        // clear-text logging taint analysis.
+        console.warn(`[Pantheon Plugin] Active preset skipped: ${(err as Error)?.name ?? 'error'}`)
       }
     },
     'chat.message': vision.chatMessage,
