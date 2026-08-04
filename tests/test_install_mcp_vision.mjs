@@ -16,6 +16,20 @@ assert.ok(opencodeInstaller.includes("join(ROOT, 'src', 'mcp', 'pantheon_vision_
 assert.ok(opencodeInstaller.includes("config.mcp['pantheon-vision']"))
 assert.ok(opencodeInstaller.includes("join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')"))
 assert.ok(opencodeInstaller.includes('const memoryPython = venvPython'))
+
+// P1-3: the MCP commands must point at the venv setupVenv ACTUALLY creates
+// (<target>/.venv), not <target>/.opencode/.venv (runtimeTarget for project
+// installs) — otherwise the MCP python executable does not exist on
+// init --project and every local MCP fails to launch.
+assert.ok(
+  opencodeInstaller.includes('venvPythonPath(target)'),
+  'installer derives the MCP venv python from the shared venvPythonPath(target) helper',
+)
+assert.equal(
+  opencodeInstaller.includes("join(runtimeTarget, '.venv'"),
+  false,
+  'MCP commands must never use runtimeTarget/.venv (project installs would miss the real venv)',
+)
 const visionConfig = opencodeInstaller.slice(
   opencodeInstaller.indexOf("config.mcp['pantheon-vision']"),
   opencodeInstaller.indexOf("config.mcp['pantheon-vision']") + 320,

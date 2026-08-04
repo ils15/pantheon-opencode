@@ -41,7 +41,7 @@ import {
   syncDir,
   writeIfChanged,
 } from './shared.mjs'
-import { setupVenv } from './venv.mjs'
+import { setupVenv, venvPythonPath } from './venv.mjs'
 
 const COMPONENT_NAMES = [
   'agents',
@@ -650,11 +650,13 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   if (componentSet.has('runtime')) {
     config.mcp = config.mcp || {}
+    // P1-3: derive the MCP python from the SAME venv layout setupVenv
+    // creates (<target>/.venv via venvPythonPath). For project installs the
+    // runtime payload lives under <target>/.opencode (runtimeTarget), but the
+    // venv is created at <target>/.venv — pointing MCP commands at
+    // runtimeTarget/.venv would reference an executable that never exists.
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
-    const venvPython =
-      process.platform === 'win32'
-        ? join(runtimeTarget, '.venv', 'Scripts', 'python.exe')
-        : join(runtimeTarget, '.venv', 'bin', 'python3')
+    const venvPython = venvPythonPath(target)
     // Point the config at the venv even on a first install; setupVenv runs
     // later in this function and creates this path before OpenCode starts.
     const memoryPython = venvPython

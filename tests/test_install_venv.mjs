@@ -91,6 +91,25 @@ test('setupVenv is a function', () => {
 })
 
 // ===================================================================
+// TEST 6: venvPythonPath mirrors the venv setupVenv actually creates
+// (P1-3). Project installs keep the venv at <target>/.venv — NOT
+// <target>/.opencode/.venv — so MCP commands derived from
+// venvPythonPath(target) always point at an executable that exists.
+// ===================================================================
+test('venvPythonPath points at the real venv under target/.venv', () => {
+  const { venvPythonPath } = ORIG
+  assert.equal(typeof venvPythonPath, 'function')
+  const p = venvPythonPath('/proj')
+  assert.ok(p.startsWith('/proj/.venv/'), `venv lives under target/.venv: ${p}`)
+  assert.ok(
+    p.endsWith(process.platform === 'win32' ? 'python.exe' : 'python3'),
+    `python binary name: ${p}`,
+  )
+  assert.ok(!p.includes('/.opencode/'), 'venv is NOT nested under .opencode (runtimeTarget)')
+  assert.equal(venvPythonPath('/proj'), venvPythonPath('/proj'), 'deterministic per target')
+})
+
+// ===================================================================
 // Summary
 // ===================================================================
 const passed = results.filter(r => r.passed).length
