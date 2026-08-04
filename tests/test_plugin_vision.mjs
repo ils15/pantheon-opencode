@@ -428,6 +428,55 @@ await (async () => {
   assert.equal(existsSync(VISION_DIR), false, 'no temp copy for http')
 })()
 
+// ─── P2-1: file:// URLs decode %20 + Windows forms (fileURLToPath) ─────────
+// A raw slice('file://') keeps the literal %20 in the path, so reading a
+// file whose name has a space fails. fileURLToPath decodes percent-encoding
+// and normalizes Windows drive-letter URLs.
+
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  const spacedPath = join(tmpdir(), `pantheon spaced ${Date.now()}.png`)
+  writeFileSync(spacedPath, 'png-bytes')
+  // encodeURI (not encodeURIComponent): preserves the file:/// path slashes.
+  const url = `file://${encodeURI(spacedPath)}`
+  assert.ok(url.includes('%20'), 'fixture URL is percent-encoded')
+  assert.ok(url.includes('file:///'), 'fixture keeps the file:/// triple slash')
+
+  // tool pattern: the injected path must be the DECODED one (real space).
+  const hooks = await makeHooks()
+  const output = await runTurn(hooks, [imagePart({ url })])
+  const injected = injectedText(output.parts)
+  assert.ok(injected.includes(spacedPath), 'injection uses the decoded path (real space)')
+  assert.equal(injected.includes('%20'), false, 'no literal %20 in the injected path')
+
+  // native pattern: the gateway payload must READ the decoded bytes — a
+  // literal %20 path would make readFile fail and skip the native call.
+  const mock = installFetchMock(() => okJson('decoded file read'))
+  try {
+    await withEnv('PANTHEON_OPENCODE_API_KEY', 'test-key-123', async () => {
+      const hooks2 = await makeHooks()
+      await runTurn(hooks2, [imagePart({ url })])
+    })
+    assert.equal(mock.calls.length, 1, 'native call succeeded reading the decoded file')
+    const payload = bodyOf(mock.calls[0]).messages[0].content[1].image_url.url
+    assert.ok(payload.startsWith('data:image/png;base64,'), 'decoded file bytes converted')
+  } finally {
+    mock.restore()
+  }
+  rmSync(spacedPath, { force: true })
+
+  // Windows-style file URL: drive-letter form preserved, %20 decoded.
+  const winUrl = 'file:///C:/Users/me/my%20screen.png'
+  const winHooks = await makeHooks()
+  const winOut = await runTurn(winHooks, [imagePart({ url: winUrl })])
+  const winInjected = injectedText(winOut.parts)
+  assert.equal(winInjected.includes('%20'), false, 'Windows URL decoded (no %20)')
+  assert.ok(
+    winInjected.includes('C:/Users/me/my screen.png'),
+    'Windows drive-letter path preserved with space decoded',
+  )
+})()
+
 // ─── Test 4: removes image FileParts, preserves user text parts ────────────
 
 await (async () => {

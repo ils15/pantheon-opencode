@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Hooks, PluginInput } from '@opencode-ai/plugin'
 import type { FilePart, Part, TextPart, UserMessage } from '@opencode-ai/sdk'
 import type { ResolvedPreset } from './presets.mjs'
@@ -434,7 +435,15 @@ async function resolveImageTarget(filePart: FilePart): Promise<SavedImage | null
   const url = filePart.url
   if (!url) return null
   if (url.startsWith('file://')) {
-    return { path: url.slice('file://'.length), partId: filePart.id, temporary: false }
+    // fileURLToPath decodes percent-encoding (file:///tmp/my%20screen.png →
+    // /tmp/my screen.png) and normalizes Windows drive-letter URLs
+    // (file:///C:/... → C:\... on Windows). A raw slice('file://') would
+    // keep the literal %20 in the path, so reading the file would fail.
+    try {
+      return { path: fileURLToPath(url), partId: filePart.id, temporary: false }
+    } catch {
+      return null // malformed file URL → unresolvable
+    }
   }
   if (url.startsWith('data:')) {
     const path = await saveDataUrlImage(url, filePart.mime)
