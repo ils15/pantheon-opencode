@@ -986,7 +986,43 @@ export function buildStructuredInjection(
 
 // ─── Tool name resolution ──────────────────────────────────────────────────
 // env PANTHEON_VISION_TOOL > config imageAnalysisTool > dynamic detection
-// (prefer the canonical Pantheon MCP) > canonical Pantheon MCP default.
+// (prefer the canonical Pantheon MCP) > canonical Pantheon MCP default —
+// but ONLY when real evidence says the MCP is available (P2-3).
+
+/**
+ * Real evidence that the pantheon-vision MCP is available at runtime:
+ *  - its tools appear in client.tool.ids() (direct), OR
+ *  - client.mcp.status() lists it with status 'connected' (registration).
+ * With --no-mcp / an uninstalled MCP there is NO such evidence, and
+ * defaulting to the canonical tool would make the model call a tool that
+ * does not exist — callers must return null instead ('Vision fallback
+ * unavailable').
+ */
+async function hasPantheonVisionMcp(
+  client: PluginInput['client'],
+  directory: string,
+): Promise<boolean> {
+  try {
+    const idsResponse = await client.tool?.ids?.({ query: { directory } })
+    const ids = idsResponse?.data
+    if (Array.isArray(ids) && ids.some((id) => isPantheonVisionServerTool(id))) return true
+  } catch {
+    // Fall through to the MCP status map.
+  }
+  try {
+    const mcpResponse = await client.mcp?.status?.({ query: { directory } })
+    const statuses = mcpResponse?.data
+    if (statuses && typeof statuses === 'object') {
+      for (const [name, status] of Object.entries(statuses)) {
+        if (!/[pP]antheon[-_]vision/.test(name)) continue
+        if ((status as { status?: string } | undefined)?.status === 'connected') return true
+      }
+    }
+  } catch {
+    // Fall through — no evidence.
+  }
+  return false
+}
 
 async function resolveImageAnalysisTool(
   client: PluginInput['client'],
@@ -1008,12 +1044,7 @@ async function resolveImageAnalysisTool(
         ids.find((id) => id === DEFAULT_IMAGE_ANALYSIS_TOOL) ??
         ids.find((id) => isPantheonVisionServerTool(id) && isPantheonVisionActionTool(id)) ??
         ids.find((id) => isPantheonVisionServerTool(id) && /describe/i.test(id))
-      // OpenCode 1.18.11 keeps MCP tools in the MCP service, NOT in
-      // client.tool.ids() — an empty/absent list is the NORMAL runtime state,
-      // so it must resolve to the canonical default tool instead of the
-      // 'Vision fallback unavailable' message. Only a thrown exception (the
-      // detection genuinely failed) returns null below.
-      return match ?? DEFAULT_IMAGE_ANALYSIS_TOOL
+      if (match) return match
     }
   } catch {
     // Detection failed (network/MCP error). Returning null keeps the explicit
@@ -1023,7 +1054,14 @@ async function resolveImageAnalysisTool(
     // real detection failures behind a tool name the model might not have.
     return null
   }
-  return DEFAULT_IMAGE_ANALYSIS_TOOL
+  // OpenCode 1.18.11 keeps MCP tools in the MCP service, NOT in
+  // client.tool.ids() — an empty/absent list is the NORMAL runtime state, so
+  // fall back to the canonical default ONLY when there is independent
+  // evidence the pantheon-vision MCP is installed and connected. Without it
+  // (--no-mcp, uninstalled, disabled) instructing the canonical tool would
+  // fail the turn with a phantom tool — return null instead.
+  const available = await hasPantheonVisionMcp(client, directory)
+  return available ? DEFAULT_IMAGE_ANALYSIS_TOOL : null
 }
 
 // ─── Temp image lifecycle ──────────────────────────────────────────────────

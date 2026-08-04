@@ -205,7 +205,20 @@ const userMessage = (_parts, model, sessionID = 'session-1') => ({
 })
 
 async function makeHooks(client = {}, directory = '/tmp') {
-  return plugin({ client, directory, project: {}, worktree: '/tmp' })
+  // Default test environment: the pantheon-vision MCP IS installed and
+  // connected (normal install). Tests that simulate --no-mcp / an
+  // uninstalled MCP override with { mcp: null } to remove the evidence.
+  const defaultClient = {
+    mcp: {
+      status: async () => ({ data: { 'pantheon-vision': { status: 'connected' } } }),
+    },
+  }
+  return plugin({
+    client: { ...defaultClient, ...client },
+    directory,
+    project: {},
+    worktree: '/tmp',
+  })
 }
 
 /** Drive one chat.message turn through the hook and return the mutated output. */
@@ -1040,11 +1053,11 @@ await (async () => {
   }
 })()
 
-// ─── Test N3b: empty/absent tool.ids → canonical default (never unavailable) ─
+// ─── Test N3b: empty/absent tool.ids + MCP connected → canonical default ──
 // OpenCode 1.18.11 keeps MCP tools in the MCP service, NOT in
-// client.tool.ids() — an empty list is the NORMAL runtime state. It must
-// resolve to the canonical default tool, not the 'Vision fallback unavailable'
-// message.
+// client.tool.ids() — an empty list is the NORMAL runtime state. With real
+// evidence the pantheon-vision MCP is available (default mock: connected),
+// the canonical default tool is correct even when ids() lists nothing.
 await (async () => {
   const hooks = await makeHooks({ tool: { ids: async () => ({ data: [] }) } })
   const output = await runTurn(hooks, [imagePart()], {
@@ -1055,7 +1068,7 @@ await (async () => {
   assert.equal(JSON.stringify(output.parts).includes('image_url'), false)
   assert.ok(
     injectedText(output.parts).includes('pantheon_vision_vision_describe'),
-    'empty tool.ids list → canonical default tool',
+    'empty tool.ids + MCP connected → canonical default tool',
   )
   assert.match(injectedText(output.parts), /pantheon_vision_vision_describe/)
 })()
@@ -1078,7 +1091,7 @@ await (async () => {
   assert.match(injectedText(output.parts), /vision fallback unavailable/i)
 })()
 
-// ─── Test N3d: tool.ids resolves but data is undefined → canonical default ──
+// ─── Test N3d: ids data undefined + MCP connected → canonical default ──
 await (async () => {
   const hooks = await makeHooks({ tool: { ids: async () => ({ data: undefined }) } })
   const output = await runTurn(hooks, [imagePart()], {
@@ -1089,7 +1102,51 @@ await (async () => {
   assert.equal(JSON.stringify(output.parts).includes('image_url'), false)
   assert.ok(
     injectedText(output.parts).includes('pantheon_vision_vision_describe'),
-    'undefined ids data → canonical default tool',
+    'undefined ids data + MCP connected → canonical default tool',
+  )
+})()
+
+// ─── Test N3e: NO MCP evidence → null ('Vision fallback unavailable') ──────
+// P2-3: with --no-mcp / an uninstalled MCP there is no evidence the
+// pantheon-vision MCP exists (no tool ids, no mcp.status entry). Defaulting
+// to the canonical tool would instruct the model to call a tool that does
+// not exist — return null so the safe failure message is used instead.
+await (async () => {
+  const hooks = await makeHooks({ mcp: null }) // simulate --no-mcp / no MCP
+  const output = await runTurn(hooks, [imagePart()], {
+    providerID: 'opencode-go',
+    modelID: 'deepseek-v4-flash',
+  })
+  assert.equal(output.parts.some(isImageFilePart), false, 'image still removed safely')
+  assert.equal(JSON.stringify(output.parts).includes('image_url'), false)
+  assert.match(
+    injectedText(output.parts),
+    /vision fallback unavailable/i,
+    'no MCP evidence → explicit unavailable message, not a phantom tool name',
+  )
+  assert.equal(
+    injectedText(output.parts).includes('pantheon_vision_vision_describe'),
+    false,
+    'no MCP evidence → canonical tool NOT instructed',
+  )
+})()
+
+// ─── Test N3f: mcp.status reports disabled → null (not available) ──────────
+await (async () => {
+  const hooks = await makeHooks({
+    mcp: {
+      status: async () => ({ data: { 'pantheon-vision': { status: 'disabled' } } }),
+    },
+  })
+  const output = await runTurn(hooks, [imagePart()], {
+    providerID: 'opencode-go',
+    modelID: 'deepseek-v4-flash',
+  })
+  assert.equal(output.parts.some(isImageFilePart), false, 'image still removed safely')
+  assert.match(
+    injectedText(output.parts),
+    /vision fallback unavailable/i,
+    'disabled MCP → no default tool',
   )
 })()
 
