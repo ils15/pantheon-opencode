@@ -1229,6 +1229,58 @@ test('T35: applyActivePresetToConfig throws PANTHEON_MISSING_API_KEY', () => {
   assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
 })
 
+// ─── T36: visionBrokenOnGateway (P2-2) ──────────────────────────────────
+// qwen3.7-plus is vision:true per models.dev but image turns through the
+// OpenCode Go gateway return HTTP 500 — the runtime decision must treat it
+// as text-only (intercepted → minimax fallback), scoped to the gateway
+// provider. hasVision() stays true per models.dev.
+test('T36: visionBrokenOnGateway flags qwen3.7-plus on opencode-go only', () => {
+  assert.equal(
+    presets.visionBrokenOnGateway('opencode-go/qwen3.7-plus', 'opencode-go'),
+    true,
+    'qwen3.7-plus broken on the Go gateway',
+  )
+  assert.equal(
+    presets.visionBrokenOnGateway('opencode-go/minimax-m3', 'opencode-go'),
+    false,
+    'minimax-m3 confirmed multimodal on the Go gateway',
+  )
+  assert.equal(
+    presets.visionBrokenOnGateway('opencode-go/qwen3.7-max', 'opencode-go'),
+    false,
+    'qwen3.7-max is text-only anyway, not in the broken-vision set',
+  )
+  // provider-scoped: the breakage is specific to the Go gateway
+  assert.equal(
+    presets.visionBrokenOnGateway('opencode-go/qwen3.7-plus', 'opencode'),
+    false,
+    'not broken on the Zen (opencode) provider',
+  )
+  assert.equal(
+    presets.visionBrokenOnGateway('opencode-go/qwen3.7-plus', 'anthropic'),
+    false,
+    'not broken on unrelated providers',
+  )
+})
+
+// ─── T37: hasVision keeps models.dev truth; gateway decision is separate ─
+test('T37: hasVision stays true for qwen3.7-plus; visionBrokenOnGateway is runtime', () => {
+  assert.equal(presets.hasVision('opencode-go/qwen3.7-plus'), true, 'models.dev says multimodal')
+  assert.equal(
+    presets.visionBrokenOnGateway('opencode-go/qwen3.7-plus', 'opencode-go'),
+    true,
+    'runtime says intercept (gateway 500)',
+  )
+  assert.ok(
+    presets.GATEWAY_BROKEN_VISION_MODELS instanceof Set,
+    'broken set exported for runtime decisions',
+  )
+  assert.ok(
+    presets.GATEWAY_BROKEN_VISION_MODELS.has('qwen3.7-plus'),
+    'qwen3.7-plus listed in the broken-vision set',
+  )
+})
+
 // ─── Summary ───────────────────────────────────────────────────────────
 const passed = results.filter((r) => r.passed).length
 const failed = results.filter((r) => !r.passed)

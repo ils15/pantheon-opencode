@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import type { Hooks, PluginInput } from '@opencode-ai/plugin'
 import type { FilePart, Part, TextPart, UserMessage } from '@opencode-ai/sdk'
 import type { ResolvedPreset } from './presets.mjs'
-import { hasVision, resolveActivePreset } from './presets.mjs'
+import { hasVision, resolveActivePreset, visionBrokenOnGateway } from './presets.mjs'
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -125,7 +125,13 @@ export type VisionMode = 'native' | 'tool' | 'auto'
 export function modelAcceptsImages(model: ModelInfo | undefined): boolean {
   if (!model) return true
   try {
-    return hasVision(`${model.providerID}/${model.modelID}`)
+    const id = `${model.providerID}/${model.modelID}`
+    // Provider/gateway-aware: a model can be vision-capable per models.dev
+    // yet BROKEN on its runtime gateway (qwen3.7-plus on opencode-go returns
+    // HTTP 500 on image turns). Such models are treated as text-only so the
+    // image is intercepted and routed to the multimodal fallback instead of
+    // being sent directly to the gateway.
+    return hasVision(id) && !visionBrokenOnGateway(id, model.providerID)
   } catch {
     // Unknown providers/models should retain OpenCode's native behavior.
     return true

@@ -78,6 +78,10 @@ export declare function normalizeCapability(
 
 export declare function hasVision(model: string): boolean
 
+export declare const GATEWAY_BROKEN_VISION_MODELS: Set<string>
+
+export declare function visionBrokenOnGateway(model: string, providerID: string): boolean
+
 export declare function loadPresetDefs(routingPath?: string): Record<string, PresetDef>
 
 export declare function resolveActivePreset(options?: ResolveOptions): ResolvedPreset | null

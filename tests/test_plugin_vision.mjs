@@ -44,6 +44,7 @@ import {
   isImageFilePart,
   matchesModelPattern,
   matchesWildcardPattern,
+  modelAcceptsImages,
   modelMatchesAnyPattern,
   parseStructuredVisionResponse,
   readOpencodeAuthToken,
@@ -748,6 +749,69 @@ await (async () => {
   assert.equal(existsSync(dir), true, 'temp dir survives cleanup (no rm -rf)')
   assert.equal(existsSync(orphan), false, 'aged orphan file swept')
   rmSync(dir, { recursive: true, force: true })
+})()
+// ─── P2-2: gateway-broken vision models (qwen3.7-plus) are intercepted ────
+// qwen3.7-plus is vision:true per models.dev but image turns through the
+// OpenCode Go gateway return HTTP 500 (opencode#33942/#29956). The runtime
+// decision must be provider/gateway-aware: broken-on-gateway models are
+// treated as TEXT-ONLY (intercepted → minimax fallback), confirmed
+// multimodal models keep the native bypass.
+
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+
+  // qwen3.7-plus on opencode-go: intercepted like a text-only model — the
+  // image is removed and never reaches the provider directly.
+  const broken = await runTurn(await makeHooks(), [imagePart()], {
+    providerID: 'opencode-go',
+    modelID: 'qwen3.7-plus',
+  })
+  assert.equal(
+    broken.parts.some(isImageFilePart),
+    false,
+    'qwen3.7-plus intercepted (gateway-broken vision)',
+  )
+  assert.equal(JSON.stringify(broken.parts).includes('image_url'), false)
+
+  // minimax-m3: confirmed multimodal on the Go gateway → native bypass stays.
+  const ok = await runTurn(await makeHooks(), [imagePart()], {
+    providerID: 'opencode-go',
+    modelID: 'minimax-m3',
+  })
+  assert.equal(ok.parts.some(isImageFilePart), true, 'minimax-m3 keeps the native bypass')
+
+  // qwen3.7-plus on a NON-gateway provider is not intercepted by this rule.
+  const otherProvider = await runTurn(await makeHooks(), [imagePart()], {
+    providerID: 'opencode',
+    modelID: 'qwen3.7-plus',
+  })
+  assert.equal(
+    otherProvider.parts.some(isImageFilePart),
+    true,
+    'qwen3.7-plus on opencode (Zen) is not gateway-broken → bypass',
+  )
+
+  // unit: modelAcceptsImages reflects the gateway-aware decision
+  assert.equal(
+    modelAcceptsImages({ providerID: 'opencode-go', modelID: 'qwen3.7-plus' }),
+    false,
+    'unit: qwen3.7-plus rejected (gateway 500)',
+  )
+  assert.equal(
+    modelAcceptsImages({ providerID: 'opencode-go', modelID: 'minimax-m3' }),
+    true,
+    'unit: minimax-m3 accepted',
+  )
+  assert.equal(
+    modelAcceptsImages({ providerID: 'opencode-go', modelID: 'deepseek-v4-flash' }),
+    false,
+    'unit: text-only deepseek rejected',
+  )
+  assert.equal(
+    modelAcceptsImages({ providerID: 'opencode', modelID: 'qwen3.7-plus' }),
+    true,
+    'unit: qwen3.7-plus accepted outside the Go gateway',
+  )
 })()
 
 // ─── Test 8: native-vision model not intercepted (wildcard config) ─────────

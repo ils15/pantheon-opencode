@@ -161,6 +161,33 @@ export function hasVision(model) {
 }
 
 /**
+ * Models that ARE vision-capable per models.dev but whose image turns FAIL
+ * on the OpenCode Go gateway (HTTP 500 — opencode#33942 + opencode#29956).
+ * Runtime image routing treats them as TEXT-ONLY so image turns are
+ * intercepted and routed to the confirmed multimodal fallback (minimax-m3)
+ * instead of being sent directly to the gateway. Keyed by the model segment
+ * (after the last '/') so bare and provider-qualified IDs both match.
+ */
+export const GATEWAY_BROKEN_VISION_MODELS = new Set(['qwen3.7-plus'])
+
+/**
+ * Whether a model's image input is BROKEN on the given provider's runtime
+ * gateway — vision per models.dev, but image turns fail. Provider-scoped:
+ * only the OpenCode Go gateway (opencode-go) has a documented breakage; the
+ * same model elsewhere (Zen free `opencode`, anthropic, openai) keeps its
+ * native bypass.
+ *
+ * @param {string} model model ID (e.g. "opencode-go/qwen3.7-plus")
+ * @param {string} providerID provider the model runs on
+ * @returns {boolean}
+ */
+export function visionBrokenOnGateway(model, providerID) {
+  if (!/^opencode-go$/.test(providerID ?? '')) return false
+  const segment = model.slice(model.lastIndexOf('/') + 1)
+  return GATEWAY_BROKEN_VISION_MODELS.has(segment)
+}
+
+/**
  * Load preset definitions from routing.yml (top-level `presets:` key).
  *
  * @param {string} [routingPath] defaults to src/routing.yml
