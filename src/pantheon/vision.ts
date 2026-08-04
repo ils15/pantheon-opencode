@@ -1067,16 +1067,25 @@ async function resolveImageAnalysisTool(
 // ─── Temp image lifecycle ──────────────────────────────────────────────────
 
 /**
- * Age-guarded cleanup of a session's temp images.
+ * Age-guarded, REFCOUNTED cleanup of a session's temp images.
  *
  * A `session.idle` can fire between auto-continue turns — not just at real
  * session end — so a temp file referenced by the next turn (seconds old) must
  * survive. Only paths older than `graceMs` are unlinked; younger paths stay
  * registered and are swept by the next idle. `server.instance.disposed` and
  * `session.deleted` pass `graceMs = 0` to unlink everything while the session
- * is gone / process is dying. The temp directory itself is never removed: it
- * may hold files from other sessions or processes. The session's description
- * cache is always dropped (cache is per-session state).
+ * is gone / process is dying.
+ *
+ * Content-hash filenames dedup identical images ACROSS sessions: two sessions
+ * can reference the SAME path. `tempFileRefs` (path → set of sessions) makes
+ * the unlink decision reference-aware — the file is only unlinked when the
+ * LAST referencing session releases it; otherwise the other session's MCP
+ * tool call would hit file-not-found (P2-4). When `tempFileRefs` is omitted
+ * (legacy callers) the unconditional behavior is kept.
+ *
+ * The temp directory itself is never removed: it may hold files from other
+ * sessions or processes. The session's description cache is always dropped
+ * (cache is per-session state).
  */
 export async function cleanupSessionTempImages(
   sessionTempFiles: Map<string, Map<string, number>>,
@@ -1085,6 +1094,7 @@ export async function cleanupSessionTempImages(
   sessionID: string,
   graceMs: number = TEMP_FILE_GRACE_MS,
   sessionDescriptionCache?: Map<string, Map<string, DescriptionCacheEntry>>,
+  tempFileRefs?: Map<string, Set<string>>,
 ): Promise<void> {
   const files = sessionTempFiles.get(sessionID)
   if (files) {
@@ -1094,6 +1104,17 @@ export async function cleanupSessionTempImages(
       // dying); a positive grace skips files younger than the threshold so the
       // next auto-continue turn can still read them.
       if (graceMs > 0 && now - createdAt <= graceMs) continue
+      const refs = tempFileRefs?.get(path)
+      if (refs) {
+        refs.delete(sessionID)
+        // Another session still references this content-hash path: keep the
+        // file on disk and drop this session's tracking of it.
+        if (refs.size > 0) {
+          files.delete(path)
+          continue
+        }
+        tempFileRefs.delete(path)
+      }
       try {
         await unlink(path)
       } catch {
@@ -1184,6 +1205,10 @@ export function sanitizeVisionHistory(
 export function createVisionHandler(input: PluginInput) {
   const { client, directory } = input
   const sessionTempFiles = new Map<string, Map<string, number>>()
+  // Content-hash dedup makes identical images share one path ACROSS sessions;
+  // this map (path → sessions holding it) makes cleanup reference-aware so a
+  // file is only unlinked when the LAST session releases it (P2-4).
+  const tempFileRefs = new Map<string, Set<string>>()
   const sessionVisionText = new Map<string, Map<string, string>>()
   const nativeVisionSessions = new Set<string>()
   const sessionDescriptionCache = new Map<string, Map<string, DescriptionCacheEntry>>()
@@ -1252,7 +1277,17 @@ export function createVisionHandler(input: PluginInput) {
       if (tempPaths.length > 0) {
         const createdAt = Date.now()
         const existing = sessionTempFiles.get(hookInput.sessionID) ?? new Map<string, number>()
-        for (const path of tempPaths) existing.set(path, createdAt)
+        for (const path of tempPaths) {
+          existing.set(path, createdAt)
+          // Track the session as a holder of this (content-hash) path so
+          // cleanup only unlinks when the LAST holder releases it.
+          let refs = tempFileRefs.get(path)
+          if (!refs) {
+            refs = new Set()
+            tempFileRefs.set(path, refs)
+          }
+          refs.add(hookInput.sessionID)
+        }
         sessionTempFiles.set(hookInput.sessionID, existing)
       }
 
@@ -1352,10 +1387,12 @@ export function createVisionHandler(input: PluginInput) {
           sessionID,
           TEMP_FILE_GRACE_MS,
           sessionDescriptionCache,
+          tempFileRefs,
         )
     } else if (ev.type === 'session.deleted') {
       // The session is gone for good: no active turn can reference its temp
       // images, so unlink them all immediately and drop its cached state.
+      // Shared paths survive while another session still references them.
       const sessionID = ev.properties.info.id
       await cleanupSessionTempImages(
         sessionTempFiles,
@@ -1364,6 +1401,7 @@ export function createVisionHandler(input: PluginInput) {
         sessionID,
         0,
         sessionDescriptionCache,
+        tempFileRefs,
       )
     } else if (ev.type === 'server.instance.disposed') {
       const sessions = [...sessionTempFiles.keys()]
@@ -1375,6 +1413,7 @@ export function createVisionHandler(input: PluginInput) {
           sessionID,
           0, // The process is dying: unlink everything immediately.
           sessionDescriptionCache,
+          tempFileRefs,
         )
       }
       sessionVisionText.clear()

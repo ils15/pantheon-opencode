@@ -1713,11 +1713,117 @@ await (async () => {
   }
 })()
 
-// ─── Melhoria 2: content-hash filenames + LRU temp cap ─────────────────────
-// saveDataUrlImage names files by sha256(content) instead of randomUUID, so
-// identical re-pasted images reuse one file. A global LRU (cap TEMP_MAX_FILES)
-// unlinks the least-recently-used files beyond the cap, but never a young file
-// (TEMP_FILE_GRACE_MS) and never the directory itself.
+// ─── P2-4: shared temp images are refcounted per session ─────────────────
+// Content-hash filenames dedup identical images across sessions: two
+// sessions can reference the SAME path. Cleanup must unlink only when the
+// LAST session releases the path — otherwise one session's cleanup deletes
+// the file the other session's MCP tool call still needs (file-not-found).
+
+// Unit: refcount map (path → sessions) drives the unlink decision.
+await (async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-refcount-'))
+  const shared = join(dir, 'shared.png')
+  writeFileSync(shared, 'bytes')
+  const now = Date.now()
+  const s1Files = new Map([[shared, now - TEMP_FILE_GRACE_MS - 5000]])
+  const s2Files = new Map([[shared, now - TEMP_FILE_GRACE_MS - 5000]])
+  const sessionTempFiles = new Map([
+    ['s1', s1Files],
+    ['s2', s2Files],
+  ])
+  const refs = new Map([
+    [shared, new Set(['s1', 's2'])],
+  ])
+
+  // s1 releases → still referenced by s2 → file stays on disk.
+  await cleanupSessionTempImages(
+    sessionTempFiles,
+    new Map(),
+    new Set(),
+    's1',
+    TEMP_FILE_GRACE_MS,
+    undefined,
+    refs,
+  )
+  assert.equal(existsSync(shared), true, 'file survives when another session still references it')
+  assert.deepEqual([...refs.get(shared)], ['s2'], 's1 ref released, s2 remains')
+  assert.equal(s1Files.has(shared), false, 's1 path entry dropped after release')
+
+  // s2 releases → LAST ref → file unlinked + refcount entry removed.
+  await cleanupSessionTempImages(
+    sessionTempFiles,
+    new Map(),
+    new Set(),
+    's2',
+    TEMP_FILE_GRACE_MS,
+    undefined,
+    refs,
+  )
+  assert.equal(existsSync(shared), false, 'file unlinked when the LAST session releases')
+  assert.equal(refs.has(shared), false, 'refcount entry removed after final release')
+
+  // Grace period preserved: a young file survives even a last-session sweep.
+  const young = join(dir, 'young.png')
+  writeFileSync(young, 'bytes')
+  const refsYoung = new Map([[young, new Set(['s3'])]])
+  await cleanupSessionTempImages(
+    new Map([['s3', new Map([[young, now]])]]),
+    new Map(),
+    new Set(),
+    's3',
+    TEMP_FILE_GRACE_MS,
+    undefined,
+    refsYoung,
+  )
+  assert.equal(existsSync(young), true, 'young file survives idle (grace) with refcount active')
+  assert.deepEqual([...refsYoung.get(young)], ['s3'], 'young file keeps its ref for the next idle')
+  rmSync(dir, { recursive: true, force: true })
+})()
+
+// Integration: two sessions share one temp file; deleting one session keeps
+// the file, deleting the last session removes it.
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  tempFileLRU.clear()
+  const hooks = await makeHooks()
+  await runTurn(hooks, [imagePart()], undefined, 'session-shared-a')
+  await runTurn(hooks, [imagePart()], undefined, 'session-shared-b')
+  const files = readdirSync(VISION_DIR)
+  assert.equal(files.length, 1, 'two sessions share ONE temp file (content-hash dedup)')
+  const sharedPath = join(VISION_DIR, files[0])
+
+  const deleteSession = (sessionID) =>
+    hooks.event({
+      event: {
+        type: 'session.deleted',
+        properties: {
+          info: {
+            id: sessionID,
+            projectID: 'p',
+            directory: '/tmp',
+            title: 't',
+            version: '1',
+            time: { created: 0, updated: 0 },
+          },
+        },
+      },
+    })
+
+  await deleteSession('session-shared-a')
+  assert.equal(
+    existsSync(sharedPath),
+    true,
+    'first session delete keeps the shared file (still referenced)',
+  )
+  await deleteSession('session-shared-b')
+  assert.equal(
+    existsSync(sharedPath),
+    false,
+    'last session delete unlinks the shared file',
+  )
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  tempFileLRU.clear()
+})()
 
 // P1-2: temp images are PRIVATE — screenshots may hold sensitive content.
 // The dir must be 0700 and the file 0600 EVEN under a permissive umask
