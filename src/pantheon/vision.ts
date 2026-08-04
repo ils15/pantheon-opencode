@@ -1105,7 +1105,7 @@ export async function cleanupSessionTempImages(
       // next auto-continue turn can still read them.
       if (graceMs > 0 && now - createdAt <= graceMs) continue
       const refs = tempFileRefs?.get(path)
-      if (refs) {
+      if (refs && tempFileRefs) {
         refs.delete(sessionID)
         // Another session still references this content-hash path: keep the
         // file on disk and drop this session's tracking of it.

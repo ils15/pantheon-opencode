@@ -392,7 +392,10 @@ export function applyPreset(config, resolved, { env = process.env } = {}) {
  * @param {{warn?: Function, log?: Function, error?: Function}} [opts.logger]
  * @returns {ResolvedPreset|null}
  */
-export function applyActivePresetToConfig(config, { env = process.env, candidates, routingPath, logger } = {}) {
+export function applyActivePresetToConfig(
+  config,
+  { env = process.env, candidates, routingPath, logger } = {},
+) {
   const resolved = resolveActivePreset({
     env,
     candidates: candidates ?? [join(process.cwd(), '.pantheon', 'active-preset.json')],

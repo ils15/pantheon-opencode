@@ -113,7 +113,11 @@ export function setupVenv(target, { dryRun = false, skipInstall = false, force =
         if (r2.status !== 0) {
           throw new Error(
             'Failed to install MCP dependencies. ' +
-            'Try: PIP_USER=0 ' + pip + ' install -r ' + reqFile + ' --break-system-packages'
+              'Try: PIP_USER=0 ' +
+              pip +
+              ' install -r ' +
+              reqFile +
+              ' --break-system-packages',
           )
         }
       }
