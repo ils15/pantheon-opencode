@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Hooks, PluginInput } from '@opencode-ai/plugin'
@@ -415,11 +415,16 @@ export async function saveDataUrlImage(dataUrl: string, mime: string): Promise<s
   const data = Buffer.from(match[2] ?? '', 'base64')
   if (data.length === 0) return null
   const dir = join(tmpdir(), TEMP_DIR_NAME)
-  await mkdir(dir, { recursive: true })
+  // Screenshots may hold sensitive content: force private modes even under a
+  // permissive umask. mkdir/writeFile honor the umask, so chmod is applied
+  // AFTER creation to guarantee 0700/0600 regardless of the environment.
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  await chmod(dir, 0o700)
   // Content-hash filename: identical re-pasted images reuse the same file
   // (dedup — less disk, and it stabilizes the per-image description cache).
   const filePath = join(dir, `${hashContent(data)}.${getExtensionForMime(mime)}`)
-  if (!existsSync(filePath)) await writeFile(filePath, data)
+  if (!existsSync(filePath)) await writeFile(filePath, data, { mode: 0o600 })
+  await chmod(filePath, 0o600)
   touchTempFile(filePath)
   await enforceTempFileCap()
   return filePath

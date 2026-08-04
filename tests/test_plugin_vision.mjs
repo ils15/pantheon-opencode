@@ -11,7 +11,7 @@
  */
 import { strict as assert } from 'node:assert'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -1548,6 +1548,30 @@ await (async () => {
 // identical re-pasted images reuse one file. A global LRU (cap TEMP_MAX_FILES)
 // unlinks the least-recently-used files beyond the cap, but never a young file
 // (TEMP_FILE_GRACE_MS) and never the directory itself.
+
+// P1-2: temp images are PRIVATE — screenshots may hold sensitive content.
+// The dir must be 0700 and the file 0600 EVEN under a permissive umask
+// (chmod is applied after creation precisely to beat the umask).
+await (async () => {
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  tempFileLRU.clear()
+  const path = await saveDataUrlImage('data:image/png;base64,ZmFrZQ==', 'image/png')
+  assert.ok(path, 'temp file saved')
+  const dirMode = statSync(VISION_DIR).mode & 0o777
+  const fileMode = statSync(path).mode & 0o777
+  assert.equal(dirMode, 0o700, `temp dir must be 0700 (got 0${dirMode.toString(8)})`)
+  assert.equal(fileMode, 0o600, `temp file must be 0600 (got 0${fileMode.toString(8)})`)
+  // A second save (dedup path) must not loosen permissions either.
+  const again = await saveDataUrlImage('data:image/png;base64,ZmFrZQ==', 'image/png')
+  assert.equal(again, path, 'dedup reuses the same file')
+  assert.equal(
+    statSync(path).mode & 0o777,
+    0o600,
+    'existing temp file stays 0600 after re-save',
+  )
+  rmSync(VISION_DIR, { recursive: true, force: true })
+  tempFileLRU.clear()
+})()
 
 // Dedup + extension + sha256 filename shape.
 await (async () => {
