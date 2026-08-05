@@ -207,7 +207,7 @@ async function detectVersion(api: TuiPluginApi): Promise<string | null> {
         .trim()
         .replace(/^v/, '')
         .replace(/-\d+-g[0-9a-f]+$/, '')
-      if (tag && tag !== '5.0.0') return tag
+      if (tag) return tag
     }
   } catch {
     /* fall through */
