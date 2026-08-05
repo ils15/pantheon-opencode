@@ -114,6 +114,10 @@ export function runHook(
       timeout,
       killSignal: 'SIGKILL' as const,
       env: hookEnv(payload, opts.env),
+      // stdio:'pipe' is equivalent to ['pipe','pipe','pipe'] — it guarantees
+      // the child's stdin is OUR pipe, NEVER the opencode TUI's terminal
+      // (which would leave `cat`-style hooks blocked reading forever and hit
+      // the opencode core hook timeout).
       stdio: 'pipe' as const,
       windowsHide: true,
       ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
@@ -172,7 +176,10 @@ export function runHook(
       })
     })
 
-    // Deliver the Claude Code protocol JSON on stdin.
+    // Deliver the Claude Code protocol JSON on stdin. stdin.end() runs
+    // UNCONDITIONALLY — even for an empty payload {} or a script that never
+    // reads stdin — so the child can never block waiting for input and hit
+    // the runtime hook timeout (reported as "Hook X timed out after 30000ms").
     child.stdin.write(JSON.stringify(payload))
     child.stdin.end()
   })

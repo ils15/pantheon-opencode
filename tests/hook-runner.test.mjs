@@ -158,3 +158,36 @@ test('runHook never throws on a script that reads no stdin (env protocol)', asyn
     rmSync(logDir, { recursive: true, force: true })
   }
 })
+
+// ─── regression: no stdin hang (runtime P0 report) ──────────────────────
+
+test('regression: validate-talos-scope resolves in < 2s (no stdin hang)', async () => {
+  // Reported symptom: "Hook validate-talos-scope.sh timed out after 30000ms"
+  // per tool call — caused by a version that left the child reading the TUI
+  // stdin. The current runner closes stdin after writing the payload, so the
+  // script must exit immediately (milliseconds), not 30s.
+  const start = performance.now()
+  const res = await runHook('validate-talos-scope.sh', {
+    tool_name: 'edit',
+    tool_input: {},
+    agent_id: 'hermes',
+    session_id: SESSION_ID,
+  })
+  const elapsed = performance.now() - start
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}: ${res.stderr}`)
+  assert.ok(
+    elapsed < 2000,
+    `hook took ${elapsed.toFixed(0)}ms — stdin hang detected (must be < 2000ms)`,
+  )
+})
+
+test('regression: runHook closes stdin even with EMPTY payload ({}), resolves fast', async () => {
+  const start = performance.now()
+  const res = await runHook('validate-talos-scope.sh', {})
+  const elapsed = performance.now() - start
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}: ${res.stderr}`)
+  assert.ok(
+    elapsed < 2000,
+    `empty-payload hook took ${elapsed.toFixed(0)}ms — stdin not closed`,
+  )
+})
