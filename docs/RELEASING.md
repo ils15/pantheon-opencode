@@ -254,3 +254,81 @@ Before cutting a release, verify:
 - [ ] Version manifests match: `package.json` == `plugin.json` == `.github/plugin/plugin.json`
 - [ ] `npm run version:recommend` shows expected bump
 - [ ] Platform READMEs are up to date
+
+---
+
+## Branch Protection (main)
+
+> **Status: DOCUMENTED ONLY — enforcement DEFERRED to Phase 5.** The release
+> pipeline (Phase 2) must be deployed first. Do NOT run the commands below
+> until the pre-flight checklist passes; enabling required checks on an
+> existing `main` is effectively a one-way door.
+
+### Intended protection
+
+Require pull-request reviews + passing status checks on `main`, so every
+merge is reviewed and version-consistent. Owner/admin bypass is retained
+initially (`enforce_admins=false`) and removed after 2 stable releases.
+
+### Enable (Phase 5, after pre-flight passes)
+
+```bash
+gh api -X PUT repos/ils15/pantheon-opencode/branches/main/protection \
+  -F required_status_checks[strict]=true \
+  -f 'required_status_checks[checks][][context]=version-check' \
+  -f 'required_status_checks[checks][][context]=commit-lint' \
+  -f 'required_status_checks[checks][][context]=ci' \
+  -F 'required_pull_request_reviews[required_approving_review_count]=1' \
+  -F enforce_admins=false
+```
+
+> GitHub reports checks by **job name**, not workflow name. The contexts above
+> name the jobs to require: `version-check` and `ci` from
+> `.github/workflows/ci.yml`, `commit-lint` from `.github/workflows/commit-lint.yml`.
+> Verify the exact reported names before enforcing — see checklist item (a).
+
+### MANDATORY pre-flight checklist
+
+If a required check never passes, **every** push to `main` is locked out,
+including the release pipeline. Confirm ALL of the following before the PUT:
+
+- [ ] **(a) Required checks EXIST as workflows** in `.github/workflows/`:
+      `ci.yml` (jobs `validate`, `version-check`) and `commit-lint.yml`
+      (job `commitlint`). Verify the actual check-run names on the repo:
+      ```bash
+      gh api repos/ils15/pantheon-opencode/commits/HEAD/check-runs \
+        --jq '.check_runs[].name' | sort -u
+      ```
+- [ ] **(b) They PASS on current `main`** — run them manually and confirm
+      green (or inspect the latest run on `main`):
+      ```bash
+      gh workflow run ci.yml && gh workflow run commit-lint.yml
+      gh run list --branch main --limit 5
+      ```
+- [ ] **(c) ONLY then** enable `require_passing_checks` with the PUT command
+      above. If (a) or (b) fails, fix the workflow first — never enable
+      protection on a check that is failing or does not exist.
+
+### Admin bypass
+
+- **Phase 5 (initial):** `enforce_admins=false` — repo owner can still push
+  past failing checks to unblock the release pipeline (per plan risk
+  mitigation).
+- **After 2 stable releases:** remove the bypass:
+  ```bash
+  gh api -X PATCH repos/ils15/pantheon-opencode/branches/main/protection \
+    -F enforce_admins=true
+  ```
+
+### Grandfather policy
+
+Commitlint is enforced **from this point forward** on all new commits (local
+`.husky/commit-msg` hook + CI `commit-lint` workflow). Existing
+non-conventional commits in history are **grandfathered** — they are never
+rewritten or retroactively linted. Known example in current history:
+
+- `release: v1.2.1 (#13)` — type `release` is not a conventional type
+
+`git log -15 --format=%s | npx --no commitlint` will list such commits as
+violations; that output is expected and accepted. New commits must follow
+Conventional Commits (see `commitlint.config.js`).

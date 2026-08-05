@@ -1,6 +1,8 @@
 name: Commit Lint
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
@@ -24,10 +26,45 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm ci --ignore-scripts 2>/dev/null || npm install
-      - name: Validate PR commits
+      - name: Validate commits
         run: |
+          set -euo pipefail
+
           if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # PR path: lint every commit between base and head
             npx commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
-          else
-            npx commitlint --from "${{ github.event.before }}" --to "${{ github.event.after }}" --verbose
+            exit $?
           fi
+
+          # Push path: lint the pushed range on main.
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+          ZERO="0000000000000000000000000000000000000000"
+
+          # Initial push (all-zero before) or invalid/empty range → fall back
+          # to the last commit.
+          if [ "$BEFORE" = "$ZERO" ] || ! git rev-list "$BEFORE..$AFTER" >/dev/null 2>&1; then
+            if ! git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+              echo "Single-commit repository — nothing to lint."
+              exit 0
+            fi
+            RANGE="HEAD~1..HEAD"
+          else
+            RANGE="$BEFORE..$AFTER"
+          fi
+
+          # Lint each commit in the range. Merge / release-tag / semver commits
+          # are auto-ignored by commitlint defaults; github-actions[bot]
+          # commits (release pipeline) are exempt per risk mitigation.
+          FAILED=0
+          for sha in $(git rev-list "$RANGE"); do
+            AUTHOR=$(git log -1 --format='%an' "$sha")
+            if [ "$AUTHOR" = "github-actions[bot]" ]; then
+              echo "Skipping bot commit: ${sha:0:7}"
+              continue
+            fi
+            if ! git log -1 --format='%s' "$sha" | npx --no -- commitlint --verbose; then
+              FAILED=1
+            fi
+          done
+          exit $FAILED

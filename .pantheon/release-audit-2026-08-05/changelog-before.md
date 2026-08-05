@@ -1,12 +1,5 @@
 # Changelog
-
-All notable changes to this project will be documented in this file.
-
-## [Unreleased]
-
-No changes yet.
-
-## [1.0.0] - 2026-07-24
+## [5.0.0] - 2026-07-24
 
 ### Major Changes
 - **OpenCode-only**: Removed all multi-platform support (Claude Code, Cursor, Windsurf, Cline, Continue.dev, VS Code Copilot). Pantheon v1.0 is exclusively for OpenCode.
@@ -35,7 +28,13 @@ No changes yet.
 - Added: `/pantheon-bg`, `/pantheon-doc`
 - Removed: install, update, cancel, sketch, consolidate
 
-[1.0.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.0
+[5.0.0]: https://github.com/ils15/pantheon/compare/v4.0.0...v1.0.0
+
+
+
+All notable changes to this project will be documented in this file.
+
+## [Unreleased]
 
 ## [3.19.2] - 2026-07-21
 
@@ -130,13 +129,13 @@ No changes yet.
 - Memory Persistence Protocol documented as ADR-006
 - `.config/opencode/` fully synced from canonical Pantheon (14 agents + 10 instructions)
 
-## [3.18.0] - 2026-07-15
+## [v3.18.0] - 2026-07-15
 
 ### Added
 
 - No unreleased changes recorded.
 
-## [3.17.1] - 2026-07-14
+## [v3.17.1] - 2026-07-14
 
 ### Added
 - Inline compression triggers (C8/C9/C11): implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) now declare `context-compression` skill and have a concise `## Inline Compression` section covering CRITICAL/HIGH subtask summaries, pre-delegation large blocks, and phase boundaries/handoffs
@@ -152,7 +151,7 @@ No changes yet.
 - Unified scrubber: 3 divergent implementations consolidated into single canonical `scripts/scrub-secrets.py`, imported by both `memory_mcp_server.py` and `compress-inline.py` via `importlib` (hyphenated filename cannot be statically imported)
 - OpenAI key regex standardized across all consumers to `sk-[A-Za-z0-9\-_]{10,}`
 
-## [3.17.0] - 2026-07-11
+## [v3.17.0] - 2026-07-11
 
 ### Added
 - Pantheon TUI Plugin overhaul: sidebar modernization, clickable commands, dynamic Python version
@@ -181,7 +180,7 @@ No changes yet.
 ### Removed
 - `docs/memory-bank/` from git history (fully purged via filter-repo)
 
-## [3.16.0] - 2026-07-10
+## [v3.16.0] - 2026-07-10
 
 ### Added
 - MCP Resources Support: pantheon://agents, skills, routing, deepwork, memory-bank
@@ -214,7 +213,7 @@ No changes yet.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [3.15.0] - 2026-06-26
+## [v3.15.0] - 2026-06-26
 
 ### 🚀 Enhancements
 
@@ -245,7 +244,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **NOTE0010:** Pantheon v3 Roadmap — 5-phase vision from FTS5 to Plugin Architecture
 - **TASK-016:** Level 3 Implementation Plan — 24 tasks across 5 phases
 - **01-active-context.md:** Updated with deepwork v3.15 changes and Two-Tier model
-## [3.14.0] - 2026-06-20
+## [v3.14.0] - 2026-06-20
 
 ### 🚀 Enhancements
 
@@ -273,7 +272,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 🏡 Chore
 
-## [3.14.1] - 2026-06-21
+## [v3.14.1] - 2026-06-21
 
 ### 🗑️ Removed
 
@@ -290,7 +289,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Install Script:** `scripts/install/opencode.mjs` now correctly copies npm-style plugin directory and registers in `tui.json` (not `opencode.json` — TUI plugins use separate registration)
 - **CI Release Pipeline:** Added `dry_run` input to manual release workflow, removed auto-merge from release PRs, fixed duplicate steps
 
-## [3.13.0] - 2026-06-20
+## [v3.13.0] - 2026-06-20
 
 ### Added
 - **Level 2 Context Compression** — priority scoring engine (5 deterministic dimensions: Impact, Risk, Novelty, Blockers, Downstream relevance), semantic summarization templates per agent-pair, budget allocation (100-line cap, priority-greedy), cross-reference mechanism (D/E/M/C IDs with auto-generated `_xref/index.md`), ZZ artifact format for phase-to-phase context injection, `context-compression` skill (Level 2)
@@ -360,7 +359,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **release:** Sync version to v3.11.0 ([1a9fb64](https://github.com/ils15/pantheon/commit/1a9fb64))
 
-## [3.9.0] - 2026-05-28
+## [v3.9.0] - 2026-05-28
 
 [compare changes](https://github.com/ils15/pantheon/compare/v3.8.4...v3.9.0)
 
