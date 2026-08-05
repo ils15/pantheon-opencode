@@ -41,7 +41,11 @@ assert.ok(healthCheck.includes("'pantheon_vision_server.py'"))
 
 assert.ok(catalog.includes("'pantheon-vision':"))
 assert.ok(sourceCatalog.includes('../../scripts/install-mcp.mjs'))
-assert.ok(catalog.includes("join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')"))
+assert.ok(
+  catalog.includes("PANTHEON_VISION_SERVER = resolveServerScript('src/mcp/pantheon_vision_server.py')"),
+  'catalog resolves the vision server through the hermetic PANTHEON_VISION_SERVER constant',
+)
+assert.ok(catalog.includes('args: [PANTHEON_VISION_SERVER]'))
 assert.ok(catalog.includes('requirements-vision.txt'))
 assert.ok(catalog.includes("vscode: {\n        type: 'stdio'"))
 
