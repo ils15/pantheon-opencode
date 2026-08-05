@@ -124,6 +124,81 @@ All notable changes to this project will be documented in this file.
 
 [1.0.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.0
 
+## [1.1.1] - 2026-07-30
+
+### Added
+- New release system — beta releases from PR labels, stable from main push (auto-release and beta-release workflows unified)
+- Interactive TUI mode for installer (Fases 1+2) — redesigned sidebar with context progress bar, live session data via events + API
+- Session-scoped context checkpoints in persistence (index, stats, auto-purge, `delete_namespace`); fallback chains, auto CI retry (2x), token tracking
+
+### Changed
+- Slash commands consolidated from 16 to 5; redundant model configs removed (agents inherit the default model)
+
+### Fixed
+- Council: UUID session isolation in context checkpoints, pre-compaction state save, flash summary quality floor, agents recall `context_get(slug, 'latest')` on startup
+- TUI plugin/CI: OpenCode crash from missing plugin deps, version detection with git fallback, commitlint scopes, workflow YAML/MCP path repairs; `datetime.UTC` → `timezone.utc` for Python < 3.11
+
+[1.1.1]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.1.1
+
+## [1.1.0] - 2026-07-26
+
+### Added
+- Council synthesis Fase 1+2 — Modo Desempate com Evidência + BackgroundJobBoard (#2)
+
+### Changed
+- Beta release workflow added (from develop)
+
+[1.1.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.1.0
+
+## [1.0.7] - 2026-07-26
+
+### Fixed
+- Installer: fixed `writeFileSync` not defined error
+
+[1.0.7]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.7
+
+## [1.0.6] - 2026-07-26
+
+### Added
+- 7 new skills (codemap, simplify, reflect, worktrees, verification-planning, loop-engineering, clonedeps) + 7 matching commands; `background_subagents` enabled by default in canonical config
+- Release pipeline: quality gates, tag creation, pre-release, hotfix support
+
+### Changed
+- CI simplified from 10 to 6 workflows; agent/skill restructuring — 12 redundant instructions removed, unused commands dropped, gaia archived then restored
+
+### Fixed
+- CI/commitlint config (YAML syntax, header-max-length, ignores function, scopes); 45 stale references cleaned across 18 files; invalid `opencode.json` fields removed; installer copies `routing.yml`; YAML frontmatter regenerated for 9 agents
+
+[1.0.6]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.6
+
+## [1.0.5] - 2026-07-26
+
+### Fixed
+- CI auto-release with OIDC trusted publisher + npm v12 (Node 22 upgrade, clean publish)
+- `doctor.mjs` paths + simplified `prepublishOnly`
+
+[1.0.5]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.5
+
+## [1.0.2] - 2026-07-25
+
+### Added
+- TUI plugin: copy logic, stale skill cleanup, `tui.json` dedup; advanced plugin with version detection and 14 commands
+
+### Changed
+- Agents migrated from deprecated `tools:` to OpenCode `permission:` model; legacy multi-platform tests removed (OpenCode-only conformance); docs modernized (OpenCode-only, unified commands)
+
+### Fixed
+- Hardcoded version fallback replaced with package.json version; routing aligned with actual skills (vscode platform removed)
+
+[1.0.2]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.2
+
+## [1.0.1] - 2026-07-24
+
+### Changed
+- Installer: unified setup flow, removed lifecycle install, fixed entry points
+
+[1.0.1]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.1
+
 ## [3.19.2] - 2026-07-21
 
 ### Added
