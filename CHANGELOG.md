@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [1.2.2] - 2026-08-05
+
 ### Added
 - **`pantheon prune`** (#22): legacy cleanup command — XDG-aware config resolution, `--dry-run` default (list only), `--apply` removes stale `opencode.json.bak*` backups (age threshold), `--apply --remove-dirs` for legacy dirs with dead configs; old global `pantheon` installs are suggested for manual `npm uninstall -g pantheon`, never removed (npm-managed)
 
@@ -21,7 +34,6 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 - Dead `src/mcp/requirements-mcp-core.txt` catalog duplicate (YAGNI — the installer uses `requirements-mcp.txt`)
-
 ## [1.2.1] - 2026-08-03
 
 ### Added
