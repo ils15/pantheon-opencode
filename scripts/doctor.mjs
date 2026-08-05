@@ -412,6 +412,33 @@ function checkMcpConfig(args) {
     if (args.verbose) {
       checkAgentMcpReferences(cfg)
     }
+
+    // 5. Hermetic spawn check — every local MCP command must resolve to an
+    // existing executable and existing absolute script paths. Catches the
+    // ENOENT-on-spawn failure class (dead hardcoded path, ambiguous relative
+    // path) before opencode tries to spawn the server.
+    for (const [name, mcpEntry] of Object.entries(mcp)) {
+      if (!mcpEntry || mcpEntry.type !== 'local') continue
+      const cmd = mcpEntry.command
+      if (!Array.isArray(cmd) || cmd.length === 0) {
+        warn(`${cfg.label}: MCP "${name}" has no command array`)
+        continue
+      }
+      const exe = cmd[0]
+      if (!exe.includes('/')) {
+        // PATH-resolved executable — cannot verify statically; surface for manual check
+        info(`${cfg.label}: MCP "${name}" uses PATH executable "${exe}" (verify with \`which ${exe}\`)`)
+        continue
+      }
+      if (!existsSync(exe)) {
+        error(`${cfg.label}: MCP "${name}" executable does not exist: ${exe}`)
+        continue
+      }
+      const deadArgs = cmd.slice(1).filter((a) => a.startsWith('/') && !existsSync(a))
+      if (deadArgs.length > 0) {
+        error(`${cfg.label}: MCP "${name}" has missing script path(s): ${deadArgs.join(', ')}`)
+      }
+    }
   }
 }
 

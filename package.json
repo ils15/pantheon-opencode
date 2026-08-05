@@ -55,6 +55,8 @@
     "src/mcp/*.sh",
     "src/routing.yml",
     "src/pantheon/**",
+    "src/plugins/**",
+    "scripts/hooks/**",
     "src/mcp/requirements*",
     "src/plugins/tui/**",
     "src/skills/**"
@@ -66,8 +68,7 @@
     "@commitlint/cli": "^19.8.0",
     "@commitlint/config-conventional": "^19.8.0",
     "@opencode-ai/plugin": "1.18.11",
-    "husky": "^9.1.7",
-    "pantheon-opencode": "^1.2.0-beta.9.7bef03e"
+    "husky": "^9.1.7"
   },
   "repository": {
     "type": "git",

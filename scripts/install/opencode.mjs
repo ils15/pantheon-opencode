@@ -347,7 +347,17 @@ export async function installOpenCode(
       'pantheon_vision_server.py',
     ]
     const srcScriptsDir = join(ROOT, 'scripts')
+    // Canonical MCP server sources live in src/mcp/. Map them explicitly so the
+    // sync always copies from the canonical source, never from the stale root
+    // scripts/ copies (which previously propagated bugs like the missing
+    // `import uuid` in mcp_persistence_server.py). scrub-secrets.py is not in
+    // src/mcp/ and intentionally falls back to join(ROOT, 'scripts').
     const canonicalMcpScripts = {
+      'mcp_resources_server.py': join(ROOT, 'src', 'mcp', 'mcp_resources_server.py'),
+      'code_mode_server.py': join(ROOT, 'src', 'mcp', 'code_mode_server.py'),
+      'memory_mcp_server.py': join(ROOT, 'src', 'mcp', 'memory_mcp_server.py'),
+      '_pantheon_paths.py': join(ROOT, 'src', 'mcp', '_pantheon_paths.py'),
+      'mcp_persistence_server.py': join(ROOT, 'src', 'mcp', 'mcp_persistence_server.py'),
       'pantheon_vision_server.py': join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py'),
     }
     const dstScriptsDir = join(runtimeTarget, 'scripts')
