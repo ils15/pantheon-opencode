@@ -4,6 +4,7 @@ import { strict as assert } from 'node:assert'
 import { existsSync, readFileSync } from 'node:fs'
 
 const opencodeInstaller = readFileSync('scripts/install/opencode.mjs', 'utf8')
+const pluginInstaller = readFileSync('scripts/install/plugin.mjs', 'utf8')
 const healthCheck = readFileSync('scripts/install/health-check.mjs', 'utf8')
 const catalog = readFileSync('scripts/install-mcp.mjs', 'utf8')
 const sourceCatalog = readFileSync('src/mcp/install-mcp.mjs', 'utf8')
@@ -38,6 +39,43 @@ assert.ok(visionConfig.includes("type: 'local'"))
 assert.ok(visionConfig.includes('enabled: true'))
 assert.ok(opencodeInstaller.includes("config.permission.mcp['pantheon-vision'] = 'ask'"))
 assert.ok(healthCheck.includes("'pantheon_vision_server.py'"))
+
+// P2-4: the hooks plugin must be rewritten at install/sync time to the
+// INSTALLED package location (derived from ROOT), never copied verbatim from
+// the packaged opencode.json — otherwise global installs leak the developer's
+// absolute path and break the plugin for every other machine.
+assert.ok(
+  opencodeInstaller.includes('function resolveInstalledPlugin'),
+  'installer rewrites plugin paths through resolveInstalledPlugin',
+)
+assert.ok(
+  opencodeInstaller.includes("const packaged = join(ROOT, 'src', 'plugins', file)"),
+  'resolved plugin path is derived from the installed package ROOT, never hardcoded',
+)
+assert.ok(
+  opencodeInstaller.includes('config.plugin = config.plugin.filter((p) => basename(p) !== file)'),
+  'stale plugin entries with the same basename (e.g. dev paths) are replaced on upgrade',
+)
+
+// P2-5: the TUI plugin must be registered by the ABSOLUTE dist path inside the
+// installed package — relative entries ("plugins/pantheon-tui") make opencode's
+// tui loader run `npm install plugins/pantheon-tui` → NpmInstallFailedError.
+assert.ok(
+  opencodeInstaller.includes("const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx')"),
+  'tui.json registration uses the hermetic dist path derived from the installed package ROOT',
+)
+assert.ok(
+  opencodeInstaller.includes("unregisterPlugin(targetTuiConfigPath, 'plugins/pantheon-tui'"),
+  'the old broken relative tui ref is removed on upgrade',
+)
+assert.ok(
+  opencodeInstaller.includes('registerPlugin(targetTuiConfigPath, tuiPluginRef'),
+  'the absolute tui dist path is what gets registered',
+)
+assert.ok(
+  pluginInstaller.includes('const staleRefs = [pluginId, `${pluginId}/dist/tui.tsx`, `${pluginId}/dist/tui.js`]'),
+  'unregisterPlugin removes the bare relative plugin id too',
+)
 
 assert.ok(catalog.includes("'pantheon-vision':"))
 assert.ok(sourceCatalog.includes('../../scripts/install-mcp.mjs'))

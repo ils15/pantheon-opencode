@@ -4,7 +4,82 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+- **`pantheon prune`** (#22): legacy cleanup command — XDG-aware config resolution, `--dry-run` default (list only), `--apply` removes stale `opencode.json.bak*` backups (age threshold), `--apply --remove-dirs` for legacy dirs with dead configs; old global `pantheon` installs are suggested for manual `npm uninstall -g pantheon`, never removed (npm-managed)
+
+### Changed
+- **Release pipeline standardization** (PR #28): single source of truth for version in `scripts/versioning.mjs` (sem-tag aware); CHANGELOG repair (normalized broken `[5.0.0]` heading → `[1.0.0]`, stripped `[v` prefixes across 3.x history, added `[Unreleased]`); `release.yml` redesigned with idempotent gates (skips publish when version already exists); new `scripts/changelog-extract.mjs` and `scripts/version-check.mjs` (+ test suites) so release bodies use real changelog sections; commitlint extended to cover pushes; pre-commit gate added; `cliff.toml` (git-cliff) removed; `docs/RELEASING.md` added; ADR-0007
+- **Test wiring + install docs** (PR #31): `test:security` extended with `test_doctor_layers`; Node test suite wired via `npm run test:node` (`node --test tests/*.mjs` — prune, hook-runner, plugin-log-policy, install/vision contracts, changelog/version checks) into CI; global-install sandbox documented in AGENTS.md / INSTALLATION.md
+
+### Fixed
+- **Reliable global install** (PR #26): hooks plugin recreated (`pantheon-hooks.ts` + `hook-runner.ts` with stdin JSON protocol, version-proof); MCP install made hermetic (absolute paths); packaging fix (`files[]` += `src/plugins/**`, `scripts/hooks/**`, self-reference removed, pinned `@opencode-ai/plugin` 1.18.11); `import uuid` hotfix in `scripts/mcp_persistence_server.py`
+- **Installer/plugin packaging paths** (PR #31): hooks plugin registered via `resolveInstalledPlugin` so the config points at the INSTALLED package path, never the developer's absolute path (#30); TUI registered with absolute dist path in `tui.json` (#32 — relative path caused NpmInstallFailedError); TUI reads its installed package version via `import.meta.url` (works from any cwd)
+- **Idempotent init** (#19): `subagent_depth` merged into the always-run config merge — run #1 already produces the final config (previously only the SECOND init added it); honest re-run stats (`routing.yml` no longer counted as created every run)
+- **Layered doctor** (#18): B.6 smoke JSON-RPC `initialize` + F venv/deps check with pinned requirements
+- **Pinned MCP dependencies** (#21): exact pins in `src/mcp/requirements-*.txt` (`mcp==1.29.0`, `fastmcp==3.4.6`, `pyyaml==6.0.3`, `sqlite-vec==0.1.9`, `fastembed==0.8.0`, `httpx==0.28.1`) — reproducible venv installs
+- **Silent hooks by default**: audit hooks no longer echo to the console on success (`PANTHEON_HOOKS_LOG=1` re-enables the debug echo; log FILES `sessions.log`/`delegations.log` continue to be written)
+
+### Removed
+- Dead `src/mcp/requirements-mcp-core.txt` catalog duplicate (YAGNI — the installer uses `requirements-mcp.txt`)
+
+## [1.2.1] - 2026-08-03
+
+### Added
+- **Model routing presets + interactive picker**: 4 presets (go-deepseek, go-premium, go-fast, go-free), zero-mutation default (injects only when `active-preset.json` exists), `set-tier` CLI in `bin/pantheon-init.mjs` with API-key fail-fast, interactive picker in `scripts/install/model-picker.mjs` (atomic write + .bak), `validate-routing.mjs` preset validation, packaging fix so `src/pantheon/**` ships in the tarball
+- 4 new provider families — go-claude (Anthropic), go-openai, go-olympus, go-muses presets + `CAPABILITY_TABLE` (+11 entries: glm-5.1/5.2, kimi-k2.6, qwen3.7-max/plus, minimax-m2.7/m2.5, bare deepseek-v4-pro/flash, big-pickle, nemotron-3-ultra-free, north-mini-code-free)
+- **Vision routing**: per-turn multimodal fallback for image turns (`vision:` key per preset, `chat.message` hook), later evolved to native gateway vision (mimo-v2.5) with MCP-tool fallback, image-history normalization, description cache (sha256, TTL 30min) + intent-calibrated prompts, temp-image dedup/LRU
+- Canonical `pantheon-vision` MCP stdio server (`src/mcp/pantheon_vision_server.py`)
+- TUI: vendored todo-progress + usage-bar (v1.1.0, MIT attribution), active model preset shown in sidebar (30s refresh), OpenCode Go/Zen usage quota tracking (5h/7d/1m dollar windows, `[opencodego]` toml config)
+- **Unified `release.yml`**: single workflow handles beta (PR label) + stable (main push) with version-exists check
+- Secret scanning: fail-closed CI gates (gitleaks + custom scan), pre-commit hooks, secret-scan regression tests
+- docs: model routing presets documented (presets, commands, env vars)
+
+### Changed
+- Preset lineup refactored 8 → 6: go-deepseek routed via OpenCode Zen, go-fast via OpenCode Go, olympus/muses renamed go-premium/go-free — all presets now via OpenCode/Anthropic/OpenAI providers, `PANTHEON_DEEPSEEK_API_KEY` removed
+- Vision routing consolidated and legacy duplicates removed
+- commitlint: CodeQL auto-fix ignore pattern, body-max-line-length disabled, `security` type allowed, plugin/vision/presets/hooks scopes added; tsconfig dropped path aliases (+ `opencode.d.ts` ambient types)
+- install: pantheon-vision registered, `doctor.mjs` hardened
+- PR template added in English; coverage artifacts gitignored
+- CI workflow triggers synced with base develop; `release.yml` gained `workflow_dispatch` with `pr_number` input
+
+### Fixed
+- Plugin export as function for opencode 1.18.11 API (object export failed to load; hooks.config mutates config in place)
+- Vision pipeline: plugin boot failure (legacy loader), MCP tool ID (`pantheon_vision_vision_describe`), gateway 401 (provider prefix stripped from model ID), temp-file race (age-guarded cleanup, dir never removed), image stripping at source (deepseek-v4-flash declared image-capable), gateway-aware qwen interception, MCP availability verified, refcounted shared temp images, file URLs decoded via `fileURLToPath`, temp image permissions restricted
+- Default vision fallbacks: mimo-v2.5 (multimodal, cheaper) then minimax-m3 (qwen3.7-plus 500 on Go gateway); silent hook logs
+- `import uuid` in `mcp_persistence_server.py` (context_save NameError)
+- commitlint failures + typecheck narrowing; active preset applied in config hook
+- CI: `workflow_dispatch` treated as stable release; empty env block removed; `NODE_AUTH_TOKEN` restored (OIDC Trusted Publisher not configured on npm); `github_pat_` self-match in secret scan; fast-uri upgraded to patched version
+- Security: hardcoded provider credentials removed, preset error logging sanitized (CodeQL), dist artifacts untracked
+- install: project MCP commands point at real venv
+
+### Removed
+- Stale release workflows (release-beta.yml / release-stable.yml leftovers) brought back by merge
+- TUI todo-progress bar (redundant with native TODO + sidebar), v1.1.1
+- Duplicate `scripts/scrub_secrets.py` (canonical is `scrub-secrets.py`)
+
+[1.2.1]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.2.1
+
+## [1.2.0] - 2026-07-30
+
+### Added
+- **Fallback chains + auto CI retry**: per-agent fallback chains (hermes→talos→athena, apollo→athena→hermes, etc.), CI retry 1 → 2 with exponential backoff + fallback agent, token tracking in `subtask_summary`, `fallback_chains` section in routing.yml
+- Zeus Fusion-style delegation enforced — `edit:deny`, `bash:deny`, never touches files
+- Persistence performance: index on (namespace, expires_at) — O(n)→O(log n) TTL queries, `kv_stats` tool, opportunistic auto-purge (>500 entries), FTS soft-delete trigger (fixes phantom results), `re.escape()` query safety, `kv_delete_namespace` bulk cleanup
+- **Context checkpoint tools**: `context_save`, `context_get`, `context_list`, `context_stats` — session-scoped state in `checkpoint:{slug}` namespace, auto-TTL 4h, replaces file-based `checkpoint_session.py`
+- New release system: beta from PR label (release-beta.yml), stable from main push (release-stable.yml)
+- docs: `RELEASE.md` — beta from PR label, stable from main push
+
+### Changed
+- **Slash commands consolidated 16 → 5** — kept `/pantheon`, `/audit`, `/deepwork`, `/optimize`, `/consolidate`; deleted 11 (cancel, focus, forget, install, reflect, remember, search, sketch, status, update, verify) with Apollo audit verifying alternative coverage (ADR-006)
+- Removed redundant model configs — agents inherit default deepseek-v4-flash
+- Persistence docs updated for new tools and auto-purge behavior
+- commitlint scopes completed; auto-release skipped when version already exists
+
+### Fixed
+- Council fixes: UUID session isolation in context checkpoints, pre-compaction state save trigger, flash summary quality floor (<10 chars → fallback to Zeus), agents recall `context_get(slug, 'latest')` on startup
+- CI: push triggers removed — validation workflows (CI, commitlint, CodeQL, hotfix, docs) now run on `pull_request` only, eliminating perma-pending duplicate checks
+
+[1.2.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.2.0
 
 ## [1.0.0] - 2026-07-24
 

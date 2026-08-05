@@ -27,9 +27,12 @@
  *     (the output only mutates args; real deny is the permission system), so
  *     violations surface as stderr + non-zero exit codes logged below.
  *   - Logging policy: non-zero exit → console.error (the security signal);
- *     zero exit → silent for the validate/scan/format hooks (they print
- *     "[TALOS SCOPE] skipping" etc. on every call — noise) and console.log for
- *     the audit hooks (session/delegation logs users want to see).
+ *     zero exit → SILENT by default. Audit scripts (log-session-start,
+ *     on-subagent-delegation-*) still write their log FILES (sessions.log,
+ *     delegations.log) from inside the .sh scripts — only the console echo is
+ *     suppressed so the chat/TUI stays clean. Set PANTHEON_HOOKS_LOG=1 (or
+ *     "debug") to re-enable the zero-exit console echo for debugging.
+ *     The env var is read once at plugin load time (opencode startup).
  *   - Hooks NEVER throw: every body is try/catch'd and only logs.
  *
  * IMPORTANT (OpenCode 1.18.11 legacy loader): this module must export EXACTLY
@@ -42,7 +45,15 @@ import { runHook, type HookPayload } from './hook-runner.ts'
 /** Tools that represent a subagent delegation (opencode `task` tool etc.). */
 const DELEGATION_TOOL_RE = /^(task|.*delegate.*|.*subagent.*)$/i
 
-/** Scripts whose zero-exit stderr is worth relaying (audit trail). */
+/**
+ * When set to a truthy value ("1" or "debug"), zero-exit audit-hook output is
+ * echoed to the console (opt-in debugging). Default (unset): fully silent on
+ * success — the .sh scripts still persist their log FILES on disk; only the
+ * console echo is suppressed. Read at plugin load time.
+ */
+const AUDIT_LOG_ENABLED = (process.env.PANTHEON_HOOKS_LOG ?? '').trim() !== ''
+
+/** Scripts whose zero-exit stderr is relayed when PANTHEON_HOOKS_LOG is set. */
 const AUDIT_HOOKS = new Set([
   'log-session-start.sh',
   'on-subagent-delegation-start.sh',
@@ -78,7 +89,10 @@ async function safeRun(script: string, payload: HookPayload): Promise<void> {
       console.error(
         `${tag} exit ${result.code}${result.timedOut ? ' (timed out)' : ''}: ${trim(result.stderr || result.stdout || 'no output')}`,
       )
-    } else if (AUDIT_HOOKS.has(script) && result.stderr.trim()) {
+    } else if (AUDIT_LOG_ENABLED && AUDIT_HOOKS.has(script) && result.stderr.trim()) {
+      // Opt-in only (PANTHEON_HOOKS_LOG=1): audit scripts echo their FILE
+      // writes here for debugging. Default is silence — the .sh scripts
+      // already persist sessions.log / delegations.log on disk.
       console.log(`${tag} ${trim(result.stderr)}`)
     }
   } catch (err) {

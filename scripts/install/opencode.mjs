@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import {
   bullet,
   colors,
@@ -193,8 +193,9 @@ export async function installOpenCode(
     const srcRouting = join(ROOT, 'src', 'routing.yml')
     const dstRouting = join(target, 'routing.yml')
     if (existsSync(srcRouting)) {
-      writeIfChanged(dstRouting, readFileSync(srcRouting, 'utf8'), dryRun)
-      stats.created++
+      const routingStatus = writeIfChanged(dstRouting, readFileSync(srcRouting, 'utf8'), dryRun)
+      if (routingStatus === 'created') stats.created++
+      else stats.skipped++
     }
   }
 
@@ -280,27 +281,12 @@ export async function installOpenCode(
 
   // -----------------------------------------------------------------------
   // -----------------------------------------------------------------------
-  // 2.7 Ensure subagent_depth in opencode.json
+  // 2.7 subagent_depth is merged into opencode.json in the config section
+  // below (always runs) — see "Ensure critical top-level config sections".
+  // Previously this was a separate block gated on the config file already
+  // existing, so a FRESH install only gained subagent_depth on the SECOND
+  // init run (idempotence bug, issue #19).
   // -----------------------------------------------------------------------
-  if (componentSet.has('agents')) {
-    const cfgPath = join(target, 'opencode.json')
-    if (existsSync(cfgPath)) {
-      try {
-        const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'))
-        let changed = false
-        if (cfg.subagent_depth === undefined) {
-          cfg.subagent_depth = 2
-          changed = true
-        }
-        if (changed && !dryRun) {
-          writeFileSync(cfgPath, `${JSON.stringify(cfg, null, 2)}\n`)
-          success('subagent_depth: 2 added to opencode.json')
-        }
-      } catch (e) {
-        warning(`Could not update opencode.json: ${e.message}`)
-      }
-    }
-  }
 
   // 2.8 Install TUI plugins (--components plugins)
   // -----------------------------------------------------------------------
@@ -322,9 +308,16 @@ export async function installOpenCode(
   const targetTuiConfigPath = isGlobal
     ? join(target, 'tui.json')
     : join(target, '.opencode', 'tui.json')
-  const pluginRef = 'plugins/pantheon-tui'
-  unregisterPlugin(targetTuiConfigPath, pluginRef, { dryRun })
-  const tuiStatus = registerPlugin(targetTuiConfigPath, pluginRef, { dryRun })
+  // Hermetic TUI plugin registration: opencode's tui loader treats relative
+  // entries ("plugins/pantheon-tui") as npm/github package specs and fails
+  // with NpmInstallFailedError ("Repository not found"). Register the plugin
+  // by the ABSOLUTE path of the built dist inside the installed package
+  // (derived from ROOT — never hardcoded), mirroring the loader's
+  // absolute-path support (same pattern as the hooks plugin fix).
+  const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx')
+  // Clean up the old broken relative ref (and stale dist refs) on upgrade.
+  unregisterPlugin(targetTuiConfigPath, 'plugins/pantheon-tui', { dryRun })
+  const tuiStatus = registerPlugin(targetTuiConfigPath, tuiPluginRef, { dryRun })
   if (tuiStatus === 'created') stats.created++
   else stats.skipped++
 
@@ -575,15 +568,41 @@ export async function installOpenCode(
   if (!config.default_agent && pantheonConfig.default_agent) {
     config.default_agent = pantheonConfig.default_agent
   }
+  // Merge subagent_depth HERE (the config merge always runs, including on a
+  // fresh install) instead of a file-existence-gated block, so run #1 already
+  // produces the final config — run #2 must be a byte-identical no-op (#19).
+  if (config.subagent_depth === undefined) {
+    config.subagent_depth = 2
+  }
+
+  // --------------------------------------------------------------------
+  // B.5.1 Hermetic plugin resolution (packaging fix)
+  // --------------------------------------------------------------------
+  // The packaged opencode.json may reference the pantheon-hooks plugin via a
+  // developer-machine absolute path (e.g. /home/<dev>/pantheon/src/plugins/...).
+  // Copying that verbatim into the user's config would break every global
+  // install on any other machine. Option A: rewrite the entry to the plugin
+  // file inside the INSTALLED package (derived from ROOT — never hardcoded),
+  // so both dev and global installs resolve to a path that actually exists.
+  // The source opencode.json keeps its dev path for local development; the
+  // transform happens at install/sync time only.
+  function resolveInstalledPlugin(plugin) {
+    const file = basename(plugin)
+    const packaged = join(ROOT, 'src', 'plugins', file)
+    return existsSync(packaged) ? packaged : plugin
+  }
 
   if (!Array.isArray(config.plugin)) {
     config.plugin = []
   }
   if (Array.isArray(pantheonConfig.plugin)) {
     for (const plugin of pantheonConfig.plugin) {
-      if (!config.plugin.includes(plugin)) {
-        config.plugin.push(plugin)
-      }
+      const resolved = resolveInstalledPlugin(plugin)
+      const file = basename(resolved)
+      // Replace any pre-existing entry for the same plugin file (e.g. a stale
+      // dev-machine path from an earlier install) so upgrades stay hermetic.
+      config.plugin = config.plugin.filter((p) => basename(p) !== file)
+      config.plugin.push(resolved)
     }
   }
 

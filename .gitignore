@@ -1,5 +1,10 @@
 node_modules/
 dist/
+# The TUI plugin dist is a build artifact that MUST ship in the npm package
+# (the opencode tui loader loads dist/tui.tsx directly — relative refs break).
+!src/plugins/tui/
+!src/plugins/tui/dist/
+!src/plugins/tui/dist/**
 .venv/
 .pantheon/
 .env

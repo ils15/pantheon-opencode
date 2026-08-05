@@ -29,6 +29,15 @@ See [INSTALLATION.md](docs/INSTALLATION.md) for setup instructions.
 - Test: `npm test`
 - Lint: `npm run lint`
 
+## Teste de Instalação Global (sandbox)
+
+Para validar a instalação global do pacote pantheon-opencode COMO UM USUÁRIO REAL, use o sandbox isolado em `~/pantheon-sandbox/` (fora do repo, HOME + prefix npm + venv próprios). O ambiente de dev mistura 3 instalações + config global + venv — NÃO serve para testar instalação/empacotamento.
+
+- Rodar: `bash ~/pantheon-sandbox/run-test.sh` (opencode mcp list 5/5 connected + doctor 0 erros + abre TUI isolado)
+- Regra para agentes: ao validar instalação global (npm pack, `init`, MCPs, hooks), usar o sandbox — NUNCA testar no ambiente de dev
+- Descarte: `rm -rf ~/pantheon-sandbox`
+- Detalhes: ver `~/pantheon-sandbox/README.md`
+
 ## Conventions
 
 - TDD: Write failing test first, then implement

@@ -37,12 +37,26 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset');
   console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)');
   console.log('  npx pantheon-opencode set-tier <name> --project  # Set active model preset (project)');
+  console.log('  npx pantheon-opencode prune               # List legacy artifacts (dry-run)');
+  console.log('  npx pantheon-opencode prune --apply       # Remove stale backups');
   console.log('  npx pantheon-opencode --help              # Show this help');
 }
 
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
+
+  // prune handles its own --help (delegated to scripts/prune.mjs), so its
+  // dispatch must run BEFORE the generic --help check.
+  if (command === 'prune') {
+    const { spawnSync } = await import('child_process');
+    const pruneScript = path.join(ROOT, 'scripts', 'prune.mjs');
+    const result = spawnSync(process.execPath, [pruneScript, ...args.slice(1)], {
+      stdio: 'inherit',
+      cwd: ROOT,
+    });
+    process.exit(result.status ?? 1);
+  }
 
   if (args.includes('--help')) { printUsage(); process.exit(0); }
 

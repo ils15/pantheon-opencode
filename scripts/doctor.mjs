@@ -24,9 +24,10 @@
  *   2 = errors (needs attention)
  */
 
-import { spawnSync } from 'node:child_process'
+import { spawn as spawnAsync, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // ---------------------------------------------------------------------------
@@ -158,10 +159,13 @@ function showHelp() {
 
  Checks:
    A. Agent Files          — canonical vs platform sync
-   B. MCP Configuration    — opencode.json MCP settings
+   B. MCP Configuration    — opencode.json MCP settings (Config layer)
+   B.5 MCP Spawn Paths     — local MCP exe/args resolve to existing files
+   B.6 MCP Runtime Smoke   — spawn each local MCP + JSON-RPC initialize handshake
    C. Permission Checks    — frontmatter validation
    D. Sync Status          — npm run sync freshness
    E. Git Status           — uncommitted changes
+   F. Runtime Layer        — venv python + pinned pip dependencies
 
  Exit codes:
    0  — all checks pass
@@ -314,12 +318,12 @@ function checkAgentFiles(args) {
 // Check B: MCP Configuration
 // ---------------------------------------------------------------------------
 
-function checkMcpConfig(args) {
-  section('B. MCP Configuration')
-
-  // Determine which opencode.json to check:
-  // 1. Target project's opencode.json
-  // 2. Pantheon ROOT opencode.json
+/**
+ * Collect every reachable opencode.json (project → repository → user config)
+ * with its parsed content, for the config, spawn-path and runtime layers.
+ * @returns {{label:string, path:string, data:object}[]}
+ */
+function collectMcpConfigs(args) {
   const candidates = [
     { label: 'project root', path: join(args.target, 'opencode.json') },
     { label: 'repository root', path: join(ROOT, 'opencode.json') },
@@ -336,7 +340,6 @@ function checkMcpConfig(args) {
     candidates.push({ label: 'user config', path: homeConfig })
   }
 
-  /** @type {{label:string, data:object}[]} */
   const configs = []
   for (const c of candidates) {
     const data = readJson(c.path)
@@ -344,6 +347,13 @@ function checkMcpConfig(args) {
       configs.push({ label: c.label, data, path: c.path })
     }
   }
+  return configs
+}
+
+function checkMcpConfig(args) {
+  section('B. MCP Configuration')
+
+  const configs = collectMcpConfigs(args)
 
   if (configs.length === 0) {
     warn('No opencode.json found in target or user config')
@@ -438,6 +448,128 @@ function checkMcpConfig(args) {
       if (deadArgs.length > 0) {
         error(`${cfg.label}: MCP "${name}" has missing script path(s): ${deadArgs.join(', ')}`)
       }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Check B.6: MCP Runtime Smoke (JSON-RPC initialize handshake)
+// ---------------------------------------------------------------------------
+// The static spawn-path check (B.5) proves the files exist; this layer proves
+// the server actually STARTS and answers the JSON-RPC initialize handshake.
+// Catches ENOENT-on-spawn, Python import errors and runtime crashes that the
+// static check cannot see — with a hard timeout so a hung server fails the
+// check instead of blocking the doctor run.
+
+/**
+ * Spawn one local MCP server, send a JSON-RPC `initialize` request and wait
+ * for a well-formed response.
+ * @param {string[]} command - argv of the MCP server (exe + args)
+ * @param {string} cwd - working directory (relative script args resolve here)
+ * @param {number} timeoutMs - hard timeout for the handshake
+ * @returns {Promise<{ok:boolean, serverName?:string, reason?:string}>}
+ */
+function mcpInitializeSmoke(command, cwd, timeoutMs) {
+  const payload = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'pantheon-doctor', version: '0.0.0' },
+    },
+  })
+  return new Promise((resolve) => {
+    let proc
+    try {
+      proc = spawnAsync(command[0], command.slice(1), { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    } catch (err) {
+      resolve({ ok: false, reason: `spawn threw: ${err.message}` })
+      return
+    }
+    let stdout = ''
+    let stderr = ''
+    let done = false
+    const finish = (result) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      try {
+        proc.kill('SIGKILL')
+      } catch {
+        /* already gone */
+      }
+      resolve(result)
+    }
+    const timer = setTimeout(
+      () => finish({ ok: false, reason: `timeout after ${timeoutMs}ms (no initialize response)` }),
+      timeoutMs,
+    )
+    proc.stdout.on('data', (chunk) => {
+      stdout += chunk.toString()
+      const line = stdout.split('\n').find((l) => l.includes('"id":1'))
+      if (!line) return
+      try {
+        const msg = JSON.parse(line.trim())
+        if (msg.id === 1 && msg.result) {
+          const info = msg.result.serverInfo
+          const label = info?.name ? `${info.name}${info.version ? ` ${info.version}` : ''}` : undefined
+          finish({ ok: true, serverName: label })
+          return
+        }
+        if (msg.error) {
+          finish({ ok: false, reason: `initialize error: ${msg.error.code ?? ''} ${msg.error.message ?? ''}` })
+        }
+      } catch {
+        /* not JSON yet — keep buffering */
+      }
+    })
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+      if (stderr.length > 4096) stderr = stderr.slice(-4096)
+    })
+    proc.on('error', (err) =>
+      finish({ ok: false, reason: `spawn failed: ${err.code ?? err.message}` }),
+    )
+    proc.on('exit', (code, signal) => {
+      if (done) return
+      const tail = stderr.trim().split('\n').filter(Boolean).slice(-3).join(' | ')
+      finish({
+        ok: false,
+        reason: `process exited early (code=${code} signal=${signal})${tail ? ` — ${tail}` : ''}`,
+      })
+    })
+    proc.stdin.write(`${payload}\n`)
+    proc.stdin.end()
+  })
+}
+
+async function checkMcpRuntimeSmoke(args) {
+  section('B.6 MCP Runtime Smoke')
+
+  const local = []
+  for (const cfg of collectMcpConfigs(args)) {
+    for (const [name, entry] of Object.entries(cfg.data.mcp ?? {})) {
+      if (!entry || entry.type !== 'local') continue
+      if (!Array.isArray(entry.command) || entry.command.length === 0) continue
+      local.push({ name, command: entry.command, cwd: dirname(cfg.path), source: cfg.label })
+    }
+  }
+
+  if (local.length === 0) {
+    warn('No local MCP servers found in any config — nothing to smoke-test')
+    return
+  }
+
+  info(`Smoke-testing ${local.length} local MCP server(s) via JSON-RPC initialize`)
+
+  for (const { name, command, cwd, source } of local) {
+    const result = await mcpInitializeSmoke(command, cwd, 10000)
+    if (result.ok) {
+      pass(`MCP "${name}" (${source}): initialize handshake OK${result.serverName ? ` — ${result.serverName}` : ''}`)
+    } else {
+      error(`MCP "${name}" (${source}): ${result.reason}`)
     }
   }
 }
@@ -663,6 +795,132 @@ function checkGitStatus(args) {
 }
 
 // ---------------------------------------------------------------------------
+// Check F: Runtime Layer — Venv, Python & pinned dependencies
+// ---------------------------------------------------------------------------
+// The MCP servers run on the venv Python under ~/.config/opencode/.venv
+// (same resolution as scripts/install-mcp.mjs). This layer verifies the venv
+// exists, the interpreter responds, and the installed packages satisfy the
+// EXACT pins in src/mcp/requirements-mcp.txt and requirements-vision.txt
+// (issue #18 / #21).
+
+/** Parse `pip freeze` output into a normalized name → version map. */
+function parsePipFreeze(text) {
+  const map = {}
+  for (const line of text.split('\n')) {
+    const m = line.trim().match(/^([A-Za-z0-9_.-]+)==(\S+)/)
+    if (!m) continue
+    map[m[1].toLowerCase().replace(/-/g, '_')] = m[2]
+  }
+  return map
+}
+
+/** Split a version string into comparable numeric segments. */
+function parseVersion(v) {
+  const m = String(v).match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:\.(\d+))?/)
+  if (!m) return []
+  return [m[1], m[2] ?? '0', m[3] ?? '0', m[4] ?? '0'].map(Number)
+}
+
+/** Compare two versions numerically. Returns <0, 0 or >0. */
+function compareVersions(a, b) {
+  const pa = parseVersion(a)
+  const pb = parseVersion(b)
+  for (let i = 0; i < 4; i++) {
+    const da = pa[i] ?? 0
+    const db = pb[i] ?? 0
+    if (da !== db) return da - db
+  }
+  return 0
+}
+
+/**
+ * Check one requirement line (name + operator + version) against installed.
+ * Emits pass/error through the doctor counters.
+ */
+function checkRequirementLine(line, installed) {
+  const m = line.match(/^\s*([A-Za-z0-9_.-]+)\s*(==|>=|<=|>|<|~=|!=)\s*([^\s#]+)/)
+  if (!m) return
+  const name = m[1].toLowerCase().replace(/-/g, '_')
+  const op = m[2]
+  const want = m[3]
+  const have = installed[name]
+  if (have === undefined) {
+    error(`Dependency "${m[1]}" not installed (required ${op}${want})`)
+    return
+  }
+  const cmp = compareVersions(have, want)
+  let ok = false
+  switch (op) {
+    case '==': ok = cmp === 0; break
+    case '>=': ok = cmp >= 0; break
+    case '<=': ok = cmp <= 0; break
+    case '>': ok = cmp > 0; break
+    case '<': ok = cmp < 0; break
+    case '!=': ok = cmp !== 0; break
+    case '~=': {
+      const spec = parseVersion(want)
+      const got = parseVersion(have)
+      ok = got[0] === spec[0] && got[1] === spec[1] && cmp >= 0
+      break
+    }
+  }
+  if (ok) {
+    pass(`Dependency ${m[1]}==${have} satisfies ${m[1]}${op}${want}`)
+  } else {
+    error(`Dependency ${m[1]} version mismatch: installed ${have}, required ${op}${want}`)
+  }
+}
+
+function checkVenvLayer() {
+  section('F. Runtime Layer — Venv, Python & Dependencies')
+
+  const configDir = join(homedir(), '.config', 'opencode')
+  const venvPython = join(configDir, '.venv', 'bin', 'python3')
+
+  if (!existsSync(venvPython)) {
+    error(`Venv python not found: ${venvPython} (run \`pantheon-opencode init\` to create it)`)
+    return
+  }
+  pass(`Venv python exists: ${venvPython}`)
+
+  const probe = spawn(venvPython, ['-c', 'import sys; print(sys.version.split()[0])'])
+  if (probe.status !== 0) {
+    error(`Venv python does not respond (exit ${probe.status}): ${probe.stderr}`)
+    return
+  }
+  pass(`Venv python responds (Python ${probe.stdout})`)
+
+  const freeze = spawn(venvPython, ['-m', 'pip', 'freeze'])
+  if (freeze.status !== 0) {
+    warn(`pip freeze failed (exit ${freeze.status}) — cannot verify pinned versions`)
+    return
+  }
+  const installed = parsePipFreeze(freeze.stdout)
+
+  const reqFiles = [
+    join(ROOT, 'src', 'mcp', 'requirements-mcp.txt'),
+    join(ROOT, 'src', 'mcp', 'requirements-vision.txt'),
+  ]
+  for (const reqFile of reqFiles) {
+    if (!existsSync(reqFile)) {
+      warn(`requirements file not found: ${reqFile}`)
+      continue
+    }
+    const base = basename(reqFile)
+    info(`Checking ${base} pins against installed packages`)
+    const lines = readFileSync(reqFile, 'utf8').split('\n')
+    let checked = 0
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+      checked++
+      checkRequirementLine(trimmed, installed)
+    }
+    if (checked === 0) warn(`${base}: no requirement entries found`)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 
@@ -692,7 +950,7 @@ function printSummary(targetPath) {
 // Main
 // ---------------------------------------------------------------------------
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv)
 
   if (args.help) {
@@ -722,9 +980,11 @@ function main() {
     join(args.target, 'scripts', 'doctor.mjs') === join(ROOT, 'scripts', 'doctor.mjs') ||
     existsSync(join(args.target, 'scripts', 'doctor.mjs')) === false
 
-  // Run checks
+  // Run checks (layer order: Config → Venv → spawn paths → runtime smoke)
   checkAgentFiles(args)
   checkMcpConfig(args)
+  checkVenvLayer(args)
+  await checkMcpRuntimeSmoke(args)
   checkPermissionMismatches(args)
   checkSyncStatus(args)
   checkGitStatus(args)
@@ -734,4 +994,7 @@ function main() {
   process.exit(exitCode)
 }
 
-main()
+main().catch((err) => {
+  console.error(`❌ Doctor crashed: ${err.stack ?? err.message}`)
+  process.exit(2)
+})
