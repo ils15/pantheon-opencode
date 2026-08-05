@@ -39,6 +39,23 @@ assert.ok(visionConfig.includes('enabled: true'))
 assert.ok(opencodeInstaller.includes("config.permission.mcp['pantheon-vision'] = 'ask'"))
 assert.ok(healthCheck.includes("'pantheon_vision_server.py'"))
 
+// P2-4: the hooks plugin must be rewritten at install/sync time to the
+// INSTALLED package location (derived from ROOT), never copied verbatim from
+// the packaged opencode.json — otherwise global installs leak the developer's
+// absolute path and break the plugin for every other machine.
+assert.ok(
+  opencodeInstaller.includes('function resolveInstalledPlugin'),
+  'installer rewrites plugin paths through resolveInstalledPlugin',
+)
+assert.ok(
+  opencodeInstaller.includes("const packaged = join(ROOT, 'src', 'plugins', file)"),
+  'resolved plugin path is derived from the installed package ROOT, never hardcoded',
+)
+assert.ok(
+  opencodeInstaller.includes('config.plugin = config.plugin.filter((p) => basename(p) !== file)'),
+  'stale plugin entries with the same basename (e.g. dev paths) are replaced on upgrade',
+)
+
 assert.ok(catalog.includes("'pantheon-vision':"))
 assert.ok(sourceCatalog.includes('../../scripts/install-mcp.mjs'))
 assert.ok(
