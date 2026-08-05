@@ -615,7 +615,7 @@ pantheon/
 │   └── workflows/            — 7 CI/CD workflows
 │       ├── ci.yml
 │       ├── beta-release.yml
-│       ├── auto-release.yml
+│       ├── release.yml
 │       ├── commit-lint.yml
 │       ├── codeql.yml
 │       ├── docs.yml
@@ -689,7 +689,7 @@ to Mnemosyne so counts stay accurate and consistent.
 
 ### What CI enforces automatically
 
-`auto-release.yml` validates version consistency across all manifests (`package.json`,
+`release.yml` validates version consistency across all manifests (`package.json`,
 `plugin.json`, `CHANGELOG.md`, and the README badge) before publishing. If they diverge,
 the release is blocked until Mnemosyne reconciles them.
 

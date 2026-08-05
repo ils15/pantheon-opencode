@@ -48,7 +48,7 @@ Re-publish automático: se label já está no PR e novo commit é pushado, o wor
 ## Histórico
 
 Antes (removido em jul/2026):
-- `auto-release.yml`: publicava beta em todo push pro develop
+- `release.yml`: publicava beta em todo push pro develop
 - Gerava versões `X.Y.Z-beta.N` sequenciais
 - Commit spammado `chore(release):` a cada push
 

@@ -250,7 +250,7 @@ async function detectVersion(api) {
 				timeoutMs: 3e3
 			});
 			const tag = (r.stdout ?? r.output ?? "").trim().replace(/^v/, "").replace(/-\d+-g[0-9a-f]+$/, "");
-			if (tag && tag !== "5.0.0") return tag;
+			if (tag) return tag;
 		}
 	} catch {}
 	try {
