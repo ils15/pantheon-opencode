@@ -177,6 +177,8 @@ opencode
 npm run doctor
 ```
 
+**Instalação global isolada:** para testar o pacote instalado globalmente como um usuário real (sem contaminar o ambiente de dev, que mistura várias instalações), use o sandbox `~/pantheon-sandbox/` — rode `bash ~/pantheon-sandbox/run-test.sh` (mcp list 5/5 + doctor + TUI isolado). Descarte com `rm -rf ~/pantheon-sandbox`; detalhes em `~/pantheon-sandbox/README.md`.
+
 ## Troubleshooting
 
 ### TUI runtime versus development build
