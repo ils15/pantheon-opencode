@@ -1,16 +1,16 @@
 name: Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: 'PR number for beta release labeling'
-        required: false
-        default: '9'
+  # Beta: a PR gets the `release:beta` label. PR number is the REAL
+  # github.event.number — no inputs, no defaults.
   pull_request:
     types: [labeled]
+  # Stable: a version-bump PR merges to main, or a manual dispatch.
+  # NO workflow_dispatch inputs — the old `pr_number` input with default '9'
+  # produced fake `-beta.9.<sha>` tags on every manual dispatch.
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,13 +25,20 @@ jobs:
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     concurrency:
-      group: release-${{ github.ref_name }}
+      # Themis audit fix #2 — global npm mutex. ONE group for BOTH the beta
+      # (PR ref) and stable (main ref) paths so two runs can't both read
+      # "version not on npm" and then both publish (double-publish race).
+      # Reruns of the same push serialize instead of cancel — acceptable
+      # because the idempotent guard below makes reruns safe.
+      group: release
       cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+          # PR: exact PR head. push: the merge commit (github.sha). dispatch:
+          # explicit 'main' — never rely on the implicit default checkout.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (github.event_name == 'push' && github.sha) || 'main' }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -44,19 +51,77 @@ jobs:
       - name: Determine release type
         id: type
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "channel=stable" >> "$GITHUB_OUTPUT"
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-          else
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "channel=beta" >> "$GITHUB_OUTPUT"
             echo "tag=beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
+
+      # Version gate — FIRST release gate. Fail when package.json is not ahead
+      # of the latest stable git tag. LATEST_STABLE only considers EXACT
+      # vX.Y.Z tags — pre-releases like v1.2.0-beta.9.7bef03e are excluded
+      # (flagged defect: naive `sort -V | tail -1` picked them up as "latest").
+      # Pure inline node — no network dependency.
+      - name: Version gate
+        id: version_gate
+        env:
+          GATE_CHANNEL: ${{ steps.type.outputs.channel }}
+        run: |
+          node <<'NODE'
+          const { execSync } = require('node:child_process');
+          const fs = require('node:fs');
+
+          const pkgVer = String(JSON.parse(fs.readFileSync('package.json', 'utf8')).version || '');
+          const channel = process.env.GATE_CHANNEL || 'stable';
+
+          // Only exact vX.Y.Z tags are stable — the 'v[0-9]*' glob alone also
+          // matches v1.2.0-beta.9.7bef03e-style pre-release tags.
+          const tags = execSync("git tag -l 'v[0-9]*'", { encoding: 'utf8' })
+            .trim().split('\n').filter(Boolean);
+          const stableTags = tags.filter((t) => /^v\d+\.\d+\.\d+$/.test(t));
+
+          const cmp = (a, b) => {
+            const pa = String(a).split('.').map(Number);
+            const pb = String(b).split('.').map(Number);
+            for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+              const x = pa[i] || 0;
+              const y = pb[i] || 0;
+              if (x > y) return 1;
+              if (x < y) return -1;
+            }
+            return 0;
+          };
+
+          stableTags.sort((a, b) => cmp(a.slice(1), b.slice(1)));
+          const latestStable = stableTags.length ? stableTags[stableTags.length - 1] : 'v0.0.0';
+
+          if (!/^\d+\.\d+\.\d+$/.test(pkgVer)) {
+            console.error(`::error::package.json version is not a clean X.Y.Z semver: "${pkgVer}"`);
+            process.exit(1);
+          }
+
+          const behind = cmp(pkgVer, latestStable.slice(1));
+          // beta: the base version must be STRICTLY ahead of latest stable.
+          // stable: == is the already-released/idempotent-rerun case, handled
+          // by the idempotent guard below — fail only when strictly behind.
+          const fail = channel === 'beta' ? behind <= 0 : behind < 0;
+          if (fail) {
+            console.error(`::error::Version must be bumped in a PR before merging. package.json=${pkgVer}, latest stable tag=${latestStable}.`);
+            process.exit(1);
+          }
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${pkgVer}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `latest_stable=${latestStable}\n`);
+          console.log(`Version gate passed: package.json=${pkgVer} (channel=${channel}, latest stable=${latestStable})`);
+          NODE
 
       - name: Compute beta version
         if: steps.type.outputs.channel == 'beta'
         id: betaver
         run: |
-          PR=${{ github.event.number || github.event.inputs.pr_number }}
+          PR=${{ github.event.number }}
           SHA=$(git rev-parse --short HEAD)
           BASE=$(node -p "require('./package.json').version")
           echo "version=${BASE}-beta.${PR}.${SHA}" >> "$GITHUB_OUTPUT"
@@ -69,8 +134,84 @@ jobs:
       - name: Pack and verify
         run: npm pack --dry-run 2>&1 | tail -3
 
+      # Idempotent guard: if the exact tag already exists AND its release
+      # exists, exit 0 — do NOT recreate the tag, recreate the release, or
+      # republish. If the tag exists but the release is missing, continue and
+      # complete the release (tag creation is skipped via tag_exists).
+      - name: Check tag and release existence
+        id: idem
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          if git ls-remote --tags origin "refs/tags/${VERSION}" | grep -q "refs/tags/${VERSION}"; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            if gh release view "${VERSION}" >/dev/null 2>&1; then
+              echo "released=true" >> "$GITHUB_OUTPUT"
+              echo "✅ ${VERSION} already released — idempotent. Exiting."
+              exit 0
+            fi
+            echo "⚠️ Tag ${VERSION} exists but release is missing — completing the release."
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "released=false" >> "$GITHUB_OUTPUT"
+
+      # Release body = extracted changelog section, NOT the raw CHANGELOG.md
+      # (which would post the ENTIRE changelog — its head is now renumbered to
+      # [1.0.0]). scripts/changelog-extract.mjs prints the "## [X.Y.Z] - date"
+      # section body for the base PKG_VER; exits non-zero when missing → fail.
+      - name: Extract changelog section
+        if: steps.idem.outputs.released != 'true'
+        run: |
+          BASE="${{ steps.version_gate.outputs.version }}"
+          if ! node scripts/changelog-extract.mjs "${BASE}" > .github/release-notes.md; then
+            echo "::error::CHANGELOG.md has no [${BASE}] section — add it in the version-bump PR."
+            exit 1
+          fi
+          echo "Extracted changelog section for ${BASE} ($(wc -l < .github/release-notes.md) lines)"
+
+      # Tag creation is workflow-owned (scripts/versioning.mjs no longer
+      # creates tags). The tag is created at the checked-out commit — for
+      # push:main that is github.sha (the exact merge commit); for a beta PR,
+      # the PR head. Runs only AFTER the gates above have passed.
+      - name: Create and push tag
+        if: steps.idem.outputs.released != 'true' && steps.idem.outputs.tag_exists != 'true'
+        run: |
+          VERSION="${{ steps.idem.outputs.version }}"
+          git tag -a "${VERSION}" -m "chore(release): ${VERSION}"
+          git push origin "${VERSION}"
+
+      - name: Create GitHub Release
+        if: steps.idem.outputs.released != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.idem.outputs.version }}"
+          PR=${{ github.event.number }}
+          if [ "${{ steps.type.outputs.channel }}" = "beta" ]; then
+            gh release create "${VERSION}" \
+              --target "${GITHUB_SHA}" \
+              --verify-tag \
+              --title "Pantheon ${VERSION} (PR #${PR})" \
+              --prerelease \
+              --notes-file .github/release-notes.md
+          else
+            gh release create "${VERSION}" \
+              --target "${GITHUB_SHA}" \
+              --verify-tag \
+              --title "Pantheon ${VERSION}" \
+              --notes-file .github/release-notes.md
+          fi
+          echo "Created release ${VERSION}"
+
+      # npm_check gates ONLY the npm publish step; the tag/release existence
+      # guard above gates the gh release path separately. No silent
+      # double-gating — one guard can no longer block both.
       - name: Check if version exists on npm
         id: npm_check
+        if: steps.idem.outputs.released != 'true'
         run: |
           VER=$(node -p "require('./package.json').version")
           NPM_VER=$(npm view pantheon-opencode version --tag ${{ steps.type.outputs.tag }} 2>/dev/null || echo "none")
@@ -81,38 +222,22 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # npm publish LAST: if the run is canceled after publish, the rerun hits
+      # the idempotent guard and exits 0 without double-publishing (and
+      # npm_check prevents a republish even if the guard is bypassed).
       - name: Publish to npm
-        if: steps.npm_check.outputs.exists == 'false'
+        if: steps.idem.outputs.released != 'true' && steps.npm_check.outputs.exists == 'false'
         run: npm publish --tag ${{ steps.type.outputs.tag }} --access public --provenance 2>&1
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Create GitHub Release
-        if: steps.npm_check.outputs.exists == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="v$(node -p "require('./package.json').version")"
-          if [ "${{ steps.type.outputs.channel }}" = "beta" ]; then
-            PR=${{ github.event.number || github.event.inputs.pr_number }}
-            gh release create "$VERSION" \
-              --title "Pantheon ${VERSION} (PR #${PR})" \
-              --prerelease \
-              --notes "Beta release from PR #${PR}."
-          else
-            gh release create "$VERSION" \
-              --title "Pantheon ${VERSION}" \
-              --notes-file CHANGELOG.md
-          fi
-          echo "Published $VERSION"
-
       - name: Post comment on PR
-        if: steps.type.outputs.channel == 'beta' && steps.npm_check.outputs.exists == 'false'
+        if: steps.type.outputs.channel == 'beta' && steps.npm_check.outputs.exists == 'false' && steps.idem.outputs.released != 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            const ver = '${{ steps.betaver.outputs.version }}';
-            const pr = ${{ github.event.number || github.event.inputs.pr_number }};
+            const ver = '${{ steps.idem.outputs.version }}';
+            const pr = ${{ github.event.number }};
             github.rest.issues.createComment({
               ...context.repo,
               issue_number: pr,

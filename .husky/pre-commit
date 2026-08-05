@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+# Delegate to the pre-commit framework (Python) so it keeps running through
+# husky's hooks dir. Husky v9 sets core.hooksPath = .husky/_ — git no longer
+# consults .git/hooks/pre-commit, so the framework must be invoked from here.
+# Mirrors the generated .git/hooks/pre-commit shim from `pre-commit install`.
+
+INSTALL_PYTHON=/usr/bin/python3
+
+if [ -x "$INSTALL_PYTHON" ]; then
+	exec "$INSTALL_PYTHON" -m pre_commit run
+elif command -v pre-commit > /dev/null 2>&1; then
+	exec pre-commit run
+else
+	echo 'pre-commit not found. Install with: pip install pre-commit' 1>&2
+	exit 1
+fi

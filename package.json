@@ -8,6 +8,7 @@
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
+    "prepare": "husky",
     "setup": "node bin/pantheon-init.mjs init",
     "setup:lite": "node bin/pantheon-init.mjs init --clean --components agents,skills,instructions",
     "doctor": "node scripts/doctor.mjs",
@@ -18,6 +19,7 @@
     "postpublish": "node -e \"console.log('✅ Published pantheon-opencode v' + require('./package.json').version + ' to npm')\"",
     "version:status": "node scripts/versioning.mjs status",
     "version:apply": "node scripts/versioning.mjs apply",
+    "version:check": "node scripts/version-check.mjs",
     "release:dry-run": "node scripts/versioning.mjs status && npm pack --dry-run",
     "publish:next": "npm publish --tag next --access public",
     "lint": "npx biome ci .",
@@ -73,6 +75,10 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/ils15/pantheon-opencode.git"
+  },
+  "homepage": "https://github.com/ils15/pantheon-opencode",
+  "bugs": {
+    "url": "https://github.com/ils15/pantheon-opencode/issues"
   },
   "keywords": [
     "github",

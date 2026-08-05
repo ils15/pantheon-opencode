@@ -1,0 +1,32 @@
+Pantheon v1.2.1	Latest	v1.2.1	2026-08-04T02:11:47Z
+Pantheon v1.2.0-beta.9.7bef03e (PR #9)	Pre-release	v1.2.0-beta.9.7bef03e	2026-08-03T18:01:02Z
+Pantheon v1.2.0-beta.9.f05c809 (PR #9)	Pre-release	v1.2.0-beta.9.f05c809	2026-08-03T17:58:48Z
+Pantheon v1.2.0		v1.2.0	2026-07-30T18:19:28Z
+Pantheon v1.1.3-beta.0 (beta)	Pre-release	v1.1.3-beta.0	2026-07-29T13:14:40Z
+Pantheon v1.1.1-beta.19 (beta)	Pre-release	v1.1.1-beta.19	2026-07-29T13:11:35Z
+Pantheon v1.1.1		v1.1.1	2026-07-28T12:55:26Z
+Pantheon v1.1.1-beta.18 (beta)	Pre-release	v1.1.1-beta.18	2026-07-28T11:04:08Z
+Pantheon v1.1.1-beta.17 (beta)	Pre-release	v1.1.1-beta.17	2026-07-28T10:54:39Z
+Pantheon v1.1.1-beta.16 (beta)	Pre-release	v1.1.1-beta.16	2026-07-27T23:22:55Z
+Pantheon v1.1.1-beta.15 (beta)	Pre-release	v1.1.1-beta.15	2026-07-27T23:12:34Z
+Pantheon v1.1.1-beta.14 (beta)	Pre-release	v1.1.1-beta.14	2026-07-27T22:28:35Z
+Pantheon v1.1.1-beta.12 (beta)	Pre-release	v1.1.1-beta.12	2026-07-27T20:49:46Z
+Pantheon v1.1.1-beta.11 (beta)	Pre-release	v1.1.1-beta.11	2026-07-27T17:53:36Z
+Pantheon v1.1.1-beta.10 (beta)	Pre-release	v1.1.1-beta.10	2026-07-27T16:08:05Z
+Pantheon v1.1.1-beta.9 (beta)	Pre-release	v1.1.1-beta.9	2026-07-27T15:57:00Z
+Pantheon v1.1.1-beta.8 (beta)	Pre-release	v1.1.1-beta.8	2026-07-27T15:46:07Z
+Pantheon v1.1.1-beta.7 (beta)	Pre-release	v1.1.1-beta.7	2026-07-27T10:19:26Z
+Pantheon v1.1.1-beta.6 (beta)	Pre-release	v1.1.1-beta.6	2026-07-26T22:57:40Z
+Pantheon v1.1.1-beta.5 (beta)	Pre-release	v1.1.1-beta.5	2026-07-26T22:47:31Z
+Pantheon v1.1.1-beta.4 (beta)	Pre-release	v1.1.1-beta.4	2026-07-26T18:29:17Z
+Pantheon v1.1.1-beta.3 (beta)	Pre-release	v1.1.1-beta.3	2026-07-26T16:54:18Z
+Pantheon v1.1.1-beta.2 (beta)	Pre-release	v1.1.1-beta.2	2026-07-26T16:51:08Z
+Pantheon v1.1.1-beta.1 (beta)	Pre-release	v1.1.1-beta.1	2026-07-26T16:37:14Z
+Pantheon v1.1.1-beta.0 (beta)	Pre-release	v1.1.1-beta.0	2026-07-26T16:25:04Z
+Pantheon v1.1.0		v1.1.0	2026-07-26T14:30:23Z
+Pantheon v1.0.7		v1.0.7	2026-07-26T03:31:38Z
+Pantheon v1.0.6		v1.0.6	2026-07-26T03:19:27Z
+Pantheon v1.0.5		v1.0.5	2026-07-26T03:13:05Z
+Pantheon v1.0.2		v1.0.2	2026-07-25T20:18:36Z
+Pantheon v1.0.1		v1.0.1	2026-07-24T23:33:12Z
+Pantheon v1.0.0		v1.0.0	2026-07-24T23:10:58Z

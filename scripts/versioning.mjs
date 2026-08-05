@@ -29,7 +29,7 @@ const MANIFEST_FILES = [
   'pyproject.toml',
   'package.json',
   'plugin.json',
-  '.github/plugin/plugin.json',
+  'src/plugins/tui/package.json',
 ]
 
 const CHANGELOG_PATH = join(ROOT, 'CHANGELOG.md')
@@ -47,8 +47,11 @@ function run(cmd) {
 }
 
 function getLatestTag() {
-  // Use numerically highest tag, not just nearest git ancestor
-  const tag = run("git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1")
+  // Stable tags only: strict vX.Y.Z with NO pre-release suffix.
+  // The loose glob `v[0-9]*.[0-9]*.[0-9]*` ALSO matches v1.2.0-beta.9.*
+  // (the trailing `*` swallows the -beta suffix), which would poison the
+  // version gate — so filter strictly before sorting.
+  const tag = run("git tag -l 'v*' | grep -E '^v[0-9]+\\.[0-9]+\\.[0-9]+$' | sort -V | tail -1")
   return tag || 'v0.0.0'
 }
 
@@ -207,13 +210,15 @@ switch (command) {
     const latestVer = latestTag.replace(/^v/, '')
 
     // If package.json is already ahead of the latest tag, someone bumped
-    // without tagging — warn and use the current version as-is.
+    // without tagging — warn and use the current version as-is. Tags are
+    // workflow-owned, so there is nothing to create here.
     if (current !== latestVer) {
       console.log(`⚠ package.json (${current}) already ahead of latest tag (${latestTag}).`)
       console.log(`  Syncing all manifests to ${current} and promoting CHANGELOG.`)
       updateManifests(current)
       const date = new Date().toISOString().slice(0, 10)
       promoteUnreleased(current, date)
+      console.log(`Tag v${current} will be created by the release workflow after merge to main.`)
       break
     }
 
@@ -226,16 +231,10 @@ switch (command) {
     promoteUnreleased(newVersion, date)
     console.log(`\nDone. Commit with: git add -A && git commit -m "chore(release): v${newVersion}"`)
 
-    // Create git tag
-    try {
-      const tag = `v${newVersion}`
-      execSync(`git tag -a ${tag} -m "chore(release): ${tag}"`, { stdio: 'inherit' })
-      console.log(`Tag ${tag} created locally. Push: git push origin ${tag}`)
-      console.log(`Auto-release will trigger on main after merge.`)
-    } catch (e) {
-      console.warn(`Tag creation failed: ${e.message}`)
-      console.log('Create manually: git tag -a v' + newVersion + ' -m "chore(release): v' + newVersion + '"')
-    }
+    // Tags are owned by the release workflow — never create them locally.
+    // A local tag on a pre-merge commit drifts from the merged main state
+    // (the untagged-v1.2.1 root cause) and would desync the version gate.
+    console.log(`Tag v${newVersion} will be created by the release workflow after merge to main.`)
     break
   }
 
