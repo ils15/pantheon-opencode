@@ -737,19 +737,18 @@ Edit README.md line 11: agents-17 → agents-18
 - Hardcoded secret detection
 - Minimum 80% test coverage (hard block)
 
-**Agent hooks enforce at runtime (`scripts/hooks/` + `.opencode/plugins/pantheon-hooks.ts`):**
-- `scan-secrets.sh` — detects hardcoded secrets and credentials (PreToolUse)
-- `validate-tool-safety.sh` — blocks destructive operations (PreToolUse)
-- `validate-talos-scope.sh` — restricts Talos hotfix scope (PreToolUse)
-- `on-subagent-delegation-start.sh` — tracks delegation start (PreToolUse)
-- `format-multi-language.sh` — auto-formats modified files (PostToolUse)
-- `log-session-start.sh` — audit trail of sessions (PostToolUse)
-- `on-subagent-delegation-stop.sh` — delegation cleanup (PostToolUse)
-- `validate-post-conditions.sh` — post-condition validation (event)
-- `audit-imports.sh` — detects wildcard imports and suspicious patterns (PostToolUse)
-- `run-type-check.sh` — runs mypy/tsc if config exists (PostToolUse)
+**Agent hooks enforce at runtime (`scripts/hooks/` + `src/plugins/pantheon-hooks.ts`):**
+- `scan-secrets.sh` — detects hardcoded secrets and credentials (tool.execute.before)
+- `validate-tool-safety.sh` — blocks destructive operations (tool.execute.before)
+- `validate-talos-scope.sh` — restricts Talos hotfix scope (tool.execute.before)
+- `on-subagent-delegation-start.sh` — tracks delegation start (tool.execute.before, delegation tools only)
+- `format-multi-language.sh` — auto-formats modified files (tool.execute.after)
+- `log-session-start.sh` — audit trail of sessions (tool.execute.after + event session.created)
+- `on-subagent-delegation-stop.sh` — delegation cleanup (tool.execute.after, delegation tools only)
+- `validate-post-conditions.sh` — post-condition validation (event session.created)
+- `audit-imports.sh` and `run-type-check.sh` also live in `scripts/hooks/` but are not wired into the plugin.
 
-The `.opencode/plugins/pantheon-hooks.ts` plugin bridges these shell scripts to OpenCode events. OpenCode auto-discovers plugins from `.opencode/plugins/` when running from the project directory.
+The `src/plugins/pantheon-hooks.ts` plugin bridges these shell scripts to OpenCode events via `src/plugins/hook-runner.ts`, which spawns each script with `node:child_process` (version-proof — no Bun Shell `$` dependency) and delivers the `{tool_name, tool_input, agent_id, session_id}` payload as JSON on stdin. Register it explicitly in `opencode.json`: `"plugin": ["<path>/src/plugins/pantheon-hooks.ts"]` (absolute path). It is **not** auto-discovered from `.opencode/plugins/`.
 
 ### Pre-commit hooks (local secret gate)
 

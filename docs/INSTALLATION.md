@@ -198,6 +198,64 @@ not indicate a broken runtime.
 | Plugin not loading | Ensure `~/.config/opencode/plugins/pantheon-tui/dist/tui.tsx` exists |
 | Health check fails | Run `npm run doctor` for detailed diagnostics |
 
+### MCP servers e falha de spawn (ENOENT)
+
+Pantheon's MCP servers (resources, code-mode, memory, persistence, vision) are
+spawned by OpenCode as local child processes. Two facts shape how spawn
+failures behave:
+
+1. **OpenCode 1.18 does not retry a failed local MCP server.** If the spawn
+   fails at startup, the server stays in `failed` state for the whole TUI
+   process. There is no reconnect hook; the only recovery is restarting the
+   TUI. Session data and persistence are safe — they live in the SQLite
+   database, not in the MCP process.
+2. **`posix_spawn ENOENT` means the command path does not exist.** The most
+   common cause is a stale hardcoded path (e.g. a config that still points at
+   `/home/admin/.config/opencode/...` after the home directory was migrated)
+   or a path relative to an ambiguous root. OpenCode spawns the command
+   verbatim — a missing interpreter or script fails with ENOENT before any
+   Python code runs.
+
+**Diagnosis**
+
+```bash
+# Verify the interpreter and script exist for each configured server
+ls /home/ils15/.config/opencode/.venv/bin/python3
+ls /home/ils15/.config/opencode/scripts/mcp_resources_server.py
+# etc. — compare against the paths in ~/.config/opencode/opencode.json
+
+# Static check — `npm run doctor` (or `pantheon-opencode doctor`) validates
+# that every local MCP command's executable and absolute script args exist
+npm run doctor -- --target /home/ils15/.config/opencode
+```
+
+If the doctor reports `MCP "..." executable does not exist`, fix the path in
+`~/.config/opencode/opencode.json` (or re-run the installer, which resolves
+hermetic absolute paths — see below) and **restart the OpenCode TUI**.
+
+**Recovery**
+
+```bash
+# Close the TUI (Ctrl+C / exit) and relaunch. Sessions and data persist.
+opencode
+# Verify MCP servers are back:
+opencode mcp list
+```
+
+**Hermetic path policy (P2, 2026-08-05)**
+
+- `scripts/install-mcp.mjs` generates commands with **absolute** interpreter
+  and script paths, resolved in this order: canonical user install
+  (`~/.config/opencode/.venv/bin/python3` + `~/.config/opencode/scripts/*.py`),
+  then the local checkout (`<ROOT>/.venv` + `<ROOT>/scripts|src/mcp`), with a
+  warning fallback to PATH `python3`.
+- `scripts/doctor.mjs` now includes a **hermetic spawn check**: every local MCP
+  entry is verified for an existing executable and existing absolute script
+  args, so the ENOENT class is caught statically before OpenCode tries to
+  spawn.
+- Avoid editing MCP commands to relative paths or paths under another user's
+  home — they reproduce this failure class.
+
 ## Installation Flow
 
 ```mermaid

@@ -23,12 +23,60 @@
 import { execSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
+
+// ---------------------------------------------------------------------------
+// Hermetic path resolution (P2 — ENOENT-on-spawn elimination)
+//
+// Pantheon MCP commands MUST be generated with ABSOLUTE paths for both the
+// venv python3 and the server script. ROOT alone is ambiguous: when this
+// installer runs from a global npm install, `join(ROOT, '.venv/bin/python3')`
+// points at a venv that does not exist there, and a stale config with a
+// hardcoded path to a migrated home (e.g. /home/admin) fails with
+// `posix_spawn ENOENT`. Resolution order:
+//   1. Canonical user install: ~/.config/opencode/.venv + ~/.config/opencode/scripts/
+//   2. Local checkout:        <ROOT>/.venv + <ROOT>/<relPath>
+//   3. Fallback:              PATH python3 / ROOT path, with a warning
+// ---------------------------------------------------------------------------
+const CONFIG_OPENCODE = join(homedir(), '.config', 'opencode')
+
+function resolveVenvPython() {
+  const candidates = [
+    join(CONFIG_OPENCODE, '.venv', 'bin', 'python3'),
+    join(ROOT, '.venv', 'bin', 'python3'),
+  ]
+  for (const p of candidates) {
+    if (existsSync(p)) return p
+  }
+  console.warn(
+    `  ⚠️  Pantheon venv python3 not found (checked ${candidates.join(', ')}). Using PATH 'python3'.`,
+  )
+  return 'python3'
+}
+
+function resolveServerScript(relPath) {
+  const base = basename(relPath)
+  const candidates = [join(CONFIG_OPENCODE, 'scripts', base), join(ROOT, relPath)]
+  for (const p of candidates) {
+    if (existsSync(p)) return p
+  }
+  console.warn(
+    `  ⚠️  Pantheon MCP server script not found (checked ${candidates.join(', ')}). Using ${join(ROOT, relPath)}.`,
+  )
+  return join(ROOT, relPath)
+}
+
+const VENV_PYTHON = resolveVenvPython()
+const MCP_RESOURCES_SERVER = resolveServerScript('scripts/mcp_resources_server.py')
+const CODE_MODE_SERVER = resolveServerScript('scripts/code_mode_server.py')
+const MEMORY_MCP_SERVER = resolveServerScript('scripts/memory_mcp_server.py')
+const MCP_PERSISTENCE_SERVER = resolveServerScript('scripts/mcp_persistence_server.py')
+const PANTHEON_VISION_SERVER = resolveServerScript('src/mcp/pantheon_vision_server.py')
 
 // ---------------------------------------------------------------------------
 // MCP Definitions
@@ -173,37 +221,37 @@ const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/mcp_resources_server.py')],
+        command: VENV_PYTHON,
+        args: [MCP_RESOURCES_SERVER],
       },
       vscode: {
         type: 'stdio',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/mcp_resources_server.py')],
+        command: VENV_PYTHON,
+        args: [MCP_RESOURCES_SERVER],
       },
       cursor: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/mcp_resources_server.py')],
+        command: VENV_PYTHON,
+        args: [MCP_RESOURCES_SERVER],
       },
       claude: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/mcp_resources_server.py')],
+        command: VENV_PYTHON,
+        args: [MCP_RESOURCES_SERVER],
       },
       windsurf: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/mcp_resources_server.py')],
+        command: VENV_PYTHON,
+        args: [MCP_RESOURCES_SERVER],
       },
     },
     env: [],
     validate: async () => {
-      const scriptPath = join(ROOT, 'scripts', 'mcp_resources_server.py')
+      const scriptPath = MCP_RESOURCES_SERVER
       if (existsSync(scriptPath)) {
         return { ok: true, message: 'server script present' }
       }
-      return { ok: false, message: 'scripts/mcp_resources_server.py not found' }
+      return { ok: false, message: 'mcp_resources_server.py not found at resolved path' }
     },
   },
   'pantheon-code-mode': {
@@ -213,37 +261,37 @@ const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/code_mode_server.py')],
+        command: VENV_PYTHON,
+        args: [CODE_MODE_SERVER],
       },
       vscode: {
         type: 'stdio',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/code_mode_server.py')],
+        command: VENV_PYTHON,
+        args: [CODE_MODE_SERVER],
       },
       cursor: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/code_mode_server.py')],
+        command: VENV_PYTHON,
+        args: [CODE_MODE_SERVER],
       },
       claude: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/code_mode_server.py')],
+        command: VENV_PYTHON,
+        args: [CODE_MODE_SERVER],
       },
       windsurf: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/code_mode_server.py')],
+        command: VENV_PYTHON,
+        args: [CODE_MODE_SERVER],
       },
     },
     env: [],
     validate: async () => {
-      const scriptPath = join(ROOT, 'scripts', 'code_mode_server.py')
+      const scriptPath = CODE_MODE_SERVER
       if (existsSync(scriptPath)) {
         return { ok: true, message: 'server script present' }
       }
-      return { ok: false, message: 'scripts/code_mode_server.py not found' }
+      return { ok: false, message: 'code_mode_server.py not found at resolved path' }
     },
   },
   'pantheon-memory': {
@@ -254,32 +302,32 @@ const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/memory_mcp_server.py')],
+        command: VENV_PYTHON,
+        args: [MEMORY_MCP_SERVER],
       },
       claude: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/memory_mcp_server.py')],
+        command: VENV_PYTHON,
+        args: [MEMORY_MCP_SERVER],
       },
       cursor: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/memory_mcp_server.py')],
+        command: VENV_PYTHON,
+        args: [MEMORY_MCP_SERVER],
       },
       windsurf: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/memory_mcp_server.py')],
+        command: VENV_PYTHON,
+        args: [MEMORY_MCP_SERVER],
       },
     },
     env: [],
     validate: async () => {
-      const scriptPath = join(ROOT, 'scripts', 'memory_mcp_server.py')
+      const scriptPath = MEMORY_MCP_SERVER
       if (existsSync(scriptPath)) {
         return { ok: true, message: 'server script present' }
       }
-      return { ok: false, message: 'scripts/memory_mcp_server.py not found' }
+      return { ok: false, message: 'memory_mcp_server.py not found at resolved path' }
     },
   },
   'pantheon-persistence': {
@@ -290,32 +338,32 @@ const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/mcp_persistence_server.py')],
+        command: VENV_PYTHON,
+        args: [MCP_PERSISTENCE_SERVER],
       },
       claude: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/mcp_persistence_server.py')],
+        command: VENV_PYTHON,
+        args: [MCP_PERSISTENCE_SERVER],
       },
       cursor: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/mcp_persistence_server.py')],
+        command: VENV_PYTHON,
+        args: [MCP_PERSISTENCE_SERVER],
       },
       windsurf: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'scripts/mcp_persistence_server.py')],
+        command: VENV_PYTHON,
+        args: [MCP_PERSISTENCE_SERVER],
       },
     },
     env: [],
     validate: async () => {
-      const scriptPath = join(ROOT, 'scripts', 'mcp_persistence_server.py')
+      const scriptPath = MCP_PERSISTENCE_SERVER
       if (existsSync(scriptPath)) {
         return { ok: true, message: 'server script present' }
       }
-      return { ok: false, message: 'scripts/mcp_persistence_server.py not found' }
+      return { ok: false, message: 'mcp_persistence_server.py not found at resolved path' }
     },
   },
   'pantheon-vision': {
@@ -327,33 +375,33 @@ const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')],
+        command: VENV_PYTHON,
+        args: [PANTHEON_VISION_SERVER],
       },
       vscode: {
         type: 'stdio',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')],
+        command: VENV_PYTHON,
+        args: [PANTHEON_VISION_SERVER],
       },
       claude: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')],
+        command: VENV_PYTHON,
+        args: [PANTHEON_VISION_SERVER],
       },
       cursor: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')],
+        command: VENV_PYTHON,
+        args: [PANTHEON_VISION_SERVER],
       },
       windsurf: {
         type: 'local',
-        command: join(ROOT, '.venv/bin/python3'),
-        args: [join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')],
+        command: VENV_PYTHON,
+        args: [PANTHEON_VISION_SERVER],
       },
     },
     env: [],
     validate: async () => {
-      const sourcePath = join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')
+      const sourcePath = PANTHEON_VISION_SERVER
       const requirementsPath = join(ROOT, 'src', 'mcp', 'requirements-vision.txt')
       if (existsSync(sourcePath) && existsSync(requirementsPath)) {
         return { ok: true, message: 'canonical server source and isolated requirements present' }

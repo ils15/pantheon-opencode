@@ -4,9 +4,14 @@
 set -euo pipefail
 
 BLOCKED_PATTERNS=(
-    "rm\s+-rf\s+/$"          # rm -rf / (root only)
+    # "rm -rf /" appears mid-JSON in the hook stdin protocol (e.g.
+    # {"tool_input":{"command":"rm -rf /"}}), so the old `/$` end-of-line
+    # anchor never matched. Match "/" followed by a JSON delimiter (", },
+    # comma), whitespace, or end of line — catches bare "rm -rf /" anywhere
+    # in the payload while keeping "rm -rf /some/path" (safe) unblocked.
+    "rm\s+-rf\s+/([\"},\t[:space:]]|$)"   # rm -rf / (root only)
     "rm\s+-rf\s+/\*"         # rm -rf /*
-    "rm\s+-rf\s+~$"          # rm -rf ~ (home only)
+    "rm\s+-rf\s+~([\",[:space:]]|$)"      # rm -rf ~ (home only)
     "rm\s+-rf\s+~/"          # rm -rf ~/...
     "rm\s+-rf\s+\.\.?/"      # rm -rf ./ or rm -rf ../
     "DROP\s+TABLE"

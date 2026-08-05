@@ -29,7 +29,7 @@
     }
   },
   "instructions": ["AGENTS.md", "src/instructions/*.instructions.md"],
-  "plugin": [],
+  "plugin": ["/home/ils15/pantheon/src/plugins/pantheon-hooks.ts"],
   "mcp": {
     "bifrost": {
       "type": "remote",

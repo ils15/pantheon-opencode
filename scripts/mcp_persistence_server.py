@@ -14,6 +14,7 @@ import argparse
 import re
 import sqlite3
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
