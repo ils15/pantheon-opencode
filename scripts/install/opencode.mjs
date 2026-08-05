@@ -308,9 +308,16 @@ export async function installOpenCode(
   const targetTuiConfigPath = isGlobal
     ? join(target, 'tui.json')
     : join(target, '.opencode', 'tui.json')
-  const pluginRef = 'plugins/pantheon-tui'
-  unregisterPlugin(targetTuiConfigPath, pluginRef, { dryRun })
-  const tuiStatus = registerPlugin(targetTuiConfigPath, pluginRef, { dryRun })
+  // Hermetic TUI plugin registration: opencode's tui loader treats relative
+  // entries ("plugins/pantheon-tui") as npm/github package specs and fails
+  // with NpmInstallFailedError ("Repository not found"). Register the plugin
+  // by the ABSOLUTE path of the built dist inside the installed package
+  // (derived from ROOT — never hardcoded), mirroring the loader's
+  // absolute-path support (same pattern as the hooks plugin fix).
+  const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx')
+  // Clean up the old broken relative ref (and stale dist refs) on upgrade.
+  unregisterPlugin(targetTuiConfigPath, 'plugins/pantheon-tui', { dryRun })
+  const tuiStatus = registerPlugin(targetTuiConfigPath, tuiPluginRef, { dryRun })
   if (tuiStatus === 'created') stats.created++
   else stats.skipped++
 
