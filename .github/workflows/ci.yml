@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with: { node-version: '22' }
 
       - name: Install dependencies
         run: pip install --quiet pytest pyyaml yamllint 2>&1 && npm ci --ignore-scripts 2>&1 || npm install 2>&1
