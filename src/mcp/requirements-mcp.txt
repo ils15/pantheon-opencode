@@ -1,5 +1,8 @@
-mcp>=1.28.0
-fastmcp>=3.4.0
-pyyaml>=6.0
-sqlite-vec>=0.1.7
-fastembed>=0.5.0
+# Pantheon MCP runtime dependencies — EXACT pins (issue #21)
+# Pinned to the versions validated in the sandbox venv (2026-08-05).
+# Update deliberately via: pip install -U <pkg> && pip freeze | grep -iE '^(mcp|fastmcp|pyyaml|sqlite-vec|fastembed)'
+mcp==1.29.0
+fastmcp==3.4.6
+pyyaml==6.0.3
+sqlite-vec==0.1.9
+fastembed==0.8.0
