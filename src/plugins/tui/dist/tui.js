@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 //#region src/index.tsx
 /** @jsxImportSource @opentui/solid */
@@ -225,6 +226,10 @@ async function resolvePresetForTui(env, cwd) {
 	};
 }
 async function detectVersion(api) {
+	try {
+		const match = (await readFile(fileURLToPath(new URL("../../../../package.json", import.meta.url)), "utf8")).match(/"version":\s*"([^"]+)"/);
+		if (match?.[1]) return match[1];
+	} catch {}
 	try {
 		const wt = api.state.path?.worktree ?? "";
 		const fp = wt ? `${wt}/package.json` : "package.json";

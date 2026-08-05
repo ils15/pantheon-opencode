@@ -49,6 +49,7 @@ import { Buffer } from 'node:buffer'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from '@opencode-ai/plugin/tui'
 import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 
@@ -166,6 +167,20 @@ async function resolvePresetForTui(
  *   4. null                                                      */
 
 async function detectVersion(api: TuiPluginApi): Promise<string | null> {
+  // Try 0: package.json do PACOTE PANTHEON instalado. O TUI é carregado de
+  // <pacote>/src/plugins/tui/dist/tui.tsx (fix #32 garante esse path) →
+  // 4 níveis acima (dist → tui → plugins → src → raiz) está o package.json
+  // do pacote. Funciona em QUALQUER cwd (ex: sandbox sem package.json/git) e
+  // também em dev (source no repo). Se falhar, cai para os tries abaixo.
+  try {
+    const pkgUrl = new URL('../../../../package.json', import.meta.url)
+    const pkgContent = await readFile(fileURLToPath(pkgUrl), 'utf8')
+    const match = pkgContent.match(/"version":\s*"([^"]+)"/)
+    if (match?.[1]) return match[1]
+  } catch {
+    /* fall through */
+  }
+
   // Try 1: package.json do projeto (via worktree path)
   try {
     const wt = ((api.state as any).path?.worktree ?? '') as string
