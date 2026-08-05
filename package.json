@@ -12,6 +12,7 @@
     "setup": "node bin/pantheon-init.mjs init",
     "setup:lite": "node bin/pantheon-init.mjs init --clean --components agents,skills,instructions",
     "doctor": "node scripts/doctor.mjs",
+    "prune": "node scripts/prune.mjs",
     "init": "node bin/pantheon-init.mjs init",
     "opencode": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
     "start": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
@@ -28,7 +29,7 @@
     "secret-scan": "node scripts/secret-scan.mjs",
     "hooks:install": "pre-commit install",
     "hooks:update": "pre-commit autoupdate",
-    "test:security": "npm run secret-scan && node tests/test_install_mcp_vision.mjs",
+    "test:security": "npm run secret-scan && node tests/test_install_mcp_vision.mjs && node tests/test_doctor_layers.mjs",
     "test": "python3 -m pytest tests/ -q 2>&1 || echo \"No tests found\"",
     "test:ci": "python3 -m pytest tests/ -q --tb=short 2>&1 || true"
   },
