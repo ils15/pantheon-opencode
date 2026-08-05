@@ -176,6 +176,11 @@ jobs:
       # creates tags). The tag is created at the checked-out commit — for
       # push:main that is github.sha (the exact merge commit); for a beta PR,
       # the PR head. Runs only AFTER the gates above have passed.
+      - name: Configure git identity
+        if: steps.idem.outputs.released != 'true' && steps.idem.outputs.tag_exists != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
       - name: Create and push tag
         if: steps.idem.outputs.released != 'true' && steps.idem.outputs.tag_exists != 'true'
         run: |
