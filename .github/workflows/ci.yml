@@ -34,6 +34,9 @@ jobs:
       - name: Run tests
         run: python3 -m pytest tests/ -q --tb=short 2>&1 || echo "test warnings"
 
+      - name: Run Node tests (PR #31 wiring — prune, hooks, install contracts)
+        run: npm run test:node
+
       - name: Security audit
         run: npm audit --audit-level=high 2>&1 || echo "audit warnings"
 
