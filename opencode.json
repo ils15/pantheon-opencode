@@ -46,6 +46,22 @@
     },
     "hephaestus": {
       "model": "opencode-go/deepseek-v4-pro"
+    },
+    "talos": {
+      "permission": {
+        "edit": {
+          "*": "allow",
+          "**/migrations/**": "deny",
+          "**/alembic/**": "deny",
+          "**/models/**": "deny",
+          "**/auth/**": "deny",
+          "**/*.sql": "deny"
+        },
+        "bash": {
+          "*": "allow",
+          "alembic *": "deny"
+        }
+      }
     }
   }
 }

@@ -95,6 +95,13 @@ kv_store("delegation:<pattern>", "{agent: ..., background: true/false}")
 kv_get("delegation:<pattern>") → reusa decisao sem memory_search
 ```
 
+### Telemetria de delegacao (Nyx P1-3)
+
+Toda decisao de delegacao grava UM registro `DelegationCacheDecision` no
+namespace `delegation-telemetry` via kv_store: {hit|miss|writeback|corrected,
+pattern, agent, source: cache|routing|user}. Em re-roteamento (recusa P0-3),
+adicione {reroute_from, reroute_to, delegation_id, source}. Uma linha por delegacao.
+
 ## REGRA DE OURO: NUNCA USE general
 
 **`subagent_type: general` e `subagent_type: explore` sao PROIBIDOS.** Nao existem no Pantheon.
@@ -113,12 +120,15 @@ Tarefa envolve:
    AI, RAG, LangChain, embeddings, vetores -> @hephaestus
    observabilidade, tracing, monitoramento -> @nyx
    GitHub, PR, issues, releases, branches -> @iris
-   documentacao, memory-bank, ADRs -> @mnemosyne
+   documentacao de PROJETO (README, docs/, changelog) -> @talos (trivial) | implementador (tecnica) | @iris (changelog/release)
+   documentacao de SISTEMA (.pantheon/memory-bank/, ADRs, task records) -> @mnemosyne
    hotfix rapido, bug pequeno, typo, CSS -> @talos
 
 NENHUMA das acima? -> E descoberta? @apollo. E planejamento? @athena.
 Ainda assim sem match? -> Pergunte ao usuario qual agente usar. NUNCA use general.
 ```
+
+REGRA: "fora de .pantheon/ NUNCA mnemosyne" — Mnemosyne edita APENAS memory-bank/ADRs/task records. Docs de projeto (README, docs/) vão para talos/implementador/iris.
 
 ## Background Delegation (PADRAO: background=true)
 
@@ -199,6 +209,15 @@ Zeus (nivel 0) -> Apollo/Hermes (nivel 1) -> sub-subagente (nivel 2 max).
 - Env var: `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`
 - Guards: `instructions/zeus-timeout-retry.instructions.md`
 
+## Taxonomia de Recusa (P0-3)
+
+Quando um subagente RECUSA ou retorna "escopo fora do meu dominio" (ex: edit: deny, scope boundary):
+
+- **Causa provavel:** agente errado selecionado no roteamento (match por palavra-chave, nao por capacidade).
+- **ACAO:** RE-ROTEAR imediatamente para o agente correto — NAO retry com prompt reformulado.
+- Registre o caso no cache de delegacao (`kv_store("deleg:<pattern>", ...)` para aprendizado futuro).
+- Recusa legitima do agente = comportamento correto do guard; o defeito esta na selecao (zeus), nao no agente.
+
 ## TODO Enforcer (Auto-Retry)
 
 **Se um agente delegado falhar ou travar, recupere automaticamente.**
@@ -207,13 +226,22 @@ Zeus (nivel 0) -> Apollo/Hermes (nivel 1) -> sub-subagente (nivel 2 max).
 ```
 Apos task_status(wait=true), verifique:
   result.state == "error" ou timeout?
-    SIM → retry 1x com prompt rephrased (diferente, mais especifico)
-    Ainda erro → escalate: "Agente X falhou 2x. Opcoes: (a) tentar outro, (b) simplificar, (c) pular"
+    SIM → ANTES de retry: detecte a CAUSA na mensagem de erro
+
+    RECUSA / scope-boundary (result contem "edit: deny", "escopo fora do meu dominio",
+    "reviewer-only", "fora do meu dominio", ou similar negativa de dominio)?
+      SIM → NAO retry com prompt rephrased.
+            RE-ROTEAR para o agente correto (ver "Taxonomia de Recusa (P0-3)").
+            Registre o caso: kv_store("deleg:<pattern>", "{agente_correto, ...}").
+
+    FALHA REAL (timeout, crash, resposta vazia, context exceeded)?
+      SIM → retry 1x com prompt rephrased (diferente, mais especifico)
+      Ainda erro → escalate: "Agente X falhou 2x. Opcoes: (a) tentar outro, (b) simplificar, (c) pular"
 ```
 
 ### Regras
-- **1 retry automatico** — 2a falha = escalate, nao loop infinito
-- **Rephrase o prompt** — nao mande o mesmo texto. Mais especifico, menos escopo
+- **1 retry automatico APENAS para falha real** — recusa/scope-boundary NUNCA gera retry; gera re-roteamento
+- **Rephrase o prompt** — so em falha real (timeout/crash/vazio), nao em recusa de dominio
 - **Timeout** — sempre `timeout_ms=120000` em task_status(). Pesquisa leva tempo
 - **Stall** — 3+ turns sem progresso util? Troque de agente ou abordagem
 

@@ -39,5 +39,12 @@ except:
     print('0')
 " 2>/dev/null || echo "0")
 
+# P0-4: enforce the Talos max-files boundary (default 3, overridable)
+TALOS_MAX_FILES="${TALOS_MAX_FILES:-3}"
+if [ "$FILE_COUNT" -gt "$TALOS_MAX_FILES" ]; then
+    echo "[TALOS SCOPE] ❌ Blocked: operation touches $FILE_COUNT files (max $TALOS_MAX_FILES)" >&2
+    exit 2
+fi
+
 echo "[TALOS SCOPE] ✅ Scope check passed" >&2
 exit 0

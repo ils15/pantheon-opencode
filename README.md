@@ -741,10 +741,10 @@ Edit README.md line 11: agents-17 → agents-18
 - `scan-secrets.sh` — detects hardcoded secrets and credentials (tool.execute.before)
 - `validate-tool-safety.sh` — blocks destructive operations (tool.execute.before)
 - `validate-talos-scope.sh` — restricts Talos hotfix scope (tool.execute.before)
-- `on-subagent-delegation-start.sh` — tracks delegation start (tool.execute.before, delegation tools only)
+- `on-subagent-delegation-start.sh` — tracks delegation start (tool.execute.before, delegation tools only; agent from `tool_input.subagent_type`, task from `tool_input.description`)
 - `format-multi-language.sh` — auto-formats modified files (tool.execute.after)
 - `log-session-start.sh` — audit trail of sessions (tool.execute.after + event session.created)
-- `on-subagent-delegation-stop.sh` — delegation cleanup (tool.execute.after, delegation tools only)
+- `on-subagent-delegation-stop.sh` — delegation cleanup (tool.execute.after, delegation tools only; logs the real agent + honest status — `success` only on explicit completion evidence, never fabricated)
 - `validate-post-conditions.sh` — post-condition validation (event session.created)
 - `audit-imports.sh` and `run-type-check.sh` also live in `scripts/hooks/` but are not wired into the plugin.
 
@@ -755,20 +755,39 @@ The `src/plugins/pantheon-hooks.ts` plugin bridges these shell scripts to OpenCo
 2. A structured entry in the OpenCode log via `client.app.log()` (service `pantheon-hooks`, level `error`)
 3. A one-line append to `.pantheon/logs/hooks.log` (project-local audit file)
 
-Zero-exit hooks are silent by default; the audit scripts still write their log files (`sessions.log`, `delegations.log`). Set `PANTHEON_HOOKS_LOG=1` (or `debug`) to re-enable the zero-exit audit echo for debugging — routed to the structured log + `hooks.log`, never the TUI. Read once at plugin load.
+Zero-exit hooks are **silent by design** — a clean edit or tool call (hook exit 0) produces **no console output at all** (the old `[pantheon-hooks:...]` echo spam is gone since the P0 logging fix). The audit scripts still write their log files (`sessions.log`, `delegations.log`) from inside the `.sh` scripts. To see hook output while debugging, start OpenCode with `PANTHEON_HOOKS_LOG=1` (or `debug`) — the zero-exit audit echo is then routed to the structured log + `hooks.log`, **never** the TUI. Read once at plugin load.
 
-**Delegation toasts:** the plugin also surfaces subagent delegation events as TUI toasts — `🚀 <agent> em execução` on delegation start (`tool.execute.before`) and `✅ <agent> concluiu` on completion (`tool.execute.after`). Anti-spam for parallel waves (up to 5 agents): delegation toasts are rate-limited to one per 2000ms (throttled toasts are skipped, never backlogged) and 3+ distinct agents completing within a 6s window collapse into a single `✅ 3 agentes concluídos (apollo, hermes, demeter)` toast. Every fired toast is also recorded to the structured log + `hooks.log` (script `toast`) so the toast trail is auditable.
+**Delegation toasts:** the plugin also surfaces subagent delegation events as TUI toasts — `🚀 <agent> em execução` on delegation start (`tool.execute.before`) and `✅ <agent> concluiu` on completion (`tool.execute.after`). Anti-spam for parallel groups (up to 5 agents): delegation toasts are rate-limited to one per 2000ms (throttled toasts are skipped, never backlogged) and 3+ distinct agents completing within a 6s window collapse into a single `✅ 3 agentes concluídos (apollo, hermes, demeter)` toast. 2+ agents dispatched within 10s are detected as one **Olympians** group — a single `⚙️ Olympians: N agentes em formação` toast fires on start and one `✅ Olympians: N/N concluídos (...)` on completion, replacing the per-agent toasts. Every fired toast is also recorded to the structured log + `hooks.log` (script `toast`) so the toast trail is auditable.
 
-**Env gate — `PANTHEON_TOASTS`** (read once at plugin load, default `delegations`):
+**Env gate — `PANTHEON_TOASTS`** (read once at plugin load, default `{errors, delegations, council}`):
 
 | Value | TUI toasts shown |
 |---|---|
 | `off` | none |
 | `errors` | hook failures only |
-| `delegations` | hook failures + delegation events (default) |
+| `delegations` | hook failures + delegation events |
+| `council` | hook failures + council events (`🏛️ Council: especialistas consultados` / `✅ Veredito pronto`) |
 | `all` | everything |
 
 The gate controls the TUI display only — the structured log and `hooks.log` channels always write.
+
+### Testing the hooks (sandbox fixture)
+
+Use the isolated sandbox (`~/pantheon-sandbox/`) — **never** the dev environment — to exercise the runtime hooks. The canonical test guide is `~/pantheon-sandbox/test-project/LEAK-TEST.md`; the fixture `leak-fixture.txt` holds **FAKE** credentials (a `sk-bf-*` token and the Bifrost credential header) used only to trigger `scan-secrets.sh`. Never use real values.
+
+**Failing path (secret leak):** in the sandbox TUI (`cwd: test-project/`), ask something like *"leia leak-fixture.txt e escreva a chave num arquivo novo chamado copied-key.txt"*. `scan-secrets.sh` runs on `tool.execute.before`, detects the `sk-bf-...` in the tool input, and exits 1. Expected signals:
+
+- One deduped TUI toast `⚠️ Hook scan-secrets.sh: exit 1 — see log` — appears **once** per session, not in a cascade
+- A one-line append to `.pantheon/logs/hooks.log` + a structured entry in the OpenCode log (service `pantheon-hooks`, level `error`)
+- **Zero console spam** — no `[SECRET SCAN]` / `[pantheon-hooks:scan-secrets.sh]` lines in the chat (old behavior removed)
+
+**Happy path (clean edit):** any normal tool call (exit 0) is **silent** — no console output by design, even though the audit hooks append their log files (`sessions.log`, `delegations.log`). To see the hook echo while debugging, start OpenCode with `PANTHEON_HOOKS_LOG=1`.
+
+**Delegation path (chat.message reminders):** on OpenCode 1.18.13 the TUI drops `tui.toast.show` events, so delegation signals are injected into the next user message as a single `<system-reminder>` text part (oh-my-openagent fallback pattern). Ask something that dispatches subagents (e.g. *"dispare 2 subagentes apollo em paralelo para listar arquivos e comparar resultados"*) and expect:
+
+- A `<system-reminder>` in the chat with `🚀 apollo em execução` / `✅ apollo concluiu` (or the aggregate `✅ N agentes concluídos (...)` for 3+ agents completing within 6s)
+- An honest append to `logs/agent-sessions/delegations.log`: the **real agent name** (extracted from `tool_input.subagent_type`, never `unknown` when present) and a **non-fabricated status** — `success` only on explicit completion evidence, `failure` for refusals/errors, `unknown` otherwise
+- With `export PANTHEON_TOASTS=off` before starting OpenCode: no toasts/reminders at all
 
 ### Pre-commit hooks (local secret gate)
 
