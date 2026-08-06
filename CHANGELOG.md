@@ -15,6 +15,26 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 
+## [v1.3.0] - 2026-08-06
+
+### Added
+- **Non-invasive TUI notifications**: hook failures no longer write to `console.error` (TUI pollution) — non-zero exits route to three non-TUI channels: deduped TUI toast (`client.tui.showToast`), structured `client.app.log` entry (service `pantheon-hooks`), and `.pantheon/logs/hooks.log` file append; `PANTHEON_HOOKS_LOG=1` opt-in preserved, routed to log channels only
+- **Delegation lifecycle toasts**: 🚀 `<agent> em execução` / ✅ `<agent> concluiu` with anti-spam (2000ms rate limiter + 3-agents-in-6s aggregation into a single summary toast)
+- **PANTHEON_TOASTS gate**: `off|errors|delegations|all` (default `delegations`), read once at plugin load; gates TUI display only, log channels always write; council toasts included in the default set
+- **Olympians groups**: wave→Olympians naming, 10s detection window, group completion
+- **Hybrid secret blocking**: high-confidence tokens blocked (throw), low-confidence advisory-only; `maskSecret()` redaction applied across hook outputs
+- **Honest delegation telemetry**: `delegation_id`/`task_id`/`duration_ms` fields, `dispatched` status for background agents, JSON round-trip stop hook (no TSV corruption)
+- **Bash exit-code monitoring**: `metadata.exit` → individual error notifications
+- **Talos scope enforcement**: session→agent map, native permission denies, content guard
+
+### Changed
+- `PANTHEON_HOOKS_LOG` opt-in with ISO timestamps per line
+- Routing disambiguation (project vs system docs), refusal taxonomy, delegation cache telemetry
+- Secret-scan hygiene: wildcard notation for credential references (no literal keys in versioned docs/comments)
+- README: hooks testing docs + `PANTHEON_TOASTS` table with council; AGENTS.md adds "PRs always update the README" convention
+
+### Fixed
+- Council toast idle-flush race condition
 ## [1.2.2] - 2026-08-05
 
 ### Added
