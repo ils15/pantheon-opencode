@@ -750,6 +750,26 @@ Edit README.md line 11: agents-17 → agents-18
 
 The `src/plugins/pantheon-hooks.ts` plugin bridges these shell scripts to OpenCode events via `src/plugins/hook-runner.ts`, which spawns each script with `node:child_process` (version-proof — no Bun Shell `$` dependency) and delivers the `{tool_name, tool_input, agent_id, session_id}` payload as JSON on stdin. Register it explicitly in `opencode.json`: `"plugin": ["<path>/src/plugins/pantheon-hooks.ts"]` (absolute path). It is **not** auto-discovered from `.opencode/plugins/`.
 
+**Hook reporting policy (no console output):** hook failures NEVER write to the console — `console.*` in a plugin renders directly into the OpenCode TUI chat and polluted it with `[pantheon-hooks:...] exit 1` spam. Non-zero hook exits are now reported through three non-TUI channels:
+1. One short, deduped TUI toast via `client.tui.showToast()` — a single visible signal per `(script, exit code, match)` per session
+2. A structured entry in the OpenCode log via `client.app.log()` (service `pantheon-hooks`, level `error`)
+3. A one-line append to `.pantheon/logs/hooks.log` (project-local audit file)
+
+Zero-exit hooks are silent by default; the audit scripts still write their log files (`sessions.log`, `delegations.log`). Set `PANTHEON_HOOKS_LOG=1` (or `debug`) to re-enable the zero-exit audit echo for debugging — routed to the structured log + `hooks.log`, never the TUI. Read once at plugin load.
+
+**Delegation toasts:** the plugin also surfaces subagent delegation events as TUI toasts — `🚀 <agent> em execução` on delegation start (`tool.execute.before`) and `✅ <agent> concluiu` on completion (`tool.execute.after`). Anti-spam for parallel waves (up to 5 agents): delegation toasts are rate-limited to one per 2000ms (throttled toasts are skipped, never backlogged) and 3+ distinct agents completing within a 6s window collapse into a single `✅ 3 agentes concluídos (apollo, hermes, demeter)` toast. Every fired toast is also recorded to the structured log + `hooks.log` (script `toast`) so the toast trail is auditable.
+
+**Env gate — `PANTHEON_TOASTS`** (read once at plugin load, default `delegations`):
+
+| Value | TUI toasts shown |
+|---|---|
+| `off` | none |
+| `errors` | hook failures only |
+| `delegations` | hook failures + delegation events (default) |
+| `all` | everything |
+
+The gate controls the TUI display only — the structured log and `hooks.log` channels always write.
+
 ### Pre-commit hooks (local secret gate)
 
 Pre-commit blocks **secrets and hygiene issues locally**, before anything reaches CI — the same fail-closed policy as the `Security / security-scan` CI gate, one layer earlier.
