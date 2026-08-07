@@ -44,3 +44,4 @@ Para validar a instalação global do pacote pantheon-opencode COMO UM USUÁRIO 
 - Coverage minimum: 80%
 - Async/await on all I/O
 - Type hints on all functions
+- PRs always update the README — every pull request must document newly added features, behaviors, env vars, or commands in the README before being opened.

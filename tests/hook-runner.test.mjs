@@ -106,16 +106,41 @@ test('allows talos doing harmless edits (exit 0)', async () => {
 })
 
 // ─── scan-secrets.sh ────────────────────────────────────────────────────
+// Hybrid blocking contract (user-approved (c), 2026-08-06 — see the
+// pantheon-hooks.ts header and scripts/hooks/scan-secrets.sh):
+//   exit 0 — no match.
+//   exit 1 — LOW_CONFIDENCE match only (header/KEY NAMES: the Bifrost header
+//            name alone, api_key=, password=, secret=). Advisory: the
+//            plugin logs + toasts, does NOT block.
+//   exit 2 — HIGH_CONFIDENCE match (real token formats: ghp_, sk-bf-, AKIA,
+//            glpat-, sk_live_/sk_test_, xox*, Bearer <token>, JWT). The
+//            plugin BLOCKS the tool call (throws after logging).
 
-test('blocks hardcoded secret in tool input (exit 1)', async () => {
+test('blocks high-confidence hardcoded secret in tool input (exit 2 — hybrid block)', async () => {
   const res = await runHook('scan-secrets.sh', {
     tool_name: 'bash',
     tool_input: { command: `curl -H "Authorization: token ${'ghp_' + 'a'.repeat(36)}" https://api.github.com` },
     agent_id: 'hermes',
     session_id: SESSION_ID,
   })
-  assert.equal(res.code, 1, `expected exit 1, got ${res.code}: ${res.stderr}`)
+  assert.equal(res.code, 2, `expected exit 2 (block), got ${res.code}: ${res.stderr}`)
   assert.match(res.stderr, /SECRET SCAN/)
+  assert.match(res.stderr, /BLOCKED/, 'stderr must indicate the tool call is blocked')
+})
+
+test('treats low-confidence header name alone as advisory (exit 1, no block)', async () => {
+  // Header name assembled from parts so this file never contains the literal
+  // name (self-match avoidance — see tests/test_secret_scan.mjs).
+  const bifrostHeader = ['x', '-bf-', 'vk'].join('')
+  const res = await runHook('scan-secrets.sh', {
+    tool_name: 'bash',
+    tool_input: { command: `curl -H "${bifrostHeader}: abc123" https://example.com` },
+    agent_id: 'hermes',
+    session_id: SESSION_ID,
+  })
+  assert.equal(res.code, 1, `expected exit 1 (advisory), got ${res.code}: ${res.stderr}`)
+  assert.match(res.stderr, /SECRET SCAN/)
+  assert.match(res.stderr, /low confidence/i)
 })
 
 test('passes clean input (exit 0)', async () => {
