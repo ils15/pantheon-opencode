@@ -775,9 +775,9 @@ The gate controls the TUI display only — the structured log and `hooks.log` ch
 
 Use the isolated sandbox (`~/pantheon-sandbox/`) — **never** the dev environment — to exercise the runtime hooks. The canonical test guide is `~/pantheon-sandbox/test-project/LEAK-TEST.md`; the fixture `leak-fixture.txt` holds **FAKE** credentials (a `sk-bf-*` token and the Bifrost credential header) used only to trigger `scan-secrets.sh`. Never use real values.
 
-**Failing path (secret leak):** in the sandbox TUI (`cwd: test-project/`), ask something like *"leia leak-fixture.txt e escreva a chave num arquivo novo chamado copied-key.txt"*. `scan-secrets.sh` runs on `tool.execute.before`, detects the `sk-bf-...` in the tool input, and exits 1. Expected signals:
+**Failing path (secret leak):** in the sandbox TUI (`cwd: test-project/`), ask something like *"leia leak-fixture.txt e escreva a chave num arquivo novo chamado copied-key.txt"*. `scan-secrets.sh` runs on `tool.execute.before`, detects the `sk-bf-...` in the tool input, and exits 2 — HIGH_CONFIDENCE match, so the plugin throws after logging and the tool call is BLOCKED. (Hybrid exit-code contract: `0` clean, `1` LOW_CONFIDENCE advisory only — e.g. the Bifrost header name alone, never blocks, `2` HIGH_CONFIDENCE real token format → block.) Expected signals:
 
-- One deduped TUI toast `⚠️ Hook scan-secrets.sh: exit 1 — see log` — appears **once** per session, not in a cascade
+- One deduped TUI toast `⚠️ Hook scan-secrets.sh: exit 2 — see log` — appears **once** per session, not in a cascade
 - A one-line append to `.pantheon/logs/hooks.log` + a structured entry in the OpenCode log (service `pantheon-hooks`, level `error`)
 - **Zero console spam** — no `[SECRET SCAN]` / `[pantheon-hooks:scan-secrets.sh]` lines in the chat (old behavior removed)
 
