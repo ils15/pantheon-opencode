@@ -2,6 +2,7 @@
 
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
+import { summaryMessage } from '../scripts/doctor.mjs'
 
 const doctor = readFileSync('scripts/doctor.mjs', 'utf8')
 
@@ -32,5 +33,22 @@ assert.ok(doctor.includes('compareVersions'), 'version comparator present')
 
 // Exit-code contract: critical failures must exit non-zero
 assert.ok(doctor.includes('exitCode = 2'), 'errors set exit code 2')
+assert.ok(doctor.includes('profile'), 'doctor has global/lite/sandbox profile awareness')
+assert.ok(doctor.includes('optional gh_grep MCP not configured'), 'gh_grep is optional')
+assert.ok(doctor.includes('optional Context7 MCP not configured'), 'Context7 is optional')
+assert.ok(doctor.includes('optional helper skipped'), 'frontmatter helper is optional')
+assert.ok(doctor.includes('Required MCP'), 'required MCP absence remains visible')
+assert.ok(doctor.includes('warnings are allowed'), 'warnings do not change doctor exit status')
+assert.ok(doctor.includes('runtime layer skipped for lite profile'), 'lite profile skips optional runtime')
+
+// A blocking error must never be presented as a positive/advisory-only result,
+// even when warnings are also present.
+const blockedWithWarnings = summaryMessage({ error: 1, warn: 2 }, 2)
+assert.match(blockedWithWarnings, /blocking error/i, 'error+warning summary names blocking errors')
+assert.match(blockedWithWarnings, /exit code 2/, 'error+warning summary names blocking exit code')
+assert.doesNotMatch(blockedWithWarnings, /No blocking errors|All checks passed/i, 'error+warning summary is not positive')
+
+const warningsOnly = summaryMessage({ error: 0, warn: 1 }, 0)
+assert.match(warningsOnly, /warnings are advisory/i, 'warnings-only summary remains advisory')
 
 console.log('✅ Doctor layered healthcheck contract passed')

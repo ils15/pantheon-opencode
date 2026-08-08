@@ -12,8 +12,8 @@ const dummyBifrostValue = ['sk', '-bf-', 'test-do-not-use'].join('')
 // Working tree must be clean: no versionable file contains a Bifrost/API credential.
 assert.deepEqual(scanVersionableFiles(), [])
 
-// Allowlist must cover files that reference pattern NAMES (not values):
-// gitleaks config and security policy document the x-bf-vk / sk-bf-* patterns.
+// Allowlist must cover files that reference provider credential pattern names
+// (not values): gitleaks config and the security policy document them.
 for (const file of ['.gitleaks.toml', 'SECURITY.md']) {
   assert.ok(allowlistedFiles.has(file), `${file} must be allowlisted`)
 }

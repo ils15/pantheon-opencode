@@ -18,16 +18,14 @@
  *   node scripts/doctor.mjs --verbose
  *   node scripts/doctor.mjs --help
  *
- * Exit codes:
- *   0 = all green
- *   1 = warnings only
- *   2 = errors (needs attention)
+ * Result classification: PASS, WARN (advisory), ERROR (blocking), or SKIP.
+ * Exit codes: 0 = no blocking errors (warnings are allowed), 2 = errors.
  */
 
 import { spawn as spawnAsync, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // ---------------------------------------------------------------------------
@@ -67,6 +65,7 @@ function parseArgs(argv) {
     fix: false,
     verbose: false,
     help: false,
+    profile: process.env.PANTHEON_PROFILE ?? 'auto',
   }
 
   for (let i = 2; i < argv.length; i++) {
@@ -83,6 +82,9 @@ function parseArgs(argv) {
       case '--verbose':
         args.verbose = true
         break
+      case '--profile':
+        args.profile = argv[++i] ?? 'auto'
+        break
       case '--help':
       case '-h':
         args.help = true
@@ -95,6 +97,10 @@ function parseArgs(argv) {
 
   if (!args.target) {
     args.target = process.cwd()
+  }
+
+  if (args.profile === 'auto') {
+    args.profile = args.target.includes('pantheon-sandbox') ? 'sandbox' : 'global'
   }
 
   // Resolve to absolute
@@ -129,7 +135,6 @@ function pass(msg) {
 }
 function warn(msg) {
   emit('warn', msg)
-  if (exitCode < 1) exitCode = 1
 }
 function error(msg) {
   emit('error', msg)
@@ -153,6 +158,7 @@ function showHelp() {
    node scripts/doctor.mjs                              auto-detect, cwd
    node scripts/doctor.mjs --target /path/to/project     target project
    node scripts/doctor.mjs --platform opencode           specific platform
+   node scripts/doctor.mjs --profile global|lite|sandbox profile policy
    node scripts/doctor.mjs --fix                         attempt auto-fixes
    node scripts/doctor.mjs --verbose                     detailed output
    node scripts/doctor.mjs --help                        show this help
@@ -168,9 +174,10 @@ function showHelp() {
    F. Runtime Layer        — venv python + pinned pip dependencies
 
  Exit codes:
-   0  — all checks pass
-   1  — warnings
-   2  — errors
+   0  — no blocking errors (warnings are advisory)
+    2  — blocking errors
+
+  Profiles: global (core MCPs required), lite (MCPs optional), sandbox (core MCPs required)
 
  Report bugs: https://github.com/ils15/pantheon/issues
 `)
@@ -239,7 +246,7 @@ function checkAgentFiles(args) {
 
   // Determine which platforms to check
   if (!existsSync(PLATFORM_DIR)) {
-    warn('Platform component not distributed in this package — skipping platform agent check')
+    info(`Platform component not distributed in this package — platform check skipped (${args.profile} profile)`)
     return
   }
   const platformDirs = readdirSync(PLATFORM_DIR, { withFileTypes: true })
@@ -248,7 +255,7 @@ function checkAgentFiles(args) {
     .filter((name) => !args.platform || name === args.platform)
 
   if (platformDirs.length === 0) {
-    warn(`No platform directories found in platform/`)
+    info(`No platform directories found in platform/ — platform check skipped (${args.profile} profile)`)
     return
   }
 
@@ -354,9 +361,14 @@ function checkMcpConfig(args) {
   section('B. MCP Configuration')
 
   const configs = collectMcpConfigs(args)
+  const requiredMcpNames = args.profile === 'lite' ? [] : ['pantheon-memory', 'pantheon-resources']
 
   if (configs.length === 0) {
-    warn('No opencode.json found in target or user config')
+    if (requiredMcpNames.length > 0) {
+      error(`No opencode.json found; required MCPs missing: ${requiredMcpNames.join(', ')}`)
+    } else {
+      info(`No opencode.json found for ${args.profile} profile — MCP check skipped`)
+    }
     return
   }
 
@@ -365,11 +377,12 @@ function checkMcpConfig(args) {
 
     const mcp = cfg.data.mcp
     if (!mcp || typeof mcp !== 'object') {
-      warn(`${cfg.label}: no "mcp" section`)
+      if (requiredMcpNames.length > 0) error(`${cfg.label}: required MCPs missing — no "mcp" section`)
+      else info(`${cfg.label}: no "mcp" section (${args.profile} profile — optional)`)
       continue
     }
 
-    // 1. gh_grep MCP check
+    // 1. gh_grep MCP check (optional in every supported profile)
     const ghGrep = mcp.gh_grep
     if (ghGrep) {
       if (ghGrep.type === 'remote' && ghGrep.url === 'https://mcp.grep.app') {
@@ -383,7 +396,7 @@ function checkMcpConfig(args) {
         warn(`${cfg.label}: gh_grep MCP may need review — ${detail}`)
       }
     } else {
-      warn(`${cfg.label}: gh_grep MCP not configured`)
+      info(`${cfg.label}: optional gh_grep MCP not configured (${args.profile} profile)`)
     }
 
     // 2. Context7 MCP check
@@ -406,7 +419,7 @@ function checkMcpConfig(args) {
         warn(`${cfg.label}: Context7 MCP issues — ${details.join(', ')}`)
       }
     } else {
-      warn(`${cfg.label}: Context7 MCP not configured`)
+      info(`${cfg.label}: optional Context7 MCP not configured (${args.profile} profile)`)
     }
 
     // 3. Check for deprecated "tools" field format
@@ -448,6 +461,14 @@ function checkMcpConfig(args) {
       if (deadArgs.length > 0) {
         error(`${cfg.label}: MCP "${name}" has missing script path(s): ${deadArgs.join(', ')}`)
       }
+    }
+  }
+
+  if (requiredMcpNames.length > 0) {
+    const configured = new Set(configs.flatMap((cfg) => Object.keys(cfg.data.mcp ?? {})))
+    for (const required of requiredMcpNames) {
+      if (configured.has(required)) pass(`Required MCP "${required}" configured in an available config`)
+      else error(`Required MCP "${required}" not configured in any available config`)
     }
   }
 }
@@ -558,7 +579,11 @@ async function checkMcpRuntimeSmoke(args) {
   }
 
   if (local.length === 0) {
-    warn('No local MCP servers found in any config — nothing to smoke-test')
+    if (args.profile === 'lite') {
+      info('No local MCP servers found in lite profile — smoke test skipped')
+    } else {
+      error('No local MCP servers found in any config — required runtime MCPs are missing')
+    }
     return
   }
 
@@ -620,7 +645,7 @@ function checkPermissionMismatches(args) {
   // Locate the validation script
   const validator = join(ROOT, 'scripts', 'validate-agent-frontmatter.py')
   if (!existsSync(validator)) {
-    warn('validate-agent-frontmatter.py not found — cannot check permissions')
+    info(`validate-agent-frontmatter.py not found — optional helper skipped (${args.profile} profile)`)
     return
   }
 
@@ -871,14 +896,18 @@ function checkRequirementLine(line, installed) {
   }
 }
 
-function checkVenvLayer() {
+function checkVenvLayer(args) {
   section('F. Runtime Layer — Venv, Python & Dependencies')
 
   const configDir = join(homedir(), '.config', 'opencode')
   const venvPython = join(configDir, '.venv', 'bin', 'python3')
 
   if (!existsSync(venvPython)) {
-    error(`Venv python not found: ${venvPython} (run \`pantheon-opencode init\` to create it)`)
+    if (args.profile === 'lite') {
+      info(`Venv python not found — runtime layer skipped for lite profile`)
+    } else {
+      error(`Venv python not found: ${venvPython} (run \`pantheon-opencode init\` to create it)`)
+    }
     return
   }
   pass(`Venv python exists: ${venvPython}`)
@@ -924,6 +953,30 @@ function checkVenvLayer() {
 // Summary
 // ---------------------------------------------------------------------------
 
+/**
+ * Return the final doctor status message without masking blocking errors.
+ * @param {{ error: number; warn: number }} summaryCounts
+ * @param {number} summaryExitCode
+ * @returns {string}
+ */
+export function summaryMessage(summaryCounts, summaryExitCode) {
+  if (summaryCounts.error > 0 || summaryExitCode !== 0) {
+    const errorText = summaryCounts.error > 0
+      ? `${summaryCounts.error} blocking error(s) found`
+      : 'Blocking check failure'
+    const warningText = summaryCounts.warn > 0
+      ? `; ${summaryCounts.warn} warning(s) remain advisory`
+      : ''
+    return `❌ ${errorText}${warningText} — exit code ${summaryExitCode}`
+  }
+
+  if (summaryCounts.warn > 0) {
+    return `⚠️ Checks passed with ${summaryCounts.warn} warning(s) — warnings are advisory`
+  }
+
+  return '✅ All checks passed!'
+}
+
 function printSummary(targetPath) {
   console.log(`\n${'='.repeat(60)}`)
   console.log('  Summary')
@@ -934,13 +987,7 @@ function printSummary(targetPath) {
   console.log(`  ${ICON.info} ${counts.info} info`)
   console.log('')
 
-  if (exitCode === 0) {
-    console.log('  ✅ All checks passed!')
-  } else if (exitCode === 1) {
-    console.log('  ⚠️  Warnings found — review above (some may be auto-fixable with --fix)')
-  } else {
-    console.log('  ❌ Errors found — needs attention')
-  }
+  console.log(`  ${summaryMessage(counts, exitCode)}`)
 
   console.log(`\n  Target: ${process.argv.includes('--target') ? targetPath : 'current directory'}`)
   console.log('')
@@ -994,7 +1041,9 @@ async function main() {
   process.exit(exitCode)
 }
 
-main().catch((err) => {
-  console.error(`❌ Doctor crashed: ${err.stack ?? err.message}`)
-  process.exit(2)
-})
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error(`❌ Doctor crashed: ${err.stack ?? err.message}`)
+    process.exit(2)
+  })
+}
