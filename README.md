@@ -187,6 +187,17 @@ opencode
 > **Minimal:** `--headless --no-mcp` installs only agents (~2s).
 > **Full:** `--headless` also creates Python venv + MCP servers (memory, persistence, KV, vision).
 
+### Doctor validation statuses
+
+The doctor reports each check as **PASS**, **WARN**, **ERROR**, or **SKIP**. WARN is
+advisory and exits 0; ERROR is blocking and exits 2. The `global` and `sandbox`
+profiles require the core `pantheon-memory` and `pantheon-resources` MCPs, while
+`lite` treats MCPs and optional helpers (`platform`, `gh_grep`, Context7, and
+`validate-agent-frontmatter.py`) as informational/skipped. Optional warnings are
+never used to hide missing required MCPs. When ERROR and WARN coexist, the final
+summary explicitly reports the blocking error and exit code 2; it never reports a
+positive “no blocking errors” result.
+
 ---
 
 ### Approval Gates
