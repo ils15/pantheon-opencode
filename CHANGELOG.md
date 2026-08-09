@@ -15,6 +15,20 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 
+## [v1.3.2] - 2026-08-09
+
+### Added
+- **Sandbox validation**: added the `sandbox` doctor profile and regression coverage for npm tarball contents, installed hook resolution, doctor status handling, MCP runtime smoke checks, and related CLI/install contracts.
+
+### Changed
+- **Package portability**: distributed configuration no longer retains checkout-specific machine paths; managed hooks are resolved from the installed package during install/sync.
+- **Doctor contract**: exit statuses now distinguish success (`0`), advisory warnings (`1`), and blocking errors (`>=2`).
+
+### Fixed
+- **Global installation diagnostics**: clarified the distinction between advisory doctor warnings and blocking failures.
+
+[1.3.2]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.3.2
+
 ## [v1.3.0] - 2026-08-06
 
 ### Added
