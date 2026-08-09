@@ -98,21 +98,37 @@ export function runHook(
   const scriptPath = path.join(opts.cwd ?? resolveHooksDir(), script)
   const timeout = opts.timeout ?? HOOK_TIMEOUT_MS
 
+  let serializedPayload: string
+  try {
+    serializedPayload = JSON.stringify(payload)
+  } catch (err) {
+    // Fail closed: a scanner hook must not run without the payload it is
+    // supposed to inspect, and serialization errors must never reject.
+    return Promise.resolve({
+      code: 1,
+      stdout: '',
+      stderr: `payload serialization failed: ${err instanceof Error ? err.message : String(err)}`,
+      signal: null,
+      timedOut: false,
+    })
+  }
+
   return new Promise<HookResult>((resolve) => {
     const stdoutBuf: { value: string } = { value: '' }
     const stderrBuf: { value: string } = { value: '' }
     let settled = false
+    let timedOut = false
+    let timeoutHandle: NodeJS.Timeout | undefined
 
     const settle = (result: HookResult) => {
       if (!settled) {
         settled = true
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
         resolve(result)
       }
     }
 
     const spawnOpts = {
-      timeout,
-      killSignal: 'SIGKILL' as const,
       env: hookEnv(payload, opts.env),
       // stdio:'pipe' is equivalent to ['pipe','pipe','pipe'] — it guarantees
       // the child's stdin is OUR pipe, NEVER the opencode TUI's terminal
@@ -120,6 +136,10 @@ export function runHook(
       // the opencode core hook timeout).
       stdio: 'pipe' as const,
       windowsHide: true,
+      // A process group lets the timeout kill shell descendants too. Without
+      // this, a shell hook can leave `sleep` holding stdout/stderr open after
+      // the shell itself receives SIGKILL, so the Promise would not settle.
+      ...(process.platform !== 'win32' ? { detached: true } : {}),
       ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
     }
 
@@ -172,15 +192,35 @@ export function runHook(
         stdout: stdoutBuf.value,
         stderr: stderrBuf.value,
         signal,
-        timedOut: code === null && signal === 'SIGKILL',
+        timedOut,
       })
     })
+
+    timeoutHandle = setTimeout(() => {
+      timedOut = true
+      try {
+        // Negative PIDs target the process group created by `detached`.
+        if (process.platform !== 'win32' && child.pid !== undefined) {
+          process.kill(-child.pid, 'SIGKILL')
+        } else {
+          child.kill('SIGKILL')
+        }
+      } catch {
+        // The child may have exited between the timer and kill call. The
+        // close/error handlers still produce the structured result.
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // Hooks must never leak a kill failure to the plugin host.
+        }
+      }
+    }, timeout)
 
     // Deliver the Claude Code protocol JSON on stdin. stdin.end() runs
     // UNCONDITIONALLY — even for an empty payload {} or a script that never
     // reads stdin — so the child can never block waiting for input and hit
     // the runtime hook timeout (reported as "Hook X timed out after 30000ms").
-    child.stdin.write(JSON.stringify(payload))
+    child.stdin.write(serializedPayload)
     child.stdin.end()
   })
 }

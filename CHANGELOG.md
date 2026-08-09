@@ -29,6 +29,14 @@ All notable changes to this project will be documented in this file.
 
 [1.3.2]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.3.2
 
+## [v1.3.1] - 2026-08-08
+
+### Added
+- **Release validation coverage**: hook-runner spawn/timeout/SIGKILL handling with process-group cleanup; scanner fixtures that avoid accidental false positives; doctor `global`, `lite`, and `sandbox` profiles with explicit PASS/WARN/ERROR/SKIP statuses; `run-test.sh` exit semantics; and sandbox validation coverage.
+
+### Changed
+- Local validation logs are ignored via `logs/` because they are generated diagnostics, not release artifacts or source files.
+
 ## [v1.3.0] - 2026-08-06
 
 ### Added
