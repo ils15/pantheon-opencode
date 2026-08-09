@@ -21,3 +21,5 @@ opencode.local.json
 opencode.json.backup
 .mcp.json.backup
 .github/release-notes.md
+# Local validation logs are generated diagnostics and must not be versioned.
+logs/

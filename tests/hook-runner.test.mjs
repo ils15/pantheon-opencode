@@ -14,7 +14,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runHook, resolveHooksDir } from '../src/plugins/hook-runner.ts'
@@ -112,20 +112,46 @@ test('allows talos doing harmless edits (exit 0)', async () => {
 //   exit 1 — LOW_CONFIDENCE match only (header/KEY NAMES: the Bifrost header
 //            name alone, api_key=, password=, secret=). Advisory: the
 //            plugin logs + toasts, does NOT block.
-//   exit 2 — HIGH_CONFIDENCE match (real token formats: ghp_, sk-bf-, AKIA,
-//            glpat-, sk_live_/sk_test_, xox*, Bearer <token>, JWT). The
+//   exit 2 — HIGH_CONFIDENCE match (real provider token formats). The
 //            plugin BLOCKS the tool call (throws after logging).
 
 test('blocks high-confidence hardcoded secret in tool input (exit 2 — hybrid block)', async () => {
+  const githubPrefix = ['gh', 'p_'].join('')
   const res = await runHook('scan-secrets.sh', {
     tool_name: 'bash',
-    tool_input: { command: `curl -H "Authorization: token ${'ghp_' + 'a'.repeat(36)}" https://api.github.com` },
+    tool_input: { command: `curl -H "Authorization: token ${githubPrefix + 'a'.repeat(36)}" https://api.github.com` },
     agent_id: 'hermes',
     session_id: SESSION_ID,
   })
   assert.equal(res.code, 2, `expected exit 2 (block), got ${res.code}: ${res.stderr}`)
   assert.match(res.stderr, /SECRET SCAN/)
   assert.match(res.stderr, /BLOCKED/, 'stderr must indicate the tool call is blocked')
+})
+
+test('blocks a high-confidence provider token and never logs its raw value', async () => {
+  const token = ['sk', '-bf-', 'fixture-', 'a'.repeat(24)].join('')
+  const res = await runHook('scan-secrets.sh', {
+    tool_name: 'bash',
+    tool_input: { command: `printf '%s' '${token}'` },
+    agent_id: 'hermes',
+    session_id: SESSION_ID,
+  })
+  assert.equal(res.code, 2, `expected exit 2 (block), got ${res.code}: ${res.stderr}`)
+  assert.doesNotMatch(res.stderr, new RegExp(token), 'scanner logs must not expose the token')
+  assert.match(res.stderr, /\*\*\*\*/)
+})
+
+test('accepts safe placeholder text that resembles a documented token pattern', async () => {
+  const placeholder = ['sk', '-bf-', '<REDACTED>'].join('')
+  const githubPrefix = ['gh', 'p_'].join('')
+  const res = await runHook('scan-secrets.sh', {
+    tool_name: 'bash',
+    tool_input: { command: `printf '%s %s' '${placeholder}' '${githubPrefix}<PLACEHOLDER>'` },
+    agent_id: 'hermes',
+    session_id: SESSION_ID,
+  })
+  assert.equal(res.code, 0, `safe placeholders must not block, got ${res.code}: ${res.stderr}`)
+  assert.equal(res.stderr, '')
 })
 
 test('treats low-confidence header name alone as advisory (exit 1, no block)', async () => {
@@ -163,6 +189,79 @@ test('runHook NEVER throws on missing script — resolves with code 1', async ()
     assert.fail(`runHook must never throw, got: ${err}`)
   }
   assert.notEqual(res.code, 0)
+  assert.match(res.stderr, /ENOENT|spawn|failed/i)
+})
+
+test('runHook never rejects on a non-serializable payload and fails closed', async () => {
+  const payload = { tool_input: { circular: null } }
+  payload.tool_input.circular = payload
+
+  const res = await runHook('scan-secrets.sh', payload)
+  assert.equal(typeof res.code, 'number')
+  assert.equal(res.code, 1)
+  assert.equal(res.timedOut, false)
+  assert.match(res.stderr, /payload serialization failed/i)
+})
+
+test('returns exit code and captures stdout/stderr from a custom hook', async () => {
+  const hooksDir = mkdtempSync(join(tmpdir(), 'pantheon-hook-runner-'))
+  const script = join(hooksDir, 'emit.sh')
+  try {
+    writeFileSync(script, '#!/bin/sh\nprintf "hook stdout"\nprintf "hook stderr" >&2\nexit 7\n')
+    chmodSync(script, 0o755)
+
+    const res = await runHook('emit.sh', {}, { cwd: hooksDir })
+    assert.equal(res.code, 7)
+    assert.equal(res.stdout, 'hook stdout')
+    assert.equal(res.stderr, 'hook stderr')
+    assert.equal(res.signal, null)
+    assert.equal(res.timedOut, false)
+  } finally {
+    rmSync(hooksDir, { recursive: true, force: true })
+  }
+})
+
+test('kills a timed-out hook with SIGKILL and returns a structured result', async () => {
+  const hooksDir = mkdtempSync(join(tmpdir(), 'pantheon-hook-runner-'))
+  const script = join(hooksDir, 'hang.sh')
+  try {
+    writeFileSync(script, '#!/bin/sh\nprintf "before timeout"\nsleep 10\n')
+    chmodSync(script, 0o755)
+
+    const res = await runHook('hang.sh', {}, { cwd: hooksDir, timeout: 50 })
+    assert.equal(res.code, 1)
+    assert.equal(res.signal, 'SIGKILL')
+    assert.equal(res.timedOut, true)
+    assert.equal(res.stdout, 'before timeout')
+    assert.equal(typeof res.stderr, 'string')
+  } finally {
+    rmSync(hooksDir, { recursive: true, force: true })
+  }
+})
+
+test('kills a timed-out hook and its background process group', { skip: process.platform === 'win32' }, async () => {
+  const hooksDir = mkdtempSync(join(tmpdir(), 'pantheon-hook-runner-'))
+  const script = join(hooksDir, 'descendant.sh')
+  const marker = join(hooksDir, 'descendant-survived')
+  try {
+    writeFileSync(
+      script,
+      `#!/bin/sh
+(sleep 2; printf survived > '${marker}') &
+wait
+`,
+    )
+    chmodSync(script, 0o755)
+
+    const res = await runHook('descendant.sh', {}, { cwd: hooksDir, timeout: 50 })
+    assert.equal(res.timedOut, true)
+    assert.equal(res.signal, 'SIGKILL')
+
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    assert.equal(existsSync(marker), false, 'background descendant survived the process-group kill')
+  } finally {
+    rmSync(hooksDir, { recursive: true, force: true })
+  }
 })
 
 test('runHook never throws on a script that reads no stdin (env protocol)', async () => {
