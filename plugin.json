@@ -1,7 +1,7 @@
 {
   "name": "pantheon",
   "publisher": "ils15",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "displayName": "Pantheon",
   "description": "Conductor-Delegate orchestration platform with 14 specialized agents, 45 skills, and OpenCode support.",
   "agents": "./agents",
