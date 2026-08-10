@@ -144,6 +144,30 @@ task_status(task_id="ses_xxx", wait=true)
   -> bloqueia ate completar: { state: "completed", task_result: "..." }
 ```
 
+### Pantheon Delegation Tools (plugin) — 3-tool API
+
+O plugin Pantheon adiciona 3 tools de delegacao gerenciada pelo BackgroundJobBoard:
+
+```
+pantheon_delegate({prompt, agent, description?, read_only?})
+  -> cria sessao filha, registra no board, retorna alias: [apo-1]
+pantheon_delegation_read({id: "apo-1"})
+  -> BLOQUEIA ate o job terminar, retorna o report markdown, marca reconciled
+pantheon_delegation_list()
+  -> lista jobs da sessao, com [unread] para jobs terminados nao lidos
+```
+
+- **Read-only enforcement:** agentes read-only (apollo, gaia — `read_only_agents` no routing.yml) tem `edit`, `write`, `bash`, `task` NEGADOS dentro da sessao delegada (o guard de `tool.execute.before` THROW com mensagem acionavel). Use `read_only: true` no delegate para qualquer agente de investigacao.
+- **Depth-2 hard-enforced:** sessao read-only NAO cria subagentes (`task` bloqueado) — investigacao nunca vira arvore.
+- **Compactacao:** jobs em voo (running + unread terminal) sao injetados no contexto de compactacao via `experimental.session.compacting` — delegacao em andamento nao se perde ao compactar.
+
+### DELEGATION_RULES (plugin path)
+
+1. **NUNCA** polle `pantheon_delegation_list` para checar se um job terminou.
+2. Voce SERA notificado via `task-notification` injetado no chat quando um job atinge estado terminal.
+3. Use `pantheon_delegation_read({id})` APENAS para fan-in explicito / recuperacao de resultado sob demanda (bloqueia ate o fim).
+4. `pantheon_delegation_list` e para diagnostico, nao para polling.
+
 ### Background (sempre usar)
 - **Apollo, Hermes, Aphrodite, Demeter, Hephaestus, Prometheus**
 - Dispare em waves paralelas: ate 5 concorrentes

@@ -23,8 +23,9 @@ const DEFAULT_STATE_PATH = '.pantheon/board/state.json'
  * Writes are atomic: content is written to a `.tmp` file, then renamed.
  *
  * The board's in-memory `this.jobs` Map is the source of truth —
- * this file is a crash-recovery snapshot only. `deleteJob()` is a no-op
- * because stale entries are harmless and overwritten on the next `saveJob()`.
+ * this file is a crash-recovery snapshot. `deleteJob()` removes the
+ * record from the snapshot so pruned/reconciled jobs don't resurface
+ * after a restart.
  */
 export class FilePersistenceAdapter implements PersistenceAdapter {
   private readonly statePath: string
@@ -87,9 +88,12 @@ export class FilePersistenceAdapter implements PersistenceAdapter {
     return (await this.readState()) ?? []
   }
 
-  async deleteJob(_taskID: string): Promise<void> {
-    // No-op: the board's in-memory Map is the source of truth.
-    // The file is a crash-recovery snapshot; stale entries are harmless
-    // and will be overwritten on the next saveJob().
+  async deleteJob(taskID: string): Promise<void> {
+    const records = await this.readState()
+    if (!records) return
+    const idx = records.findIndex(r => r.taskID === taskID)
+    if (idx < 0) return
+    records.splice(idx, 1)
+    await this.writeState(records)
   }
 }

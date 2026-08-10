@@ -89,9 +89,12 @@ npx pantheon-opencode init --project
 
 This installs to `.opencode/agents/` in the current project directory.
 
-## Background Subagents
+## Background Delegation
 
-Pantheon v1.0 supports **native OpenCode background delegation**. This allows dispatching up to 5 agents in parallel.
+Pantheon's plugin layer provides **background delegation** via three tools
+(`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`),
+tracked on a persistent job board with completion notifications injected into
+the parent's next message (no polling, no client push).
 
 **Requirement:** Set the environment variable before launching OpenCode:
 
@@ -109,13 +112,17 @@ npm run start
 **How it works:**
 
 ```javascript
-// Dispatch a background task — returns immediately
-task(background=true, subagent_type="apollo", prompt="...")
-// → { task_id: "ses_xxx", state: "running" }
+// Dispatch a background agent — returns immediately with a readable alias
+pantheon_delegate({ prompt: "search the codebase", agent: "apollo", description: "Find X" })
+// → Delegated to apollo: [apo-1] (task ses_xxx). Read with pantheon_delegation_read.
 
-// Collect results later
-task_status(task_id="ses_xxx", wait=true)
-// → { state: "completed", task_result: "..." }
+// Collect results later (blocks until finished, then returns the report)
+pantheon_delegation_read({ id: "apo-1" })
+// → report markdown (job marked reconciled)
+
+// See what's running / finished-unread
+pantheon_delegation_list({})
+// → [apo-1] apollo — Find X — OK [unread]
 ```
 
 **Which agents run in background:**
@@ -125,6 +132,10 @@ task_status(task_id="ses_xxx", wait=true)
 | Apollo, Hermes, Aphrodite, Demeter, Hephaestus, Prometheus | ✅ Yes | Independent, long-running work |
 | Athena, Themis | ❌ No | Need full session context |
 | Talos, Iris, Nyx, Mnemosyne, Gaia | ❌ No | Quick operations |
+
+See the **Background Delegation** section in the [README](../README.md) for the
+notification model, timeout, read-only enforcement, and `background_delegation`
+routing.yml configuration.
 
 ## TUI Sidebar Plugin
 

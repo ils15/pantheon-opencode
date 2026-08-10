@@ -555,4 +555,12 @@ platforms:
 background_job_board:
   max_concurrent_per_agent: 3
   signal_dir: .pantheon/deepwork/board-signals/
-  persistence_dir: .pantheon/board/jobs/
+  persistence_path: .pantheon/board/state.json
+background_delegation:
+  timeout_ms: 900000        # 15 min
+  poll_ms: 250
+  max_compaction_items: 10
+  prune_ttl_ms: 86400000    # 24h
+  read_only_agents: [apollo, gaia]
+  session_max: 3
+  retry_count: 1

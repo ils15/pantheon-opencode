@@ -129,6 +129,13 @@ export interface PersistenceAdapter {
   deleteJob(taskID: string): Promise<void>
 }
 
+/** A pending `waitForTerminal()` registration for a taskID. */
+interface TerminalWaiter {
+  resolve: (job: BackgroundJobRecord) => void
+  reject: (err: Error) => void
+  timer: NodeJS.Timeout
+}
+
 // ─── Agent Prefix Mapping ──────────────────────────────────────────────
 
 const AGENT_PREFIXES: Record<string, string> = {
@@ -171,6 +178,7 @@ export class BackgroundJobBoard {
    */
   private readonly aliasCounters: Map<string, Map<string, number>> = new Map()
   private readonly terminalListeners: Set<(taskID: string) => void> = new Set()
+  private readonly terminalWaiters: Map<string, TerminalWaiter[]> = new Map()
   private readonly options: Required<BoardOptions>
   private persistence: PersistenceAdapter | null = null
 
@@ -460,6 +468,65 @@ export class BackgroundJobBoard {
     this.terminalListeners.delete(listener)
   }
 
+  /**
+   * Resolve with the job record once the job reaches a terminal state
+   * (`completed`, `error`, `cancelled`, or `reconciled`), or reject with a
+   * timeout error if `timeoutMs` elapses first.
+   *
+   * Resolves immediately when the job is already terminal at call time.
+   * Multiple concurrent waiters for the same taskID all resolve.
+   */
+  waitForTerminal(taskID: string, timeoutMs: number): Promise<BackgroundJobRecord> {
+    const existing = this.jobs.get(taskID)
+    if (existing && (TERMINAL_STATES.has(existing.state) || existing.state === 'reconciled')) {
+      return Promise.resolve(existing)
+    }
+
+    return new Promise<BackgroundJobRecord>((resolve, reject) => {
+      const waiter: TerminalWaiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.removeTerminalWaiter(taskID, waiter)
+          reject(
+            new Error(
+              `Timed out after ${timeoutMs}ms waiting for job ${taskID} to reach a terminal state`,
+            ),
+          )
+        }, timeoutMs),
+      }
+      const waiters = this.terminalWaiters.get(taskID) ?? []
+      waiters.push(waiter)
+      this.terminalWaiters.set(taskID, waiters)
+    })
+  }
+
+  private removeTerminalWaiter(taskID: string, waiter: TerminalWaiter): void {
+    const waiters = this.terminalWaiters.get(taskID)
+    if (!waiters) return
+    const idx = waiters.indexOf(waiter)
+    if (idx < 0) return
+    waiters.splice(idx, 1)
+    if (waiters.length === 0) {
+      this.terminalWaiters.delete(taskID)
+    }
+  }
+
+  private resolveTerminalWaiters(taskID: string): void {
+    const waiters = this.terminalWaiters.get(taskID)
+    if (!waiters) return
+    this.terminalWaiters.delete(taskID)
+    const job = this.jobs.get(taskID)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer)
+      if (job) {
+        waiter.resolve(job)
+      } else {
+        waiter.reject(new Error(`Job ${taskID} was removed before reaching a terminal state`))
+      }
+    }
+  }
+
   // ─── Prompt Integration ──────────────────────────────────────────────
 
   /**
@@ -491,15 +558,24 @@ export class BackgroundJobBoard {
   // ─── Cleanup ─────────────────────────────────────────────────────────
 
   /**
-   * Remove jobs whose `updatedAt` is older than `ttlMs` milliseconds
-   * from the current time.
+   * Remove jobs whose `updatedAt` is older than `ttlMs` milliseconds.
+   *
+   * Only TERMINAL (completed/error/cancelled) and reconciled jobs are pruned —
+   * running jobs are never pruned. Each pruned job is also removed from the
+   * persistence adapter so it doesn't resurface after a restart.
    */
-  pruneExpired(ttlMs: number): void {
+  async pruneExpired(ttlMs: number): Promise<void> {
     const now = Date.now()
-    for (const [taskID, job] of this.jobs) {
-      if (now - job.updatedAt > ttlMs) {
-        this.jobs.delete(taskID)
+    const expired: BackgroundJobRecord[] = []
+    for (const job of this.jobs.values()) {
+      const isDone = TERMINAL_STATES.has(job.state) || job.state === 'reconciled'
+      if (isDone && now - job.updatedAt > ttlMs) {
+        expired.push(job)
       }
+    }
+    for (const job of expired) {
+      this.jobs.delete(job.taskID)
+      await this.deletePersisted(job.taskID)
     }
   }
 
@@ -526,6 +602,18 @@ export class BackgroundJobBoard {
     }
   }
 
+  private async deletePersisted(taskID: string): Promise<void> {
+    if (!this.persistence) return
+    try {
+      await this.persistence.deleteJob(taskID)
+    } catch (err) {
+      console.error(
+        `[BackgroundJobBoard] Failed to delete persisted job ${taskID}:`,
+        err,
+      )
+    }
+  }
+
   private notifyTerminal(taskID: string): void {
     for (const listener of this.terminalListeners) {
       try {
@@ -537,6 +625,7 @@ export class BackgroundJobBoard {
         )
       }
     }
+    this.resolveTerminalWaiters(taskID)
   }
 
   private async writeSignal(record: BackgroundJobRecord): Promise<void> {

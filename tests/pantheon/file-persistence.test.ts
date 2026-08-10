@@ -233,48 +233,97 @@ await testAsync('loadAllJobs ignores stale .tmp files', async () => {
   }
 })
 
-await testAsync('deleteJob is a no-op (does not remove job from state)', async () => {
+await testAsync('deleteJob removes a job from state.json (persisted + atomic)', async () => {
   const tmpDir = mkdtempSync(join(tmpdir(), 'fp-del-'))
   try {
     const statePath = join(tmpDir, 'state.json')
     const adapter = new FilePersistenceAdapter(statePath)
 
     await adapter.saveJob({
-      taskID: 'delete-me',
+      taskID: 'keep-me',
       parentSessionID: 's1',
       agent: 'apollo',
-      description: 'To delete',
-      state: 'running',
+      description: 'Keep me',
+      state: 'completed',
       timedOut: false,
       alias: 'apo-1',
       launchedAt: 1000,
-      updatedAt: 1000,
+      updatedAt: 2000,
+      completedAt: 2000,
       totalErrors: 0,
       timeoutCount: 0,
-      terminalUnreconciled: false,
+      terminalUnreconciled: true,
       contextFiles: [],
+      resultSummary: 'Kept',
+    })
+
+    await adapter.saveJob({
+      taskID: 'delete-me',
+      parentSessionID: 's1',
+      agent: 'hermes',
+      description: 'Delete me',
+      state: 'completed',
+      timedOut: false,
+      alias: 'her-1',
+      launchedAt: 1000,
+      updatedAt: 2000,
+      completedAt: 2000,
+      totalErrors: 0,
+      timeoutCount: 0,
+      terminalUnreconciled: true,
+      contextFiles: [],
+      resultSummary: 'Bye',
     })
 
     assert.ok(existsSync(statePath))
 
     await adapter.deleteJob('delete-me')
 
-    // deleteJob is a no-op — record should still be in state.json
-    const content = JSON.parse(readFileSync(statePath, 'utf-8'))
-    assert.equal(content.length, 1)
-    assert.equal(content[0].taskID, 'delete-me')
+    // Reload from disk with a FRESH adapter — proves the deletion persisted
+    const fresh = new FilePersistenceAdapter(statePath)
+    const loaded = await fresh.loadAllJobs()
+    assert.equal(loaded.length, 1)
+    assert.equal(loaded[0]?.taskID, 'keep-me')
+    assert.equal(loaded[0]?.resultSummary, 'Kept')
+
+    // Atomic write: no .tmp file left behind after the delete
+    assert.equal(existsSync(`${statePath}.tmp`), false, '.tmp file should be gone after rename')
   } finally {
     rmSync(tmpDir, { recursive: true, force: true })
   }
 })
 
-await testAsync('deleteJob on nonexistent entry does not throw', async () => {
+await testAsync('deleteJob on nonexistent entry does not throw and leaves file untouched', async () => {
   const tmpDir = mkdtempSync(join(tmpdir(), 'fp-dne-'))
   try {
     const statePath = join(tmpDir, 'state.json')
     const adapter = new FilePersistenceAdapter(statePath)
+
+    await adapter.saveJob({
+      taskID: 'keep-me',
+      parentSessionID: 's1',
+      agent: 'apollo',
+      description: 'Keep',
+      state: 'completed',
+      timedOut: false,
+      alias: 'apo-1',
+      launchedAt: 1000,
+      updatedAt: 2000,
+      completedAt: 2000,
+      totalErrors: 0,
+      timeoutCount: 0,
+      terminalUnreconciled: true,
+      contextFiles: [],
+      resultSummary: 'OK',
+    })
+
     // Should not throw
     await adapter.deleteJob('does-not-exist')
+
+    // Existing records untouched
+    const content = JSON.parse(readFileSync(statePath, 'utf-8'))
+    assert.equal(content.length, 1)
+    assert.equal(content[0].taskID, 'keep-me')
   } finally {
     rmSync(tmpDir, { recursive: true, force: true })
   }
