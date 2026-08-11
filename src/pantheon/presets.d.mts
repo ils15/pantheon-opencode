@@ -84,6 +84,20 @@ export declare function visionBrokenOnGateway(model: string, providerID: string)
 
 export declare function loadPresetDefs(routingPath?: string): Record<string, PresetDef>
 
+export interface RoutingAgentModelsOptions {
+  routingPath?: string
+  logger?: { warn?: (msg: string) => void }
+}
+
+/**
+ * Lowercase agent → "provider/model" mapping from routing.yml's FIRST
+ * (default) preset — the static source for the delegation toolset's
+ * options.agentModels. Fail-open: missing/corrupt routing.yml → {}.
+ */
+export declare function loadRoutingAgentModels(
+  options?: RoutingAgentModelsOptions,
+): Record<string, string>
+
 export declare function resolveActivePreset(options?: ResolveOptions): ResolvedPreset | null
 
 export declare function applyActivePresetToConfig<C extends object>(

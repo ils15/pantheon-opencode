@@ -211,6 +211,49 @@ export function loadPresetDefs(routingPath) {
 }
 
 /**
+ * Load the DEFAULT agent → model mapping from routing.yml for the delegation
+ * toolset (Fase 6 — wiring agentModels).
+ *
+ * routing.yml keeps per-agent models ONLY inside presets
+ * (`presets.<name>.agents.<agent>.model`) — the top-level `agents:` section
+ * carries no model field. The FIRST-listed preset is the static default
+ * (go-deepseek today): a mapping INDEPENDENT of the active preset, so a
+ * delegated child always gets a sane per-agent model even when no preset is
+ * active — delegation no longer depends 100% on the active preset (branch (b)
+ * of resolveChildModel, which outranks the active-preset branch (c)).
+ *
+ * Fail-open: a missing or unparseable routing.yml yields {} (the caller keeps
+ * the previous behavior — active preset / opencode default) and warns via the
+ * optional logger; it NEVER throws at startup.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.routingPath]
+ * @param {{warn?: Function}} [opts.logger]
+ * @returns {Record<string, string>} lowercase agent → "provider/model"
+ */
+export function loadRoutingAgentModels({ routingPath, logger = console } = {}) {
+  let defs
+  try {
+    defs = loadPresetDefs(routingPath)
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    logger.warn?.(
+      `presets: routing.yml agent models unavailable (${reason}) — delegation falls back to the active preset/default`,
+    )
+    return {}
+  }
+  const names = Object.keys(defs)
+  if (names.length === 0) return {}
+  const models = {}
+  for (const [agent, spec] of Object.entries(defs[names[0]]?.agents ?? {})) {
+    if (spec && typeof spec === 'object' && typeof spec.model === 'string' && spec.model !== '') {
+      models[agent.toLowerCase()] = spec.model
+    }
+  }
+  return models
+}
+
+/**
  * Resolve the active preset: env PANTHEON_MODEL_PRESET > first existing
  * candidate file > null. "none" disables. Unknown names warn and return null
  * WITHOUT falling through to lower-priority sources.

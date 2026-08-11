@@ -1220,7 +1220,10 @@ test('T35: applyActivePresetToConfig throws PANTHEON_MISSING_API_KEY', () => {
   )
   let thrown = null
   try {
-    presets.applyActivePresetToConfig({}, { env: {}, candidates: [presetFile(dir)], logger: silent })
+    presets.applyActivePresetToConfig(
+      {},
+      { env: {}, candidates: [presetFile(dir)], logger: silent },
+    )
   } catch (e) {
     thrown = e
   }
@@ -1279,6 +1282,78 @@ test('T37: hasVision stays true for qwen3.7-plus; visionBrokenOnGateway is runti
     presets.GATEWAY_BROKEN_VISION_MODELS.has('qwen3.7-plus'),
     'qwen3.7-plus listed in the broken-vision set',
   )
+})
+
+// ─── T38-T42: loadRoutingAgentModels (Fase 6 — wiring agentModels) ─────
+// The delegation toolset's `options.agentModels` (branch b) is sourced from
+// routing.yml's DEFAULT (first) preset — a static mapping INDEPENDENT of the
+// active preset, so delegation no longer depends 100% on the active preset.
+test('T38: loadRoutingAgentModels maps every repo preset agent to provider/model (lowercase)', () => {
+  const models = presets.loadRoutingAgentModels()
+  const repo = repoAgents()
+  assert.ok(Object.keys(models).length >= repo.length, 'default preset must cover the repo agents')
+  for (const agent of repo) {
+    assert.ok(models[agent], `agent "${agent}" must have a model from the default preset`)
+    assert.ok(
+      /^[a-z0-9][a-z0-9._-]*\/.+$/.test(models[agent]),
+      `model "${models[agent]}" must be provider/model`,
+    )
+    assert.equal(models[agent], models[agent.toLowerCase()], 'keys must be lowercase')
+  }
+  assert.equal(models['apollo'], 'opencode/deepseek-v4-flash-free')
+  assert.equal(models['hermes'], 'opencode/deepseek-v4-flash')
+  assert.equal(models['athena'], 'opencode/deepseek-v4-pro')
+})
+
+test('T39: loadRoutingAgentModels ignores agents without a model entry', () => {
+  const p = fixtureRouting(`
+presets:
+  first:
+    agents:
+      has-model:    { model: opencode/deepseek-v4-flash, reasoning_effort: low }
+      no-model:     { reasoning_effort: low }
+      empty-model:  { model: "", reasoning_effort: low }
+`)
+  const models = presets.loadRoutingAgentModels({ routingPath: p })
+  assert.deepEqual(models, { 'has-model': 'opencode/deepseek-v4-flash' })
+})
+
+test('T40: loadRoutingAgentModels uses the FIRST preset when several exist', () => {
+  const p = fixtureRouting(`
+presets:
+  first:
+    agents:
+      apollo: { model: opencode/model-a }
+      hermes: { model: opencode/model-b }
+  second:
+    agents:
+      apollo: { model: opencode/model-z }
+`)
+  const models = presets.loadRoutingAgentModels({ routingPath: p })
+  assert.deepEqual(models, { apollo: 'opencode/model-a', hermes: 'opencode/model-b' })
+})
+
+test('T41: loadRoutingAgentModels — missing routing.yml → {} without throw (warn)', () => {
+  const warns = []
+  const models = presets.loadRoutingAgentModels({
+    routingPath: join(makeTmp(), 'nope.yml'),
+    logger: { warn: (m) => warns.push(m) },
+  })
+  assert.deepEqual(models, {}, 'missing routing.yml must yield an empty mapping')
+  assert.ok(warns.length > 0, 'missing routing.yml must warn')
+})
+
+test('T42: loadRoutingAgentModels — corrupt routing.yml → {} without throw (warn)', () => {
+  const dir = makeTmp()
+  const p = join(dir, 'routing.yml')
+  writeFileSync(p, 'presets: [unclosed\n  bad: {')
+  const warns = []
+  const models = presets.loadRoutingAgentModels({
+    routingPath: p,
+    logger: { warn: (m) => warns.push(m) },
+  })
+  assert.deepEqual(models, {}, 'corrupt routing.yml must yield an empty mapping')
+  assert.ok(warns.length > 0, 'corrupt routing.yml must warn')
 })
 
 // ─── Summary ───────────────────────────────────────────────────────────

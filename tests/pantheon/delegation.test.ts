@@ -18,6 +18,7 @@ import {
 } from '../../src/pantheon/background-job-board.ts'
 import { createDelegationTools, type DelegationToolset } from '../../src/pantheon/delegation.ts'
 import { readDelegationReport } from '../../src/pantheon/delegation-finalize.ts'
+import { loadRoutingAgentModels } from '../../src/pantheon/presets.mjs'
 
 // ─── Harness ───────────────────────────────────────────────────────────
 
@@ -426,6 +427,80 @@ async function main() {
           warnings.some((w) => /API key/i.test(w)),
           `explicit model must still warn on the missing key, got: ${warnings.join('; ')}`,
         )
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('(d) precedence: explicit model option beats options.agentModels', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-precedence-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      const warnings: string[] = []
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: {
+          rootSessions: new Set([ROOT]),
+          outputDir: tmp,
+          // agentModels is present, but the explicit caller model must win.
+          agentModels: { apollo: 'opencode/deepseek-v4-flash-free' },
+          // Empty env: openai key is missing — the explicit model is still
+          // respected (warned, never overridden).
+          presetEnv: {},
+          logger: { warn: (msg) => warnings.push(msg) },
+        },
+      })
+
+      await tools.pantheon_delegate.execute(
+        { prompt: 'Find X', agent: 'apollo', model: 'openai/gpt-5.6-terra' },
+        makeCtx(),
+      )
+
+      assert.equal(client.created.length, 1)
+      assert.deepEqual(client.created[0]!.body.model, {
+        id: 'gpt-5.6-terra',
+        providerID: 'openai',
+      })
+      assert.ok(
+        warnings.some((w) => /API key/i.test(w)),
+        `explicit model wins but must still warn on the missing key, got: ${warnings.join('; ')}`,
+      )
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
+    '(c) integration: agentModels built from routing.yml (loadRoutingAgentModels) drives branch (b)',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-routing-models-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            // Same source the plugin wires (Fase 6): routing.yml's default
+            // agent→model mapping. The opencode provider requires
+            // PANTHEON_OPENCODE_API_KEY (routing.yml go-deepseek apiKeyEnv).
+            agentModels: loadRoutingAgentModels(),
+            presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
+          },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'deepseek-v4-flash-free',
+          providerID: 'opencode',
+        })
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }

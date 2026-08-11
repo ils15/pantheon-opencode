@@ -13,7 +13,7 @@ import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
 import { createPantheonLogger } from './pantheon/logger.ts'
-import { applyActivePresetToConfig } from './pantheon/presets.mjs'
+import { applyActivePresetToConfig, loadRoutingAgentModels } from './pantheon/presets.mjs'
 import {
   TODO_ENFORCER_DEFAULTS,
   TodoEnforcer,
@@ -30,6 +30,17 @@ import { activePresetCandidates, createVisionHandler } from './pantheon/vision.t
 // directly into the terminal — the "lixo". Every line goes to
 // .pantheon/logs/hooks.log; the console echo is opt-in via PANTHEON_HOOKS_LOG=1.
 const log = createPantheonLogger({ module: 'pantheon-plugin' })
+
+// Fase 6 (release-134): the delegation toolset's options.agentModels (branch
+// (b) of resolveChildModel) is wired from routing.yml's default (first)
+// preset — a STATIC per-agent model mapping independent of the active preset,
+// so delegated children get a sane model even without an active preset (the
+// previous production wiring left branch (b) dead: delegation depended 100%
+// on the active preset). Built ONCE at module load, never per dispatch.
+// Fail-open: a missing/corrupt routing.yml yields {} (warned by the helper)
+// and delegation falls back to the active preset / opencode default — the
+// plugin never throws at startup.
+const routingAgentModels = loadRoutingAgentModels({ logger: log })
 
 const board = new BackgroundJobBoard({
   maxConcurrentPerAgent: 3,
@@ -215,7 +226,11 @@ const plugin: Plugin = async (input: PluginInput) => {
   const delegation = createDelegationTools({
     board,
     client: adaptDelegationClient(input.client),
-    options: { rootSessions, readOnlyAgents: new Set(['apollo', 'gaia']) },
+    options: {
+      rootSessions,
+      readOnlyAgents: new Set(['apollo', 'gaia']),
+      agentModels: routingAgentModels,
+    },
   })
 
   // Wave 1 (PR #46): TODO continuation enforcer for root/non-board sessions.
