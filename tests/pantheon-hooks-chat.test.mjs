@@ -52,7 +52,7 @@ async function loadPlugin(phase) {
       tui: { showToast: async () => {} },
     },
   })
-  return { hooks, logDir }
+  return { hooks, logDir, appLogs }
 }
 
 /** Queue one chat reminder through the real event → toast → reminder path. */
@@ -137,6 +137,37 @@ test('chat.message with a valid msg_ messageID still injects the reminder (regre
     assert.equal(part.messageID, 'msg_parent_002', 'messageID must be preserved verbatim')
     assert.match(part.text, /<system-reminder>\n/)
     assert.match(part.text, /test reminder signal/)
+  } finally {
+    rmSync(logDir, { recursive: true, force: true })
+  }
+})
+
+test('idle-flush logs a SUMMARY, not the duplicated joined content (chat-reminder delivery is the single content source)', async () => {
+  // 1.3.4 dedup: the SAME line ("🚀 … | ❌ session error") appeared 2× in the
+  // log — flushIdleReminders echoed the reminder body joined with " | " while
+  // the chat.message delivery echoed the same body joined with "\n". The
+  // idle-flush entry must stay an audit summary (count only); the reminder
+  // CONTENT is logged exactly once, at chat-reminder delivery.
+  const { hooks, logDir, appLogs } = await loadPlugin('idle-dedup')
+  try {
+    await seedReminder(hooks)
+
+    // session.idle fires → flushIdleReminders logs + re-queues ONE aggregate.
+    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 'parent-ses-3' } } })
+    const idleEntry = appLogs.find((l) => l.extra?.script === 'idle-flush')
+    assert.ok(idleEntry, 'idle-flush entry expected in the app log')
+    assert.match(idleEntry.message, /flushed/i)
+    assert.ok(
+      !idleEntry.message.includes('test reminder signal'),
+      `idle-flush must NOT duplicate the joined reminder content, got: ${idleEntry.message}`,
+    )
+
+    // The single content-bearing log entry arrives at chat-reminder delivery.
+    const output = { parts: [] }
+    await hooks['chat.message']({ sessionID: 'parent-ses-3', messageID: 'msg_parent_003' }, output)
+    const delivery = appLogs.find((l) => l.extra?.script === 'chat-reminder')
+    assert.ok(delivery, 'chat-reminder delivery entry expected in the app log')
+    assert.ok(delivery.message.includes('test reminder signal'))
   } finally {
     rmSync(logDir, { recursive: true, force: true })
   }

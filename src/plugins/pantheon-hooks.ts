@@ -1124,10 +1124,13 @@ function flushIdleReminders(ctx: HookContext): void {
 
   // ONE aggregated entry, fresh timestamp — chat.message delivers it next.
   enqueueChatReminder(lines.join('\n'))
+  // 1.3.4 dedup: log a SUMMARY here (count only), never the joined body — the
+  // SAME lines used to be echoed twice (idle-flush with " | ", chat-reminder
+  // delivery with "\n"). The content is logged exactly once, at delivery.
   void reportFailure(
     ctx,
-    `[pantheon-hooks:idle-flush] ${lines.join(' | ')}`,
-    { script: 'idle-flush', count: fresh.length },
+    `[pantheon-hooks:idle-flush] ${fresh.length} reminder(s) flushed into the chat buffer (${lines.length} line(s) after aggregation)`,
+    { script: 'idle-flush', count: fresh.length, lineCount: lines.length },
     'info',
   )
 }
