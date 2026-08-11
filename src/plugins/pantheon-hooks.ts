@@ -1427,17 +1427,24 @@ const plugin: Plugin = async ({ client, directory }) => {
     // tui.toast.show events on opencode 1.18.13 (untagged — see header), so
     // queued agent-lifecycle signals (delegation start/done, hook failures,
     // olympians/council summaries) are injected here as ONE <system-reminder> text
-    // part into the next user message, then cleared. chat.message fires only
-    // for user-initiated messages (subagent prompts use a different path), so
-    // this surfaces in the main session exactly when the user is watching.
-    // session.idle flushes the buffer into ONE fresh aggregated entry first
-    // (flushIdleReminders). Same PANTHEON_TOASTS gate as toasts: the buffer
-    // only receives gated signals, and the empty-set check below is a
-    // defensive backstop.
+    // part into the next user message, then cleared.
+    // P0 (2026-08-11, live E2E — release blocker): this hook ALSO fires for the
+    // child session's client.session.promptAsync (the old "subagent prompts use
+    // a different path" claim is FALSE on 1.18.13), where input.messageID is
+    // EMPTY/undefined. Injecting there with `?? ''` produced a part opencode's
+    // schema rejects (SchemaError: Expected a string starting with "msg", got
+    // "") → prompt_async failed → every delegation died in ~20ms. The guard
+    // below skips injection ENTIRELY on that path WITHOUT draining the buffer,
+    // so the reminder still lands on the parent's next real message.
     'chat.message': async (input, output) => {
       try {
         if (ENABLED_TOAST_CATEGORIES.size === 0) return
         if (pendingChatReminders.length === 0) return
+        // Subagent promptAsync fires have no messageID — injecting any part
+        // with an empty messageID crashes the child session (schema reject).
+        // Early return BEFORE the buffer drain keeps the reminder queued for
+        // the parent's next real (msg_-ID'd) message.
+        if (!input.messageID) return
         const now = Date.now()
         const fresh = pendingChatReminders.filter((r) => now - r.at <= CHAT_REMINDER_TTL_MS)
         pendingChatReminders.length = 0
@@ -1445,10 +1452,12 @@ const plugin: Plugin = async ({ client, directory }) => {
         const body = fresh.map((r) => r.text).join('\n')
         // Minimal TextPart — the core backfills messageID/sessionID for
         // hook-injected parts (see opencode chat.message trigger pipeline).
+        // The guard above guarantees input.messageID is a non-empty string,
+        // so no `?? ''` fallback is needed (an explicit "" is schema-rejected).
         output.parts.push({
           id: `prt_${crypto.randomUUID()}`,
           sessionID: input.sessionID,
-          messageID: input.messageID ?? '',
+          messageID: input.messageID,
           type: 'text',
           text: `<system-reminder>\n${body}\n</system-reminder>`,
         } satisfies Part)
