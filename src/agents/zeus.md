@@ -286,7 +286,7 @@ Wave: dispare N, colete com tolerancia a falha
 ```
 
 ### Plugin Enforcer (auto — session.idle hook)
-O plugin re-injeta "Incomplete tasks remain..." em sessões root/não-board que
+O plugin re-injeta "Continue: pending todos remain — review and proceed." em sessões root/não-board que
 vão a idle com todos incompletos. Guards (todos no `src/pantheon/todo-enforcer.ts`):
 - **User-activity (30s)** — após uma mensagem do usuário (`chat.message` hook),
   a injeção é suprimida por `user_activity_quiet_ms: 30000`.

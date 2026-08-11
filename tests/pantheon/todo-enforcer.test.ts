@@ -610,6 +610,25 @@ async function main() {
     },
   )
 
+  await testAsync('TODO_CONTINUATION_PROMPT is a discreet one-line message', async () => {
+    assert.ok(
+      TODO_CONTINUATION_PROMPT.startsWith('Continue:'),
+      'prompt leads with a discreet "Continue:" directive, not a multi-sentence block',
+    )
+    assert.ok(
+      !TODO_CONTINUATION_PROMPT.includes('\n'),
+      'prompt must be a single line — no newlines, no paragraph',
+    )
+    assert.ok(
+      !TODO_CONTINUATION_PROMPT.includes('critically re-examine'),
+      'the old long-form completion-audit text is gone',
+    )
+    assert.ok(
+      !TODO_CONTINUATION_PROMPT.includes('Incomplete tasks remain'),
+      'the old invasive opening is gone',
+    )
+  })
+
   // ═══════════════════════════════════════════════════════════════════════
 
   const passed = results.filter((r) => r.passed).length

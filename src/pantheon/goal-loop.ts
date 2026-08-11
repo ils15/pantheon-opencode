@@ -32,8 +32,7 @@ export { GoalStore }
 // ─── Constants ─────────────────────────────────────────────────────────
 
 /** Continuation text injected into idle sessions. `{objective}` is substituted. */
-export const GOAL_CONTINUATION_PROMPT =
-  "Active goal: {objective}. Continue working toward it. Do not stop until you update the goal to done. If you believe it's complete, call pantheon_goal_update with status done."
+export const GOAL_CONTINUATION_PROMPT = 'Continue goal: {objective}'
 
 /** Defaults matching routing.yml `full_auto`. */
 export const GOAL_LOOP_DEFAULTS = {

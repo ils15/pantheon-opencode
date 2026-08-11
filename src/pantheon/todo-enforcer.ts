@@ -55,8 +55,7 @@ const log = createPantheonLogger({ module: 'pantheon-todo' })
  * Version-controlled continuation text injected into the idle session.
  * Exported for tests and so the routing.yml comment stays in sync.
  */
-export const TODO_CONTINUATION_PROMPT =
-  'Incomplete tasks remain in your todo list. Continue working on them. Do not stop until all are done. If you believe all work is complete, critically re-examine whether the completion claim is verifiable.'
+export const TODO_CONTINUATION_PROMPT = 'Continue: pending todos remain — review and proceed.'
 
 /** Defaults matching routing.yml `todo_enforcer`. */
 export const TODO_ENFORCER_DEFAULTS = {
