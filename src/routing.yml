@@ -575,3 +575,10 @@ hashline:
   # Wave 2 (PR #46): tag-anchored edits. enhance_read augments `read` output
   # with per-line sha256 tags (12#XJ|content); hashline_edit anchors edits to
   # those refs. Documentation mirror — the plugin resolves behavior in code.
+full_auto:
+  enabled: false                 # opt-in: goal continuations are OFF by default
+  max_continuations: 25          # hard cap on goal continuations per session
+  # Wave 3 (PR #46): full-auto goal loop. One active goal per session
+  # (pending → in_progress → done); while active, idle sessions are
+  # continued automatically toward the objective. Documentation mirror —
+  # the plugin resolves behavior in code (GOAL_LOOP_DEFAULTS).

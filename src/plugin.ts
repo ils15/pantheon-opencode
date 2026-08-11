@@ -6,8 +6,10 @@ import { buildCompactionContext } from './pantheon/delegation-compaction.ts'
 import { createEnforcementGuard, readOnlyRegistry } from './pantheon/delegation-enforce.ts'
 import { DelegationNotifier, handleDelegationEvent } from './pantheon/delegation-notify.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
+import { GOAL_LOOP_DEFAULTS, GoalLoop, GoalStore } from './pantheon/goal-loop.ts'
 import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
+import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
 import { applyActivePresetToConfig } from './pantheon/presets.mjs'
 import {
   TODO_ENFORCER_DEFAULTS,
@@ -202,6 +204,21 @@ const plugin: Plugin = async (input: PluginInput) => {
     options: TODO_ENFORCER_DEFAULTS,
   })
 
+  // Wave 3 (PR #46): full-auto goal loop — opt-in (`full_auto.enabled:
+  // false` default, mirrored by GOAL_LOOP_DEFAULTS). File-based GoalStore
+  // (`.pantheon/goals/<sessionID>.json` — the plugin layer cannot reach MCP
+  // KV). Idle routing: an active goal owns the idle (goal loop); otherwise
+  // the todo enforcer gets it (see idle-continuation.ts).
+  const goalStore = new GoalStore({ dir: '.pantheon/goals' })
+  const goalLoop = new GoalLoop({
+    store: goalStore,
+    client: adaptTodoEnforcerClient(input.client),
+    board,
+    options: GOAL_LOOP_DEFAULTS,
+  })
+  const goalTools = goalLoop.tools()
+  const idleDispatcher = createIdleDispatcher({ goalLoop, todoEnforcer })
+
   // Wave 2 (PR #46): hashline — tag-anchored edits. The read enhancer
   // (tool.execute.after) augments `read` output with per-line sha256 tags
   // (`12#XJ|content`); hashline_edit anchors edits to those refs. Additive —
@@ -255,6 +272,10 @@ const plugin: Plugin = async (input: PluginInput) => {
       pantheon_delegation_read: delegation.pantheon_delegation_read,
       pantheon_delegation_list: delegation.pantheon_delegation_list,
       hashline_edit: hashlineEdit,
+      // Wave 3 (PR #46): full-auto goal tools (single active goal/session).
+      pantheon_goal_create: goalTools.pantheon_goal_create,
+      pantheon_goal_update: goalTools.pantheon_goal_update,
+      pantheon_goal_get: goalTools.pantheon_goal_get,
     },
     'chat.message': async (hookInput, output) => {
       await vision.chatMessage(hookInput, output)
@@ -278,12 +299,14 @@ const plugin: Plugin = async (input: PluginInput) => {
           board,
           finalize: (childSessionID, opts) => delegation.finalizeDelegation(childSessionID, opts),
         })
-        // Wave 1: non-board idle → TODO continuation enforcer. Board children
-        // are handled by handleDelegationEvent above; everything else (roots,
-        // non-board sessions) gets the todo re-injection. onIdle never throws
-        // (internal failures are logged + swallowed), so the session is safe.
+        // Wave 1/3: non-board idle → idle dispatcher. Board children are
+        // handled by handleDelegationEvent above; everything else (roots,
+        // non-board sessions) is routed by priority: an active goal owns the
+        // idle (goal loop), otherwise the todo enforcer re-injects. Neither
+        // onIdle ever throws (internal failures are logged + swallowed), so
+        // the session is safe.
         if (!delegated && ev.type === 'session.idle') {
-          await todoEnforcer.onIdle(ev.properties.sessionID)
+          await idleDispatcher.onIdle(ev.properties.sessionID)
         }
       } catch (err) {
         // The event hook must never break the session.
