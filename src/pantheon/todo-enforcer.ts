@@ -13,11 +13,17 @@
  *      `userActivityQuietMs` is being driven interactively → skip;
  *   2. board-running — a session with a running background job is skipped
  *      (the parent is busy; the child session itself is never routed here);
- *   3. native-children — opencode `task(background=true)` children are NOT on
- *      our board, so `session.children()` is checked: an active child (its
- *      `time.updated` newer than `childActiveMs`) means the parent is still
- *      waiting on a native background task → skip. Throws fail open (log +
- *      inject) so version-sensitive APIs never break the enforcer;
+ *   3. children — `session.children()` is checked: a delegated child's
+ *      session ID IS its board task ID, so `board.get(child.id)` resolves
+ *      and the board state machine is authoritative — the child is active
+ *      ONLY while the job is `running`; terminal jobs (completed/error/
+ *      cancelled/reconciled) never suppress. Native children (opencode
+ *      `task(background=true)`, NOT on our board) fall back to the
+ *      `time.updated` heuristic (`childActiveMs`). The cross-ref fixes the
+ *      T6 bug: a completed delegation's frozen `time.updated` looked "still
+ *      running" for `childActiveMs` and suppressed every injection in that
+ *      window. Throws fail open (log + inject) so version-sensitive APIs
+ *      never break the enforcer;
  *   4. in-flight — one injection per idle, never concurrent;
  *   5. cooldown — exponential per-session backoff `cooldownBaseMs *
  *      2^min(failures, max)`, failures increment when an injection does not
@@ -65,7 +71,7 @@ export const TODO_ENFORCER_DEFAULTS = {
   failureResetMs: 300000,
   /** Skip injection this long after a user message in the session. */
   userActivityQuietMs: 30000,
-  /** A native child whose `time.updated` is newer than this is still running. */
+  /** A native (non-board) child whose `time.updated` is newer than this is still running. */
   childActiveMs: 120000,
 } as const
 
@@ -145,16 +151,16 @@ export interface TodoEnforcerOptions {
   failureResetMs?: number
   /** Skip injection while a user message is more recent than this. */
   userActivityQuietMs?: number
-  /** Native child sessions newer than this are considered active/running. */
+  /** Native (non-board) child sessions newer than this are considered active/running. */
   childActiveMs?: number
   /** Injectable clock (testable), defaults to `Date.now`. */
   now?: () => number
 }
 
-/** Dependencies threaded to the enforcer (structural board — list only). */
+/** Dependencies threaded to the enforcer (structural board — list + get). */
 export interface TodoEnforcerDeps {
   client: TodoEnforcerClient
-  board: Pick<BackgroundJobBoard, 'list'>
+  board: Pick<BackgroundJobBoard, 'list' | 'get'>
   options?: TodoEnforcerOptions
   logger?: { warn: (message: string) => void }
 }
@@ -175,7 +181,7 @@ type InheritedContext = {
  */
 export class TodoEnforcer {
   private readonly client: TodoEnforcerClient
-  private readonly board: Pick<BackgroundJobBoard, 'list'>
+  private readonly board: Pick<BackgroundJobBoard, 'list' | 'get'>
   private readonly options: Required<TodoEnforcerOptions>
   private readonly warn: (message: string) => void
 
@@ -268,8 +274,10 @@ export class TodoEnforcer {
     // Guard 2: a session with a running board job is busy — skip.
     if (this.board.list(sessionID).some((job) => job.state === 'running')) return
 
-    // Guard 3: native background task() children are NOT on our board — an
-    // active child means the parent is still waiting on it, so skip.
+    // Guard 3: children — a delegated child (session ID == board task ID) is
+    // active only while its job is `running`; a native child is active while
+    // its time.updated is fresh. Either active child means the parent is
+    // still waiting on it, so skip.
     if ((await this.activeChildren(sessionID, now)) > 0) return
 
     const todos = await this.client.session.todo({ path: { id: sessionID } })
@@ -340,26 +348,47 @@ export class TodoEnforcer {
   }
 
   /**
-   * Count active native child sessions. opencode `task(background=true)`
-   * children are NOT registered on our board, so the only way to see them is
-   * `session.children()`. A child is active while its `time.updated` is newer
-   * than `childActiveMs` — a running background task keeps updating its
-   * session while streaming; a completed one freezes. Fail-open: when the
-   * children API is unavailable (older opencode / permission), log and return
-   * 0 so the enforcer still works on version-sensitive runtimes.
+   * Count active child sessions. Children fall into two classes:
+   *
+   *  - BOARD children (delegated via the toolset): the child session ID IS
+   *    the board task ID, so `board.get(child.id)` resolves. The board state
+   *    machine is authoritative — active ONLY while `state === 'running'`;
+   *    a terminal job (completed/error/cancelled/reconciled) is NOT active,
+   *    even though its `time.updated` froze at completion (the frozen
+   *    timestamp is exactly the T6 bug that made a finished delegation look
+   *    "still running" for `childActiveMs`).
+   *  - NATIVE children (opencode `task(background=true)`, NOT on our board):
+   *    `board.get(child.id)` is undefined, so the heuristic applies — active
+   *    while its `time.updated` is newer than `childActiveMs` (a running
+   *    native task keeps updating its session while streaming; a completed
+   *    one freezes).
+   *
+   * Fail-open: when the children API is unavailable (older opencode /
+   * permission), log and return 0 so the enforcer still works on
+   * version-sensitive runtimes.
    */
   private async activeChildren(sessionID: string, now: number): Promise<number> {
     try {
       const children = await this.client.session.children({ path: { id: sessionID } })
-      return children.filter((child) => {
-        const updated = child.time?.updated
-        return typeof updated === 'number' && now - updated < this.options.childActiveMs
-      }).length
+      return children.filter((child) => this.isChildActive(child, now)).length
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err)
       this.warn(`todo children check failed for session ${sessionID}: ${reason}`)
       return 0
     }
+  }
+
+  /**
+   * Whether a single child counts as active. Board children (the child's
+   * session ID matches a board task ID) are active only while the job is
+   * `running` — terminal board states never suppress. Native children
+   * (no board job) use the `time.updated` freshness heuristic.
+   */
+  private isChildActive(child: TodoEnforcerChild, now: number): boolean {
+    const job = this.board.get(child.id)
+    if (job !== undefined) return job.state === 'running'
+    const updated = child.time?.updated
+    return typeof updated === 'number' && now - updated < this.options.childActiveMs
   }
 
   /**
