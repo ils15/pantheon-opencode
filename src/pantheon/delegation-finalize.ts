@@ -31,7 +31,9 @@ export interface DelegationMessageBundle {
 
 /** Minimal structural view of the opencode SDK session client we use. */
 export interface DelegationClientSession {
-  create(input: { body: { parentID: string; title?: string } }): Promise<{ id: string }>
+  create(input: {
+    body: { parentID: string; title?: string; model?: { id: string; providerID: string } }
+  }): Promise<{ id: string }>
   promptAsync(input: {
     path: { id: string }
     body: { agent: string; parts: Array<{ type: 'text'; text: string }> }
@@ -62,6 +64,20 @@ export interface DelegationOptions {
    * background_delegation.read_only_agents. Matching is case-insensitive.
    */
   readOnlyAgents?: ReadonlySet<string>
+  /**
+   * Per-agent model overrides for delegated child sessions, keyed by agent
+   * name (lowercase, e.g. `apollo`). Values are opencode model IDs in
+   * `provider/model` form (e.g. `opencode/deepseek-v4-flash-free`), sourced
+   * from routing.yml agent entries. Higher priority than the active preset.
+   */
+  agentModels?: Readonly<Record<string, string>>
+  /**
+   * Env override for the active-preset resolution (see resolveActivePreset).
+   * Defaults to process.env. Primarily for tests.
+   */
+  presetEnv?: Record<string, string | undefined>
+  /** Warning sink for the no-model fallback (defaults to console). */
+  logger?: { warn?: (msg: string) => void }
 }
 
 /** Dependencies threaded to the finalize path. */

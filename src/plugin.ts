@@ -108,8 +108,15 @@ function adaptDelegationClient(client: PluginInput['client']): DelegationClient 
   return {
     session: {
       create: async (input) => {
-        const body: { parentID?: string; title?: string } = { parentID: input.body.parentID }
+        const body: {
+          parentID?: string
+          title?: string
+          model?: { id: string; providerID: string }
+        } = { parentID: input.body.parentID }
         if (input.body.title !== undefined) body.title = input.body.title
+        // Forward the routed child model (E2E fix): without it the child
+        // falls back to the key-gated default model and dies at startup.
+        if (input.body.model !== undefined) body.model = input.body.model
         const result = await client.session.create({ body })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
         return { id: result.data.id }
