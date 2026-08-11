@@ -18,10 +18,10 @@ import { strict as assert } from 'node:assert'
 
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
 import {
-  PANTHEON_COMPACTION_DIRECTIVE,
   buildCompactionContext,
   type CompactionGoalSource,
   type CompactionTodoSource,
+  PANTHEON_COMPACTION_DIRECTIVE,
 } from '../../src/pantheon/delegation-compaction.ts'
 import type { Goal } from '../../src/pantheon/goal-store.ts'
 import type { TodoLike } from '../../src/pantheon/todo-enforcer.ts'
@@ -320,10 +320,10 @@ async function main() {
         'no goals → no mission section',
       )
       assert.deepEqual(
-        await buildCompactionContext(
-          board,
-          { sessionID: ROOT, goals: goalSource([ACTIVE_GOAL], false) },
-        ),
+        await buildCompactionContext(board, {
+          sessionID: ROOT,
+          goals: goalSource([ACTIVE_GOAL], false),
+        }),
         [],
         'goal loop disabled → no mission section',
       )
@@ -359,7 +359,10 @@ async function main() {
       'no todos → no todo section',
     )
     assert.deepEqual(
-      await buildCompactionContext(board, { sessionID: ROOT, todos: todoSource([PENDING_TODO], false) }),
+      await buildCompactionContext(board, {
+        sessionID: ROOT,
+        todos: todoSource([PENDING_TODO], false),
+      }),
       [],
       'todo enforcer disabled → no todo section',
     )
