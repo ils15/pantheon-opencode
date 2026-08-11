@@ -46,6 +46,7 @@ import {
   finalizeDelegation as finalizeDelegationReport,
   readDelegationReport,
 } from './delegation-finalize.ts'
+import { resolveActivePreset } from './presets.mjs'
 
 export type {
   DelegationClient,
@@ -99,6 +100,12 @@ const delegateArgs = {
   agent: z.string().min(1).describe('Agent name, e.g. "apollo" or "hermes".'),
   description: z.string().optional().describe('Human-readable description shown on the job board.'),
   read_only: z.boolean().optional().describe('Advisory flag for Phase 4 read-only enforcement.'),
+  model: z
+    .string()
+    .optional()
+    .describe(
+      'Explicit model for the child session (provider/model, e.g. "opencode/deepseek-v4-flash-free").',
+    ),
 } satisfies z.ZodRawShape
 
 const readArgs = {
@@ -122,6 +129,69 @@ function stateLabel(state: BackgroundJobRecord['state']): string {
     case 'reconciled':
       return 'RECONCILED'
   }
+}
+
+// ─── Model resolution ──────────────────────────────────────────────────
+
+/** Session model ref accepted by the opencode server's session.create. */
+export interface ChildSessionModelRef {
+  id: string
+  providerID: string
+}
+
+/**
+ * Split a `provider/model` model ID (e.g. `opencode/deepseek-v4-flash-free`)
+ * into the `{ id, providerID }` ref the session.create body expects.
+ * Returns undefined for malformed IDs (no slash, empty segments).
+ */
+function splitModelRef(model: string): ChildSessionModelRef | undefined {
+  const slash = model.indexOf('/')
+  if (slash <= 0 || slash === model.length - 1) return undefined
+  return { providerID: model.slice(0, slash), id: model.slice(slash + 1) }
+}
+
+/**
+ * Resolve the child session model with priority:
+ *   1. explicit `model` option passed to the delegate tool;
+ *   2. `options.agentModels[agent]` (routing.yml agent entry, case-insensitive);
+ *   3. the active preset's agent entry via resolveActivePreset();
+ *   4. fallback: undefined — the child is created without a model (the
+ *      caller warns) so opencode's default applies.
+ */
+function resolveChildModel(
+  options: DelegationOptions,
+  agent: string,
+  explicitModel?: string,
+): ChildSessionModelRef | undefined {
+  // (a) explicit model option on the delegate tool call
+  if (explicitModel !== undefined && explicitModel !== '') {
+    const ref = splitModelRef(explicitModel)
+    if (ref !== undefined) return ref
+  }
+  const key = agent.toLowerCase()
+  // (b) routing.yml agent entry wired through options.agentModels
+  const mapped = options.agentModels?.[key]
+  if (mapped !== undefined && mapped !== '') {
+    const ref = splitModelRef(mapped)
+    if (ref !== undefined) return ref
+  }
+  // (c) active preset agent entry (resolveActivePreset reads routing.yml
+  // presets + .pantheon/active-preset.json). Guarded — a broken routing.yml
+  // must never kill the delegate.
+  try {
+    const presetModel = resolveActivePreset({
+      ...(options.presetEnv !== undefined ? { env: options.presetEnv } : {}),
+      ...(options.logger !== undefined ? { logger: options.logger } : {}),
+    })?.agents?.[key]?.model
+    if (presetModel !== undefined && presetModel !== '') {
+      const ref = splitModelRef(presetModel)
+      if (ref !== undefined) return ref
+    }
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err)
+    options.logger?.warn?.(`[pantheon-delegate] active preset resolution failed: ${reason}`)
+  }
+  return undefined
 }
 
 // ─── Factory ───────────────────────────────────────────────────────────
@@ -187,12 +257,23 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       // session.create failure → return a clear error as TEXT (tools return
       // errors as text, not thrown) and register NO job on the board — an
       // unhandled rejection here would otherwise lose the failure entirely.
+      // The child model is resolved from (a) the explicit `model` option,
+      // (b) options.agentModels (routing.yml), (c) the active preset — else
+      // left unset so opencode's default applies (warned below).
+      const childModel = resolveChildModel(options, args.agent, args.model)
+      if (childModel === undefined) {
+        options.logger?.warn?.(
+          `[pantheon-delegate] no model resolved for agent "${args.agent}" — ` +
+            "child session will use opencode's default model (may require API keys)",
+        )
+      }
       let created: { id: string }
       try {
         created = await client.session.create({
           body: {
             parentID: ctx.sessionID,
             title: args.description ?? args.prompt.slice(0, 80),
+            ...(childModel !== undefined ? { model: childModel } : {}),
           },
         })
       } catch (err: unknown) {
