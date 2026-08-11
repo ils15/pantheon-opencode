@@ -19,6 +19,7 @@ import {
   type TodoEnforcerClient,
   todoEnforcerEnabledFromEnv,
 } from './pantheon/todo-enforcer.ts'
+import { TodoPreserver } from './pantheon/todo-preserve.ts'
 import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
@@ -228,6 +229,15 @@ const plugin: Plugin = async (input: PluginInput) => {
     options: { ...TODO_ENFORCER_DEFAULTS, enabled: todoEnforcerEnabledFromEnv() },
   })
 
+  // release-134 Phase 3: post-compaction todo restore. Captures the session's
+  // todo list in 'experimental.session.compacting', activates the snapshot on
+  // 'session.compacted', and rewrites the first post-compaction `todowrite`
+  // with the exact list (todo-preserve.ts). Additive + fail-open: every step
+  // degrades to a logged warn, never throws in a hook.
+  const todoPreserver = new TodoPreserver({
+    client: adaptTodoEnforcerClient(input.client),
+  })
+
   // Wave 3 (PR #46): full-auto goal loop — opt-in (`full_auto.enabled:
   // false` default, mirrored by GOAL_LOOP_DEFAULTS). File-based GoalStore
   // (`.pantheon/goals/<sessionID>.json` — the plugin layer cannot reach MCP
@@ -324,6 +334,12 @@ const plugin: Plugin = async (input: PluginInput) => {
         const info = ev.properties.info
         if (info && info.parentID === undefined) rootSessions.add(info.id)
       }
+      // release-134 Phase 3: activate the todo snapshot captured at
+      // compacting time — the first todowrite within the restore window is
+      // rewritten with the exact list (see todo-preserve.ts). Fail-open.
+      if (ev.type === 'session.compacted') {
+        await todoPreserver.onCompacted(ev.properties.sessionID)
+      }
       // Phase 3: observe completion on child sessions → finalizeDelegation.
       // The board transition fires onTerminal → notifier.notifyParent (the
       // single notification point). Unknown sessions are a no-op.
@@ -349,7 +365,15 @@ const plugin: Plugin = async (input: PluginInput) => {
     },
     // Phase 4: deny mutating tools in read-only delegated sessions. Additive
     // key — does not touch Phase 3's tools/event/onTerminal/chat.message.
-    'tool.execute.before': enforcementGuard,
+    'tool.execute.before': async (input, output) => {
+      // Chain: the read-only enforcement guard runs first (denies mutating
+      // tools in read-only sessions), then release-134 Phase 3 rewrites the
+      // first post-compaction `todowrite` with the captured todo snapshot.
+      // Both are no-ops for non-matching sessions/tools; the preserver is
+      // fail-open (only its intentional restore denial throws).
+      await enforcementGuard(input)
+      await todoPreserver.beforeTodoWrite(input, output)
+    },
     // Wave 2 (PR #46): augment `read` output with hashline tags. Additive —
     // pantheon-hooks.ts (a separate plugin instance) owns its own
     // tool.execute.after, so there is no key collision. Non-read tools pass
@@ -378,6 +402,10 @@ const plugin: Plugin = async (input: PluginInput) => {
         if (blocks.length > 0) {
           output.context.push(...blocks)
         }
+        // release-134 Phase 3 (additive): snapshot the session's full todo
+        // list for post-compaction restore. Best-effort — a GET failure is
+        // logged and the compaction proceeds normally.
+        await todoPreserver.capture(_input.sessionID)
       } catch (err: unknown) {
         log.warn('[Pantheon Plugin] Compaction context build failed:', err)
       }
