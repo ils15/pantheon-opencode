@@ -153,8 +153,12 @@ pantheon_delegate({prompt, agent, description?, read_only?})
   -> cria sessao filha, registra no board, retorna alias: [apo-1]
 pantheon_delegation_read({id: "apo-1"})
   -> BLOQUEIA ate o job terminar, retorna o report markdown, marca reconciled
+  -> durante a espera, mostra o que o agente esta fazendo: seccao final "## Agent Activity"
+     (amostra as messages do child a cada ~2s; tool calls + args truncados / texto)
 pantheon_delegation_list()
   -> lista jobs da sessao, com [unread] para jobs terminados nao lidos
+  -> jobs RUNNING mostram "last activity:" (ultima acao visivel do child)
+  -> fail-open: sem suporte a messages, formato atual inalterado
 ```
 
 - **Read-only enforcement:** agentes read-only (apollo, gaia — `read_only_agents` no routing.yml) tem `edit`, `write`, `bash`, `task` NEGADOS dentro da sessao delegada (o guard de `tool.execute.before` THROW com mensagem acionavel). Use `read_only: true` no delegate para qualquer agente de investigacao.

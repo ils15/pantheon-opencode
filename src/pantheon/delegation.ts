@@ -41,6 +41,7 @@ import {
   DELEGATION_DEFAULTS,
   type DelegationClient,
   type DelegationDeps,
+  type DelegationMessageBundle,
   type DelegationOptions,
   type FinalizeInput,
   finalizeDelegation as finalizeDelegationReport,
@@ -135,6 +136,167 @@ function stateLabel(state: BackgroundJobRecord['state']): string {
     case 'reconciled':
       return 'RECONCILED'
   }
+}
+
+// ─── Agent activity sampling ────────────────────────────────────────────
+//
+// Visibility for `pantheon_delegation_read` / `pantheon_delegation_list`
+// (issue: the read blocks silently while the child works). While a read waits
+// on `waitForTerminal` it periodically samples the CHILD session's messages
+// via the same `client.session.messages` the finalize path uses, and the
+// collected lines are appended to the report as `## Agent Activity`.
+//
+// Fail-open by design: a missing/throwing `session.messages` (or empty
+// response) degrades to the current behavior — report without a section —
+// and NEVER breaks the read. No streaming/SSE, no persistent timers: the
+// poll lives inside the read's existing wait and is cleared when it settles.
+
+/** Cap for one activity line (~200 chars, spec). */
+const ACTIVITY_LINE_MAX = 200
+/** How often the read re-samples child activity while waiting (ms). */
+const ACTIVITY_POLL_MS = 2000
+/** Keep only the latest N readable entries per sample. */
+const ACTIVITY_LINES = 3
+
+/**
+ * Mutable collector shared between the wait loop and the read result.
+ * `sampled` distinguishes "messages unavailable/never succeeded" (fail-open
+ * → NO activity section, current behavior) from "messages OK but nothing
+ * readable" (→ `_no activity captured_` section).
+ */
+interface ActivityCollector {
+  /** Readable activity lines captured so far (latest window). */
+  lines: string[]
+  /** True once session.messages returned a bundle list at least once. */
+  sampled: boolean
+}
+
+/** Collapse whitespace and cap a single line at ~200 chars. */
+function truncateActivityLine(text: string, max = ACTIVITY_LINE_MAX): string {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  if (clean.length <= max) return clean
+  return `${clean.slice(0, max - 1)}…`
+}
+
+/** Readable tool args from a tool part (SDK ToolPart.metadata.input), or ''. */
+function toolArgsFromPart(part: { metadata?: { input?: unknown } }): string {
+  const meta = part.metadata
+  const raw = meta !== undefined && 'input' in meta ? meta.input : meta
+  if (raw === undefined) return ''
+  try {
+    const s = typeof raw === 'string' ? raw : JSON.stringify(raw)
+    return s === '' || s === '{}' ? '' : s
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * One readable activity line per message bundle — tool calls first (highest
+ * signal), then the first non-empty text part. Image/attachment/reasoning
+ * parts are skipped (only `text` and `tool` parts are user-visible).
+ */
+function activityLineFromBundle(bundle: DelegationMessageBundle): string | undefined {
+  const role = bundle.info?.role
+  const parts = bundle.parts ?? []
+  for (const part of parts) {
+    if (part.type === 'tool' && typeof part.tool === 'string' && part.tool !== '') {
+      const args = toolArgsFromPart(part)
+      return truncateActivityLine(`tool: ${part.tool}${args !== '' ? ` ${args}` : ''}`)
+    }
+  }
+  for (const part of parts) {
+    if (part.type === 'text' && typeof part.text === 'string' && part.text.trim() !== '') {
+      const label = role === 'user' ? 'user' : 'assistant'
+      return truncateActivityLine(`${label}: ${part.text.trim()}`)
+    }
+  }
+  return undefined
+}
+
+/**
+ * Sample the child's latest readable activity into `collector` (replace
+ * window). Fail-open: unavailable/throwing messages leaves the collector
+ * untouched (previous lines, or none → `_no activity captured_`), while a
+ * successful (even empty) response marks the collector as sampled.
+ */
+async function sampleChildActivity(
+  client: DelegationClient,
+  childSessionID: string,
+  collector: ActivityCollector,
+): Promise<void> {
+  if (typeof client.session.messages !== 'function') return
+  try {
+    const bundles = await client.session.messages({ path: { id: childSessionID } })
+    if (!Array.isArray(bundles)) return
+    collector.sampled = true
+    if (bundles.length === 0) return
+    const fresh = bundles
+      .map((b) => activityLineFromBundle(b))
+      .filter((l): l is string => l !== undefined)
+      .slice(-ACTIVITY_LINES)
+    if (fresh.length > 0) {
+      collector.lines.length = 0
+      collector.lines.push(...fresh)
+    }
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err)
+    log.warn(`[pantheon-delegate] activity sample failed (fail-open): ${reason}`)
+  }
+}
+
+/** Last readable activity line for a child, or undefined when unavailable. */
+async function lastChildActivity(
+  client: DelegationClient,
+  childSessionID: string,
+): Promise<string | undefined> {
+  if (typeof client.session.messages !== 'function') return undefined
+  try {
+    const bundles = await client.session.messages({ path: { id: childSessionID } })
+    if (!Array.isArray(bundles)) return undefined
+    for (let i = bundles.length - 1; i >= 0; i--) {
+      const bundle = bundles[i]
+      if (bundle === undefined) continue
+      const line = activityLineFromBundle(bundle)
+      if (line !== undefined) return line
+    }
+    return undefined
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err)
+    log.warn(`[pantheon-delegate] last activity fetch failed (fail-open): ${reason}`)
+    return undefined
+  }
+}
+
+/**
+ * Wait for a terminal board state while sampling the child's activity every
+ * ACTIVITY_POLL_MS (first sample fires immediately — a quick finalize can
+ * still capture something). The interval is cleared when the wait settles;
+ * collection never delays the terminal resolution.
+ */
+async function waitForTerminalWithActivity(
+  board: BackgroundJobBoard,
+  client: DelegationClient,
+  taskID: string,
+  timeoutMs: number,
+  collector: ActivityCollector,
+): Promise<BackgroundJobRecord> {
+  void sampleChildActivity(client, taskID, collector)
+  const timer = setInterval(() => {
+    void sampleChildActivity(client, taskID, collector)
+  }, ACTIVITY_POLL_MS)
+  timer.unref()
+  try {
+    return await board.waitForTerminal(taskID, timeoutMs)
+  } finally {
+    clearInterval(timer)
+  }
+}
+
+/** Render the trailing activity section appended to the read result. */
+export function formatActivitySection(lines: string[]): string {
+  if (lines.length === 0) return '## Agent Activity\n\n_no activity captured_'
+  return `## Agent Activity\n\n${lines.map((l) => `- ${l}`).join('\n')}`
 }
 
 // ─── Model resolution ──────────────────────────────────────────────────
@@ -422,7 +584,8 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
   const pantheon_delegation_read: DelegationTool<typeof readArgs> = {
     description:
       'Block until a background delegation finishes (completed/error/cancelled), then return its ' +
-      'report markdown and mark the job reconciled. Resolves by alias or task ID.',
+      'report markdown (with a trailing agent-activity section) and mark the job reconciled. ' +
+      'Resolves by alias or task ID.',
     args: readArgs,
     execute: async (args, ctx) => {
       const job = board.resolve(ctx.sessionID, args.id)
@@ -430,9 +593,18 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         return `Unknown delegation "${args.id}" for this session. Use pantheon_delegation_list to see active delegations.`
       }
 
+      // Sample the child's messages while waiting so the caller sees what the
+      // agent is doing — fail-open: no messages support → report as before.
+      const collector: ActivityCollector = { lines: [], sampled: false }
       let terminal: BackgroundJobRecord
       try {
-        terminal = await board.waitForTerminal(job.taskID, readTimeoutMs)
+        terminal = await waitForTerminalWithActivity(
+          board,
+          client,
+          job.taskID,
+          readTimeoutMs,
+          collector,
+        )
       } catch {
         return `Timed out after ${readTimeoutMs}ms waiting for delegation "${args.id}" ([${job.alias}]).`
       }
@@ -443,7 +615,9 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       }
 
       await board.markReconciled(job.taskID)
-      return md
+      // Fail-open: if session.messages never succeeded, keep the report as-is.
+      if (!collector.sampled && collector.lines.length === 0) return md
+      return `${md.replace(/\n+$/, '')}\n\n${formatActivitySection(collector.lines)}`
     },
   }
 
@@ -455,10 +629,16 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       const jobs = board.list(ctx.sessionID)
       if (jobs.length === 0) return 'No background delegations for this session.'
 
-      const lines = jobs.map((j) => {
-        const unread = j.terminalUnreconciled ? ' [unread]' : ''
-        return `  [${j.alias}] ${j.agent} — ${j.description} — ${stateLabel(j.state)}${unread}`
-      })
+      const lines = await Promise.all(
+        jobs.map(async (j) => {
+          const unread = j.terminalUnreconciled ? ' [unread]' : ''
+          const base = `  [${j.alias}] ${j.agent} — ${j.description} — ${stateLabel(j.state)}${unread}`
+          // Running jobs get a live `last activity:` line (fail-open fetch).
+          if (j.state !== 'running') return base
+          const last = await lastChildActivity(client, j.taskID)
+          return last === undefined ? base : `${base}\n    last activity: ${last}`
+        }),
+      )
       return `Background Delegations (${jobs.length}):\n${lines.join('\n')}`
     },
   }

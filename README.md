@@ -196,6 +196,16 @@ via three delegation tools, tracked on a persistent job board
 | `pantheon_delegation_read` | `{id}` | Blocks (`waitForTerminal`, up to 15 min) until the delegation reaches a terminal state, returns the report markdown, and marks the job reconciled. Resolves by alias or task ID. |
 | `pantheon_delegation_list` | `{}` | Lists the current session's delegations with `[unread]` on finished, unreconciled jobs. |
 
+**Agent activity visibility.** While `pantheon_delegation_read` blocks on a
+running job, it samples the child session's messages every ~2s and appends the
+collected lines to the report as a trailing `## Agent Activity` section (latest
+tool calls with truncated args, or user/assistant text, capped at ~200 chars per
+line) — so you can see what the agent is doing during the wait. Likewise,
+`pantheon_delegation_list` shows a `last activity:` line for running jobs.
+Fail-open: if the child session messages are unavailable (or empty), the read
+returns the report exactly as before — the activity sampling never breaks the
+delegation read.
+
 **Notification model — no polling, no client push.** When a job reaches a
 terminal state (completion observed via `session.idle`/`session.error` on the
 child), a self-contained `<task-notification>` block is queued in memory for
