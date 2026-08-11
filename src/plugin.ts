@@ -6,7 +6,14 @@ import { buildCompactionContext } from './pantheon/delegation-compaction.ts'
 import { createEnforcementGuard, readOnlyRegistry } from './pantheon/delegation-enforce.ts'
 import { DelegationNotifier, handleDelegationEvent } from './pantheon/delegation-notify.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
+import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
+import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { applyActivePresetToConfig } from './pantheon/presets.mjs'
+import {
+  TODO_ENFORCER_DEFAULTS,
+  TodoEnforcer,
+  type TodoEnforcerClient,
+} from './pantheon/todo-enforcer.ts'
 import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
@@ -121,6 +128,34 @@ function adaptDelegationClient(client: PluginInput['client']): DelegationClient 
 }
 
 /**
+ * Adapt the opencode SDK client to the structural TodoEnforcerClient the
+ * todo enforcer expects: unwraps the SDK `{data, error, request, response}`
+ * result and surfaces errors as throws (the enforcer swallows + logs them,
+ * so the event hook can never break the session).
+ */
+function adaptTodoEnforcerClient(client: PluginInput['client']): TodoEnforcerClient {
+  return {
+    session: {
+      todo: async (input) => {
+        const result = await client.session.todo({ path: input.path })
+        if (result.error) throw new Error(sdkErrorMessage(result.error))
+        return result.data
+      },
+      messages: async (input) => {
+        const result = await client.session.messages({ path: input.path })
+        if (result.error) throw new Error(sdkErrorMessage(result.error))
+        return result.data
+      },
+      promptAsync: async (input) => {
+        const result = await client.session.promptAsync({ path: input.path, body: input.body })
+        if (result.error) throw new Error(sdkErrorMessage(result.error))
+        return result.data
+      },
+    },
+  }
+}
+
+/**
  * Pantheon plugin for OpenCode. Pasted images are intercepted via the
  * `chat.message` hook (proven to fire in opencode 1.18.11). When a provider
  * key is available — env PANTHEON_OPENCODE_API_KEY / OPENCODE_API_KEY, or the
@@ -156,6 +191,24 @@ const plugin: Plugin = async (input: PluginInput) => {
     client: adaptDelegationClient(input.client),
     options: { rootSessions, readOnlyAgents: new Set(['apollo', 'gaia']) },
   })
+
+  // Wave 1 (PR #46): TODO continuation enforcer for root/non-board sessions.
+  // Mirrors routing.yml `todo_enforcer` (plugin scope has no routing.yml
+  // access — COMPACTION_MAX_ITEMS pattern). The event hook routes non-board
+  // session.idle events here; board-child idles go to finalizeDelegation.
+  const todoEnforcer = new TodoEnforcer({
+    client: adaptTodoEnforcerClient(input.client),
+    board,
+    options: TODO_ENFORCER_DEFAULTS,
+  })
+
+  // Wave 2 (PR #46): hashline — tag-anchored edits. The read enhancer
+  // (tool.execute.after) augments `read` output with per-line sha256 tags
+  // (`12#XJ|content`); hashline_edit anchors edits to those refs. Additive —
+  // the plugin has no tool.execute.after yet, and pantheon-hooks.ts (a
+  // separate plugin instance) keeps its own. Mirrors routing.yml `hashline`.
+  const hashlineEdit = createHashlineEditTool()
+  const readEnhancer = createReadEnhancer()
 
   return {
     config: async (config: PluginConfig) => {
@@ -201,6 +254,7 @@ const plugin: Plugin = async (input: PluginInput) => {
       pantheon_delegate: delegation.pantheon_delegate,
       pantheon_delegation_read: delegation.pantheon_delegation_read,
       pantheon_delegation_list: delegation.pantheon_delegation_list,
+      hashline_edit: hashlineEdit,
     },
     'chat.message': async (hookInput, output) => {
       await vision.chatMessage(hookInput, output)
@@ -220,10 +274,17 @@ const plugin: Plugin = async (input: PluginInput) => {
       // The board transition fires onTerminal → notifier.notifyParent (the
       // single notification point). Unknown sessions are a no-op.
       try {
-        await handleDelegationEvent(ev, {
+        const delegated = await handleDelegationEvent(ev, {
           board,
           finalize: (childSessionID, opts) => delegation.finalizeDelegation(childSessionID, opts),
         })
+        // Wave 1: non-board idle → TODO continuation enforcer. Board children
+        // are handled by handleDelegationEvent above; everything else (roots,
+        // non-board sessions) gets the todo re-injection. onIdle never throws
+        // (internal failures are logged + swallowed), so the session is safe.
+        if (!delegated && ev.type === 'session.idle') {
+          await todoEnforcer.onIdle(ev.properties.sessionID)
+        }
       } catch (err) {
         // The event hook must never break the session.
         console.error('[Pantheon Plugin] Delegation event handling failed:', err)
@@ -233,6 +294,11 @@ const plugin: Plugin = async (input: PluginInput) => {
     // Phase 4: deny mutating tools in read-only delegated sessions. Additive
     // key — does not touch Phase 3's tools/event/onTerminal/chat.message.
     'tool.execute.before': enforcementGuard,
+    // Wave 2 (PR #46): augment `read` output with hashline tags. Additive —
+    // pantheon-hooks.ts (a separate plugin instance) owns its own
+    // tool.execute.after, so there is no key collision. Non-read tools pass
+    // through untouched.
+    'tool.execute.after': readEnhancer,
     // Phase 4: keep in-flight background delegations visible across
     // compaction (running + unread terminal jobs). Guarded: only pushes when
     // there is something to preserve.

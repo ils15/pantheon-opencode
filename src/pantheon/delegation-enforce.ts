@@ -9,9 +9,12 @@
  * module never needs the opencode SDK — the handler is a structural closure
  * wired from plugin.ts.
  *
- * Blocked tools (edit, write, bash, task):
+ * Blocked tools (edit, write, bash, task, hashline_edit):
  *   - edit/write/bash are the mutating surface — read-only agents (apollo,
  *     gaia) must stay investigation-only.
+ *   - `hashline_edit` is the Wave 2 (PR #46) tag-anchored edit tool — it is a
+ *     write surface too, so read-only agents must not bypass enforcement via
+ *     it.
  *   - `task` is blocked too, which hard-enforces depth-2: a read-only agent
  *     cannot spawn its own subagents.
  *
@@ -58,7 +61,13 @@ export interface EnforcementGuardOptions {
 // ─── Defaults ──────────────────────────────────────────────────────────
 
 /** Mutating tools denied in read-only sessions. `task` ⇒ depth-2 guard. */
-export const DEFAULT_BLOCKED_TOOLS: ReadonlySet<string> = new Set(['edit', 'write', 'bash', 'task'])
+export const DEFAULT_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
+  'edit',
+  'write',
+  'bash',
+  'task',
+  'hashline_edit',
+])
 
 // ─── Registry ──────────────────────────────────────────────────────────
 
