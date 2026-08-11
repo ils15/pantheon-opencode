@@ -21,10 +21,13 @@ import { strict as assert } from 'node:assert'
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
 import {
   TODO_CONTINUATION_PROMPT,
+  TODO_ENFORCER_DEFAULTS,
   TodoEnforcer,
+  type TodoEnforcerChild,
   type TodoEnforcerClient,
   type TodoEnforcerMessage,
   type TodoLike,
+  todoEnforcerEnabledFromEnv,
 } from '../../src/pantheon/todo-enforcer.ts'
 
 // ─── Harness ───────────────────────────────────────────────────────────
@@ -55,6 +58,8 @@ class FakeClient {
   promptAsyncCalls: PromptAsyncCall[] = []
   todoImpl: (id: string) => Promise<TodoLike[]> = async () => this.todos
   promptAsyncImpl: (input: PromptAsyncCall) => Promise<unknown> = async () => ({})
+  childrenResult: TodoEnforcerChild[] = []
+  childrenImpl: (id: string) => Promise<TodoEnforcerChild[]> = async () => this.childrenResult
 
   /** Optional broken TUI — the enforcer must never touch it. */
   tui?: { showToast: () => Promise<never> }
@@ -65,6 +70,9 @@ class FakeClient {
       return this.todoImpl(input.path.id)
     },
     messages: async (): Promise<TodoEnforcerMessage[]> => this.messagesResult,
+    children: async (input: { path: { id: string } }): Promise<TodoEnforcerChild[]> => {
+      return this.childrenImpl(input.path.id)
+    },
     promptAsync: async (input: {
       path: { id: string }
       body: PromptAsyncCall['body']
@@ -455,6 +463,114 @@ async function main() {
       'todo fetch failure is logged',
     )
   })
+
+  await testAsync(
+    'native-children guard: active child → skip; no children → injects; terminal child → injects',
+    async () => {
+      const clock = { t: 1_000_000 }
+      const client = new FakeClient()
+      client.todos = incompleteTodos(3)
+      const enforcer = new TodoEnforcer({
+        client: client.asClient(),
+        board: new BackgroundJobBoard(),
+        options: { now: () => clock.t },
+      })
+
+      // Active native background child (updated 1s ago, childActiveMs=120s) → skip.
+      client.childrenResult = [{ id: 'child_1', time: { updated: clock.t - 1000 } }]
+      await enforcer.onIdle(ROOT)
+      assert.equal(client.promptAsyncCalls.length, 0, 'active native child → no injection')
+
+      // No children at all → inject.
+      client.childrenResult = []
+      await enforcer.onIdle(ROOT)
+      assert.equal(client.promptAsyncCalls.length, 1, 'no children → injection proceeds')
+
+      // Terminal child (updated 300s ago, past the 120s window) → inject.
+      clock.t = 1_006_000 // past the 5000ms cooldown from the injection above
+      client.todos = incompleteTodos(2) // progress 3→2 breaks the failure streak
+      client.childrenResult = [{ id: 'child_1', time: { updated: clock.t - 300_000 } }]
+      await enforcer.onIdle(ROOT)
+      assert.equal(client.promptAsyncCalls.length, 2, 'terminal child → injection proceeds')
+    },
+  )
+
+  await testAsync(
+    'native-children guard: children() throwing → fail-open (logged, still injects)',
+    async () => {
+      const warnings: string[] = []
+      const client = new FakeClient()
+      client.todos = incompleteTodos(2)
+      client.childrenImpl = async () => {
+        throw new Error('children endpoint unavailable')
+      }
+      const enforcer = new TodoEnforcer({
+        client: client.asClient(),
+        board: new BackgroundJobBoard(),
+        logger: { warn: (m: string) => warnings.push(m) },
+      })
+
+      await enforcer.onIdle(ROOT)
+
+      assert.equal(client.promptAsyncCalls.length, 1, 'children API failure never blocks injection')
+      assert.ok(
+        warnings.some((w) => w.includes('children')),
+        'children failure is logged',
+      )
+    },
+  )
+
+  await testAsync(
+    'user-activity gate: message within userActivityQuietMs → skip; after → injects',
+    async () => {
+      const clock = { t: 0 }
+      const client = new FakeClient()
+      client.todos = incompleteTodos(2)
+      const enforcer = new TodoEnforcer({
+        client: client.asClient(),
+        board: new BackgroundJobBoard(),
+        options: { now: () => clock.t },
+      })
+
+      enforcer.noteUserActivity(ROOT) // records t=0 (lastUserMessageAt)
+      await enforcer.onIdle(ROOT)
+      assert.equal(client.promptAsyncCalls.length, 0, 'fresh user message → no injection')
+
+      clock.t = 10_000 // still inside the 30s quiet window
+      await enforcer.onIdle(ROOT)
+      assert.equal(client.promptAsyncCalls.length, 0, 'within quiet window → still skipped')
+
+      clock.t = 60_000 // past the 30s window
+      await enforcer.onIdle(ROOT)
+      assert.equal(client.promptAsyncCalls.length, 1, 'after quiet window → injection proceeds')
+    },
+  )
+
+  await testAsync(
+    'PANTHEON_TODO_ENFORCER=off → disabled (never injects even with incomplete todos)',
+    async () => {
+      // Env parsing (case-insensitive, only exact "off" disables).
+      assert.equal(todoEnforcerEnabledFromEnv({ PANTHEON_TODO_ENFORCER: 'off' }), false)
+      assert.equal(todoEnforcerEnabledFromEnv({ PANTHEON_TODO_ENFORCER: 'OFF' }), false)
+      assert.equal(todoEnforcerEnabledFromEnv({}), true)
+      assert.equal(todoEnforcerEnabledFromEnv({ PANTHEON_TODO_ENFORCER: 'false' }), true)
+
+      // End-to-end: the plugin wires the env read into the enabled flag.
+      const client = new FakeClient()
+      client.todos = incompleteTodos(3)
+      const enforcer = new TodoEnforcer({
+        client: client.asClient(),
+        board: new BackgroundJobBoard(),
+        options: {
+          ...TODO_ENFORCER_DEFAULTS,
+          enabled: todoEnforcerEnabledFromEnv({ PANTHEON_TODO_ENFORCER: 'off' }),
+        },
+      })
+
+      await enforcer.onIdle(ROOT)
+      assert.equal(client.promptAsyncCalls.length, 0, 'kill-switch off → never injects')
+    },
+  )
 
   // ═══════════════════════════════════════════════════════════════════════
 

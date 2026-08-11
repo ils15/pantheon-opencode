@@ -570,6 +570,10 @@ todo_enforcer:
   cooldown_base_ms: 5000            # base backoff between injections
   max_consecutive_failures: 5       # stop injecting after this many failures
   failure_reset_ms: 300000          # quiet period before the counter resets (5 min)
+  user_activity_quiet_ms: 30000     # skip injection this long after a user message (30s)
+  child_active_ms: 120000           # native background child newer than this = still running → skip (2 min)
+  # Runtime kill-switch: PANTHEON_TODO_ENFORCER=off (doc mirror only — the
+  # env var is the real switch, read at plugin construction).
 hashline:
   enabled: true
   enhance_read: true

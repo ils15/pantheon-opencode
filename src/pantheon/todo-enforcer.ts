@@ -9,13 +9,20 @@
  * todos, so the agent keeps working on its task list instead of stopping.
  *
  * Guards (council-approved cut — latch/skipAgents/countdown-toast removed):
- *   1. board-running — a session with a running background job is skipped
+ *   1. user-activity — a session whose user sent a message within
+ *      `userActivityQuietMs` is being driven interactively → skip;
+ *   2. board-running — a session with a running background job is skipped
  *      (the parent is busy; the child session itself is never routed here);
- *   2. in-flight — one injection per idle, never concurrent;
- *   3. cooldown — exponential per-session backoff `cooldownBaseMs *
+ *   3. native-children — opencode `task(background=true)` children are NOT on
+ *      our board, so `session.children()` is checked: an active child (its
+ *      `time.updated` newer than `childActiveMs`) means the parent is still
+ *      waiting on a native background task → skip. Throws fail open (log +
+ *      inject) so version-sensitive APIs never break the enforcer;
+ *   4. in-flight — one injection per idle, never concurrent;
+ *   5. cooldown — exponential per-session backoff `cooldownBaseMs *
  *      2^min(failures, max)`, failures increment when an injection does not
  *      clear todos (the next idle shows the same-or-worse incomplete count);
- *   4. max-consecutive-failures — stop injecting after the cap; the failure
+ *   6. max-consecutive-failures — stop injecting after the cap; the failure
  *      counter resets after a quiet period (`failureResetMs`) and when an
  *      injection makes progress (streak semantics).
  *
@@ -51,7 +58,22 @@ export const TODO_ENFORCER_DEFAULTS = {
   cooldownBaseMs: 5000,
   maxConsecutiveFailures: 5,
   failureResetMs: 300000,
+  /** Skip injection this long after a user message in the session. */
+  userActivityQuietMs: 30000,
+  /** A native child whose `time.updated` is newer than this is still running. */
+  childActiveMs: 120000,
 } as const
+
+/**
+ * Runtime kill-switch: `PANTHEON_TODO_ENFORCER=off` disables the enforcer.
+ * Read at plugin construction — routing.yml is a doc mirror only, this env
+ * var is the real runtime switch (COMPACTION_MAX_ITEMS precedent).
+ */
+export function todoEnforcerEnabledFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return (env.PANTHEON_TODO_ENFORCER ?? '').trim().toLowerCase() !== 'off'
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -61,6 +83,16 @@ export interface TodoLike {
   status: string
   priority?: string
   id?: string
+}
+
+/**
+ * Structural view of a child session from `session.children()` (SDK Session).
+ * Only `time.updated` is used — a running native background task keeps
+ * updating its session while streaming; a completed one freezes.
+ */
+export interface TodoEnforcerChild {
+  id: string
+  time?: { updated?: number }
 }
 
 /**
@@ -85,6 +117,7 @@ export interface TodoEnforcerClient {
   session: {
     todo(input: { path: { id: string } }): Promise<TodoLike[]>
     messages(input: { path: { id: string } }): Promise<TodoEnforcerMessage[]>
+    children(input: { path: { id: string } }): Promise<TodoEnforcerChild[]>
     promptAsync(input: {
       path: { id: string }
       body: {
@@ -105,6 +138,10 @@ export interface TodoEnforcerOptions {
   maxConsecutiveFailures?: number
   /** Quiet period after which the failure counter resets. */
   failureResetMs?: number
+  /** Skip injection while a user message is more recent than this. */
+  userActivityQuietMs?: number
+  /** Native child sessions newer than this are considered active/running. */
+  childActiveMs?: number
   /** Injectable clock (testable), defaults to `Date.now`. */
   now?: () => number
 }
@@ -147,6 +184,8 @@ export class TodoEnforcer {
   private readonly pendingCheck = new Map<string, boolean>()
   /** Consecutive failures per session. */
   private readonly failures = new Map<string, number>()
+  /** Last user-message timestamp per session (wired from chat.message). */
+  private readonly lastUserMessageAt = new Map<string, number>()
 
   constructor(deps: TodoEnforcerDeps) {
     this.client = deps.client
@@ -158,10 +197,21 @@ export class TodoEnforcer {
       maxConsecutiveFailures:
         opts.maxConsecutiveFailures ?? TODO_ENFORCER_DEFAULTS.maxConsecutiveFailures,
       failureResetMs: opts.failureResetMs ?? TODO_ENFORCER_DEFAULTS.failureResetMs,
+      userActivityQuietMs: opts.userActivityQuietMs ?? TODO_ENFORCER_DEFAULTS.userActivityQuietMs,
+      childActiveMs: opts.childActiveMs ?? TODO_ENFORCER_DEFAULTS.childActiveMs,
       now: opts.now ?? Date.now,
     }
     this.warn =
       deps.logger?.warn ?? ((message: string) => console.warn(`[pantheon-todo] ${message}`))
+  }
+
+  /**
+   * Record that the user just sent a message in `sessionID` (wired from the
+   * plugin `chat.message` hook). Suppresses injection for `userActivityQuietMs`
+   * — an interactive session is being driven by the user, don't nag it.
+   */
+  noteUserActivity(sessionID: string): void {
+    this.lastUserMessageAt.set(sessionID, this.options.now())
   }
 
   /**
@@ -187,8 +237,17 @@ export class TodoEnforcer {
   private async handleIdle(sessionID: string): Promise<void> {
     const now = this.options.now()
 
-    // Guard 1: a session with a running background job is busy — skip.
+    // Guard 1: user activity — a fresh user message means the session is being
+    // driven interactively; don't nag it.
+    const lastUser = this.lastUserMessageAt.get(sessionID)
+    if (lastUser !== undefined && now - lastUser < this.options.userActivityQuietMs) return
+
+    // Guard 2: a session with a running board job is busy — skip.
     if (this.board.list(sessionID).some((job) => job.state === 'running')) return
+
+    // Guard 3: native background task() children are NOT on our board — an
+    // active child means the parent is still waiting on it, so skip.
+    if ((await this.activeChildren(sessionID, now)) > 0) return
 
     const todos = await this.client.session.todo({ path: { id: sessionID } })
     const incomplete = todos.filter(
@@ -255,6 +314,29 @@ export class TodoEnforcer {
     return (
       this.options.cooldownBaseMs * 2 ** Math.min(failures, this.options.maxConsecutiveFailures)
     )
+  }
+
+  /**
+   * Count active native child sessions. opencode `task(background=true)`
+   * children are NOT registered on our board, so the only way to see them is
+   * `session.children()`. A child is active while its `time.updated` is newer
+   * than `childActiveMs` — a running background task keeps updating its
+   * session while streaming; a completed one freezes. Fail-open: when the
+   * children API is unavailable (older opencode / permission), log and return
+   * 0 so the enforcer still works on version-sensitive runtimes.
+   */
+  private async activeChildren(sessionID: string, now: number): Promise<number> {
+    try {
+      const children = await this.client.session.children({ path: { id: sessionID } })
+      return children.filter((child) => {
+        const updated = child.time?.updated
+        return typeof updated === 'number' && now - updated < this.options.childActiveMs
+      }).length
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err)
+      this.warn(`todo children check failed for session ${sessionID}: ${reason}`)
+      return 0
+    }
   }
 
   /**

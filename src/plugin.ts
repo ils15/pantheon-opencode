@@ -16,6 +16,7 @@ import {
   TODO_ENFORCER_DEFAULTS,
   TodoEnforcer,
   type TodoEnforcerClient,
+  todoEnforcerEnabledFromEnv,
 } from './pantheon/todo-enforcer.ts'
 import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
@@ -149,6 +150,11 @@ function adaptTodoEnforcerClient(client: PluginInput['client']): TodoEnforcerCli
         if (result.error) throw new Error(sdkErrorMessage(result.error))
         return result.data
       },
+      children: async (input) => {
+        const result = await client.session.children({ path: input.path })
+        if (result.error) throw new Error(sdkErrorMessage(result.error))
+        return result.data
+      },
       promptAsync: async (input) => {
         const result = await client.session.promptAsync({ path: input.path, body: input.body })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
@@ -199,10 +205,12 @@ const plugin: Plugin = async (input: PluginInput) => {
   // Mirrors routing.yml `todo_enforcer` (plugin scope has no routing.yml
   // access — COMPACTION_MAX_ITEMS pattern). The event hook routes non-board
   // session.idle events here; board-child idles go to finalizeDelegation.
+  // Runtime kill-switch: PANTHEON_TODO_ENFORCER=off (routing.yml is a doc
+  // mirror only — the env var is the real switch, PANTHEON_TOASTS pattern).
   const todoEnforcer = new TodoEnforcer({
     client: adaptTodoEnforcerClient(input.client),
     board,
-    options: TODO_ENFORCER_DEFAULTS,
+    options: { ...TODO_ENFORCER_DEFAULTS, enabled: todoEnforcerEnabledFromEnv() },
   })
 
   // Wave 3 (PR #46): full-auto goal loop — opt-in (`full_auto.enabled:
@@ -292,6 +300,9 @@ const plugin: Plugin = async (input: PluginInput) => {
       // context (prepended onto the first text part). No-op when the queue is
       // empty or the parent session has no pending notifications.
       notifier.flushQueue(hookInput.sessionID, output)
+      // Wave 1: a user message is activity — the todo enforcer's
+      // user-activity gate skips injection for userActivityQuietMs afterwards.
+      todoEnforcer.noteUserActivity(hookInput.sessionID)
     },
     'experimental.chat.messages.transform': vision.messagesTransform,
     event: async ({ event: ev }) => {

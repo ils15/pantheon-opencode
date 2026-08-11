@@ -281,6 +281,20 @@ Wave: dispare N, colete com tolerancia a falha
       r = retry(agente, prompt_alternativo)
 ```
 
+### Plugin Enforcer (auto — session.idle hook)
+O plugin re-injeta "Incomplete tasks remain..." em sessões root/não-board que
+vão a idle com todos incompletos. Guards (todos no `src/pantheon/todo-enforcer.ts`):
+- **User-activity (30s)** — após uma mensagem do usuário (`chat.message` hook),
+  a injeção é suprimida por `user_activity_quiet_ms: 30000`.
+- **Board-running** — sessão com job background do nosso board em running → skip.
+- **Native-children (2 min)** — children de `task(background=true)` do opencode
+  NÃO estão no nosso board; o enforcer consulta `session.children()` e pula se
+  algum child tiver `time.updated` mais novo que `child_active_ms: 120000`
+  (background task nativo ainda rodando). API indisponível → fail-open (log + injeta).
+- **Kill-switch**: `PANTHEON_TODO_ENFORCER=off` desativa o enforcer por completo
+  (lido na construção do plugin). routing.yml é espelho de documentação — o env
+  var é o switch real (precedente COMPACTION_MAX_ITEMS).
+
 ## Wave 4 (PR #46): Empty-Result Retry + /cost + Themis Tier
 
 ### Empty-Result Retry (dispatch-guard — MANUAL orchestration)
