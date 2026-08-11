@@ -46,6 +46,7 @@ import {
   finalizeDelegation as finalizeDelegationReport,
   readDelegationReport,
 } from './delegation-finalize.ts'
+import { createPantheonLogger } from './logger.ts'
 import { resolveActivePreset } from './presets.mjs'
 
 export type {
@@ -58,6 +59,11 @@ export type {
 export { DELEGATION_DEFAULTS } from './delegation-finalize.ts'
 
 // ─── Types ─────────────────────────────────────────────────────────────
+
+// Silence-by-default TUI policy (pantheon-hooks L42-58): console output in a
+// plugin renders into the opencode TUI — the "lixo". Errors go to
+// .pantheon/logs/hooks.log; console echo is opt-in via PANTHEON_HOOKS_LOG=1.
+const log = createPantheonLogger({ module: 'pantheon-delegate' })
 
 /** Structural view of the tool context opencode passes to execute(). */
 export interface ToolContextLike {
@@ -312,9 +318,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
           state: 'error',
           error: `Delegation [${job.alias}] timed out after ${timeoutMs}ms without reaching a terminal state`,
           timedOut: true,
-        }).catch((err: unknown) =>
-          console.error('[pantheon-delegate] timeout finalize failed:', err),
-        )
+        }).catch((err: unknown) => log.error('[pantheon-delegate] timeout finalize failed:', err))
       }, timeoutMs)
       timer.unref()
       timers.set(childSessionID, timer)
@@ -326,7 +330,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
           path: { id: childSessionID },
           body: { agent: args.agent, parts: [{ type: 'text', text: args.prompt }] },
         })
-        .catch((err: unknown) => console.error('[pantheon-delegate] promptAsync failed:', err))
+        .catch((err: unknown) => log.error('[pantheon-delegate] promptAsync failed:', err))
 
       return (
         `Delegated to ${args.agent}: [${job.alias}] (task ${childSessionID}).\n` +

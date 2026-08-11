@@ -11,6 +11,7 @@ import { GOAL_LOOP_DEFAULTS, GoalLoop, GoalStore } from './pantheon/goal-loop.ts
 import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
+import { createPantheonLogger } from './pantheon/logger.ts'
 import { applyActivePresetToConfig } from './pantheon/presets.mjs'
 import {
   TODO_ENFORCER_DEFAULTS,
@@ -22,6 +23,12 @@ import { activePresetCandidates, createVisionHandler } from './pantheon/vision.t
 
 // ─── Background Job Board Singleton ────────────────────────────────────
 
+// Silence-by-default TUI policy (pantheon-hooks L42-58): console output in a
+// plugin writes to the process stdout/stderr, which the opencode TUI renders
+// directly into the terminal — the "lixo". Every line goes to
+// .pantheon/logs/hooks.log; the console echo is opt-in via PANTHEON_HOOKS_LOG=1.
+const log = createPantheonLogger({ module: 'pantheon-plugin' })
+
 const board = new BackgroundJobBoard({
   maxConcurrentPerAgent: 3,
   signalDir: '.pantheon/deepwork/board-signals',
@@ -30,7 +37,7 @@ const persistence = new FilePersistenceAdapter('.pantheon/board/state.json')
 board.setPersistence(persistence)
 board
   .recoverRunningJobs()
-  .catch((err) => console.error('[Pantheon Plugin] Failed to recover running jobs:', err))
+  .catch((err) => log.error('[Pantheon Plugin] Failed to recover running jobs:', err))
 // ─── Phase 3: Completion Notifications ────────────────────────────────
 
 // The notifier is the completion channel: the spike refuted client push
@@ -44,7 +51,10 @@ const notificationsEnabled = (process.env.PANTHEON_TOASTS ?? '').trim().toLowerC
 board.onTerminal((taskID: string) => {
   const job = board.get(taskID)
   if (!job) return
-  console.log(
+  // File-only log (info): the user-facing completion signal is the
+  // notifier.notifyParent chat.message injection below — this line exists
+  // for the on-disk audit trail only (console echo opt-in, PANTHEON_HOOKS_LOG).
+  log.info(
     `[Pantheon Plugin] Board terminal: [${job.alias}] ${job.description} → ${job.state}${job.resultSummary ? ` — ${job.resultSummary}` : ''}`,
   )
   // Queue the completion notification for the job's parent session. The
@@ -65,9 +75,7 @@ setInterval(
   () => {
     void board
       .pruneExpired(86_400_000)
-      .catch((err: unknown) =>
-        console.error('[Pantheon Plugin] Background board prune failed:', err),
-      )
+      .catch((err: unknown) => log.error('[Pantheon Plugin] Background board prune failed:', err))
   },
   30 * 60 * 1000,
 ).unref()
@@ -269,9 +277,7 @@ const plugin: Plugin = async (input: PluginInput) => {
           candidates: activePresetCandidates(),
         })
         if (resolved) {
-          console.log(
-            `[Pantheon Plugin] Applied model preset: ${resolved.name} (${resolved.source})`,
-          )
+          log.info(`[Pantheon Plugin] Applied model preset: ${resolved.name} (${resolved.source})`)
         }
       } catch {
         // Fully STATIC warning — the thrown error object is tainted because
@@ -284,7 +290,7 @@ const plugin: Plugin = async (input: PluginInput) => {
         // emitted by applyActivePresetToConfig's own logger before it throws.
         // The catch binding is intentionally omitted so no tainted value can
         // ever reach this log line (CodeQL alert #11).
-        console.warn('[plugin] preset application failed (see logs for details)')
+        log.warn('[plugin] preset application failed (see logs for details)')
       }
     },
     // Phase 2: background delegation tools (structural — matches the `tool`
@@ -337,7 +343,7 @@ const plugin: Plugin = async (input: PluginInput) => {
         }
       } catch (err) {
         // The event hook must never break the session.
-        console.error('[Pantheon Plugin] Delegation event handling failed:', err)
+        log.error('[Pantheon Plugin] Delegation event handling failed:', err)
       }
       await vision.event({ event: ev })
     },

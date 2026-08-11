@@ -42,6 +42,12 @@
  */
 
 import type { BackgroundJobBoard } from './background-job-board.ts'
+import { createPantheonLogger } from './logger.ts'
+
+// Silence-by-default TUI policy (pantheon-hooks L42-58): the default warn
+// fallback logs to .pantheon/logs/hooks.log; console echo is opt-in via
+// PANTHEON_HOOKS_LOG=1. `deps.logger` injection stays for tests.
+const log = createPantheonLogger({ module: 'pantheon-todo' })
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
@@ -201,8 +207,7 @@ export class TodoEnforcer {
       childActiveMs: opts.childActiveMs ?? TODO_ENFORCER_DEFAULTS.childActiveMs,
       now: opts.now ?? Date.now,
     }
-    this.warn =
-      deps.logger?.warn ?? ((message: string) => console.warn(`[pantheon-todo] ${message}`))
+    this.warn = deps.logger?.warn ?? ((message: string) => log.warn(message))
   }
 
   /**

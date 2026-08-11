@@ -36,6 +36,12 @@
 
 import type { BackgroundJobRecord } from './background-job-board.ts'
 import type { FinalizeInput } from './delegation-finalize.ts'
+import { createPantheonLogger } from './logger.ts'
+
+// Silence-by-default TUI policy (pantheon-hooks L42-58): the default warn
+// fallback logs to .pantheon/logs/hooks.log; console echo is opt-in via
+// PANTHEON_HOOKS_LOG=1. `logger` injection stays for tests.
+const log = createPantheonLogger({ module: 'pantheon-delegation' })
 
 export type { FinalizeInput } from './delegation-finalize.ts'
 
@@ -120,13 +126,13 @@ export class DelegationNotifier {
   private readonly warn: (message: string) => void
 
   /**
-   * @param logger Optional injected logger (testable). Defaults to
-   *   `console.warn` with the `[pantheon-delegation]` prefix, matching the
-   *   plugin's structured-log style.
+   * @param logger Optional injected logger (testable). Defaults to the
+   *   Pantheon silence-by-default logger: writes `[pantheon-delegation]`
+   *   lines to .pantheon/logs/hooks.log, console echo opt-in via
+   *   PANTHEON_HOOKS_LOG=1 (TUI pollution policy, pantheon-hooks L42-58).
    */
   constructor(logger?: { warn: (message: string) => void }) {
-    this.warn =
-      logger?.warn ?? ((message: string) => console.warn(`[pantheon-delegation] ${message}`))
+    this.warn = logger?.warn ?? ((message: string) => log.warn(message))
   }
 
   /** Notifications awaiting delivery for a parent session. */
