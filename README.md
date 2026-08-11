@@ -219,6 +219,41 @@ terminal delegations (capped at `background_delegation.max_compaction_items`,
 default 10) are carried into the compacted context so the parent doesn't lose
 track of in-flight work.
 
+**Compaction summary v2 (1.3.4):** the `experimental.session.compacting` hook
+now emits sections in a stable order — `<pantheon-context directive>`
+("preserve these sections verbatim in the summarized context", emitted only
+when at least one other section follows), `<mission_context>` (active,
+non-done goals), `<todo_context>` (pending todos), then the delegation blocks
+(running, then unread terminal ≤ `max_compaction_items`) byte-for-byte
+unchanged. Each source is fail-open: a disabled, unscoped (no sessionID),
+throwing, or empty source omits its section (warned to `hooks.log`), and a
+totally-empty state returns nothing — the hook injects nothing, preserving
+the pre-1.3.4 behavior.
+
+**Post-compaction todo preservation (1.3.4):** the session's todo list is
+captured via the `session.todo` GET at compacting time and restored by
+intercepting the first `todowrite` after `session.compacted` — opencode
+1.18.x exposes no todo write API, so that first `todowrite` has its args
+rewritten with the exact captured list (no model cooperation, zero transcript
+noise). Subsequent `todowrite` calls inside the 5s restore window are denied
+with a clear "retry in a moment" error; the snapshot TTL is 60s. Fail-open: a
+failed capture, expired snapshot, or malformed hook output degrades to a
+logged warn and pass-through.
+
+**Post-compaction state re-assertion (1.3.4):** on `session.compacted`, fresh
+state — running/unread delegations from the board + active goals, capped at 10
+lines — is re-injected as a `<system-reminder>` into the session's next
+message via the shared chat-reminder buffer (`chat-reminders.ts`, the same P0
+messageID guard that protects subagent fires). A session with nothing to
+assert is a silent skip.
+
+**Preemptive compaction check (1.3.4):** a pure threshold core
+(`preemptive-compact.ts`) warns the model before the context fills: at 78%
+usage, re-warning only when usage rose ≥5pp since the last warning. It is
+dormant / ready-to-wire — opencode 1.18.x exposes no runtime context-usage
+percentage, so nothing observes it yet; when a source appears, the caller
+wires it in (the enqueue callback is injected).
+
 **Model API-key validation (1.3.4):** `pantheon_delegate` gates the resolved
 child model's provider before dispatching (single source of truth:
 `routing.yml` preset definitions' `apiKeyEnv` — the same check `applyPreset`
@@ -233,6 +268,15 @@ Setting `PANTHEON_MODEL_PRESET` to a preset whose providers have keys, or
 filling the required `PANTHEON_*_API_KEY` env var for the preset's provider,
 resolves the fallback path. If nothing resolves at all (no model, no preset),
 the child keeps using opencode's default model (warned).
+
+**agentModels wiring (1.3.4):** the delegate now also resolves the child model
+via `routing.yml` — `loadRoutingAgentModels` extracts the per-agent models of
+the FIRST-listed preset (the static default, `go-deepseek` today) and passes
+them as `options.agentModels`, branch (b) of the resolve precedence: explicit
+`model` > `options.agentModels` > active preset > opencode default. Delegation
+no longer depends exclusively on the active preset — a delegated child gets a
+sane per-agent model even when no preset is active. Fail-open: a missing or
+unparseable routing.yml yields `{}` (previous behavior, warned).
 
 **Delegation log hygiene (1.3.4):** `delegations.log` now records the real
 `task_id` (omitted when empty, never `""`) and a **numeric** `duration_ms`
