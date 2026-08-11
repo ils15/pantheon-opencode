@@ -168,7 +168,7 @@ pantheon_delegation_list()
 ### DELEGATION_RULES (plugin path)
 
 1. **NUNCA** polle `pantheon_delegation_list` para checar se um job terminou.
-2. Voce SERA notificado via `task-notification` injetado no chat quando um job atinge estado terminal.
+2. Voce NAO recebe notificacao injetada no chat — politica do usuario: ZERO `task-notification` no transcript. Visibilidade de conclusao: marcador `[unread]` em `pantheon_delegation_list`, `pantheon_delegation_read({id})`, toasts TUI (pantheon-hooks) e carry-forward de compactacao.
 3. Use `pantheon_delegation_read({id})` APENAS para fan-in explicito / recuperacao de resultado sob demanda (bloqueia ate o fim).
 4. `pantheon_delegation_list` e para diagnostico, nao para polling.
 

@@ -6,7 +6,7 @@ import { createCostCommand } from './pantheon/cost-command.ts'
 import { createDelegationTools, type DelegationClient } from './pantheon/delegation.ts'
 import { buildCompactionContext } from './pantheon/delegation-compaction.ts'
 import { createEnforcementGuard, readOnlyRegistry } from './pantheon/delegation-enforce.ts'
-import { DelegationNotifier, handleDelegationEvent } from './pantheon/delegation-notify.ts'
+import { handleDelegationEvent } from './pantheon/delegation-notify.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
 import { GOAL_LOOP_DEFAULTS, GoalLoop, GoalStore } from './pantheon/goal-loop.ts'
 import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
@@ -51,33 +51,21 @@ board.setPersistence(persistence)
 board
   .recoverRunningJobs()
   .catch((err) => log.error('[Pantheon Plugin] Failed to recover running jobs:', err))
-// ─── Phase 3: Completion Notifications ────────────────────────────────
+// ─── Phase 3: Board terminal audit log ─────────────────────────────────
 
-// The notifier is the completion channel: the spike refuted client push
-// (noReply delivers nothing to the parent), so terminal-job notifications are
-// QUEUED here and injected into the parent's next chat.message by the flush in
-// the 'chat.message' hook below (graceful-degradation path). Gated by the same
-// env as pantheon-hooks toasts: PANTHEON_TOASTS=off disables queueing.
-const notifier = new DelegationNotifier()
-const notificationsEnabled = (process.env.PANTHEON_TOASTS ?? '').trim().toLowerCase() !== 'off'
-
+// The onTerminal listener is the completion AUDIT point: it writes a
+// file-only log line (console echo opt-in via PANTHEON_HOOKS_LOG). There is
+// deliberately NO chat delivery — the user policy is zero delegation
+// notifications in the transcript. Completion visibility lives in the board
+// `[unread]` marker (pantheon_delegation_list), pantheon_delegation_read,
+// TUI toasts (pantheon-hooks, PANTHEON_TOASTS gate) and compaction
+// carry-forward.
 board.onTerminal((taskID: string) => {
   const job = board.get(taskID)
   if (!job) return
-  // File-only log (info): the user-facing completion signal is the
-  // notifier.notifyParent chat.message injection below — this line exists
-  // for the on-disk audit trail only (console echo opt-in, PANTHEON_HOOKS_LOG).
   log.info(
     `[Pantheon Plugin] Board terminal: [${job.alias}] ${job.description} → ${job.state}${job.resultSummary ? ` — ${job.resultSummary}` : ''}`,
   )
-  // Queue the completion notification for the job's parent session. The
-  // onTerminal listener is the SINGLE notification point — the timeout path
-  // (timeout finalize → updateStatus) and the event path (session.idle →
-  // finalizeDelegation → updateStatus) both transition the board and fire
-  // here, so every terminal job (incl. timedOut) gets exactly one notification.
-  if (notificationsEnabled) {
-    notifier.notifyParent(job)
-  }
 })
 
 // Periodically prune terminal/reconciled jobs (24h TTL, every 30 min).
@@ -335,10 +323,10 @@ const plugin: Plugin = async (input: PluginInput) => {
     },
     'chat.message': async (hookInput, output) => {
       await vision.chatMessage(hookInput, output)
-      // Phase 3: deliver queued completion notifications into the parent's
-      // context (prepended onto the first text part). No-op when the queue is
-      // empty or the parent session has no pending notifications.
-      notifier.flushQueue(hookInput.sessionID, output)
+      // No delegation notification delivery here — the user policy is ZERO
+      // notification text injected into the chat transcript (previously the
+      // notifier.flushQueue prepend). pantheon-hooks' chat-reminders.ts keeps
+      // its own <system-reminder> channel, untouched.
       // Wave 1: a user message is activity — the todo enforcer's
       // user-activity gate skips injection for userActivityQuietMs afterwards.
       todoEnforcer.noteUserActivity(hookInput.sessionID)
@@ -368,8 +356,9 @@ const plugin: Plugin = async (input: PluginInput) => {
         })
       }
       // Phase 3: observe completion on child sessions → finalizeDelegation.
-      // The board transition fires onTerminal → notifier.notifyParent (the
-      // single notification point). Unknown sessions are a no-op.
+      // The board transition fires onTerminal → the file-only audit log (no
+      // chat delivery — see the onTerminal listener above). Unknown sessions
+      // are a no-op.
       try {
         const delegated = await handleDelegationEvent(ev, {
           board,

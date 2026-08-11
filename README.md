@@ -206,15 +206,17 @@ Fail-open: if the child session messages are unavailable (or empty), the read
 returns the report exactly as before — the activity sampling never breaks the
 delegation read.
 
-**Notification model — no polling, no client push.** When a job reaches a
-terminal state (completion observed via `session.idle`/`session.error` on the
-child), a self-contained `<task-notification>` block is queued in memory for
-the parent session and injected into the parent's **next** `chat.message` hook
-fire (prepended onto the first text part — the graceful-degradation channel the
-TUI toast workaround uses). If the parent never sends another message, the
-notification stays queued. The `<task-notification>` carries the task ID, alias,
-agent, state, description and a `Result:`-prefixed summary so the parent can act
-without an extra tool call.
+**Completion visibility — no chat injection.** User policy: ZERO delegation
+notifications in the chat transcript — no `<task-notification>` block is ever
+injected into a `chat.message` output (the old queue + flush channel was
+removed). When a job reaches a terminal state (completion observed via
+`session.idle`/`session.error` on the child, or the timeout finalize path), the
+plugin writes a file-only audit log line (echo opt-in via `PANTHEON_HOOKS_LOG`).
+Completion visibility lives in the legitimate channels: the board `[unread]`
+marker (`pantheon_delegation_list`), `pantheon_delegation_read`, TUI toasts
+(pantheon-hooks, `PANTHEON_TOASTS` gate) and compaction carry-forward. Reconcile
+is an acknowledgment, not a completion — it never re-fires the terminal
+transition.
 
 **Timeout:** `background_delegation.timeout_ms` (default `900000` = 15 min). A job
 that has not reached a terminal state is finalized as `error`/`timedOut`.
@@ -300,8 +302,9 @@ duplicate lines for the same notification.
 - `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` — required (see launch block above).
 - `PANTHEON_TOASTS` — TUI toast gate for the delegation lifecycle signals.
   Default `{errors, delegations, council}`; `PANTHEON_TOASTS=off` disables all
-  TUI toasts (delegation signals then only surface via the chat.message
-  `<task-notification>`/`<system-reminder>` channel).
+  TUI toasts (delegation signals then only surface via the board `[unread]`
+  marker, `pantheon_delegation_read` and the on-disk audit log — never via
+  chat.message injection from the plugin).
 - `background_delegation` section in `src/routing.yml` — `timeout_ms`,
   `poll_ms`, `max_compaction_items`, `prune_ttl_ms`, `read_only_agents`,
   `session_max`, `retry_count`.

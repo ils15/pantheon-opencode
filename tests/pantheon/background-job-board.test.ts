@@ -513,17 +513,20 @@ async function main() {
     assert.equal(fired[0], job.taskID)
   })
 
-  await testAsync('onTerminal fires for markReconciled when was terminalUnreconciled', async () => {
+  await testAsync('markReconciled does NOT re-fire onTerminal (reconcile is an acknowledgment)', async () => {
     const board = new BackgroundJobBoard()
     const job = await board.registerLaunch(makeLaunch())
     const fired: string[] = []
 
     board.onTerminal((taskID) => fired.push(taskID))
     await board.updateStatus({ taskID: job.taskID, state: 'completed' })
-    assert.equal(fired.length, 1) // first fire from updateStatus
+    assert.equal(fired.length, 1) // first fire from updateStatus — the only terminal transition
 
     await board.markReconciled(job.taskID)
-    assert.equal(fired.length, 2) // second fire from reconcile (was terminalUnreconciled)
+    assert.equal(fired.length, 1) // reconcile must not fire terminal listeners (no duplicate notification)
+    const reconciled = board.get(job.taskID)
+    assert.ok(reconciled)
+    assert.equal(reconciled.state, 'reconciled')
   })
 
   await testAsync('removeTerminalListener stops firing', async () => {

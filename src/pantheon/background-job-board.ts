@@ -370,6 +370,13 @@ export class BackgroundJobBoard {
    * Valid: only `completed`, `error`, or `cancelled` → `reconciled`.
    * Idempotent: already-reconciled jobs are returned as-is.
    * Rejected: `running` → `reconciled`.
+   *
+   * Reconcile is an ACKNOWLEDGMENT, not a completion event: it does NOT fire
+   * the terminal listeners (onTerminal) and does NOT resolve waiters — the
+   * terminal transition already did both. Firing them here produced a second
+   * `<task-notification>` per job (completed + reconciled) in the parent
+   * transcript; waiters are covered by `waitForTerminal` resolving immediately
+   * for already-terminal/reconciled jobs.
    */
   async markReconciled(taskID: string): Promise<BackgroundJobRecord | undefined> {
     const job = this.jobs.get(taskID)
@@ -385,17 +392,12 @@ export class BackgroundJobBoard {
       )
     }
 
-    const wasTerminalUnreconciled = job.terminalUnreconciled
     job.state = 'reconciled'
     job.updatedAt = Date.now()
     job.terminalUnreconciled = false
 
     await this.persistRecord(job)
     await this.writeSignal(job)
-
-    if (wasTerminalUnreconciled) {
-      this.notifyTerminal(job.taskID)
-    }
 
     return job
   }
