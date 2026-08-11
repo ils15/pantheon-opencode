@@ -796,6 +796,18 @@ async function readDelegationEntries(dir) {
 	entries.sort(compareDelegationEntries);
 	return entries;
 }
+/** Resolve the directory where the job board writes delegation md reports.
+*  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
+*  which the TUI exposes as `TuiState.path.directory`. `project` does NOT
+*  exist on `TuiState.path` (the old `state?.project ?? state?.worktree`
+*  resolution was always undefined for the first term) and `worktree` is
+*  `/` when there is no git (e.g. the sandbox test project) — a root of
+*  `''` or `'/'` must fall back to `process.cwd()`. */
+function resolveDelegationsDir(state, cwd = process.cwd()) {
+	const root = state?.directory ?? state?.worktree ?? "";
+	if (root === "" || root === "/") return join(cwd, ".pantheon", "delegations");
+	return join(root, ".pantheon", "delegations");
+}
 /** Sort delegations: running first, then terminal by recency (updatedAt,
 *  falling back to startedAt, descending). Shared by the md reader and
 *  mergeDelegationSources. */
@@ -994,6 +1006,34 @@ function removeDelegationEntry(map, partIDOrCallID) {
 	}
 	return false;
 }
+/** Collect pantheon delegation tool parts from a session's messages.
+*  Messages may carry their parts inline (duck-typed `msg.parts`); when
+*  they don't, the optional `getParts(messageID)` callback is used (the TUI
+*  SDK exposes `api.state.part(messageID)`). Pure w.r.t. I/O — used by the
+*  mount re-scan to re-seed the live map after compaction/attach. */
+function collectDelegationToolParts(messages, getParts) {
+	const out = [];
+	for (const msg of messages ?? []) {
+		let parts;
+		if (Array.isArray(msg?.parts)) parts = msg.parts;
+		else if (msg?.id !== void 0 && typeof getParts === "function") parts = getParts(msg.id);
+		if (!parts) continue;
+		for (const raw of parts) {
+			const part = raw;
+			if (part?.type === "tool" && (part.tool === "pantheon_delegate" || part.tool === "pantheon_delegation_read")) out.push(part);
+		}
+	}
+	return out;
+}
+/** Apply a batch of tool parts (in message order) to the live map. Used on
+*  mount to re-seed entries that `message.part.removed` (compaction) wiped,
+*  from the session's existing tool parts. Returns how many parts changed
+*  the map (0 on the second identical seed — idempotent, no extra bumps). */
+function seedLiveDelegationMap(map, parts, now = Date.now()) {
+	let changed = 0;
+	for (const part of parts) if (reduceDelegationToolPart(map, part, now)) changed++;
+	return changed;
+}
 /** Convert a live entry into the shared display shape. Alias falls back to
 *  a `live-<callID>` prefix while the delegate tool has not completed yet. */
 function toDelegationEntry(live) {
@@ -1132,11 +1172,7 @@ function View(props) {
 			return (b.time?.updated ?? b.updated ?? 0) - ta;
 		}).slice(0, 8);
 	});
-	const delegationsDir = createMemo(() => {
-		const state = props.api.state.path;
-		const root = state?.project ?? state?.worktree ?? "";
-		return join(root !== "" ? root : process.cwd(), ".pantheon", "delegations");
-	});
+	const delegationsDir = createMemo(() => resolveDelegationsDir(props.api.state.path));
 	const [delegations, setDelegations] = createSignal([]);
 	const [now, setNow] = createSignal(Date.now());
 	const refreshDelegations = async () => {
@@ -1172,6 +1208,15 @@ function View(props) {
 		} catch {}
 		cleanup.push(() => clearInterval(setInterval(() => setNow(Date.now()), 1e3)));
 		cleanup.push(() => clearInterval(setInterval(() => void refreshDelegations(), 2e3)));
+		try {
+			const sdk = props.api.state?.session;
+			if (typeof sdk?.messages === "function") {
+				const messages = sdk.messages(props.sessionID) ?? [];
+				const state = props.api.state;
+				const parts = collectDelegationToolParts(messages, typeof state?.part === "function" ? (messageID) => state.part(messageID) : void 0);
+				if (parts.length > 0 && seedLiveDelegationMap(props.liveStore.map, parts) > 0) props.liveStore.bump();
+			}
+		} catch {}
 		onCleanup(() => cleanup.forEach((fn) => {
 			fn();
 		}));
@@ -1403,6 +1448,6 @@ const plugin = {
 	tui
 };
 //#endregion
-export { compareDelegationEntries, plugin as default, delegationElapsed, fmtElapsed, mergeDelegationSources, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, toDelegationEntry };
+export { collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationElapsed, fmtElapsed, mergeDelegationSources, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
 
 //# sourceMappingURL=tui.js.map

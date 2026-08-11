@@ -1038,6 +1038,22 @@ export async function readDelegationEntries(dir: string): Promise<DelegationEntr
   return entries
 }
 
+/** Resolve the directory where the job board writes delegation md reports.
+ *  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
+ *  which the TUI exposes as `TuiState.path.directory`. `project` does NOT
+ *  exist on `TuiState.path` (the old `state?.project ?? state?.worktree`
+ *  resolution was always undefined for the first term) and `worktree` is
+ *  `/` when there is no git (e.g. the sandbox test project) — a root of
+ *  `''` or `'/'` must fall back to `process.cwd()`. */
+export function resolveDelegationsDir(
+  state: { directory?: string; worktree?: string } | undefined,
+  cwd = process.cwd(),
+): string {
+  const root = state?.directory ?? state?.worktree ?? ''
+  if (root === '' || root === '/') return join(cwd, '.pantheon', 'delegations')
+  return join(root, '.pantheon', 'delegations')
+}
+
 /** Sort delegations: running first, then terminal by recency (updatedAt,
  *  falling back to startedAt, descending). Shared by the md reader and
  *  mergeDelegationSources. */
@@ -1336,6 +1352,53 @@ export function removeDelegationEntry(
   return false
 }
 
+/** Collect pantheon delegation tool parts from a session's messages.
+ *  Messages may carry their parts inline (duck-typed `msg.parts`); when
+ *  they don't, the optional `getParts(messageID)` callback is used (the TUI
+ *  SDK exposes `api.state.part(messageID)`). Pure w.r.t. I/O — used by the
+ *  mount re-scan to re-seed the live map after compaction/attach. */
+export function collectDelegationToolParts(
+  messages: readonly { id?: string; parts?: unknown[] }[] | undefined,
+  getParts?: (messageID: string) => readonly unknown[] | undefined,
+): DelegationToolPart[] {
+  const out: DelegationToolPart[] = []
+  for (const msg of messages ?? []) {
+    let parts: readonly unknown[] | undefined
+    if (Array.isArray(msg?.parts)) {
+      parts = msg.parts
+    } else if (msg?.id !== undefined && typeof getParts === 'function') {
+      parts = getParts(msg.id)
+    }
+    if (!parts) continue
+    for (const raw of parts) {
+      const part = raw as DelegationToolPart
+      if (
+        part?.type === 'tool' &&
+        (part.tool === 'pantheon_delegate' || part.tool === 'pantheon_delegation_read')
+      ) {
+        out.push(part)
+      }
+    }
+  }
+  return out
+}
+
+/** Apply a batch of tool parts (in message order) to the live map. Used on
+ *  mount to re-seed entries that `message.part.removed` (compaction) wiped,
+ *  from the session's existing tool parts. Returns how many parts changed
+ *  the map (0 on the second identical seed — idempotent, no extra bumps). */
+export function seedLiveDelegationMap(
+  map: Map<string, LiveDelegationEntry>,
+  parts: readonly DelegationToolPart[],
+  now = Date.now(),
+): number {
+  let changed = 0
+  for (const part of parts) {
+    if (reduceDelegationToolPart(map, part, now)) changed++
+  }
+  return changed
+}
+
 /** Convert a live entry into the shared display shape. Alias falls back to
  *  a `live-<callID>` prefix while the delegate tool has not completed yet. */
 export function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry {
@@ -1543,11 +1606,7 @@ function View(props: {
   // Live entries come from `message.part.updated` subscriptions registered
   // in tui() (agent-sidebar pattern); the md channel covers historical jobs
   // from previous sessions and terminal states of never-read jobs.
-  const delegationsDir = createMemo(() => {
-    const state = (props.api.state as any).path
-    const root = state?.project ?? state?.worktree ?? ''
-    return join(root !== '' ? root : process.cwd(), '.pantheon', 'delegations')
-  })
+  const delegationsDir = createMemo(() => resolveDelegationsDir((props.api.state as any).path))
   const [delegations, setDelegations] = createSignal<DelegationEntry[]>([])
   // 1s ticker drives the running-jobs elapsed counter (see onMount).
   const [now, setNow] = createSignal(Date.now())
@@ -1610,6 +1669,32 @@ function View(props: {
     }
     cleanup.push(() => clearInterval(setInterval(() => setNow(Date.now()), 1_000)))
     cleanup.push(() => clearInterval(setInterval(() => void refreshDelegations(), 2_000)))
+
+    // Compaction recovery: `message.part.removed` clears live entries while
+    // compacting, so after a compaction/attach the live map would start
+    // empty even though the session still holds the delegation tool parts.
+    // Re-seed the live map from the session's existing parts (in message
+    // order) right after the subscriptions are registered. Fail-open: if
+    // the SDK access is unavailable we skip — live events + the md channel
+    // keep the panel working.
+    try {
+      const sdk = (props.api.state as any)?.session
+      if (typeof sdk?.messages === 'function') {
+        const messages: readonly { id?: string; parts?: unknown[] }[] =
+          sdk.messages(props.sessionID) ?? []
+        const state = props.api.state as any
+        const getParts =
+          typeof state?.part === 'function'
+            ? (messageID: string) => state.part(messageID)
+            : undefined
+        const parts = collectDelegationToolParts(messages, getParts)
+        if (parts.length > 0 && seedLiveDelegationMap(props.liveStore.map, parts) > 0) {
+          props.liveStore.bump()
+        }
+      }
+    } catch {
+      /* re-scan unavailable — live events + md fallback still cover it */
+    }
 
     onCleanup(() =>
       cleanup.forEach((fn) => {

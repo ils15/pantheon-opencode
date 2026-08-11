@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  collectDelegationToolParts,
   type DelegationEntry,
   delegationElapsed,
   fmtElapsed,
@@ -29,6 +30,8 @@ import {
   readDelegationEntries,
   reduceDelegationToolPart,
   removeDelegationEntry,
+  resolveDelegationsDir,
+  seedLiveDelegationMap,
   toDelegationEntry,
 } from '../../src/plugins/tui/src/index.tsx'
 
@@ -312,6 +315,211 @@ async function main() {
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
+  })
+
+  // ─── resolveDelegationsDir (md channel root resolution) ─────────────
+  // The board writes `.pantheon/delegations` RELATIVE to the server cwd
+  // (= TuiState.path.directory). `project` does NOT exist on TuiState.path
+  // and `worktree` is `/` when there is no git (e.g. the sandbox test
+  // project) — a root of `''` or `'/'` must fall back to `process.cwd()`.
+  // An explicit `cwd` param keeps these tests deterministic.
+
+  await testAsync('resolve: worktree "/" (no git) → cwd fallback', async () => {
+    assert.equal(
+      resolveDelegationsDir({ worktree: '/' }, '/srv/opencode'),
+      join('/srv/opencode', '.pantheon', 'delegations'),
+      'root "/" must not produce "/.pantheon/delegations"',
+    )
+  })
+
+  await testAsync('resolve: valid worktree dir → join(worktree)', async () => {
+    assert.equal(
+      resolveDelegationsDir({ worktree: '/repos/acme' }, '/srv/opencode'),
+      join('/repos/acme', '.pantheon', 'delegations'),
+    )
+  })
+
+  await testAsync('resolve: directory present (no project) → uses directory', async () => {
+    assert.equal(
+      resolveDelegationsDir({ directory: '/proj/site' }, '/srv/opencode'),
+      join('/proj/site', '.pantheon', 'delegations'),
+      'directory wins when present (board writes relative to the server cwd)',
+    )
+  })
+
+  await testAsync('resolve: directory beats worktree "/" (sandbox case)', async () => {
+    assert.equal(
+      resolveDelegationsDir({ directory: '/proj/site', worktree: '/' }, '/srv/opencode'),
+      join('/proj/site', '.pantheon', 'delegations'),
+    )
+  })
+
+  await testAsync('resolve: empty state object → cwd fallback', async () => {
+    assert.equal(
+      resolveDelegationsDir({}, '/srv/opencode'),
+      join('/srv/opencode', '.pantheon', 'delegations'),
+    )
+  })
+
+  await testAsync('resolve: undefined state → cwd fallback', async () => {
+    assert.equal(
+      resolveDelegationsDir(undefined, '/srv/opencode'),
+      join('/srv/opencode', '.pantheon', 'delegations'),
+    )
+  })
+
+  await testAsync('resolve: legacy "project" field ignored (not on TuiState.path)', async () => {
+    // `project` is not part of TuiState.path — the old resolution read it
+    // via `state?.project` which was always undefined. Passing it must not
+    // change the result (directory/worktree still rule, else cwd).
+    assert.equal(
+      resolveDelegationsDir(
+        { project: '/proj/site' } as unknown as { directory?: string; worktree?: string },
+        '/srv/opencode',
+      ),
+      join('/srv/opencode', '.pantheon', 'delegations'),
+      'project-only state falls back to cwd (field does not exist in the type)',
+    )
+  })
+
+  // ─── collectDelegationToolParts + seedLiveDelegationMap (mount re-scan) ─
+  // `message.part.removed` (compaction) clears live entries; on mount the
+  // panel re-seeds the live map from the session's EXISTING tool parts via
+  // `api.state.session.messages(sessionID)` so pós-compaction/attach the
+  // panel still shows jobs. Extraction + reduction are pure helpers tested
+  // here with a mocked messages array (the SDK method is synchronous).
+
+  const SEED_DELEGATE_RUNNING = {
+    id: 'part_seed_1',
+    sessionID: 'ses_root',
+    messageID: 'msg_1',
+    type: 'tool',
+    callID: 'call_seed_1',
+    tool: 'pantheon_delegate',
+    state: {
+      status: 'running',
+      input: { agent: 'apollo', prompt: 'find x' },
+      time: { start: 1000 },
+    },
+  }
+  const SEED_DELEGATE_COMPLETED = {
+    ...SEED_DELEGATE_RUNNING,
+    state: {
+      status: 'completed',
+      input: { agent: 'apollo', prompt: 'find x' },
+      output:
+        'Delegated to apollo: [apo-1] (task ses_child_9).\nRead with pantheon_delegation_read({ id: "apo-1" }).',
+      time: { start: 1000, end: 1500 },
+    },
+  }
+  const SEED_READ_COMPLETED = {
+    id: 'part_seed_2',
+    sessionID: 'ses_root',
+    messageID: 'msg_2',
+    type: 'tool',
+    callID: 'call_seed_2',
+    tool: 'pantheon_delegation_read',
+    state: {
+      status: 'completed',
+      input: { id: 'apo-1' },
+      output: '# Delegation Report — apo-1\n\n- **Agent**: apollo\n',
+      time: { start: 5000, end: 8000 },
+    },
+  }
+
+  await testAsync('collect: embedded parts → only pantheon tool parts', async () => {
+    const messages = [
+      {
+        id: 'msg_1',
+        parts: [
+          SEED_DELEGATE_RUNNING,
+          { type: 'text', text: 'hi' },
+          { type: 'tool', tool: 'bash', state: {} },
+        ],
+      },
+      { id: 'msg_2', parts: [SEED_READ_COMPLETED] },
+    ]
+    const parts = collectDelegationToolParts(messages)
+    assert.equal(parts.length, 2, 'text + bash parts are skipped')
+    assert.deepEqual(
+      parts.map((p) => p.tool),
+      ['pantheon_delegate', 'pantheon_delegation_read'],
+    )
+  })
+
+  await testAsync('collect: messages without parts → getParts(msg.id) fallback', async () => {
+    const messages = [{ id: 'msg_1' }, { id: 'msg_2' }]
+    const getParts = (id: string) => (id === 'msg_1' ? [SEED_DELEGATE_RUNNING] : [])
+    const parts = collectDelegationToolParts(messages, getParts)
+    assert.equal(parts.length, 1)
+    assert.equal(parts[0]?.tool, 'pantheon_delegate')
+  })
+
+  await testAsync('collect: no parts anywhere → [] (fail-open)', async () => {
+    assert.deepEqual(
+      collectDelegationToolParts([], () => []),
+      [],
+    )
+    assert.deepEqual(collectDelegationToolParts([{ id: 'm1' }], undefined), [])
+    assert.deepEqual(collectDelegationToolParts(undefined, undefined), [])
+  })
+
+  await testAsync('seed: empty parts → 0 changes, map untouched', async () => {
+    const map = new Map<string, LiveDelegationEntry>()
+    assert.equal(seedLiveDelegationMap(map, []), 0)
+    assert.equal(map.size, 0)
+  })
+
+  await testAsync(
+    'seed: re-scan from session.messages parts → job restored terminal (compaction recovery)',
+    async () => {
+      // Simulates: state.session.messages(sessionID) → collect → seed, the
+      // exact mount path. The delegate runs, completes (alias), read blocks
+      // until terminal → entry closes at the read end timestamp.
+      const messages = [
+        { id: 'msg_1', parts: [SEED_DELEGATE_RUNNING] },
+        { id: 'msg_2', parts: [SEED_DELEGATE_COMPLETED] },
+        { id: 'msg_3', parts: [SEED_READ_COMPLETED] },
+      ]
+      const map = new Map<string, LiveDelegationEntry>()
+      const parts = collectDelegationToolParts(messages)
+      assert.equal(
+        seedLiveDelegationMap(map, parts, 9000),
+        3,
+        'delegate create + alias absorb + read close = 3 changes',
+      )
+
+      const e = map.get('call_seed_1')
+      assert.ok(e, 'job restored into the live map on mount')
+      assert.equal(e.state, 'completed')
+      assert.equal(e.alias, 'apo-1')
+      assert.equal(e.taskID, 'ses_child_9')
+      assert.equal(e.read, true)
+      assert.equal(e.updatedAt, 8000, 'terminal stamped from the read end')
+
+      assert.equal(
+        seedLiveDelegationMap(map, collectDelegationToolParts(messages), 9000),
+        0,
+        're-seeding identical parts is idempotent (no extra bumps)',
+      )
+    },
+  )
+
+  await testAsync('seed: non-pantheon parts skipped, unknown tools no-op', async () => {
+    const map = new Map<string, LiveDelegationEntry>()
+    const skippedParts = [
+      { type: 'text', text: 'x' },
+      { type: 'tool', tool: 'bash', callID: 'c1', state: { status: 'running' } },
+      {
+        type: 'tool',
+        tool: 'pantheon_delegation_read',
+        callID: 'c2',
+        state: { status: 'running', input: { id: 'nope' } },
+      },
+    ]
+    const changed = seedLiveDelegationMap(map, skippedParts)
+    assert.equal(changed, 0, 'read without a target delegate is a no-op')
+    assert.equal(map.size, 0)
   })
 
   // ─── Type-level: the entry shape is exported for the TUI row ───────────

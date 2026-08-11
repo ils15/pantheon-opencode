@@ -31,6 +31,17 @@ declare function parseDelegationMarkdown(raw: string, fileAlias?: string, sessio
  *  first, then terminal by `updatedAt` (most recent first) so the panel can
  *  render them in order directly. */
 declare function readDelegationEntries(dir: string): Promise<DelegationEntry[]>;
+/** Resolve the directory where the job board writes delegation md reports.
+ *  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
+ *  which the TUI exposes as `TuiState.path.directory`. `project` does NOT
+ *  exist on `TuiState.path` (the old `state?.project ?? state?.worktree`
+ *  resolution was always undefined for the first term) and `worktree` is
+ *  `/` when there is no git (e.g. the sandbox test project) — a root of
+ *  `''` or `'/'` must fall back to `process.cwd()`. */
+declare function resolveDelegationsDir(state: {
+  directory?: string;
+  worktree?: string;
+} | undefined, cwd?: string): string;
 /** Sort delegations: running first, then terminal by recency (updatedAt,
  *  falling back to startedAt, descending). Shared by the md reader and
  *  mergeDelegationSources. */
@@ -106,6 +117,20 @@ declare function reduceDelegationToolPart(map: Map<string, LiveDelegationEntry>,
 /** Remove a live entry by part id (message.part.removed) or call id.
  *  Returns true when something was removed. */
 declare function removeDelegationEntry(map: Map<string, LiveDelegationEntry>, partIDOrCallID: string): boolean;
+/** Collect pantheon delegation tool parts from a session's messages.
+ *  Messages may carry their parts inline (duck-typed `msg.parts`); when
+ *  they don't, the optional `getParts(messageID)` callback is used (the TUI
+ *  SDK exposes `api.state.part(messageID)`). Pure w.r.t. I/O — used by the
+ *  mount re-scan to re-seed the live map after compaction/attach. */
+declare function collectDelegationToolParts(messages: readonly {
+  id?: string;
+  parts?: unknown[];
+}[] | undefined, getParts?: (messageID: string) => readonly unknown[] | undefined): DelegationToolPart[];
+/** Apply a batch of tool parts (in message order) to the live map. Used on
+ *  mount to re-seed entries that `message.part.removed` (compaction) wiped,
+ *  from the session's existing tool parts. Returns how many parts changed
+ *  the map (0 on the second identical seed — idempotent, no extra bumps). */
+declare function seedLiveDelegationMap(map: Map<string, LiveDelegationEntry>, parts: readonly DelegationToolPart[], now?: number): number;
 /** Convert a live entry into the shared display shape. Alias falls back to
  *  a `live-<callID>` prefix while the delegate tool has not completed yet. */
 declare function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry;
@@ -129,5 +154,5 @@ declare const plugin: TuiPluginModule & {
   id: string;
 };
 //#endregion
-export { DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, compareDelegationEntries, plugin as default, delegationElapsed, fmtElapsed, mergeDelegationSources, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, toDelegationEntry };
+export { DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationElapsed, fmtElapsed, mergeDelegationSources, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
 //# sourceMappingURL=tui.d.ts.map
