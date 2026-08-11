@@ -355,16 +355,31 @@ const plugin: Plugin = async (input: PluginInput) => {
     // tool.execute.after, so there is no key collision. Non-read tools pass
     // through untouched.
     'tool.execute.after': readEnhancer,
-    // Phase 4: keep in-flight background delegations visible across
-    // compaction (running + unread terminal jobs). Guarded: only pushes when
-    // there is something to preserve.
+    // Phase 4 + release-134 Phase 2: keep the session's working state across
+    // compaction — preservation directive, active goals (<mission_context>),
+    // pending todos (<todo_context>), and in-flight background delegations
+    // (running + unread terminal ≤ max_compaction_items). Guarded: only
+    // pushes when there is something to preserve; a build failure must never
+    // break the experimental compaction hook.
     'experimental.session.compacting': async (_input, output) => {
-      const blocks = buildCompactionContext(board, {
-        sessionID: _input.sessionID,
-        maxItems: COMPACTION_MAX_ITEMS,
-      })
-      if (blocks.length > 0) {
-        output.context.push(...blocks)
+      try {
+        const blocks = await buildCompactionContext(board, {
+          sessionID: _input.sessionID,
+          maxItems: COMPACTION_MAX_ITEMS,
+          goals: {
+            enabled: GOAL_LOOP_DEFAULTS.enabled,
+            list: (sessionID: string) => goalStore.list(sessionID),
+          },
+          todos: {
+            enabled: todoEnforcerEnabledFromEnv(),
+            list: (sessionID: string) => todoEnforcer.listPendingTodos(sessionID),
+          },
+        })
+        if (blocks.length > 0) {
+          output.context.push(...blocks)
+        }
+      } catch (err: unknown) {
+        log.warn('[Pantheon Plugin] Compaction context build failed:', err)
       }
     },
   }
