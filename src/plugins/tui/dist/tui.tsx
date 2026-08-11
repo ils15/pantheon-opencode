@@ -840,12 +840,30 @@ async function setupUsageBar(api: TuiPluginApi) {
 }
 
 /* ─── Delegations (real-time panel) ────────────────────────
- * Channel: the markdown reports the job board persists under
- * `.pantheon/delegations/<sessionID>/<alias>.md` (written by
- * src/pantheon/delegation-finalize.ts `renderDelegationMarkdown`). The TUI
- * never touches the in-memory board — it only reads these files, so the
- * panel keeps working across restarts and shows jobs that are born/die
- * while opencode is open.
+ * DUAL CHANNEL (agent-sidebar pattern, featura/134):
+ *
+ *   1. PRIMARY — LIVE tool-call lifecycle via `message.part.updated`
+ *      events (the same mechanism as EvanDbg/opencode-agent-sidebar).
+ *      Tool parts named `pantheon_delegate` / `pantheon_delegation_read`
+ *      are tracked in-memory keyed by callID:
+ *        • pantheon_delegate pending/running → entry { state: 'running' }.
+ *          IMPORTANT: a *completed* delegate tool only means the job was
+ *          LAUNCHED (it returns "[alias] (task ses_...)"), so the entry
+ *          stays 'running' — the background job is still executing.
+ *        • pantheon_delegation_read blocks until terminal, so its
+ *          completed/error state + end timestamp close the entry
+ *          (authoritative job duration) and mark it `read`.
+ *      `message.part.removed` (compaction) deletes the tracked entry.
+ *      Fail-open: if the events API is unavailable, nothing subscribes
+ *      and the md channel below is the only source — never crash.
+ *
+ *   2. FALLBACK — markdown reports the job board persists under
+ *      `.pantheon/delegations/<sessionID>/<alias>.md` (written by
+ *      src/pantheon/delegation-finalize.ts `renderDelegationMarkdown`
+ *      at terminal state). Covers historical jobs (previous sessions)
+ *      and the terminal states of never-read jobs. mergeDelegationSources
+ *      combines both channels per (sessionID, alias): a terminal md entry
+ *      is authoritative over a live running entry.
  *
  * Header fields parsed (markdown bullet list): Agent, Description, State,
  * Timed out, Started, Finalized. `State: running` entries (no Finalized
@@ -856,6 +874,8 @@ async function setupUsageBar(api: TuiPluginApi) {
 export type DelegationEntry = {
   /** Job alias, e.g. "apo-1" (from the H1 title, falling back to filename). */
   alias: string
+  /** Parent session the job was launched from (dir name under .pantheon/delegations). */
+  sessionID: string
   /** Agent name, e.g. "apollo". */
   agent: string
   state: 'running' | 'completed' | 'error' | 'cancelled'
@@ -886,7 +906,11 @@ const TITLE_SEPARATORS = '—–-'
  *  Linear, single-pass over `raw.split('\n')` with plain string operations
  *  (startsWith/indexOf/slice) — zero regex, so worst case is O(bytes) even
  *  on adversarial whitespace-heavy input (ReDoS regression, CodeQL 12x HIGH). */
-export function parseDelegationMarkdown(raw: string, fileAlias?: string): DelegationEntry | null {
+export function parseDelegationMarkdown(
+  raw: string,
+  fileAlias?: string,
+  sessionID = '',
+): DelegationEntry | null {
   let title: string | undefined
   let agent: string | undefined
   let description = ''
@@ -961,6 +985,7 @@ export function parseDelegationMarkdown(raw: string, fileAlias?: string): Delega
 
   return {
     alias: title ?? (fileAlias !== undefined ? stripMdSuffix(fileAlias) : 'unknown'),
+    sessionID,
     agent,
     state: normalized,
     startedAt,
@@ -1001,7 +1026,7 @@ export async function readDelegationEntries(dir: string): Promise<DelegationEntr
       if (!file.isFile() || !file.name.endsWith('.md')) continue
       try {
         const raw = await readFile(join(dir, session.name, file.name), 'utf8')
-        const entry = parseDelegationMarkdown(raw, file.name)
+        const entry = parseDelegationMarkdown(raw, file.name, session.name)
         if (entry !== null) entries.push(entry)
       } catch {
         // unreadable/malformed file — skip, never crash
@@ -1009,18 +1034,23 @@ export async function readDelegationEntries(dir: string): Promise<DelegationEntr
     }
   }
 
-  entries.sort((a, b) => {
-    const aRun = a.state === 'running' ? 1 : 0
-    const bRun = b.state === 'running' ? 1 : 0
-    if (aRun !== bRun) return bRun - aRun
-    return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt)
-  })
+  entries.sort(compareDelegationEntries)
   return entries
+}
+
+/** Sort delegations: running first, then terminal by recency (updatedAt,
+ *  falling back to startedAt, descending). Shared by the md reader and
+ *  mergeDelegationSources. */
+export function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry): number {
+  const aRun = a.state === 'running' ? 1 : 0
+  const bRun = b.state === 'running' ? 1 : 0
+  if (aRun !== bRun) return bRun - aRun
+  return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt)
 }
 
 /** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
  *  second for running jobs. */
-function fmtElapsed(ms: number): string {
+export function fmtElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
   const days = Math.floor(total / 86_400)
   const hours = Math.floor((total % 86_400) / 3_600)
@@ -1030,6 +1060,329 @@ function fmtElapsed(ms: number): string {
   if (hours > 0) return `${hours}h ${minutes}m`
   if (minutes > 0) return `${minutes}m ${seconds}s`
   return `${seconds}s`
+}
+
+/** Elapsed label for one entry: running → ticks `now - startedAt`, terminal
+ *  → fixed `updatedAt - startedAt` (em dash when no finalized timestamp). */
+export function delegationElapsed(entry: DelegationEntry, now: number): string {
+  if (entry.state === 'running') return fmtElapsed(now - entry.startedAt)
+  return entry.updatedAt !== null ? fmtElapsed(entry.updatedAt - entry.startedAt) : '\u2014'
+}
+
+/* ─── Live tool-call lifecycle (agent-sidebar pattern) ─────
+ * Source of truth for jobs born while opencode is open. The TUI event bus
+ * (api.event.on) delivers `message.part.updated` for every part change;
+ * we only care about tool parts whose `tool` is pantheon_delegate (job
+ * launch) or pantheon_delegation_read (blocking until terminal → closes
+ * the entry). Shape-adapted from the SDK v2 ToolPart but duck-typed so the
+ * pure helpers are testable without the SDK. */
+
+/** Duck-typed subset of a tool part (SDK v2 `ToolPart` / `ToolState`). */
+export type DelegationToolPart = {
+  id?: string
+  callID?: string
+  sessionID?: string
+  type?: string
+  tool?: string
+  state?: {
+    status?: string
+    input?: Record<string, unknown>
+    output?: string
+    error?: string
+    time?: { start?: number; end?: number }
+  }
+}
+
+/** One live delegation tracked in-memory, keyed by the delegate callID. */
+export type LiveDelegationEntry = {
+  /** Tool call id of the pantheon_delegate part (stable across events). */
+  callID: string
+  /** Part id (for message.part.removed cleanup). */
+  partID: string
+  /** Parent session the delegation was launched from. */
+  sessionID: string
+  tool: 'pantheon_delegate' | 'pantheon_delegation_read'
+  /** Agent name (from the delegate input args). */
+  agent: string
+  description: string
+  /** Known after the delegate tool completes (parsed from its output). */
+  alias: string | null
+  /** Child session id (parsed from the delegate output). */
+  taskID: string | null
+  state: 'running' | 'completed' | 'error' | 'cancelled'
+  startedAt: number
+  updatedAt: number | null
+  /** True once a pantheon_delegation_read for this job has been observed. */
+  read: boolean
+}
+
+/** Result of parsing one tool part into lifecycle-relevant fields. */
+export type ParsedDelegationToolPart = {
+  callID: string
+  partID: string
+  sessionID: string
+  tool: 'pantheon_delegate' | 'pantheon_delegation_read'
+  /** null for read parts (no agent arg — the id targets an existing job). */
+  agent: string | null
+  description: string
+  status: 'pending' | 'running' | 'completed' | 'error'
+  alias: string | null
+  taskID: string | null
+  startedAt: number
+  endAt: number | null
+}
+
+/** Alias in the delegate output: "Delegated to apollo: [apo-1] (task …)". */
+const DELEGATE_ALIAS_PATTERN = /\[([a-z]{2,8}-\d+)\]/i
+/** Child task id in the delegate output: "(task ses_child_9)". */
+const DELEGATE_TASKID_PATTERN = /\(task\s+([a-z0-9_]+)\)/i
+/** Plain alias, as passed to pantheon_delegation_read input.id: "apo-1". */
+const READ_ALIAS_PATTERN = /^[a-z]{2,8}-\d+$/i
+
+/** Extract the tool name + args from a `message.part.updated` part and
+ *  reduce it to what the panel needs. Returns null for anything that is
+ *  not a pantheon delegation tool part (or is missing its callID). */
+export function parseDelegationToolPart(
+  part: DelegationToolPart,
+  now = Date.now(),
+): ParsedDelegationToolPart | null {
+  if (part.type !== 'tool') return null
+  if (part.tool !== 'pantheon_delegate' && part.tool !== 'pantheon_delegation_read') return null
+  const callID = part.callID
+  if (callID === undefined || callID === '') return null
+  const sessionID = part.sessionID ?? ''
+  const state = part.state ?? {}
+  const status = state.status ?? 'pending'
+  if (status !== 'pending' && status !== 'running' && status !== 'completed' && status !== 'error')
+    return null
+  const input = state.input ?? {}
+  const startedAt = state.time?.start ?? now
+  const endAt = state.time?.end ?? null
+
+  if (part.tool === 'pantheon_delegation_read') {
+    const target = typeof input.id === 'string' ? input.id : null
+    let alias: string | null = null
+    let taskID: string | null = null
+    if (target !== null) {
+      if (READ_ALIAS_PATTERN.test(target)) alias = target
+      else if (target.startsWith('ses_')) taskID = target // raw child session id
+    }
+    return {
+      callID,
+      partID: part.id ?? '',
+      sessionID,
+      tool: 'pantheon_delegation_read',
+      agent: null,
+      description: '',
+      status,
+      alias,
+      taskID,
+      startedAt,
+      endAt,
+    }
+  }
+
+  const agent = typeof input.agent === 'string' ? input.agent : 'agent'
+  const description = typeof input.description === 'string' ? input.description : ''
+  // The alias/taskID only exist once the delegate tool COMPLETES (they are
+  // returned in its output); a running/pending part has neither.
+  let alias: string | null = null
+  let taskID: string | null = null
+  if (status === 'completed') {
+    const output = state.output ?? ''
+    alias = DELEGATE_ALIAS_PATTERN.exec(output)?.[1] ?? null
+    taskID = DELEGATE_TASKID_PATTERN.exec(output)?.[1] ?? null
+  }
+  return {
+    callID,
+    partID: part.id ?? '',
+    sessionID,
+    tool: 'pantheon_delegate',
+    agent,
+    description,
+    status,
+    alias,
+    taskID,
+    startedAt,
+    endAt,
+  }
+}
+
+/** Find a live entry by alias or taskID (read parts resolve by id). */
+function findLiveByTarget(
+  map: Map<string, LiveDelegationEntry>,
+  alias: string | null,
+  taskID: string | null,
+): LiveDelegationEntry | undefined {
+  if (alias === null && taskID === null) return undefined
+  for (const entry of map.values()) {
+    if (alias !== null && entry.alias === alias) return entry
+    if (taskID !== null && entry.taskID === taskID) return entry
+  }
+  return undefined
+}
+
+/** Apply one tool part to the live map. Returns true when the map changed.
+ *  Pure w.r.t. I/O — only mutates `map`. */
+export function reduceDelegationToolPart(
+  map: Map<string, LiveDelegationEntry>,
+  part: DelegationToolPart,
+  now = Date.now(),
+): boolean {
+  const parsed = parseDelegationToolPart(part, now)
+  if (parsed === null) return false
+
+  // Read tool: never creates a row — it resolves a delegation by id. It
+  // marks the target `read` and (because it blocks until terminal) closes
+  // the entry on completed/error with its end timestamp.
+  if (parsed.tool === 'pantheon_delegation_read') {
+    const target = findLiveByTarget(map, parsed.alias, parsed.taskID)
+    if (target === undefined) return false
+    let changed = false
+    if (!target.read) {
+      target.read = true
+      changed = true
+    }
+    if (parsed.status === 'completed' && target.state === 'running') {
+      target.state = 'completed'
+      target.updatedAt = parsed.endAt ?? now
+      changed = true
+    } else if (parsed.status === 'error' && target.state === 'running') {
+      target.state = 'error'
+      target.updatedAt = parsed.endAt ?? now
+      changed = true
+    }
+    return changed
+  }
+
+  // Delegate tool: pending/running → job launched (running). A COMPLETED
+  // delegate tool only means the job was registered — it stays running and
+  // we pick up alias + taskID from the output.
+  const existing = map.get(parsed.callID)
+  if (parsed.status === 'error') {
+    if (existing !== undefined && existing.state === 'error' && existing.updatedAt === parsed.endAt)
+      return false
+    map.set(parsed.callID, {
+      callID: parsed.callID,
+      partID: parsed.partID,
+      sessionID: parsed.sessionID,
+      tool: 'pantheon_delegate',
+      agent: parsed.agent ?? 'agent',
+      description: parsed.description,
+      alias: existing?.alias ?? null,
+      taskID: existing?.taskID ?? null,
+      state: 'error',
+      startedAt: existing?.startedAt ?? parsed.startedAt,
+      updatedAt: parsed.endAt ?? now,
+      read: existing?.read ?? false,
+    })
+    return true
+  }
+  if (existing === undefined) {
+    map.set(parsed.callID, {
+      callID: parsed.callID,
+      partID: parsed.partID,
+      sessionID: parsed.sessionID,
+      tool: 'pantheon_delegate',
+      agent: parsed.agent ?? 'agent',
+      description: parsed.description,
+      alias: parsed.alias,
+      taskID: parsed.taskID,
+      state: 'running',
+      startedAt: parsed.startedAt,
+      updatedAt: null,
+      read: false,
+    })
+    return true
+  }
+  // Existing entry: absorb newly-discovered alias/taskID/agent/description.
+  let changed = false
+  if (parsed.alias !== null && existing.alias !== parsed.alias) {
+    existing.alias = parsed.alias
+    changed = true
+  }
+  if (parsed.taskID !== null && existing.taskID !== parsed.taskID) {
+    existing.taskID = parsed.taskID
+    changed = true
+  }
+  if (parsed.agent !== null && existing.agent !== parsed.agent) {
+    existing.agent = parsed.agent
+    changed = true
+  }
+  if (parsed.description !== '' && existing.description !== parsed.description) {
+    existing.description = parsed.description
+    changed = true
+  }
+  if (existing.partID === '' && parsed.partID !== '') {
+    existing.partID = parsed.partID
+    changed = true
+  }
+  return changed
+}
+
+/** Remove a live entry by part id (message.part.removed) or call id.
+ *  Returns true when something was removed. */
+export function removeDelegationEntry(
+  map: Map<string, LiveDelegationEntry>,
+  partIDOrCallID: string,
+): boolean {
+  if (map.delete(partIDOrCallID)) return true
+  for (const [key, entry] of map) {
+    if (entry.partID === partIDOrCallID) {
+      map.delete(key)
+      return true
+    }
+  }
+  return false
+}
+
+/** Convert a live entry into the shared display shape. Alias falls back to
+ *  a `live-<callID>` prefix while the delegate tool has not completed yet. */
+export function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry {
+  return {
+    alias: live.alias ?? `live-${live.callID.slice(0, 8)}`,
+    sessionID: live.sessionID,
+    agent: live.agent,
+    state: live.state,
+    startedAt: live.startedAt,
+    updatedAt: live.updatedAt,
+    timedOut: false,
+    description: live.description,
+  }
+}
+
+/** Combine the live channel with the md (historical) channel into one
+ *  display list. Dedupes by (sessionID, alias) — aliases are per-parent-
+ *  session, so the same alias in different sessions stays separate. A
+ *  terminal md entry is authoritative over a live running entry for the
+ *  same job (it carries Finalized/timedOut/cancelled from finalize). */
+export function mergeDelegationSources(
+  live: readonly LiveDelegationEntry[],
+  md: readonly DelegationEntry[],
+): DelegationEntry[] {
+  const keyOf = (sessionID: string, alias: string): string => `${sessionID}\u0000${alias}`
+  const byKey = new Map<string, DelegationEntry>()
+  for (const m of md) {
+    const key = keyOf(m.sessionID, m.alias)
+    const existing = byKey.get(key)
+    if (existing === undefined || (existing.state === 'running' && m.state !== 'running'))
+      byKey.set(key, m)
+  }
+  const aliasless: DelegationEntry[] = []
+  for (const l of live) {
+    const e = toDelegationEntry(l)
+    if (l.alias === null) {
+      aliasless.push(e)
+      continue
+    }
+    const key = keyOf(l.sessionID, l.alias)
+    const mdEntry = byKey.get(key)
+    if (mdEntry !== undefined && mdEntry.state !== 'running') continue // md terminal wins
+    byKey.set(key, e)
+  }
+  const all = [...aliasless, ...byKey.values()]
+  all.sort(compareDelegationEntries)
+  return all
 }
 
 /* ─── Session Row (single session with live status indicator) ─ */
@@ -1085,14 +1438,10 @@ function DelegationRow(props: { api: TuiPluginApi; job: DelegationEntry; now: nu
   })
 
   const label = createMemo(() => {
-    const { alias, agent, state, startedAt, updatedAt, timedOut, description } = props.job
-    const stateLabel = state === 'running' ? 'running' : `${state}${timedOut ? ' (timed out)' : ''}`
-    const elapsed =
-      state === 'running'
-        ? fmtElapsed(props.now - startedAt)
-        : updatedAt !== null
-          ? fmtElapsed(updatedAt - startedAt)
-          : '\u2014'
+    const { alias, agent, state, timedOut, description } = props.job
+    const stateLabel =
+      state === 'running' ? 'RUNNING' : `${state.toUpperCase()}${timedOut ? ' (timed out)' : ''}`
+    const elapsed = delegationElapsed(props.job, props.now)
     const desc = description !== '' ? ` \u2014 ${description}` : ''
     const line = `[${alias}] ${agent} \u2014 ${stateLabel} \u2014 ${elapsed}${desc}`
     // Hard cap: keep the line within ~200 chars (truncate the description).
@@ -1104,7 +1453,23 @@ function DelegationRow(props: { api: TuiPluginApi; job: DelegationEntry; now: nu
 
 /* ─── Main Sidebar View ──────────────────────────────────── */
 
-function View(props: { api: TuiPluginApi; sessionID: string; version: string | null }) {
+/** Plugin-level live delegation store shared with the event subscriptions
+ *  in `tui()`: the map of live entries + a version signal bumped on every
+ *  mutation so the View re-renders reactively. */
+export type LiveDelegationStore = {
+  map: Map<string, LiveDelegationEntry>
+  /** Reactive version getter — View reads it inside a memo to re-render. */
+  version: () => number
+  /** Bump the version after a live mutation. */
+  bump: () => void
+}
+
+function View(props: {
+  api: TuiPluginApi
+  sessionID: string
+  version: string | null
+  liveStore: LiveDelegationStore
+}) {
   const [showSessions, setShowSessions] = createSignal(false)
   const [showDelegations, setShowDelegations] = createSignal(false)
 
@@ -1174,8 +1539,10 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
       .slice(0, 8)
   })
 
-  // ── Delegations: md reports persisted by the job board ──
-  // `.pantheon/delegations/<sessionID>/<alias>.md` under the project root.
+  // ── Delegations: LIVE tool-call events (primary) + md reports (fallback) ──
+  // Live entries come from `message.part.updated` subscriptions registered
+  // in tui() (agent-sidebar pattern); the md channel covers historical jobs
+  // from previous sessions and terminal states of never-read jobs.
   const delegationsDir = createMemo(() => {
     const state = (props.api.state as any).path
     const root = state?.project ?? state?.worktree ?? ''
@@ -1191,10 +1558,24 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
       // fail-open: never crash the sidebar on a read error
     }
   }
-  // Running jobs first (readDelegationEntries already sorts), then the 8
-  // most recent terminal reports.
+  // Live entries for the current session (reactivity via the version signal
+  // bumped by the event subscriptions in tui()).
+  const liveForSession = createMemo(() => {
+    props.liveStore.version() // subscribe to live mutations
+    const out: LiveDelegationEntry[] = []
+    for (const entry of props.liveStore.map.values()) {
+      if (entry.sessionID === props.sessionID) out.push(entry)
+    }
+    return out
+  })
+  // Combine live + md into the display list (dedupe by session+alias).
+  const mergedDelegations = createMemo(() =>
+    mergeDelegationSources(liveForSession(), delegations()),
+  )
+  // Running jobs first (merge already sorts), then the 8 most recent
+  // terminal reports. The header count uses this same "running + recentes".
   const visibleDelegations = createMemo(() => {
-    const all = delegations()
+    const all = mergedDelegations()
     const running = all.filter((d) => d.state === 'running')
     const terminal = all.filter((d) => d.state !== 'running').slice(0, 8)
     return [...running, ...terminal]
@@ -1214,9 +1595,12 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
       /* events API not available in this runtime */
     }
 
-    // Delegation panel: initial read, re-read on session lifecycle events
-    // (jobs are born/die with sessions), plus a 2s poll of the md channel.
-    // A 1s ticker re-renders the running jobs' elapsed counter.
+    // Delegation panel (md fallback channel): initial read, re-read on
+    // session lifecycle events (jobs are born/die with sessions), plus a
+    // 2s poll of the md channel — this catches terminal states of jobs
+    // never closed by a pantheon_delegation_read event, and history from
+    // previous sessions. The live channel is event-driven in tui(). A 1s
+    // ticker re-renders the running jobs' elapsed counter.
     void refreshDelegations()
     try {
       cleanup.push(props.api.event.on('session.created', () => void refreshDelegations()))
@@ -1288,12 +1672,12 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
         </Show>
       </Show>
 
-      {/* ── Delegations (real-time, from the .pantheon/delegations md channel) ── */}
+      {/* ── Delegations (live tool-call events + .pantheon/delegations md fallback) ── */}
       <box onMouseDown={() => setShowDelegations((x) => !x)}>
         <text fg={theme().text} attributes={1}>
           {`${showDelegations() ? '\u25bc' : '\u25b6'} Delegations`}
         </text>
-        <text fg={theme().textMuted}>{` (${String(delegations().length)})`}</text>
+        <text fg={theme().textMuted}>{` (${String(visibleDelegations().length)})`}</text>
       </box>
       <Show when={showDelegations()}>
         <Show
@@ -1323,11 +1707,63 @@ const tui: TuiPlugin = async (api, _options, _meta) => {
   // Vendored feature (MIT): AI subscription usage gauges.
   void setupUsageBar(api) // async init — never blocks sidebar registration
 
+  // ── Live delegation store (agent-sidebar pattern) ──
+  // The PRIMARY channel of the Delegations panel. `message.part.updated`
+  // fires for every part change; we track pantheon_delegate /
+  // pantheon_delegation_read tool parts and bump a version signal so the
+  // sidebar re-renders. Fail-open: if the events API is unavailable the
+  // md fallback channel in View keeps the panel working (never crash).
+  const [liveVersion, setLiveVersion] = createSignal(0)
+  const liveStore: LiveDelegationStore = {
+    map: new Map<string, LiveDelegationEntry>(),
+    version: liveVersion,
+    bump: () => setLiveVersion((v) => v + 1),
+  }
+  const unsubLive: (() => void)[] = []
+
+  try {
+    unsubLive.push(
+      api.event.on('message.part.updated', (event: any) => {
+        // SDK v2 shape: properties.part (v1 drift: properties.info.part).
+        const props = (event?.properties ?? {}) as { part?: unknown; info?: { part?: unknown } }
+        const part = (props.part ?? props.info?.part) as DelegationToolPart | undefined
+        if (part === undefined) return
+        if (reduceDelegationToolPart(liveStore.map, part)) liveStore.bump()
+      }),
+    )
+  } catch {
+    /* events API unavailable — md fallback only */
+  }
+  try {
+    unsubLive.push(
+      api.event.on('message.part.removed', (event: any) => {
+        // SDK v2 shape: properties.partID (v1 drift: properties.part.id).
+        const props = (event?.properties ?? {}) as { partID?: string; part?: { id?: string } }
+        const partID = props.partID ?? props.part?.id
+        if (partID !== undefined && removeDelegationEntry(liveStore.map, partID)) liveStore.bump()
+      }),
+    )
+  } catch {
+    /* events API unavailable — md fallback only */
+  }
+  api.lifecycle.onDispose(() => {
+    for (const unsub of unsubLive) {
+      try {
+        unsub()
+      } catch {
+        /* ignore */
+      }
+    }
+    liveStore.map.clear()
+  })
+
   api.slots.register({
     order: 900,
     slots: {
       sidebar_content(_ctx, props) {
-        return <View api={api} sessionID={props.session_id} version={version} />
+        return (
+          <View api={api} sessionID={props.session_id} version={version} liveStore={liveStore} />
+        )
       },
     },
   })

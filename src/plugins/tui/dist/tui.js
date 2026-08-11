@@ -691,7 +691,7 @@ const TITLE_SEPARATORS = "—–-";
 *  Linear, single-pass over `raw.split('\n')` with plain string operations
 *  (startsWith/indexOf/slice) — zero regex, so worst case is O(bytes) even
 *  on adversarial whitespace-heavy input (ReDoS regression, CodeQL 12x HIGH). */
-function parseDelegationMarkdown(raw, fileAlias) {
+function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 	let title;
 	let agent;
 	let description = "";
@@ -751,6 +751,7 @@ function parseDelegationMarkdown(raw, fileAlias) {
 	const finalizedAt = finalized !== void 0 ? Date.parse(finalized) : NaN;
 	return {
 		alias: title ?? (fileAlias !== void 0 ? stripMdSuffix(fileAlias) : "unknown"),
+		sessionID,
 		agent,
 		state: normalized,
 		startedAt,
@@ -787,18 +788,22 @@ async function readDelegationEntries(dir) {
 		for (const file of files) {
 			if (!file.isFile() || !file.name.endsWith(".md")) continue;
 			try {
-				const entry = parseDelegationMarkdown(await readFile(join(dir, session.name, file.name), "utf8"), file.name);
+				const entry = parseDelegationMarkdown(await readFile(join(dir, session.name, file.name), "utf8"), file.name, session.name);
 				if (entry !== null) entries.push(entry);
 			} catch {}
 		}
 	}
-	entries.sort((a, b) => {
-		const aRun = a.state === "running" ? 1 : 0;
-		const bRun = b.state === "running" ? 1 : 0;
-		if (aRun !== bRun) return bRun - aRun;
-		return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt);
-	});
+	entries.sort(compareDelegationEntries);
 	return entries;
+}
+/** Sort delegations: running first, then terminal by recency (updatedAt,
+*  falling back to startedAt, descending). Shared by the md reader and
+*  mergeDelegationSources. */
+function compareDelegationEntries(a, b) {
+	const aRun = a.state === "running" ? 1 : 0;
+	const bRun = b.state === "running" ? 1 : 0;
+	if (aRun !== bRun) return bRun - aRun;
+	return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt);
 }
 /** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
 *  second for running jobs. */
@@ -812,6 +817,225 @@ function fmtElapsed(ms) {
 	if (hours > 0) return `${hours}h ${minutes}m`;
 	if (minutes > 0) return `${minutes}m ${seconds}s`;
 	return `${seconds}s`;
+}
+/** Elapsed label for one entry: running → ticks `now - startedAt`, terminal
+*  → fixed `updatedAt - startedAt` (em dash when no finalized timestamp). */
+function delegationElapsed(entry, now) {
+	if (entry.state === "running") return fmtElapsed(now - entry.startedAt);
+	return entry.updatedAt !== null ? fmtElapsed(entry.updatedAt - entry.startedAt) : "—";
+}
+/** Duck-typed subset of a tool part (SDK v2 `ToolPart` / `ToolState`). */
+/** One live delegation tracked in-memory, keyed by the delegate callID. */
+/** Result of parsing one tool part into lifecycle-relevant fields. */
+/** Alias in the delegate output: "Delegated to apollo: [apo-1] (task …)". */
+const DELEGATE_ALIAS_PATTERN = /\[([a-z]{2,8}-\d+)\]/i;
+/** Child task id in the delegate output: "(task ses_child_9)". */
+const DELEGATE_TASKID_PATTERN = /\(task\s+([a-z0-9_]+)\)/i;
+/** Plain alias, as passed to pantheon_delegation_read input.id: "apo-1". */
+const READ_ALIAS_PATTERN = /^[a-z]{2,8}-\d+$/i;
+/** Extract the tool name + args from a `message.part.updated` part and
+*  reduce it to what the panel needs. Returns null for anything that is
+*  not a pantheon delegation tool part (or is missing its callID). */
+function parseDelegationToolPart(part, now = Date.now()) {
+	if (part.type !== "tool") return null;
+	if (part.tool !== "pantheon_delegate" && part.tool !== "pantheon_delegation_read") return null;
+	const callID = part.callID;
+	if (callID === void 0 || callID === "") return null;
+	const sessionID = part.sessionID ?? "";
+	const state = part.state ?? {};
+	const status = state.status ?? "pending";
+	if (status !== "pending" && status !== "running" && status !== "completed" && status !== "error") return null;
+	const input = state.input ?? {};
+	const startedAt = state.time?.start ?? now;
+	const endAt = state.time?.end ?? null;
+	if (part.tool === "pantheon_delegation_read") {
+		const target = typeof input.id === "string" ? input.id : null;
+		let alias = null;
+		let taskID = null;
+		if (target !== null) {
+			if (READ_ALIAS_PATTERN.test(target)) alias = target;
+			else if (target.startsWith("ses_")) taskID = target;
+		}
+		return {
+			callID,
+			partID: part.id ?? "",
+			sessionID,
+			tool: "pantheon_delegation_read",
+			agent: null,
+			description: "",
+			status,
+			alias,
+			taskID,
+			startedAt,
+			endAt
+		};
+	}
+	const agent = typeof input.agent === "string" ? input.agent : "agent";
+	const description = typeof input.description === "string" ? input.description : "";
+	let alias = null;
+	let taskID = null;
+	if (status === "completed") {
+		const output = state.output ?? "";
+		alias = DELEGATE_ALIAS_PATTERN.exec(output)?.[1] ?? null;
+		taskID = DELEGATE_TASKID_PATTERN.exec(output)?.[1] ?? null;
+	}
+	return {
+		callID,
+		partID: part.id ?? "",
+		sessionID,
+		tool: "pantheon_delegate",
+		agent,
+		description,
+		status,
+		alias,
+		taskID,
+		startedAt,
+		endAt
+	};
+}
+/** Find a live entry by alias or taskID (read parts resolve by id). */
+function findLiveByTarget(map, alias, taskID) {
+	if (alias === null && taskID === null) return void 0;
+	for (const entry of map.values()) {
+		if (alias !== null && entry.alias === alias) return entry;
+		if (taskID !== null && entry.taskID === taskID) return entry;
+	}
+}
+/** Apply one tool part to the live map. Returns true when the map changed.
+*  Pure w.r.t. I/O — only mutates `map`. */
+function reduceDelegationToolPart(map, part, now = Date.now()) {
+	const parsed = parseDelegationToolPart(part, now);
+	if (parsed === null) return false;
+	if (parsed.tool === "pantheon_delegation_read") {
+		const target = findLiveByTarget(map, parsed.alias, parsed.taskID);
+		if (target === void 0) return false;
+		let changed = false;
+		if (!target.read) {
+			target.read = true;
+			changed = true;
+		}
+		if (parsed.status === "completed" && target.state === "running") {
+			target.state = "completed";
+			target.updatedAt = parsed.endAt ?? now;
+			changed = true;
+		} else if (parsed.status === "error" && target.state === "running") {
+			target.state = "error";
+			target.updatedAt = parsed.endAt ?? now;
+			changed = true;
+		}
+		return changed;
+	}
+	const existing = map.get(parsed.callID);
+	if (parsed.status === "error") {
+		if (existing !== void 0 && existing.state === "error" && existing.updatedAt === parsed.endAt) return false;
+		map.set(parsed.callID, {
+			callID: parsed.callID,
+			partID: parsed.partID,
+			sessionID: parsed.sessionID,
+			tool: "pantheon_delegate",
+			agent: parsed.agent ?? "agent",
+			description: parsed.description,
+			alias: existing?.alias ?? null,
+			taskID: existing?.taskID ?? null,
+			state: "error",
+			startedAt: existing?.startedAt ?? parsed.startedAt,
+			updatedAt: parsed.endAt ?? now,
+			read: existing?.read ?? false
+		});
+		return true;
+	}
+	if (existing === void 0) {
+		map.set(parsed.callID, {
+			callID: parsed.callID,
+			partID: parsed.partID,
+			sessionID: parsed.sessionID,
+			tool: "pantheon_delegate",
+			agent: parsed.agent ?? "agent",
+			description: parsed.description,
+			alias: parsed.alias,
+			taskID: parsed.taskID,
+			state: "running",
+			startedAt: parsed.startedAt,
+			updatedAt: null,
+			read: false
+		});
+		return true;
+	}
+	let changed = false;
+	if (parsed.alias !== null && existing.alias !== parsed.alias) {
+		existing.alias = parsed.alias;
+		changed = true;
+	}
+	if (parsed.taskID !== null && existing.taskID !== parsed.taskID) {
+		existing.taskID = parsed.taskID;
+		changed = true;
+	}
+	if (parsed.agent !== null && existing.agent !== parsed.agent) {
+		existing.agent = parsed.agent;
+		changed = true;
+	}
+	if (parsed.description !== "" && existing.description !== parsed.description) {
+		existing.description = parsed.description;
+		changed = true;
+	}
+	if (existing.partID === "" && parsed.partID !== "") {
+		existing.partID = parsed.partID;
+		changed = true;
+	}
+	return changed;
+}
+/** Remove a live entry by part id (message.part.removed) or call id.
+*  Returns true when something was removed. */
+function removeDelegationEntry(map, partIDOrCallID) {
+	if (map.delete(partIDOrCallID)) return true;
+	for (const [key, entry] of map) if (entry.partID === partIDOrCallID) {
+		map.delete(key);
+		return true;
+	}
+	return false;
+}
+/** Convert a live entry into the shared display shape. Alias falls back to
+*  a `live-<callID>` prefix while the delegate tool has not completed yet. */
+function toDelegationEntry(live) {
+	return {
+		alias: live.alias ?? `live-${live.callID.slice(0, 8)}`,
+		sessionID: live.sessionID,
+		agent: live.agent,
+		state: live.state,
+		startedAt: live.startedAt,
+		updatedAt: live.updatedAt,
+		timedOut: false,
+		description: live.description
+	};
+}
+/** Combine the live channel with the md (historical) channel into one
+*  display list. Dedupes by (sessionID, alias) — aliases are per-parent-
+*  session, so the same alias in different sessions stays separate. A
+*  terminal md entry is authoritative over a live running entry for the
+*  same job (it carries Finalized/timedOut/cancelled from finalize). */
+function mergeDelegationSources(live, md) {
+	const keyOf = (sessionID, alias) => `${sessionID}\u0000${alias}`;
+	const byKey = /* @__PURE__ */ new Map();
+	for (const m of md) {
+		const key = keyOf(m.sessionID, m.alias);
+		const existing = byKey.get(key);
+		if (existing === void 0 || existing.state === "running" && m.state !== "running") byKey.set(key, m);
+	}
+	const aliasless = [];
+	for (const l of live) {
+		const e = toDelegationEntry(l);
+		if (l.alias === null) {
+			aliasless.push(e);
+			continue;
+		}
+		const key = keyOf(l.sessionID, l.alias);
+		const mdEntry = byKey.get(key);
+		if (mdEntry !== void 0 && mdEntry.state !== "running") continue;
+		byKey.set(key, e);
+	}
+	const all = [...aliasless, ...byKey.values()];
+	all.sort(compareDelegationEntries);
+	return all;
 }
 function SessionRow(props) {
 	const theme = () => props.api.theme.current;
@@ -848,8 +1072,8 @@ function DelegationRow(props) {
 		}
 	});
 	const label = createMemo(() => {
-		const { alias, agent, state, startedAt, updatedAt, timedOut, description } = props.job;
-		const line = `[${alias}] ${agent} \u2014 ${state === "running" ? "running" : `${state}${timedOut ? " (timed out)" : ""}`} \u2014 ${state === "running" ? fmtElapsed(props.now - startedAt) : updatedAt !== null ? fmtElapsed(updatedAt - startedAt) : "—"}${description !== "" ? ` \u2014 ${description}` : ""}`;
+		const { alias, agent, state, timedOut, description } = props.job;
+		const line = `[${alias}] ${agent} \u2014 ${state === "running" ? "RUNNING" : `${state.toUpperCase()}${timedOut ? " (timed out)" : ""}`} \u2014 ${delegationElapsed(props.job, props.now)}${description !== "" ? ` \u2014 ${description}` : ""}`;
 		return line.length > 200 ? `${line.slice(0, 197)}\u2026` : line;
 	});
 	return (() => {
@@ -859,6 +1083,9 @@ function DelegationRow(props) {
 		return _el$13;
 	})();
 }
+/** Plugin-level live delegation store shared with the event subscriptions
+*  in `tui()`: the map of live entries + a version signal bumped on every
+*  mutation so the View re-renders reactively. */
 function View(props) {
 	const [showSessions, setShowSessions] = createSignal(false);
 	const [showDelegations, setShowDelegations] = createSignal(false);
@@ -917,8 +1144,15 @@ function View(props) {
 			setDelegations(await readDelegationEntries(delegationsDir()));
 		} catch {}
 	};
+	const liveForSession = createMemo(() => {
+		props.liveStore.version();
+		const out = [];
+		for (const entry of props.liveStore.map.values()) if (entry.sessionID === props.sessionID) out.push(entry);
+		return out;
+	});
+	const mergedDelegations = createMemo(() => mergeDelegationSources(liveForSession(), delegations()));
 	const visibleDelegations = createMemo(() => {
-		const all = delegations();
+		const all = mergedDelegations();
 		const running = all.filter((d) => d.state === "running");
 		const terminal = all.filter((d) => d.state !== "running").slice(0, 8);
 		return [...running, ...terminal];
@@ -1058,7 +1292,7 @@ function View(props) {
 		setProp(_el$22, "onMouseDown", () => setShowDelegations((x) => !x));
 		setProp(_el$23, "attributes", 1);
 		insert(_el$23, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
-		insert(_el$24, () => ` (${String(delegations().length)})`);
+		insert(_el$24, () => ` (${String(visibleDelegations().length)})`);
 		insert(_el$16, createComponent(Show, {
 			get when() {
 				return showDelegations();
@@ -1122,6 +1356,34 @@ function View(props) {
 const tui = async (api, _options, _meta) => {
 	const version = await detectVersion(api);
 	setupUsageBar(api);
+	const [liveVersion, setLiveVersion] = createSignal(0);
+	const liveStore = {
+		map: /* @__PURE__ */ new Map(),
+		version: liveVersion,
+		bump: () => setLiveVersion((v) => v + 1)
+	};
+	const unsubLive = [];
+	try {
+		unsubLive.push(api.event.on("message.part.updated", (event) => {
+			const props = event?.properties ?? {};
+			const part = props.part ?? props.info?.part;
+			if (part === void 0) return;
+			if (reduceDelegationToolPart(liveStore.map, part)) liveStore.bump();
+		}));
+	} catch {}
+	try {
+		unsubLive.push(api.event.on("message.part.removed", (event) => {
+			const props = event?.properties ?? {};
+			const partID = props.partID ?? props.part?.id;
+			if (partID !== void 0 && removeDelegationEntry(liveStore.map, partID)) liveStore.bump();
+		}));
+	} catch {}
+	api.lifecycle.onDispose(() => {
+		for (const unsub of unsubLive) try {
+			unsub();
+		} catch {}
+		liveStore.map.clear();
+	});
 	api.slots.register({
 		order: 900,
 		slots: { sidebar_content(_ctx, props) {
@@ -1130,7 +1392,8 @@ const tui = async (api, _options, _meta) => {
 				get sessionID() {
 					return props.session_id;
 				},
-				version
+				version,
+				liveStore
 			});
 		} }
 	});
@@ -1140,6 +1403,6 @@ const plugin = {
 	tui
 };
 //#endregion
-export { plugin as default, parseDelegationMarkdown, readDelegationEntries };
+export { compareDelegationEntries, plugin as default, delegationElapsed, fmtElapsed, mergeDelegationSources, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, toDelegationEntry };
 
 //# sourceMappingURL=tui.js.map
