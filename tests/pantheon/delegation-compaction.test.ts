@@ -1,19 +1,30 @@
 /**
- * Tests for Delegation Compaction Context (Phase 4) — delegation-compaction.ts.
+ * Tests for Compaction Context (Phase 4 + release-134 Phase 2) —
+ * delegation-compaction.ts.
  *
- * buildCompactionContext(board, {sessionID, maxItems}) returns context blocks
- * for the `experimental.session.compacting` hook:
+ * buildCompactionContext(board, {sessionID, maxItems, goals, todos}) returns
+ * context blocks for the `experimental.session.compacting` hook:
+ *   - `<pantheon-context directive>` — preservation directive (prefix)
+ *   - `<mission_context>` — active goals (omitted when absent/disabled/empty)
+ *   - `<todo_context>` — pending todos (omitted when absent/disabled/empty)
  *   - running delegations (alias, agent, started, truncated prompt)
  *   - unread terminal delegations (≤ max_compaction_items, newest first)
  *   - reconciled jobs excluded entirely
- *   - empty state → empty array
+ *   - totally empty state → empty array (no orphan directive)
  *
  * Run with: npx tsx tests/pantheon/delegation-compaction.test.ts
  */
 import { strict as assert } from 'node:assert'
 
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
-import { buildCompactionContext } from '../../src/pantheon/delegation-compaction.ts'
+import {
+  PANTHEON_COMPACTION_DIRECTIVE,
+  buildCompactionContext,
+  type CompactionGoalSource,
+  type CompactionTodoSource,
+} from '../../src/pantheon/delegation-compaction.ts'
+import type { Goal } from '../../src/pantheon/goal-store.ts'
+import type { TodoLike } from '../../src/pantheon/todo-enforcer.ts'
 
 // ─── Harness ───────────────────────────────────────────────────────────
 
@@ -79,13 +90,44 @@ async function addTerminal(
 
 const LONG_PROMPT = `Probe the entire codebase for async patterns across every module. ${'x'.repeat(200)}`
 
+// ─── Release-134 Phase 2 fixtures ──────────────────────────────────────
+
+function goalSource(goals: Goal[], enabled = true): CompactionGoalSource {
+  return { enabled, list: async () => goals }
+}
+
+function todoSource(todos: TodoLike[], enabled = true): CompactionTodoSource {
+  return { enabled, list: async () => todos }
+}
+
+const ACTIVE_GOAL: Goal = {
+  id: ROOT,
+  sessionID: ROOT,
+  objective: 'ship compaction v2',
+  status: 'in_progress',
+  createdAt: 1_700_000_000_000,
+  updatedAt: 1_700_000_000_001,
+  continuationCount: 2,
+}
+
+const DONE_GOAL: Goal = { ...ACTIVE_GOAL, status: 'done' }
+
+const PENDING_TODO: TodoLike = {
+  id: 'todo_1',
+  content: 'wire the directive',
+  status: 'in_progress',
+  priority: 'high',
+}
+
+const COMPLETED_TODO: TodoLike = { id: 'todo_2', content: 'finished work', status: 'completed' }
+
 // ═══════════════════════════════════════════════════════════════════════
 
 async function main() {
   await testAsync('empty state → empty context array', async () => {
     const board = new BackgroundJobBoard()
-    assert.deepEqual(buildCompactionContext(board, { sessionID: ROOT }), [])
-    assert.deepEqual(buildCompactionContext(board, { sessionID: ROOT, maxItems: 5 }), [])
+    assert.deepEqual(await buildCompactionContext(board, { sessionID: ROOT }), [])
+    assert.deepEqual(await buildCompactionContext(board, { sessionID: ROOT, maxItems: 5 }), [])
   })
 
   await testAsync(
@@ -99,10 +141,10 @@ async function main() {
         at: 1_700_000_000_000,
       })
 
-      const blocks = buildCompactionContext(board, { sessionID: ROOT })
-      assert.equal(blocks.length, 1, 'only the running block is produced')
+      const blocks = await buildCompactionContext(board, { sessionID: ROOT })
+      assert.equal(blocks.length, 2, 'directive + running block')
 
-      const block = blocks[0]!
+      const block = blocks[1]!
       assert.ok(block.startsWith('Background Delegations (running):'))
       assert.ok(block.includes('[apo-1]'), 'block must include the job alias')
       assert.ok(block.includes('apollo'), 'block must include the agent name')
@@ -126,9 +168,9 @@ async function main() {
     await addTerminal(board, { taskID: 'ses_t2', description: 'new task', at: 3_000 })
     await addTerminal(board, { taskID: 'ses_t3', description: 'middle task', at: 2_000 })
 
-    const blocks = buildCompactionContext(board, { sessionID: ROOT })
-    assert.equal(blocks.length, 1)
-    const block = blocks[0]!
+    const blocks = await buildCompactionContext(board, { sessionID: ROOT })
+    assert.equal(blocks.length, 2, 'directive + unread terminal block')
+    const block = blocks[1]!
     assert.ok(block.startsWith('Background Delegations (finished, unread):'))
     assert.ok(block.includes('[unread]'), 'terminal-unreconciled jobs must carry [unread]')
 
@@ -147,10 +189,10 @@ async function main() {
     await addRunning(board, { taskID: 'ses_r1', description: 'in flight', at: 5_000 })
     await addTerminal(board, { taskID: 'ses_t1', description: 'done', at: 4_000 })
 
-    const blocks = buildCompactionContext(board, { sessionID: ROOT })
-    assert.equal(blocks.length, 2)
-    assert.ok(blocks[0]!.startsWith('Background Delegations (running):'))
-    assert.ok(blocks[1]!.startsWith('Background Delegations (finished, unread):'))
+    const blocks = await buildCompactionContext(board, { sessionID: ROOT })
+    assert.equal(blocks.length, 3, 'directive + running + unread blocks')
+    assert.ok(blocks[1]!.startsWith('Background Delegations (running):'))
+    assert.ok(blocks[2]!.startsWith('Background Delegations (finished, unread):'))
   })
 
   await testAsync('reconciled jobs are excluded from both blocks', async () => {
@@ -163,9 +205,9 @@ async function main() {
       reconciled: true,
     })
 
-    const blocks = buildCompactionContext(board, { sessionID: ROOT })
-    assert.equal(blocks.length, 1)
-    const block = blocks[0]!
+    const blocks = await buildCompactionContext(board, { sessionID: ROOT })
+    assert.equal(blocks.length, 2, 'directive + running block only')
+    const block = blocks[1]!
     assert.ok(block.includes('in flight'), 'running job must still appear')
     assert.ok(
       !block.includes('read already'),
@@ -187,9 +229,9 @@ async function main() {
       // Running jobs are NOT capped — they are active work.
       await addRunning(board, { taskID: 'ses_r1', description: 'in flight', at: 9_000 })
 
-      const blocks = buildCompactionContext(board, { sessionID: ROOT, maxItems: 2 })
-      assert.equal(blocks.length, 2, 'running + capped unread blocks both present')
-      const terminalBlock = blocks[1]!
+      const blocks = await buildCompactionContext(board, { sessionID: ROOT, maxItems: 2 })
+      assert.equal(blocks.length, 3, 'directive + running + capped unread blocks')
+      const terminalBlock = blocks[2]!
       assert.ok(terminalBlock.includes('[apo-5]'), 'newest unread must be kept')
       assert.ok(terminalBlock.includes('[apo-4]'), 'second-newest unread must be kept')
       assert.ok(!terminalBlock.includes('[apo-3]'), 'older unread must be capped away')
@@ -207,10 +249,10 @@ async function main() {
       at: 2_000,
     })
 
-    const blocks = buildCompactionContext(board, { sessionID: ROOT })
-    assert.equal(blocks.length, 1)
-    assert.ok(blocks[0]!.includes('my job'))
-    assert.ok(!blocks[0]!.includes('their job'), 'other session jobs must be excluded')
+    const blocks = await buildCompactionContext(board, { sessionID: ROOT })
+    assert.equal(blocks.length, 2)
+    assert.ok(blocks[1]!.includes('my job'))
+    assert.ok(!blocks[1]!.includes('their job'), 'other session jobs must be excluded')
   })
 
   await testAsync('error/cancelled terminal jobs render with their status label', async () => {
@@ -230,10 +272,166 @@ async function main() {
       at: 2_000,
     })
 
-    const blocks = buildCompactionContext(board, { sessionID: ROOT })
-    const block = blocks[0]!
+    const blocks = await buildCompactionContext(board, { sessionID: ROOT })
+    const block = blocks[1]!
     assert.ok(block.includes('ERR'), 'error job must carry ERR label')
     assert.ok(block.includes('CAN'), 'cancelled job must carry CAN label')
+  })
+
+  // ═══ release-134 Phase 2: directive + mission/todo sections ═══════════
+
+  await testAsync('preservation directive precedes the delegation blocks', async () => {
+    const board = new BackgroundJobBoard()
+    await addRunning(board, { taskID: 'ses_r1', description: 'in flight', at: 1_000 })
+
+    const blocks = await buildCompactionContext(board, { sessionID: ROOT })
+    assert.equal(blocks.length, 2, 'directive + delegation block')
+    assert.ok(
+      blocks[0]!.startsWith('<pantheon-context directive>'),
+      'directive must be the first section',
+    )
+    assert.ok(blocks[0]!.includes(PANTHEON_COMPACTION_DIRECTIVE), 'directive text must be present')
+    assert.ok(blocks[1]!.startsWith('Background Delegations (running):'), 'delegation unchanged')
+  })
+
+  await testAsync('mission_context emitted when the goal source has active goals', async () => {
+    const board = new BackgroundJobBoard()
+    const blocks = await buildCompactionContext(board, {
+      sessionID: ROOT,
+      goals: goalSource([ACTIVE_GOAL]),
+    })
+
+    assert.equal(blocks.length, 2, 'directive + mission block')
+    assert.ok(blocks[0]!.startsWith('<pantheon-context directive>'))
+    const block = blocks[1]!
+    assert.ok(block.startsWith('<mission_context>'), 'mission section must be tagged')
+    assert.ok(block.includes(ACTIVE_GOAL.id), 'mission must include the goal id')
+    assert.ok(block.includes(ACTIVE_GOAL.objective), 'mission must include the goal objective')
+    assert.ok(block.includes(ACTIVE_GOAL.status), 'mission must include the goal status')
+  })
+
+  await testAsync(
+    'mission_context omitted when the goal source is empty, disabled, or all-done',
+    async () => {
+      const board = new BackgroundJobBoard()
+      assert.deepEqual(
+        await buildCompactionContext(board, { sessionID: ROOT, goals: goalSource([]) }),
+        [],
+        'no goals → no mission section',
+      )
+      assert.deepEqual(
+        await buildCompactionContext(
+          board,
+          { sessionID: ROOT, goals: goalSource([ACTIVE_GOAL], false) },
+        ),
+        [],
+        'goal loop disabled → no mission section',
+      )
+      assert.deepEqual(
+        await buildCompactionContext(board, { sessionID: ROOT, goals: goalSource([DONE_GOAL]) }),
+        [],
+        'only done goals → no mission section',
+      )
+    },
+  )
+
+  await testAsync('todo_context emitted when the todo source has pending todos', async () => {
+    const board = new BackgroundJobBoard()
+    const blocks = await buildCompactionContext(board, {
+      sessionID: ROOT,
+      todos: todoSource([PENDING_TODO, COMPLETED_TODO]),
+    })
+
+    assert.equal(blocks.length, 2, 'directive + todo block')
+    assert.ok(blocks[0]!.startsWith('<pantheon-context directive>'))
+    const block = blocks[1]!
+    assert.ok(block.startsWith('<todo_context>'), 'todo section must be tagged')
+    assert.ok(block.includes(PENDING_TODO.content ?? ''), 'todo must include the description')
+    assert.ok(block.includes(PENDING_TODO.status), 'todo must include the status')
+    assert.ok(!block.includes('finished work'), 'completed todos must be filtered out')
+  })
+
+  await testAsync('todo_context omitted when the todo source is empty or disabled', async () => {
+    const board = new BackgroundJobBoard()
+    assert.deepEqual(
+      await buildCompactionContext(board, { sessionID: ROOT, todos: todoSource([]) }),
+      [],
+      'no todos → no todo section',
+    )
+    assert.deepEqual(
+      await buildCompactionContext(board, { sessionID: ROOT, todos: todoSource([PENDING_TODO], false) }),
+      [],
+      'todo enforcer disabled → no todo section',
+    )
+    assert.deepEqual(
+      await buildCompactionContext(board, { sessionID: ROOT, todos: todoSource([COMPLETED_TODO]) }),
+      [],
+      'only completed todos → no todo section',
+    )
+  })
+
+  await testAsync('full stack: directive → mission → todo → delegation', async () => {
+    const board = new BackgroundJobBoard()
+    await addRunning(board, { taskID: 'ses_r1', description: 'in flight', at: 1_000 })
+
+    const blocks = await buildCompactionContext(board, {
+      sessionID: ROOT,
+      goals: goalSource([ACTIVE_GOAL]),
+      todos: todoSource([PENDING_TODO]),
+    })
+    assert.equal(blocks.length, 4, 'directive + mission + todo + delegation')
+    assert.ok(blocks[0]!.startsWith('<pantheon-context directive>'))
+    assert.ok(blocks[1]!.startsWith('<mission_context>'))
+    assert.ok(blocks[2]!.startsWith('<todo_context>'))
+    assert.ok(blocks[3]!.startsWith('Background Delegations (running):'))
+  })
+
+  await testAsync(
+    'totally empty (no goals/todos/delegations) → empty array, no orphan directive',
+    async () => {
+      const board = new BackgroundJobBoard()
+      const blocks = await buildCompactionContext(board, {
+        sessionID: ROOT,
+        goals: goalSource([]),
+        todos: todoSource([]),
+      })
+      assert.deepEqual(blocks, [], 'empty state must not push a lone directive')
+    },
+  )
+
+  await testAsync('failing goal/todo sources are skipped without breaking the rest', async () => {
+    const board = new BackgroundJobBoard()
+    await addRunning(board, { taskID: 'ses_r1', description: 'in flight', at: 1_000 })
+
+    const blocks = await buildCompactionContext(board, {
+      sessionID: ROOT,
+      goals: {
+        enabled: true,
+        list: async () => {
+          throw new Error('store down')
+        },
+      },
+      todos: {
+        enabled: true,
+        list: async () => {
+          throw new Error('sdk down')
+        },
+      },
+    })
+    assert.equal(blocks.length, 2, 'directive + delegation survive source failures')
+    assert.ok(blocks[1]!.includes('in flight'), 'delegation block must still be produced')
+  })
+
+  await testAsync('without sessionID: mission/todo omitted, delegation kept', async () => {
+    const board = new BackgroundJobBoard()
+    await addRunning(board, { taskID: 'ses_r1', description: 'in flight', at: 1_000 })
+
+    const blocks = await buildCompactionContext(board, {
+      goals: goalSource([ACTIVE_GOAL]),
+      todos: todoSource([PENDING_TODO]),
+    })
+    assert.equal(blocks.length, 2, 'directive + delegation only')
+    assert.ok(!blocks[1]!.includes('ship compaction'), 'goal/todo sections need a sessionID')
   })
 
   // ═══════════════════════════════════════════════════════════════════════

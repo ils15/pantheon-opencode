@@ -572,6 +572,44 @@ async function main() {
     },
   )
 
+  await testAsync(
+    'listPendingTodos → pending only; [] when disabled or on API failure (fail-open)',
+    async () => {
+      const client = new FakeClient()
+      client.todos = [...incompleteTodos(2), ...completedTodos()]
+      const enforcer = new TodoEnforcer({
+        client: client.asClient(),
+        board: new BackgroundJobBoard(),
+        options: { enabled: true },
+      })
+
+      const pending = await enforcer.listPendingTodos(ROOT)
+      assert.equal(pending.length, 2, 'completed/cancelled todos must be filtered out')
+      assert.ok(
+        pending.every((t) => t.status !== 'completed' && t.status !== 'cancelled'),
+        'only pending/in_progress todos remain',
+      )
+
+      const disabled = new TodoEnforcer({
+        client: new FakeClient().asClient(),
+        board: new BackgroundJobBoard(),
+        options: { enabled: false },
+      })
+      assert.deepEqual(await disabled.listPendingTodos(ROOT), [], 'disabled → []')
+
+      const broken = new FakeClient()
+      broken.todoImpl = async () => {
+        throw new Error('api down')
+      }
+      const failOpen = new TodoEnforcer({
+        client: broken.asClient(),
+        board: new BackgroundJobBoard(),
+        options: { enabled: true },
+      })
+      assert.deepEqual(await failOpen.listPendingTodos(ROOT), [], 'API failure → [] (fail-open)')
+    },
+  )
+
   // ═══════════════════════════════════════════════════════════════════════
 
   const passed = results.filter((r) => r.passed).length
