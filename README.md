@@ -219,6 +219,28 @@ terminal delegations (capped at `background_delegation.max_compaction_items`,
 default 10) are carried into the compacted context so the parent doesn't lose
 track of in-flight work.
 
+**Model API-key validation (1.3.4):** `pantheon_delegate` gates the resolved
+child model's provider before dispatching (single source of truth:
+`routing.yml` preset definitions' `apiKeyEnv` — the same check `applyPreset`
+enforces at startup). If an **auto-resolved** model (`options.agentModels` or
+the active preset) points to a provider that requires an API key
+(`apiKeyEnv`) and the env var is unset, the delegate falls back to
+`opencode/deepseek-v4-flash-free` (validated the same way). If the fallback is
+also unusable, the tool returns a clear error **text** (never throws) naming
+the missing env var — and registers **no job** on the board. An **explicit**
+`model` passed by the caller is always respected (warned, not overridden).
+Setting `PANTHEON_MODEL_PRESET` to a preset whose providers have keys, or
+filling the required `PANTHEON_*_API_KEY` env var for the preset's provider,
+resolves the fallback path. If nothing resolves at all (no model, no preset),
+the child keeps using opencode's default model (warned).
+
+**Delegation log hygiene (1.3.4):** `delegations.log` now records the real
+`task_id` (omitted when empty, never `""`) and a **numeric** `duration_ms`
+(null when unset) so downstream aggregation works. The idle-flush log entry is
+deduplicated: the flush logs a summary (count + aggregated line count) and the
+reminder content is logged exactly once, at `chat.message` delivery — no more
+duplicate lines for the same notification.
+
 **Env vars & config:**
 
 - `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` — required (see launch block above).
