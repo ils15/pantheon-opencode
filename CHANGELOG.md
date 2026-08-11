@@ -15,6 +15,23 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 
+## [v1.3.4] - 2026-08-11
+
+### Added
+- **Compaction summary V2** (preservation directive + mission/todo/delegation sections): `buildCompactionContext` is now async and accepts goal/todo sources — `PANTHEON_COMPACTION_DIRECTIVE` prefix section (emitted before any other section, skipped on totally-empty state), `<mission_context>` with active goals (id/objective/status), `<todo_context>` with pending (not completed/cancelled) todos; delegation blocks byte-for-byte unchanged; failing/disabled sources are skipped fail-open (logged to hooks.log)
+- **Post-compaction todo preservation**: TodoPreserver captures the session's todo list on `experimental.session.compacting`, activates the snapshot on `session.compacted`, and rewrites the first post-compaction `todowrite` with the exact pre-compaction list — additive + fail-open (every step degrades to a logged warn, never throws in a hook)
+- **Post-compaction state re-assertion**: re-asserts session state after compaction so the rebuilt context reflects the live board
+- **agentModels wiring from routing.yml**: delegation toolset's `options.agentModels` is now wired from the routing.yml default (first) preset — a static per-agent model mapping built once at module load, so branch (b) of `resolveChildModel` (previously dead) gives delegated children a sane model even without an active preset; fail-open `{}` on missing/corrupt routing.yml
+- **Preemptive compaction threshold logic** (dormant/experimental): threshold-based preemptive compaction — not active by default
+- **File-first logging**: `createPantheonLogger` — console echo opt-in via `PANTHEON_HOOKS_LOG=1`, everything routed to `.pantheon/logs/hooks.log` (silences TUI console pollution)
+- **README docs**: 1.3.4 compaction + delegation features documented
+
+### Fixed
+- **Delegate dispatch with missing provider API key** (P1): `resolveChildModel` never checked whether the resolved model's provider had a configured API key — a child dispatched to a keyless provider (e.g. gpt-5.6-luna/opencode-go) died instantly with `AI_LoadAPIKeyError`. Auto-resolved models (agentModels/preset) whose provider key is missing now fall back to `opencode/deepseek-v4-flash-free`; explicit caller models are respected (warned); when nothing is usable the tool returns a clear error TEXT and registers NO job on the board
+- **delegations.log typing**: `task_id` was always `""` (now omitted when empty) and `duration_ms` was logged as a STRING (now parsed to a number, null when unset), breaking downstream aggregation
+- **Idle-flush log duplication**: `flushIdleReminders` echoed the reminder body joined with `" | "` while chat.message delivery echoed the same body with `"\n"` — the identical line appeared twice; idle-flush is now an audit summary (count + aggregated line count), content logged exactly once at chat-reminder delivery
+- **TUI console log pollution**: console output in the plugin/hooks rendered directly into the opencode TUI; now env-gated, log-file only by default
+
 ## [v1.3.3] - 2026-08-11
 
 ### Added
