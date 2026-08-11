@@ -356,7 +356,15 @@ async function main() {
         const gate = new Promise<void>((resolve) => {
           release = resolve
         })
+        let entered: () => void = () => {}
+        const enteredPromise = new Promise<void>((resolve) => {
+          entered = resolve
+        })
         client.promptAsyncImpl = async () => {
+          // Deterministic in-flight signal: fires when the injection reaches
+          // promptAsync (the fake records the call BEFORE invoking this impl),
+          // so the guard check never races a real file read vs setTimeout(0).
+          entered()
           await gate
           return {}
         }
@@ -372,7 +380,7 @@ async function main() {
 
         const first = loop.onIdle(ROOT)
         const second = loop.onIdle(ROOT)
-        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+        await enteredPromise
         assert.equal(client.promptAsyncCalls.length, 1, 'only the first idle injects')
 
         release()
