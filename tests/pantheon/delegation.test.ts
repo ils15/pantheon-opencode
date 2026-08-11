@@ -215,7 +215,10 @@ async function main() {
             // No agentModels — the delegate must resolve the active preset
             // itself (default routing.yml) and use the preset's apollo model.
             // opencode provider requires PANTHEON_OPENCODE_API_KEY (routing.yml).
-            presetEnv: { PANTHEON_MODEL_PRESET: 'go-deepseek', PANTHEON_OPENCODE_API_KEY: 'sk-test' },
+            presetEnv: {
+              PANTHEON_MODEL_PRESET: 'go-deepseek',
+              PANTHEON_OPENCODE_API_KEY: 'sk-test',
+            },
             logger: { warn: (msg) => warnings.push(msg) },
           },
         })
@@ -288,7 +291,10 @@ async function main() {
             // go-openai: apollo → openai/gpt-5.6-luna-fast. PANTHEON_OPENAI_API_KEY
             // is UNSET → fallback must kick in. The fallback provider (opencode)
             // IS configured → usable.
-            presetEnv: { PANTHEON_MODEL_PRESET: 'go-openai', PANTHEON_OPENCODE_API_KEY: 'sk-fallback' },
+            presetEnv: {
+              PANTHEON_MODEL_PRESET: 'go-openai',
+              PANTHEON_OPENCODE_API_KEY: 'sk-fallback',
+            },
             logger: { warn: (msg) => warnings.push(msg) },
           },
         })
@@ -340,10 +346,7 @@ async function main() {
           makeCtx(),
         )
 
-        assert.ok(
-          /no usable model/i.test(result),
-          `expected clear error text, got: ${result}`,
-        )
+        assert.ok(/no usable model/i.test(result), `expected clear error text, got: ${result}`)
         assert.match(result, /PANTHEON_OPENAI_API_KEY/, 'error must name the missing env var')
         assert.equal(client.created.length, 0, 'no session may be created without a usable model')
         assert.equal(board.list().length, 0, 'no job may be registered when creation fails')

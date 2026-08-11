@@ -153,7 +153,9 @@ test('idle-flush logs a SUMMARY, not the duplicated joined content (chat-reminde
     await seedReminder(hooks)
 
     // session.idle fires → flushIdleReminders logs + re-queues ONE aggregate.
-    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 'parent-ses-3' } } })
+    await hooks.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-ses-3' } },
+    })
     const idleEntry = appLogs.find((l) => l.extra?.script === 'idle-flush')
     assert.ok(idleEntry, 'idle-flush entry expected in the app log')
     assert.match(idleEntry.message, /flushed/i)
