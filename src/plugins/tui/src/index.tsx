@@ -11,7 +11,7 @@
  *
  * Slots:
  *   - sidebar_content        (order 900) — Pantheon sidebar (header/version/
- *     branch, Sessions, Commands, Agents, Config, Memory).
+ *     branch, Sessions, real-time Delegations panel).
  *   - app_bottom             (order 60)  — AI subscription usage gauges
  *     (Anthropic/OpenAI quotas, OpenCode Go/Zen dollar limits + provider
  *     status incidents).
@@ -46,7 +46,8 @@
  */
 
 import { Buffer } from 'node:buffer'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -55,46 +56,11 @@ import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show
 
 /* ─── Constants ─────────────────────────────────────────── */
 
-const COMMANDS = [
-  { name: '/pantheon', desc: 'Council synthesis' },
-  { name: '/pantheon-status', desc: 'System status' },
-  { name: '/pantheon-audit', desc: 'Full audit' },
-  { name: '/pantheon-bg', desc: 'List background tasks' },
-  { name: '/pantheon-cancel', desc: 'Cancel task' },
-  { name: '/pantheon-deepwork', desc: 'Deep work mode' },
-  { name: '/pantheon-focus', desc: 'Focus on scope' },
-  { name: '/pantheon-remember', desc: 'Memory store/recall' },
-  { name: '/pantheon-search', desc: 'Memory search' },
-  { name: '/pantheon-consolidate', desc: 'Merge memories' },
-  { name: '/pantheon-forget', desc: 'Compress memories' },
-] as const
-
 /** How often the sidebar re-reads .pantheon/active-preset.json so `set-tier`
  *  changes made while opencode is open show up within ~30s. */
 const PRESET_REFRESH_MS = 30_000
 
-const AGENTS = [
-  { name: 'zeus', tier: 'default' as const, role: 'Orchestrator' },
-  { name: 'athena', tier: 'premium' as const, role: 'Strategic planner' },
-  { name: 'apollo', tier: 'fast' as const, role: 'Codebase discovery' },
-  { name: 'hermes', tier: 'default' as const, role: 'Backend' },
-  { name: 'aphrodite', tier: 'default' as const, role: 'Frontend' },
-  { name: 'demeter', tier: 'default' as const, role: 'Database' },
-  { name: 'themis', tier: 'premium' as const, role: 'Quality & security' },
-  { name: 'prometheus', tier: 'default' as const, role: 'Infrastructure' },
-  { name: 'hephaestus', tier: 'default' as const, role: 'AI pipelines' },
-  { name: 'nyx', tier: 'fast' as const, role: 'Observability' },
-  { name: 'gaia', tier: 'fast' as const, role: 'Remote sensing' },
-  { name: 'iris', tier: 'fast' as const, role: 'GitHub operations' },
-  { name: 'mnemosyne', tier: 'fast' as const, role: 'Memory bank' },
-  { name: 'talos', tier: 'fast' as const, role: 'Hotfixes' },
-] as const
-
 /* ─── Helpers ───────────────────────────────────────────── */
-
-function fmtInt(n: number): string {
-  return Intl.NumberFormat('en-US').format(Math.max(0, Math.round(n)))
-}
 
 /* ─── Active Preset Detection ──────────────────────────────
  * Inline replica of src/pantheon/presets.mjs resolveActivePreset() — the TUI
@@ -873,6 +839,129 @@ async function setupUsageBar(api: TuiPluginApi) {
   })
 }
 
+/* ─── Delegations (real-time panel) ────────────────────────
+ * Channel: the markdown reports the job board persists under
+ * `.pantheon/delegations/<sessionID>/<alias>.md` (written by
+ * src/pantheon/delegation-finalize.ts `renderDelegationMarkdown`). The TUI
+ * never touches the in-memory board — it only reads these files, so the
+ * panel keeps working across restarts and shows jobs that are born/die
+ * while opencode is open.
+ *
+ * Header fields parsed (markdown bullet list): Agent, Description, State,
+ * Timed out, Started, Finalized. `State: running` entries (no Finalized
+ * yet) render with a live ticking elapsed counter; terminal entries show
+ * their total duration. Everything is fail-open: a missing directory
+ * yields [], and any unreadable/malformed file is skipped — never crash. */
+
+export type DelegationEntry = {
+  /** Job alias, e.g. "apo-1" (from the H1 title, falling back to filename). */
+  alias: string
+  /** Agent name, e.g. "apollo". */
+  agent: string
+  state: 'running' | 'completed' | 'error' | 'cancelled'
+  /** Epoch ms of the `Started` header. */
+  startedAt: number
+  /** Epoch ms of the `Finalized` header — null while still running. */
+  updatedAt: number | null
+  timedOut: boolean
+  description: string
+}
+
+/** Parse one delegation report md header into a structured entry.
+ *  Returns null (skip) when the file is not a recognizable report:
+ *  missing agent/state/startedAt, an unknown state, or an unparsable
+ *  Started timestamp. The alias falls back to the file name when the H1
+ *  title is missing. Pure — no I/O. */
+export function parseDelegationMarkdown(raw: string, fileAlias?: string): DelegationEntry | null {
+  const title = raw.match(/^#\s+Delegation Report\s*[—\-–]\s*(.+)$/m)?.[1]?.trim()
+  const agent = raw.match(/^-\s+\*\*Agent\*\*:\s*(.+)$/m)?.[1]?.trim()
+  const description = raw.match(/^-\s+\*\*Description\*\*:\s*(.+)$/m)?.[1]?.trim() ?? ''
+  const state = raw.match(/^-\s+\*\*State\*\*:\s*(.+)$/m)?.[1]?.trim()
+  const timedOut = raw.match(/^-\s+\*\*Timed out\*\*:\s*(true|false)/m)?.[1] === 'true'
+  const started = raw.match(/^-\s+\*\*Started\*\*:\s*(.+)$/m)?.[1]?.trim()
+  const finalized = raw.match(/^-\s+\*\*Finalized\*\*:\s*(.+)$/m)?.[1]?.trim()
+
+  const startedAt = started !== undefined ? Date.parse(started) : NaN
+  if (agent === undefined || state === undefined || Number.isNaN(startedAt)) return null
+  const normalized = state.toLowerCase()
+  if (
+    normalized !== 'running' &&
+    normalized !== 'completed' &&
+    normalized !== 'error' &&
+    normalized !== 'cancelled'
+  ) {
+    return null
+  }
+  const finalizedAt = finalized !== undefined ? Date.parse(finalized) : NaN
+
+  return {
+    alias: title ?? (fileAlias !== undefined ? fileAlias.replace(/\.md$/i, '') : 'unknown'),
+    agent,
+    state: normalized,
+    startedAt,
+    updatedAt: Number.isNaN(finalizedAt) ? null : finalizedAt,
+    timedOut,
+    description,
+  }
+}
+
+/** Read every delegation report under `<dir>/<sessionID>/<alias>.md`.
+ *  Fail-open: a missing/unreadable directory yields [], and each unreadable
+ *  or malformed file is skipped individually. Entries are sorted running
+ *  first, then terminal by `updatedAt` (most recent first) so the panel can
+ *  render them in order directly. */
+export async function readDelegationEntries(dir: string): Promise<DelegationEntry[]> {
+  let sessionDirs: Dirent[]
+  try {
+    sessionDirs = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return [] // directory absent/unreadable — nothing to show
+  }
+
+  const entries: DelegationEntry[] = []
+  for (const session of sessionDirs) {
+    if (!session.isDirectory()) continue
+    let files: Dirent[]
+    try {
+      files = await readdir(join(dir, session.name), { withFileTypes: true })
+    } catch {
+      continue // unreadable session dir — skip
+    }
+    for (const file of files) {
+      if (!file.isFile() || !file.name.endsWith('.md')) continue
+      try {
+        const raw = await readFile(join(dir, session.name, file.name), 'utf8')
+        const entry = parseDelegationMarkdown(raw, file.name)
+        if (entry !== null) entries.push(entry)
+      } catch {
+        // unreadable/malformed file — skip, never crash
+      }
+    }
+  }
+
+  entries.sort((a, b) => {
+    const aRun = a.state === 'running' ? 1 : 0
+    const bRun = b.state === 'running' ? 1 : 0
+    if (aRun !== bRun) return bRun - aRun
+    return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt)
+  })
+  return entries
+}
+
+/** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
+ *  second for running jobs. */
+function fmtElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const days = Math.floor(total / 86_400)
+  const hours = Math.floor((total % 86_400) / 3_600)
+  const minutes = Math.floor((total % 3_600) / 60)
+  const seconds = total % 60
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
 /* ─── Session Row (single session with live status indicator) ─ */
 
 function SessionRow(props: { api: TuiPluginApi; session: any }) {
@@ -906,13 +995,48 @@ function SessionRow(props: { api: TuiPluginApi; session: any }) {
   )
 }
 
+/* ─── Delegation Row (single job from the md report channel) ─ */
+
+function DelegationRow(props: { api: TuiPluginApi; job: DelegationEntry; now: number }) {
+  const theme = () => props.api.theme.current
+
+  const color = createMemo(() => {
+    const t = theme()
+    switch (props.job.state) {
+      case 'running':
+        return t.warning
+      case 'completed':
+        return t.success
+      case 'error':
+        return t.error
+      default:
+        return t.textMuted // cancelled
+    }
+  })
+
+  const label = createMemo(() => {
+    const { alias, agent, state, startedAt, updatedAt, timedOut, description } = props.job
+    const stateLabel = state === 'running' ? 'running' : `${state}${timedOut ? ' (timed out)' : ''}`
+    const elapsed =
+      state === 'running'
+        ? fmtElapsed(props.now - startedAt)
+        : updatedAt !== null
+          ? fmtElapsed(updatedAt - startedAt)
+          : '\u2014'
+    const desc = description !== '' ? ` \u2014 ${description}` : ''
+    const line = `[${alias}] ${agent} \u2014 ${stateLabel} \u2014 ${elapsed}${desc}`
+    // Hard cap: keep the line within ~200 chars (truncate the description).
+    return line.length > 200 ? `${line.slice(0, 197)}\u2026` : line
+  })
+
+  return <text fg={color()}>{label()}</text>
+}
+
 /* ─── Main Sidebar View ──────────────────────────────────── */
 
 function View(props: { api: TuiPluginApi; sessionID: string; version: string | null }) {
-  const [showCommands, setShowCommands] = createSignal(false)
-  const [showAgents, setShowAgents] = createSignal(false)
-  const [showConfig, setShowConfig] = createSignal(false)
   const [showSessions, setShowSessions] = createSignal(false)
+  const [showDelegations, setShowDelegations] = createSignal(false)
 
   const theme = () => props.api.theme.current
 
@@ -980,10 +1104,33 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
       .slice(0, 8)
   })
 
-  // ── Memory: starts at null (= "N/A"), tracks via events ──
-  const [memoryCount, setMemoryCount] = createSignal<number | null>(null)
+  // ── Delegations: md reports persisted by the job board ──
+  // `.pantheon/delegations/<sessionID>/<alias>.md` under the project root.
+  const delegationsDir = createMemo(() => {
+    const state = (props.api.state as any).path
+    const root = state?.project ?? state?.worktree ?? ''
+    return join(root !== '' ? root : process.cwd(), '.pantheon', 'delegations')
+  })
+  const [delegations, setDelegations] = createSignal<DelegationEntry[]>([])
+  // 1s ticker drives the running-jobs elapsed counter (see onMount).
+  const [now, setNow] = createSignal(Date.now())
+  const refreshDelegations = async () => {
+    try {
+      setDelegations(await readDelegationEntries(delegationsDir()))
+    } catch {
+      // fail-open: never crash the sidebar on a read error
+    }
+  }
+  // Running jobs first (readDelegationEntries already sorts), then the 8
+  // most recent terminal reports.
+  const visibleDelegations = createMemo(() => {
+    const all = delegations()
+    const running = all.filter((d) => d.state === 'running')
+    const terminal = all.filter((d) => d.state !== 'running').slice(0, 8)
+    return [...running, ...terminal]
+  })
 
-  // ── Event subscriptions for live session/memory updates ──
+  // ── Event subscriptions for live session/delegation updates ──
   onMount(() => {
     const cleanup: (() => void)[] = []
 
@@ -997,37 +1144,24 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
       /* events API not available in this runtime */
     }
 
-    // Memory events — tracks running counter (no api.state.memory)
+    // Delegation panel: initial read, re-read on session lifecycle events
+    // (jobs are born/die with sessions), plus a 2s poll of the md channel.
+    // A 1s ticker re-renders the running jobs' elapsed counter.
+    void refreshDelegations()
     try {
-      const ev = props.api.event as any
-      if (typeof ev?.on === 'function') {
-        cleanup.push(ev.on('memory.created', () => setMemoryCount((c) => (c !== null ? c + 1 : 1))))
-        cleanup.push(
-          ev.on('memory.deleted', () =>
-            setMemoryCount((c) => (c !== null ? Math.max(0, c - 1) : 0)),
-          ),
-        )
-      }
+      cleanup.push(props.api.event.on('session.created', () => void refreshDelegations()))
+      cleanup.push(props.api.event.on('session.updated', () => void refreshDelegations()))
     } catch {
-      /* memory events not available */
+      /* events API not available — the 2s poll still covers it */
     }
+    cleanup.push(() => clearInterval(setInterval(() => setNow(Date.now()), 1_000)))
+    cleanup.push(() => clearInterval(setInterval(() => void refreshDelegations(), 2_000)))
 
     onCleanup(() =>
       cleanup.forEach((fn) => {
         fn()
       }),
     )
-  })
-
-  // ── Config summary ──
-  const configSummary = createMemo(() => {
-    const cfg = (props.api.state as any).config
-    if (!cfg) return null
-    return {
-      mcpCount: cfg.mcp ? Object.keys(cfg.mcp).length : 0,
-      pluginCount: Array.isArray(cfg.plugin) ? cfg.plugin.length : 0,
-      autoCompaction: cfg.compaction?.auto === true,
-    }
   })
 
   const HR = () => <text fg={theme().textMuted}>{'\u2500'.repeat(28)}</text>
@@ -1084,96 +1218,29 @@ function View(props: { api: TuiPluginApi; sessionID: string; version: string | n
         </Show>
       </Show>
 
-      {/* ── Commands ── */}
-      <box onMouseDown={() => setShowCommands((x) => !x)}>
+      {/* ── Delegations (real-time, from the .pantheon/delegations md channel) ── */}
+      <box onMouseDown={() => setShowDelegations((x) => !x)}>
         <text fg={theme().text} attributes={1}>
-          {`${showCommands() ? '\u25bc' : '\u25b6'} Commands`}
+          {`${showDelegations() ? '\u25bc' : '\u25b6'} Delegations`}
         </text>
-        <text fg={theme().textMuted}>{` (${String(COMMANDS.length)})`}</text>
+        <text fg={theme().textMuted}>{` (${String(delegations().length)})`}</text>
       </box>
-      <Show when={showCommands()}>
-        <box marginLeft={1} flexDirection="column">
-          <For each={COMMANDS}>
-            {(cmd) => (
-              <box
-                onMouseDown={(e) => {
-                  e.stopPropagation()
-                  try {
-                    const cmdApi = (props.api as any).command
-                    const cmdName = cmd.name.replace('/', '')
-                    if (cmdApi?.trigger?.(cmdName)) return
-                  } catch {
-                    /* fall through to toast */
-                  }
-                  props.api.ui?.toast?.({ title: 'Command', message: `Type ${cmd.name} in chat` })
-                }}
-              >
-                <text fg={cmd.name === '/pantheon' ? theme().accent : theme().textMuted}>
-                  {cmd.name}
-                </text>
-                <text fg={theme().textMuted}>{` \u2014 ${cmd.desc}`}</text>
-              </box>
-            )}
-          </For>
-        </box>
-      </Show>
-
-      {/* ── Agents ── */}
-      <box onMouseDown={() => setShowAgents((x) => !x)}>
-        <text fg={theme().text} attributes={1}>
-          {`${showAgents() ? '\u25bc' : '\u25b6'} Agents`}
-        </text>
-        <text fg={theme().textMuted}>{` (${String(AGENTS.length)})`}</text>
-      </box>
-      <Show when={showAgents()}>
-        <box marginLeft={1} flexDirection="column">
-          <For each={AGENTS}>
-            {(agent) => (
-              <box>
-                <text fg={agent.tier === 'premium' ? theme().accent : theme().textMuted}>
-                  {`${agent.tier === 'premium' ? '\u2726 ' : '\u00b7 '}${agent.name}`}
-                </text>
-                <text fg={theme().textMuted}>{` \u2014 ${agent.role}`}</text>
-              </box>
-            )}
-          </For>
-        </box>
-      </Show>
-
-      {/* ── Config ── */}
-      <box onMouseDown={() => setShowConfig((x) => !x)}>
-        <text fg={theme().text} attributes={1}>
-          {`${showConfig() ? '\u25bc' : '\u25b6'} Config`}
-        </text>
-      </box>
-      <Show when={showConfig()}>
+      <Show when={showDelegations()}>
         <Show
-          when={configSummary()}
+          when={visibleDelegations().length > 0}
           fallback={
             <box marginLeft={1}>
-              <text fg={theme().textMuted}>No config data</text>
+              <text fg={theme().textMuted}>No delegations</text>
             </box>
           }
         >
-          {(cfg) => (
-            <box marginLeft={1} flexDirection="column">
-              <text
-                fg={theme().textMuted}
-              >{`MCP: ${String(cfg().mcpCount)}  Plugins: ${String(cfg().pluginCount)}`}</text>
-              <text
-                fg={theme().textMuted}
-              >{`Auto-compaction: ${cfg().autoCompaction ? 'ON' : 'OFF'}`}</text>
-            </box>
-          )}
+          <box marginLeft={1} flexDirection="column">
+            <For each={visibleDelegations()}>
+              {(job) => <DelegationRow api={props.api} job={job} now={now()} />}
+            </For>
+          </box>
         </Show>
       </Show>
-
-      {/* ── Memory (always visible summary) ── */}
-      <box marginTop={1}>
-        <text fg={theme().textMuted}>
-          {memoryCount() !== null ? `Memory: ${fmtInt(memoryCount()!)} entries` : 'Memory: N/A'}
-        </text>
-      </box>
     </box>
   )
 }
