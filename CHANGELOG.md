@@ -15,6 +15,24 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 
+## [v1.3.3] - 2026-08-11
+
+### Added
+- **Todo continuation enforcer**: auto-continues sessions with incomplete todos on `session.idle` (4 guards: board-running, in-flight, exponential cooldown, max-failures cap) + kill-switch `PANTHEON_TODO_ENFORCER=off`
+- **Hashline hash-anchored edits**: `hashline_edit` tool with sha256-truncated line tags, additive read enhancer, validate-before-write with `>>>` mismatch hints + Did-you-mean suggestions; blocked in read-only sessions
+- **Full-auto goal loop** (opt-in `full_auto.enabled: false`): `pantheon_goal_create/update/get` tools, atomic GoalStore, priority idle dispatcher (goal suppresses enforcer), max 25 continuations
+- **Dispatch retry-on-empty**: classifies empty results (mode 1: 0 tokens; mode 2: reasoning without text) with cap-1 automatic retry
+- **Cost tracking**: JSONL ledger + `pantheon_cost` command reading opencode.db (zero-dep, node:sqlite → scripts/cost.mjs fallback)
+
+### Fixed
+- **Installer `resolveInstalledPlugin`** mapped only `src/plugins/*` — `src/plugin.ts` resolved to the dev path, breaking global installs on non-dev machines and leaking the dev path (release-blocking)
+- **Todo enforcer invasiveness**: skips injection when native background children are active (`session.children`) and within 30s of user activity
+- **Hashline**: atomic write (tmp+rename), path containment guard, documented seed separator
+
+### Changed
+- **Themis phase reviews** route to deepseek-v4-flash (pro reserved for final release gate); Athena stays premium (council red-line)
+- **Routing config**: `background_delegation`, `todo_enforcer`, `hashline`, `full_auto` sections
+
 ## [v1.3.2] - 2026-08-09
 
 ### Added
