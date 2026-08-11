@@ -14,7 +14,8 @@ presets:
         apiKeyEnv: PANTHEON_OPENCODE_API_KEY
     agents:
       athena:     { model: opencode/deepseek-v4-pro,       reasoning_effort: high,   fallback_models: [opencode/mimo-v2.5] }
-      themis:     { model: opencode/deepseek-v4-pro,       reasoning_effort: high,   fallback_models: [opencode/mimo-v2.5] }
+      # themis (PR #46 W4): phase reviews run on v4-flash (cost/empty-signature fix); pro only for the FINAL gate (manual override).
+      themis:     { model: opencode/deepseek-v4-flash,     reasoning_effort: high,   fallback_models: [opencode/mimo-v2.5] }
       zeus:       { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
       hermes:     { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
       aphrodite:  { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
@@ -564,3 +565,25 @@ background_delegation:
   read_only_agents: [apollo, gaia]
   session_max: 3
   retry_count: 1
+todo_enforcer:
+  enabled: true
+  cooldown_base_ms: 5000            # base backoff between injections
+  max_consecutive_failures: 5       # stop injecting after this many failures
+  failure_reset_ms: 300000          # quiet period before the counter resets (5 min)
+  user_activity_quiet_ms: 30000     # skip injection this long after a user message (30s)
+  child_active_ms: 120000           # native background child newer than this = still running → skip (2 min)
+  # Runtime kill-switch: PANTHEON_TODO_ENFORCER=off (doc mirror only — the
+  # env var is the real switch, read at plugin construction).
+hashline:
+  enabled: true
+  enhance_read: true
+  # Wave 2 (PR #46): tag-anchored edits. enhance_read augments `read` output
+  # with per-line sha256 tags (12#XJ|content); hashline_edit anchors edits to
+  # those refs. Documentation mirror — the plugin resolves behavior in code.
+full_auto:
+  enabled: false                 # opt-in: goal continuations are OFF by default
+  max_continuations: 25          # hard cap on goal continuations per session
+  # Wave 3 (PR #46): full-auto goal loop. One active goal per session
+  # (pending → in_progress → done); while active, idle sessions are
+  # continued automatically toward the objective. Documentation mirror —
+  # the plugin resolves behavior in code (GOAL_LOOP_DEFAULTS).

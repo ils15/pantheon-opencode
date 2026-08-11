@@ -49,8 +49,12 @@ assert.ok(
   'installer rewrites plugin paths through resolveInstalledPlugin',
 )
 assert.ok(
-  opencodeInstaller.includes("const packaged = join(ROOT, 'src', 'plugins', file)"),
+  opencodeInstaller.includes('const packaged = join(ROOT, plugin.slice(srcIndex))'),
   'resolved plugin path is derived from the installed package ROOT, never hardcoded',
+)
+assert.ok(
+  opencodeInstaller.includes("const srcIndex = plugin.indexOf('src/')"),
+  'resolveInstalledPlugin maps ANY src/ ref (src/plugins/* and root-level src/plugin.ts) into the package',
 )
 assert.ok(
   opencodeInstaller.includes('config.plugin = config.plugin.filter((p) => basename(p) !== file)'),

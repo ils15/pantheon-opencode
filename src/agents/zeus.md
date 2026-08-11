@@ -280,3 +280,55 @@ Wave: dispare N, colete com tolerancia a falha
     catch:
       r = retry(agente, prompt_alternativo)
 ```
+
+### Plugin Enforcer (auto — session.idle hook)
+O plugin re-injeta "Incomplete tasks remain..." em sessões root/não-board que
+vão a idle com todos incompletos. Guards (todos no `src/pantheon/todo-enforcer.ts`):
+- **User-activity (30s)** — após uma mensagem do usuário (`chat.message` hook),
+  a injeção é suprimida por `user_activity_quiet_ms: 30000`.
+- **Board-running** — sessão com job background do nosso board em running → skip.
+- **Native-children (2 min)** — children de `task(background=true)` do opencode
+  NÃO estão no nosso board; o enforcer consulta `session.children()` e pula se
+  algum child tiver `time.updated` mais novo que `child_active_ms: 120000`
+  (background task nativo ainda rodando). API indisponível → fail-open (log + injeta).
+- **Kill-switch**: `PANTHEON_TODO_ENFORCER=off` desativa o enforcer por completo
+  (lido na construção do plugin). routing.yml é espelho de documentação — o env
+  var é o switch real (precedente COMPACTION_MAX_ITEMS).
+
+## Wave 4 (PR #46): Empty-Result Retry + /cost + Themis Tier
+
+### Empty-Result Retry (dispatch-guard — MANUAL orchestration)
+OpenCode 1.18.x NAO permite interceptar a conclusao de `task()` via hooks,
+entao o `src/pantheon/dispatch-guard.ts` e uma lib pura usada POR VOCE na
+orquestracao (NAO esta wired no plugin):
+
+```
+import { createDispatchGuard } from '.../src/pantheon/dispatch-guard.ts'  # via code-mode ou subagente
+
+guard = createDispatchGuard({ retryOnEmpty: true, logger: { warn: console.warn } })
+
+# classificar resultado de task_status/wait:
+#   'content'      → tem texto, pronto
+#   'empty-mode1'  → SEM texto E SEM tokens (nada voltou)      → RETRY 1x
+#   'empty-mode2'  → SEM texto, MAS tokens (raciocinou, perdeu a parte de texto;
+#                    assinatura da falha themis Wave-2)         → RETRY 1x
+
+out = await guard.maybeRetry(result, async () => { ...task() de novo... })
+# out.retried=true se redisparou; CAP DURO de 1 retry — nunca 2x.
+# Se o retry voltar vazio, `out.retried=false` — NAO tente de novo: escale.
+```
+Regra: retry 1x APENAS em `empty-mode1`/`empty-mode2`. Resultado com conteudo
+nunca redispara. Apos 1 retry vazio → escalate (mesma regra do TODO Enforcer).
+
+### /cost — pantheon_cost tool (WIRED no plugin)
+`pantheon_cost({ days?: number })` le o `opencode.db` READ-ONLY (node:sqlite;
+fallback `scripts/cost.mjs`) e devolve tabela markdown de custo + tokens por
+agente nos ultimos N dias (default 7). Uso: quando Nyx pedir visibilidade de
+custo, ou antes de escalar tier — decida se o batch valeu o preco.
+
+### Themis Tier Policy (routing.yml go-deepseek)
+Revisoes de FASE do themis rodam em `opencode/deepseek-v4-flash`
+(review rapido, barato — evita a assinatura empty-mode2 de retorno vazio).
+O tier PRO (`deepseek-v4-pro`) fica RESERVADO para o FINAL GATE (auditoria
+final apos tudo aprovado) — override manual na hora. Athena NAO muda:
+planner continua em pro.

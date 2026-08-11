@@ -85,6 +85,28 @@ function mergeMissing(target, source) {
 }
 
 /**
+ * Resolve a plugin ref from the packaged opencode.json to a path INSIDE the
+ * installed package.
+ *
+ * The packaged config may reference plugins via developer-machine absolute
+ * paths (e.g. /home/<dev>/pantheon/src/plugin.ts). Copying those verbatim into
+ * the user's config would break every install on any other machine. This
+ * rewrites the entry to the plugin file inside the INSTALLED package (derived
+ * from ROOT — never hardcoded), so both dev and global installs resolve to a
+ * path that actually exists.
+ */
+export function resolveInstalledPlugin(plugin) {
+  // Map any ref whose path tail starts with `src/` to the matching file INSIDE
+  // the installed package. This preserves the ref's relative location, so both
+  // src/plugins/* (hooks) and the root-level src/plugin.ts (delegation plugin,
+  // PR #45) resolve correctly — nothing is forced into src/plugins/.
+  const srcIndex = plugin.indexOf('src/')
+  if (srcIndex === -1) return plugin
+  const packaged = join(ROOT, plugin.slice(srcIndex))
+  return existsSync(packaged) ? packaged : plugin
+}
+
+/**
  * Detect whether `target` is the user's global OpenCode installation directory
  * (~/.opencode or $XDG_CONFIG_HOME/opencode).
  * Global installs use a flat layout: agents/ skills/ commands/ plugins/
@@ -578,19 +600,15 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   // B.5.1 Hermetic plugin resolution (packaging fix)
   // --------------------------------------------------------------------
-  // The packaged opencode.json may reference the pantheon-hooks plugin via a
-  // developer-machine absolute path (e.g. /home/<dev>/pantheon/src/plugins/...).
-  // Copying that verbatim into the user's config would break every global
-  // install on any other machine. Option A: rewrite the entry to the plugin
+  // The packaged opencode.json may reference plugins via developer-machine
+  // absolute paths (e.g. /home/<dev>/pantheon/src/plugin.ts or
+  // /home/<dev>/pantheon/src/plugins/pantheon-hooks.ts). Copying those
+  // verbatim into the user's config would break every global install on any
+  // other machine. resolveInstalledPlugin() rewrites each entry to the plugin
   // file inside the INSTALLED package (derived from ROOT — never hardcoded),
   // so both dev and global installs resolve to a path that actually exists.
   // The source opencode.json keeps its dev path for local development; the
   // transform happens at install/sync time only.
-  function resolveInstalledPlugin(plugin) {
-    const file = basename(plugin)
-    const packaged = join(ROOT, 'src', 'plugins', file)
-    return existsSync(packaged) ? packaged : plugin
-  }
 
   if (!Array.isArray(config.plugin)) {
     config.plugin = []
