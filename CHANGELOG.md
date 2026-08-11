@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Delegation killer**: chat.message hook injected reminders with empty messageID on the subagent promptAsync path — opencode schema rejected it, killing every background delegation in ~20ms (found by live E2E smoke)
+- **Delegation child model routing**: child sessions now inherit the routed model (explicit arg → routing.yml agent entry → active preset) instead of falling back to the key-gated default (E2E: AI_LoadAPIKeyError without an active preset)
 - **Installer `resolveInstalledPlugin`** mapped only `src/plugins/*` — `src/plugin.ts` resolved to the dev path, breaking global installs on non-dev machines and leaking the dev path (release-blocking)
 - **Todo enforcer invasiveness**: skips injection when native background children are active (`session.children`) and within 30s of user activity
 - **Hashline**: atomic write (tmp+rename), path containment guard, documented seed separator
