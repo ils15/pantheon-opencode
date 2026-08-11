@@ -220,6 +220,25 @@ export class TodoEnforcer {
   }
 
   /**
+   * List the session's PENDING todos (not completed/cancelled) — the same
+   * incomplete filter as the idle continuation, exposed for the compaction
+   * context builder. Returns [] when the enforcer is disabled or the todo
+   * API fails (fail-open: the compaction hook must never break the
+   * session).
+   */
+  async listPendingTodos(sessionID: string): Promise<TodoLike[]> {
+    if (!this.options.enabled) return []
+    try {
+      const todos = await this.client.session.todo({ path: { id: sessionID } })
+      return todos.filter((todo) => todo.status !== 'completed' && todo.status !== 'cancelled')
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err)
+      this.warn(`todo list failed for session ${sessionID}: ${reason}`)
+      return []
+    }
+  }
+
+  /**
    * Handle a `session.idle` event for a non-board session. Evaluates the
    * previous injection's outcome, applies the guards, and injects the
    * continuation prompt when incomplete todos remain and the guards allow.
