@@ -31,9 +31,9 @@ import {
   pendingChatReminders,
 } from '../../src/pantheon/chat-reminders.ts'
 import {
+  type CompactionAssertDeps,
   REASSERT_MAX_LINES,
   reassertAfterCompaction,
-  type CompactionAssertDeps,
 } from '../../src/pantheon/compaction-assert.ts'
 import type { CompactionGoalSource } from '../../src/pantheon/delegation-compaction.ts'
 import type { Goal } from '../../src/pantheon/goal-store.ts'
@@ -53,7 +53,6 @@ async function testAsync(name: string, fn: () => Promise<void>) {
 }
 
 const ROOT = 'ses_root'
-const OTHER = 'ses_other'
 
 /** Clear the shared buffer between tests (module-level production state). */
 function clearBuffer(): void {
@@ -141,8 +140,13 @@ async function main() {
   await testAsync('(a) running + unread delegations → reminder enqueued with summary', async () => {
     clearBuffer()
     const board = new BackgroundJobBoard()
-    await addRunning(board, { taskID: 't1', agent: 'apollo', description: 'search widgets', at: 100 })
-    await addTerminal(board, {
+    const running = await addRunning(board, {
+      taskID: 't1',
+      agent: 'apollo',
+      description: 'search widgets',
+      at: 100,
+    })
+    const done = await addTerminal(board, {
       taskID: 't2',
       agent: 'hermes',
       description: 'implement API',
@@ -150,17 +154,31 @@ async function main() {
       at: 200,
     })
     // A reconciled terminal job is NOT fresh state — must be excluded.
-    await addTerminal(board, { taskID: 't3', agent: 'talos', description: 'old fix', at: 150, reconciled: true })
+    await addTerminal(board, {
+      taskID: 't3',
+      agent: 'talos',
+      description: 'old fix',
+      at: 150,
+      reconciled: true,
+    })
 
     const enqueued = await reassertAfterCompaction(depsFor({ board }))
     assert.equal(enqueued, true, 'reminder was enqueued')
 
     const text = queuedText()
     assert.match(text, /State re-assertion after compaction/, 'header present')
-    assert.match(text, /running \[t1\] apollo — search widgets/, 'running job line present')
-    assert.match(text, /unread \[t2\] hermes — implement API — OK/, 'unread terminal line with state label')
+    assert.match(
+      text,
+      new RegExp(`running \\[${running.alias}\\] apollo — search widgets`),
+      'running job line present',
+    )
+    assert.match(
+      text,
+      new RegExp(`unread \\[${done.alias}\\] hermes — implement API — OK`),
+      'unread terminal line with state label',
+    )
     assert.ok(!text.includes('t3'), 'reconciled job excluded from fresh state')
-    assert.ok(!text.includes('[t3]'), 'reconciled job not mentioned')
+    assert.ok(!text.includes('[tal-1]'), 'reconciled job not mentioned')
     clearBuffer()
   })
 
@@ -168,7 +186,12 @@ async function main() {
   await testAsync('(b) active goals included; done/disabled goals omitted', async () => {
     clearBuffer()
     const board = new BackgroundJobBoard()
-    await addRunning(board, { taskID: 't1', agent: 'apollo', description: 'search widgets', at: 100 })
+    await addRunning(board, {
+      taskID: 't1',
+      agent: 'apollo',
+      description: 'search widgets',
+      at: 100,
+    })
 
     const enqueued = await reassertAfterCompaction(
       depsFor({ board, goals: goalSource([ACTIVE_GOAL, DONE_GOAL]) }),
@@ -180,7 +203,9 @@ async function main() {
     clearBuffer()
 
     // Disabled goal source (GOAL_LOOP_DEFAULTS.enabled === false) → omitted.
-    const disabled = await reassertAfterCompaction(depsFor({ board, goals: goalSource([ACTIVE_GOAL], false) }))
+    const disabled = await reassertAfterCompaction(
+      depsFor({ board, goals: goalSource([ACTIVE_GOAL], false) }),
+    )
     assert.equal(disabled, true, 'delegations alone still enqueue')
     assert.ok(!queuedText().includes('goal '), 'disabled goals never included')
     clearBuffer()
@@ -196,7 +221,9 @@ async function main() {
     clearBuffer()
 
     // Only done goals → still nothing fresh.
-    const onlyDone = await reassertAfterCompaction(depsFor({ board, goals: goalSource([DONE_GOAL]) }))
+    const onlyDone = await reassertAfterCompaction(
+      depsFor({ board, goals: goalSource([DONE_GOAL]) }),
+    )
     assert.equal(onlyDone, false, 'done-only goals → skip')
     assert.equal(pendingChatReminders.length, 0, 'no reminder enqueued')
     clearBuffer()
@@ -236,7 +263,10 @@ async function main() {
     )
     assert.equal(enqueued, false, 'fail-open → skipped')
     assert.equal(pendingChatReminders.length, 0, 'no reminder enqueued')
-    assert.ok(warns.some((w) => w.includes('goals store down')), 'warn carries the goals reason')
+    assert.ok(
+      warns.some((w) => w.includes('goals store down')),
+      'warn carries the goals reason',
+    )
     clearBuffer()
   })
 
@@ -244,7 +274,12 @@ async function main() {
     clearBuffer()
     const warns: string[] = []
     const board = new BackgroundJobBoard()
-    await addRunning(board, { taskID: 't1', agent: 'apollo', description: 'search widgets', at: 100 })
+    await addRunning(board, {
+      taskID: 't1',
+      agent: 'apollo',
+      description: 'search widgets',
+      at: 100,
+    })
     const failingEnqueue = () => {
       throw new Error('buffer full')
     }
@@ -253,7 +288,10 @@ async function main() {
     )
     assert.equal(enqueued, false, 'fail-open → skipped')
     assert.equal(pendingChatReminders.length, 0, 'no reminder enqueued (enqueue threw)')
-    assert.ok(warns.some((w) => w.includes('buffer full')), 'warn carries the enqueue reason')
+    assert.ok(
+      warns.some((w) => w.includes('buffer full')),
+      'warn carries the enqueue reason',
+    )
     clearBuffer()
   })
 
@@ -288,28 +326,43 @@ async function main() {
   })
 
   // (f) subagent (no messageID) → P0 guard keeps the reminder queued — zero crash.
-  await testAsync('(f) subagent fire (no messageID) cannot lose the re-assertion reminder', async () => {
-    clearBuffer()
-    const board = new BackgroundJobBoard()
-    await addRunning(board, { taskID: 't1', agent: 'apollo', description: 'search widgets', at: 100 })
+  await testAsync(
+    '(f) subagent fire (no messageID) cannot lose the re-assertion reminder',
+    async () => {
+      clearBuffer()
+      const board = new BackgroundJobBoard()
+      const running = await addRunning(board, {
+        taskID: 't1',
+        agent: 'apollo',
+        description: 'search widgets',
+        at: 100,
+      })
 
-    const enqueued = await reassertAfterCompaction(depsFor({ board }))
-    assert.equal(enqueued, true, 'reminder enqueued')
+      const enqueued = await reassertAfterCompaction(depsFor({ board }))
+      assert.equal(enqueued, true, 'reminder enqueued')
 
-    // P0 guard (src/plugins/pantheon-hooks.ts chat.message): `if
-    // (!input.messageID) return` fires BEFORE any drain — a child-session
-    // promptAsync fire (messageID empty/undefined) injects nothing AND leaves
-    // the buffer untouched, so the reminder survives for the parent's next
-    // real (msg_-ID'd) message. The guard itself is integration-tested in
-    // tests/pantheon-hooks-chat.test.mjs; this asserts the buffer contract
-    // the re-assertion relies on: no drain on the subagent path.
-    assert.equal(pendingChatReminders.length, 1, 'reminder still queued after (simulated) subagent fire')
+      // P0 guard (src/plugins/pantheon-hooks.ts chat.message): `if
+      // (!input.messageID) return` fires BEFORE any drain — a child-session
+      // promptAsync fire (messageID empty/undefined) injects nothing AND leaves
+      // the buffer untouched, so the reminder survives for the parent's next
+      // real (msg_-ID'd) message. The guard itself is integration-tested in
+      // tests/pantheon-hooks-chat.test.mjs; this asserts the buffer contract
+      // the re-assertion relies on: no drain on the subagent path.
+      assert.equal(
+        pendingChatReminders.length,
+        1,
+        'reminder still queued after (simulated) subagent fire',
+      )
 
-    // Next real message: drain delivers it.
-    const body = drainFreshChatReminders()
-    assert.ok(body !== undefined && body.includes('running [t1]'), 'delivered on the next real message')
-    clearBuffer()
-  })
+      // Next real message: drain delivers it.
+      const body = drainFreshChatReminders()
+      assert.ok(
+        body !== undefined && body.includes(`running [${running.alias}]`),
+        'delivered on the next real message',
+      )
+      clearBuffer()
+    },
+  )
 
   // Budget guard: the block stays compact (items ≤ REASSERT_MAX_LINES).
   await testAsync('block stays within REASSERT_MAX_LINES', async () => {

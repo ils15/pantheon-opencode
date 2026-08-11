@@ -186,6 +186,12 @@ import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { Part } from '@opencode-ai/sdk'
+import {
+  CHAT_REMINDER_TTL_MS,
+  drainFreshChatReminders,
+  enqueueChatReminder,
+  pendingChatReminders,
+} from '../pantheon/chat-reminders.ts'
 import { type HookPayload, type HookResult, runHook } from './hook-runner.ts'
 
 /** Tools that represent a subagent delegation (opencode `task` tool etc.). */
@@ -424,6 +430,15 @@ const TASK_ID_TEXT_RE = /\btask\s+id="(ses_[^"]+)"/i
  * opencode 1.18.13 drops tui.toast.show events (untagged), so every signal
  * that would fire a toast is ALSO queued here and injected into the next user
  * message by the 'chat.message' hook as a single <system-reminder> text part.
+ *
+ * The buffer itself lives in the SHARED chat-reminders.ts module: this plugin
+ * file must export EXACTLY ONE function-valued export (legacy loader —
+ * see the IMPORTANT note at the top), so the enqueue API cannot be exported
+ * from here. Importing the shared module instead gives src/plugin.ts (a
+ * separate plugin file, loaded via plain dynamic import) the SAME buffer
+ * instance — release-134 Phase 4 (compaction-assert.ts) enqueues
+ * post-compaction state re-assertions here and this hook delivers them.
+ *
  * Bounded: at most CHAT_REMINDER_MAX entries, each expiring
  * CHAT_REMINDER_TTL_MS after its tool event. Consumed (and cleared) by the
  * chat.message hook. Full-buffer enqueues are SKIPPED, never unbounded — the
@@ -432,20 +447,6 @@ const TASK_ID_TEXT_RE = /\btask\s+id="(ses_[^"]+)"/i
  * session.idle flushes the buffer into ONE fresh aggregated entry (see
  * flushIdleReminders) so completions survive until the next user message.
  */
-const CHAT_REMINDER_MAX = 10
-const CHAT_REMINDER_TTL_MS = 60_000
-const pendingChatReminders: { text: string; at: number }[] = []
-
-/** Queue one chat-reminder line, pruning expired entries first. Never throws. */
-function enqueueChatReminder(text: string): void {
-  const now = Date.now()
-  for (let i = pendingChatReminders.length - 1; i >= 0; i--) {
-    const r = pendingChatReminders[i]
-    if (r !== undefined && now - r.at > CHAT_REMINDER_TTL_MS) pendingChatReminders.splice(i, 1)
-  }
-  if (pendingChatReminders.length >= CHAT_REMINDER_MAX) return
-  pendingChatReminders.push({ text, at: now })
-}
 
 /** Variants accepted by the opencode TUI showToast (TuiShowToastData.body.variant). */
 type ToastVariant = 'info' | 'success' | 'warning' | 'error'
@@ -1448,11 +1449,8 @@ const plugin: Plugin = async ({ client, directory }) => {
         // Early return BEFORE the buffer drain keeps the reminder queued for
         // the parent's next real (msg_-ID'd) message.
         if (!input.messageID) return
-        const now = Date.now()
-        const fresh = pendingChatReminders.filter((r) => now - r.at <= CHAT_REMINDER_TTL_MS)
-        pendingChatReminders.length = 0
-        if (fresh.length === 0) return
-        const body = fresh.map((r) => r.text).join('\n')
+        const body = drainFreshChatReminders()
+        if (body === undefined) return
         // Minimal TextPart — the core backfills messageID/sessionID for
         // hook-injected parts (see opencode chat.message trigger pipeline).
         // The guard above guarantees input.messageID is a non-empty string,
@@ -1467,7 +1465,7 @@ const plugin: Plugin = async ({ client, directory }) => {
         await reportFailure(
           ctx,
           `[pantheon-hooks:chat-reminder] ${body}`,
-          { script: 'chat-reminder', count: fresh.length },
+          { script: 'chat-reminder' },
           'info',
         )
       } catch {

@@ -1,6 +1,7 @@
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
+import { reassertAfterCompaction } from './pantheon/compaction-assert.ts'
 import { createCostCommand } from './pantheon/cost-command.ts'
 import { createDelegationTools, type DelegationClient } from './pantheon/delegation.ts'
 import { buildCompactionContext } from './pantheon/delegation-compaction.ts'
@@ -339,6 +340,17 @@ const plugin: Plugin = async (input: PluginInput) => {
       // rewritten with the exact list (see todo-preserve.ts). Fail-open.
       if (ev.type === 'session.compacted') {
         await todoPreserver.onCompacted(ev.properties.sessionID)
+        // release-134 Phase 4: re-assert post-compaction state — enqueue a
+        // fresh-state reminder (running/unread board jobs + active goals) for
+        // the session's next chat.message delivery. Fail-open (never throws).
+        await reassertAfterCompaction({
+          sessionID: ev.properties.sessionID,
+          board,
+          goals: {
+            enabled: GOAL_LOOP_DEFAULTS.enabled,
+            list: (s: string) => goalStore.list(s),
+          },
+        })
       }
       // Phase 3: observe completion on child sessions → finalizeDelegation.
       // The board transition fires onTerminal → notifier.notifyParent (the
