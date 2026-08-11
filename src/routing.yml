@@ -14,7 +14,8 @@ presets:
         apiKeyEnv: PANTHEON_OPENCODE_API_KEY
     agents:
       athena:     { model: opencode/deepseek-v4-pro,       reasoning_effort: high,   fallback_models: [opencode/mimo-v2.5] }
-      themis:     { model: opencode/deepseek-v4-pro,       reasoning_effort: high,   fallback_models: [opencode/mimo-v2.5] }
+      # themis (PR #46 W4): phase reviews run on v4-flash (cost/empty-signature fix); pro only for the FINAL gate (manual override).
+      themis:     { model: opencode/deepseek-v4-flash,     reasoning_effort: high,   fallback_models: [opencode/mimo-v2.5] }
       zeus:       { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
       hermes:     { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }
       aphrodite:  { model: opencode/deepseek-v4-flash,     reasoning_effort: medium, fallback_models: [opencode/mimo-v2.5] }

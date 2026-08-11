@@ -1,6 +1,7 @@
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
+import { createCostCommand } from './pantheon/cost-command.ts'
 import { createDelegationTools, type DelegationClient } from './pantheon/delegation.ts'
 import { buildCompactionContext } from './pantheon/delegation-compaction.ts'
 import { createEnforcementGuard, readOnlyRegistry } from './pantheon/delegation-enforce.ts'
@@ -227,6 +228,12 @@ const plugin: Plugin = async (input: PluginInput) => {
   const hashlineEdit = createHashlineEditTool()
   const readEnhancer = createReadEnhancer()
 
+  // Wave 4 (PR #46): /cost — delegation cost + token visibility. Reads
+  // opencode.db read-only (node:sqlite, falls back to scripts/cost.mjs).
+  // Fully wired (unlike dispatch-guard, which is manual-orchestration-only
+  // because opencode 1.18.x cannot intercept task completion via hooks).
+  const costCommand = createCostCommand()
+
   return {
     config: async (config: PluginConfig) => {
       config.agentsPath = config.agentsPath ?? []
@@ -276,6 +283,8 @@ const plugin: Plugin = async (input: PluginInput) => {
       pantheon_goal_create: goalTools.pantheon_goal_create,
       pantheon_goal_update: goalTools.pantheon_goal_update,
       pantheon_goal_get: goalTools.pantheon_goal_get,
+      // Wave 4 (PR #46): /cost — delegation cost report from opencode.db.
+      pantheon_cost: costCommand.pantheon_cost,
     },
     'chat.message': async (hookInput, output) => {
       await vision.chatMessage(hookInput, output)
