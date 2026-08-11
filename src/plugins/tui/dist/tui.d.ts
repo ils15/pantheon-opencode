@@ -17,7 +17,11 @@ type DelegationEntry = {
  *  Returns null (skip) when the file is not a recognizable report:
  *  missing agent/state/startedAt, an unknown state, or an unparsable
  *  Started timestamp. The alias falls back to the file name when the H1
- *  title is missing. Pure — no I/O. */
+ *  title is missing. Pure — no I/O.
+ *
+ *  Linear, single-pass over `raw.split('\n')` with plain string operations
+ *  (startsWith/indexOf/slice) — zero regex, so worst case is O(bytes) even
+ *  on adversarial whitespace-heavy input (ReDoS regression, CodeQL 12x HIGH). */
 declare function parseDelegationMarkdown(raw: string, fileAlias?: string): DelegationEntry | null;
 /** Read every delegation report under `<dir>/<sessionID>/<alias>.md`.
  *  Fail-open: a missing/unreadable directory yields [], and each unreadable

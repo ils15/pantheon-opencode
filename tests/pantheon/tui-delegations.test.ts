@@ -176,6 +176,80 @@ async function main() {
     assert.equal(e.alias, 'ze-1')
   })
 
+  // ─── Security: ReDoS regression (CodeQL 12x HIGH on the old regex parser) ─
+
+  await testAsync(
+    'security: adversarial whitespace → null fast, no regex blowup (<1s)',
+    async () => {
+      const t0 = Date.now()
+      // Old parser: /^#\s+Delegation Report\s*[—\-–]\s*(.+)$/m with `\s*`+`(.+)`
+      // overlapping on a huge space run — the polynomial-regex pattern CodeQL flagged.
+      assert.equal(
+        parseDelegationMarkdown(`# Delegation Report-${' '.repeat(10000)}`),
+        null,
+        'H1-only adversarial input must not produce an entry',
+      )
+      assert.equal(
+        parseDelegationMarkdown(`- **Agent**:${' '.repeat(10000)}`),
+        null,
+        'header with only whitespace value must not produce an entry',
+      )
+      assert.equal(
+        parseDelegationMarkdown(`# Delegation Report -${' '.repeat(200000)}`),
+        null,
+        'very large space run must still parse fast and yield nothing',
+      )
+      assert.ok(
+        Date.now() - t0 < 1000,
+        `adversarial inputs must finish in <1s (took ${Date.now() - t0}ms)`,
+      )
+    },
+  )
+
+  await testAsync('parse: ** inside values + empty fields do not break parsing', async () => {
+    // (b) ** and **: inside a value must be preserved, not confuse the parser.
+    const e = parseDelegationMarkdown(
+      '# Delegation Report — apo-1\n' +
+        '- **Agent**: apollo\n' +
+        '- **Description**: watch out for **bold** and **: colons\n' +
+        '- **State**: completed\n' +
+        '- **Started**: 2026-08-11T14:46:13.477Z\n',
+      'apo-1.md',
+    )
+    assert.ok(e, 'report with ** inside values must parse')
+    assert.equal(e.description, 'watch out for **bold** and **: colons')
+
+    // Empty required-field value → missing (no cross-line regex leak).
+    assert.equal(
+      parseDelegationMarkdown(
+        '- **Agent**:\n- **State**: completed\n- **Started**: 2026-08-11T15:00:00.000Z\n',
+        'x.md',
+      ),
+      null,
+      'empty Agent value must be treated as missing',
+    )
+
+    // Empty title after separator → alias falls back to the filename.
+    const e2 = parseDelegationMarkdown(
+      '# Delegation Report —\n- **Agent**: a\n- **State**: completed\n- **Started**: 2026-08-11T15:00:00.000Z\n',
+      'ze-9.md',
+    )
+    assert.ok(e2, 'report with empty title must still parse')
+    assert.equal(e2.alias, 'ze-9', 'empty title falls back to filename alias')
+
+    // Timed out keeps the old prefix semantics: `true`-prefixed → true, else false.
+    const e3 = parseDelegationMarkdown(
+      '- **Agent**: a\n- **State**: error\n- **Timed out**: trueX\n- **Started**: 2026-08-11T15:00:00.000Z\n',
+    )
+    assert.ok(e3)
+    assert.equal(e3.timedOut, true, '`trueX` is prefix-matched as true')
+    const e4 = parseDelegationMarkdown(
+      '- **Agent**: a\n- **State**: error\n- **Timed out**: True\n- **Started**: 2026-08-11T15:00:00.000Z\n',
+    )
+    assert.ok(e4)
+    assert.equal(e4.timedOut, false, '`True` is not matched (case-sensitive)')
+  })
+
   // ─── readDelegationEntries (directory channel) ─────────────────────────
 
   await testAsync('read: missing directory → [] (fail-open)', async () => {

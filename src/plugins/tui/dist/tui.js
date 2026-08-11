@@ -674,26 +674,83 @@ async function setupUsageBar(api) {
 		} }
 	});
 }
+/** True for `\s` characters (space, tab, newline, CR) — plain char checks so
+*  the parser stays regex-free (CodeQL flagged the old `\s*`/`\s+` + `(.+)`
+*  patterns as polynomial ReDoS: 12x HIGH). */
+function isWs(ch) {
+	return ch === " " || ch === "	" || ch === "\n" || ch === "\r";
+}
+/** Em/en dash + hyphen — the separators accepted after the H1 title. */
+const TITLE_SEPARATORS = "—–-";
 /** Parse one delegation report md header into a structured entry.
 *  Returns null (skip) when the file is not a recognizable report:
 *  missing agent/state/startedAt, an unknown state, or an unparsable
 *  Started timestamp. The alias falls back to the file name when the H1
-*  title is missing. Pure — no I/O. */
+*  title is missing. Pure — no I/O.
+*
+*  Linear, single-pass over `raw.split('\n')` with plain string operations
+*  (startsWith/indexOf/slice) — zero regex, so worst case is O(bytes) even
+*  on adversarial whitespace-heavy input (ReDoS regression, CodeQL 12x HIGH). */
 function parseDelegationMarkdown(raw, fileAlias) {
-	const title = raw.match(/^#\s+Delegation Report\s*[—\-–]\s*(.+)$/m)?.[1]?.trim();
-	const agent = raw.match(/^-\s+\*\*Agent\*\*:\s*(.+)$/m)?.[1]?.trim();
-	const description = raw.match(/^-\s+\*\*Description\*\*:\s*(.+)$/m)?.[1]?.trim() ?? "";
-	const state = raw.match(/^-\s+\*\*State\*\*:\s*(.+)$/m)?.[1]?.trim();
-	const timedOut = raw.match(/^-\s+\*\*Timed out\*\*:\s*(true|false)/m)?.[1] === "true";
-	const started = raw.match(/^-\s+\*\*Started\*\*:\s*(.+)$/m)?.[1]?.trim();
-	const finalized = raw.match(/^-\s+\*\*Finalized\*\*:\s*(.+)$/m)?.[1]?.trim();
+	let title;
+	let agent;
+	let description = "";
+	let state;
+	let timedOut = false;
+	let started;
+	let finalized;
+	for (const rawLine of raw.split("\n")) {
+		if (rawLine[0] === "#" && isWs(rawLine[1])) {
+			let i = 2;
+			while (i < rawLine.length && isWs(rawLine[i])) i++;
+			if (rawLine.startsWith("Delegation Report", i)) {
+				i += 17;
+				while (i < rawLine.length && isWs(rawLine[i])) i++;
+				if (i < rawLine.length && TITLE_SEPARATORS.includes(rawLine[i])) {
+					const rest = rawLine.slice(i + 1).trim();
+					if (rest !== "" && title === void 0) title = rest;
+				}
+			}
+			continue;
+		}
+		if (rawLine[0] !== "-") continue;
+		let i = 1;
+		while (i < rawLine.length && isWs(rawLine[i])) i++;
+		if (!rawLine.startsWith("**", i)) continue;
+		const nameStart = i + 2;
+		const valueEnd = rawLine.indexOf("**:", nameStart);
+		if (valueEnd < 0) continue;
+		const name = rawLine.slice(nameStart, valueEnd);
+		const value = rawLine.slice(valueEnd + 3).trim();
+		switch (name) {
+			case "Agent":
+				if (value !== "" && agent === void 0) agent = value;
+				break;
+			case "Description":
+				description = value;
+				break;
+			case "State":
+				if (value !== "" && state === void 0) state = value;
+				break;
+			case "Timed out":
+				timedOut = value.startsWith("true");
+				break;
+			case "Started":
+				if (value !== "" && started === void 0) started = value;
+				break;
+			case "Finalized":
+				finalized = value;
+				break;
+			default: break;
+		}
+	}
 	const startedAt = started !== void 0 ? Date.parse(started) : NaN;
 	if (agent === void 0 || state === void 0 || Number.isNaN(startedAt)) return null;
 	const normalized = state.toLowerCase();
 	if (normalized !== "running" && normalized !== "completed" && normalized !== "error" && normalized !== "cancelled") return null;
 	const finalizedAt = finalized !== void 0 ? Date.parse(finalized) : NaN;
 	return {
-		alias: title ?? (fileAlias !== void 0 ? fileAlias.replace(/\.md$/i, "") : "unknown"),
+		alias: title ?? (fileAlias !== void 0 ? stripMdSuffix(fileAlias) : "unknown"),
 		agent,
 		state: normalized,
 		startedAt,
@@ -701,6 +758,10 @@ function parseDelegationMarkdown(raw, fileAlias) {
 		timedOut,
 		description
 	};
+}
+/** Strip a trailing `.md` (any case) — linear replacement for /\.md$/i. */
+function stripMdSuffix(name) {
+	return name.toLowerCase().endsWith(".md") ? name.slice(0, name.length - 3) : name;
 }
 /** Read every delegation report under `<dir>/<sessionID>/<alias>.md`.
 *  Fail-open: a missing/unreadable directory yields [], and each unreadable

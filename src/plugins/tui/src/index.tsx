@@ -867,19 +867,84 @@ export type DelegationEntry = {
   description: string
 }
 
+/** True for `\s` characters (space, tab, newline, CR) — plain char checks so
+ *  the parser stays regex-free (CodeQL flagged the old `\s*`/`\s+` + `(.+)`
+ *  patterns as polynomial ReDoS: 12x HIGH). */
+function isWs(ch: string | undefined): boolean {
+  return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r'
+}
+
+/** Em/en dash + hyphen — the separators accepted after the H1 title. */
+const TITLE_SEPARATORS = '—–-'
+
 /** Parse one delegation report md header into a structured entry.
  *  Returns null (skip) when the file is not a recognizable report:
  *  missing agent/state/startedAt, an unknown state, or an unparsable
  *  Started timestamp. The alias falls back to the file name when the H1
- *  title is missing. Pure — no I/O. */
+ *  title is missing. Pure — no I/O.
+ *
+ *  Linear, single-pass over `raw.split('\n')` with plain string operations
+ *  (startsWith/indexOf/slice) — zero regex, so worst case is O(bytes) even
+ *  on adversarial whitespace-heavy input (ReDoS regression, CodeQL 12x HIGH). */
 export function parseDelegationMarkdown(raw: string, fileAlias?: string): DelegationEntry | null {
-  const title = raw.match(/^#\s+Delegation Report\s*[—\-–]\s*(.+)$/m)?.[1]?.trim()
-  const agent = raw.match(/^-\s+\*\*Agent\*\*:\s*(.+)$/m)?.[1]?.trim()
-  const description = raw.match(/^-\s+\*\*Description\*\*:\s*(.+)$/m)?.[1]?.trim() ?? ''
-  const state = raw.match(/^-\s+\*\*State\*\*:\s*(.+)$/m)?.[1]?.trim()
-  const timedOut = raw.match(/^-\s+\*\*Timed out\*\*:\s*(true|false)/m)?.[1] === 'true'
-  const started = raw.match(/^-\s+\*\*Started\*\*:\s*(.+)$/m)?.[1]?.trim()
-  const finalized = raw.match(/^-\s+\*\*Finalized\*\*:\s*(.+)$/m)?.[1]?.trim()
+  let title: string | undefined
+  let agent: string | undefined
+  let description = ''
+  let state: string | undefined
+  let timedOut = false
+  let started: string | undefined
+  let finalized: string | undefined
+
+  for (const rawLine of raw.split('\n')) {
+    // H1 title: `# Delegation Report — <alias>` (empty alias → fallback later).
+    if (rawLine[0] === '#' && isWs(rawLine[1])) {
+      let i = 2
+      while (i < rawLine.length && isWs(rawLine[i])) i++
+      if (rawLine.startsWith('Delegation Report', i)) {
+        i += 'Delegation Report'.length
+        while (i < rawLine.length && isWs(rawLine[i])) i++
+        if (i < rawLine.length && TITLE_SEPARATORS.includes(rawLine[i])) {
+          const rest = rawLine.slice(i + 1).trim()
+          if (rest !== '' && title === undefined) title = rest
+        }
+      }
+      continue
+    }
+    // Field bullets: `- **Name**: value` — unknown names are ignored.
+    if (rawLine[0] !== '-') continue
+    let i = 1
+    while (i < rawLine.length && isWs(rawLine[i])) i++
+    if (!rawLine.startsWith('**', i)) continue
+    const nameStart = i + 2
+    const valueEnd = rawLine.indexOf('**:', nameStart)
+    if (valueEnd < 0) continue
+    const name = rawLine.slice(nameStart, valueEnd)
+    const value = rawLine.slice(valueEnd + 3).trim()
+    switch (name) {
+      case 'Agent':
+        // Empty value counts as missing (old regex `(.+)` required 1+ chars).
+        if (value !== '' && agent === undefined) agent = value
+        break
+      case 'Description':
+        description = value
+        break
+      case 'State':
+        if (value !== '' && state === undefined) state = value
+        break
+      case 'Timed out':
+        // Old `(true|false)` prefix match, case-sensitive — kept verbatim.
+        timedOut = value.startsWith('true')
+        break
+      case 'Started':
+        if (value !== '' && started === undefined) started = value
+        break
+      case 'Finalized':
+        finalized = value
+        break
+      default:
+        break // unknown field (e.g. Task ID) → ignore the line
+    }
+  }
 
   const startedAt = started !== undefined ? Date.parse(started) : NaN
   if (agent === undefined || state === undefined || Number.isNaN(startedAt)) return null
@@ -895,7 +960,7 @@ export function parseDelegationMarkdown(raw: string, fileAlias?: string): Delega
   const finalizedAt = finalized !== undefined ? Date.parse(finalized) : NaN
 
   return {
-    alias: title ?? (fileAlias !== undefined ? fileAlias.replace(/\.md$/i, '') : 'unknown'),
+    alias: title ?? (fileAlias !== undefined ? stripMdSuffix(fileAlias) : 'unknown'),
     agent,
     state: normalized,
     startedAt,
@@ -903,6 +968,11 @@ export function parseDelegationMarkdown(raw: string, fileAlias?: string): Delega
     timedOut,
     description,
   }
+}
+
+/** Strip a trailing `.md` (any case) — linear replacement for /\.md$/i. */
+function stripMdSuffix(name: string): string {
+  return name.toLowerCase().endsWith('.md') ? name.slice(0, name.length - 3) : name
 }
 
 /** Read every delegation report under `<dir>/<sessionID>/<alias>.md`.
