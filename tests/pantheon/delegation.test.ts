@@ -47,7 +47,11 @@ async function waitFor(fn: () => boolean, timeoutMs = 2000, label = 'condition')
 // ─── Fake client ───────────────────────────────────────────────────────
 
 interface FakeCreateInput {
-  body: { parentID: string; title?: string }
+  body: {
+    parentID: string
+    title?: string
+    model?: { id: string; providerID: string }
+  }
 }
 interface FakePromptInput {
   path: { id: string }
@@ -127,6 +131,137 @@ async function main() {
         assert.equal(client.prompted[0]!.path.id, 'ses_child_1')
         assert.equal(client.prompted[0]!.body.agent, 'apollo')
         assert.equal(client.prompted[0]!.body.parts[0]!.text, 'Find auth patterns')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'delegate passes explicit model option through to session.create body',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-model-explicit-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo', model: 'opencode/deepseek-v4-flash-free' },
+          makeCtx(),
+        )
+
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'deepseek-v4-flash-free',
+          providerID: 'opencode',
+        })
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'delegate resolves child model from options.agentModels (routing.yml agent entry)',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-model-agents-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            agentModels: { apollo: 'opencode/deepseek-v4-flash-free' },
+          },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'deepseek-v4-flash-free',
+          providerID: 'opencode',
+        })
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'delegate falls back to resolveActivePreset agent model when no explicit/agentModels model',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-model-preset-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            // No agentModels — the delegate must resolve the active preset
+            // itself (default routing.yml) and use the preset's apollo model.
+            presetEnv: { PANTHEON_MODEL_PRESET: 'go-deepseek' },
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'deepseek-v4-flash-free',
+          providerID: 'opencode',
+        })
+        assert.equal(warnings.length, 0, 'preset model resolves — no warning expected')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'delegate without any model source: still creates child, logs a warning, no model in body',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-model-none-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            presetEnv: { PANTHEON_MODEL_PRESET: 'none' },
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        const result = await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo' },
+          makeCtx(),
+        )
+
+        assert.equal(client.created.length, 1, 'child session still created without a model')
+        assert.equal(client.created[0]!.body.model, undefined, 'no model field in create body')
+        assert.ok(result.includes('apo-1'), 'delegation proceeds normally')
+        assert.ok(
+          warnings.some((w) => /no model/i.test(w)),
+          `expected a no-model warning, got: ${warnings.join('; ')}`,
+        )
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }
