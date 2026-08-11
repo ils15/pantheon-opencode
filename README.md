@@ -183,6 +183,56 @@ export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
 opencode
 ```
 
+### Background Delegation
+
+Zeus (and other root sessions) can dispatch agents as **background child sessions**
+via three delegation tools, tracked on a persistent job board
+(`.pantheon/board/state.json`, 24h TTL) with reports written to
+`.pantheon/delegations/<parent>/<alias>.md`:
+
+| Tool | Signature | Behavior |
+|------|-----------|----------|
+| `pantheon_delegate` | `{prompt, agent, description?, read_only?}` | Creates a child session (parentID = caller), registers it on the job board, arms a 15-minute timeout, and fire-and-forgets `promptAsync` on the child. Returns the readable alias (e.g. `apo-1`). Only root sessions may delegate (sub-sessions are rejected by the depth guard). |
+| `pantheon_delegation_read` | `{id}` | Blocks (`waitForTerminal`, up to 15 min) until the delegation reaches a terminal state, returns the report markdown, and marks the job reconciled. Resolves by alias or task ID. |
+| `pantheon_delegation_list` | `{}` | Lists the current session's delegations with `[unread]` on finished, unreconciled jobs. |
+
+**Notification model — no polling, no client push.** When a job reaches a
+terminal state (completion observed via `session.idle`/`session.error` on the
+child), a self-contained `<task-notification>` block is queued in memory for
+the parent session and injected into the parent's **next** `chat.message` hook
+fire (prepended onto the first text part — the graceful-degradation channel the
+TUI toast workaround uses). If the parent never sends another message, the
+notification stays queued. The `<task-notification>` carries the task ID, alias,
+agent, state, description and a `Result:`-prefixed summary so the parent can act
+without an extra tool call.
+
+**Timeout:** `background_delegation.timeout_ms` (default `900000` = 15 min). A job
+that has not reached a terminal state is finalized as `error`/`timedOut`.
+
+**Read-only enforcement:** delegating with `read_only: true`, or delegating to an
+agent in `background_delegation.read_only_agents` (`apollo`, `gaia`), registers
+the child session as read-only — the `tool.execute.before` guard denies
+`edit`/`write`/`bash`/`task` inside that session.
+
+**Compaction carry-forward:** during context compaction, running and unread
+terminal delegations (capped at `background_delegation.max_compaction_items`,
+default 10) are carried into the compacted context so the parent doesn't lose
+track of in-flight work.
+
+**Env vars & config:**
+
+- `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` — required (see launch block above).
+- `PANTHEON_TOASTS` — TUI toast gate for the delegation lifecycle signals.
+  Default `{errors, delegations, council}`; `PANTHEON_TOASTS=off` disables all
+  TUI toasts (delegation signals then only surface via the chat.message
+  `<task-notification>`/`<system-reminder>` channel).
+- `background_delegation` section in `src/routing.yml` — `timeout_ms`,
+  `poll_ms`, `max_compaction_items`, `prune_ttl_ms`, `read_only_agents`,
+  `session_max`, `retry_count`.
+
+See `src/agents/zeus.md` for the agent-facing delegation protocol and
+`src/pantheon/delegation.ts` for the tool implementations.
+
 > **Modes:** Interactive TUI with checkbox selection (default TTY), or `--headless` for scripts/CI.
 > **Minimal:** `--headless --no-mcp` installs only agents (~2s).
 > **Full:** `--headless` also creates Python venv + MCP servers (memory, persistence, KV, vision).

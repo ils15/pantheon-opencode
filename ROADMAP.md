@@ -64,15 +64,17 @@ Layer 3 — Verification Planning
 IntentGate: routing.yml classifica request antes de delegar (regex, zero LLM)
 ```
 
-### Sprint 4 — Background Agents + Full-Auto (4-6d) 🚧 Já planejado
+### Sprint 4 — Background Agents + Full-Auto (4-6d) ✅ Entregue (parcial) — ver commit 084a5a5
 
 ```
-├── Background agents first-class (parallel dispatch, push notification)
-├── TODO Enforcer (idle detection, retry automático)
-├── Hash-anchored edits
-├── /pantheon-deepwork --full-auto (modo autônomo, gates automáticos)
-└── Respeitar subagent_depth: 2
+├── Background agents first-class (parallel dispatch, push notification) ✅
+├── TODO Enforcer (idle detection, retry automático) 🔲 pendente
+├── Hash-anchored edits 🔲 pendente
+├── /pantheon-deepwork --full-auto (modo autônomo, gates automáticos) 🔲 pendente
+└── Respeitar subagent_depth: 2 ✅
 ```
+
+> Restante (TODO Enforcer, hash-anchored edits, full-auto) fica para a próxima iteração.
 
 ### Sprint 5 — Pruning + Cache + Memory (3-4d) 🚧 Já planejado
 
@@ -99,19 +101,19 @@ IntentGate: routing.yml classifica request antes de delegar (regex, zero LLM)
 **Baseado em pesquisa do ecossistema awesome-opencode (9k⭐, 300+ plugins)
 por 5 agentes — 2.717 linhas de análise.**
 
-### Sprint 7 — Background Architecture (4-6d)
+### Sprint 7 — Background Architecture ✅ Entregue (2026-08-10, commit 084a5a5)
 
 *Expande Sprint 4: runtime → API formal de desenvolvedor.*
 
 ```
-├── Delegate/Read/List 3-Tool API
+├── Delegate/Read/List 3-Tool API ✅
 │   ├── delegate(prompt, agent?) → task_id
 │   ├── delegation_read(id) → result
 │   └── delegation_list() → tasks[]
-├── Read-only background enforcement (edit=deny, write=deny)
-├── 15-min timeout + persistence before notification
-├── Compaction-aware context (experimental.session.compacting hook)
-└── Auth interceptor: plugin hook para providers + multi-account rotation
+├── Read-only background enforcement (edit=deny, write=deny) ✅
+├── 15-min timeout + persistence before notification ✅
+├── Compaction-aware context (experimental.session.compacting hook) ✅
+└── Auth interceptor: plugin hook para providers + multi-account rotation 🔲 pendente
 ```
 
 ### Sprint 8 — Community Integration (3-5d)
@@ -196,7 +198,7 @@ por 5 agentes — 2.717 linhas de análise.**
 | **GitHub stars** | — | 500+ |
 | **Community plugins** | 0 | 5+ |
 | **Themis patterns** | 20 | 50+ |
-| **Tests** | ~50 | 200+ |
+| **Tests** | ~119 TS + 97 pytest | 200+ |
 | **Coverage** | ~60% | >80% |
 
 ---
@@ -226,6 +228,7 @@ por 5 agentes — 2.717 linhas de análise.**
 
 | Data | Mudança |
 |------|---------|
+| 2026-08-10 | **Sprint 4 (parcial) + Sprint 7 entregues.** 3-tool API de delegação (pantheon_delegate/read/list) sobre BackgroundJobBoard; notificação via session.idle + chat.message flush (spike provou noReply indisponível); timeout 15min + output parcial persistido; enforcement read-only (edit/write/bash/task negados, apollo/gaia); compaction carry-forward; pruning TTL 24h. Commit 084a5a5. TODO Enforcer/full-auto/hash-anchored/auth-interceptor pendentes. |
 | 2026-07-24 v6 | **Cleanup:** removidas referências a concorrentes, tabela competitiva removida. Sprints reorganizados: S6 (YAGNI) reconhecido como já planejado, S4 full-auto = modo autônomo, S5 decay já existe. Novos sprints (S7-S13) são expansões do que já existe, não features do zero. |
 | 2026-07-24 v5 | Corrigido para v1.0. Revisão Themis aplicada. |
 | 2026-07-24 v4 | Pesquisa comunitária. 6 novos sprints. |
