@@ -20,7 +20,7 @@
  * Run with: npx tsx tests/pantheon/hashline.test.ts
  */
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -256,6 +256,77 @@ async function main() {
           original,
           'failed validation must NOT write anything',
         )
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('tool: atomic write — no .tmp-* leftovers after success', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'hashline-atomic-'))
+    try {
+      const file = join(tmp, 'atomic.txt')
+      writeFileSync(file, 'a\nb\n')
+      const tool = createHashlineEditTool()
+      const res = await tool.execute(
+        {
+          file,
+          edits: [{ op: 'replace', ref: `1#${hashTag('a', 1)}`, lines: ['A'] }],
+        },
+        CTX,
+      )
+      assert.notEqual(typeof res, 'string', 'edit must succeed')
+      assert.equal(
+        readFileSync(file, 'utf8'),
+        'A\nb\n',
+        'content must be fully written (no partial/corrupt file)',
+      )
+      assert.deepEqual(
+        readdirSync(tmp),
+        ['atomic.txt'],
+        'tmp+rename write must not leave .tmp-* files behind after success',
+      )
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
+    'tool: path containment — traversal escapes base → error-as-text; valid relative path works',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'hashline-contain-'))
+      try {
+        const tool = createHashlineEditTool()
+        const ctx = { sessionID: 'ses_hl', directory: tmp, worktree: tmp, agent: 'zeus' }
+
+        // `../../etc/passwd` resolves OUTSIDE `base` → must be rejected as
+        // error-as-text BEFORE any read/write attempt (defense-in-depth).
+        const res = await tool.execute(
+          {
+            file: '../../etc/passwd',
+            edits: [{ op: 'replace', ref: '1#XX', lines: ['pwned'] }],
+          },
+          ctx,
+        )
+        assert.equal(typeof res, 'string', 'traversal must be rejected as error TEXT, not applied')
+        assert.match(
+          res as string,
+          /escapes|outside|containment/i,
+          'error must name the containment violation',
+        )
+
+        // A relative path INSIDE `base` must still resolve and apply normally.
+        const file = join(tmp, 'inner.txt')
+        writeFileSync(file, 'a\nb\n')
+        const ok = await tool.execute(
+          {
+            file: 'inner.txt',
+            edits: [{ op: 'replace', ref: `1#${hashTag('a', 1)}`, lines: ['A'] }],
+          },
+          ctx,
+        )
+        assert.notEqual(typeof ok, 'string', 'valid path inside base must succeed')
+        assert.equal(readFileSync(file, 'utf8'), 'A\nb\n')
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }

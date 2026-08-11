@@ -43,6 +43,10 @@ export function normalizeLine(line: string): string {
 export function hashTag(line: string, lineNumber: number): string {
   const normalized = normalizeLine(line)
   const seed = ALNUM_RE.test(normalized) ? 0 : lineNumber
+  // The `\u0000` NUL between seed and content disambiguates the
+  // seed/content concatenation: without it, seed 1 + content "2" and
+  // seed 12 + content "" would collide into the same digest input. NUL
+  // never occurs in real source lines, so it is a safe separator.
   const digest = createHash('sha256').update(`${seed}\u0000${normalized}`).digest()
   const first = digest[0] ?? 0
   return HASHLINE_DICT.charAt(first >> 4) + HASHLINE_DICT.charAt(first & 0x0f)

@@ -21,8 +21,8 @@
  * @module hashline/tool
  */
 
-import { readFile, writeFile } from 'node:fs/promises'
-import { isAbsolute, resolve } from 'node:path'
+import { readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { isAbsolute, resolve, sep } from 'node:path'
 import { z } from 'zod'
 
 import { buildMismatchError, HASHLINE_REF_RE } from './core.ts'
@@ -89,11 +89,30 @@ interface ResolvedEdit {
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
-/** Resolve the edit file to an absolute path. */
-function resolveFile(file: string, ctx: HashlineEditContext): string {
-  if (isAbsolute(file)) return resolve(file)
-  const base = ctx.worktree ?? ctx.directory ?? process.cwd()
-  return resolve(base, file)
+/**
+ * Resolve the edit file to an absolute path, with a containment guard.
+ *
+ * Relative paths must stay inside `base` (worktree → directory → cwd):
+ * `../` traversal (`../../etc/passwd`) is rejected as error-as-text, so no
+ * read/write ever happens outside the worktree. Absolute paths are trusted
+ * as-is — hashline_edit carries the same privilege as edit/write/bash, so
+ * this is cheap defense-in-depth, not a security boundary.
+ */
+function resolveFile(
+  file: string,
+  ctx: HashlineEditContext,
+): { ok: true; file: string } | { ok: false; error: string } {
+  if (isAbsolute(file)) return { ok: true, file: resolve(file) }
+  const base = resolve(ctx.worktree ?? ctx.directory ?? process.cwd())
+  const resolved = resolve(base, file)
+  // Prefix check with a path.sep boundary: `/tmp/x` must not match `/tmp2/x`.
+  if (resolved !== base && !resolved.startsWith(base + sep)) {
+    return {
+      ok: false,
+      error: `hashline_edit: file "${file}" escapes the worktree (resolved to "${resolved}") — path containment denied`,
+    }
+  }
+  return { ok: true, file: resolved }
 }
 
 /** Parse + validate a ref string against the ORIGINAL snapshot lines. */
@@ -179,7 +198,9 @@ export function createHashlineEditTool() {
       args: z.infer<z.ZodObject<typeof hashlineEditArgs>>,
       ctx: HashlineEditContext,
     ): Promise<HashlineToolResult> => {
-      const file = resolveFile(args.file, ctx)
+      const resolved = resolveFile(args.file, ctx)
+      if (!resolved.ok) return resolved.error
+      const file = resolved.file
 
       let original: string
       try {
@@ -214,9 +235,16 @@ export function createHashlineEditTool() {
 
       let out = working.join('\n')
       if (hadTrailingNewline && !out.endsWith('\n')) out += '\n'
+      // Atomic write (tmp + rename — same pattern as file-persistence.ts
+      // writeState / background-job-board.ts writeSignal): a mid-write crash
+      // leaves at most a `.tmp-<pid>` file, never partial target content.
+      // The tmp file is best-effort cleaned up if the write or rename fails.
+      const tmpPath = `${file}.tmp-${process.pid}`
       try {
-        await writeFile(file, out, 'utf8')
+        await writeFile(tmpPath, out, 'utf8')
+        await rename(tmpPath, file)
       } catch {
+        await rm(tmpPath, { force: true }).catch(() => {})
         return `hashline_edit: cannot write "${file}" — check permissions and try again`
       }
 
