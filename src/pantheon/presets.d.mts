@@ -91,6 +91,23 @@ export declare function applyActivePresetToConfig<C extends object>(
   options?: ResolveOptions & { env?: Record<string, string | undefined> },
 ): ResolvedPreset | null
 
+export interface ProviderKeyOptions {
+  env?: Record<string, string | undefined>
+  routingPath?: string
+}
+
+/** Name of the env var whose value is missing for a provider, or undefined when usable. */
+export declare function missingProviderKeyEnv(
+  providerID: string,
+  options?: ProviderKeyOptions,
+): string | undefined
+
+/** Whether the provider's API key is configured (apiKeyEnv set + non-empty, or no gate). */
+export declare function providerKeyConfigured(
+  providerID: string,
+  options?: ProviderKeyOptions,
+): boolean
+
 export interface MissingApiKeyError extends Error {
   code: 'PANTHEON_MISSING_API_KEY'
   envVar: string

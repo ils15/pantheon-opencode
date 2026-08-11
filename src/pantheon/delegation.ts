@@ -47,7 +47,7 @@ import {
   readDelegationReport,
 } from './delegation-finalize.ts'
 import { createPantheonLogger } from './logger.ts'
-import { resolveActivePreset } from './presets.mjs'
+import { missingProviderKeyEnv, resolveActivePreset } from './presets.mjs'
 
 export type {
   DelegationClient,
@@ -146,6 +146,17 @@ export interface ChildSessionModelRef {
 }
 
 /**
+ * Known-good fallback model (P1, 2026-08-11 — release 1.3.4): when an
+ * AUTO-RESOLVED model (routing.yml agent entry / active preset) points at a
+ * provider whose API key is not configured, the child is dispatched on the
+ * native `opencode` provider instead — verified to work in the field without
+ * an external provider key. Validated with the same providerKeyConfigured
+ * gate as the resolved model; an explicit caller-supplied `model` always wins
+ * over this fallback.
+ */
+const FALLBACK_MODEL = 'opencode/deepseek-v4-flash-free'
+
+/**
  * Split a `provider/model` model ID (e.g. `opencode/deepseek-v4-flash-free`)
  * into the `{ id, providerID }` ref the session.create body expects.
  * Returns undefined for malformed IDs (no slash, empty segments).
@@ -198,6 +209,75 @@ function resolveChildModel(
     options.logger?.warn?.(`[pantheon-delegate] active preset resolution failed: ${reason}`)
   }
   return undefined
+}
+
+/**
+ * Resolve a USABLE child model for a delegate dispatch, gating the resolved
+ * provider's API key (P1, 2026-08-11 — release 1.3.4):
+ *
+ *   1. resolve the model with the existing precedence (explicit `model` >
+ *      options.agentModels > active preset) — see resolveChildModel.
+ *   2. provider key gate: the resolved provider requires its apiKeyEnv env
+ *      var (routing.yml preset defs — same source applyPreset enforces at
+ *      startup). No gate (native providers) or key present → usable as-is.
+ *   3. key MISSING + EXPLICIT caller model → respected anyway (user intent),
+ *      warned.
+ *   4. key MISSING + AUTO-resolved model → fall back to FALLBACK_MODEL
+ *      (validated the same way). Fallback also unusable → returns an `error`
+ *      TEXT (the caller returns it from the tool — never throws) and the
+ *      caller registers NO job on the board.
+ *
+ * The no-model case (nothing resolved) keeps the pre-existing behavior:
+ * warn and let the child use opencode's default.
+ *
+ * @returns `{ model, error }` — at most one of `model` / `error` is set;
+ *   both may be unset (no model resolved, warn emitted).
+ */
+function resolveUsableChildModel(
+  options: DelegationOptions,
+  agent: string,
+  explicitModel: string | undefined,
+): { model: ChildSessionModelRef | undefined; error: string | undefined } {
+  const env = options.presetEnv ?? process.env
+  const explicit = explicitModel !== undefined && explicitModel !== ''
+  const warn = (msg: string) => options.logger?.warn?.(msg)
+
+  const model = resolveChildModel(options, agent, explicitModel)
+  if (model === undefined) {
+    warn(
+      `[pantheon-delegate] no model resolved for agent "${agent}" — ` +
+        "child session will use opencode's default model (may require API keys)",
+    )
+    return { model: undefined, error: undefined }
+  }
+
+  const missingVar = missingProviderKeyEnv(model.providerID, { env })
+  if (missingVar === undefined) return { model, error: undefined }
+
+  if (explicit) {
+    // Rule of precedence: the caller's explicit model is respected — warn only.
+    warn(
+      `[pantheon-delegate] model "${explicitModel}" provider "${model.providerID}" requires ` +
+        `API key ${missingVar} (unset) — respecting the explicit model anyway`,
+    )
+    return { model, error: undefined }
+  }
+
+  // Auto-resolved (agentModels / preset) → try the known-good fallback.
+  const fallback = splitModelRef(FALLBACK_MODEL)
+  if (fallback !== undefined && missingProviderKeyEnv(fallback.providerID, { env }) === undefined) {
+    warn(
+      `[pantheon-delegate] provider "${model.providerID}" requires API key ${missingVar} ` +
+        `(unset) — falling back to ${FALLBACK_MODEL}`,
+    )
+    return { model: fallback, error: undefined }
+  }
+
+  const message =
+    `pantheon_delegate: no usable model for agent "${agent}" — provider "${model.providerID}" ` +
+    `requires API key (set ${missingVar} or PANTHEON_MODEL_PRESET)`
+  warn(`[pantheon-delegate] ${message}`)
+  return { model: undefined, error: message }
 }
 
 // ─── Factory ───────────────────────────────────────────────────────────
@@ -263,16 +343,16 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       // session.create failure → return a clear error as TEXT (tools return
       // errors as text, not thrown) and register NO job on the board — an
       // unhandled rejection here would otherwise lose the failure entirely.
-      // The child model is resolved from (a) the explicit `model` option,
-      // (b) options.agentModels (routing.yml), (c) the active preset — else
-      // left unset so opencode's default applies (warned below).
-      const childModel = resolveChildModel(options, args.agent, args.model)
-      if (childModel === undefined) {
-        options.logger?.warn?.(
-          `[pantheon-delegate] no model resolved for agent "${args.agent}" — ` +
-            "child session will use opencode's default model (may require API keys)",
-        )
-      }
+      // The child model is resolved with a provider API-key gate (P1): the
+      // resolved model (explicit `model` > options.agentModels > active
+      // preset) is used when its provider key is configured; an explicit
+      // caller model is always respected (warned); an auto-resolved model
+      // whose provider key is missing falls back to the known-good
+      // opencode/deepseek-v4-flash-free; if nothing usable remains the
+      // failure is returned as TEXT below — no session, no board job.
+      const resolved = resolveUsableChildModel(options, args.agent, args.model)
+      if (resolved.error !== undefined) return resolved.error
+      const childModel = resolved.model
       let created: { id: string }
       try {
         created = await client.session.create({

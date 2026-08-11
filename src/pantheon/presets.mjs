@@ -327,6 +327,66 @@ function buildResolved(defs, name, source, rawFile) {
 }
 
 /**
+ * Whether a single provider DEF has its API key configured: no apiKeyEnv
+ * (native provider, no external key gate) → always configured; otherwise the
+ * env var must be set and non-empty. Shared by applyPreset (startup config
+ * path) and providerKeyConfigured / missingProviderKeyEnv (delegate dispatch).
+ *
+ * @param {object|null|undefined} provider provider def ({baseURL, apiKeyEnv})
+ * @param {Record<string, string|undefined>} env
+ * @returns {boolean}
+ */
+function providerDefKeyConfigured(provider, env) {
+  if (!provider || typeof provider !== 'object') return true
+  const envVar = provider.apiKeyEnv
+  if (typeof envVar !== 'string' || envVar === '') return true
+  const key = env[envVar]
+  return typeof key === 'string' && key.trim() !== ''
+}
+
+/**
+ * Name of the env var whose value is missing for a provider, or undefined
+ * when the provider is usable. A provider is usable when it declares no
+ * apiKeyEnv (native providers like opencode Zen) or its apiKeyEnv env var is
+ * set and non-empty. Provider defs come from routing.yml preset definitions —
+ * the SAME source applyPreset enforces at startup, so the delegate dispatch
+ * path and the config path can never disagree.
+ *
+ * @param {string} providerID e.g. 'openai' | 'opencode' | 'opencode-go'
+ * @param {object} [opts]
+ * @param {Record<string, string|undefined>} [opts.env]
+ * @param {string} [opts.routingPath]
+ * @returns {string|undefined} missing env var name, or undefined when usable
+ */
+export function missingProviderKeyEnv(providerID, { env = process.env, routingPath } = {}) {
+  const defs = loadPresetDefs(routingPath)
+  for (const def of Object.values(defs)) {
+    const provider = def?.providers?.[providerID]
+    if (provider === undefined) continue
+    if (providerDefKeyConfigured(provider, env)) return undefined
+    return provider.apiKeyEnv
+  }
+  // Provider not declared in any preset → no external key gate (opencode
+  // manages its own auth) → usable.
+  return undefined
+}
+
+/**
+ * Whether the given provider's API key is configured (see
+ * missingProviderKeyEnv). Convenience boolean for callers that only need the
+ * yes/no answer.
+ *
+ * @param {string} providerID
+ * @param {object} [opts]
+ * @param {Record<string, string|undefined>} [opts.env]
+ * @param {string} [opts.routingPath]
+ * @returns {boolean}
+ */
+export function providerKeyConfigured(providerID, opts) {
+  return missingProviderKeyEnv(providerID, opts) === undefined
+}
+
+/**
  * Apply a resolved preset to an opencode config object (mutates `config`).
  * - Providers: config.provider[id].options.baseURL + apiKey (env-gated).
  * - Agents:    config.agent[agent].model / .variant / .fallback_models.
@@ -339,8 +399,7 @@ export function applyPreset(config, resolved, { env = process.env } = {}) {
   if (!resolved) return config
 
   for (const [id, provider] of Object.entries(resolved.providers ?? {})) {
-    const apiKey = env[provider.apiKeyEnv]
-    if (!apiKey) {
+    if (!providerDefKeyConfigured(provider, env)) {
       const err = new Error(`presets: provider "${id}" requires env var ${provider.apiKeyEnv}`)
       err.code = 'PANTHEON_MISSING_API_KEY'
       err.envVar = provider.apiKeyEnv
@@ -350,7 +409,7 @@ export function applyPreset(config, resolved, { env = process.env } = {}) {
     config.provider[id] ??= {}
     config.provider[id].options ??= {}
     config.provider[id].options.baseURL = provider.baseURL
-    config.provider[id].options.apiKey = apiKey
+    config.provider[id].options.apiKey = env[provider.apiKeyEnv]
   }
 
   for (const [agent, spec] of Object.entries(resolved.agents ?? {})) {

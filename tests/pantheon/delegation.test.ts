@@ -179,6 +179,8 @@ async function main() {
           options: {
             rootSessions: new Set([ROOT]),
             outputDir: tmp,
+            // opencode provider requires PANTHEON_OPENCODE_API_KEY (routing.yml)
+            presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
             agentModels: { apollo: 'opencode/deepseek-v4-flash-free' },
           },
         })
@@ -212,7 +214,8 @@ async function main() {
             outputDir: tmp,
             // No agentModels — the delegate must resolve the active preset
             // itself (default routing.yml) and use the preset's apollo model.
-            presetEnv: { PANTHEON_MODEL_PRESET: 'go-deepseek' },
+            // opencode provider requires PANTHEON_OPENCODE_API_KEY (routing.yml).
+            presetEnv: { PANTHEON_MODEL_PRESET: 'go-deepseek', PANTHEON_OPENCODE_API_KEY: 'sk-test' },
             logger: { warn: (msg) => warnings.push(msg) },
           },
         })
@@ -261,6 +264,164 @@ async function main() {
         assert.ok(
           warnings.some((w) => /no model/i.test(w)),
           `expected a no-model warning, got: ${warnings.join('; ')}`,
+        )
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(P1) resolved provider without API key → child created with fallback opencode/deepseek-v4-flash-free + warn',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-fallback-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            // go-openai: apollo → openai/gpt-5.6-luna-fast. PANTHEON_OPENAI_API_KEY
+            // is UNSET → fallback must kick in. The fallback provider (opencode)
+            // IS configured → usable.
+            presetEnv: { PANTHEON_MODEL_PRESET: 'go-openai', PANTHEON_OPENCODE_API_KEY: 'sk-fallback' },
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        const result = await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo' },
+          makeCtx(),
+        )
+
+        assert.ok(result.includes('apo-1'), `delegation proceeds via fallback, got: ${result}`)
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'deepseek-v4-flash-free',
+          providerID: 'opencode',
+        })
+        assert.ok(
+          warnings.some((w) => /API key/i.test(w) && /fallback|deepseek-v4-flash-free/i.test(w)),
+          `expected a missing-key fallback warning, got: ${warnings.join('; ')}`,
+        )
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(P1) fallback provider ALSO without API key → clear error TEXT, NO job on board',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-none-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            // go-openai: resolved provider openai key UNSET; fallback provider
+            // opencode key ALSO unset → no usable model at all.
+            presetEnv: { PANTHEON_MODEL_PRESET: 'go-openai' },
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        const result = await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo' },
+          makeCtx(),
+        )
+
+        assert.ok(
+          /no usable model/i.test(result),
+          `expected clear error text, got: ${result}`,
+        )
+        assert.match(result, /PANTHEON_OPENAI_API_KEY/, 'error must name the missing env var')
+        assert.equal(client.created.length, 0, 'no session may be created without a usable model')
+        assert.equal(board.list().length, 0, 'no job may be registered when creation fails')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(P1) resolved provider WITH API key configured → resolved model used normally, no warning',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-present-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            presetEnv: {
+              PANTHEON_MODEL_PRESET: 'go-openai',
+              PANTHEON_OPENAI_API_KEY: 'sk-openai',
+            },
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'gpt-5.6-luna-fast',
+          providerID: 'openai',
+        })
+        assert.equal(warnings.length, 0, 'key present — no warning expected')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(P1) EXPLICIT model in the tool call is respected even without provider key (warn only)',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-explicit-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            // Empty env: openai key is missing, but the explicit model wins.
+            presetEnv: {},
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo', model: 'openai/gpt-5.6-terra' },
+          makeCtx(),
+        )
+
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'gpt-5.6-terra',
+          providerID: 'openai',
+        })
+        assert.ok(
+          warnings.some((w) => /API key/i.test(w)),
+          `explicit model must still warn on the missing key, got: ${warnings.join('; ')}`,
         )
       } finally {
         rmSync(tmp, { recursive: true, force: true })
