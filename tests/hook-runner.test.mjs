@@ -315,3 +315,67 @@ test('regression: runHook closes stdin even with EMPTY payload ({}), resolves fa
     `empty-payload hook took ${elapsed.toFixed(0)}ms — stdin not closed`,
   )
 })
+
+// ─── on-subagent-delegation-stop.sh delegations.log line format ─────────
+// 1.3.4 regression: the log line used to emit `task_id: ""` (empty) and
+// `duration_ms` as a STRING (prim() stringified the plugin's numeric value).
+// The line must carry the REAL task id (never empty when a job exists) and a
+// NUMERIC duration_ms.
+
+test('delegation stop log: task_id is the real id and duration_ms is numeric', async () => {
+  const logDir = mkdtempSync(join(tmpdir(), 'pantheon-delegation-log-'))
+  try {
+    const res = await runHook(
+      'on-subagent-delegation-stop.sh',
+      {
+        tool_name: 'task',
+        tool_input: { subagent_type: 'apollo', description: 'Find X' },
+        session_id: 'ses_parent_1',
+        delegation_id: 'del-001',
+        task_id: 'ses_child_99',
+        duration_ms: 1234,
+        status: 'success',
+        tool_output: { title: 'ok', output: 'done', metadata: null },
+      },
+      { env: { LOG_DIR: logDir } },
+    )
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}: ${res.stderr}`)
+    const lines = readFileSync(join(logDir, 'delegations.log'), 'utf8').trim().split('\n')
+    const last = JSON.parse(lines[lines.length - 1])
+    assert.equal(last.event, 'SubagentStop')
+    assert.equal(last.task_id, 'ses_child_99', 'task_id must be the real child id, never ""')
+    assert.equal(typeof last.duration_ms, 'number', 'duration_ms must be numeric, not a string')
+    assert.equal(last.duration_ms, 1234)
+  } finally {
+    rmSync(logDir, { recursive: true, force: true })
+  }
+})
+
+test('delegation stop log: empty task_id is OMITTED and unparseable duration is null', async () => {
+  const logDir = mkdtempSync(join(tmpdir(), 'pantheon-delegation-log-empty-'))
+  try {
+    const res = await runHook(
+      'on-subagent-delegation-stop.sh',
+      {
+        tool_name: 'task',
+        tool_input: { subagent_type: 'apollo', description: 'Find X' },
+        session_id: 'ses_parent_2',
+        delegation_id: 'del-002',
+        task_id: '',
+        status: 'success',
+        tool_output: { title: 'ok', output: 'done', metadata: null },
+      },
+      { env: { LOG_DIR: logDir } },
+    )
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}: ${res.stderr}`)
+    const lines = readFileSync(join(logDir, 'delegations.log'), 'utf8').trim().split('\n')
+    const last = JSON.parse(lines[lines.length - 1])
+    assert.ok(
+      !Object.prototype.hasOwnProperty.call(last, 'task_id'),
+      'empty task_id must be omitted from the line, not emitted as ""',
+    )
+    assert.equal(last.duration_ms, null, 'missing duration must be null, not a string')
+  } finally {
+    rmSync(logDir, { recursive: true, force: true })
+  }
+})

@@ -383,12 +383,27 @@ fi
 # Emit a schema-compatible line: {event, timestamp, agent, status, reason,
 # session_id, result, delegation_id, task_id, duration_ms} — P0-2: the
 # delegation_id joins this record to the matching SubagentStart; task_id and
-# duration_ms ride in their OWN fields. Built with json.dumps so arbitrary
+# duration_ms ride in their OWN fields. 1.3.4: task_id is OMITTED when empty
+# (never "" — the real child id is always present when a job exists) and
+# duration_ms is emitted as a NUMBER (the plugin computes it; stringifying it
+# broke downstream aggregation). Built with json.dumps so arbitrary
 # reason/result text cannot break the JSON.
 LOG_LINE=$(python3 -c '
 import json
 import sys
-print(json.dumps({
+
+
+def _num(v):
+    """Best-effort numeric parse — the plugin duration_ms is a number; a
+    non-numeric value (e.g. unset) becomes null, never a string."""
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+task_id = sys.argv[8] or ""
+line = {
     "event": "SubagentStop",
     "timestamp": sys.argv[1],
     "agent": sys.argv[2],
@@ -397,9 +412,11 @@ print(json.dumps({
     "session_id": sys.argv[5],
     "result": sys.argv[6],
     "delegation_id": sys.argv[7],
-    "task_id": sys.argv[8],
-    "duration_ms": sys.argv[9] or None,
-}, ensure_ascii=False))
+}
+if task_id:
+    line["task_id"] = task_id
+line["duration_ms"] = _num(sys.argv[9])
+print(json.dumps(line, ensure_ascii=False))
 ' "$TIMESTAMP" "$AGENT_NAME" "$STATUS" "$REASON" "$SESSION_ID" "$RESULT_SNIPPET" "$DELEGATION_ID" "$TASK_ID" "$DURATION_MS")
 
 LOG_FILE="$LOG_DIR/delegations.log"
