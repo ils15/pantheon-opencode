@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - **Cost tracking**: JSONL ledger + `pantheon_cost` command reading opencode.db (zero-dep, node:sqlite → scripts/cost.mjs fallback)
 
 ### Fixed
+- **Delegation killer**: chat.message hook injected reminders with empty messageID on the subagent promptAsync path — opencode schema rejected it, killing every background delegation in ~20ms (found by live E2E smoke)
 - **Installer `resolveInstalledPlugin`** mapped only `src/plugins/*` — `src/plugin.ts` resolved to the dev path, breaking global installs on non-dev machines and leaking the dev path (release-blocking)
 - **Todo enforcer invasiveness**: skips injection when native background children are active (`session.children`) and within 30s of user activity
 - **Hashline**: atomic write (tmp+rename), path containment guard, documented seed separator
