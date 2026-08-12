@@ -30,8 +30,8 @@ import {
   delegationSpinnerFrame,
   fmtElapsed,
   type LiveDelegationEntry,
-  mergeDelegationSources,
   mergeChildDelegationSources,
+  mergeDelegationSources,
   navigateToDelegationSession,
   parseDelegationMarkdown,
   parseDelegationToolPart,
@@ -1001,26 +1001,29 @@ async function main() {
     },
   )
 
-  await testAsync('visual state: live delegation exposes phase labels and spinner frames', async () => {
-    const live: DelegationEntry = {
-      alias: 'live-call_1',
-      sessionID: 'ses_root',
-      agent: 'apollo',
-      state: 'running',
-      startedAt: 1000,
-      updatedAt: null,
-      timedOut: false,
-      description: 'Busca',
-    }
-    assert.equal(delegationActivity(live), 'delegating')
-    assert.equal(delegationActivityLabel(live), 'DELEGATING')
-    assert.notEqual(delegationSpinnerFrame(0), delegationSpinnerFrame(140))
-    assert.equal(
-      delegationActivityLabel({ ...live, alias: 'apo-1', taskID: 'ses_child', read: true }),
-      'READING RESULT',
-    )
-    assert.equal(delegationActivityLabel({ ...live, state: 'completed' }), 'DONE')
-  })
+  await testAsync(
+    'visual state: live delegation exposes phase labels and spinner frames',
+    async () => {
+      const live: DelegationEntry = {
+        alias: 'live-call_1',
+        sessionID: 'ses_root',
+        agent: 'apollo',
+        state: 'running',
+        startedAt: 1000,
+        updatedAt: null,
+        timedOut: false,
+        description: 'Busca',
+      }
+      assert.equal(delegationActivity(live), 'delegating')
+      assert.equal(delegationActivityLabel(live), 'DELEGATING')
+      assert.notEqual(delegationSpinnerFrame(0), delegationSpinnerFrame(140))
+      assert.equal(
+        delegationActivityLabel({ ...live, alias: 'apo-1', taskID: 'ses_child', read: true }),
+        'READING RESULT',
+      )
+      assert.equal(delegationActivityLabel({ ...live, state: 'completed' }), 'DONE')
+    },
+  )
 
   await testAsync(
     'children/live merge: live phase appears before child/report and md terminal wins',
