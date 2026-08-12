@@ -42,6 +42,11 @@ const PLUGIN_URL = new URL('../src/plugins/pantheon-hooks.ts', import.meta.url).
  */
 async function loadPlugin(phase) {
   process.env.PANTHEON_TOASTS = 'all' // open the chat-reminder gate (errors+delegations+council)
+  // Escape hatch: the runtime double-registration guard (plugin-once.ts) is
+  // process-global — this suite invokes the factory once PER PHASE in the
+  // SAME process (cache-busted imports). Without `off`, every phase after the
+  // first would become a no-op and the tests would silently test nothing.
+  process.env.PANTHEON_PLUGIN_ONCE = 'off'
   const mod = await import(`${PLUGIN_URL}?phase=${phase}`)
   const logDir = mkdtempSync(join(tmpdir(), `hooks-chat-${phase}-`))
   const appLogs = []

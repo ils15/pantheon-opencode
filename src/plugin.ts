@@ -13,6 +13,7 @@ import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
 import { createPantheonLogger } from './pantheon/logger.ts'
+import { pantheonPluginOnce } from './pantheon/plugin-once.ts'
 import { applyActivePresetToConfig, loadRoutingAgentModels } from './pantheon/presets.mjs'
 import {
   TODO_ENFORCER_DEFAULTS,
@@ -207,6 +208,16 @@ function adaptTodoEnforcerClient(client: PluginInput['client']): TodoEnforcerCli
  * Helpers live in src/pantheon/vision.ts and are imported from there directly.
  */
 const plugin: Plugin = async (input: PluginInput) => {
+  // release-134: runtime guard against DOUBLE registration (duplicate toasts +
+  // duplicate task_ids in one process — 2026-08-12 live logs). opencode
+  // merges the global config (npm-package plugin paths) with the project
+  // config (repo source paths), so this module loads from TWO filesystem
+  // paths in the same process and the factory would otherwise run twice. The
+  // second invocation becomes a no-op: an empty hooks object (every Hooks
+  // field is optional) → hooks/tools register exactly once.
+  if (pantheonPluginOnce('pantheon:plugin')) {
+    return {}
+  }
   const vision = createVisionHandler(input)
   // Phase 2/3: background delegation toolset + the bound finalize lifecycle
   // hook. Completion is observed through the event hook below

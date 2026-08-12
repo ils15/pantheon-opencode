@@ -193,6 +193,7 @@ import {
   pendingChatReminders,
 } from '../pantheon/chat-reminders.ts'
 import { type HookPayload, type HookResult, runHook } from './hook-runner.ts'
+import { pantheonPluginOnce } from '../pantheon/plugin-once.ts'
 
 /** Tools that represent a subagent delegation (opencode `task` tool etc.). */
 const DELEGATION_TOOL_RE = /^(task|.*delegate.*|.*subagent.*)$/i
@@ -1207,6 +1208,17 @@ async function safeRun(
 }
 
 const plugin: Plugin = async ({ client, directory }) => {
+  // release-134: runtime guard against DOUBLE registration (duplicate toasts +
+  // duplicate task_ids in one process — 2026-08-12 live logs). opencode
+  // merges the global config (npm-package plugin paths) with the project
+  // config (repo source paths), so this module loads from TWO filesystem
+  // paths in the same process and the factory would otherwise run twice —
+  // every hook (tool.execute.before/after, chat.message, event) firing
+  // TWICE. The second invocation becomes a no-op (empty hooks object) so
+  // hooks register exactly once.
+  if (pantheonPluginOnce('pantheon:hooks')) {
+    return {}
+  }
   const ctx: HookContext = { client, directory }
   return {
     'tool.execute.before': async (input, output) => {

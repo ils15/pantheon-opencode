@@ -59,6 +59,13 @@ import {
 } from '../src/pantheon/vision.ts'
 import plugin from '../src/plugin.ts'
 
+// Escape hatch: the runtime double-registration guard (plugin-once.ts) is
+// process-global — this suite invokes the plugin factory ~20 times in the
+// SAME process (module-level contract block + makeHooks()). Without `off`,
+// only the first invocation would run its full body and every later hook
+// would be an empty object.
+process.env.PANTHEON_PLUGIN_ONCE = 'off'
+
 // ─── Contract: plugin.ts export surface (OpenCode 1.18.11 legacy loader) ───
 // OpenCode 1.18.11 `getLegacyPlugins()` does `Object.values(mod)` and invokes
 // EVERY function-valued export as a plugin factory, passing a PluginInput. Any
