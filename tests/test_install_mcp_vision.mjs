@@ -80,6 +80,11 @@ assert.ok(
   pluginInstaller.includes('const staleRefs = [pluginId, `${pluginId}/dist/tui.tsx`, `${pluginId}/dist/tui.js`]'),
   'unregisterPlugin removes the bare relative plugin id too',
 )
+assert.ok(
+  pluginInstaller.includes("'/src/plugins/tui/dist/tui.tsx'") &&
+    pluginInstaller.includes("'/plugins/pantheon-tui/dist/tui.tsx'"),
+  'unregisterPlugin removes stale absolute TUI registrations from previous installs',
+)
 
 assert.ok(catalog.includes("'pantheon-vision':"))
 assert.ok(sourceCatalog.includes('../../scripts/install-mcp.mjs'))

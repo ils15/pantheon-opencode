@@ -130,12 +130,21 @@ export function unregisterPlugin(tuiJsonPath, pluginId, { dryRun = false } = {})
   }
   // Remove stale refs: the bare relative id (openCode < 1.19 wrote
   // "plugins/pantheon-tui", which its tui loader misreads as an npm/github
-  // spec → NpmInstallFailedError) and the old dist paths.
+  // spec → NpmInstallFailedError), old dist paths, and absolute paths from
+  // previous package/npx installs. Without removing the absolute paths, each
+  // init run accumulates another TUI plugin and OpenCode loads stale copies.
   const staleRefs = [pluginId, `${pluginId}/dist/tui.tsx`, `${pluginId}/dist/tui.js`]
-  for (const stale of staleRefs) {
-    const idx = tuiConfig.plugin.indexOf(stale)
-    if (idx !== -1) tuiConfig.plugin.splice(idx, 1)
-  }
+  const staleSuffixes = [
+    '/src/plugins/tui/dist/tui.tsx',
+    '/src/plugins/tui/dist/tui.js',
+    '/plugins/pantheon-tui/dist/tui.tsx',
+    '/plugins/pantheon-tui/dist/tui.js',
+  ]
+  tuiConfig.plugin = tuiConfig.plugin.filter((ref) => {
+    if (staleRefs.includes(ref)) return false
+    const normalized = typeof ref === 'string' ? ref.replaceAll('\\', '/') : ''
+    return !staleSuffixes.some((suffix) => normalized.endsWith(suffix))
+  })
   const tuiContent = `${JSON.stringify(tuiConfig, null, 2)}\n`
   return writeIfChanged(tuiJsonPath, tuiContent, dryRun)
 }
