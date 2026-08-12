@@ -903,6 +903,10 @@ export type DelegationEntry = {
   updatedAt: number | null
   timedOut: boolean
   description: string
+  /** True while the panel is waiting for pantheon_delegation_read. */
+  read?: boolean
+  /** Internal provenance used to keep a finalized md report authoritative. */
+  source?: 'child' | 'live' | 'md'
 }
 
 /** True for `\s` characters (space, tab, newline, CR) — plain char checks so
@@ -1016,6 +1020,7 @@ export function parseDelegationMarkdown(
     updatedAt: Number.isNaN(finalizedAt) ? null : finalizedAt,
     timedOut,
     description,
+    source: 'md',
   }
 }
 
@@ -1115,6 +1120,107 @@ export function fmtElapsed(ms: number): string {
 export function delegationElapsed(entry: DelegationEntry, now: number): string {
   if (entry.state === 'running') return fmtElapsed(now - entry.startedAt)
   return entry.updatedAt !== null ? fmtElapsed(entry.updatedAt - entry.startedAt) : '\u2014'
+}
+
+/** The activity labels shown by the animated row. Keeping this pure makes the
+ * state machine testable without booting OpenCode's renderer. */
+export type DelegationActivity =
+  | 'delegating'
+  | 'working'
+  | 'reading'
+  | 'completed'
+  | 'error'
+  | 'cancelled'
+
+export function delegationActivity(entry: DelegationEntry): DelegationActivity {
+  if (entry.state === 'completed') return 'completed'
+  if (entry.state === 'error') return 'error'
+  if (entry.state === 'cancelled') return 'cancelled'
+  if (entry.read) return 'reading'
+  if (entry.alias.startsWith('live-') && entry.taskID === undefined) return 'delegating'
+  return 'working'
+}
+
+export function delegationActivityLabel(entry: DelegationEntry): string {
+  switch (delegationActivity(entry)) {
+    case 'delegating':
+      return 'DELEGATING'
+    case 'working':
+      return 'WORKING'
+    case 'reading':
+      return 'READING RESULT'
+    case 'completed':
+      return entry.timedOut ? 'DONE (TIMED OUT)' : 'DONE'
+    case 'error':
+      return 'ERROR'
+    default:
+      return 'CANCELLED'
+  }
+}
+
+const DELEGATION_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+/** Return a deterministic spinner frame. The View ticks this every 140ms. */
+export function delegationSpinnerFrame(now: number): string {
+  const index = Math.floor(Math.max(0, now) / 140) % DELEGATION_SPINNER_FRAMES.length
+  return DELEGATION_SPINNER_FRAMES[index] ?? DELEGATION_SPINNER_FRAMES[0]
+}
+
+/** Merge the immediate tool-event channel into the child-session channel.
+ *
+ * Children remain the durable source, while live entries make a delegation
+ * visible before the child API/report catches up. A finalized md entry wins
+ * over a stale live entry; a child-only row is upgraded with live agent,
+ * alias, phase and timestamps. */
+export function mergeChildDelegationSources(
+  children: readonly DelegationEntry[],
+  live: readonly LiveDelegationEntry[],
+): DelegationEntry[] {
+  const result = [...children]
+  const byTask = new Map<string, number>()
+  const bySessionAlias = new Map<string, number>()
+  const key = (sessionID: string, alias: string): string => `${sessionID}\u0000${alias}`
+
+  result.forEach((entry, index) => {
+    if (entry.taskID !== undefined) byTask.set(entry.taskID, index)
+    bySessionAlias.set(key(entry.sessionID, entry.alias), index)
+  })
+
+  for (const liveEntry of live) {
+    const incoming = toDelegationEntry(liveEntry)
+    const index =
+      (incoming.taskID !== undefined ? byTask.get(incoming.taskID) : undefined) ??
+      (incoming.alias !== '' ? bySessionAlias.get(key(incoming.sessionID, incoming.alias)) : undefined)
+
+    if (index === undefined) {
+      result.push(incoming)
+      const newIndex = result.length - 1
+      if (incoming.taskID !== undefined) byTask.set(incoming.taskID, newIndex)
+      bySessionAlias.set(key(incoming.sessionID, incoming.alias), newIndex)
+      continue
+    }
+
+    const existing = result[index]
+    if (existing === undefined) continue
+    const finalized = existing.source === 'md' && existing.state !== 'running'
+    if (finalized) continue
+    result[index] = {
+      ...existing,
+      alias: liveEntry.alias !== null ? incoming.alias : existing.alias,
+      sessionID: existing.sessionID || incoming.sessionID,
+      taskID: existing.taskID ?? incoming.taskID,
+      agent: incoming.agent !== 'agent' ? incoming.agent : existing.agent,
+      description: incoming.description !== '' ? incoming.description : existing.description,
+      state: incoming.state,
+      startedAt: Math.min(existing.startedAt, incoming.startedAt),
+      updatedAt: incoming.updatedAt,
+      read: incoming.read,
+      source: 'live',
+    }
+  }
+
+  result.sort(compareDelegationEntries)
+  return result
 }
 
 /* ─── Live tool-call lifecycle (agent-sidebar pattern) ─────
@@ -1437,12 +1543,15 @@ export function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry {
   return {
     alias: live.alias ?? `live-${live.callID.slice(0, 8)}`,
     sessionID: live.sessionID,
+    ...(live.taskID !== null ? { taskID: live.taskID } : {}),
     agent: live.agent,
     state: live.state,
     startedAt: live.startedAt,
     updatedAt: live.updatedAt,
     timedOut: false,
     description: live.description,
+    read: live.read,
+    source: 'live',
   }
 }
 
@@ -1556,6 +1665,7 @@ export function childrenToDelegationEntries(
         mdEntry !== undefined && mdEntry.description !== ''
           ? mdEntry.description
           : (child.title ?? ''),
+      source: mdEntry !== undefined ? 'md' : 'child',
     })
   }
   out.sort(compareDelegationEntries)
@@ -1658,7 +1768,12 @@ function SessionRow(props: { api: TuiPluginApi; session: any }) {
 
 /* ─── Delegation Row (single job from the children/md channels) ─ */
 
-function DelegationRow(props: { api: TuiPluginApi; job: DelegationEntry; now: number }) {
+function DelegationRow(props: {
+  api: TuiPluginApi
+  job: DelegationEntry
+  now: number
+  animationNow: number
+}) {
   const theme = () => props.api.theme.current
 
   const color = createMemo(() => {
@@ -1675,11 +1790,9 @@ function DelegationRow(props: { api: TuiPluginApi; job: DelegationEntry; now: nu
     }
   })
 
-  // delegations-sidebar dot: ● running, ✓ completed, ✕ error, ○ cancelled.
-  const dot = createMemo(() => {
+  const marker = createMemo(() => {
+    if (props.job.state === 'running') return `${delegationSpinnerFrame(props.animationNow)} `
     switch (props.job.state) {
-      case 'running':
-        return '\u25cf '
       case 'completed':
         return '\u2713 '
       case 'error':
@@ -1689,15 +1802,16 @@ function DelegationRow(props: { api: TuiPluginApi; job: DelegationEntry; now: nu
     }
   })
 
-  const label = createMemo(() => {
-    const { alias, agent, state, timedOut, description } = props.job
-    const stateLabel =
-      state === 'running' ? 'RUNNING' : `${state.toUpperCase()}${timedOut ? ' (timed out)' : ''}`
+  const primary = createMemo(() => {
+    const { alias, agent } = props.job
+    return `${marker()}[${alias}] ${agent} \u2014 ${delegationActivityLabel(props.job)}`
+  })
+
+  const detail = createMemo(() => {
     const elapsed = delegationElapsed(props.job, props.now)
-    const desc = description !== '' ? ` \u2014 ${description}` : ''
-    const line = `${dot()}[${alias}] ${agent} \u2014 ${stateLabel} \u2014 ${elapsed}${desc}`
-    // Hard cap: keep the line within ~200 chars (truncate the description).
-    return line.length > 200 ? `${line.slice(0, 197)}\u2026` : line
+    const description = props.job.description !== '' ? ` \u2014 ${props.job.description}` : ''
+    const line = `${elapsed}${description}`
+    return line.length > 180 ? `${line.slice(0, 177)}\u2026` : line
   })
 
   // Click a row → navigate to the child session (route API guarded in the
@@ -1709,7 +1823,8 @@ function DelegationRow(props: { api: TuiPluginApi; job: DelegationEntry; now: nu
 
   return (
     <box onMouseDown={open}>
-      <text fg={color()}>{label()}</text>
+      <text fg={color()}>{primary()}</text>
+      <text fg={theme().textMuted}>{detail()}</text>
     </box>
   )
 }
@@ -1718,9 +1833,8 @@ function DelegationRow(props: { api: TuiPluginApi; job: DelegationEntry; now: nu
 
 /** Plugin-level live delegation store shared with the event subscriptions
  *  in `tui()`: the map of live entries + a version signal bumped on every
- *  mutation. The View subscribes to the version (in an effect) purely as a
- *  REFRESH TRIGGER for the children-based panel — the map itself is no
- *  longer read for rendering. */
+ *  mutation. The View subscribes to the version (in an effect) to refresh the
+ *  durable child list and also reads the map as an optimistic live source. */
 export type LiveDelegationStore = {
   map: Map<string, LiveDelegationEntry>
   /** Reactive version getter — View reads it inside an effect to re-fetch. */
@@ -1736,7 +1850,8 @@ function View(props: {
   liveStore: LiveDelegationStore
 }) {
   const [showSessions, setShowSessions] = createSignal(false)
-  const [showDelegations, setShowDelegations] = createSignal(false)
+  // Show live work immediately; the header remains clickable to collapse it.
+  const [showDelegations, setShowDelegations] = createSignal(true)
 
   const theme = () => props.api.theme.current
 
@@ -1810,9 +1925,8 @@ function View(props: {
   // session with parentID = this session, so children ARE the delegation
   // list (delegations-sidebar pattern). The md channel
   // (.pantheon/delegations) enriches each child with alias/agent/description
-  // and terminal duration via the `Task ID` match. Live tool-call events
-  // (message.part.updated) are NOT the source: they only bump
-  // liveStore.version(), which re-triggers this fetch.
+  // and terminal duration via the `Task ID` match. Live tool-call events are
+  // merged optimistically so the row appears before those channels catch up.
   const delegationsDir = createMemo(() => resolveDelegationsDir((props.api.state as any).path))
   // Silence-by-default panel logger → <project>/.pantheon/logs/hooks.log.
   const panelLog = createTuiLogger(dirname(delegationsDir()))
@@ -1824,6 +1938,9 @@ function View(props: {
   // (oh-my-opencode-slim pattern): re-fetch children + re-read the md every
   // second so the panel updates even when NO event ever fires.
   const [now, setNow] = createSignal(Date.now())
+  // Separate fast ticker for the spinner. The elapsed label intentionally
+  // remains on the 1s ticker to avoid unnecessary work.
+  const [animationNow, setAnimationNow] = createSignal(Date.now())
   // Cumulative count of event-triggered refreshes — logged with every fetch
   // ("panel: children=N md=N events=N") so the (0) symptom is diagnosable:
   // children>0 means the source works; events=0 means the event bus isn't
@@ -1864,7 +1981,14 @@ function View(props: {
           }
         }
         const withStatus = children.map((c) => ({ ...c, status: resolveStatus(c.id) }))
-        setChildDelegations(childrenToDelegationEntries(withStatus, md, now()))
+        const childEntries = childrenToDelegationEntries(withStatus, md, now())
+        // The event channel is optimistic: it renders a job even while the
+        // child session/report is still being created. Filter by parent so a
+        // different focused session never leaks rows into this sidebar.
+        const liveEntries = [...props.liveStore.map.values()].filter(
+          (entry) => entry.sessionID === props.sessionID,
+        )
+        setChildDelegations(mergeChildDelegationSources(childEntries, liveEntries))
         // 4. diagnostic line — every re-fetch (silence-by-default, hooks.log).
         panelLog.info(
           `panel: children=${children.length} md=${md.length} events=${eventRefreshCount}`,
@@ -1916,7 +2040,7 @@ function View(props: {
 
     // message.part.updated/removed → liveStore.version() bumps (tui()):
     // subscribe here so the panel ALSO re-fetches children when tool-part
-    // events DO arrive (kept strictly as a refresh trigger, not a source).
+    // events DO arrive and the updated live row is rendered immediately.
     createEffect(() => {
       props.liveStore.version() // subscribe to live mutations
       eventRefreshCount += 1
@@ -1930,6 +2054,8 @@ function View(props: {
       void refreshDelegations()
     }, 1_000)
     cleanup.push(() => clearInterval(poll))
+    const animation = setInterval(() => setAnimationNow(Date.now()), 140)
+    cleanup.push(() => clearInterval(animation))
 
     // Compaction recovery: `message.part.removed` clears live entries while
     // compacting, so after a compaction/attach the live map would start
@@ -2037,7 +2163,14 @@ function View(props: {
         >
           <box marginLeft={1} flexDirection="column">
             <For each={visibleDelegations()}>
-              {(job) => <DelegationRow api={props.api} job={job} now={now()} />}
+              {(job) => (
+                <DelegationRow
+                  api={props.api}
+                  job={job}
+                  now={now()}
+                  animationNow={animationNow()}
+                />
+              )}
             </For>
           </box>
         </Show>

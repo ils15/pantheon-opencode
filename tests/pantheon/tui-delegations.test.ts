@@ -24,10 +24,14 @@ import {
   childStatusToState,
   collectDelegationToolParts,
   type DelegationEntry,
+  delegationActivity,
+  delegationActivityLabel,
   delegationElapsed,
+  delegationSpinnerFrame,
   fmtElapsed,
   type LiveDelegationEntry,
   mergeDelegationSources,
+  mergeChildDelegationSources,
   navigateToDelegationSession,
   parseDelegationMarkdown,
   parseDelegationToolPart,
@@ -994,6 +998,71 @@ async function main() {
         '7s',
         'terminal uses updatedAt-startedAt, not now',
       )
+    },
+  )
+
+  await testAsync('visual state: live delegation exposes phase labels and spinner frames', async () => {
+    const live: DelegationEntry = {
+      alias: 'live-call_1',
+      sessionID: 'ses_root',
+      agent: 'apollo',
+      state: 'running',
+      startedAt: 1000,
+      updatedAt: null,
+      timedOut: false,
+      description: 'Busca',
+    }
+    assert.equal(delegationActivity(live), 'delegating')
+    assert.equal(delegationActivityLabel(live), 'DELEGATING')
+    assert.notEqual(delegationSpinnerFrame(0), delegationSpinnerFrame(140))
+    assert.equal(
+      delegationActivityLabel({ ...live, alias: 'apo-1', taskID: 'ses_child', read: true }),
+      'READING RESULT',
+    )
+    assert.equal(delegationActivityLabel({ ...live, state: 'completed' }), 'DONE')
+  })
+
+  await testAsync(
+    'children/live merge: live phase appears before child/report and md terminal wins',
+    async () => {
+      const child: DelegationEntry = {
+        alias: 'ses_child_9',
+        sessionID: '',
+        taskID: 'ses_child_9',
+        agent: 'agent',
+        state: 'running',
+        startedAt: 1000,
+        updatedAt: null,
+        timedOut: false,
+        description: 'Busca',
+        source: 'child',
+      }
+      const live: LiveDelegationEntry = {
+        callID: 'call_1',
+        partID: 'part_1',
+        sessionID: 'ses_root',
+        tool: 'pantheon_delegate',
+        agent: 'apollo',
+        description: 'Busca',
+        alias: 'apo-1',
+        taskID: 'ses_child_9',
+        state: 'running',
+        startedAt: 1000,
+        updatedAt: null,
+        read: true,
+      }
+      const merged = mergeChildDelegationSources([child], [live])
+      assert.equal(merged.length, 1)
+      assert.equal(merged[0]?.alias, 'apo-1')
+      assert.equal(merged[0]?.agent, 'apollo')
+      assert.equal(merged[0]?.read, true)
+      assert.equal(delegationActivityLabel(merged[0] as DelegationEntry), 'READING RESULT')
+
+      const finalized = mergeChildDelegationSources(
+        [{ ...child, alias: 'apo-1', state: 'completed', updatedAt: 9000, source: 'md' }],
+        [live],
+      )
+      assert.equal(finalized[0]?.state, 'completed', 'finalized md remains authoritative')
     },
   )
 

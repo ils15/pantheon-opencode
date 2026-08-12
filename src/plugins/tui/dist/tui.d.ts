@@ -18,6 +18,10 @@ type DelegationEntry = {
   updatedAt: number | null;
   timedOut: boolean;
   description: string;
+  /** True while the panel is waiting for pantheon_delegation_read. */
+  read?: boolean;
+  /** Internal provenance used to keep a finalized md report authoritative. */
+  source?: 'child' | 'live' | 'md';
 };
 /** Parse one delegation report md header into a structured entry.
  *  Returns null (skip) when the file is not a recognizable report:
@@ -56,6 +60,20 @@ declare function fmtElapsed(ms: number): string;
 /** Elapsed label for one entry: running → ticks `now - startedAt`, terminal
  *  → fixed `updatedAt - startedAt` (em dash when no finalized timestamp). */
 declare function delegationElapsed(entry: DelegationEntry, now: number): string;
+/** The activity labels shown by the animated row. Keeping this pure makes the
+ * state machine testable without booting OpenCode's renderer. */
+type DelegationActivity = 'delegating' | 'working' | 'reading' | 'completed' | 'error' | 'cancelled';
+declare function delegationActivity(entry: DelegationEntry): DelegationActivity;
+declare function delegationActivityLabel(entry: DelegationEntry): string;
+/** Return a deterministic spinner frame. The View ticks this every 140ms. */
+declare function delegationSpinnerFrame(now: number): string;
+/** Merge the immediate tool-event channel into the child-session channel.
+ *
+ * Children remain the durable source, while live entries make a delegation
+ * visible before the child API/report catches up. A finalized md entry wins
+ * over a stale live entry; a child-only row is upgraded with live agent,
+ * alias, phase and timestamps. */
+declare function mergeChildDelegationSources(children: readonly DelegationEntry[], live: readonly LiveDelegationEntry[]): DelegationEntry[];
 /** Duck-typed subset of a tool part (SDK v2 `ToolPart` / `ToolState`). */
 type DelegationToolPart = {
   id?: string;
@@ -181,9 +199,8 @@ declare function navigateToDelegationSession(route: {
 } | undefined, taskID: string | undefined): boolean;
 /** Plugin-level live delegation store shared with the event subscriptions
  *  in `tui()`: the map of live entries + a version signal bumped on every
- *  mutation. The View subscribes to the version (in an effect) purely as a
- *  REFRESH TRIGGER for the children-based panel — the map itself is no
- *  longer read for rendering. */
+ *  mutation. The View subscribes to the version (in an effect) to refresh the
+ *  durable child list and also reads the map as an optimistic live source. */
 type LiveDelegationStore = {
   map: Map<string, LiveDelegationEntry>;
   /** Reactive version getter — View reads it inside an effect to re-fetch. */
@@ -195,5 +212,5 @@ declare const plugin: TuiPluginModule & {
   id: string;
 };
 //#endregion
-export { ChildDelegationLike, DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationElapsed, fmtElapsed, mergeDelegationSources, navigateToDelegationSession, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
+export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, fmtElapsed, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
 //# sourceMappingURL=tui.d.ts.map
