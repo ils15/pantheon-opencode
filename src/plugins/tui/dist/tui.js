@@ -1174,6 +1174,38 @@ function mergeDelegationSources(live, md) {
 	all.sort(compareDelegationEntries);
 	return all;
 }
+/** Server-aligned session id validity: opencode rejects anything not starting
+*  with "ses" (SchemaError). This deliberately mirrors that exact contract —
+*  nothing stricter, nothing looser — so a template placeholder ("{sessionID}"),
+*  an empty/undefined value, or a foreign id (e.g. "wrk_") can never reach a
+*  path and error-spam the log. */
+function isValidSessionId(id) {
+	return typeof id === "string" && id.startsWith("ses");
+}
+/** Sources the sidebar can resolve the CURRENT session id from. Duck-typed
+*  subsets of TuiPluginApi / TuiState / TuiRouteCurrent so the helper stays
+*  pure and testable without the TUI runtime. */
+/** Resolve the current session id for the sidebar. Order: slot prop →
+*  api.state.sessionID (runtime superset) → api.route.current.params.sessionID
+*  (typed route). Every source is validated; invalid/absent → next source.
+*  NEVER returns a placeholder or non-ses id. Null → callers MUST skip the
+*  fetch (empty panel, zero errors). Pure — no I/O, no runtime required. */
+function resolveCurrentSessionID(sources) {
+	const candidates = [
+		sources?.sessionID,
+		sources?.api?.state?.sessionID,
+		sources?.api?.route?.current?.params?.sessionID
+	];
+	for (const candidate of candidates) if (isValidSessionId(candidate)) return candidate;
+	return null;
+}
+/** Build the `session.children` path ONLY from a validated session id.
+*  Returns null for null/invalid ids so the caller skips the fetch instead of
+*  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression). */
+function buildChildrenPath(id) {
+	if (!isValidSessionId(id)) return null;
+	return { path: { id } };
+}
 /** Duck-typed subset of a child Session (+ its live status type). */
 /** Map a child status type to a display state. busy/retry → running
 *  (the child is actively working), idle → completed, unknown → running
@@ -1373,7 +1405,10 @@ function View(props) {
 		if (!result) return [];
 		const data = result.data ?? result;
 		if (!Array.isArray(data)) return [];
-		return data.filter((s) => !s.parentID && s.id !== props.sessionID).sort((a, b) => {
+		return data.filter((s) => !s.parentID && s.id !== resolveCurrentSessionID({
+			sessionID: props.sessionID,
+			api: props.api
+		})).sort((a, b) => {
 			const ta = a.time?.updated ?? a.updated ?? 0;
 			return (b.time?.updated ?? b.updated ?? 0) - ta;
 		}).slice(0, 8);
@@ -1390,13 +1425,23 @@ function View(props) {
 		delegationsInflight = (async () => {
 			try {
 				const state = props.api.state;
+				const sessionID = resolveCurrentSessionID({
+					sessionID: props.sessionID,
+					api: props.api
+				});
+				if (sessionID === null) {
+					setChildDelegations([]);
+					panelLog.info(`panel: children=0 md=0 events=${eventRefreshCount} (no sessionID — fetch skipped)`);
+					return;
+				}
 				let children = [];
 				try {
-					const result = await props.api.client?.session?.children?.({ path: { id: props.sessionID } });
+					const result = await props.api.client?.session?.children?.(buildChildrenPath(sessionID));
 					const data = result?.data ?? result;
 					children = Array.isArray(data) ? data : [];
-				} catch {
+				} catch (err) {
 					children = [];
+					panelLog.info("panel: error children fetch", err);
 				}
 				let md = [];
 				try {
@@ -1415,7 +1460,7 @@ function View(props) {
 					...c,
 					status: resolveStatus(c.id)
 				})), md, now());
-				const liveEntries = [...props.liveStore.map.values()].filter((entry) => entry.sessionID === props.sessionID);
+				const liveEntries = [...props.liveStore.map.values()].filter((entry) => entry.sessionID === sessionID);
 				setChildDelegations(mergeChildDelegationSources(childEntries, liveEntries));
 				panelLog.info(`panel: children=${children.length} md=${md.length} events=${eventRefreshCount}`);
 			} finally {
@@ -1462,8 +1507,12 @@ function View(props) {
 		cleanup.push(() => clearInterval(animation));
 		try {
 			const sdk = props.api.state?.session;
-			if (typeof sdk?.messages === "function") {
-				const messages = sdk.messages(props.sessionID) ?? [];
+			const mountSessionID = resolveCurrentSessionID({
+				sessionID: props.sessionID,
+				api: props.api
+			});
+			if (mountSessionID !== null && typeof sdk?.messages === "function") {
+				const messages = sdk.messages(mountSessionID) ?? [];
 				const state = props.api.state;
 				const parts = collectDelegationToolParts(messages, typeof state?.part === "function" ? (messageID) => state.part(messageID) : void 0);
 				if (parts.length > 0 && seedLiveDelegationMap(props.liveStore.map, parts) > 0) props.liveStore.bump();
@@ -1703,6 +1752,6 @@ const plugin = {
 	tui
 };
 //#endregion
-export { childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, fmtElapsed, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
+export { buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, fmtElapsed, isValidSessionId, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
 
 //# sourceMappingURL=tui.js.map

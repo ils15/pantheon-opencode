@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  buildChildrenPath,
   type ChildDelegationLike,
   childrenToDelegationEntries,
   childStatusToState,
@@ -38,6 +39,7 @@ import {
   readDelegationEntries,
   reduceDelegationToolPart,
   removeDelegationEntry,
+  resolveCurrentSessionID,
   resolveDelegationsDir,
   seedLiveDelegationMap,
   toDelegationEntry,
@@ -1220,6 +1222,93 @@ async function main() {
     assert.equal(navigateToDelegationSession(route, undefined), false, 'missing taskID → false')
     assert.equal(navigateToDelegationSession(route, ''), false, 'empty taskID → false')
     assert.deepEqual(calls, [], 'navigate must never be called')
+  })
+
+  // ─── Current-session resolution + children path guard ──────────────────
+  // Regression: the sidebar forwarded `props.session_id` verbatim to
+  // `session.children({ path: { id } })`. When the TUI runtime has no focused
+  // session it leaves the template UNSUBSTITUTED — the literal "{sessionID}"
+  // placeholder — which the server rejected every poll (~1 err/s: "Expected a
+  // string starting with \"ses\", got \"%7BsessionID%7D\"") and failed open
+  // into "Delegations (0)". Contract: resolution NEVER yields a placeholder;
+  // a null resolution means the fetch is SKIPPED (empty panel, zero errors).
+
+  await testAsync('sessionID: valid ses_ slot prop resolves', async () => {
+    assert.equal(resolveCurrentSessionID({ sessionID: 'ses_abc123', api: undefined }), 'ses_abc123')
+  })
+
+  await testAsync('sessionID: undefined / empty / absent → null (fetch skipped)', async () => {
+    assert.equal(resolveCurrentSessionID({ sessionID: undefined }), null)
+    assert.equal(resolveCurrentSessionID({ sessionID: '' }), null)
+    assert.equal(resolveCurrentSessionID({}), null)
+    assert.equal(resolveCurrentSessionID(null), null)
+  })
+
+  await testAsync(
+    'sessionID: unsubstituted "{sessionID}" placeholder → null (regression)',
+    async () => {
+      // The exact runtime value behind the "%7BsessionID%7D" error — the guard
+      // must NEVER forward it into a path.
+      assert.equal(resolveCurrentSessionID({ sessionID: '{sessionID}' }), null)
+      assert.equal(resolveCurrentSessionID({ sessionID: ' {sessionID} ' }), null)
+    },
+  )
+
+  await testAsync('sessionID: non-ses garbage / non-string → null', async () => {
+    assert.equal(resolveCurrentSessionID({ sessionID: 'wrk_123' }), null)
+    assert.equal(resolveCurrentSessionID({ sessionID: 'foo-bar' }), null)
+    assert.equal(resolveCurrentSessionID({ sessionID: 42 }), null)
+  })
+
+  await testAsync('sessionID: slot prop wins over state and route', async () => {
+    const api = {
+      state: { sessionID: 'ses_state1' },
+      route: { current: { name: 'session', params: { sessionID: 'ses_route1' } } },
+    }
+    assert.equal(resolveCurrentSessionID({ sessionID: 'ses_prop1', api }), 'ses_prop1')
+  })
+
+  await testAsync('sessionID: invalid prop falls back to api.state.sessionID', async () => {
+    const api = { state: { sessionID: 'ses_state1' } }
+    assert.equal(resolveCurrentSessionID({ sessionID: '{sessionID}', api }), 'ses_state1')
+  })
+
+  await testAsync(
+    'sessionID: invalid prop+state fall back to route.current.params.sessionID',
+    async () => {
+      const api = {
+        state: { sessionID: undefined },
+        route: { current: { name: 'session', params: { sessionID: 'ses_route1' } } },
+      }
+      assert.equal(resolveCurrentSessionID({ sessionID: '', api }), 'ses_route1')
+    },
+  )
+
+  await testAsync('children path: valid id → { path: { id } }, never a placeholder', async () => {
+    assert.deepEqual(buildChildrenPath('ses_abc123'), { path: { id: 'ses_abc123' } })
+    const serialized = JSON.stringify(buildChildrenPath('ses_abc123'))
+    assert.ok(
+      !serialized.includes('{sessionID}'),
+      'path must never contain an unsubstituted placeholder',
+    )
+  })
+
+  await testAsync('children path: null / empty / placeholder → null (call skipped)', async () => {
+    assert.equal(buildChildrenPath(null), null)
+    assert.equal(buildChildrenPath(undefined), null)
+    assert.equal(buildChildrenPath(''), null)
+    assert.equal(buildChildrenPath('{sessionID}'), null)
+    assert.equal(buildChildrenPath('wrk_123'), null)
+  })
+
+  await testAsync('regression: placeholder sessionID → resolution null → no fetch', async () => {
+    const sessionID = resolveCurrentSessionID({ sessionID: '{sessionID}' })
+    const path = sessionID === null ? null : buildChildrenPath(sessionID)
+    assert.equal(
+      path,
+      null,
+      'the children call must be skipped entirely (empty panel, zero errors)',
+    )
   })
 
   // ─── Report ────────────────────────────────────────────────────────────

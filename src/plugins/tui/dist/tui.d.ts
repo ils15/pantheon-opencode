@@ -162,6 +162,46 @@ declare function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry;
  *  terminal md entry is authoritative over a live running entry for the
  *  same job (it carries Finalized/timedOut/cancelled from finalize). */
 declare function mergeDelegationSources(live: readonly LiveDelegationEntry[], md: readonly DelegationEntry[]): DelegationEntry[];
+/** Server-aligned session id validity: opencode rejects anything not starting
+ *  with "ses" (SchemaError). This deliberately mirrors that exact contract —
+ *  nothing stricter, nothing looser — so a template placeholder ("{sessionID}"),
+ *  an empty/undefined value, or a foreign id (e.g. "wrk_") can never reach a
+ *  path and error-spam the log. */
+declare function isValidSessionId(id: unknown): id is string;
+/** Sources the sidebar can resolve the CURRENT session id from. Duck-typed
+ *  subsets of TuiPluginApi / TuiState / TuiRouteCurrent so the helper stays
+ *  pure and testable without the TUI runtime. */
+type TuiSessionSources = {
+  /** sidebar_content slot prop (`session_id`). */
+  sessionID?: string | null;
+  api?: {
+    /** Runtime state superset — may expose the current session id. */
+    state?: {
+      sessionID?: unknown;
+    };
+    /** Typed route: { name: 'session', params: { sessionID } } when in one. */
+    route?: {
+      current?: {
+        name?: string;
+        params?: Record<string, unknown>;
+      };
+    };
+  } | null;
+};
+/** Resolve the current session id for the sidebar. Order: slot prop →
+ *  api.state.sessionID (runtime superset) → api.route.current.params.sessionID
+ *  (typed route). Every source is validated; invalid/absent → next source.
+ *  NEVER returns a placeholder or non-ses id. Null → callers MUST skip the
+ *  fetch (empty panel, zero errors). Pure — no I/O, no runtime required. */
+declare function resolveCurrentSessionID(sources: TuiSessionSources): string | null;
+/** Build the `session.children` path ONLY from a validated session id.
+ *  Returns null for null/invalid ids so the caller skips the fetch instead of
+ *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression). */
+declare function buildChildrenPath(id: string | null | undefined): {
+  path: {
+    id: string;
+  };
+} | null;
 /** Duck-typed subset of a child Session (+ its live status type). */
 type ChildDelegationLike = {
   /** Child session id (= board task id). */
@@ -212,5 +252,5 @@ declare const plugin: TuiPluginModule & {
   id: string;
 };
 //#endregion
-export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, fmtElapsed, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
+export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, fmtElapsed, isValidSessionId, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
 //# sourceMappingURL=tui.d.ts.map

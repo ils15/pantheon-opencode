@@ -877,7 +877,19 @@ async function setupUsageBar(api: TuiPluginApi) {
  *
  *   4. DIAGNOSTICS — every re-fetch logs "panel: children=N md=N events=N"
  *      to `.pantheon/logs/hooks.log` (silence-by-default, createPantheonLogger
- *      policy) so the (0) symptom is diagnosable from disk.
+ *      policy) so the (0) symptom is diagnosable from disk. A children fetch
+ *      failure logs "panel: error <msg>" (previously silenced), and a missing
+ *      current session (null/placeholder sessionID) logs "panel: children=0
+ *      ... (no sessionID — fetch skipped)" instead of erroring.
+ *
+ *   5. SESSIONID GUARD (placeholder regression) — the runtime may hand the
+ *      sidebar the UNSUBSTITUTED template literal "{sessionID}" as its
+ *      session_id (no focused session). Forwarding it to session.children
+ *      made opencode's server reject every poll (~1 err/s: "Expected a string
+ *      starting with \"ses\", got \"%7BsessionID%7D\"") and fail-open the
+ *      panel into "(0)". resolveCurrentSessionID (slot prop → api.state →
+ *      route.current) never yields a placeholder; a null resolution SKIPS the
+ *      children fetch entirely — empty panel, zero errors.
  *
  * The live tool-part lifecycle helpers below remain (tested, exported) but
  * are no longer the source of truth: they feed a version signal that merely
@@ -1190,7 +1202,9 @@ export function mergeChildDelegationSources(
     const incoming = toDelegationEntry(liveEntry)
     const index =
       (incoming.taskID !== undefined ? byTask.get(incoming.taskID) : undefined) ??
-      (incoming.alias !== '' ? bySessionAlias.get(key(incoming.sessionID, incoming.alias)) : undefined)
+      (incoming.alias !== ''
+        ? bySessionAlias.get(key(incoming.sessionID, incoming.alias))
+        : undefined)
 
     if (index === undefined) {
       result.push(incoming)
@@ -1595,6 +1609,76 @@ export function mergeDelegationSources(
  * pure helpers here turn those children + the md reports into the display
  * list, and navigate to a child session on click. */
 
+/* ─── Current-session resolution + path guard (placeholder regression) ──
+ * The sidebar forwarded `props.session_id` verbatim into
+ * `session.children({ path: { id } })`. When the TUI runtime renders the
+ * sidebar without a focused session it leaves the route template
+ * UNSUBSTITUTED — the literal "{sessionID}" string — which opencode's server
+ * rejected every poll (SchemaError: Expected a string starting with "ses",
+ * got "%7BsessionID%7D"), ~1 error/s from the 1s safety poll, and the failed
+ * call fail-opened into "Delegations (0)".
+ *
+ * Contract: resolution NEVER yields a placeholder — an invalid/absent id is
+ * null, and a null resolution means the children fetch is SKIPPED (empty
+ * panel, ZERO errors). Sources, in order:
+ *   1. the sidebar_content slot prop (`session_id`);
+ *   2. `api.state.sessionID` (duck-typed: the typed TuiState has no such
+ *      field, but the runtime state is a superset — the delegations-sidebar
+ *      reference reads the current session from api.state);
+ *   3. `api.route.current.params.sessionID` (typed: TuiRouteCurrent's
+ *      `{ name: 'session', params: { sessionID } }` variant).
+ * Each source passes the same server-aligned validity check (non-empty
+ * string starting with "ses"), so a placeholder or garbage at any position
+ * falls through to the next source instead of hitting the wire. */
+
+/** Server-aligned session id validity: opencode rejects anything not starting
+ *  with "ses" (SchemaError). This deliberately mirrors that exact contract —
+ *  nothing stricter, nothing looser — so a template placeholder ("{sessionID}"),
+ *  an empty/undefined value, or a foreign id (e.g. "wrk_") can never reach a
+ *  path and error-spam the log. */
+export function isValidSessionId(id: unknown): id is string {
+  return typeof id === 'string' && id.startsWith('ses')
+}
+
+/** Sources the sidebar can resolve the CURRENT session id from. Duck-typed
+ *  subsets of TuiPluginApi / TuiState / TuiRouteCurrent so the helper stays
+ *  pure and testable without the TUI runtime. */
+export type TuiSessionSources = {
+  /** sidebar_content slot prop (`session_id`). */
+  sessionID?: string | null
+  api?: {
+    /** Runtime state superset — may expose the current session id. */
+    state?: { sessionID?: unknown }
+    /** Typed route: { name: 'session', params: { sessionID } } when in one. */
+    route?: { current?: { name?: string; params?: Record<string, unknown> } }
+  } | null
+}
+
+/** Resolve the current session id for the sidebar. Order: slot prop →
+ *  api.state.sessionID (runtime superset) → api.route.current.params.sessionID
+ *  (typed route). Every source is validated; invalid/absent → next source.
+ *  NEVER returns a placeholder or non-ses id. Null → callers MUST skip the
+ *  fetch (empty panel, zero errors). Pure — no I/O, no runtime required. */
+export function resolveCurrentSessionID(sources: TuiSessionSources): string | null {
+  const candidates: unknown[] = [
+    sources?.sessionID,
+    sources?.api?.state?.sessionID,
+    sources?.api?.route?.current?.params?.sessionID,
+  ]
+  for (const candidate of candidates) {
+    if (isValidSessionId(candidate)) return candidate
+  }
+  return null
+}
+
+/** Build the `session.children` path ONLY from a validated session id.
+ *  Returns null for null/invalid ids so the caller skips the fetch instead of
+ *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression). */
+export function buildChildrenPath(id: string | null | undefined): { path: { id: string } } | null {
+  if (!isValidSessionId(id)) return null
+  return { path: { id } }
+}
+
 /** Duck-typed subset of a child Session (+ its live status type). */
 export type ChildDelegationLike = {
   /** Child session id (= board task id). */
@@ -1845,7 +1929,7 @@ export type LiveDelegationStore = {
 
 function View(props: {
   api: TuiPluginApi
-  sessionID: string
+  sessionID: string | undefined
   version: string | null
   liveStore: LiveDelegationStore
 }) {
@@ -1910,7 +1994,11 @@ function View(props: {
     const data: any[] = (result as any).data ?? result
     if (!Array.isArray(data)) return []
     return data
-      .filter((s: any) => !s.parentID && s.id !== props.sessionID)
+      .filter(
+        (s: any) =>
+          !s.parentID &&
+          s.id !== resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api }),
+      )
       .sort((a: any, b: any) => {
         const ta = a.time?.updated ?? a.updated ?? 0
         const tb = b.time?.updated ?? b.updated ?? 0
@@ -1954,16 +2042,33 @@ function View(props: {
     delegationsInflight = (async () => {
       try {
         const state = props.api.state as any
+        // 0. current session — resolve + GUARD (placeholder regression). The
+        // runtime may render the sidebar with an unsubstituted "{sessionID}"
+        // slot prop; forwarding it to session.children made the server reject
+        // every poll (~1 err/s: "Expected a string starting with \"ses\", got
+        // \"%7BsessionID%7D\"") and fail-open the panel into "(0)". A null
+        // resolution SKIPS the fetch entirely: empty panel, zero errors.
+        const sessionID = resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api })
+        if (sessionID === null) {
+          setChildDelegations([])
+          panelLog.info(
+            `panel: children=0 md=0 events=${eventRefreshCount} (no sessionID — fetch skipped)`,
+          )
+          return
+        }
         // 1. children — PRIMARY source (SDK: api.client.session.children).
         let children: ChildDelegationLike[] = []
         try {
-          const result = await (props.api.client as any)?.session?.children?.({
-            path: { id: props.sessionID },
-          })
+          // buildChildrenPath re-validates: with sessionID !== null it is
+          // never null, so no placeholder can reach the wire.
+          const result = await (props.api.client as any)?.session?.children?.(
+            buildChildrenPath(sessionID),
+          )
           const data = (result?.data ?? result) as unknown
           children = Array.isArray(data) ? (data as ChildDelegationLike[]) : []
-        } catch {
+        } catch (err) {
           children = [] // children API unavailable — the panel shows md only
+          panelLog.info('panel: error children fetch', err)
         }
         // 2. md reports — enrichment (alias/agent/description/duration).
         let md: DelegationEntry[] = []
@@ -1986,7 +2091,7 @@ function View(props: {
         // child session/report is still being created. Filter by parent so a
         // different focused session never leaks rows into this sidebar.
         const liveEntries = [...props.liveStore.map.values()].filter(
-          (entry) => entry.sessionID === props.sessionID,
+          (entry) => entry.sessionID === sessionID,
         )
         setChildDelegations(mergeChildDelegationSources(childEntries, liveEntries))
         // 4. diagnostic line — every re-fetch (silence-by-default, hooks.log).
@@ -2067,9 +2172,10 @@ function View(props: {
     // working.
     try {
       const sdk = (props.api.state as any)?.session
-      if (typeof sdk?.messages === 'function') {
+      const mountSessionID = resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api })
+      if (mountSessionID !== null && typeof sdk?.messages === 'function') {
         const messages: readonly { id?: string; parts?: unknown[] }[] =
-          sdk.messages(props.sessionID) ?? []
+          sdk.messages(mountSessionID) ?? []
         const state = props.api.state as any
         const getParts =
           typeof state?.part === 'function'
