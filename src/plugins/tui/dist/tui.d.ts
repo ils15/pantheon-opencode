@@ -5,6 +5,10 @@ type DelegationEntry = {
   alias: string;
   /** Parent session the job was launched from (dir name under .pantheon/delegations). */
   sessionID: string;
+  /** Child session id (= board task id, from the `Task ID` header). The
+   *  children channel always sets it from the child session itself; the md
+   *  channel parses it so child↔md matching works by taskID. */
+  taskID?: string;
   /** Agent name, e.g. "apollo". */
   agent: string;
   state: 'running' | 'completed' | 'error' | 'cancelled';
@@ -140,12 +144,49 @@ declare function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry;
  *  terminal md entry is authoritative over a live running entry for the
  *  same job (it carries Finalized/timedOut/cancelled from finalize). */
 declare function mergeDelegationSources(live: readonly LiveDelegationEntry[], md: readonly DelegationEntry[]): DelegationEntry[];
+/** Duck-typed subset of a child Session (+ its live status type). */
+type ChildDelegationLike = {
+  /** Child session id (= board task id). */
+  id: string;
+  /** Session title — the delegate's description or prompt prefix. */
+  title?: string;
+  /** Status type from api.state.session.status: 'busy' | 'retry' | 'idle',
+   *  or undefined when the status API is unavailable. */
+  status?: string;
+  time?: {
+    created?: number;
+    updated?: number;
+  };
+};
+/** Map a child status type to a display state. busy/retry → running
+ *  (the child is actively working), idle → completed, unknown → running
+ *  (fail-open: a freshly-seen child is assumed active; the 1s poll + md
+ *  correct it as soon as terminal data exists). */
+declare function childStatusToState(status: string | undefined): 'running' | 'completed';
+/** Turn child sessions (PRIMARY) enriched with md reports into the display
+ *  list. One entry per child id (duplicates across re-fetches collapse).
+ *  The md report is matched by `Task ID` (== child.id) and supplies alias,
+ *  agent, description, terminal state and duration. A child without a
+ *  report still renders: description from its title, agent falls back to
+ *  'agent', state derived from its status, startedAt from time.created.
+ *  Terminal md state wins over the derived state; a running md defers to
+ *  the child's live status. Sorted running-first (compareDelegationEntries).
+ *  Pure — no I/O. */
+declare function childrenToDelegationEntries(children: readonly ChildDelegationLike[] | undefined, md: readonly DelegationEntry[], now?: number): DelegationEntry[];
+/** Navigate the TUI to a child session (click/Enter on a delegation row).
+ *  Returns false when the route API is unavailable or the target id is
+ *  missing — the row stays inert instead of crashing. */
+declare function navigateToDelegationSession(route: {
+  navigate?: (name: string, params?: Record<string, unknown>) => void;
+} | undefined, taskID: string | undefined): boolean;
 /** Plugin-level live delegation store shared with the event subscriptions
  *  in `tui()`: the map of live entries + a version signal bumped on every
- *  mutation so the View re-renders reactively. */
+ *  mutation. The View subscribes to the version (in an effect) purely as a
+ *  REFRESH TRIGGER for the children-based panel — the map itself is no
+ *  longer read for rendering. */
 type LiveDelegationStore = {
   map: Map<string, LiveDelegationEntry>;
-  /** Reactive version getter — View reads it inside a memo to re-render. */
+  /** Reactive version getter — View reads it inside an effect to re-fetch. */
   version: () => number;
   /** Bump the version after a live mutation. */
   bump: () => void;
@@ -154,5 +195,5 @@ declare const plugin: TuiPluginModule & {
   id: string;
 };
 //#endregion
-export { DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationElapsed, fmtElapsed, mergeDelegationSources, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
+export { ChildDelegationLike, DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationElapsed, fmtElapsed, mergeDelegationSources, navigateToDelegationSession, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
 //# sourceMappingURL=tui.d.ts.map

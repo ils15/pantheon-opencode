@@ -699,6 +699,7 @@ function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 	let timedOut = false;
 	let started;
 	let finalized;
+	let taskID;
 	for (const rawLine of raw.split("\n")) {
 		if (rawLine[0] === "#" && isWs(rawLine[1])) {
 			let i = 2;
@@ -723,6 +724,9 @@ function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 		const name = rawLine.slice(nameStart, valueEnd);
 		const value = rawLine.slice(valueEnd + 3).trim();
 		switch (name) {
+			case "Task ID":
+				if (value !== "" && taskID === void 0) taskID = stripTaskIdTicks(value);
+				break;
 			case "Agent":
 				if (value !== "" && agent === void 0) agent = value;
 				break;
@@ -752,6 +756,7 @@ function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 	return {
 		alias: title ?? (fileAlias !== void 0 ? stripMdSuffix(fileAlias) : "unknown"),
 		sessionID,
+		...taskID !== void 0 ? { taskID } : {},
 		agent,
 		state: normalized,
 		startedAt,
@@ -763,6 +768,12 @@ function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 /** Strip a trailing `.md` (any case) — linear replacement for /\.md$/i. */
 function stripMdSuffix(name) {
 	return name.toLowerCase().endsWith(".md") ? name.slice(0, name.length - 3) : name;
+}
+/** Strip surrounding backticks from a `Task ID` value: "`ses_x`" → "ses_x". */
+function stripTaskIdTicks(value) {
+	const start = value[0] === "`" ? 1 : 0;
+	const end = value.length > start && value[value.length - 1] === "`" ? value.length - 1 : value.length;
+	return value.slice(start, end);
 }
 /** Read every delegation report under `<dir>/<sessionID>/<alias>.md`.
 *  Fail-open: a missing/unreadable directory yields [], and each unreadable
@@ -1077,6 +1088,87 @@ function mergeDelegationSources(live, md) {
 	all.sort(compareDelegationEntries);
 	return all;
 }
+/** Duck-typed subset of a child Session (+ its live status type). */
+/** Map a child status type to a display state. busy/retry → running
+*  (the child is actively working), idle → completed, unknown → running
+*  (fail-open: a freshly-seen child is assumed active; the 1s poll + md
+*  correct it as soon as terminal data exists). */
+function childStatusToState(status) {
+	if (status === "idle") return "completed";
+	return "running";
+}
+/** Compact readable alias for a child with no md report yet: short id. */
+function childAlias(id) {
+	return id.length > 14 ? `${id.slice(0, 12)}\u2026` : id;
+}
+/** Turn child sessions (PRIMARY) enriched with md reports into the display
+*  list. One entry per child id (duplicates across re-fetches collapse).
+*  The md report is matched by `Task ID` (== child.id) and supplies alias,
+*  agent, description, terminal state and duration. A child without a
+*  report still renders: description from its title, agent falls back to
+*  'agent', state derived from its status, startedAt from time.created.
+*  Terminal md state wins over the derived state; a running md defers to
+*  the child's live status. Sorted running-first (compareDelegationEntries).
+*  Pure — no I/O. */
+function childrenToDelegationEntries(children, md, now = Date.now()) {
+	const byTaskID = /* @__PURE__ */ new Map();
+	for (const m of md) if (m.taskID !== void 0 && !byTaskID.has(m.taskID)) byTaskID.set(m.taskID, m);
+	const out = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (const child of children ?? []) {
+		if (child.id === "" || seen.has(child.id)) continue;
+		seen.add(child.id);
+		const mdEntry = byTaskID.get(child.id);
+		const state = mdEntry !== void 0 && mdEntry.state !== "running" ? mdEntry.state : childStatusToState(child.status);
+		out.push({
+			alias: mdEntry?.alias ?? childAlias(child.id),
+			sessionID: mdEntry?.sessionID ?? "",
+			taskID: child.id,
+			agent: mdEntry?.agent ?? "agent",
+			state,
+			startedAt: mdEntry?.startedAt ?? child.time?.created ?? now,
+			updatedAt: mdEntry?.updatedAt ?? (state === "running" ? null : child.time?.updated ?? null),
+			timedOut: mdEntry?.timedOut ?? false,
+			description: mdEntry !== void 0 && mdEntry.description !== "" ? mdEntry.description : child.title ?? ""
+		});
+	}
+	out.sort(compareDelegationEntries);
+	return out;
+}
+/** Navigate the TUI to a child session (click/Enter on a delegation row).
+*  Returns false when the route API is unavailable or the target id is
+*  missing — the row stays inert instead of crashing. */
+function navigateToDelegationSession(route, taskID) {
+	if (typeof route?.navigate !== "function" || taskID === void 0 || taskID === "") return false;
+	route.navigate("session", { sessionID: taskID });
+	return true;
+}
+function createTuiLogger(logDir, module = "pantheon-tui") {
+	const echo = (process.env.PANTHEON_HOOKS_LOG ?? "").trim() !== "";
+	const logPath = join(logDir ?? process.cwd(), ".pantheon", "logs", "hooks.log");
+	const formatArg = (arg) => {
+		if (arg instanceof Error) return arg.stack ?? arg.message;
+		if (typeof arg === "string") return arg;
+		try {
+			return JSON.stringify(arg);
+		} catch {
+			return String(arg);
+		}
+	};
+	const write = (message, args) => {
+		const lines = [message, ...args.map(formatArg)].join(" ").split("\n").map((p) => p.trim()).filter((p) => p !== "");
+		if (lines.length === 0) return;
+		(async () => {
+			try {
+				await mkdir(dirname(logPath), { recursive: true });
+				const stamp = (/* @__PURE__ */ new Date()).toISOString();
+				await appendFile(logPath, `${lines.map((l) => `[${stamp}] [${module}] ${l}`).join("\n")}\n`, "utf8");
+			} catch {}
+		})();
+		if (echo) for (const line of lines) console.log(`[${module}] ${line}`);
+	};
+	return { info: (message, ...args) => write(message, args) };
+}
 function SessionRow(props) {
 	const theme = () => props.api.theme.current;
 	const status = createMemo(() => {
@@ -1111,21 +1203,39 @@ function DelegationRow(props) {
 			default: return t.textMuted;
 		}
 	});
+	const dot = createMemo(() => {
+		switch (props.job.state) {
+			case "running": return "● ";
+			case "completed": return "✓ ";
+			case "error": return "✕ ";
+			default: return "○ ";
+		}
+	});
 	const label = createMemo(() => {
 		const { alias, agent, state, timedOut, description } = props.job;
-		const line = `[${alias}] ${agent} \u2014 ${state === "running" ? "RUNNING" : `${state.toUpperCase()}${timedOut ? " (timed out)" : ""}`} \u2014 ${delegationElapsed(props.job, props.now)}${description !== "" ? ` \u2014 ${description}` : ""}`;
+		const stateLabel = state === "running" ? "RUNNING" : `${state.toUpperCase()}${timedOut ? " (timed out)" : ""}`;
+		const elapsed = delegationElapsed(props.job, props.now);
+		const desc = description !== "" ? ` \u2014 ${description}` : "";
+		const line = `${dot()}[${alias}] ${agent} \u2014 ${stateLabel} \u2014 ${elapsed}${desc}`;
 		return line.length > 200 ? `${line.slice(0, 197)}\u2026` : line;
 	});
+	const open = () => {
+		navigateToDelegationSession(props.api.route, props.job.taskID);
+	};
 	return (() => {
-		var _el$13 = createElement("text");
-		insert(_el$13, label);
-		effect((_$p) => setProp(_el$13, "fg", color(), _$p));
+		var _el$13 = createElement("box"), _el$14 = createElement("text");
+		insertNode(_el$13, _el$14);
+		setProp(_el$13, "onMouseDown", open);
+		insert(_el$14, label);
+		effect((_$p) => setProp(_el$14, "fg", color(), _$p));
 		return _el$13;
 	})();
 }
 /** Plugin-level live delegation store shared with the event subscriptions
 *  in `tui()`: the map of live entries + a version signal bumped on every
-*  mutation so the View re-renders reactively. */
+*  mutation. The View subscribes to the version (in an effect) purely as a
+*  REFRESH TRIGGER for the children-based panel — the map itself is no
+*  longer read for rendering. */
 function View(props) {
 	const [showSessions, setShowSessions] = createSignal(false);
 	const [showDelegations, setShowDelegations] = createSignal(false);
@@ -1173,22 +1283,51 @@ function View(props) {
 		}).slice(0, 8);
 	});
 	const delegationsDir = createMemo(() => resolveDelegationsDir(props.api.state.path));
-	const [delegations, setDelegations] = createSignal([]);
+	const panelLog = createTuiLogger(dirname(delegationsDir()));
+	const [childDelegations, setChildDelegations] = createSignal([]);
 	const [now, setNow] = createSignal(Date.now());
-	const refreshDelegations = async () => {
-		try {
-			setDelegations(await readDelegationEntries(delegationsDir()));
-		} catch {}
+	let eventRefreshCount = 0;
+	let delegationsInflight = null;
+	const refreshDelegations = () => {
+		if (delegationsInflight !== null) return delegationsInflight;
+		delegationsInflight = (async () => {
+			try {
+				const state = props.api.state;
+				let children = [];
+				try {
+					const result = await props.api.client?.session?.children?.({ path: { id: props.sessionID } });
+					const data = result?.data ?? result;
+					children = Array.isArray(data) ? data : [];
+				} catch {
+					children = [];
+				}
+				let md = [];
+				try {
+					md = await readDelegationEntries(delegationsDir());
+				} catch {
+					md = [];
+				}
+				const resolveStatus = (childID) => {
+					try {
+						return state?.session?.status?.(childID)?.type;
+					} catch {
+						return;
+					}
+				};
+				const withStatus = children.map((c) => ({
+					...c,
+					status: resolveStatus(c.id)
+				}));
+				setChildDelegations(childrenToDelegationEntries(withStatus, md, now()));
+				panelLog.info(`panel: children=${children.length} md=${md.length} events=${eventRefreshCount}`);
+			} finally {
+				delegationsInflight = null;
+			}
+		})();
+		return delegationsInflight;
 	};
-	const liveForSession = createMemo(() => {
-		props.liveStore.version();
-		const out = [];
-		for (const entry of props.liveStore.map.values()) if (entry.sessionID === props.sessionID) out.push(entry);
-		return out;
-	});
-	const mergedDelegations = createMemo(() => mergeDelegationSources(liveForSession(), delegations()));
 	const visibleDelegations = createMemo(() => {
-		const all = mergedDelegations();
+		const all = childDelegations();
 		const running = all.filter((d) => d.state === "running");
 		const terminal = all.filter((d) => d.state !== "running").slice(0, 8);
 		return [...running, ...terminal];
@@ -1201,13 +1340,26 @@ function View(props) {
 			cleanup.push(props.api.event.on("session.updated", refetchSessions));
 			cleanup.push(props.api.event.on("session.deleted", refetchSessions));
 		} catch {}
-		refreshDelegations();
 		try {
-			cleanup.push(props.api.event.on("session.created", () => void refreshDelegations()));
-			cleanup.push(props.api.event.on("session.updated", () => void refreshDelegations()));
+			const eventRefresh = () => {
+				eventRefreshCount += 1;
+				refreshDelegations();
+			};
+			cleanup.push(props.api.event.on("session.created", eventRefresh));
+			cleanup.push(props.api.event.on("session.updated", eventRefresh));
+			cleanup.push(props.api.event.on("session.deleted", eventRefresh));
+			cleanup.push(props.api.event.on("session.status", eventRefresh));
 		} catch {}
-		cleanup.push(() => clearInterval(setInterval(() => setNow(Date.now()), 1e3)));
-		cleanup.push(() => clearInterval(setInterval(() => void refreshDelegations(), 2e3)));
+		createEffect(() => {
+			props.liveStore.version();
+			eventRefreshCount += 1;
+			refreshDelegations();
+		});
+		const poll = setInterval(() => {
+			setNow(Date.now());
+			refreshDelegations();
+		}, 1e3);
+		cleanup.push(() => clearInterval(poll));
 		try {
 			const sdk = props.api.state?.session;
 			if (typeof sdk?.messages === "function") {
@@ -1222,78 +1374,78 @@ function View(props) {
 		}));
 	});
 	const HR = () => (() => {
-		var _el$14 = createElement("text");
-		insertNode(_el$14, createTextNode(`────────────────────────────`));
-		effect((_$p) => setProp(_el$14, "fg", theme().textMuted, _$p));
-		return _el$14;
+		var _el$15 = createElement("text");
+		insertNode(_el$15, createTextNode(`────────────────────────────`));
+		effect((_$p) => setProp(_el$15, "fg", theme().textMuted, _$p));
+		return _el$15;
 	})();
 	return (() => {
-		var _el$16 = createElement("box"), _el$17 = createElement("text"), _el$18 = createElement("box"), _el$19 = createElement("text"), _el$20 = createElement("text"), _el$22 = createElement("box"), _el$23 = createElement("text"), _el$24 = createElement("text");
-		insertNode(_el$16, _el$17);
-		insertNode(_el$16, _el$18);
-		insertNode(_el$16, _el$22);
-		setProp(_el$16, "flexDirection", "column");
-		setProp(_el$16, "width", "100%");
-		setProp(_el$17, "attributes", 1);
-		insert(_el$17, () => `Pantheon${props.version ? ` v${props.version}` : ""}`);
-		insert(_el$16, createComponent(Show, {
+		var _el$17 = createElement("box"), _el$18 = createElement("text"), _el$19 = createElement("box"), _el$20 = createElement("text"), _el$21 = createElement("text"), _el$23 = createElement("box"), _el$24 = createElement("text"), _el$25 = createElement("text");
+		insertNode(_el$17, _el$18);
+		insertNode(_el$17, _el$19);
+		insertNode(_el$17, _el$23);
+		setProp(_el$17, "flexDirection", "column");
+		setProp(_el$17, "width", "100%");
+		setProp(_el$18, "attributes", 1);
+		insert(_el$18, () => `Pantheon${props.version ? ` v${props.version}` : ""}`);
+		insert(_el$17, createComponent(Show, {
 			get when() {
 				return branch();
 			},
 			children: (b) => (() => {
-				var _el$26 = createElement("text");
-				insert(_el$26, b);
-				effect((_$p) => setProp(_el$26, "fg", theme().textMuted, _$p));
-				return _el$26;
+				var _el$27 = createElement("text");
+				insert(_el$27, b);
+				effect((_$p) => setProp(_el$27, "fg", theme().textMuted, _$p));
+				return _el$27;
 			})()
-		}), _el$18);
-		insert(_el$16, createComponent(Show, {
+		}), _el$19);
+		insert(_el$17, createComponent(Show, {
 			get when() {
 				return preset().name;
 			},
 			get fallback() {
 				return (() => {
-					var _el$27 = createElement("box"), _el$28 = createElement("text");
-					insertNode(_el$27, _el$28);
-					setProp(_el$27, "flexDirection", "row");
-					setProp(_el$27, "gap", 1);
-					insertNode(_el$28, createTextNode(`Preset: default`));
-					effect((_$p) => setProp(_el$28, "fg", theme().textMuted, _$p));
-					return _el$27;
+					var _el$28 = createElement("box"), _el$29 = createElement("text");
+					insertNode(_el$28, _el$29);
+					setProp(_el$28, "flexDirection", "row");
+					setProp(_el$28, "gap", 1);
+					insertNode(_el$29, createTextNode(`Preset: default`));
+					effect((_$p) => setProp(_el$29, "fg", theme().textMuted, _$p));
+					return _el$28;
 				})();
 			},
 			children: (name) => (() => {
-				var _el$30 = createElement("box"), _el$31 = createElement("text"), _el$33 = createElement("text"), _el$34 = createElement("text");
-				insertNode(_el$30, _el$31);
-				insertNode(_el$30, _el$33);
-				insertNode(_el$30, _el$34);
-				setProp(_el$30, "flexDirection", "row");
-				setProp(_el$30, "gap", 1);
-				insertNode(_el$31, createTextNode(`⚡ Preset:`));
-				insert(_el$33, name);
-				insert(_el$34, () => `(${preset().source ?? ""})`);
+				var _el$31 = createElement("box"), _el$32 = createElement("text"), _el$34 = createElement("text"), _el$35 = createElement("text");
+				insertNode(_el$31, _el$32);
+				insertNode(_el$31, _el$34);
+				insertNode(_el$31, _el$35);
+				setProp(_el$31, "flexDirection", "row");
+				setProp(_el$31, "gap", 1);
+				insertNode(_el$32, createTextNode(`⚡ Preset:`));
+				insert(_el$34, name);
+				insert(_el$35, () => `(${preset().source ?? ""})`);
 				effect((_p$) => {
 					var _v$0 = theme().textMuted, _v$1 = theme().accent, _v$10 = theme().textMuted;
-					_v$0 !== _p$.e && (_p$.e = setProp(_el$31, "fg", _v$0, _p$.e));
-					_v$1 !== _p$.t && (_p$.t = setProp(_el$33, "fg", _v$1, _p$.t));
-					_v$10 !== _p$.a && (_p$.a = setProp(_el$34, "fg", _v$10, _p$.a));
+					_v$0 !== _p$.e && (_p$.e = setProp(_el$32, "fg", _v$0, _p$.e));
+					_v$1 !== _p$.t && (_p$.t = setProp(_el$34, "fg", _v$1, _p$.t));
+					_v$10 !== _p$.a && (_p$.a = setProp(_el$35, "fg", _v$10, _p$.a));
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0,
 					a: void 0
 				});
-				return _el$30;
+				return _el$31;
 			})()
-		}), _el$18);
-		insert(_el$16, createComponent(HR, {}), _el$18);
-		insertNode(_el$18, _el$19);
-		insertNode(_el$18, _el$20);
-		setProp(_el$18, "onMouseDown", () => setShowSessions((x) => !x));
-		setProp(_el$19, "attributes", 1);
-		insert(_el$19, () => `${showSessions() ? "▼" : "▶"} Sessions`);
-		insert(_el$20, () => ` (${String(totalSessions())})`);
-		insert(_el$16, createComponent(Show, {
+		}), _el$19);
+		insert(_el$17, createComponent(HR, {}), _el$19);
+		insertNode(_el$19, _el$20);
+		insertNode(_el$19, _el$21);
+		setProp(_el$19, "onMouseDown", () => setShowSessions((x) => !x));
+		setProp(_el$20, "attributes", 1);
+		insert(_el$20, () => `${showSessions() ? "▼" : "▶"} Sessions`);
+		insert(_el$21, () => ` (${String(totalSessions())})`);
+		insert(_el$17, createComponent(Show, {
 			get when() {
 				return showSessions();
 			},
@@ -1304,19 +1456,19 @@ function View(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$35 = createElement("box"), _el$36 = createElement("text");
-							insertNode(_el$35, _el$36);
-							setProp(_el$35, "marginLeft", 1);
-							insertNode(_el$36, createTextNode(`No recent sessions`));
-							effect((_$p) => setProp(_el$36, "fg", theme().textMuted, _$p));
-							return _el$35;
+							var _el$36 = createElement("box"), _el$37 = createElement("text");
+							insertNode(_el$36, _el$37);
+							setProp(_el$36, "marginLeft", 1);
+							insertNode(_el$37, createTextNode(`No recent sessions`));
+							effect((_$p) => setProp(_el$37, "fg", theme().textMuted, _$p));
+							return _el$36;
 						})();
 					},
 					get children() {
-						var _el$21 = createElement("box");
-						setProp(_el$21, "marginLeft", 1);
-						setProp(_el$21, "flexDirection", "column");
-						insert(_el$21, createComponent(For, {
+						var _el$22 = createElement("box");
+						setProp(_el$22, "marginLeft", 1);
+						setProp(_el$22, "flexDirection", "column");
+						insert(_el$22, createComponent(For, {
 							get each() {
 								return recentSessions();
 							},
@@ -1327,18 +1479,18 @@ function View(props) {
 								session: ses
 							})
 						}));
-						return _el$21;
+						return _el$22;
 					}
 				});
 			}
-		}), _el$22);
-		insertNode(_el$22, _el$23);
-		insertNode(_el$22, _el$24);
-		setProp(_el$22, "onMouseDown", () => setShowDelegations((x) => !x));
-		setProp(_el$23, "attributes", 1);
-		insert(_el$23, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
-		insert(_el$24, () => ` (${String(visibleDelegations().length)})`);
-		insert(_el$16, createComponent(Show, {
+		}), _el$23);
+		insertNode(_el$23, _el$24);
+		insertNode(_el$23, _el$25);
+		setProp(_el$23, "onMouseDown", () => setShowDelegations((x) => !x));
+		setProp(_el$24, "attributes", 1);
+		insert(_el$24, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
+		insert(_el$25, () => ` (${String(visibleDelegations().length)})`);
+		insert(_el$17, createComponent(Show, {
 			get when() {
 				return showDelegations();
 			},
@@ -1349,19 +1501,19 @@ function View(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$38 = createElement("box"), _el$39 = createElement("text");
-							insertNode(_el$38, _el$39);
-							setProp(_el$38, "marginLeft", 1);
-							insertNode(_el$39, createTextNode(`No delegations`));
-							effect((_$p) => setProp(_el$39, "fg", theme().textMuted, _$p));
-							return _el$38;
+							var _el$39 = createElement("box"), _el$40 = createElement("text");
+							insertNode(_el$39, _el$40);
+							setProp(_el$39, "marginLeft", 1);
+							insertNode(_el$40, createTextNode(`No delegations`));
+							effect((_$p) => setProp(_el$40, "fg", theme().textMuted, _$p));
+							return _el$39;
 						})();
 					},
 					get children() {
-						var _el$25 = createElement("box");
-						setProp(_el$25, "marginLeft", 1);
-						setProp(_el$25, "flexDirection", "column");
-						insert(_el$25, createComponent(For, {
+						var _el$26 = createElement("box");
+						setProp(_el$26, "marginLeft", 1);
+						setProp(_el$26, "flexDirection", "column");
+						insert(_el$26, createComponent(For, {
 							get each() {
 								return visibleDelegations();
 							},
@@ -1375,18 +1527,18 @@ function View(props) {
 								}
 							})
 						}));
-						return _el$25;
+						return _el$26;
 					}
 				});
 			}
 		}), null);
 		effect((_p$) => {
 			var _v$5 = theme().accent, _v$6 = theme().text, _v$7 = theme().textMuted, _v$8 = theme().text, _v$9 = theme().textMuted;
-			_v$5 !== _p$.e && (_p$.e = setProp(_el$17, "fg", _v$5, _p$.e));
-			_v$6 !== _p$.t && (_p$.t = setProp(_el$19, "fg", _v$6, _p$.t));
-			_v$7 !== _p$.a && (_p$.a = setProp(_el$20, "fg", _v$7, _p$.a));
-			_v$8 !== _p$.o && (_p$.o = setProp(_el$23, "fg", _v$8, _p$.o));
-			_v$9 !== _p$.i && (_p$.i = setProp(_el$24, "fg", _v$9, _p$.i));
+			_v$5 !== _p$.e && (_p$.e = setProp(_el$18, "fg", _v$5, _p$.e));
+			_v$6 !== _p$.t && (_p$.t = setProp(_el$20, "fg", _v$6, _p$.t));
+			_v$7 !== _p$.a && (_p$.a = setProp(_el$21, "fg", _v$7, _p$.a));
+			_v$8 !== _p$.o && (_p$.o = setProp(_el$24, "fg", _v$8, _p$.o));
+			_v$9 !== _p$.i && (_p$.i = setProp(_el$25, "fg", _v$9, _p$.i));
 			return _p$;
 		}, {
 			e: void 0,
@@ -1395,7 +1547,7 @@ function View(props) {
 			o: void 0,
 			i: void 0
 		});
-		return _el$16;
+		return _el$17;
 	})();
 }
 const tui = async (api, _options, _meta) => {
@@ -1448,6 +1600,6 @@ const plugin = {
 	tui
 };
 //#endregion
-export { collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationElapsed, fmtElapsed, mergeDelegationSources, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
+export { childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationElapsed, fmtElapsed, mergeDelegationSources, navigateToDelegationSession, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
 
 //# sourceMappingURL=tui.js.map

@@ -840,42 +840,51 @@ async function setupUsageBar(api: TuiPluginApi) {
 }
 
 /* ─── Delegations (real-time panel) ────────────────────────
- * DUAL CHANNEL (agent-sidebar pattern, featura/134):
+ * CHILDREN + MD (delegations-sidebar pattern, feat/compaction-134):
  *
- *   1. PRIMARY — LIVE tool-call lifecycle via `message.part.updated`
- *      events (the same mechanism as EvanDbg/opencode-agent-sidebar).
- *      Tool parts named `pantheon_delegate` / `pantheon_delegation_read`
- *      are tracked in-memory keyed by callID:
- *        • pantheon_delegate pending/running → entry { state: 'running' }.
- *          IMPORTANT: a *completed* delegate tool only means the job was
- *          LAUNCHED (it returns "[alias] (task ses_...)"), so the entry
- *          stays 'running' — the background job is still executing.
- *        • pantheon_delegation_read blocks until terminal, so its
- *          completed/error state + end timestamp close the entry
- *          (authoritative job duration) and mark it `read`.
- *      `message.part.removed` (compaction) deletes the tracked entry.
- *      Fail-open: if the events API is unavailable, nothing subscribes
- *      and the md channel below is the only source — never crash.
+ *   1. PRIMARY — SDK child sessions via `api.client.session.children`:
+ *      every pantheon_delegate creates a child session with
+ *      parentID = caller (src/pantheon/delegation.ts session.create), so
+ *      the children of the current session ARE the delegation list — the
+ *      same mechanism the opencode-delegations-sidebar reference uses
+ *      (`client.session.children` + `session.parentID === current`).
+ *      Live status comes from `api.state.session.status(childID)`
+ *      (busy/retry → running; idle → terminal). This does NOT depend on
+ *      tool-part events, which runtime 1.18.13 may not deliver for
+ *      pantheon_delegate (the "(0) even while delegating" symptom).
  *
- *   2. FALLBACK — markdown reports the job board persists under
+ *   2. ENRICHMENT — markdown reports the job board persists under
  *      `.pantheon/delegations/<sessionID>/<alias>.md` (written by
- *      src/pantheon/delegation-finalize.ts `renderDelegationMarkdown`
- *      at terminal state). Covers historical jobs (previous sessions)
- *      and the terminal states of never-read jobs. mergeDelegationSources
- *      combines both channels per (sessionID, alias): a terminal md entry
- *      is authoritative over a live running entry.
+ *      src/pantheon/delegation-finalize.ts at terminal state). Each child
+ *      is matched to its report by the `Task ID` header (== child session
+ *      id == board task id), which supplies the alias (apo-N), agent,
+ *      description and terminal duration/timedOut. No report → the child
+ *      itself still renders (title as description, derived state).
  *
- * Header fields parsed (markdown bullet list): Agent, Description, State,
- * Timed out, Started, Finalized. `State: running` entries (no Finalized
- * yet) render with a live ticking elapsed counter; terminal entries show
- * their total duration. Everything is fail-open: a missing directory
- * yields [], and any unreadable/malformed file is skipped — never crash. */
+ *   3. REFRESH — session.created/updated/deleted/status events and
+ *      message.part.updated/removed (via liveStore.version bumps) re-fetch
+ *      children; a 1s safety poll (oh-my-opencode-slim pattern) re-fetches
+ *      children + re-reads the md so the panel updates EVEN without events.
+ *
+ *   4. DIAGNOSTICS — every re-fetch logs "panel: children=N md=N events=N"
+ *      to `.pantheon/logs/hooks.log` (silence-by-default, createPantheonLogger
+ *      policy) so the (0) symptom is diagnosable from disk.
+ *
+ * The live tool-part lifecycle helpers below remain (tested, exported) but
+ * are no longer the source of truth: they feed a version signal that merely
+ * re-triggers the children fetch. Everything is fail-open: a missing
+ * children API or directory yields [], and any unreadable input is skipped —
+ * never crash. */
 
 export type DelegationEntry = {
   /** Job alias, e.g. "apo-1" (from the H1 title, falling back to filename). */
   alias: string
   /** Parent session the job was launched from (dir name under .pantheon/delegations). */
   sessionID: string
+  /** Child session id (= board task id, from the `Task ID` header). The
+   *  children channel always sets it from the child session itself; the md
+   *  channel parses it so child↔md matching works by taskID. */
+  taskID?: string
   /** Agent name, e.g. "apollo". */
   agent: string
   state: 'running' | 'completed' | 'error' | 'cancelled'
@@ -918,6 +927,7 @@ export function parseDelegationMarkdown(
   let timedOut = false
   let started: string | undefined
   let finalized: string | undefined
+  let taskID: string | undefined
 
   for (const rawLine of raw.split('\n')) {
     // H1 title: `# Delegation Report — <alias>` (empty alias → fallback later).
@@ -945,6 +955,10 @@ export function parseDelegationMarkdown(
     const name = rawLine.slice(nameStart, valueEnd)
     const value = rawLine.slice(valueEnd + 3).trim()
     switch (name) {
+      case 'Task ID':
+        // `- **Task ID**: \`ses_x\`` — strip the surrounding backticks.
+        if (value !== '' && taskID === undefined) taskID = stripTaskIdTicks(value)
+        break
       case 'Agent':
         // Empty value counts as missing (old regex `(.+)` required 1+ chars).
         if (value !== '' && agent === undefined) agent = value
@@ -986,6 +1000,7 @@ export function parseDelegationMarkdown(
   return {
     alias: title ?? (fileAlias !== undefined ? stripMdSuffix(fileAlias) : 'unknown'),
     sessionID,
+    ...(taskID !== undefined ? { taskID } : {}),
     agent,
     state: normalized,
     startedAt,
@@ -998,6 +1013,14 @@ export function parseDelegationMarkdown(
 /** Strip a trailing `.md` (any case) — linear replacement for /\.md$/i. */
 function stripMdSuffix(name: string): string {
   return name.toLowerCase().endsWith('.md') ? name.slice(0, name.length - 3) : name
+}
+
+/** Strip surrounding backticks from a `Task ID` value: "`ses_x`" → "ses_x". */
+function stripTaskIdTicks(value: string): string {
+  const start = value[0] === '`' ? 1 : 0
+  const end =
+    value.length > start && value[value.length - 1] === '`' ? value.length - 1 : value.length
+  return value.slice(start, end)
 }
 
 /** Read every delegation report under `<dir>/<sessionID>/<alias>.md`.
@@ -1448,6 +1471,149 @@ export function mergeDelegationSources(
   return all
 }
 
+/* ─── Children channel (primary source, delegations-sidebar pattern) ────
+ * `api.client.session.children` returns the child sessions of the current
+ * session — every pantheon_delegate spawns one (parentID = caller). The
+ * pure helpers here turn those children + the md reports into the display
+ * list, and navigate to a child session on click. */
+
+/** Duck-typed subset of a child Session (+ its live status type). */
+export type ChildDelegationLike = {
+  /** Child session id (= board task id). */
+  id: string
+  /** Session title — the delegate's description or prompt prefix. */
+  title?: string
+  /** Status type from api.state.session.status: 'busy' | 'retry' | 'idle',
+   *  or undefined when the status API is unavailable. */
+  status?: string
+  time?: {
+    created?: number
+    updated?: number
+  }
+}
+
+/** Map a child status type to a display state. busy/retry → running
+ *  (the child is actively working), idle → completed, unknown → running
+ *  (fail-open: a freshly-seen child is assumed active; the 1s poll + md
+ *  correct it as soon as terminal data exists). */
+export function childStatusToState(status: string | undefined): 'running' | 'completed' {
+  if (status === 'idle') return 'completed'
+  return 'running' // busy, retry, or unknown
+}
+
+/** Compact readable alias for a child with no md report yet: short id. */
+function childAlias(id: string): string {
+  return id.length > 14 ? `${id.slice(0, 12)}\u2026` : id
+}
+
+/** Turn child sessions (PRIMARY) enriched with md reports into the display
+ *  list. One entry per child id (duplicates across re-fetches collapse).
+ *  The md report is matched by `Task ID` (== child.id) and supplies alias,
+ *  agent, description, terminal state and duration. A child without a
+ *  report still renders: description from its title, agent falls back to
+ *  'agent', state derived from its status, startedAt from time.created.
+ *  Terminal md state wins over the derived state; a running md defers to
+ *  the child's live status. Sorted running-first (compareDelegationEntries).
+ *  Pure — no I/O. */
+export function childrenToDelegationEntries(
+  children: readonly ChildDelegationLike[] | undefined,
+  md: readonly DelegationEntry[],
+  now = Date.now(),
+): DelegationEntry[] {
+  const byTaskID = new Map<string, DelegationEntry>()
+  for (const m of md) {
+    if (m.taskID !== undefined && !byTaskID.has(m.taskID)) byTaskID.set(m.taskID, m)
+  }
+  const out: DelegationEntry[] = []
+  const seen = new Set<string>()
+  for (const child of children ?? []) {
+    if (child.id === '' || seen.has(child.id)) continue
+    seen.add(child.id)
+    const mdEntry = byTaskID.get(child.id)
+    const state =
+      mdEntry !== undefined && mdEntry.state !== 'running'
+        ? mdEntry.state
+        : childStatusToState(child.status)
+    out.push({
+      alias: mdEntry?.alias ?? childAlias(child.id),
+      sessionID: mdEntry?.sessionID ?? '',
+      taskID: child.id,
+      agent: mdEntry?.agent ?? 'agent',
+      state,
+      startedAt: mdEntry?.startedAt ?? child.time?.created ?? now,
+      updatedAt: mdEntry?.updatedAt ?? (state === 'running' ? null : (child.time?.updated ?? null)),
+      timedOut: mdEntry?.timedOut ?? false,
+      description:
+        mdEntry !== undefined && mdEntry.description !== ''
+          ? mdEntry.description
+          : (child.title ?? ''),
+    })
+  }
+  out.sort(compareDelegationEntries)
+  return out
+}
+
+/** Navigate the TUI to a child session (click/Enter on a delegation row).
+ *  Returns false when the route API is unavailable or the target id is
+ *  missing — the row stays inert instead of crashing. */
+export function navigateToDelegationSession(
+  route: { navigate?: (name: string, params?: Record<string, unknown>) => void } | undefined,
+  taskID: string | undefined,
+): boolean {
+  if (typeof route?.navigate !== 'function' || taskID === undefined || taskID === '') return false
+  route.navigate('session', { sessionID: taskID })
+  return true
+}
+
+/* ─── Silence-by-default panel logger ──────────────────────
+ * Mirrors src/pantheon/logger.ts createPantheonLogger (the TUI plugin is
+ * self-contained — dist/tui.tsx is a raw copy with no relative imports):
+ * every line is ALWAYS appended to `<logDir>/.pantheon/logs/hooks.log` and
+ * echoed to the console ONLY when PANTHEON_HOOKS_LOG is truthy (opencode
+ * renders plugin console output directly into the TUI — the pollution bug).
+ * Best-effort and fire-and-forget: a logging failure must never break the
+ * panel. */
+type TuiLogger = { info: (message: string, ...args: unknown[]) => void }
+
+function createTuiLogger(logDir: string | undefined, module = 'pantheon-tui'): TuiLogger {
+  const echo = (process.env.PANTHEON_HOOKS_LOG ?? '').trim() !== ''
+  const logPath = join(logDir ?? process.cwd(), '.pantheon', 'logs', 'hooks.log')
+  const formatArg = (arg: unknown): string => {
+    if (arg instanceof Error) return arg.stack ?? arg.message
+    if (typeof arg === 'string') return arg
+    try {
+      return JSON.stringify(arg)
+    } catch {
+      return String(arg)
+    }
+  }
+  const write = (message: string, args: unknown[]) => {
+    const lines = [message, ...args.map(formatArg)]
+      .join(' ')
+      .split('\n')
+      .map((p) => p.trim())
+      .filter((p) => p !== '')
+    if (lines.length === 0) return
+    void (async () => {
+      try {
+        await mkdir(dirname(logPath), { recursive: true })
+        const stamp = new Date().toISOString()
+        await appendFile(
+          logPath,
+          `${lines.map((l) => `[${stamp}] [${module}] ${l}`).join('\n')}\n`,
+          'utf8',
+        )
+      } catch {
+        /* best-effort file log — never break the panel over logging */
+      }
+    })()
+    if (echo) {
+      for (const line of lines) console.log(`[${module}] ${line}`)
+    }
+  }
+  return { info: (message, ...args) => write(message, args) }
+}
+
 /* ─── Session Row (single session with live status indicator) ─ */
 
 function SessionRow(props: { api: TuiPluginApi; session: any }) {
@@ -1481,7 +1647,7 @@ function SessionRow(props: { api: TuiPluginApi; session: any }) {
   )
 }
 
-/* ─── Delegation Row (single job from the md report channel) ─ */
+/* ─── Delegation Row (single job from the children/md channels) ─ */
 
 function DelegationRow(props: { api: TuiPluginApi; job: DelegationEntry; now: number }) {
   const theme = () => props.api.theme.current
@@ -1500,28 +1666,55 @@ function DelegationRow(props: { api: TuiPluginApi; job: DelegationEntry; now: nu
     }
   })
 
+  // delegations-sidebar dot: ● running, ✓ completed, ✕ error, ○ cancelled.
+  const dot = createMemo(() => {
+    switch (props.job.state) {
+      case 'running':
+        return '\u25cf '
+      case 'completed':
+        return '\u2713 '
+      case 'error':
+        return '\u2715 '
+      default:
+        return '\u25cb '
+    }
+  })
+
   const label = createMemo(() => {
     const { alias, agent, state, timedOut, description } = props.job
     const stateLabel =
       state === 'running' ? 'RUNNING' : `${state.toUpperCase()}${timedOut ? ' (timed out)' : ''}`
     const elapsed = delegationElapsed(props.job, props.now)
     const desc = description !== '' ? ` \u2014 ${description}` : ''
-    const line = `[${alias}] ${agent} \u2014 ${stateLabel} \u2014 ${elapsed}${desc}`
+    const line = `${dot()}[${alias}] ${agent} \u2014 ${stateLabel} \u2014 ${elapsed}${desc}`
     // Hard cap: keep the line within ~200 chars (truncate the description).
     return line.length > 200 ? `${line.slice(0, 197)}\u2026` : line
   })
 
-  return <text fg={color()}>{label()}</text>
+  // Click a row → navigate to the child session (route API guarded in the
+  // helper). Enter-key binding is left out (per-row keymap wiring is not
+  // worth the complexity in this sidebar); mouse is enabled in tui.json.
+  const open = () => {
+    navigateToDelegationSession(props.api.route, props.job.taskID)
+  }
+
+  return (
+    <box onMouseDown={open}>
+      <text fg={color()}>{label()}</text>
+    </box>
+  )
 }
 
 /* ─── Main Sidebar View ──────────────────────────────────── */
 
 /** Plugin-level live delegation store shared with the event subscriptions
  *  in `tui()`: the map of live entries + a version signal bumped on every
- *  mutation so the View re-renders reactively. */
+ *  mutation. The View subscribes to the version (in an effect) purely as a
+ *  REFRESH TRIGGER for the children-based panel — the map itself is no
+ *  longer read for rendering. */
 export type LiveDelegationStore = {
   map: Map<string, LiveDelegationEntry>
-  /** Reactive version getter — View reads it inside a memo to re-render. */
+  /** Reactive version getter — View reads it inside an effect to re-fetch. */
   version: () => number
   /** Bump the version after a live mutation. */
   bump: () => void
@@ -1602,39 +1795,81 @@ function View(props: {
       .slice(0, 8)
   })
 
-  // ── Delegations: LIVE tool-call events (primary) + md reports (fallback) ──
-  // Live entries come from `message.part.updated` subscriptions registered
-  // in tui() (agent-sidebar pattern); the md channel covers historical jobs
-  // from previous sessions and terminal states of never-read jobs.
+  // ── Delegations: session.children (PRIMARY) + md reports (enrichment) ──
+  // The panel's source of truth is the SDK child-session API
+  // (`api.client.session.children`) — every pantheon_delegate spawns a child
+  // session with parentID = this session, so children ARE the delegation
+  // list (delegations-sidebar pattern). The md channel
+  // (.pantheon/delegations) enriches each child with alias/agent/description
+  // and terminal duration via the `Task ID` match. Live tool-call events
+  // (message.part.updated) are NOT the source: they only bump
+  // liveStore.version(), which re-triggers this fetch.
   const delegationsDir = createMemo(() => resolveDelegationsDir((props.api.state as any).path))
-  const [delegations, setDelegations] = createSignal<DelegationEntry[]>([])
-  // 1s ticker drives the running-jobs elapsed counter (see onMount).
+  // Silence-by-default panel logger → <project>/.pantheon/logs/hooks.log.
+  const panelLog = createTuiLogger(dirname(delegationsDir()))
+  // The rendered list is childDelegations (children enriched with md);
+  // there is no separate md-only signal — the md channel only feeds
+  // childrenToDelegationEntries below.
+  const [childDelegations, setChildDelegations] = createSignal<DelegationEntry[]>([])
+  // 1s ticker drives the running-jobs elapsed counter AND the safety poll
+  // (oh-my-opencode-slim pattern): re-fetch children + re-read the md every
+  // second so the panel updates even when NO event ever fires.
   const [now, setNow] = createSignal(Date.now())
-  const refreshDelegations = async () => {
-    try {
-      setDelegations(await readDelegationEntries(delegationsDir()))
-    } catch {
-      // fail-open: never crash the sidebar on a read error
-    }
+  // Cumulative count of event-triggered refreshes — logged with every fetch
+  // ("panel: children=N md=N events=N") so the (0) symptom is diagnosable:
+  // children>0 means the source works; events=0 means the event bus isn't
+  // delivering, and the 1s poll is what keeps the panel honest.
+  let eventRefreshCount = 0
+  // In-flight guard: overlap between the poll, events and the version effect
+  // collapses into one fetch — no duplicate work, no duplicate entries.
+  let delegationsInflight: Promise<void> | null = null
+  const refreshDelegations = () => {
+    if (delegationsInflight !== null) return delegationsInflight
+    delegationsInflight = (async () => {
+      try {
+        const state = props.api.state as any
+        // 1. children — PRIMARY source (SDK: api.client.session.children).
+        let children: ChildDelegationLike[] = []
+        try {
+          const result = await (props.api.client as any)?.session?.children?.({
+            path: { id: props.sessionID },
+          })
+          const data = (result?.data ?? result) as unknown
+          children = Array.isArray(data) ? (data as ChildDelegationLike[]) : []
+        } catch {
+          children = [] // children API unavailable — the panel shows md only
+        }
+        // 2. md reports — enrichment (alias/agent/description/duration).
+        let md: DelegationEntry[] = []
+        try {
+          md = await readDelegationEntries(delegationsDir())
+        } catch {
+          md = [] // fail-open: never crash the sidebar on a read error
+        }
+        // 3. live status per child (sync API) + merge children with md.
+        const resolveStatus = (childID: string): string | undefined => {
+          try {
+            return state?.session?.status?.(childID)?.type as string | undefined
+          } catch {
+            return undefined // status API unavailable — child state fallback
+          }
+        }
+        const withStatus = children.map((c) => ({ ...c, status: resolveStatus(c.id) }))
+        setChildDelegations(childrenToDelegationEntries(withStatus, md, now()))
+        // 4. diagnostic line — every re-fetch (silence-by-default, hooks.log).
+        panelLog.info(
+          `panel: children=${children.length} md=${md.length} events=${eventRefreshCount}`,
+        )
+      } finally {
+        delegationsInflight = null
+      }
+    })()
+    return delegationsInflight
   }
-  // Live entries for the current session (reactivity via the version signal
-  // bumped by the event subscriptions in tui()).
-  const liveForSession = createMemo(() => {
-    props.liveStore.version() // subscribe to live mutations
-    const out: LiveDelegationEntry[] = []
-    for (const entry of props.liveStore.map.values()) {
-      if (entry.sessionID === props.sessionID) out.push(entry)
-    }
-    return out
-  })
-  // Combine live + md into the display list (dedupe by session+alias).
-  const mergedDelegations = createMemo(() =>
-    mergeDelegationSources(liveForSession(), delegations()),
-  )
-  // Running jobs first (merge already sorts), then the 8 most recent
-  // terminal reports. The header count uses this same "running + recentes".
+  // Running jobs first, then the 8 most recent terminal reports. The header
+  // count uses this same "running + recentes".
   const visibleDelegations = createMemo(() => {
-    const all = mergedDelegations()
+    const all = childDelegations()
     const running = all.filter((d) => d.state === 'running')
     const terminal = all.filter((d) => d.state !== 'running').slice(0, 8)
     return [...running, ...terminal]
@@ -1644,7 +1879,7 @@ function View(props: {
   onMount(() => {
     const cleanup: (() => void)[] = []
 
-    // Session events — triggers resource refetch
+    // Session events — triggers the sessions resource refetch.
     try {
       cleanup.push(props.api.event.on('session.status', refetchSessions))
       cleanup.push(props.api.event.on('session.created', refetchSessions))
@@ -1654,29 +1889,47 @@ function View(props: {
       /* events API not available in this runtime */
     }
 
-    // Delegation panel (md fallback channel): initial read, re-read on
-    // session lifecycle events (jobs are born/die with sessions), plus a
-    // 2s poll of the md channel — this catches terminal states of jobs
-    // never closed by a pantheon_delegation_read event, and history from
-    // previous sessions. The live channel is event-driven in tui(). A 1s
-    // ticker re-renders the running jobs' elapsed counter.
-    void refreshDelegations()
+    // Delegation panel: children are born/die with session lifecycle events
+    // (a delegate spawns a child → session.created fires) — re-fetch on all
+    // of them. `session.status` re-syncs busy→idle state transitions.
     try {
-      cleanup.push(props.api.event.on('session.created', () => void refreshDelegations()))
-      cleanup.push(props.api.event.on('session.updated', () => void refreshDelegations()))
+      const eventRefresh = () => {
+        eventRefreshCount += 1
+        void refreshDelegations()
+      }
+      cleanup.push(props.api.event.on('session.created', eventRefresh))
+      cleanup.push(props.api.event.on('session.updated', eventRefresh))
+      cleanup.push(props.api.event.on('session.deleted', eventRefresh))
+      cleanup.push(props.api.event.on('session.status', eventRefresh))
     } catch {
-      /* events API not available — the 2s poll still covers it */
+      /* events API not available — the 1s poll still covers it */
     }
-    cleanup.push(() => clearInterval(setInterval(() => setNow(Date.now()), 1_000)))
-    cleanup.push(() => clearInterval(setInterval(() => void refreshDelegations(), 2_000)))
+
+    // message.part.updated/removed → liveStore.version() bumps (tui()):
+    // subscribe here so the panel ALSO re-fetches children when tool-part
+    // events DO arrive (kept strictly as a refresh trigger, not a source).
+    createEffect(() => {
+      props.liveStore.version() // subscribe to live mutations
+      eventRefreshCount += 1
+      void refreshDelegations()
+    })
+
+    // Safety poll (OMO-slim pattern): 1s re-fetch children + md + tick the
+    // elapsed counter. Guarantees the panel updates even with zero events.
+    const poll = setInterval(() => {
+      setNow(Date.now())
+      void refreshDelegations()
+    }, 1_000)
+    cleanup.push(() => clearInterval(poll))
 
     // Compaction recovery: `message.part.removed` clears live entries while
     // compacting, so after a compaction/attach the live map would start
     // empty even though the session still holds the delegation tool parts.
     // Re-seed the live map from the session's existing parts (in message
-    // order) right after the subscriptions are registered. Fail-open: if
-    // the SDK access is unavailable we skip — live events + the md channel
-    // keep the panel working.
+    // order) right after the subscriptions are registered — the version
+    // bump re-triggers the children fetch. Fail-open: if the SDK access is
+    // unavailable we skip — the children API + the 1s poll keep the panel
+    // working.
     try {
       const sdk = (props.api.state as any)?.session
       if (typeof sdk?.messages === 'function') {
@@ -1693,7 +1946,7 @@ function View(props: {
         }
       }
     } catch {
-      /* re-scan unavailable — live events + md fallback still cover it */
+      /* re-scan unavailable — children API + 1s poll still cover it */
     }
 
     onCleanup(() =>
@@ -1757,7 +2010,7 @@ function View(props: {
         </Show>
       </Show>
 
-      {/* ── Delegations (live tool-call events + .pantheon/delegations md fallback) ── */}
+      {/* ── Delegations (session.children primary + .pantheon/delegations md enrichment) ── */}
       <box onMouseDown={() => setShowDelegations((x) => !x)}>
         <text fg={theme().text} attributes={1}>
           {`${showDelegations() ? '\u25bc' : '\u25b6'} Delegations`}
@@ -1792,12 +2045,16 @@ const tui: TuiPlugin = async (api, _options, _meta) => {
   // Vendored feature (MIT): AI subscription usage gauges.
   void setupUsageBar(api) // async init — never blocks sidebar registration
 
-  // ── Live delegation store (agent-sidebar pattern) ──
-  // The PRIMARY channel of the Delegations panel. `message.part.updated`
-  // fires for every part change; we track pantheon_delegate /
-  // pantheon_delegation_read tool parts and bump a version signal so the
-  // sidebar re-renders. Fail-open: if the events API is unavailable the
-  // md fallback channel in View keeps the panel working (never crash).
+  // ── Live delegation store (legacy tool-part tracker, kept as a REFRESH
+  // TRIGGER) ──
+  // The Delegations panel's PRIMARY source is `api.client.session.children`
+  // (delegations-sidebar pattern) — `message.part.updated` may not fire for
+  // pantheon_delegate on runtime 1.18.13 (the "(0)" symptom). The tool-part
+  // lifecycle below still tracks pantheon_delegate / pantheon_delegation_read
+  // parts and bumps a version signal the View subscribes to: when part
+  // events DO arrive, the panel re-fetches children. Fail-open: if the
+  // events API is unavailable nothing subscribes and the 1s safety poll
+  // keeps the panel working (never crash).
   const [liveVersion, setLiveVersion] = createSignal(0)
   const liveStore: LiveDelegationStore = {
     map: new Map<string, LiveDelegationEntry>(),
@@ -1817,7 +2074,7 @@ const tui: TuiPlugin = async (api, _options, _meta) => {
       }),
     )
   } catch {
-    /* events API unavailable — md fallback only */
+    /* events API unavailable — children API + 1s poll cover the panel */
   }
   try {
     unsubLive.push(
@@ -1829,7 +2086,7 @@ const tui: TuiPlugin = async (api, _options, _meta) => {
       }),
     )
   } catch {
-    /* events API unavailable — md fallback only */
+    /* events API unavailable — children API + 1s poll cover the panel */
   }
   api.lifecycle.onDispose(() => {
     for (const unsub of unsubLive) {

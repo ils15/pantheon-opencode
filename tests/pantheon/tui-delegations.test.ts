@@ -19,12 +19,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  type ChildDelegationLike,
+  childrenToDelegationEntries,
+  childStatusToState,
   collectDelegationToolParts,
   type DelegationEntry,
   delegationElapsed,
   fmtElapsed,
   type LiveDelegationEntry,
   mergeDelegationSources,
+  navigateToDelegationSession,
   parseDelegationMarkdown,
   parseDelegationToolPart,
   readDelegationEntries,
@@ -992,6 +996,159 @@ async function main() {
       )
     },
   )
+
+  // ─── Children channel (PRIMARY source, delegations-sidebar pattern) ───
+  // The panel's source of truth is `api.client.session.children` — every
+  // pantheon_delegate spawns a child session (parentID = caller), so the
+  // children of the current session ARE the delegation list. Status types
+  // map busy/retry → running, idle → completed, unknown → running (fail-
+  // open). The md report (matched by the `Task ID` header == child.id)
+  // enriches alias/agent/description/duration; a child without a report
+  // still renders from its own title. These pure helpers power
+  // View.refreshDelegations + DelegationRow navigation.
+
+  await testAsync('children: childStatusToState — busy/retry → running', async () => {
+    assert.equal(childStatusToState('busy'), 'running')
+    assert.equal(childStatusToState('retry'), 'running')
+  })
+
+  await testAsync(
+    'children: childStatusToState — idle → completed, unknown → running',
+    async () => {
+      assert.equal(childStatusToState('idle'), 'completed')
+      assert.equal(childStatusToState(undefined), 'running', 'no status → running (fail-open)')
+      assert.equal(childStatusToState('weird'), 'running', 'unknown status → running (fail-open)')
+    },
+  )
+
+  await testAsync(
+    'children: entries derive state from live status (busy/retry running, idle completed)',
+    async () => {
+      const children: ChildDelegationLike[] = [
+        {
+          id: 'ses_child_busy',
+          title: 'Busca em andamento',
+          status: 'busy',
+          time: { created: 1000 },
+        },
+        {
+          id: 'ses_child_rty',
+          title: 'Tentando de novo',
+          status: 'retry',
+          time: { created: 2000 },
+        },
+        {
+          id: 'ses_child_idle',
+          title: 'Já terminou',
+          status: 'idle',
+          time: { created: 3000, updated: 8000 },
+        },
+      ]
+      const entries = childrenToDelegationEntries(children, [], 10_000)
+      assert.equal(entries.length, 3)
+      const byId = new Map(entries.map((e) => [e.taskID, e]))
+      assert.equal(byId.get('ses_child_busy')?.state, 'running')
+      assert.equal(byId.get('ses_child_rty')?.state, 'running')
+      assert.equal(byId.get('ses_child_idle')?.state, 'completed')
+      assert.equal(byId.get('ses_child_busy')?.updatedAt, null, 'running child has no end')
+      assert.equal(byId.get('ses_child_idle')?.updatedAt, 8000, 'terminal child uses time.updated')
+    },
+  )
+
+  await testAsync(
+    'children: md matched by Task ID (backticks stripped) → alias/agent/description',
+    async () => {
+      // The board report carries `- **Task ID**: \`ses_child_9\`` — the parse
+      // must strip the surrounding backticks so the map keys on the raw child
+      // session id and the child↔md match lands.
+      const md = parseDelegationMarkdown(
+        '# Delegation Report — apo-1\n' +
+          '- **Task ID**: `ses_child_9`\n' +
+          '- **Agent**: apollo\n' +
+          '- **Description**: Busca de código\n' +
+          '- **State**: completed\n' +
+          '- **Timed out**: false\n' +
+          '- **Started**: 2026-08-11T15:00:00.000Z\n' +
+          '- **Finalized**: 2026-08-11T15:10:00.000Z\n',
+        'apo-1.md',
+      )
+      assert.ok(md, 'report with Task ID must parse')
+      assert.equal(md.taskID, 'ses_child_9', 'backticked Task ID is stripped')
+
+      const entries = childrenToDelegationEntries(
+        [{ id: 'ses_child_9', title: 'fallback title', status: 'idle' }],
+        [md],
+        10_000,
+      )
+      assert.equal(entries.length, 1)
+      const e = entries[0]
+      assert.ok(e)
+      assert.equal(e.taskID, 'ses_child_9')
+      assert.equal(e.alias, 'apo-1', 'alias comes from the matched md report')
+      assert.equal(e.agent, 'apollo')
+      assert.equal(e.description, 'Busca de código', 'report description wins over child title')
+      assert.equal(e.state, 'completed', 'terminal md state wins over idle-derived')
+      assert.equal(e.startedAt, Date.parse('2026-08-11T15:00:00.000Z'))
+      assert.equal(e.updatedAt, Date.parse('2026-08-11T15:10:00.000Z'))
+    },
+  )
+
+  await testAsync('children: refresh/polling does not duplicate (dedupe by child id)', async () => {
+    // The 1s poll + event refetches re-read the same children — duplicate ids
+    // in one batch AND across calls must collapse to a single entry each.
+    const children = [
+      { id: 'ses_child_a', title: 'A', status: 'busy' },
+      { id: 'ses_child_a', title: 'A', status: 'busy' },
+      { id: 'ses_child_b', title: 'B', status: 'idle' },
+    ]
+    const first = childrenToDelegationEntries(children, [], 10_000)
+    assert.equal(first.length, 2, 'duplicate id in one batch collapses')
+    const second = childrenToDelegationEntries(children, [], 11_000)
+    assert.equal(second.length, 2, 're-fetch does not accumulate entries')
+    assert.deepEqual(first.map((e) => e.taskID).sort(), ['ses_child_a', 'ses_child_b'])
+  })
+
+  await testAsync(
+    'children: no md → child still renders (title as description, agent fallback)',
+    async () => {
+      const entries = childrenToDelegationEntries(
+        [{ id: 'ses_child_x', title: 'Busca de código', status: 'busy', time: { created: 5000 } }],
+        [],
+        10_000,
+      )
+      assert.equal(entries.length, 1, 'a child without a report still renders')
+      const e = entries[0]
+      assert.ok(e)
+      assert.equal(e.agent, 'agent', 'agent falls back to "agent" without a report')
+      assert.equal(e.description, 'Busca de código', 'description falls back to the child title')
+      assert.equal(e.state, 'running')
+      assert.equal(e.startedAt, 5000, 'startedAt from time.created')
+      assert.equal(e.timedOut, false)
+    },
+  )
+
+  await testAsync('navigate: route.navigate present → calls session navigation', async () => {
+    const calls: Array<[string, Record<string, unknown> | undefined]> = []
+    const route = {
+      navigate: (name: string, params?: Record<string, unknown>) => calls.push([name, params]),
+    }
+    assert.equal(navigateToDelegationSession(route, 'ses_child_9'), true)
+    assert.deepEqual(calls, [['session', { sessionID: 'ses_child_9' }]])
+  })
+
+  await testAsync('navigate: route API absent / taskID missing → false, never calls', async () => {
+    const calls: string[] = []
+    assert.equal(navigateToDelegationSession(undefined, 'ses_child_9'), false, 'no route → false')
+    assert.equal(
+      navigateToDelegationSession({}, 'ses_child_9'),
+      false,
+      'route without navigate → false',
+    )
+    const route = { navigate: (name: string) => calls.push(name) }
+    assert.equal(navigateToDelegationSession(route, undefined), false, 'missing taskID → false')
+    assert.equal(navigateToDelegationSession(route, ''), false, 'empty taskID → false')
+    assert.deepEqual(calls, [], 'navigate must never be called')
+  })
 
   // ─── Report ────────────────────────────────────────────────────────────
 
