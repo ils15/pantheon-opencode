@@ -3,7 +3,7 @@
  */
 
 import { execSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { warning } from './cli-ui.mjs'
 import { writeIfChanged } from './shared.mjs'
@@ -30,7 +30,11 @@ export function installPlugin(srcDir, dstDir, { dryRun = false, clean = false } 
   // Copy src/index.tsx -> index.tsx
   const srcIdx = join(srcDir, 'src', 'index.tsx')
   if (existsSync(srcIdx)) {
-    const idxStatus = writeIfChanged(join(dstDir, 'index.tsx'), readFileSync(srcIdx, 'utf8'), dryRun)
+    const idxStatus = writeIfChanged(
+      join(dstDir, 'index.tsx'),
+      readFileSync(srcIdx, 'utf8'),
+      dryRun,
+    )
     if (idxStatus === 'created') result.created++
     else result.skipped++
   }
@@ -48,7 +52,11 @@ export function installPlugin(srcDir, dstDir, { dryRun = false, clean = false } 
   // Copy package.json
   const pkgSrc = join(srcDir, 'package.json')
   if (existsSync(pkgSrc)) {
-    const pkgStatus = writeIfChanged(join(dstDir, 'package.json'), readFileSync(pkgSrc, 'utf8'), dryRun)
+    const pkgStatus = writeIfChanged(
+      join(dstDir, 'package.json'),
+      readFileSync(pkgSrc, 'utf8'),
+      dryRun,
+    )
     if (pkgStatus === 'created') result.created++
     else result.skipped++
   }
@@ -117,13 +125,17 @@ export function registerPlugin(tuiJsonPath, pluginId, { dryRun = false } = {}) {
  * @returns {'created'|'skipped'}
  */
 export function unregisterPlugin(tuiJsonPath, pluginId, { dryRun = false } = {}) {
+  if (!existsSync(tuiJsonPath)) {
+    // Nothing to clean — and never create an empty tui.json in a location
+    // OpenCode reads (the cross-location cleanup also touches global config
+    // dirs that may not exist yet; writing there would ENOENT).
+    return 'skipped'
+  }
   let tuiConfig = { plugin: [] }
-  if (existsSync(tuiJsonPath)) {
-    try {
-      tuiConfig = JSON.parse(readFileSync(tuiJsonPath, 'utf8'))
-    } catch {
-      /* use default */
-    }
+  try {
+    tuiConfig = JSON.parse(readFileSync(tuiJsonPath, 'utf8'))
+  } catch {
+    /* use default */
   }
   if (!Array.isArray(tuiConfig.plugin)) {
     tuiConfig.plugin = []

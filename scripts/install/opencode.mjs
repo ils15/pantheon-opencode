@@ -3,15 +3,7 @@
  * opencode.mjs — OpenCode platform installer
  */
 
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import {
@@ -121,6 +113,57 @@ export function isGlobalConfigDir(target) {
   const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
   const xdgDir = resolve(join(xdgConfig, 'opencode'))
   return resolve(target) === xdgDir
+}
+
+/**
+ * Sync the Pantheon TUI plugin registration across EVERY tui.json location
+ * OpenCode reads.
+ *
+ * OpenCode loads BOTH global config locations when they exist:
+ *   ~/.opencode/tui.json                      (primary installation)
+ *   $XDG_CONFIG_HOME/opencode/tui.json        (legacy/alternative)
+ * A stale Pantheon TUI registration left in the non-target location (e.g. an
+ * absolute path from an old checkout/package install) would still be loaded
+ * and can break the TUI even though the current install cleaned its own
+ * target. This unregisters stale TUI refs from both locations using the same
+ * staleSuffixes filter as upgrades, then registers the CURRENT plugin in the
+ * selected target only — a single registration is enough since the loader
+ * merges both files.
+ *
+ * @param {string} target - install target directory
+ * @param {object} [opts]
+ * @param {boolean} [opts.isGlobal=false] - flat global layout vs .opencode/
+ * @param {boolean} [opts.dryRun=false]
+ * @returns {'created'|'skipped'} status for the target registration
+ */
+export function syncTuiRegistration(target, { isGlobal = false, dryRun = false } = {}) {
+  const targetTuiConfigPath = isGlobal
+    ? join(target, 'tui.json')
+    : join(target, '.opencode', 'tui.json')
+  // Hermetic TUI plugin registration: opencode's tui loader treats relative
+  // entries ("plugins/pantheon-tui") as npm/github package specs and fails
+  // with NpmInstallFailedError ("Repository not found"). Register the plugin
+  // by the ABSOLUTE path of the built dist inside the installed package
+  // (derived from ROOT — never hardcoded), mirroring the loader's
+  // absolute-path support (same pattern as the hooks plugin fix).
+  const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx')
+  // OpenCode loads both global config locations when they exist. Clean stale
+  // Pantheon TUI refs from both locations, but register the current plugin in
+  // the selected target only so the plugin is never loaded twice.
+  const tuiConfigPaths = [targetTuiConfigPath]
+  if (isGlobal) {
+    const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
+    for (const candidate of [
+      join(homedir(), '.opencode', 'tui.json'),
+      join(xdgConfig, 'opencode', 'tui.json'),
+    ]) {
+      if (!tuiConfigPaths.includes(candidate)) tuiConfigPaths.push(candidate)
+    }
+  }
+  for (const tuiConfigPath of tuiConfigPaths) {
+    unregisterPlugin(tuiConfigPath, 'plugins/pantheon-tui', { dryRun })
+  }
+  return registerPlugin(targetTuiConfigPath, tuiPluginRef, { dryRun })
 }
 
 export async function installOpenCode(
@@ -327,19 +370,7 @@ export async function installOpenCode(
   // -----------------------------------------------------------------------
   // 2.9 Create/update tui.json with plugin registration
   // -----------------------------------------------------------------------
-  const targetTuiConfigPath = isGlobal
-    ? join(target, 'tui.json')
-    : join(target, '.opencode', 'tui.json')
-  // Hermetic TUI plugin registration: opencode's tui loader treats relative
-  // entries ("plugins/pantheon-tui") as npm/github package specs and fails
-  // with NpmInstallFailedError ("Repository not found"). Register the plugin
-  // by the ABSOLUTE path of the built dist inside the installed package
-  // (derived from ROOT — never hardcoded), mirroring the loader's
-  // absolute-path support (same pattern as the hooks plugin fix).
-  const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx')
-  // Clean up the old broken relative ref (and stale dist refs) on upgrade.
-  unregisterPlugin(targetTuiConfigPath, 'plugins/pantheon-tui', { dryRun })
-  const tuiStatus = registerPlugin(targetTuiConfigPath, tuiPluginRef, { dryRun })
+  const tuiStatus = syncTuiRegistration(target, { isGlobal, dryRun })
   if (tuiStatus === 'created') stats.created++
   else stats.skipped++
 
