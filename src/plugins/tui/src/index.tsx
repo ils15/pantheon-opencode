@@ -862,6 +862,16 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      tool-part events, which runtime 1.18.13 may not deliver for
  *      pantheon_delegate (the "(0) even while delegating" symptom).
  *
+ *   1b. NATIVE task() CHILDREN — `session.children` returns ALL children,
+ *      and the native `task()` tool ALSO spawns a child session with
+ *      parentID = caller. A child WITHOUT a board report is a native
+ *      task() child: childrenToDelegationEntries tags it source
+ *      'children-only' with the `[task]` row tag (distinct info color),
+ *      so native task() work is visible in the panel alongside board
+ *      delegates ([apo-1]) — never filtered out, never duplicated with a
+ *      board row for the same child (a child WITH a report keeps the md
+ *      entry, source 'md').
+ *
  *   2. ENRICHMENT + HISTORY — markdown reports the job board persists under
  *      `.pantheon/delegations/<sessionID>/<alias>.md` (written by
  *      src/pantheon/delegation-finalize.ts at terminal state). Each child
@@ -923,8 +933,10 @@ export type DelegationEntry = {
   description: string
   /** True while the panel is waiting for pantheon_delegation_read. */
   read?: boolean
-  /** Internal provenance used to keep a finalized md report authoritative. */
-  source?: 'child' | 'live' | 'md'
+  /** Internal provenance used to keep a finalized md report authoritative.
+   *  'children-only' = a native task() child session with NO board report
+   *  (rendered with the distinct `[task]` tag); 'md' = board report wins. */
+  source?: 'child' | 'live' | 'md' | 'children-only'
 }
 
 /** True for `\s` characters (space, tab, newline, CR) — plain char checks so
@@ -1745,6 +1757,9 @@ export type ChildDelegationLike = {
   id: string
   /** Session title — the delegate's description or prompt prefix. */
   title?: string
+  /** Agent name when the child session carries one (duck-typed; native
+   *  task() children may expose it, board reports always do). */
+  agent?: string
   /** Status type from api.state.session.status: 'busy' | 'retry' | 'idle',
    *  or undefined when the status API is unavailable. */
   status?: string
@@ -1763,17 +1778,24 @@ export function childStatusToState(status: string | undefined): 'running' | 'com
   return 'running' // busy, retry, or unknown
 }
 
-/** Compact readable alias for a child with no md report yet: short id. */
-function childAlias(id: string): string {
-  return id.length > 14 ? `${id.slice(0, 12)}\u2026` : id
+/** Row tag for a delegation entry: `[task]` for native task() children
+ *  (source 'children-only' — no board report), `[<alias>]` for board rows
+ *  ([apo-1]). The panel renders the tag with a distinct style so native
+ *  task() children are visually separable from pantheon_delegate jobs. */
+export function delegationTag(entry: DelegationEntry): string {
+  return entry.source === 'children-only' ? '[task]' : `[${entry.alias}]`
 }
 
 /** Turn child sessions (PRIMARY) enriched with md reports into the display
  *  list. One entry per child id (duplicates across re-fetches collapse).
  *  The md report is matched by `Task ID` (== child.id) and supplies alias,
  *  agent, description, terminal state and duration. A child without a
- *  report still renders: description from its title, agent falls back to
- *  'agent', state derived from its status, startedAt from time.created.
+ *  report still renders: description from its title, agent from the child
+ *  itself (fallback 'agent'), state derived from its status, startedAt from
+ *  time.created. A report-less child is a NATIVE task() child (every
+ *  child of the current session — pantheon_delegate OR the native `task()`
+ *  tool — carries parentID = caller), so it gets source 'children-only'
+ *  and the `[task]` tag instead of a board alias.
  *  Terminal md state wins over the derived state; a running md defers to
  *  the child's live status. Sorted running-first (compareDelegationEntries).
  *  Pure — no I/O. */
@@ -1797,10 +1819,10 @@ export function childrenToDelegationEntries(
         ? mdEntry.state
         : childStatusToState(child.status)
     out.push({
-      alias: mdEntry?.alias ?? childAlias(child.id),
+      alias: mdEntry?.alias ?? 'task',
       sessionID: mdEntry?.sessionID ?? '',
       taskID: child.id,
-      agent: mdEntry?.agent ?? 'agent',
+      agent: mdEntry?.agent ?? child.agent ?? 'agent',
       state,
       startedAt: mdEntry?.startedAt ?? child.time?.created ?? now,
       updatedAt: mdEntry?.updatedAt ?? (state === 'running' ? null : (child.time?.updated ?? null)),
@@ -1809,7 +1831,7 @@ export function childrenToDelegationEntries(
         mdEntry !== undefined && mdEntry.description !== ''
           ? mdEntry.description
           : (child.title ?? ''),
-      source: mdEntry !== undefined ? 'md' : 'child',
+      source: mdEntry !== undefined ? 'md' : 'children-only',
     })
   }
   out.sort(compareDelegationEntries)
@@ -1958,10 +1980,10 @@ function DelegationRow(props: {
     }
   })
 
-  const primary = createMemo(() => {
-    const { alias, agent } = props.job
-    return `${marker()}[${alias}] ${agent} \u2014 ${delegationActivityLabel(props.job)}`
-  })
+  // The row tag: `[task]` for native task() children (no board report),
+  // `[apo-1]`-style alias for pantheon_delegate board rows. Rendered with
+  // the info color so task() children are visually distinct from delegates.
+  const tagColor = createMemo(() => (props.job.source === 'children-only' ? theme().info : color()))
 
   const detail = createMemo(() => {
     const elapsed = delegationElapsed(props.job, props.now)
@@ -1979,7 +2001,13 @@ function DelegationRow(props: {
 
   return (
     <box onMouseDown={open}>
-      <text fg={color()}>{primary()}</text>
+      <box flexDirection="row">
+        <text fg={color()}>{marker()}</text>
+        <text fg={tagColor()}>{delegationTag(props.job)}</text>
+        <text
+          fg={color()}
+        >{` ${props.job.agent} \u2014 ${delegationActivityLabel(props.job)}`}</text>
+      </box>
       <text fg={theme().textMuted}>{detail()}</text>
     </box>
   )

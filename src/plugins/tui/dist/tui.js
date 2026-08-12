@@ -1261,16 +1261,23 @@ function childStatusToState(status) {
 	if (status === "idle") return "completed";
 	return "running";
 }
-/** Compact readable alias for a child with no md report yet: short id. */
-function childAlias(id) {
-	return id.length > 14 ? `${id.slice(0, 12)}\u2026` : id;
+/** Row tag for a delegation entry: `[task]` for native task() children
+*  (source 'children-only' — no board report), `[<alias>]` for board rows
+*  ([apo-1]). The panel renders the tag with a distinct style so native
+*  task() children are visually separable from pantheon_delegate jobs. */
+function delegationTag(entry) {
+	return entry.source === "children-only" ? "[task]" : `[${entry.alias}]`;
 }
 /** Turn child sessions (PRIMARY) enriched with md reports into the display
 *  list. One entry per child id (duplicates across re-fetches collapse).
 *  The md report is matched by `Task ID` (== child.id) and supplies alias,
 *  agent, description, terminal state and duration. A child without a
-*  report still renders: description from its title, agent falls back to
-*  'agent', state derived from its status, startedAt from time.created.
+*  report still renders: description from its title, agent from the child
+*  itself (fallback 'agent'), state derived from its status, startedAt from
+*  time.created. A report-less child is a NATIVE task() child (every
+*  child of the current session — pantheon_delegate OR the native `task()`
+*  tool — carries parentID = caller), so it gets source 'children-only'
+*  and the `[task]` tag instead of a board alias.
 *  Terminal md state wins over the derived state; a running md defers to
 *  the child's live status. Sorted running-first (compareDelegationEntries).
 *  Pure — no I/O. */
@@ -1285,16 +1292,16 @@ function childrenToDelegationEntries(children, md, now = Date.now()) {
 		const mdEntry = byTaskID.get(child.id);
 		const state = mdEntry !== void 0 && mdEntry.state !== "running" ? mdEntry.state : childStatusToState(child.status);
 		out.push({
-			alias: mdEntry?.alias ?? childAlias(child.id),
+			alias: mdEntry?.alias ?? "task",
 			sessionID: mdEntry?.sessionID ?? "",
 			taskID: child.id,
-			agent: mdEntry?.agent ?? "agent",
+			agent: mdEntry?.agent ?? child.agent ?? "agent",
 			state,
 			startedAt: mdEntry?.startedAt ?? child.time?.created ?? now,
 			updatedAt: mdEntry?.updatedAt ?? (state === "running" ? null : child.time?.updated ?? null),
 			timedOut: mdEntry?.timedOut ?? false,
 			description: mdEntry !== void 0 && mdEntry.description !== "" ? mdEntry.description : child.title ?? "",
-			source: mdEntry !== void 0 ? "md" : "child"
+			source: mdEntry !== void 0 ? "md" : "children-only"
 		});
 	}
 	out.sort(compareDelegationEntries);
@@ -1385,10 +1392,7 @@ function DelegationRow(props) {
 			default: return "○ ";
 		}
 	});
-	const primary = createMemo(() => {
-		const { alias, agent } = props.job;
-		return `${marker()}[${alias}] ${agent} \u2014 ${delegationActivityLabel(props.job)}`;
-	});
+	const tagColor = createMemo(() => props.job.source === "children-only" ? theme().info : color());
 	const detail = createMemo(() => {
 		const line = `${delegationElapsed(props.job, props.now)}${props.job.description !== "" ? ` \u2014 ${props.job.description}` : ""}`;
 		return line.length > 180 ? `${line.slice(0, 177)}\u2026` : line;
@@ -1397,20 +1401,30 @@ function DelegationRow(props) {
 		navigateToDelegationSession(props.api.route, props.job.taskID);
 	};
 	return (() => {
-		var _el$13 = createElement("box"), _el$14 = createElement("text"), _el$15 = createElement("text");
+		var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$16 = createElement("text"), _el$17 = createElement("text"), _el$18 = createElement("text");
 		insertNode(_el$13, _el$14);
-		insertNode(_el$13, _el$15);
+		insertNode(_el$13, _el$18);
 		setProp(_el$13, "onMouseDown", open);
-		insert(_el$14, primary);
-		insert(_el$15, detail);
+		insertNode(_el$14, _el$15);
+		insertNode(_el$14, _el$16);
+		insertNode(_el$14, _el$17);
+		setProp(_el$14, "flexDirection", "row");
+		insert(_el$15, marker);
+		insert(_el$16, () => delegationTag(props.job));
+		insert(_el$17, () => ` ${props.job.agent} \u2014 ${delegationActivityLabel(props.job)}`);
+		insert(_el$18, detail);
 		effect((_p$) => {
-			var _v$5 = color(), _v$6 = theme().textMuted;
-			_v$5 !== _p$.e && (_p$.e = setProp(_el$14, "fg", _v$5, _p$.e));
-			_v$6 !== _p$.t && (_p$.t = setProp(_el$15, "fg", _v$6, _p$.t));
+			var _v$5 = color(), _v$6 = tagColor(), _v$7 = color(), _v$8 = theme().textMuted;
+			_v$5 !== _p$.e && (_p$.e = setProp(_el$15, "fg", _v$5, _p$.e));
+			_v$6 !== _p$.t && (_p$.t = setProp(_el$16, "fg", _v$6, _p$.t));
+			_v$7 !== _p$.a && (_p$.a = setProp(_el$17, "fg", _v$7, _p$.a));
+			_v$8 !== _p$.o && (_p$.o = setProp(_el$18, "fg", _v$8, _p$.o));
 			return _p$;
 		}, {
 			e: void 0,
-			t: void 0
+			t: void 0,
+			a: void 0,
+			o: void 0
 		});
 		return _el$13;
 	})();
@@ -1574,78 +1588,78 @@ function View(props) {
 		}));
 	});
 	const HR = () => (() => {
-		var _el$16 = createElement("text");
-		insertNode(_el$16, createTextNode(`────────────────────────────`));
-		effect((_$p) => setProp(_el$16, "fg", theme().textMuted, _$p));
-		return _el$16;
+		var _el$19 = createElement("text");
+		insertNode(_el$19, createTextNode(`────────────────────────────`));
+		effect((_$p) => setProp(_el$19, "fg", theme().textMuted, _$p));
+		return _el$19;
 	})();
 	return (() => {
-		var _el$18 = createElement("box"), _el$19 = createElement("text"), _el$20 = createElement("box"), _el$21 = createElement("text"), _el$22 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text"), _el$26 = createElement("text");
-		insertNode(_el$18, _el$19);
-		insertNode(_el$18, _el$20);
-		insertNode(_el$18, _el$24);
-		setProp(_el$18, "flexDirection", "column");
-		setProp(_el$18, "width", "100%");
-		setProp(_el$19, "attributes", 1);
-		insert(_el$19, () => `Pantheon${props.version ? ` v${props.version}` : ""}`);
-		insert(_el$18, createComponent(Show, {
+		var _el$21 = createElement("box"), _el$22 = createElement("text"), _el$23 = createElement("box"), _el$24 = createElement("text"), _el$25 = createElement("text"), _el$27 = createElement("box"), _el$28 = createElement("text"), _el$29 = createElement("text");
+		insertNode(_el$21, _el$22);
+		insertNode(_el$21, _el$23);
+		insertNode(_el$21, _el$27);
+		setProp(_el$21, "flexDirection", "column");
+		setProp(_el$21, "width", "100%");
+		setProp(_el$22, "attributes", 1);
+		insert(_el$22, () => `Pantheon${props.version ? ` v${props.version}` : ""}`);
+		insert(_el$21, createComponent(Show, {
 			get when() {
 				return branch();
 			},
 			children: (b) => (() => {
-				var _el$28 = createElement("text");
-				insert(_el$28, b);
-				effect((_$p) => setProp(_el$28, "fg", theme().textMuted, _$p));
-				return _el$28;
+				var _el$31 = createElement("text");
+				insert(_el$31, b);
+				effect((_$p) => setProp(_el$31, "fg", theme().textMuted, _$p));
+				return _el$31;
 			})()
-		}), _el$20);
-		insert(_el$18, createComponent(Show, {
+		}), _el$23);
+		insert(_el$21, createComponent(Show, {
 			get when() {
 				return preset().name;
 			},
 			get fallback() {
 				return (() => {
-					var _el$29 = createElement("box"), _el$30 = createElement("text");
-					insertNode(_el$29, _el$30);
-					setProp(_el$29, "flexDirection", "row");
-					setProp(_el$29, "gap", 1);
-					insertNode(_el$30, createTextNode(`Preset: default`));
-					effect((_$p) => setProp(_el$30, "fg", theme().textMuted, _$p));
-					return _el$29;
+					var _el$32 = createElement("box"), _el$33 = createElement("text");
+					insertNode(_el$32, _el$33);
+					setProp(_el$32, "flexDirection", "row");
+					setProp(_el$32, "gap", 1);
+					insertNode(_el$33, createTextNode(`Preset: default`));
+					effect((_$p) => setProp(_el$33, "fg", theme().textMuted, _$p));
+					return _el$32;
 				})();
 			},
 			children: (name) => (() => {
-				var _el$32 = createElement("box"), _el$33 = createElement("text"), _el$35 = createElement("text"), _el$36 = createElement("text");
-				insertNode(_el$32, _el$33);
-				insertNode(_el$32, _el$35);
-				insertNode(_el$32, _el$36);
-				setProp(_el$32, "flexDirection", "row");
-				setProp(_el$32, "gap", 1);
-				insertNode(_el$33, createTextNode(`⚡ Preset:`));
-				insert(_el$35, name);
-				insert(_el$36, () => `(${preset().source ?? ""})`);
+				var _el$35 = createElement("box"), _el$36 = createElement("text"), _el$38 = createElement("text"), _el$39 = createElement("text");
+				insertNode(_el$35, _el$36);
+				insertNode(_el$35, _el$38);
+				insertNode(_el$35, _el$39);
+				setProp(_el$35, "flexDirection", "row");
+				setProp(_el$35, "gap", 1);
+				insertNode(_el$36, createTextNode(`⚡ Preset:`));
+				insert(_el$38, name);
+				insert(_el$39, () => `(${preset().source ?? ""})`);
 				effect((_p$) => {
-					var _v$10 = theme().textMuted, _v$11 = theme().accent, _v$12 = theme().textMuted;
-					_v$10 !== _p$.e && (_p$.e = setProp(_el$33, "fg", _v$10, _p$.e));
-					_v$11 !== _p$.t && (_p$.t = setProp(_el$35, "fg", _v$11, _p$.t));
-					_v$12 !== _p$.a && (_p$.a = setProp(_el$36, "fg", _v$12, _p$.a));
+					var _v$12 = theme().textMuted, _v$13 = theme().accent, _v$14 = theme().textMuted;
+					_v$12 !== _p$.e && (_p$.e = setProp(_el$36, "fg", _v$12, _p$.e));
+					_v$13 !== _p$.t && (_p$.t = setProp(_el$38, "fg", _v$13, _p$.t));
+					_v$14 !== _p$.a && (_p$.a = setProp(_el$39, "fg", _v$14, _p$.a));
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0,
 					a: void 0
 				});
-				return _el$32;
+				return _el$35;
 			})()
-		}), _el$20);
-		insert(_el$18, createComponent(HR, {}), _el$20);
-		insertNode(_el$20, _el$21);
-		insertNode(_el$20, _el$22);
-		setProp(_el$20, "onMouseDown", () => setShowSessions((x) => !x));
-		setProp(_el$21, "attributes", 1);
-		insert(_el$21, () => `${showSessions() ? "▼" : "▶"} Sessions`);
-		insert(_el$22, () => ` (${String(totalSessions())})`);
-		insert(_el$18, createComponent(Show, {
+		}), _el$23);
+		insert(_el$21, createComponent(HR, {}), _el$23);
+		insertNode(_el$23, _el$24);
+		insertNode(_el$23, _el$25);
+		setProp(_el$23, "onMouseDown", () => setShowSessions((x) => !x));
+		setProp(_el$24, "attributes", 1);
+		insert(_el$24, () => `${showSessions() ? "▼" : "▶"} Sessions`);
+		insert(_el$25, () => ` (${String(totalSessions())})`);
+		insert(_el$21, createComponent(Show, {
 			get when() {
 				return showSessions();
 			},
@@ -1656,19 +1670,19 @@ function View(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$37 = createElement("box"), _el$38 = createElement("text");
-							insertNode(_el$37, _el$38);
-							setProp(_el$37, "marginLeft", 1);
-							insertNode(_el$38, createTextNode(`No recent sessions`));
-							effect((_$p) => setProp(_el$38, "fg", theme().textMuted, _$p));
-							return _el$37;
+							var _el$40 = createElement("box"), _el$41 = createElement("text");
+							insertNode(_el$40, _el$41);
+							setProp(_el$40, "marginLeft", 1);
+							insertNode(_el$41, createTextNode(`No recent sessions`));
+							effect((_$p) => setProp(_el$41, "fg", theme().textMuted, _$p));
+							return _el$40;
 						})();
 					},
 					get children() {
-						var _el$23 = createElement("box");
-						setProp(_el$23, "marginLeft", 1);
-						setProp(_el$23, "flexDirection", "column");
-						insert(_el$23, createComponent(For, {
+						var _el$26 = createElement("box");
+						setProp(_el$26, "marginLeft", 1);
+						setProp(_el$26, "flexDirection", "column");
+						insert(_el$26, createComponent(For, {
 							get each() {
 								return recentSessions();
 							},
@@ -1679,18 +1693,18 @@ function View(props) {
 								session: ses
 							})
 						}));
-						return _el$23;
+						return _el$26;
 					}
 				});
 			}
-		}), _el$24);
-		insertNode(_el$24, _el$25);
-		insertNode(_el$24, _el$26);
-		setProp(_el$24, "onMouseDown", () => setShowDelegations((x) => !x));
-		setProp(_el$25, "attributes", 1);
-		insert(_el$25, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
-		insert(_el$26, () => ` (${String(visibleDelegations().length)})`);
-		insert(_el$18, createComponent(Show, {
+		}), _el$27);
+		insertNode(_el$27, _el$28);
+		insertNode(_el$27, _el$29);
+		setProp(_el$27, "onMouseDown", () => setShowDelegations((x) => !x));
+		setProp(_el$28, "attributes", 1);
+		insert(_el$28, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
+		insert(_el$29, () => ` (${String(visibleDelegations().length)})`);
+		insert(_el$21, createComponent(Show, {
 			get when() {
 				return showDelegations();
 			},
@@ -1701,19 +1715,19 @@ function View(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$40 = createElement("box"), _el$41 = createElement("text");
-							insertNode(_el$40, _el$41);
-							setProp(_el$40, "marginLeft", 1);
-							insertNode(_el$41, createTextNode(`No delegations`));
-							effect((_$p) => setProp(_el$41, "fg", theme().textMuted, _$p));
-							return _el$40;
+							var _el$43 = createElement("box"), _el$44 = createElement("text");
+							insertNode(_el$43, _el$44);
+							setProp(_el$43, "marginLeft", 1);
+							insertNode(_el$44, createTextNode(`No delegations`));
+							effect((_$p) => setProp(_el$44, "fg", theme().textMuted, _$p));
+							return _el$43;
 						})();
 					},
 					get children() {
-						var _el$27 = createElement("box");
-						setProp(_el$27, "marginLeft", 1);
-						setProp(_el$27, "flexDirection", "column");
-						insert(_el$27, createComponent(For, {
+						var _el$30 = createElement("box");
+						setProp(_el$30, "marginLeft", 1);
+						setProp(_el$30, "flexDirection", "column");
+						insert(_el$30, createComponent(For, {
 							get each() {
 								return visibleDelegations();
 							},
@@ -1730,18 +1744,18 @@ function View(props) {
 								}
 							})
 						}));
-						return _el$27;
+						return _el$30;
 					}
 				});
 			}
 		}), null);
 		effect((_p$) => {
-			var _v$7 = theme().accent, _v$8 = theme().text, _v$9 = theme().textMuted, _v$0 = theme().text, _v$1 = theme().textMuted;
-			_v$7 !== _p$.e && (_p$.e = setProp(_el$19, "fg", _v$7, _p$.e));
-			_v$8 !== _p$.t && (_p$.t = setProp(_el$21, "fg", _v$8, _p$.t));
-			_v$9 !== _p$.a && (_p$.a = setProp(_el$22, "fg", _v$9, _p$.a));
-			_v$0 !== _p$.o && (_p$.o = setProp(_el$25, "fg", _v$0, _p$.o));
-			_v$1 !== _p$.i && (_p$.i = setProp(_el$26, "fg", _v$1, _p$.i));
+			var _v$9 = theme().accent, _v$0 = theme().text, _v$1 = theme().textMuted, _v$10 = theme().text, _v$11 = theme().textMuted;
+			_v$9 !== _p$.e && (_p$.e = setProp(_el$22, "fg", _v$9, _p$.e));
+			_v$0 !== _p$.t && (_p$.t = setProp(_el$24, "fg", _v$0, _p$.t));
+			_v$1 !== _p$.a && (_p$.a = setProp(_el$25, "fg", _v$1, _p$.a));
+			_v$10 !== _p$.o && (_p$.o = setProp(_el$28, "fg", _v$10, _p$.o));
+			_v$11 !== _p$.i && (_p$.i = setProp(_el$29, "fg", _v$11, _p$.i));
 			return _p$;
 		}, {
 			e: void 0,
@@ -1750,7 +1764,7 @@ function View(props) {
 			o: void 0,
 			i: void 0
 		});
-		return _el$18;
+		return _el$21;
 	})();
 }
 const tui = async (api, _options, _meta) => {
@@ -1803,6 +1817,6 @@ const plugin = {
 	tui
 };
 //#endregion
-export { buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, fmtElapsed, isValidSessionId, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
+export { buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isValidSessionId, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
 
 //# sourceMappingURL=tui.js.map
