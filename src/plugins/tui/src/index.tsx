@@ -862,13 +862,16 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      tool-part events, which runtime 1.18.13 may not deliver for
  *      pantheon_delegate (the "(0) even while delegating" symptom).
  *
- *   2. ENRICHMENT — markdown reports the job board persists under
+ *   2. ENRICHMENT + HISTORY — markdown reports the job board persists under
  *      `.pantheon/delegations/<sessionID>/<alias>.md` (written by
  *      src/pantheon/delegation-finalize.ts at terminal state). Each child
  *      is matched to its report by the `Task ID` header (== child session
  *      id == board task id), which supplies the alias (apo-N), agent,
  *      description and terminal duration/timedOut. No report → the child
- *      itself still renders (title as description, derived state).
+ *      itself still renders (title as description, derived state). The md
+ *      channel is ALSO read from EVERY session (readAllDelegationEntries) —
+ *      the panel shows the full delegation history even without a focused
+ *      session.
  *
  *   3. REFRESH — session.created/updated/deleted/status events and
  *      message.part.updated/removed (via liveStore.version bumps) re-fetch
@@ -880,7 +883,8 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      policy) so the (0) symptom is diagnosable from disk. A children fetch
  *      failure logs "panel: error <msg>" (previously silenced), and a missing
  *      current session (null/placeholder sessionID) logs "panel: children=0
- *      ... (no sessionID — fetch skipped)" instead of erroring.
+ *      md=N ... (no sessionID — history shown)" — the md HISTORY renders
+ *      instead of erroring.
  *
  *   5. SESSIONID GUARD (placeholder regression) — the runtime may hand the
  *      sidebar the UNSUBSTITUTED template literal "{sessionID}" as its
@@ -888,8 +892,10 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      made opencode's server reject every poll (~1 err/s: "Expected a string
  *      starting with \"ses\", got \"%7BsessionID%7D\"") and fail-open the
  *      panel into "(0)". resolveCurrentSessionID (slot prop → api.state →
- *      route.current) never yields a placeholder; a null resolution SKIPS the
- *      children fetch entirely — empty panel, zero errors.
+ *      route.current) never yields a placeholder (isValidSessionId rejects
+ *      "{sessionID}" and "%7BsessionID%7D" via the startsWith("ses")
+ *      contract); a null resolution SKIPS the children fetch entirely and
+ *      renders the md history — zero errors.
  *
  * The live tool-part lifecycle helpers below remain (tested, exported) but
  * are no longer the source of truth: they feed a version signal that merely
@@ -1087,6 +1093,17 @@ export async function readDelegationEntries(dir: string): Promise<DelegationEntr
   return entries
 }
 
+/** Read delegation reports from EVERY session under
+ *  `<root>/.pantheon/delegations/<sessionID>/<alias>.md` — the panel's
+ *  HISTORY channel. Unlike the children/live channels it does NOT depend on a
+ *  resolved sessionID: with no focused session (null/placeholder), the panel
+ *  still shows the reports from all past sessions (running first, Finalized
+ *  desc — the sort applied by readDelegationEntries). Fail-open: a
+ *  missing/unreadable directory yields []. */
+export async function readAllDelegationEntries(root: string): Promise<DelegationEntry[]> {
+  return readDelegationEntries(join(root, '.pantheon', 'delegations'))
+}
+
 /** Resolve the directory where the job board writes delegation md reports.
  *  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
  *  which the TUI exposes as `TuiState.path.directory`. `project` does NOT
@@ -1103,6 +1120,21 @@ export function resolveDelegationsDir(
   return join(root, '.pantheon', 'delegations')
 }
 
+/** Project root derived from the delegations dir: `<root>/.pantheon/delegations`
+ *  → `<root>`. Used to point the panel logger at the REAL hooks.log — passing
+ *  the delegations dir (or its dirname) directly made createTuiLogger append
+ *  to `<root>/.pantheon/.pantheon/logs/hooks.log`, a nested empty dir the real
+ *  log never saw. Pure — no I/O. */
+export function panelLogDir(delegationsDir: string): string {
+  return dirname(dirname(delegationsDir))
+}
+
+/** Where the panel logger appends lines: `<projectRoot>/.pantheon/logs/hooks.log`.
+ *  Pure — testable without the runtime. */
+export function tuiLogPath(projectRoot: string): string {
+  return join(projectRoot, '.pantheon', 'logs', 'hooks.log')
+}
+
 /** Sort delegations: running first, then terminal by recency (updatedAt,
  *  falling back to startedAt, descending). Shared by the md reader and
  *  mergeDelegationSources. */
@@ -1111,6 +1143,19 @@ export function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry)
   const bRun = b.state === 'running' ? 1 : 0
   if (aRun !== bRun) return bRun - aRun
   return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt)
+}
+
+/** The list the panel actually renders: running jobs first, then the most
+ *  recent terminal reports (capped). Pure — so the history-only panel (no
+ *  sessionID) is testable without the TUI runtime. The header count uses the
+ *  same "running + recentes" list. */
+export function visibleDelegationList(
+  all: readonly DelegationEntry[],
+  maxTerminal = 8,
+): DelegationEntry[] {
+  const running = all.filter((d) => d.state === 'running')
+  const terminal = all.filter((d) => d.state !== 'running').slice(0, maxTerminal)
+  return [...running, ...terminal]
 }
 
 /** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
@@ -1634,8 +1679,11 @@ export function mergeDelegationSources(
 /** Server-aligned session id validity: opencode rejects anything not starting
  *  with "ses" (SchemaError). This deliberately mirrors that exact contract —
  *  nothing stricter, nothing looser — so a template placeholder ("{sessionID}"),
- *  an empty/undefined value, or a foreign id (e.g. "wrk_") can never reach a
- *  path and error-spam the log. */
+ *  its URL-encoded form ("%7BsessionID%7D", what the server reported in the
+ *  schema error), an empty/undefined value, or a foreign id (e.g. "wrk_") can
+ *  never reach a path and error-spam the log. Confirmed: "{sessionID}" starts
+ *  with "{" and "%7BsessionID%7D" with "%" — both fail startsWith("ses"), so
+ *  the placeholder is rejected WITHOUT an explicit denylist (covered by tests). */
 export function isValidSessionId(id: unknown): id is string {
   return typeof id === 'string' && id.startsWith('ses')
 }
@@ -1671,12 +1719,24 @@ export function resolveCurrentSessionID(sources: TuiSessionSources): string | nu
   return null
 }
 
-/** Build the `session.children` path ONLY from a validated session id.
- *  Returns null for null/invalid ids so the caller skips the fetch instead of
- *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression). */
-export function buildChildrenPath(id: string | null | undefined): { path: { id: string } } | null {
+/** THE single choke point for every `session.children` / session-API path.
+ *  Returns `{ path: { id } }` ONLY for a server-valid session id; returns
+ *  null for anything else (placeholder, empty, foreign id) so the caller
+ *  skips the call entirely instead of sending an unsubstituted placeholder
+ *  (the "%7BsessionID%7D" regression). Every session-API call site MUST go
+ *  through this function (enforced by the source-scan test in
+ *  tests/pantheon/tui-delegations.test.ts). */
+export function safeSessionPath(id: unknown): { path: { id: string } } | null {
   if (!isValidSessionId(id)) return null
   return { path: { id } }
+}
+
+/** Build the `session.children` path ONLY from a validated session id.
+ *  Delegates to {@link safeSessionPath} — the single choke point. Returns
+ *  null for null/invalid ids so the caller skips the fetch instead of
+ *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression). */
+export function buildChildrenPath(id: string | null | undefined): { path: { id: string } } | null {
+  return safeSessionPath(id)
 }
 
 /** Duck-typed subset of a child Session (+ its live status type). */
@@ -1758,12 +1818,14 @@ export function childrenToDelegationEntries(
 
 /** Navigate the TUI to a child session (click/Enter on a delegation row).
  *  Returns false when the route API is unavailable or the target id is
- *  missing — the row stays inert instead of crashing. */
+ *  missing/placeholder — the row stays inert instead of crashing. Only a
+ *  server-valid session id ("ses...") ever reaches the router, so an
+ *  unsubstituted "{sessionID}" placeholder can never be routed. */
 export function navigateToDelegationSession(
   route: { navigate?: (name: string, params?: Record<string, unknown>) => void } | undefined,
   taskID: string | undefined,
 ): boolean {
-  if (typeof route?.navigate !== 'function' || taskID === undefined || taskID === '') return false
+  if (typeof route?.navigate !== 'function' || !isValidSessionId(taskID)) return false
   route.navigate('session', { sessionID: taskID })
   return true
 }
@@ -1778,9 +1840,15 @@ export function navigateToDelegationSession(
  * panel. */
 type TuiLogger = { info: (message: string, ...args: unknown[]) => void }
 
-function createTuiLogger(logDir: string | undefined, module = 'pantheon-tui'): TuiLogger {
+/** Silence-by-default panel logger.
+ *  @param projectRoot the PROJECT ROOT — the logger appends to
+ *  `<projectRoot>/.pantheon/logs/hooks.log` (tuiLogPath). Passing anything
+ *  deeper (e.g. the delegations dir) used to double-nest the path into
+ *  `<root>/.pantheon/.pantheon/logs/hooks.log` and never reach the real log;
+ *  derive the root with {@link panelLogDir}. */
+function createTuiLogger(projectRoot: string | undefined, module = 'pantheon-tui'): TuiLogger {
   const echo = (process.env.PANTHEON_HOOKS_LOG ?? '').trim() !== ''
-  const logPath = join(logDir ?? process.cwd(), '.pantheon', 'logs', 'hooks.log')
+  const logPath = tuiLogPath(projectRoot ?? process.cwd())
   const formatArg = (arg: unknown): string => {
     if (arg instanceof Error) return arg.stack ?? arg.message
     if (typeof arg === 'string') return arg
@@ -1823,6 +1891,10 @@ function SessionRow(props: { api: TuiPluginApi; session: any }) {
   const theme = () => props.api.theme.current
 
   const status = createMemo(() => {
+    // isValidSessionId guard: a placeholder / foreign session id must never
+    // reach the status API (same "%7BsessionID%7D" regression class as the
+    // children path). Invalid id → no status call, no icon.
+    if (!isValidSessionId(props.session?.id)) return null
     try {
       const s = (props.api.state as any).session?.status?.(props.session.id)
       if (s?.type) return s.type as string
@@ -2016,8 +2088,13 @@ function View(props: {
   // and terminal duration via the `Task ID` match. Live tool-call events are
   // merged optimistically so the row appears before those channels catch up.
   const delegationsDir = createMemo(() => resolveDelegationsDir((props.api.state as any).path))
-  // Silence-by-default panel logger → <project>/.pantheon/logs/hooks.log.
-  const panelLog = createTuiLogger(dirname(delegationsDir()))
+  // Silence-by-default panel logger → the REAL <root>/.pantheon/logs/hooks.log.
+  // panelLogDir(<root>/.pantheon/delegations) = <root>: the old code passed
+  // dirname(delegationsDir()) (= <root>/.pantheon), which createTuiLogger
+  // re-joined with `.pantheon/logs/hooks.log` → a nested
+  // <root>/.pantheon/.pantheon/logs/hooks.log that never reached the real
+  // hooks.log (the empty nested dirs observed in production).
+  const panelLog = createTuiLogger(panelLogDir(delegationsDir()))
   // The rendered list is childDelegations (children enriched with md);
   // there is no separate md-only signal — the md channel only feeds
   // childrenToDelegationEntries below.
@@ -2042,21 +2119,33 @@ function View(props: {
     delegationsInflight = (async () => {
       try {
         const state = props.api.state as any
-        // 0. current session — resolve + GUARD (placeholder regression). The
+        // 0. md reports from EVERY session under .pantheon/delegations — the
+        // HISTORY channel. Read BEFORE the sessionID guard so the panel shows
+        // past reports (running first, Finalized desc) even when no session
+        // is focused (null/placeholder sessionID): the "(0)" symptom becomes
+        // the full historical list. Fail-open: a missing dir yields [].
+        let md: DelegationEntry[] = []
+        try {
+          md = await readAllDelegationEntries(panelLogDir(delegationsDir()))
+        } catch {
+          md = [] // fail-open: never crash the sidebar on a read error
+        }
+        // 1. current session — resolve + GUARD (placeholder regression). The
         // runtime may render the sidebar with an unsubstituted "{sessionID}"
         // slot prop; forwarding it to session.children made the server reject
         // every poll (~1 err/s: "Expected a string starting with \"ses\", got
         // \"%7BsessionID%7D\"") and fail-open the panel into "(0)". A null
-        // resolution SKIPS the fetch entirely: empty panel, zero errors.
+        // resolution SKIPS the fetch entirely: the md history is shown alone
+        // (zero children, zero errors).
         const sessionID = resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api })
         if (sessionID === null) {
-          setChildDelegations([])
+          setChildDelegations(md)
           panelLog.info(
-            `panel: children=0 md=0 events=${eventRefreshCount} (no sessionID — fetch skipped)`,
+            `panel: children=0 md=${md.length} events=${eventRefreshCount} (no sessionID — history shown)`,
           )
           return
         }
-        // 1. children — PRIMARY source (SDK: api.client.session.children).
+        // 2. children — PRIMARY source (SDK: api.client.session.children).
         let children: ChildDelegationLike[] = []
         try {
           // buildChildrenPath re-validates: with sessionID !== null it is
@@ -2070,15 +2159,12 @@ function View(props: {
           children = [] // children API unavailable — the panel shows md only
           panelLog.info('panel: error children fetch', err)
         }
-        // 2. md reports — enrichment (alias/agent/description/duration).
-        let md: DelegationEntry[] = []
-        try {
-          md = await readDelegationEntries(delegationsDir())
-        } catch {
-          md = [] // fail-open: never crash the sidebar on a read error
-        }
         // 3. live status per child (sync API) + merge children with md.
-        const resolveStatus = (childID: string): string | undefined => {
+        const resolveStatus = (childID: unknown): string | undefined => {
+          // isValidSessionId guard: a placeholder / foreign id must never
+          // reach the status API (same regression class as the children
+          // path — "%7BsessionID%7D").
+          if (!isValidSessionId(childID)) return undefined
           try {
             return state?.session?.status?.(childID)?.type as string | undefined
           } catch {
@@ -2105,13 +2191,8 @@ function View(props: {
     return delegationsInflight
   }
   // Running jobs first, then the 8 most recent terminal reports. The header
-  // count uses this same "running + recentes".
-  const visibleDelegations = createMemo(() => {
-    const all = childDelegations()
-    const running = all.filter((d) => d.state === 'running')
-    const terminal = all.filter((d) => d.state !== 'running').slice(0, 8)
-    return [...running, ...terminal]
-  })
+  // count uses this same "running + recentes" list.
+  const visibleDelegations = createMemo(() => visibleDelegationList(childDelegations()))
 
   // ── Event subscriptions for live session/delegation updates ──
   onMount(() => {

@@ -15,6 +15,7 @@
  */
 import { strict as assert } from 'node:assert'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { readFile as readFileP } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -30,12 +31,15 @@ import {
   delegationElapsed,
   delegationSpinnerFrame,
   fmtElapsed,
+  isValidSessionId,
   type LiveDelegationEntry,
   mergeChildDelegationSources,
   mergeDelegationSources,
   navigateToDelegationSession,
+  panelLogDir,
   parseDelegationMarkdown,
   parseDelegationToolPart,
+  readAllDelegationEntries,
   readDelegationEntries,
   reduceDelegationToolPart,
   removeDelegationEntry,
@@ -43,6 +47,8 @@ import {
   resolveDelegationsDir,
   seedLiveDelegationMap,
   toDelegationEntry,
+  tuiLogPath,
+  visibleDelegationList,
 } from '../../src/plugins/tui/src/index.tsx'
 
 // ─── Fixtures (real header shapes from renderDelegationMarkdown) ────────
@@ -324,6 +330,98 @@ async function main() {
       assert.equal(entries.length, 0)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  // ─── panelLogDir + tuiLogPath (double-path fix) ─────────────────────────
+  // Regression: the View created the logger with `dirname(delegationsDir())`
+  // (= <root>/.pantheon), so createTuiLogger joined `.pantheon/logs/hooks.log`
+  // onto it → <root>/.pantheon/.pantheon/logs/hooks.log — a nested empty dir
+  // that the real hooks.log never saw. panelLogDir(delegationsDir) returns
+  // the PROJECT ROOT so the logger lands on the real <root>/.pantheon/logs.
+
+  await testAsync(
+    'panelLogDir: delegations dir → project root (kills the .pantheon/.pantheon nesting)',
+    async () => {
+      assert.equal(
+        panelLogDir('/repos/acme/.pantheon/delegations'),
+        '/repos/acme',
+        'absolute delegations dir → project root',
+      )
+      assert.equal(panelLogDir('.pantheon/delegations'), '.', 'relative dir → cwd root')
+      assert.equal(
+        panelLogDir('/repos/acme/.pantheon/delegations'),
+        '/repos/acme',
+        'always yields the root, never a .pantheon-level dir',
+      )
+    },
+  )
+
+  await testAsync(
+    'tuiLogPath: logger appends to <root>/.pantheon/logs/hooks.log (the REAL file)',
+    async () => {
+      assert.equal(tuiLogPath('/repos/acme'), '/repos/acme/.pantheon/logs/hooks.log')
+      // Full chain: the View derives root from the delegations dir, then the
+      // logger writes .pantheon/logs/hooks.log under it — NOT the nested
+      // .pantheon/.pantheon/logs/hooks.log the bug produced.
+      assert.equal(
+        tuiLogPath(panelLogDir('/repos/acme/.pantheon/delegations')),
+        '/repos/acme/.pantheon/logs/hooks.log',
+      )
+      assert.ok(
+        !tuiLogPath(panelLogDir('/repos/acme/.pantheon/delegations')).includes(
+          '.pantheon/.pantheon',
+        ),
+        'no double-nested .pantheon in the final log path',
+      )
+    },
+  )
+
+  // ─── readAllDelegationEntries (history across ALL sessions) ─────────────
+  // The View reads reports from EVERY session subdir under
+  // <root>/.pantheon/delegations/*/<alias>.md — the panel shows the full
+  // delegation history even when no sessionID resolves (no focused session).
+
+  await testAsync(
+    'readAll: aggregates reports from MULTIPLE session subdirs, sorted running-first',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
+      try {
+        const deleg = join(root, '.pantheon', 'delegations')
+        const sesA = join(deleg, 'ses_aaa')
+        const sesB = join(deleg, 'ses_bbb')
+        mkdirSync(sesA, { recursive: true })
+        mkdirSync(sesB, { recursive: true })
+        writeFileSync(join(sesA, 'apo-1.md'), COMPLETED_MD) // terminal, older
+        writeFileSync(join(sesB, 'her-7.md'), TIMED_OUT_MD) // terminal, newer
+        writeFileSync(join(sesA, 'apo-5.md'), RUNNING_MD) // running → first
+
+        const entries = await readAllDelegationEntries(root)
+        assert.equal(entries.length, 3, 'all sessions aggregated')
+        assert.deepEqual(
+          entries.map((e) => e.alias),
+          ['apo-5', 'her-7', 'apo-1'],
+          'running first, then terminal by Finalized desc across sessions',
+        )
+        // sessionID comes from each report's own session dir.
+        assert.equal(entries[2]?.sessionID, 'ses_aaa')
+        assert.equal(entries[1]?.sessionID, 'ses_bbb')
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('readAll: root without delegations dir → [] (fail-open)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
+    try {
+      assert.deepEqual(await readAllDelegationEntries(root), [])
+      assert.deepEqual(
+        await readAllDelegationEntries(join(tmpdir(), 'pantheon-tui-root-does-not-exist')),
+        [],
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 
@@ -1254,6 +1352,47 @@ async function main() {
     },
   )
 
+  await testAsync(
+    'sessionID: isValidSessionId rejects placeholder + URL-encoded placeholder',
+    async () => {
+      // Contract confirmed: opencode session ids start with "ses". A literal
+      // "{sessionID}" starts with "{" and its URL-encoded form with "%", so
+      // BOTH fail the startsWith("ses") check — the placeholder can never be
+      // forwarded to the server (the "%7BsessionID%7D" schema-error spam).
+      assert.equal(isValidSessionId('{sessionID}'), false, 'literal placeholder rejected')
+      assert.equal(isValidSessionId('%7BsessionID%7D'), false, 'URL-encoded placeholder rejected')
+      assert.equal(
+        isValidSessionId(' {sessionID} '),
+        false,
+        'whitespace-wrapped placeholder rejected',
+      )
+      assert.equal(
+        isValidSessionId('ses_00eb66a34ffeCHnzDx5hH2BCsS'),
+        true,
+        'real session id accepted',
+      )
+      assert.equal(isValidSessionId(''), false)
+      assert.equal(isValidSessionId(undefined), false)
+      assert.equal(isValidSessionId(42), false)
+    },
+  )
+
+  await testAsync(
+    'sessionID: URL-encoded "%7BsessionID%7D" placeholder → null in resolution',
+    async () => {
+      // The exact string opencode's server reported in the SchemaError.
+      assert.equal(resolveCurrentSessionID({ sessionID: '%7BsessionID%7D' }), null)
+      assert.equal(
+        resolveCurrentSessionID({
+          sessionID: '%7BsessionID%7D',
+          api: { state: { sessionID: 'ses_x' } },
+        }),
+        'ses_x',
+        'placeholder prop falls through to the next valid source',
+      )
+    },
+  )
+
   await testAsync('sessionID: non-ses garbage / non-string → null', async () => {
     assert.equal(resolveCurrentSessionID({ sessionID: 'wrk_123' }), null)
     assert.equal(resolveCurrentSessionID({ sessionID: 'foo-bar' }), null)
@@ -1310,6 +1449,129 @@ async function main() {
       'the children call must be skipped entirely (empty panel, zero errors)',
     )
   })
+
+  // ─── History-only panel (no sessionID) ──────────────────────────────────
+  // When sessionID does not resolve (no focused session) the panel shows the
+  // md history read from ALL sessions — never "(0)". visibleDelegationList is
+  // the exact list the View memo renders: running first, then the most recent
+  // terminal reports (capped at 8).
+
+  await testAsync(
+    'panel history: reports shown even with NO sessionID (combined state, running first)',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
+      try {
+        const deleg = join(root, '.pantheon', 'delegations')
+        const ses = join(deleg, 'ses_aaa')
+        mkdirSync(ses, { recursive: true })
+        writeFileSync(join(ses, 'apo-1.md'), COMPLETED_MD)
+        writeFileSync(join(ses, 'her-7.md'), TIMED_OUT_MD)
+        writeFileSync(join(ses, 'apo-5.md'), RUNNING_MD)
+        writeFileSync(join(ses, 'the-9.md'), NO_FINALIZED_MD)
+
+        // Simulates View.refreshDelegations with sessionID === null: the md
+        // history is read and rendered WITHOUT any children/live channel.
+        const sessionID = resolveCurrentSessionID({ sessionID: '{sessionID}' })
+        assert.equal(sessionID, null)
+        const md = await readAllDelegationEntries(root)
+        assert.equal(md.length, 4, 'history collected from disk despite null sessionID')
+        const panelList = visibleDelegationList(md)
+        assert.equal(panelList.length, 4, 'history renders — panel is NOT (0)')
+        assert.equal(panelList[0]?.state, 'running', 'running job first')
+        assert.deepEqual(
+          panelList
+            .slice(1)
+            .map((e) => e.alias)
+            .sort(),
+          ['apo-1', 'her-7', 'the-9'],
+          'terminal history present',
+        )
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('panel history: terminal reports capped at 8, running always shown', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
+    try {
+      const deleg = join(root, '.pantheon', 'delegations')
+      const ses = join(deleg, 'ses_aaa')
+      mkdirSync(ses, { recursive: true })
+      writeFileSync(join(ses, 'run-1.md'), RUNNING_MD)
+      for (let i = 0; i < 12; i++) {
+        const ts = new Date(Date.UTC(2026, 7, 10 + i, 12)).toISOString()
+        writeFileSync(
+          join(ses, `term-${i}.md`),
+          `# Delegation Report — her-${i}\n\n` +
+            `- **Agent**: hermes\n- **Description**: job ${i}\n- **State**: completed\n` +
+            `- **Timed out**: false\n- **Started**: ${ts}\n- **Finalized**: ${ts}\n`,
+        )
+      }
+      const md = await readAllDelegationEntries(root)
+      assert.equal(md.length, 13, 'all reports collected')
+      const panelList = visibleDelegationList(md)
+      assert.equal(panelList[0]?.state, 'running', 'running job first')
+      assert.equal(panelList.length, 1 + 8, '1 running + at most 8 terminal')
+      // Recency: the 8 most recently finalized terminals are kept.
+      const terminalAliases = panelList.slice(1).map((e) => e.alias)
+      assert.ok(terminalAliases.includes('her-11'), 'most recent terminal kept')
+      assert.ok(!terminalAliases.includes('her-0'), 'oldest terminal trimmed by the cap')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // ─── Source-scan: session-API call sites stay guarded ───────────────────
+  // Every `session.children` path goes through buildChildrenPath/safeSessionPath
+  // and every `session.status` call is isValidSessionId-guarded — a future edit
+  // that forwards a raw/placeholder id to the wire breaks this test.
+
+  await testAsync(
+    'source-scan: every session.children / session.status call site is id-guarded',
+    async () => {
+      const source = await readFileP(
+        new URL('../../src/plugins/tui/src/index.tsx', import.meta.url),
+        'utf8',
+      )
+      const lines = source.split('\n')
+      // Look 2 lines before and 1 after the call site: the guard sits on its
+      // own line (isValidSessionId) or the path expression spans lines
+      // (buildChildrenPath on the line after `session?.children?.(`).
+      const near = (idx: number, pat: RegExp) =>
+        lines.slice(Math.max(0, idx - 2), Math.min(lines.length, idx + 2)).some((l) => pat.test(l))
+      const isComment = (line: string) => {
+        const t = line.trim()
+        return t.startsWith('*') || t.startsWith('/*') || t.startsWith('{/*') || t.startsWith('//')
+      }
+
+      const childrenSites: number[] = []
+      const statusSites: number[] = []
+      lines.forEach((line, idx) => {
+        if (isComment(line)) return // doc comments mention the API — not call sites
+        if (line.includes('session?.children') || line.includes('session.children'))
+          childrenSites.push(idx)
+        // API calls use optional chaining (`session?.status?.(`); the event
+        // subscription name `event.on('session.status')` must NOT match.
+        if (line.includes('session?.status')) statusSites.push(idx)
+      })
+
+      assert.ok(childrenSites.length >= 1, 'expected ≥1 session.children call site')
+      for (const idx of childrenSites) {
+        assert.ok(
+          near(idx, /buildChildrenPath\(|safeSessionPath\(/),
+          `session.children call must be path-guarded (line ${idx + 1}): ${lines[idx]?.trim()}`,
+        )
+      }
+      assert.ok(statusSites.length >= 1, 'expected ≥1 session.status call site')
+      for (const idx of statusSites) {
+        assert.ok(
+          near(idx, /isValidSessionId\(/),
+          `session.status call must be id-guarded (line ${idx + 1}): ${lines[idx]?.trim()}`,
+        )
+      }
+    },
+  )
 
   // ─── Report ────────────────────────────────────────────────────────────
 

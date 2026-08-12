@@ -39,6 +39,14 @@ declare function parseDelegationMarkdown(raw: string, fileAlias?: string, sessio
  *  first, then terminal by `updatedAt` (most recent first) so the panel can
  *  render them in order directly. */
 declare function readDelegationEntries(dir: string): Promise<DelegationEntry[]>;
+/** Read delegation reports from EVERY session under
+ *  `<root>/.pantheon/delegations/<sessionID>/<alias>.md` — the panel's
+ *  HISTORY channel. Unlike the children/live channels it does NOT depend on a
+ *  resolved sessionID: with no focused session (null/placeholder), the panel
+ *  still shows the reports from all past sessions (running first, Finalized
+ *  desc — the sort applied by readDelegationEntries). Fail-open: a
+ *  missing/unreadable directory yields []. */
+declare function readAllDelegationEntries(root: string): Promise<DelegationEntry[]>;
 /** Resolve the directory where the job board writes delegation md reports.
  *  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
  *  which the TUI exposes as `TuiState.path.directory`. `project` does NOT
@@ -50,10 +58,24 @@ declare function resolveDelegationsDir(state: {
   directory?: string;
   worktree?: string;
 } | undefined, cwd?: string): string;
+/** Project root derived from the delegations dir: `<root>/.pantheon/delegations`
+ *  → `<root>`. Used to point the panel logger at the REAL hooks.log — passing
+ *  the delegations dir (or its dirname) directly made createTuiLogger append
+ *  to `<root>/.pantheon/.pantheon/logs/hooks.log`, a nested empty dir the real
+ *  log never saw. Pure — no I/O. */
+declare function panelLogDir(delegationsDir: string): string;
+/** Where the panel logger appends lines: `<projectRoot>/.pantheon/logs/hooks.log`.
+ *  Pure — testable without the runtime. */
+declare function tuiLogPath(projectRoot: string): string;
 /** Sort delegations: running first, then terminal by recency (updatedAt,
  *  falling back to startedAt, descending). Shared by the md reader and
  *  mergeDelegationSources. */
 declare function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry): number;
+/** The list the panel actually renders: running jobs first, then the most
+ *  recent terminal reports (capped). Pure — so the history-only panel (no
+ *  sessionID) is testable without the TUI runtime. The header count uses the
+ *  same "running + recentes" list. */
+declare function visibleDelegationList(all: readonly DelegationEntry[], maxTerminal?: number): DelegationEntry[];
 /** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
  *  second for running jobs. */
 declare function fmtElapsed(ms: number): string;
@@ -165,8 +187,11 @@ declare function mergeDelegationSources(live: readonly LiveDelegationEntry[], md
 /** Server-aligned session id validity: opencode rejects anything not starting
  *  with "ses" (SchemaError). This deliberately mirrors that exact contract —
  *  nothing stricter, nothing looser — so a template placeholder ("{sessionID}"),
- *  an empty/undefined value, or a foreign id (e.g. "wrk_") can never reach a
- *  path and error-spam the log. */
+ *  its URL-encoded form ("%7BsessionID%7D", what the server reported in the
+ *  schema error), an empty/undefined value, or a foreign id (e.g. "wrk_") can
+ *  never reach a path and error-spam the log. Confirmed: "{sessionID}" starts
+ *  with "{" and "%7BsessionID%7D" with "%" — both fail startsWith("ses"), so
+ *  the placeholder is rejected WITHOUT an explicit denylist (covered by tests). */
 declare function isValidSessionId(id: unknown): id is string;
 /** Sources the sidebar can resolve the CURRENT session id from. Duck-typed
  *  subsets of TuiPluginApi / TuiState / TuiRouteCurrent so the helper stays
@@ -194,8 +219,21 @@ type TuiSessionSources = {
  *  NEVER returns a placeholder or non-ses id. Null → callers MUST skip the
  *  fetch (empty panel, zero errors). Pure — no I/O, no runtime required. */
 declare function resolveCurrentSessionID(sources: TuiSessionSources): string | null;
+/** THE single choke point for every `session.children` / session-API path.
+ *  Returns `{ path: { id } }` ONLY for a server-valid session id; returns
+ *  null for anything else (placeholder, empty, foreign id) so the caller
+ *  skips the call entirely instead of sending an unsubstituted placeholder
+ *  (the "%7BsessionID%7D" regression). Every session-API call site MUST go
+ *  through this function (enforced by the source-scan test in
+ *  tests/pantheon/tui-delegations.test.ts). */
+declare function safeSessionPath(id: unknown): {
+  path: {
+    id: string;
+  };
+} | null;
 /** Build the `session.children` path ONLY from a validated session id.
- *  Returns null for null/invalid ids so the caller skips the fetch instead of
+ *  Delegates to {@link safeSessionPath} — the single choke point. Returns
+ *  null for null/invalid ids so the caller skips the fetch instead of
  *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression). */
 declare function buildChildrenPath(id: string | null | undefined): {
   path: {
@@ -233,7 +271,9 @@ declare function childStatusToState(status: string | undefined): 'running' | 'co
 declare function childrenToDelegationEntries(children: readonly ChildDelegationLike[] | undefined, md: readonly DelegationEntry[], now?: number): DelegationEntry[];
 /** Navigate the TUI to a child session (click/Enter on a delegation row).
  *  Returns false when the route API is unavailable or the target id is
- *  missing — the row stays inert instead of crashing. */
+ *  missing/placeholder — the row stays inert instead of crashing. Only a
+ *  server-valid session id ("ses...") ever reaches the router, so an
+ *  unsubstituted "{sessionID}" placeholder can never be routed. */
 declare function navigateToDelegationSession(route: {
   navigate?: (name: string, params?: Record<string, unknown>) => void;
 } | undefined, taskID: string | undefined): boolean;
@@ -252,5 +292,5 @@ declare const plugin: TuiPluginModule & {
   id: string;
 };
 //#endregion
-export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, fmtElapsed, isValidSessionId, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, parseDelegationMarkdown, parseDelegationToolPart, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, seedLiveDelegationMap, toDelegationEntry };
+export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, fmtElapsed, isValidSessionId, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
 //# sourceMappingURL=tui.d.ts.map
