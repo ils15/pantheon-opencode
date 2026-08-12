@@ -2,7 +2,7 @@ import { defineConfig } from 'tsdown'
 import solid from 'rolldown-plugin-solid'
 
 export default defineConfig({
-  entry: { tui: 'src/index.tsx' },
+  entry: { tui: 'src/index.tsx', server: 'src/server.ts' },
   format: ['esm'],
   platform: 'node',
   outDir: 'dist',

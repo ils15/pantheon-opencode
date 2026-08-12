@@ -151,6 +151,9 @@ export function unregisterPlugin(tuiJsonPath, pluginId, { dryRun = false } = {})
     '/src/plugins/tui/dist/tui.js',
     '/plugins/pantheon-tui/dist/tui.tsx',
     '/plugins/pantheon-tui/dist/tui.js',
+    // The bare copy directory itself (installPlugin legacy target) — a
+    // registration pointing at it is stale once the package dir is used.
+    '/plugins/pantheon-tui',
   ]
   tuiConfig.plugin = tuiConfig.plugin.filter((ref) => {
     if (staleRefs.includes(ref)) return false

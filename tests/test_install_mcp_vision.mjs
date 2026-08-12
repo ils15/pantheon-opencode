@@ -65,14 +65,18 @@ assert.ok(
   'stale plugin entries with the same basename (e.g. dev paths) are replaced on upgrade',
 )
 
-// P2-5: the TUI plugin must be registered by the ABSOLUTE dist path inside the
-// installed package — relative entries ("plugins/pantheon-tui") make opencode's
-// tui loader run `npm install plugins/pantheon-tui` → NpmInstallFailedError.
+// P2-5: the TUI plugin must be registered by the ABSOLUTE PACKAGE DIRECTORY
+// inside the installed package — relative entries ("plugins/pantheon-tui")
+// make opencode's tui loader run `npm install plugins/pantheon-tui` →
+// NpmInstallFailedError, and FILE entries (dist/tui.tsx) bypass package.json
+// exports so the loader mounts the raw (non-reactive) JSX. Pointing at the
+// directory lets the loader read exports["./tui"] → the COMPILED dist/tui.js
+// (Solid transforms applied) + exports["./server"] → the no-op server stub.
 assert.ok(
   opencodeInstaller.includes(
-    "const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx')",
+    "const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui')",
   ),
-  'tui.json registration uses the hermetic dist path derived from the installed package ROOT',
+  'tui.json registration uses the hermetic package DIRECTORY derived from the installed package ROOT (loader reads package.json exports)',
 )
 assert.ok(
   opencodeInstaller.includes("unregisterPlugin(tuiConfigPath, 'plugins/pantheon-tui'"),
@@ -90,14 +94,40 @@ assert.ok(
 )
 assert.ok(
   pluginInstaller.includes(
-    'const staleRefs = [pluginId, `${pluginId}/dist/tui.tsx`, `${pluginId}/dist/tui.js`]',
+    "const staleRefs = [pluginId, `${pluginId}/dist/tui.tsx`, `${pluginId}/dist/tui.js`]",
   ),
   'unregisterPlugin removes the bare relative plugin id too',
 )
 assert.ok(
   pluginInstaller.includes("'/src/plugins/tui/dist/tui.tsx'") &&
-    pluginInstaller.includes("'/plugins/pantheon-tui/dist/tui.tsx'"),
-  'unregisterPlugin removes stale absolute TUI registrations from previous installs',
+    pluginInstaller.includes("'/plugins/pantheon-tui/dist/tui.tsx'") &&
+    pluginInstaller.includes("'/plugins/pantheon-tui'"),
+  'unregisterPlugin removes stale absolute TUI registrations from previous installs (dist file refs + bare plugin dir ref)',
+)
+
+// P2-5c: the TUI plugin package must expose the opencode loader contract that
+// the directory registration relies on — compiled tui entry + no-op server
+// stub (the reference opencode-delegations-sidebar pattern).
+const tuiPkg = JSON.parse(readFileSync('src/plugins/tui/package.json', 'utf8'))
+assert.equal(
+  tuiPkg.exports['./tui'],
+  './dist/tui.js',
+  'exports["./tui"] points at the COMPILED tui entry (Solid transforms applied), never the raw tsx',
+)
+assert.equal(
+  tuiPkg.exports['./server'],
+  './dist/server.js',
+  'exports["./server"] points at the compiled no-op server stub (loader requires every plugin to expose server())',
+)
+const tsdownConfig = readFileSync('src/plugins/tui/tsdown.config.ts', 'utf8')
+assert.ok(
+  /entry:\s*\{[^}]*server:\s*'src\/server\.ts'/.test(tsdownConfig),
+  'tsdown builds the server entry into dist/server.js',
+)
+const serverStub = readFileSync('src/plugins/tui/src/server.ts', 'utf8')
+assert.ok(
+  /export default function server\(\)/.test(serverStub),
+  'src/server.ts default-exports the no-op server() stub',
 )
 
 assert.ok(catalog.includes("'pantheon-vision':"))
@@ -144,7 +174,7 @@ for (const dependency of ['pillow', 'paddle', 'gemini', 'torch']) {
 // checkouts/package installs) must be cleaned too, while the current plugin
 // is registered ONLY in the selected target.
 // ---------------------------------------------------------------------------
-const CURRENT_TUI_REF = join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx')
+const CURRENT_TUI_REF = join(ROOT, 'src', 'plugins', 'tui')
 const STALE_ABS_REF = '/home/olddev/pantheon/src/plugins/tui/dist/tui.tsx'
 const STALE_REL_REF = 'plugins/pantheon-tui'
 const STALE_DIST_REF = '/home/olddev/pantheon/plugins/pantheon-tui/dist/tui.js'

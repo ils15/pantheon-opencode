@@ -143,10 +143,15 @@ export function syncTuiRegistration(target, { isGlobal = false, dryRun = false }
   // Hermetic TUI plugin registration: opencode's tui loader treats relative
   // entries ("plugins/pantheon-tui") as npm/github package specs and fails
   // with NpmInstallFailedError ("Repository not found"). Register the plugin
-  // by the ABSOLUTE path of the built dist inside the installed package
-  // (derived from ROOT — never hardcoded), mirroring the loader's
-  // absolute-path support (same pattern as the hooks plugin fix).
-  const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx')
+  // by the ABSOLUTE PACKAGE DIRECTORY inside the installed package (derived
+  // from ROOT — never hardcoded). Pointing at the DIRECTORY (not the dist
+  // file) makes the loader read the package.json `exports` map:
+  //   exports["./tui"]    → dist/tui.js     (COMPILED Solid output — the raw
+  //                          tsx path mounts once with dead effects)
+  //   exports["./server"] → dist/server.js  (no-op server() stub the loader
+  //                          requires on every plugin — see src/server.ts)
+  // This mirrors the working opencode-delegations-sidebar reference.
+  const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui')
   // OpenCode loads both global config locations when they exist. Clean stale
   // Pantheon TUI refs from both locations, but register the current plugin in
   // the selected target only so the plugin is never loaded twice.
