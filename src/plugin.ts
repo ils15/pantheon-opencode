@@ -3,7 +3,11 @@ import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { reassertAfterCompaction } from './pantheon/compaction-assert.ts'
 import { createCostCommand } from './pantheon/cost-command.ts'
-import { createDelegationTools, type DelegationClient } from './pantheon/delegation.ts'
+import {
+  collectRootSessionIDs,
+  createDelegationTools,
+  type DelegationClient,
+} from './pantheon/delegation.ts'
 import { buildCompactionContext } from './pantheon/delegation-compaction.ts'
 import { createEnforcementGuard, readOnlyRegistry } from './pantheon/delegation-enforce.ts'
 import { handleDelegationEvent } from './pantheon/delegation-notify.ts'
@@ -96,9 +100,16 @@ const enforcementGuard = createEnforcementGuard({
 const COMPACTION_MAX_ITEMS = 10
 
 // Root-session registry for the delegation depth guard: sessions created
-// without a parentID are roots. Populated from `session.created` events in the
-// event hook — the authoritative complement to the knownChildren default
-// ("any session WE created is a sub-session") in delegation.ts.
+// without a parentID are roots. Populated from TWO sources:
+//   1. the `session.created` event hook (live roots — fires for sessions
+//      created while the plugin runs);
+//   2. a fail-open startup seed from client.session.list() in the config
+//      hook (compaction-134) — opencode does NOT replay session.created
+//      events for sessions that exist before plugin load, so without the
+//      seed a resumed root would never enter this set after a restart.
+// delegation.ts additionally falls back to knownChildren ("any session WE
+// created is a sub-session; unknown sessions are roots") so the depth guard
+// works even when this set is incomplete.
 const rootSessions = new Set<string>()
 
 /** Extract the SDK error message ({name, data: {message}}) or a fallback. */
@@ -284,6 +295,26 @@ const plugin: Plugin = async (input: PluginInput) => {
 
   return {
     config: async (config: PluginConfig) => {
+      // compaction-134 seed: opencode does NOT replay `session.created`
+      // events for sessions that exist before plugin load, so after a
+      // restart the resumed ROOT session never enters rootSessions and the
+      // depth guard would reject its pantheon_delegate calls. Seed the
+      // registry from session.list() — every session WITHOUT a parentID is
+      // a root. Fail-open: a failed/throttled list leaves the set untouched
+      // (delegation.ts treats unknown sessions as roots) and the config
+      // hook must never break startup.
+      try {
+        const result = await input.client.session.list()
+        if (!result.error && Array.isArray(result.data)) {
+          const seeded = collectRootSessionIDs(result.data)
+          if (seeded.size > 0) {
+            for (const id of seeded) rootSessions.add(id)
+            log.info(`[Pantheon Plugin] Seeded ${seeded.size} root session(s) from session.list`)
+          }
+        }
+      } catch (err) {
+        log.warn('[Pantheon Plugin] Root session seed failed (fail-open):', err)
+      }
       config.agentsPath = config.agentsPath ?? []
       config.agentsPath.push(new URL('./agents', import.meta.url).pathname)
       config.skillsPaths = config.skillsPaths ?? []

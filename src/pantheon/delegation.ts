@@ -19,11 +19,19 @@
  * Depth guard (root-session detection): the ToolContext carries NO parentID
  * (spike), so root detection is configurable. Resolution order:
  *   1. `options.isRootSession(sessionID)` custom predicate;
- *   2. `options.rootSessions` explicit allowlist;
- *   3. default: any session WE created via `session.create` is a sub-session;
- *      everything else is treated as root. Phase 3 should pass the root
- *      registry derived from `session.created` events (Session.parentID
- *      undefined ⇒ root) for authoritative enforcement.
+ *   2. `options.rootSessions` explicit allowlist — with a knownChildren
+ *      fallback (compaction-134): a session is a sub-session ONLY if WE
+ *      created it as a child (`session.create` via pantheon_delegate).
+ *      Sessions in neither set are treated as root, so a resumed root can
+ *      delegate after a restart even when the allowlist is incomplete
+ *      (opencode does not replay `session.created` events for pre-existing
+ *      sessions — the plugin seeds the registry from session.list() at
+ *      startup, and this fallback covers a failed/incomplete seed);
+ *   3. default (no rootSessions): any session WE created via
+ *      `session.create` is a sub-session; everything else is treated as
+ *      root. Phase 3 should pass the root registry derived from
+ *      `session.created` events (Session.parentID undefined ⇒ root) for
+ *      authoritative enforcement.
  *
  * Read-only enforcement is Phase 4 — `read_only` is exposed on the delegate
  * args and the child session is registered in the read-only registry when the
@@ -445,6 +453,25 @@ function resolveUsableChildModel(
 // ─── Factory ───────────────────────────────────────────────────────────
 
 /**
+ * Pure helper: collect the IDs of root sessions (parentID === undefined)
+ * from a session list. Used to SEED the depth-guard allowlist at startup —
+ * opencode does not replay `session.created` events for sessions that exist
+ * before plugin load, so a resumed root would never enter `rootSessions`
+ * and the depth guard would reject its pantheon_delegate calls after a
+ * restart. Fail-open contract lives at the call site (plugin.ts): a failed
+ * `session.list()` leaves the registry untouched, never crashes startup.
+ */
+export function collectRootSessionIDs(
+  sessions: ReadonlyArray<{ id: string; parentID?: string }>,
+): Set<string> {
+  const roots = new Set<string>()
+  for (const session of sessions) {
+    if (session.parentID === undefined) roots.add(session.id)
+  }
+  return roots
+}
+
+/**
  * Build the delegation toolset. Keeps per-instance state: the set of child
  * sessions WE created (depth-guard default) and the per-job timeout timers
  * (cleared on finalize, `.unref()`'d so they never hold the process open).
@@ -462,7 +489,18 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
 
   function isRootSession(sessionID: string): boolean {
     if (options.isRootSession !== undefined) return options.isRootSession(sessionID)
-    if (options.rootSessions !== undefined) return options.rootSessions.has(sessionID)
+    if (options.rootSessions !== undefined) {
+      // compaction-134 (fix layer 2): the allowlist alone is NOT
+      // authoritative. opencode does not replay `session.created` events for
+      // pre-existing sessions, so after a restart the resumed root never
+      // entered rootSessions (the plugin seeds it from session.list() at
+      // startup, but that seed is fail-open). A session is a sub-session
+      // ONLY if WE created it as a child (knownChildren — filled on every
+      // pantheon_delegate dispatch). Everything unknown is treated as root:
+      // resumed/unknown sessions can delegate, while the real depth guard
+      // (a child of a delegate cannot re-delegate) is preserved.
+      return options.rootSessions.has(sessionID) || !knownChildren.has(sessionID)
+    }
     return !knownChildren.has(sessionID)
   }
 

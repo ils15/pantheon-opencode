@@ -16,7 +16,11 @@ import {
   BackgroundJobBoard,
   type BackgroundJobRecord,
 } from '../../src/pantheon/background-job-board.ts'
-import { createDelegationTools, type DelegationToolset } from '../../src/pantheon/delegation.ts'
+import {
+  collectRootSessionIDs,
+  createDelegationTools,
+  type DelegationToolset,
+} from '../../src/pantheon/delegation.ts'
 import { readDelegationReport } from '../../src/pantheon/delegation-finalize.ts'
 import { loadRoutingAgentModels } from '../../src/pantheon/presets.mjs'
 
@@ -93,7 +97,6 @@ class FakeClient {
 }
 
 const ROOT = 'ses_root'
-const CHILD = 'ses_child_outer'
 
 function makeCtx(sessionID = ROOT) {
   return { sessionID, directory: '/tmp', worktree: '/tmp', agent: 'zeus' }
@@ -512,8 +515,111 @@ async function main() {
     },
   )
 
-  await testAsync('depth guard: delegate from a SUB-session caller is rejected', async () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'delegation-depth-'))
+  await testAsync(
+    '(b) depth guard preserved: a child WE created is rejected even when rootSessions does not contain it',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-depth-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+
+        // Root delegates → creates child ses_child_1 (enters knownChildren).
+        await tools.pantheon_delegate.execute({ prompt: 'Root task', agent: 'apollo' }, makeCtx())
+
+        // The child we created tries to delegate → rejected: the allowlist
+        // does NOT contain ses_child_1, but knownChildren does (fallback).
+        await assert.rejects(
+          tools.pantheon_delegate.execute(
+            { prompt: 'Nested delegation', agent: 'apollo' },
+            makeCtx('ses_child_1'),
+          ),
+          /root session/,
+        )
+        assert.equal(client.created.length, 1, 'no session may be created for a rejected delegate')
+        assert.equal(board.list().length, 1)
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(b2) depth guard with EMPTY allowlist (post-restart): known child still rejected',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-depth-empty-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        // Simulate a restart before the session.list() seed populated the
+        // registry: the allowlist is EMPTY, yet the knownChildren fallback
+        // must still block a child we create.
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set<string>(), outputDir: tmp },
+        })
+
+        // Resumed root delegates → creates child ses_child_1 (knownChildren).
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Root task', agent: 'apollo' },
+          makeCtx('ses_resumed_root'),
+        )
+
+        await assert.rejects(
+          tools.pantheon_delegate.execute(
+            { prompt: 'Nested delegation', agent: 'apollo' },
+            makeCtx('ses_child_1'),
+          ),
+          /root session/,
+        )
+        assert.equal(client.created.length, 1, 'nested delegate must not create a session')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(a) resumed session: in NEITHER rootSessions nor knownChildren → treated as root, can delegate',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-resumed-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        // Post-restart: the allowlist is empty (session.created events are
+        // not replayed for pre-existing sessions) and the resumed root was
+        // never created by THIS tools instance. It must be allowed to
+        // delegate — this is the compaction-134 bug scenario.
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set<string>(), outputDir: tmp },
+        })
+
+        const result = await tools.pantheon_delegate.execute(
+          { prompt: 'Resumed root task', agent: 'apollo' },
+          makeCtx('ses_resumed_root'),
+        )
+
+        assert.ok(
+          result.includes('apo-1'),
+          `resumed root must be allowed to delegate, got: ${result}`,
+        )
+        assert.equal(client.created.length, 1, 'delegation must create a child session')
+        assert.equal(board.get('ses_child_1')?.parentSessionID, 'ses_resumed_root')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('(c) session listed in rootSessions → can delegate', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-allowlist-'))
     try {
       const board = new BackgroundJobBoard()
       const client = new FakeClient()
@@ -523,19 +629,31 @@ async function main() {
         options: { rootSessions: new Set([ROOT]), outputDir: tmp },
       })
 
-      await assert.rejects(
-        tools.pantheon_delegate.execute(
-          { prompt: 'Nested delegation', agent: 'apollo' },
-          makeCtx(CHILD),
-        ),
-        /root session/,
+      const result = await tools.pantheon_delegate.execute(
+        { prompt: 'Allowlisted root', agent: 'apollo' },
+        makeCtx(ROOT),
       )
-      assert.equal(client.created.length, 0, 'no session may be created for a rejected delegate')
-      assert.equal(board.list().length, 0)
+      assert.ok(result.includes('apo-1'), `allowlisted root must delegate, got: ${result}`)
+      assert.equal(client.created.length, 1)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
   })
+
+  await testAsync(
+    '(d) collectRootSessionIDs: seeds only sessions WITHOUT a parentID (2 roots + 1 child → 2 roots)',
+    async () => {
+      const roots = collectRootSessionIDs([
+        { id: 'ses_root_1' },
+        { id: 'ses_root_2', parentID: undefined },
+        { id: 'ses_child_1', parentID: 'ses_root_1' },
+        { id: 'ses_child_2', parentID: 'ses_root_2' },
+      ])
+      assert.deepEqual([...roots].sort(), ['ses_root_1', 'ses_root_2'])
+      assert.equal(roots.has('ses_child_1'), false, 'children must never be seeded as roots')
+      assert.equal(roots.has('ses_child_2'), false)
+    },
+  )
 
   await testAsync(
     'depth guard: a session we created as a child cannot delegate again (self-learning)',
