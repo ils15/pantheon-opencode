@@ -120,7 +120,14 @@ const rootSessions = new Set<string>()
  * unknown session as a root, so this enrichment is deliberately best-effort.
  */
 function seedRootSessionsInBackground(input: PluginInput): void {
-  void input.client.session
+  // Fail-open: environments without the session API (client.session absent or
+  // not yet wired while config hooks run) must NOT break startup. `session`
+  // is captured and the method invoked on it so `this` stays bound; the
+  // delegation layer already treats unknown sessions as roots, so skipping
+  // the seed is always safe.
+  const session = input.client.session
+  if (typeof session?.list !== 'function') return
+  void session
     .list()
     .then((result) => {
       if (!result.error && Array.isArray(result.data)) {

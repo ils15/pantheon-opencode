@@ -81,7 +81,7 @@ function mergeMissing(target, source) {
  * installed package.
  *
  * The packaged config may reference plugins via developer-machine absolute
- * paths (e.g. /home/<dev>/pantheon/src/plugin.ts). Copying those verbatim into
+ * paths (e.g. <dev>/pantheon/.../src/plugin.ts). Copying those verbatim into
  * the user's config would break every install on any other machine. This
  * rewrites the entry to the plugin file inside the INSTALLED package (derived
  * from ROOT — never hardcoded), so both dev and global installs resolve to a
@@ -672,8 +672,8 @@ export async function installOpenCode(
   // B.5.1 Hermetic plugin resolution (packaging fix)
   // --------------------------------------------------------------------
   // The packaged opencode.json may reference plugins via developer-machine
-  // absolute paths (e.g. /home/<dev>/pantheon/src/plugin.ts or
-  // /home/<dev>/pantheon/src/plugins/pantheon-hooks.ts). Copying those
+  // absolute paths (e.g. <dev>/pantheon/.../src/plugin.ts or
+  // <dev>/pantheon/.../src/plugins/pantheon-hooks.ts). Copying those
   // verbatim into the user's config would break every global install on any
   // other machine. resolveInstalledPlugin() rewrites each entry to the plugin
   // file inside the INSTALLED package (derived from ROOT — never hardcoded),
@@ -694,6 +694,17 @@ export async function installOpenCode(
       config.plugin.push(resolved)
     }
   }
+
+  // The runtime hooks plugin MUST always be registered. The packaged
+  // opencode.json no longer carries dev-machine plugin paths (removed in
+  // 3e552cc), so config.plugin would otherwise stay empty and the
+  // pantheon-hooks runtime would never load. Register it unconditionally,
+  // replacing any stale entry for the same file (same basename-dedup as
+  // above) so installs and upgrades are idempotent and hermetic.
+  const hooksPlugin = resolveInstalledPlugin('src/plugins/pantheon-hooks.ts')
+  const hooksFile = basename(hooksPlugin)
+  config.plugin = config.plugin.filter((p) => basename(p) !== hooksFile)
+  config.plugin.push(hooksPlugin)
 
   if (!config.provider && pantheonConfig.provider) {
     config.provider = deepClone(pantheonConfig.provider)

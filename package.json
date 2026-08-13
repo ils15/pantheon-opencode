@@ -64,7 +64,10 @@
     "scripts/hooks/**",
     "src/mcp/requirements*",
     "src/plugins/tui/**",
-    "src/skills/**"
+    "!src/plugins/tui/node_modules/**",
+    "src/skills/**",
+    "!**/__pycache__/**",
+    "!**/*.pyc"
   ],
   "dependencies": {
     "js-yaml": "^4.3.0",

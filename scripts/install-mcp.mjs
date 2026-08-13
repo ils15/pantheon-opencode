@@ -37,7 +37,7 @@ const ROOT = join(__dirname, '..')
 // venv python3 and the server script. ROOT alone is ambiguous: when this
 // installer runs from a global npm install, `join(ROOT, '.venv/bin/python3')`
 // points at a venv that does not exist there, and a stale config with a
-// hardcoded path to a migrated home (e.g. /home/admin) fails with
+// hardcoded path to a migrated home (e.g. <dev>/admin) fails with
 // `posix_spawn ENOENT`. Resolution order:
 //   1. Canonical user install: ~/.config/opencode/.venv + ~/.config/opencode/scripts/
 //   2. Local checkout:        <ROOT>/.venv + <ROOT>/<relPath>

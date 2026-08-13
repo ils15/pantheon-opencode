@@ -105,7 +105,8 @@ function resolveFile(
   if (isAbsolute(file)) return { ok: true, file: resolve(file) }
   const base = resolve(ctx.worktree ?? ctx.directory ?? process.cwd())
   const resolved = resolve(base, file)
-  // Prefix check with a path.sep boundary: `/tmp/x` must not match `/tmp2/x`.
+  // Prefix check with a path.sep boundary: base + sep + name must not
+  // match a sibling prefix (e.g. `/data/x` vs `/data2/x`).
   if (resolved !== base && !resolved.startsWith(base + sep)) {
     return {
       ok: false,

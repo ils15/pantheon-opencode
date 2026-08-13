@@ -135,8 +135,11 @@ echo ""
 # Step 5: Validate scrub-secrets.py works
 echo "[5/4] Testing scrub-secrets.py (bonus)..."
 if [ -f scripts/scrub-secrets.py ]; then
-    # Test with a simple secret
-    SECRET_TEST=$(echo "Bearer my-test-token-12345" | python3 scripts/scrub-secrets.py --stdin 2>/dev/null)
+    # Test with a simple secret. The token is assembled at runtime so the
+    # shipped script never contains a literal `Bearer <token>` sequence (the
+    # redaction gate flags any such literal as a credential).
+    SCRUB_FIXTURE_TOKEN="my-test-token-12345"
+    SECRET_TEST=$(echo "Bearer ${SCRUB_FIXTURE_TOKEN}" | python3 scripts/scrub-secrets.py --stdin 2>/dev/null)
     if echo "$SECRET_TEST" | grep -q "REDACTED"; then
         echo "   ✅ scrub-secrets.py: secret detection working"
     else

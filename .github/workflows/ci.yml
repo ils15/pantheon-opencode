@@ -17,6 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the release-notes draft runs `git log lastTag..HEAD`,
+          # which a shallow depth-1 clone (default) cannot satisfy — it only
+          # brings the merge commit and would emit an empty draft.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - uses: actions/setup-node@v4

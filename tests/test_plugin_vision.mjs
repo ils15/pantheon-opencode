@@ -11,7 +11,15 @@
  */
 import { strict as assert } from 'node:assert'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -179,6 +187,16 @@ await (async () => {
       }
     })
   })
+})()
+
+// ─── Fail-open: config hook tolerates an absent client.session ─────────────
+// Some OpenCode environments do not expose the session API while config
+// hooks run. The root-session seed is best-effort (delegation treats unknown
+// sessions as roots), so hooks.config() must never throw on a missing
+// client.session.
+await (async () => {
+  const hooks = await makeHooks({ session: undefined })
+  await assert.doesNotReject(hooks.config({}), 'config hook tolerates missing client.session')
 })()
 
 // ─── Mocks ─────────────────────────────────────────────────────────────────
@@ -1738,9 +1756,7 @@ await (async () => {
     ['s1', s1Files],
     ['s2', s2Files],
   ])
-  const refs = new Map([
-    [shared, new Set(['s1', 's2'])],
-  ])
+  const refs = new Map([[shared, new Set(['s1', 's2'])]])
 
   // s1 releases → still referenced by s2 → file stays on disk.
   await cleanupSessionTempImages(
@@ -1823,11 +1839,7 @@ await (async () => {
     'first session delete keeps the shared file (still referenced)',
   )
   await deleteSession('session-shared-b')
-  assert.equal(
-    existsSync(sharedPath),
-    false,
-    'last session delete unlinks the shared file',
-  )
+  assert.equal(existsSync(sharedPath), false, 'last session delete unlinks the shared file')
   rmSync(VISION_DIR, { recursive: true, force: true })
   tempFileLRU.clear()
 })()
@@ -1847,11 +1859,7 @@ await (async () => {
   // A second save (dedup path) must not loosen permissions either.
   const again = await saveDataUrlImage('data:image/png;base64,ZmFrZQ==', 'image/png')
   assert.equal(again, path, 'dedup reuses the same file')
-  assert.equal(
-    statSync(path).mode & 0o777,
-    0o600,
-    'existing temp file stays 0600 after re-save',
-  )
+  assert.equal(statSync(path).mode & 0o777, 0o600, 'existing temp file stays 0600 after re-save')
   rmSync(VISION_DIR, { recursive: true, force: true })
   tempFileLRU.clear()
 })()

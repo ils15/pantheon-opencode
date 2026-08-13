@@ -4,8 +4,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -29,9 +29,13 @@ const privateUrl =
 
 function pack() {
   // Do not bypass prepack: the published archive is the artifact under test.
+  // --json emits the full manifest + file listing (>1MB once the tarball
+  // carries every runtime input); the default 1MB child buffer would blow
+  // up with ENOBUFS, so raise it explicitly.
   const result = execFileSync('npm', ['pack', '--json'], {
     cwd: ROOT,
     encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
   })
   return JSON.parse(result)[0].filename
 }
@@ -61,6 +65,10 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     const listing = execFileSync('tar', ['-tzf', join(ROOT, tarball)], { encoding: 'utf8' })
     assert.doesNotMatch(listing, forbidden)
     assert.doesNotMatch(listing, /(?:^|\/)logs(?:\/|$)|\.log$/i)
+    // Python bytecode/build dirs must never ship — the `files` whitelist in
+    // package.json carries explicit `!**/__pycache__/**` / `!**/*.pyc`
+    // negations because .npmignore is overridden by a files whitelist.
+    assert.doesNotMatch(listing, /(?:^|\/)__pycache__(?:\/|$)|\.pyc$/)
     execFileSync('tar', ['-xzf', join(ROOT, tarball), '-C', work])
     const contents = readFileSync(join(work, 'package', 'opencode.json'), 'utf8')
     assertExecutableConfigIsPathFree(join(work, 'package'))
@@ -85,12 +93,18 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     }
     assert.match(listing, /^package\/bin\/pantheon-init\.mjs$/m)
     const doctor = readFileSync(join(work, 'package', 'scripts', 'doctor.mjs'), 'utf8')
-    assert.match(doctor, /--profile sandbox/)
+    // Packaged doctor must expose the profile policy flag (incl. sandbox) and
+    // the blocking-error exit code contract.
+    assert.match(doctor, /--profile global\|lite\|sandbox/)
     assert.match(doctor, /exitCode = 2/)
 
-    const redaction = spawnSync(process.execPath, [join(ROOT, 'scripts', 'redaction-gate.mjs'), join(ROOT, tarball)], {
-      encoding: 'utf8',
-    })
+    const redaction = spawnSync(
+      process.execPath,
+      [join(ROOT, 'scripts', 'redaction-gate.mjs'), join(ROOT, tarball)],
+      {
+        encoding: 'utf8',
+      },
+    )
     assert.equal(redaction.status, 0, redaction.stderr || redaction.stdout)
   } finally {
     rmSync(work, { recursive: true, force: true })
@@ -123,8 +137,15 @@ test('installed package resolves hooks to its installed absolute path', () => {
     assert.equal(existsSync(config.plugin[0]), true)
     assert.doesNotMatch(JSON.stringify(config), executableForbidden)
     const tui = JSON.parse(readFileSync(join(project, '.opencode', 'tui.json'), 'utf8'))
-    assert.deepEqual(tui.plugin, [join(installedRoot, 'src', 'plugins', 'tui', 'dist', 'tui.tsx')])
-    assert.equal(existsSync(tui.plugin[0]), true)
+    // Installer contract (af40321): the TUI plugin is COPIED to the target
+    // config's plugins/pantheon-tui and registered as that directory — never
+    // the in-package src/plugins/tui — so installs stay hermetic and
+    // idempotent. Assert the registered entry is the absolute copied dir and
+    // it carries the loader contract (dist/tui.js).
+    const tuiDir = join(project, '.opencode', 'plugins', 'pantheon-tui')
+    assert.deepEqual(tui.plugin, [tuiDir])
+    assert.equal(existsSync(tuiDir), true)
+    assert.equal(existsSync(join(tuiDir, 'dist', 'tui.js')), true)
     assert.equal(
       tui.plugin.some((entry) => !entry.startsWith('/')),
       false,
