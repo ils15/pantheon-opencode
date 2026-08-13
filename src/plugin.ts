@@ -112,6 +112,30 @@ const COMPACTION_MAX_ITEMS = 10
 // works even when this set is incomplete.
 const rootSessions = new Set<string>()
 
+/**
+ * Seed resumed root sessions without making OpenCode startup depend on the
+ * session API responding. Some OpenCode environments do not have the API
+ * ready while plugin config hooks run; awaiting session.list() there leaves
+ * the TUI stuck before it can open. The delegation layer already treats an
+ * unknown session as a root, so this enrichment is deliberately best-effort.
+ */
+function seedRootSessionsInBackground(input: PluginInput): void {
+  void input.client.session
+    .list()
+    .then((result) => {
+      if (!result.error && Array.isArray(result.data)) {
+        const seeded = collectRootSessionIDs(result.data)
+        if (seeded.size > 0) {
+          for (const id of seeded) rootSessions.add(id)
+          log.info(`[Pantheon Plugin] Seeded ${seeded.size} root session(s) from session.list`)
+        }
+      }
+    })
+    .catch((err) => {
+      log.warn('[Pantheon Plugin] Root session seed failed (fail-open):', err)
+    })
+}
+
 /** Extract the SDK error message ({name, data: {message}}) or a fallback. */
 function sdkErrorMessage(error: { data?: { message?: string } } | null | undefined): string {
   const message = error?.data?.message
@@ -299,22 +323,11 @@ const plugin: Plugin = async (input: PluginInput) => {
       // events for sessions that exist before plugin load, so after a
       // restart the resumed ROOT session never enters rootSessions and the
       // depth guard would reject its pantheon_delegate calls. Seed the
-      // registry from session.list() — every session WITHOUT a parentID is
-      // a root. Fail-open: a failed/throttled list leaves the set untouched
-      // (delegation.ts treats unknown sessions as roots) and the config
-      // hook must never break startup.
-      try {
-        const result = await input.client.session.list()
-        if (!result.error && Array.isArray(result.data)) {
-          const seeded = collectRootSessionIDs(result.data)
-          if (seeded.size > 0) {
-            for (const id of seeded) rootSessions.add(id)
-            log.info(`[Pantheon Plugin] Seeded ${seeded.size} root session(s) from session.list`)
-          }
-        }
-      } catch (err) {
-        log.warn('[Pantheon Plugin] Root session seed failed (fail-open):', err)
-      }
+      // registry from session.list() in the background — every session
+      // WITHOUT a parentID is a root. Fail-open: a failed/throttled list
+      // leaves the set untouched (delegation.ts treats unknown sessions as
+      // roots), and config setup must never wait for the session API.
+      seedRootSessionsInBackground(input)
       config.agentsPath = config.agentsPath ?? []
       config.agentsPath.push(new URL('./agents', import.meta.url).pathname)
       config.skillsPaths = config.skillsPaths ?? []
