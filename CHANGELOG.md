@@ -2,22 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
 ## [Unreleased]
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
-### Added
+## 🆕 What's New
 
-### Changed
+## 🐞 Fixed
 
-### Fixed
+## ⚠️ Known Issues
 
-### Removed
+## ✅ Closed Issues
 
 ## [v1.3.4] - 2026-08-11
 
-### Added
+## 🆕 What's New
+
 - **Compaction summary V2** (preservation directive + mission/todo/delegation sections): `buildCompactionContext` is now async and accepts goal/todo sources — `PANTHEON_COMPACTION_DIRECTIVE` prefix section (emitted before any other section, skipped on totally-empty state), `<mission_context>` with active goals (id/objective/status), `<todo_context>` with pending (not completed/cancelled) todos; delegation blocks byte-for-byte unchanged; failing/disabled sources are skipped fail-open (logged to hooks.log)
 - **Post-compaction todo preservation**: TodoPreserver captures the session's todo list on `experimental.session.compacting`, activates the snapshot on `session.compacted`, and rewrites the first post-compaction `todowrite` with the exact pre-compaction list — additive + fail-open (every step degrades to a logged warn, never throws in a hook)
 - **Post-compaction state re-assertion**: re-asserts session state after compaction so the rebuilt context reflects the live board
@@ -26,11 +29,10 @@ All notable changes to this project will be documented in this file.
 - **File-first logging**: `createPantheonLogger` — console echo opt-in via `PANTHEON_HOOKS_LOG=1`, everything routed to `.pantheon/logs/hooks.log` (silences TUI console pollution)
 - **Real-time Delegations TUI panel**: sidebar panel sourced from `api.client.session.children` — shows `pantheon_delegate` children (board alias tag) AND native `task()` children (`[task]` tag, distinct info color); animated states (DELEGATING/WORKING/READING RESULT/DONE/DONE (TIMED OUT)/ERROR/CANCELLED) with a 140ms spinner; click-to-navigate into the child session; all-sessions history via `.pantheon/delegations/` reports; `panel: children=N md=N events=N` diagnostics in hooks.log
 - **README docs**: 1.3.4 compaction + delegation features documented
-
-### Changed
 - **Zero chat-notification policy**: removed the `chat.message` injection channel for delegation signals — completion visibility lives in the board `[unread]` marker, `pantheon_delegation_read`, TUI toasts and compaction carry-forward, never in the chat transcript
 
-### Fixed
+## 🐞 Fixed
+
 - **Delegate dispatch with missing provider API key** (P1): `resolveChildModel` never checked whether the resolved model's provider had a configured API key — a child dispatched to a keyless provider (e.g. gpt-5.6-luna/opencode-go) died instantly with `AI_LoadAPIKeyError`. Auto-resolved models (agentModels/preset) whose provider key is missing now fall back to `opencode/deepseek-v4-flash-free`; explicit caller models are respected (warned); when nothing is usable the tool returns a clear error TEXT and registers NO job on the board
 - **delegations.log typing**: `task_id` was always `""` (now omitted when empty) and `duration_ms` was logged as a STRING (now parsed to a number, null when unset), breaking downstream aggregation
 - **Idle-flush log duplication**: `flushIdleReminders` echoed the reminder body joined with `" | "` while chat.message delivery echoed the same body with `"\n"` — the identical line appeared twice; idle-flush is now an audit summary (count + aggregated line count), content logged exactly once at chat-reminder delivery
@@ -38,49 +40,49 @@ All notable changes to this project will be documented in this file.
 
 ## [v1.3.3] - 2026-08-11
 
-### Added
+## 🆕 What's New
+
 - **Todo continuation enforcer**: auto-continues sessions with incomplete todos on `session.idle` (4 guards: board-running, in-flight, exponential cooldown, max-failures cap) + kill-switch `PANTHEON_TODO_ENFORCER=off`
 - **Hashline hash-anchored edits**: `hashline_edit` tool with sha256-truncated line tags, additive read enhancer, validate-before-write with `>>>` mismatch hints + Did-you-mean suggestions; blocked in read-only sessions
 - **Full-auto goal loop** (opt-in `full_auto.enabled: false`): `pantheon_goal_create/update/get` tools, atomic GoalStore, priority idle dispatcher (goal suppresses enforcer), max 25 continuations
 - **Dispatch retry-on-empty**: classifies empty results (mode 1: 0 tokens; mode 2: reasoning without text) with cap-1 automatic retry
 - **Cost tracking**: JSONL ledger + `pantheon_cost` command reading opencode.db (zero-dep, node:sqlite → scripts/cost.mjs fallback)
+- **Themis phase reviews** route to deepseek-v4-flash (pro reserved for final release gate); Athena stays premium (council red-line)
+- **Routing config**: `background_delegation`, `todo_enforcer`, `hashline`, `full_auto` sections
 
-### Fixed
+## 🐞 Fixed
+
 - **Delegation killer**: chat.message hook injected reminders with empty messageID on the subagent promptAsync path — opencode schema rejected it, killing every background delegation in ~20ms (found by live E2E smoke)
 - **Delegation child model routing**: child sessions now inherit the routed model (explicit arg → routing.yml agent entry → active preset) instead of falling back to the key-gated default (E2E: AI_LoadAPIKeyError without an active preset)
 - **Installer `resolveInstalledPlugin`** mapped only `src/plugins/*` — `src/plugin.ts` resolved to the dev path, breaking global installs on non-dev machines and leaking the dev path (release-blocking)
 - **Todo enforcer invasiveness**: skips injection when native background children are active (`session.children`) and within 30s of user activity
 - **Hashline**: atomic write (tmp+rename), path containment guard, documented seed separator
 
-### Changed
-- **Themis phase reviews** route to deepseek-v4-flash (pro reserved for final release gate); Athena stays premium (council red-line)
-- **Routing config**: `background_delegation`, `todo_enforcer`, `hashline`, `full_auto` sections
-
 ## [v1.3.2] - 2026-08-09
 
-### Added
-- **Sandbox validation**: added the `sandbox` doctor profile and regression coverage for npm tarball contents, installed hook resolution, doctor status handling, MCP runtime smoke checks, and related CLI/install contracts.
+## 🆕 What's New
 
-### Changed
+- **Sandbox validation**: added the `sandbox` doctor profile and regression coverage for npm tarball contents, installed hook resolution, doctor status handling, MCP runtime smoke checks, and related CLI/install contracts.
 - **Package portability**: distributed configuration no longer retains checkout-specific machine paths; managed hooks are resolved from the installed package during install/sync.
 - **Doctor contract**: exit statuses now distinguish success (`0`), advisory warnings (`1`), and blocking errors (`>=2`).
 
-### Fixed
+## 🐞 Fixed
+
 - **Global installation diagnostics**: clarified the distinction between advisory doctor warnings and blocking failures.
 
-[1.3.2]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.3.2
+[v1.3.2]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.3.2
 
 ## [v1.3.1] - 2026-08-08
 
-### Added
-- **Release validation coverage**: hook-runner spawn/timeout/SIGKILL handling with process-group cleanup; scanner fixtures that avoid accidental false positives; doctor `global`, `lite`, and `sandbox` profiles with explicit PASS/WARN/ERROR/SKIP statuses; `run-test.sh` exit semantics; and sandbox validation coverage.
+## 🆕 What's New
 
-### Changed
+- **Release validation coverage**: hook-runner spawn/timeout/SIGKILL handling with process-group cleanup; scanner fixtures that avoid accidental false positives; doctor `global`, `lite`, and `sandbox` profiles with explicit PASS/WARN/ERROR/SKIP statuses; `run-test.sh` exit semantics; and sandbox validation coverage.
 - Local validation logs are ignored via `logs/` because they are generated diagnostics, not release artifacts or source files.
 
 ## [v1.3.0] - 2026-08-06
 
-### Added
+## 🆕 What's New
+
 - **Non-invasive TUI notifications**: hook failures no longer write to `console.error` (TUI pollution) — non-zero exits route to three non-TUI channels: deduped TUI toast (`client.tui.showToast`), structured `client.app.log` entry (service `pantheon-hooks`), and `.pantheon/logs/hooks.log` file append; `PANTHEON_HOOKS_LOG=1` opt-in preserved, routed to log channels only
 - **Delegation lifecycle toasts**: 🚀 `<agent> em execução` / ✅ `<agent> concluiu` with anti-spam (2000ms rate limiter + 3-agents-in-6s aggregation into a single summary toast)
 - **PANTHEON_TOASTS gate**: `off|errors|delegations|all` (default `delegations`), read once at plugin load; gates TUI display only, log channels always write; council toasts included in the default set
@@ -89,25 +91,26 @@ All notable changes to this project will be documented in this file.
 - **Honest delegation telemetry**: `delegation_id`/`task_id`/`duration_ms` fields, `dispatched` status for background agents, JSON round-trip stop hook (no TSV corruption)
 - **Bash exit-code monitoring**: `metadata.exit` → individual error notifications
 - **Talos scope enforcement**: session→agent map, native permission denies, content guard
-
-### Changed
 - `PANTHEON_HOOKS_LOG` opt-in with ISO timestamps per line
 - Routing disambiguation (project vs system docs), refusal taxonomy, delegation cache telemetry
 - Secret-scan hygiene: wildcard notation for credential references (no literal keys in versioned docs/comments)
 - README: hooks testing docs + `PANTHEON_TOASTS` table with council; AGENTS.md adds "PRs always update the README" convention
 
-### Fixed
+## 🐞 Fixed
+
 - Council toast idle-flush race condition
-## [1.2.2] - 2026-08-05
 
-### Added
+## [v1.2.2] - 2026-08-05
+
+## 🆕 What's New
+
 - **`pantheon prune`** (#22): legacy cleanup command — XDG-aware config resolution, `--dry-run` default (list only), `--apply` removes stale `opencode.json.bak*` backups (age threshold), `--apply --remove-dirs` for legacy dirs with dead configs; old global `pantheon` installs are suggested for manual `npm uninstall -g pantheon`, never removed (npm-managed)
-
-### Changed
 - **Release pipeline standardization** (PR #28): single source of truth for version in `scripts/versioning.mjs` (sem-tag aware); CHANGELOG repair (normalized broken `[5.0.0]` heading → `[1.0.0]`, stripped `[v` prefixes across 3.x history, added `[Unreleased]`); `release.yml` redesigned with idempotent gates (skips publish when version already exists); new `scripts/changelog-extract.mjs` and `scripts/version-check.mjs` (+ test suites) so release bodies use real changelog sections; commitlint extended to cover pushes; pre-commit gate added; `cliff.toml` (git-cliff) removed; `docs/RELEASING.md` added; ADR-0007
 - **Test wiring + install docs** (PR #31): `test:security` extended with `test_doctor_layers`; Node test suite wired via `npm run test:node` (`node --test tests/*.mjs` — prune, hook-runner, plugin-log-policy, install/vision contracts, changelog/version checks) into CI; global-install sandbox documented in AGENTS.md / INSTALLATION.md
+- Dead `src/mcp/requirements-mcp-core.txt` catalog duplicate (YAGNI — the installer uses `requirements-mcp.txt`)
 
-### Fixed
+## 🐞 Fixed
+
 - **Reliable global install** (PR #26): hooks plugin recreated (`pantheon-hooks.ts` + `hook-runner.ts` with stdin JSON protocol, version-proof); MCP install made hermetic (absolute paths); packaging fix (`files[]` += `src/plugins/**`, `scripts/hooks/**`, self-reference removed, pinned `@opencode-ai/plugin` 1.18.11); `import uuid` hotfix in `scripts/mcp_persistence_server.py`
 - **Installer/plugin packaging paths** (PR #31): hooks plugin registered via `resolveInstalledPlugin` so the config points at the INSTALLED package path, never the developer's absolute path (#30); TUI registered with absolute dist path in `tui.json` (#32 — relative path caused NpmInstallFailedError); TUI reads its installed package version via `import.meta.url` (works from any cwd)
 - **Idempotent init** (#19): `subagent_depth` merged into the always-run config merge — run #1 already produces the final config (previously only the SECOND init added it); honest re-run stats (`routing.yml` no longer counted as created every run)
@@ -115,11 +118,10 @@ All notable changes to this project will be documented in this file.
 - **Pinned MCP dependencies** (#21): exact pins in `src/mcp/requirements-*.txt` (`mcp==1.29.0`, `fastmcp==3.4.6`, `pyyaml==6.0.3`, `sqlite-vec==0.1.9`, `fastembed==0.8.0`, `httpx==0.28.1`) — reproducible venv installs
 - **Silent hooks by default**: audit hooks no longer echo to the console on success (`PANTHEON_HOOKS_LOG=1` re-enables the debug echo; log FILES `sessions.log`/`delegations.log` continue to be written)
 
-### Removed
-- Dead `src/mcp/requirements-mcp-core.txt` catalog duplicate (YAGNI — the installer uses `requirements-mcp.txt`)
-## [1.2.1] - 2026-08-03
+## [v1.2.1] - 2026-08-03
 
-### Added
+## 🆕 What's New
+
 - **Model routing presets + interactive picker**: 4 presets (go-deepseek, go-premium, go-fast, go-free), zero-mutation default (injects only when `active-preset.json` exists), `set-tier` CLI in `bin/pantheon-init.mjs` with API-key fail-fast, interactive picker in `scripts/install/model-picker.mjs` (atomic write + .bak), `validate-routing.mjs` preset validation, packaging fix so `src/pantheon/**` ships in the tarball
 - 4 new provider families — go-claude (Anthropic), go-openai, go-olympus, go-muses presets + `CAPABILITY_TABLE` (+11 entries: glm-5.1/5.2, kimi-k2.6, qwen3.7-max/plus, minimax-m2.7/m2.5, bare deepseek-v4-pro/flash, big-pickle, nemotron-3-ultra-free, north-mini-code-free)
 - **Vision routing**: per-turn multimodal fallback for image turns (`vision:` key per preset, `chat.message` hook), later evolved to native gateway vision (mimo-v2.5) with MCP-tool fallback, image-history normalization, description cache (sha256, TTL 30min) + intent-calibrated prompts, temp-image dedup/LRU
@@ -128,16 +130,18 @@ All notable changes to this project will be documented in this file.
 - **Unified `release.yml`**: single workflow handles beta (PR label) + stable (main push) with version-exists check
 - Secret scanning: fail-closed CI gates (gitleaks + custom scan), pre-commit hooks, secret-scan regression tests
 - docs: model routing presets documented (presets, commands, env vars)
-
-### Changed
 - Preset lineup refactored 8 → 6: go-deepseek routed via OpenCode Zen, go-fast via OpenCode Go, olympus/muses renamed go-premium/go-free — all presets now via OpenCode/Anthropic/OpenAI providers, `PANTHEON_DEEPSEEK_API_KEY` removed
 - Vision routing consolidated and legacy duplicates removed
 - commitlint: CodeQL auto-fix ignore pattern, body-max-line-length disabled, `security` type allowed, plugin/vision/presets/hooks scopes added; tsconfig dropped path aliases (+ `opencode.d.ts` ambient types)
 - install: pantheon-vision registered, `doctor.mjs` hardened
 - PR template added in English; coverage artifacts gitignored
 - CI workflow triggers synced with base develop; `release.yml` gained `workflow_dispatch` with `pr_number` input
+- Stale release workflows (release-beta.yml / release-stable.yml leftovers) brought back by merge
+- TUI todo-progress bar (redundant with native TODO + sidebar), v1.1.1
+- Duplicate `scripts/scrub_secrets.py` (canonical is `scrub-secrets.py`)
 
-### Fixed
+## 🐞 Fixed
+
 - Plugin export as function for opencode 1.18.11 API (object export failed to load; hooks.config mutates config in place)
 - Vision pipeline: plugin boot failure (legacy loader), MCP tool ID (`pantheon_vision_vision_describe`), gateway 401 (provider prefix stripped from model ID), temp-file race (age-guarded cleanup, dir never removed), image stripping at source (deepseek-v4-flash declared image-capable), gateway-aware qwen interception, MCP availability verified, refcounted shared temp images, file URLs decoded via `fileURLToPath`, temp image permissions restricted
 - Default vision fallbacks: mimo-v2.5 (multimodal, cheaper) then minimax-m3 (qwen3.7-plus 500 on Go gateway); silent hook logs
@@ -147,144 +151,137 @@ All notable changes to this project will be documented in this file.
 - Security: hardcoded provider credentials removed, preset error logging sanitized (CodeQL), dist artifacts untracked
 - install: project MCP commands point at real venv
 
-### Removed
-- Stale release workflows (release-beta.yml / release-stable.yml leftovers) brought back by merge
-- TUI todo-progress bar (redundant with native TODO + sidebar), v1.1.1
-- Duplicate `scripts/scrub_secrets.py` (canonical is `scrub-secrets.py`)
+[v1.2.1]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.2.1
 
-[1.2.1]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.2.1
+## [v1.2.0] - 2026-07-30
 
-## [1.2.0] - 2026-07-30
+## 🆕 What's New
 
-### Added
 - **Fallback chains + auto CI retry**: per-agent fallback chains (hermes→talos→athena, apollo→athena→hermes, etc.), CI retry 1 → 2 with exponential backoff + fallback agent, token tracking in `subtask_summary`, `fallback_chains` section in routing.yml
 - Zeus Fusion-style delegation enforced — `edit:deny`, `bash:deny`, never touches files
 - Persistence performance: index on (namespace, expires_at) — O(n)→O(log n) TTL queries, `kv_stats` tool, opportunistic auto-purge (>500 entries), FTS soft-delete trigger (fixes phantom results), `re.escape()` query safety, `kv_delete_namespace` bulk cleanup
 - **Context checkpoint tools**: `context_save`, `context_get`, `context_list`, `context_stats` — session-scoped state in `checkpoint:{slug}` namespace, auto-TTL 4h, replaces file-based `checkpoint_session.py`
 - New release system: beta from PR label (release-beta.yml), stable from main push (release-stable.yml)
 - docs: `RELEASE.md` — beta from PR label, stable from main push
-
-### Changed
 - **Slash commands consolidated 16 → 5** — kept `/pantheon`, `/audit`, `/deepwork`, `/optimize`, `/consolidate`; deleted 11 (cancel, focus, forget, install, reflect, remember, search, sketch, status, update, verify) with Apollo audit verifying alternative coverage (ADR-006)
 - Removed redundant model configs — agents inherit default deepseek-v4-flash
 - Persistence docs updated for new tools and auto-purge behavior
 - commitlint scopes completed; auto-release skipped when version already exists
 
-### Fixed
+## 🐞 Fixed
+
 - Council fixes: UUID session isolation in context checkpoints, pre-compaction state save trigger, flash summary quality floor (<10 chars → fallback to Zeus), agents recall `context_get(slug, 'latest')` on startup
 - CI: push triggers removed — validation workflows (CI, commitlint, CodeQL, hotfix, docs) now run on `pull_request` only, eliminating perma-pending duplicate checks
 
-[1.2.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.2.0
+[v1.2.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.2.0
 
-## [1.0.0] - 2026-07-24
+## [v1.0.0] - 2026-07-24
 
-### Major Changes
+## 🆕 What's New
+
 - **OpenCode-only**: Removed all multi-platform support (Claude Code, Cursor, Windsurf, Cline, Continue.dev, VS Code Copilot). Pantheon v1.0 is exclusively for OpenCode.
 - **Global installation**: `npx pantheon-opencode init` installs agents globally to `~/.config/opencode/agents/`. Optional `--project` flag for project-local install.
 - **Background subagents**: Native OpenCode `task(background=true)` + `task_status()` delegation. Max 5 concurrent subagents. Requires `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`.
 - **Shared instructions**: Behavioral rules moved to `.instructions.md` files loaded via `instructions/*.instructions.md`. Eliminated duplicate rules between agents and instructions.
 - **TUI sidebar plugin**: Custom sidebar showing Pantheon version, sessions, commands, agents, config, and memory stats.
 - **Agent routing optimized**: Zeus routing decision tree prohibits `general`/`explore` subagent types. Each domain maps to a specialist.
-
-### Token Optimization
 - Instructions tokens reduced 10.3k → 7.5k (-18%)
 - Zeus.md reduced 431 → 144 lines
 - Skills reduced to 14 (from 40), with merged content
 - `skills-lock.json` regenerated (40 → 14 entries)
-
-### Removed
 - 6 platform-specific installers (claude, cline, continue, copilot, cursor, windsurf)
 - 6 platform-specific docs files
 - Legacy scripts: `pantheon-install.mjs`, `pantheon-update.mjs`
 - `platform/opencode/agents/` (agents now in `src/agents/`)
 - `auto-continue-template.md`
 - `checkpoint-standards.instructions.md`
-
-### Commands
 - Updated command list: 14 → 11 commands
 - Added: `/pantheon-bg`, `/pantheon-doc`
 - Removed: install, update, cancel, sketch, consolidate
 
-[1.0.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.0
+[v1.0.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.0
 
-## [1.1.1] - 2026-07-30
+## [v1.1.1] - 2026-07-30
 
-### Added
+## 🆕 What's New
+
 - New release system — beta releases from PR labels, stable from main push (auto-release and beta-release workflows unified)
 - Interactive TUI mode for installer (Fases 1+2) — redesigned sidebar with context progress bar, live session data via events + API
 - Session-scoped context checkpoints in persistence (index, stats, auto-purge, `delete_namespace`); fallback chains, auto CI retry (2x), token tracking
-
-### Changed
 - Slash commands consolidated from 16 to 5; redundant model configs removed (agents inherit the default model)
 
-### Fixed
+## 🐞 Fixed
+
 - Council: UUID session isolation in context checkpoints, pre-compaction state save, flash summary quality floor, agents recall `context_get(slug, 'latest')` on startup
 - TUI plugin/CI: OpenCode crash from missing plugin deps, version detection with git fallback, commitlint scopes, workflow YAML/MCP path repairs; `datetime.UTC` → `timezone.utc` for Python < 3.11
 
-[1.1.1]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.1.1
+[v1.1.1]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.1.1
 
-## [1.1.0] - 2026-07-26
+## [v1.1.0] - 2026-07-26
 
-### Added
+## 🆕 What's New
+
 - Council synthesis Fase 1+2 — Modo Desempate com Evidência + BackgroundJobBoard (#2)
-
-### Changed
 - Beta release workflow added (from develop)
 
-[1.1.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.1.0
+[v1.1.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.1.0
 
-## [1.0.7] - 2026-07-26
+## [v1.0.7] - 2026-07-26
 
-### Fixed
+## 🐞 Fixed
+
 - Installer: fixed `writeFileSync` not defined error
 
-[1.0.7]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.7
+[v1.0.7]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.7
 
-## [1.0.6] - 2026-07-26
+## [v1.0.6] - 2026-07-26
 
-### Added
+## 🆕 What's New
+
 - 7 new skills (codemap, simplify, reflect, worktrees, verification-planning, loop-engineering, clonedeps) + 7 matching commands; `background_subagents` enabled by default in canonical config
 - Release pipeline: quality gates, tag creation, pre-release, hotfix support
-
-### Changed
 - CI simplified from 10 to 6 workflows; agent/skill restructuring — 12 redundant instructions removed, unused commands dropped, gaia archived then restored
 
-### Fixed
+## 🐞 Fixed
+
 - CI/commitlint config (YAML syntax, header-max-length, ignores function, scopes); 45 stale references cleaned across 18 files; invalid `opencode.json` fields removed; installer copies `routing.yml`; YAML frontmatter regenerated for 9 agents
 
-[1.0.6]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.6
+[v1.0.6]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.6
 
-## [1.0.5] - 2026-07-26
+## [v1.0.5] - 2026-07-26
 
-### Fixed
+## 🐞 Fixed
+
 - CI auto-release with OIDC trusted publisher + npm v12 (Node 22 upgrade, clean publish)
 - `doctor.mjs` paths + simplified `prepublishOnly`
 
-[1.0.5]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.5
+[v1.0.5]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.5
 
-## [1.0.2] - 2026-07-25
+## [v1.0.2] - 2026-07-25
 
-### Added
+## 🆕 What's New
+
 - TUI plugin: copy logic, stale skill cleanup, `tui.json` dedup; advanced plugin with version detection and 14 commands
-
-### Changed
 - Agents migrated from deprecated `tools:` to OpenCode `permission:` model; legacy multi-platform tests removed (OpenCode-only conformance); docs modernized (OpenCode-only, unified commands)
 
-### Fixed
+## 🐞 Fixed
+
 - Hardcoded version fallback replaced with package.json version; routing aligned with actual skills (vscode platform removed)
 
-[1.0.2]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.2
+[v1.0.2]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.2
 
-## [1.0.1] - 2026-07-24
+## [v1.0.1] - 2026-07-24
 
-### Changed
+## 🆕 What's New
+
 - Installer: unified setup flow, removed lifecycle install, fixed entry points
 
-[1.0.1]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.1
+[v1.0.1]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.0.1
 
-## [3.19.2] - 2026-07-21
+## [v3.19.2] - 2026-07-21
 
-### Added
+## 🆕 What's New
+
 - `_pantheon_paths.py` — shared path resolution (`PANTHEON_HOME`, `PANTHEON_PROJECT`)
 - `pantheon-persistence` MCP — KV store with SQLite FTS5, TTL, namespaces, 6 tools
 - `pantheon-memory` rewritten — sqlite-vec + fastembed (ONNX, ~50MB) replaces chromadb + torch (~1.4GB)
@@ -295,8 +292,6 @@ All notable changes to this project will be documented in this file.
 - `scripts/install/health-check.mjs` — 6 post-install validations
 - `scripts/install/migrate.mjs` — upgrade path v3.10 → v3.18 → v3.19.0 → v3.19.2
 - MCP servers patched for global install (no more `__file__.parent.parent`)
-
-### Changed
 - **Dependencies reduced from ~1.4GB to ~50MB** — removed chromadb, sentence-transformers, torch
 - `memory_mcp_server.py`: 1,344→584 lines, 14→6 tools (memory_store, memory_search, memory_recall, memory_forget, memory_list, memory_stats)
 - `routing.yml`: 1,102→482 lines (-56%), deleted 22 dead handoffs, routing_matrix
@@ -305,29 +300,27 @@ All notable changes to this project will be documented in this file.
 - Agent YAML frontmatter fixed across all 14 agents (broken `...` separators, skills indent)
 - All platform configs updated with persistence MCP entries
 - `opencode.json` generated with correct deploy paths (cwd = deploy target)
-
-### Fixed
-- 157 dangling instruction references across 6 platforms
-- YAML frontmatter in all 14 agents (broken by previous sed edits)
-- OpenCode platform detection (was missing `platform/opencode/opencode.json`)
-
-### Removed
 - chromadb + sentence-transformers + torch (~1.4GB dependency chain)
 - `scripts/requirements-mcp-memory.txt`
 - 9 duplicate instructions (now skills on-demand)
 - `multi-model-routing` from prometheus (deleted skill)
 
-## [3.19.0] - 2026-07-21
+## 🐞 Fixed
 
-### Added
+- 157 dangling instruction references across 6 platforms
+- YAML frontmatter in all 14 agents (broken by previous sed edits)
+- OpenCode platform detection (was missing `platform/opencode/opencode.json`)
+
+## [v3.19.0] - 2026-07-21
+
+## 🆕 What's New
+
 - Memory Persistence Protocol (ADR-006) — agents now have mandatory `memory_recall()` pre-work (top_k=3, skip if score<0.3) and `memory_store()` post-work (2 lines max, importance 0.4-0.9)
 - Session-end auto-save script (`.pantheon/code-mode/session-end-save.py`) — exports Vector DB entries with importance ≥0.4 at session close (ChromaDB direct read + client-side filtering)
 - `session_end_save` handoff in routing.yml for Mnemosyne session close trigger
 - `tools.agent: true` for Apollo, Talos, and Gaia canonical agent files
 - Recall Conflict Protocol (ADR-006 v1.1) — 5 rules for when recalled memory conflicts with current action (log, prefer freshness, escalate ADRs, score threshold, audit trail)
 - New skills synced: `file-prompts`, `plan-architecture`, `streaming-patterns`, `token-audit`, `wisdom-accumulation`
-
-### Changed
 - All 14 agent files updated with `## 🧠 Memory Protocol` section (both canonical `/agents/` and OpenCode `.config/opencode/agents/`)
 - Zeus now auto-stores `memory_store()` directly on agent return — no Mnemosyne middleman
 - Steps optimization in opencode.json: zeus(25→35), aphrodite(25→30), hermes(20→25), themis(20→25), demeter(20→25), mnemosyne(10→8), iris(15→10), nyx(15→12), athena(15→12)
@@ -344,8 +337,20 @@ All notable changes to this project will be documented in this file.
 - `commands/pantheon-update.md`: example version bumped to 3.19.0
 - `pyproject.toml`: removed all backend/fastapi/alembic dependencies (no longer maintained)
 - `platform/forge.json`: version bumped to 3.19.0
+- `alembic/` — stale DB scaffolding (never completed)
+- `backend/` — stale FastAPI database engine (half-finished)
+- `docs/memory-bank/` — stale duplicate (should have been purged in v3.17.0)
+- `docs/TUTORIAL-PLUGIN-PT.md` — Portuguese tutorial for disabled plugin
+- `plugins-disabled/` — stale pantheon-tui-plugin
+- `release_notes.md` — lowercase, redundant with CHANGELOG
+- 4 obsolete skills: `conversational-ai-design`, `multi-model-routing`, `prompt-improver`, `prompt-injection-security`
+- `__pycache__` and `.mypy_cache` build artifacts
+- Full documentation audit: 10+ doc files cleaned, versions reconciled, stale content purged
+- Memory Persistence Protocol documented as ADR-006
+- `.config/opencode/` fully synced from canonical Pantheon (14 agents + 10 instructions)
 
-### Fixed
+## 🐞 Fixed
+
 - 33 dangling `docs/memory-bank/` references fixed across platform configs (`.claude/`, `.cursor/`, `.windsurf/`, `.continue/`, `.clinerules/`, `.github/`, `memories/`, `platform/`, `template/`, `.opencode/skills/`, `.tests/`)
 - `.pantheon/memory-bank/.tmp/` added to `.gitignore`
 - `docs/RELEASING.md` version reference — v3.8.4 → v3.19.0
@@ -360,46 +365,30 @@ All notable changes to this project will be documented in this file.
 - Skills count reconciled across all docs: 40
 - `docs/INDEX.md` skills count: 45→40
 
-### Removed
-- `alembic/` — stale DB scaffolding (never completed)
-- `backend/` — stale FastAPI database engine (half-finished)
-- `docs/memory-bank/` — stale duplicate (should have been purged in v3.17.0)
-- `docs/TUTORIAL-PLUGIN-PT.md` — Portuguese tutorial for disabled plugin
-- `plugins-disabled/` — stale pantheon-tui-plugin
-- `release_notes.md` — lowercase, redundant with CHANGELOG
-- 4 obsolete skills: `conversational-ai-design`, `multi-model-routing`, `prompt-improver`, `prompt-injection-security`
-- `__pycache__` and `.mypy_cache` build artifacts
+## [v3.18.0] - 2026-07-15
 
-### Documentation
-- Full documentation audit: 10+ doc files cleaned, versions reconciled, stale content purged
-- Memory Persistence Protocol documented as ADR-006
-- `.config/opencode/` fully synced from canonical Pantheon (14 agents + 10 instructions)
+(no changes)
 
-## [3.18.0] - 2026-07-15
+## [v3.17.1] - 2026-07-14
 
-### Added
+## 🆕 What's New
 
-- No unreleased changes recorded.
-
-## [3.17.1] - 2026-07-14
-
-### Added
 - Inline compression triggers (C8/C9/C11): implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) now declare `context-compression` skill and have a concise `## Inline Compression` section covering CRITICAL/HIGH subtask summaries, pre-delegation large blocks, and phase boundaries/handoffs
 - `tests/test_code_mode_args.py`: TDD coverage for the new `args` parameter forwarding
-
-### Changed
 - `context-compression` SKILL.md: real C8–C11 trigger definitions added; redundant C10 noted as OpenCode-native cross-reference; L1/L3 contradiction resolved (L1 = inline compress via MCP, L2 = batch promotion at gates)
 - Agent `.md` files: `context-compression` added to `skills:` frontmatter for all 5 implementation agents
 - `instructions/artifact-protocol.instructions.md`: scrub documented as automatic via MCP layer
 
-### Fixed
+## 🐞 Fixed
+
 - `execute_code_script` now forwards CLI arguments to subprocess — `compress-inline.py` is reachable via MCP (fixes argparse code 2 error)
 - Unified scrubber: 3 divergent implementations consolidated into single canonical `scripts/scrub-secrets.py`, imported by both `memory_mcp_server.py` and `compress-inline.py` via `importlib` (hyphenated filename cannot be statically imported)
 - OpenAI key regex standardized across all consumers to `sk-[A-Za-z0-9\-_]{10,}`
 
-## [3.17.0] - 2026-07-11
+## [v3.17.0] - 2026-07-11
 
-### Added
+## 🆕 What's New
+
 - Pantheon TUI Plugin overhaul: sidebar modernization, clickable commands, dynamic Python version
 - MCP Config section in TUI: list active plugins, MCP status, auto-compaction toggle
 - Memory section in TUI: show memory entries count
@@ -407,8 +396,6 @@ All notable changes to this project will be documented in this file.
 - `scripts/init-pantheon-mcp.sh` — automated MCP setup
 - `docs/INSTALLATION.md` — MCP installation guide
 - `docs/MIGRATION-MEMORY-BANK.md` — migration guide for memory bank to .pantheon/
-
-### Changed
 - Memory bank moved from `docs/memory-bank/` → `.pantheon/memory-bank/` (fully local, gitignored)
 - `.pantheon/` is now the standard for all local/generated artifacts
 - OpenCode MCP format fixed: command as array + cwd
@@ -416,19 +403,19 @@ All notable changes to this project will be documented in this file.
 - `.mcp.json` moved from root to `platform/mcp/mcp-template.json`
 - Version synchronization: `versioning.mjs` now handles all manifests (package.json, plugin.json, pyproject.toml, forge.json)
 - Updated 65+ source files with new .pantheon/ paths
+- `docs/memory-bank/` from git history (fully purged via filter-repo)
 
-### Fixed
+## 🐞 Fixed
+
 - TUI plugin path in tui.json (was pointing to non-existent file)
 - OpenCode MCP config format (command must be array + cwd)
 - Release pipeline: version mismatch between package.json and plugin.json
 - `mcp_resources_server.py` memory-bank path resolution
 
-### Removed
-- `docs/memory-bank/` from git history (fully purged via filter-repo)
+## [v3.16.0] - 2026-07-10
 
-## [3.16.0] - 2026-07-10
+## 🆕 What's New
 
-### Added
 - MCP Resources Support: pantheon://agents, skills, routing, deepwork, memory-bank
 - Code Mode MCP Adapter: confined script execution from .pantheon/code-mode/
 - YOLO Mode / Auto-Approve: permission tiers for trusted MCP servers
@@ -439,60 +426,60 @@ All notable changes to this project will be documented in this file.
 - Freshness decay (30-day half-life) + importance boost + claim verification
 - Agent MCP Integration: all 14 agents with MCP Capabilities + routing.yml capabilities
 - Documentation: MCP.md (238l), MEMORY.md (471l), AGENT-MCP.md (197l)
-
-### Changed
 - Skills audit: 5 orphan skills deleted, quality-gate skill created
 - Platform sync: pantheon-memory added as Tier 1 MCP in install-mcp.mjs
 - docs/mcp-recommendations.md expanded to 422 lines (browser MCPs, infra MCPs, 3-7 rule)
-
-### Security
 - memory_cleanup: 3-char minimum prefix guard
 - memory_export: restricted to ~/.pantheon/exports/ with path traversal check
 - Content size limit: 100KB max, 500 char category
 
-### Fixed
+## 🐞 Fixed
+
 - memory_sessions dead code (always returned empty results)
 - install-mcp.mjs filename: dash → underscore
 - .github/plugin/plugin.json: removed deleted streaming-patterns reference
 - memory_mcp_server.py: F821 undefined name, missing except block
 
+## [v3.15.0] - 2026-06-26
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-
-## [3.15.0] - 2026-06-26
-
-### 🚀 Enhancements
+## 🆕 What's New
 
 - **Level 3 Vector Memory:** 5 scripts (`schema.py`, `index.py`, `query.py`, `rebuild.py`, `cli.py`) with dual indexing (FTS5 + optional sqlite-vec embeddings), 8/8 tests passing, 120 entries indexed from memory bank
 - **Two-Tier Persistence Model:** Tier 1 auto-index (`quick_index()`) saves background agent results instantly into Vector Memory; Tier 2 full compression (ZZ artifact + memory bank update) only on Themis APPROVED
 - **Inline quick_index():** New function in `index.py` indexes subtask_summary dicts directly (no file scanning), idempotent via content_hash, auto-tags from keywords
 - **Context Compression Trigger:** Section in `zeus.agent.md` with test script `scripts/test-context-compression.sh` — validates all 5 checks (prerequisites, mocks, structure, secrets, output)
 - **Background Agent Dispatch:** Pattern documented in `zeus.agent.md` and `orchestration-workflow/SKILL.md` — OpenCode v1.16.2+ background agents with auto-persist
-
-### 🔧 Changed
-
 - **Auto-Continue Canonical Name:** "relentless" → "auto-continue" across 43 files (skills, commands, agent files, platform copies)
 - **Tools Format:** 14 agents converted from YAML array (`- tool`) to object format (`tool: true`)
 - **quick_index path fix:** Scripts now add `scripts/` (parent of vector_memory package) to sys.path instead of their own directory
-
-### 🗑️ Removed
-
 - **Platform Skill Directories:** 211 stale skill files removed from 6 platform dirs (`.clinerules/skills/`, `.claude/skills/`, `.cursor/skills/`, `.windsurf/skills/`, `.continue/skills/`, `platform/*/`) — OpenCode v1.16.0+ discovers skills natively from `~/.config/opencode/skills/`
 - **Exa MCP Server:** `exa-mcp-server` removed from `opencode.json` (redundant with OpenCode native websearch)
 - **`vector_memory` config key:** Removed from both project and global `opencode.json` (not recognized by OpenCode v1.17.x)
-
-### 🐛 Fixed
-
-- **Import Path in Vector Memory Scripts:** `sys.path` now correctly points to parent of `vector_memory/` package, enabling both direct execution and `python -m` usage
-
-### 📚 Documentation
-
 - **NOTE0010:** Pantheon v3 Roadmap — 5-phase vision from FTS5 to Plugin Architecture
 - **TASK-016:** Level 3 Implementation Plan — 24 tasks across 5 phases
 - **01-active-context.md:** Updated with deepwork v3.15 changes and Two-Tier model
-## [3.14.0] - 2026-06-20
 
-### 🚀 Enhancements
+## 🐞 Fixed
+
+- **Import Path in Vector Memory Scripts:** `sys.path` now correctly points to parent of `vector_memory/` package, enabling both direct execution and `python -m` usage
+
+## [v3.14.1] - 2026-06-21
+
+## 🆕 What's New
+
+- **Pantheon-Context MCP Experiment:** Removed entire `scripts/pantheon-context-mcp/` directory (server.py, scoring.py, summarizer.py, tests — 12 files, ~1,200 lines)
+- **Stale Agent References:** Stripped `pantheon-context` tool references from all 14 agent files, `.mcp.json`, `opencode.json`, `ROADMAP.md`
+- **Auto-Release CI:** Removed `.github/workflows/auto-release.yml` (triggered broken v3.14.0 release on every push to main)
+- **TUI Sidebar Plugin:** Rewrote from flat file to npm-style directory (`plugins/pantheon-tui/` with `index.tsx`, `package.json`, `dist/tui.tsx`). New features: real context usage bar (color thresholds 70%/90%), collapsible command guide (16 `/pantheon` commands), manual compress button, Python version display, collapsible agent registry
+
+## 🐞 Fixed
+
+- **Install Script:** `scripts/install/opencode.mjs` now correctly copies npm-style plugin directory and registers in `tui.json` (not `opencode.json` — TUI plugins use separate registration)
+- **CI Release Pipeline:** Added `dry_run` input to manual release workflow, removed auto-merge from release PRs, fixed duplicate steps
+
+## [v3.14.0] - 2026-06-20
+
+## 🆕 What's New
 
 - **Codebase Audit:** Comprehensive 5-agent scan — 48 issues found, all resolved
 - **Mermaid Diagrams:** 5 new diagrams — TDD Cycle (stateDiagram-v2), Artifact Lifecycle (flowchart), Council Synthesis (sequenceDiagram), Architecture (flowchart), Delegation Flow (flowchart)
@@ -504,7 +491,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Database Standards:** Async SQLAlchemy 2.0 patterns, connection pooling, migration testing, disaster recovery + 2 Mermaid diagrams
 - **Documentation Quality:** "When NOT to Use" sections on all 7 main agents, English-only throughout, ROADMAP.md updated
 
-### 🩹 Fixes
+## 🐞 Fixed
 
 - **Dead Agent Purge:** Removed ~150+ references to Echo, Chiron, Argus, Agora across 67+ files (agents, platforms, instructions, skills)
 - **Portuguese→English:** `docs/platforms/README.md` fully translated, `agents/prometheus.agent.md` mixed-language fixed
@@ -516,52 +503,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`agent-return-format.instructions.md`:** Fixed Agora reference in artifact table
 - **`skills/README.md`:** Count corrected from 37→42, stale Chiron/Echo refs updated
 
-### 🏡 Chore
+## [v3.13.0] - 2026-06-20
 
-## [3.14.1] - 2026-06-21
+## 🆕 What's New
 
-### 🗑️ Removed
-
-- **Pantheon-Context MCP Experiment:** Removed entire `scripts/pantheon-context-mcp/` directory (server.py, scoring.py, summarizer.py, tests — 12 files, ~1,200 lines)
-- **Stale Agent References:** Stripped `pantheon-context` tool references from all 14 agent files, `.mcp.json`, `opencode.json`, `ROADMAP.md`
-- **Auto-Release CI:** Removed `.github/workflows/auto-release.yml` (triggered broken v3.14.0 release on every push to main)
-
-### ✨ Enhanced
-
-- **TUI Sidebar Plugin:** Rewrote from flat file to npm-style directory (`plugins/pantheon-tui/` with `index.tsx`, `package.json`, `dist/tui.tsx`). New features: real context usage bar (color thresholds 70%/90%), collapsible command guide (16 `/pantheon` commands), manual compress button, Python version display, collapsible agent registry
-
-### 🔧 Fixed
-
-- **Install Script:** `scripts/install/opencode.mjs` now correctly copies npm-style plugin directory and registers in `tui.json` (not `opencode.json` — TUI plugins use separate registration)
-- **CI Release Pipeline:** Added `dry_run` input to manual release workflow, removed auto-merge from release PRs, fixed duplicate steps
-
-## [3.13.0] - 2026-06-20
-
-### Added
 - **Level 2 Context Compression** — priority scoring engine (5 deterministic dimensions: Impact, Risk, Novelty, Blockers, Downstream relevance), semantic summarization templates per agent-pair, budget allocation (100-line cap, priority-greedy), cross-reference mechanism (D/E/M/C IDs with auto-generated `_xref/index.md`), ZZ artifact format for phase-to-phase context injection, `context-compression` skill (Level 2)
 - **New prompts**: `prompts/semantic-summarize.md` for agent-pair aware semantic summarization
 - **New scripts**: `scripts/scrub-secrets.py` for security scrubbing of compressed content
 - **Missing infra**: `docs/memory-bank/_xref/_next_id.json` with full key names (decisions/entities/milestones/tasks)
 - **Safety preflight**: `can_compress()` guard prevents compression of in-progress/escalated/blocked/NEEDS_REVISION artifacts
 - **Atomic write protocol**: .tmp + fsync + rename with validation for corruption prevention
-
-### Changed
 - **14 agent `.agent.md` files** — stripped non-OpenCode frontmatter (`tools:`, `handoffs:`, `agents:`, `color:`, `hidden:`, `mcpServers:`). All agents now use only OpenCode-recognized fields
 - **Agent count unified** — all files consistently say "14 agents" (removed chiron, echo, argus from counts)
 - **`instructions/artifact-protocol.instructions.md`** — updated with ZZ artifact format, compression lifecycle, atomic write protocol, budget guardrails
 - **`instructions/memory-bank-standards.instructions.md`** — updated with compression and recovery section, cross-reference docs
 - **Context compression** — Level 1 replaced entirely by Level 2 (priority-scored summaries with downstream-aware field masks)
 - **All 7 platforms regenerated** — commands (pantheon-status, ping) and agents synced across OpenCode, Claude Code, Cursor, Windsurf, Cline, Continue, Copilot
-
-### Removed
 - **TUI Plugin** — moved to `plugins-disabled/`, removed from OpenCode config (temporary removal)
 - **`packages/tui-plugin/`** — source files removed from active tree
 - **`plugins/pantheon-tui-plugin/`** — secondary plugin source removed
 - **`platform/opencode/.opencode/package.json`** — stale TUI config removed
 - **Stale agent references** — chiron, echo, argus, agora references cleaned from 40+ files across platforms, docs, tests, commands
 - **Missing skill references** — `code-discipline`, `architecture-diagrams` removed from agent references (never existed as skills)
+- **Platform Conformance Matrix** — 6/6 plataformas passando com 0 falhas
+- **CI validate** — passing
+- **Sync Check** — passing
+- **Auto Release** — published at v3.13.0
 
-### Fixed
+## 🐞 Fixed
+
 - **CHANGELOG.md** — removed 4 duplicate v3.12.1 entries and empty v3.12.2 section
 - **Frontmatter consistency** — all 14 agents now parse cleanly with OpenCode YAML frontmatter
 - **Cross-platform agent count** — 14 everywhere (was inconsistent: some files said 18, some said 14)
@@ -578,42 +548,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **wisdom-accumulation cleaned from platforms** — nenhum agente referenciava o skill; removido de platform dirs via sync --clean
 - **All platforms sync:check** — 0 stale files across 7 platforms
 
-### CI
-- **Platform Conformance Matrix** — 6/6 plataformas passando com 0 falhas
-- **CI validate** — passing
-- **Sync Check** — passing
-- **Auto Release** — published at v3.13.0
-
-
-
-
-## [3.12.0] - 2026-06
+## [v3.12.0] - 2026-06
 
 [compare changes](https://github.com/ils15/pantheon/compare/v3.11.0...v3.12.0)
 
-### 🚀 Enhancements
+## 🆕 What's New
 
 - **agents:** Add anti-stall resilience and orchestration improvements ([7a61b69](https://github.com/ils15/pantheon/commit/7a61b69))
 - **agents:** Add /pantheon-status command with version badge + agent registry ([984ec65](https://github.com/ils15/pantheon/commit/984ec65))
 - **platform:** Add Pantheon TUI sidebar plugin for OpenCode ([09253c1](https://github.com/ils15/pantheon/commit/09253c1))
+- **release:** Sync version to v3.11.0 ([1a9fb64](https://github.com/ils15/pantheon/commit/1a9fb64))
 
-### 🩹 Fixes
+## 🐞 Fixed
 
 - **ci:** Sync platform files and add mcp-security skill to pass CI ([a27a245](https://github.com/ils15/pantheon/commit/a27a245))
 
-### 🏡 Chore
-
-- **release:** Sync version to v3.11.0 ([1a9fb64](https://github.com/ils15/pantheon/commit/1a9fb64))
-
-## [3.9.0] - 2026-05-28
+## [v3.9.0] - 2026-05-28
 
 [compare changes](https://github.com/ils15/pantheon/compare/v3.8.4...v3.9.0)
 
-### 🚀 Enhancements
+## 🆕 What's New
 
 - Setup changelogen + git-cliff for auto-releases ([ce4ee22](https://github.com/ils15/pantheon/commit/ce4ee22))
+- Cleanup commands, fix subtask agent, add Context7 tools, improve sync script ([da6ed7c](https://github.com/ils15/pantheon/commit/da6ed7c))
 
-### 🩹 Fixes
+## 🐞 Fixed
 
 - Add missing closing brace for github configuration in opencode.json ([a63c522](https://github.com/ils15/pantheon/commit/a63c522))
 - Address PR review sync and mapping feedback ([c550049](https://github.com/ils15/pantheon/commit/c550049))
@@ -621,8 +580,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add CHANGELOG entry for v3.8.4 to fix CI validate failure ([58cc0f5](https://github.com/ils15/pantheon/commit/58cc0f5))
 - **ci:** Auto-release cria PR com auto-merge ao invés de push direto pra main ([e4f78c9](https://github.com/ils15/pantheon/commit/e4f78c9))
 
-### 🏡 Chore
-
-- Cleanup commands, fix subtask agent, add Context7 tools, improve sync script ([da6ed7c](https://github.com/ils15/pantheon/commit/da6ed7c))
-
-[3.19.0]: https://github.com/ils15/pantheon/compare/v3.18.0...v3.19.0
+[v3.19.0]: https://github.com/ils15/pantheon/compare/v3.18.0...v3.19.0
