@@ -1,10 +1,19 @@
 /** Installation contract tests for the local Pantheon Vision MCP. */
 
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { syncTuiRegistration } from '../scripts/install/opencode.mjs'
+import { dirname, join } from 'node:path'
+import { resolveTuiCopyTarget, syncTuiRegistration } from '../scripts/install/opencode.mjs'
+import { staleTuiRefs } from '../scripts/install/plugin.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
 const opencodeInstaller = readFileSync('scripts/install/opencode.mjs', 'utf8')
@@ -65,44 +74,55 @@ assert.ok(
   'stale plugin entries with the same basename (e.g. dev paths) are replaced on upgrade',
 )
 
-// P2-5: the TUI plugin must be registered by the ABSOLUTE PACKAGE DIRECTORY
-// inside the installed package — relative entries ("plugins/pantheon-tui")
-// make opencode's tui loader run `npm install plugins/pantheon-tui` →
-// NpmInstallFailedError, and FILE entries (dist/tui.tsx) bypass package.json
-// exports so the loader mounts the raw (non-reactive) JSX. Pointing at the
-// directory lets the loader read exports["./tui"] → the COMPILED dist/tui.js
-// (Solid transforms applied) + exports["./server"] → the no-op server stub.
+// P2-5: the TUI plugin must be COPIED from the single source of truth
+// (src/plugins/tui) into the target config's plugins/pantheon-tui and
+// registered by THAT copied directory — never by the in-package source dir.
+// A registration pointing at the installed package breaks on package
+// reinstall/upgrade (the dir is replaced under a live registration) and can
+// accumulate diverging copies; the copied dir keeps exactly one absolute
+// reference per install. The loader reads the copied package.json exports:
+//   exports["./tui"]    → dist/tui.js     (COMPILED Solid output)
+//   exports["./server"] → dist/server.js  (no-op server() stub)
 assert.ok(
-  opencodeInstaller.includes(
-    "const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui')",
-  ),
-  'tui.json registration uses the hermetic package DIRECTORY derived from the installed package ROOT (loader reads package.json exports)',
+  opencodeInstaller.includes('function resolveTuiCopyTarget'),
+  'installer exposes pure resolveTuiCopyTarget(configDir) to derive the copied plugin dir',
+)
+assert.ok(
+  opencodeInstaller.includes('const tuiCopyDir = resolveTuiCopyTarget(configDir)'),
+  'syncTuiRegistration points at the COPIED directory, not the package source dir',
+)
+assert.ok(
+  opencodeInstaller.includes('copyPluginFiles(tuiSrcDir, tuiCopyDir'),
+  'syncTuiRegistration ALWAYS copies src/plugins/tui into <config>/plugins/pantheon-tui',
+)
+assert.ok(
+  opencodeInstaller.includes("const tuiSrcDir = join(ROOT, 'src', 'plugins', 'tui')"),
+  'the copy source is the package src/plugins/tui (single source of truth)',
+)
+assert.ok(
+  opencodeInstaller.includes('registerPlugin(targetTuiConfigPath, tuiCopyDir'),
+  'the copied directory is what gets registered in the target tui.json',
 )
 assert.ok(
   opencodeInstaller.includes("unregisterPlugin(tuiConfigPath, 'plugins/pantheon-tui'"),
   'old broken relative tui refs are removed on upgrade',
 )
 assert.ok(
-  opencodeInstaller.includes('registerPlugin(targetTuiConfigPath, tuiPluginRef'),
-  'the absolute tui dist path is what gets registered',
+  opencodeInstaller.includes("join(homedir(), '.opencode', 'tui.json')") &&
+    opencodeInstaller.includes("join(xdgConfig, 'opencode', 'tui.json')") &&
+    opencodeInstaller.includes("join(target, '.opencode', 'tui.json')"),
+  'cleanup covers ALL three tui.json locations OpenCode reads (global + project)',
 )
 assert.ok(
-  opencodeInstaller.includes('const tuiConfigPaths = [targetTuiConfigPath]') &&
-    opencodeInstaller.includes("join(homedir(), '.opencode', 'tui.json')") &&
-    opencodeInstaller.includes("join(xdgConfig, 'opencode', 'tui.json')"),
-  'global init cleans stale TUI refs from both OpenCode config locations',
+  pluginInstaller.includes('function staleTuiRefs'),
+  'plugin.mjs exposes the pure staleTuiRefs() filter',
 )
 assert.ok(
-  pluginInstaller.includes(
-    "const staleRefs = [pluginId, `${pluginId}/dist/tui.tsx`, `${pluginId}/dist/tui.js`]",
-  ),
-  'unregisterPlugin removes the bare relative plugin id too',
-)
-assert.ok(
-  pluginInstaller.includes("'/src/plugins/tui/dist/tui.tsx'") &&
-    pluginInstaller.includes("'/plugins/pantheon-tui/dist/tui.tsx'") &&
-    pluginInstaller.includes("'/plugins/pantheon-tui'"),
-  'unregisterPlugin removes stale absolute TUI registrations from previous installs (dist file refs + bare plugin dir ref)',
+  pluginInstaller.includes("'/src/plugins/tui'") &&
+    pluginInstaller.includes("'/plugins/pantheon-tui'") &&
+    pluginInstaller.includes("'/src/plugins/tui/dist/tui.tsx'") &&
+    pluginInstaller.includes("'/plugins/pantheon-tui/dist/tui.js'"),
+  'unregisterPlugin removes stale absolute TUI registrations (package source dir, bare copy dir, dist file refs)',
 )
 
 // P2-5c: the TUI plugin package must expose the opencode loader contract that
@@ -168,16 +188,24 @@ for (const dependency of ['pillow', 'paddle', 'gemini', 'torch']) {
 }
 
 // ---------------------------------------------------------------------------
-// P2-5b: behavioral — cross-location TUI registration sync. OpenCode loads
-// tui.json from BOTH ~/.opencode AND $XDG_CONFIG_HOME/opencode when they
-// exist, so stale absolute refs left in the NON-target location (old
-// checkouts/package installs) must be cleaned too, while the current plugin
-// is registered ONLY in the selected target.
+// P2-5b: behavioral — single source of truth for the TUI plugin. OpenCode
+// reads tui.json from ~/.opencode, $XDG_CONFIG_HOME/opencode AND
+// <project>/.opencode, so stale absolute refs from old checkouts/package/npx
+// installs must be cleaned from ALL of them, while the CURRENT plugin is
+// copied into <config>/plugins/pantheon-tui and registered by that single
+// absolute directory reference.
 // ---------------------------------------------------------------------------
-const CURRENT_TUI_REF = join(ROOT, 'src', 'plugins', 'tui')
-const STALE_ABS_REF = '/home/olddev/pantheon/src/plugins/tui/dist/tui.tsx'
-const STALE_REL_REF = 'plugins/pantheon-tui'
-const STALE_DIST_REF = '/home/olddev/pantheon/plugins/pantheon-tui/dist/tui.js'
+const PACKAGE_TUI_SRC = join(ROOT, 'src', 'plugins', 'tui')
+// Every reference shape that must NEVER survive an install:
+const STALE_REFS = [
+  '/home/olddev/pantheon/src/plugins/tui/dist/tui.tsx', // legacy dist file (tsx era)
+  '/home/olddev/pantheon/src/plugins/tui/dist/tui.js', // legacy dist file (js era)
+  '/home/olddev/node_modules/pantheon-opencode/src/plugins/tui', // in-package source dir
+  '/home/olddev/pantheon/.opencode/plugins/pantheon-tui', // bare copied dir (old target)
+  'plugins/pantheon-tui', // bare relative id (pre-1.19 writes)
+  '/home/olddev/.npm/_npx/ab12cd34/node_modules/pantheon-tui', // npx cache copy
+  'npx -y pantheon-tui', // npx spec string
+]
 
 function readTuiJson(path) {
   return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null
@@ -205,20 +233,22 @@ function withGlobalDirs(run) {
 const tuiAt = (dir, global_) =>
   global_ ? join(dir, 'tui.json') : join(dir, '.opencode', 'tui.json')
 
-// (a) clean global install → destination has exactly 1 registration, the
-// other global location stays empty (no stale refs, no created file).
+// (a) clean global install → exactly 1 registration, pointing at the COPIED
+// directory, and that directory exists with dist/tui.js (the loader entry).
 withGlobalDirs(({ home, xdg }) => {
   const target = join(home, '.opencode')
   mkdirSync(target, { recursive: true })
   const status = syncTuiRegistration(target, { isGlobal: true, dryRun: false })
-  assert.equal(status, 'created', 'clean install registers the current plugin')
+  assert.equal(status, 'created', 'clean install registers the copied TUI dir')
   const targetCfg = readTuiJson(tuiAt(target, true))
   assert.ok(targetCfg, 'target tui.json created')
-  assert.deepEqual(
-    targetCfg.plugin,
-    [CURRENT_TUI_REF],
-    'target holds exactly the current registration',
-  )
+  assert.equal(targetCfg.plugin.length, 1, 'exactly one TUI registration')
+  const [ref] = targetCfg.plugin
+  const copyDir = resolveTuiCopyTarget(target)
+  assert.equal(ref, copyDir, 'the registered ref is the copied plugin directory')
+  assert.ok(existsSync(ref), 'copied plugin dir exists')
+  assert.ok(existsSync(join(ref, 'dist', 'tui.js')), 'copied dir has dist/tui.js (loader entry)')
+  assert.ok(existsSync(join(ref, 'package.json')), 'copied dir has package.json (exports map)')
   const other = tuiAt(join(xdg, 'opencode'), true)
   assert.equal(
     readTuiJson(other)?.plugin.length ?? 0,
@@ -227,50 +257,114 @@ withGlobalDirs(({ home, xdg }) => {
   )
 })
 
-// (b) pre-existing stale refs in the OTHER global location are cleaned on
-// install, even though it is not the destination.
+// (b) idempotency: a second install produces a byte-identical tui.json with
+// the same single registration, and the copied dist files are untouched.
 withGlobalDirs(({ home, xdg }) => {
   const target = join(home, '.opencode')
   mkdirSync(target, { recursive: true })
-  const otherDir = join(xdg, 'opencode')
-  mkdirSync(otherDir, { recursive: true })
-  const otherTui = tuiAt(otherDir, true)
-  writeFileSync(
-    otherTui,
-    JSON.stringify({ plugin: [STALE_ABS_REF, STALE_REL_REF, STALE_DIST_REF] }, null, 2),
-  )
   syncTuiRegistration(target, { isGlobal: true, dryRun: false })
-  assert.deepEqual(
-    readTuiJson(otherTui).plugin,
-    [],
-    'stale absolute + relative + dist refs removed from the non-target location',
+  const targetTui = tuiAt(target, true)
+  const first = readFileSync(targetTui, 'utf8')
+  const copyDir = resolveTuiCopyTarget(target)
+  const firstDist = readFileSync(join(copyDir, 'dist', 'tui.js'), 'utf8')
+
+  syncTuiRegistration(target, { isGlobal: true, dryRun: false })
+
+  assert.equal(
+    readFileSync(targetTui, 'utf8'),
+    first,
+    'reinstall is a byte-identical no-op on tui.json',
   )
-  assert.deepEqual(
-    readTuiJson(tuiAt(target, true)).plugin,
-    [CURRENT_TUI_REF],
-    'destination still holds exactly the current registration',
+  const cfg = readTuiJson(targetTui)
+  assert.equal(cfg.plugin.length, 1, 'still exactly one registration')
+  assert.equal(cfg.plugin[0], copyDir, 'registration unchanged after reinstall')
+  assert.equal(
+    readFileSync(join(copyDir, 'dist', 'tui.js'), 'utf8'),
+    firstDist,
+    'copied dist files unchanged after reinstall',
+  )
+  const other = tuiAt(join(xdg, 'opencode'), true)
+  assert.equal(readTuiJson(other)?.plugin.length ?? 0, 0, 'other location stays clean')
+})
+
+// (c) stale refs (dist file, package source, bare copy, npx) seeded in ALL
+// THREE tui.json locations are cleaned; the project target keeps exactly the
+// copied-dir registration — one Pantheon TUI reference system-wide.
+withGlobalDirs(({ home, xdg }) => {
+  const project = mkdtempSync(join(tmpdir(), 'pantheon-tui-proj-'))
+  try {
+    const projectTuiDir = join(project, '.opencode')
+    mkdirSync(projectTuiDir, { recursive: true })
+    const global1 = join(home, '.opencode', 'tui.json') // ~/.opencode
+    const global2 = join(xdg, 'opencode', 'tui.json') // ~/.config/opencode
+    const projectTui = join(projectTuiDir, 'tui.json') // <project>/.opencode
+    for (const p of [global1, global2, projectTui]) {
+      mkdirSync(dirname(p), { recursive: true })
+      writeFileSync(p, JSON.stringify({ plugin: [...STALE_REFS] }, null, 2))
+    }
+
+    syncTuiRegistration(project, { isGlobal: false, dryRun: false })
+
+    assert.deepEqual(
+      readTuiJson(projectTui).plugin,
+      [resolveTuiCopyTarget(projectTuiDir)],
+      'project target keeps exactly the copied-dir registration',
+    )
+    for (const p of [global1, global2]) {
+      assert.equal(readTuiJson(p)?.plugin.length ?? 0, 0, `old Pantheon TUI refs cleaned from ${p}`)
+    }
+    const allRefs = [global1, global2, projectTui]
+      .filter(existsSync)
+      .flatMap((p) => readTuiJson(p)?.plugin ?? [])
+      .filter((r) => typeof r === 'string' && r.includes('pantheon-tui'))
+    assert.equal(allRefs.length, 1, 'exactly ONE Pantheon TUI reference system-wide after install')
+  } finally {
+    rmSync(project, { recursive: true, force: true })
+  }
+})
+
+// (d) the copied <config>/plugins/pantheon-tui is byte-identical to the
+// source of truth (dist/* + package.json + index.tsx).
+withGlobalDirs(({ home }) => {
+  const target = join(home, '.opencode')
+  mkdirSync(target, { recursive: true })
+  syncTuiRegistration(target, { isGlobal: true, dryRun: false })
+  const copyDir = resolveTuiCopyTarget(target)
+  for (const f of readdirSync(join(PACKAGE_TUI_SRC, 'dist'))) {
+    assert.equal(
+      readFileSync(join(copyDir, 'dist', f), 'utf8'),
+      readFileSync(join(PACKAGE_TUI_SRC, 'dist', f), 'utf8'),
+      `dist/${f} is byte-identical to the source of truth`,
+    )
+  }
+  assert.equal(
+    readFileSync(join(copyDir, 'package.json'), 'utf8'),
+    readFileSync(join(PACKAGE_TUI_SRC, 'package.json'), 'utf8'),
+    'package.json is byte-identical to the source of truth',
+  )
+  assert.equal(
+    readFileSync(join(copyDir, 'index.tsx'), 'utf8'),
+    readFileSync(join(PACKAGE_TUI_SRC, 'src', 'index.tsx'), 'utf8'),
+    'index.tsx is byte-identical to src/index.tsx',
   )
 })
 
-// (c) an already-correct registration in the destination is preserved
-// (no duplicate, no stale-ref removal of the current ref).
-withGlobalDirs(({ home, xdg }) => {
-  const target = join(home, '.opencode')
-  mkdirSync(target, { recursive: true })
-  const targetTui = tuiAt(target, true)
-  writeFileSync(targetTui, JSON.stringify({ plugin: [CURRENT_TUI_REF] }, null, 2))
-  syncTuiRegistration(target, { isGlobal: true, dryRun: false })
-  assert.deepEqual(
-    readTuiJson(targetTui).plugin,
-    [CURRENT_TUI_REF],
-    're-install preserves the current registration exactly once',
-  )
-  const other = tuiAt(join(xdg, 'opencode'), true)
-  assert.equal(
-    readTuiJson(other)?.plugin.length ?? 0,
-    0,
-    're-install keeps the other global location clean',
-  )
-})
+// (e) pure helpers: resolveTuiCopyTarget derives the copy dir; staleTuiRefs
+// flags every old Pantheon TUI reference shape (dist file, package source,
+// bare copy dir, npx). The bare-copy-dir shape is indistinguishable from a
+// stale one without knowing the install target, so it is flagged too —
+// syncTuiRegistration keeps the current ref by unregister-then-register.
+assert.equal(
+  resolveTuiCopyTarget('/x/.opencode'),
+  join('/x/.opencode', 'plugins', 'pantheon-tui'),
+  'resolveTuiCopyTarget appends plugins/pantheon-tui under the config dir',
+)
+const currentShape = '/home/current/.opencode/plugins/pantheon-tui'
+const staleOnly = staleTuiRefs([...STALE_REFS, currentShape])
+assert.deepEqual(
+  staleOnly,
+  [...STALE_REFS, currentShape],
+  'staleTuiRefs flags old shapes AND bare copy dirs (current ref is kept by re-registration)',
+)
 
 console.log('✅ Pantheon Vision MCP installation contract passed')

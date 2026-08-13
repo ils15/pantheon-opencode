@@ -194,21 +194,34 @@ npm run doctor
 
 ### TUI runtime versus development build
 
-The installer copies the prebuilt `plugins/pantheon-tui/dist/tui.tsx` and only
-installs runtime dependencies. OpenCode loads that TSX entry directly and
-transpiles it at startup, so users do not need `tsconfig.json`, `tsdown`, or
-development dependencies after installation. The TUI `build` and `typecheck`
-scripts are maintainer/development tasks for the repository, not post-install
-health checks; their failure in `~/.config/opencode/plugins/pantheon-tui` does
-not indicate a broken runtime.
+The installer treats `src/plugins/tui` as the single source of truth and always
+copies it into the target config as `plugins/pantheon-tui` (dist/ + package.json
++ index.tsx). OpenCode's TUI loader reads the copied `package.json` `exports`
+map (`./tui` → `dist/tui.js`, `./server` → `dist/server.js`), so users do not
+need `tsconfig.json`, `tsdown`, or development dependencies after installation.
+The TUI `build` and `typecheck` scripts are maintainer/development tasks for the
+repository, not post-install health checks; their failure in
+`~/.config/opencode/plugins/pantheon-tui` does not indicate a broken runtime.
+
+Every install (global or project) registers exactly ONE Pantheon TUI reference
+system-wide — the copied `plugins/pantheon-tui` directory in the installed
+config. Stale references from older installs (dist file paths, in-package
+`src/plugins/tui` dirs, bare `plugins/pantheon-tui` copies, npx paths) are
+removed from all `tui.json` locations OpenCode reads: `~/.opencode/tui.json`,
+`~/.config/opencode/tui.json` and `<project>/.opencode/tui.json`.
+
+> **Windows/WSL:** each environment (Windows native vs. WSL/Linux) uses its own
+> OpenCode binary, config directory, and Node/npx install. Run the installer
+> separately inside each environment — never share a config dir or copy
+> `tui.json` references between them, since paths are environment-specific.
 
 | Problem | Solution |
 |---------|----------|
 | Agents not found | Run `npx pantheon-opencode init` again |
 | MCP servers not starting | Check Python 3.11+, run `npm run setup` |
 | Background delegation not available | Set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` before launching OpenCode |
-| TUI sidebar not showing | Check `~/.config/opencode/tui.json` has `"plugins/pantheon-tui"` |
-| Plugin not loading | Ensure `~/.config/opencode/plugins/pantheon-tui/dist/tui.tsx` exists |
+| TUI sidebar not showing | Check the installed config's `tui.json` has exactly one `plugins/pantheon-tui` entry (absolute path) |
+| Plugin not loading | Ensure `<config>/plugins/pantheon-tui/dist/tui.js` exists (copied at install time) |
 | Health check fails | Run `npm run doctor` for detailed diagnostics |
 
 ### MCP servers e falha de spawn (ENOENT)
