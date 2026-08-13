@@ -19,7 +19,12 @@ import { z } from 'zod'
 import type { BackgroundJobBoard } from './background-job-board.ts'
 import type { ToolContextLike } from './delegation.ts'
 import { GoalStore } from './goal-store.ts'
+import { createPantheonLogger } from './logger.ts'
 import type { TodoEnforcerMessage } from './todo-enforcer.ts'
+
+// Silence-by-default TUI policy (pantheon-hooks L42-58): warn → hooks.log,
+// console echo opt-in via PANTHEON_HOOKS_LOG=1. `deps.logger` stays for tests.
+const log = createPantheonLogger({ module: 'pantheon-goal' })
 
 export type { Goal, GoalStatus } from './goal-store.ts'
 export { GoalStore }
@@ -27,8 +32,7 @@ export { GoalStore }
 // ─── Constants ─────────────────────────────────────────────────────────
 
 /** Continuation text injected into idle sessions. `{objective}` is substituted. */
-export const GOAL_CONTINUATION_PROMPT =
-  "Active goal: {objective}. Continue working toward it. Do not stop until you update the goal to done. If you believe it's complete, call pantheon_goal_update with status done."
+export const GOAL_CONTINUATION_PROMPT = 'Continue goal: {objective}'
 
 /** Defaults matching routing.yml `full_auto`. */
 export const GOAL_LOOP_DEFAULTS = {
@@ -141,8 +145,7 @@ export class GoalLoop {
       maxContinuations: opts.maxContinuations ?? GOAL_LOOP_DEFAULTS.maxContinuations,
       now: opts.now ?? Date.now,
     }
-    this.warn =
-      deps.logger?.warn ?? ((message: string) => console.warn(`[pantheon-goal] ${message}`))
+    this.warn = deps.logger?.warn ?? ((message: string) => log.warn(message))
   }
 
   /** True when the session has an active (non-done) goal. Used by the idle dispatcher. */

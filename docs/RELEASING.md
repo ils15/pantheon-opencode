@@ -27,11 +27,17 @@ node scripts/versioning.mjs status
 # Sync all manifests + promote [Unreleased] → [vX.Y.Z] (recommended bump)
 node scripts/versioning.mjs apply          # type auto (from commits)
 node scripts/versioning.mjs apply minor    # explicit type: patch | minor | major
+node scripts/versioning.mjs apply --notes  # pre-fill the promoted entry with
+                                           # release notes generated from commits
+
+# Generate release notes from conventional commits (lastTag..HEAD)
+node scripts/release-notes.mjs             # stable vX.Y.Z tags only
+node scripts/release-notes.mjs --draft     # last 30 commits, no tag lookup
 
 # CI-side consistency check (run in the version-check workflow job)
 node scripts/version-check.mjs
 
-# Dry-run of the release payload (status + pack)
+# Dry-run of the release payload (status + release notes + pack)
 npm run release:dry-run
 ```
 
@@ -65,6 +71,70 @@ git tags** — tags are workflow-owned (see below).
 > No tag is created locally and no release is created at merge time by a
 > separate workflow — everything downstream happens in `release.yml` on the
 > merge commit.
+
+---
+
+## Release Notes
+
+Release notes are **generated from conventional commits**, never written
+from scratch. Commitlint (12 types / 40 scopes) validates every commit
+before it merges, so the generator can always group the history.
+
+### Type → section mapping
+
+Release notes use the final emoji group format — **🆕 What's New /
+🐞 Fixed / ⚠️ Known Issues / ✅ Closed Issues**:
+
+| Commit type | Release notes section |
+|---|---|
+| `feat`, `perf`, `docs` | `## 🆕 What's New` (docs are user-facing — no dedicated group) |
+| `fix`, `security` | `## 🐞 Fixed` |
+| `--known-issues "text"` (CLI flag, repeatable) | `## ⚠️ Known Issues` (omitted when the flag is absent — never emitted empty) |
+| `Closes #N` / `Fixes #N` / `Resolves #N` in the commit **body** | `## ✅ Closed Issues` — bullet `- #N - <subject>` (deduped; omitted when no refs exist) |
+| `chore`, `refactor`, `test`, `ci`, `build`, `style`, `revert` (and unknown types) | **omitted** — internal, never user-facing |
+| `BREAKING CHANGE` footer or `type!:` / `type(scope)!:` | `💥` prefix on the bullet **inside** What's New (e.g. `- 💥 **scope** — subject`) — no dedicated Breaking group |
+
+Merge commits ("Merge …") and empty-subject chores are skipped. Bullets use
+`- **<scope>** — <subject>` (the scope as the bold prefix; without a scope
+the whole subject is bolded). Section order is What's New → Fixed → Known
+Issues → Closed Issues.
+
+### Generate the notes
+
+```bash
+# Commits since the latest stable tag (strict vX.Y.Z, pre-releases excluded)
+node scripts/release-notes.mjs
+
+# Same output without reading git tags (last 30 commits) — quick preview or
+# pre-first-tag use
+node scripts/release-notes.mjs --draft
+
+# Add a manual Known Issues entry (repeatable; omitted from output when absent)
+node scripts/release-notes.mjs --known-issues "widget API is unstable"
+
+# Pre-merge review: version status + generated notes + pack dry-run
+npm run release:dry-run
+```
+
+The script exits 0 whenever it can generate. stdout is markdown ready to
+paste into the `[Unreleased]` CHANGELOG section (diagnostics go to stderr).
+
+### Flow
+
+1. **Commit** — Conventional Commits enforced by commitlint (local hook + CI).
+2. **Generate** — `node scripts/release-notes.mjs` → paste the output into the
+   `[Unreleased]` section, or let `apply --notes` do it automatically.
+3. **CHANGELOG** — `node scripts/versioning.mjs apply minor [--notes]` bumps
+   the manifests and promotes `[Unreleased]` → `[vX.Y.Z]`. With `--notes` the
+   promoted entry is pre-filled from the grouped commits (mapped to the final
+   emoji groups `## 🆕 What's New / 🐞 Fixed / ⚠️ Known Issues /
+   ✅ Closed Issues`); without it the flow stays manual. `--notes`
+   **replaces** any manual `[Unreleased]` content — review the diff before
+   committing.
+4. **Extract** — `release.yml` runs `node scripts/changelog-extract.mjs X.Y.Z`
+   to pull the versioned section into the GitHub Release body.
+5. **Publish** — the workflow tags the exact merge commit and publishes to
+   npm (stable or beta per the PR label).
 
 ---
 

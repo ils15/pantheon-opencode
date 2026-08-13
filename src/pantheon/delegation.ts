@@ -19,11 +19,19 @@
  * Depth guard (root-session detection): the ToolContext carries NO parentID
  * (spike), so root detection is configurable. Resolution order:
  *   1. `options.isRootSession(sessionID)` custom predicate;
- *   2. `options.rootSessions` explicit allowlist;
- *   3. default: any session WE created via `session.create` is a sub-session;
- *      everything else is treated as root. Phase 3 should pass the root
- *      registry derived from `session.created` events (Session.parentID
- *      undefined ⇒ root) for authoritative enforcement.
+ *   2. `options.rootSessions` explicit allowlist — with a knownChildren
+ *      fallback (compaction-134): a session is a sub-session ONLY if WE
+ *      created it as a child (`session.create` via pantheon_delegate).
+ *      Sessions in neither set are treated as root, so a resumed root can
+ *      delegate after a restart even when the allowlist is incomplete
+ *      (opencode does not replay `session.created` events for pre-existing
+ *      sessions — the plugin seeds the registry from session.list() at
+ *      startup, and this fallback covers a failed/incomplete seed);
+ *   3. default (no rootSessions): any session WE created via
+ *      `session.create` is a sub-session; everything else is treated as
+ *      root. Phase 3 should pass the root registry derived from
+ *      `session.created` events (Session.parentID undefined ⇒ root) for
+ *      authoritative enforcement.
  *
  * Read-only enforcement is Phase 4 — `read_only` is exposed on the delegate
  * args and the child session is registered in the read-only registry when the
@@ -41,12 +49,14 @@ import {
   DELEGATION_DEFAULTS,
   type DelegationClient,
   type DelegationDeps,
+  type DelegationMessageBundle,
   type DelegationOptions,
   type FinalizeInput,
   finalizeDelegation as finalizeDelegationReport,
   readDelegationReport,
 } from './delegation-finalize.ts'
-import { resolveActivePreset } from './presets.mjs'
+import { createPantheonLogger } from './logger.ts'
+import { missingProviderKeyEnv, resolveActivePreset } from './presets.mjs'
 
 export type {
   DelegationClient,
@@ -58,6 +68,11 @@ export type {
 export { DELEGATION_DEFAULTS } from './delegation-finalize.ts'
 
 // ─── Types ─────────────────────────────────────────────────────────────
+
+// Silence-by-default TUI policy (pantheon-hooks L42-58): console output in a
+// plugin renders into the opencode TUI — the "lixo". Errors go to
+// .pantheon/logs/hooks.log; console echo is opt-in via PANTHEON_HOOKS_LOG=1.
+const log = createPantheonLogger({ module: 'pantheon-delegate' })
 
 /** Structural view of the tool context opencode passes to execute(). */
 export interface ToolContextLike {
@@ -131,6 +146,167 @@ function stateLabel(state: BackgroundJobRecord['state']): string {
   }
 }
 
+// ─── Agent activity sampling ────────────────────────────────────────────
+//
+// Visibility for `pantheon_delegation_read` / `pantheon_delegation_list`
+// (issue: the read blocks silently while the child works). While a read waits
+// on `waitForTerminal` it periodically samples the CHILD session's messages
+// via the same `client.session.messages` the finalize path uses, and the
+// collected lines are appended to the report as `## Agent Activity`.
+//
+// Fail-open by design: a missing/throwing `session.messages` (or empty
+// response) degrades to the current behavior — report without a section —
+// and NEVER breaks the read. No streaming/SSE, no persistent timers: the
+// poll lives inside the read's existing wait and is cleared when it settles.
+
+/** Cap for one activity line (~200 chars, spec). */
+const ACTIVITY_LINE_MAX = 200
+/** How often the read re-samples child activity while waiting (ms). */
+const ACTIVITY_POLL_MS = 2000
+/** Keep only the latest N readable entries per sample. */
+const ACTIVITY_LINES = 3
+
+/**
+ * Mutable collector shared between the wait loop and the read result.
+ * `sampled` distinguishes "messages unavailable/never succeeded" (fail-open
+ * → NO activity section, current behavior) from "messages OK but nothing
+ * readable" (→ `_no activity captured_` section).
+ */
+interface ActivityCollector {
+  /** Readable activity lines captured so far (latest window). */
+  lines: string[]
+  /** True once session.messages returned a bundle list at least once. */
+  sampled: boolean
+}
+
+/** Collapse whitespace and cap a single line at ~200 chars. */
+function truncateActivityLine(text: string, max = ACTIVITY_LINE_MAX): string {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  if (clean.length <= max) return clean
+  return `${clean.slice(0, max - 1)}…`
+}
+
+/** Readable tool args from a tool part (SDK ToolPart.metadata.input), or ''. */
+function toolArgsFromPart(part: { metadata?: { input?: unknown } }): string {
+  const meta = part.metadata
+  const raw = meta !== undefined && 'input' in meta ? meta.input : meta
+  if (raw === undefined) return ''
+  try {
+    const s = typeof raw === 'string' ? raw : JSON.stringify(raw)
+    return s === '' || s === '{}' ? '' : s
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * One readable activity line per message bundle — tool calls first (highest
+ * signal), then the first non-empty text part. Image/attachment/reasoning
+ * parts are skipped (only `text` and `tool` parts are user-visible).
+ */
+function activityLineFromBundle(bundle: DelegationMessageBundle): string | undefined {
+  const role = bundle.info?.role
+  const parts = bundle.parts ?? []
+  for (const part of parts) {
+    if (part.type === 'tool' && typeof part.tool === 'string' && part.tool !== '') {
+      const args = toolArgsFromPart(part)
+      return truncateActivityLine(`tool: ${part.tool}${args !== '' ? ` ${args}` : ''}`)
+    }
+  }
+  for (const part of parts) {
+    if (part.type === 'text' && typeof part.text === 'string' && part.text.trim() !== '') {
+      const label = role === 'user' ? 'user' : 'assistant'
+      return truncateActivityLine(`${label}: ${part.text.trim()}`)
+    }
+  }
+  return undefined
+}
+
+/**
+ * Sample the child's latest readable activity into `collector` (replace
+ * window). Fail-open: unavailable/throwing messages leaves the collector
+ * untouched (previous lines, or none → `_no activity captured_`), while a
+ * successful (even empty) response marks the collector as sampled.
+ */
+async function sampleChildActivity(
+  client: DelegationClient,
+  childSessionID: string,
+  collector: ActivityCollector,
+): Promise<void> {
+  if (typeof client.session.messages !== 'function') return
+  try {
+    const bundles = await client.session.messages({ path: { id: childSessionID } })
+    if (!Array.isArray(bundles)) return
+    collector.sampled = true
+    if (bundles.length === 0) return
+    const fresh = bundles
+      .map((b) => activityLineFromBundle(b))
+      .filter((l): l is string => l !== undefined)
+      .slice(-ACTIVITY_LINES)
+    if (fresh.length > 0) {
+      collector.lines.length = 0
+      collector.lines.push(...fresh)
+    }
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err)
+    log.warn(`[pantheon-delegate] activity sample failed (fail-open): ${reason}`)
+  }
+}
+
+/** Last readable activity line for a child, or undefined when unavailable. */
+async function lastChildActivity(
+  client: DelegationClient,
+  childSessionID: string,
+): Promise<string | undefined> {
+  if (typeof client.session.messages !== 'function') return undefined
+  try {
+    const bundles = await client.session.messages({ path: { id: childSessionID } })
+    if (!Array.isArray(bundles)) return undefined
+    for (let i = bundles.length - 1; i >= 0; i--) {
+      const bundle = bundles[i]
+      if (bundle === undefined) continue
+      const line = activityLineFromBundle(bundle)
+      if (line !== undefined) return line
+    }
+    return undefined
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err)
+    log.warn(`[pantheon-delegate] last activity fetch failed (fail-open): ${reason}`)
+    return undefined
+  }
+}
+
+/**
+ * Wait for a terminal board state while sampling the child's activity every
+ * ACTIVITY_POLL_MS (first sample fires immediately — a quick finalize can
+ * still capture something). The interval is cleared when the wait settles;
+ * collection never delays the terminal resolution.
+ */
+async function waitForTerminalWithActivity(
+  board: BackgroundJobBoard,
+  client: DelegationClient,
+  taskID: string,
+  timeoutMs: number,
+  collector: ActivityCollector,
+): Promise<BackgroundJobRecord> {
+  void sampleChildActivity(client, taskID, collector)
+  const timer = setInterval(() => {
+    void sampleChildActivity(client, taskID, collector)
+  }, ACTIVITY_POLL_MS)
+  timer.unref()
+  try {
+    return await board.waitForTerminal(taskID, timeoutMs)
+  } finally {
+    clearInterval(timer)
+  }
+}
+
+/** Render the trailing activity section appended to the read result. */
+export function formatActivitySection(lines: string[]): string {
+  if (lines.length === 0) return '## Agent Activity\n\n_no activity captured_'
+  return `## Agent Activity\n\n${lines.map((l) => `- ${l}`).join('\n')}`
+}
+
 // ─── Model resolution ──────────────────────────────────────────────────
 
 /** Session model ref accepted by the opencode server's session.create. */
@@ -138,6 +314,17 @@ export interface ChildSessionModelRef {
   id: string
   providerID: string
 }
+
+/**
+ * Known-good fallback model (P1, 2026-08-11 — release 1.3.4): when an
+ * AUTO-RESOLVED model (routing.yml agent entry / active preset) points at a
+ * provider whose API key is not configured, the child is dispatched on the
+ * native `opencode` provider instead — verified to work in the field without
+ * an external provider key. Validated with the same providerKeyConfigured
+ * gate as the resolved model; an explicit caller-supplied `model` always wins
+ * over this fallback.
+ */
+const FALLBACK_MODEL = 'opencode/deepseek-v4-flash-free'
 
 /**
  * Split a `provider/model` model ID (e.g. `opencode/deepseek-v4-flash-free`)
@@ -194,7 +381,95 @@ function resolveChildModel(
   return undefined
 }
 
+/**
+ * Resolve a USABLE child model for a delegate dispatch, gating the resolved
+ * provider's API key (P1, 2026-08-11 — release 1.3.4):
+ *
+ *   1. resolve the model with the existing precedence (explicit `model` >
+ *      options.agentModels > active preset) — see resolveChildModel.
+ *   2. provider key gate: the resolved provider requires its apiKeyEnv env
+ *      var (routing.yml preset defs — same source applyPreset enforces at
+ *      startup). No gate (native providers) or key present → usable as-is.
+ *   3. key MISSING + EXPLICIT caller model → respected anyway (user intent),
+ *      warned.
+ *   4. key MISSING + AUTO-resolved model → fall back to FALLBACK_MODEL
+ *      (validated the same way). Fallback also unusable → returns an `error`
+ *      TEXT (the caller returns it from the tool — never throws) and the
+ *      caller registers NO job on the board.
+ *
+ * The no-model case (nothing resolved) keeps the pre-existing behavior:
+ * warn and let the child use opencode's default.
+ *
+ * @returns `{ model, error }` — at most one of `model` / `error` is set;
+ *   both may be unset (no model resolved, warn emitted).
+ */
+function resolveUsableChildModel(
+  options: DelegationOptions,
+  agent: string,
+  explicitModel: string | undefined,
+): { model: ChildSessionModelRef | undefined; error: string | undefined } {
+  const env = options.presetEnv ?? process.env
+  const explicit = explicitModel !== undefined && explicitModel !== ''
+  const warn = (msg: string) => options.logger?.warn?.(msg)
+
+  const model = resolveChildModel(options, agent, explicitModel)
+  if (model === undefined) {
+    warn(
+      `[pantheon-delegate] no model resolved for agent "${agent}" — ` +
+        "child session will use opencode's default model (may require API keys)",
+    )
+    return { model: undefined, error: undefined }
+  }
+
+  const missingVar = missingProviderKeyEnv(model.providerID, { env })
+  if (missingVar === undefined) return { model, error: undefined }
+
+  if (explicit) {
+    // Rule of precedence: the caller's explicit model is respected — warn only.
+    warn(
+      `[pantheon-delegate] model "${explicitModel}" provider "${model.providerID}" requires ` +
+        `API key ${missingVar} (unset) — respecting the explicit model anyway`,
+    )
+    return { model, error: undefined }
+  }
+
+  // Auto-resolved (agentModels / preset) → try the known-good fallback.
+  const fallback = splitModelRef(FALLBACK_MODEL)
+  if (fallback !== undefined && missingProviderKeyEnv(fallback.providerID, { env }) === undefined) {
+    warn(
+      `[pantheon-delegate] provider "${model.providerID}" requires API key ${missingVar} ` +
+        `(unset) — falling back to ${FALLBACK_MODEL}`,
+    )
+    return { model: fallback, error: undefined }
+  }
+
+  const message =
+    `pantheon_delegate: no usable model for agent "${agent}" — provider "${model.providerID}" ` +
+    `requires API key (set ${missingVar} or PANTHEON_MODEL_PRESET)`
+  warn(`[pantheon-delegate] ${message}`)
+  return { model: undefined, error: message }
+}
+
 // ─── Factory ───────────────────────────────────────────────────────────
+
+/**
+ * Pure helper: collect the IDs of root sessions (parentID === undefined)
+ * from a session list. Used to SEED the depth-guard allowlist at startup —
+ * opencode does not replay `session.created` events for sessions that exist
+ * before plugin load, so a resumed root would never enter `rootSessions`
+ * and the depth guard would reject its pantheon_delegate calls after a
+ * restart. Fail-open contract lives at the call site (plugin.ts): a failed
+ * `session.list()` leaves the registry untouched, never crashes startup.
+ */
+export function collectRootSessionIDs(
+  sessions: ReadonlyArray<{ id: string; parentID?: string }>,
+): Set<string> {
+  const roots = new Set<string>()
+  for (const session of sessions) {
+    if (session.parentID === undefined) roots.add(session.id)
+  }
+  return roots
+}
 
 /**
  * Build the delegation toolset. Keeps per-instance state: the set of child
@@ -214,7 +489,18 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
 
   function isRootSession(sessionID: string): boolean {
     if (options.isRootSession !== undefined) return options.isRootSession(sessionID)
-    if (options.rootSessions !== undefined) return options.rootSessions.has(sessionID)
+    if (options.rootSessions !== undefined) {
+      // compaction-134 (fix layer 2): the allowlist alone is NOT
+      // authoritative. opencode does not replay `session.created` events for
+      // pre-existing sessions, so after a restart the resumed root never
+      // entered rootSessions (the plugin seeds it from session.list() at
+      // startup, but that seed is fail-open). A session is a sub-session
+      // ONLY if WE created it as a child (knownChildren — filled on every
+      // pantheon_delegate dispatch). Everything unknown is treated as root:
+      // resumed/unknown sessions can delegate, while the real depth guard
+      // (a child of a delegate cannot re-delegate) is preserved.
+      return options.rootSessions.has(sessionID) || !knownChildren.has(sessionID)
+    }
     return !knownChildren.has(sessionID)
   }
 
@@ -257,16 +543,16 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       // session.create failure → return a clear error as TEXT (tools return
       // errors as text, not thrown) and register NO job on the board — an
       // unhandled rejection here would otherwise lose the failure entirely.
-      // The child model is resolved from (a) the explicit `model` option,
-      // (b) options.agentModels (routing.yml), (c) the active preset — else
-      // left unset so opencode's default applies (warned below).
-      const childModel = resolveChildModel(options, args.agent, args.model)
-      if (childModel === undefined) {
-        options.logger?.warn?.(
-          `[pantheon-delegate] no model resolved for agent "${args.agent}" — ` +
-            "child session will use opencode's default model (may require API keys)",
-        )
-      }
+      // The child model is resolved with a provider API-key gate (P1): the
+      // resolved model (explicit `model` > options.agentModels > active
+      // preset) is used when its provider key is configured; an explicit
+      // caller model is always respected (warned); an auto-resolved model
+      // whose provider key is missing falls back to the known-good
+      // opencode/deepseek-v4-flash-free; if nothing usable remains the
+      // failure is returned as TEXT below — no session, no board job.
+      const resolved = resolveUsableChildModel(options, args.agent, args.model)
+      if (resolved.error !== undefined) return resolved.error
+      const childModel = resolved.model
       let created: { id: string }
       try {
         created = await client.session.create({
@@ -312,9 +598,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
           state: 'error',
           error: `Delegation [${job.alias}] timed out after ${timeoutMs}ms without reaching a terminal state`,
           timedOut: true,
-        }).catch((err: unknown) =>
-          console.error('[pantheon-delegate] timeout finalize failed:', err),
-        )
+        }).catch((err: unknown) => log.error('[pantheon-delegate] timeout finalize failed:', err))
       }, timeoutMs)
       timer.unref()
       timers.set(childSessionID, timer)
@@ -326,7 +610,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
           path: { id: childSessionID },
           body: { agent: args.agent, parts: [{ type: 'text', text: args.prompt }] },
         })
-        .catch((err: unknown) => console.error('[pantheon-delegate] promptAsync failed:', err))
+        .catch((err: unknown) => log.error('[pantheon-delegate] promptAsync failed:', err))
 
       return (
         `Delegated to ${args.agent}: [${job.alias}] (task ${childSessionID}).\n` +
@@ -338,7 +622,8 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
   const pantheon_delegation_read: DelegationTool<typeof readArgs> = {
     description:
       'Block until a background delegation finishes (completed/error/cancelled), then return its ' +
-      'report markdown and mark the job reconciled. Resolves by alias or task ID.',
+      'report markdown (with a trailing agent-activity section) and mark the job reconciled. ' +
+      'Resolves by alias or task ID.',
     args: readArgs,
     execute: async (args, ctx) => {
       const job = board.resolve(ctx.sessionID, args.id)
@@ -346,9 +631,18 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         return `Unknown delegation "${args.id}" for this session. Use pantheon_delegation_list to see active delegations.`
       }
 
+      // Sample the child's messages while waiting so the caller sees what the
+      // agent is doing — fail-open: no messages support → report as before.
+      const collector: ActivityCollector = { lines: [], sampled: false }
       let terminal: BackgroundJobRecord
       try {
-        terminal = await board.waitForTerminal(job.taskID, readTimeoutMs)
+        terminal = await waitForTerminalWithActivity(
+          board,
+          client,
+          job.taskID,
+          readTimeoutMs,
+          collector,
+        )
       } catch {
         return `Timed out after ${readTimeoutMs}ms waiting for delegation "${args.id}" ([${job.alias}]).`
       }
@@ -359,7 +653,9 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       }
 
       await board.markReconciled(job.taskID)
-      return md
+      // Fail-open: if session.messages never succeeded, keep the report as-is.
+      if (!collector.sampled && collector.lines.length === 0) return md
+      return `${md.replace(/\n+$/, '')}\n\n${formatActivitySection(collector.lines)}`
     },
   }
 
@@ -371,10 +667,16 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       const jobs = board.list(ctx.sessionID)
       if (jobs.length === 0) return 'No background delegations for this session.'
 
-      const lines = jobs.map((j) => {
-        const unread = j.terminalUnreconciled ? ' [unread]' : ''
-        return `  [${j.alias}] ${j.agent} — ${j.description} — ${stateLabel(j.state)}${unread}`
-      })
+      const lines = await Promise.all(
+        jobs.map(async (j) => {
+          const unread = j.terminalUnreconciled ? ' [unread]' : ''
+          const base = `  [${j.alias}] ${j.agent} — ${j.description} — ${stateLabel(j.state)}${unread}`
+          // Running jobs get a live `last activity:` line (fail-open fetch).
+          if (j.state !== 'running') return base
+          const last = await lastChildActivity(client, j.taskID)
+          return last === undefined ? base : `${base}\n    last activity: ${last}`
+        }),
+      )
       return `Background Delegations (${jobs.length}):\n${lines.join('\n')}`
     },
   }

@@ -19,6 +19,13 @@
  * @module dispatch-guard
  */
 
+import { createPantheonLogger } from './logger.ts'
+
+// Silence-by-default TUI policy (pantheon-hooks L42-58): the default warn
+// fallback logs to .pantheon/logs/hooks.log; console echo is opt-in via
+// PANTHEON_HOOKS_LOG=1. `logger` injection stays for tests.
+const log = createPantheonLogger({ module: 'pantheon-dispatch-guard' })
+
 /** A dispatch result — the minimal shape needed to classify emptiness. */
 export interface DispatchResultLike {
   /** Text content of the result (task_result / report markdown). */
@@ -35,7 +42,7 @@ export type DispatchClassification = 'content' | 'empty-mode1' | 'empty-mode2'
 export interface DispatchGuardOptions {
   /** Enable auto-retry on empty results. Default: true. */
   retryOnEmpty?: boolean
-  /** Injectable logger (defaults to console.warn with a prefix). */
+  /** Injectable logger (defaults to the Pantheon file log, env-gated echo). */
   logger?: { warn: (message: string) => void }
 }
 
@@ -72,9 +79,7 @@ function hasTokens(result: DispatchResultLike): boolean {
 
 export function createDispatchGuard(options?: DispatchGuardOptions): DispatchGuard {
   const retryOnEmpty = options?.retryOnEmpty ?? true
-  const warn =
-    options?.logger?.warn ??
-    ((message: string) => console.warn(`[pantheon-dispatch-guard] ${message}`))
+  const warn = options?.logger?.warn ?? ((message: string) => log.warn(message))
   // Per-instance retry budget — the "cap 1" enforcement point.
   let retriesUsed = 0
 

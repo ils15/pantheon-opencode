@@ -3,15 +3,7 @@
  * opencode.mjs — OpenCode platform installer
  */
 
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import {
@@ -29,7 +21,7 @@ import {
 } from './cli-ui.mjs'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
-import { installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
+import { copyPluginFiles, installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
 import {
   collectSkillNames,
   copyFiles,
@@ -89,7 +81,7 @@ function mergeMissing(target, source) {
  * installed package.
  *
  * The packaged config may reference plugins via developer-machine absolute
- * paths (e.g. /home/<dev>/pantheon/src/plugin.ts). Copying those verbatim into
+ * paths (e.g. <dev>/pantheon/.../src/plugin.ts). Copying those verbatim into
  * the user's config would break every install on any other machine. This
  * rewrites the entry to the plugin file inside the INSTALLED package (derived
  * from ROOT — never hardcoded), so both dev and global installs resolve to a
@@ -121,6 +113,97 @@ export function isGlobalConfigDir(target) {
   const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
   const xdgDir = resolve(join(xdgConfig, 'opencode'))
   return resolve(target) === xdgDir
+}
+
+/**
+ * Derive where the TUI plugin must be COPIED for a given config directory.
+ *
+ * The TUI plugin's single source of truth is src/plugins/tui inside the
+ * package; the loader must NEVER be pointed at that in-package dir (a package
+ * reinstall/upgrade replaces the dir under a live registration and leaves
+ * diverging copies loading). Instead the installer always copies it into the
+ * config dir's plugins/ dir and registers THAT copy:
+ *
+ *   <configDir>/plugins/pantheon-tui      (dist/ + package.json + index.tsx)
+ *
+ * The loader reads the copied package.json `exports` map:
+ *   exports["./tui"]    → dist/tui.js     (COMPILED Solid output)
+ *   exports["./server"] → dist/server.js  (no-op server() stub)
+ *
+ * @param {string} configDir - directory holding tui.json (target for global
+ *   installs, <target>/.opencode for project installs)
+ * @returns {string} absolute path of the copied plugin directory
+ */
+export function resolveTuiCopyTarget(configDir) {
+  return join(configDir, 'plugins', 'pantheon-tui')
+}
+
+/**
+ * Every tui.json location OpenCode reads: the two global config dirs
+ * (~/.opencode and $XDG_CONFIG_HOME/opencode) plus the target's own project
+ * config. Cleanup runs over ALL of them so a stale Pantheon TUI registration
+ * can never survive in a location the loader still reads.
+ *
+ * @param {string} target - install target directory
+ * @returns {string[]} unique tui.json paths (deterministic order)
+ */
+export function tuiConfigLocations(target) {
+  const homeTui = join(homedir(), '.opencode', 'tui.json')
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
+  const xdgTui = join(xdgConfig, 'opencode', 'tui.json')
+  const projectTui = join(target, '.opencode', 'tui.json')
+  return [...new Set([homeTui, xdgTui, projectTui])]
+}
+
+/**
+ * Sync the Pantheon TUI plugin registration across EVERY tui.json location
+ * OpenCode reads.
+ *
+ * Contract (single source of truth):
+ *   1. ALWAYS copy src/plugins/tui → <configDir>/plugins/pantheon-tui
+ *      (dist/* + package.json + index.tsx) so the registered reference is a
+ *      directory that exists and carries the loader contract (exports →
+ *      dist/tui.js, dist/server.js). The copy is idempotent: a second run is
+ *      byte-identical.
+ *   2. Clean stale Pantheon TUI refs from ALL tui.json locations OpenCode
+ *      loads — ~/.opencode, $XDG_CONFIG_HOME/opencode and
+ *      <target>/.opencode — covering every old reference shape: dist file
+ *      paths, in-package src/plugins/tui dirs, bare plugins/pantheon-tui
+ *      copies, and npx paths. A stale ref left in the non-target location
+ *      would still be loaded and break the TUI.
+ *   3. Register EXACTLY the copied directory in the selected target only —
+ *      exactly ONE Pantheon TUI reference exists system-wide after install.
+ *
+ * @param {string} target - install target directory
+ * @param {object} [opts]
+ * @param {boolean} [opts.isGlobal=false] - flat global layout vs .opencode/
+ * @param {boolean} [opts.dryRun=false]
+ * @returns {'created'|'skipped'} status for the target registration
+ */
+export function syncTuiRegistration(target, { isGlobal = false, dryRun = false } = {}) {
+  const configDir = isGlobal ? target : join(target, '.opencode')
+  const targetTuiConfigPath = join(configDir, 'tui.json')
+
+  // 1. Always copy the single source of truth into the target config's
+  //    plugins/pantheon-tui. Registering this copied directory (never the
+  //    in-package src/plugins/tui) keeps installs hermetic and idempotent:
+  //    the ref points at a dir that exists and has dist/tui.js.
+  const tuiSrcDir = join(ROOT, 'src', 'plugins', 'tui')
+  const tuiCopyDir = resolveTuiCopyTarget(configDir)
+  if (existsSync(tuiSrcDir)) {
+    copyPluginFiles(tuiSrcDir, tuiCopyDir, { dryRun })
+  }
+
+  // 2. Clean stale Pantheon TUI refs from every location OpenCode reads.
+  //    unregisterPlugin covers the bare relative id plus the extended stale
+  //    patterns (dist files, in-package src/plugins/tui dir, bare
+  //    plugins/pantheon-tui copies, npx paths).
+  for (const tuiConfigPath of tuiConfigLocations(target)) {
+    unregisterPlugin(tuiConfigPath, 'plugins/pantheon-tui', { dryRun })
+  }
+
+  // 3. Register the copied directory in the selected target only.
+  return registerPlugin(targetTuiConfigPath, tuiCopyDir, { dryRun })
 }
 
 export async function installOpenCode(
@@ -327,19 +410,7 @@ export async function installOpenCode(
   // -----------------------------------------------------------------------
   // 2.9 Create/update tui.json with plugin registration
   // -----------------------------------------------------------------------
-  const targetTuiConfigPath = isGlobal
-    ? join(target, 'tui.json')
-    : join(target, '.opencode', 'tui.json')
-  // Hermetic TUI plugin registration: opencode's tui loader treats relative
-  // entries ("plugins/pantheon-tui") as npm/github package specs and fails
-  // with NpmInstallFailedError ("Repository not found"). Register the plugin
-  // by the ABSOLUTE path of the built dist inside the installed package
-  // (derived from ROOT — never hardcoded), mirroring the loader's
-  // absolute-path support (same pattern as the hooks plugin fix).
-  const tuiPluginRef = join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx')
-  // Clean up the old broken relative ref (and stale dist refs) on upgrade.
-  unregisterPlugin(targetTuiConfigPath, 'plugins/pantheon-tui', { dryRun })
-  const tuiStatus = registerPlugin(targetTuiConfigPath, tuiPluginRef, { dryRun })
+  const tuiStatus = syncTuiRegistration(target, { isGlobal, dryRun })
   if (tuiStatus === 'created') stats.created++
   else stats.skipped++
 
@@ -601,8 +672,8 @@ export async function installOpenCode(
   // B.5.1 Hermetic plugin resolution (packaging fix)
   // --------------------------------------------------------------------
   // The packaged opencode.json may reference plugins via developer-machine
-  // absolute paths (e.g. /home/<dev>/pantheon/src/plugin.ts or
-  // /home/<dev>/pantheon/src/plugins/pantheon-hooks.ts). Copying those
+  // absolute paths (e.g. <dev>/pantheon/.../src/plugin.ts or
+  // <dev>/pantheon/.../src/plugins/pantheon-hooks.ts). Copying those
   // verbatim into the user's config would break every global install on any
   // other machine. resolveInstalledPlugin() rewrites each entry to the plugin
   // file inside the INSTALLED package (derived from ROOT — never hardcoded),
@@ -623,6 +694,17 @@ export async function installOpenCode(
       config.plugin.push(resolved)
     }
   }
+
+  // The runtime hooks plugin MUST always be registered. The packaged
+  // opencode.json no longer carries dev-machine plugin paths (removed in
+  // 3e552cc), so config.plugin would otherwise stay empty and the
+  // pantheon-hooks runtime would never load. Register it unconditionally,
+  // replacing any stale entry for the same file (same basename-dedup as
+  // above) so installs and upgrades are idempotent and hermetic.
+  const hooksPlugin = resolveInstalledPlugin('src/plugins/pantheon-hooks.ts')
+  const hooksFile = basename(hooksPlugin)
+  config.plugin = config.plugin.filter((p) => basename(p) !== hooksFile)
+  config.plugin.push(hooksPlugin)
 
   if (!config.provider && pantheonConfig.provider) {
     config.provider = deepClone(pantheonConfig.provider)

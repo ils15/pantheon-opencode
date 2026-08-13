@@ -26,7 +26,14 @@ import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-b
 /** A minimal structural view of one message bundle from session.messages(). */
 export interface DelegationMessageBundle {
   info?: { role?: string; finish?: string; error?: unknown }
-  parts?: Array<{ type?: string; text?: string }>
+  parts?: Array<{
+    type?: string
+    text?: string
+    /** Tool name on `tool` parts — used by the activity sampler. */
+    tool?: string
+    /** Tool input on `tool` parts (opencode SDK ToolPart.metadata). */
+    metadata?: { input?: unknown }
+  }>
 }
 
 /** Minimal structural view of the opencode SDK session client we use. */

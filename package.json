@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "publishConfig": {
     "access": "public",
@@ -21,7 +21,7 @@
     "version:status": "node scripts/versioning.mjs status",
     "version:apply": "node scripts/versioning.mjs apply",
     "version:check": "node scripts/version-check.mjs",
-    "release:dry-run": "node scripts/versioning.mjs status && npm pack --dry-run",
+    "release:dry-run": "node scripts/versioning.mjs status && node scripts/release-notes.mjs && npm pack --dry-run",
     "publish:next": "npm publish --tag next --access public",
     "lint": "npx biome ci .",
     "typecheck": "npx tsc --noEmit",
@@ -30,7 +30,7 @@
     "hooks:install": "pre-commit install",
     "hooks:update": "pre-commit autoupdate",
     "test:security": "npm run secret-scan && node tests/test_install_mcp_vision.mjs && node tests/test_doctor_layers.mjs",
-    "test:node": "node --test tests/*.mjs",
+    "test:node": "node --test tests/*.mjs tests/pantheon/*.mjs",
     "test:ts": "for f in tests/pantheon/*.test.ts; do npx tsx \"$f\" || exit 1; done",
     "test": "python3 -m pytest tests/ -q 2>&1 || echo \"No tests found\"",
     "test:ci": "python3 -m pytest tests/ -q --tb=short 2>&1 || true"
@@ -64,7 +64,10 @@
     "scripts/hooks/**",
     "src/mcp/requirements*",
     "src/plugins/tui/**",
-    "src/skills/**"
+    "!src/plugins/tui/node_modules/**",
+    "src/skills/**",
+    "!**/__pycache__/**",
+    "!**/*.pyc"
   ],
   "dependencies": {
     "js-yaml": "^4.3.0",

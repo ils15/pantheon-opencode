@@ -11,17 +11,19 @@
  */
 
 import { mkdir, rename, writeFile } from 'node:fs/promises'
-import { join, dirname } from 'node:path'
+import { dirname, join } from 'node:path'
+
+import { createPantheonLogger } from './logger.ts'
+
+// Silence-by-default TUI policy (pantheon-hooks L42-58): console output in a
+// plugin renders into the opencode TUI — the "lixo". Board internals log to
+// .pantheon/logs/hooks.log; console echo is opt-in via PANTHEON_HOOKS_LOG=1.
+const log = createPantheonLogger({ module: 'BackgroundJobBoard' })
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
 /** Valid states for a background job. */
-export type BackgroundJobState =
-  | 'running'
-  | 'completed'
-  | 'error'
-  | 'cancelled'
-  | 'reconciled'
+export type BackgroundJobState = 'running' | 'completed' | 'error' | 'cancelled' | 'reconciled'
 
 /** Terminal states that can transition to reconciled. */
 const TERMINAL_STATES: ReadonlySet<BackgroundJobState> = new Set([
@@ -35,10 +37,7 @@ const TERMINAL_STATES: ReadonlySet<BackgroundJobState> = new Set([
  * Each entry defines which target states are reachable from the current state.
  * Only running → terminal, or same-terminal → same-terminal (idempotent re-notify).
  */
-const UPDATE_TRANSITIONS: Record<
-  BackgroundJobState,
-  ReadonlySet<BackgroundJobState>
-> = {
+const UPDATE_TRANSITIONS: Record<BackgroundJobState, ReadonlySet<BackgroundJobState>> = {
   running: new Set(['completed', 'error', 'cancelled']),
   completed: new Set(['completed']),
   error: new Set(['error']),
@@ -371,6 +370,13 @@ export class BackgroundJobBoard {
    * Valid: only `completed`, `error`, or `cancelled` → `reconciled`.
    * Idempotent: already-reconciled jobs are returned as-is.
    * Rejected: `running` → `reconciled`.
+   *
+   * Reconcile is an ACKNOWLEDGMENT, not a completion event: it does NOT fire
+   * the terminal listeners (onTerminal) and does NOT resolve waiters — the
+   * terminal transition already did both. Firing them here produced a second
+   * `<task-notification>` per job (completed + reconciled) in the parent
+   * transcript; waiters are covered by `waitForTerminal` resolving immediately
+   * for already-terminal/reconciled jobs.
    */
   async markReconciled(taskID: string): Promise<BackgroundJobRecord | undefined> {
     const job = this.jobs.get(taskID)
@@ -386,17 +392,12 @@ export class BackgroundJobBoard {
       )
     }
 
-    const wasTerminalUnreconciled = job.terminalUnreconciled
     job.state = 'reconciled'
     job.updatedAt = Date.now()
     job.terminalUnreconciled = false
 
     await this.persistRecord(job)
     await this.writeSignal(job)
-
-    if (wasTerminalUnreconciled) {
-      this.notifyTerminal(job.taskID)
-    }
 
     return job
   }
@@ -415,17 +416,14 @@ export class BackgroundJobBoard {
   list(parentSessionID?: string): BackgroundJobRecord[] {
     const all = Array.from(this.jobs.values())
     if (!parentSessionID) return [...all]
-    return all.filter(j => j.parentSessionID === parentSessionID)
+    return all.filter((j) => j.parentSessionID === parentSessionID)
   }
 
   /**
    * Resolve a job by either taskID or alias within a parent session.
    * Checks exact taskID first, then falls back to alias matching.
    */
-  resolve(
-    parentSessionID: string,
-    taskIDOrAlias: string,
-  ): BackgroundJobRecord | undefined {
+  resolve(parentSessionID: string, taskIDOrAlias: string): BackgroundJobRecord | undefined {
     // Exact taskID match (session-scoped)
     const byID = this.jobs.get(taskIDOrAlias)
     if (byID?.parentSessionID === parentSessionID) return byID
@@ -538,7 +536,7 @@ export class BackgroundJobBoard {
     const jobs = this.list(parentSessionID)
     if (jobs.length === 0) return undefined
 
-    const lines = jobs.map(j => {
+    const lines = jobs.map((j) => {
       const status =
         j.state === 'completed'
           ? 'OK'
@@ -595,10 +593,7 @@ export class BackgroundJobBoard {
     try {
       await this.persistence.saveJob(record)
     } catch (err) {
-      console.error(
-        `[BackgroundJobBoard] Failed to persist job ${record.taskID}:`,
-        err,
-      )
+      log.error(`[BackgroundJobBoard] Failed to persist job ${record.taskID}:`, err)
     }
   }
 
@@ -607,10 +602,7 @@ export class BackgroundJobBoard {
     try {
       await this.persistence.deleteJob(taskID)
     } catch (err) {
-      console.error(
-        `[BackgroundJobBoard] Failed to delete persisted job ${taskID}:`,
-        err,
-      )
+      log.error(`[BackgroundJobBoard] Failed to delete persisted job ${taskID}:`, err)
     }
   }
 
@@ -619,10 +611,7 @@ export class BackgroundJobBoard {
       try {
         listener(taskID)
       } catch (err) {
-        console.error(
-          `[BackgroundJobBoard] Terminal listener error for ${taskID}:`,
-          err,
-        )
+        log.error(`[BackgroundJobBoard] Terminal listener error for ${taskID}:`, err)
       }
     }
     this.resolveTerminalWaiters(taskID)
@@ -648,10 +637,7 @@ export class BackgroundJobBoard {
       await writeFile(tmpPath, content, 'utf-8')
       await rename(tmpPath, signalPath)
     } catch (err) {
-      console.error(
-        `[BackgroundJobBoard] Failed to write signal for ${record.alias}:`,
-        err,
-      )
+      log.error(`[BackgroundJobBoard] Failed to write signal for ${record.alias}:`, err)
     }
   }
 }

@@ -1,26 +1,51 @@
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
+import { reassertAfterCompaction } from './pantheon/compaction-assert.ts'
 import { createCostCommand } from './pantheon/cost-command.ts'
-import { createDelegationTools, type DelegationClient } from './pantheon/delegation.ts'
+import {
+  collectRootSessionIDs,
+  createDelegationTools,
+  type DelegationClient,
+} from './pantheon/delegation.ts'
 import { buildCompactionContext } from './pantheon/delegation-compaction.ts'
 import { createEnforcementGuard, readOnlyRegistry } from './pantheon/delegation-enforce.ts'
-import { DelegationNotifier, handleDelegationEvent } from './pantheon/delegation-notify.ts'
+import { handleDelegationEvent } from './pantheon/delegation-notify.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
 import { GOAL_LOOP_DEFAULTS, GoalLoop, GoalStore } from './pantheon/goal-loop.ts'
 import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
-import { applyActivePresetToConfig } from './pantheon/presets.mjs'
+import { createPantheonLogger } from './pantheon/logger.ts'
+import { pantheonPluginOnce } from './pantheon/plugin-once.ts'
+import { applyActivePresetToConfig, loadRoutingAgentModels } from './pantheon/presets.mjs'
 import {
   TODO_ENFORCER_DEFAULTS,
   TodoEnforcer,
   type TodoEnforcerClient,
   todoEnforcerEnabledFromEnv,
 } from './pantheon/todo-enforcer.ts'
+import { TodoPreserver } from './pantheon/todo-preserve.ts'
 import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
+
+// Silence-by-default TUI policy (pantheon-hooks L42-58): console output in a
+// plugin writes to the process stdout/stderr, which the opencode TUI renders
+// directly into the terminal — the "lixo". Every line goes to
+// .pantheon/logs/hooks.log; the console echo is opt-in via PANTHEON_HOOKS_LOG=1.
+const log = createPantheonLogger({ module: 'pantheon-plugin' })
+
+// Fase 6 (release-134): the delegation toolset's options.agentModels (branch
+// (b) of resolveChildModel) is wired from routing.yml's default (first)
+// preset — a STATIC per-agent model mapping independent of the active preset,
+// so delegated children get a sane model even without an active preset (the
+// previous production wiring left branch (b) dead: delegation depended 100%
+// on the active preset). Built ONCE at module load, never per dispatch.
+// Fail-open: a missing/corrupt routing.yml yields {} (warned by the helper)
+// and delegation falls back to the active preset / opencode default — the
+// plugin never throws at startup.
+const routingAgentModels = loadRoutingAgentModels({ logger: log })
 
 const board = new BackgroundJobBoard({
   maxConcurrentPerAgent: 3,
@@ -30,31 +55,22 @@ const persistence = new FilePersistenceAdapter('.pantheon/board/state.json')
 board.setPersistence(persistence)
 board
   .recoverRunningJobs()
-  .catch((err) => console.error('[Pantheon Plugin] Failed to recover running jobs:', err))
-// ─── Phase 3: Completion Notifications ────────────────────────────────
+  .catch((err) => log.error('[Pantheon Plugin] Failed to recover running jobs:', err))
+// ─── Phase 3: Board terminal audit log ─────────────────────────────────
 
-// The notifier is the completion channel: the spike refuted client push
-// (noReply delivers nothing to the parent), so terminal-job notifications are
-// QUEUED here and injected into the parent's next chat.message by the flush in
-// the 'chat.message' hook below (graceful-degradation path). Gated by the same
-// env as pantheon-hooks toasts: PANTHEON_TOASTS=off disables queueing.
-const notifier = new DelegationNotifier()
-const notificationsEnabled = (process.env.PANTHEON_TOASTS ?? '').trim().toLowerCase() !== 'off'
-
+// The onTerminal listener is the completion AUDIT point: it writes a
+// file-only log line (console echo opt-in via PANTHEON_HOOKS_LOG). There is
+// deliberately NO chat delivery — the user policy is zero delegation
+// notifications in the transcript. Completion visibility lives in the board
+// `[unread]` marker (pantheon_delegation_list), pantheon_delegation_read,
+// TUI toasts (pantheon-hooks, PANTHEON_TOASTS gate) and compaction
+// carry-forward.
 board.onTerminal((taskID: string) => {
   const job = board.get(taskID)
   if (!job) return
-  console.log(
+  log.info(
     `[Pantheon Plugin] Board terminal: [${job.alias}] ${job.description} → ${job.state}${job.resultSummary ? ` — ${job.resultSummary}` : ''}`,
   )
-  // Queue the completion notification for the job's parent session. The
-  // onTerminal listener is the SINGLE notification point — the timeout path
-  // (timeout finalize → updateStatus) and the event path (session.idle →
-  // finalizeDelegation → updateStatus) both transition the board and fire
-  // here, so every terminal job (incl. timedOut) gets exactly one notification.
-  if (notificationsEnabled) {
-    notifier.notifyParent(job)
-  }
 })
 
 // Periodically prune terminal/reconciled jobs (24h TTL, every 30 min).
@@ -65,9 +81,7 @@ setInterval(
   () => {
     void board
       .pruneExpired(86_400_000)
-      .catch((err: unknown) =>
-        console.error('[Pantheon Plugin] Background board prune failed:', err),
-      )
+      .catch((err: unknown) => log.error('[Pantheon Plugin] Background board prune failed:', err))
   },
   30 * 60 * 1000,
 ).unref()
@@ -86,10 +100,48 @@ const enforcementGuard = createEnforcementGuard({
 const COMPACTION_MAX_ITEMS = 10
 
 // Root-session registry for the delegation depth guard: sessions created
-// without a parentID are roots. Populated from `session.created` events in the
-// event hook — the authoritative complement to the knownChildren default
-// ("any session WE created is a sub-session") in delegation.ts.
+// without a parentID are roots. Populated from TWO sources:
+//   1. the `session.created` event hook (live roots — fires for sessions
+//      created while the plugin runs);
+//   2. a fail-open startup seed from client.session.list() in the config
+//      hook (compaction-134) — opencode does NOT replay session.created
+//      events for sessions that exist before plugin load, so without the
+//      seed a resumed root would never enter this set after a restart.
+// delegation.ts additionally falls back to knownChildren ("any session WE
+// created is a sub-session; unknown sessions are roots") so the depth guard
+// works even when this set is incomplete.
 const rootSessions = new Set<string>()
+
+/**
+ * Seed resumed root sessions without making OpenCode startup depend on the
+ * session API responding. Some OpenCode environments do not have the API
+ * ready while plugin config hooks run; awaiting session.list() there leaves
+ * the TUI stuck before it can open. The delegation layer already treats an
+ * unknown session as a root, so this enrichment is deliberately best-effort.
+ */
+function seedRootSessionsInBackground(input: PluginInput): void {
+  // Fail-open: environments without the session API (client.session absent or
+  // not yet wired while config hooks run) must NOT break startup. `session`
+  // is captured and the method invoked on it so `this` stays bound; the
+  // delegation layer already treats unknown sessions as roots, so skipping
+  // the seed is always safe.
+  const session = input.client.session
+  if (typeof session?.list !== 'function') return
+  void session
+    .list()
+    .then((result) => {
+      if (!result.error && Array.isArray(result.data)) {
+        const seeded = collectRootSessionIDs(result.data)
+        if (seeded.size > 0) {
+          for (const id of seeded) rootSessions.add(id)
+          log.info(`[Pantheon Plugin] Seeded ${seeded.size} root session(s) from session.list`)
+        }
+      }
+    })
+    .catch((err) => {
+      log.warn('[Pantheon Plugin] Root session seed failed (fail-open):', err)
+    })
+}
 
 /** Extract the SDK error message ({name, data: {message}}) or a fallback. */
 function sdkErrorMessage(error: { data?: { message?: string } } | null | undefined): string {
@@ -198,6 +250,16 @@ function adaptTodoEnforcerClient(client: PluginInput['client']): TodoEnforcerCli
  * Helpers live in src/pantheon/vision.ts and are imported from there directly.
  */
 const plugin: Plugin = async (input: PluginInput) => {
+  // release-134: runtime guard against DOUBLE registration (duplicate toasts +
+  // duplicate task_ids in one process — 2026-08-12 live logs). opencode
+  // merges the global config (npm-package plugin paths) with the project
+  // config (repo source paths), so this module loads from TWO filesystem
+  // paths in the same process and the factory would otherwise run twice. The
+  // second invocation becomes a no-op: an empty hooks object (every Hooks
+  // field is optional) → hooks/tools register exactly once.
+  if (pantheonPluginOnce('pantheon:plugin')) {
+    return {}
+  }
   const vision = createVisionHandler(input)
   // Phase 2/3: background delegation toolset + the bound finalize lifecycle
   // hook. Completion is observed through the event hook below
@@ -205,7 +267,11 @@ const plugin: Plugin = async (input: PluginInput) => {
   const delegation = createDelegationTools({
     board,
     client: adaptDelegationClient(input.client),
-    options: { rootSessions, readOnlyAgents: new Set(['apollo', 'gaia']) },
+    options: {
+      rootSessions,
+      readOnlyAgents: new Set(['apollo', 'gaia']),
+      agentModels: routingAgentModels,
+    },
   })
 
   // Wave 1 (PR #46): TODO continuation enforcer for root/non-board sessions.
@@ -218,6 +284,15 @@ const plugin: Plugin = async (input: PluginInput) => {
     client: adaptTodoEnforcerClient(input.client),
     board,
     options: { ...TODO_ENFORCER_DEFAULTS, enabled: todoEnforcerEnabledFromEnv() },
+  })
+
+  // release-134 Phase 3: post-compaction todo restore. Captures the session's
+  // todo list in 'experimental.session.compacting', activates the snapshot on
+  // 'session.compacted', and rewrites the first post-compaction `todowrite`
+  // with the exact list (todo-preserve.ts). Additive + fail-open: every step
+  // degrades to a logged warn, never throws in a hook.
+  const todoPreserver = new TodoPreserver({
+    client: adaptTodoEnforcerClient(input.client),
   })
 
   // Wave 3 (PR #46): full-auto goal loop — opt-in (`full_auto.enabled:
@@ -251,6 +326,15 @@ const plugin: Plugin = async (input: PluginInput) => {
 
   return {
     config: async (config: PluginConfig) => {
+      // compaction-134 seed: opencode does NOT replay `session.created`
+      // events for sessions that exist before plugin load, so after a
+      // restart the resumed ROOT session never enters rootSessions and the
+      // depth guard would reject its pantheon_delegate calls. Seed the
+      // registry from session.list() in the background — every session
+      // WITHOUT a parentID is a root. Fail-open: a failed/throttled list
+      // leaves the set untouched (delegation.ts treats unknown sessions as
+      // roots), and config setup must never wait for the session API.
+      seedRootSessionsInBackground(input)
       config.agentsPath = config.agentsPath ?? []
       config.agentsPath.push(new URL('./agents', import.meta.url).pathname)
       config.skillsPaths = config.skillsPaths ?? []
@@ -269,9 +353,7 @@ const plugin: Plugin = async (input: PluginInput) => {
           candidates: activePresetCandidates(),
         })
         if (resolved) {
-          console.log(
-            `[Pantheon Plugin] Applied model preset: ${resolved.name} (${resolved.source})`,
-          )
+          log.info(`[Pantheon Plugin] Applied model preset: ${resolved.name} (${resolved.source})`)
         }
       } catch {
         // Fully STATIC warning — the thrown error object is tainted because
@@ -284,7 +366,7 @@ const plugin: Plugin = async (input: PluginInput) => {
         // emitted by applyActivePresetToConfig's own logger before it throws.
         // The catch binding is intentionally omitted so no tainted value can
         // ever reach this log line (CodeQL alert #11).
-        console.warn('[plugin] preset application failed (see logs for details)')
+        log.warn('[plugin] preset application failed (see logs for details)')
       }
     },
     // Phase 2: background delegation tools (structural — matches the `tool`
@@ -303,10 +385,10 @@ const plugin: Plugin = async (input: PluginInput) => {
     },
     'chat.message': async (hookInput, output) => {
       await vision.chatMessage(hookInput, output)
-      // Phase 3: deliver queued completion notifications into the parent's
-      // context (prepended onto the first text part). No-op when the queue is
-      // empty or the parent session has no pending notifications.
-      notifier.flushQueue(hookInput.sessionID, output)
+      // No delegation notification delivery here — the user policy is ZERO
+      // notification text injected into the chat transcript (previously the
+      // notifier.flushQueue prepend). pantheon-hooks' chat-reminders.ts keeps
+      // its own <system-reminder> channel, untouched.
       // Wave 1: a user message is activity — the todo enforcer's
       // user-activity gate skips injection for userActivityQuietMs afterwards.
       todoEnforcer.noteUserActivity(hookInput.sessionID)
@@ -318,9 +400,27 @@ const plugin: Plugin = async (input: PluginInput) => {
         const info = ev.properties.info
         if (info && info.parentID === undefined) rootSessions.add(info.id)
       }
+      // release-134 Phase 3: activate the todo snapshot captured at
+      // compacting time — the first todowrite within the restore window is
+      // rewritten with the exact list (see todo-preserve.ts). Fail-open.
+      if (ev.type === 'session.compacted') {
+        await todoPreserver.onCompacted(ev.properties.sessionID)
+        // release-134 Phase 4: re-assert post-compaction state — enqueue a
+        // fresh-state reminder (running/unread board jobs + active goals) for
+        // the session's next chat.message delivery. Fail-open (never throws).
+        await reassertAfterCompaction({
+          sessionID: ev.properties.sessionID,
+          board,
+          goals: {
+            enabled: GOAL_LOOP_DEFAULTS.enabled,
+            list: (s: string) => goalStore.list(s),
+          },
+        })
+      }
       // Phase 3: observe completion on child sessions → finalizeDelegation.
-      // The board transition fires onTerminal → notifier.notifyParent (the
-      // single notification point). Unknown sessions are a no-op.
+      // The board transition fires onTerminal → the file-only audit log (no
+      // chat delivery — see the onTerminal listener above). Unknown sessions
+      // are a no-op.
       try {
         const delegated = await handleDelegationEvent(ev, {
           board,
@@ -337,28 +437,55 @@ const plugin: Plugin = async (input: PluginInput) => {
         }
       } catch (err) {
         // The event hook must never break the session.
-        console.error('[Pantheon Plugin] Delegation event handling failed:', err)
+        log.error('[Pantheon Plugin] Delegation event handling failed:', err)
       }
       await vision.event({ event: ev })
     },
     // Phase 4: deny mutating tools in read-only delegated sessions. Additive
     // key — does not touch Phase 3's tools/event/onTerminal/chat.message.
-    'tool.execute.before': enforcementGuard,
+    'tool.execute.before': async (input, output) => {
+      // Chain: the read-only enforcement guard runs first (denies mutating
+      // tools in read-only sessions), then release-134 Phase 3 rewrites the
+      // first post-compaction `todowrite` with the captured todo snapshot.
+      // Both are no-ops for non-matching sessions/tools; the preserver is
+      // fail-open (only its intentional restore denial throws).
+      await enforcementGuard(input)
+      await todoPreserver.beforeTodoWrite(input, output)
+    },
     // Wave 2 (PR #46): augment `read` output with hashline tags. Additive —
     // pantheon-hooks.ts (a separate plugin instance) owns its own
     // tool.execute.after, so there is no key collision. Non-read tools pass
     // through untouched.
     'tool.execute.after': readEnhancer,
-    // Phase 4: keep in-flight background delegations visible across
-    // compaction (running + unread terminal jobs). Guarded: only pushes when
-    // there is something to preserve.
+    // Phase 4 + release-134 Phase 2: keep the session's working state across
+    // compaction — preservation directive, active goals (<mission_context>),
+    // pending todos (<todo_context>), and in-flight background delegations
+    // (running + unread terminal ≤ max_compaction_items). Guarded: only
+    // pushes when there is something to preserve; a build failure must never
+    // break the experimental compaction hook.
     'experimental.session.compacting': async (_input, output) => {
-      const blocks = buildCompactionContext(board, {
-        sessionID: _input.sessionID,
-        maxItems: COMPACTION_MAX_ITEMS,
-      })
-      if (blocks.length > 0) {
-        output.context.push(...blocks)
+      try {
+        const blocks = await buildCompactionContext(board, {
+          sessionID: _input.sessionID,
+          maxItems: COMPACTION_MAX_ITEMS,
+          goals: {
+            enabled: GOAL_LOOP_DEFAULTS.enabled,
+            list: (sessionID: string) => goalStore.list(sessionID),
+          },
+          todos: {
+            enabled: todoEnforcerEnabledFromEnv(),
+            list: (sessionID: string) => todoEnforcer.listPendingTodos(sessionID),
+          },
+        })
+        if (blocks.length > 0) {
+          output.context.push(...blocks)
+        }
+        // release-134 Phase 3 (additive): snapshot the session's full todo
+        // list for post-compaction restore. Best-effort — a GET failure is
+        // logged and the compaction proceeds normally.
+        await todoPreserver.capture(_input.sessionID)
+      } catch (err: unknown) {
+        log.warn('[Pantheon Plugin] Compaction context build failed:', err)
       }
     },
   }

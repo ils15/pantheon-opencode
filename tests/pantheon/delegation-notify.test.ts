@@ -1,8 +1,19 @@
 /**
- * Tests for the Delegation Notify module (Phase 3) — completion notifications
- * for background jobs delivered via the queue + flush channel (the spike
- * refuted client push), plus the event→finalize wiring
- * (session.idle / session.error → finalizeDelegation).
+ * Tests for the Delegation event wiring module (Phase 3, user policy) — the
+ * `event`-hook complement of the board: `session.idle` / `session.error` on a
+ * child session that is a board job → `finalizeDelegation` (Phase 2).
+ *
+ * User policy: ZERO delegation notifications in the chat transcript — no
+ * `<task-notification>` block is ever injected into a `chat.message` output,
+ * and no queued delivery path exists. Completion visibility lives in the
+ * legitimate channels only: the board `[unread]` marker
+ * (`pantheon_delegation_list`), `pantheon_delegation_read`, TUI toasts
+ * (pantheon-hooks, PANTHEON_TOASTS gate) and compaction carry-forward.
+ * The plugin's `onTerminal` listener writes a file-only log line.
+ *
+ * These tests cover ONLY the preserved wiring. The removed notification API
+ * (DelegationNotifier / buildTaskNotification / flushQueue) no longer exists —
+ * the type checker rejects any import of it.
  *
  * Uses a fake client + real in-memory BackgroundJobBoard — no opencode runtime.
  *
@@ -16,9 +27,7 @@ import { join } from 'node:path'
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
 import { createDelegationTools, type FinalizeInput } from '../../src/pantheon/delegation.ts'
 import {
-  buildTaskNotification,
   type DelegationEventLike,
-  DelegationNotifier,
   handleDelegationEvent,
 } from '../../src/pantheon/delegation-notify.ts'
 
@@ -68,176 +77,6 @@ function makeCtx(sessionID = ROOT) {
 // ═══════════════════════════════════════════════════════════════════════
 
 async function main() {
-  await testAsync(
-    'notifyParent success: builds <task-notification> text, queues, flush marks sent',
-    async () => {
-      const board = new BackgroundJobBoard()
-      const notifier = new DelegationNotifier()
-      const job = await board.registerLaunch({
-        taskID: 'ses_job_1',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Search codebase',
-      })
-      await board.updateStatus({
-        taskID: 'ses_job_1',
-        state: 'completed',
-        resultSummary: 'Found 3 matches',
-      })
-
-      // Queue the completion notification for the parent session.
-      assert.equal(notifier.notifyParent(job), true, 'notifyParent accepts the job')
-      assert.equal(notifier.pendingCount(ROOT), 1)
-      assert.ok(notifier.hasPending(ROOT), 'notification awaits delivery for the parent')
-
-      // The channel: the next chat.message for the parent flushes the queue,
-      // prepending the <task-notification> block onto the first text part.
-      const output = { parts: [{ type: 'text', text: 'please continue' }] }
-      assert.equal(notifier.flushQueue(ROOT, output), 1, 'flushQueue delivers the notification')
-      assert.equal(notifier.pendingCount(ROOT), 0, 'delivered notifications leave the queue')
-      assert.equal(notifier.sentCount(ROOT), 1, 'delivered notifications are marked sent')
-
-      const text = String((output.parts[0] as { text?: string }).text)
-      assert.ok(text.startsWith('<task-notification>'), 'block starts with <task-notification>')
-      assert.ok(text.includes('<task id="ses_job_1"'), 'block carries the task id')
-      assert.ok(text.includes('apo-1'), 'block carries the alias')
-      assert.ok(text.includes('completed'), 'block carries the terminal state')
-      assert.ok(text.includes('Found 3 matches'), 'block carries the result summary')
-      assert.ok(
-        text.includes('Result: Found 3 matches'),
-        'block marks the child output origin with a Result: prefix',
-      )
-      assert.ok(text.endsWith('please continue'), 'original user text is preserved after the block')
-    },
-  )
-
-  await testAsync(
-    'queue-on-failure: no deliverable parent message → stays queued; wrong-session flush is a no-op',
-    async () => {
-      const board = new BackgroundJobBoard()
-      const notifier = new DelegationNotifier()
-      const job = await board.registerLaunch({
-        taskID: 'ses_job_2',
-        parentSessionID: ROOT,
-        agent: 'hermes',
-        description: 'Build the service',
-      })
-      notifier.notifyParent(job)
-
-      // A flush for a DIFFERENT parent must not touch this queue.
-      assert.equal(notifier.flushQueue('ses_other_parent', { parts: [] }), 0)
-      assert.ok(notifier.hasPending(ROOT), 'notification stays queued while the parent is silent')
-
-      // Deliver into an output with NO text part → the block is unshifted as a
-      // new text part (the graceful-degradation injection path).
-      const output = { parts: [] as unknown[] }
-      assert.equal(notifier.flushQueue(ROOT, output), 1)
-      assert.equal(output.parts.length, 1)
-      assert.equal((output.parts[0] as { type?: string }).type, 'text')
-      assert.ok(
-        String((output.parts[0] as { text?: string }).text).includes('Delegation [her-1]'),
-        'unshifted part carries the notification body',
-      )
-      assert.equal(notifier.pendingCount(ROOT), 0)
-      assert.equal(notifier.sentCount(ROOT), 1)
-    },
-  )
-
-  await testAsync(
-    'flush-on-parent-message: queue delivers exactly on the parent next message, once',
-    async () => {
-      const notifier = new DelegationNotifier()
-      notifier.queueNotification(ROOT, 'notif A')
-      assert.ok(notifier.hasPending(ROOT))
-
-      const output = { parts: [{ type: 'text', text: 'hi' }] }
-      assert.equal(notifier.flushQueue(ROOT, output), 1)
-      assert.ok(String((output.parts[0] as { text?: string }).text).includes('notif A'))
-      assert.equal(notifier.pendingCount(ROOT), 0)
-
-      // A second flush for the same parent delivers nothing (queue is drained).
-      assert.equal(notifier.flushQueue(ROOT, { parts: [] }), 0)
-      assert.equal(notifier.sentCount(ROOT), 1)
-    },
-  )
-
-  await testAsync('flush ordering: multiple queued notifications flush in FIFO order', async () => {
-    const notifier = new DelegationNotifier()
-    notifier.queueNotification(ROOT, 'first')
-    notifier.queueNotification(ROOT, 'second')
-    notifier.queueNotification(ROOT, 'third')
-    assert.equal(notifier.pendingCount(ROOT), 3)
-
-    const output = { parts: [{ type: 'text', text: 'base' }] }
-    assert.equal(notifier.flushQueue(ROOT, output), 3)
-    const text = String((output.parts[0] as { text?: string }).text)
-    assert.ok(text.indexOf('first') < text.indexOf('second'), 'first precedes second')
-    assert.ok(text.indexOf('second') < text.indexOf('third'), 'second precedes third')
-    assert.equal(notifier.pendingCount(ROOT), 0)
-    assert.equal(notifier.sentCount(ROOT), 3)
-  })
-
-  await testAsync(
-    'bounded queue: a full parent queue drops new entries instead of growing unbounded',
-    async () => {
-      const notifier = new DelegationNotifier()
-      let accepted = true
-      for (let i = 0; i < 10; i += 1) {
-        accepted = notifier.queueNotification(ROOT, `n${i}`) && accepted
-      }
-      assert.equal(accepted, true, 'first ten entries are accepted')
-      assert.equal(
-        notifier.queueNotification(ROOT, 'overflow'),
-        false,
-        'full queue drops the entry',
-      )
-      assert.equal(notifier.pendingCount(ROOT), 10)
-    },
-  )
-
-  await testAsync(
-    'bounded queue: a dropped entry logs a warning via the injected logger',
-    async () => {
-      const warnings: string[] = []
-      const notifier = new DelegationNotifier({ warn: (msg: string) => warnings.push(msg) })
-      for (let i = 0; i < 10; i += 1) {
-        notifier.queueNotification(ROOT, `n${i}`)
-      }
-      assert.equal(notifier.queueNotification(ROOT, 'overflow'), false)
-      assert.equal(warnings.length, 1, 'exactly one warning is logged for the dropped entry')
-      assert.ok(
-        warnings[0].includes('dropped'),
-        'warning mentions that the notification was dropped',
-      )
-      assert.ok(warnings[0].includes(ROOT), 'warning names the parent session')
-      assert.ok(warnings[0].includes('10'), 'warning cites the per-parent bound')
-    },
-  )
-
-  await testAsync(
-    'timedOut job notification carries the timeout status (onTerminal covers timeout finalizes)',
-    async () => {
-      const board = new BackgroundJobBoard()
-      await board.registerLaunch({
-        taskID: 'ses_t',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Slow task',
-      })
-      await board.updateStatus({
-        taskID: 'ses_t',
-        state: 'error',
-        timedOut: true,
-        error: 'timed out after 1ms',
-      })
-      const timedOutJob = board.get('ses_t')
-      assert.ok(timedOutJob, 'timed out job must exist on the board')
-      const text = buildTaskNotification(timedOutJob)
-      assert.ok(text.includes('state="error"'), 'timeout notification carries the error state')
-      assert.ok(text.includes('timed out'), 'timeout notification carries the timeout status')
-    },
-  )
-
   await testAsync(
     'event→finalize wiring: session.idle → completed, session.error → error, unknown → no-op',
     async () => {
@@ -302,23 +141,21 @@ async function main() {
   )
 
   await testAsync(
-    'idle fires multiple times → finalize idempotent, onTerminal queues the notification exactly once',
+    'idle fires multiple times → finalize idempotent, exactly ONE terminal transition (no echo)',
     async () => {
       const tmp = mkdtempSync(join(tmpdir(), 'notify-idempotent-'))
       try {
         const board = new BackgroundJobBoard()
         const client = new FakeClient()
-        const notifier = new DelegationNotifier()
         const tools = createDelegationTools({
           board,
           client,
           options: { rootSessions: new Set([ROOT]), outputDir: tmp },
         })
-        // The plugin wires onTerminal → notifyParent: the single notification point.
-        board.onTerminal((taskID: string) => {
-          const job = board.get(taskID)
-          if (job) notifier.notifyParent(job)
-        })
+        // The plugin wires onTerminal → the file-only audit log. Count the
+        // firings: there must be EXACTLY ONE per job — never a reconciled echo.
+        const terminalFires: string[] = []
+        board.onTerminal((taskID: string) => terminalFires.push(taskID))
 
         await tools.pantheon_delegate.execute({ prompt: 'Implement X', agent: 'hermes' }, makeCtx())
         const finalize = (id: string, opts: FinalizeInput) => tools.finalizeDelegation(id, opts)
@@ -331,15 +168,20 @@ async function main() {
         const completedJob = board.get('ses_child_1')
         assert.ok(completedJob, 'job must exist after finalize')
         assert.equal(completedJob.state, 'completed')
-        assert.equal(notifier.pendingCount(ROOT), 1, 'onTerminal queues exactly one notification')
+        assert.equal(terminalFires.length, 1, 'terminal transition fires onTerminal exactly once')
 
         // Second idle on the same child → idempotent: no throw, same terminal
-        // state, and NO second notification (board only re-notifies same-terminal).
+        // state, and NO second terminal transition (the board never re-fires).
         assert.equal(await handleDelegationEvent(idleEv, { board, finalize }), true)
         const completedAgain = board.get('ses_child_1')
         assert.ok(completedAgain, 'job must still exist after re-idle')
         assert.equal(completedAgain.state, 'completed')
-        assert.equal(notifier.pendingCount(ROOT), 1, 're-idle must not queue a duplicate')
+        assert.equal(terminalFires.length, 1, 're-idle must not re-fire onTerminal')
+
+        // Reconcile (pantheon_delegation_read acknowledgment) is NOT a
+        // completion event — it must not re-fire onTerminal either.
+        await board.markReconciled('ses_child_1')
+        assert.equal(terminalFires.length, 1, 'reconcile must not re-fire onTerminal')
 
         // The report was (re)written by both finalize runs.
         const md = readFileSync(join(tmp, ROOT, 'her-1.md'), 'utf-8')

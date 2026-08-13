@@ -2,7 +2,7 @@
 <h1 align="center">Pantheon</h1>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.0.0-blue" alt="Version"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.3.4-blue" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
   <a href="src/agents/README.md"><img src="https://img.shields.io/badge/agents-14-purple" alt="Agents"></a>
   <a href="src/skills/README.md"><img src="https://img.shields.io/badge/skills-21-orange" alt="Skills"></a>
@@ -196,15 +196,27 @@ via three delegation tools, tracked on a persistent job board
 | `pantheon_delegation_read` | `{id}` | Blocks (`waitForTerminal`, up to 15 min) until the delegation reaches a terminal state, returns the report markdown, and marks the job reconciled. Resolves by alias or task ID. |
 | `pantheon_delegation_list` | `{}` | Lists the current session's delegations with `[unread]` on finished, unreconciled jobs. |
 
-**Notification model — no polling, no client push.** When a job reaches a
-terminal state (completion observed via `session.idle`/`session.error` on the
-child), a self-contained `<task-notification>` block is queued in memory for
-the parent session and injected into the parent's **next** `chat.message` hook
-fire (prepended onto the first text part — the graceful-degradation channel the
-TUI toast workaround uses). If the parent never sends another message, the
-notification stays queued. The `<task-notification>` carries the task ID, alias,
-agent, state, description and a `Result:`-prefixed summary so the parent can act
-without an extra tool call.
+**Agent activity visibility.** While `pantheon_delegation_read` blocks on a
+running job, it samples the child session's messages every ~2s and appends the
+collected lines to the report as a trailing `## Agent Activity` section (latest
+tool calls with truncated args, or user/assistant text, capped at ~200 chars per
+line) — so you can see what the agent is doing during the wait. Likewise,
+`pantheon_delegation_list` shows a `last activity:` line for running jobs.
+Fail-open: if the child session messages are unavailable (or empty), the read
+returns the report exactly as before — the activity sampling never breaks the
+delegation read.
+
+**Completion visibility — no chat injection.** User policy: ZERO delegation
+notifications in the chat transcript — no `<task-notification>` block is ever
+injected into a `chat.message` output (the old queue + flush channel was
+removed). When a job reaches a terminal state (completion observed via
+`session.idle`/`session.error` on the child, or the timeout finalize path), the
+plugin writes a file-only audit log line (echo opt-in via `PANTHEON_HOOKS_LOG`).
+Completion visibility lives in the legitimate channels: the board `[unread]`
+marker (`pantheon_delegation_list`), `pantheon_delegation_read`, TUI toasts
+(pantheon-hooks, `PANTHEON_TOASTS` gate) and compaction carry-forward. Reconcile
+is an acknowledgment, not a completion — it never re-fires the terminal
+transition.
 
 **Timeout:** `background_delegation.timeout_ms` (default `900000` = 15 min). A job
 that has not reached a terminal state is finalized as `error`/`timedOut`.
@@ -219,19 +231,110 @@ terminal delegations (capped at `background_delegation.max_compaction_items`,
 default 10) are carried into the compacted context so the parent doesn't lose
 track of in-flight work.
 
+**Compaction summary v2 (1.3.4):** the `experimental.session.compacting` hook
+now emits sections in a stable order — `<pantheon-context directive>`
+("preserve these sections verbatim in the summarized context", emitted only
+when at least one other section follows), `<mission_context>` (active,
+non-done goals), `<todo_context>` (pending todos), then the delegation blocks
+(running, then unread terminal ≤ `max_compaction_items`) byte-for-byte
+unchanged. Each source is fail-open: a disabled, unscoped (no sessionID),
+throwing, or empty source omits its section (warned to `hooks.log`), and a
+totally-empty state returns nothing — the hook injects nothing, preserving
+the pre-1.3.4 behavior.
+
+**Post-compaction todo preservation (1.3.4):** the session's todo list is
+captured via the `session.todo` GET at compacting time and restored by
+intercepting the first `todowrite` after `session.compacted` — opencode
+1.18.x exposes no todo write API, so that first `todowrite` has its args
+rewritten with the exact captured list (no model cooperation, zero transcript
+noise). Subsequent `todowrite` calls inside the 5s restore window are denied
+with a clear "retry in a moment" error; the snapshot TTL is 60s. Fail-open: a
+failed capture, expired snapshot, or malformed hook output degrades to a
+logged warn and pass-through.
+
+**Post-compaction state re-assertion (1.3.4):** on `session.compacted`, fresh
+state — running/unread delegations from the board + active goals, capped at 10
+lines — is re-injected as a `<system-reminder>` into the session's next
+message via the shared chat-reminder buffer (`chat-reminders.ts`, the same P0
+messageID guard that protects subagent fires). A session with nothing to
+assert is a silent skip.
+
+**Preemptive compaction check (1.3.4):** a pure threshold core
+(`preemptive-compact.ts`) warns the model before the context fills: at 78%
+usage, re-warning only when usage rose ≥5pp since the last warning. It is
+dormant / ready-to-wire — opencode 1.18.x exposes no runtime context-usage
+percentage, so nothing observes it yet; when a source appears, the caller
+wires it in (the enqueue callback is injected).
+
+**Model API-key validation (1.3.4):** `pantheon_delegate` gates the resolved
+child model's provider before dispatching (single source of truth:
+`routing.yml` preset definitions' `apiKeyEnv` — the same check `applyPreset`
+enforces at startup). If an **auto-resolved** model (`options.agentModels` or
+the active preset) points to a provider that requires an API key
+(`apiKeyEnv`) and the env var is unset, the delegate falls back to
+`opencode/deepseek-v4-flash-free` (validated the same way). If the fallback is
+also unusable, the tool returns a clear error **text** (never throws) naming
+the missing env var — and registers **no job** on the board. An **explicit**
+`model` passed by the caller is always respected (warned, not overridden).
+Setting `PANTHEON_MODEL_PRESET` to a preset whose providers have keys, or
+filling the required `PANTHEON_*_API_KEY` env var for the preset's provider,
+resolves the fallback path. If nothing resolves at all (no model, no preset),
+the child keeps using opencode's default model (warned).
+
+**agentModels wiring (1.3.4):** the delegate now also resolves the child model
+via `routing.yml` — `loadRoutingAgentModels` extracts the per-agent models of
+the FIRST-listed preset (the static default, `go-deepseek` today) and passes
+them as `options.agentModels`, branch (b) of the resolve precedence: explicit
+`model` > `options.agentModels` > active preset > opencode default. Delegation
+no longer depends exclusively on the active preset — a delegated child gets a
+sane per-agent model even when no preset is active. Fail-open: a missing or
+unparseable routing.yml yields `{}` (previous behavior, warned).
+
+**Delegation log hygiene (1.3.4):** `delegations.log` now records the real
+`task_id` (omitted when empty, never `""`) and a **numeric** `duration_ms`
+(null when unset) so downstream aggregation works. The idle-flush log entry is
+deduplicated: the flush logs a summary (count + aggregated line count) and the
+reminder content is logged exactly once, at `chat.message` delivery — no more
+duplicate lines for the same notification.
+
 **Env vars & config:**
 
 - `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` — required (see launch block above).
 - `PANTHEON_TOASTS` — TUI toast gate for the delegation lifecycle signals.
   Default `{errors, delegations, council}`; `PANTHEON_TOASTS=off` disables all
-  TUI toasts (delegation signals then only surface via the chat.message
-  `<task-notification>`/`<system-reminder>` channel).
+  TUI toasts (delegation signals then only surface via the board `[unread]`
+  marker, `pantheon_delegation_read` and the on-disk audit log — never via
+  chat.message injection from the plugin).
 - `background_delegation` section in `src/routing.yml` — `timeout_ms`,
   `poll_ms`, `max_compaction_items`, `prune_ttl_ms`, `read_only_agents`,
   `session_max`, `retry_count`.
 
 See `src/agents/zeus.md` for the agent-facing delegation protocol and
 `src/pantheon/delegation.ts` for the tool implementations.
+
+### Real-time Delegations panel (1.3.4)
+
+The TUI sidebar ships a live **Delegations** panel (open by default, above the
+collapsed Sessions list). Its primary source is `api.client.session.children`,
+so it shows **both** kinds of background work in one place:
+
+- **`pantheon_delegate` children** — rendered with their board alias tag
+  (`[apo-1]`) and enriched from the `.pantheon/delegations/` report.
+- **Native `task()` children** — rendered with a distinct `[task]` tag (info
+  color) when no board report exists for the session.
+
+Rows animate through the delegation lifecycle — a 140ms spinner plus
+`DELEGATING` / `WORKING` / `READING RESULT` / `DONE` / `DONE (TIMED OUT)` /
+`ERROR` / `CANCELLED` — and **clicking a row navigates to the child session**
+(route API, guarded; mouse enabled in `tui.json`). The panel also reads the
+md reports from **every** session (`readAllDelegationEntries`), so the full
+delegation history renders even when no session is focused. Refresh is driven
+by session events + `message.part.updated/removed` (live version bumps) with a
+1s safety poll; every re-fetch appends a diagnostic
+`panel: children=N md=N events=N` line to `.pantheon/logs/hooks.log`
+(silence-by-default policy — see `PANTHEON_HOOKS_LOG`). Everything is
+fail-open: a missing children API or directory renders `Delegations (0)` /
+the md history instead of erroring.
 
 > **Modes:** Interactive TUI with checkbox selection (default TTY), or `--headless` for scripts/CI.
 > **Minimal:** `--headless --no-mcp` installs only agents (~2s).

@@ -571,7 +571,9 @@ todo_enforcer:
   max_consecutive_failures: 5       # stop injecting after this many failures
   failure_reset_ms: 300000          # quiet period before the counter resets (5 min)
   user_activity_quiet_ms: 30000     # skip injection this long after a user message (30s)
-  child_active_ms: 120000           # native background child newer than this = still running → skip (2 min)
+  child_active_ms: 120000           # native (non-board) background child newer than this = still running → skip (2 min).
+                                    # Board children (delegations) are resolved by taskID instead: running → skip;
+                                    # terminal jobs (completed/error/cancelled/reconciled) NEVER suppress (T6 fix).
   # Runtime kill-switch: PANTHEON_TODO_ENFORCER=off (doc mirror only — the
   # env var is the real switch, read at plugin construction).
 hashline:

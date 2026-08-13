@@ -139,17 +139,33 @@ routing.yml configuration.
 
 ## TUI Sidebar Plugin
 
-Pantheon includes a TUI sidebar plugin showing:
+Pantheon includes a TUI sidebar plugin (reduced sidebar with a real-time
+Delegations panel) showing:
 
 ```
-Pantheon v1.0.0
+Pantheon v1.3.4
 ⎇ main
-▶ Sessions (N total)
-▶ Commands (5)
-▶ Agents (14)
-▶ Config — MCPs, Compaction
-▶ Memory — Entry count
+⚡ Preset: go-deepseek (file)      ← or "Preset: default"
+────────────────────────────
+▼ Sessions (12)
+▼ Delegations (3)                 ← real-time panel
+  ⠋ [apo-1] apollo — WORKING — find X
+  ✓ [task] hermes — DONE
 ```
+
+- **Header** — Pantheon version, current git branch, and the active model
+  preset (`⚡ Preset: <name> (source)`, or `Preset: default`).
+- **Sessions** — collapsible recent-sessions list (click a row to open).
+- **Delegations (real-time, 1.3.4)** — live view sourced from
+  `api.client.session.children`: children spawned by `pantheon_delegate`
+  (board alias tag `[apo-1]`) **and** native `task()` children (`[task]` tag,
+  distinct info color). Animated states
+  (DELEGATING / WORKING / READING RESULT / DONE / DONE (TIMED OUT) / ERROR /
+  CANCELLED) with a 140ms spinner; clicking a row navigates to the child
+  session. Also reads `.pantheon/delegations/` reports from all sessions, so
+  the full delegation history renders even without a focused session.
+  Diagnostics: every re-fetch logs `panel: children=N md=N events=N` to
+  `.pantheon/logs/hooks.log` (silence-by-default).
 
 The plugin is installed automatically during `npm run setup`. It appears in the right sidebar of OpenCode TUI.
 
@@ -194,21 +210,34 @@ npm run doctor
 
 ### TUI runtime versus development build
 
-The installer copies the prebuilt `plugins/pantheon-tui/dist/tui.tsx` and only
-installs runtime dependencies. OpenCode loads that TSX entry directly and
-transpiles it at startup, so users do not need `tsconfig.json`, `tsdown`, or
-development dependencies after installation. The TUI `build` and `typecheck`
-scripts are maintainer/development tasks for the repository, not post-install
-health checks; their failure in `~/.config/opencode/plugins/pantheon-tui` does
-not indicate a broken runtime.
+The installer treats `src/plugins/tui` as the single source of truth and always
+copies it into the target config as `plugins/pantheon-tui` (dist/ + package.json
++ index.tsx). OpenCode's TUI loader reads the copied `package.json` `exports`
+map (`./tui` → `dist/tui.js`, `./server` → `dist/server.js`), so users do not
+need `tsconfig.json`, `tsdown`, or development dependencies after installation.
+The TUI `build` and `typecheck` scripts are maintainer/development tasks for the
+repository, not post-install health checks; their failure in
+`~/.config/opencode/plugins/pantheon-tui` does not indicate a broken runtime.
+
+Every install (global or project) registers exactly ONE Pantheon TUI reference
+system-wide — the copied `plugins/pantheon-tui` directory in the installed
+config. Stale references from older installs (dist file paths, in-package
+`src/plugins/tui` dirs, bare `plugins/pantheon-tui` copies, npx paths) are
+removed from all `tui.json` locations OpenCode reads: `~/.opencode/tui.json`,
+`~/.config/opencode/tui.json` and `<project>/.opencode/tui.json`.
+
+> **Windows/WSL:** each environment (Windows native vs. WSL/Linux) uses its own
+> OpenCode binary, config directory, and Node/npx install. Run the installer
+> separately inside each environment — never share a config dir or copy
+> `tui.json` references between them, since paths are environment-specific.
 
 | Problem | Solution |
 |---------|----------|
 | Agents not found | Run `npx pantheon-opencode init` again |
 | MCP servers not starting | Check Python 3.11+, run `npm run setup` |
 | Background delegation not available | Set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` before launching OpenCode |
-| TUI sidebar not showing | Check `~/.config/opencode/tui.json` has `"plugins/pantheon-tui"` |
-| Plugin not loading | Ensure `~/.config/opencode/plugins/pantheon-tui/dist/tui.tsx` exists |
+| TUI sidebar not showing | Check the installed config's `tui.json` has exactly one `plugins/pantheon-tui` entry (absolute path) |
+| Plugin not loading | Ensure `<config>/plugins/pantheon-tui/dist/tui.js` exists (copied at install time) |
 | Health check fails | Run `npm run doctor` for detailed diagnostics |
 
 ### MCP servers e falha de spawn (ENOENT)

@@ -84,12 +84,43 @@ export declare function visionBrokenOnGateway(model: string, providerID: string)
 
 export declare function loadPresetDefs(routingPath?: string): Record<string, PresetDef>
 
+export interface RoutingAgentModelsOptions {
+  routingPath?: string
+  logger?: { warn?: (msg: string) => void }
+}
+
+/**
+ * Lowercase agent → "provider/model" mapping from routing.yml's FIRST
+ * (default) preset — the static source for the delegation toolset's
+ * options.agentModels. Fail-open: missing/corrupt routing.yml → {}.
+ */
+export declare function loadRoutingAgentModels(
+  options?: RoutingAgentModelsOptions,
+): Record<string, string>
+
 export declare function resolveActivePreset(options?: ResolveOptions): ResolvedPreset | null
 
 export declare function applyActivePresetToConfig<C extends object>(
   config: C,
   options?: ResolveOptions & { env?: Record<string, string | undefined> },
 ): ResolvedPreset | null
+
+export interface ProviderKeyOptions {
+  env?: Record<string, string | undefined>
+  routingPath?: string
+}
+
+/** Name of the env var whose value is missing for a provider, or undefined when usable. */
+export declare function missingProviderKeyEnv(
+  providerID: string,
+  options?: ProviderKeyOptions,
+): string | undefined
+
+/** Whether the provider's API key is configured (apiKeyEnv set + non-empty, or no gate). */
+export declare function providerKeyConfigured(
+  providerID: string,
+  options?: ProviderKeyOptions,
+): boolean
 
 export interface MissingApiKeyError extends Error {
   code: 'PANTHEON_MISSING_API_KEY'

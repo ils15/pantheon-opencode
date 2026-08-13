@@ -12,12 +12,13 @@
  * Run: node --test tests/hook-runner.test.mjs
  * (Node >= 22.18 imports the .ts module natively via type stripping.)
  */
-import { test } from 'node:test'
+
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runHook, resolveHooksDir } from '../src/plugins/hook-runner.ts'
+import { test } from 'node:test'
+import { resolveHooksDir, runHook } from '../src/plugins/hook-runner.ts'
 
 const SESSION_ID = 'test-session-001'
 
@@ -119,7 +120,9 @@ test('blocks high-confidence hardcoded secret in tool input (exit 2 — hybrid b
   const githubPrefix = ['gh', 'p_'].join('')
   const res = await runHook('scan-secrets.sh', {
     tool_name: 'bash',
-    tool_input: { command: `curl -H "Authorization: token ${githubPrefix + 'a'.repeat(36)}" https://api.github.com` },
+    tool_input: {
+      command: `curl -H "Authorization: token ${githubPrefix + 'a'.repeat(36)}" https://api.github.com`,
+    },
     agent_id: 'hermes',
     session_id: SESSION_ID,
   })
@@ -239,7 +242,9 @@ test('kills a timed-out hook with SIGKILL and returns a structured result', asyn
   }
 })
 
-test('kills a timed-out hook and its background process group', { skip: process.platform === 'win32' }, async () => {
+test('kills a timed-out hook and its background process group', {
+  skip: process.platform === 'win32',
+}, async () => {
   const hooksDir = mkdtempSync(join(tmpdir(), 'pantheon-hook-runner-'))
   const script = join(hooksDir, 'descendant.sh')
   const marker = join(hooksDir, 'descendant-survived')
@@ -310,8 +315,69 @@ test('regression: runHook closes stdin even with EMPTY payload ({}), resolves fa
   const res = await runHook('validate-talos-scope.sh', {})
   const elapsed = performance.now() - start
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}: ${res.stderr}`)
-  assert.ok(
-    elapsed < 2000,
-    `empty-payload hook took ${elapsed.toFixed(0)}ms — stdin not closed`,
-  )
+  assert.ok(elapsed < 2000, `empty-payload hook took ${elapsed.toFixed(0)}ms — stdin not closed`)
+})
+
+// ─── on-subagent-delegation-stop.sh delegations.log line format ─────────
+// 1.3.4 regression: the log line used to emit `task_id: ""` (empty) and
+// `duration_ms` as a STRING (prim() stringified the plugin's numeric value).
+// The line must carry the REAL task id (never empty when a job exists) and a
+// NUMERIC duration_ms.
+
+test('delegation stop log: task_id is the real id and duration_ms is numeric', async () => {
+  const logDir = mkdtempSync(join(tmpdir(), 'pantheon-delegation-log-'))
+  try {
+    const res = await runHook(
+      'on-subagent-delegation-stop.sh',
+      {
+        tool_name: 'task',
+        tool_input: { subagent_type: 'apollo', description: 'Find X' },
+        session_id: 'ses_parent_1',
+        delegation_id: 'del-001',
+        task_id: 'ses_child_99',
+        duration_ms: 1234,
+        status: 'success',
+        tool_output: { title: 'ok', output: 'done', metadata: null },
+      },
+      { env: { LOG_DIR: logDir } },
+    )
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}: ${res.stderr}`)
+    const lines = readFileSync(join(logDir, 'delegations.log'), 'utf8').trim().split('\n')
+    const last = JSON.parse(lines[lines.length - 1])
+    assert.equal(last.event, 'SubagentStop')
+    assert.equal(last.task_id, 'ses_child_99', 'task_id must be the real child id, never ""')
+    assert.equal(typeof last.duration_ms, 'number', 'duration_ms must be numeric, not a string')
+    assert.equal(last.duration_ms, 1234)
+  } finally {
+    rmSync(logDir, { recursive: true, force: true })
+  }
+})
+
+test('delegation stop log: empty task_id is OMITTED and unparseable duration is null', async () => {
+  const logDir = mkdtempSync(join(tmpdir(), 'pantheon-delegation-log-empty-'))
+  try {
+    const res = await runHook(
+      'on-subagent-delegation-stop.sh',
+      {
+        tool_name: 'task',
+        tool_input: { subagent_type: 'apollo', description: 'Find X' },
+        session_id: 'ses_parent_2',
+        delegation_id: 'del-002',
+        task_id: '',
+        status: 'success',
+        tool_output: { title: 'ok', output: 'done', metadata: null },
+      },
+      { env: { LOG_DIR: logDir } },
+    )
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}: ${res.stderr}`)
+    const lines = readFileSync(join(logDir, 'delegations.log'), 'utf8').trim().split('\n')
+    const last = JSON.parse(lines[lines.length - 1])
+    assert.ok(
+      !Object.hasOwn(last, 'task_id'),
+      'empty task_id must be omitted from the line, not emitted as ""',
+    )
+    assert.equal(last.duration_ms, null, 'missing duration must be null, not a string')
+  } finally {
+    rmSync(logDir, { recursive: true, force: true })
+  }
 })

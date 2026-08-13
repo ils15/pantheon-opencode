@@ -521,6 +521,123 @@ async function main() {
   )
 
   await testAsync(
+    'guard 3 board cross-ref: delegated child (board job) TERMINAL → not active → injects despite fresh time.updated (T6)',
+    async () => {
+      const clock = { t: 1_000_000 }
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      client.todos = incompleteTodos(2)
+      const enforcer = new TodoEnforcer({
+        client: client.asClient(),
+        board,
+        options: { now: () => clock.t },
+      })
+
+      // Delegated child: session ID IS the board task ID; the job completed,
+      // which froze `time.updated` at completion. The heuristic alone would
+      // call it "active" for another childActiveMs (120s) — the T6 bug.
+      const childID = 'ses_child_delegated'
+      await board.registerLaunch({
+        taskID: childID,
+        parentSessionID: ROOT,
+        agent: 'hermes',
+        description: 'impl phase',
+      })
+      await board.updateStatus({ taskID: childID, state: 'completed', resultSummary: 'done' })
+      client.childrenResult = [{ id: childID, time: { updated: clock.t - 1000 } }]
+
+      await enforcer.onIdle(ROOT)
+
+      assert.equal(
+        client.promptAsyncCalls.length,
+        1,
+        'terminal delegated child does NOT suppress injection (T6 regression)',
+      )
+    },
+  )
+
+  await testAsync(
+    'guard 3 board cross-ref: delegated child (board job) RUNNING → active → suppressed',
+    async () => {
+      const clock = { t: 1_000_000 }
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      client.todos = incompleteTodos(2)
+      const enforcer = new TodoEnforcer({
+        client: client.asClient(),
+        board,
+        options: { now: () => clock.t },
+      })
+
+      // The running job is registered under a DIFFERENT parent so Guard 2's
+      // parent-scoped board.list(ROOT) cannot catch it — this isolates Guard
+      // 3's taskID cross-ref (board.get(child.id) === job, running).
+      const childID = 'ses_child_running'
+      await board.registerLaunch({
+        taskID: childID,
+        parentSessionID: 'ses_other_parent',
+        agent: 'apollo',
+        description: 'search',
+      })
+      // Stale time.updated — the board state must override the heuristic.
+      client.childrenResult = [{ id: childID, time: { updated: clock.t - 300_000 } }]
+
+      await enforcer.onIdle(ROOT)
+
+      assert.equal(
+        client.promptAsyncCalls.length,
+        0,
+        'running board child suppresses injection even with stale time.updated',
+      )
+    },
+  )
+
+  await testAsync(
+    'guard 3 native child (not on board): fresh time.updated → active → suppressed',
+    async () => {
+      const clock = { t: 1_000_000 }
+      const client = new FakeClient()
+      client.todos = incompleteTodos(2)
+      const enforcer = new TodoEnforcer({
+        client: client.asClient(),
+        board: new BackgroundJobBoard(),
+        options: { now: () => clock.t },
+      })
+
+      // Native child: board.get(id) is undefined → the heuristic applies.
+      client.childrenResult = [{ id: 'native_child', time: { updated: clock.t - 1000 } }]
+
+      await enforcer.onIdle(ROOT)
+
+      assert.equal(client.promptAsyncCalls.length, 0, 'fresh native child suppresses injection')
+    },
+  )
+
+  await testAsync(
+    'guard 3 native child (not on board): stale time.updated → not active → injects',
+    async () => {
+      const clock = { t: 1_000_000 }
+      const client = new FakeClient()
+      client.todos = incompleteTodos(2)
+      const enforcer = new TodoEnforcer({
+        client: client.asClient(),
+        board: new BackgroundJobBoard(),
+        options: { now: () => clock.t },
+      })
+
+      client.childrenResult = [{ id: 'native_child', time: { updated: clock.t - 300_000 } }]
+
+      await enforcer.onIdle(ROOT)
+
+      assert.equal(
+        client.promptAsyncCalls.length,
+        1,
+        'stale native child does not suppress injection',
+      )
+    },
+  )
+
+  await testAsync(
     'user-activity gate: message within userActivityQuietMs → skip; after → injects',
     async () => {
       const clock = { t: 0 }
@@ -571,6 +688,63 @@ async function main() {
       assert.equal(client.promptAsyncCalls.length, 0, 'kill-switch off → never injects')
     },
   )
+
+  await testAsync(
+    'listPendingTodos → pending only; [] when disabled or on API failure (fail-open)',
+    async () => {
+      const client = new FakeClient()
+      client.todos = [...incompleteTodos(2), ...completedTodos()]
+      const enforcer = new TodoEnforcer({
+        client: client.asClient(),
+        board: new BackgroundJobBoard(),
+        options: { enabled: true },
+      })
+
+      const pending = await enforcer.listPendingTodos(ROOT)
+      assert.equal(pending.length, 2, 'completed/cancelled todos must be filtered out')
+      assert.ok(
+        pending.every((t) => t.status !== 'completed' && t.status !== 'cancelled'),
+        'only pending/in_progress todos remain',
+      )
+
+      const disabled = new TodoEnforcer({
+        client: new FakeClient().asClient(),
+        board: new BackgroundJobBoard(),
+        options: { enabled: false },
+      })
+      assert.deepEqual(await disabled.listPendingTodos(ROOT), [], 'disabled → []')
+
+      const broken = new FakeClient()
+      broken.todoImpl = async () => {
+        throw new Error('api down')
+      }
+      const failOpen = new TodoEnforcer({
+        client: broken.asClient(),
+        board: new BackgroundJobBoard(),
+        options: { enabled: true },
+      })
+      assert.deepEqual(await failOpen.listPendingTodos(ROOT), [], 'API failure → [] (fail-open)')
+    },
+  )
+
+  await testAsync('TODO_CONTINUATION_PROMPT is a discreet one-line message', async () => {
+    assert.ok(
+      TODO_CONTINUATION_PROMPT.startsWith('Continue:'),
+      'prompt leads with a discreet "Continue:" directive, not a multi-sentence block',
+    )
+    assert.ok(
+      !TODO_CONTINUATION_PROMPT.includes('\n'),
+      'prompt must be a single line — no newlines, no paragraph',
+    )
+    assert.ok(
+      !TODO_CONTINUATION_PROMPT.includes('critically re-examine'),
+      'the old long-form completion-audit text is gone',
+    )
+    assert.ok(
+      !TODO_CONTINUATION_PROMPT.includes('Incomplete tasks remain'),
+      'the old invasive opening is gone',
+    )
+  })
 
   // ═══════════════════════════════════════════════════════════════════════
 

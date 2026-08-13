@@ -16,8 +16,13 @@ import {
   BackgroundJobBoard,
   type BackgroundJobRecord,
 } from '../../src/pantheon/background-job-board.ts'
-import { createDelegationTools, type DelegationToolset } from '../../src/pantheon/delegation.ts'
+import {
+  collectRootSessionIDs,
+  createDelegationTools,
+  type DelegationToolset,
+} from '../../src/pantheon/delegation.ts'
 import { readDelegationReport } from '../../src/pantheon/delegation-finalize.ts'
+import { loadRoutingAgentModels } from '../../src/pantheon/presets.mjs'
 
 // ─── Harness ───────────────────────────────────────────────────────────
 
@@ -64,8 +69,12 @@ class FakeClient {
   messagesCalls: string[] = []
   /** When set, session.create rejects with this error (F3). */
   createError: Error | null = null
-  messagesResult: Array<{ info: { role: string }; parts: Array<{ type: string; text: string }> }> =
-    [{ info: { role: 'assistant' }, parts: [{ type: 'text', text: 'fake assistant output' }] }]
+  /** When set, session.messages rejects with this error (fail-open paths). */
+  messagesError: Error | null = null
+  messagesResult: Array<{
+    info: { role: string }
+    parts: Array<{ type?: string; text?: string; tool?: string; metadata?: { input?: unknown } }>
+  }> = [{ info: { role: 'assistant' }, parts: [{ type: 'text', text: 'fake assistant output' }] }]
   private childCounter = 0
 
   readonly session = {
@@ -81,13 +90,13 @@ class FakeClient {
     },
     messages: async (input: { path: { id: string } }): Promise<unknown> => {
       this.messagesCalls.push(input.path.id)
+      if (this.messagesError) throw this.messagesError
       return this.messagesResult
     },
   }
 }
 
 const ROOT = 'ses_root'
-const CHILD = 'ses_child_outer'
 
 function makeCtx(sessionID = ROOT) {
   return { sessionID, directory: '/tmp', worktree: '/tmp', agent: 'zeus' }
@@ -179,6 +188,8 @@ async function main() {
           options: {
             rootSessions: new Set([ROOT]),
             outputDir: tmp,
+            // opencode provider requires PANTHEON_OPENCODE_API_KEY (routing.yml)
+            presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
             agentModels: { apollo: 'opencode/deepseek-v4-flash-free' },
           },
         })
@@ -212,7 +223,11 @@ async function main() {
             outputDir: tmp,
             // No agentModels — the delegate must resolve the active preset
             // itself (default routing.yml) and use the preset's apollo model.
-            presetEnv: { PANTHEON_MODEL_PRESET: 'go-deepseek' },
+            // opencode provider requires PANTHEON_OPENCODE_API_KEY (routing.yml).
+            presetEnv: {
+              PANTHEON_MODEL_PRESET: 'go-deepseek',
+              PANTHEON_OPENCODE_API_KEY: 'sk-test',
+            },
             logger: { warn: (msg) => warnings.push(msg) },
           },
         })
@@ -268,8 +283,343 @@ async function main() {
     },
   )
 
-  await testAsync('depth guard: delegate from a SUB-session caller is rejected', async () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'delegation-depth-'))
+  await testAsync(
+    '(P1) resolved provider without API key → child created with fallback opencode/deepseek-v4-flash-free + warn',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-fallback-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            // go-openai: apollo → openai/gpt-5.6-luna-fast. PANTHEON_OPENAI_API_KEY
+            // is UNSET → fallback must kick in. The fallback provider (opencode)
+            // IS configured → usable.
+            presetEnv: {
+              PANTHEON_MODEL_PRESET: 'go-openai',
+              PANTHEON_OPENCODE_API_KEY: 'sk-fallback',
+            },
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        const result = await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo' },
+          makeCtx(),
+        )
+
+        assert.ok(result.includes('apo-1'), `delegation proceeds via fallback, got: ${result}`)
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'deepseek-v4-flash-free',
+          providerID: 'opencode',
+        })
+        assert.ok(
+          warnings.some((w) => /API key/i.test(w) && /fallback|deepseek-v4-flash-free/i.test(w)),
+          `expected a missing-key fallback warning, got: ${warnings.join('; ')}`,
+        )
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(P1) fallback provider ALSO without API key → clear error TEXT, NO job on board',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-none-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            // go-openai: resolved provider openai key UNSET; fallback provider
+            // opencode key ALSO unset → no usable model at all.
+            presetEnv: { PANTHEON_MODEL_PRESET: 'go-openai' },
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        const result = await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo' },
+          makeCtx(),
+        )
+
+        assert.ok(/no usable model/i.test(result), `expected clear error text, got: ${result}`)
+        assert.match(result, /PANTHEON_OPENAI_API_KEY/, 'error must name the missing env var')
+        assert.equal(client.created.length, 0, 'no session may be created without a usable model')
+        assert.equal(board.list().length, 0, 'no job may be registered when creation fails')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(P1) resolved provider WITH API key configured → resolved model used normally, no warning',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-present-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            presetEnv: {
+              PANTHEON_MODEL_PRESET: 'go-openai',
+              PANTHEON_OPENAI_API_KEY: 'sk-openai',
+            },
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'gpt-5.6-luna-fast',
+          providerID: 'openai',
+        })
+        assert.equal(warnings.length, 0, 'key present — no warning expected')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(P1) EXPLICIT model in the tool call is respected even without provider key (warn only)',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-explicit-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            // Empty env: openai key is missing, but the explicit model wins.
+            presetEnv: {},
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo', model: 'openai/gpt-5.6-terra' },
+          makeCtx(),
+        )
+
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'gpt-5.6-terra',
+          providerID: 'openai',
+        })
+        assert.ok(
+          warnings.some((w) => /API key/i.test(w)),
+          `explicit model must still warn on the missing key, got: ${warnings.join('; ')}`,
+        )
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('(d) precedence: explicit model option beats options.agentModels', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-precedence-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      const warnings: string[] = []
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: {
+          rootSessions: new Set([ROOT]),
+          outputDir: tmp,
+          // agentModels is present, but the explicit caller model must win.
+          agentModels: { apollo: 'opencode/deepseek-v4-flash-free' },
+          // Empty env: openai key is missing — the explicit model is still
+          // respected (warned, never overridden).
+          presetEnv: {},
+          logger: { warn: (msg) => warnings.push(msg) },
+        },
+      })
+
+      await tools.pantheon_delegate.execute(
+        { prompt: 'Find X', agent: 'apollo', model: 'openai/gpt-5.6-terra' },
+        makeCtx(),
+      )
+
+      assert.equal(client.created.length, 1)
+      assert.deepEqual(client.created[0]!.body.model, {
+        id: 'gpt-5.6-terra',
+        providerID: 'openai',
+      })
+      assert.ok(
+        warnings.some((w) => /API key/i.test(w)),
+        `explicit model wins but must still warn on the missing key, got: ${warnings.join('; ')}`,
+      )
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
+    '(c) integration: agentModels built from routing.yml (loadRoutingAgentModels) drives branch (b)',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-routing-models-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            // Same source the plugin wires (Fase 6): routing.yml's default
+            // agent→model mapping. The opencode provider requires
+            // PANTHEON_OPENCODE_API_KEY (routing.yml go-deepseek apiKeyEnv).
+            agentModels: loadRoutingAgentModels(),
+            presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
+          },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]!.body.model, {
+          id: 'deepseek-v4-flash-free',
+          providerID: 'opencode',
+        })
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(b) depth guard preserved: a child WE created is rejected even when rootSessions does not contain it',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-depth-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+
+        // Root delegates → creates child ses_child_1 (enters knownChildren).
+        await tools.pantheon_delegate.execute({ prompt: 'Root task', agent: 'apollo' }, makeCtx())
+
+        // The child we created tries to delegate → rejected: the allowlist
+        // does NOT contain ses_child_1, but knownChildren does (fallback).
+        await assert.rejects(
+          tools.pantheon_delegate.execute(
+            { prompt: 'Nested delegation', agent: 'apollo' },
+            makeCtx('ses_child_1'),
+          ),
+          /root session/,
+        )
+        assert.equal(client.created.length, 1, 'no session may be created for a rejected delegate')
+        assert.equal(board.list().length, 1)
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(b2) depth guard with EMPTY allowlist (post-restart): known child still rejected',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-depth-empty-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        // Simulate a restart before the session.list() seed populated the
+        // registry: the allowlist is EMPTY, yet the knownChildren fallback
+        // must still block a child we create.
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set<string>(), outputDir: tmp },
+        })
+
+        // Resumed root delegates → creates child ses_child_1 (knownChildren).
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Root task', agent: 'apollo' },
+          makeCtx('ses_resumed_root'),
+        )
+
+        await assert.rejects(
+          tools.pantheon_delegate.execute(
+            { prompt: 'Nested delegation', agent: 'apollo' },
+            makeCtx('ses_child_1'),
+          ),
+          /root session/,
+        )
+        assert.equal(client.created.length, 1, 'nested delegate must not create a session')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(a) resumed session: in NEITHER rootSessions nor knownChildren → treated as root, can delegate',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-resumed-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        // Post-restart: the allowlist is empty (session.created events are
+        // not replayed for pre-existing sessions) and the resumed root was
+        // never created by THIS tools instance. It must be allowed to
+        // delegate — this is the compaction-134 bug scenario.
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set<string>(), outputDir: tmp },
+        })
+
+        const result = await tools.pantheon_delegate.execute(
+          { prompt: 'Resumed root task', agent: 'apollo' },
+          makeCtx('ses_resumed_root'),
+        )
+
+        assert.ok(
+          result.includes('apo-1'),
+          `resumed root must be allowed to delegate, got: ${result}`,
+        )
+        assert.equal(client.created.length, 1, 'delegation must create a child session')
+        assert.equal(board.get('ses_child_1')?.parentSessionID, 'ses_resumed_root')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('(c) session listed in rootSessions → can delegate', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-allowlist-'))
     try {
       const board = new BackgroundJobBoard()
       const client = new FakeClient()
@@ -279,19 +629,31 @@ async function main() {
         options: { rootSessions: new Set([ROOT]), outputDir: tmp },
       })
 
-      await assert.rejects(
-        tools.pantheon_delegate.execute(
-          { prompt: 'Nested delegation', agent: 'apollo' },
-          makeCtx(CHILD),
-        ),
-        /root session/,
+      const result = await tools.pantheon_delegate.execute(
+        { prompt: 'Allowlisted root', agent: 'apollo' },
+        makeCtx(ROOT),
       )
-      assert.equal(client.created.length, 0, 'no session may be created for a rejected delegate')
-      assert.equal(board.list().length, 0)
+      assert.ok(result.includes('apo-1'), `allowlisted root must delegate, got: ${result}`)
+      assert.equal(client.created.length, 1)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
   })
+
+  await testAsync(
+    '(d) collectRootSessionIDs: seeds only sessions WITHOUT a parentID (2 roots + 1 child → 2 roots)',
+    async () => {
+      const roots = collectRootSessionIDs([
+        { id: 'ses_root_1' },
+        { id: 'ses_root_2', parentID: undefined },
+        { id: 'ses_child_1', parentID: 'ses_root_1' },
+        { id: 'ses_child_2', parentID: 'ses_root_2' },
+      ])
+      assert.deepEqual([...roots].sort(), ['ses_root_1', 'ses_root_2'])
+      assert.equal(roots.has('ses_child_1'), false, 'children must never be seeded as roots')
+      assert.equal(roots.has('ses_child_2'), false)
+    },
+  )
 
   await testAsync(
     'depth guard: a session we created as a child cannot delegate again (self-learning)',
@@ -452,13 +814,258 @@ async function main() {
         client,
         options: { rootSessions: new Set([ROOT]), outputDir: tmp },
       })
-
       const result = await tools.pantheon_delegation_read.execute({ id: 'nope' }, makeCtx())
       assert.ok(/unknown|not found/i.test(result), `expected unknown-id message, got: ${result}`)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
   })
+
+  await testAsync(
+    '(a) read collects child activity during the wait and includes ## Agent Activity in the result',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-activity-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+        // Read blocks while running — the wait samples the child's messages
+        const readPromise = tools.pantheon_delegation_read.execute({ id: 'apo-1' }, makeCtx())
+        await sleep(20)
+        await tools.finalizeDelegation('ses_child_1', { state: 'completed' })
+
+        const content = await readPromise
+        assert.ok(
+          content.includes('## Agent Activity'),
+          'read result must include the activity section',
+        )
+        assert.ok(
+          content.includes('fake assistant output'),
+          'activity must surface the child assistant text',
+        )
+        assert.ok(
+          !content.includes('_no activity captured_'),
+          'activity section must not be empty when messages are available',
+        )
+        // Report body stays intact (backward compatible)
+        assert.ok(content.includes('## Output'), 'report markdown must remain present')
+        assert.ok(content.includes('apo-1'), 'report must still identify the alias')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(b) activity with a tool call shows the tool name + truncated args',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-activity-tool-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        client.messagesResult = [
+          {
+            info: { role: 'assistant' },
+            parts: [
+              {
+                type: 'tool',
+                tool: 'bash',
+                metadata: { input: 'grep -rn "search term" src/ --include="*.ts"' },
+              },
+            ],
+          },
+        ]
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+        const readPromise = tools.pantheon_delegation_read.execute({ id: 'apo-1' }, makeCtx())
+        await sleep(20)
+        await tools.finalizeDelegation('ses_child_1', { state: 'completed' })
+
+        const content = await readPromise
+        assert.ok(content.includes('tool: bash'), `activity must name the tool, got: ${content}`)
+        assert.ok(content.includes('grep -rn'), 'activity must include the (truncated) tool args')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(c) read is fail-open: session.messages throwing → report as before, no activity section, no crash',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-activity-failopen-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        client.messagesError = new Error('fake messages failure')
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+        const readPromise = tools.pantheon_delegation_read.execute({ id: 'apo-1' }, makeCtx())
+        await sleep(20)
+        await tools.finalizeDelegation('ses_child_1', { state: 'completed' })
+
+        const content = await readPromise
+        assert.ok(
+          !content.includes('## Agent Activity'),
+          'no activity section when messages are unavailable',
+        )
+        assert.ok(content.includes('## Output'), 'report markdown still returned')
+        assert.ok(content.includes('apo-1'), 'report still identifies the alias')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'read with empty/unreadable messages → ## Agent Activity with _no activity captured_',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-activity-empty-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        client.messagesResult = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+        const readPromise = tools.pantheon_delegation_read.execute({ id: 'apo-1' }, makeCtx())
+        await sleep(20)
+        await tools.finalizeDelegation('ses_child_1', { state: 'completed' })
+
+        const content = await readPromise
+        assert.ok(content.includes('## Agent Activity'), 'section must be present')
+        assert.ok(
+          content.includes('_no activity captured_'),
+          'empty messages must render the no-activity marker',
+        )
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(d) list: running job shows `last activity:` line; unavailable messages keep current format',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-list-activity-'))
+      try {
+        // Running job WITH session.messages → last activity line present
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Running task', agent: 'hermes' },
+          makeCtx(),
+        )
+        const listing = await tools.pantheon_delegation_list.execute({}, makeCtx())
+        assert.ok(listing.includes('[her-1]'), 'list shows the running job')
+        assert.ok(listing.includes('last activity:'), 'running job must show a last activity line')
+        assert.ok(
+          listing.includes('fake assistant output'),
+          'last activity line surfaces the assistant text',
+        )
+
+        // Running job WITHOUT session.messages (throwing) → current format, no activity line
+        const board2 = new BackgroundJobBoard()
+        const client2 = new FakeClient()
+        client2.messagesError = new Error('fake messages failure')
+        const tools2 = createDelegationTools({
+          board: board2,
+          client: client2,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+        await tools2.pantheon_delegate.execute(
+          { prompt: 'Running task', agent: 'hermes' },
+          makeCtx(),
+        )
+        const listing2 = await tools2.pantheon_delegation_list.execute({}, makeCtx())
+        assert.ok(listing2.includes('[her-1]'), 'list still shows the running job')
+        assert.ok(
+          !listing2.includes('last activity:'),
+          'no last activity line when messages are unavailable',
+        )
+
+        // Terminal jobs never show activity lines
+        await tools.finalizeDelegation('ses_child_1', { state: 'completed' })
+        const listing3 = await tools.pantheon_delegation_list.execute({}, makeCtx())
+        assert.ok(listing3.includes('[unread]'), 'terminal job keeps its flags')
+        assert.ok(
+          !listing3.includes('last activity:'),
+          'terminal jobs keep the current format (no activity line)',
+        )
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(e) truncation: long activity message is cut at ~200 chars without breaking',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-activity-trunc-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        client.messagesResult = [
+          {
+            info: { role: 'assistant' },
+            parts: [{ type: 'text', text: 'L'.repeat(500) }],
+          },
+        ]
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+        const readPromise = tools.pantheon_delegation_read.execute({ id: 'apo-1' }, makeCtx())
+        await sleep(20)
+        await tools.finalizeDelegation('ses_child_1', { state: 'completed' })
+
+        const content = await readPromise
+        const activitySection = content.slice(content.indexOf('## Agent Activity'))
+        const activityLine = activitySection.split('\n').find((l) => l.startsWith('- '))
+        assert.ok(activityLine !== undefined, 'activity section must have a line')
+        assert.ok(
+          activityLine.slice(2).length <= 200,
+          `activity line must be truncated to ~200 chars, got ${activityLine.slice(2).length}`,
+        )
+        // The report's Output section keeps the full text — truncation applies
+        // to the ACTIVITY line only.
+        assert.ok(
+          !activitySection.includes('L'.repeat(500)),
+          'activity must truncate the long message',
+        )
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
 
   await testAsync(
     'pantheon_delegation_list: shows [unread] for terminal-unreconciled jobs',

@@ -40,6 +40,11 @@ async function fireSession(logDir, debug) {
   console.log = (...a) => consoleLines.push(`[log] ${a.join(' ')}`)
   console.error = (...a) => consoleLines.push(`[err] ${a.join(' ')}`)
   process.env.LOG_DIR = logDir
+  // Escape hatch: the runtime double-registration guard (plugin-once.ts) is
+  // process-global — this suite fires the factory for BOTH modes (silent +
+  // debug) in the SAME process via cache-busted imports. Without `off`, the
+  // second mode would be a no-op and its assertions would never run.
+  process.env.PANTHEON_PLUGIN_ONCE = 'off'
   if (debug) process.env.PANTHEON_HOOKS_LOG = '1'
   else delete process.env.PANTHEON_HOOKS_LOG
   try {

@@ -356,7 +356,15 @@ async function main() {
         const gate = new Promise<void>((resolve) => {
           release = resolve
         })
+        let entered: () => void = () => {}
+        const enteredPromise = new Promise<void>((resolve) => {
+          entered = resolve
+        })
         client.promptAsyncImpl = async () => {
+          // Deterministic in-flight signal: fires when the injection reaches
+          // promptAsync (the fake records the call BEFORE invoking this impl),
+          // so the guard check never races a real file read vs setTimeout(0).
+          entered()
           await gate
           return {}
         }
@@ -372,7 +380,7 @@ async function main() {
 
         const first = loop.onIdle(ROOT)
         const second = loop.onIdle(ROOT)
-        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+        await enteredPromise
         assert.equal(client.promptAsyncCalls.length, 1, 'only the first idle injects')
 
         release()
@@ -440,15 +448,23 @@ async function main() {
   })
 
   await testAsync(
-    'GOAL_CONTINUATION_PROMPT carries the objective placeholder + action instruction',
+    'GOAL_CONTINUATION_PROMPT is a discreet one-line prompt with the objective placeholder',
     async () => {
+      assert.ok(
+        GOAL_CONTINUATION_PROMPT.startsWith('Continue goal:'),
+        'prompt leads with a discreet "Continue goal:" directive',
+      )
       assert.ok(
         GOAL_CONTINUATION_PROMPT.includes('{objective}'),
         'prompt restates the objective via the {objective} placeholder',
       )
       assert.ok(
-        GOAL_CONTINUATION_PROMPT.includes('pantheon_goal_update'),
-        'prompt tells the agent to mark the goal done via pantheon_goal_update',
+        !GOAL_CONTINUATION_PROMPT.includes('\n'),
+        'prompt must be a single line — no newlines, no paragraph',
+      )
+      assert.ok(
+        !GOAL_CONTINUATION_PROMPT.includes('pantheon_goal_update'),
+        'the long-form action instruction is dropped from the discreet prompt',
       )
     },
   )

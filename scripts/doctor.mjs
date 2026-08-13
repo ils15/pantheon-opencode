@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
-const AGENTS_DIR = join(ROOT, "src", "agents")
+const AGENTS_DIR = join(ROOT, 'src', 'agents')
 const PLATFORM_DIR = join(ROOT, 'platform')
 
 // All known platforms (must match platform/ subdirectories with adapter.json)
@@ -246,7 +246,9 @@ function checkAgentFiles(args) {
 
   // Determine which platforms to check
   if (!existsSync(PLATFORM_DIR)) {
-    info(`Platform component not distributed in this package — platform check skipped (${args.profile} profile)`)
+    info(
+      `Platform component not distributed in this package — platform check skipped (${args.profile} profile)`,
+    )
     return
   }
   const platformDirs = readdirSync(PLATFORM_DIR, { withFileTypes: true })
@@ -255,7 +257,9 @@ function checkAgentFiles(args) {
     .filter((name) => !args.platform || name === args.platform)
 
   if (platformDirs.length === 0) {
-    info(`No platform directories found in platform/ — platform check skipped (${args.profile} profile)`)
+    info(
+      `No platform directories found in platform/ — platform check skipped (${args.profile} profile)`,
+    )
     return
   }
 
@@ -377,7 +381,8 @@ function checkMcpConfig(args) {
 
     const mcp = cfg.data.mcp
     if (!mcp || typeof mcp !== 'object') {
-      if (requiredMcpNames.length > 0) error(`${cfg.label}: required MCPs missing — no "mcp" section`)
+      if (requiredMcpNames.length > 0)
+        error(`${cfg.label}: required MCPs missing — no "mcp" section`)
       else info(`${cfg.label}: no "mcp" section (${args.profile} profile — optional)`)
       continue
     }
@@ -450,7 +455,9 @@ function checkMcpConfig(args) {
       const exe = cmd[0]
       if (!exe.includes('/')) {
         // PATH-resolved executable — cannot verify statically; surface for manual check
-        info(`${cfg.label}: MCP "${name}" uses PATH executable "${exe}" (verify with \`which ${exe}\`)`)
+        info(
+          `${cfg.label}: MCP "${name}" uses PATH executable "${exe}" (verify with \`which ${exe}\`)`,
+        )
         continue
       }
       if (!existsSync(exe)) {
@@ -467,7 +474,8 @@ function checkMcpConfig(args) {
   if (requiredMcpNames.length > 0) {
     const configured = new Set(configs.flatMap((cfg) => Object.keys(cfg.data.mcp ?? {})))
     for (const required of requiredMcpNames) {
-      if (configured.has(required)) pass(`Required MCP "${required}" configured in an available config`)
+      if (configured.has(required))
+        pass(`Required MCP "${required}" configured in an available config`)
       else error(`Required MCP "${required}" not configured in any available config`)
     }
   }
@@ -535,12 +543,17 @@ function mcpInitializeSmoke(command, cwd, timeoutMs) {
         const msg = JSON.parse(line.trim())
         if (msg.id === 1 && msg.result) {
           const info = msg.result.serverInfo
-          const label = info?.name ? `${info.name}${info.version ? ` ${info.version}` : ''}` : undefined
+          const label = info?.name
+            ? `${info.name}${info.version ? ` ${info.version}` : ''}`
+            : undefined
           finish({ ok: true, serverName: label })
           return
         }
         if (msg.error) {
-          finish({ ok: false, reason: `initialize error: ${msg.error.code ?? ''} ${msg.error.message ?? ''}` })
+          finish({
+            ok: false,
+            reason: `initialize error: ${msg.error.code ?? ''} ${msg.error.message ?? ''}`,
+          })
         }
       } catch {
         /* not JSON yet — keep buffering */
@@ -592,7 +605,9 @@ async function checkMcpRuntimeSmoke(args) {
   for (const { name, command, cwd, source } of local) {
     const result = await mcpInitializeSmoke(command, cwd, 10000)
     if (result.ok) {
-      pass(`MCP "${name}" (${source}): initialize handshake OK${result.serverName ? ` — ${result.serverName}` : ''}`)
+      pass(
+        `MCP "${name}" (${source}): initialize handshake OK${result.serverName ? ` — ${result.serverName}` : ''}`,
+      )
     } else {
       error(`MCP "${name}" (${source}): ${result.reason}`)
     }
@@ -645,7 +660,9 @@ function checkPermissionMismatches(args) {
   // Locate the validation script
   const validator = join(ROOT, 'scripts', 'validate-agent-frontmatter.py')
   if (!existsSync(validator)) {
-    info(`validate-agent-frontmatter.py not found — optional helper skipped (${args.profile} profile)`)
+    info(
+      `validate-agent-frontmatter.py not found — optional helper skipped (${args.profile} profile)`,
+    )
     return
   }
 
@@ -876,12 +893,24 @@ function checkRequirementLine(line, installed) {
   const cmp = compareVersions(have, want)
   let ok = false
   switch (op) {
-    case '==': ok = cmp === 0; break
-    case '>=': ok = cmp >= 0; break
-    case '<=': ok = cmp <= 0; break
-    case '>': ok = cmp > 0; break
-    case '<': ok = cmp < 0; break
-    case '!=': ok = cmp !== 0; break
+    case '==':
+      ok = cmp === 0
+      break
+    case '>=':
+      ok = cmp >= 0
+      break
+    case '<=':
+      ok = cmp <= 0
+      break
+    case '>':
+      ok = cmp > 0
+      break
+    case '<':
+      ok = cmp < 0
+      break
+    case '!=':
+      ok = cmp !== 0
+      break
     case '~=': {
       const spec = parseVersion(want)
       const got = parseVersion(have)
@@ -961,12 +990,12 @@ function checkVenvLayer(args) {
  */
 export function summaryMessage(summaryCounts, summaryExitCode) {
   if (summaryCounts.error > 0 || summaryExitCode !== 0) {
-    const errorText = summaryCounts.error > 0
-      ? `${summaryCounts.error} blocking error(s) found`
-      : 'Blocking check failure'
-    const warningText = summaryCounts.warn > 0
-      ? `; ${summaryCounts.warn} warning(s) remain advisory`
-      : ''
+    const errorText =
+      summaryCounts.error > 0
+        ? `${summaryCounts.error} blocking error(s) found`
+        : 'Blocking check failure'
+    const warningText =
+      summaryCounts.warn > 0 ? `; ${summaryCounts.warn} warning(s) remain advisory` : ''
     return `❌ ${errorText}${warningText} — exit code ${summaryExitCode}`
   }
 
@@ -1004,6 +1033,11 @@ async function main() {
     showHelp()
     process.exit(0)
   }
+
+  // Report the resolved validation profile up front (auto → global/sandbox)
+  // so callers — including the `doctor` CLI wrapper — can see which policy
+  // gate applied before any check output.
+  console.log(`Validation profile: ${args.profile}`)
 
   if (!existsSync(args.target)) {
     console.error(`❌ Target directory does not exist: ${args.target}`)
