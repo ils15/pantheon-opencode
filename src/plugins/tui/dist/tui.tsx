@@ -2396,8 +2396,15 @@ function View(props: {
 
 /* ─── Plugin Registration ────────────────────────────────── */
 
-const tui: TuiPlugin = async (api, _options, _meta) => {
-  const version = await detectVersion(api)
+const tui: TuiPlugin = (api, _options, _meta) => {
+  // Do not await project file/process probes here. OpenCode waits for the TUI
+  // factory before it finishes startup, and a Windows host opening a WSL
+  // project can leave those probes pending while the project bridge comes up.
+  // Register the sidebar immediately and fill in the optional version later.
+  const [version, setVersion] = createSignal<string | null>(null)
+  void detectVersion(api)
+    .then((detected) => setVersion(detected))
+    .catch(() => setVersion(null))
 
   // Vendored feature (MIT): AI subscription usage gauges.
   void setupUsageBar(api) // async init — never blocks sidebar registration
@@ -2460,9 +2467,7 @@ const tui: TuiPlugin = async (api, _options, _meta) => {
     order: 900,
     slots: {
       sidebar_content(_ctx, props) {
-        return (
-          <View api={api} sessionID={props.session_id} version={version} liveStore={liveStore} />
-        )
+        return <View api={api} sessionID={props.session_id} version={version()} liveStore={liveStore} />
       },
     },
   })

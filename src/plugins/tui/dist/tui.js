@@ -1767,8 +1767,9 @@ function View(props) {
 		return _el$21;
 	})();
 }
-const tui = async (api, _options, _meta) => {
-	const version = await detectVersion(api);
+const tui = (api, _options, _meta) => {
+	const [version, setVersion] = createSignal(null);
+	detectVersion(api).then((detected) => setVersion(detected)).catch(() => setVersion(null));
 	setupUsageBar(api);
 	const [liveVersion, setLiveVersion] = createSignal(0);
 	const liveStore = {
@@ -1806,7 +1807,9 @@ const tui = async (api, _options, _meta) => {
 				get sessionID() {
 					return props.session_id;
 				},
-				version,
+				get version() {
+					return version();
+				},
 				liveStore
 			});
 		} }
