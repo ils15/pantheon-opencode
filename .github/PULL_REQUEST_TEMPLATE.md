@@ -19,6 +19,15 @@ Title convention — Conventional Commits, in English:
 ## Changes
 <!-- List by area (e.g. core, plugin, mcp, tests, docs). Bullet points. -->
 
+## Release notes
+<!-- User-facing impact for the release notes, aligned with the groups in
+     `scripts/release-notes.mjs`:
+     ✨ Features · 🐞 Fixed · 📚 Documentation · ⚡ Performance ·
+     🛡️ Security · 🔧 Maintenance · 💥 Breaking
+     One bullet per change, e.g. `- **tui** — real-time Delegations panel`.
+     Leave empty when there is no user-facing impact. -->
+- ...
+
 ## Root causes fixed
 <!-- If this PR fixes bugs, fill the table. Otherwise delete this section. -->
 

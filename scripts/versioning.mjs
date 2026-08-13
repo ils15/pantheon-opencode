@@ -20,6 +20,7 @@ import { execSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { collectEntries, groupCommits, parseCommitLine, renderChangelog } from './release-notes.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -120,9 +121,14 @@ function updateManifests(newVersion) {
 //   1. Strips empty subsections (### Added\n\n### Changed...)
 //   2. Renames [Unreleased] → [vX.Y.Z] - date
 //   3. Inserts a fresh empty [Unreleased] template above it
+//
+// `notesBody` (from `apply --notes`) replaces the manual body of the
+// promoted entry with release notes generated from conventional commits
+// (rendered via release-notes.mjs renderChangelog). When notesBody is
+// provided the empty-[Unreleased] early return is bypassed.
 // ---------------------------------------------------------------------------
 
-function promoteUnreleased(newVersion, dateStr) {
+function promoteUnreleased(newVersion, dateStr, notesBody = null) {
   const content = readFileSync(CHANGELOG_PATH, 'utf-8')
 
   const unreleasedHeader = '## [Unreleased]'
@@ -144,17 +150,26 @@ function promoteUnreleased(newVersion, dateStr) {
     .split('\n')
     .filter((l) => l.trim() && !l.startsWith('###') && !l.startsWith('<!--'))
 
-  if (realLines.length === 0) {
+  if (notesBody === null && realLines.length === 0) {
     console.log('  ℹ [Unreleased] is empty — CHANGELOG not modified')
     return false
   }
 
+  if (notesBody !== null && realLines.length > 0) {
+    console.log(
+      '  ⚠ --notes replaces the manual [Unreleased] content — review the diff before committing',
+    )
+  }
+
   // Strip lines that are just empty subsections (### X followed by blank line
   // then another ### or end)
-  const cleanedBody = unreleasedBody
-    .replace(/\n### \w[^\n]*\n(\n(?=###|\n## |\n$))+/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trimEnd()
+  const cleanedBody =
+    notesBody !== null
+      ? `\n\n${notesBody}`
+      : unreleasedBody
+          .replace(/\n### \w[^\n]*\n(\n(?=###|\n## |\n$))+/g, '\n')
+          .replace(/\n{3,}/g, '\n\n')
+          .trimEnd()
 
   const newTemplate = `\n\n<!-- Add new changes here. Running \`node scripts/versioning.mjs apply\` will\n     move this section to a versioned entry and reset the template below. -->\n\n### Added\n\n### Changed\n\n### Fixed\n\n### Removed`
   const newVersionHeader = `## [v${newVersion}] - ${dateStr}`
@@ -165,7 +180,11 @@ function promoteUnreleased(newVersion, dateStr) {
   const updated = `${before + unreleasedHeader + newTemplate}\n\n${newVersionHeader}${cleanedBody}${after}`
 
   writeFileSync(CHANGELOG_PATH, updated)
-  console.log(`  ✓ CHANGELOG: [Unreleased] → [v${newVersion}]`)
+  console.log(
+    notesBody !== null
+      ? `  ✓ CHANGELOG: [Unreleased] → [v${newVersion}] (notes generated from commits)`
+      : `  ✓ CHANGELOG: [Unreleased] → [v${newVersion}]`,
+  )
   return true
 }
 
@@ -204,10 +223,28 @@ switch (command) {
   }
 
   case 'apply': {
-    const type = arg || 'auto'
+    const args = process.argv.slice(3)
+    const useNotes = args.includes('--notes')
+    const type = args.find((a) => !a.startsWith('--')) || 'auto'
     const latestTag = getLatestTag()
     const current = getCurrentVersion()
     const latestVer = latestTag.replace(/^v/, '')
+
+    // `apply --notes` pre-fills the promoted [Unreleased] entry with release
+    // notes generated from conventional commits (release-notes.mjs). Default
+    // stays manual — the flag is opt-in.
+    const generateNotes = () => {
+      if (!useNotes) return null
+      const since = latestTag === 'v0.0.0' ? null : latestTag
+      const raw = collectEntries({ since, draft: since === null })
+      const body = renderChangelog(groupCommits(raw.map(parseCommitLine)))
+      if (!body) {
+        console.log('  ⚠ --notes: no groupable commits — manual [Unreleased] content used')
+        return null
+      }
+      console.log(`  ℹ --notes: release notes generated from ${raw.length} commits`)
+      return body
+    }
 
     // If package.json is already ahead of the latest tag, someone bumped
     // without tagging — warn and use the current version as-is. Tags are
@@ -217,7 +254,7 @@ switch (command) {
       console.log(`  Syncing all manifests to ${current} and promoting CHANGELOG.`)
       updateManifests(current)
       const date = new Date().toISOString().slice(0, 10)
-      promoteUnreleased(current, date)
+      promoteUnreleased(current, date, generateNotes())
       console.log(`Tag v${current} will be created by the release workflow after merge to main.`)
       break
     }
@@ -228,7 +265,7 @@ switch (command) {
 
     console.log(`Bumping ${current} → ${newVersion} (${bumpType})`)
     updateManifests(newVersion)
-    promoteUnreleased(newVersion, date)
+    promoteUnreleased(newVersion, date, generateNotes())
     console.log(`\nDone. Commit with: git add -A && git commit -m "chore(release): v${newVersion}"`)
 
     // Tags are owned by the release workflow — never create them locally.
@@ -254,6 +291,8 @@ Commands:
   recommend            Print recommended bump type (patch/minor/major)
   apply [type]         Bump manifests + move [Unreleased] → [vX.Y.Z]
                        type: patch | minor | major | auto (default: auto)
+                       --notes: pre-fill the promoted entry with release
+                       notes generated from conventional commits
   changelog [version]  Promote [Unreleased] → [vX.Y.Z] without bumping
 
 Release flow:

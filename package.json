@@ -21,7 +21,7 @@
     "version:status": "node scripts/versioning.mjs status",
     "version:apply": "node scripts/versioning.mjs apply",
     "version:check": "node scripts/version-check.mjs",
-    "release:dry-run": "node scripts/versioning.mjs status && npm pack --dry-run",
+    "release:dry-run": "node scripts/versioning.mjs status && node scripts/release-notes.mjs && npm pack --dry-run",
     "publish:next": "npm publish --tag next --access public",
     "lint": "npx biome ci .",
     "typecheck": "npx tsc --noEmit",
