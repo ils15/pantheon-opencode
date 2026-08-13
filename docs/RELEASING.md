@@ -82,19 +82,22 @@ before it merges, so the generator can always group the history.
 
 ### Type → section mapping
 
+Release notes use the final emoji group format — **🆕 What's New /
+🐞 Fixed / ⚠️ Known Issues / ✅ Closed Issues**:
+
 | Commit type | Release notes section |
 |---|---|
-| `feat` | `## ✨ Features` |
-| `fix` | `## 🐞 Fixed` |
-| `docs` | `## 📚 Documentation` |
-| `perf` | `## ⚡ Performance` |
-| `security` | `## 🛡️ Security` |
-| `chore`, `refactor`, `test`, `ci`, `build`, `style`, `revert` | `## 🔧 Maintenance` |
-| `BREAKING CHANGE` footer or `type!:` / `type(scope)!:` | `## 💥 Breaking` (precedence — never also appears in its type group) |
+| `feat`, `perf`, `docs` | `## 🆕 What's New` (docs are user-facing — no dedicated group) |
+| `fix`, `security` | `## 🐞 Fixed` |
+| `--known-issues "text"` (CLI flag, repeatable) | `## ⚠️ Known Issues` (omitted when the flag is absent — never emitted empty) |
+| `Closes #N` / `Fixes #N` / `Resolves #N` in the commit **body** | `## ✅ Closed Issues` — bullet `- #N - <subject>` (deduped; omitted when no refs exist) |
+| `chore`, `refactor`, `test`, `ci`, `build`, `style`, `revert` (and unknown types) | **omitted** — internal, never user-facing |
+| `BREAKING CHANGE` footer or `type!:` / `type(scope)!:` | `💥` prefix on the bullet **inside** What's New (e.g. `- 💥 **scope** — subject`) — no dedicated Breaking group |
 
 Merge commits ("Merge …") and empty-subject chores are skipped. Bullets use
 `- **<scope>** — <subject>` (the scope as the bold prefix; without a scope
-the whole subject is bolded). Sections are emitted Breaking first.
+the whole subject is bolded). Section order is What's New → Fixed → Known
+Issues → Closed Issues.
 
 ### Generate the notes
 
@@ -105,6 +108,9 @@ node scripts/release-notes.mjs
 # Same output without reading git tags (last 30 commits) — quick preview or
 # pre-first-tag use
 node scripts/release-notes.mjs --draft
+
+# Add a manual Known Issues entry (repeatable; omitted from output when absent)
+node scripts/release-notes.mjs --known-issues "widget API is unstable"
 
 # Pre-merge review: version status + generated notes + pack dry-run
 npm run release:dry-run
@@ -120,10 +126,11 @@ paste into the `[Unreleased]` CHANGELOG section (diagnostics go to stderr).
    `[Unreleased]` section, or let `apply --notes` do it automatically.
 3. **CHANGELOG** — `node scripts/versioning.mjs apply minor [--notes]` bumps
    the manifests and promotes `[Unreleased]` → `[vX.Y.Z]`. With `--notes` the
-   promoted entry is pre-filled from the grouped commits (mapped to the
-   Keep-a-Changelog subsections `### Added / Changed / Fixed / Security`);
-   without it the flow stays manual. `--notes` **replaces** any manual
-   `[Unreleased]` content — review the diff before committing.
+   promoted entry is pre-filled from the grouped commits (mapped to the final
+   emoji groups `## 🆕 What's New / 🐞 Fixed / ⚠️ Known Issues /
+   ✅ Closed Issues`); without it the flow stays manual. `--notes`
+   **replaces** any manual `[Unreleased]` content — review the diff before
+   committing.
 4. **Extract** — `release.yml` runs `node scripts/changelog-extract.mjs X.Y.Z`
    to pull the versioned section into the GitHub Release body.
 5. **Publish** — the workflow tags the exact merge commit and publishes to

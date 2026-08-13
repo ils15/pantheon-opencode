@@ -22,8 +22,7 @@ Title convention — Conventional Commits, in English:
 ## Release notes
 <!-- User-facing impact for the release notes, aligned with the groups in
      `scripts/release-notes.mjs`:
-     ✨ Features · 🐞 Fixed · 📚 Documentation · ⚡ Performance ·
-     🛡️ Security · 🔧 Maintenance · 💥 Breaking
+     🆕 What's New · 🐞 Fixed · ⚠️ Known Issues · ✅ Closed Issues
      One bullet per change, e.g. `- **tui** — real-time Delegations panel`.
      Leave empty when there is no user-facing impact. -->
 - ...

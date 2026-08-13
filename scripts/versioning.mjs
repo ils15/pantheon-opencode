@@ -118,15 +118,55 @@ function updateManifests(newVersion) {
 // CHANGELOG updater
 //
 // Finds the [Unreleased] section and:
-//   1. Strips empty subsections (### Added\n\n### Changed...)
+//   1. Strips empty subsections (### Added, ## 🆕 What's New, ...)
 //   2. Renames [Unreleased] → [vX.Y.Z] - date
 //   3. Inserts a fresh empty [Unreleased] template above it
 //
 // `notesBody` (from `apply --notes`) replaces the manual body of the
 // promoted entry with release notes generated from conventional commits
-// (rendered via release-notes.mjs renderChangelog). When notesBody is
-// provided the empty-[Unreleased] early return is bypassed.
+// (rendered via release-notes.mjs renderChangelog — the final emoji groups
+// 🆕/🐞/⚠️/✅). When notesBody is provided the empty-[Unreleased] early
+// return is bypassed.
 // ---------------------------------------------------------------------------
+
+// A section header that adds no user-facing content: the legacy
+// Keep-a-Changelog ### subsections and the emoji release-note groups.
+const EMPTY_SECTION_HEADER =
+  /^(?:### \w|## 🆕 What's New|## 🐞 Fixed|## ⚠️ Known Issues|## ✅ Closed Issues)/
+
+// Any markdown header — used to find the end of a section's content.
+const ANY_HEADER = /^(?:### |## )/
+
+/**
+ * Remove empty subsections from a changelog body: a recognized section
+ * header with no content (non-blank, non-header lines) before the next
+ * header or end of body is dropped together with its trailing blank lines.
+ */
+function stripEmptySections(body) {
+  const lines = body.split('\n')
+  const keep = []
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]
+    if (!EMPTY_SECTION_HEADER.test(line)) {
+      keep.push(line)
+      continue
+    }
+    let j = i + 1
+    let hasContent = false
+    while (j < lines.length && !ANY_HEADER.test(lines[j])) {
+      if (lines[j].trim()) hasContent = true
+      j += 1
+    }
+    if (hasContent) {
+      keep.push(line)
+      continue
+    }
+    // Empty section: drop the header and any blank lines up to the next
+    // header so the section leaves no empty gap.
+    while (i + 1 < lines.length && lines[i + 1].trim() === '') i += 1
+  }
+  return keep.join('\n').replace(/\n{3,}/g, '\n\n')
+}
 
 function promoteUnreleased(newVersion, dateStr, notesBody = null) {
   const content = readFileSync(CHANGELOG_PATH, 'utf-8')
@@ -145,10 +185,13 @@ function promoteUnreleased(newVersion, dateStr, notesBody = null) {
     nextSectionIdx === -1 ? content.slice(afterHeader) : content.slice(afterHeader, nextSectionIdx)
 
   // Check if the [Unreleased] section has any real content (non-empty lines
-  // that aren't just section headers or comments)
-  const realLines = unreleasedBody
+  // that aren't just section headers or comments). HTML comments (the
+  // template hint) are removed first — they span multiple lines.
+  const bodyWithoutComments = unreleasedBody.replace(/<!--[\s\S]*?-->/g, '')
+  const realLines = bodyWithoutComments
     .split('\n')
-    .filter((l) => l.trim() && !l.startsWith('###') && !l.startsWith('<!--'))
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('###') && !l.startsWith('## '))
 
   if (notesBody === null && realLines.length === 0) {
     console.log('  ℹ [Unreleased] is empty — CHANGELOG not modified')
@@ -161,17 +204,12 @@ function promoteUnreleased(newVersion, dateStr, notesBody = null) {
     )
   }
 
-  // Strip lines that are just empty subsections (### X followed by blank line
-  // then another ### or end)
+  // Strip lines that are just empty subsections (### X or ## 🆕/🐞/⚠️/✅
+  // followed by blank lines then another header or end)
   const cleanedBody =
-    notesBody !== null
-      ? `\n\n${notesBody}`
-      : unreleasedBody
-          .replace(/\n### \w[^\n]*\n(\n(?=###|\n## |\n$))+/g, '\n')
-          .replace(/\n{3,}/g, '\n\n')
-          .trimEnd()
+    notesBody !== null ? `\n\n${notesBody}` : stripEmptySections(unreleasedBody).trimEnd()
 
-  const newTemplate = `\n\n<!-- Add new changes here. Running \`node scripts/versioning.mjs apply\` will\n     move this section to a versioned entry and reset the template below. -->\n\n### Added\n\n### Changed\n\n### Fixed\n\n### Removed`
+  const newTemplate = `\n\n<!-- Add new changes here. Running \`node scripts/versioning.mjs apply\` will\n     move this section to a versioned entry and reset the template below. -->\n\n## 🆕 What's New\n\n## 🐞 Fixed\n\n## ⚠️ Known Issues\n\n## ✅ Closed Issues`
   const newVersionHeader = `## [v${newVersion}] - ${dateStr}`
 
   const before = content.slice(0, idx)

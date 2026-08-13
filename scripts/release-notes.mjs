@@ -7,17 +7,24 @@
  * (subject + body per commit), groups commits by type, and prints markdown
  * ready to paste into the [Unreleased] CHANGELOG section.
  *
- * Groups (section order — Breaking first, highest visibility):
- *   💥 Breaking         `BREAKING CHANGE` footer or `type!:` / `type(scope)!:`
- *                       (precedence — a breaking commit never also appears in
- *                       its type group)
- *   ✨ Features         feat
- *   🐞 Fixed            fix
- *   ⚡ Performance      perf
- *   🛡️ Security         security
- *   📚 Documentation    docs
- *   🔧 Maintenance      chore | refactor | test | ci | build | style | revert
- *                       (unknown conventional types also land here)
+ * Groups (section order — user-facing first):
+ *   🆕 What's New      feat | perf | docs
+ *                       (docs are user-facing — no dedicated group)
+ *   🐞 Fixed           fix | security
+ *   ⚠️ Known Issues    manual — CLI flag `--known-issues "text"` (repeatable);
+ *                       the group is OMITTED when the flag is absent (never
+ *                       emitted empty)
+ *   ✅ Closed Issues   issue refs parsed from commit BODIES (%b):
+ *                       `Closes #N` / `Fixes #N` / `Resolves #N` — one
+ *                       bullet `- #N - <subject>` per referenced issue
+ *                       (deduped); the group is OMITTED when no refs exist
+ *
+ * Omitted (internal, never user-facing): chore | refactor | test | ci |
+ * build | style | revert (unknown conventional types too).
+ *
+ * Breaking: `BREAKING CHANGE` footer or `type!:` / `type(scope)!:` — the
+ * commit keeps its type bucket and the bullet is prefixed with 💥
+ * (e.g. `- 💥 **scope** — subject`). No dedicated Breaking group.
  *
  * Skipped: merge commits ("Merge ..."), empty-subject commits (trivial
  * chores), and non-conventional subjects (grandfathered history only).
@@ -27,8 +34,10 @@
  *   - **<subject>**                                              (no scope)
  *
  * Usage:
- *   node scripts/release-notes.mjs            # lastTag..HEAD (stable tags only)
- *   node scripts/release-notes.mjs --draft    # last 30 commits, no tag lookup
+ *   node scripts/release-notes.mjs                          # lastTag..HEAD
+ *   node scripts/release-notes.mjs --draft                  # last 30 commits
+ *   node scripts/release-notes.mjs --known-issues "widget API is unstable"
+ *                                                           # manual ⚠️ entry
  *
  * Exit code is 0 whenever output can be generated (empty output means no
  * groupable commits since the range). stdout is pure markdown — diagnostics
@@ -106,12 +115,25 @@ export function collectEntries({ since = null, draft = false } = {}) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Parse issue references from a commit body: `Closes #N`, `Fixes #N` or
+ * `Resolves #N` (case-insensitive). Returns the numbers in order of
+ * appearance; empty when the body references nothing.
+ *
+ * @param {string} body - the raw commit body (may be '')
+ * @returns {number[]}
+ */
+function parseIssueRefs(body) {
+  return [...body.matchAll(/\b(?:Closes|Fixes|Resolves)\s+#(\d+)\b/gi)].map((m) => Number(m[1]))
+}
+
+/**
  * Parse one "subject|body" record into a conventional-commit entry.
  * Returns null for records that must be skipped: merge commits ("Merge ..."),
  * non-conventional subjects, and empty-subject (trivial) commits.
  *
  * @param {string} line
- * @returns {{type: string, scope: string|null, subject: string, breaking: boolean}|null}
+ * @returns {{type: string, scope: string|null, subject: string,
+ *            breaking: boolean, refs: number[]}|null}
  */
 export function parseCommitLine(line) {
   const [subjectPart, ...bodyParts] = line.split('|')
@@ -130,40 +152,54 @@ export function parseCommitLine(line) {
     scope: scope || null,
     subject: cleanSubject,
     breaking: Boolean(bang) || /BREAKING CHANGE/i.test(body),
+    refs: parseIssueRefs(body),
   }
-}
-
-const TYPE_GROUPS = {
-  feat: 'features',
-  fix: 'fixed',
-  docs: 'docs',
-  perf: 'performance',
-  security: 'security',
 }
 
 /**
- * Group parsed commits into release-note sections. Breaking commits take
- * precedence over their type group; unknown conventional types land in
- * maintenance. Entries keep git log order.
+ * Conventional type → final release-note group. Types missing from this map
+ * (chore, refactor, test, ci, build, style, revert, unknown) are internal
+ * and omitted from the notes.
+ */
+const TYPE_GROUPS = {
+  feat: 'whatsNew',
+  perf: 'whatsNew',
+  docs: 'whatsNew',
+  fix: 'fixed',
+  security: 'fixed',
+}
+
+/**
+ * Group parsed commits into the final release-note sections. Breaking
+ * commits keep their type bucket (the 💥 marker is applied at render time);
+ * internal types are dropped; issue refs from ANY commit body feed
+ * closedIssues (deduped, first occurrence wins). Entries keep git log order.
  *
  * @param {Array<ReturnType<typeof parseCommitLine>>} entries
- * @returns {{breaking: Array, features: Array, fixed: Array, docs: Array,
- *            performance: Array, security: Array, maintenance: Array}}
+ * @param {{knownIssues?: string[]|string|null}} [options]
+ *   knownIssues — manual Known Issues entries (CLI --known-issues). Omitted
+ *   (empty array) when not provided.
+ * @returns {{whatsNew: Array, fixed: Array, knownIssues: string[],
+ *            closedIssues: Array<{ref: number, subject: string}>}}
  */
-export function groupCommits(entries) {
+export function groupCommits(entries, options = {}) {
+  const { knownIssues = [] } = options
   const groups = {
-    breaking: [],
-    features: [],
+    whatsNew: [],
     fixed: [],
-    docs: [],
-    performance: [],
-    security: [],
-    maintenance: [],
+    knownIssues: Array.isArray(knownIssues) ? [...knownIssues] : knownIssues ? [knownIssues] : [],
+    closedIssues: [],
   }
+  const seenRefs = new Set()
   for (const entry of entries) {
     if (!entry) continue
-    const bucket = entry.breaking ? 'breaking' : (TYPE_GROUPS[entry.type] ?? 'maintenance')
-    groups[bucket].push(entry)
+    const bucket = TYPE_GROUPS[entry.type]
+    if (bucket) groups[bucket].push(entry)
+    for (const ref of entry.refs) {
+      if (seenRefs.has(ref)) continue
+      seenRefs.add(ref)
+      groups.closedIssues.push({ ref, subject: entry.subject })
+    }
   }
   return groups
 }
@@ -173,25 +209,37 @@ export function groupCommits(entries) {
 // ---------------------------------------------------------------------------
 
 /** One bullet: `- **<scope>** — <subject>`; without a scope the whole
- *  subject becomes the bold summary. */
+ *  subject becomes the bold summary. Breaking bullets get a 💥 prefix. */
 function bullet(entry) {
-  return entry.scope ? `- **${entry.scope}** — ${entry.subject}` : `- **${entry.subject}**`
+  const prefix = entry.breaking ? '💥 ' : ''
+  return entry.scope
+    ? `- ${prefix}**${entry.scope}** — ${entry.subject}`
+    : `- ${prefix}**${entry.subject}**`
 }
 
-/** Section order — Breaking first (highest visibility), then type groups. */
+/** One Closed Issues bullet: `- #N - <subject>` (subject may be absent). */
+function closedIssueBullet({ ref, subject }) {
+  return subject ? `- #${ref} - ${subject}` : `- #${ref}`
+}
+
+/** Section order — user-facing first, Known Issues then Closed Issues. */
 const MARKDOWN_SECTIONS = [
-  ['breaking', '💥 Breaking'],
-  ['features', '✨ Features'],
+  ['whatsNew', "🆕 What's New"],
   ['fixed', '🐞 Fixed'],
-  ['performance', '⚡ Performance'],
-  ['security', '🛡️ Security'],
-  ['docs', '📚 Documentation'],
-  ['maintenance', '🔧 Maintenance'],
+  ['knownIssues', '⚠️ Known Issues'],
+  ['closedIssues', '✅ Closed Issues'],
 ]
 
+/** Render one entry for its section (strings for Known Issues). */
+function renderEntry(key, entry) {
+  if (key === 'knownIssues') return `- ${entry}`
+  if (key === 'closedIssues') return closedIssueBullet(entry)
+  return bullet(entry)
+}
+
 /**
- * Render grouped commits as emoji-sectioned markdown (the CLI stdout).
- * Returns '' when there is nothing to report.
+ * Render grouped commits as emoji-sectioned markdown (the CLI stdout and the
+ * CHANGELOG body). Returns '' when there is nothing to report.
  *
  * @param {ReturnType<typeof groupCommits>} groups
  * @returns {string}
@@ -200,54 +248,46 @@ export function renderMarkdown(groups) {
   const blocks = []
   for (const [key, heading] of MARKDOWN_SECTIONS) {
     if (!groups[key]?.length) continue
-    blocks.push(`## ${heading}\n${groups[key].map(bullet).join('\n')}`)
+    blocks.push(`## ${heading}\n${groups[key].map((entry) => renderEntry(key, entry)).join('\n')}`)
   }
   return blocks.join('\n\n')
 }
 
-/** Keep-a-Changelog subsection order for versioned CHANGELOG entries. */
-const CHANGELOG_SECTIONS = [
-  ['added', '### Added', (g) => g.features],
-  [
-    'changed',
-    '### Changed',
-    (g) => [
-      ...(g.breaking ?? []),
-      ...(g.performance ?? []),
-      ...(g.docs ?? []),
-      ...(g.maintenance ?? []),
-    ],
-  ],
-  ['fixed', '### Fixed', (g) => g.fixed],
-  ['security', '### Security', (g) => g.security],
-]
-
 /**
- * Render grouped commits as Keep-a-Changelog subsections
- * (### Added / Changed / Fixed / Security). Used by
+ * Render grouped commits for a CHANGELOG version entry. Used by
  * `versioning.mjs apply --notes` to pre-fill the promoted [Unreleased] entry.
+ * Emits the SAME final emoji groups as renderMarkdown — the CHANGELOG uses
+ * the emoji format.
  *
  * @param {ReturnType<typeof groupCommits>} groups
  * @returns {string}
  */
 export function renderChangelog(groups) {
-  const blocks = []
-  for (const [, heading, pick] of CHANGELOG_SECTIONS) {
-    const entries = pick(groups)
-    if (!entries?.length) continue
-    blocks.push(`${heading}\n${entries.map(bullet).join('\n')}`)
-  }
-  return blocks.join('\n\n')
+  return renderMarkdown(groups)
 }
 
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
+/** Collect every `--known-issues <text>` value from argv (repeatable). */
+function parseKnownIssues(argv) {
+  const issues = []
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === '--known-issues' && argv[i + 1]) {
+      issues.push(argv[i + 1])
+      i += 1
+    }
+  }
+  return issues
+}
+
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 
 if (isDirectRun) {
-  const draft = process.argv.includes('--draft')
+  const args = process.argv.slice(2)
+  const draft = args.includes('--draft')
+  const knownIssues = parseKnownIssues(args)
   let since = null
 
   if (draft) {
@@ -263,7 +303,7 @@ if (isDirectRun) {
   }
 
   const raw = collectEntries({ since, draft: since === null })
-  const groups = groupCommits(raw.map(parseCommitLine))
+  const groups = groupCommits(raw.map(parseCommitLine), { knownIssues })
   const markdown = renderMarkdown(groups)
   const sectionCount = Object.values(groups).filter((g) => g.length).length
 
