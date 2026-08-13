@@ -24,7 +24,11 @@ All notable changes to this project will be documented in this file.
 - **agentModels wiring from routing.yml**: delegation toolset's `options.agentModels` is now wired from the routing.yml default (first) preset — a static per-agent model mapping built once at module load, so branch (b) of `resolveChildModel` (previously dead) gives delegated children a sane model even without an active preset; fail-open `{}` on missing/corrupt routing.yml
 - **Preemptive compaction threshold logic** (dormant/experimental): threshold-based preemptive compaction — not active by default
 - **File-first logging**: `createPantheonLogger` — console echo opt-in via `PANTHEON_HOOKS_LOG=1`, everything routed to `.pantheon/logs/hooks.log` (silences TUI console pollution)
+- **Real-time Delegations TUI panel**: sidebar panel sourced from `api.client.session.children` — shows `pantheon_delegate` children (board alias tag) AND native `task()` children (`[task]` tag, distinct info color); animated states (DELEGATING/WORKING/READING RESULT/DONE/DONE (TIMED OUT)/ERROR/CANCELLED) with a 140ms spinner; click-to-navigate into the child session; all-sessions history via `.pantheon/delegations/` reports; `panel: children=N md=N events=N` diagnostics in hooks.log
 - **README docs**: 1.3.4 compaction + delegation features documented
+
+### Changed
+- **Zero chat-notification policy**: removed the `chat.message` injection channel for delegation signals — completion visibility lives in the board `[unread]` marker, `pantheon_delegation_read`, TUI toasts and compaction carry-forward, never in the chat transcript
 
 ### Fixed
 - **Delegate dispatch with missing provider API key** (P1): `resolveChildModel` never checked whether the resolved model's provider had a configured API key — a child dispatched to a keyless provider (e.g. gpt-5.6-luna/opencode-go) died instantly with `AI_LoadAPIKeyError`. Auto-resolved models (agentModels/preset) whose provider key is missing now fall back to `opencode/deepseek-v4-flash-free`; explicit caller models are respected (warned); when nothing is usable the tool returns a clear error TEXT and registers NO job on the board

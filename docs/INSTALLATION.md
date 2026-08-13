@@ -139,17 +139,33 @@ routing.yml configuration.
 
 ## TUI Sidebar Plugin
 
-Pantheon includes a TUI sidebar plugin showing:
+Pantheon includes a TUI sidebar plugin (reduced sidebar with a real-time
+Delegations panel) showing:
 
 ```
-Pantheon v1.0.0
+Pantheon v1.3.4
 ⎇ main
-▶ Sessions (N total)
-▶ Commands (5)
-▶ Agents (14)
-▶ Config — MCPs, Compaction
-▶ Memory — Entry count
+⚡ Preset: go-deepseek (file)      ← or "Preset: default"
+────────────────────────────
+▼ Sessions (12)
+▼ Delegations (3)                 ← real-time panel
+  ⠋ [apo-1] apollo — WORKING — find X
+  ✓ [task] hermes — DONE
 ```
+
+- **Header** — Pantheon version, current git branch, and the active model
+  preset (`⚡ Preset: <name> (source)`, or `Preset: default`).
+- **Sessions** — collapsible recent-sessions list (click a row to open).
+- **Delegations (real-time, 1.3.4)** — live view sourced from
+  `api.client.session.children`: children spawned by `pantheon_delegate`
+  (board alias tag `[apo-1]`) **and** native `task()` children (`[task]` tag,
+  distinct info color). Animated states
+  (DELEGATING / WORKING / READING RESULT / DONE / DONE (TIMED OUT) / ERROR /
+  CANCELLED) with a 140ms spinner; clicking a row navigates to the child
+  session. Also reads `.pantheon/delegations/` reports from all sessions, so
+  the full delegation history renders even without a focused session.
+  Diagnostics: every re-fetch logs `panel: children=N md=N events=N` to
+  `.pantheon/logs/hooks.log` (silence-by-default).
 
 The plugin is installed automatically during `npm run setup`. It appears in the right sidebar of OpenCode TUI.
 

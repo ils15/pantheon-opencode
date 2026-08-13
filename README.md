@@ -2,7 +2,7 @@
 <h1 align="center">Pantheon</h1>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.0.0-blue" alt="Version"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.3.4-blue" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
   <a href="src/agents/README.md"><img src="https://img.shields.io/badge/agents-14-purple" alt="Agents"></a>
   <a href="src/skills/README.md"><img src="https://img.shields.io/badge/skills-21-orange" alt="Skills"></a>
@@ -311,6 +311,30 @@ duplicate lines for the same notification.
 
 See `src/agents/zeus.md` for the agent-facing delegation protocol and
 `src/pantheon/delegation.ts` for the tool implementations.
+
+### Real-time Delegations panel (1.3.4)
+
+The TUI sidebar ships a live **Delegations** panel (open by default, above the
+collapsed Sessions list). Its primary source is `api.client.session.children`,
+so it shows **both** kinds of background work in one place:
+
+- **`pantheon_delegate` children** — rendered with their board alias tag
+  (`[apo-1]`) and enriched from the `.pantheon/delegations/` report.
+- **Native `task()` children** — rendered with a distinct `[task]` tag (info
+  color) when no board report exists for the session.
+
+Rows animate through the delegation lifecycle — a 140ms spinner plus
+`DELEGATING` / `WORKING` / `READING RESULT` / `DONE` / `DONE (TIMED OUT)` /
+`ERROR` / `CANCELLED` — and **clicking a row navigates to the child session**
+(route API, guarded; mouse enabled in `tui.json`). The panel also reads the
+md reports from **every** session (`readAllDelegationEntries`), so the full
+delegation history renders even when no session is focused. Refresh is driven
+by session events + `message.part.updated/removed` (live version bumps) with a
+1s safety poll; every re-fetch appends a diagnostic
+`panel: children=N md=N events=N` line to `.pantheon/logs/hooks.log`
+(silence-by-default policy — see `PANTHEON_HOOKS_LOG`). Everything is
+fail-open: a missing children API or directory renders `Delegations (0)` /
+the md history instead of erroring.
 
 > **Modes:** Interactive TUI with checkbox selection (default TTY), or `--headless` for scripts/CI.
 > **Minimal:** `--headless --no-mcp` installs only agents (~2s).
