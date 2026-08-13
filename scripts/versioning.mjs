@@ -134,6 +134,19 @@ function updateManifests(newVersion) {
 const EMPTY_SECTION_HEADER =
   /^(?:### \w|## 🆕 What's New|## 🐞 Fixed|## ⚠️ Known Issues|## ✅ Closed Issues)/
 
+/**
+ * Neutralize HTML comment delimiters in body content derived from commit
+ * messages before it is written into CHANGELOG.md. CodeQL's changelog-
+ * injection rule flags interpolating untrusted markdown into a file that
+ * also carries HTML comments: a `-->` in a commit subject (surfaced via
+ * `apply --notes`) would terminate the template comment early and let the
+ * surrounding markdown render as HTML. Escaping BOTH delimiters keeps the
+ * emitted body inert regardless of the input commit messages.
+ */
+function sanitizeCommentDelimiters(body) {
+  return body.replace(/<!--/g, '&lt;!--').replace(/-->/g, '--&gt;')
+}
+
 // Any markdown header — used to find the end of a section's content.
 const ANY_HEADER = /^(?:### |## )/
 
@@ -208,6 +221,10 @@ function promoteUnreleased(newVersion, dateStr, notesBody = null) {
   // followed by blank lines then another header or end)
   const cleanedBody =
     notesBody !== null ? `\n\n${notesBody}` : stripEmptySections(unreleasedBody).trimEnd()
+  // Sanitize the WRITTEN body only (never the strip pass): commit-derived
+  // notes can carry `<!--` / `-->`, which CodeQL flags as changelog
+  // injection when interpolated next to the template's HTML comment.
+  const writtenBody = sanitizeCommentDelimiters(cleanedBody)
 
   const newTemplate = `\n\n<!-- Add new changes here. Running \`node scripts/versioning.mjs apply\` will\n     move this section to a versioned entry and reset the template below. -->\n\n## 🆕 What's New\n\n## 🐞 Fixed\n\n## ⚠️ Known Issues\n\n## ✅ Closed Issues`
   const newVersionHeader = `## [v${newVersion}] - ${dateStr}`
@@ -215,7 +232,7 @@ function promoteUnreleased(newVersion, dateStr, notesBody = null) {
   const before = content.slice(0, idx)
   const after = nextSectionIdx === -1 ? '' : content.slice(nextSectionIdx)
 
-  const updated = `${before + unreleasedHeader + newTemplate}\n\n${newVersionHeader}${cleanedBody}${after}`
+  const updated = `${before + unreleasedHeader + newTemplate}\n\n${newVersionHeader}${writtenBody}${after}`
 
   writeFileSync(CHANGELOG_PATH, updated)
   console.log(
