@@ -200,7 +200,12 @@ function promoteUnreleased(newVersion, dateStr, notesBody = null) {
   // Check if the [Unreleased] section has any real content (non-empty lines
   // that aren't just section headers or comments). HTML comments (the
   // template hint) are removed first — they span multiple lines.
-  const bodyWithoutComments = unreleasedBody.replace(/<!--[\s\S]*?-->/g, '')
+  let bodyWithoutComments = unreleasedBody
+  let previousBody
+  do {
+    previousBody = bodyWithoutComments
+    bodyWithoutComments = bodyWithoutComments.replace(/<!--[\s\S]*?-->/g, '')
+  } while (bodyWithoutComments !== previousBody)
   const realLines = bodyWithoutComments
     .split('\n')
     .map((l) => l.trim())
