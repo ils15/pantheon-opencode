@@ -144,7 +144,7 @@ const EMPTY_SECTION_HEADER =
  * emitted body inert regardless of the input commit messages.
  */
 function sanitizeCommentDelimiters(body) {
-  return body.replace(/<!--/g, '&lt;!--').replace(/-->/g, '--&gt;')
+  return body.replace(/<!--/g, '&lt;!--').replace(/--(?:!?)>/g, '--&gt;')
 }
 
 // Any markdown header — used to find the end of a section's content.
