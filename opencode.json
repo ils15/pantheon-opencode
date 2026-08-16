@@ -11,7 +11,9 @@
     }
   },
   "default_agent": "zeus",
-  "subagent_depth": 2,
+  "experimental": {
+    "subagent_depth": 2
+  },
   "model": "opencode-go/deepseek-v4-flash",
   "small_model": "opencode-go/deepseek-v4-flash",
   "permission": {
@@ -28,7 +30,6 @@
       "pip *": "allow"
     }
   },
-  "instructions": ["AGENTS.md", "src/instructions/*.instructions.md"],
   "mcp": {
     "bifrost": {
       "type": "remote",

@@ -10,6 +10,7 @@
     "postinstall": "node scripts/postinstall.mjs",
     "prepare": "husky",
     "setup": "node bin/pantheon-init.mjs init",
+    "build:agents-md": "node scripts/build-agents-md.mjs",
     "setup:lite": "node bin/pantheon-init.mjs init --clean --components agents,skills,instructions",
     "doctor": "node scripts/doctor.mjs",
     "prune": "node scripts/prune.mjs",

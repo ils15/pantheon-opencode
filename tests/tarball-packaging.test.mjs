@@ -133,8 +133,17 @@ test('installed package resolves hooks to its installed absolute path', () => {
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const config = JSON.parse(readFileSync(join(project, 'opencode.json'), 'utf8'))
     const installedRoot = resolve(work, 'node_modules', 'pantheon-opencode')
-    assert.deepEqual(config.plugin, [join(installedRoot, 'src', 'plugins', 'pantheon-hooks.ts')])
-    assert.equal(existsSync(config.plugin[0]), true)
+    // Installer contract: BOTH pantheon plugins are registered unconditionally
+    // — the root-level delegation plugin (src/plugin.ts) and the runtime hooks
+    // plugin (src/plugins/pantheon-hooks.ts) — resolved to absolute paths
+    // inside the INSTALLED package (never dev-machine paths).
+    assert.deepEqual(config.plugin, [
+      join(installedRoot, 'src', 'plugin.ts'),
+      join(installedRoot, 'src', 'plugins', 'pantheon-hooks.ts'),
+    ])
+    for (const entry of config.plugin) {
+      assert.equal(existsSync(entry), true, `registered plugin must exist: ${entry}`)
+    }
     assert.doesNotMatch(JSON.stringify(config), executableForbidden)
     const tui = JSON.parse(readFileSync(join(project, '.opencode', 'tui.json'), 'utf8'))
     // Installer contract (af40321): the TUI plugin is COPIED to the target
