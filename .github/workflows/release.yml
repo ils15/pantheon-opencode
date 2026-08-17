@@ -21,7 +21,7 @@ jobs:
   release:
     if: >
       (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
-      (github.event_name == 'pull_request' && github.event.label.name == 'release:beta') ||
+      (github.event_name == 'pull_request' && startsWith(github.event.label.name, 'release:beta')) ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     concurrency:
@@ -103,10 +103,10 @@ jobs:
           }
 
           const behind = cmp(pkgVer, latestStable.slice(1));
-          // beta: the base version must be STRICTLY ahead of latest stable.
-          // stable: == is the already-released/idempotent-rerun case, handled
-          // by the idempotent guard below — fail only when strictly behind.
-          const fail = channel === 'beta' ? behind <= 0 : behind < 0;
+          // Stable keeps the existing tag gate. Beta's base comes from npm
+          // latest in the next gate, so the branch version is only required to
+          // be a clean stable version before manifests are rewritten.
+          const fail = channel === 'stable' && behind < 0;
           if (fail) {
             console.error(`::error::Version must be bumped in a PR before merging. package.json=${pkgVer}, latest stable tag=${latestStable}.`);
             process.exit(1);
@@ -117,19 +117,46 @@ jobs:
           console.log(`Version gate passed: package.json=${pkgVer} (channel=${channel}, latest stable=${latestStable})`);
           NODE
 
+      - name: Query published stable version
+        if: steps.type.outputs.channel == 'beta'
+        id: npm_latest
+        run: |
+          LATEST=$(npm view pantheon-opencode dist-tags.latest --json 2>/dev/null | tr -d '"')
+          if ! printf '%s' "$LATEST" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::npm latest is not a stable semver: $LATEST"
+            exit 1
+          fi
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Published stable: $LATEST"
+
       - name: Compute beta version
         if: steps.type.outputs.channel == 'beta'
         id: betaver
         run: |
           PR=${{ github.event.number }}
           SHA=$(git rev-parse --short HEAD)
-          BASE=$(node -p "require('./package.json').version")
-          echo "version=${BASE}-beta.${PR}.${SHA}" >> "$GITHUB_OUTPUT"
+          LABEL='${{ github.event.label.name }}'
+          INTENT=patch
+          case "$LABEL" in
+            release:beta:minor) INTENT=minor ;;
+            release:beta:major) INTENT=major ;;
+          esac
+          VERSION=$(node scripts/release-beta-version.mjs \
+            --latest=${{ steps.npm_latest.outputs.latest }} --intent="$INTENT" --pr="$PR" --sha="$SHA")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "intent=$INTENT" >> "$GITHUB_OUTPUT"
 
       - name: Bump to beta version
         if: steps.type.outputs.channel == 'beta'
         run: |
-          npm version ${{ steps.betaver.outputs.version }} --no-git-tag-version
+          CALCULATED=$(node scripts/release-beta-version.mjs \
+            --latest=${{ steps.npm_latest.outputs.latest }} \
+            --intent=${{ steps.betaver.outputs.intent }} \
+            --pr=${{ github.event.number }} \
+            --sha=$(git rev-parse --short HEAD) \
+            --apply)
+          test "$CALCULATED" = "${{ steps.betaver.outputs.version }}"
+          node scripts/version-check.mjs
 
       - name: Pack and verify
         run: npm pack --dry-run 2>&1 | tail -3

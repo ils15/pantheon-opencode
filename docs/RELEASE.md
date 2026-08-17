@@ -14,7 +14,8 @@ Semver: `1.2.0-beta.6.a1b2c3d` < `1.2.0` (beta é menor que a release).
 
 | Label | Efeito |
 |-------|--------|
-| `release:beta` | Publica beta no npm + GitHub Pre-release |
+| `release:beta` | Publica beta no npm + GitHub Pre-release (next patch from npm `latest`) |
+| `release:beta:minor` / `release:beta:major` | Beta usando o próximo minor/major publicado |
 
 ## Fluxos
 
@@ -22,8 +23,8 @@ Semver: `1.2.0-beta.6.a1b2c3d` < `1.2.0` (beta é menor que a release).
 
 1. PR aberto (develop → main)
 2. Adicionar label `release:beta` no PR
-3. Workflow `release-beta.yml` dispara:
-   - Gera versão `X.Y.Z-beta.<PR>.<SHA>`
+3. Workflow `release.yml` dispara:
+   - Consulta o stable publicado em npm e gera `next-stable-beta.<PR>.<SHA>`
    - Publica no npm com tag `beta`
    - Cria GitHub Pre-release
    - Comenta no PR com link de instalação
@@ -53,6 +54,6 @@ Antes (removido em jul/2026):
 - Commit spammado `chore(release):` a cada push
 
 Agora:
-- `release-beta.yml`: label `release:beta` no PR → beta único
-- `release-stable.yml`: push na main → stable
+- `release.yml`: label `release:beta` no PR → beta calculado do npm `latest`
+- `release.yml`: push na main → stable
 - Sem commits de bump automáticos no develop
