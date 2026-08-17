@@ -889,6 +889,8 @@ to Mnemosyne so counts stay accurate and consistent.
 `release.yml` validates version consistency across the package manifests
 (`package.json`, `plugin.json`, `pyproject.toml`, and the TUI package) before
 publishing. If they diverge, the release is blocked until they are reconciled.
+Commitlint also permits the explicit `opencode-v2` scope used by the dual-version
+migration while continuing to reject unlisted scopes.
 
 Beta releases are calculated from npm's published `latest` at workflow runtime:
 the default is the next patch, formatted as
