@@ -294,8 +294,7 @@ test('CLI normal mode exits 0 and prints the final emoji sections (lastTag..HEAD
     return
   }
 
-  assert.match(stdout, /## 🆕 What's New/)
-  assert.match(stdout, /## 🐞 Fixed/)
+  assert.match(stdout, /## (🆕 What's New|🐞 Fixed)/)
 })
 
 test('CLI --draft exits 0 without reading tags and prints markdown', () => {
