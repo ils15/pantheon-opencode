@@ -163,6 +163,29 @@ test('metadata lookups distinguish confirmed absence from uncertainty and fail c
   assert.match(workflow, /Existing GitHub release is not bound to VERSION and TARGET_SHA/)
 })
 
+test('release creation is repository-explicit and safe to rerun after an existing tag', () => {
+  const createStep = workflow.slice(
+    workflow.indexOf('- name: Create GitHub release'),
+    workflow.indexOf('- name: Publish immutable artifact to npm'),
+  )
+  const createCommands = createStep.match(/gh release create[^\n]+/g) ?? []
+
+  assert.equal(createCommands.length, 2)
+  for (const command of createCommands) {
+    assert.match(command, /--repo "\$RELEASE_REPO"/)
+    assert.match(command, /--verify-tag/)
+  }
+  assert.match(createStep, /if: steps\.idem\.outputs\.released != 'true'/)
+  assert.match(workflow, /echo 'tag_exists=true' >> "\$GITHUB_OUTPUT"/)
+  assert.match(workflow, /echo 'released=false' >> "\$GITHUB_OUTPUT"/)
+  assert.match(workflow, /if \[ "\$STATUS" = 404 \]; then[\s\S]*echo 'released=false'/)
+  assert.match(
+    workflow,
+    /if: steps\.idem\.outputs\.released != 'true' && steps\.idem\.outputs\.tag_exists != 'true'/,
+  )
+  assert.match(workflow, /if: steps\.idem\.outputs\.npm_exists != 'true'/)
+})
+
 test('stable and beta preserve TARGET_SHA provenance through tag, release, and artifact', () => {
   const targetExpression =
     'TARGET_SHA: $' +

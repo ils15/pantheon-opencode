@@ -299,9 +299,9 @@ jobs:
           RELEASE_CHANNEL: ${{ github.event_name == 'pull_request' && 'beta' || 'latest' }}
         run: |
           if [ "$RELEASE_CHANNEL" = "beta" ]; then
-            gh release create "$VERSION" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --prerelease --notes-file release-artifact/release-notes.md
+            gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --prerelease --notes-file release-artifact/release-notes.md
           else
-            gh release create "$VERSION" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --notes-file release-artifact/release-notes.md
+            gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --notes-file release-artifact/release-notes.md
           fi
 
       # This is intentionally the final step. The artifact was produced with
