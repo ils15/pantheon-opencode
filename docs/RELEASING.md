@@ -178,10 +178,14 @@ number** (the old fake `pr_number=9` hack is gone; the real
 `github.event.number` is used):
 
 1. Type: channel=`beta`, npm dist-tag=`beta`.
-2. **Version gate** — the base package.json version must be **strictly**
-   ahead of the latest stable tag.
-3. **Beta version** — `<base>-beta.<PR>.<short-sha>` (e.g. `1.2.2-beta.12.abc1234`),
-   applied with `npm version --no-git-tag-version`.
+2. **Published stable lookup** — the workflow queries npm `dist-tags.latest` at
+   release time; git tags and the branch's package version are not used as the
+   beta base.
+3. **Beta version** — the next semver patch of npm latest by default,
+   `<next-stable>-beta.<PR>.<short-sha>` (e.g. `1.3.5-beta.12.abc1234`).
+   Labels `release:beta:minor` and `release:beta:major` request the matching
+   semver bump. All manifests are rewritten to the calculated version and
+   `version-check` blocks publishing if they diverge.
 4. Tag is created on the **PR head**, the GitHub Release is created with
    `--prerelease` and titled `Pantheon <ver> (PR #<n>)`.
 5. `npm publish --tag beta`, then a comment is posted on the PR:

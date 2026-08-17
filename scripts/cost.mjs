@@ -26,6 +26,22 @@ function fail(message) {
   process.exitCode = 1
 }
 
+function assertCompatibleSchema(db) {
+  const table = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'message'")
+    .get()
+  if (!table)
+    throw new Error('incompatible opencode.db schema: required "message" table is missing')
+  const columns = db.prepare('PRAGMA table_info(message)').all()
+  const names = new Set(columns.map((column) => column.name))
+  const missing = ['data', 'time_created'].filter((name) => !names.has(name))
+  if (missing.length > 0) {
+    throw new Error(
+      `incompatible opencode.db schema: message table is missing ${missing.join(', ')}; select the matching V1/V2 database`,
+    )
+  }
+}
+
 function main() {
   const [, , dbPath, daysArg] = process.argv
   const days = Number(daysArg ?? '7')
@@ -35,6 +51,7 @@ function main() {
 
   try {
     const db = new DatabaseSync(dbPath, { readOnly: true })
+    assertCompatibleSchema(db)
     const since = Date.now() - days * 86_400_000
     const rows = db.prepare('SELECT data FROM message WHERE time_created >= ?').all(since)
     db.close()

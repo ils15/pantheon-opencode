@@ -195,6 +195,14 @@ Pantheon's shared config is **V1-shaped and valid under both OpenCode versions**
 | State DB | `~/.local/share/opencode/opencode.db` | `~/.local/share/opencode/opencode-v2.db` (isolated via `OPENCODE_DB`) |
 | Service port | 49374 | 49375 (must differ from V1) |
 
+The `pantheon_cost` report preserves the V1 database default. Set
+`PANTHEON_OPENCODE_VERSION=v1` or `v2` to select the corresponding state DB
+explicitly (`opencode.db` or `opencode-v2.db`). For custom installations,
+`PANTHEON_COST_DB=/absolute/path/to/opencode.db` takes precedence over the
+version selector; an explicit `dbPath` supplied by the tool caller takes
+precedence over both. The resolver never probes the other version's database,
+and reports an actionable error when the selected DB is missing or has an
+incompatible schema.
 **What changed for V2 compatibility (Phase 3):**
 
 - `subagent_depth` moved from top-level to `experimental.subagent_depth` — V2 silently ignores the top-level key. The installer migrates existing configs automatically.
@@ -877,9 +885,17 @@ to Mnemosyne so counts stay accurate and consistent.
 
 ### What CI enforces automatically
 
-`release.yml` validates version consistency across all manifests (`package.json`,
-`plugin.json`, `CHANGELOG.md`, and the README badge) before publishing. If they diverge,
-the release is blocked until Mnemosyne reconciles them.
+`release.yml` validates version consistency across the package manifests
+(`package.json`, `plugin.json`, `pyproject.toml`, and the TUI package) before
+publishing. If they diverge, the release is blocked until they are reconciled.
+Commitlint also permits the explicit `opencode-v2` scope used by the dual-version
+migration while continuing to reject unlisted scopes.
+
+Beta releases are calculated from npm's published `latest` at workflow runtime:
+the default is the next patch, formatted as
+`<next-stable>-beta.<PR>.<short-sha>`. Labels `release:beta:minor` and
+`release:beta:major` request minor or major calculation. The workflow owns the
+manifest update, tag, and publish; it does not assume a fixed future version.
 
 ### Anti-patterns
 

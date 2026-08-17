@@ -14,9 +14,10 @@
  */
 import { strict as assert } from 'node:assert'
 import { execFile } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
@@ -46,9 +47,143 @@ function freshDir(): string {
   return mkdtempSync(join(tmpdir(), 'pantheon-costcmd-'))
 }
 
+function createDb(path: string, compatible: boolean, agent = 'hermes'): void {
+  const db = new DatabaseSync(path)
+  if (compatible) {
+    db.exec('CREATE TABLE message (data TEXT NOT NULL, time_created INTEGER NOT NULL)')
+    const data = JSON.stringify({
+      role: 'assistant',
+      agent,
+      cost: 1.25,
+      tokens: { input: 10, output: 20 },
+    })
+    db.prepare('INSERT INTO message (data, time_created) VALUES (?, ?)').run(data, Date.now())
+  }
+  db.close()
+}
+
+async function withEnv(
+  values: Record<string, string | undefined>,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]))
+  try {
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    await fn()
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 
 async function main() {
+  await testAsync('V1 version selects the V1 database', async () => {
+    const dir = freshDir()
+    try {
+      const v1 = join(dir, 'opencode', 'opencode.db')
+      mkdirSync(join(dir, 'opencode'), { recursive: true })
+      createDb(v1, true, 'v1-agent')
+      await withEnv(
+        { XDG_DATA_HOME: dir, PANTHEON_OPENCODE_VERSION: 'v1', PANTHEON_COST_DB: undefined },
+        async () => {
+          const output = await createCostCommand().pantheon_cost.execute(
+            {},
+            { sessionID: 'ses_root' },
+          )
+          assert.ok(output.includes('v1-agent'))
+        },
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('V2 version selects the isolated V2 database', async () => {
+    const dir = freshDir()
+    try {
+      const v2 = join(dir, 'opencode', 'opencode-v2.db')
+      mkdirSync(join(dir, 'opencode'), { recursive: true })
+      createDb(v2, true, 'v2-agent')
+      await withEnv(
+        { XDG_DATA_HOME: dir, PANTHEON_OPENCODE_VERSION: 'v2', PANTHEON_COST_DB: undefined },
+        async () => {
+          const output = await createCostCommand().pantheon_cost.execute(
+            {},
+            { sessionID: 'ses_root' },
+          )
+          assert.ok(output.includes('v2-agent'))
+        },
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
+    'explicit dbPath takes precedence over environment override and version',
+    async () => {
+      const dir = freshDir()
+      try {
+        const explicit = join(dir, 'explicit.db')
+        const envDb = join(dir, 'env.db')
+        createDb(explicit, true, 'explicit-agent')
+        createDb(envDb, true, 'env-agent')
+        await withEnv({ PANTHEON_COST_DB: envDb, PANTHEON_OPENCODE_VERSION: 'v2' }, async () => {
+          const output = await createCostCommand({ dbPath: explicit }).pantheon_cost.execute(
+            {},
+            { sessionID: 'ses_root' },
+          )
+          assert.ok(output.includes('explicit-agent'))
+          assert.ok(!output.includes('env-agent'))
+        })
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('missing selected V2 database reports the selected path', async () => {
+    const dir = freshDir()
+    try {
+      await withEnv(
+        { XDG_DATA_HOME: dir, PANTHEON_OPENCODE_VERSION: 'v2', PANTHEON_COST_DB: undefined },
+        async () => {
+          const output = await createCostCommand().pantheon_cost.execute(
+            {},
+            { sessionID: 'ses_root' },
+          )
+          assert.ok(output.includes('opencode-v2.db'))
+          assert.ok(output.includes('not found'))
+        },
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('incompatible database schema reports a friendly error', async () => {
+    const dir = freshDir()
+    try {
+      const incompatible = join(dir, 'incompatible.db')
+      createDb(incompatible, false)
+      const output = await createCostCommand({ dbPath: incompatible }).pantheon_cost.execute(
+        {},
+        { sessionID: 'ses_root' },
+      )
+      assert.ok(output.includes('incompatible opencode.db schema'))
+      assert.ok(output.includes('message'))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   await testAsync('missing database → friendly error string, never throws', async () => {
     const dir = freshDir()
     try {

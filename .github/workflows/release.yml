@@ -1,57 +1,90 @@
 name: Release
 
 on:
-  # Beta: a PR gets the `release:beta` label. PR number is the REAL
-  # github.event.number — no inputs, no defaults.
   pull_request:
     types: [labeled]
-  # Stable: a version-bump PR merges to main, or a manual dispatch.
-  # NO workflow_dispatch inputs — the old `pr_number` input with default '9'
-  # produced fake `-beta.9.<sha>` tags on every manual dispatch.
   push:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: write
-  id-token: write
-  pull-requests: write
+concurrency:
+  group: release
+  cancel-in-progress: false
 
+# Validation runs on PR-controlled files, so it never receives a release
+# credential. The release job consumes only the immutable artifact produced by
+# that job and has write permissions solely because it performs the release.
 jobs:
-  release:
+  validate:
     if: >
       (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
       (github.event_name == 'pull_request' && github.event.label.name == 'release:beta') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    concurrency:
-      # Themis audit fix #2 — global npm mutex. ONE group for BOTH the beta
-      # (PR ref) and stable (main ref) paths so two runs can't both read
-      # "version not on npm" and then both publish (double-publish race).
-      # Reruns of the same push serialize instead of cancel — acceptable
-      # because the idempotent guard below makes reruns safe.
-      group: release
-      cancel-in-progress: false
-
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      EVENT_NAME: ${{ github.event_name }}
+      RELEASE_LABEL: ${{ github.event.label.name }}
+      PR_NUMBER: ${{ github.event.number }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      TARGET_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
+      # This is deliberately the first step. In particular, no release
+      # mutation can be reached before the PR number is a positive safe int.
+      - name: Validate release inputs before checkout
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$RELEASE_LABEL" != "release:beta" ]; then
+            echo "::error::Only the exact release:beta label can trigger a beta release."
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            case "$PR_NUMBER" in
+              ''|*[!0-9]*) echo "::error::Pull request number must contain digits only."; exit 1 ;;
+            esac
+            PR_NUMBER="$PR_NUMBER" node <<'NODE'
+          const raw = process.env.PR_NUMBER ?? '';
+          const value = Number(raw);
+          if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value <= 0) {
+            console.error('::error::Pull request number must be a positive safe integer.');
+            process.exit(1);
+          }
+          NODE
+            case "$PR_HEAD_SHA" in
+              ''|*[!0-9a-fA-F]*) echo "::error::Pull request head SHA must be hexadecimal."; exit 1 ;;
+            esac
+            [ "${#PR_HEAD_SHA}" -eq 40 ] || { echo "::error::Pull request head SHA must be 40 characters."; exit 1; }
+          fi
+          case "$TARGET_SHA" in
+            ''|*[!0-9a-fA-F]*) echo "::error::Target SHA must be hexadecimal."; exit 1 ;;
+          esac
+          [ "${#TARGET_SHA}" -eq 40 ] || { echo "::error::Target SHA must be 40 characters."; exit 1; }
+
+      - name: Assert validation has no release credentials
+        run: |
+          test -z "${NODE_AUTH_TOKEN:-}" || { echo "::error::Validation received NODE_AUTH_TOKEN."; exit 1; }
+          test -z "${NPM_TOKEN:-}" || { echo "::error::Validation received NPM_TOKEN."; exit 1; }
+          test -z "${RELEASE_TOKEN:-}" || { echo "::error::Validation received RELEASE_TOKEN."; exit 1; }
+
       - uses: actions/checkout@v4
         with:
-          # PR: exact PR head. push: the merge commit (github.sha). dispatch:
-          # explicit 'main' — never rely on the implicit default checkout.
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (github.event_name == 'push' && github.sha) || 'main' }}
+          ref: ${{ env.TARGET_SHA }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
 
-      - run: npm ci --ignore-scripts 2>/dev/null || npm install
+      # PR code is untrusted. There is no fallback to npm install and no
+      # lifecycle script is allowed to run in this job.
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
 
       - name: Determine release type
         id: type
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
             echo "channel=beta" >> "$GITHUB_OUTPUT"
             echo "tag=beta" >> "$GITHUB_OUTPUT"
           else
@@ -59,192 +92,230 @@ jobs:
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
-      # Version gate — FIRST release gate. Fail when package.json is not ahead
-      # of the latest stable git tag. LATEST_STABLE only considers EXACT
-      # vX.Y.Z tags — pre-releases like v1.2.0-beta.9.7bef03e are excluded
-      # (flagged defect: naive `sort -V | tail -1` picked them up as "latest").
-      # Pure inline node — no network dependency.
       - name: Version gate
         id: version_gate
         env:
           GATE_CHANNEL: ${{ steps.type.outputs.channel }}
         run: |
           node <<'NODE'
-          const { execSync } = require('node:child_process');
+          const { execFileSync } = require('node:child_process');
           const fs = require('node:fs');
-
           const pkgVer = String(JSON.parse(fs.readFileSync('package.json', 'utf8')).version || '');
           const channel = process.env.GATE_CHANNEL || 'stable';
-
-          // Only exact vX.Y.Z tags are stable — the 'v[0-9]*' glob alone also
-          // matches v1.2.0-beta.9.7bef03e-style pre-release tags.
-          const tags = execSync("git tag -l 'v[0-9]*'", { encoding: 'utf8' })
-            .trim().split('\n').filter(Boolean);
-          const stableTags = tags.filter((t) => /^v\d+\.\d+\.\d+$/.test(t));
-
+          const tags = execFileSync('git', ['tag', '-l', 'v[0-9]*'], { encoding: 'utf8' })
+            .trim().split('\n').filter(Boolean).filter((t) => /^v\d+\.\d+\.\d+$/.test(t));
           const cmp = (a, b) => {
-            const pa = String(a).split('.').map(Number);
-            const pb = String(b).split('.').map(Number);
-            for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-              const x = pa[i] || 0;
-              const y = pb[i] || 0;
-              if (x > y) return 1;
-              if (x < y) return -1;
-            }
+            const pa = a.split('.').map(Number); const pb = b.split('.').map(Number);
+            for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0) ? 1 : -1;
             return 0;
           };
-
-          stableTags.sort((a, b) => cmp(a.slice(1), b.slice(1)));
-          const latestStable = stableTags.length ? stableTags[stableTags.length - 1] : 'v0.0.0';
-
-          if (!/^\d+\.\d+\.\d+$/.test(pkgVer)) {
-            console.error(`::error::package.json version is not a clean X.Y.Z semver: "${pkgVer}"`);
+          tags.sort((a, b) => cmp(a.slice(1), b.slice(1)));
+          const latest = tags.length ? tags.at(-1) : 'v0.0.0';
+          if (!/^\d+\.\d+\.\d+$/.test(pkgVer) || (channel === 'stable' && cmp(pkgVer, latest.slice(1)) < 0)) {
+            console.error(`::error::Version gate failed: ${pkgVer} (latest stable ${latest}).`);
             process.exit(1);
           }
-
-          const behind = cmp(pkgVer, latestStable.slice(1));
-          // beta: the base version must be STRICTLY ahead of latest stable.
-          // stable: == is the already-released/idempotent-rerun case, handled
-          // by the idempotent guard below — fail only when strictly behind.
-          const fail = channel === 'beta' ? behind <= 0 : behind < 0;
-          if (fail) {
-            console.error(`::error::Version must be bumped in a PR before merging. package.json=${pkgVer}, latest stable tag=${latestStable}.`);
-            process.exit(1);
-          }
-
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${pkgVer}\n`);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `latest_stable=${latestStable}\n`);
-          console.log(`Version gate passed: package.json=${pkgVer} (channel=${channel}, latest stable=${latestStable})`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${pkgVer}\nlatest_stable=${latest}\n`);
           NODE
 
-      - name: Compute beta version
+      - name: Query published stable version
         if: steps.type.outputs.channel == 'beta'
-        id: betaver
+        id: npm_latest
         run: |
-          PR=${{ github.event.number }}
-          SHA=$(git rev-parse --short HEAD)
-          BASE=$(node -p "require('./package.json').version")
-          echo "version=${BASE}-beta.${PR}.${SHA}" >> "$GITHUB_OUTPUT"
+          LATEST_RESPONSE="$RUNNER_TEMP/npm-latest-response"
+          LATEST_ERROR="$RUNNER_TEMP/npm-latest-error"
+          if npm view pantheon-opencode dist-tags.latest --json > "$LATEST_RESPONSE" 2> "$LATEST_ERROR"; then
+            LATEST=$(tr -d '"[:space:]' < "$LATEST_RESPONSE")
+            printf '%s' "$LATEST" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::npm latest is not a stable semver: $LATEST"; exit 1; }
+          elif grep -Eqi 'E404|404[[:space:]]+Not Found|code[[:space:]]+E404' "$LATEST_ERROR" "$LATEST_RESPONSE"; then
+            echo '::error::Published npm package was not found; refusing to compute a beta version.'; exit 1
+          else
+            echo '::error::Could not determine published npm metadata; refusing to compute a beta version.'; cat "$LATEST_ERROR"; exit 1
+          fi
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
 
-      - name: Bump to beta version
+      - name: Compute and apply beta version
         if: steps.type.outputs.channel == 'beta'
+        env:
+          LATEST_STABLE: ${{ steps.npm_latest.outputs.latest }}
         run: |
-          npm version ${{ steps.betaver.outputs.version }} --no-git-tag-version
+          VERSION=$(node scripts/release-beta-version.mjs --latest="$LATEST_STABLE" --intent=patch --pr="$PR_NUMBER" --sha="$(git rev-parse --short HEAD)" --apply)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Pack and verify
-        run: npm pack --dry-run 2>&1 | tail -3
+      - name: Validate release manifests
+        # Both channels must validate the checked-out manifests before an
+        # artifact is created or any release credential is exposed.
+        run: node scripts/version-check.mjs
 
-      # Idempotent guard: if the exact tag already exists AND its release
-      # exists, exit 0 — do NOT recreate the tag, recreate the release, or
-      # republish. If the tag exists but the release is missing, continue and
-      # complete the release (tag creation is skipped via tag_exists).
-      - name: Check tag and release existence
+      - name: Create release artifact and notes
+        env:
+          BASE_VERSION: ${{ steps.version_gate.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-artifact"
+          if ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-artifact/release-notes.md"; then
+            echo "::error::CHANGELOG.md has no [$BASE_VERSION] section."; exit 1
+          fi
+          VERSION=$(node -p "require('./package.json').version")
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+\.[0-9a-f]+)?$' || { echo "::error::Invalid release version."; exit 1; }
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/release-artifact" >/dev/null
+          printf '%s\n' "$VERSION" > "$RUNNER_TEMP/release-artifact/version"
+          printf '%s\n' "$TARGET_SHA" > "$RUNNER_TEMP/release-artifact/target-sha"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-inputs-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-artifact
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: validate
+    if: >
+      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'release:beta') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      EVENT_NAME: ${{ github.event_name }}
+      RELEASE_LABEL: ${{ github.event.label.name }}
+      PR_NUMBER: ${{ github.event.number }}
+      TARGET_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      RELEASE_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event_name == 'pull_request' && 'beta' || 'latest' }}
+    steps:
+      # Defense in depth: this step must remain before every gh/tag/npm
+      # mutation in this job. It does not inspect or execute the artifact.
+      - name: Revalidate release inputs before mutations
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            [ "$RELEASE_LABEL" = "release:beta" ] || { echo "::error::Invalid release label."; exit 1; }
+            case "$PR_NUMBER" in ''|*[!0-9]*) echo "::error::PR number must contain digits only."; exit 1 ;; esac
+            PR_NUMBER="$PR_NUMBER" node <<'NODE'
+          const raw = process.env.PR_NUMBER ?? '';
+          const value = Number(raw);
+          if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value <= 0) process.exit(1);
+          NODE
+          fi
+          case "$TARGET_SHA" in ''|*[!0-9a-fA-F]*) echo "::error::Target SHA must be hexadecimal."; exit 1 ;; esac
+          [ "${#TARGET_SHA}" -eq 40 ] || { echo "::error::Target SHA must be 40 characters."; exit 1; }
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-inputs-${{ github.run_id }}
+          path: release-artifact
+
+      - name: Validate immutable artifact metadata
+        id: metadata
+        run: |
+          ARTIFACT_SHA=$(tr -d '\n' < release-artifact/target-sha)
+          case "$ARTIFACT_SHA" in
+            ''|*[!0-9a-fA-F]*) echo "::error::Artifact target SHA must be hexadecimal."; exit 1 ;;
+          esac
+          [ "${#ARTIFACT_SHA}" -eq 40 ] || { echo "::error::Artifact target SHA must be 40 characters."; exit 1; }
+          [ "$ARTIFACT_SHA" = "$TARGET_SHA" ] || { echo "::error::Validation and release TARGET_SHA differ."; exit 1; }
+          VERSION=$(tr -d '\n' < release-artifact/version)
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+\.[0-9a-f]+)?$' || { echo "::error::Invalid artifact version."; exit 1; }
+          PACKAGE=$(find release-artifact -maxdepth 1 -type f -name '*.tgz' -print -quit)
+          [ -n "$PACKAGE" ] || { echo "::error::Release package artifact is missing."; exit 1; }
+          echo "version=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check idempotency
         id: idem
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
         run: |
-          VERSION="v$(node -p "require('./package.json').version")"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          if git ls-remote --tags origin "refs/tags/${VERSION}" | grep -q "refs/tags/${VERSION}"; then
-            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
-            if gh release view "${VERSION}" >/dev/null 2>&1; then
-              echo "released=true" >> "$GITHUB_OUTPUT"
-              echo "✅ ${VERSION} already released — idempotent. Exiting."
-              exit 0
-            fi
-            echo "⚠️ Tag ${VERSION} exists but release is missing — completing the release."
+          TAG_REF="$VERSION"
+          if TAG_RESPONSE=$(gh api "repos/$RELEASE_REPO/git/ref/tags/$TAG_REF" --include 2>"$RUNNER_TEMP/tag-ref-error"); then
+            TAG_OBJECT_TYPE=$(printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body && /"type"/ { if (match($0, /"type"[[:space:]]*:[[:space:]]*"[^"]+"/)) { value=substr($0, RSTART, RLENGTH); sub(/^.*"type"[[:space:]]*:[[:space:]]*"/, "", value); sub(/"$/, "", value); print value; exit } }')
+            TAG_OBJECT_SHA=$(printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body && /"sha"/ { if (match($0, /"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]+"/)) { value=substr($0, RSTART, RLENGTH); sub(/^.*"sha"[[:space:]]*:[[:space:]]*"/, "", value); sub(/"$/, "", value); print value; exit } }')
+            while [ "$TAG_OBJECT_TYPE" = tag ]; do
+              TAG_RESPONSE=$(gh api "repos/$RELEASE_REPO/git/tags/$TAG_OBJECT_SHA" --include) || { echo "::error::Could not resolve annotated tag object."; exit 1; }
+              TAG_OBJECT_TYPE=$(printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body && /"type"/ { if (match($0, /"type"[[:space:]]*:[[:space:]]*"[^"]+"/)) { value=substr($0, RSTART, RLENGTH); sub(/^.*"type"[[:space:]]*:[[:space:]]*"/, "", value); sub(/"$/, "", value); print value; exit } }')
+              TAG_OBJECT_SHA=$(printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body && /"sha"/ { if (match($0, /"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]+"/)) { value=substr($0, RSTART, RLENGTH); sub(/^.*"sha"[[:space:]]*:[[:space:]]*"/, "", value); sub(/"$/, "", value); print value; exit } }')
+            done
+            [ "$TAG_OBJECT_TYPE" = commit ] || { echo "::error::Release tag does not resolve to a commit."; exit 1; }
+            [ "$TAG_OBJECT_SHA" = "$TARGET_SHA" ] || { echo "::error::Existing tag does not point to TARGET_SHA."; exit 1; }
+            echo 'tag_exists=true' >> "$GITHUB_OUTPUT"
           else
-            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+            STATUS=$(printf '%s\n' "$TAG_RESPONSE" | awk 'NR == 1 { print $2; exit }')
+            if [ "$STATUS" = 404 ]; then
+              echo 'tag_exists=false' >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::Could not determine whether release tag exists (HTTP ${STATUS:-unknown})."; exit 1
+            fi
           fi
-          echo "released=false" >> "$GITHUB_OUTPUT"
-
-      # Release body = extracted changelog section, NOT the raw CHANGELOG.md
-      # (which would post the ENTIRE changelog — its head is now renumbered to
-      # [1.0.0]). scripts/changelog-extract.mjs prints the "## [X.Y.Z] - date"
-      # section body for the base PKG_VER; exits non-zero when missing → fail.
-      - name: Extract changelog section
-        if: steps.idem.outputs.released != 'true'
-        run: |
-          BASE="${{ steps.version_gate.outputs.version }}"
-          if ! node scripts/changelog-extract.mjs "${BASE}" > .github/release-notes.md; then
-            echo "::error::CHANGELOG.md has no [${BASE}] section — add it in the version-bump PR."
-            exit 1
+          # A release lookup is a state check, not a best-effort probe. Only
+          # an explicit 404 means "missing"; auth, API, and network errors
+          # stop here before any tag/release/npm mutation.
+          RELEASE_RESPONSE="$RUNNER_TEMP/release-response"
+          if gh api --include "repos/$RELEASE_REPO/releases/tags/$VERSION" > "$RELEASE_RESPONSE" 2> "$RUNNER_TEMP/release-error"; then
+            awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body { print }' "$RELEASE_RESPONSE" > "$RUNNER_TEMP/release-body"
+            RELEASE_BODY="$RUNNER_TEMP/release-body" TARGET_SHA="$TARGET_SHA" VERSION="$VERSION" node <<'NODE'
+          const fs = require('node:fs');
+          const release = JSON.parse(fs.readFileSync(process.env.RELEASE_BODY, 'utf8'));
+          if (release.tag_name !== process.env.VERSION || release.target_commitish !== process.env.TARGET_SHA) {
+            console.error('::error::Existing GitHub release is not bound to VERSION and TARGET_SHA.');
+            process.exit(1);
+          }
+          NODE
+            echo 'released=true' >> "$GITHUB_OUTPUT"
+          else
+            STATUS=$(awk 'NR == 1 { print $2; exit }' "$RELEASE_RESPONSE")
+            if [ "$STATUS" = 404 ]; then
+              echo 'released=false' >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::Could not determine whether GitHub release exists (HTTP ${STATUS:-unknown})."; exit 1
+            fi
           fi
-          echo "Extracted changelog section for ${BASE} ($(wc -l < .github/release-notes.md) lines)"
 
-      # Tag creation is workflow-owned (scripts/versioning.mjs no longer
-      # creates tags). The tag is created at the checked-out commit — for
-      # push:main that is github.sha (the exact merge commit); for a beta PR,
-      # the PR head. Runs only AFTER the gates above have passed.
-      - name: Configure git identity
-        if: steps.idem.outputs.released != 'true' && steps.idem.outputs.tag_exists != 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-      - name: Create and push tag
-        if: steps.idem.outputs.released != 'true' && steps.idem.outputs.tag_exists != 'true'
-        run: |
-          VERSION="${{ steps.idem.outputs.version }}"
-          git tag -a "${VERSION}" -m "chore(release): ${VERSION}"
-          git push origin "${VERSION}"
+          NPM_RESPONSE="$RUNNER_TEMP/npm-response"
+          NPM_ERROR="$RUNNER_TEMP/npm-error"
+          if npm view pantheon-opencode version --tag "$RELEASE_TAG" --json > "$NPM_RESPONSE" 2> "$NPM_ERROR"; then
+            NPM_VER=$(tr -d '"[:space:]' < "$NPM_RESPONSE")
+            if [ "$NPM_VER" = "${VERSION#v}" ]; then echo 'npm_exists=true' >> "$GITHUB_OUTPUT"; else echo 'npm_exists=false' >> "$GITHUB_OUTPUT"; fi
+          elif grep -Eqi 'E404|404[[:space:]]+Not Found|code[[:space:]]+E404' "$NPM_ERROR" "$NPM_RESPONSE"; then
+            echo 'npm_exists=false' >> "$GITHUB_OUTPUT"
+          else
+            echo '::error::Could not determine npm package metadata; refusing to mutate or publish.'; cat "$NPM_ERROR"; exit 1
+          fi
 
-      - name: Create GitHub Release
+      - name: Create and push immutable tag
+        if: steps.idem.outputs.released != 'true' && steps.idem.outputs.tag_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: gh api --method POST "repos/$RELEASE_REPO/git/refs" -f "ref=refs/tags/$VERSION" -f "sha=$TARGET_SHA"
+
+      - name: Create GitHub release
         if: steps.idem.outputs.released != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          RELEASE_CHANNEL: ${{ github.event_name == 'pull_request' && 'beta' || 'latest' }}
         run: |
-          VERSION="${{ steps.idem.outputs.version }}"
-          PR=${{ github.event.number }}
-          if [ "${{ steps.type.outputs.channel }}" = "beta" ]; then
-            gh release create "${VERSION}" \
-              --target "${GITHUB_SHA}" \
-              --verify-tag \
-              --title "Pantheon ${VERSION} (PR #${PR})" \
-              --prerelease \
-              --notes-file .github/release-notes.md
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then
+            gh release create "$VERSION" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --prerelease --notes-file release-artifact/release-notes.md
           else
-            gh release create "${VERSION}" \
-              --target "${GITHUB_SHA}" \
-              --verify-tag \
-              --title "Pantheon ${VERSION}" \
-              --notes-file .github/release-notes.md
-          fi
-          echo "Created release ${VERSION}"
-
-      # npm_check gates ONLY the npm publish step; the tag/release existence
-      # guard above gates the gh release path separately. No silent
-      # double-gating — one guard can no longer block both.
-      - name: Check if version exists on npm
-        id: npm_check
-        if: steps.idem.outputs.released != 'true'
-        run: |
-          VER=$(node -p "require('./package.json').version")
-          NPM_VER=$(npm view pantheon-opencode version --tag ${{ steps.type.outputs.tag }} 2>/dev/null || echo "none")
-          if [ "$NPM_VER" = "$VER" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "⚠️ Version $VER already published"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            gh release create "$VERSION" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --notes-file release-artifact/release-notes.md
           fi
 
-      # npm publish LAST: if the run is canceled after publish, the rerun hits
-      # the idempotent guard and exits 0 without double-publishing (and
-      # npm_check prevents a republish even if the guard is bypassed).
-      - name: Publish to npm
-        if: steps.idem.outputs.released != 'true' && steps.npm_check.outputs.exists == 'false'
-        run: npm publish --tag ${{ steps.type.outputs.tag }} --access public --provenance 2>&1
+      # This is intentionally the final step. The artifact was produced with
+      # --ignore-scripts; npm also receives --ignore-scripts as a second guard.
+      # No PR checkout or PR-controlled code runs after this token is exposed.
+      - name: Publish immutable artifact to npm
+        if: steps.idem.outputs.npm_exists != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Post comment on PR
-        if: steps.type.outputs.channel == 'beta' && steps.npm_check.outputs.exists == 'false' && steps.idem.outputs.released != 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const ver = '${{ steps.idem.outputs.version }}';
-            const pr = ${{ github.event.number }};
-            github.rest.issues.createComment({
-              ...context.repo,
-              issue_number: pr,
-              body: `📦 Beta \`${ver}\` published.\n\n\`\`\`\nnpm install pantheon-opencode@${ver}\nnpm install pantheon-opencode@beta\n\`\`\``
-            });
+          VERSION: ${{ steps.metadata.outputs.version }}
+          PACKAGE: ${{ steps.metadata.outputs.package }}
+          RELEASE_TAG: ${{ github.event_name == 'pull_request' && 'beta' || 'latest' }}
+        run: npm publish "$PACKAGE" --ignore-scripts --tag "$RELEASE_TAG" --access public --provenance
