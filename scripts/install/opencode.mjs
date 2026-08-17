@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 /**
  * opencode.mjs — OpenCode platform installer
+ *
+ * Dual-version install (Phase 3): the generated config is V1-shaped and valid
+ * under BOTH OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2`
+ * v0.0.0-next-17444). V2 reads the same config locations and normalizes V1
+ * fields in memory — do NOT convert to native V2 format. Known V2 beta gaps
+ * handled here: top-level `subagent_depth` is silently ignored (migrated to
+ * `experimental.subagent_depth`), and the `instructions` config key is
+ * accepted-but-not-loaded (content consolidated into AGENTS.md, which both
+ * versions load). Pass --version v2 to pantheon-init for an informational
+ * label; state isolation is handled at runtime via OPENCODE_DB.
  */
 
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
@@ -221,6 +231,20 @@ export async function installOpenCode(
   const componentSet = new Set(components)
   const stats = summary.opencode
 
+  // V1/V2 dual-version awareness (Phase 3): the SAME config works under both
+  // OpenCode V1 (`opencode`) and V2 (`opencode2`, beta v0.0.0-next-17444).
+  // V2 normalizes V1 fields in memory (no rewrite) and isolates its state DB
+  // via OPENCODE_DB (~/.local/share/opencode/opencode-v2.db) with a distinct
+  // service port (49375 vs V1's 49374). The installer writes one shared
+  // config; the --version flag only labels the install for the operator.
+  const version = opts.version === 'v2' ? 'v2' : 'v1'
+  if (version === 'v2') {
+    info(
+      'OpenCode V2 target — shared config; state isolated via OPENCODE_DB ' +
+        '(~/.local/share/opencode/opencode-v2.db), service port 49375',
+    )
+  }
+
   // Interactive mode handling
   const stdinTTY = process.stdin.isTTY && process.stdout.isTTY
   const forceInteractive = opts.interactive === true
@@ -333,8 +357,13 @@ export async function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
-  // 2.5 Install instructions: AGENTS.md + instructions/ (--components instructions)
+  // 2.5 Install instructions: AGENTS.md only (--components instructions)
   // -----------------------------------------------------------------------
+  // AGENTS.md is the single instruction file both V1 and V2 load; the
+  // generated file embeds every src/instructions/*.instructions.md body, so
+  // the individual files are NOT copied anymore (nothing references
+  // <config>/instructions/ after the section-D merge fix — copying them would
+  // just leave stale duplicates on disk).
   if (componentSet.has('instructions')) {
     section('\uD83D\uDCCB Instructions')
     // AGENTS.md
@@ -345,14 +374,6 @@ export async function installOpenCode(
       const status = writeIfChanged(dstAgentsMd, content, dryRun)
       if (status === 'created') stats.created++
       else stats.skipped++
-    }
-    // instructions/ directory
-    const srcInstr = join(ROOT, 'src', 'instructions')
-    const dstInstr = join(target, 'instructions')
-    if (existsSync(srcInstr)) {
-      const instrResult = syncDir(srcInstr, dstInstr, dryRun, clean)
-      stats.created += instrResult.created
-      stats.skipped += instrResult.skipped
     }
   }
 
@@ -661,11 +682,36 @@ export async function installOpenCode(
   if (!config.default_agent && pantheonConfig.default_agent) {
     config.default_agent = pantheonConfig.default_agent
   }
+  // Merge top-level model/small_model from the repo config when the target
+  // config has no top-level `model` (fresh sandbox installs have none). The
+  // repo's opencode.json carries the default pair
+  // (opencode-go/deepseek-v4-flash); a user-set model is never overwritten.
+  if (!config.model && pantheonConfig.model) {
+    config.model = pantheonConfig.model
+    if (!config.small_model && pantheonConfig.small_model) {
+      config.small_model = pantheonConfig.small_model
+    }
+  }
   // Merge subagent_depth HERE (the config merge always runs, including on a
   // fresh install) instead of a file-existence-gated block, so run #1 already
   // produces the final config — run #2 must be a byte-identical no-op (#19).
-  if (config.subagent_depth === undefined) {
-    config.subagent_depth = 2
+  //
+  // V1/V2 compat (Phase 3): top-level `subagent_depth` is in V2's
+  // unsupportedTopLevel list and is SILENTLY IGNORED. The accepted form is
+  // `experimental.subagent_depth`. Migrate any existing top-level value into
+  // experimental (preserving the user's choice) and default fresh installs to
+  // experimental.subagent_depth = 2. V1 reads experimental.subagent_depth
+  // too, so the V1-shape config stays valid under both versions.
+  if (config.experimental === undefined || typeof config.experimental !== 'object') {
+    config.experimental = {}
+  }
+  if (config.subagent_depth !== undefined) {
+    if (config.experimental.subagent_depth === undefined) {
+      config.experimental.subagent_depth = config.subagent_depth
+    }
+    delete config.subagent_depth
+  } else if (config.experimental.subagent_depth === undefined) {
+    config.experimental.subagent_depth = 2
   }
 
   // --------------------------------------------------------------------
@@ -695,16 +741,24 @@ export async function installOpenCode(
     }
   }
 
-  // The runtime hooks plugin MUST always be registered. The packaged
-  // opencode.json no longer carries dev-machine plugin paths (removed in
-  // 3e552cc), so config.plugin would otherwise stay empty and the
-  // pantheon-hooks runtime would never load. Register it unconditionally,
-  // replacing any stale entry for the same file (same basename-dedup as
-  // above) so installs and upgrades are idempotent and hermetic.
-  const hooksPlugin = resolveInstalledPlugin('src/plugins/pantheon-hooks.ts')
-  const hooksFile = basename(hooksPlugin)
-  config.plugin = config.plugin.filter((p) => basename(p) !== hooksFile)
-  config.plugin.push(hooksPlugin)
+  // The two Pantheon plugins MUST always be registered, on fresh installs AND
+  // upgrades. The packaged opencode.json carries no `plugin` key (dev-machine
+  // paths removed in 3e552cc), so config.plugin would otherwise only contain
+  // whatever the user had — a fresh install would register NOTHING and lose
+  // delegation tools, GoalLoop, cost command, hashline and vision. Register
+  // both unconditionally, replacing any stale entry for the same file
+  // (basename-dedup) so installs and upgrades are idempotent and hermetic
+  // while preserving any user plugins.
+  const ensurePantheonPlugin = (ref) => {
+    const resolved = resolveInstalledPlugin(ref)
+    const file = basename(resolved)
+    config.plugin = config.plugin.filter((p) => basename(p) !== file)
+    config.plugin.push(resolved)
+  }
+  // Root-level delegation plugin (PR #45): tools, GoalLoop, cost, hashline.
+  ensurePantheonPlugin('src/plugin.ts')
+  // Runtime hooks plugin: chat hooks, hook-runner, TUI wiring.
+  ensurePantheonPlugin('src/plugins/pantheon-hooks.ts')
 
   if (!config.provider && pantheonConfig.provider) {
     config.provider = deepClone(pantheonConfig.provider)
@@ -747,10 +801,25 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   // D. Merge instructions paths
   // --------------------------------------------------------------------
-  const pantheonInstructions = ['AGENTS.md', 'instructions/*.instructions.md']
+  // AGENTS.md is the single instruction file both V1 and V2 load (V1
+  // auto-discovers it, V2 loads it explicitly). The generated AGENTS.md
+  // (scripts/build-agents-md.mjs) already embeds every
+  // src/instructions/*.instructions.md body, so the `instructions/*.md`
+  // glob is no longer needed — keeping it would duplicate content under V1
+  // and is ignored under V2 anyway. Only ensure AGENTS.md is present.
+  const pantheonInstructions = ['AGENTS.md']
   if (!config.instructions) {
     config.instructions = [...pantheonInstructions]
   } else {
+    // Strip stale per-file instruction globs from PREVIOUS installs
+    // (e.g. `instructions/*.instructions.md` / `src/instructions/*.md`).
+    // The merge is additive-only otherwise, so without this filter existing
+    // configs would keep loading instruction content twice under V1
+    // (generated AGENTS.md + individual files). User entries that are not
+    // *.instructions.md globs are preserved.
+    config.instructions = config.instructions.filter(
+      (instr) => typeof instr !== 'string' || !instr.endsWith('.instructions.md'),
+    )
     for (const instr of pantheonInstructions) {
       if (!config.instructions.includes(instr)) {
         config.instructions.push(instr)

@@ -6,6 +6,13 @@
  *
  * Thin CLI wrapper that parses arguments and delegates to
  * installOpenCode() from scripts/install/opencode.mjs.
+ *
+ * Dual-version install (Phase 3): the generated config is V1-shaped and valid
+ * under BOTH OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2`
+ * v0.0.0-next-17444). V2 reads the same config locations and normalizes V1
+ * fields in memory — no native V2 conversion. `--version v2` labels the
+ * install for the operator; state isolation is a runtime concern
+ * (OPENCODE_DB ~/.local/share/opencode/opencode-v2.db, service port 49375).
  */
 import fs from 'fs'
 import os from 'os'
@@ -43,6 +50,7 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --interactive  # Force interactive TUI mode')
   console.log('  npx pantheon-opencode init --headless     # Force non-interactive mode')
   console.log('  npx pantheon-opencode init -y             # Skip confirmations, use defaults')
+  console.log('  npx pantheon-opencode init --version v2    # Label install for OpenCode V2 (beta)')
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
   console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)')
   console.log(
@@ -182,6 +190,14 @@ async function main() {
     const autoYes = args.includes('--yes') || args.includes('-y')
     const presetIndex = args.indexOf('--preset')
     const presetOpt = presetIndex >= 0 ? (args[presetIndex + 1] ?? null) : null
+    // --version v1|v2 labels the install target (informational; the config is
+    // shared and V1-shaped under both versions). Invalid values fail fast.
+    const versionIndex = args.indexOf('--version')
+    const versionOpt = versionIndex >= 0 ? (args[versionIndex + 1] ?? null) : null
+    if (versionOpt !== null && versionOpt !== 'v1' && versionOpt !== 'v2') {
+      console.error(`❌ Invalid --version "${versionOpt}" — expected v1 or v2`)
+      process.exit(1)
+    }
 
     const components = ['agents', 'skills', 'instructions', 'commands', 'plugins']
     if (!skipMCP) components.push('runtime')
@@ -203,6 +219,7 @@ async function main() {
         headless: forceHeadless,
         yes: autoYes,
         preset: presetOpt,
+        version: versionOpt ?? 'v1',
       })
     } catch (err) {
       console.error(

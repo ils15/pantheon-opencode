@@ -12,10 +12,11 @@
  * Run: node --test tests/install-opencode.test.mjs
  */
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { resolveInstalledPlugin } from '../scripts/install/opencode.mjs'
+import { installOpenCode, resolveInstalledPlugin } from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
 // Simulates the developer machine path being baked into the packaged config
@@ -65,4 +66,117 @@ test('resolved plugin paths exist inside the package (ROOT-derived, not stale re
 test('resolveInstalledPlugin passes through non-src plugin refs unchanged', () => {
   assert.equal(resolveInstalledPlugin('@scope/custom-plugin'), '@scope/custom-plugin')
   assert.equal(resolveInstalledPlugin('pantheon-hooks'), 'pantheon-hooks')
+})
+
+// ─── End-to-end config merge (installOpenCode into temp dirs) ──────────────
+// Exercises the full installer config pipeline: plugin registration, the
+// instructions merge (section D) and the model/small_model merge. The
+// 'runtime' component is excluded so no venv/health-check side effects run.
+
+const COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins']
+
+/** Run a real (non-dry-run) install into `target`, optionally seeding an
+ * existing opencode.json first. Returns the merged config. */
+async function runInstall(target, existingConfig = null) {
+  if (existingConfig !== null) {
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'opencode.json'), JSON.stringify(existingConfig, null, 2))
+  }
+  await installOpenCode(target, false, false, COMPONENTS, { yes: true, headless: true })
+  return JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+}
+
+test('fresh install registers BOTH pantheon plugins (plugin.ts + pantheon-hooks.ts)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-fresh-'))
+  try {
+    const config = await runInstall(target)
+    assert.ok(Array.isArray(config.plugin), 'config.plugin must be an array')
+    assert.ok(
+      config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
+      `delegation plugin missing from fresh install: ${JSON.stringify(config.plugin)}`,
+    )
+    assert.ok(
+      config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
+      `hooks plugin missing from fresh install: ${JSON.stringify(config.plugin)}`,
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('fresh install instructions key is exactly [AGENTS.md]', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-instr-'))
+  try {
+    const config = await runInstall(target)
+    assert.deepEqual(config.instructions, ['AGENTS.md'])
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('upgrade strips stale instructions globs, keeps user entries + AGENTS.md', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-upgrade-'))
+  try {
+    const config = await runInstall(target, {
+      instructions: [
+        'AGENTS.md',
+        'instructions/*.instructions.md',
+        'src/instructions/*.instructions.md',
+        'docs/user-guide.md',
+      ],
+    })
+    assert.deepEqual(
+      config.instructions,
+      ['AGENTS.md', 'docs/user-guide.md'],
+      'stale *.instructions.md globs must be stripped, user entries kept',
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('upgrade preserves user plugins and adds both pantheon plugins (dedupe)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-upgrade-plugins-'))
+  try {
+    const config = await runInstall(target, {
+      plugin: ['@scope/custom-plugin', '/home/otherdev/pantheon/src/plugin.ts'],
+    })
+    assert.ok(config.plugin.includes('@scope/custom-plugin'), 'user plugin preserved')
+    // Stale dev-machine path replaced by the installed-package path.
+    assert.ok(
+      config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
+      `delegation plugin not re-registered: ${JSON.stringify(config.plugin)}`,
+    )
+    assert.ok(
+      config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
+      `hooks plugin not registered: ${JSON.stringify(config.plugin)}`,
+    )
+    // No duplicate entries for the same plugin file.
+    const pluginFiles = config.plugin.map((p) => p.split('/').pop())
+    assert.equal(pluginFiles.filter((f) => f === 'plugin.ts').length, 1)
+    assert.equal(pluginFiles.filter((f) => f === 'pantheon-hooks.ts').length, 1)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('model + small_model merged from repo config when absent', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-model-'))
+  try {
+    const config = await runInstall(target, {})
+    assert.equal(config.model, 'opencode-go/deepseek-v4-flash')
+    assert.equal(config.small_model, 'opencode-go/deepseek-v4-flash')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('user-set model is never overwritten by the merge', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-model-user-'))
+  try {
+    const config = await runInstall(target, { model: 'user/custom-model' })
+    assert.equal(config.model, 'user/custom-model')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
 })
