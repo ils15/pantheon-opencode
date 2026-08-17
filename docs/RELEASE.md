@@ -32,12 +32,14 @@ Semver: `1.2.0-beta.6.a1b2c3d` < `1.2.0` (beta é menor que a release).
 
 Re-publish automático: se label já está no PR e novo commit é pushado, o workflow re-publica com novo SHA.
 
-### Stable Release (merge na main)
+### Stable Release (explicit dispatch)
 
-1. PR mergeado na main com mensagem `chore(release): vX.Y.Z`
-2. Workflow `release-stable.yml` dispara:
-   - Publica no npm com tag `latest`
-   - Cria GitHub Release
+1. Merge o PR de release na `main` com mensagem `chore(release): vX.Y.Z`.
+2. No GitHub Actions, execute manualmente `Release` (`workflow_dispatch`) na
+   revisão desejada. Um push comum na `main` não inicia uma release.
+3. O workflow valida manifests e o SHA exato antes de:
+   - Publicar no npm com tag `latest`
+   - Criar GitHub Release
 
 ## Versões Publicadas Atualmente
 
@@ -55,5 +57,5 @@ Antes (removido em jul/2026):
 
 Agora:
 - `release.yml`: label `release:beta` no PR → beta calculado do npm `latest`
-- `release.yml`: push na main → stable
+- `release.yml`: stable somente por `workflow_dispatch`
 - Sem commits de bump automáticos no develop

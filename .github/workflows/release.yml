@@ -3,8 +3,6 @@ name: Release
 on:
   pull_request:
     types: [labeled]
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +15,6 @@ concurrency:
 jobs:
   validate:
     if: >
-      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
       (github.event_name == 'pull_request' && github.event.label.name == 'release:beta') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -171,7 +168,6 @@ jobs:
   release:
     needs: validate
     if: >
-      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
       (github.event_name == 'pull_request' && github.event.label.name == 'release:beta') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest

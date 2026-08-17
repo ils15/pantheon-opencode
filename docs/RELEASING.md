@@ -68,9 +68,10 @@ git tags** — tags are workflow-owned (see below).
    **ahead** of the latest stable tag; pre-releases excluded) plus the other
    required checks before merging.
 
-> No tag is created locally and no release is created at merge time by a
-> separate workflow — everything downstream happens in `release.yml` on the
-> merge commit.
+> No tag is created locally. Merging an ordinary PR does **not** release. To
+> publish a stable version, use the explicit `Release` workflow dispatch after
+> the intended commit is on `main`; it validates manifests and preserves the
+> exact target-SHA/idempotency checks.
 
 ---
 

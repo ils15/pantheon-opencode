@@ -30,6 +30,26 @@ test('beta trigger requires the exact release:beta label', () => {
   assert.match(workflow, /RELEASE_LABEL: \$\{\{ github\.event\.label\.name \}\}/)
 })
 
+test('ordinary pushes cannot start a release and stable remains explicit', () => {
+  assert.doesNotMatch(workflow, /^\s*push:/m)
+  assert.doesNotMatch(workflow, /github\.event_name\s*==\s*['"]push['"]\s*&&/)
+  assert.match(workflow, /github\.event_name == 'workflow_dispatch'/)
+  assert.match(workflow, /node scripts\/version-check\.mjs/)
+  assert.match(workflow, /Existing tag does not point to TARGET_SHA/)
+  assert.match(workflow, /--target "\$TARGET_SHA"/)
+})
+
+test('beta uses published npm latest and does not consult the current version tag gate', () => {
+  const betaSection = workflow.slice(
+    workflow.indexOf('- name: Query published stable version'),
+    workflow.indexOf('- name: Validate release manifests'),
+  )
+  assert.match(betaSection, /npm view pantheon-opencode dist-tags\.latest/)
+  assert.match(betaSection, /scripts\/release-beta-version\.mjs/)
+  assert.doesNotMatch(betaSection, /git tag -l/)
+  assert.doesNotMatch(betaSection, /Existing tag does not point to TARGET_SHA/)
+})
+
 test('validation and release are separate least-privilege jobs', () => {
   assert.ok(workflow.includes('jobs:\n  validate:'))
   assert.ok(workflow.includes('  release:\n    needs: validate'))
