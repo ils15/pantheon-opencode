@@ -203,7 +203,6 @@ version selector; an explicit `dbPath` supplied by the tool caller takes
 precedence over both. The resolver never probes the other version's database,
 and reports an actionable error when the selected DB is missing or has an
 incompatible schema.
-
 **What changed for V2 compatibility (Phase 3):**
 
 - `subagent_depth` moved from top-level to `experimental.subagent_depth` — V2 silently ignores the top-level key. The installer migrates existing configs automatically.
