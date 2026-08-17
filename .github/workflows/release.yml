@@ -327,6 +327,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          registry-url: https://registry.npmjs.org
 
       - name: Check idempotency
         id: idem
@@ -474,4 +475,4 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
           PACKAGE: ${{ steps.metadata.outputs.package }}
           RELEASE_TAG: ${{ inputs.recovery_version != '' && 'beta' || github.event_name == 'pull_request' && 'beta' || 'latest' }}
-        run: npm publish "$PACKAGE" --ignore-scripts --tag "$RELEASE_TAG" --access public --provenance
+        run: npm publish "$PACKAGE" --ignore-scripts --tag "$RELEASE_TAG" --access public --provenance --registry https://registry.npmjs.org

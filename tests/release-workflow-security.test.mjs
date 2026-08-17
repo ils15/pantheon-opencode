@@ -298,6 +298,21 @@ test('npm publish receives an explicit local, validated npm pack tarball', () =>
   assert.doesNotMatch(publish, /npm publish "?release-artifact\//)
 })
 
+test('release npm auth is configured for the public registry without exposing secrets', () => {
+  const release = workflow.slice(workflow.indexOf('  release:'))
+  const publish = release.slice(release.indexOf('- name: Publish immutable artifact to npm'))
+  const setupNode = release.slice(0, release.indexOf('- name: Publish immutable artifact to npm'))
+
+  assert.match(
+    setupNode,
+    /- uses: actions\/setup-node@v4[\s\S]*registry-url: https:\/\/registry\.npmjs\.org/,
+  )
+  assert.match(publish, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/)
+  assert.match(publish, /npm publish "\$PACKAGE"[\s\S]*--registry https:\/\/registry\.npmjs\.org/)
+  assert.doesNotMatch(publish, /(?:NPM_TOKEN|NODE_AUTH_TOKEN)\s*[:=]\s*['"][^$]/)
+  assert.doesNotMatch(publish, /secrets\.[A-Z_]+\s*\|\|/)
+})
+
 test('validation, artifact, and release use one immutable event target SHA', () => {
   assert.doesNotMatch(workflow, /CHECKOUT_REF|\|\| 'main'/)
   const targetExpression =
