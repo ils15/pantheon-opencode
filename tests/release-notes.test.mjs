@@ -3,6 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
+  collectEntries,
+  getLastTag,
   groupCommits,
   parseCommitLine,
   renderChangelog,
@@ -272,6 +274,26 @@ test('CLI normal mode exits 0 and prints the final emoji sections (lastTag..HEAD
   const { status, stdout, stderr } = runCli([])
   assert.equal(status, 0, stderr)
   assert.match(stderr, /release-notes: v\d+\.\d+\.\d+\.\.HEAD/)
+
+  if (stdout.trim() === '') {
+    // A range containing only internal commits is a valid release-notes
+    // result. Verify the range itself explains the empty output rather than
+    // treating an empty stdout as an unconditional success.
+    const entries = collectEntries({ since: getLastTag() })
+    assert.ok(entries.length > 0, 'empty output requires a non-empty internal-only range')
+    const parsed = entries.map(parseCommitLine)
+    assert.ok(
+      parsed.every(
+        (entry) =>
+          !entry ||
+          (entry.refs.length === 0 &&
+            !['feat', 'perf', 'docs', 'fix', 'security'].includes(entry.type)),
+      ),
+      'empty output is only valid when the range has no user-facing commits or issue references',
+    )
+    return
+  }
+
   assert.match(stdout, /## 🆕 What's New/)
   assert.match(stdout, /## 🐞 Fixed/)
 })
