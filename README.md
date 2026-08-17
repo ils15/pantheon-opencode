@@ -892,9 +892,12 @@ publishing. If they diverge, the release is blocked until they are reconciled.
 
 Beta releases are calculated from npm's published `latest` at workflow runtime:
 the default is the next patch, formatted as
-`<next-stable>-beta.<PR>.<short-sha>`. Labels `release:beta:minor` and
-`release:beta:major` request minor or major calculation. The workflow owns the
-manifest update, tag, and publish; it does not assume a fixed future version.
+`<next-stable>-beta.<PR>.<short-sha>`. Only the exact `release:beta` label
+triggers this path; alternate label variants do not trigger it. Beta recovery
+requires an explicit `workflow_dispatch` with its recovery inputs; a normal
+push does not republish beta. The workflow owns the manifest update, tag, and
+publish, creates the GitHub Release as `Pantheon <version>`, and does not create
+PR comments.
 
 ### Anti-patterns
 
