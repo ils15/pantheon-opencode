@@ -10,8 +10,9 @@
  *   - missing/unreadable db → FRIENDLY error string, never a crash (tools
  *     return errors as TEXT).
  *
- * dbPath resolution: explicit option > env PANTHEON_COST_DB > XDG data
- * home > ~/.local/share/opencode/opencode.db. The tool is wired in
+ * dbPath resolution: explicit option > env PANTHEON_COST_DB > the version-aware
+ * default selected by PANTHEON_OPENCODE_VERSION (v1 or v2). An unset version
+ * deliberately preserves V1 behavior. The tool is wired in
  * plugin.ts alongside the delegation toolset (usable by zeus and any agent
  * with tool access — no routing change needed).
  *
@@ -41,6 +42,8 @@ export interface CostCommandOptions {
   dbPath?: string
 }
 
+export type OpenCodeVersion = 'v1' | 'v2'
+
 /** One cost tool: description + zod args shape + execute (delegation.ts shape). */
 export interface CostTool<Args extends z.ZodRawShape = typeof costArgs> {
   description: string
@@ -62,15 +65,32 @@ const costArgs = {
     .describe('Number of days of delegation history to include (default 7).'),
 } satisfies z.ZodRawShape
 
-/** Resolve candidate db paths in priority order (env override first). */
-function dbCandidates(): string[] {
-  const candidates: string[] = []
-  const env = process.env.PANTHEON_COST_DB
-  if (env !== undefined && env !== '') candidates.push(env)
+/** Return the safe, isolated state DB name for an OpenCode version. */
+function defaultDbPath(version: OpenCodeVersion | undefined): string {
   const xdg = process.env.XDG_DATA_HOME
   const dataHome = xdg !== undefined && xdg !== '' ? xdg : join(homedir(), '.local', 'share')
-  candidates.push(join(dataHome, 'opencode', 'opencode.db'))
-  return candidates
+  const filename = version === 'v2' ? 'opencode-v2.db' : 'opencode.db'
+  return join(dataHome, 'opencode', filename)
+}
+
+/**
+ * Resolve the database without probing another version's database.
+ *
+ * Explicit paths always win. A version selector changes exactly one default
+ * filename; it never falls back to V1, which prevents a V2 report from
+ * silently reading V1 history (or vice versa).
+ */
+export function resolveCostDbPath(options?: CostCommandOptions): string {
+  const explicit = options?.dbPath || process.env.PANTHEON_COST_DB
+  if (explicit) return explicit
+
+  const configuredVersion = process.env.PANTHEON_OPENCODE_VERSION
+  if (configuredVersion !== undefined && configuredVersion !== 'v1' && configuredVersion !== 'v2') {
+    throw new Error(
+      `invalid PANTHEON_OPENCODE_VERSION "${configuredVersion}"; expected "v1" or "v2"`,
+    )
+  }
+  return defaultDbPath(configuredVersion as OpenCodeVersion | undefined)
 }
 
 /**
@@ -79,11 +99,28 @@ function dbCandidates(): string[] {
  * to the real opencode.db).
  */
 function findExistingDb(override?: string): string | undefined {
-  const candidates = override !== undefined && override !== '' ? [override] : dbCandidates()
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate
+  const candidate =
+    override === undefined ? resolveCostDbPath() : resolveCostDbPath({ dbPath: override })
+  return existsSync(candidate) ? candidate : undefined
+}
+
+function assertCompatibleSchema(db: {
+  prepare(sql: string): { get(): unknown; all(...args: unknown[]): unknown[] }
+}): void {
+  const row = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'message'")
+    .get()
+  if (row === undefined) {
+    throw new Error('incompatible opencode.db schema: required "message" table is missing')
   }
-  return undefined
+  const columns = db.prepare('PRAGMA table_info(message)').all() as Array<{ name?: unknown }>
+  const names = new Set(columns.map((column) => column.name))
+  const missing = ['data', 'time_created'].filter((name) => !names.has(name))
+  if (missing.length > 0) {
+    throw new Error(
+      `incompatible opencode.db schema: message table is missing ${missing.join(', ')}; select the matching V1/V2 database`,
+    )
+  }
 }
 
 /** Aggregate cost + tokens by agent via node:sqlite (read-only). */
@@ -91,6 +128,7 @@ async function queryWithNodeSqlite(dbPath: string, days: number): Promise<CostRo
   const sqlite = await import('node:sqlite')
   const db = new sqlite.DatabaseSync(dbPath, { readOnly: true })
   try {
+    assertCompatibleSchema(db)
     const since = Date.now() - days * 86_400_000
     const rows = db.prepare('SELECT data FROM message WHERE time_created >= ?').all(since)
     return aggregateMessages(rows.map((row) => String(row.data)))
@@ -180,16 +218,17 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
     try {
       const dbPath = findExistingDb(options?.dbPath)
       if (dbPath === undefined) {
-        const expected =
-          options?.dbPath ?? process.env.PANTHEON_COST_DB ?? '~/.local/share/opencode/opencode.db'
+        const expected = resolveCostDbPath(options)
         return (
           `pantheon_cost failed: opencode.db not found (expected at ${expected}). ` +
           `No cost history is available until opencode has stored session data.`
         )
       }
-      const rows = await queryWithNodeSqlite(dbPath, days).catch(async () =>
-        queryWithScript(scriptPath, dbPath, days),
-      )
+      const rows = await queryWithNodeSqlite(dbPath, days).catch(async (err: unknown) => {
+        if (err instanceof Error && err.message.startsWith('incompatible opencode.db schema'))
+          throw err
+        return queryWithScript(scriptPath, dbPath, days)
+      })
       return renderMarkdown(rows, days)
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err)
