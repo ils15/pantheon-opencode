@@ -3,9 +3,20 @@ name: Release
 on:
   pull_request:
     types: [labeled]
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      recovery_version:
+        description: 'Existing beta semver prerelease to recover (without v)'
+        required: false
+        type: string
+      recovery_target_sha:
+        description: 'Full commit SHA already referenced by the beta tag'
+        required: false
+        type: string
+      recovery_pr_number:
+        description: 'Positive PR number encoded in the beta version'
+        required: false
+        type: string
 
 concurrency:
   group: release
@@ -17,7 +28,6 @@ concurrency:
 jobs:
   validate:
     if: >
-      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
       (github.event_name == 'pull_request' && github.event.label.name == 'release:beta') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -29,12 +39,35 @@ jobs:
       RELEASE_LABEL: ${{ github.event.label.name }}
       PR_NUMBER: ${{ github.event.number }}
       PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      TARGET_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      RECOVERY_VERSION: ${{ inputs.recovery_version }}
+      RECOVERY_TARGET_SHA: ${{ inputs.recovery_target_sha }}
+      RECOVERY_PR_NUMBER: ${{ inputs.recovery_pr_number }}
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
       # This is deliberately the first step. In particular, no release
       # mutation can be reached before the PR number is a positive safe int.
       - name: Validate release inputs before checkout
         run: |
+          RECOVERY_VERSION="$RECOVERY_VERSION" RECOVERY_TARGET_SHA="$RECOVERY_TARGET_SHA" RECOVERY_PR_NUMBER="$RECOVERY_PR_NUMBER" EVENT_NAME="$EVENT_NAME" node <<'NODE'
+          const version = process.env.RECOVERY_VERSION ?? '';
+          const sha = process.env.RECOVERY_TARGET_SHA ?? '';
+          const pr = process.env.RECOVERY_PR_NUMBER ?? '';
+          const supplied = [version, sha, pr].filter(Boolean).length;
+          if (process.env.EVENT_NAME !== 'workflow_dispatch' && supplied) throw new Error('Recovery inputs are only valid for workflow_dispatch.');
+          if (supplied && supplied !== 3) throw new Error('Recovery inputs must be supplied together.');
+          if (supplied) {
+            // Beta recovery versions use the repository convention from
+            // release-beta-version.mjs: exactly the first seven lowercase
+            // characters of the full target SHA.
+            const match = /^(\d+\.\d+\.\d+)-beta\.(\d+)\.([0-9a-f]{7})$/.exec(version);
+            if (!match) throw new Error('Recovery version must be <base>-beta.<pr>.<7-char-lowercase-sha>.');
+            if (!/^[0-9a-fA-F]{40}$/.test(sha)) throw new Error('Recovery target SHA must be a full 40-hex SHA.');
+            const value = Number(pr);
+            if (!/^\d+$/.test(pr) || !Number.isSafeInteger(value) || value <= 0) throw new Error('Recovery PR number must be a positive safe integer.');
+            if (match[2] !== pr) throw new Error('Recovery version PR must match recovery_pr_number.');
+            if (match[3] !== sha.slice(0, 7).toLowerCase()) throw new Error('Recovery version SHA suffix must match recovery_target_sha.');
+          }
+          NODE
           if [ "$EVENT_NAME" = "pull_request" ] && [ "$RELEASE_LABEL" != "release:beta" ]; then
             echo "::error::Only the exact release:beta label can trigger a beta release."
             exit 1
@@ -84,7 +117,11 @@ jobs:
       - name: Determine release type
         id: type
         run: |
-          if [ "$EVENT_NAME" = "pull_request" ]; then
+          if [ -n "$RECOVERY_VERSION" ]; then
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+            echo "tag=beta" >> "$GITHUB_OUTPUT"
+            echo "recovery=true" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
             echo "channel=beta" >> "$GITHUB_OUTPUT"
             echo "tag=beta" >> "$GITHUB_OUTPUT"
           else
@@ -92,16 +129,31 @@ jobs:
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Apply exact recovery version
+        if: steps.type.outputs.recovery == 'true'
+        run: |
+          npm version "$RECOVERY_VERSION" --no-git-tag-version --ignore-scripts >/dev/null
+          node scripts/version-check.mjs --fix
+
       - name: Version gate
         id: version_gate
         env:
           GATE_CHANNEL: ${{ steps.type.outputs.channel }}
+          RECOVERY_VERSION: ${{ inputs.recovery_version }}
         run: |
           node <<'NODE'
           const { execFileSync } = require('node:child_process');
           const fs = require('node:fs');
           const pkgVer = String(JSON.parse(fs.readFileSync('package.json', 'utf8')).version || '');
           const channel = process.env.GATE_CHANNEL || 'stable';
+          if (process.env.RECOVERY_VERSION) {
+            if (pkgVer !== process.env.RECOVERY_VERSION) {
+              console.error('::error::Recovery package version was not applied exactly.');
+              process.exit(1);
+            }
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${pkgVer}\nlatest_stable=v${pkgVer}\n`);
+            process.exit(0);
+          }
           const tags = execFileSync('git', ['tag', '-l', 'v[0-9]*'], { encoding: 'utf8' })
             .trim().split('\n').filter(Boolean).filter((t) => /^v\d+\.\d+\.\d+$/.test(t));
           const cmp = (a, b) => {
@@ -119,7 +171,7 @@ jobs:
           NODE
 
       - name: Query published stable version
-        if: steps.type.outputs.channel == 'beta'
+        if: steps.type.outputs.channel == 'beta' && steps.type.outputs.recovery != 'true'
         id: npm_latest
         run: |
           LATEST_RESPONSE="$RUNNER_TEMP/npm-latest-response"
@@ -135,7 +187,7 @@ jobs:
           echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
 
       - name: Compute and apply beta version
-        if: steps.type.outputs.channel == 'beta'
+        if: steps.type.outputs.channel == 'beta' && steps.type.outputs.recovery != 'true'
         env:
           LATEST_STABLE: ${{ steps.npm_latest.outputs.latest }}
         run: |
@@ -150,16 +202,19 @@ jobs:
       - name: Create release artifact and notes
         env:
           BASE_VERSION: ${{ steps.version_gate.outputs.version }}
+          RECOVERY_VERSION: ${{ inputs.recovery_version }}
         run: |
           mkdir -p "$RUNNER_TEMP/release-artifact"
-          if ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-artifact/release-notes.md"; then
+          if [ -n "$RECOVERY_VERSION" ]; then
+            printf '%s\n' "Recovery publish for existing GitHub Release $RECOVERY_VERSION." > "$RUNNER_TEMP/release-artifact/release-notes.md"
+          elif ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-artifact/release-notes.md"; then
             echo "::error::CHANGELOG.md has no [$BASE_VERSION] section."; exit 1
           fi
           VERSION=$(node -p "require('./package.json').version")
           printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+\.[0-9a-f]+)?$' || { echo "::error::Invalid release version."; exit 1; }
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/release-artifact" >/dev/null
           printf '%s\n' "$VERSION" > "$RUNNER_TEMP/release-artifact/version"
-          printf '%s\n' "$TARGET_SHA" > "$RUNNER_TEMP/release-artifact/target-sha"
+          printf '%s\n' "$TARGET_SHA" | tr '[:upper:]' '[:lower:]' > "$RUNNER_TEMP/release-artifact/target-sha"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -171,7 +226,6 @@ jobs:
   release:
     needs: validate
     if: >
-      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
       (github.event_name == 'pull_request' && github.event.label.name == 'release:beta') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -182,14 +236,42 @@ jobs:
       EVENT_NAME: ${{ github.event_name }}
       RELEASE_LABEL: ${{ github.event.label.name }}
       PR_NUMBER: ${{ github.event.number }}
-      TARGET_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      RECOVERY_VERSION: ${{ inputs.recovery_version }}
+      RECOVERY_TARGET_SHA: ${{ inputs.recovery_target_sha }}
+      RECOVERY_PR_NUMBER: ${{ inputs.recovery_pr_number }}
       RELEASE_REPO: ${{ github.repository }}
-      RELEASE_TAG: ${{ github.event_name == 'pull_request' && 'beta' || 'latest' }}
+      # Recovery is always a beta publish, even though it is dispatched
+      # manually. Keep the recovery branch first so it cannot inherit the
+      # workflow_dispatch stable default.
+      RELEASE_TAG: ${{ inputs.recovery_version != '' && 'beta' || github.event_name == 'pull_request' && 'beta' || 'latest' }}
     steps:
       # Defense in depth: this step must remain before every gh/tag/npm
       # mutation in this job. It does not inspect or execute the artifact.
       - name: Revalidate release inputs before mutations
         run: |
+          RELEASE_REPO="$RELEASE_REPO" node <<'NODE'
+          const repo = process.env.RELEASE_REPO ?? '';
+          if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(repo)) {
+            throw new Error('RELEASE_REPO must be an owner/name GitHub repository.');
+          }
+          NODE
+          RECOVERY_VERSION="$RECOVERY_VERSION" RECOVERY_TARGET_SHA="$RECOVERY_TARGET_SHA" RECOVERY_PR_NUMBER="$RECOVERY_PR_NUMBER" node <<'NODE'
+          const values = [process.env.RECOVERY_VERSION ?? '', process.env.RECOVERY_TARGET_SHA ?? '', process.env.RECOVERY_PR_NUMBER ?? ''];
+          if (values.some(Boolean) && values.filter(Boolean).length !== 3) throw new Error('Recovery inputs must be supplied together.');
+          if (values[0]) {
+            const match = /^(\d+\.\d+\.\d+)-beta\.(\d+)\.([0-9a-f]{7})$/.exec(values[0]);
+            if (!match || !/^[0-9a-fA-F]{40}$/.test(values[1])) throw new Error('Invalid recovery version or SHA.');
+            if (!/^\d+$/.test(values[2]) || !Number.isSafeInteger(Number(values[2])) || Number(values[2]) <= 0) throw new Error('Invalid recovery PR number.');
+            if (match[2] !== values[2]) throw new Error('Recovery version PR must match recovery_pr_number.');
+            if (match[3] !== values[1].slice(0, 7).toLowerCase()) throw new Error('Recovery version SHA suffix must match recovery_target_sha.');
+          }
+          NODE
+          if [ -n "$RECOVERY_VERSION" ]; then
+            [ "$EVENT_NAME" = "workflow_dispatch" ] || { echo '::error::Recovery requires workflow_dispatch.'; exit 1; }
+            TARGET_SHA="$RECOVERY_TARGET_SHA"
+          fi
+          TARGET_SHA=$(printf '%s' "$TARGET_SHA" | tr '[:upper:]' '[:lower:]')
           if [ "$EVENT_NAME" = "pull_request" ]; then
             [ "$RELEASE_LABEL" = "release:beta" ] || { echo "::error::Invalid release label."; exit 1; }
             case "$PR_NUMBER" in ''|*[!0-9]*) echo "::error::PR number must contain digits only."; exit 1 ;; esac
@@ -218,14 +300,34 @@ jobs:
           [ "$ARTIFACT_SHA" = "$TARGET_SHA" ] || { echo "::error::Validation and release TARGET_SHA differ."; exit 1; }
           VERSION=$(tr -d '\n' < release-artifact/version)
           printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+\.[0-9a-f]+)?$' || { echo "::error::Invalid artifact version."; exit 1; }
-          PACKAGE=$(find release-artifact -maxdepth 1 -type f -name '*.tgz' -print -quit)
-          [ -n "$PACKAGE" ] || { echo "::error::Release package artifact is missing."; exit 1; }
+          PACKAGE_REL=$(find release-artifact -maxdepth 1 -type f -name '*.tgz' -print -quit)
+          [ -n "$PACKAGE_REL" ] || { echo "::error::Release package artifact is missing."; exit 1; }
+          PACKAGE=$(realpath -- "$PACKAGE_REL")
+          [ -f "$PACKAGE" ] || { echo "::error::Release package artifact path is invalid."; exit 1; }
+          tar -tzf "$PACKAGE" > "$RUNNER_TEMP/package-contents" || {
+            echo "::error::Release package artifact is not a readable tarball."; exit 1;
+          }
+          grep -Fxq 'package/package.json' "$RUNNER_TEMP/package-contents" || {
+            echo "::error::Release package artifact is not an npm pack tarball."; exit 1;
+          }
+          tar -xOzf "$PACKAGE" package/package.json > "$RUNNER_TEMP/package.json" || {
+            echo "::error::Could not read package metadata from release artifact."; exit 1;
+          }
+          ARTIFACT_VERSION="$VERSION" node <<'NODE'
+          const fs = require('node:fs');
+          const packageJson = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/package.json', 'utf8'));
+          if (packageJson.name !== 'pantheon-opencode' || packageJson.version !== process.env.ARTIFACT_VERSION) {
+            console.error('::error::Release tarball package metadata does not match the validated artifact.');
+            process.exit(1);
+          }
+          NODE
           echo "version=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          registry-url: https://registry.npmjs.org
 
       - name: Check idempotency
         id: idem
@@ -234,24 +336,67 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
           TAG_REF="$VERSION"
+          if [ -n "$RECOVERY_VERSION" ]; then
+            EXPECTED_TAG="v${RECOVERY_VERSION}"
+            [ "$TAG_REF" = "$EXPECTED_TAG" ] || { echo '::error::Recovery artifact version differs from requested version.'; exit 1; }
+          fi
+          TAG_REF="$TAG_REF" node <<'NODE'
+          const tag = process.env.TAG_REF ?? '';
+          if (!/^v\d+\.\d+\.\d+(?:-beta\.\d+\.[0-9a-f]+)?$/.test(tag)) {
+            throw new Error('Release tag ref is invalid.');
+          }
+          NODE
           if TAG_RESPONSE=$(gh api "repos/$RELEASE_REPO/git/ref/tags/$TAG_REF" --include 2>"$RUNNER_TEMP/tag-ref-error"); then
-            TAG_OBJECT_TYPE=$(printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body && /"type"/ { if (match($0, /"type"[[:space:]]*:[[:space:]]*"[^"]+"/)) { value=substr($0, RSTART, RLENGTH); sub(/^.*"type"[[:space:]]*:[[:space:]]*"/, "", value); sub(/"$/, "", value); print value; exit } }')
-            TAG_OBJECT_SHA=$(printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body && /"sha"/ { if (match($0, /"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]+"/)) { value=substr($0, RSTART, RLENGTH); sub(/^.*"sha"[[:space:]]*:[[:space:]]*"/, "", value); sub(/"$/, "", value); print value; exit } }')
+            printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body { print }' > "$RUNNER_TEMP/tag-ref-body"
+            TAG_OBJECT=$(TAG_BODY="$RUNNER_TEMP/tag-ref-body" node <<'NODE'
+          const fs = require('node:fs');
+          const body = JSON.parse(fs.readFileSync(process.env.TAG_BODY, 'utf8'));
+          const object = body.object ?? body;
+          const sha = String(object.sha ?? '').trim().toLowerCase();
+          if (!['tag', 'commit'].includes(object.type) || !/^[0-9a-f]{40}$/.test(sha)) {
+            throw new Error('GitHub tag API returned an invalid object.');
+          }
+          process.stdout.write(`${object.type}\t${sha}`);
+          NODE
+            )
+            TAG_OBJECT_TYPE=${TAG_OBJECT%%$'\t'*}
+            TAG_OBJECT_SHA=${TAG_OBJECT#*$'\t'}
+            TAG_DEPTH=0
             while [ "$TAG_OBJECT_TYPE" = tag ]; do
-              TAG_RESPONSE=$(gh api "repos/$RELEASE_REPO/git/tags/$TAG_OBJECT_SHA" --include) || { echo "::error::Could not resolve annotated tag object."; exit 1; }
-              TAG_OBJECT_TYPE=$(printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body && /"type"/ { if (match($0, /"type"[[:space:]]*:[[:space:]]*"[^"]+"/)) { value=substr($0, RSTART, RLENGTH); sub(/^.*"type"[[:space:]]*:[[:space:]]*"/, "", value); sub(/"$/, "", value); print value; exit } }')
-              TAG_OBJECT_SHA=$(printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body && /"sha"/ { if (match($0, /"sha"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]+"/)) { value=substr($0, RSTART, RLENGTH); sub(/^.*"sha"[[:space:]]*:[[:space:]]*"/, "", value); sub(/"$/, "", value); print value; exit } }')
+              [ "$TAG_DEPTH" -lt 4 ] || { echo '::error::Annotated tag nesting is too deep.'; exit 1; }
+              TAG_RESPONSE=$(gh api "repos/$RELEASE_REPO/git/tags/$TAG_OBJECT_SHA" --include 2>"$RUNNER_TEMP/tag-object-error") || { echo '::error::Could not resolve annotated tag object.'; cat "$RUNNER_TEMP/tag-object-error"; exit 1; }
+              printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body { print }' > "$RUNNER_TEMP/tag-object-body"
+              TAG_OBJECT=$(TAG_BODY="$RUNNER_TEMP/tag-object-body" node <<'NODE'
+          const fs = require('node:fs');
+          const body = JSON.parse(fs.readFileSync(process.env.TAG_BODY, 'utf8'));
+          const object = body.object;
+          const sha = String(object?.sha ?? '').trim().toLowerCase();
+          if (!object || !['tag', 'commit'].includes(object.type) || !/^[0-9a-f]{40}$/.test(sha)) {
+            throw new Error('GitHub annotated tag API returned an invalid object.');
+          }
+          process.stdout.write(`${object.type}\t${sha}`);
+          NODE
+              )
+              TAG_OBJECT_TYPE=${TAG_OBJECT%%$'\t'*}
+              TAG_OBJECT_SHA=${TAG_OBJECT#*$'\t'}
+              TAG_DEPTH=$((TAG_DEPTH + 1))
             done
             [ "$TAG_OBJECT_TYPE" = commit ] || { echo "::error::Release tag does not resolve to a commit."; exit 1; }
             [ "$TAG_OBJECT_SHA" = "$TARGET_SHA" ] || { echo "::error::Existing tag does not point to TARGET_SHA."; exit 1; }
+            tag_exists=true
             echo 'tag_exists=true' >> "$GITHUB_OUTPUT"
           else
             STATUS=$(printf '%s\n' "$TAG_RESPONSE" | awk 'NR == 1 { print $2; exit }')
             if [ "$STATUS" = 404 ]; then
+              tag_exists=false
               echo 'tag_exists=false' >> "$GITHUB_OUTPUT"
             else
               echo "::error::Could not determine whether release tag exists (HTTP ${STATUS:-unknown})."; exit 1
             fi
+          fi
+
+          if [ -n "$RECOVERY_VERSION" ]; then
+            [ "$TAG_OBJECT_SHA" = "$TARGET_SHA" ] || { echo '::error::Recovery tag does not point to recovery target SHA.'; exit 1; }
           fi
           # A release lookup is a state check, not a best-effort probe. Only
           # an explicit 404 means "missing"; auth, API, and network errors
@@ -267,19 +412,31 @@ jobs:
             process.exit(1);
           }
           NODE
+            released=true
             echo 'released=true' >> "$GITHUB_OUTPUT"
           else
             STATUS=$(awk 'NR == 1 { print $2; exit }' "$RELEASE_RESPONSE")
             if [ "$STATUS" = 404 ]; then
+              released=false
               echo 'released=false' >> "$GITHUB_OUTPUT"
             else
               echo "::error::Could not determine whether GitHub release exists (HTTP ${STATUS:-unknown})."; exit 1
             fi
           fi
 
+          if [ -n "$RECOVERY_VERSION" ] && [ "$released" != "true" ]; then
+            echo '::error::Recovery requires the existing GitHub Release; it will not create one.'
+            exit 1
+          fi
+
           NPM_RESPONSE="$RUNNER_TEMP/npm-response"
           NPM_ERROR="$RUNNER_TEMP/npm-error"
-          if npm view pantheon-opencode version --tag "$RELEASE_TAG" --json > "$NPM_RESPONSE" 2> "$NPM_ERROR"; then
+          if [ -n "$RECOVERY_VERSION" ]; then
+            NPM_QUERY=(npm view "pantheon-opencode@${VERSION#v}" version --json)
+          else
+            NPM_QUERY=(npm view pantheon-opencode version --tag "$RELEASE_TAG" --json)
+          fi
+          if "${NPM_QUERY[@]}" > "$NPM_RESPONSE" 2> "$NPM_ERROR"; then
             NPM_VER=$(tr -d '"[:space:]' < "$NPM_RESPONSE")
             if [ "$NPM_VER" = "${VERSION#v}" ]; then echo 'npm_exists=true' >> "$GITHUB_OUTPUT"; else echo 'npm_exists=false' >> "$GITHUB_OUTPUT"; fi
           elif grep -Eqi 'E404|404[[:space:]]+Not Found|code[[:space:]]+E404' "$NPM_ERROR" "$NPM_RESPONSE"; then
@@ -289,23 +446,23 @@ jobs:
           fi
 
       - name: Create and push immutable tag
-        if: steps.idem.outputs.released != 'true' && steps.idem.outputs.tag_exists != 'true'
+        if: steps.idem.outputs.released != 'true' && steps.idem.outputs.tag_exists != 'true' && inputs.recovery_version == ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.metadata.outputs.version }}
         run: gh api --method POST "repos/$RELEASE_REPO/git/refs" -f "ref=refs/tags/$VERSION" -f "sha=$TARGET_SHA"
 
       - name: Create GitHub release
-        if: steps.idem.outputs.released != 'true'
+        if: steps.idem.outputs.released != 'true' && inputs.recovery_version == ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.metadata.outputs.version }}
-          RELEASE_CHANNEL: ${{ github.event_name == 'pull_request' && 'beta' || 'latest' }}
+          RELEASE_CHANNEL: ${{ inputs.recovery_version != '' && 'beta' || github.event_name == 'pull_request' && 'beta' || 'latest' }}
         run: |
           if [ "$RELEASE_CHANNEL" = "beta" ]; then
-            gh release create "$VERSION" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --prerelease --notes-file release-artifact/release-notes.md
+            gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --prerelease --notes-file release-artifact/release-notes.md
           else
-            gh release create "$VERSION" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --notes-file release-artifact/release-notes.md
+            gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --notes-file release-artifact/release-notes.md
           fi
 
       # This is intentionally the final step. The artifact was produced with
@@ -317,5 +474,5 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.metadata.outputs.version }}
           PACKAGE: ${{ steps.metadata.outputs.package }}
-          RELEASE_TAG: ${{ github.event_name == 'pull_request' && 'beta' || 'latest' }}
-        run: npm publish "$PACKAGE" --ignore-scripts --tag "$RELEASE_TAG" --access public --provenance
+          RELEASE_TAG: ${{ inputs.recovery_version != '' && 'beta' || github.event_name == 'pull_request' && 'beta' || 'latest' }}
+        run: npm publish "$PACKAGE" --ignore-scripts --tag "$RELEASE_TAG" --access public --provenance --registry https://registry.npmjs.org
