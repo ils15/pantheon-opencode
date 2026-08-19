@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import type { Hooks, PluginInput } from '@opencode-ai/plugin'
 import type { FilePart, Part, TextPart, UserMessage } from '@opencode-ai/sdk'
 import type { ResolvedPreset } from './presets.mjs'
-import { hasVision, resolveActivePreset, visionBrokenOnGateway } from './presets.mjs'
+import { CAPABILITY_TABLE, hasVision, resolveActivePreset, visionBrokenOnGateway } from './presets.mjs'
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -121,9 +121,30 @@ type NativeVisionEndpoint = { modelID: string; baseURL: string }
 
 export type VisionMode = 'native' | 'tool' | 'auto'
 
+/**
+ * Check whether a provider is text-only by examining CAPABILITY_TABLE.
+ * A provider is text-only if ALL provider-qualified entries (prefix starting
+ * with `providerID/`) have `vision: false`. If no provider-qualified entries
+ * exist, the provider is unknown → returns false (fail-open).
+ */
+export function providerIsTextOnly(providerID: string): boolean {
+  const providerEntries = CAPABILITY_TABLE.filter((entry) =>
+    entry.prefix.startsWith(`${providerID}/`),
+  )
+  if (providerEntries.length === 0) return false
+  return providerEntries.every((entry) => !entry.vision)
+}
+
 /** Return whether OpenCode's current model is known to accept image input. */
-export function modelAcceptsImages(model: ModelInfo | undefined): boolean {
-  if (!model) return true
+export function modelAcceptsImages(
+  model: ModelInfo | undefined,
+  providerID?: string,
+): boolean {
+  if (!model) {
+    // Fail-closed for known text-only providers
+    if (providerID && providerIsTextOnly(providerID)) return false
+    return true
+  }
   try {
     const id = `${model.providerID}/${model.modelID}`
     // Provider/gateway-aware: a model can be vision-capable per models.dev
@@ -1230,7 +1251,7 @@ export function createVisionHandler(input: PluginInput) {
       const message: UserMessage | undefined = output?.message
       if (!message || message.role !== 'user') return
       const model = hookInput?.model ?? message.model
-      if (modelAcceptsImages(model)) {
+      if (modelAcceptsImages(model, model?.providerID)) {
         nativeVisionSessions.add(hookInput.sessionID)
         return
       }
