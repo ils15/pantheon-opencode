@@ -1,7 +1,7 @@
 ---
 name: nyx
 description: "Observability & monitoring specialist — OpenTelemetry tracing, token/cost tracking, agent performance analytics, LangSmith integration. Calls apollo for discovery, sends to themis."
-mode: subagent
+mode: all
 reasoning_effort: low
 permission:
   read: allow
@@ -9,6 +9,8 @@ permission:
   bash: allow
   webfetch: allow
   edit: deny
+  task:
+    "*": deny
 temperature: 0.1
 steps: 25
 skills:

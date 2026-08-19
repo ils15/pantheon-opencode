@@ -254,6 +254,25 @@ transition.
 **Timeout:** `background_delegation.timeout_ms` (default `900000` = 15 min). A job
 that has not reached a terminal state is finalized as `error`/`timedOut`.
 
+**Runtime delegation environment variables:**
+
+| Variable | Default | Scope and behavior |
+|---|---:|---|
+| `PANTHEON_ATHENA_APOLLO_BUDGET` | `5` dispatches | In-memory per `createDelegationTools()` factory/process instance and parent session, for the `athena → apollo` read-only exception. |
+| `PANTHEON_HERMES_APOLLO_BUDGET` | `5` dispatches | In-memory per `createDelegationTools()` factory/process instance and parent session, for the `hermes → apollo` read-only exception. |
+| `PANTHEON_DELEGATION_TIMEOUT_MS` | `900000` ms (15 min) | Per delegated child wall-clock timeout. The value is read when the plugin factory is created; unset or invalid values use the default. |
+
+Budgets are reserved before asynchronous child-session creation, so real
+concurrent calls cannot overshoot them. They reset when the factory/process
+restarts. If `ToolContext.agent` is missing, the default runtime matrix rejects
+the delegation (fail-closed); no caller identity or budget is inferred from the
+target, prompt, or session state. An explicitly legacy host using
+`enforceRuntimeMatrix: false` skips the budget because the caller cannot be
+identified and emits a warning. These budgets are separate from
+`background_delegation.max_concurrent_per_agent`: concurrency limits the number
+of currently running children, while an exception budget limits total dispatch
+reservations for that parent session during the factory lifetime.
+
 **Read-only enforcement:** delegating with `read_only: true`, or delegating to an
 agent in `background_delegation.read_only_agents` (`apollo`, `gaia`), registers
 the child session as read-only — the `tool.execute.before` guard denies

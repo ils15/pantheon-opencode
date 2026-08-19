@@ -192,6 +192,8 @@ agents:
     reasoning_effort: high
     user_invocable: true
     can_delegate: true
+    subagent_can_delegate_to:
+    - apollo
     can_receive_delegation: true
     capabilities:
     - strategic_planning
@@ -201,8 +203,6 @@ agents:
     - risk_assessment
     - memory_recall
     - pantheon_resources
-    subagent_can_delegate_to:
-    - apollo
     skills:
     - spec-driven-development
     - memory-bank
@@ -228,6 +228,8 @@ agents:
     reasoning_effort: medium
     user_invocable: true
     can_delegate: true
+    subagent_can_delegate_to:
+    - apollo
     can_receive_delegation: true
     capabilities:
     - backend_implementation
@@ -237,10 +239,6 @@ agents:
     - obsolete_lib_detection
     - memory_store
     - pantheon_code_mode
-    subagent_can_delegate_to:
-    - apollo
-    - themis
-    - mnemosyne
     skills:
     - tdd-with-agents
     - file-prompts
@@ -252,6 +250,7 @@ agents:
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
+    subagent_can_delegate_to: []
     can_receive_delegation: true
     capabilities:
     - frontend_implementation
@@ -271,6 +270,7 @@ agents:
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
+    subagent_can_delegate_to: []
     can_receive_delegation: true
     capabilities:
     - database_migration
@@ -288,7 +288,7 @@ agents:
     role: Quality gate
     reasoning_effort: high
     user_invocable: true
-    can_delegate: true
+    can_delegate: false
     can_receive_delegation: true
     capabilities:
     - code_review
@@ -300,8 +300,6 @@ agents:
     - memory_search
     - pantheon_resources
     - pantheon_code_mode
-    subagent_can_delegate_to:
-    - mnemosyne
     skills:
     - code-review-checklist
     - security-hardening
@@ -312,6 +310,7 @@ agents:
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
+    subagent_can_delegate_to: []
     can_receive_delegation: true
     capabilities:
     - infrastructure_as_code
@@ -329,6 +328,7 @@ agents:
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
+    subagent_can_delegate_to: []
     can_receive_delegation: true
     capabilities:
     - rag_pipeline_design
@@ -346,6 +346,7 @@ agents:
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
+    subagent_can_delegate_to: []
     can_receive_delegation: true
     capabilities:
     - opentelemetry_setup
@@ -363,6 +364,7 @@ agents:
     reasoning_effort: low
     user_invocable: false
     can_delegate: false
+    subagent_can_delegate_to: []
     can_receive_delegation: true
     capabilities:
     - remote_sensing
@@ -376,6 +378,7 @@ agents:
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
+    subagent_can_delegate_to: []
     can_receive_delegation: true
     capabilities:
     - branch_management

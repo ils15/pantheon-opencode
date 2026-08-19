@@ -104,6 +104,34 @@ test('fresh install registers BOTH pantheon plugins (plugin.ts + pantheon-hooks.
   }
 })
 
+test('fresh install writes experimental.subagent_depth=2 and is byte-identical on rerun', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-depth-'))
+  try {
+    await runInstall(target)
+    const configPath = join(target, 'opencode.json')
+    const firstBytes = readFileSync(configPath, 'utf8')
+    const firstConfig = JSON.parse(firstBytes)
+    assert.equal(firstConfig.experimental?.subagent_depth, 2)
+    assert.equal('subagent_depth' in firstConfig, false)
+
+    await installOpenCode(target, false, false, COMPONENTS, { yes: true, headless: true })
+    assert.equal(readFileSync(configPath, 'utf8'), firstBytes)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('upgrade migrates a user top-level subagent_depth into experimental', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-depth-migrate-'))
+  try {
+    const config = await runInstall(target, { subagent_depth: 7 })
+    assert.equal(config.experimental?.subagent_depth, 7)
+    assert.equal('subagent_depth' in config, false)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
 test('fresh install instructions key is exactly [AGENTS.md]', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-instr-'))
   try {

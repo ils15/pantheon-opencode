@@ -18,9 +18,9 @@
  *   - `task` is blocked too, which hard-enforces depth-2: a read-only agent
  *     cannot spawn its own subagents.
  *
- * Unknown sessions are ALLOWED by default — the guard only denies sessions
- * that are explicitly registered, so normal (non-delegated) agent work is
- * never blocked.
+ * Unknown sessions are allowed for ordinary tools. Delegation tools are
+ * fail-closed when the runtime matrix is wired: missing agent identity or
+ * target metadata is denied rather than inferred.
  *
  * The registry is populated by delegation.ts at delegate time: the CHILD
  * session is registered when the delegate call is read-only.
@@ -47,8 +47,100 @@ export interface ToolExecuteBeforeInput {
   callID: string
 }
 
+/** The output object supplied alongside `tool.execute.before`. */
+export interface ToolExecuteBeforeOutput {
+  args?: unknown
+}
+
 /** The `tool.execute.before` handler shape (throw ⇒ deny). */
-export type ToolExecuteBeforeHandler = (input: ToolExecuteBeforeInput) => Promise<void>
+export type ToolExecuteBeforeHandler = (
+  input: ToolExecuteBeforeInput,
+  output?: ToolExecuteBeforeOutput,
+) => Promise<void>
+
+/** Runtime session hierarchy, populated only from SDK session metadata. */
+export class SessionHierarchyRegistry {
+  private readonly roots = new Set<string>()
+  private readonly children = new Set<string>()
+  private seedState: 'unseeded' | 'pending' | 'seeded' | 'failed' = 'unseeded'
+
+  /** Mark the beginning of an authoritative session snapshot lookup. */
+  beginSeed(): void {
+    this.seedState = 'pending'
+  }
+
+  /** Complete the lookup and register the SDK's authoritative parentID data. */
+  completeSeed(sessions: ReadonlyArray<{ id: string; parentID?: string }>): void {
+    this.registerMany(sessions)
+    this.seedState = 'seeded'
+  }
+
+  /** Record an unavailable snapshot without classifying unknown sessions as children. */
+  failSeed(): void {
+    this.seedState = 'failed'
+  }
+
+  /** Register a session using its SDK parentID (or lack of one). */
+  register(session: { id: string; parentID?: string }): void {
+    if (session.parentID !== undefined) {
+      this.children.add(session.id)
+      this.roots.delete(session.id)
+      return
+    }
+    if (!this.children.has(session.id)) this.roots.add(session.id)
+  }
+
+  /** Register a snapshot returned by session.list(). */
+  registerMany(sessions: ReadonlyArray<{ id: string; parentID?: string }>): void {
+    for (const session of sessions) this.register(session)
+  }
+
+  /** Whether SDK metadata identified this session as a child. */
+  isChild(sessionID: string): boolean {
+    return this.children.has(sessionID)
+  }
+
+  /** Whether SDK metadata identified this session as a root. */
+  isRoot(sessionID: string): boolean {
+    if (this.children.has(sessionID)) return false
+    if (this.roots.has(sessionID)) return true
+    // Until the authoritative snapshot is available, an unknown session is
+    // deliberately unclassified. A valid root resumed after restart must not
+    // be denied merely because session.list() is slow or unavailable.
+    return this.seedState !== 'seeded'
+  }
+
+  /** Snapshot of known root IDs. */
+  rootIDs(): ReadonlySet<string> {
+    return new Set(this.roots)
+  }
+}
+
+/** Normalize an agent identity without guessing from prompts or tool names. */
+export function normalizeDelegationAgent(agent: unknown): string | undefined {
+  if (typeof agent !== 'string') return undefined
+  const normalized = agent.trim().toLowerCase()
+  return normalized === '' ? undefined : normalized
+}
+
+/** Runtime delegation matrix from Fase B2. */
+export function isDelegationAllowed(callerAgent: unknown, targetAgent: unknown): boolean {
+  const caller = normalizeDelegationAgent(callerAgent)
+  const target = normalizeDelegationAgent(targetAgent)
+  if (caller === undefined || target === undefined) return false
+  if (caller === 'zeus') return true
+  return (caller === 'athena' || caller === 'hermes') && target === 'apollo'
+}
+
+function targetFromTool(tool: string, args: unknown): string | undefined {
+  if (args === null || typeof args !== 'object') return undefined
+  const record = args as Record<string, unknown>
+  if (tool === 'pantheon_delegate') return normalizeDelegationAgent(record.agent)
+  if (tool === 'task') {
+    return normalizeDelegationAgent(record.subagent_type ?? record.subagentType)
+  }
+  return undefined
+}
 
 /** Options for createEnforcementGuard(). */
 export interface EnforcementGuardOptions {
@@ -56,6 +148,14 @@ export interface EnforcementGuardOptions {
   blockedTools?: ReadonlySet<string>
   /** Prefix for the denial message. */
   messagePrefix?: string
+  /** Current agent by session, populated by the SDK chat.params hook. */
+  getSessionAgent?: (sessionID: string) => string | undefined
+  /** SDK-backed root check used for the delegation matrix. */
+  isRootSession?: (sessionID: string) => boolean
+  /** SDK-backed child check used to prevent native task() depth escalation. */
+  isChildSession?: (sessionID: string) => boolean
+  /** Audit sink for denied runtime delegation attempts. */
+  logger?: { warn?: (message: string) => void }
 }
 
 // ─── Defaults ──────────────────────────────────────────────────────────
@@ -129,7 +229,41 @@ export function createEnforcementGuard(input: {
   const blockedTools = input.options?.blockedTools ?? DEFAULT_BLOCKED_TOOLS
   const prefix = input.options?.messagePrefix ?? 'pantheon_delegate guard'
 
-  return async (hook: ToolExecuteBeforeInput): Promise<void> => {
+  return async (hook: ToolExecuteBeforeInput, output?: ToolExecuteBeforeOutput): Promise<void> => {
+    const isDelegationTool = hook.tool === 'task' || hook.tool === 'pantheon_delegate'
+    if (isDelegationTool && input.options?.isChildSession?.(hook.sessionID) === true) {
+      throw new Error(
+        `${prefix}: session ${hook.sessionID} is a child session — delegation tools are denied ` +
+          'to prevent nested delegation',
+      )
+    }
+    // pantheon_delegate has the authoritative ToolContext.agent at execution
+    // time, so its matrix check lives in delegation.ts. The hook only has the
+    // session-scoped agent learned from chat.params for native task().
+    if (
+      hook.tool === 'task' &&
+      input.options?.isRootSession !== undefined &&
+      input.options?.isChildSession?.(hook.sessionID) !== true
+    ) {
+      const caller = input.options.getSessionAgent?.(hook.sessionID)
+      const target = targetFromTool(hook.tool, output?.args)
+      if (!input.options.isRootSession(hook.sessionID)) {
+        input.options.logger?.warn?.(
+          `${prefix}: delegation denied for session ${hook.sessionID} — not an authorized root session`,
+        )
+        throw new Error(`${prefix}: session ${hook.sessionID} is not an authorized root session`)
+      }
+      if (!isDelegationAllowed(caller, target)) {
+        const reason =
+          caller === undefined ? 'caller agent is unavailable' : 'agent/target is not allowed'
+        input.options.logger?.warn?.(
+          `${prefix}: delegation denied for session ${hook.sessionID} — ${reason}`,
+        )
+        throw new Error(
+          `${prefix}: delegation denied — ${reason}; target must follow the runtime matrix`,
+        )
+      }
+    }
     if (!blockedTools.has(hook.tool)) return
     if (!input.getReadOnlySessions().has(hook.sessionID)) return
 

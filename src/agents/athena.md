@@ -3,7 +3,7 @@ name: athena
 description: Strategic planner & architect — research-first, plan-only, never implements.
   Plans include quality gates (ruff/Biome, dep detection, LTS policy). Calls apollo
   for discovery.
-mode: primary
+mode: all
 reasoning_effort: high
 
 steps: 30
@@ -21,6 +21,9 @@ permission:
   grep: allow
   glob: allow
   webfetch: allow
+  task:
+    "*": deny
+    apollo: allow
 ---
 
 ##  When NOT to Use Athena

@@ -89,7 +89,9 @@ for (const dir of [srcSkillsDir, dotSkillsDir]) {
         if (existsSync(join(skillDir, 'SKILL.md')) && !existingSkills.includes(d)) {
           existingSkills.push(d)
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
   }
 }
@@ -164,6 +166,168 @@ for (const w of presetValidation.warnings) {
   warn(`Preset ${w}`)
 }
 console.log(`  Presets defined: ${Object.keys(presetDefs).length}`)
+
+// G. Delegation Matrix Invariants (B1 — Zeus strict + read-only exceptions)
+console.log(`\n  Delegation matrix invariants:`)
+
+// G1. can_delegate: true only for zeus, athena (→apollo), hermes (→apollo)
+const CAN_DELEGATE_AGENTS = ['zeus', 'athena', 'hermes']
+for (const [name, agentInfo] of Object.entries(routing.agents || {})) {
+  if (agentInfo.can_delegate === true) {
+    check(
+      CAN_DELEGATE_AGENTS.includes(name),
+      `Agent "${name}" has can_delegate: true but is not in allowed list [${CAN_DELEGATE_AGENTS}]`,
+    )
+  }
+}
+
+// G3. subagent_can_delegate_to only references existing agents
+for (const [name, agentInfo] of Object.entries(routing.agents || {})) {
+  const delegates = agentInfo.subagent_can_delegate_to || []
+  for (const target of delegates) {
+    check(
+      routingAgents.includes(target),
+      `Agent "${name}" can_delegate_to unknown agent "${target}"`,
+    )
+  }
+}
+
+// G4. athena and hermes can only delegate to apollo (read-only exception)
+for (const agentName of ['athena', 'hermes']) {
+  const agentInfo = routing.agents[agentName]
+  if (agentInfo) {
+    const delegates = agentInfo.subagent_can_delegate_to || []
+    check(
+      delegates.length <= 1 && delegates[0] === 'apollo',
+      `Agent "${agentName}" subagent_can_delegate_to must be [apollo] only, got [${delegates}]`,
+    )
+  }
+}
+
+// G5. Frontmatter permission.task invariants
+const AGENT_FILES_DIR = join(ROOT, 'src', 'agents')
+const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---/
+
+function parseFrontmatter(filePath) {
+  const content = readFileSync(filePath, 'utf8')
+  const match = content.match(FRONTMATTER_RE)
+  if (!match) return null
+  try {
+    return yaml.load(match[1])
+  } catch {
+    return null
+  }
+}
+
+// G5a. Frontmatter mode must match routing.yml task eligibility.
+const frontmatterByAgent = new Map()
+for (const agentName of canonicalFiles) {
+  frontmatterByAgent.set(agentName, parseFrontmatter(join(AGENT_FILES_DIR, `${agentName}.md`)))
+}
+
+for (const [name, agentInfo] of Object.entries(routing.agents || {})) {
+  const fm = frontmatterByAgent.get(name)
+  if (!fm) continue
+
+  if (name === 'zeus') {
+    check(fm.mode === 'primary', 'Agent "zeus" must use mode primary')
+  } else if (agentInfo.can_receive_delegation === true) {
+    const expectedMode = agentInfo.user_invocable === true ? 'all' : 'subagent'
+    check(
+      fm.mode === expectedMode,
+      `Agent "${name}" mode must be "${expectedMode}" for routing.yml eligibility, got "${fm.mode}"`,
+    )
+  }
+}
+
+// G5b. Zeus targets must exist, receive delegation, and never be primary.
+for (const targetEntry of routing.delegation?.zeus || []) {
+  const target = typeof targetEntry === 'string' ? targetEntry : targetEntry.target
+  const targetInfo = routing.agents[target]
+  const targetFm = frontmatterByAgent.get(target)
+  check(targetInfo !== undefined, `Zeus delegation target "${target}" must exist`)
+  if (targetInfo && targetFm) {
+    check(
+      targetInfo.can_receive_delegation === true && targetFm.mode !== 'primary',
+      `Zeus delegation target "${target}" must not be mode primary and must receive delegation`,
+    )
+  }
+}
+
+// G5c. Every subagent delegation target must exist and be eligible.
+for (const [name, agentInfo] of Object.entries(routing.agents || {})) {
+  for (const target of agentInfo.subagent_can_delegate_to || []) {
+    const targetInfo = routing.agents[target]
+    const targetFm = frontmatterByAgent.get(target)
+    check(targetInfo !== undefined, `Agent "${name}" can_delegate_to unknown agent "${target}"`)
+    if (targetInfo && targetFm) {
+      check(
+        targetInfo.can_receive_delegation === true && targetFm.mode !== 'primary',
+        `Agent "${name}" can_delegate_to target "${target}" is not eligible`,
+      )
+    }
+  }
+}
+
+// Expected permission.task matrix
+const EXPECTED_TASK_PERMISSIONS = {
+  zeus: { '*': 'allow' },
+  athena: { '*': 'deny', apollo: 'allow' },
+  hermes: { '*': 'deny', apollo: 'allow' },
+  themis: { '*': 'deny' },
+  aphrodite: { '*': 'deny' },
+  demeter: { '*': 'deny' },
+  apollo: { '*': 'deny' },
+  gaia: { '*': 'deny' },
+  prometheus: { '*': 'deny' },
+  hephaestus: { '*': 'deny' },
+  nyx: { '*': 'deny' },
+  iris: { '*': 'deny' },
+  talos: { '*': 'deny' },
+  mnemosyne: { '*': 'deny' },
+}
+
+for (const agentName of canonicalFiles) {
+  const fmPath = join(AGENT_FILES_DIR, `${agentName}.md`)
+  const fm = parseFrontmatter(fmPath)
+  if (!fm) {
+    check(false, `Agent "${agentName}" has no valid frontmatter`)
+    continue
+  }
+
+  // G5a. permission.task must exist
+  const hasTask = fm.permission?.task
+  check(hasTask, `Agent "${agentName}" missing permission.task in frontmatter`)
+
+  if (!hasTask) continue
+
+  // G5b. Only zeus may have "*": allow
+  const starRule = fm.permission.task['*']
+  if (starRule === 'allow') {
+    check(
+      agentName === 'zeus',
+      `Agent "${agentName}" has permission.task "*": allow — only zeus is allowed`,
+    )
+  }
+
+  // G5c. Verify exact expected permissions
+  const expected = EXPECTED_TASK_PERMISSIONS[agentName]
+  if (expected) {
+    const actual = fm.permission.task
+    const actualKeys = Object.keys(actual).sort()
+    const expectedKeys = Object.keys(expected).sort()
+    check(
+      JSON.stringify(actualKeys) === JSON.stringify(expectedKeys),
+      `Agent "${agentName}" permission.task keys mismatch: expected [${expectedKeys}], got [${actualKeys}]`,
+    )
+    for (const [key, val] of Object.entries(expected)) {
+      check(
+        actual[key] === val,
+        `Agent "${agentName}" permission.task.${key}: expected "${val}", got "${actual[key]}"`,
+      )
+    }
+  }
+}
 
 // Summary
 console.log(`\n${'='.repeat(50)}`)

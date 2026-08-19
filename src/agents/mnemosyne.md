@@ -3,7 +3,7 @@ name: mnemosyne
 description: Memory bank quality owner — initializes .pantheon/memory-bank/, writes ADRs
   and task records on explicit request. Called by zeus. Never invoked automatically
   after phases.
-mode: primary
+mode: all
 reasoning_effort: low
 
 steps: 25
@@ -35,6 +35,8 @@ permission:
   read: allow
   grep: allow
   edit: deny
+  task:
+    "*": deny
 ---
 
 ## ⚠️ SCOPE BOUNDARY

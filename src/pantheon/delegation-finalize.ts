@@ -65,6 +65,16 @@ export interface DelegationOptions {
   rootSessions?: ReadonlySet<string>
   /** Custom depth-guard predicate — overrides rootSessions and the default. */
   isRootSession?: (sessionID: string) => boolean
+  /** SDK-backed child predicate; authoritative when supplied by the plugin. */
+  isChildSession?: (sessionID: string) => boolean
+  /**
+   * Enforce the runtime B2 delegation matrix; createDelegationTools defaults
+   * this to true. Set false only for an explicitly legacy host that cannot
+   * provide ToolContext.agent.
+   */
+  enforceRuntimeMatrix?: boolean
+  /** Record a child returned by the SDK session.create call. */
+  registerChildSession?: (sessionID: string, parentID: string) => void
   /**
    * Agents whose delegated child sessions are registered as read-only
    * (Phase 4 enforcement). Mirrors routing.yml
@@ -78,6 +88,20 @@ export interface DelegationOptions {
    * from routing.yml agent entries. Higher priority than the active preset.
    */
   agentModels?: Readonly<Record<string, string>>
+  /**
+   * Fase B3: Per-exception delegation budgets. Keys use
+   * `<parent-agent>-><target-agent>` (for example `athena->apollo`). The
+   * count is tracked per parent session for this process. It is intentionally
+   * not persisted across restart because this layer has no reliable store.
+   * An absent key has no budget limit.
+   */
+  delegationBudgets?: ReadonlyMap<string, number>
+  /**
+   * Fase B3: Wall-clock timeout (ms) for individual delegation sessions.
+   * The plugin resolves `PANTHEON_DELEGATION_TIMEOUT_MS` into this option;
+   * direct callers may provide it here instead.
+   */
+  wallClockTimeoutMs?: number
   /**
    * Env override for the active-preset resolution (see resolveActivePreset).
    * Defaults to process.env. Primarily for tests.

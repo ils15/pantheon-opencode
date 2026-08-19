@@ -1,12 +1,14 @@
 ---
 name: talos
 description: "Hotfix express lane — direct fixes for small bugs, CSS, typos, minor logic. No TDD ceremony, no orchestration overhead. Standalone, no subagents. Escalates complex issues to zeus."
-mode: subagent
+mode: all
 reasoning_effort: low
 permission:
   read: allow
   edit: allow
   bash: allow
+  task:
+    "*": deny
 temperature: 0.3
 steps: 35
 skills:

@@ -20,7 +20,14 @@ import {
   collectRootSessionIDs,
   createDelegationTools,
   type DelegationToolset,
+  resolveDelegationBudgets,
+  resolveDelegationTimeoutMs,
 } from '../../src/pantheon/delegation.ts'
+import {
+  createEnforcementGuard,
+  isDelegationAllowed,
+  SessionHierarchyRegistry,
+} from '../../src/pantheon/delegation-enforce.ts'
 import { readDelegationReport } from '../../src/pantheon/delegation-finalize.ts'
 import { loadRoutingAgentModels } from '../../src/pantheon/presets.mjs'
 
@@ -69,6 +76,8 @@ class FakeClient {
   messagesCalls: string[] = []
   /** When set, session.create rejects with this error (F3). */
   createError: Error | null = null
+  /** Delay session.create to exercise concurrent budget reservations. */
+  createDelayMs = 0
   /** When set, session.messages rejects with this error (fail-open paths). */
   messagesError: Error | null = null
   messagesResult: Array<{
@@ -80,6 +89,7 @@ class FakeClient {
   readonly session = {
     create: async (input: FakeCreateInput): Promise<{ id: string }> => {
       if (this.createError) throw this.createError
+      if (this.createDelayMs > 0) await sleep(this.createDelayMs)
       this.created.push(input)
       this.childCounter += 1
       return { id: `ses_child_${this.childCounter}` }
@@ -98,8 +108,8 @@ class FakeClient {
 
 const ROOT = 'ses_root'
 
-function makeCtx(sessionID = ROOT) {
-  return { sessionID, directory: '/tmp', worktree: '/tmp', agent: 'zeus' }
+function makeCtx(sessionID = ROOT, agent = 'zeus') {
+  return { sessionID, directory: '/tmp', worktree: '/tmp', agent }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -129,17 +139,17 @@ async function main() {
         // Job registered on board with taskID = child sessionID
         const job = board.get('ses_child_1')
         assert.ok(job, 'job should be registered with taskID = child session id')
-        assert.equal(job!.state, 'running')
-        assert.equal(job!.alias, 'apo-1')
-        assert.equal(job!.parentSessionID, ROOT)
+        assert.equal(job?.state, 'running')
+        assert.equal(job?.alias, 'apo-1')
+        assert.equal(job?.parentSessionID, ROOT)
 
         // promptAsync fired on the child WITHOUT noReply (push-less completion)
         assert.equal(client.created.length, 1)
-        assert.equal(client.created[0]!.body.parentID, ROOT)
+        assert.equal(client.created[0]?.body.parentID, ROOT)
         assert.equal(client.prompted.length, 1)
-        assert.equal(client.prompted[0]!.path.id, 'ses_child_1')
-        assert.equal(client.prompted[0]!.body.agent, 'apollo')
-        assert.equal(client.prompted[0]!.body.parts[0]!.text, 'Find auth patterns')
+        assert.equal(client.prompted[0]?.path.id, 'ses_child_1')
+        assert.equal(client.prompted[0]?.body.agent, 'apollo')
+        assert.equal(client.prompted[0]?.body.parts[0]?.text, 'Find auth patterns')
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }
@@ -165,7 +175,7 @@ async function main() {
         )
 
         assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]!.body.model, {
+        assert.deepEqual(client.created[0]?.body.model, {
           id: 'deepseek-v4-flash-free',
           providerID: 'opencode',
         })
@@ -197,7 +207,7 @@ async function main() {
         await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
 
         assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]!.body.model, {
+        assert.deepEqual(client.created[0]?.body.model, {
           id: 'deepseek-v4-flash-free',
           providerID: 'opencode',
         })
@@ -235,7 +245,7 @@ async function main() {
         await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
 
         assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]!.body.model, {
+        assert.deepEqual(client.created[0]?.body.model, {
           id: 'deepseek-v4-flash-free',
           providerID: 'opencode',
         })
@@ -271,7 +281,7 @@ async function main() {
         )
 
         assert.equal(client.created.length, 1, 'child session still created without a model')
-        assert.equal(client.created[0]!.body.model, undefined, 'no model field in create body')
+        assert.equal(client.created[0]?.body.model, undefined, 'no model field in create body')
         assert.ok(result.includes('apo-1'), 'delegation proceeds normally')
         assert.ok(
           warnings.some((w) => /no model/i.test(w)),
@@ -315,7 +325,7 @@ async function main() {
 
         assert.ok(result.includes('apo-1'), `delegation proceeds via fallback, got: ${result}`)
         assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]!.body.model, {
+        assert.deepEqual(client.created[0]?.body.model, {
           id: 'deepseek-v4-flash-free',
           providerID: 'opencode',
         })
@@ -390,7 +400,7 @@ async function main() {
         await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
 
         assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]!.body.model, {
+        assert.deepEqual(client.created[0]?.body.model, {
           id: 'gpt-5.6-luna-fast',
           providerID: 'openai',
         })
@@ -427,7 +437,7 @@ async function main() {
         )
 
         assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]!.body.model, {
+        assert.deepEqual(client.created[0]?.body.model, {
           id: 'gpt-5.6-terra',
           providerID: 'openai',
         })
@@ -468,7 +478,7 @@ async function main() {
       )
 
       assert.equal(client.created.length, 1)
-      assert.deepEqual(client.created[0]!.body.model, {
+      assert.deepEqual(client.created[0]?.body.model, {
         id: 'gpt-5.6-terra',
         providerID: 'openai',
       })
@@ -505,7 +515,7 @@ async function main() {
         await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
 
         assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]!.body.model, {
+        assert.deepEqual(client.created[0]?.body.model, {
           id: 'deepseek-v4-flash-free',
           providerID: 'opencode',
         })
@@ -684,6 +694,212 @@ async function main() {
     },
   )
 
+  await testAsync('B2 runtime matrix: root Zeus may delegate', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-b2-zeus-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: { rootSessions: new Set([ROOT]), outputDir: tmp, enforceRuntimeMatrix: true },
+      })
+      const result = await tools.pantheon_delegate.execute(
+        { prompt: 'Zeus dispatch', agent: 'hermes' },
+        makeCtx(ROOT, 'zeus'),
+      )
+      assert.match(result, /her-1/)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('B2 runtime matrix: athena/hermes may only delegate to apollo', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-b2-exceptions-'))
+    try {
+      const board = new BackgroundJobBoard({ maxConcurrentPerAgent: 10 })
+      const client = new FakeClient()
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: { rootSessions: new Set([ROOT]), outputDir: tmp, enforceRuntimeMatrix: true },
+      })
+      await tools.pantheon_delegate.execute(
+        { prompt: 'Athena scout', agent: 'apollo' },
+        makeCtx(ROOT, 'athena'),
+      )
+      await tools.pantheon_delegate.execute(
+        { prompt: 'Hermes scout', agent: 'apollo' },
+        makeCtx(ROOT, 'hermes'),
+      )
+      for (const caller of ['athena', 'hermes']) {
+        await assert.rejects(
+          tools.pantheon_delegate.execute(
+            { prompt: 'Forbidden', agent: 'zeus' },
+            makeCtx(ROOT, caller),
+          ),
+          /runtime delegation matrix denied/,
+        )
+      }
+      assert.equal(client.created.length, 2)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('B2 runtime matrix: absent ToolContext.agent is fail-closed', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-b2-no-agent-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: { rootSessions: new Set([ROOT]), outputDir: tmp, enforceRuntimeMatrix: true },
+      })
+      await assert.rejects(
+        tools.pantheon_delegate.execute(
+          { prompt: 'Unknown caller', agent: 'apollo' },
+          { sessionID: ROOT, directory: '/tmp', worktree: '/tmp' },
+        ),
+        /ToolContext\.agent is unavailable/,
+      )
+      assert.equal(client.created.length, 0)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
+    'B2 session hierarchy uses parentID and does not classify resumed children as roots',
+    async () => {
+      const hierarchy = new SessionHierarchyRegistry()
+      hierarchy.registerMany([
+        { id: 'root_after_restart' },
+        { id: 'native_task_child', parentID: 'root_after_restart' },
+      ])
+      assert.equal(hierarchy.isRoot('root_after_restart'), true)
+      assert.equal(hierarchy.isChild('native_task_child'), true)
+      assert.equal(hierarchy.isRoot('native_task_child'), false)
+      assert.equal(isDelegationAllowed('zeus', 'hermes'), true)
+      assert.equal(isDelegationAllowed('athena', 'apollo'), true)
+      assert.equal(isDelegationAllowed('hermes', 'apollo'), true)
+      assert.equal(isDelegationAllowed('athena', 'hermes'), false)
+      assert.equal(isDelegationAllowed(undefined, 'apollo'), false)
+    },
+  )
+
+  await testAsync(
+    'B2 hierarchy seed states are fail-open before/after delayed or failed session.list',
+    async () => {
+      const hierarchy = new SessionHierarchyRegistry()
+      const resumedRoot = 'resumed-root'
+      const resumedChild = 'resumed-child'
+
+      hierarchy.beginSeed()
+      assert.equal(hierarchy.isRoot(resumedRoot), true)
+      assert.equal(hierarchy.isChild(resumedRoot), false)
+
+      hierarchy.completeSeed([{ id: resumedRoot }, { id: resumedChild, parentID: resumedRoot }])
+      assert.equal(hierarchy.isRoot(resumedRoot), true)
+      assert.equal(hierarchy.isRoot(resumedChild), false)
+      assert.equal(hierarchy.isChild(resumedChild), true)
+
+      const failed = new SessionHierarchyRegistry()
+      failed.beginSeed()
+      failed.failSeed()
+      assert.equal(failed.isRoot('root-after-list-failure'), true)
+      failed.register({ id: resumedChild, parentID: resumedRoot })
+      assert.equal(failed.isRoot(resumedChild), false)
+    },
+  )
+
+  await testAsync(
+    'B2 factory defaults runtime matrix enforcement; legacy mode requires explicit false',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-b2-default-'))
+      try {
+        const strictTools = createDelegationTools({
+          board: new BackgroundJobBoard(),
+          client: new FakeClient(),
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+        await assert.rejects(
+          strictTools.pantheon_delegate.execute(
+            { prompt: 'Missing identity', agent: 'apollo' },
+            { sessionID: ROOT, directory: '/tmp', worktree: '/tmp' },
+          ),
+          /ToolContext\.agent is unavailable/,
+        )
+
+        const legacyTools = createDelegationTools({
+          board: new BackgroundJobBoard(),
+          client: new FakeClient(),
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp, enforceRuntimeMatrix: false },
+        })
+        const result = await legacyTools.pantheon_delegate.execute(
+          { prompt: 'Explicit legacy host', agent: 'apollo' },
+          { sessionID: ROOT, directory: '/tmp', worktree: '/tmp' },
+        )
+        assert.match(result, /apo-1/)
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'B2 native task hook applies root, child, exception, and missing-agent rules',
+    async () => {
+      const hierarchy = new SessionHierarchyRegistry()
+      hierarchy.register({ id: ROOT })
+      hierarchy.register({ id: 'native_child', parentID: ROOT })
+      const agents = new Map<string, string>([
+        [ROOT, 'zeus'],
+        ['athena_root', 'athena'],
+      ])
+      hierarchy.register({ id: 'athena_root' })
+      const guard = createEnforcementGuard({
+        getReadOnlySessions: () => new Set(),
+        options: {
+          isRootSession: (sessionID) => hierarchy.isRoot(sessionID),
+          isChildSession: (sessionID) => hierarchy.isChild(sessionID),
+          getSessionAgent: (sessionID) => agents.get(sessionID),
+        },
+      })
+      await guard(
+        { tool: 'task', sessionID: ROOT, callID: 'zeus-task' },
+        { args: { subagent_type: 'hermes' } },
+      )
+      await guard(
+        { tool: 'task', sessionID: 'athena_root', callID: 'athena-task' },
+        { args: { subagent_type: 'apollo' } },
+      )
+      await assert.rejects(
+        guard(
+          { tool: 'task', sessionID: 'native_child', callID: 'child-task' },
+          { args: { subagent_type: 'apollo' } },
+        ),
+        /child session/,
+      )
+      await assert.rejects(
+        guard(
+          { tool: 'task', sessionID: 'athena_root', callID: 'bad-task' },
+          { args: { subagent_type: 'hermes' } },
+        ),
+        /runtime matrix|delegation denied/,
+      )
+      hierarchy.register({ id: 'unknown-root' })
+      await assert.rejects(
+        guard(
+          { tool: 'task', sessionID: 'unknown-root', callID: 'missing-agent' },
+          { args: { subagent_type: 'apollo' } },
+        ),
+        /caller agent is unavailable/,
+      )
+    },
+  )
+
   await testAsync(
     'canDispatch saturation: maxConcurrentPerAgent exceeded → rejected with clear message',
     async () => {
@@ -720,6 +936,162 @@ async function main() {
   )
 
   await testAsync(
+    'B3: athena→apollo and hermes→apollo budgets are per exception and per parent session',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-budget-'))
+      try {
+        const board = new BackgroundJobBoard({ maxConcurrentPerAgent: 10 })
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            delegationBudgets: new Map([
+              ['athena->apollo', 1],
+              ['hermes->apollo', 2],
+            ]),
+          },
+        })
+
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Athena scout', agent: 'apollo' },
+          makeCtx(ROOT, 'athena'),
+        )
+        await assert.rejects(
+          tools.pantheon_delegate.execute(
+            { prompt: 'Athena scout again', agent: 'apollo' },
+            makeCtx(ROOT, 'athena'),
+          ),
+          /budget exhausted.*athena->apollo/i,
+        )
+
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Hermes scout 1', agent: 'apollo' },
+          makeCtx(ROOT, 'hermes'),
+        )
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Hermes scout 2', agent: 'apollo' },
+          makeCtx(ROOT, 'hermes'),
+        )
+        await assert.rejects(
+          tools.pantheon_delegate.execute(
+            { prompt: 'Hermes scout 3', agent: 'apollo' },
+            makeCtx(ROOT, 'hermes'),
+          ),
+          /budget exhausted.*hermes->apollo/i,
+        )
+        assert.equal(client.created.length, 3, 'only budgeted child sessions should be created')
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'B3: unknown caller agent skips the budget and emits actionable telemetry',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-budget-unknown-agent-'))
+      try {
+        const board = new BackgroundJobBoard({ maxConcurrentPerAgent: 10 })
+        const client = new FakeClient()
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            delegationBudgets: new Map([['athena->apollo', 0]]),
+            // Legacy structural host: explicitly opt out of the runtime
+            // matrix while still exercising the process-scoped budget path.
+            enforceRuntimeMatrix: false,
+            logger: { warn: (message) => warnings.push(message) },
+          },
+        })
+
+        // No agent field: neither the target name nor any other local state
+        // may be used as a caller identity. The configured budget is skipped.
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Unknown caller scout', agent: 'apollo' },
+          { sessionID: ROOT, directory: '/tmp', worktree: '/tmp' },
+        )
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Unknown caller scout again', agent: 'apollo' },
+          { sessionID: ROOT, directory: '/tmp', worktree: '/tmp', agent: '   ' },
+        )
+
+        assert.equal(
+          client.created.length,
+          2,
+          'unknown identity must not be falsely budget-rejected',
+        )
+        const budgetWarnings = warnings.filter((warning) => /B3 budget skipped/i.test(warning))
+        assert.equal(budgetWarnings.length, 2)
+        assert.ok(budgetWarnings.every((warning) => /no budget limit applied/i.test(warning)))
+        assert.ok(budgetWarnings.every((warning) => /ToolContext\.agent/i.test(warning)))
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'B3: budget and timeout environment parsers accept valid values and reject invalid values',
+    async () => {
+      const budgets = resolveDelegationBudgets({
+        PANTHEON_ATHENA_APOLLO_BUDGET: '2',
+        PANTHEON_HERMES_APOLLO_BUDGET: '0',
+      })
+      assert.equal(budgets.get('athena->apollo'), 2)
+      assert.equal(budgets.get('hermes->apollo'), 0)
+      assert.equal(
+        resolveDelegationBudgets({ PANTHEON_ATHENA_APOLLO_BUDGET: '-1' }).get('athena->apollo'),
+        5,
+      )
+      assert.equal(resolveDelegationTimeoutMs({ PANTHEON_DELEGATION_TIMEOUT_MS: '2500' }), 2500)
+      assert.equal(
+        resolveDelegationTimeoutMs({ PANTHEON_DELEGATION_TIMEOUT_MS: 'not-a-number' }),
+        undefined,
+      )
+    },
+  )
+
+  await testAsync('B3: concurrent dispatches reserve the real budget atomically', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-budget-concurrent-'))
+    try {
+      const board = new BackgroundJobBoard({ maxConcurrentPerAgent: 10 })
+      const client = new FakeClient()
+      client.createDelayMs = 15
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: {
+          rootSessions: new Set([ROOT]),
+          outputDir: tmp,
+          delegationBudgets: new Map([['athena->apollo', 2]]),
+        },
+      })
+
+      const results = await Promise.allSettled(
+        Array.from({ length: 6 }, (_, index) =>
+          tools.pantheon_delegate.execute(
+            { prompt: `Concurrent scout ${index}`, agent: 'apollo' },
+            makeCtx(ROOT, 'athena'),
+          ),
+        ),
+      )
+
+      assert.equal(client.created.length, 2, 'only two concurrent calls may reserve the budget')
+      assert.equal(results.filter((result) => result.status === 'rejected').length, 4)
+      assert.equal(board.getRunningCount('apollo'), 2)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
     'timeout finalize: timer fires without idle → error state with timedOut flag + [TIMEOUT REACHED] marker',
     async () => {
       const tmp = mkdtempSync(join(tmpdir(), 'delegation-timeout-'))
@@ -740,7 +1112,8 @@ async function main() {
 
         await waitFor(() => board.get('ses_child_1')?.state === 'error', 3000, 'timeout finalize')
 
-        const job = board.get('ses_child_1')!
+        const job = board.get('ses_child_1')
+        assert.ok(job)
         assert.equal(job.state, 'error')
         assert.equal(job.timedOut, true)
         assert.equal(job.timeoutCount, 1)
@@ -795,7 +1168,8 @@ async function main() {
         )
         assert.ok(content.includes('apo-1'), 'read content should identify the job alias')
 
-        const job = board.get('ses_child_1')!
+        const job = board.get('ses_child_1')
+        assert.ok(job)
         assert.equal(job.state, 'reconciled', 'read must mark the job reconciled')
         assert.equal(job.terminalUnreconciled, false)
       } finally {
@@ -1122,9 +1496,9 @@ async function main() {
         const job = await tools.finalizeDelegation('ses_child_1', { state: 'completed' })
 
         assert.ok(job, 'finalize returns the updated job')
-        assert.equal(job!.state, 'completed')
-        assert.equal(job!.terminalUnreconciled, true)
-        assert.equal(job!.timedOut, false)
+        assert.equal(job?.state, 'completed')
+        assert.equal(job?.terminalUnreconciled, true)
+        assert.equal(job?.timedOut, false)
 
         // Messages were pulled from the child session
         assert.deepEqual(client.messagesCalls, ['ses_child_1'])
@@ -1142,7 +1516,7 @@ async function main() {
         // Timeout timer was cleared — no late timeout can flip the job to error
         // (the armed timeoutMs=30 would have fired during this sleep otherwise)
         await sleep(60)
-        assert.equal(board.get('ses_child_1')!.state, 'completed')
+        assert.equal(board.get('ses_child_1')?.state, 'completed')
         const after = readFileSync(mdPath, 'utf-8')
         assert.ok(!after.includes('[TIMEOUT REACHED]'), 'cleared timer must not stamp the report')
       } finally {
@@ -1265,7 +1639,7 @@ async function main() {
 
   console.log('')
   for (const r of results) {
-    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? ': ' + r.error : ''}`)
+    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? `: ${r.error}` : ''}`)
   }
   console.log(`\nResults: ${passed} passed, ${failed.length} failed`)
   process.exit(failed.length > 0 ? 1 : 0)

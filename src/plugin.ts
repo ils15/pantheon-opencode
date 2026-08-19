@@ -7,9 +7,15 @@ import {
   collectRootSessionIDs,
   createDelegationTools,
   type DelegationClient,
+  resolveDelegationBudgets,
+  resolveDelegationTimeoutMs,
 } from './pantheon/delegation.ts'
 import { buildCompactionContext } from './pantheon/delegation-compaction.ts'
-import { createEnforcementGuard, readOnlyRegistry } from './pantheon/delegation-enforce.ts'
+import {
+  createEnforcementGuard,
+  readOnlyRegistry,
+  SessionHierarchyRegistry,
+} from './pantheon/delegation-enforce.ts'
 import { handleDelegationEvent } from './pantheon/delegation-notify.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
 import { GOAL_LOOP_DEFAULTS, GoalLoop, GoalStore } from './pantheon/goal-loop.ts'
@@ -94,6 +100,12 @@ setInterval(
 // from tool.execute.before; unknown sessions are allowed (safe default).
 const enforcementGuard = createEnforcementGuard({
   getReadOnlySessions: () => readOnlyRegistry.sessionIDs(),
+  options: {
+    getSessionAgent: (sessionID) => sessionAgents.get(sessionID),
+    isRootSession: (sessionID) => rootSessions.has(sessionID) || sessionHierarchy.isRoot(sessionID),
+    isChildSession: (sessionID) => sessionHierarchy.isChild(sessionID),
+    logger: log,
+  },
 })
 
 // Mirrors routing.yml background_delegation.max_compaction_items.
@@ -111,6 +123,8 @@ const COMPACTION_MAX_ITEMS = 10
 // created is a sub-session; unknown sessions are roots") so the depth guard
 // works even when this set is incomplete.
 const rootSessions = new Set<string>()
+const sessionHierarchy = new SessionHierarchyRegistry()
+const sessionAgents = new Map<string, string>()
 
 /**
  * Seed resumed root sessions without making OpenCode startup depend on the
@@ -127,18 +141,23 @@ function seedRootSessionsInBackground(input: PluginInput): void {
   // the seed is always safe.
   const session = input.client.session
   if (typeof session?.list !== 'function') return
+  sessionHierarchy.beginSeed()
   void session
     .list()
     .then((result) => {
       if (!result.error && Array.isArray(result.data)) {
+        sessionHierarchy.completeSeed(result.data)
         const seeded = collectRootSessionIDs(result.data)
         if (seeded.size > 0) {
           for (const id of seeded) rootSessions.add(id)
           log.info(`[Pantheon Plugin] Seeded ${seeded.size} root session(s) from session.list`)
         }
+      } else {
+        sessionHierarchy.failSeed()
       }
     })
     .catch((err) => {
+      sessionHierarchy.failSeed()
       log.warn('[Pantheon Plugin] Root session seed failed (fail-open):', err)
     })
 }
@@ -264,13 +283,26 @@ const plugin: Plugin = async (input: PluginInput) => {
   // Phase 2/3: background delegation toolset + the bound finalize lifecycle
   // hook. Completion is observed through the event hook below
   // (session.idle / session.error on a child) → finalizeDelegation.
+  // Fase B3: runtime controls for the two read-only exceptions and the real
+  // per-child wall-clock timer. No task_budget field is injected into the
+  // plugin/frontmatter; these are enforced by delegation.ts itself.
+  const delegationBudgets = resolveDelegationBudgets()
+  const wallClockTimeoutMs = resolveDelegationTimeoutMs()
+
   const delegation = createDelegationTools({
     board,
     client: adaptDelegationClient(input.client),
     options: {
       rootSessions,
+      isChildSession: (sessionID) => sessionHierarchy.isChild(sessionID),
+      registerChildSession: (sessionID, parentID) => {
+        sessionHierarchy.register({ id: sessionID, parentID })
+      },
+      enforceRuntimeMatrix: true,
       readOnlyAgents: new Set(['apollo', 'gaia']),
       agentModels: routingAgentModels,
+      delegationBudgets,
+      ...(wallClockTimeoutMs !== undefined ? { wallClockTimeoutMs } : {}),
     },
   })
 
@@ -393,12 +425,20 @@ const plugin: Plugin = async (input: PluginInput) => {
       // user-activity gate skips injection for userActivityQuietMs afterwards.
       todoEnforcer.noteUserActivity(hookInput.sessionID)
     },
+    'chat.params': async (hookInput) => {
+      // The SDK exposes the active agent here; tool.execute.before has no
+      // agent field. Never infer identity from a prompt or tool name.
+      sessionAgents.set(hookInput.sessionID, hookInput.agent)
+    },
     'experimental.chat.messages.transform': vision.messagesTransform,
     event: async ({ event: ev }) => {
       // Phase 3: sessions created without a parent are roots for the depth guard.
       if (ev.type === 'session.created') {
         const info = ev.properties.info
-        if (info && info.parentID === undefined) rootSessions.add(info.id)
+        if (info) {
+          sessionHierarchy.register(info)
+          if (info.parentID === undefined) rootSessions.add(info.id)
+        }
       }
       // release-134 Phase 3: activate the todo snapshot captured at
       // compacting time — the first todowrite within the restore window is
@@ -449,7 +489,7 @@ const plugin: Plugin = async (input: PluginInput) => {
       // first post-compaction `todowrite` with the captured todo snapshot.
       // Both are no-ops for non-matching sessions/tools; the preserver is
       // fail-open (only its intentional restore denial throws).
-      await enforcementGuard(input)
+      await enforcementGuard(input, output)
       await todoPreserver.beforeTodoWrite(input, output)
     },
     // Wave 2 (PR #46): augment `read` output with hashline tags. Additive —
