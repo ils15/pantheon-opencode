@@ -3,8 +3,6 @@ from pathlib import Path
 PLUGIN_FILES = (
     Path("src/plugins/tui/src/index.tsx"),
     Path("src/plugins/tui/dist/tui.tsx"),
-    Path("src/plugins/tui/src/index.tsx"),
-    Path(".opencode/plugins/pantheon-tui/index.tsx"),
 )
 
 

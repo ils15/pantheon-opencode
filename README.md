@@ -203,6 +203,7 @@ version selector; an explicit `dbPath` supplied by the tool caller takes
 precedence over both. The resolver never probes the other version's database,
 and reports an actionable error when the selected DB is missing or has an
 incompatible schema.
+
 **What changed for V2 compatibility (Phase 3):**
 
 - `subagent_depth` moved from top-level to `experimental.subagent_depth` — V2 silently ignores the top-level key. The installer migrates existing configs automatically.
@@ -888,14 +889,15 @@ to Mnemosyne so counts stay accurate and consistent.
 `release.yml` validates version consistency across the package manifests
 (`package.json`, `plugin.json`, `pyproject.toml`, and the TUI package) before
 publishing. If they diverge, the release is blocked until they are reconciled.
-Commitlint also permits the explicit `opencode-v2` scope used by the dual-version
-migration while continuing to reject unlisted scopes.
 
 Beta releases are calculated from npm's published `latest` at workflow runtime:
 the default is the next patch, formatted as
-`<next-stable>-beta.<PR>.<short-sha>`. Labels `release:beta:minor` and
-`release:beta:major` request minor or major calculation. The workflow owns the
-manifest update, tag, and publish; it does not assume a fixed future version.
+`<next-stable>-beta.<PR>.<short-sha>`. Only the exact `release:beta` label
+triggers this path; alternate label variants do not trigger it. Beta recovery
+requires an explicit `workflow_dispatch` with its recovery inputs; a normal
+push does not republish beta. The workflow owns the manifest update, tag, and
+publish, creates the GitHub Release as `Pantheon <version>`, and does not create
+PR comments.
 
 ### Anti-patterns
 

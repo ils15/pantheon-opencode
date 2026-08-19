@@ -38,15 +38,6 @@
     }
   },
   "agent": {
-    "athena": {
-      "model": "opencode-go/kimi-k3"
-    },
-    "themis": {
-      "model": "opencode-go/deepseek-v4-pro"
-    },
-    "hephaestus": {
-      "model": "opencode-go/deepseek-v4-pro"
-    },
     "talos": {
       "permission": {
         "edit": {
