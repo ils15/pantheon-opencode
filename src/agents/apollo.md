@@ -10,6 +10,8 @@ permission:
   webfetch: allow
   edit: deny
   bash: deny
+  task:
+    "*": deny
 temperature: 0.1
 steps: 30
 skills:

@@ -19,19 +19,13 @@
  * Depth guard (root-session detection): the ToolContext carries NO parentID
  * (spike), so root detection is configurable. Resolution order:
  *   1. `options.isRootSession(sessionID)` custom predicate;
- *   2. `options.rootSessions` explicit allowlist — with a knownChildren
- *      fallback (compaction-134): a session is a sub-session ONLY if WE
- *      created it as a child (`session.create` via pantheon_delegate).
- *      Sessions in neither set are treated as root, so a resumed root can
- *      delegate after a restart even when the allowlist is incomplete
- *      (opencode does not replay `session.created` events for pre-existing
- *      sessions — the plugin seeds the registry from session.list() at
- *      startup, and this fallback covers a failed/incomplete seed);
+ *   2. `options.rootSessions` explicit allowlist, with `options.isChildSession`
+ *      authoritative when supplied by the plugin. SDK session metadata is
+ *      registered from parentID; no prompt/name inference is used.
  *   3. default (no rootSessions): any session WE created via
  *      `session.create` is a sub-session; everything else is treated as
- *      root. Phase 3 should pass the root registry derived from
- *      `session.created` events (Session.parentID undefined ⇒ root) for
- *      authoritative enforcement.
+ *      root for standalone compatibility. The plugin supplies the SDK-backed
+ *      hierarchy at runtime.
  *
  * Read-only enforcement is Phase 4 — `read_only` is exposed on the delegate
  * args and the child session is registered in the read-only registry when the
@@ -44,7 +38,11 @@
 import { z } from 'zod'
 
 import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-board.ts'
-import { readOnlyRegistry } from './delegation-enforce.ts'
+import {
+  isDelegationAllowed,
+  normalizeDelegationAgent,
+  readOnlyRegistry,
+} from './delegation-enforce.ts'
 import {
   DELEGATION_DEFAULTS,
   type DelegationClient,
@@ -67,6 +65,49 @@ export type {
 } from './delegation-finalize.ts'
 export { DELEGATION_DEFAULTS } from './delegation-finalize.ts'
 
+// Fase B3: these are runtime controls, not routing/frontmatter fields. The
+// plugin reads them from the environment, while tests and embedders can pass
+// the same values through DelegationOptions.
+export const B3_DEFAULT_EXCEPTION_BUDGET = 5
+
+function readIntegerEnv(
+  env: Record<string, string | undefined>,
+  name: string,
+  fallback: number,
+  minimum: number,
+): number {
+  const raw = env[name]?.trim()
+  if (raw === undefined || raw === '') return fallback
+  const value = Number(raw)
+  return Number.isSafeInteger(value) && value >= minimum ? value : fallback
+}
+
+/** Resolve the two supported read-only delegation exception budgets. */
+export function resolveDelegationBudgets(
+  env: Record<string, string | undefined> = process.env,
+): ReadonlyMap<string, number> {
+  return new Map([
+    [
+      'athena->apollo',
+      readIntegerEnv(env, 'PANTHEON_ATHENA_APOLLO_BUDGET', B3_DEFAULT_EXCEPTION_BUDGET, 0),
+    ],
+    [
+      'hermes->apollo',
+      readIntegerEnv(env, 'PANTHEON_HERMES_APOLLO_BUDGET', B3_DEFAULT_EXCEPTION_BUDGET, 0),
+    ],
+  ])
+}
+
+/** Resolve an optional positive wall-clock timeout from the environment. */
+export function resolveDelegationTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number | undefined {
+  const raw = env.PANTHEON_DELEGATION_TIMEOUT_MS?.trim()
+  if (raw === undefined || raw === '') return undefined
+  const value = Number(raw)
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────
 
 // Silence-by-default TUI policy (pantheon-hooks L42-58): console output in a
@@ -79,6 +120,11 @@ export interface ToolContextLike {
   sessionID: string
   directory?: string
   worktree?: string
+  /**
+   * The OpenCode SDK's ToolContext declares this as required. It remains
+   * optional here because the structural test/embedding surface can be
+   * supplied by older hosts; B3 must skip enforcement when it is absent.
+   */
   agent?: string
 }
 
@@ -145,6 +191,9 @@ function stateLabel(state: BackgroundJobRecord['state']): string {
       return 'RECONCILED'
   }
 }
+
+/** Normalize the SDK-provided caller agent without inventing an identity. */
+const normalizeToolAgent = normalizeDelegationAgent
 
 // ─── Agent activity sampling ────────────────────────────────────────────
 //
@@ -478,16 +527,24 @@ export function collectRootSessionIDs(
  */
 export function createDelegationTools(input: CreateDelegationToolsInput): DelegationToolset {
   const { board, client } = input
-  const options: DelegationOptions = input.options ?? {}
+  // Runtime matrix enforcement is the safe default for every host. A legacy
+  // structural embedder must opt out explicitly with `false`; omission must
+  // never silently widen the delegation surface.
+  const options: DelegationOptions = { enforceRuntimeMatrix: true, ...(input.options ?? {}) }
   const deps: DelegationDeps = { board, client, options }
   const outputDir = options.outputDir ?? DELEGATION_DEFAULTS.outputDir
-  const timeoutMs = options.timeoutMs ?? DELEGATION_DEFAULTS.timeoutMs
+  const timeoutMs = options.wallClockTimeoutMs ?? options.timeoutMs ?? DELEGATION_DEFAULTS.timeoutMs
   const readTimeoutMs = options.readTimeoutMs ?? DELEGATION_DEFAULTS.readTimeoutMs
 
   const knownChildren = new Set<string>()
   const timers = new Map<string, NodeJS.Timeout>()
+  // Fase B3: per-parent-session delegation budget tracking, scoped to this
+  // factory/process instance. Keyed by `${parentSessionID}:${parentAgent}->${targetAgent}`;
+  // it is not restart-persistent because the factory has no reliable store.
+  const budgetUsage = new Map<string, number>()
 
   function isRootSession(sessionID: string): boolean {
+    if (options.isChildSession?.(sessionID) === true) return false
     if (options.isRootSession !== undefined) return options.isRootSession(sessionID)
     if (options.rootSessions !== undefined) {
       // compaction-134 (fix layer 2): the allowlist alone is NOT
@@ -540,6 +597,54 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         )
       }
 
+      // Fase B3: only the two read-only exceptions are budgeted. The official
+      // SDK provides the current agent on ToolContext. If a structural/older
+      // host omits it, do NOT infer identity from prompt, target, or process
+      // state: the budget is explicitly skipped and the delegation continues.
+      const parentAgent = normalizeToolAgent(ctx.agent)
+      const targetAgent = args.agent.toLowerCase()
+      if (options.enforceRuntimeMatrix === true && !isDelegationAllowed(parentAgent, targetAgent)) {
+        const reason =
+          parentAgent === undefined
+            ? 'ToolContext.agent is unavailable'
+            : `${parentAgent}->${targetAgent} is not allowed`
+        options.logger?.warn?.(
+          `[pantheon-delegate] runtime delegation denied for session ${ctx.sessionID}: ${reason}`,
+        )
+        throw new Error(`pantheon_delegate rejected: runtime delegation matrix denied (${reason})`)
+      }
+      if (
+        parentAgent === undefined &&
+        !options.enforceRuntimeMatrix &&
+        (options.delegationBudgets?.size ?? 0) > 0
+      ) {
+        const message =
+          `[pantheon-delegate] B3 budget skipped: current agent unavailable for session ${ctx.sessionID}; ` +
+          `no budget limit applied to ${targetAgent}. Runtime must provide ToolContext.agent ` +
+          '(the official SDK field) to enforce the configured exception budget.'
+        ;(options.logger?.warn ?? ((msg: string) => log.warn(msg)))(message)
+      }
+      const budgetKey =
+        parentAgent === undefined ? undefined : `${ctx.sessionID}:${parentAgent}->${targetAgent}`
+      const budget =
+        parentAgent === undefined
+          ? undefined
+          : options.delegationBudgets?.get(`${parentAgent}->${targetAgent}`)
+      let budgetReserved = false
+      if (budgetKey !== undefined && budget !== undefined) {
+        const used = budgetUsage.get(budgetKey) ?? 0
+        if (used >= budget) {
+          throw new Error(
+            `pantheon_delegate rejected: delegation budget exhausted for ${parentAgent}->${targetAgent} ` +
+              `(${used}/${budget} dispatches used in this session). ` +
+              'Configure the corresponding PANTHEON_*_APOLLO_BUDGET environment variable or DelegationOptions.',
+          )
+        }
+        // Reserve before the first await so concurrent calls cannot overshoot.
+        budgetUsage.set(budgetKey, used + 1)
+        budgetReserved = true
+      }
+
       // session.create failure → return a clear error as TEXT (tools return
       // errors as text, not thrown) and register NO job on the board — an
       // unhandled rejection here would otherwise lose the failure entirely.
@@ -551,7 +656,11 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       // opencode/deepseek-v4-flash-free; if nothing usable remains the
       // failure is returned as TEXT below — no session, no board job.
       const resolved = resolveUsableChildModel(options, args.agent, args.model)
-      if (resolved.error !== undefined) return resolved.error
+      if (resolved.error !== undefined) {
+        if (budgetReserved && budgetKey !== undefined)
+          budgetUsage.set(budgetKey, (budgetUsage.get(budgetKey) ?? 1) - 1)
+        return resolved.error
+      }
       const childModel = resolved.model
       let created: { id: string }
       try {
@@ -564,10 +673,14 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         })
       } catch (err: unknown) {
         const reason = err instanceof Error ? err.message : String(err)
+        if (budgetReserved && budgetKey !== undefined) {
+          budgetUsage.set(budgetKey, Math.max(0, (budgetUsage.get(budgetKey) ?? 1) - 1))
+        }
         return `pantheon_delegate failed to create child session: ${reason}`
       }
       const childSessionID = created.id
       knownChildren.add(childSessionID)
+      options.registerChildSession?.(childSessionID, ctx.sessionID)
 
       // Phase 4 read-only enforcement: register the child session in the
       // read-only registry when the delegate is read-only — explicit

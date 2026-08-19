@@ -757,7 +757,7 @@ function checkPermissionMismatches(args) {
 // Check D: Sync Status
 // ---------------------------------------------------------------------------
 
-function checkSyncStatus(args) {
+function checkSyncStatus(_args) {
   section('D. Sync Status')
 
   // Platform sync removed in v1.0 (OpenCode-only)
@@ -979,8 +979,206 @@ function checkVenvLayer(args) {
 }
 
 // ---------------------------------------------------------------------------
-// Summary
+// Check G: AGENTS.md freshness
 // ---------------------------------------------------------------------------
+
+/**
+ * Check AGENTS.md only where the repository's generator can provide a real
+ * source-of-truth comparison. Installed targets have no canonical instruction
+ * sources available to this process, so their freshness is deliberately not
+ * guessed from file age.
+ */
+function checkAgentsMdFreshness(args) {
+  section('G. AGENTS.md Freshness')
+
+  const agentsMdPath = join(args.target, 'AGENTS.md')
+  if (args.target !== ROOT) {
+    const outcome = classifyAgentsMdFreshness({
+      targetIsRoot: false,
+      agentsMdExists: existsSync(agentsMdPath),
+      generatorExists: false,
+    })
+    if (outcome === 'unverified') {
+      info(
+        'AGENTS.md is present; freshness was not checked because the canonical generator sources are not available in an installed target',
+      )
+    } else {
+      warn(
+        'AGENTS.md is not present; freshness cannot be verified for this installed target — run `pantheon-opencode init --components instructions`',
+      )
+    }
+    return
+  }
+
+  const generator = join(ROOT, 'scripts', 'build-agents-md.mjs')
+  if (!existsSync(generator)) {
+    info('AGENTS.md freshness skipped — canonical generator is not available')
+    return
+  }
+
+  const result = spawn(process.execPath, [generator, '--check'], ROOT)
+  const outcome = classifyAgentsMdFreshness({
+    targetIsRoot: true,
+    agentsMdExists: existsSync(agentsMdPath),
+    generatorExists: true,
+    generatorStatus: result.status,
+  })
+  if (outcome === 'pass') {
+    pass('AGENTS.md matches the canonical generated instructions')
+  } else if (outcome === 'unverified' && !existsSync(agentsMdPath)) {
+    warn(
+      'AGENTS.md is missing — run `node scripts/build-agents-md.mjs` or `pantheon-opencode init`',
+    )
+  } else if (outcome === 'stale') {
+    warn('AGENTS.md is stale — run `node scripts/build-agents-md.mjs` to refresh it')
+  } else {
+    warn(
+      `AGENTS.md freshness could not be verified (generator exited ${result.status ?? 'unknown'})`,
+    )
+  }
+}
+
+/**
+ * Classify the generator result without relying on timestamps or fragile
+ * process mocks. The doctor CLI uses the same result contract internally.
+ *
+ * @param {{ targetIsRoot: boolean; agentsMdExists: boolean; generatorExists: boolean; generatorStatus?: number | null }} input
+ * @returns {'pass' | 'missing' | 'stale' | 'skipped' | 'unverified'}
+ */
+export function classifyAgentsMdFreshness(input) {
+  if (!input.targetIsRoot) return input.agentsMdExists ? 'unverified' : 'missing'
+  if (!input.generatorExists) return 'skipped'
+  if (input.generatorStatus === 0) return 'pass'
+  if (input.generatorStatus === 1 && input.agentsMdExists) return 'stale'
+  return 'unverified'
+}
+
+// ---------------------------------------------------------------------------
+// Check H: Config migration — no top-level subagent_depth
+// ---------------------------------------------------------------------------
+
+function checkSubagentDepthPlacement(args) {
+  section('H. Config Migration')
+
+  const configs = collectMcpConfigs(args)
+  if (configs.length === 0) {
+    info('subagent_depth placement check skipped — no opencode.json was found')
+    return
+  }
+  for (const cfg of configs) {
+    if (cfg.data.subagent_depth !== undefined) {
+      error(
+        `${cfg.label}: top-level "subagent_depth" is unsupported — run \`pantheon-opencode init\` to migrate it to "experimental.subagent_depth"`,
+      )
+    } else if (
+      cfg.data.experimental &&
+      typeof cfg.data.experimental === 'object' &&
+      cfg.data.experimental.subagent_depth !== undefined
+    ) {
+      pass(`${cfg.label}: experimental.subagent_depth = ${cfg.data.experimental.subagent_depth}`)
+    } else {
+      info(
+        `${cfg.label}: experimental.subagent_depth is not configured (older/custom config may omit it)`,
+      )
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Check J: Agent permission.task presence
+// ---------------------------------------------------------------------------
+
+/** @param {string} content @returns {boolean} */
+export function hasPermissionTask(content) {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return false
+  const permission = match[1].match(/(?:^|\r?\n)permission:\s*\r?\n([\s\S]*?)(?=\r?\n\S|$)/)
+  return Boolean(permission && /^\s+task:\s*/m.test(permission[1]))
+}
+
+/**
+ * Derive installed agent files from the paths already declared by configs.
+ * This supports both global flat and project .opencode layouts without
+ * assuming a user home directory.
+ *
+ * @param {{path: string, data: object}[]} configs
+ * @returns {string[]}
+ */
+export function deriveInstalledAgentFiles(configs) {
+  const directories = new Set()
+  for (const cfg of configs) {
+    for (const agent of Object.values(cfg.data.agent ?? {})) {
+      const source = agent && typeof agent === 'object' ? agent.source : undefined
+      if (typeof source !== 'string' || !source.includes('/')) continue
+      const filePath = resolve(dirname(cfg.path), source)
+      if (filePath.startsWith(`${AGENTS_DIR}/`)) continue
+      if (existsSync(filePath)) directories.add(dirname(filePath))
+    }
+  }
+
+  const files = []
+  for (const directory of directories) {
+    let entries
+    try {
+      entries = readdirSync(directory, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith('.md')) files.push(join(directory, entry.name))
+    }
+  }
+  return [...new Set(files)].sort()
+}
+
+function checkPermissionTaskPresence(args) {
+  section('J. Installed Agent permission.task')
+
+  if (args.profile === 'lite') {
+    info(
+      'Installed agent permission.task check skipped (lite profile does not require managed agents)',
+    )
+    return
+  }
+
+  const installedFiles = deriveInstalledAgentFiles(collectMcpConfigs(args))
+  if (installedFiles.length === 0) {
+    info(
+      'Installed agent permission.task check skipped — no agent source directory could be derived from available config',
+    )
+    return
+  }
+
+  const missing = findMissingPermissionTask(installedFiles)
+  if (classifyPermissionTaskCheck(args.profile, installedFiles.length, missing.length) === 'pass') {
+    pass(`All ${installedFiles.length} installed agents have permission.task`)
+    return
+  }
+
+  for (const filePath of missing) {
+    error(
+      `${basename(filePath)}: missing permission.task in managed agent — run \`pantheon-opencode init\` to update installed agents`,
+    )
+  }
+}
+
+/** @param {string[]} filePaths @returns {string[]} */
+export function findMissingPermissionTask(filePaths) {
+  return filePaths.filter((filePath) => !hasPermissionTask(readFileSync(filePath, 'utf8')))
+}
+
+/**
+ * Classify the installed-agent permission.task layer for a doctor profile.
+ *
+ * @param {string} profile
+ * @param {number} installedCount
+ * @param {number} missingCount
+ * @returns {'skip' | 'pass' | 'error'}
+ */
+export function classifyPermissionTaskCheck(profile, installedCount, missingCount) {
+  if (profile === 'lite' || installedCount === 0) return 'skip'
+  return missingCount === 0 ? 'pass' : 'error'
+}
 
 /**
  * Return the final doctor status message without masking blocking errors.
@@ -1069,6 +1267,9 @@ async function main() {
   checkPermissionMismatches(args)
   checkSyncStatus(args)
   checkGitStatus(args)
+  checkAgentsMdFreshness(args)
+  checkSubagentDepthPlacement(args)
+  checkPermissionTaskPresence(args)
 
   printSummary(args.target)
 

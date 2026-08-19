@@ -1,7 +1,7 @@
 ---
 name: demeter
 description: "Database specialist — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, TDD migrations, modern DB libs. Calls apollo for discovery, sends to themis."
-mode: primary
+mode: all
 reasoning_effort: medium
 permission:
   read: allow
@@ -9,6 +9,8 @@ permission:
   edit: allow
   bash: allow
   webfetch: allow
+  task:
+    "*": deny
 temperature: 0.2
 steps: 40
 skills:

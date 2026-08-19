@@ -1,7 +1,7 @@
 ---
 name: prometheus
 description: "Infrastructure + model provider specialist — Docker, CI/CD, multi-model routing, cost optimization, provider abstraction"
-mode: subagent
+mode: all
 reasoning_effort: medium
 permission:
   read: allow
@@ -9,6 +9,8 @@ permission:
   edit: allow
   bash: allow
   webfetch: allow
+  task:
+    "*": deny
 temperature: 0.2
 steps: 30
 skills:
