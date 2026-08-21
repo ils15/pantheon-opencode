@@ -169,6 +169,70 @@ export const DEFAULT_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
   'hashline_edit',
 ])
 
+// ─── Zeus Read Guard ──────────────────────────────────────────────────
+
+/**
+ * Path patterns that Zeus must NOT read directly. Zeus must delegate
+ * codebase reads to @apollo to avoid context bloat and enforce separation
+ * of concerns.
+ */
+export const ZEUS_READ_DENY_PATTERNS: ReadonlyArray<RegExp> = [
+  /^src\//,
+  /^tests?\//,
+  /^scripts?\//,
+]
+
+/**
+ * Path exceptions that Zeus MAY read even if they match a deny pattern.
+ * Markdown files, .pantheon/ configs, and memories/ are operational context
+ * that Zeus legitimately needs.
+ */
+export const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
+  /\.md$/,
+  /\.pantheon\//,
+  /memories\//,
+]
+
+/**
+ * Zeus read guard. When the active agent is Zeus, deny read/glob/grep calls
+ * that target source code, tests, or scripts — Zeus must delegate those to
+ * @apollo. Allowed paths (markdown, .pantheon/, memories/) are exempt.
+ *
+ * Non-Zeus sessions are never affected.
+ *
+ * @throws {Error} when Zeus attempts a denied read
+ */
+export function zeusReadGuard(
+  tool: string,
+  args: unknown,
+  agent: string | undefined,
+): void {
+  if (agent !== 'zeus') return
+  if (tool !== 'read' && tool !== 'glob' && tool !== 'grep') return
+
+  const record = args as Record<string, unknown> | undefined
+  const filePath =
+    typeof record?.filePath === 'string'
+      ? record.filePath
+      : typeof record?.pattern === 'string'
+        ? record.pattern
+        : undefined
+
+  if (!filePath) return
+
+  for (const pattern of ZEUS_READ_DENY_PATTERNS) {
+    if (pattern.test(filePath)) {
+      // Check allowed-path exceptions before denying
+      for (const allowed of ALLOWED_PATHS) {
+        if (allowed.test(filePath)) return
+      }
+      throw new Error(
+        `Zeus cannot read ${filePath} — delegate to @apollo`,
+      )
+    }
+  }
+}
+
 // ─── Registry ──────────────────────────────────────────────────────────
 
 /**

@@ -37,7 +37,7 @@ skills:
 
 ## Golden Rule
 
-**Coordenador APENAS.** Leu arquivo → delegue. Nunca implemente, nunca edite, nunca debugue.
+**Coordenador APENAS. Zeus NUNCA lê arquivos de código-fonte.** Toda leitura de `src/`, `tests/`, `scripts/` vai para @apollo. Leia apenas: config, docs, memory bank, delegação.
 
 
 ## 🔒 Fusion-Style Enforcement

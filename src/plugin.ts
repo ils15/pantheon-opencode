@@ -15,6 +15,7 @@ import {
   createEnforcementGuard,
   readOnlyRegistry,
   SessionHierarchyRegistry,
+  zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
 import { handleDelegationEvent } from './pantheon/delegation-notify.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
@@ -484,11 +485,13 @@ const plugin: Plugin = async (input: PluginInput) => {
     // Phase 4: deny mutating tools in read-only delegated sessions. Additive
     // key — does not touch Phase 3's tools/event/onTerminal/chat.message.
     'tool.execute.before': async (input, output) => {
-      // Chain: the read-only enforcement guard runs first (denies mutating
-      // tools in read-only sessions), then release-134 Phase 3 rewrites the
-      // first post-compaction `todowrite` with the captured todo snapshot.
-      // Both are no-ops for non-matching sessions/tools; the preserver is
-      // fail-open (only its intentional restore denial throws).
+      // Chain: Zeus read guard runs first (denies read/glob/grep of source
+      // code when the active agent is Zeus — delegate to @apollo), then the
+      // read-only enforcement guard (denies mutating tools in read-only
+      // sessions), then release-134 Phase 3 rewrites the first
+      // post-compaction `todowrite` with the captured todo snapshot. All are
+      // no-ops for non-matching sessions/tools.
+      zeusReadGuard(input.tool, output?.args, sessionAgents.get(input.sessionID))
       await enforcementGuard(input, output)
       await todoPreserver.beforeTodoWrite(input, output)
     },

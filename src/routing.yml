@@ -457,6 +457,11 @@ intent_gate:
     - search
     - lookup
     - documentation
+    - procure
+    - busque
+    - encontre
+    - localize
+    - pesquise
     target: apollo
   investigate:
     patterns:

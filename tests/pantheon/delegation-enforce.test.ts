@@ -24,6 +24,9 @@ import {
   createEnforcementGuard,
   DEFAULT_BLOCKED_TOOLS,
   readOnlyRegistry,
+  zeusReadGuard,
+  ZEUS_READ_DENY_PATTERNS,
+  ALLOWED_PATHS,
   type ToolExecuteBeforeHandler,
 } from '../../src/pantheon/delegation-enforce.ts'
 
@@ -278,6 +281,87 @@ async function main() {
 
       readOnlyRegistry.clear()
       assert.equal(readOnlyRegistry.sessionIDs().size, 0)
+    },
+  )
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Zeus Read Guard Tests
+  // ═══════════════════════════════════════════════════════════════════════
+
+  await testAsync(
+    'zeus read guard: Zeus + read src/index.ts → denied',
+    async () => {
+      const err =(() => zeusReadGuard('read', { filePath: 'src/index.ts' }, 'zeus')) as () => void
+      assert.throws(err, /delegate to @apollo/, 'Zeus must not read src/ files')
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: Zeus + read README.md → allowed (markdown exception)',
+    async () => {
+      zeusReadGuard('read', { filePath: 'README.md' }, 'zeus')
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: Zeus + read .pantheon/memory.md → allowed (.pantheon/ exception)',
+    async () => {
+      zeusReadGuard('read', { filePath: '.pantheon/memory.md' }, 'zeus')
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: Zeus + glob src/**/*.ts → denied',
+    async () => {
+      const err = () => zeusReadGuard('glob', { pattern: 'src/**/*.ts' }, 'zeus')
+      assert.throws(err, /delegate to @apollo/, 'Zeus must not glob src/ patterns')
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: Zeus + grep "pattern" src/ → denied',
+    async () => {
+      const err = () => zeusReadGuard('grep', { pattern: 'src/foo' }, 'zeus')
+      assert.throws(err, /delegate to @apollo/, 'Zeus must not grep in src/')
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: Non-Zeus + read src/index.ts → allowed (no change)',
+    async () => {
+      zeusReadGuard('read', { filePath: 'src/index.ts' }, 'hermes')
+      zeusReadGuard('read', { filePath: 'src/index.ts' }, 'apollo')
+      zeusReadGuard('read', { filePath: 'src/index.ts' }, undefined)
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: Zeus + read tests/test.ts → denied',
+    async () => {
+      const err = () => zeusReadGuard('read', { filePath: 'tests/test.ts' }, 'zeus')
+      assert.throws(err, /delegate to @apollo/, 'Zeus must not read tests/')
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: Zeus + read memories/fact.md → allowed (memories/ exception)',
+    async () => {
+      zeusReadGuard('read', { filePath: 'memories/fact.md' }, 'zeus')
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: Zeus + read scripts/deploy.sh → denied',
+    async () => {
+      const err = () => zeusReadGuard('read', { filePath: 'scripts/deploy.sh' }, 'zeus')
+      assert.throws(err, /delegate to @apollo/, 'Zeus must not read scripts/')
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: Zeus + non-read tool (edit) on src/ → allowed (guard only covers read/glob/grep)',
+    async () => {
+      zeusReadGuard('edit', { filePath: 'src/index.ts' }, 'zeus')
     },
   )
 
