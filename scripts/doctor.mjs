@@ -187,6 +187,26 @@ function showHelp() {
 // Helper utilities
 // ---------------------------------------------------------------------------
 
+/** @type {Set<string>} agent-defining frontmatter fields */
+const AGENT_FRONTMATTER_FIELDS = new Set(['name', 'description', 'mode'])
+
+/**
+ * Return true if the file content has YAML frontmatter containing at least
+ * one agent-defining field (name, description, or mode). Non-agent .md files
+ * such as README.md are excluded.
+ * @param {string} content
+ * @returns {boolean}
+ */
+export function isValidAgentFile(content) {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return false
+  const fm = match[1]
+  for (const field of AGENT_FRONTMATTER_FIELDS) {
+    if (new RegExp(`(?:^|\\r?\\n)${field}\\s*:`).test(fm)) return true
+  }
+  return false
+}
+
 /**
  * Collect canonical agent names from agents/*.md
  * @returns {string[]} sorted list of agent names (without extension)
@@ -195,7 +215,9 @@ function getCanonicalAgentNames() {
   if (!existsSync(AGENTS_DIR)) return []
   return readdirSync(AGENTS_DIR)
     .filter((f) => f.endsWith('.md'))
-    .map((f) => f.replace(/\.agent\.md$/, ''))
+    .map((f) => ({ name: f, path: join(AGENTS_DIR, f) }))
+    .filter(({ path: p }) => isValidAgentFile(readFileSync(p, 'utf8')))
+    .map(({ name }) => name.replace(/\.agent\.md$/, ''))
     .sort()
 }
 
@@ -1125,7 +1147,15 @@ export function deriveInstalledAgentFiles(configs) {
       continue
     }
     for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith('.md')) files.push(join(directory, entry.name))
+      if (!entry.isFile() || !entry.name.endsWith('.md')) continue
+      const filePath = join(directory, entry.name)
+      try {
+        if (isValidAgentFile(readFileSync(filePath, 'utf8'))) {
+          files.push(filePath)
+        }
+      } catch {
+        // unreadable — skip
+      }
     }
   }
   return [...new Set(files)].sort()

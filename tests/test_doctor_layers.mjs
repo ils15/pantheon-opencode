@@ -10,6 +10,7 @@ import {
   deriveInstalledAgentFiles,
   findMissingPermissionTask,
   hasPermissionTask,
+  isValidAgentFile,
   summaryMessage,
 } from '../scripts/doctor.mjs'
 
@@ -119,6 +120,66 @@ try {
   assert.equal(hasPermissionTask('---\nmode: primary\n---\n'), false)
 } finally {
   rmSync(doctorFixture, { recursive: true, force: true })
+}
+
+// ---------------------------------------------------------------------------
+// isValidAgentFile — frontmatter validation for agent detection
+// ---------------------------------------------------------------------------
+
+// Valid agent files with frontmatter containing agent-defining fields
+assert.equal(isValidAgentFile('---\nname: zeus\n---\n'), true, 'name field → valid')
+assert.equal(isValidAgentFile('---\ndescription: Orchestrator\n---\n'), true, 'description field → valid')
+assert.equal(isValidAgentFile('---\nmode: all\n---\n'), true, 'mode field → valid')
+assert.equal(isValidAgentFile('---\nname: hermes\ndescription: Backend\nmode: all\n---\n'), true, 'all fields → valid')
+
+// Invalid — no frontmatter
+assert.equal(isValidAgentFile('# README\n\nSome text'), false, 'no frontmatter → invalid')
+
+// Invalid — frontmatter present but no agent-defining fields
+assert.equal(isValidAgentFile('---\ntemperature: 0.3\nsteps: 50\n---\n'), false, 'frontmatter without agent fields → invalid')
+assert.equal(isValidAgentFile('---\ncustom_field: value\n---\n'), false, 'unrelated frontmatter → invalid')
+
+// Real-world: README.md has no frontmatter
+const readmeContent = '# Agent Reference — Pantheon\n\nThis directory contains...'
+assert.equal(isValidAgentFile(readmeContent), false, 'README.md content → invalid')
+
+// Blank / empty
+assert.equal(isValidAgentFile(''), false, 'empty file → invalid')
+
+// ---------------------------------------------------------------------------
+// deriveInstalledAgentFiles excludes non-agent .md files
+// ---------------------------------------------------------------------------
+
+const readmeFixture = mkdtempSync(join(tmpdir(), 'pantheon-doctor-readme-'))
+try {
+  const configPath = join(readmeFixture, 'opencode.json')
+  const agentsDir = join(readmeFixture, '.opencode', 'agents')
+  mkdirSync(agentsDir, { recursive: true })
+
+  // Create a valid agent
+  const agentPath = join(agentsDir, 'zeus.md')
+  writeFileSync(agentPath, '---\nname: zeus\ndescription: Orchestrator\n---\n')
+
+  // Create a README.md (no frontmatter)
+  const readmePath = join(agentsDir, 'README.md')
+  writeFileSync(readmePath, '# Agent Reference\n\nThis directory has agents.')
+
+  // Create a .md file with frontmatter but no agent fields
+  const notesPath = join(agentsDir, 'NOTES.md')
+  writeFileSync(notesPath, '---\ntitle: Meeting Notes\n---\n')
+
+  const files = deriveInstalledAgentFiles([
+    {
+      path: configPath,
+      data: { agent: { zeus: { source: '.opencode/agents/zeus.md' } } },
+    },
+  ])
+
+  assert.deepEqual(files, [agentPath], 'only valid agent .md returned; README.md and NOTES.md excluded')
+  assert.ok(!files.includes(readmePath), 'README.md is NOT listed as installed agent')
+  assert.ok(!files.includes(notesPath), 'NOTES.md is NOT listed as installed agent')
+} finally {
+  rmSync(readmeFixture, { recursive: true, force: true })
 }
 
 console.log('✅ Doctor layered healthcheck contract passed')
