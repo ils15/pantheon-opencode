@@ -11,6 +11,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🆕 What's New
 
+- **Depth-1 delegation policy** (PR #56): runtime delegation now enforces a single child level; only the documented `athena → apollo` and `hermes → apollo` read-only exceptions remain budgeted and caller identity is fail-closed.
+- **Beta candidate preparation**: the workflow will compute the candidate from npm `latest` `1.3.4` as `1.3.5-beta.<PR>.<short-sha>` via `scripts/release-beta-version.mjs`; `scripts/changelog-extract.mjs` continues to extract the existing `[v1.3.4]` section. The exact `release:beta` label remains the release trigger.
+
 ## 🐞 Fixed
 
 ## ⚠️ Known Issues
