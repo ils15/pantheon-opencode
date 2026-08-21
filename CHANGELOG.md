@@ -17,6 +17,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [1.3.5] - 2026-08-21
+
+## 🆕 What's New
+
+- **PT patterns para delegação (routing.yml)** — adiciona 5 padrões PT (`procure`/`busque`/`encontre`/`localize`/`pesquise`) ao `intent_gate` research → apollo, corrigindo detecção de intenção para prompts em português (PR #61).
+- **Zeus read guard (delegation-enforce.ts + plugin.ts)** — `ZEUS_READ_DENY_PATTERNS` bloqueia `src`/`tests`/`scripts`/`glob`/`grep` por Zeus via `tool.execute.before` (primeiro guard da cadeia); `ALLOWED_PATHS` libera `.md` e `.pantheon/memories`; 10 casos de teste em `tests/pantheon/delegation-enforce.test.ts`; `apollo.md`/`gaia.md` com `visible:false` e `tools.task:false` para depth-1 (PR #61).
+
+## 🐞 Fixed
+
+- **session-guard + retry helper (session-guard.ts + zeus-delegate-with-retry.ts)** — guard de `session_id` e helper `zeusDelegateWithRetry` com retry/backoff para delegações; `goal-loop.ts`/`todo-enforcer.ts`/`todo-preserve.ts`/`delegation.ts` ajustados (PR #61).
+- **validate doctor filter (scripts/doctor.mjs)** — `isValidAgentFile` verifica frontmatter YAML (`name`/`description`/`mode`) para filtrar `README.md` e docs não-agente de `getCanonicalAgentNames`/`deriveInstalledAgentFiles`; evita contagem espúria no `doctor` (PR #61).
+- **README move (src/agents → docs/agents)** — move `README.md` para fora de `src/agents` para evitar agente espúrio; `docs/agents/README.md` criado (PR #61).
+- **TUI GC aliasless (src/plugins/tui)** — GC de delegações live sem alias para evitar estado `delegating` preso; `src/plugins/tui/src/index.tsx` + `dist/` atualizados (PR #61).
+- **routing fallback opencode-go (src/pantheon/presets.mjs + routing.yml)** — fallback do preset default para `opencode-go` quando API key do provider ausente; `resolveChildModel` com fallback para `opencode/deepseek-v4-flash-free` (PR #61).
+- **install README guard (scripts/install/*)** — `shared.mjs`/`opencode.mjs`/`agents-md.mjs` impedem cópia de `README.md` para diretório de agentes; `package.json` ajustado (PR #61).
+
 ## [v1.3.4] - 2026-08-11
 
 ## 🆕 What's New
