@@ -54,6 +54,7 @@ import {
   matchesWildcardPattern,
   modelAcceptsImages,
   modelMatchesAnyPattern,
+  providerIsTextOnly,
   parseStructuredVisionResponse,
   readOpencodeAuthToken,
   resolveNativeVisionConfig,
@@ -2182,6 +2183,40 @@ await (async () => {
   } finally {
     mock.restore()
   }
+})()
+
+// ─── Test: providerIsTextOnly + modelAcceptsImages fail-closed for text-only providers ──
+
+await (async () => {
+  // providerIsTextOnly: deepseek has provider-qualified entries all vision:false
+  assert.equal(providerIsTextOnly('deepseek'), true, 'deepseek is text-only')
+
+  // providerIsTextOnly: anthropic has provider-qualified entries with vision:true
+  assert.equal(providerIsTextOnly('anthropic'), false, 'anthropic is not text-only')
+
+  // providerIsTextOnly: unknown provider → not text-only (fail-open)
+  assert.equal(providerIsTextOnly('unknown-provider'), false, 'unknown provider is not text-only')
+
+  // modelAcceptsImages: undefined model + known text-only provider → reject
+  assert.equal(
+    modelAcceptsImages(undefined, 'deepseek'),
+    false,
+    'undefined model + deepseek provider → rejected (fail-closed)',
+  )
+
+  // modelAcceptsImages: undefined model + unknown provider → accept (fail-open)
+  assert.equal(
+    modelAcceptsImages(undefined, 'unknown-provider'),
+    true,
+    'undefined model + unknown provider → accepted (fail-open)',
+  )
+
+  // modelAcceptsImages: undefined model + no provider → accept (backward compat)
+  assert.equal(
+    modelAcceptsImages(undefined),
+    true,
+    'undefined model + no provider → accepted (backward compat)',
+  )
 })()
 
 // ─── Teardown ──────────────────────────────────────────────────────────────
