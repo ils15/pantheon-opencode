@@ -324,7 +324,7 @@ child model's provider before dispatching (single source of truth:
 enforces at startup). If an **auto-resolved** model (`options.agentModels` or
 the active preset) points to a provider that requires an API key
 (`apiKeyEnv`) and the env var is unset, the delegate falls back to
-`opencode/deepseek-v4-flash-free` (validated the same way). If the fallback is
+`opencode-go/deepseek-v4-flash` (validated the same way). If the fallback is
 also unusable, the tool returns a clear error **text** (never throws) naming
 the missing env var — and registers **no job** on the board. An **explicit**
 `model` passed by the caller is always respected (warned, not overridden).
