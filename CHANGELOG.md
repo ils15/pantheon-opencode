@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## 🆕 What's New
 
 ## 🐞 Fixed
+- **fix(deepseek): image input support** — fail-closed for known text-only providers when model is undefined (#58)
 
 ## ⚠️ Known Issues
 
