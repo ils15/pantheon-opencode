@@ -63,6 +63,24 @@ import {
   Show,
 } from 'solid-js'
 
+// ─── Double-load guard (mirrors src/pantheon/plugin-once.ts) ───────────────
+// Opencode merges global + project plugin paths, so this module can load twice
+// in one process. The second factory invocation becomes a no-op.
+const __tuiPluginOnceKey = '__pantheonPluginsLoaded'
+function pantheonPluginOnce(key: string): boolean {
+  try {
+    const g = globalThis as unknown as Record<string, unknown>
+    if (g[__tuiPluginOnceKey] === undefined) g[__tuiPluginOnceKey] = new Set<string>()
+    const set = g[__tuiPluginOnceKey]
+    if (!(set instanceof Set)) return false
+    if ((set as Set<string>).has(key)) return true
+    ;(set as Set<string>).add(key)
+    return false
+  } catch {
+    return false
+  }
+}
+
 /* ─── Constants ─────────────────────────────────────────── */
 
 /** How often the sidebar re-reads .pantheon/active-preset.json so `set-tier`
@@ -2397,6 +2415,7 @@ function View(props: {
 /* ─── Plugin Registration ────────────────────────────────── */
 
 const tui: TuiPlugin = (api, _options, _meta) => {
+  if (pantheonPluginOnce('pantheon:tui')) return
   // Do not await project file/process probes here. OpenCode waits for the TUI
   // factory before it finishes startup, and a Windows host opening a WSL
   // project can leave those probes pending while the project bridge comes up.

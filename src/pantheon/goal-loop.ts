@@ -20,6 +20,7 @@ import type { BackgroundJobBoard } from './background-job-board.ts'
 import type { ToolContextLike } from './delegation.ts'
 import { GoalStore } from './goal-store.ts'
 import { createPantheonLogger } from './logger.ts'
+import { safeSessionPath } from './session-guard.ts'
 import type { TodoEnforcerMessage } from './todo-enforcer.ts'
 
 // Silence-by-default TUI policy (pantheon-hooks L42-58): warn → hooks.log,
@@ -188,8 +189,13 @@ export class GoalLoop {
     this.lastContinuationAt.set(sessionID, now)
     const inherited = await this.inheritAgentOrModel(sessionID)
     const prompt = GOAL_CONTINUATION_PROMPT.replace('{objective}', goal.objective)
+    const promptPath = safeSessionPath(sessionID)
+    if (!promptPath) {
+      this.warn(`goal continuation skipped: invalid sessionID "${sessionID}"`)
+      return
+    }
     await this.client.session.promptAsync({
-      path: { id: sessionID },
+      path: promptPath.path,
       body: {
         ...(inherited.agent !== undefined ? { agent: inherited.agent } : {}),
         ...(inherited.model !== undefined ? { model: inherited.model } : {}),
@@ -206,7 +212,12 @@ export class GoalLoop {
    * continuation runs in the same context as the session's last turn.
    */
   private async inheritAgentOrModel(sessionID: string): Promise<InheritedContext> {
-    const messages = await this.client.session.messages({ path: { id: sessionID } })
+    const path = safeSessionPath(sessionID)
+    if (!path) {
+      this.warn(`inherit skipped: invalid sessionID "${sessionID}"`)
+      return {}
+    }
+    const messages = await this.client.session.messages(path)
     for (const msg of [...messages].reverse()) {
       const info = msg.info
       if (info === undefined || info.role !== 'assistant') continue

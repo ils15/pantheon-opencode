@@ -48,6 +48,7 @@
  */
 
 import { createPantheonLogger } from './logger.ts'
+import { safeSessionPath } from './session-guard.ts'
 import type { TodoLike } from './todo-enforcer.ts'
 
 // Silence-by-default TUI policy (pantheon-hooks L42-58): console echo is
@@ -173,8 +174,13 @@ export class TodoPreserver {
    */
   async capture(sessionID: string): Promise<void> {
     this.pruneExpired()
+    const path = safeSessionPath(sessionID)
+    if (!path) {
+      this.warn(`todo snapshot capture skipped: invalid sessionID "${sessionID}"`)
+      return
+    }
     try {
-      const todos = await this.client.session.todo({ path: { id: sessionID } })
+      const todos = await this.client.session.todo(path)
       if (todos.length === 0) {
         // Nothing to preserve → drop any stale entry so no restore happens.
         this.snapshots.delete(sessionID)

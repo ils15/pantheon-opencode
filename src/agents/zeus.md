@@ -324,6 +324,10 @@ out = await guard.maybeRetry(result, async () => { ...task() de novo... })
 Regra: retry 1x APENAS em `empty-mode1`/`empty-mode2`. Resultado com conteudo
 nunca redispara. Apos 1 retry vazio → escalate (mesma regra do TODO Enforcer).
 
+> **Waves DEVEM usar `zeusDelegateWithRetry`** (`src/pantheon/zeus-delegate-with-retry.ts`) — encapsula `delegate → waitForTerminal → classify → retry 1x → escalate` com cap duro 1; se ainda vazio throw `ZeusEscalationError` (escale: tente outro agente, simplifique, manual).
+> Uso alto-nível: `import { zeusDelegateWithRetry } from './pantheon/zeus-delegate-with-retry.ts'` → `await zeusDelegateWithRetry({ board, client, sessionID, agent, prompt })`.
+> Uso baixo-nível: `createZeusRetryHelper().executeWithRetry(first, () => secondRead())` — classifica empty e decide retry/escalate (mesmo cap 1).
+
 ### /cost — pantheon_cost tool (WIRED no plugin)
 `pantheon_cost({ days?: number })` le o `opencode.db` READ-ONLY (node:sqlite;
 fallback `scripts/cost.mjs`) e devolve tabela markdown de custo + tokens por

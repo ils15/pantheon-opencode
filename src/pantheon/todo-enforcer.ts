@@ -49,6 +49,7 @@
 
 import type { BackgroundJobBoard } from './background-job-board.ts'
 import { createPantheonLogger } from './logger.ts'
+import { buildChildrenPath, safeSessionPath } from './session-guard.ts'
 
 // Silence-by-default TUI policy (pantheon-hooks L42-58): the default warn
 // fallback logs to .pantheon/logs/hooks.log; console echo is opt-in via
@@ -233,8 +234,13 @@ export class TodoEnforcer {
    */
   async listPendingTodos(sessionID: string): Promise<TodoLike[]> {
     if (!this.options.enabled) return []
+    const path = safeSessionPath(sessionID)
+    if (!path) {
+      this.warn(`todo list skipped: invalid sessionID "${sessionID}"`)
+      return []
+    }
     try {
-      const todos = await this.client.session.todo({ path: { id: sessionID } })
+      const todos = await this.client.session.todo(path)
       return todos.filter((todo) => todo.status !== 'completed' && todo.status !== 'cancelled')
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err)
@@ -280,7 +286,12 @@ export class TodoEnforcer {
     // still waiting on it, so skip.
     if ((await this.activeChildren(sessionID, now)) > 0) return
 
-    const todos = await this.client.session.todo({ path: { id: sessionID } })
+    const path = safeSessionPath(sessionID)
+    if (!path) {
+      this.warn(`todo check skipped: invalid sessionID "${sessionID}"`)
+      return
+    }
+    const todos = await this.client.session.todo(path)
     const incomplete = todos.filter(
       (todo) => todo.status !== 'completed' && todo.status !== 'cancelled',
     ).length
@@ -328,8 +339,13 @@ export class TodoEnforcer {
     // (throwing) injection still applies the cooldown — no hot retry loop.
     this.lastInjectionAt.set(sessionID, now)
     const inherited = await this.inheritAgentOrModel(sessionID)
+    const promptPath = safeSessionPath(sessionID)
+    if (!promptPath) {
+      this.warn(`todo injection skipped: invalid sessionID "${sessionID}"`)
+      return
+    }
     await this.client.session.promptAsync({
-      path: { id: sessionID },
+      path: promptPath.path,
       body: {
         ...(inherited.agent !== undefined ? { agent: inherited.agent } : {}),
         ...(inherited.model !== undefined ? { model: inherited.model } : {}),
@@ -368,8 +384,13 @@ export class TodoEnforcer {
    * version-sensitive runtimes.
    */
   private async activeChildren(sessionID: string, now: number): Promise<number> {
+    const path = safeSessionPath(sessionID)
+    if (!path) {
+      this.warn(`children check skipped: invalid sessionID "${sessionID}"`)
+      return 0
+    }
     try {
-      const children = await this.client.session.children({ path: { id: sessionID } })
+      const children = await this.client.session.children(path)
       return children.filter((child) => this.isChildActive(child, now)).length
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err)
@@ -398,7 +419,12 @@ export class TodoEnforcer {
    * SDK then applies the session default.
    */
   private async inheritAgentOrModel(sessionID: string): Promise<InheritedContext> {
-    const messages = await this.client.session.messages({ path: { id: sessionID } })
+    const path = safeSessionPath(sessionID)
+    if (!path) {
+      this.warn(`inherit skipped: invalid sessionID "${sessionID}"`)
+      return {}
+    }
+    const messages = await this.client.session.messages(path)
     for (const msg of [...messages].reverse()) {
       const info = msg.info
       if (info === undefined || info.role !== 'assistant') continue
