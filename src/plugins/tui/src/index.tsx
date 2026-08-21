@@ -1274,6 +1274,7 @@ export function mergeChildDelegationSources(
   })
 
   for (const liveEntry of live) {
+    if (liveEntry.alias === null && liveEntry.taskID === null && Date.now() - liveEntry.startedAt > 30_000) continue
     const incoming = toDelegationEntry(liveEntry)
     const index =
       (incoming.taskID !== undefined ? byTask.get(incoming.taskID) : undefined) ??
@@ -2219,6 +2220,7 @@ function View(props: {
         }
         const withStatus = children.map((c) => ({ ...c, status: resolveStatus(c.id) }))
         const childEntries = childrenToDelegationEntries(withStatus, md, now())
+        for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 30_000) props.liveStore.map.delete(k)
         // The event channel is optimistic: it renders a job even while the
         // child session/report is still being created. Filter by parent so a
         // different focused session never leaks rows into this sidebar.
