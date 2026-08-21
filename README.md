@@ -4,7 +4,7 @@
 <p align="center">
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.3.4-blue" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
-  <a href="src/agents/README.md"><img src="https://img.shields.io/badge/agents-14-purple" alt="Agents"></a>
+  <a href="docs/agents/README.md"><img src="https://img.shields.io/badge/agents-14-purple" alt="Agents"></a>
   <a href="src/skills/README.md"><img src="https://img.shields.io/badge/skills-21-orange" alt="Skills"></a>
   <a href="commands/"><img src="https://img.shields.io/badge/commands-11-red" alt="Commands"></a>
   <a href="https://github.com/ils15/pantheon/actions"><img src="https://img.shields.io/github/actions/workflow/status/ils15/pantheon/ci.yml?branch=main&label=CI" alt="CI"></a>
@@ -22,7 +22,7 @@ Supports **OpenCode** — multi-agent orchestration for your editor.
 
 | Resource | Link |
 |----------|------|
-| 📖 **Agent Reference** | [src/agents/README.md](src/agents/README.md) — all 14 agents |
+| 📖 **Agent Reference** | [docs/agents/README.md](docs/agents/README.md) — all 14 agents |
 | 📖 **Skills Reference** | [src/skills/README.md](src/skills/README.md) — all 21 skills |
 | 🚀 **Installation Guide** | [docs/INSTALLATION.md](docs/INSTALLATION.md) |
 | 🔌 **MCP Server Guide** | [docs/mcp-recommendations.md](docs/mcp-recommendations.md) — recommended MCP servers for each project type |
@@ -324,7 +324,7 @@ child model's provider before dispatching (single source of truth:
 enforces at startup). If an **auto-resolved** model (`options.agentModels` or
 the active preset) points to a provider that requires an API key
 (`apiKeyEnv`) and the env var is unset, the delegate falls back to
-`opencode/deepseek-v4-flash-free` (validated the same way). If the fallback is
+`opencode-go/deepseek-v4-flash` (validated the same way). If the fallback is
 also unusable, the tool returns a clear error **text** (never throws) naming
 the missing env var — and registers **no job** on the board. An **explicit**
 `model` passed by the caller is always respected (warned, not overridden).
@@ -518,7 +518,7 @@ Domain Specialist
   └── Gaia — remote sensing: LULC analysis, scientific literature
 ```
 
-> See [src/agents/README.md](src/agents/README.md) for the complete reference — each agent's
+> See [docs/agents/README.md](docs/agents/README.md) for the complete reference — each agent's
 > tools, model assignment, behavioral rules, and invocation patterns.
 
 ### Architecture Diagram
@@ -1097,7 +1097,7 @@ Pantheon draws from the broader multi-agent landscape while diverging in key way
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md) | Installation guide |
 | [docs/platforms/opencode.md](docs/platforms/opencode.md) | OpenCode setup guide |
-| [src/agents/README.md](src/agents/README.md) | Agent directory |
+| [docs/agents/README.md](docs/agents/README.md) | Agent directory |
 | [src/skills/README.md](src/skills/README.md) | Skill directory |
 | [docs/mcp-tools.md](docs/mcp-tools.md) | Canonical MCP tool registry |
 | [docs/mcp-user-guide.md](docs/mcp-user-guide.md) | Adding custom MCP servers |

@@ -15,6 +15,7 @@ import {
   createEnforcementGuard,
   readOnlyRegistry,
   SessionHierarchyRegistry,
+  zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
 import { handleDelegationEvent } from './pantheon/delegation-notify.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
@@ -23,6 +24,7 @@ import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
 import { createPantheonLogger } from './pantheon/logger.ts'
+import { safeSessionPath } from './pantheon/session-guard.ts'
 import { pantheonPluginOnce } from './pantheon/plugin-once.ts'
 import { applyActivePresetToConfig, loadRoutingAgentModels } from './pantheon/presets.mjs'
 import {
@@ -193,15 +195,25 @@ function adaptDelegationClient(client: PluginInput['client']): DelegationClient 
         return { id: result.data.id }
       },
       promptAsync: async (input) => {
+        const path = safeSessionPath(input.path.id)
+        if (!path) {
+          log.warn(`[Pantheon Plugin] promptAsync skipped: invalid sessionID "${input.path.id}"`)
+          throw new Error(`invalid sessionID: ${input.path.id}`)
+        }
         const result = await client.session.promptAsync({
-          path: input.path,
+          path: path.path,
           body: { agent: input.body.agent, parts: input.body.parts },
         })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
         return result.data
       },
       messages: async (input) => {
-        const result = await client.session.messages({ path: input.path })
+        const path = safeSessionPath(input.path.id)
+        if (!path) {
+          log.warn(`[Pantheon Plugin] messages skipped: invalid sessionID "${input.path.id}"`)
+          return []
+        }
+        const result = await client.session.messages({ path: path.path })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
         return result.data
       },
@@ -219,22 +231,42 @@ function adaptTodoEnforcerClient(client: PluginInput['client']): TodoEnforcerCli
   return {
     session: {
       todo: async (input) => {
-        const result = await client.session.todo({ path: input.path })
+        const path = safeSessionPath(input.path.id)
+        if (!path) {
+          log.warn(`[Pantheon Plugin] todo skipped: invalid sessionID "${input.path.id}"`)
+          return []
+        }
+        const result = await client.session.todo({ path: path.path })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
         return result.data
       },
       messages: async (input) => {
-        const result = await client.session.messages({ path: input.path })
+        const path = safeSessionPath(input.path.id)
+        if (!path) {
+          log.warn(`[Pantheon Plugin] messages skipped: invalid sessionID "${input.path.id}"`)
+          return []
+        }
+        const result = await client.session.messages({ path: path.path })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
         return result.data
       },
       children: async (input) => {
-        const result = await client.session.children({ path: input.path })
+        const path = safeSessionPath(input.path.id)
+        if (!path) {
+          log.warn(`[Pantheon Plugin] children skipped: invalid sessionID "${input.path.id}"`)
+          return []
+        }
+        const result = await client.session.children({ path: path.path })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
         return result.data
       },
       promptAsync: async (input) => {
-        const result = await client.session.promptAsync({ path: input.path, body: input.body })
+        const path = safeSessionPath(input.path.id)
+        if (!path) {
+          log.warn(`[Pantheon Plugin] promptAsync skipped: invalid sessionID "${input.path.id}"`)
+          throw new Error(`invalid sessionID: ${input.path.id}`)
+        }
+        const result = await client.session.promptAsync({ path: path.path, body: input.body })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
         return result.data
       },
@@ -484,11 +516,13 @@ const plugin: Plugin = async (input: PluginInput) => {
     // Phase 4: deny mutating tools in read-only delegated sessions. Additive
     // key — does not touch Phase 3's tools/event/onTerminal/chat.message.
     'tool.execute.before': async (input, output) => {
-      // Chain: the read-only enforcement guard runs first (denies mutating
-      // tools in read-only sessions), then release-134 Phase 3 rewrites the
-      // first post-compaction `todowrite` with the captured todo snapshot.
-      // Both are no-ops for non-matching sessions/tools; the preserver is
-      // fail-open (only its intentional restore denial throws).
+      // Chain: Zeus read guard runs first (denies read/glob/grep of source
+      // code when the active agent is Zeus — delegate to @apollo), then the
+      // read-only enforcement guard (denies mutating tools in read-only
+      // sessions), then release-134 Phase 3 rewrites the first
+      // post-compaction `todowrite` with the captured todo snapshot. All are
+      // no-ops for non-matching sessions/tools.
+      zeusReadGuard(input.tool, output?.args, sessionAgents.get(input.sessionID))
       await enforcementGuard(input, output)
       await todoPreserver.beforeTodoWrite(input, output)
     },

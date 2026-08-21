@@ -63,6 +63,24 @@ import {
   Show,
 } from 'solid-js'
 
+// ─── Double-load guard (mirrors src/pantheon/plugin-once.ts) ───────────────
+// Opencode merges global + project plugin paths, so this module can load twice
+// in one process. The second factory invocation becomes a no-op.
+const __tuiPluginOnceKey = '__pantheonPluginsLoaded'
+function pantheonPluginOnce(key: string): boolean {
+  try {
+    const g = globalThis as unknown as Record<string, unknown>
+    if (g[__tuiPluginOnceKey] === undefined) g[__tuiPluginOnceKey] = new Set<string>()
+    const set = g[__tuiPluginOnceKey]
+    if (!(set instanceof Set)) return false
+    if ((set as Set<string>).has(key)) return true
+    ;(set as Set<string>).add(key)
+    return false
+  } catch {
+    return false
+  }
+}
+
 /* ─── Constants ─────────────────────────────────────────── */
 
 /** How often the sidebar re-reads .pantheon/active-preset.json so `set-tier`
@@ -1256,6 +1274,7 @@ export function mergeChildDelegationSources(
   })
 
   for (const liveEntry of live) {
+    if (liveEntry.alias === null && liveEntry.taskID === null && Date.now() - liveEntry.startedAt > 30_000) continue
     const incoming = toDelegationEntry(liveEntry)
     const index =
       (incoming.taskID !== undefined ? byTask.get(incoming.taskID) : undefined) ??
@@ -2201,6 +2220,7 @@ function View(props: {
         }
         const withStatus = children.map((c) => ({ ...c, status: resolveStatus(c.id) }))
         const childEntries = childrenToDelegationEntries(withStatus, md, now())
+        for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 30_000) props.liveStore.map.delete(k)
         // The event channel is optimistic: it renders a job even while the
         // child session/report is still being created. Filter by parent so a
         // different focused session never leaks rows into this sidebar.
@@ -2397,6 +2417,7 @@ function View(props: {
 /* ─── Plugin Registration ────────────────────────────────── */
 
 const tui: TuiPlugin = (api, _options, _meta) => {
+  if (pantheonPluginOnce('pantheon:tui')) return
   // Do not await project file/process probes here. OpenCode waits for the TUI
   // factory before it finishes startup, and a Windows host opening a WSL
   // project can leave those probes pending while the project bridge comes up.

@@ -33,7 +33,7 @@ export const PLATFORM_DIR = join(ROOT, 'platform')
 export function getAgentNames() {
   if (!existsSync(AGENTS_DIR)) return []
   return readdirSync(AGENTS_DIR)
-    .filter((f) => f.endsWith('.agent.md') || f.endsWith('.md'))
+    .filter((f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md')
     .map((f) => f.replace(/\.(agent\.)?md$/, ''))
     .sort()
 }
@@ -277,9 +277,11 @@ export function copyFiles(srcDir, dstDir, dryRun, renameMap = null, clean = fals
   // Build set of expected destination filenames (after rename)
   const dstNames = new Set()
   for (const entry of entries) {
+    if (entry.toLowerCase() === 'readme.md') continue
     const srcFile = join(srcDir, entry)
     if (!existsSync(srcFile)) continue
     const dstName = renameMap ? (renameMap(entry) ?? entry) : entry
+    if (dstName.toLowerCase() === 'readme.md') continue
     dstNames.add(dstName)
 
     const dstFile = join(dstDir, dstName)

@@ -402,6 +402,7 @@ function providerDefKeyConfigured(provider, env) {
  * @returns {string|undefined} missing env var name, or undefined when usable
  */
 export function missingProviderKeyEnv(providerID, { env = process.env, routingPath } = {}) {
+  if (providerID === 'opencode-go') return undefined
   const defs = loadPresetDefs(routingPath)
   for (const def of Object.values(defs)) {
     const provider = def?.providers?.[providerID]

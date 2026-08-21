@@ -558,7 +558,9 @@ export async function installOpenCode(
     const agentsDir = join(ROOT, 'src', 'agents')
     if (!existsSync(agentsDir)) return {}
     const sources = {}
-    const files = readdirSync(agentsDir).filter((f) => f.endsWith('.agent.md') || f.endsWith('.md'))
+    const files = readdirSync(agentsDir).filter(
+      (f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md',
+    )
     for (const f of files) {
       const name = f.replace(/\.(agent\.)?md$/, '')
       sources[name] = `${agentPrefix}/${name}.md`
@@ -570,7 +572,9 @@ export async function installOpenCode(
     const agentsDir = join(ROOT, 'src', 'agents')
     if (!existsSync(agentsDir)) return {}
     const config = {}
-    const files = readdirSync(agentsDir).filter((f) => f.endsWith('.agent.md') || f.endsWith('.md'))
+    const files = readdirSync(agentsDir).filter(
+      (f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md',
+    )
     for (const f of files) {
       const name = f.replace(/\.(agent\.)?md$/, '')
       const content = readFileSync(join(agentsDir, f), 'utf8')

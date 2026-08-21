@@ -365,15 +365,18 @@ export interface ChildSessionModelRef {
 }
 
 /**
- * Known-good fallback model (P1, 2026-08-11 — release 1.3.4): when an
+ * Known-good fallback model (P1, 2026-08-11 — release 1.3.4, updated
+ * 2026-08-21 for sandbox without PANTHEON_OPENCODE_API_KEY): when an
  * AUTO-RESOLVED model (routing.yml agent entry / active preset) points at a
  * provider whose API key is not configured, the child is dispatched on the
- * native `opencode` provider instead — verified to work in the field without
- * an external provider key. Validated with the same providerKeyConfigured
- * gate as the resolved model; an explicit caller-supplied `model` always wins
- * over this fallback.
+ * `opencode-go` provider instead — `opencode-go/deepseek-v4-flash`
+ * via https://opencode.ai/zen/go/v1 works without an external API key
+ * (Go subscription / opencode auth, sandbox default). Validated with the
+ * same providerKeyConfigured gate as the resolved model, with an
+ * opencode-go exception for the sandbox; an explicit caller-supplied
+ * `model` always wins over this fallback.
  */
-const FALLBACK_MODEL = 'opencode/deepseek-v4-flash-free'
+const FALLBACK_MODEL = 'opencode-go/deepseek-v4-flash'
 
 /**
  * Split a `provider/model` model ID (e.g. `opencode/deepseek-v4-flash-free`)
@@ -484,7 +487,7 @@ function resolveUsableChildModel(
 
   // Auto-resolved (agentModels / preset) → try the known-good fallback.
   const fallback = splitModelRef(FALLBACK_MODEL)
-  if (fallback !== undefined && missingProviderKeyEnv(fallback.providerID, { env }) === undefined) {
+  if (fallback !== undefined && (fallback.providerID === 'opencode-go' || missingProviderKeyEnv(fallback.providerID, { env }) === undefined)) {
     warn(
       `[pantheon-delegate] provider "${model.providerID}" requires API key ${missingVar} ` +
         `(unset) — falling back to ${FALLBACK_MODEL}`,
@@ -653,7 +656,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       // preset) is used when its provider key is configured; an explicit
       // caller model is always respected (warned); an auto-resolved model
       // whose provider key is missing falls back to the known-good
-      // opencode/deepseek-v4-flash-free; if nothing usable remains the
+      // opencode-go/deepseek-v4-flash; if nothing usable remains the
       // failure is returned as TEXT below — no session, no board job.
       const resolved = resolveUsableChildModel(options, args.agent, args.model)
       if (resolved.error !== undefined) {

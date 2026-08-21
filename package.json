@@ -51,6 +51,7 @@
     "skills-lock.json",
     "scripts/*.sh",
     "src/agents/*.md",
+    "!src/agents/README.md",
     "bin/*.mjs",
     "AGENTS.md",
     "opencode.json",

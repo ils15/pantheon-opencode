@@ -49,6 +49,20 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, onCl
 *   (the old ContextBar was removed) and we deliberately do NOT hack the
 *   native footer. Track upstream: opencode statusline config.
 */
+const __tuiPluginOnceKey = "__pantheonPluginsLoaded";
+function pantheonPluginOnce(key) {
+	try {
+		const g = globalThis;
+		if (g[__tuiPluginOnceKey] === void 0) g[__tuiPluginOnceKey] = /* @__PURE__ */ new Set();
+		const set = g[__tuiPluginOnceKey];
+		if (!(set instanceof Set)) return false;
+		if (set.has(key)) return true;
+		set.add(key);
+		return false;
+	} catch {
+		return false;
+	}
+}
 /** How often the sidebar re-reads .pantheon/active-preset.json so `set-tier`
 *  changes made while opencode is open show up within ~30s. */
 const PRESET_REFRESH_MS = 3e4;
@@ -933,6 +947,7 @@ function mergeChildDelegationSources(children, live) {
 		bySessionAlias.set(key(entry.sessionID, entry.alias), index);
 	});
 	for (const liveEntry of live) {
+		if (liveEntry.alias === null && liveEntry.taskID === null && Date.now() - liveEntry.startedAt > 3e4) continue;
 		const incoming = toDelegationEntry(liveEntry);
 		const index = (incoming.taskID !== void 0 ? byTask.get(incoming.taskID) : void 0) ?? (incoming.alias !== "" ? bySessionAlias.get(key(incoming.sessionID, incoming.alias)) : void 0);
 		if (index === void 0) {
@@ -1530,6 +1545,7 @@ function View(props) {
 					...c,
 					status: resolveStatus(c.id)
 				})), md, now());
+				for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 3e4) props.liveStore.map.delete(k);
 				const liveEntries = [...props.liveStore.map.values()].filter((entry) => entry.sessionID === sessionID);
 				setChildDelegations(mergeChildDelegationSources(childEntries, liveEntries));
 				panelLog.info(`panel: children=${children.length} md=${md.length} events=${eventRefreshCount}`);
@@ -1768,6 +1784,7 @@ function View(props) {
 	})();
 }
 const tui = (api, _options, _meta) => {
+	if (pantheonPluginOnce("pantheon:tui")) return;
 	const [version, setVersion] = createSignal(null);
 	detectVersion(api).then((detected) => setVersion(detected)).catch(() => setVersion(null));
 	setupUsageBar(api);
