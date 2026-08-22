@@ -1554,7 +1554,7 @@ async function main() {
         assert.equal(job?.timedOut, false)
 
         // Messages were pulled from the child session
-        assert.deepEqual(client.messagesCalls, ['ses_child_1'])
+        assert.deepEqual(client.messagesCalls, ['ses_child_1', 'ses_child_1'])
 
         // md file written atomically under .pantheon/delegations/<root>/<alias>.md
         const mdPath = join(tmp, ROOT, 'her-1.md')

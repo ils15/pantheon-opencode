@@ -25,7 +25,14 @@ export type TimeoutSubType = 'timeout-with-partial' | 'timeout-empty' | 'timeout
 
 /** Structured delegation result replacing raw-text returns. */
 export interface DelegationResult {
-  status: 'success' | 'empty' | 'budget-exhausted' | 'timeout' | 'error'
+  status:
+    | 'success'
+    | 'empty'
+    | 'budget-exhausted'
+    | 'timeout'
+    | 'error'
+    | 'startup_failed'
+    | 'bootstrap_unknown'
   content: string
   retryCount: number
   /** When status is 'empty', which empty mode was detected. */
@@ -277,6 +284,16 @@ export function formatDelegationResult(result: DelegationResult): string {
     case 'error':
       parts.push('[ERROR]')
       parts.push(result.content)
+      break
+    case 'startup_failed':
+      parts.push('[STARTUP FAILED]')
+      parts.push(result.content)
+      parts.push(result.recommendation ?? 'Retry once or inspect the child session before dispatching again.')
+      break
+    case 'bootstrap_unknown':
+      parts.push('[BOOTSTRAP UNKNOWN]')
+      parts.push(result.content)
+      parts.push(result.recommendation ?? 'The host did not expose enough session state to verify startup.')
       break
   }
 

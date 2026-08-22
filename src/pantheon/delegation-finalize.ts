@@ -51,7 +51,9 @@ export interface DelegationClientSession {
       parts: Array<{ type: 'text'; text: string }>
     }
   }): Promise<unknown>
-  messages(input: { path: { id: string } }): Promise<Array<DelegationMessageBundle>>
+  messages?(input: { path: { id: string } }): Promise<Array<DelegationMessageBundle>>
+  /** Optional session metadata endpoint (older hosts do not expose it). */
+  get?(input: { path: { id: string } }): Promise<unknown>
 }
 
 /** The client surface used by the delegation core. */
@@ -134,6 +136,13 @@ export interface DelegationOptions {
    * to the canonical 14-agent roster.
    */
   agentNames?: readonly string[]
+  /** Bounded post-prompt bootstrap watchdog window. */
+  bootstrapTimeoutMs?: number
+  /** Poll interval used by the bootstrap watchdog. */
+  bootstrapPollIntervalMs?: number
+  /** Injectable clock/sleeper for deterministic watchdog tests. */
+  now?: () => number
+  sleep?: (ms: number) => Promise<void>
 }
 
 /** Dependencies threaded to the finalize path. */
@@ -161,6 +170,7 @@ export const DELEGATION_DEFAULTS = {
 
 /** Concatenate every non-empty text part across the child's messages. */
 async function pullOutput(client: DelegationClient, childSessionID: string): Promise<string> {
+  if (typeof client.session.messages !== 'function') return '(child session messages API unavailable)'
   try {
     const bundles = await client.session.messages({ path: { id: childSessionID } })
     const lines: string[] = []
