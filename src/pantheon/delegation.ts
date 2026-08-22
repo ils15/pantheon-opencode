@@ -49,6 +49,11 @@ import {
   readOnlyRegistry,
 } from './delegation-enforce.ts'
 import {
+  classifyStuckAgent,
+  formatDelegationResult,
+  type DelegationResult,
+} from './delegation-classifier.ts'
+import {
   DELEGATION_DEFAULTS,
   type DelegationClient,
   type DelegationDeps,
