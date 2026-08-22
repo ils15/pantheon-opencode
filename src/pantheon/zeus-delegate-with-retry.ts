@@ -39,8 +39,7 @@
 
 import type { BackgroundJobBoard } from './background-job-board.ts'
 import type { DelegationClient } from './delegation-finalize.ts'
-import { readDelegationReport } from './delegation-finalize.ts'
-import { DELEGATION_DEFAULTS } from './delegation-finalize.ts'
+import { DELEGATION_DEFAULTS, readDelegationReport } from './delegation-finalize.ts'
 import {
   createDispatchGuard,
   type DispatchClassification,
@@ -49,6 +48,11 @@ import {
   type DispatchResultLike,
 } from './dispatch-guard.ts'
 import { createPantheonLogger } from './logger.ts'
+import {
+  type ProviderCooldownTracker,
+  type RetryPolicy,
+  RetryPolicyEngine,
+} from './retry-policy.ts'
 import { safeSessionPath } from './session-guard.ts'
 
 const log = createPantheonLogger({ module: 'pantheon-zeus-retry' })
@@ -74,6 +78,12 @@ export interface ZeusDelegateWithRetryOptions {
   readTimeoutMs?: number
   /** Retry on empty results. Default: true */
   retryOnEmpty?: boolean
+  /** R1: per-error-type retry policy (routing.yml `retry_policy`). */
+  retryPolicy?: RetryPolicy
+  /** R1: provider cooldown tracker (routing.yml `cooldown`). */
+  cooldown?: ProviderCooldownTracker
+  /** R1: provider name for cooldown tracking (default "default"). */
+  provider?: string
   /** Injectable logger. Default: file log (PANTHEON_HOOKS_LOG gate). */
   logger?: { warn: (message: string) => void; info?: (message: string) => void }
   /** Output dir for delegation reports. Default: DELEGATION_DEFAULTS.outputDir */
@@ -143,20 +153,76 @@ export interface ZeusRetryHelper {
   }>
 }
 
-export function createZeusRetryHelper(
-  options?: DispatchGuardOptions,
-): ZeusRetryHelper {
+export interface ZeusRetryHelperOptions extends DispatchGuardOptions {
+  /**
+   * R1: per-error-type retry policy. When provided, error-type retries with
+   * exponential backoff apply (auth → 0, rate_limit → N, ...); when absent
+   * the legacy hard-cap-1 empty-result retry applies.
+   */
+  retryPolicy?: RetryPolicy
+  /** R1: provider cooldown tracker (shared across helpers for global cooldown). */
+  cooldown?: ProviderCooldownTracker
+  /** R1: provider name for cooldown tracking (default "default"). */
+  provider?: string
+  /** R1: injectable sleep for tests (default: setTimeout promise). */
+  sleep?: (ms: number) => Promise<void>
+}
+
+export function createZeusRetryHelper(options?: ZeusRetryHelperOptions): ZeusRetryHelper {
   const guard = createDispatchGuard(options)
+  const engine =
+    options?.retryPolicy !== undefined
+      ? new RetryPolicyEngine(options.retryPolicy, options.cooldown)
+      : undefined
+  const provider = options?.provider ?? 'default'
+  const sleep =
+    options?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   return {
     guard,
     async executeWithRetry(first, redispatch) {
-      const out = await guard.maybeRetry(first, redispatch)
-      const escalate = out.classification !== 'content'
-      return {
-        result: out.result,
-        classification: out.classification,
-        retried: out.retried,
-        escalate,
+      if (engine === undefined) {
+        // Legacy path (unchanged): hard cap 1 on empty results.
+        const out = await guard.maybeRetry(first, redispatch)
+        const escalate = out.classification !== 'content'
+        return {
+          result: out.result,
+          classification: out.classification,
+          retried: out.retried,
+          escalate,
+        }
+      }
+      // R1 path: classify the failure, apply the per-error-type policy with
+      // exponential backoff, and track provider cooldown. A content result
+      // records success (resets the provider's failure counter); an
+      // exhausted budget records failure (feeds the cooldown tracker).
+      let result = first
+      let attemptsUsed = 0
+      let retried = false
+      let classification = guard.classifyResult(result)
+      let lastError: unknown =
+        result.error ??
+        (classification === 'content' ? undefined : new Error('empty dispatch result'))
+      for (;;) {
+        if (classification === 'content') {
+          engine.recordSuccess(provider)
+          return { result, classification, retried, escalate: false }
+        }
+        lastError = result.error ?? lastError
+        const decision = engine.decide(provider, lastError, attemptsUsed)
+        if (!decision.shouldRetry) {
+          engine.recordFailure(provider, lastError)
+          return { result, classification, retried, escalate: true }
+        }
+        retried = true
+        attemptsUsed += 1
+        await sleep(decision.delayMs)
+        try {
+          result = await redispatch()
+          lastError = undefined
+        } catch (err: unknown) {
+          lastError = err
+        }
+        classification = guard.classifyResult(result)
       }
     },
   }
@@ -193,6 +259,9 @@ export async function zeusDelegateWithRetry(
   const retryHelper = createZeusRetryHelper({
     retryOnEmpty: opts.retryOnEmpty ?? true,
     logger,
+    ...(opts.retryPolicy !== undefined ? { retryPolicy: opts.retryPolicy } : {}),
+    ...(opts.cooldown !== undefined ? { cooldown: opts.cooldown } : {}),
+    ...(opts.provider !== undefined ? { provider: opts.provider } : {}),
   })
 
   // One delegate+read attempt. Factored so maybeRetry can invoke a second

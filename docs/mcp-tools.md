@@ -40,30 +40,22 @@ read_mcp_resource(server="pantheon-resources", uri="pantheon://routing")
 
 ### pantheon-memory (persistent storage)
 
-Vector memory with sqlite-vec + fastembed. 14 tools for storing, searching, linking, compressing, and managing memories across sessions.
+Vector memory with sqlite-vec + fastembed. 6 tools for storing, searching, recalling, forgetting, listing, and inspecting memories across namespaces.
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
-| `memory_recall` | `(context: str, n_results?: 3)` | Auto-retrieve relevant memories for prompt injection | ALL agents — called at session start |
-| `memory_store` | `(content, category?, agent?, session_id?, importance?: 0.5, links?)` | Persist a fact, decision, or pattern | Implementers: hermes, aphrodite, demeter, prometheus, hephaestus, nyx, mnemosyne, zeus |
-| `memory_search` | `(query: str, n_results?: 5, category_filter?)` | Vector similarity search with freshness decay + importance boost | apollo, themis, mnemosyne |
-| `memory_delete` | `(entry_id: str)` | Permanently delete an entry | mnemosyne only |
-| `memory_update` | `(entry_id, content?, category?, importance?)` | Update an existing entry's content/metadata | mnemosyne only |
-| `memory_export` | `(session_id?, filename?)` | Export memories as formatted markdown | mnemosyne only |
-| `memory_link` | `(from_id, to_id, relation?: "references")` | Create bidirectional relationship between entries | mnemosyne, hephaestus |
-| `memory_traverse` | `(entry_id, max_depth?: 1)` | Walk knowledge graph from entry following links | mnemosyne only |
-| `memory_compress` | `(session_id, max_entries?: 50, compression_ratio?: 0.5)` | Compress oldest entries into summaries (DCP-style) | mnemosyne only |
-| `memory_consolidate` | `(session_id?)` | Merge duplicate/similar entries via cosine similarity | mnemosyne only |
-| `memory_verify` | `(entry_id)` | Validate entry exists and check freshness | mnemosyne only |
-| `memory_sessions` | `(format?: "json")` | List all unique session IDs with counts and timestamps | mnemosyne, nyx |
-| `memory_expand` | `(entry_id)` | Restore a compressed entry back to detailed form | mnemosyne only |
-| `memory_cleanup` | `(session_prefix?: "test-")` | Delete test/old sessions (prefix min 3 chars) | mnemosyne only |
+| `memory_store` | `(value, namespace?: "default", key?, metadata?: "{}")` | Store a memory entry with automatic embedding generation | Implementers: hermes, aphrodite, demeter, prometheus, hephaestus, nyx, mnemosyne, zeus |
+| `memory_search` | `(query, namespace?, top_k?: 5, decay_days?)` | Hybrid vector + FTS5 keyword search via RRF; optional freshness decay via `decay_days` (default off) | apollo, themis, mnemosyne |
+| `memory_recall` | `(key, namespace?: "default")` | Exact recall of an entry by key within a namespace | ALL agents — session continuity |
+| `memory_forget` | `(id?, key?, namespace?: "default")` | Delete an entry by ID or key (vector + FTS cleaned via cascade/triggers) | mnemosyne only |
+| `memory_list` | `(namespace?, prefix?, limit?: 50)` | List entries chronologically with namespace and key-prefix filters | apollo, zeus — discovery |
+| `memory_stats` | `()` | Database statistics: totals, namespaces, FTS/vector counts, disk usage | nyx, zeus — maintenance |
 
 **Call pattern:**
 ```
-memory_recall(context="implementing JWT auth in FastAPI")
-memory_store(content="Decided to use refresh token rotation", category="decision", importance=0.9)
-memory_search(query="existing auth patterns", n_results=5)
+memory_store(value="Decided to use refresh token rotation", key="decision-42")
+memory_search(query="existing auth patterns", top_k=5)
+memory_recall(key="decision-42")
 ```
 
 ---

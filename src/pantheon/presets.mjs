@@ -211,6 +211,140 @@ export function loadPresetDefs(routingPath) {
 }
 
 /**
+ * Load and parse the full routing.yml document (fail-open helper for the
+ * R1/R4/O5 config loaders below).
+ *
+ * @param {string} [routingPath] defaults to src/routing.yml
+ * @returns {object|null} parsed routing.yml, or null when unreadable
+ */
+function loadRoutingYaml(routingPath) {
+  const path = routingPath ?? fileURLToPath(new URL('../routing.yml', import.meta.url))
+  const raw = readFileSync(path, 'utf8')
+  const routing = yaml.load(raw)
+  return routing && typeof routing === 'object' ? routing : null
+}
+
+const RETRY_ERROR_TYPES = new Set(['auth', 'rate_limit', 'timeout', 'other'])
+
+/**
+ * Load the R1 per-error-type retry policy from routing.yml (`retry_policy:`).
+ * Fail-open: missing/unparseable config yields null (the caller falls back
+ * to DEFAULT_RETRY_POLICY) and warns via the optional logger.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.routingPath]
+ * @param {{warn?: Function}} [opts.logger]
+ * @returns {Record<string, number>|null} error-type → max retries
+ */
+export function loadRoutingRetryPolicy({ routingPath, logger = console } = {}) {
+  try {
+    const routing = loadRoutingYaml(routingPath)
+    const policy = routing?.retry_policy
+    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return null
+    const out = {}
+    for (const [type, max] of Object.entries(policy)) {
+      if (RETRY_ERROR_TYPES.has(type) && Number.isSafeInteger(max) && max >= 0) {
+        out[type] = max
+      }
+    }
+    return Object.keys(out).length > 0 ? out : null
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    logger.warn?.(`presets: routing.yml retry_policy unavailable (${reason})`)
+    return null
+  }
+}
+
+/**
+ * Load the R1 provider cooldown config from routing.yml (`cooldown:`).
+ * Fail-open: missing/unparseable config yields null (caller falls back to
+ * DEFAULT_COOLDOWN).
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.routingPath]
+ * @param {{warn?: Function}} [opts.logger]
+ * @returns {{allowed_fails: number, cooldown_time_seconds: number}|null}
+ */
+export function loadRoutingCooldown({ routingPath, logger = console } = {}) {
+  try {
+    const routing = loadRoutingYaml(routingPath)
+    const cooldown = routing?.cooldown
+    if (!cooldown || typeof cooldown !== 'object' || Array.isArray(cooldown)) return null
+    const allowedFails = cooldown.allowed_fails
+    const cooldownTimeSeconds = cooldown.cooldown_time_seconds
+    if (
+      !Number.isSafeInteger(allowedFails) ||
+      allowedFails < 1 ||
+      !Number.isSafeInteger(cooldownTimeSeconds) ||
+      cooldownTimeSeconds < 1
+    ) {
+      return null
+    }
+    return { allowed_fails: allowedFails, cooldown_time_seconds: cooldownTimeSeconds }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    logger.warn?.(`presets: routing.yml cooldown unavailable (${reason})`)
+    return null
+  }
+}
+
+/**
+ * Load the R4 per-agent step caps from routing.yml
+ * (`agents.<name>.max_steps`). Fail-open: missing config yields {}.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.routingPath]
+ * @param {{warn?: Function}} [opts.logger]
+ * @returns {Record<string, number>} lowercase agent → max_steps
+ */
+export function loadRoutingMaxSteps({ routingPath, logger = console } = {}) {
+  try {
+    const routing = loadRoutingYaml(routingPath)
+    const agents = routing?.agents
+    if (!agents || typeof agents !== 'object') return {}
+    const out = {}
+    for (const [agent, spec] of Object.entries(agents)) {
+      const maxSteps = spec && typeof spec === 'object' ? spec.max_steps : undefined
+      if (Number.isSafeInteger(maxSteps) && maxSteps > 0) {
+        out[agent.toLowerCase()] = maxSteps
+      }
+    }
+    return out
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    logger.warn?.(`presets: routing.yml max_steps unavailable (${reason})`)
+    return {}
+  }
+}
+
+/**
+ * Load the O5 permission.task glob rules from routing.yml
+ * (`permission.task:`). Fail-open: missing config yields null (caller keeps
+ * the existing runtime matrix, everything allowed).
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.routingPath]
+ * @param {{warn?: Function}} [opts.logger]
+ * @returns {Record<string, 'allow'|'deny'>|null} glob pattern → action
+ */
+export function loadRoutingPermissionTask({ routingPath, logger = console } = {}) {
+  try {
+    const routing = loadRoutingYaml(routingPath)
+    const task = routing?.permission?.task
+    if (!task || typeof task !== 'object' || Array.isArray(task)) return null
+    const out = {}
+    for (const [pattern, action] of Object.entries(task)) {
+      if (action === 'allow' || action === 'deny') out[pattern] = action
+    }
+    return Object.keys(out).length > 0 ? out : null
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    logger.warn?.(`presets: routing.yml permission.task unavailable (${reason})`)
+    return null
+  }
+}
+
+/**
  * Load the DEFAULT agent → model mapping from routing.yml for the delegation
  * toolset (Fase 6 — wiring agentModels).
  *

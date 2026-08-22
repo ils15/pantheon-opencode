@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-MODULE_PATH = "scripts.code_mode_server"
+MODULE_PATH = "src.mcp.code_mode_server"
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / ".pantheon" / "code-mode"
 

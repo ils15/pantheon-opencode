@@ -1,11 +1,11 @@
 # Pantheon Memory System Guide
 
 Pantheon's memory system provides persistent, multi-strategy memory for AI
-agents using ChromaDB (vector database) + sentence-transformers (local
-embeddings). All 14 tools are accessible via the `pantheon-memory` MCP server.
+agents using sqlite-vec (vector extension) + fastembed (local ONNX
+embeddings). Six tools are accessible via the `pantheon-memory` MCP server.
 
 **Server script:** `scripts/memory_mcp_server.py`
-**Storage:** `~/.pantheon/memory/chroma.sqlite3`
+**Storage:** `~/.pantheon/memory/memory.db`
 
 ---
 
@@ -25,18 +25,20 @@ Agent tool call → MCP server → ChromaDB PersistentClient
 
 ### Scoring Strategy
 
-Each memory retrieval uses **fusion scoring** that combines three signals:
+Each memory retrieval uses **Reciprocal Rank Fusion (RRF)** that combines two
+signals:
 
 | Signal | Weight | Description |
 |--------|--------|-------------|
-| **Dense vector similarity** | Primary | ChromaDB's built-in cosine similarity between query and stored embeddings |
-| **Freshness decay** | Boost | 30-day exponential half-life. Newer entries score higher |
-| **Importance boost** | Boost | User-set `importance` (0.0–1.0). Higher = more weight |
+| **Dense vector similarity** | Primary | sqlite-vec cosine similarity between query and stored embeddings |
+| **Keyword (FTS5 BM25)** | Primary | Full-text keyword search, fused with vector via RRF |
+| **Freshness decay** | Opt-in | `decay_days` param on `memory_search` (default off). `freshness = 2^(-days_since_created / decay_days)` |
 
-**Freshness decay formula:** `score = cosine_sim × freshness × (1 + importance)`
-
-Where `freshness = 2^(-days_since_store / 30)` — after 30 days, an entry's
-freshness contribution halves.
+**Freshness decay formula:** `fused_rrf_score × freshness`, where
+`freshness = 2^(-days_since_created / decay_days)`. Decay is **off by
+default** (backward compatible) — pass `decay_days` to `memory_search` to
+enable it. With `decay_days=30`, an entry's freshness contribution halves
+every 30 days.
 
 ### Memory Metadata
 

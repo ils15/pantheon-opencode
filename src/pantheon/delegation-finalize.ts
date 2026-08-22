@@ -20,6 +20,8 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-board.ts'
+import type { PermissionTaskConfig } from './permission-globs.ts'
+import type { StepCapTracker } from './step-cap.ts'
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -109,6 +111,25 @@ export interface DelegationOptions {
   presetEnv?: Record<string, string | undefined>
   /** Warning sink for the no-model fallback (defaults to console). */
   logger?: { warn?: (msg: string) => void }
+  /**
+   * R4: per-agent step-cap tracker (routing.yml `agents.<name>.max_steps`).
+   * When an agent reaches max_steps the delegation is forced to
+   * summarize-and-stop: skipped with a capped summary when already at the
+   * cap, or the prompt is appended with a stop instruction when the cap is
+   * hit by this dispatch.
+   */
+  stepCapTracker?: StepCapTracker
+  /**
+   * O5: permission.task glob rules controlling which subagents may be
+   * invoked. Denied agents are removed from the delegate tool description
+   * entirely (not just blocked at call time).
+   */
+  permissionTask?: PermissionTaskConfig
+  /**
+   * O5: candidate agent names for the delegate tool description. Defaults
+   * to the canonical 14-agent roster.
+   */
+  agentNames?: readonly string[]
 }
 
 /** Dependencies threaded to the finalize path. */

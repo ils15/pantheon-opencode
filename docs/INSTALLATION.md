@@ -143,7 +143,7 @@ Pantheon includes a TUI sidebar plugin (reduced sidebar with a real-time
 Delegations panel) showing:
 
 ```
-Pantheon v1.3.4
+Pantheon v1.3.6-beta
 ⎇ main
 ⚡ Preset: go-deepseek (file)      ← or "Preset: default"
 ────────────────────────────

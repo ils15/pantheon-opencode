@@ -12,7 +12,7 @@ permission:
   task:
     "*": deny
 temperature: 0.2
-steps: 40
+steps: 60
 skills:
   - tdd-with-agents
   - incremental-implementation

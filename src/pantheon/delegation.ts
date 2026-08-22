@@ -54,7 +54,9 @@ import {
   readDelegationReport,
 } from './delegation-finalize.ts'
 import { createPantheonLogger } from './logger.ts'
+import { buildAgentListDescription } from './permission-globs.ts'
 import { missingProviderKeyEnv, resolveActivePreset } from './presets.mjs'
+import { buildStopInstruction, cappedSummary, DEFAULT_MAX_STEPS } from './step-cap.ts'
 
 export type {
   DelegationClient,
@@ -177,6 +179,24 @@ const listArgs = {} satisfies z.ZodRawShape
 
 // ─── State labels ──────────────────────────────────────────────────────
 
+/** Canonical 14-agent roster (O5 tool-description default). */
+export const CANONICAL_AGENTS: readonly string[] = [
+  'zeus',
+  'athena',
+  'apollo',
+  'hermes',
+  'aphrodite',
+  'demeter',
+  'themis',
+  'prometheus',
+  'hephaestus',
+  'nyx',
+  'gaia',
+  'iris',
+  'mnemosyne',
+  'talos',
+]
+
 function stateLabel(state: BackgroundJobRecord['state']): string {
   switch (state) {
     case 'running':
@@ -194,6 +214,21 @@ function stateLabel(state: BackgroundJobRecord['state']): string {
 
 /** Normalize the SDK-provided caller agent without inventing an identity. */
 const normalizeToolAgent = normalizeDelegationAgent
+
+/**
+ * O5: the delegate tool description. When permission.task rules are
+ * configured, denied agents are REMOVED from the description entirely (not
+ * just blocked at call time) — the caller never sees them as invocable.
+ */
+function buildDelegateDescription(options: DelegationOptions): string {
+  const base =
+    'Dispatch a background agent as a child session and register it on the job board. ' +
+    'Returns the readable alias (e.g. "apo-1"); read the result with ' +
+    'pantheon_delegation_read. Only root sessions may delegate.'
+  if (options.permissionTask === undefined) return base
+  const roster = options.agentNames ?? CANONICAL_AGENTS
+  return `${base} Allowed subagents: ${buildAgentListDescription(options.permissionTask, roster)}.`
+}
 
 // ─── Agent activity sampling ────────────────────────────────────────────
 //
@@ -487,7 +522,11 @@ function resolveUsableChildModel(
 
   // Auto-resolved (agentModels / preset) → try the known-good fallback.
   const fallback = splitModelRef(FALLBACK_MODEL)
-  if (fallback !== undefined && (fallback.providerID === 'opencode-go' || missingProviderKeyEnv(fallback.providerID, { env }) === undefined)) {
+  if (
+    fallback !== undefined &&
+    (fallback.providerID === 'opencode-go' ||
+      missingProviderKeyEnv(fallback.providerID, { env }) === undefined)
+  ) {
     warn(
       `[pantheon-delegate] provider "${model.providerID}" requires API key ${missingVar} ` +
         `(unset) — falling back to ${FALLBACK_MODEL}`,
@@ -582,10 +621,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
   }
 
   const pantheon_delegate: DelegationTool<typeof delegateArgs> = {
-    description:
-      'Dispatch a background agent as a child session and register it on the job board. ' +
-      'Returns the readable alias (e.g. "apo-1"); read the result with ' +
-      'pantheon_delegation_read. Only root sessions may delegate.',
+    description: buildDelegateDescription(options),
     args: delegateArgs,
     execute: async (args, ctx) => {
       if (!isRootSession(ctx.sessionID)) {
@@ -600,13 +636,34 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         )
       }
 
+      // R4: per-agent step caps. An agent already at max_steps is forced to
+      // summarize-and-stop — the delegation is skipped with a capped summary
+      // (no session, no board job, no budget consumed). Otherwise record the
+      // step; when THIS step hits the cap, append the stop instruction to
+      // the prompt so the agent summarizes and stops instead of continuing.
+      let effectivePrompt = args.prompt
+      const stepCap = options.stepCapTracker
+      if (stepCap !== undefined) {
+        const maxSteps = stepCap.maxStepsFor(args.agent)
+        if (stepCap.isCapped(args.agent)) {
+          return cappedSummary(args.agent, maxSteps ?? DEFAULT_MAX_STEPS)
+        }
+        const rec = stepCap.recordStep(args.agent)
+        if (rec.capped && rec.maxSteps !== undefined) {
+          effectivePrompt = `${args.prompt}${buildStopInstruction(args.agent, rec.maxSteps)}`
+        }
+      }
+
       // Fase B3: only the two read-only exceptions are budgeted. The official
       // SDK provides the current agent on ToolContext. If a structural/older
       // host omits it, do NOT infer identity from prompt, target, or process
       // state: the budget is explicitly skipped and the delegation continues.
       const parentAgent = normalizeToolAgent(ctx.agent)
       const targetAgent = args.agent.toLowerCase()
-      if (options.enforceRuntimeMatrix === true && !isDelegationAllowed(parentAgent, targetAgent)) {
+      if (
+        options.enforceRuntimeMatrix === true &&
+        !isDelegationAllowed(parentAgent, targetAgent, options.permissionTask)
+      ) {
         const reason =
           parentAgent === undefined
             ? 'ToolContext.agent is unavailable'
@@ -670,7 +727,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         created = await client.session.create({
           body: {
             parentID: ctx.sessionID,
-            title: args.description ?? args.prompt.slice(0, 80),
+            title: args.description ?? effectivePrompt.slice(0, 80),
             ...(childModel !== undefined ? { model: childModel } : {}),
           },
         })
@@ -702,8 +759,8 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         taskID: childSessionID,
         parentSessionID: ctx.sessionID,
         agent: args.agent,
-        description: args.description ?? args.prompt,
-        objective: args.prompt,
+        description: args.description ?? effectivePrompt,
+        objective: effectivePrompt,
       })
 
       // Timeout manager: cleared on finalize, unref'd so the timer never
@@ -724,7 +781,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       void client.session
         .promptAsync({
           path: { id: childSessionID },
-          body: { agent: args.agent, parts: [{ type: 'text', text: args.prompt }] },
+          body: { agent: args.agent, parts: [{ type: 'text', text: effectivePrompt }] },
         })
         .catch((err: unknown) => log.error('[pantheon-delegate] promptAsync failed:', err))
 

@@ -25,6 +25,7 @@ import json
 import os
 import sqlite3
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -186,10 +187,55 @@ def _parse_metadata(row: dict[str, Any]) -> dict[str, Any]:
 _RRF_CONST = 60
 
 
+def _parse_iso_ts(value: str) -> float:
+    """Parse an ISO 8601 UTC timestamp to epoch seconds.
+
+    Handles both aware ISO strings (``2026-08-21T10:00:00Z`` /
+    ``...+00:00``) and legacy naive rows from ``DEFAULT (datetime('now'))``
+    (``YYYY-MM-DD HH:MM:SS``, space separator, no TZ). Naive timestamps are
+    assumed UTC — SQLite's ``datetime('now')`` is UTC, so interpreting them
+    in the local timezone would skew freshness decay.
+    """
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def _fetch_created_at_map(
+    db: sqlite3.Connection, ids: list[int]
+) -> dict[int, str]:
+    """Fetch created_at timestamps for the given memory IDs.
+
+    Args:
+        db: Active SQLite connection.
+        ids: Memory row IDs to look up.
+
+    Returns:
+        Mapping of id -> created_at ISO string. Empty on failure.
+    """
+    created_at_map: dict[int, str] = {}
+    if not ids:
+        return created_at_map
+    try:
+        placeholders = ",".join("?" * len(ids))
+        rows = db.execute(
+            f"SELECT id, created_at FROM memories "
+            f"WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        created_at_map = {r["id"]: r["created_at"] for r in rows}
+    except Exception:
+        created_at_map = {}
+    return created_at_map
+
+
 def _rrf_fuse(
     vec_ids: list[int],
     fts_ids: list[int],
     top_k: int,
+    created_at_map: dict[int, str] | None = None,
+    decay_days: float | None = None,
 ) -> list[tuple[int, float]]:
     """Reciprocal Rank Fusion of vector and FTS5 result ID lists.
 
@@ -197,6 +243,12 @@ def _rrf_fuse(
         vec_ids: Ordered list of IDs from vector search (most relevant first).
         fts_ids: Ordered list of IDs from FTS5 search (most relevant first).
         top_k: Maximum number of fused results to return.
+        created_at_map: Optional mapping of doc_id -> created_at ISO string,
+            used to compute freshness when ``decay_days`` is set.
+        decay_days: Optional freshness half-life in days. When set, each fused
+            score is multiplied by ``freshness = 2^(-days/decay_days)`` so
+            older entries rank lower. Default None = no decay (backward
+            compatible).
 
     Returns:
         List of (id, rrf_score) tuples sorted by descending score.
@@ -206,6 +258,19 @@ def _rrf_fuse(
         scores[doc_id] = 1.0 / (_RRF_CONST + rank)
     for rank, doc_id in enumerate(fts_ids, start=1):
         scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (_RRF_CONST + rank)
+
+    if decay_days is not None and decay_days > 0 and created_at_map:
+        now = time.time()
+        for doc_id in list(scores):
+            created = created_at_map.get(doc_id)
+            if not created:
+                continue
+            try:
+                days = max(0.0, (now - _parse_iso_ts(created)) / 86400.0)
+            except (ValueError, TypeError):
+                continue
+            scores[doc_id] *= 2.0 ** (-days / decay_days)
+
     ranked = sorted(scores.items(), key=lambda x: (-x[1], x[0]))
     return ranked[:top_k]
 
@@ -282,12 +347,15 @@ def memory_store(
 @mcp.tool(
     description="Hybrid semantic search across memories. "
     "Combines vector cosine similarity and FTS5 BM25 keyword search "
-    "via Reciprocal Rank Fusion (RRF).",
+    "via Reciprocal Rank Fusion (RRF). Optional decay_days applies a "
+    "freshness half-life (2^(-days/decay_days)) so recent entries rank "
+    "higher; default None keeps the original rank-only behavior.",
 )
 def memory_search(  # noqa: PLR0912
     query: str,
     namespace: str | None = None,
     top_k: int = 5,
+    decay_days: float | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid search: vector + keyword fused via RRF.
 
@@ -299,6 +367,9 @@ def memory_search(  # noqa: PLR0912
         query: Search query text.
         namespace: Optional namespace filter.
         top_k: Maximum results (default 5, max 50).
+        decay_days: Optional freshness half-life in days. When set, fused
+            scores are multiplied by ``2^(-days_since_created/decay_days)``
+            so older entries rank lower. Default None = no decay.
 
     Returns:
         List of memory entries with score and metadata.
@@ -364,8 +435,14 @@ def memory_search(  # noqa: PLR0912
     except Exception:
         fts_ids = []
 
-    # 4. RRF fusion
-    fused = _rrf_fuse(vec_ids, fts_ids, top_k)
+    # 4. RRF fusion (optionally freshness-decayed)
+    candidate_ids = list(dict.fromkeys([*vec_ids, *fts_ids]))
+    created_at_map = (
+        _fetch_created_at_map(db, candidate_ids)
+        if decay_days is not None and decay_days > 0
+        else {}
+    )
+    fused = _rrf_fuse(vec_ids, fts_ids, top_k, created_at_map, decay_days)
 
     if not fused:
         return []

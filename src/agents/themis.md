@@ -97,6 +97,10 @@ Verificacoes rapidas de estilo e sanidade:
 - [ ] Formatacao consistente (mesmo style guide)
 - [ ] Nomes de variaveis/funcoes descritivos
 - [ ] Comentarios TODO ou FIXME sem resolucao
+- [ ] Comment Checker: codigo gerado indistinguivel de humano
+      - Flag comentarios obvios/excessivos (ex: `// increment i`, `# set x to 5`)
+      - Flag codigo morto comentado (blocos inteiros desativados)
+      - Flag cabecalhos boilerplate (autor/data/licenca repetitivos)
 
 Tempo estimado: ~10% do esforco de review
 
