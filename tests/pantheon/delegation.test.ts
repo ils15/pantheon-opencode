@@ -67,7 +67,11 @@ interface FakeCreateInput {
 }
 interface FakePromptInput {
   path: { id: string }
-  body: { agent: string; parts: Array<{ type: string; text: string }> }
+  body: {
+    agent: string
+    model?: { id: string; providerID: string }
+    parts: Array<{ type: string; text: string }>
+  }
 }
 
 class FakeClient {
@@ -530,6 +534,44 @@ async function main() {
           id: 'deepseek-v4-flash-free',
           providerID: 'opencode',
         })
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(e) promptAsync forwards resolved model to child session',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-prompt-model-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            agentModels: { apollo: 'opencode/deepseek-v4-flash-free' },
+            presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
+          },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Do X', agent: 'apollo' }, makeCtx())
+
+        assert.equal(client.prompted.length, 1, 'promptAsync must be called exactly once')
+        const body = client.prompted[0]?.body as {
+          agent: string
+          model?: { id: string; providerID: string }
+          parts: Array<{ type: string; text: string }>
+        }
+        assert.deepEqual(
+          body.model,
+          { id: 'deepseek-v4-flash-free', providerID: 'opencode' },
+          'promptAsync must receive the resolved model in body.model',
+        )
+        assert.equal(body.agent, 'apollo')
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }

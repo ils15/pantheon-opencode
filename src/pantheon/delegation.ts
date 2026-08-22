@@ -786,7 +786,11 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       void client.session
         .promptAsync({
           path: { id: childSessionID },
-          body: { agent: args.agent, parts: [{ type: 'text', text: effectivePrompt }] },
+          body: {
+            agent: args.agent,
+            ...(childModel !== undefined ? { model: childModel } : {}),
+            parts: [{ type: 'text', text: effectivePrompt }],
+          },
         })
         .catch((err: unknown) => log.error('[pantheon-delegate] promptAsync failed:', err))
 

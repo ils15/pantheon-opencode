@@ -219,7 +219,13 @@ function adaptDelegationClient(client: PluginInput['client']): DelegationClient 
         }
         const result = await client.session.promptAsync({
           path: path.path,
-          body: { agent: input.body.agent, parts: input.body.parts },
+          body: {
+            agent: input.body.agent,
+            ...(input.body.model !== undefined
+              ? { model: { providerID: input.body.model.providerID, modelID: input.body.model.id } }
+              : {}),
+            parts: input.body.parts,
+          },
         })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
         return result.data

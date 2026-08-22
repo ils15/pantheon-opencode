@@ -45,7 +45,11 @@ export interface DelegationClientSession {
   }): Promise<{ id: string }>
   promptAsync(input: {
     path: { id: string }
-    body: { agent: string; parts: Array<{ type: 'text'; text: string }> }
+    body: {
+      agent: string
+      model?: { id: string; providerID: string }
+      parts: Array<{ type: 'text'; text: string }>
+    }
   }): Promise<unknown>
   messages(input: { path: { id: string } }): Promise<Array<DelegationMessageBundle>>
 }
