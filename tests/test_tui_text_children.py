@@ -21,6 +21,14 @@ def test_tui_reactive_effect_is_imported_in_source_and_runtime_bundle() -> None:
     assert "createEffect" in runtime_import
 
 
+def test_tui_raw_dist_is_a_deterministic_copy_of_source() -> None:
+    """The OpenCode loader consumes the checked-in, self-contained TSX entry."""
+    source = PLUGIN_FILES[0].read_text()
+    raw_dist = PLUGIN_FILES[1].read_text()
+
+    assert raw_dist == source
+
+
 def test_tui_numeric_text_children_are_stringified() -> None:
     """OpenTUI text nodes reject numbers, so renderer-boundary values stay strings."""
     forbidden_children = (

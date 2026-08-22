@@ -7,10 +7,12 @@ import { join } from 'node:path'
 import {
   classifyAgentsMdFreshness,
   classifyPermissionTaskCheck,
+  collectMcpConfigs,
   deriveInstalledAgentFiles,
   findMissingPermissionTask,
   hasPermissionTask,
   isValidAgentFile,
+  resolveOpenCodeConfigDir,
   summaryMessage,
 } from '../scripts/doctor.mjs'
 
@@ -96,6 +98,42 @@ assert.equal(
 assert.equal(classifyPermissionTaskCheck('global', 1, 1), 'error')
 assert.equal(classifyPermissionTaskCheck('sandbox', 1, 1), 'error')
 assert.equal(classifyPermissionTaskCheck('lite', 1, 1), 'skip')
+
+// User config resolution must follow the same isolated HOME/XDG/PANTHEON_HOME
+// roots used by init/OpenCode, rather than the doctor's current working dir.
+const sandboxHome = mkdtempSync(join(tmpdir(), 'pantheon-doctor-home-'))
+try {
+  const sandboxConfigDir = join(sandboxHome, '.config', 'opencode')
+  mkdirSync(sandboxConfigDir, { recursive: true })
+  const sandboxConfig = join(sandboxConfigDir, 'opencode.json')
+  writeFileSync(sandboxConfig, JSON.stringify({ mcp: { 'pantheon-memory': { type: 'local' } } }))
+
+  assert.equal(
+    resolveOpenCodeConfigDir({ HOME: sandboxHome }),
+    sandboxConfigDir,
+    'sandbox HOME resolves to its OpenCode config root',
+  )
+  assert.ok(
+    collectMcpConfigs({ target: sandboxHome, env: { HOME: sandboxHome } }).some(
+      (cfg) => cfg.path === sandboxConfig,
+    ),
+    'doctor discovers MCPs from the effective sandbox user config',
+  )
+
+  const xdgConfigDir = join(sandboxHome, 'xdg')
+  assert.equal(
+    resolveOpenCodeConfigDir({ HOME: sandboxHome, XDG_CONFIG_HOME: xdgConfigDir }),
+    join(xdgConfigDir, 'opencode'),
+    'XDG_CONFIG_HOME overrides HOME/.config',
+  )
+  assert.equal(
+    resolveOpenCodeConfigDir({ HOME: sandboxHome, PANTHEON_HOME: sandboxConfigDir }),
+    sandboxConfigDir,
+    'PANTHEON_HOME takes precedence and is already the config root',
+  )
+} finally {
+  rmSync(sandboxHome, { recursive: true, force: true })
+}
 
 // B3 installer/doctor checks: installed agents are derived from config source
 // paths, never from a hardcoded home-directory layout.
