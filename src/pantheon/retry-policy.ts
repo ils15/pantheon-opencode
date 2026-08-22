@@ -92,8 +92,11 @@ interface CooldownEntry {
  */
 export class ProviderCooldownTracker {
   private readonly state = new Map<string, CooldownEntry>()
+  readonly config: CooldownConfig
 
-  constructor(private readonly config: CooldownConfig = DEFAULT_COOLDOWN) {}
+  constructor(config: CooldownConfig = DEFAULT_COOLDOWN) {
+    this.config = config
+  }
 
   /** Record one failure for a provider; trips cooldown at allowedFails. */
   recordFailure(provider: string): void {
@@ -159,12 +162,16 @@ export interface RetryDecision {
  */
 export class RetryPolicyEngine {
   private readonly cooldown: ProviderCooldownTracker
+  readonly policy: RetryPolicy
+  readonly backoffBaseMs: number
 
   constructor(
-    private readonly policy: RetryPolicy = DEFAULT_RETRY_POLICY,
+    policy: RetryPolicy = DEFAULT_RETRY_POLICY,
     cooldown?: ProviderCooldownTracker,
-    private readonly backoffBaseMs = 1000,
+    backoffBaseMs = 1000,
   ) {
+    this.policy = policy
+    this.backoffBaseMs = backoffBaseMs
     this.cooldown = cooldown ?? new ProviderCooldownTracker()
   }
 

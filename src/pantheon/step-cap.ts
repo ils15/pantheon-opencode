@@ -58,8 +58,11 @@ export function cappedSummary(agent: string, maxSteps: number): string {
  */
 export class StepCapTracker {
   private readonly steps = new Map<string, number>()
+  readonly maxStepsByAgent: Readonly<Record<string, number>>
 
-  constructor(private readonly maxStepsByAgent: Readonly<Record<string, number>> = {}) {}
+  constructor(maxStepsByAgent: Readonly<Record<string, number>> = {}) {
+    this.maxStepsByAgent = maxStepsByAgent
+  }
 
   /** The configured budget for an agent, or undefined when uncapped. */
   maxStepsFor(agent: string): number | undefined {
