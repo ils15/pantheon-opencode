@@ -1,3 +1,4 @@
+# Auto-generated: resolved symlink from ../src/mcp/mcp_persistence_server.py
 #!/usr/bin/env python3
 """Pantheon Persistence MCP Server.
 
