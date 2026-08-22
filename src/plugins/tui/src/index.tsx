@@ -1292,8 +1292,30 @@ export function mergeChildDelegationSources(
 
     const existing = result[index]
     if (existing === undefined) continue
-    const finalized = existing.source === 'md' && existing.state !== 'running'
-    if (finalized) continue
+    // Any terminal state is authoritative — a child session that went idle
+    // correctly derives 'completed' via childStatusToState before the MD
+    // report is written. The live tool-part channel stays 'running' until
+    // pantheon_delegation_read fires, so allowing it to overwrite a
+    // terminal state would flip completed → running (the bug this fixes).
+    //
+    // When the existing entry IS terminal, we still absorb live metadata
+    // (alias, agent, read) but preserve the terminal state.
+    if (existing.state !== 'running') {
+      let changed = false
+      if (liveEntry.alias !== null && existing.alias !== incoming.alias) {
+        existing.alias = incoming.alias
+        changed = true
+      }
+      if (incoming.agent !== 'agent' && existing.agent !== incoming.agent) {
+        existing.agent = incoming.agent
+        changed = true
+      }
+      if (incoming.read && !existing.read) {
+        existing.read = true
+        changed = true
+      }
+      continue
+    }
     result[index] = {
       ...existing,
       alias: liveEntry.alias !== null ? incoming.alias : existing.alias,
