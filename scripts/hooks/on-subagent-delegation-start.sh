@@ -24,10 +24,16 @@
 set -euo pipefail
 
 # Project-local by default; set XDG_STATE_HOME for system-wide logging
+# Anchor to PANTHEON_HOME or PANTHEON_PROJECT when available to avoid
+# CWD-dependent relative path ("logs/agent-sessions" wrote to cwd).
 if [ -n "${LOG_DIR:-}" ]; then
     LOG_DIR="$LOG_DIR"
 elif [ -n "${XDG_STATE_HOME:-}" ]; then
     LOG_DIR="$XDG_STATE_HOME/pantheon/hooks"
+elif [ -n "${PANTHEON_HOME:-}" ]; then
+    LOG_DIR="$PANTHEON_HOME/logs/agent-sessions"
+elif [ -n "${PANTHEON_PROJECT:-}" ]; then
+    LOG_DIR="$PANTHEON_PROJECT/logs/agent-sessions"
 else
     LOG_DIR="logs/agent-sessions"
 fi
@@ -133,20 +139,30 @@ echo "[DELEGATION] $AGENT_NAME started → $LOG_DIR/delegations.log" >&2
 
 # --- Dispatch-time validation: check target against routing.yml ---
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
-ROUTING_FILE="$REPO_ROOT/routing.yml"
-if [ -f "$ROUTING_FILE" ] && [ -n "$AGENT_NAME" ] && [ "$AGENT_NAME" != "unknown" ]; then
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." 2>/dev/null && pwd)"
+
+# Find routing.yml: try repo root first, then PANTHEON_HOME, then PANTHEON_PROJECT.
+# Silently skip if none found (deployed users may not have routing.yml locally).
+ROUTING_FILE=""
+if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/routing.yml" ]; then
+    ROUTING_FILE="$REPO_ROOT/routing.yml"
+elif [ -n "${PANTHEON_HOME:-}" ] && [ -f "$PANTHEON_HOME/routing.yml" ]; then
+    ROUTING_FILE="$PANTHEON_HOME/routing.yml"
+elif [ -n "${PANTHEON_PROJECT:-}" ] && [ -f "$PANTHEON_PROJECT/routing.yml" ]; then
+    ROUTING_FILE="$PANTHEON_PROJECT/routing.yml"
+fi
+
+if [ -n "$ROUTING_FILE" ] && [ -n "$AGENT_NAME" ] && [ "$AGENT_NAME" != "unknown" ]; then
     ESCAPED_AGENT_NAME=$(printf '%s\n' "$AGENT_NAME" | sed 's/[][(){}.^$*+?|\/\\-]/\\&/g')
     if grep -qE "^[[:space:]]*-[[:space:]]+target:[[:space:]]+$ESCAPED_AGENT_NAME[[:space:]]*$" "$ROUTING_FILE" 2>/dev/null; then
         echo "[VALIDATION] ✅ Target '$AGENT_NAME' found in routing.yml" >&2
     else
         echo "[VALIDATION] ⚠️ Target '$AGENT_NAME' NOT in routing.yml delegation rules" >&2
     fi
-elif [ -f "$ROUTING_FILE" ]; then
+elif [ -n "$ROUTING_FILE" ]; then
     echo "[VALIDATION] ⚠️ Could not identify the delegated agent (agent='$AGENT_NAME') — skipping routing.yml validation" >&2
-elif [ ! -f "$ROUTING_FILE" ]; then
-    echo "[VALIDATION] ⚠️ Could not read routing.yml for validation" >&2
 fi
+# else: no routing.yml found — silently skip (deployed users may not have it locally)
 
 # --- Cost estimation for delegation ---
 declare -A TIER_MAP

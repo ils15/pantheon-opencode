@@ -16,9 +16,12 @@ import sys, json
 d = json.load(sys.stdin)
 print(d.get('tool_name', ''))
 " 2>/dev/null || echo "")
+  # Normalize to lowercase — opencode sends lowercase (edit/write/bash),
+  # Claude Code protocol may send capitalized (Edit/Write/Bash).
+  TOOL_NAME_LOWER=$(echo "$TOOL_NAME" | tr '[:upper:]' '[:lower:]')
 
-  case "$TOOL_NAME" in
-    Edit|Write)
+  case "$TOOL_NAME_LOWER" in
+    edit|write)
       JSON_PATH=$(echo "$STDIN_JSON" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
@@ -28,7 +31,7 @@ print(d.get('tool_input', {}).get('file_path', ''))
         FILE_PATH="$JSON_PATH"
       fi
       ;;
-    Bash)
+    bash)
       COMMAND=$(echo "$STDIN_JSON" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
