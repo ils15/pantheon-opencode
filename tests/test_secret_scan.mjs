@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
-import { scanText, scanVersionableFiles, allowlistedFiles } from '../scripts/secret-scan.mjs'
+import { allowlistedFiles, scanText, scanVersionableFiles } from '../scripts/secret-scan.mjs'
 
 // Pattern names built from parts (never the real secret value).
 const bifrostHeader = ['x', '-bf-', 'vk'].join('')
@@ -30,7 +30,13 @@ assert.ok(scanText(`"${authorizationName}": "Bearer fixture-bearer-value"`, 'fix
 
 // Regression: opencode.json must contain 0 occurrences of the header/prefix (masked scan).
 const opencodeText = readFileSync('opencode.json', 'utf8')
-assert.ok(!opencodeText.includes(bifrostHeader), 'opencode.json must not contain the Bifrost header name')
-assert.ok(!opencodeText.includes(bifrostTokenPrefix), 'opencode.json must not contain the Bifrost token prefix')
+assert.ok(
+  !opencodeText.includes(bifrostHeader),
+  'opencode.json must not contain the Bifrost header name',
+)
+assert.ok(
+  !opencodeText.includes(bifrostTokenPrefix),
+  'opencode.json must not contain the Bifrost token prefix',
+)
 
 console.log('✅ versionable-file secret scan passed')

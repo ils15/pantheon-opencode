@@ -47,7 +47,10 @@ async function main() {
 counter += 1`
     const result = checkCommentDensity(source)
     assert.ok(result.flags.length > 0, 'should flag the trivial comment')
-    assert.ok(result.flags.some(f => f.includes('increment')), 'should mention increment')
+    assert.ok(
+      result.flags.some((f) => f.includes('increment')),
+      'should mention increment',
+    )
   })
 
   await test('flags trivial decrement comment', async () => {
@@ -55,7 +58,10 @@ counter += 1`
 retries -= 1`
     const result = checkCommentDensity(source)
     assert.ok(result.flags.length > 0, 'should flag the trivial comment')
-    assert.ok(result.flags.some(f => f.includes('decrement')), 'should mention decrement')
+    assert.ok(
+      result.flags.some((f) => f.includes('decrement')),
+      'should mention decrement',
+    )
   })
 
   await test('flags trivial set comment', async () => {
@@ -63,7 +69,10 @@ retries -= 1`
 timeout = 30`
     const result = checkCommentDensity(source)
     assert.ok(result.flags.length > 0, 'should flag the trivial comment')
-    assert.ok(result.flags.some(f => f.includes('set ')), 'should mention set')
+    assert.ok(
+      result.flags.some((f) => f.includes('set ')),
+      'should mention set',
+    )
   })
 
   await test('flags trivial loop over comment', async () => {
@@ -72,7 +81,10 @@ for item in items:
     process(item)`
     const result = checkCommentDensity(source)
     assert.ok(result.flags.length > 0, 'should flag the trivial comment')
-    assert.ok(result.flags.some(f => f.includes('loop over')), 'should mention loop over')
+    assert.ok(
+      result.flags.some((f) => f.includes('loop over')),
+      'should mention loop over',
+    )
   })
 
   await test('flags trivial initialize comment', async () => {
@@ -80,7 +92,10 @@ for item in items:
 conn = create_connection()`
     const result = checkCommentDensity(source)
     assert.ok(result.flags.length > 0, 'should flag the trivial comment')
-    assert.ok(result.flags.some(f => f.includes('initialize') || f.includes('init')), 'should mention initialize/init')
+    assert.ok(
+      result.flags.some((f) => f.includes('initialize') || f.includes('init')),
+      'should mention initialize/init',
+    )
   })
 
   await test('flags trivial init comment', async () => {
@@ -95,7 +110,10 @@ buf = bytearray()`
 return value`
     const result = checkCommentDensity(source)
     assert.ok(result.flags.length > 0, 'should flag the trivial comment')
-    assert.ok(result.flags.some(f => f.includes('return')), 'should mention return')
+    assert.ok(
+      result.flags.some((f) => f.includes('return')),
+      'should mention return',
+    )
   })
 
   await test('flags trivial yield comment', async () => {
@@ -103,7 +121,10 @@ return value`
 yield item`
     const result = checkCommentDensity(source)
     assert.ok(result.flags.length > 0, 'should flag the trivial comment')
-    assert.ok(result.flags.some(f => f.includes('yield')), 'should mention yield')
+    assert.ok(
+      result.flags.some((f) => f.includes('yield')),
+      'should mention yield',
+    )
   })
 
   await test('does NOT flag meaningful comments', async () => {
@@ -165,12 +186,12 @@ return timeout`
   // ─── Summary ───────────────────────────────────────────────────────
 
   console.log('\n' + '='.repeat(60))
-  const passed = results.filter(r => r.passed).length
-  const failed = results.filter(r => !r.passed).length
+  const passed = results.filter((r) => r.passed).length
+  const failed = results.filter((r) => !r.passed).length
   console.log(`Results: ${passed} passed, ${failed} failed, ${results.length} total`)
   if (failed > 0) {
     console.log('\nFailed tests:')
-    for (const r of results.filter(r => !r.passed)) {
+    for (const r of results.filter((r) => !r.passed)) {
       console.log(`  ✗ ${r.name}: ${r.error}`)
     }
     process.exit(1)
@@ -178,7 +199,7 @@ return timeout`
   console.log('All tests passed! ✅')
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error(err)
   process.exit(1)
 })

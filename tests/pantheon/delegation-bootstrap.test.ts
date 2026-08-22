@@ -13,7 +13,13 @@ type ProbeClient = {
   prompted: string[]
 }
 
-function client(options: { messages?: () => unknown[]; status?: string } = {}): ProbeClient {
+function client(
+  options: {
+    messages?: () => unknown[]
+    status?: string
+    prompt?: (id: string, signal?: AbortSignal) => Promise<unknown>
+  } = {},
+): ProbeClient {
   let count = 0
   const result: ProbeClient = {
     created: [],
@@ -27,6 +33,8 @@ function client(options: { messages?: () => unknown[]; status?: string } = {}): 
       },
       promptAsync: async (input) => {
         result.prompted.push(input.path.id)
+        if (options.prompt)
+          return options.prompt(input.path.id, (input as { signal?: AbortSignal }).signal)
         return undefined // upstream 204
       },
     },
@@ -44,36 +52,96 @@ async function run(): Promise<void> {
     const c = client({ messages: () => [{ info: { role: 'user' } }] })
     const board = new BackgroundJobBoard()
     const tools = createDelegationTools({ board, client: c as never, options: opts })
-    assert.match(await tools.pantheon_delegate.execute({ prompt: 'x', agent: 'apollo' }, { sessionID: root, agent: 'zeus' }), /apo-1/)
+    assert.match(
+      await tools.pantheon_delegate.execute(
+        { prompt: 'x', agent: 'apollo' },
+        { sessionID: root, agent: 'zeus' },
+      ),
+      /apo-1/,
+    )
   }
   {
     const c = client({ status: 'busy' })
     const board = new BackgroundJobBoard()
     const tools = createDelegationTools({ board, client: c as never, options: opts })
-    assert.match(await tools.pantheon_delegate.execute({ prompt: 'x', agent: 'apollo' }, { sessionID: root, agent: 'zeus' }), /apo-1/)
+    assert.match(
+      await tools.pantheon_delegate.execute(
+        { prompt: 'x', agent: 'apollo' },
+        { sessionID: root, agent: 'zeus' },
+      ),
+      /apo-1/,
+    )
   }
   {
     const c = client({ messages: () => [] })
     const board = new BackgroundJobBoard()
     const tools = createDelegationTools({ board, client: c as never, options: opts })
-    const result = await tools.pantheon_delegate.execute({ prompt: 'x', agent: 'apollo' }, { sessionID: root, agent: 'zeus' })
+    const result = await tools.pantheon_delegate.execute(
+      { prompt: 'x', agent: 'apollo' },
+      { sessionID: root, agent: 'zeus' },
+    )
     assert.match(result, /STARTUP FAILED|BOOTSTRAP UNKNOWN/)
-    assert.equal(c.created.length, 2, 'one retry creates one fresh child')
-    assert.equal(board.get('child_1')?.state, 'error')
-    assert.equal(board.get('child_2')?.state, 'error')
+    assert.equal(c.created.length, 1, 'accepted-but-empty must not create a duplicate prompt')
+    assert.equal(board.get('child_1')?.state, 'startup_failed')
     assert.equal(board.getRunningCount(), 0)
   }
   {
     const c = client()
     const board = new BackgroundJobBoard()
     const tools = createDelegationTools({ board, client: c as never, options: opts })
-    const result = await tools.pantheon_delegate.execute({ prompt: 'x', agent: 'apollo' }, { sessionID: root, agent: 'zeus' })
+    const result = await tools.pantheon_delegate.execute(
+      { prompt: 'x', agent: 'apollo' },
+      { sessionID: root, agent: 'zeus' },
+    )
     assert.match(result, /BOOTSTRAP UNKNOWN/)
     assert.equal(board.getRunningCount(), 0)
   }
+  {
+    let aborted = false
+    const c = client({
+      prompt: async (_id, signal) => {
+        signal?.addEventListener('abort', () => {
+          aborted = true
+        })
+        return new Promise<never>(() => {})
+      },
+    })
+    const board = new BackgroundJobBoard()
+    const tools = createDelegationTools({
+      board,
+      client: c as never,
+      options: { ...opts, bootstrapTimeoutMs: 5 },
+    })
+    const result = await tools.pantheon_delegate.execute(
+      { prompt: 'x', agent: 'apollo' },
+      { sessionID: root, agent: 'zeus' },
+    )
+    assert.match(result, /STARTUP FAILED/)
+    assert.equal(aborted, true, 'prompt timeout must abort the SDK request')
+    assert.equal(c.created.length, 1, 'timed out prompt must not be resent')
+    assert.equal(board.get('child_1')?.state, 'startup_failed')
+  }
+  {
+    const c = client({ prompt: async () => Promise.reject(new Error('not accepted')) })
+    const board = new BackgroundJobBoard()
+    const tools = createDelegationTools({
+      board,
+      client: c as never,
+      options: { ...opts, bootstrapTimeoutMs: 5 },
+    })
+    const result = await tools.pantheon_delegate.execute(
+      { prompt: 'x', agent: 'apollo' },
+      { sessionID: root, agent: 'zeus' },
+    )
+    assert.match(result, /STARTUP FAILED|BOOTSTRAP UNKNOWN/)
+    assert.equal(c.created.length, 2, 'an explicit prompt rejection is safe to retry once')
+    assert.equal(c.prompted.length, 2)
+  }
 }
 
-run().then(() => console.log('Results: 4 passed, 0 failed')).catch((error: unknown) => {
-  console.error(error)
-  process.exitCode = 1
-})
+run()
+  .then(() => console.log('Results: 6 passed, 0 failed'))
+  .catch((error: unknown) => {
+    console.error(error)
+    process.exitCode = 1
+  })

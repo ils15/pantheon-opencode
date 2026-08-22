@@ -22,7 +22,7 @@
  * No runtime dependencies (Node >= 18, stdlib only). Idempotent: running it
  * twice produces byte-identical output.
  */
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -189,7 +189,9 @@ function main() {
 
   writeFileSync(AGENTS_MD_PATH, content, 'utf8')
   const lines = content.split('\n').length
-  console.log(`✅ Generated AGENTS.md (${instructions.length} instruction sections, ${lines} lines)`)
+  console.log(
+    `✅ Generated AGENTS.md (${instructions.length} instruction sections, ${lines} lines)`,
+  )
 }
 
 main()

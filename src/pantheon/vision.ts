@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url'
 import type { Hooks, PluginInput } from '@opencode-ai/plugin'
 import type { FilePart, Part, TextPart, UserMessage } from '@opencode-ai/sdk'
 import type { ResolvedPreset } from './presets.mjs'
-import { CAPABILITY_TABLE, hasVision, resolveActivePreset, visionBrokenOnGateway } from './presets.mjs'
+import {
+  CAPABILITY_TABLE,
+  hasVision,
+  resolveActivePreset,
+  visionBrokenOnGateway,
+} from './presets.mjs'
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -136,10 +141,7 @@ export function providerIsTextOnly(providerID: string): boolean {
 }
 
 /** Return whether OpenCode's current model is known to accept image input. */
-export function modelAcceptsImages(
-  model: ModelInfo | undefined,
-  providerID?: string,
-): boolean {
+export function modelAcceptsImages(model: ModelInfo | undefined, providerID?: string): boolean {
   if (!model) {
     // Fail-closed for known text-only providers
     if (providerID && providerIsTextOnly(providerID)) return false

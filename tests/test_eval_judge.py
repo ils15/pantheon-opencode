@@ -77,14 +77,20 @@ def skill_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch):
-    for var in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "EVAL_JUDGE_MODEL"):
+    for var in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "EVAL_JUDGE_MODEL", "PANTHEON_ALLOW_EXTERNAL_LLM"):
         monkeypatch.delenv(var, raising=False)
 
 
-def test_no_api_key_exits_2(skill_dir: Path, capsys: pytest.CaptureFixture[str]):
-    """Without OPENAI_API_KEY the judge fails gracefully with exit code 2."""
+def test_no_opt_in_is_structured_skip_without_network(skill_dir: Path, capsys: pytest.CaptureFixture[str]):
+    """Without explicit opt-in, content is never sent and the result is non-error."""
     exit_code = MOD.main([str(skill_dir)])
-    assert exit_code == 2
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["skipped"] is True
+
+
+def test_opt_in_without_api_key_exits_2(skill_dir: Path, capsys: pytest.CaptureFixture[str]):
+    """Opt-in without credentials remains a clear configuration error."""
+    assert MOD.main([str(skill_dir), "--allow-external-llm"]) == 2
     assert "OPENAI_API_KEY" in capsys.readouterr().err
 
 
@@ -102,6 +108,7 @@ def test_successful_judgement_shape(
     monkeypatch.setattr(MOD.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("EVAL_JUDGE_MODEL", "judge-x")
+    monkeypatch.setenv("PANTHEON_ALLOW_EXTERNAL_LLM", "1")
 
     exit_code = MOD.main([str(skill_dir)])
     out = json.loads(capsys.readouterr().out)
@@ -136,11 +143,34 @@ def test_openai_base_url_override(
     monkeypatch.setattr(MOD.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:8000/v1/")
+    monkeypatch.setenv("PANTHEON_ALLOW_EXTERNAL_LLM", "1")
 
     exit_code = MOD.main([str(skill_dir)])
     assert exit_code == 0
     assert seen_urls == ["http://localhost:8000/v1/chat/completions"]
     assert json.loads(capsys.readouterr().out)["overall"] == 79.2
+
+
+def test_invalid_endpoint_is_rejected(
+    skill_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_BASE_URL", "file:///tmp/not-http")
+    assert MOD.main([str(skill_dir), "--allow-external-llm"]) == 2
+    assert "http or https" in capsys.readouterr().err
+
+
+def test_request_timeout_is_reported(
+    skill_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    def timeout_urlopen(request, timeout):  # noqa: ANN001
+        assert timeout == MOD.REQUEST_TIMEOUT
+        raise TimeoutError("slow endpoint")
+
+    monkeypatch.setattr(MOD.urllib.request, "urlopen", timeout_urlopen)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert MOD.main([str(skill_dir), "--allow-external-llm"]) == 2
+    assert "LLM request failed" in capsys.readouterr().err
 
 
 def test_fenced_json_accepted(skill_dir: Path, monkeypatch: pytest.MonkeyPatch):
@@ -152,6 +182,7 @@ def test_fenced_json_accepted(skill_dir: Path, monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(MOD.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PANTHEON_ALLOW_EXTERNAL_LLM", "1")
 
     assert MOD.main([str(skill_dir)]) == 0
 
@@ -165,6 +196,7 @@ def test_http_error_exits_2(skill_dir: Path, monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(MOD.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PANTHEON_ALLOW_EXTERNAL_LLM", "1")
 
     assert MOD.main([str(skill_dir)]) == 2
 
@@ -178,5 +210,6 @@ def test_out_of_range_score_exits_2(skill_dir: Path, monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(MOD.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PANTHEON_ALLOW_EXTERNAL_LLM", "1")
 
     assert MOD.main([str(skill_dir)]) == 2

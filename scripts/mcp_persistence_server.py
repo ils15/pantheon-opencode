@@ -1,4 +1,3 @@
-# Auto-generated: resolved symlink from ../src/mcp/mcp_persistence_server.py
 #!/usr/bin/env python3
 """Pantheon Persistence MCP Server.
 
@@ -518,7 +517,7 @@ def _opportunistic_auto_purge(conn: sqlite3.Connection, namespace: str, threshol
     conn.execute(
         "UPDATE kv_store SET deleted_at = datetime('now') "
         "WHERE namespace = ? AND expires_at IS NOT NULL "
-        "AND expires_at < datetime('now') AND deleted_at IS NULL",
+        "AND datetime(expires_at) < datetime('now') AND deleted_at IS NULL",
         (namespace,),
     )
     conn.commit()

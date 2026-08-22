@@ -15,10 +15,10 @@ import {
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const REQUIRED_NODE_MAJOR = 18;
+const REQUIRED_NODE_MAJOR = 18
 if (parseInt(process.versions.node.split('.')[0], 10) < REQUIRED_NODE_MAJOR) {
-  console.error(`❌ Node.js >= ${REQUIRED_NODE_MAJOR} required (current: ${process.versions.node})`);
-  process.exit(1);
+  console.error(`❌ Node.js >= ${REQUIRED_NODE_MAJOR} required (current: ${process.versions.node})`)
+  process.exit(1)
 }
 
 import yaml from 'js-yaml'
@@ -33,7 +33,9 @@ export const PLATFORM_DIR = join(ROOT, 'platform')
 export function getAgentNames() {
   if (!existsSync(AGENTS_DIR)) return []
   return readdirSync(AGENTS_DIR)
-    .filter((f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md')
+    .filter(
+      (f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md',
+    )
     .map((f) => f.replace(/\.(agent\.)?md$/, ''))
     .sort()
 }

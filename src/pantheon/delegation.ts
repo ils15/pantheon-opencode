@@ -39,15 +39,15 @@ import { z } from 'zod'
 
 import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-board.ts'
 import {
+  classifyStuckAgent,
+  type DelegationResult,
+  formatDelegationResult,
+} from './delegation-classifier.ts'
+import {
   isDelegationAllowed,
   normalizeDelegationAgent,
   readOnlyRegistry,
 } from './delegation-enforce.ts'
-import {
-  classifyStuckAgent,
-  formatDelegationResult,
-  type DelegationResult,
-} from './delegation-classifier.ts'
 import {
   DELEGATION_DEFAULTS,
   type DelegationClient,
@@ -98,6 +98,46 @@ type BootstrapOutcome =
   | { status: 'started'; elapsedMs: number; reason: string }
   | { status: 'startup_failed' | 'bootstrap_unknown'; elapsedMs: number; reason: string }
 
+type PromptOutcome =
+  | { status: 'accepted'; value: unknown }
+  | { status: 'rejected'; reason: string }
+  | { status: 'timeout'; reason: string }
+
+/**
+ * Bound the SDK request itself, not just the board watchdog.  The AbortSignal
+ * is passed to hosts that support it; the race also protects older hosts that
+ * ignore the signal and never settle their promise.
+ */
+async function promptWithTimeout(
+  client: DelegationClient,
+  input: Parameters<DelegationClient['session']['promptAsync']>[0],
+  timeoutMs: number,
+): Promise<PromptOutcome> {
+  const controller = new AbortController()
+  let timer: NodeJS.Timeout | undefined
+  const operation = client.session.promptAsync({ ...input, signal: controller.signal }).then(
+    (value) => ({ status: 'accepted' as const, value }),
+    (error: unknown) => ({
+      status: 'rejected' as const,
+      reason: error instanceof Error ? error.message : String(error),
+    }),
+  )
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<PromptOutcome>((resolve) => {
+        timer = setTimeout(() => {
+          controller.abort()
+          resolve({ status: 'timeout', reason: `promptAsync timed out after ${timeoutMs}ms` })
+        }, timeoutMs)
+        timer.unref()
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
 const RUNNING_SESSION_STATES = new Set(['busy', 'running', 'processing', 'retry', 'pending'])
 
 async function boundedProbe<T>(operation: Promise<T>, timeoutMs: number): Promise<T | undefined> {
@@ -139,7 +179,8 @@ async function bootstrapChild(
   options: DelegationOptions,
 ): Promise<BootstrapOutcome> {
   const now = options.now ?? Date.now
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   const timeoutMs = options.bootstrapTimeoutMs ?? BOOTSTRAP_TIMEOUT_MS
   const intervalMs = options.bootstrapPollIntervalMs ?? BOOTSTRAP_POLL_INTERVAL_MS
   const startedAt = now()
@@ -149,11 +190,16 @@ async function bootstrapChild(
 
   if (!hasMessagesAPI && !hasStatusAPI) {
     return acceptedRunning
-      ? { status: 'started', elapsedMs: now() - startedAt, reason: 'prompt accepted by legacy host' }
+      ? {
+          status: 'started',
+          elapsedMs: now() - startedAt,
+          reason: 'prompt accepted by legacy host',
+        }
       : {
           status: 'bootstrap_unknown',
           elapsedMs: now() - startedAt,
-          reason: 'host exposes neither session.messages nor session.get and prompt had no running evidence',
+          reason:
+            'host exposes neither session.messages nor session.get and prompt had no running evidence',
         }
   }
 
@@ -190,8 +236,18 @@ async function bootstrapChild(
         // Fail closed only after the bounded window; never create an unbounded poll.
       }
     }
-    if (durable) return { status: 'started', elapsedMs: now() - startedAt, reason: 'durable child message observed' }
-    if (running) return { status: 'started', elapsedMs: now() - startedAt, reason: 'child session reports running/processing' }
+    if (durable)
+      return {
+        status: 'started',
+        elapsedMs: now() - startedAt,
+        reason: 'durable child message observed',
+      }
+    if (running)
+      return {
+        status: 'started',
+        elapsedMs: now() - startedAt,
+        reason: 'child session reports running/processing',
+      }
     await sleep(Math.min(intervalMs, Math.max(0, timeoutMs - (now() - startedAt))))
   }
   return sawProbe
@@ -328,6 +384,10 @@ function stateLabel(state: BackgroundJobRecord['state']): string {
       return 'OK'
     case 'error':
       return 'ERR'
+    case 'startup_failed':
+      return 'STARTUP FAILED'
+    case 'startup_unknown':
+      return 'STARTUP UNKNOWN'
     case 'cancelled':
       return 'CANCELLED'
     case 'reconciled':
@@ -904,17 +964,32 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         ...(childModel !== undefined ? { model: childModel } : {}),
         parts: [{ type: 'text' as const, text: effectivePrompt }],
       }
-      let accepted: unknown
-      try {
-        accepted = await client.session.promptAsync({ path: { id: childSessionID }, body: promptBody })
-      } catch (err: unknown) {
-        const reason = err instanceof Error ? err.message : String(err)
-        await finalize(childSessionID, { state: 'error', error: `promptAsync failed: ${reason}` })
-        return `[ERROR] promptAsync failed for child session ${childSessionID}: ${reason}`
+      const promptOutcome = await promptWithTimeout(
+        client,
+        { path: { id: childSessionID }, body: promptBody },
+        options.promptTimeoutMs ?? options.bootstrapTimeoutMs ?? BOOTSTRAP_TIMEOUT_MS,
+      )
+      let bootstrap: BootstrapOutcome
+      let safeRetry = false
+      if (promptOutcome.status === 'rejected') {
+        // A synchronous rejection is the only safe automatic retry signal: the
+        // host explicitly told us that it did not accept the request.
+        bootstrap = {
+          status: 'startup_failed',
+          elapsedMs: 0,
+          reason: `promptAsync rejected: ${promptOutcome.reason}`,
+        }
+        safeRetry = true
+      } else if (promptOutcome.status === 'timeout') {
+        // A timeout is ambiguous: the server may have accepted the prompt even
+        // though the client never received its response. Never resend it.
+        bootstrap = { status: 'startup_failed', elapsedMs: 0, reason: promptOutcome.reason }
+      } else {
+        bootstrap = await bootstrapChild(client, childSessionID, promptOutcome.value, options)
       }
-
-      const bootstrap = await bootstrapChild(client, childSessionID, accepted, options)
-      log.info(`[pantheon-delegate] bootstrap child=${childSessionID} elapsed=${bootstrap.elapsedMs}ms reason=${bootstrap.reason}`)
+      log.info(
+        `[pantheon-delegate] bootstrap child=${childSessionID} elapsed=${bootstrap.elapsedMs}ms reason=${bootstrap.reason}`,
+      )
       if (bootstrap.status === 'started') {
         return (
           `Delegated to ${args.agent}: [${job.alias}] (task ${childSessionID}).\n` +
@@ -922,9 +997,28 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         )
       }
 
-      // A failed bootstrap is terminal for this child. Retry exactly once on
-      // a fresh session so a delayed original 204 cannot receive a duplicate.
-      await finalize(childSessionID, { state: 'error', error: `${bootstrap.status}: ${bootstrap.reason}` })
+      // Every startup diagnosis is terminal for this child. Only a prompt
+      // rejection (known not accepted) permits one fresh-session retry;
+      // accepted-empty, unavailable APIs, and request timeouts do not.
+      const boardStartupState =
+        bootstrap.status === 'bootstrap_unknown' ? 'startup_unknown' : 'startup_failed'
+      await finalize(childSessionID, {
+        state: boardStartupState,
+        error: `${bootstrap.status}: ${bootstrap.reason}`,
+      })
+      if (!safeRetry) {
+        const finalResult: DelegationResult = {
+          status: bootstrap.status,
+          content: `Child session ${childSessionID} did not start (${bootstrap.reason}).`,
+          retryCount: 0,
+          recommendation:
+            bootstrap.status === 'bootstrap_unknown'
+              ? 'Inspect the child session in the board/TUI and retry manually only after confirming the prompt was not accepted.'
+              : 'Inspect the child session/host promptAsync implementation; no automatic retry was attempted because acceptance was ambiguous.',
+        }
+        return formatDelegationResult(finalResult)
+      }
+
       let retry: { id: string }
       try {
         retry = await client.session.create({
@@ -954,20 +1048,32 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
           state: 'error',
           error: `Delegation [${retryJob.alias}] timed out after ${timeoutMs}ms without reaching a terminal state`,
           timedOut: true,
-        }).catch((err: unknown) => log.error('[pantheon-delegate] retry timeout finalize failed:', err))
+        }).catch((err: unknown) =>
+          log.error('[pantheon-delegate] retry timeout finalize failed:', err),
+        )
       }, timeoutMs)
       retryTimer.unref()
       timers.set(retryID, retryTimer)
-      let retryAccepted: unknown
-      try {
-        retryAccepted = await client.session.promptAsync({ path: { id: retryID }, body: promptBody })
-      } catch (err: unknown) {
-        const reason = err instanceof Error ? err.message : String(err)
-        await finalize(retryID, { state: 'error', error: `retry promptAsync failed: ${reason}` })
-        return `[STARTUP FAILED] retry promptAsync failed for child session ${retryID}: ${reason}`
+      const retryPrompt = await promptWithTimeout(
+        client,
+        { path: { id: retryID }, body: promptBody },
+        options.promptTimeoutMs ?? options.bootstrapTimeoutMs ?? BOOTSTRAP_TIMEOUT_MS,
+      )
+      let retryBootstrap: BootstrapOutcome
+      if (retryPrompt.status === 'rejected') {
+        retryBootstrap = {
+          status: 'startup_failed',
+          elapsedMs: 0,
+          reason: `retry promptAsync rejected: ${retryPrompt.reason}`,
+        }
+      } else if (retryPrompt.status === 'timeout') {
+        retryBootstrap = { status: 'startup_failed', elapsedMs: 0, reason: retryPrompt.reason }
+      } else {
+        retryBootstrap = await bootstrapChild(client, retryID, retryPrompt.value, options)
       }
-      const retryBootstrap = await bootstrapChild(client, retryID, retryAccepted, options)
-      log.info(`[pantheon-delegate] bootstrap retry child=${retryID} elapsed=${retryBootstrap.elapsedMs}ms reason=${retryBootstrap.reason}`)
+      log.info(
+        `[pantheon-delegate] bootstrap retry child=${retryID} elapsed=${retryBootstrap.elapsedMs}ms reason=${retryBootstrap.reason}`,
+      )
       if (retryBootstrap.status === 'started') {
         return (
           `Delegated to ${args.agent}: [${retryJob.alias}] (task ${retryID}); retry=1.\n` +
@@ -975,14 +1081,15 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         )
       }
       await finalize(retryID, {
-        state: 'error',
+        state: retryBootstrap.status === 'bootstrap_unknown' ? 'startup_unknown' : 'startup_failed',
         error: `startup retry exhausted: ${retryBootstrap.status}: ${retryBootstrap.reason}`,
       })
       const finalResult: DelegationResult = {
         status: retryBootstrap.status,
         content: `Child session ${retryID} did not start (${retryBootstrap.reason}).`,
         retryCount: 1,
-        recommendation: 'Inspect the child session/host promptAsync implementation; no further automatic retries will be attempted.',
+        recommendation:
+          'Inspect the child session/host promptAsync implementation; no further automatic retries will be attempted.',
       }
       return formatDelegationResult(finalResult)
     },

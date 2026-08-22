@@ -1,5 +1,10 @@
 /** Status/exit policy shared by installation validation and its tests. */
-export const VALIDATION_STATUS = Object.freeze({ PASS: 'PASS', WARN: 'WARN', ERROR: 'ERROR', SKIP: 'SKIP' })
+export const VALIDATION_STATUS = Object.freeze({
+  PASS: 'PASS',
+  WARN: 'WARN',
+  ERROR: 'ERROR',
+  SKIP: 'SKIP',
+})
 
 export function classifyDoctorExit(exitStatus, output = '') {
   if (exitStatus === 0) return VALIDATION_STATUS.PASS

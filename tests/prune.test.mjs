@@ -13,9 +13,9 @@
  */
 import { strict as assert } from 'node:assert'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const ROOT = join(import.meta.dirname ?? process.cwd(), '..')
 const PRUNE = join(ROOT, 'scripts', 'prune.mjs')
@@ -106,7 +106,10 @@ test('--apply removes ONLY stale backups; fresh backup, active config, venv, leg
     assert.ok(existsSync(join(cfg, 'opencode.json.bak')), 'fresh backup kept')
     assert.ok(existsSync(join(cfg, 'opencode.json')), 'active config untouched')
     assert.ok(existsSync(join(cfg, '.venv')), 'active venv untouched')
-    assert.ok(existsSync(join(cfg, 'pantheon-legacy')), 'legacy dir NOT removed without --remove-dirs')
+    assert.ok(
+      existsSync(join(cfg, 'pantheon-legacy')),
+      'legacy dir NOT removed without --remove-dirs',
+    )
     assert.match(r.stdout, /requires --apply --remove-dirs/)
   } finally {
     cleanup(root)

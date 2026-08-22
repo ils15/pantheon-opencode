@@ -1,4 +1,3 @@
-# Auto-generated: resolved symlink from ../src/mcp/mcp_resources_server.py
 #!/usr/bin/env python3
 """Pantheon MCP Resources Server.
 

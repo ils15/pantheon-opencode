@@ -129,9 +129,7 @@ export function classifyStuckAgent(report: string): StuckClassification {
   if (BUDGET_EXHAUSTED_RE.test(trimmed)) {
     const outputSection = extractOutputSection(trimmed)
     const partialResult =
-      outputSection !== undefined && !NO_OUTPUT_RE.test(outputSection)
-        ? outputSection
-        : undefined
+      outputSection !== undefined && !NO_OUTPUT_RE.test(outputSection) ? outputSection : undefined
 
     return {
       status: 'budget-exhausted',
@@ -171,7 +169,8 @@ function extractOutputSection(report: string): string | undefined {
  */
 export function classifyTimeout(input: TimeoutClassifyInput): DelegationResult {
   const { report, hasMessages, retryCount } = input
-  const hasPartial = (report !== undefined && report.trim() !== '' && !NO_OUTPUT_RE.test(report)) || hasMessages
+  const hasPartial =
+    (report !== undefined && report.trim() !== '' && !NO_OUTPUT_RE.test(report)) || hasMessages
 
   // Already retried → exhausted, no more retries
   if (retryCount >= 1) {
@@ -196,8 +195,7 @@ export function classifyTimeout(input: TimeoutClassifyInput): DelegationResult {
       subType: 'timeout-with-partial',
       partialResult: report ?? '',
       recommendation:
-        'Agent timed out but partial work exists. ' +
-        'Partial result is available above.',
+        'Agent timed out but partial work exists. ' + 'Partial result is available above.',
     }
   }
 
@@ -207,8 +205,7 @@ export function classifyTimeout(input: TimeoutClassifyInput): DelegationResult {
     content: report ?? '',
     retryCount,
     subType: 'timeout-empty',
-    recommendation:
-      'Agent timed out with no output. Will retry once with rephrased prompt.',
+    recommendation: 'Agent timed out with no output. Will retry once with rephrased prompt.',
   }
 }
 
@@ -288,12 +285,17 @@ export function formatDelegationResult(result: DelegationResult): string {
     case 'startup_failed':
       parts.push('[STARTUP FAILED]')
       parts.push(result.content)
-      parts.push(result.recommendation ?? 'Retry once or inspect the child session before dispatching again.')
+      parts.push(
+        result.recommendation ??
+          'Retry once or inspect the child session before dispatching again.',
+      )
       break
     case 'bootstrap_unknown':
       parts.push('[BOOTSTRAP UNKNOWN]')
       parts.push(result.content)
-      parts.push(result.recommendation ?? 'The host did not expose enough session state to verify startup.')
+      parts.push(
+        result.recommendation ?? 'The host did not expose enough session state to verify startup.',
+      )
       break
   }
 

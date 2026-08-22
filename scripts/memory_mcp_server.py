@@ -1,4 +1,3 @@
-# Auto-generated: resolved symlink from ../src/mcp/memory_mcp_server.py
 #!/usr/bin/env python3
 """Pantheon Memory MCP Server — lightweight, zero heavy deps.
 

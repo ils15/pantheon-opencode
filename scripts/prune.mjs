@@ -34,7 +34,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const ROOT = join(__dirname, '..')
+const _ROOT = join(__dirname, '..')
 const DEFAULT_BACKUP_AGE_DAYS = 30
 
 // ---------------------------------------------------------------------------

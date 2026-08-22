@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readState, writeState, createInitialState } from './state.mjs'
+import { createInitialState, readState, writeState } from './state.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..', '..')
@@ -243,9 +243,7 @@ export function rollbackMigration(target, version) {
   }
 
   const migrations = state.applied_migrations || []
-  const targetMigration = migrations.find(
-    (m) => m.to === version && m.status === 'completed',
-  )
+  const targetMigration = migrations.find((m) => m.to === version && m.status === 'completed')
   if (!targetMigration) {
     console.log(`  \u26A0\uFE0F  No completed migration found for version ${version}`)
     return { success: false, reason: 'Migration not found' }
@@ -341,7 +339,12 @@ function main() {
     console.log(`  Previous version: ${history.previousVersion || 'N/A'}`)
     console.log(`  Applied migrations: ${history.migrations.length}`)
     for (const m of history.migrations) {
-      const icon = m.status === 'completed' ? '\u2705' : m.status === 'rolled_back' ? '\u{1F504}' : '\u26A0\uFE0F'
+      const icon =
+        m.status === 'completed'
+          ? '\u2705'
+          : m.status === 'rolled_back'
+            ? '\u{1F504}'
+            : '\u26A0\uFE0F'
       console.log(`    ${icon} ${m.from} \u2192 ${m.to} [${m.status}] (${m.applied_at})`)
     }
     return

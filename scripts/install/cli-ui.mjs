@@ -95,22 +95,42 @@ export function summaryTable(items) {
   const bot = `\u2514${'\u2500'.repeat(nameWidth + 2)}\u2534${'\u2500'.repeat(statusWidth + 2)}\u2518`
 
   console.log(tag(top))
-  console.log(tag(`\u2502 ${'Componente'.padEnd(nameWidth)} \u2502 ${'Status'.padEnd(statusWidth)} \u2502`))
+  console.log(
+    tag(`\u2502 ${'Componente'.padEnd(nameWidth)} \u2502 ${'Status'.padEnd(statusWidth)} \u2502`),
+  )
   console.log(tag(sep))
   for (const item of items) {
-    console.log(tag(`\u2502 ${item.name.padEnd(nameWidth)} \u2502 ${String(item.status).padEnd(statusWidth)} \u2502`))
+    console.log(
+      tag(
+        `\u2502 ${item.name.padEnd(nameWidth)} \u2502 ${String(item.status).padEnd(statusWidth)} \u2502`,
+      ),
+    )
   }
   console.log(tag(bot))
 }
 
 export function spinner(message) {
-  const frames = ['\u280b', '\u2819', '\u2839', '\u2838', '\u283c', '\u2834', '\u2826', '\u2827', '\u2807', '\u280f']
+  const frames = [
+    '\u280b',
+    '\u2819',
+    '\u2839',
+    '\u2838',
+    '\u283c',
+    '\u2834',
+    '\u2826',
+    '\u2827',
+    '\u2807',
+    '\u280f',
+  ]
   let i = 0
   let running = true
 
   if (tty() && !_quiet) {
     const interval = setInterval(() => {
-      if (!running) { clearInterval(interval); return }
+      if (!running) {
+        clearInterval(interval)
+        return
+      }
       process.stdout.write(`\r${frames[i % frames.length]} ${tag(message)}...`)
       i++
     }, 80)

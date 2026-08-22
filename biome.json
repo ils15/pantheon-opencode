@@ -1,4 +1,7 @@
 {
+  "files": {
+    "includes": ["**", "!src/plugins/tui/dist/**", "!.pantheon/**"]
+  },
   "linter": {
     "enabled": true,
     "rules": {

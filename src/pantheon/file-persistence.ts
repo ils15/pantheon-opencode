@@ -58,7 +58,11 @@ export class FilePersistenceAdapter implements PersistenceAdapter {
       const content = await readFile(this.statePath, 'utf-8')
       return JSON.parse(content) as BackgroundJobRecord[]
     } catch (err: unknown) {
-      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (
+        err instanceof Error &&
+        'code' in err &&
+        (err as NodeJS.ErrnoException).code === 'ENOENT'
+      ) {
         return null
       }
       throw err
@@ -75,7 +79,7 @@ export class FilePersistenceAdapter implements PersistenceAdapter {
 
   async saveJob(record: BackgroundJobRecord): Promise<void> {
     const records = (await this.readState()) ?? []
-    const idx = records.findIndex(r => r.taskID === record.taskID)
+    const idx = records.findIndex((r) => r.taskID === record.taskID)
     if (idx >= 0) {
       records[idx] = record
     } else {
@@ -91,7 +95,7 @@ export class FilePersistenceAdapter implements PersistenceAdapter {
   async deleteJob(taskID: string): Promise<void> {
     const records = await this.readState()
     if (!records) return
-    const idx = records.findIndex(r => r.taskID === taskID)
+    const idx = records.findIndex((r) => r.taskID === taskID)
     if (idx < 0) return
     records.splice(idx, 1)
     await this.writeState(records)

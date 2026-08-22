@@ -15,9 +15,9 @@
  * @module auto-wake
  */
 
+import { existsSync } from 'node:fs'
 import { readdir, readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
 
 /** Signal structure written by BackgroundJobBoard.writeSignal(). */
 export interface WakeSignal {
@@ -48,9 +48,7 @@ const DEFAULT_SIGNAL_DIR = '.pantheon/deepwork/board-signals'
  * @param signalDir  Directory to scan (default: `.pantheon/deepwork/board-signals`)
  * @returns List of wake signals from newly consumed files
  */
-export async function consumeWakeSignals(
-  signalDir?: string,
-): Promise<WakeSignal[]> {
+export async function consumeWakeSignals(signalDir?: string): Promise<WakeSignal[]> {
   const dir = signalDir ?? DEFAULT_SIGNAL_DIR
 
   // If the signal directory doesn't exist, there are no signals

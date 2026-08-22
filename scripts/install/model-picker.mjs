@@ -55,7 +55,10 @@ export function writeActivePreset(
     copyFileSync(filePath, backupPath)
     backupMade = true
   }
-  writeFileSync(`${filePath}.tmp-${process.pid}`, `${JSON.stringify(buildActivePresetFile(presetName, source), null, 2)}\n`)
+  writeFileSync(
+    `${filePath}.tmp-${process.pid}`,
+    `${JSON.stringify(buildActivePresetFile(presetName, source), null, 2)}\n`,
+  )
   renameSync(`${filePath}.tmp-${process.pid}`, filePath)
   return { written: true, path: filePath, backupPath: backupMade ? backupPath : null }
 }

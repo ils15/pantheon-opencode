@@ -30,7 +30,9 @@ function scanFile(path) {
 }
 
 function scanTarball(path) {
-  const entries = execFileSync('tar', ['-tzf', path], { encoding: 'utf8' }).split('\n').filter(Boolean)
+  const entries = execFileSync('tar', ['-tzf', path], { encoding: 'utf8' })
+    .split('\n')
+    .filter(Boolean)
   const result = []
   for (const entry of entries) {
     const content = execFileSync('tar', ['-xOzf', path, entry])

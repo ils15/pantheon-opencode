@@ -43,8 +43,6 @@ export function safeSessionPath(id: unknown): { path: { id: string } } | null {
  * Delegates to {@link safeSessionPath} — the single choke point. Returns
  * null for null/invalid ids so the caller skips the fetch.
  */
-export function buildChildrenPath(
-  id: string | null | undefined,
-): { path: { id: string } } | null {
+export function buildChildrenPath(id: string | null | undefined): { path: { id: string } } | null {
   return safeSessionPath(id)
 }

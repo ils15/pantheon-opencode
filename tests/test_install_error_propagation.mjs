@@ -29,10 +29,14 @@ test('opencode.mjs: catch block re-throws fatal error', () => {
   assert.ok(catchIdx >= 0, 'Should have "Setup failed" error message')
 
   const afterCatch = fnStr.substring(catchIdx, catchIdx + 120)
-  assert.ok(afterCatch.includes('throw err'),
-    `Catch block should re-throw. Got: ${afterCatch.substring(0, 80)}`)
-  assert.ok(!afterCatch.includes('stats.errors') || afterCatch.includes('throw err'),
-    'Should re-throw, not just increment stats')
+  assert.ok(
+    afterCatch.includes('throw err'),
+    `Catch block should re-throw. Got: ${afterCatch.substring(0, 80)}`,
+  )
+  assert.ok(
+    !afterCatch.includes('stats.errors') || afterCatch.includes('throw err'),
+    'Should re-throw, not just increment stats',
+  )
 })
 
 // ===================================================================
@@ -41,12 +45,9 @@ test('opencode.mjs: catch block re-throws fatal error', () => {
 const pantheonInit = readFileSync('./bin/pantheon-init.mjs', 'utf-8')
 
 test('pantheon-init.mjs: error message shows recovery suggestions', () => {
-  assert.ok(pantheonInit.includes('--no-mcp'),
-    'Error message should mention --no-mcp flag')
-  assert.ok(pantheonInit.includes('--force'),
-    'Error message should mention --force flag')
-  assert.ok(pantheonInit.includes('process.exit(1)'),
-    'Should exit with non-zero on error')
+  assert.ok(pantheonInit.includes('--no-mcp'), 'Error message should mention --no-mcp flag')
+  assert.ok(pantheonInit.includes('--force'), 'Error message should mention --force flag')
+  assert.ok(pantheonInit.includes('process.exit(1)'), 'Should exit with non-zero on error')
 })
 
 // ===================================================================
@@ -64,23 +65,25 @@ test('pantheon-init.mjs: success banner only after try block (not inside catch)'
   const catchIdx = pantheonInit.indexOf('} catch')
   const afterCatchEnd = pantheonInit.indexOf('process.exit', catchIdx)
   const catchContent = pantheonInit.substring(catchIdx, afterCatchEnd + 50)
-  assert.ok(!catchContent.includes('✅'),
-    'Catch block should not contain success banner')
+  assert.ok(!catchContent.includes('✅'), 'Catch block should not contain success banner')
 })
 
 // ===================================================================
 // TEST 4: import check — both modules parse correctly
 // ===================================================================
 test('opencode.mjs and pantheon-init.mjs import without errors', () => {
-  assert.equal(typeof opencodeSrc.installOpenCode, 'function',
-    'installOpenCode should be a function')
+  assert.equal(
+    typeof opencodeSrc.installOpenCode,
+    'function',
+    'installOpenCode should be a function',
+  )
 })
 
 // ===================================================================
 // Summary
 // ===================================================================
-const passed = results.filter(r => r.passed).length
-const failed = results.filter(r => !r.passed)
+const passed = results.filter((r) => r.passed).length
+const failed = results.filter((r) => !r.passed)
 
 console.log('')
 for (const r of results) {

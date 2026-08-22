@@ -26,7 +26,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 export const MANIFESTS = [
   { name: 'pyproject.toml', file: 'pyproject.toml', kind: 'toml' },
   { name: 'plugin.json', file: 'plugin.json', kind: 'json' },
-  { name: 'src/plugins/tui/package.json', file: join('src', 'plugins', 'tui', 'package.json'), kind: 'json' },
+  {
+    name: 'src/plugins/tui/package.json',
+    file: join('src', 'plugins', 'tui', 'package.json'),
+    kind: 'json',
+  },
 ]
 
 function readTomlVersion(filePath) {
@@ -109,8 +113,7 @@ function printDivergenceTable(result) {
   console.log('')
 }
 
-const isDirectRun =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 
 if (isDirectRun) {
   // npm scripts run from the package root, so the working directory is the
@@ -138,7 +141,9 @@ if (isDirectRun) {
       console.log(`✓ Synced ${changed} manifest(s) to v${after.source}`)
       process.exit(0)
     }
-    console.error(`version-check: sync incomplete — ${after.manifests.filter((m) => !m.ok).length} manifest(s) still divergent`)
+    console.error(
+      `version-check: sync incomplete — ${after.manifests.filter((m) => !m.ok).length} manifest(s) still divergent`,
+    )
     process.exit(1)
   }
   console.error('version-check: manifests out of sync (run with --fix to sync)')

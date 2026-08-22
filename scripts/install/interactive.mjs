@@ -31,7 +31,10 @@ function teardownStdin() {
   }
 }
 
-export async function promptMultiSelect(options, { title = '', selected = new Set(), pageSize = 6 } = {}) {
+export async function promptMultiSelect(
+  options,
+  { title = '', selected = new Set(), pageSize = 6 } = {},
+) {
   if (options.length === 0) return new Set()
 
   const preSelected = selected instanceof Set ? selected : new Set(selected)
@@ -83,7 +86,11 @@ export async function promptMultiSelect(options, { title = '', selected = new Se
     const count = items.filter((i) => i.checked).length
     const total = items.length
     const noun = count === 1 ? 'selected' : 'selected'
-    lines.push(colors.dim(`(${count}/${total} ${noun}) — ${colors.cyan('↑')}${colors.dim('/')}${colors.cyan('↓')} navigate · ${colors.cyan('Space')}${colors.dim(' toggle · ')}${colors.cyan('Enter')}${colors.dim(' confirm')}`))
+    lines.push(
+      colors.dim(
+        `(${count}/${total} ${noun}) — ${colors.cyan('↑')}${colors.dim('/')}${colors.cyan('↓')} navigate · ${colors.cyan('Space')}${colors.dim(' toggle · ')}${colors.cyan('Enter')}${colors.dim(' confirm')}`,
+      ),
+    )
 
     const lineCount = lines.length
     if (previousLineCount > 0) cursorUp(previousLineCount)
@@ -247,7 +254,11 @@ export async function promptList(options, { title = '' } = {}) {
 
     if (hasMoreBelow) lines.push(colors.dim('  ...'))
 
-    lines.push(colors.dim(`(${colors.cyan('↑')}${colors.dim('/')}${colors.cyan('↓')} navigate · ${colors.cyan('Enter')}${colors.dim(' select')}`))
+    lines.push(
+      colors.dim(
+        `(${colors.cyan('↑')}${colors.dim('/')}${colors.cyan('↓')} navigate · ${colors.cyan('Enter')}${colors.dim(' select')}`,
+      ),
+    )
 
     const lineCount = lines.length
     if (previousLineCount > 0) cursorUp(previousLineCount)
@@ -307,9 +318,7 @@ export async function promptList(options, { title = '' } = {}) {
 }
 
 export async function runInteractiveInstall({ components = [], defaultComponents = [] } = {}) {
-  const defaultSet = new Set(
-    defaultComponents.length > 0 ? defaultComponents : components,
-  )
+  const defaultSet = new Set(defaultComponents.length > 0 ? defaultComponents : components)
 
   const componentOptions = [
     {
@@ -362,7 +371,9 @@ export async function runInteractiveInstall({ components = [], defaultComponents
 
   if (selectedComponents.size === 0) {
     process.stdout.write(`${colors.yellow('No components selected — using defaults\n')}`)
-    defaultSet.forEach((v) => selectedComponents.add(v))
+    defaultSet.forEach((v) => {
+      selectedComponents.add(v)
+    })
   }
 
   const targetOptions = [

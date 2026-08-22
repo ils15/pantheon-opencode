@@ -76,9 +76,7 @@ async function main() {
   // ─── classifyStuckAgent ─────────────────────────────────────────────
 
   await testAsync('classifyStuckAgent: normal completed report → success', async () => {
-    const result = classifyStuckAgent(
-      '# Delegation Report\n\n## Output\n\nHere are the findings.',
-    )
+    const result = classifyStuckAgent('# Delegation Report\n\n## Output\n\nHere are the findings.')
     assert.equal(result.status, 'success')
   })
 
@@ -92,20 +90,24 @@ async function main() {
   })
 
   await testAsync('classifyStuckAgent: "step budget exhausted" → budget-exhausted', async () => {
-    const result = classifyStuckAgent(
-      'The step budget was exhausted before the task completed.',
-    )
+    const result = classifyStuckAgent('The step budget was exhausted before the task completed.')
     assert.equal(result.status, 'budget-exhausted')
   })
 
-  await testAsync('classifyStuckAgent: partial result + budget-exhausted → partialResult included', async () => {
-    const report =
-      '# Delegation Report\n\n## Output\n\nFound 3 files:\n- src/a.ts\n- src/b.ts\n\nMaximum steps for this agent have been reached.'
-    const result = classifyStuckAgent(report)
-    assert.equal(result.status, 'budget-exhausted')
-    assert.ok(result.partialResult, 'should have partialResult')
-    assert.ok(result.partialResult!.includes('Found 3 files'), 'partialResult should have content before the marker')
-  })
+  await testAsync(
+    'classifyStuckAgent: partial result + budget-exhausted → partialResult included',
+    async () => {
+      const report =
+        '# Delegation Report\n\n## Output\n\nFound 3 files:\n- src/a.ts\n- src/b.ts\n\nMaximum steps for this agent have been reached.'
+      const result = classifyStuckAgent(report)
+      assert.equal(result.status, 'budget-exhausted')
+      assert.ok(result.partialResult, 'should have partialResult')
+      assert.ok(
+        result.partialResult!.includes('Found 3 files'),
+        'partialResult should have content before the marker',
+      )
+    },
+  )
 
   await testAsync('classifyStuckAgent: empty report → empty (not success)', async () => {
     const result = classifyStuckAgent('# Delegation Report\n\n## Output\n\n_No output captured._')
@@ -133,15 +135,18 @@ async function main() {
     assert.ok(result.partialResult, 'should include partialResult')
   })
 
-  await testAsync('classifyTimeout: no report but messages exist → timeout-with-partial', async () => {
-    const result = classifyTimeout({
-      report: undefined,
-      hasMessages: true,
-      retryCount: 0,
-    })
-    assert.equal(result.status, 'timeout')
-    assert.equal(result.subType, 'timeout-with-partial')
-  })
+  await testAsync(
+    'classifyTimeout: no report but messages exist → timeout-with-partial',
+    async () => {
+      const result = classifyTimeout({
+        report: undefined,
+        hasMessages: true,
+        retryCount: 0,
+      })
+      assert.equal(result.status, 'timeout')
+      assert.equal(result.subType, 'timeout-with-partial')
+    },
+  )
 
   await testAsync('classifyTimeout: already retried → timeout-exhausted', async () => {
     const result = classifyTimeout({
@@ -246,48 +251,60 @@ async function main() {
     assert.equal(formatted, 'Here are the findings...')
   })
 
-  await testAsync('formatDelegationResult: empty-mode1 → structured message with retry info', async () => {
-    const result: DelegationResult = {
-      status: 'empty',
-      content: '',
-      retryCount: 0,
-      classification: 'empty-mode1',
-    }
-    const formatted = formatDelegationResult(result)
-    assert.ok(formatted.includes('empty'), 'should mention empty')
-    assert.ok(formatted.includes('mode1') || formatted.includes('no tokens'), 'should classify mode')
-    assert.ok(formatted.includes('retry') || formatted.includes('Retry'), 'should mention retry')
-  })
+  await testAsync(
+    'formatDelegationResult: empty-mode1 → structured message with retry info',
+    async () => {
+      const result: DelegationResult = {
+        status: 'empty',
+        content: '',
+        retryCount: 0,
+        classification: 'empty-mode1',
+      }
+      const formatted = formatDelegationResult(result)
+      assert.ok(formatted.includes('empty'), 'should mention empty')
+      assert.ok(
+        formatted.includes('mode1') || formatted.includes('no tokens'),
+        'should classify mode',
+      )
+      assert.ok(formatted.includes('retry') || formatted.includes('Retry'), 'should mention retry')
+    },
+  )
 
-  await testAsync('formatDelegationResult: budget-exhausted → recommendation included', async () => {
-    const result: DelegationResult = {
-      status: 'budget-exhausted',
-      content: 'Partial...',
-      retryCount: 0,
-      partialResult: 'Found 3 files...',
-      recommendation: 'Agent hit step budget; partial result available.',
-    }
-    const formatted = formatDelegationResult(result)
-    assert.ok(formatted.includes('budget') || formatted.includes('step'), 'should mention budget')
-    assert.ok(formatted.includes('partial'), 'should mention partial result')
-  })
+  await testAsync(
+    'formatDelegationResult: budget-exhausted → recommendation included',
+    async () => {
+      const result: DelegationResult = {
+        status: 'budget-exhausted',
+        content: 'Partial...',
+        retryCount: 0,
+        partialResult: 'Found 3 files...',
+        recommendation: 'Agent hit step budget; partial result available.',
+      }
+      const formatted = formatDelegationResult(result)
+      assert.ok(formatted.includes('budget') || formatted.includes('step'), 'should mention budget')
+      assert.ok(formatted.includes('partial'), 'should mention partial result')
+    },
+  )
 
-  await testAsync('formatDelegationResult: timeout-with-partial → partialResult in output', async () => {
-    const result: DelegationResult = {
-      status: 'timeout',
-      content: '',
-      retryCount: 0,
-      subType: 'timeout-with-partial',
-      partialResult: 'Some progress...',
-      recommendation: 'Agent timed out but partial work exists.',
-    }
-    const formatted = formatDelegationResult(result)
-    assert.ok(
-      formatted.includes('[TIMEOUT') || formatted.includes('timeout'),
-      `should mention timeout, got: ${formatted}`,
-    )
-    assert.ok(formatted.includes('partial'), `should mention partial, got: ${formatted}`)
-  })
+  await testAsync(
+    'formatDelegationResult: timeout-with-partial → partialResult in output',
+    async () => {
+      const result: DelegationResult = {
+        status: 'timeout',
+        content: '',
+        retryCount: 0,
+        subType: 'timeout-with-partial',
+        partialResult: 'Some progress...',
+        recommendation: 'Agent timed out but partial work exists.',
+      }
+      const formatted = formatDelegationResult(result)
+      assert.ok(
+        formatted.includes('[TIMEOUT') || formatted.includes('timeout'),
+        `should mention timeout, got: ${formatted}`,
+      )
+      assert.ok(formatted.includes('partial'), `should mention partial, got: ${formatted}`)
+    },
+  )
 
   await testAsync('formatDelegationResult: timeout-exhausted → escalate message', async () => {
     const result: DelegationResult = {
@@ -298,7 +315,10 @@ async function main() {
       partialResult: 'Some progress...',
     }
     const formatted = formatDelegationResult(result)
-    assert.ok(formatted.includes('exhausted') || formatted.includes('escalat'), 'should mention exhaustion/escalation')
+    assert.ok(
+      formatted.includes('exhausted') || formatted.includes('escalat'),
+      'should mention exhaustion/escalation',
+    )
   })
 
   // ═══════════════════════════════════════════════════════════════════════

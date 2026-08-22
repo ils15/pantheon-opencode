@@ -3,8 +3,8 @@
  */
 import { strict as assert } from 'node:assert'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const { setupVenv } = await import('../scripts/install/venv.mjs')
 const results = []
@@ -48,10 +48,8 @@ test('reqFile not found error shows file path', () => {
   // We can't easily trigger this without modifying the source,
   // but we can verify the error handling code exists
   const src = setupVenv.toString()
-  assert.ok(src.includes('Requirements file not found'),
-    'Should handle missing reqFile')
-  assert.ok(src.includes('reqFile'),
-    'Error should include the file path')
+  assert.ok(src.includes('Requirements file not found'), 'Should handle missing reqFile')
+  assert.ok(src.includes('reqFile'), 'Error should include the file path')
 })
 
 // ===================================================================
@@ -81,8 +79,8 @@ test('PIP_USER appears only in the pipEnv object (not as system env mutation)', 
 // ===================================================================
 // Summary
 // ===================================================================
-const passed = results.filter(r => r.passed).length
-const failed = results.filter(r => !r.passed)
+const passed = results.filter((r) => r.passed).length
+const failed = results.filter((r) => !r.passed)
 
 console.log('')
 for (const r of results) {

@@ -39,7 +39,7 @@ async function testAsync(name: string, fn: () => Promise<void>) {
 
 const EMPTY_CONFIG: PermissionConfig = { deny: [], allow: [] }
 
-const DENY_FORCE_PUSH: PermissionConfig = {
+const _DENY_FORCE_PUSH: PermissionConfig = {
   deny: ['git push --force:*'],
   allow: [],
 }
@@ -49,8 +49,8 @@ const DENY_ALL_BASH: PermissionConfig = {
   allow: ['read:./**'],
 }
 
-const USER_DENY_OVERRIDE: PermissionConfig = {
-  deny: ['git push:*'],         // user-level deny
+const _USER_DENY_OVERRIDE: PermissionConfig = {
+  deny: ['git push:*'], // user-level deny
   allow: ['git push:origin/**'], // project-level allow
 }
 
@@ -88,7 +88,7 @@ async function main() {
   // ── (2) User-deny overrides project-allow ──────────────────────────
   await testAsync('(2) user-deny overrides project-allow', async () => {
     const config: PermissionConfig = {
-      deny: ['git push:*'],         // user-level
+      deny: ['git push:*'], // user-level
       allow: ['git push:origin/**'], // project-level
     }
     const result = evaluatePermission(config, {

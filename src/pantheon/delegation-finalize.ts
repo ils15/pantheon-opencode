@@ -50,6 +50,8 @@ export interface DelegationClientSession {
       model?: { id: string; providerID: string }
       parts: Array<{ type: 'text'; text: string }>
     }
+    /** Request cancellation for hosts that support AbortSignal. */
+    signal?: AbortSignal
   }): Promise<unknown>
   messages?(input: { path: { id: string } }): Promise<Array<DelegationMessageBundle>>
   /** Optional session metadata endpoint (older hosts do not expose it). */
@@ -138,6 +140,8 @@ export interface DelegationOptions {
   agentNames?: readonly string[]
   /** Bounded post-prompt bootstrap watchdog window. */
   bootstrapTimeoutMs?: number
+  /** Timeout for the promptAsync request itself (including AbortSignal). */
+  promptTimeoutMs?: number
   /** Poll interval used by the bootstrap watchdog. */
   bootstrapPollIntervalMs?: number
   /** Injectable clock/sleeper for deterministic watchdog tests. */
@@ -154,7 +158,7 @@ export interface DelegationDeps {
 
 /** Terminal transition requested by the finalize path. */
 export interface FinalizeInput {
-  state: 'completed' | 'error' | 'cancelled'
+  state: 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled'
   error?: string
   timedOut?: boolean
 }
@@ -170,7 +174,8 @@ export const DELEGATION_DEFAULTS = {
 
 /** Concatenate every non-empty text part across the child's messages. */
 async function pullOutput(client: DelegationClient, childSessionID: string): Promise<string> {
-  if (typeof client.session.messages !== 'function') return '(child session messages API unavailable)'
+  if (typeof client.session.messages !== 'function')
+    return '(child session messages API unavailable)'
   try {
     const bundles = await client.session.messages({ path: { id: childSessionID } })
     const lines: string[] = []
@@ -312,7 +317,7 @@ export async function finalizeDelegation(
 
   const status: {
     taskID: string
-    state: 'completed' | 'error' | 'cancelled'
+    state: 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled'
     error?: string
     timedOut?: boolean
     resultSummary?: string

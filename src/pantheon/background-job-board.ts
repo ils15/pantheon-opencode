@@ -23,7 +23,14 @@ const log = createPantheonLogger({ module: 'BackgroundJobBoard' })
 // ─── Types ─────────────────────────────────────────────────────────────
 
 /** Valid states for a background job. */
-export type BackgroundJobState = 'running' | 'completed' | 'error' | 'cancelled' | 'reconciled'
+export type BackgroundJobState =
+  | 'running'
+  | 'completed'
+  | 'error'
+  | 'startup_failed'
+  | 'startup_unknown'
+  | 'cancelled'
+  | 'reconciled'
 
 /** Terminal states that can transition to reconciled. */
 const TERMINAL_STATES: ReadonlySet<BackgroundJobState> = new Set([
@@ -38,9 +45,11 @@ const TERMINAL_STATES: ReadonlySet<BackgroundJobState> = new Set([
  * Only running → terminal, or same-terminal → same-terminal (idempotent re-notify).
  */
 const UPDATE_TRANSITIONS: Record<BackgroundJobState, ReadonlySet<BackgroundJobState>> = {
-  running: new Set(['completed', 'error', 'cancelled']),
+  running: new Set(['completed', 'error', 'startup_failed', 'startup_unknown', 'cancelled']),
   completed: new Set(['completed']),
   error: new Set(['error']),
+  startup_failed: new Set(['startup_failed']),
+  startup_unknown: new Set(['startup_unknown']),
   cancelled: new Set(['cancelled']),
   reconciled: new Set([]),
 }
@@ -101,7 +110,7 @@ export interface LaunchInput {
 /** Input for updating a job's status to a terminal state. */
 export interface StatusInput {
   taskID: string
-  state: 'completed' | 'error' | 'cancelled'
+  state: 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled'
   resultSummary?: string
   error?: string
   timedOut?: boolean
@@ -289,7 +298,11 @@ export class BackgroundJobBoard {
     if (input.timedOut !== undefined) {
       job.timedOut = input.timedOut
     }
-    if (input.state === 'error') {
+    if (
+      input.state === 'error' ||
+      input.state === 'startup_failed' ||
+      input.state === 'startup_unknown'
+    ) {
       job.totalErrors++
     }
     if (input.timedOut) {

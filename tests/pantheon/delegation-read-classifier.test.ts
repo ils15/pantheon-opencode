@@ -14,8 +14,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
-import { createDelegationTools } from '../../src/pantheon/delegation.ts'
 import type { DelegationToolset } from '../../src/pantheon/delegation.ts'
+import { createDelegationTools } from '../../src/pantheon/delegation.ts'
 
 // ─── Harness ───────────────────────────────────────────────────────────
 
@@ -109,7 +109,9 @@ async function main() {
         const content = await readPromise
         // The read should classify the empty response and include status info
         assert.ok(
-          content.includes('[EMPTY') || content.includes('empty') || content.includes('_No output captured_'),
+          content.includes('[EMPTY') ||
+            content.includes('empty') ||
+            content.includes('_No output captured_'),
           `read should classify empty response, got: ${content}`,
         )
       } finally {
@@ -143,7 +145,10 @@ async function main() {
           options: { rootSessions: new Set([ROOT]), outputDir: tmp },
         })
 
-        await tools.pantheon_delegate.execute({ prompt: 'Find auth patterns', agent: 'apollo' }, makeCtx())
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Find auth patterns', agent: 'apollo' },
+          makeCtx(),
+        )
 
         const readPromise = tools.pantheon_delegation_read.execute({ id: 'apo-1' }, makeCtx())
         await sleep(20)
@@ -192,7 +197,10 @@ async function main() {
           options: { rootSessions: new Set([ROOT]), outputDir: tmp },
         })
 
-        await tools.pantheon_delegate.execute({ prompt: 'Analyze auth', agent: 'apollo' }, makeCtx())
+        await tools.pantheon_delegate.execute(
+          { prompt: 'Analyze auth', agent: 'apollo' },
+          makeCtx(),
+        )
 
         const readPromise = tools.pantheon_delegation_read.execute({ id: 'apo-1' }, makeCtx())
         await sleep(20)
@@ -247,7 +255,9 @@ async function main() {
         const content = await readPromise
         // The read should detect timeout-with-partial (has partial content)
         assert.ok(
-          content.includes('[TIMEOUT') || content.includes('timeout') || content.includes('partial'),
+          content.includes('[TIMEOUT') ||
+            content.includes('timeout') ||
+            content.includes('partial'),
           `read should classify timeout-with-partial, got: ${content}`,
         )
       } finally {
@@ -284,7 +294,9 @@ async function main() {
         const content = await readPromise
         // Empty result should have classification markers and structured info
         assert.ok(
-          content.includes('[EMPTY') || content.includes('empty') || content.includes('_No output captured_'),
+          content.includes('[EMPTY') ||
+            content.includes('empty') ||
+            content.includes('_No output captured_'),
           `should include empty classification, got: ${content}`,
         )
         assert.ok(

@@ -166,16 +166,32 @@ try {
 
 // Valid agent files with frontmatter containing agent-defining fields
 assert.equal(isValidAgentFile('---\nname: zeus\n---\n'), true, 'name field → valid')
-assert.equal(isValidAgentFile('---\ndescription: Orchestrator\n---\n'), true, 'description field → valid')
+assert.equal(
+  isValidAgentFile('---\ndescription: Orchestrator\n---\n'),
+  true,
+  'description field → valid',
+)
 assert.equal(isValidAgentFile('---\nmode: all\n---\n'), true, 'mode field → valid')
-assert.equal(isValidAgentFile('---\nname: hermes\ndescription: Backend\nmode: all\n---\n'), true, 'all fields → valid')
+assert.equal(
+  isValidAgentFile('---\nname: hermes\ndescription: Backend\nmode: all\n---\n'),
+  true,
+  'all fields → valid',
+)
 
 // Invalid — no frontmatter
 assert.equal(isValidAgentFile('# README\n\nSome text'), false, 'no frontmatter → invalid')
 
 // Invalid — frontmatter present but no agent-defining fields
-assert.equal(isValidAgentFile('---\ntemperature: 0.3\nsteps: 50\n---\n'), false, 'frontmatter without agent fields → invalid')
-assert.equal(isValidAgentFile('---\ncustom_field: value\n---\n'), false, 'unrelated frontmatter → invalid')
+assert.equal(
+  isValidAgentFile('---\ntemperature: 0.3\nsteps: 50\n---\n'),
+  false,
+  'frontmatter without agent fields → invalid',
+)
+assert.equal(
+  isValidAgentFile('---\ncustom_field: value\n---\n'),
+  false,
+  'unrelated frontmatter → invalid',
+)
 
 // Real-world: README.md has no frontmatter
 const readmeContent = '# Agent Reference — Pantheon\n\nThis directory contains...'
@@ -213,7 +229,11 @@ try {
     },
   ])
 
-  assert.deepEqual(files, [agentPath], 'only valid agent .md returned; README.md and NOTES.md excluded')
+  assert.deepEqual(
+    files,
+    [agentPath],
+    'only valid agent .md returned; README.md and NOTES.md excluded',
+  )
   assert.ok(!files.includes(readmePath), 'README.md is NOT listed as installed agent')
   assert.ok(!files.includes(notesPath), 'NOTES.md is NOT listed as installed agent')
 } finally {

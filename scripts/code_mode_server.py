@@ -1,4 +1,3 @@
-# Auto-generated: resolved symlink from ../src/mcp/code_mode_server.py
 #!/usr/bin/env python3
 """Pantheon Code Mode MCP Server.
 
@@ -17,8 +16,12 @@ Or via MCP client (stdio transport):
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import signal
+import shutil
 import stat
+import sys
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -32,6 +35,98 @@ from mcp.server.fastmcp import FastMCP
 # ── Constants ─────────────────────────────────────────────────────────────────
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".sh", ".py"})
 SCRIPT_TIMEOUT: int = 30
+# Hard ceiling for frontmatter `timeout:` overrides — no script may pin the
+# executor for longer than 5 minutes.
+MAX_SCRIPT_TIMEOUT: int = 300
+
+# ── Env Allowlist ──────────────────────────────────────────────────────────────
+# Only these variables are passed to script subprocesses.  Everything else
+# (secrets, cloud credentials, etc.) is stripped to limit blast radius.
+_CODE_MODE_ENV_ALLOWLIST: frozenset[str] = frozenset({
+    "PATH",
+    "HOME",
+    "LANG",
+    "PANTHEON_HOME",
+    "PANTHEON_PROJECT",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "EVAL_JUDGE_MODEL",
+    "SHELL",
+    "USER",
+})
+
+# Optional extra vars that callers may opt-in to pass through.  Populate
+# this set at startup if needed (e.g. ``CODE_MODE_EXTRA_ENV.add("MY_VAR")``).
+CODE_MODE_EXTRA_ENV: set[str] = set()
+
+# Safe defaults when the host env is completely empty.
+_SAFE_DEFAULTS: dict[str, str] = {
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "HOME": "/tmp",
+}
+
+_log = logging.getLogger(__name__)
+
+
+def _build_script_env(
+    host_env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Construct a minimal env dict for script subprocesses.
+
+    Only allowlisted vars (plus any in ``CODE_MODE_EXTRA_ENV``) are
+    forwarded from *host_env* (defaults to ``os.environ``).  Missing
+    allowlisted vars receive safe defaults from ``_SAFE_DEFAULTS``.
+
+    Returns a **new** dict — the input is never mutated.
+    """
+    if host_env is None:
+        host_env = dict(os.environ)
+
+    allowed = _CODE_MODE_ENV_ALLOWLIST | CODE_MODE_EXTRA_ENV
+    env: dict[str, str] = {}
+
+    for key in allowed:
+        if key in host_env:
+            env[key] = host_env[key]
+        elif key in _SAFE_DEFAULTS:
+            env[key] = _SAFE_DEFAULTS[key]
+
+    # Always ensure PATH is present even if allowlist + defaults both miss it.
+    if "PATH" not in env:
+        env["PATH"] = _SAFE_DEFAULTS.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+
+    return env
+
+
+def _prlimit_prefix(
+    prlimit_path: str | None,
+    timeout_s: int = SCRIPT_TIMEOUT,
+) -> list[str] | None:
+    """Return a ``prlimit`` command prefix to wrap a subprocess, or *None*.
+
+    On Linux with ``prlimit`` available the prefix adds:
+      --nproc=512  --as=1073741824  --cpu=<timeout_s + 5>
+
+    On non-Linux or when *prlimit_path* is falsy, returns *None* (fail-open).
+    """
+    if not prlimit_path:
+        return None
+
+    cpu_limit = timeout_s + 5
+    return [
+        prlimit_path,
+        "--nproc=512",
+        "--as=1073741824",  # 1 GiB in bytes
+        f"--cpu={cpu_limit}",
+        "--",
+    ]
+
+
+def _detect_prlimit() -> str | None:
+    """Return the path to ``prlimit`` if available, else *None*."""
+    if sys.platform != "linux":
+        return None
+    return shutil.which("prlimit")
 
 # ── Scripts Directory Resolution ─────────────────────────────────────────────
 # Priority:
@@ -172,10 +267,14 @@ def _parse_frontmatter(script_path: Path) -> dict[str, Any]:
 
 
 def _script_timeout(script_path: Path) -> int:
-    """Per-script timeout override from frontmatter, else the 30s default."""
+    """Per-script timeout override from frontmatter, capped at MAX_SCRIPT_TIMEOUT.
+
+    Honors any positive integer `timeout:` from the script frontmatter, but
+    never returns more than 300s (5 min) regardless of what frontmatter asks.
+    """
     timeout = _parse_frontmatter(script_path).get("timeout")
     if isinstance(timeout, int) and timeout > 0:
-        return timeout
+        return min(timeout, MAX_SCRIPT_TIMEOUT)
     return SCRIPT_TIMEOUT
 
 
@@ -312,13 +411,25 @@ async def execute_code_script(
 
     script_dir = script_path.parent
     started = time.monotonic()
+
+    # ── Build sanitized env & optional prlimit prefix ────────────────────
+    env_dict = _build_script_env()
+    prlimit = _prlimit_prefix(_detect_prlimit(), timeout_s)
+
+    # Command: optionally wrapped with prlimit for resource limits.
+    if prlimit is not None:
+        cmd = [*prlimit, str(script_path), *args]
+    else:
+        cmd = [str(script_path), *args]
+
     try:
         proc = await asyncio.create_subprocess_exec(
-            str(script_path),
-            *args,
+            *cmd,
             cwd=str(script_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env_dict,
+            start_new_session=True,
         )
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -336,7 +447,11 @@ async def execute_code_script(
                 timeout_s=timeout_s,
             )
         except TimeoutError:
-            proc.kill()
+            # Kill the entire process group so child processes don't survive.
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                proc.kill()  # fallback: kill main process only
             await proc.wait()
             duration_ms = int((time.monotonic() - started) * 1000)
             return _build_result(
