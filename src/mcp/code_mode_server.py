@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import shutil
 import stat
 import sys
@@ -428,6 +429,7 @@ async def execute_code_script(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env_dict,
+            start_new_session=True,
         )
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -445,7 +447,11 @@ async def execute_code_script(
                 timeout_s=timeout_s,
             )
         except TimeoutError:
-            proc.kill()
+            # Kill the entire process group so child processes don't survive.
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                proc.kill()  # fallback: kill main process only
             await proc.wait()
             duration_ms = int((time.monotonic() - started) * 1000)
             return _build_result(

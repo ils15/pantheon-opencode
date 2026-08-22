@@ -101,6 +101,15 @@ time.sleep(30)
 print('should-not-print')
 """
 
+# Bash script that spawns a child process (sleep) — verifies process-group kill.
+TIMEOUT_KILLPG_FM = """#!/usr/bin/env bash
+# ---
+# timeout: 2
+# ---
+sleep 30
+echo "should-not-print"
+"""
+
 
 # =============================================================================
 # Frontmatter parsing
@@ -194,6 +203,33 @@ class TestScriptTimeout:
             assert data["timed_out"] is True
             assert data["exit_code"] == -1
             assert 1.5 <= elapsed < 10, f"killed at {elapsed:.1f}s, expected ~2s"
+            assert data["timeout_s"] == 2
+        finally:
+            path.unlink(missing_ok=True)
+
+    async def test_bash_sleep_killed_via_process_group(self, server) -> None:
+        """Bash script spawning `sleep 30` must be killed via process group.
+
+        Before the killpg fix, `proc.kill()` only killed the bash process,
+        leaving `sleep 30` alive. With `start_new_session=True` +
+        `os.killpg(SIGKILL)`, the entire process group is terminated.
+        """
+        path = _write_script("fm_killpg.sh", TIMEOUT_KILLPG_FM)
+        try:
+            started = time.monotonic()
+            result = await server.call_tool(
+                "execute_code_script",
+                {"script_name": "fm_killpg.sh", "json_output": True},
+            )
+            elapsed = time.monotonic() - started
+            data = _json(result)
+            assert data["timed_out"] is True
+            assert data["exit_code"] == -1
+            assert data["duration_ms"] < 3000, (
+                f"duration_ms={data['duration_ms']}ms, expected <3000ms; "
+                f"killpg may not have killed the child process group"
+            )
+            assert 1.0 <= elapsed < 10, f"killed at {elapsed:.1f}s, expected ~2s"
             assert data["timeout_s"] == 2
         finally:
             path.unlink(missing_ok=True)

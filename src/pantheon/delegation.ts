@@ -44,6 +44,11 @@ import {
   readOnlyRegistry,
 } from './delegation-enforce.ts'
 import {
+  classifyStuckAgent,
+  formatDelegationResult,
+  type DelegationResult,
+} from './delegation-classifier.ts'
+import {
   DELEGATION_DEFAULTS,
   type DelegationClient,
   type DelegationDeps,
@@ -825,10 +830,30 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         return `Delegation [${terminal.alias}] reached state ${terminal.state} but no report file was found.`
       }
 
+      // Classify the result for stuck-agent detection
+      const classification = classifyStuckAgent(md)
+      const hasActivity = collector.sampled || collector.lines.length > 0
+      const activitySuffix = hasActivity ? `\n\n${formatActivitySection(collector.lines)}` : ''
+
+      if (classification.status === 'success') {
+        await board.markReconciled(job.taskID)
+        // Backward compatible: success reports returned as-is
+        if (!hasActivity) return md
+        return `${md.replace(/\n+$/, '')}${activitySuffix}`
+      }
+
+      // Non-success: build structured DelegationResult and format
+      const delegationResult: DelegationResult = {
+        status: classification.status === 'empty' ? 'empty' : classification.status,
+        content: md,
+        retryCount: 0,
+        partialResult: classification.partialResult,
+        recommendation: classification.recommendation,
+      }
+
       await board.markReconciled(job.taskID)
-      // Fail-open: if session.messages never succeeded, keep the report as-is.
-      if (!collector.sampled && collector.lines.length === 0) return md
-      return `${md.replace(/\n+$/, '')}\n\n${formatActivitySection(collector.lines)}`
+      const formatted = formatDelegationResult(delegationResult)
+      return `${formatted}${activitySuffix}`
     },
   }
 
