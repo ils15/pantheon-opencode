@@ -2,7 +2,7 @@
 <h1 align="center">Pantheon</h1>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.3.4-blue" alt="Version"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.3.6--beta-blue" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
   <a href="docs/agents/README.md"><img src="https://img.shields.io/badge/agents-14-purple" alt="Agents"></a>
   <a href="src/skills/README.md"><img src="https://img.shields.io/badge/skills-21-orange" alt="Skills"></a>
@@ -277,6 +277,38 @@ reservations for that parent session during the factory lifetime.
 agent in `background_delegation.read_only_agents` (`apollo`, `gaia`), registers
 the child session as read-only — the `tool.execute.before` guard denies
 `edit`/`write`/`bash`/`task` inside that session.
+
+**R1 — Per-error-type retry + provider cooldown (LiteLLM pattern):**
+`retry_policy` in `src/routing.yml` maps an error class (`auth`, `rate_limit`,
+`timeout`, `other`) to max retries before escalating — `auth` is never retried
+(0), `rate_limit` gets 3, `timeout` 2, `other` 1. Retries use exponential
+backoff (base 1s, doubling, capped 30s). `cooldown` (`allowed_fails`,
+`cooldown_time_seconds`) skips a provider for the configured window after that
+many consecutive failures; a success resets the counter. Enforcement lives in
+`RetryPolicyEngine` (`src/pantheon/retry-policy.ts`) and the R1 path of
+`zeusDelegateWithRetry` (`src/pantheon/zeus-delegate-with-retry.ts`) — pass
+`retryPolicy`/`cooldown`/`provider` to `createZeusRetryHelper`. In-memory only
+(no Redis).
+
+**R4 — Per-agent step caps:** `agents.<name>.max_steps` in `src/routing.yml`
+gives each agent a step budget (e.g. `apollo: 25`, `themis: 25`, `athena: 15`).
+When an agent reaches `max_steps` it is forced to summarize-and-stop: a
+delegation to an already-capped agent is skipped with a `[STEP CAP REACHED]`
+summary (no child session created), and a dispatch that hits the cap appends a
+stop instruction to the prompt. Enforcement: `StepCapTracker`
+(`src/pantheon/step-cap.ts`) wired into `pantheon_delegate`. The tracker is
+**permanent-per-process** — counters accumulate for the process lifetime and
+are intentionally not reset on success/session end (a per-session reset would
+let an agent exceed its process budget).
+
+**O5 — Permission globs for delegation:** `permission.task` in `src/routing.yml`
+controls which subagents an agent may invoke via glob patterns (last matching
+rule wins). A deny removes the agent from the delegate tool description
+entirely (not just blocks the call) — preventing circular delegation at the
+permission layer. Default `"*": allow` keeps the existing runtime matrix
+(zeus → anyone; athena/hermes → apollo only). Enforcement:
+`src/pantheon/permission-globs.ts` + the `permissionTask` option on
+`createDelegationTools` / `createEnforcementGuard`.
 
 **Compaction carry-forward:** during context compaction, running and unread
 terminal delegations (capped at `background_delegation.max_compaction_items`,

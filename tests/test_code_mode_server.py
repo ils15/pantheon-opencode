@@ -18,8 +18,8 @@ from unittest.mock import patch
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-# Module path
-MODULE_PATH = "scripts.code_mode_server"
+# Module path — canonical source lives in src/mcp/
+MODULE_PATH = "src.mcp.code_mode_server"
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / ".pantheon" / "code-mode"
 

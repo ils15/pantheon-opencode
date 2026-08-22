@@ -1,8 +1,8 @@
 import { strict as assert } from 'node:assert'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { execFileSync } from 'node:child_process'
 
 const script = 'scripts/redaction-gate.mjs'
 const dir = mkdtempSync(join(tmpdir(), 'pantheon-redaction-'))

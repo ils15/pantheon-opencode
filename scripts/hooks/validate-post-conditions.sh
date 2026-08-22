@@ -9,7 +9,7 @@ SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.st
 
 REVIEW_DIR=".pantheon/memory-bank/.tmp"
 if [ -d "$REVIEW_DIR" ]; then
-    REVIEW_COUNT=$(ls "$REVIEW_DIR"/REVIEW-* 2>/dev/null | wc -l)
+    REVIEW_COUNT=$(find "$REVIEW_DIR" -maxdepth 1 -name 'REVIEW-*' -type f 2>/dev/null | wc -l)
     if [ "$REVIEW_COUNT" -eq 0 ]; then
         echo "[POST-CONDITION] ⚠️ No REVIEW artifact found in $REVIEW_DIR/" >&2
         echo "[POST-CONDITION] 💡 Remember: implementation agents MUST call @themis for review" >&2

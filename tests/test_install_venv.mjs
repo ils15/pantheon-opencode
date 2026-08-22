@@ -6,8 +6,8 @@
 
 import { strict as assert } from 'node:assert'
 import { existsSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const ORIG = await import('../scripts/install/venv.mjs')
 const { setupVenv } = ORIG
@@ -50,8 +50,10 @@ test('PIP_USER=0 set in pip env', () => {
   const pipEnvIdx = src.indexOf('pipEnv')
   assert.ok(pipEnvIdx >= 0, 'pipEnv variable should exist')
   const envSection = src.substring(pipEnvIdx, pipEnvIdx + 200)
-  assert.ok(envSection.includes('PIP_USER'),
-    `PIP_USER should be in pip env. Got: ${envSection.substring(0, 120)}`)
+  assert.ok(
+    envSection.includes('PIP_USER'),
+    `PIP_USER should be in pip env. Got: ${envSection.substring(0, 120)}`,
+  )
 })
 
 // ===================================================================
@@ -62,10 +64,11 @@ test('error message uses reqFile (absolute path)', () => {
   const throwIdx = src.indexOf('throw new Error')
   assert.ok(throwIdx >= 0, 'should have throw statement')
   const errPart = src.substring(throwIdx, throwIdx + 300)
-  assert.ok(errPart.includes('reqFile'),
-    `Error should reference reqFile. Got: ${errPart.substring(0, 120)}`)
-  assert.ok(!errPart.includes("'src/mcp/"),
-    'Error should NOT contain hardcoded relative path')
+  assert.ok(
+    errPart.includes('reqFile'),
+    `Error should reference reqFile. Got: ${errPart.substring(0, 120)}`,
+  )
+  assert.ok(!errPart.includes("'src/mcp/"), 'Error should NOT contain hardcoded relative path')
 })
 
 // ===================================================================
@@ -75,11 +78,10 @@ await testAsync('dry-run does not create .venv', async () => {
   const tmpDir = join(tmpdir(), 'pantheon-dryrun-' + Date.now())
   try {
     await setupVenv(tmpDir, { dryRun: true, skipInstall: true })
-  } catch (e) {
+  } catch {
     // ignore — no real python may be available
   }
-  assert.equal(existsSync(join(tmpDir, '.venv')), false,
-    'dry-run should not create .venv')
+  assert.equal(existsSync(join(tmpDir, '.venv')), false, 'dry-run should not create .venv')
   rmSync(tmpDir, { recursive: true, force: true })
 })
 
@@ -112,8 +114,8 @@ test('venvPythonPath points at the real venv under target/.venv', () => {
 // ===================================================================
 // Summary
 // ===================================================================
-const passed = results.filter(r => r.passed).length
-const failed = results.filter(r => !r.passed)
+const passed = results.filter((r) => r.passed).length
+const failed = results.filter((r) => !r.passed)
 
 console.log('')
 for (const r of results) {

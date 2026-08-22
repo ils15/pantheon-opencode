@@ -1,9 +1,11 @@
 import { strict as assert } from 'node:assert'
 import { existsSync, readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
-  VALIDATION_STATUS,
   classifyDoctorExit,
   classifyTuiExit,
+  VALIDATION_STATUS,
   validationExitCode,
 } from '../scripts/validation-policy.mjs'
 
@@ -22,12 +24,12 @@ assert.equal(classifyTuiExit(0), VALIDATION_STATUS.PASS)
 assert.equal(classifyTuiExit(1), VALIDATION_STATUS.ERROR)
 assert.equal(validationExitCode(VALIDATION_STATUS.PASS, VALIDATION_STATUS.ERROR), 1)
 
-const wrapperPath = '/home/ils15/pantheon-sandbox/run-test.sh'
-if (existsSync(wrapperPath)) {
-  const wrapper = readFileSync(wrapperPath, 'utf8')
-  assert.match(wrapper, /doctor_status/)
-  assert.match(wrapper, /tui_status/)
-  assert.match(wrapper, /warnings não bloqueiam/)
-}
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const wrapperPath = resolve(repoRoot, 'tests/fixtures/sandbox/run-test.sh')
+assert.ok(existsSync(wrapperPath), 'sandbox validation fixture must be present')
+const wrapper = readFileSync(wrapperPath, 'utf8')
+assert.match(wrapper, /doctor_status/)
+assert.match(wrapper, /tui_status/)
+assert.match(wrapper, /warnings não bloqueiam/)
 
 console.log('✅ Validation status matrix passed')

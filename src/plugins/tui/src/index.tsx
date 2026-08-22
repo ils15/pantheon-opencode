@@ -677,25 +677,25 @@ function parseConfig(raw: string): UsageBarConfig {
   const root = asTable(toml.parse(raw))
   const cfg = defaultConfig()
 
-  const ui = asTable(root['ui'])
-  cfg.showBars = bool(ui['show_bars'], cfg.showBars)
-  cfg.showStatus = bool(ui['show_status'], cfg.showStatus)
-  const rawWidth = ui['bar_width']
+  const ui = asTable(root.ui)
+  cfg.showBars = bool(ui.show_bars, cfg.showBars)
+  cfg.showStatus = bool(ui.show_status, cfg.showStatus)
+  const rawWidth = ui.bar_width
   if (typeof rawWidth === 'number' && Number.isFinite(rawWidth) && rawWidth >= 1)
     cfg.barWidth = Math.min(40, Math.floor(rawWidth))
 
   for (const id of ['anthropic', 'openai', 'opencodego'] as ProviderId[]) {
     const t = asTable(root[id])
     const p = cfg.providers[id]
-    p.enabled = bool(t['enabled'], p.enabled)
-    p.show['5h'] = bool(t['show_5h'], p.show['5h'])
-    p.show['7d'] = bool(t['show_7d'], p.show['7d'])
-    p.show['1m'] = bool(t['show_1m'], p.show['1m'])
-    p.show.model = bool(t['show_model'], p.show.model)
+    p.enabled = bool(t.enabled, p.enabled)
+    p.show['5h'] = bool(t.show_5h, p.show['5h'])
+    p.show['7d'] = bool(t.show_7d, p.show['7d'])
+    p.show['1m'] = bool(t.show_1m, p.show['1m'])
+    p.show.model = bool(t.show_model, p.show.model)
     // Assign only when present — keeps `exactOptionalPropertyTypes` happy.
-    const credentialsPath = str(t['credentials_path'])
+    const credentialsPath = str(t.credentials_path)
     if (credentialsPath !== undefined) p.credentialsPath = credentialsPath
-    const codexAuthPath = str(t['codex_auth_path'])
+    const codexAuthPath = str(t.codex_auth_path)
     if (codexAuthPath !== undefined) p.codexAuthPath = codexAuthPath
   }
   return cfg
@@ -942,7 +942,7 @@ export type DelegationEntry = {
   taskID?: string
   /** Agent name, e.g. "apollo". */
   agent: string
-  state: 'running' | 'completed' | 'error' | 'cancelled'
+  state: 'running' | 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled'
   /** Epoch ms of the `Started` header. */
   startedAt: number
   /** Epoch ms of the `Finalized` header — null while still running. */
@@ -1052,6 +1052,8 @@ export function parseDelegationMarkdown(
     normalized !== 'running' &&
     normalized !== 'completed' &&
     normalized !== 'error' &&
+    normalized !== 'startup_failed' &&
+    normalized !== 'startup_unknown' &&
     normalized !== 'cancelled'
   ) {
     return null
@@ -1221,7 +1223,12 @@ export type DelegationActivity =
 
 export function delegationActivity(entry: DelegationEntry): DelegationActivity {
   if (entry.state === 'completed') return 'completed'
-  if (entry.state === 'error') return 'error'
+  if (
+    entry.state === 'error' ||
+    entry.state === 'startup_failed' ||
+    entry.state === 'startup_unknown'
+  )
+    return 'error'
   if (entry.state === 'cancelled') return 'cancelled'
   if (entry.read) return 'reading'
   if (entry.alias.startsWith('live-') && entry.taskID === undefined) return 'delegating'
@@ -1274,7 +1281,12 @@ export function mergeChildDelegationSources(
   })
 
   for (const liveEntry of live) {
-    if (liveEntry.alias === null && liveEntry.taskID === null && Date.now() - liveEntry.startedAt > 30_000) continue
+    if (
+      liveEntry.alias === null &&
+      liveEntry.taskID === null &&
+      Date.now() - liveEntry.startedAt > 30_000
+    )
+      continue
     const incoming = toDelegationEntry(liveEntry)
     const index =
       (incoming.taskID !== undefined ? byTask.get(incoming.taskID) : undefined) ??
@@ -1292,8 +1304,26 @@ export function mergeChildDelegationSources(
 
     const existing = result[index]
     if (existing === undefined) continue
-    const finalized = existing.source === 'md' && existing.state !== 'running'
-    if (finalized) continue
+    // Any terminal state is authoritative — a child session that went idle
+    // correctly derives 'completed' via childStatusToState before the MD
+    // report is written. The live tool-part channel stays 'running' until
+    // pantheon_delegation_read fires, so allowing it to overwrite a
+    // terminal state would flip completed → running (the bug this fixes).
+    //
+    // When the existing entry IS terminal, we still absorb live metadata
+    // (alias, agent, read) but preserve the terminal state.
+    if (existing.state !== 'running') {
+      if (liveEntry.alias !== null && existing.alias !== incoming.alias) {
+        existing.alias = incoming.alias
+      }
+      if (incoming.agent !== 'agent' && existing.agent !== incoming.agent) {
+        existing.agent = incoming.agent
+      }
+      if (incoming.read && !existing.read) {
+        existing.read = true
+      }
+      continue
+    }
     result[index] = {
       ...existing,
       alias: liveEntry.alias !== null ? incoming.alias : existing.alias,
@@ -2220,7 +2250,9 @@ function View(props: {
         }
         const withStatus = children.map((c) => ({ ...c, status: resolveStatus(c.id) }))
         const childEntries = childrenToDelegationEntries(withStatus, md, now())
-        for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 30_000) props.liveStore.map.delete(k)
+        for (const [k, v] of props.liveStore.map)
+          if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 30_000)
+            props.liveStore.map.delete(k)
         // The event channel is optimistic: it renders a job even while the
         // child session/report is still being created. Filter by parent so a
         // different focused session never leaks rows into this sidebar.
@@ -2488,7 +2520,9 @@ const tui: TuiPlugin = (api, _options, _meta) => {
     order: 900,
     slots: {
       sidebar_content(_ctx, props) {
-        return <View api={api} sessionID={props.session_id} version={version()} liveStore={liveStore} />
+        return (
+          <View api={api} sessionID={props.session_id} version={version()} liveStore={liveStore} />
+        )
       },
     },
   })

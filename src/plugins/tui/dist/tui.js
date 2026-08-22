@@ -455,10 +455,10 @@ function parseConfig(raw) {
 	if (!toml?.parse) return defaultConfig();
 	const root = asTable(toml.parse(raw));
 	const cfg = defaultConfig();
-	const ui = asTable(root["ui"]);
-	cfg.showBars = bool(ui["show_bars"], cfg.showBars);
-	cfg.showStatus = bool(ui["show_status"], cfg.showStatus);
-	const rawWidth = ui["bar_width"];
+	const ui = asTable(root.ui);
+	cfg.showBars = bool(ui.show_bars, cfg.showBars);
+	cfg.showStatus = bool(ui.show_status, cfg.showStatus);
+	const rawWidth = ui.bar_width;
 	if (typeof rawWidth === "number" && Number.isFinite(rawWidth) && rawWidth >= 1) cfg.barWidth = Math.min(40, Math.floor(rawWidth));
 	for (const id of [
 		"anthropic",
@@ -467,14 +467,14 @@ function parseConfig(raw) {
 	]) {
 		const t = asTable(root[id]);
 		const p = cfg.providers[id];
-		p.enabled = bool(t["enabled"], p.enabled);
-		p.show["5h"] = bool(t["show_5h"], p.show["5h"]);
-		p.show["7d"] = bool(t["show_7d"], p.show["7d"]);
-		p.show["1m"] = bool(t["show_1m"], p.show["1m"]);
-		p.show.model = bool(t["show_model"], p.show.model);
-		const credentialsPath = str(t["credentials_path"]);
+		p.enabled = bool(t.enabled, p.enabled);
+		p.show["5h"] = bool(t.show_5h, p.show["5h"]);
+		p.show["7d"] = bool(t.show_7d, p.show["7d"]);
+		p.show["1m"] = bool(t.show_1m, p.show["1m"]);
+		p.show.model = bool(t.show_model, p.show.model);
+		const credentialsPath = str(t.credentials_path);
 		if (credentialsPath !== void 0) p.credentialsPath = credentialsPath;
-		const codexAuthPath = str(t["codex_auth_path"]);
+		const codexAuthPath = str(t.codex_auth_path);
 		if (codexAuthPath !== void 0) p.codexAuthPath = codexAuthPath;
 	}
 	return cfg;
@@ -765,7 +765,7 @@ function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 	const startedAt = started !== void 0 ? Date.parse(started) : NaN;
 	if (agent === void 0 || state === void 0 || Number.isNaN(startedAt)) return null;
 	const normalized = state.toLowerCase();
-	if (normalized !== "running" && normalized !== "completed" && normalized !== "error" && normalized !== "cancelled") return null;
+	if (normalized !== "running" && normalized !== "completed" && normalized !== "error" && normalized !== "startup_failed" && normalized !== "startup_unknown" && normalized !== "cancelled") return null;
 	const finalizedAt = finalized !== void 0 ? Date.parse(finalized) : NaN;
 	return {
 		alias: title ?? (fileAlias !== void 0 ? stripMdSuffix(fileAlias) : "unknown"),
@@ -898,7 +898,7 @@ function delegationElapsed(entry, now) {
 * state machine testable without booting OpenCode's renderer. */
 function delegationActivity(entry) {
 	if (entry.state === "completed") return "completed";
-	if (entry.state === "error") return "error";
+	if (entry.state === "error" || entry.state === "startup_failed" || entry.state === "startup_unknown") return "error";
 	if (entry.state === "cancelled") return "cancelled";
 	if (entry.read) return "reading";
 	if (entry.alias.startsWith("live-") && entry.taskID === void 0) return "delegating";
@@ -959,7 +959,12 @@ function mergeChildDelegationSources(children, live) {
 		}
 		const existing = result[index];
 		if (existing === void 0) continue;
-		if (existing.source === "md" && existing.state !== "running") continue;
+		if (existing.state !== "running") {
+			if (liveEntry.alias !== null && existing.alias !== incoming.alias) existing.alias = incoming.alias;
+			if (incoming.agent !== "agent" && existing.agent !== incoming.agent) existing.agent = incoming.agent;
+			if (incoming.read && !existing.read) existing.read = true;
+			continue;
+		}
 		result[index] = {
 			...existing,
 			alias: liveEntry.alias !== null ? incoming.alias : existing.alias,

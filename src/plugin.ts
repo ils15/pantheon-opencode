@@ -24,9 +24,15 @@ import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
 import { createPantheonLogger } from './pantheon/logger.ts'
-import { safeSessionPath } from './pantheon/session-guard.ts'
 import { pantheonPluginOnce } from './pantheon/plugin-once.ts'
-import { applyActivePresetToConfig, loadRoutingAgentModels } from './pantheon/presets.mjs'
+import {
+  applyActivePresetToConfig,
+  loadRoutingAgentModels,
+  loadRoutingMaxSteps,
+  loadRoutingPermissionTask,
+} from './pantheon/presets.mjs'
+import { safeSessionPath } from './pantheon/session-guard.ts'
+import { StepCapTracker } from './pantheon/step-cap.ts'
 import {
   TODO_ENFORCER_DEFAULTS,
   TodoEnforcer,
@@ -54,6 +60,17 @@ const log = createPantheonLogger({ module: 'pantheon-plugin' })
 // and delegation falls back to the active preset / opencode default — the
 // plugin never throws at startup.
 const routingAgentModels = loadRoutingAgentModels({ logger: log })
+
+// R4: per-agent step caps from routing.yml `agents.<name>.max_steps`
+// (fail-open → {} = no agent capped). R1 retry_policy/cooldown are NOT
+// wired here — the plugin has no retry path (opencode cannot intercept task
+// completion); zeus waves load them via presets.mjs loaders and pass them
+// to zeusDelegateWithRetry explicitly.
+const stepCapTracker = new StepCapTracker(loadRoutingMaxSteps({ logger: log }))
+
+// O5: permission.task glob rules from routing.yml `permission.task`
+// (fail-open → undefined = existing runtime matrix only).
+const routingPermissionTask = loadRoutingPermissionTask({ logger: log })
 
 const board = new BackgroundJobBoard({
   maxConcurrentPerAgent: 3,
@@ -202,7 +219,13 @@ function adaptDelegationClient(client: PluginInput['client']): DelegationClient 
         }
         const result = await client.session.promptAsync({
           path: path.path,
-          body: { agent: input.body.agent, parts: input.body.parts },
+          body: {
+            agent: input.body.agent,
+            ...(input.body.model !== undefined
+              ? { model: { providerID: input.body.model.providerID, modelID: input.body.model.id } }
+              : {}),
+            parts: input.body.parts,
+          },
         })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
         return result.data
@@ -334,6 +357,8 @@ const plugin: Plugin = async (input: PluginInput) => {
       readOnlyAgents: new Set(['apollo', 'gaia']),
       agentModels: routingAgentModels,
       delegationBudgets,
+      stepCapTracker,
+      ...(routingPermissionTask != null ? { permissionTask: routingPermissionTask } : {}),
       ...(wallClockTimeoutMs !== undefined ? { wallClockTimeoutMs } : {}),
     },
   })

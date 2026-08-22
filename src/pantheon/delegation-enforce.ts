@@ -30,6 +30,8 @@
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
+import { isAgentAllowed, type PermissionTaskConfig } from './permission-globs.ts'
+
 /** Why a session is read-only. */
 export interface ReadOnlyEntry {
   /** Agent name the session was delegated to (e.g. "apollo"). */
@@ -123,11 +125,21 @@ export function normalizeDelegationAgent(agent: unknown): string | undefined {
   return normalized === '' ? undefined : normalized
 }
 
-/** Runtime delegation matrix from Fase B2. */
-export function isDelegationAllowed(callerAgent: unknown, targetAgent: unknown): boolean {
+/**
+ * Runtime delegation matrix from Fase B2, gated by the O5 permission.task
+ * glob rules when provided. The glob rules run FIRST (last-match-wins; a
+ * deny blocks the target regardless of the matrix), then the static matrix
+ * (zeus → anyone; athena/hermes → apollo only).
+ */
+export function isDelegationAllowed(
+  callerAgent: unknown,
+  targetAgent: unknown,
+  permissionTask?: PermissionTaskConfig,
+): boolean {
   const caller = normalizeDelegationAgent(callerAgent)
   const target = normalizeDelegationAgent(targetAgent)
   if (caller === undefined || target === undefined) return false
+  if (permissionTask !== undefined && !isAgentAllowed(permissionTask, target)) return false
   if (caller === 'zeus') return true
   return (caller === 'athena' || caller === 'hermes') && target === 'apollo'
 }
@@ -154,6 +166,8 @@ export interface EnforcementGuardOptions {
   isRootSession?: (sessionID: string) => boolean
   /** SDK-backed child check used to prevent native task() depth escalation. */
   isChildSession?: (sessionID: string) => boolean
+  /** O5 permission.task glob rules — deny removes the target entirely. */
+  permissionTask?: PermissionTaskConfig
   /** Audit sink for denied runtime delegation attempts. */
   logger?: { warn?: (message: string) => void }
 }
@@ -176,22 +190,14 @@ export const DEFAULT_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
  * codebase reads to @apollo to avoid context bloat and enforce separation
  * of concerns.
  */
-export const ZEUS_READ_DENY_PATTERNS: ReadonlyArray<RegExp> = [
-  /^src\//,
-  /^tests?\//,
-  /^scripts?\//,
-]
+export const ZEUS_READ_DENY_PATTERNS: ReadonlyArray<RegExp> = [/^src\//, /^tests?\//, /^scripts?\//]
 
 /**
  * Path exceptions that Zeus MAY read even if they match a deny pattern.
  * Markdown files, .pantheon/ configs, and memories/ are operational context
  * that Zeus legitimately needs.
  */
-export const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
-  /\.md$/,
-  /\.pantheon\//,
-  /memories\//,
-]
+export const ALLOWED_PATHS: ReadonlyArray<RegExp> = [/\.md$/, /\.pantheon\//, /memories\//]
 
 /**
  * Zeus read guard. When the active agent is Zeus, deny read/glob/grep calls
@@ -202,11 +208,7 @@ export const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
  *
  * @throws {Error} when Zeus attempts a denied read
  */
-export function zeusReadGuard(
-  tool: string,
-  args: unknown,
-  agent: string | undefined,
-): void {
+export function zeusReadGuard(tool: string, args: unknown, agent: string | undefined): void {
   if (agent !== 'zeus') return
   if (tool !== 'read' && tool !== 'glob' && tool !== 'grep') return
 
@@ -226,9 +228,7 @@ export function zeusReadGuard(
       for (const allowed of ALLOWED_PATHS) {
         if (allowed.test(filePath)) return
       }
-      throw new Error(
-        `Zeus cannot read ${filePath} — delegate to @apollo`,
-      )
+      throw new Error(`Zeus cannot read ${filePath} — delegate to @apollo`)
     }
   }
 }
@@ -317,7 +317,7 @@ export function createEnforcementGuard(input: {
         )
         throw new Error(`${prefix}: session ${hook.sessionID} is not an authorized root session`)
       }
-      if (!isDelegationAllowed(caller, target)) {
+      if (!isDelegationAllowed(caller, target, input.options?.permissionTask)) {
         const reason =
           caller === undefined ? 'caller agent is unavailable' : 'agent/target is not allowed'
         input.options.logger?.warn?.(

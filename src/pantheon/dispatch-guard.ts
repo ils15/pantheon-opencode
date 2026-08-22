@@ -34,6 +34,8 @@ export interface DispatchResultLike {
   tokensInput?: number
   /** Output tokens (present when the model actually reasoned). */
   tokensOutput?: number
+  /** R1: the failure that produced this result (classified by retry-policy). */
+  error?: unknown
 }
 
 /** Classification of a dispatch result. */

@@ -452,6 +452,7 @@ export async function installOpenCode(
       '_pantheon_paths.py',
       'mcp_persistence_server.py',
       'pantheon_vision_server.py',
+      'eval_store.py',
     ]
     const srcScriptsDir = join(ROOT, 'scripts')
     // Canonical MCP server sources live in src/mcp/. Map them explicitly so the
@@ -466,6 +467,7 @@ export async function installOpenCode(
       '_pantheon_paths.py': join(ROOT, 'src', 'mcp', '_pantheon_paths.py'),
       'mcp_persistence_server.py': join(ROOT, 'src', 'mcp', 'mcp_persistence_server.py'),
       'pantheon_vision_server.py': join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py'),
+      'eval_store.py': join(ROOT, 'src', 'mcp', 'eval_store.py'),
     }
     const dstScriptsDir = join(runtimeTarget, 'scripts')
     if (!dryRun) mkdirSync(dstScriptsDir, { recursive: true })

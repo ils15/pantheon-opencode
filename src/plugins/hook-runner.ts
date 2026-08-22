@@ -22,7 +22,7 @@
  * is returned as a structured HookResult so the opencode session can never be
  * taken down by the security layer.
  */
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import path from 'node:path'
 import type { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'

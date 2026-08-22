@@ -11,7 +11,7 @@ type DelegationEntry = {
   taskID?: string;
   /** Agent name, e.g. "apollo". */
   agent: string;
-  state: 'running' | 'completed' | 'error' | 'cancelled';
+  state: 'running' | 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled';
   /** Epoch ms of the `Started` header. */
   startedAt: number;
   /** Epoch ms of the `Finalized` header — null while still running. */

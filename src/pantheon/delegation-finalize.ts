@@ -20,6 +20,8 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-board.ts'
+import type { PermissionTaskConfig } from './permission-globs.ts'
+import type { StepCapTracker } from './step-cap.ts'
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -43,9 +45,17 @@ export interface DelegationClientSession {
   }): Promise<{ id: string }>
   promptAsync(input: {
     path: { id: string }
-    body: { agent: string; parts: Array<{ type: 'text'; text: string }> }
+    body: {
+      agent: string
+      model?: { id: string; providerID: string }
+      parts: Array<{ type: 'text'; text: string }>
+    }
+    /** Request cancellation for hosts that support AbortSignal. */
+    signal?: AbortSignal
   }): Promise<unknown>
-  messages(input: { path: { id: string } }): Promise<Array<DelegationMessageBundle>>
+  messages?(input: { path: { id: string } }): Promise<Array<DelegationMessageBundle>>
+  /** Optional session metadata endpoint (older hosts do not expose it). */
+  get?(input: { path: { id: string } }): Promise<unknown>
 }
 
 /** The client surface used by the delegation core. */
@@ -109,6 +119,34 @@ export interface DelegationOptions {
   presetEnv?: Record<string, string | undefined>
   /** Warning sink for the no-model fallback (defaults to console). */
   logger?: { warn?: (msg: string) => void }
+  /**
+   * R4: per-agent step-cap tracker (routing.yml `agents.<name>.max_steps`).
+   * When an agent reaches max_steps the delegation is forced to
+   * summarize-and-stop: skipped with a capped summary when already at the
+   * cap, or the prompt is appended with a stop instruction when the cap is
+   * hit by this dispatch.
+   */
+  stepCapTracker?: StepCapTracker
+  /**
+   * O5: permission.task glob rules controlling which subagents may be
+   * invoked. Denied agents are removed from the delegate tool description
+   * entirely (not just blocked at call time).
+   */
+  permissionTask?: PermissionTaskConfig
+  /**
+   * O5: candidate agent names for the delegate tool description. Defaults
+   * to the canonical 14-agent roster.
+   */
+  agentNames?: readonly string[]
+  /** Bounded post-prompt bootstrap watchdog window. */
+  bootstrapTimeoutMs?: number
+  /** Timeout for the promptAsync request itself (including AbortSignal). */
+  promptTimeoutMs?: number
+  /** Poll interval used by the bootstrap watchdog. */
+  bootstrapPollIntervalMs?: number
+  /** Injectable clock/sleeper for deterministic watchdog tests. */
+  now?: () => number
+  sleep?: (ms: number) => Promise<void>
 }
 
 /** Dependencies threaded to the finalize path. */
@@ -120,7 +158,7 @@ export interface DelegationDeps {
 
 /** Terminal transition requested by the finalize path. */
 export interface FinalizeInput {
-  state: 'completed' | 'error' | 'cancelled'
+  state: 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled'
   error?: string
   timedOut?: boolean
 }
@@ -136,6 +174,8 @@ export const DELEGATION_DEFAULTS = {
 
 /** Concatenate every non-empty text part across the child's messages. */
 async function pullOutput(client: DelegationClient, childSessionID: string): Promise<string> {
+  if (typeof client.session.messages !== 'function')
+    return '(child session messages API unavailable)'
   try {
     const bundles = await client.session.messages({ path: { id: childSessionID } })
     const lines: string[] = []
@@ -277,7 +317,7 @@ export async function finalizeDelegation(
 
   const status: {
     taskID: string
-    state: 'completed' | 'error' | 'cancelled'
+    state: 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled'
     error?: string
     timedOut?: boolean
     resultSummary?: string

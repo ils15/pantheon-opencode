@@ -67,7 +67,11 @@ interface FakeCreateInput {
 }
 interface FakePromptInput {
   path: { id: string }
-  body: { agent: string; parts: Array<{ type: string; text: string }> }
+  body: {
+    agent: string
+    model?: { id: string; providerID: string }
+    parts: Array<{ type: string; text: string }>
+  }
 }
 
 class FakeClient {
@@ -294,7 +298,7 @@ async function main() {
   )
 
   await testAsync(
-    '(P1) resolved provider without API key → child created with fallback opencode/deepseek-v4-flash-free + warn',
+    '(P1) resolved provider without API key → child created with fallback opencode-go/deepseek-v4-flash + warn',
     async () => {
       const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-fallback-'))
       try {
@@ -308,8 +312,8 @@ async function main() {
             rootSessions: new Set([ROOT]),
             outputDir: tmp,
             // go-openai: apollo → openai/gpt-5.6-luna-fast. PANTHEON_OPENAI_API_KEY
-            // is UNSET → fallback must kick in. The fallback provider (opencode)
-            // IS configured → usable.
+            // is UNSET → fallback must kick in. The fallback provider
+            // (opencode-go) is exempt from the key gate → usable.
             presetEnv: {
               PANTHEON_MODEL_PRESET: 'go-openai',
               PANTHEON_OPENCODE_API_KEY: 'sk-fallback',
@@ -326,11 +330,11 @@ async function main() {
         assert.ok(result.includes('apo-1'), `delegation proceeds via fallback, got: ${result}`)
         assert.equal(client.created.length, 1)
         assert.deepEqual(client.created[0]?.body.model, {
-          id: 'deepseek-v4-flash-free',
-          providerID: 'opencode',
+          id: 'deepseek-v4-flash',
+          providerID: 'opencode-go',
         })
         assert.ok(
-          warnings.some((w) => /API key/i.test(w) && /fallback|deepseek-v4-flash-free/i.test(w)),
+          warnings.some((w) => /API key/i.test(w) && /fallback|deepseek-v4-flash/i.test(w)),
           `expected a missing-key fallback warning, got: ${warnings.join('; ')}`,
         )
       } finally {
@@ -340,7 +344,7 @@ async function main() {
   )
 
   await testAsync(
-    '(P1) fallback provider ALSO without API key → clear error TEXT, NO job on board',
+    '(P1) fallback provider (opencode-go) needs no API key → delegation proceeds even with no keys configured',
     async () => {
       const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-none-'))
       try {
@@ -353,8 +357,10 @@ async function main() {
           options: {
             rootSessions: new Set([ROOT]),
             outputDir: tmp,
-            // go-openai: resolved provider openai key UNSET; fallback provider
-            // opencode key ALSO unset → no usable model at all.
+            // go-openai: resolved provider openai key UNSET. The fallback
+            // provider opencode-go is exempt from the key gate (sandbox
+            // default, 2026-08-21) → the delegation proceeds via the
+            // fallback instead of erroring.
             presetEnv: { PANTHEON_MODEL_PRESET: 'go-openai' },
             logger: { warn: (msg) => warnings.push(msg) },
           },
@@ -365,10 +371,19 @@ async function main() {
           makeCtx(),
         )
 
-        assert.ok(/no usable model/i.test(result), `expected clear error text, got: ${result}`)
-        assert.match(result, /PANTHEON_OPENAI_API_KEY/, 'error must name the missing env var')
-        assert.equal(client.created.length, 0, 'no session may be created without a usable model')
-        assert.equal(board.list().length, 0, 'no job may be registered when creation fails')
+        assert.ok(
+          result.includes('apo-1'),
+          `delegation proceeds via opencode-go fallback, got: ${result}`,
+        )
+        assert.equal(client.created.length, 1)
+        assert.deepEqual(client.created[0]?.body.model, {
+          id: 'deepseek-v4-flash',
+          providerID: 'opencode-go',
+        })
+        assert.ok(
+          warnings.some((w) => /API key/i.test(w) && /fallback|deepseek-v4-flash/i.test(w)),
+          `expected a missing-key fallback warning, got: ${warnings.join('; ')}`,
+        )
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }
@@ -524,6 +539,41 @@ async function main() {
       }
     },
   )
+
+  await testAsync('(e) promptAsync forwards resolved model to child session', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-prompt-model-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: {
+          rootSessions: new Set([ROOT]),
+          outputDir: tmp,
+          agentModels: { apollo: 'opencode/deepseek-v4-flash-free' },
+          presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
+        },
+      })
+
+      await tools.pantheon_delegate.execute({ prompt: 'Do X', agent: 'apollo' }, makeCtx())
+
+      assert.equal(client.prompted.length, 1, 'promptAsync must be called exactly once')
+      const body = client.prompted[0]?.body as {
+        agent: string
+        model?: { id: string; providerID: string }
+        parts: Array<{ type: string; text: string }>
+      }
+      assert.deepEqual(
+        body.model,
+        { id: 'deepseek-v4-flash-free', providerID: 'opencode' },
+        'promptAsync must receive the resolved model in body.model',
+      )
+      assert.equal(body.agent, 'apollo')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
 
   await testAsync(
     '(b) depth guard preserved: a child WE created is rejected even when rootSessions does not contain it',
@@ -1501,7 +1551,7 @@ async function main() {
         assert.equal(job?.timedOut, false)
 
         // Messages were pulled from the child session
-        assert.deepEqual(client.messagesCalls, ['ses_child_1'])
+        assert.deepEqual(client.messagesCalls, ['ses_child_1', 'ses_child_1'])
 
         // md file written atomically under .pantheon/delegations/<root>/<alias>.md
         const mdPath = join(tmp, ROOT, 'her-1.md')

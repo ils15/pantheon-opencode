@@ -4,10 +4,16 @@
 set -euo pipefail
 
 # Project-local by default; set XDG_STATE_HOME for system-wide logging
+# Anchor to PANTHEON_HOME or PANTHEON_PROJECT when available to avoid
+# CWD-dependent relative path ("logs/agent-sessions" wrote to cwd).
 if [ -n "${LOG_DIR:-}" ]; then
     LOG_DIR="$LOG_DIR"
 elif [ -n "${XDG_STATE_HOME:-}" ]; then
     LOG_DIR="$XDG_STATE_HOME/pantheon/hooks"
+elif [ -n "${PANTHEON_HOME:-}" ]; then
+    LOG_DIR="$PANTHEON_HOME/logs/agent-sessions"
+elif [ -n "${PANTHEON_PROJECT:-}" ]; then
+    LOG_DIR="$PANTHEON_PROJECT/logs/agent-sessions"
 else
     LOG_DIR="logs/agent-sessions"
 fi

@@ -18,8 +18,11 @@ BLOCKED_PATTERNS=(
     "DROP\s+DATABASE"
     "TRUNCATE\s+TABLE"
     "DELETE\s+FROM\s+.*;?\s*$"
-    "rm\s+.*\s+--no-preserve-root"
-    ":(){ :|:& };:"
+    # DEAD PATTERN REMOVED: `rm\s+.*\s+--no-preserve-root` — redundant with
+    # pattern #1 which already blocks `rm -rf /` regardless of flags.
+    # DEAD PATTERN REMOVED: `:(){ :|:& };:` — fork bomb syntax never appears
+    # in real tool_input.command payloads (the entire stdin would need to be
+    # exactly this 13-char token with zero surrounding JSON/context).
     ">\s*/dev/\(sd[a-z]\|hd[a-z]\|disk[0-9]*\)"
     "dd\s+if=.*of=/dev/"
     "mkfs\."

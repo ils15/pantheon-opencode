@@ -151,6 +151,7 @@ presets:
 agents:
   zeus:
     role: Central orchestrator
+    max_steps: 40   # R4: step budget — at max_steps the agent is forced to summarize-and-stop. Tracker is permanent-per-process (no reset wiring).
     reasoning_effort: medium
     user_invocable: true
     can_delegate: true
@@ -189,6 +190,7 @@ agents:
     - incremental-implementation
   athena:
     role: Strategic planner
+    max_steps: 15   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: high
     user_invocable: true
     can_delegate: true
@@ -208,6 +210,7 @@ agents:
     - memory-bank
   apollo:
     role: Investigation scout
+    max_steps: 25   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: false
     can_delegate: false
@@ -225,6 +228,7 @@ agents:
     - auto-continue
   hermes:
     role: Backend specialist
+    max_steps: 60   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: medium
     user_invocable: true
     can_delegate: true
@@ -247,6 +251,7 @@ agents:
     - incremental-implementation
   aphrodite:
     role: Frontend specialist
+    max_steps: 60   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -267,6 +272,7 @@ agents:
     - file-prompts
   demeter:
     role: Database specialist
+    max_steps: 50   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -286,6 +292,7 @@ agents:
     - incremental-implementation
   themis:
     role: Quality gate
+    max_steps: 25   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: high
     user_invocable: true
     can_delegate: false
@@ -307,6 +314,7 @@ agents:
     - context-compression
   prometheus:
     role: Infrastructure specialist
+    max_steps: 30   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -325,6 +333,7 @@ agents:
     - incremental-implementation
   hephaestus:
     role: AI pipelines
+    max_steps: 50   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -343,6 +352,7 @@ agents:
     - auto-continue
   nyx:
     role: Observability
+    max_steps: 25   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -361,6 +371,7 @@ agents:
     - auto-continue
   gaia:
     role: Remote sensing domain specialist
+    max_steps: 25   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: false
     can_delegate: false
@@ -375,6 +386,7 @@ agents:
     - auto-continue
   iris:
     role: GitHub operations
+    max_steps: 20   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -392,6 +404,7 @@ agents:
     - artifact-management
   mnemosyne:
     role: Memory bank
+    max_steps: 20   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -415,6 +428,7 @@ agents:
     - session-goal
   talos:
     role: Hotfix agent
+    max_steps: 15   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -573,6 +587,34 @@ background_delegation:
   read_only_agents: [apollo, gaia]
   session_max: 3
   retry_count: 1
+# ── R1: Per-error-type retry + provider cooldown (LiteLLM pattern) ──────
+# retry_policy: max retries per error class before escalating. Exponential
+# backoff (base 1s, doubling, capped 30s) applies between retries. auth
+# errors are NEVER retried (0) — a credential problem will not fix itself.
+# Enforcement: zeus-delegate-with-retry (manual waves) + RetryPolicyEngine.
+retry_policy:
+  auth: 0
+  rate_limit: 3
+  timeout: 2
+  other: 1
+# cooldown: after `allowed_fails` consecutive failures for a provider, skip
+# that provider for `cooldown_time_seconds`. A success resets the counter.
+# In-memory tracker (no Redis) — process-wide, shared across retry helpers.
+cooldown:
+  allowed_fails: 3
+  cooldown_time_seconds: 60
+# ── O5: permission.task — glob rules for which subagents an agent may
+# invoke (last matching rule wins; deny removes the agent from the delegate
+# tool description entirely — prevents circular delegation at the
+# permission layer). Default "*": allow keeps the existing runtime matrix
+# (zeus → anyone; athena/hermes → apollo only). Example deny-first config:
+#   permission:
+#     task:
+#       "*": deny
+#       "orchestrator-*": allow
+permission:
+  task:
+    "*": allow
 todo_enforcer:
   enabled: true
   cooldown_base_ms: 5000            # base backoff between injections

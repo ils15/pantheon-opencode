@@ -1,4 +1,3 @@
-# Auto-generated: resolved symlink from ../src/mcp/_pantheon_paths.py
 #!/usr/bin/env python3
 """Pantheon path resolution — global install + project root detection.
 

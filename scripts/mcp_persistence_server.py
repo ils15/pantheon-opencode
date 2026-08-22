@@ -178,14 +178,15 @@ _global_root = (
 _global_db = _init_db(_global_root / "global.db")
 
 _project_db_instance = None
+_project_db_path: Path | None = None
 if args.project_db:
-    _project_db_instance = _init_db(Path(args.project_db))
+    _project_db_path = Path(args.project_db)
+    _project_db_instance = _init_db(_project_db_path)
 else:
     _proj = pantheon_project()
     if _proj:
-        _project_db_instance = _init_db(
-            _proj / ".pantheon" / "persistence" / "project.db"
-        )
+        _project_db_path = _proj / ".pantheon" / "persistence" / "project.db"
+        _project_db_instance = _init_db(_project_db_path)
 _project_db = _project_db_instance
 
 
@@ -262,7 +263,7 @@ async def kv_get(
     row = conn.execute(
         "SELECT value FROM kv_store "
         "WHERE namespace = ? AND key = ? "
-        "AND (expires_at IS NULL OR expires_at > datetime('now')) "
+        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
         "AND deleted_at IS NULL",
         (namespace, key),
     ).fetchone()
@@ -289,13 +290,13 @@ async def kv_stats(
     total = conn.execute("SELECT COUNT(*) FROM kv_store WHERE deleted_at IS NULL").fetchone()[0]
     expired = conn.execute(
         "SELECT COUNT(*) FROM kv_store "
-        "WHERE expires_at IS NOT NULL AND expires_at < datetime('now') "
+        "WHERE expires_at IS NOT NULL AND datetime(expires_at) < datetime('now') "
         "AND deleted_at IS NULL"
     ).fetchone()[0]
 
     ns_rows = conn.execute(
         "SELECT namespace, COUNT(*) as cnt, "
-        "SUM(CASE WHEN expires_at IS NOT NULL AND expires_at < datetime('now') THEN 1 ELSE 0 END) as expired_count "
+        "SUM(CASE WHEN expires_at IS NOT NULL AND datetime(expires_at) < datetime('now') THEN 1 ELSE 0 END) as expired_count "
         "FROM kv_store WHERE deleted_at IS NULL GROUP BY namespace ORDER BY cnt DESC"
     ).fetchall()
 
@@ -372,7 +373,7 @@ async def kv_list(
     rows = conn.execute(
         "SELECT key, value, created_at, expires_at FROM kv_store "
         "WHERE namespace = ? AND key LIKE ? "
-        "AND (expires_at IS NULL OR expires_at > datetime('now')) "
+        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
         "AND deleted_at IS NULL "
         "ORDER BY key LIMIT ?",
         (namespace, f"{prefix}%", limit),
@@ -426,7 +427,7 @@ async def kv_search(
         "JOIN kv_store ON kv_store_fts.rowid = kv_store.id "
         "WHERE kv_store_fts MATCH ? "
         "AND kv_store.deleted_at IS NULL "
-        "AND (kv_store.expires_at IS NULL OR kv_store.expires_at > datetime('now'))"
+        "AND (kv_store.expires_at IS NULL OR datetime(kv_store.expires_at) > datetime('now'))"
     )
     params: list[str | int] = [fts_query]
 
@@ -474,7 +475,7 @@ async def purge_expired(
     expired = conn.execute(
         "SELECT key FROM kv_store "
         "WHERE expires_at IS NOT NULL "
-        "AND expires_at < datetime('now') "
+        "AND datetime(expires_at) < datetime('now') "
         "AND deleted_at IS NULL",
     ).fetchall()
     expired_keys = [r[0] for r in expired]
@@ -490,7 +491,7 @@ async def purge_expired(
     conn.execute(
         "UPDATE kv_store SET deleted_at = datetime('now') "
         "WHERE expires_at IS NOT NULL "
-        "AND expires_at < datetime('now') "
+        "AND datetime(expires_at) < datetime('now') "
         "AND deleted_at IS NULL",
     )
     conn.commit()
@@ -516,7 +517,7 @@ def _opportunistic_auto_purge(conn: sqlite3.Connection, namespace: str, threshol
     conn.execute(
         "UPDATE kv_store SET deleted_at = datetime('now') "
         "WHERE namespace = ? AND expires_at IS NOT NULL "
-        "AND expires_at < datetime('now') AND deleted_at IS NULL",
+        "AND datetime(expires_at) < datetime('now') AND deleted_at IS NULL",
         (namespace,),
     )
     conn.commit()
@@ -659,7 +660,7 @@ async def context_get(
     row = conn.execute(
         "SELECT value FROM kv_store "
         "WHERE namespace = ? AND key = ? "
-        "AND (expires_at IS NULL OR expires_at > datetime('now')) "
+        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
         "AND deleted_at IS NULL",
         (ns, key),
     ).fetchone()
@@ -691,7 +692,7 @@ async def context_list(
     rows = conn.execute(
         "SELECT key, created_at, expires_at FROM kv_store "
         "WHERE namespace = ? "
-        "AND (expires_at IS NULL OR expires_at > datetime('now')) "
+        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
         "AND deleted_at IS NULL "
         "ORDER BY created_at DESC LIMIT 50",
         (ns,),
@@ -737,7 +738,7 @@ async def context_stats(
 
     expired = conn.execute(
         "SELECT COUNT(*) FROM kv_store "
-        "WHERE namespace = ? AND expires_at < datetime('now') "
+        "WHERE namespace = ? AND datetime(expires_at) < datetime('now') "
         "AND deleted_at IS NULL",
         (ns,),
     ).fetchone()[0]
@@ -773,15 +774,15 @@ async def context_stats(
     }
 
 def _resolve_db_path(scope: str) -> Path | None:
-    """Resolve the database file path for a given scope."""
+    """Resolve the database file path for a given scope.
+
+    Returns the actual path used at init (honoring an explicit
+    ``--project-db``), so deletelog writes and db_size stats land next to
+    the real database file.
+    """
     if scope == "global":
         return _global_root / "global.db"
-    if _project_db_instance:
-        # Find the project root from the project DB path
-        proj_root = pantheon_project()
-        if proj_root:
-            return proj_root / ".pantheon" / "persistence" / "project.db"
-    return None
+    return _project_db_path
 
 
 # ── Main Entrypoint ─────────────────────────────────────────────────────────────

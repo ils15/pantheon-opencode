@@ -11,7 +11,7 @@ mcp_tools:
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
 temperature: 0.3
-steps: 50
+steps: 70
 skills:
   - tdd-with-agents
   - file-prompts

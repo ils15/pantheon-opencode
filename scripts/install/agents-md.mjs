@@ -76,7 +76,9 @@ export function readCanonicalAgents() {
   if (!existsSync(AGENTS_DIR)) return []
 
   const files = readdirSync(AGENTS_DIR)
-    .filter((f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md')
+    .filter(
+      (f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md',
+    )
     .sort()
 
   const agents = []

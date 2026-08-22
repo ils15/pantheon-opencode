@@ -39,6 +39,11 @@ import { z } from 'zod'
 
 import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-board.ts'
 import {
+  classifyStuckAgent,
+  type DelegationResult,
+  formatDelegationResult,
+} from './delegation-classifier.ts'
+import {
   isDelegationAllowed,
   normalizeDelegationAgent,
   readOnlyRegistry,
@@ -54,7 +59,9 @@ import {
   readDelegationReport,
 } from './delegation-finalize.ts'
 import { createPantheonLogger } from './logger.ts'
+import { buildAgentListDescription } from './permission-globs.ts'
 import { missingProviderKeyEnv, resolveActivePreset } from './presets.mjs'
+import { buildStopInstruction, cappedSummary, DEFAULT_MAX_STEPS } from './step-cap.ts'
 
 export type {
   DelegationClient,
@@ -70,6 +77,11 @@ export { DELEGATION_DEFAULTS } from './delegation-finalize.ts'
 // the same values through DelegationOptions.
 export const B3_DEFAULT_EXCEPTION_BUDGET = 5
 
+/** Maximum time spent proving that an accepted prompt actually booted. */
+export const BOOTSTRAP_TIMEOUT_MS = 5_000
+/** Default cadence for the bounded bootstrap probe. */
+export const BOOTSTRAP_POLL_INTERVAL_MS = 250
+
 function readIntegerEnv(
   env: Record<string, string | undefined>,
   name: string,
@@ -80,6 +92,175 @@ function readIntegerEnv(
   if (raw === undefined || raw === '') return fallback
   const value = Number(raw)
   return Number.isSafeInteger(value) && value >= minimum ? value : fallback
+}
+
+type BootstrapOutcome =
+  | { status: 'started'; elapsedMs: number; reason: string }
+  | { status: 'startup_failed' | 'bootstrap_unknown'; elapsedMs: number; reason: string }
+
+type PromptOutcome =
+  | { status: 'accepted'; value: unknown }
+  | { status: 'rejected'; reason: string }
+  | { status: 'timeout'; reason: string }
+
+/**
+ * Bound the SDK request itself, not just the board watchdog.  The AbortSignal
+ * is passed to hosts that support it; the race also protects older hosts that
+ * ignore the signal and never settle their promise.
+ */
+async function promptWithTimeout(
+  client: DelegationClient,
+  input: Parameters<DelegationClient['session']['promptAsync']>[0],
+  timeoutMs: number,
+): Promise<PromptOutcome> {
+  const controller = new AbortController()
+  let timer: NodeJS.Timeout | undefined
+  const operation = client.session.promptAsync({ ...input, signal: controller.signal }).then(
+    (value) => ({ status: 'accepted' as const, value }),
+    (error: unknown) => ({
+      status: 'rejected' as const,
+      reason: error instanceof Error ? error.message : String(error),
+    }),
+  )
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<PromptOutcome>((resolve) => {
+        timer = setTimeout(() => {
+          controller.abort()
+          resolve({ status: 'timeout', reason: `promptAsync timed out after ${timeoutMs}ms` })
+        }, timeoutMs)
+        timer.unref()
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+const RUNNING_SESSION_STATES = new Set(['busy', 'running', 'processing', 'retry', 'pending'])
+
+async function boundedProbe<T>(operation: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  if (timeoutMs <= 0) return undefined
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), timeoutMs)
+        timer.unref()
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+function isRunningSession(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  const state = record.status ?? record.state
+  return typeof state === 'string' && RUNNING_SESSION_STATES.has(state.toLowerCase())
+}
+
+function hasDurableMessage(value: unknown): boolean {
+  if (!Array.isArray(value)) return false
+  return value.some((bundle) => {
+    if (typeof bundle !== 'object' || bundle === null) return false
+    const info = (bundle as { info?: { role?: unknown } }).info
+    return info?.role === 'user' || info?.role === 'assistant'
+  })
+}
+
+async function bootstrapChild(
+  client: DelegationClient,
+  childSessionID: string,
+  accepted: unknown,
+  options: DelegationOptions,
+): Promise<BootstrapOutcome> {
+  const now = options.now ?? Date.now
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  const timeoutMs = options.bootstrapTimeoutMs ?? BOOTSTRAP_TIMEOUT_MS
+  const intervalMs = options.bootstrapPollIntervalMs ?? BOOTSTRAP_POLL_INTERVAL_MS
+  const startedAt = now()
+  const hasMessagesAPI = typeof client.session.messages === 'function'
+  const hasStatusAPI = typeof client.session.get === 'function'
+  const acceptedRunning = isRunningSession(accepted)
+
+  if (!hasMessagesAPI && !hasStatusAPI) {
+    return acceptedRunning
+      ? {
+          status: 'started',
+          elapsedMs: now() - startedAt,
+          reason: 'prompt accepted by legacy host',
+        }
+      : {
+          status: 'bootstrap_unknown',
+          elapsedMs: now() - startedAt,
+          reason:
+            'host exposes neither session.messages nor session.get and prompt had no running evidence',
+        }
+  }
+
+  let sawProbe = false
+  while (now() - startedAt < timeoutMs) {
+    let durable = false
+    let running = acceptedRunning
+    const remainingMs = timeoutMs - (now() - startedAt)
+    if (hasMessagesAPI) {
+      try {
+        const messages = await boundedProbe(
+          client.session.messages!({ path: { id: childSessionID } }),
+          remainingMs,
+        )
+        if (messages !== undefined) {
+          sawProbe = true
+          durable = hasDurableMessage(messages)
+        }
+      } catch {
+        // A transient endpoint failure is diagnosed after the bounded window.
+      }
+    }
+    if (hasStatusAPI) {
+      try {
+        const status = await boundedProbe(
+          client.session.get!({ path: { id: childSessionID } }),
+          timeoutMs - (now() - startedAt),
+        )
+        if (status !== undefined) {
+          running = running || isRunningSession(status)
+          sawProbe = true
+        }
+      } catch {
+        // Fail closed only after the bounded window; never create an unbounded poll.
+      }
+    }
+    if (durable)
+      return {
+        status: 'started',
+        elapsedMs: now() - startedAt,
+        reason: 'durable child message observed',
+      }
+    if (running)
+      return {
+        status: 'started',
+        elapsedMs: now() - startedAt,
+        reason: 'child session reports running/processing',
+      }
+    await sleep(Math.min(intervalMs, Math.max(0, timeoutMs - (now() - startedAt))))
+  }
+  return sawProbe
+    ? {
+        status: 'startup_failed',
+        elapsedMs: now() - startedAt,
+        reason: `no durable message or running state after ${timeoutMs}ms`,
+      }
+    : {
+        status: 'bootstrap_unknown',
+        elapsedMs: now() - startedAt,
+        reason: `bootstrap probes were unavailable after ${timeoutMs}ms`,
+      }
 }
 
 /** Resolve the two supported read-only delegation exception budgets. */
@@ -177,6 +358,24 @@ const listArgs = {} satisfies z.ZodRawShape
 
 // ─── State labels ──────────────────────────────────────────────────────
 
+/** Canonical 14-agent roster (O5 tool-description default). */
+export const CANONICAL_AGENTS: readonly string[] = [
+  'zeus',
+  'athena',
+  'apollo',
+  'hermes',
+  'aphrodite',
+  'demeter',
+  'themis',
+  'prometheus',
+  'hephaestus',
+  'nyx',
+  'gaia',
+  'iris',
+  'mnemosyne',
+  'talos',
+]
+
 function stateLabel(state: BackgroundJobRecord['state']): string {
   switch (state) {
     case 'running':
@@ -185,6 +384,10 @@ function stateLabel(state: BackgroundJobRecord['state']): string {
       return 'OK'
     case 'error':
       return 'ERR'
+    case 'startup_failed':
+      return 'STARTUP FAILED'
+    case 'startup_unknown':
+      return 'STARTUP UNKNOWN'
     case 'cancelled':
       return 'CANCELLED'
     case 'reconciled':
@@ -194,6 +397,21 @@ function stateLabel(state: BackgroundJobRecord['state']): string {
 
 /** Normalize the SDK-provided caller agent without inventing an identity. */
 const normalizeToolAgent = normalizeDelegationAgent
+
+/**
+ * O5: the delegate tool description. When permission.task rules are
+ * configured, denied agents are REMOVED from the description entirely (not
+ * just blocked at call time) — the caller never sees them as invocable.
+ */
+function buildDelegateDescription(options: DelegationOptions): string {
+  const base =
+    'Dispatch a background agent as a child session and register it on the job board. ' +
+    'Returns the readable alias (e.g. "apo-1"); read the result with ' +
+    'pantheon_delegation_read. Only root sessions may delegate.'
+  if (options.permissionTask === undefined) return base
+  const roster = options.agentNames ?? CANONICAL_AGENTS
+  return `${base} Allowed subagents: ${buildAgentListDescription(options.permissionTask, roster)}.`
+}
 
 // ─── Agent activity sampling ────────────────────────────────────────────
 //
@@ -487,7 +705,11 @@ function resolveUsableChildModel(
 
   // Auto-resolved (agentModels / preset) → try the known-good fallback.
   const fallback = splitModelRef(FALLBACK_MODEL)
-  if (fallback !== undefined && (fallback.providerID === 'opencode-go' || missingProviderKeyEnv(fallback.providerID, { env }) === undefined)) {
+  if (
+    fallback !== undefined &&
+    (fallback.providerID === 'opencode-go' ||
+      missingProviderKeyEnv(fallback.providerID, { env }) === undefined)
+  ) {
     warn(
       `[pantheon-delegate] provider "${model.providerID}" requires API key ${missingVar} ` +
         `(unset) — falling back to ${FALLBACK_MODEL}`,
@@ -582,10 +804,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
   }
 
   const pantheon_delegate: DelegationTool<typeof delegateArgs> = {
-    description:
-      'Dispatch a background agent as a child session and register it on the job board. ' +
-      'Returns the readable alias (e.g. "apo-1"); read the result with ' +
-      'pantheon_delegation_read. Only root sessions may delegate.',
+    description: buildDelegateDescription(options),
     args: delegateArgs,
     execute: async (args, ctx) => {
       if (!isRootSession(ctx.sessionID)) {
@@ -600,13 +819,34 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         )
       }
 
+      // R4: per-agent step caps. An agent already at max_steps is forced to
+      // summarize-and-stop — the delegation is skipped with a capped summary
+      // (no session, no board job, no budget consumed). Otherwise record the
+      // step; when THIS step hits the cap, append the stop instruction to
+      // the prompt so the agent summarizes and stops instead of continuing.
+      let effectivePrompt = args.prompt
+      const stepCap = options.stepCapTracker
+      if (stepCap !== undefined) {
+        const maxSteps = stepCap.maxStepsFor(args.agent)
+        if (stepCap.isCapped(args.agent)) {
+          return cappedSummary(args.agent, maxSteps ?? DEFAULT_MAX_STEPS)
+        }
+        const rec = stepCap.recordStep(args.agent)
+        if (rec.capped && rec.maxSteps !== undefined) {
+          effectivePrompt = `${args.prompt}${buildStopInstruction(args.agent, rec.maxSteps)}`
+        }
+      }
+
       // Fase B3: only the two read-only exceptions are budgeted. The official
       // SDK provides the current agent on ToolContext. If a structural/older
       // host omits it, do NOT infer identity from prompt, target, or process
       // state: the budget is explicitly skipped and the delegation continues.
       const parentAgent = normalizeToolAgent(ctx.agent)
       const targetAgent = args.agent.toLowerCase()
-      if (options.enforceRuntimeMatrix === true && !isDelegationAllowed(parentAgent, targetAgent)) {
+      if (
+        options.enforceRuntimeMatrix === true &&
+        !isDelegationAllowed(parentAgent, targetAgent, options.permissionTask)
+      ) {
         const reason =
           parentAgent === undefined
             ? 'ToolContext.agent is unavailable'
@@ -670,7 +910,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         created = await client.session.create({
           body: {
             parentID: ctx.sessionID,
-            title: args.description ?? args.prompt.slice(0, 80),
+            title: args.description ?? effectivePrompt.slice(0, 80),
             ...(childModel !== undefined ? { model: childModel } : {}),
           },
         })
@@ -702,8 +942,8 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         taskID: childSessionID,
         parentSessionID: ctx.sessionID,
         agent: args.agent,
-        description: args.description ?? args.prompt,
-        objective: args.prompt,
+        description: args.description ?? effectivePrompt,
+        objective: effectivePrompt,
       })
 
       // Timeout manager: cleared on finalize, unref'd so the timer never
@@ -719,19 +959,139 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       timer.unref()
       timers.set(childSessionID, timer)
 
-      // Fire-and-forget — completion is observed via session.idle on the
-      // child (spike: noReply does NOT deliver anything to the parent).
-      void client.session
-        .promptAsync({
-          path: { id: childSessionID },
-          body: { agent: args.agent, parts: [{ type: 'text', text: args.prompt }] },
-        })
-        .catch((err: unknown) => log.error('[pantheon-delegate] promptAsync failed:', err))
-
-      return (
-        `Delegated to ${args.agent}: [${job.alias}] (task ${childSessionID}).\n` +
-        `Read the result with pantheon_delegation_read({ id: "${job.alias}" }).`
+      const promptBody = {
+        agent: args.agent,
+        ...(childModel !== undefined ? { model: childModel } : {}),
+        parts: [{ type: 'text' as const, text: effectivePrompt }],
+      }
+      const promptOutcome = await promptWithTimeout(
+        client,
+        { path: { id: childSessionID }, body: promptBody },
+        options.promptTimeoutMs ?? options.bootstrapTimeoutMs ?? BOOTSTRAP_TIMEOUT_MS,
       )
+      let bootstrap: BootstrapOutcome
+      let safeRetry = false
+      if (promptOutcome.status === 'rejected') {
+        // A synchronous rejection is the only safe automatic retry signal: the
+        // host explicitly told us that it did not accept the request.
+        bootstrap = {
+          status: 'startup_failed',
+          elapsedMs: 0,
+          reason: `promptAsync rejected: ${promptOutcome.reason}`,
+        }
+        safeRetry = true
+      } else if (promptOutcome.status === 'timeout') {
+        // A timeout is ambiguous: the server may have accepted the prompt even
+        // though the client never received its response. Never resend it.
+        bootstrap = { status: 'startup_failed', elapsedMs: 0, reason: promptOutcome.reason }
+      } else {
+        bootstrap = await bootstrapChild(client, childSessionID, promptOutcome.value, options)
+      }
+      log.info(
+        `[pantheon-delegate] bootstrap child=${childSessionID} elapsed=${bootstrap.elapsedMs}ms reason=${bootstrap.reason}`,
+      )
+      if (bootstrap.status === 'started') {
+        return (
+          `Delegated to ${args.agent}: [${job.alias}] (task ${childSessionID}).\n` +
+          `Read the result with pantheon_delegation_read({ id: "${job.alias}" }).`
+        )
+      }
+
+      // Every startup diagnosis is terminal for this child. Only a prompt
+      // rejection (known not accepted) permits one fresh-session retry;
+      // accepted-empty, unavailable APIs, and request timeouts do not.
+      const boardStartupState =
+        bootstrap.status === 'bootstrap_unknown' ? 'startup_unknown' : 'startup_failed'
+      await finalize(childSessionID, {
+        state: boardStartupState,
+        error: `${bootstrap.status}: ${bootstrap.reason}`,
+      })
+      if (!safeRetry) {
+        const finalResult: DelegationResult = {
+          status: bootstrap.status,
+          content: `Child session ${childSessionID} did not start (${bootstrap.reason}).`,
+          retryCount: 0,
+          recommendation:
+            bootstrap.status === 'bootstrap_unknown'
+              ? 'Inspect the child session in the board/TUI and retry manually only after confirming the prompt was not accepted.'
+              : 'Inspect the child session/host promptAsync implementation; no automatic retry was attempted because acceptance was ambiguous.',
+        }
+        return formatDelegationResult(finalResult)
+      }
+
+      let retry: { id: string }
+      try {
+        retry = await client.session.create({
+          body: {
+            parentID: ctx.sessionID,
+            title: args.description ?? effectivePrompt.slice(0, 80),
+            ...(childModel !== undefined ? { model: childModel } : {}),
+          },
+        })
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : String(err)
+        return `[STARTUP FAILED] ${bootstrap.status}: ${bootstrap.reason}; retry creation failed: ${reason}`
+      }
+      const retryID = retry.id
+      knownChildren.add(retryID)
+      options.registerChildSession?.(retryID, ctx.sessionID)
+      const retryJob = await board.registerLaunch({
+        taskID: retryID,
+        parentSessionID: ctx.sessionID,
+        agent: args.agent,
+        description: args.description ?? effectivePrompt,
+        objective: effectivePrompt,
+      })
+      const retryTimer = setTimeout(() => {
+        timers.delete(retryID)
+        void finalize(retryID, {
+          state: 'error',
+          error: `Delegation [${retryJob.alias}] timed out after ${timeoutMs}ms without reaching a terminal state`,
+          timedOut: true,
+        }).catch((err: unknown) =>
+          log.error('[pantheon-delegate] retry timeout finalize failed:', err),
+        )
+      }, timeoutMs)
+      retryTimer.unref()
+      timers.set(retryID, retryTimer)
+      const retryPrompt = await promptWithTimeout(
+        client,
+        { path: { id: retryID }, body: promptBody },
+        options.promptTimeoutMs ?? options.bootstrapTimeoutMs ?? BOOTSTRAP_TIMEOUT_MS,
+      )
+      let retryBootstrap: BootstrapOutcome
+      if (retryPrompt.status === 'rejected') {
+        retryBootstrap = {
+          status: 'startup_failed',
+          elapsedMs: 0,
+          reason: `retry promptAsync rejected: ${retryPrompt.reason}`,
+        }
+      } else if (retryPrompt.status === 'timeout') {
+        retryBootstrap = { status: 'startup_failed', elapsedMs: 0, reason: retryPrompt.reason }
+      } else {
+        retryBootstrap = await bootstrapChild(client, retryID, retryPrompt.value, options)
+      }
+      log.info(
+        `[pantheon-delegate] bootstrap retry child=${retryID} elapsed=${retryBootstrap.elapsedMs}ms reason=${retryBootstrap.reason}`,
+      )
+      if (retryBootstrap.status === 'started') {
+        return (
+          `Delegated to ${args.agent}: [${retryJob.alias}] (task ${retryID}); retry=1.\n` +
+          `Read the result with pantheon_delegation_read({ id: "${retryJob.alias}" }).`
+        )
+      }
+      await finalize(retryID, {
+        state: retryBootstrap.status === 'bootstrap_unknown' ? 'startup_unknown' : 'startup_failed',
+        error: `startup retry exhausted: ${retryBootstrap.status}: ${retryBootstrap.reason}`,
+      })
+      const finalResult: DelegationResult = {
+        status: retryBootstrap.status,
+        content: `Child session ${retryID} did not start (${retryBootstrap.reason}).`,
+        retryCount: 1,
+        recommendation:
+          'Inspect the child session/host promptAsync implementation; no further automatic retries will be attempted.',
+      }
+      return formatDelegationResult(finalResult)
     },
   }
 
@@ -768,10 +1128,30 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         return `Delegation [${terminal.alias}] reached state ${terminal.state} but no report file was found.`
       }
 
+      // Classify the result for stuck-agent detection
+      const classification = classifyStuckAgent(md)
+      const hasActivity = collector.sampled || collector.lines.length > 0
+      const activitySuffix = hasActivity ? `\n\n${formatActivitySection(collector.lines)}` : ''
+
+      if (classification.status === 'success') {
+        await board.markReconciled(job.taskID)
+        // Backward compatible: success reports returned as-is
+        if (!hasActivity) return md
+        return `${md.replace(/\n+$/, '')}${activitySuffix}`
+      }
+
+      // Non-success: build structured DelegationResult and format
+      const delegationResult: DelegationResult = {
+        status: classification.status === 'empty' ? 'empty' : classification.status,
+        content: md,
+        retryCount: 0,
+        partialResult: classification.partialResult,
+        recommendation: classification.recommendation,
+      }
+
       await board.markReconciled(job.taskID)
-      // Fail-open: if session.messages never succeeded, keep the report as-is.
-      if (!collector.sampled && collector.lines.length === 0) return md
-      return `${md.replace(/\n+$/, '')}\n\n${formatActivitySection(collector.lines)}`
+      const formatted = formatDelegationResult(delegationResult)
+      return `${formatted}${activitySuffix}`
     },
   }
 

@@ -351,30 +351,41 @@ function checkAgentFiles(args) {
 // Check B: MCP Configuration
 // ---------------------------------------------------------------------------
 
+/** Resolve the effective OpenCode user config directory. */
+export function resolveOpenCodeConfigDir(env = process.env) {
+  if (env.PANTHEON_HOME) return resolve(env.PANTHEON_HOME)
+  const base = env.XDG_CONFIG_HOME || join(env.HOME ?? homedir(), '.config')
+  return join(base, 'opencode')
+}
+
 /**
  * Collect every reachable opencode.json (project → repository → user config)
  * with its parsed content, for the config, spawn-path and runtime layers.
  * @returns {{label:string, path:string, data:object}[]}
  */
-function collectMcpConfigs(args) {
+export function collectMcpConfigs(args) {
   const candidates = [
     { label: 'project root', path: join(args.target, 'opencode.json') },
     { label: 'repository root', path: join(ROOT, 'opencode.json') },
   ]
 
-  // Also check user config if target matches Pantheon ROOT
-  if (args.target === ROOT) {
-    candidates.push({
-      label: 'user config',
-      path: join(ROOT, '.opencode', 'opencode.json'),
-    })
-  } else {
-    const homeConfig = join(process.env.HOME ?? '~', '.config', 'opencode', 'opencode.json')
-    candidates.push({ label: 'user config', path: homeConfig })
-  }
+  // OpenCode resolves user configuration independently of cwd. Keep the
+  // project-local .opencode config for repository checks, but always include
+  // the effective user config so a sandbox HOME is not mistaken for cwd.
+  candidates.push({
+    label: 'project .opencode config',
+    path: join(args.target, '.opencode', 'opencode.json'),
+  })
+  candidates.push({
+    label: 'user config',
+    path: join(resolveOpenCodeConfigDir(args.env ?? process.env), 'opencode.json'),
+  })
 
   const configs = []
+  const seen = new Set()
   for (const c of candidates) {
+    if (seen.has(c.path)) continue
+    seen.add(c.path)
     const data = readJson(c.path)
     if (data) {
       configs.push({ label: c.label, data, path: c.path })
@@ -391,7 +402,9 @@ function checkMcpConfig(args) {
 
   if (configs.length === 0) {
     if (requiredMcpNames.length > 0) {
-      error(`No opencode.json found; required MCPs missing: ${requiredMcpNames.join(', ')}`)
+      error(
+        `No opencode.json found (searched project/repository and ${resolveOpenCodeConfigDir(args.env ?? process.env)}); required MCPs missing: ${requiredMcpNames.join(', ')}`,
+      )
     } else {
       info(`No opencode.json found for ${args.profile} profile — MCP check skipped`)
     }
@@ -950,7 +963,7 @@ function checkRequirementLine(line, installed) {
 function checkVenvLayer(args) {
   section('F. Runtime Layer — Venv, Python & Dependencies')
 
-  const configDir = join(homedir(), '.config', 'opencode')
+  const configDir = resolveOpenCodeConfigDir()
   const venvPython = join(configDir, '.venv', 'bin', 'python3')
 
   if (!existsSync(venvPython)) {

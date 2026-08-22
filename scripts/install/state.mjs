@@ -95,12 +95,15 @@ export function upgradeStateV1toV2(state) {
     updated_at: state.updated_at || now,
     migration_checkpoint: null,
     applied_migrations: Array.isArray(state.applied_migrations) ? state.applied_migrations : [],
-    components: state.components && typeof state.components === 'object' ? state.components : {
-      agents: { version: 1, status: 'installed' },
-      skills: { version: 1, status: 'installed' },
-      plugins: { version: 1, status: 'unknown' },
-      runtime: { version: 1, status: 'unknown' },
-    },
+    components:
+      state.components && typeof state.components === 'object'
+        ? state.components
+        : {
+            agents: { version: 1, status: 'installed' },
+            skills: { version: 1, status: 'installed' },
+            plugins: { version: 1, status: 'unknown' },
+            runtime: { version: 1, status: 'unknown' },
+          },
   }
 }
 

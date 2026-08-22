@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -22,8 +23,8 @@ from unittest.mock import patch
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-# Module path
-MODULE_PATH = "scripts.memory_mcp_server"
+# Module path — canonical source lives in src/mcp/
+MODULE_PATH = "src.mcp.memory_mcp_server"
 
 
 def _text(contents: list | str) -> str:
@@ -285,6 +286,128 @@ class TestMemorySearch:
         text = _text_from_tool(result)
         data = json.loads(text) if text else []
         assert data == []
+
+
+class TestMemorySearchDecay:
+    """Tests for the decay_days freshness parameter on memory_search."""
+
+    async def _store_pair(
+        self, server: FastMCP, module, namespace: str
+    ) -> None:
+        """Store an old (90d) and a fresh entry with identical content."""
+        for key, age_days in (("py_old", 90), ("py_new", 0)):
+            result = await server.call_tool(
+                "memory_store",
+                {
+                    "value": "Python is a programming language.",
+                    "key": key,
+                    "namespace": namespace,
+                },
+            )
+            data = json.loads(_text_from_tool(result))
+            entry_id = data["id"]
+            old_iso = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - age_days * 86400)
+            )
+            db = module._get_conn()
+            db.execute(
+                "UPDATE memories SET created_at = ? WHERE id = ?",
+                [old_iso, entry_id],
+            )
+            db.commit()
+
+    async def test_default_no_decay(self, server: FastMCP, module) -> None:
+        """Default search (decay_days=None) must not apply freshness decay."""
+        ns = f"decay_{time.time_ns()}"
+        await self._store_pair(server, module, ns)
+        result = await server.call_tool(
+            "memory_search", {"query": "Python programming", "top_k": 5, "namespace": ns}
+        )
+        data = json.loads(_text_from_tool(result))
+        scores = {r["key"]: r["score"] for r in data}
+        assert "py_old" in scores and "py_new" in scores
+        # Default search must not penalize the old entry: its score is
+        # strictly higher than when decay_days is enabled (freshness < 1
+        # for age > 0), while the fresh entry is unaffected.
+        decayed = await server.call_tool(
+            "memory_search",
+            {"query": "Python programming", "top_k": 5, "namespace": ns, "decay_days": 30},
+        )
+        d2 = {r["key"]: r["score"] for r in json.loads(_text_from_tool(decayed))}
+        assert scores["py_old"] > d2["py_old"]
+        assert scores["py_new"] == pytest.approx(d2["py_new"], rel=1e-6)
+
+    async def test_decay_ranks_newer_higher(self, server: FastMCP, module) -> None:
+        """With decay_days set, older memories rank below newer ones."""
+        ns = f"decay_{time.time_ns()}"
+        await self._store_pair(server, module, ns)
+        result = await server.call_tool(
+            "memory_search",
+            {"query": "Python programming", "top_k": 5, "namespace": ns, "decay_days": 30},
+        )
+        data = json.loads(_text_from_tool(result))
+        keys = [r["key"] for r in data]
+        assert "py_old" in keys and "py_new" in keys
+        assert keys.index("py_new") < keys.index("py_old")
+
+    async def test_decay_changes_scores(self, server: FastMCP, module) -> None:
+        """decay_days=None vs set must produce different scores for old entries."""
+        ns = f"decay_{time.time_ns()}"
+        await self._store_pair(server, module, ns)
+        r1 = await server.call_tool(
+            "memory_search", {"query": "Python programming", "top_k": 5, "namespace": ns}
+        )
+        r2 = await server.call_tool(
+            "memory_search",
+            {"query": "Python programming", "top_k": 5, "namespace": ns, "decay_days": 30},
+        )
+        d1 = {r["key"]: r["score"] for r in json.loads(_text_from_tool(r1))}
+        d2 = {r["key"]: r["score"] for r in json.loads(_text_from_tool(r2))}
+        # Old entry decays; fresh entry keeps its score (freshness ≈ 1.0)
+        assert d1["py_old"] != d2["py_old"]
+        assert d1["py_new"] == pytest.approx(d2["py_new"], rel=1e-6)
+
+    async def test_rrf_fuse_freshness_multiplier(self, module) -> None:
+        """_rrf_fuse applies the freshness multiplier when decay_days is set."""
+        now = time.time()
+        new_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+        old_iso = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 90 * 86400)
+        )
+        fused = module._rrf_fuse([1, 2], [1, 2], 10)
+        fused_decayed = module._rrf_fuse(
+            [1, 2],
+            [1, 2],
+            10,
+            created_at_map={1: new_iso, 2: old_iso},
+            decay_days=30,
+        )
+        # Without decay: pure RRF — rank 1 (id 1) beats rank 2 (id 2)
+        assert fused[0][0] == 1
+        assert fused[1][0] == fused[0][0] + 1
+        assert fused[0][1] > fused[1][1]
+        # With decay: the 90-day-old entry (id 2) is penalized, the fresh
+        # one (id 1, age 0 → freshness 1.0) is not.
+        assert fused_decayed[0][0] == 1
+        assert fused_decayed[1][1] < fused[1][1]
+        assert fused_decayed[0][1] == pytest.approx(fused[0][1], rel=1e-6)
+
+    async def test_parse_iso_ts_legacy_naive_format(self, module) -> None:
+        """Legacy naive timestamps (space separator, no TZ) parse as UTC.
+
+        Rows created by ``DEFAULT (datetime('now'))`` are
+        ``YYYY-MM-DD HH:MM:SS`` with no timezone — they must be interpreted
+        as UTC (SQLite's datetime('now') is UTC), not the local timezone.
+        """
+        import calendar
+
+        # A known UTC instant: 2026-08-21 12:00:00 UTC
+        expected = calendar.timegm((2026, 8, 21, 12, 0, 0))
+        # Legacy space-separated naive format
+        assert module._parse_iso_ts("2026-08-21 12:00:00") == expected
+        # Aware ISO formats still parse identically
+        assert module._parse_iso_ts("2026-08-21T12:00:00Z") == expected
+        assert module._parse_iso_ts("2026-08-21T12:00:00+00:00") == expected
 
 
 class TestMemoryRecall:

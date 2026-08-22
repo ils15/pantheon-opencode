@@ -1,4 +1,3 @@
-# Auto-generated: resolved symlink from ../src/mcp/mcp_resources_server.py
 #!/usr/bin/env python3
 """Pantheon MCP Resources Server.
 
@@ -19,6 +18,7 @@ from typing import Any
 
 import yaml
 from _pantheon_paths import pantheon_home, pantheon_project
+from eval_store import get_latest_eval, list_evals
 from mcp.server.fastmcp import FastMCP
 
 # ── Path Resolution ──────────────────────────────────────────────────────────
@@ -112,6 +112,8 @@ async def list_skills() -> str:
 async def get_routing() -> str:
     """Return the full content of routing.yml."""
     routing_file = _PANTHEON_HOME / "routing.yml"
+    if not routing_file.exists() and _PANTHEON_PROJECT:
+        routing_file = _PANTHEON_PROJECT / "src" / "routing.yml"
     if not routing_file.exists():
         return "routing.yml not found."
     return routing_file.read_text(encoding="utf-8")
@@ -198,6 +200,63 @@ async def get_memory_bank(path: str) -> str:
         return f"File '{path}' not found."
 
     return resolved.read_text(encoding="utf-8")
+
+
+# ── Plugin Eval Resources ─────────────────────────────────────────────────────
+
+
+def _valid_plugin_name(name: str) -> bool:
+    """Validate a plugin name for the eval resource (no traversal)."""
+    return bool(name) and "/" not in name and "\\" not in name and ".." not in name
+
+
+@mcp.resource(
+    "pantheon://eval",
+    description="List of evaluated plugins/skills with their latest "
+    "certification score (from the plugin_eval memory namespace)",
+)
+async def list_plugin_evals() -> str:
+    """Return a markdown list of evaluated plugins with latest scores."""
+    entries = list_evals()
+    if not entries:
+        return "No plugin evals recorded yet."
+
+    lines = ["# Plugin Eval Certification", ""]
+    for entry in entries:
+        name = entry.get("name", "?")
+        score = entry.get("metadata", {}).get("score", "?")
+        created = entry.get("created_at", "")
+        lines.append(f"- **{name}** — score {score} (evaluated {created})")
+    return "\n".join(lines)
+
+
+@mcp.resource(
+    "pantheon://eval/{plugin}",
+    description="Latest certification report for a plugin/skill "
+    "(from the plugin_eval memory namespace)",
+)
+async def get_plugin_eval(plugin: str) -> str:
+    """Return the latest eval certification report for a plugin.
+
+    Security: plugin names containing path separators or traversal
+    sequences are rejected before any lookup.
+    """
+    if not _valid_plugin_name(plugin):
+        return "Invalid plugin name: blocked."
+
+    entry = get_latest_eval(plugin)
+    if entry is None:
+        return f"No eval found for plugin '{plugin}'."
+
+    score = entry.get("metadata", {}).get("score", "?")
+    created = entry.get("created_at", "")
+    value = entry.get("value", "{}")
+    return (
+        f"# Eval Report: {plugin}\n\n"
+        f"**Score:** {score}\n"
+        f"**Evaluated:** {created}\n\n"
+        f"```json\n{value}\n```"
+    )
 
 
 # ── Main Entrypoint ───────────────────────────────────────────────────────────

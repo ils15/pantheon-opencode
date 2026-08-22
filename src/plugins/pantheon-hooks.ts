@@ -192,8 +192,8 @@ import {
   enqueueChatReminder,
   pendingChatReminders,
 } from '../pantheon/chat-reminders.ts'
-import { type HookPayload, type HookResult, runHook } from './hook-runner.ts'
 import { pantheonPluginOnce } from '../pantheon/plugin-once.ts'
+import { type HookPayload, type HookResult, runHook } from './hook-runner.ts'
 
 /** Tools that represent a subagent delegation (opencode `task` tool etc.). */
 const DELEGATION_TOOL_RE = /^(task|.*delegate.*|.*subagent.*)$/i

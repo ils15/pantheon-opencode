@@ -1,5 +1,5 @@
-import { defineConfig } from 'tsdown'
 import solid from 'rolldown-plugin-solid'
+import { defineConfig } from 'tsdown'
 
 export default defineConfig({
   entry: { tui: 'src/index.tsx', server: 'src/server.ts' },

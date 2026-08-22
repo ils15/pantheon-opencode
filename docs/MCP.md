@@ -181,26 +181,18 @@ execute_code_script("deploy.sh")
 **Script:** `scripts/memory_mcp_server.py`
 
 Persistent, lightweight memory server using sqlite-vec + fastembed
-(BAAI/bge-small-en-v1.5) for local embeddings (~30MB, ONNX, no PyTorch). Provides 14 tools and 2 resources.
+(BAAI/bge-small-en-v1.5) for local embeddings (~30MB, ONNX, no PyTorch). Provides 6 tools and 2 resources.
 
-### Tools (14)
+### Tools (6)
 
 | Tool | Description |
 |------|-------------|
-| `memory_store` | Store a memory entry with metadata (category, agent, session, importance, links) |
-| `memory_search` | Search with dense vector similarity + freshness decay + importance boost |
-| `memory_recall` | Auto-recall: context → relevant memories as formatted prompt injection |
-| `memory_compress` | Compress oldest entries into summarized form (DCP-style range compression) |
-| `memory_expand` | Restore a compressed entry back to detailed form |
-| `memory_consolidate` | Merge duplicate/similar entries (cosine similarity threshold) |
-| `memory_delete` | Permanently delete a specific memory entry by ID |
-| `memory_update` | Update content and/or metadata of an existing entry |
-| `memory_link` | Create a bidirectional relationship between two entries |
-| `memory_traverse` | Walk the knowledge graph from an entry, following links up to max_depth |
-| `memory_verify` | Verify a claim: check entry exists and validate freshness |
-| `memory_sessions` | List all unique session IDs with entry count and latest timestamp |
-| `memory_export` | Export memories as formatted markdown, optionally scoped to a session |
-| `memory_cleanup` | Delete test/old sessions (prefix minimum 3 characters) |
+| `memory_store` | Store a memory entry with automatic embedding generation |
+| `memory_search` | Hybrid vector + FTS5 keyword search via RRF; optional `decay_days` freshness half-life (default off) |
+| `memory_recall` | Exact recall of an entry by key within a namespace |
+| `memory_forget` | Delete an entry by ID or key (vector + FTS cleaned via cascade/triggers) |
+| `memory_list` | List entries chronologically with namespace and key-prefix filters |
+| `memory_stats` | Database statistics: totals, namespaces, FTS/vector counts, disk usage |
 
 ### Resources
 
@@ -215,13 +207,13 @@ Persistent, lightweight memory server using sqlite-vec + fastembed
 |-----------|---------------|
 | Vector DB | sqlite-vec (SQLite vector extension) → `~/.pantheon/memory/memory.db` |
 | Embeddings | `fastembed` (ONNX, BAAI/bge-small-en-v1.5, ~30MB, auto-download) |
-| Freshness decay | 30-day half-life (exponential, Shokunin-inspired) |
+| Freshness decay | Opt-in via `decay_days` on `memory_search` (30-day half-life, default off) |
 | Compression | DCP-style range compression (deterministic, not LLM-based) |
 | Fusion scoring | Dense similarity + freshness boost + importance boost |
 
 ### Full Documentation
 
-See `docs/MEMORY.md` for complete usage guide with examples for all 14 tools.
+See `docs/MEMORY.md` for complete usage guide with examples for all 6 tools.
 
 ---
 
@@ -267,9 +259,7 @@ injects this MCP when native vision is unavailable. Bifrost is opt-in only via
 | Run a shell/Python script safely | pantheon-code-mode |
 | Store an important fact across sessions | pantheon-memory |
 | Find relevant past decisions | pantheon-memory |
-| Link related memories into a graph | pantheon-memory |
-| Auto-recall context at session start | pantheon-memory |
-| Export session memories as markdown | pantheon-memory |
+| Recall a memory by key | pantheon-memory |
 | Describe, OCR, or analyze an image | pantheon-vision |
 
 ---

@@ -16,20 +16,20 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  readState,
-  writeState,
-  createInitialState,
-  addMigrationRecord,
-  updateVersion,
-} from './state.mjs'
-import {
-  readCheckpoint,
-  writeCheckpoint,
   advanceCheckpoint,
+  listAppliedMigrations,
+  readCheckpoint,
   removeCheckpoint,
   resumePendingMigration,
-  listAppliedMigrations,
+  writeCheckpoint,
 } from './migrate.mjs'
+import {
+  addMigrationRecord,
+  createInitialState,
+  readState,
+  updateVersion,
+  writeState,
+} from './state.mjs'
 
 // ---------------------------------------------------------------------------
 // Migration step definitions
@@ -290,16 +290,10 @@ function main() {
     addMigrationRecord(state, config.from, config.to, 'completed')
     removeCheckpoint(config.target)
     writeState(config.target, state)
-    console.log(
-      `\n  \u2705 Migration complete: ${config.from} \u2192 ${config.to}`,
-    )
-    console.log(
-      `     State written to: ${join(config.target, '.pantheon', 'install-state.json')}`,
-    )
+    console.log(`\n  \u2705 Migration complete: ${config.from} \u2192 ${config.to}`)
+    console.log(`     State written to: ${join(config.target, '.pantheon', 'install-state.json')}`)
   } else {
-    console.log(
-      `\n  \u2705 Migration would complete (dry-run): ${config.from} \u2192 ${config.to}`,
-    )
+    console.log(`\n  \u2705 Migration would complete (dry-run): ${config.from} \u2192 ${config.to}`)
   }
 }
 

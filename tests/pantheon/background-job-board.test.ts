@@ -4,9 +4,9 @@
  * Run with: npx tsx tests/pantheon/background-job-board.test.ts
  */
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   BackgroundJobBoard,
@@ -18,16 +18,6 @@ import {
 // ─── Helpers ───────────────────────────────────────────────────────────
 
 const results: { name: string; passed: boolean; error?: string }[] = []
-
-function test(name: string, fn: () => void) {
-  try {
-    fn()
-    results.push({ name, passed: true })
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e)
-    results.push({ name, passed: false, error: msg })
-  }
-}
 
 async function testAsync(name: string, fn: () => Promise<void>) {
   try {
@@ -432,7 +422,7 @@ async function main() {
 
   await testAsync('resolve returns undefined for wrong session', async () => {
     const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch({ taskID: 't1', parentSessionID: 's1' }))
+    await board.registerLaunch(makeLaunch({ taskID: 't1', parentSessionID: 's1' }))
     assert.equal(board.resolve('s2', 't1'), undefined)
     assert.equal(board.resolve('s2', 'apo-1'), undefined)
   })
@@ -513,21 +503,24 @@ async function main() {
     assert.equal(fired[0], job.taskID)
   })
 
-  await testAsync('markReconciled does NOT re-fire onTerminal (reconcile is an acknowledgment)', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch())
-    const fired: string[] = []
+  await testAsync(
+    'markReconciled does NOT re-fire onTerminal (reconcile is an acknowledgment)',
+    async () => {
+      const board = new BackgroundJobBoard()
+      const job = await board.registerLaunch(makeLaunch())
+      const fired: string[] = []
 
-    board.onTerminal((taskID) => fired.push(taskID))
-    await board.updateStatus({ taskID: job.taskID, state: 'completed' })
-    assert.equal(fired.length, 1) // first fire from updateStatus — the only terminal transition
+      board.onTerminal((taskID) => fired.push(taskID))
+      await board.updateStatus({ taskID: job.taskID, state: 'completed' })
+      assert.equal(fired.length, 1) // first fire from updateStatus — the only terminal transition
 
-    await board.markReconciled(job.taskID)
-    assert.equal(fired.length, 1) // reconcile must not fire terminal listeners (no duplicate notification)
-    const reconciled = board.get(job.taskID)
-    assert.ok(reconciled)
-    assert.equal(reconciled.state, 'reconciled')
-  })
+      await board.markReconciled(job.taskID)
+      assert.equal(fired.length, 1) // reconcile must not fire terminal listeners (no duplicate notification)
+      const reconciled = board.get(job.taskID)
+      assert.ok(reconciled)
+      assert.equal(reconciled.state, 'reconciled')
+    },
+  )
 
   await testAsync('removeTerminalListener stops firing', async () => {
     const board = new BackgroundJobBoard()

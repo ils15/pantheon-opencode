@@ -1,11 +1,11 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { compareVersions, syncToSource, MANIFESTS } from '../scripts/version-check.mjs'
+import { compareVersions, MANIFESTS, syncToSource } from '../scripts/version-check.mjs'
 
 const SCRIPT = fileURLToPath(new URL('../scripts/version-check.mjs', import.meta.url))
 
@@ -46,7 +46,10 @@ const SOURCE_PKG = '1.2.1'
 /** Build a fixture tree: package.json (source) + 3 manifests, returns the root. */
 function makeFixture({ pyproject = '1.1.0', plugin = '1.1.0', tui = '1.2.0' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'version-check-'))
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'pantheon-opencode', version: SOURCE_PKG }, null, 2) + '\n')
+  writeFileSync(
+    join(root, 'package.json'),
+    JSON.stringify({ name: 'pantheon-opencode', version: SOURCE_PKG }, null, 2) + '\n',
+  )
   writeFileSync(join(root, 'pyproject.toml'), TOML_FIXTURE.replace('1.1.0', pyproject))
   writeFileSync(join(root, 'plugin.json'), PLUGIN_FIXTURE.replace('1.1.0', plugin))
   const tuiDir = join(root, 'src', 'plugins', 'tui')

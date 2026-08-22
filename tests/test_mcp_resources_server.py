@@ -17,8 +17,8 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import Resource as MCPResource
 from mcp.types import ResourceTemplate
 
-# Module path
-MODULE_PATH = "scripts.mcp_resources_server"
+# Module path — canonical source lives in src/mcp/
+MODULE_PATH = "src.mcp.mcp_resources_server"
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -301,3 +301,110 @@ class TestServerLifecycle:
         """Server should have instructions set."""
         assert server.instructions is not None
         assert len(server.instructions) > 0
+
+
+# =============================================================================
+# Plugin Eval Resources (pantheon://eval)
+# =============================================================================
+
+
+@pytest.fixture
+def eval_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Seed a temp plugin_eval DB and point eval_store at it."""
+    import eval_store
+
+    db_path = tmp_path / "memory" / "memory.db"
+    monkeypatch.setattr(eval_store, "_db_path", lambda: db_path)
+    eval_store.store_eval(
+        "tdd-with-agents",
+        {"name": "tdd-with-agents", "score": 90, "checks": {}},
+        90,
+        when="2026-08-21",
+    )
+    eval_store.store_eval(
+        "hermes",
+        {"name": "hermes", "score": 85, "checks": {}},
+        85,
+        when="2026-08-21",
+    )
+    return eval_store
+
+
+class TestEvalResources:
+    """Tests for the plugin-eval certification resources."""
+
+    async def test_eval_list_uri_registered(self, server: FastMCP) -> None:
+        """The eval list URI pantheon://eval should be registered."""
+        resources = await server.list_resources()
+        uris = [str(r.uri) for r in resources]
+        assert "pantheon://eval" in uris
+
+    async def test_eval_template_registered(self, server: FastMCP) -> None:
+        """The eval template pantheon://eval/{plugin} should be registered."""
+        templates = await server.list_resource_templates()
+        uris = [str(t.uriTemplate) for t in templates]
+        matches = [u for u in uris if "eval" in u and "{" in u]
+        assert len(matches) > 0
+
+    async def test_eval_list_returns_plugins_with_scores(
+        self, server: FastMCP, eval_db
+    ) -> None:
+        """Reading pantheon://eval should list plugins with their latest scores."""
+        result = await server.read_resource("pantheon://eval")
+        text = _text(result)
+        assert "tdd-with-agents" in text
+        assert "hermes" in text
+        assert "90" in text
+        assert "85" in text
+
+    async def test_eval_list_empty_namespace(self, server: FastMCP, tmp_path, monkeypatch) -> None:
+        """An empty plugin_eval namespace yields a meaningful message."""
+        import eval_store
+
+        monkeypatch.setattr(
+            eval_store, "_db_path", lambda: tmp_path / "memory" / "memory.db"
+        )
+        result = await server.read_resource("pantheon://eval")
+        text = _text(result)
+        assert "no" in text.lower() or "none" in text.lower()
+
+    async def test_eval_plugin_returns_report(self, server: FastMCP, eval_db) -> None:
+        """Reading pantheon://eval/tdd-with-agents returns the certification report."""
+        result = await server.read_resource("pantheon://eval/tdd-with-agents")
+        text = _text(result)
+        assert "tdd-with-agents" in text
+        assert "90" in text
+
+    async def test_eval_plugin_not_found(self, server: FastMCP, eval_db) -> None:
+        """An unevaluated plugin returns a meaningful not-found message."""
+        result = await server.read_resource("pantheon://eval/ghost-plugin")
+        text = _text(result)
+        assert "not found" in text.lower() or "no eval" in text.lower()
+
+    async def test_eval_plugin_traversal_blocked(self, module, eval_db) -> None:
+        """Path-traversal style plugin names should be blocked."""
+        content = await module.get_plugin_eval("../../routing")
+        assert "blocked" in content.lower() or "invalid" in content.lower()
+
+    async def test_eval_plugin_underscore_not_wildcard(self, server, eval_db) -> None:
+        """Underscores in plugin names must not act as SQL LIKE wildcards."""
+        import eval_store
+
+        eval_store.store_eval(
+            "code_review",
+            {"name": "code_review", "score": 99, "checks": {}},
+            99,
+            when="2026-08-21",
+        )
+        # Decoy inserted last (highest id): matches 'eval:code_review:%'
+        # under LIKE semantics because '_' matches any single character.
+        eval_store.store_eval(
+            "codexreview",
+            {"name": "codexreview", "score": 1, "checks": {}},
+            1,
+            when="2026-08-21",
+        )
+        result = await server.read_resource("pantheon://eval/code_review")
+        text = _text(result)
+        assert "code_review" in text
+        assert "99" in text

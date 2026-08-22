@@ -1170,6 +1170,54 @@ async function main() {
     },
   )
 
+  await testAsync(
+    'merge: children-only terminal state is NOT overwritten by stale live running entry',
+    async () => {
+      // BUG FIX: when a child session goes idle before the MD report is
+      // written, childrenToDelegationEntries derives state 'completed' from
+      // childStatusToState('idle') with source 'children-only'. The live
+      // entry from the delegate tool part is still 'running' (it only
+      // transitions on pantheon_delegation_read). The merge must NOT
+      // overwrite the terminal children-only state with the stale live state.
+      const child: DelegationEntry = {
+        alias: 'task',
+        sessionID: 'ses_root',
+        taskID: 'ses_child_idle',
+        agent: 'apollo',
+        state: 'completed',
+        startedAt: 1000,
+        updatedAt: 5000,
+        timedOut: false,
+        description: 'Fetch data',
+        source: 'children-only',
+      }
+      const live: LiveDelegationEntry = {
+        callID: 'call_1',
+        partID: 'part_1',
+        sessionID: 'ses_root',
+        tool: 'pantheon_delegate',
+        agent: 'apollo',
+        description: 'Fetch data',
+        alias: 'apo-1',
+        taskID: 'ses_child_idle',
+        state: 'running', // stale — delegate tool finished but read hasn't fired
+        startedAt: 1000,
+        updatedAt: null,
+        read: false,
+      }
+      const merged = mergeChildDelegationSources([child], [live])
+      assert.equal(merged.length, 1)
+      assert.equal(
+        merged[0]?.state,
+        'completed',
+        'children-only terminal state must not be downgraded to running by a stale live entry',
+      )
+      // The live entry should still contribute metadata (alias, agent, read).
+      assert.equal(merged[0]?.alias, 'apo-1', 'live alias is absorbed')
+      assert.equal(merged[0]?.agent, 'apollo', 'live agent is absorbed')
+    },
+  )
+
   // ─── Children channel (PRIMARY source, delegations-sidebar pattern) ───
   // The panel's source of truth is `api.client.session.children` — every
   // pantheon_delegate spawns a child session (parentID = caller), so the
