@@ -67,7 +67,9 @@ function parsePattern(pattern: string): { tool: string; argPattern: string } {
   // arg pattern. Colons inside parens are literal, not separators.
   const parenMatch = /^([^(]+)\(([^)]+)\)$/.exec(pattern)
   if (parenMatch) {
-    return { tool: parenMatch[1], argPattern: parenMatch[2] }
+    const tool = parenMatch[1] ?? ''
+    const argPattern = parenMatch[2] ?? ''
+    return { tool, argPattern }
   }
 
   // Handle "tool:argPattern" or just "tool"
