@@ -156,7 +156,7 @@ Pantheon v1.3.6-beta
 - **Header** — Pantheon version, current git branch, and the active model
   preset (`⚡ Preset: <name> (source)`, or `Preset: default`).
 - **Sessions** — collapsible recent-sessions list (click a row to open).
-- **Delegations (real-time, 1.3.4)** — live view sourced from
+- **Delegations (real-time, 1.3.6)** — live view sourced from
   `api.client.session.children`: children spawned by `pantheon_delegate`
   (board alias tag `[apo-1]`) **and** native `task()` children (`[task]` tag,
   distinct info color). Animated states
