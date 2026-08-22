@@ -31,10 +31,7 @@ export interface HookResult {
  * exit 0 → allow, exit 2 → hard deny, exit 1 → soft deny.
  * Throw = fail-open.
  */
-export type PreToolUseHook = (
-  tool: string,
-  args: unknown,
-) => Promise<HookResult> | HookResult
+export type PreToolUseHook = (tool: string, args: unknown) => Promise<HookResult> | HookResult
 
 /** Permission configuration. */
 export interface PermissionConfig {
@@ -131,11 +128,7 @@ function combinedString(tool: string, args: unknown): string {
  *   2. Direct tool match → check argPattern against args
  *   3. Combined match (for "git push:*" style patterns) → prefix match
  */
-function matchesRule(
-  pattern: string,
-  tool: string,
-  args: unknown,
-): boolean {
+function matchesRule(pattern: string, tool: string, args: unknown): boolean {
   const { tool: patternTool, argPattern } = parsePattern(pattern)
 
   // Wildcard tool: match any tool
