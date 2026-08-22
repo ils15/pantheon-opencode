@@ -17,6 +17,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [1.3.6] - 2026-08-22
+
+## 🆕 What's New
+
+- **Recency decay in `memory_search` (src/mcp/memory_mcp_server.py)** — new `decay_days` param (default `None`, backward compatible) applies a freshness half-life `2^(-days_since_created/decay_days)` to RRF-fused scores, so older memories rank lower when enabled. `_rrf_fuse` accepts an optional `created_at_map`; tool description and docs updated (docs/MEMORY.md, docs/MCP.md, docs/mcp-tools.md).
+- **Themis Comment Checker (src/agents/themis.md)** — Layer 1 review now flags generated code that is indistinguishable from human-written: excessive/obvious comments (`// increment i`, `# set x to 5`), commented-out dead code, and boilerplate headers.
+- **Doc drift fixes** — MEMORY.md/MCP.md/mcp-tools.md now describe the real sqlite-vec + fastembed implementation (6 tools) instead of the stale ChromaDB 14-tool design; freshness decay documented as opt-in via `decay_days`.
+- **scripts/ resynced with src/mcp/** — `mcp_resources_server.py` (routing project fallback), `code_mode_server.py` (comment drift), `memory_mcp_server.py`, `mcp_persistence_server.py`, `_pantheon_paths.py` regenerated from canonical source; tests now point at `src.mcp.*` so they exercise canonical code.
+- **mcp-registry.yml synced** — real tool names (`memory_store/search/recall/forget/list/stats`, `kv_*`, `execute_code_script`, `vision_*`) + `pantheon-vision` server added.
+- **Persistence MCP server test suite (tests/test_mcp_persistence_server.py)** — 32 tests covering kv_store/kv_get (incl. TTL expiry), kv_list, kv_search (FTS5), kv_delete, kv_delete_namespace, purge_expired (dry_run + deletelog), context_save/get/list/stats (latest pointer, session isolation) and namespace/scope isolation — the only previously untested MCP server now has full coverage.
+- **CRITICAL TTL expiry fix (src/mcp/mcp_persistence_server.py)** — ISO `expires_at` timestamps (with `T` separator) compared lexicographically against SQLite's space-separated `datetime('now')` were ALWAYS greater on the same date, so TTL entries never expired (kv_get never returned None, purge_expired never purged, the 4h checkpoint TTL never fired). All 9 comparison sites now normalize via `datetime(expires_at)` — restoring the crash-recovery checkpoint path.
+- **`_resolve_db_path` fix (src/mcp/mcp_persistence_server.py)** — with an explicit `--project-db`, deletelog writes and db_size stats pointed at the repo's real project.db instead of the actual DB path; the resolved path is now tracked at init.
+- **Code-mode script metadata (src/mcp/code_mode_server.py)** — optional comment-style YAML frontmatter (`# ---` delimiters) on scripts: `description`, `timeout` (per-script override, seconds), `allowed_args` (arg allowlist). Exposed via `pantheon://code-mode/scripts/{name}` and the new `json_output=true` structured result (stdout/stderr/exit_code/duration_ms/timed_out/metadata). Malformed/missing frontmatter fails open. Documented in `.pantheon/code-mode/README.md`.
+- **Per-script timeout override (src/mcp/code_mode_server.py)** — frontmatter `timeout` overrides the 30s default in the subprocess `wait_for`; kill-on-timeout preserved (tested: `timeout: 2` script killed at ~2s).
+- **`_parse_iso_ts` UTC fix (src/mcp/memory_mcp_server.py)** — legacy naive timestamps from `DEFAULT (datetime('now'))` (`YYYY-MM-DD HH:MM:SS`, no TZ) are now assumed UTC instead of local timezone before `.timestamp()`, keeping freshness decay correct.
+- **StepCapTracker permanent-per-process documented (src/pantheon/step-cap.ts)** — counters accumulate for the process lifetime and are intentionally not reset on success/session end; `reset()` remains a tested utility. Documented in routing.yml + README.
+- **High-level R1 integration tests (tests/pantheon/zeus-delegate-with-retry.test.ts)** — `zeusDelegateWithRetry` with retryPolicy/cooldown: policy-driven retry-then-success (empty → 1 retry → recovered content), 0-retry escalate, and cooldown skip.
+- **R4 per-agent step caps (src/pantheon/step-cap.ts + src/routing.yml)** — every routed agent gets a `max_steps` budget (explore 25, reviewer 25, oracle 15, hermes 40, zeus 60, …); at the cap the delegation is forced to summarize-and-stop via `buildStopInstruction`/`cappedSummary`; counters are permanent-per-process by design.
+- **O5 permission.task globs (src/pantheon/permission-globs.ts)** — allow/deny glob rules controlling which subagents may be delegated; deny rules remove the target from Zeus's task tool entirely (`delegation-enforce`), with matching filtering in finalize and the agent-list description.
+- **plugin-eval certification suite (.pantheon/code-mode/)** — `eval-static.py` (structural checks: frontmatter/secrets/file refs), `eval-llm-judge.py` (LLM quality layer), `eval-monte-carlo.py` (simulated-run reliability, exits 1 below 75%), `eval-run.py` (orchestrator emitting one report JSON; below-threshold layers still score), plus `eval_store` persistence and `pantheon://eval` resources exposing latest certification scores.
+
+## 🐞 Fixed
+
+- memory_search doc drift: freshness decay was documented but not implemented — now real via `decay_days`.
+- scripts/ copies stale vs src/mcp/ canonical sources (missing routing project fallback, stale comments).
+- .pantheon/mcp-registry.yml listed non-existent tools (memory_compress, memory_expand, list_agents) and missed pantheon-vision.
+
+
 ## [1.3.6-beta] - 2026-08-21
 
 ## 🆕 What's New
