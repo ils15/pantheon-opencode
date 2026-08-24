@@ -34,6 +34,7 @@ import {
   fmtElapsed,
   isValidSessionId,
   type LiveDelegationEntry,
+  markStaleIfRunning,
   mergeChildDelegationSources,
   mergeDelegationSources,
   navigateToDelegationSession,
@@ -148,14 +149,9 @@ async function main() {
     assert.equal(e.description, 'Localizar código do hook e seleção de modelo')
   })
 
-  await testAsync('parse: running report → updatedAt null, timedOut false', async () => {
+  await testAsync('parse: running report → null (running state rejected from MD)', async () => {
     const e = parseDelegationMarkdown(RUNNING_MD, 'apo-5.md')
-    assert.ok(e, 'running report must parse')
-    assert.equal(e.alias, 'apo-5')
-    assert.equal(e.state, 'running')
-    assert.equal(e.updatedAt, null, 'running job has no Finalized timestamp')
-    assert.equal(e.timedOut, false)
-    assert.equal(e.startedAt, Date.parse('2026-08-11T15:00:00.000Z'))
+    assert.equal(e, null, 'running state in MD is rejected — only live channels produce running')
   })
 
   await testAsync('parse: timedOut report → timedOut true, state error', async () => {
@@ -303,16 +299,14 @@ async function main() {
         writeFileSync(join(tmp, 'README.md'), '# not a session')
 
         const entries = await readDelegationEntries(tmp)
-        assert.equal(entries.length, 3, 'only the 3 valid reports are read')
+        // Running MD reports are now rejected (Fix 3) — only terminal reports parse
+        assert.equal(entries.length, 2, 'only terminal reports are read (running MD rejected)')
         assert.deepEqual(
           entries.map((e) => e.alias),
-          ['apo-5', 'her-7', 'apo-1'],
-          'running first, then terminal by recency (Finalized desc)',
+          ['her-7', 'apo-1'],
+          'terminal by recency (Finalized desc)',
         )
-        const running = entries[0]
-        assert.ok(running)
-        assert.equal(running.state, 'running')
-        const timedOut = entries[1]
+        const timedOut = entries[0]
         assert.ok(timedOut)
         assert.equal(timedOut.state, 'error')
         assert.equal(timedOut.timedOut, true)
@@ -395,18 +389,19 @@ async function main() {
         mkdirSync(sesB, { recursive: true })
         writeFileSync(join(sesA, 'apo-1.md'), COMPLETED_MD) // terminal, older
         writeFileSync(join(sesB, 'her-7.md'), TIMED_OUT_MD) // terminal, newer
-        writeFileSync(join(sesA, 'apo-5.md'), RUNNING_MD) // running → first
+        writeFileSync(join(sesA, 'apo-5.md'), RUNNING_MD) // running → rejected (Fix 3)
 
         const entries = await readAllDelegationEntries(root)
-        assert.equal(entries.length, 3, 'all sessions aggregated')
+        // Running MD reports are now rejected (Fix 3) — only terminal reports parse
+        assert.equal(entries.length, 2, 'only terminal sessions aggregated (running MD rejected)')
         assert.deepEqual(
           entries.map((e) => e.alias),
-          ['apo-5', 'her-7', 'apo-1'],
-          'running first, then terminal by Finalized desc across sessions',
+          ['her-7', 'apo-1'],
+          'terminal by Finalized desc across sessions',
         )
         // sessionID comes from each report's own session dir.
-        assert.equal(entries[2]?.sessionID, 'ses_aaa')
-        assert.equal(entries[1]?.sessionID, 'ses_bbb')
+        assert.equal(entries[1]?.sessionID, 'ses_aaa')
+        assert.equal(entries[0]?.sessionID, 'ses_bbb')
       } finally {
         rmSync(root, { recursive: true, force: true })
       }
@@ -1680,13 +1675,12 @@ async function main() {
         const sessionID = resolveCurrentSessionID({ sessionID: '{sessionID}' })
         assert.equal(sessionID, null)
         const md = await readAllDelegationEntries(root)
-        assert.equal(md.length, 4, 'history collected from disk despite null sessionID')
+        // Running MD reports are now rejected (Fix 3) — only terminal reports parse
+        assert.equal(md.length, 3, 'history collected from disk despite null sessionID (running MD rejected)')
         const panelList = visibleDelegationList(md)
-        assert.equal(panelList.length, 4, 'history renders — panel is NOT (0)')
-        assert.equal(panelList[0]?.state, 'running', 'running job first')
+        assert.equal(panelList.length, 3, 'history renders — panel is NOT (0)')
         assert.deepEqual(
           panelList
-            .slice(1)
             .map((e) => e.alias)
             .sort(),
           ['apo-1', 'her-7', 'the-9'],
@@ -1715,12 +1709,12 @@ async function main() {
         )
       }
       const md = await readAllDelegationEntries(root)
-      assert.equal(md.length, 13, 'all reports collected')
+      // Running MD reports are now rejected (Fix 3) — only terminal reports parse
+      assert.equal(md.length, 12, 'all terminal reports collected (running MD rejected)')
       const panelList = visibleDelegationList(md)
-      assert.equal(panelList[0]?.state, 'running', 'running job first')
-      assert.equal(panelList.length, 1 + 8, '1 running + at most 8 terminal')
+      assert.equal(panelList.length, 8, 'at most 8 terminal (no running from MD)')
       // Recency: the 8 most recently finalized terminals are kept.
-      const terminalAliases = panelList.slice(1).map((e) => e.alias)
+      const terminalAliases = panelList.map((e) => e.alias)
       assert.ok(terminalAliases.includes('her-11'), 'most recent terminal kept')
       assert.ok(!terminalAliases.includes('her-0'), 'oldest terminal trimmed by the cap')
     } finally {
@@ -1778,6 +1772,116 @@ async function main() {
       }
     },
   )
+
+  // ─── Stale-running detector (Fix 1) ──────────────────────────────────
+
+  await testAsync('stale-running: short-running entry stays running', async () => {
+    const entry: DelegationEntry = {
+      alias: 'test-1',
+      sessionID: 'ses_test',
+      agent: 'apollo',
+      state: 'running',
+      startedAt: Date.now() - 60_000, // 1 minute ago
+      updatedAt: null,
+      timedOut: false,
+      description: 'short job',
+    }
+    const result = markStaleIfRunning(entry, Date.now(), 30 * 60 * 1000)
+    assert.equal(result.state, 'running', 'short-running entry stays running')
+  })
+
+  await testAsync('stale-running: long-running without updatedAt → stale', async () => {
+    const now = Date.now()
+    const entry: DelegationEntry = {
+      alias: 'test-2',
+      sessionID: 'ses_test',
+      agent: 'hermes',
+      state: 'running',
+      startedAt: now - 31 * 60 * 1000, // 31 minutes ago (beyond 30min threshold)
+      updatedAt: null,
+      timedOut: false,
+      description: 'long job with no updates',
+    }
+    const result = markStaleIfRunning(entry, now, 30 * 60 * 1000)
+    assert.equal(result.state, 'stale-running', 'long-running without updatedAt becomes stale')
+  })
+
+  await testAsync('stale-running: long-running with stale updatedAt → stale', async () => {
+    const now = Date.now()
+    const entry: DelegationEntry = {
+      alias: 'test-3',
+      sessionID: 'ses_test',
+      agent: 'demeter',
+      state: 'running',
+      startedAt: now - 35 * 60 * 1000, // 35 minutes ago
+      updatedAt: now - 120_000, // last update 2 minutes ago (> 60s silence)
+      timedOut: false,
+      description: 'long job with stale updates',
+    }
+    const result = markStaleIfRunning(entry, now, 30 * 60 * 1000)
+    assert.equal(result.state, 'stale-running', 'long-running with stale updatedAt becomes stale')
+  })
+
+  await testAsync('stale-running: long-running with recent updatedAt → stays running', async () => {
+    const now = Date.now()
+    const entry: DelegationEntry = {
+      alias: 'test-4',
+      sessionID: 'ses_test',
+      agent: 'aphrodite',
+      state: 'running',
+      startedAt: now - 35 * 60 * 1000, // 35 minutes ago
+      updatedAt: now - 30_000, // last update 30 seconds ago (< 60s silence)
+      timedOut: false,
+      description: 'long job with recent updates',
+    }
+    const result = markStaleIfRunning(entry, now, 30 * 60 * 1000)
+    assert.equal(result.state, 'running', 'long-running with recent updatedAt stays running')
+  })
+
+  await testAsync('stale-running: terminal entry unchanged', async () => {
+    const entry: DelegationEntry = {
+      alias: 'test-5',
+      sessionID: 'ses_test',
+      agent: 'themis',
+      state: 'completed',
+      startedAt: Date.now() - 60_000,
+      updatedAt: Date.now(),
+      timedOut: false,
+      description: 'completed job',
+    }
+    const result = markStaleIfRunning(entry, Date.now(), 30 * 60 * 1000)
+    assert.equal(result.state, 'completed', 'terminal entry unchanged')
+  })
+
+  await testAsync('stale-running: visibleDelegationList marks stale entries', async () => {
+    const now = Date.now()
+    const entries: DelegationEntry[] = [
+      {
+        alias: 'fresh',
+        sessionID: 'ses_test',
+        agent: 'apollo',
+        state: 'running',
+        startedAt: now - 5 * 60 * 1000, // 5 min — not stale
+        updatedAt: null,
+        timedOut: false,
+        description: 'fresh job',
+      },
+      {
+        alias: 'stale',
+        sessionID: 'ses_test',
+        agent: 'hermes',
+        state: 'running',
+        startedAt: now - 60 * 60 * 1000, // 1 hour — stale
+        updatedAt: null,
+        timedOut: false,
+        description: 'stale job',
+      },
+    ]
+    const result = visibleDelegationList(entries, 8, now, 30 * 60 * 1000)
+    assert.equal(result.length, 2)
+    assert.equal(result[0]?.state, 'running', 'fresh entry stays running')
+    assert.equal(result[1]?.state, 'stale-running', 'stale entry marked as stale-running')
+  })
 
   // ─── Report ────────────────────────────────────────────────────────────
 

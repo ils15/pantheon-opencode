@@ -942,7 +942,14 @@ export type DelegationEntry = {
   taskID?: string
   /** Agent name, e.g. "apollo". */
   agent: string
-  state: 'running' | 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled'
+  state:
+    | 'running'
+    | 'completed'
+    | 'error'
+    | 'startup_failed'
+    | 'startup_unknown'
+    | 'cancelled'
+    | 'stale-running'
   /** Epoch ms of the `Started` header. */
   startedAt: number
   /** Epoch ms of the `Finalized` header — null while still running. */
@@ -1048,8 +1055,10 @@ export function parseDelegationMarkdown(
   const startedAt = started !== undefined ? Date.parse(started) : NaN
   if (agent === undefined || state === undefined || Number.isNaN(startedAt)) return null
   const normalized = state.toLowerCase()
+  // Running state should only come from live channels, never from persisted
+  // reports. A stale "running" MD artifact contaminates the panel — skip it.
+  if (normalized === 'running') return null
   if (
-    normalized !== 'running' &&
     normalized !== 'completed' &&
     normalized !== 'error' &&
     normalized !== 'startup_failed' &&
@@ -1171,8 +1180,8 @@ export function tuiLogPath(projectRoot: string): string {
  *  falling back to startedAt, descending). Shared by the md reader and
  *  mergeDelegationSources. */
 export function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry): number {
-  const aRun = a.state === 'running' ? 1 : 0
-  const bRun = b.state === 'running' ? 1 : 0
+  const aRun = a.state === 'running' || a.state === 'stale-running' ? 1 : 0
+  const bRun = b.state === 'running' || b.state === 'stale-running' ? 1 : 0
   if (aRun !== bRun) return bRun - aRun
   return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt)
 }
@@ -1184,10 +1193,43 @@ export function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry)
 export function visibleDelegationList(
   all: readonly DelegationEntry[],
   maxTerminal = 8,
+  now = Date.now(),
+  staleThresholdMs = 30 * 60 * 1000, // 30 minutes
 ): DelegationEntry[] {
-  const running = all.filter((d) => d.state === 'running')
+  const running = all
+    .filter((d) => d.state === 'running')
+    .map((d) => markStaleIfRunning(d, now, staleThresholdMs))
   const terminal = all.filter((d) => d.state !== 'running').slice(0, maxTerminal)
   return [...running, ...terminal]
+}
+
+/** Default stale-running threshold: 30 minutes. */
+export const STALE_RUNNING_THRESHOLD_MS = 30 * 60 * 1000
+
+/** Idle silence window: if no updatedAt change in this window, the entry is
+ *  considered stale. Combined with the stale-running threshold to produce the
+ *  display-only `stale-running` state. */
+export const IDLE_SILENCE_MS = 60 * 1000
+
+/**
+ * Mark a running entry as `stale-running` if it has been running longer than
+ * the threshold AND has no recent activity (no `updatedAt` change in the last
+ * `IDLE_SILENCE_MS`). This is DISPLAY-ONLY — the board state is unchanged.
+ *
+ * A `stale-running` entry renders with a warning indicator but the underlying
+ * delegation is still treated as running by the backend.
+ */
+export function markStaleIfRunning(
+  entry: DelegationEntry,
+  now: number,
+  thresholdMs = STALE_RUNNING_THRESHOLD_MS,
+): DelegationEntry {
+  if (entry.state !== 'running') return entry
+  const elapsed = now - entry.startedAt
+  if (elapsed < thresholdMs) return entry
+  // If updatedAt exists and is recent, entry is still active — not stale.
+  if (entry.updatedAt !== null && now - entry.updatedAt < IDLE_SILENCE_MS) return entry
+  return { ...entry, state: 'stale-running' as const }
 }
 
 /** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
@@ -1207,7 +1249,8 @@ export function fmtElapsed(ms: number): string {
 /** Elapsed label for one entry: running → ticks `now - startedAt`, terminal
  *  → fixed `updatedAt - startedAt` (em dash when no finalized timestamp). */
 export function delegationElapsed(entry: DelegationEntry, now: number): string {
-  if (entry.state === 'running') return fmtElapsed(now - entry.startedAt)
+  if (entry.state === 'running' || entry.state === 'stale-running')
+    return fmtElapsed(now - entry.startedAt)
   return entry.updatedAt !== null ? fmtElapsed(entry.updatedAt - entry.startedAt) : '\u2014'
 }
 
@@ -1874,7 +1917,9 @@ export function childrenToDelegationEntries(
       agent: mdEntry?.agent ?? child.agent ?? 'agent',
       state,
       startedAt: mdEntry?.startedAt ?? child.time?.created ?? now,
-      updatedAt: mdEntry?.updatedAt ?? (state === 'running' ? null : (child.time?.updated ?? null)),
+      updatedAt:
+        mdEntry?.updatedAt ??
+        (state === 'running' || state === 'stale-running' ? null : (child.time?.updated ?? null)),
       timedOut: mdEntry?.timedOut ?? false,
       description:
         mdEntry !== undefined && mdEntry.description !== ''
@@ -2008,6 +2053,8 @@ function DelegationRow(props: {
     switch (props.job.state) {
       case 'running':
         return t.warning
+      case 'stale-running':
+        return t.error // warning color for stale delegations
       case 'completed':
         return t.success
       case 'error':
@@ -2019,6 +2066,7 @@ function DelegationRow(props: {
 
   const marker = createMemo(() => {
     if (props.job.state === 'running') return `${delegationSpinnerFrame(props.animationNow)} `
+    if (props.job.state === 'stale-running') return '\u26a0 ' // warning triangle
     switch (props.job.state) {
       case 'completed':
         return '\u2713 '
