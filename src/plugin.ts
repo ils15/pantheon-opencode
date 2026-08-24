@@ -1,5 +1,7 @@
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { reassertAfterCompaction } from './pantheon/compaction-assert.ts'
 import { createCostCommand } from './pantheon/cost-command.ts'
@@ -9,6 +11,7 @@ import {
   type DelegationClient,
   resolveDelegationBudgets,
   resolveDelegationTimeoutMs,
+  startIdleChildScan,
 } from './pantheon/delegation.ts'
 import { buildCompactionContext } from './pantheon/delegation-compaction.ts'
 import {
@@ -40,6 +43,7 @@ import {
   todoEnforcerEnabledFromEnv,
 } from './pantheon/todo-enforcer.ts'
 import { TodoPreserver } from './pantheon/todo-preserve.ts'
+import { checkTuiVersionStaleness } from './pantheon/tui-version-check.ts'
 import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
@@ -334,6 +338,9 @@ const plugin: Plugin = async (input: PluginInput) => {
   if (pantheonPluginOnce('pantheon:plugin')) {
     return {}
   }
+  // Runtime TUI version staleness check — warns if the copied TUI plugin
+  // is older than the installed package. Runs once, fail-open, no auto-sync.
+  checkTuiVersionStaleness((msg) => log.warn(msg))
   const vision = createVisionHandler(input)
   // Phase 2/3: background delegation toolset + the bound finalize lifecycle
   // hook. Completion is observed through the event hook below
@@ -362,6 +369,28 @@ const plugin: Plugin = async (input: PluginInput) => {
       ...(wallClockTimeoutMs !== undefined ? { wallClockTimeoutMs } : {}),
     },
   })
+
+  // Proactive idle-child scan (Fix 2): finalize children that are idle on the
+  // board but have no MD report on disk — eliminates the phantom "running"
+  // window. Runs every 30s (configurable via PANTHEON_IDLE_SCAN_INTERVAL_MS),
+  // unref'd so it never holds the process open. Fail-open by design.
+  const idleScanIntervalMs = Number(process.env.PANTHEON_IDLE_SCAN_INTERVAL_MS) || undefined
+  startIdleChildScan(
+    {
+      board,
+      finalize: (childSessionID, opts) => delegation.finalizeDelegation(childSessionID, opts),
+      hasReport: (job) => {
+        try {
+          const filePath = join('.pantheon/delegations', job.parentSessionID, `${job.alias}.md`)
+          return existsSync(filePath)
+        } catch {
+          return false
+        }
+      },
+      logger: log,
+    },
+    idleScanIntervalMs,
+  )
 
   // Wave 1 (PR #46): TODO continuation enforcer for root/non-board sessions.
   // Mirrors routing.yml `todo_enforcer` (plugin scope has no routing.yml

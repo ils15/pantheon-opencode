@@ -58,6 +58,11 @@ import {
   finalizeDelegation as finalizeDelegationReport,
   readDelegationReport,
 } from './delegation-finalize.ts'
+import {
+  type IdleChildScanDeps,
+  finalizeIdleChildrenWithoutMd,
+  startIdleChildScan,
+} from './delegation-notify.ts'
 import { createPantheonLogger } from './logger.ts'
 import { buildAgentListDescription } from './permission-globs.ts'
 import { missingProviderKeyEnv, resolveActivePreset } from './presets.mjs'
@@ -71,6 +76,8 @@ export type {
   FinalizeInput,
 } from './delegation-finalize.ts'
 export { DELEGATION_DEFAULTS } from './delegation-finalize.ts'
+export type { IdleChildScanDeps } from './delegation-notify.ts'
+export { finalizeIdleChildrenWithoutMd, startIdleChildScan } from './delegation-notify.ts'
 
 // Fase B3: these are runtime controls, not routing/frontmatter fields. The
 // plugin reads them from the environment, while tests and embedders can pass
@@ -326,6 +333,8 @@ export interface DelegationToolset {
     childSessionID: string,
     opts: FinalizeInput,
   ) => Promise<BackgroundJobRecord | undefined>
+  /** Proactive finalize for idle children without MD reports (Fix 2). */
+  finalizeIdleChildrenWithoutMd: typeof finalizeIdleChildrenWithoutMd
 }
 
 /** Input for createDelegationTools(). */
@@ -1182,5 +1191,6 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
     pantheon_delegation_read,
     pantheon_delegation_list,
     finalizeDelegation: finalize,
+    finalizeIdleChildrenWithoutMd,
   }
 }

@@ -21,6 +21,11 @@
  * acknowledgment, not a completion), so every job gets exactly ONE terminal
  * transition — never a reconciled echo. Unknown sessions are ignored.
  *
+ * `finalizeIdleChildrenWithoutMd` proactively finalizes children that are
+ * idle on the board but have no MD report on disk — eliminates the phantom
+ * "running" window during `pullOutput` (Fix 2 for the TUI stale-running bug).
+ * Wired into a periodic scan via `startIdleChildScan` (default 30 s cadence).
+ *
  * Pure TypeScript — zero runtime dependencies beyond the board types.
  *
  * Follow-up (Themis review, Phase 5): `extractErrorMessage` handles the two
@@ -37,6 +42,9 @@ import type { BackgroundJobRecord } from './background-job-board.ts'
 import type { FinalizeInput } from './delegation-finalize.ts'
 
 export type { FinalizeInput } from './delegation-finalize.ts'
+
+/** Default cadence for the proactive idle-child scan (30 s). */
+export const IDLE_SCAN_INTERVAL_MS = 30_000
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -97,4 +105,93 @@ export async function handleDelegationEvent(
     })
   }
   return true
+}
+
+// ─── Proactive finalize (Fix 2) ────────────────────────────────────────
+
+/** Dependencies for idle-child scanning. */
+export interface IdleChildScanDeps {
+  /** Look up a board job by session ID (child session IDs are task IDs). */
+  board: {
+    get(taskID: string): BackgroundJobRecord | undefined
+    list(parentSessionID?: string): BackgroundJobRecord[]
+  }
+  /** Bound Phase 2 finalize — clears the timeout timer + writes the report. */
+  finalize: (childSessionID: string, opts: FinalizeInput) => Promise<unknown>
+  /**
+   * Check whether an MD report exists for the given board job.
+   * Receives the full job record so the caller can construct the report
+   * path from `job.parentSessionID` + `job.alias`.
+   * If the function throws, the scan skips that child (fail-open).
+   */
+  hasReport: (job: BackgroundJobRecord) => boolean
+  /** Optional logger for diagnostic messages. */
+  logger?: { info?: (msg: string) => void; warn?: (msg: string) => void }
+}
+
+/**
+ * Scan running board jobs for children whose sessions are idle but have no MD
+ * report on disk, and proactively finalize them. This eliminates the phantom
+ * "running" window that occurs between `session.idle` firing and the
+ * `pullOutput`→`writeDelegationReport` cycle completing.
+ *
+ * Called from the periodic idle-child scan (`startIdleChildScan`, default 30 s).
+ * The scan is O(N) where N = number of running jobs (typically < 10).
+ *
+ * Each child is finalized exactly once — the board's same-terminal idempotency
+ * ensures repeated scans are harmless. Errors are caught per-child so one
+ * failure never blocks the rest.
+ *
+ * @returns Number of children finalized (for diagnostics).
+ */
+export async function finalizeIdleChildrenWithoutMd(
+  deps: IdleChildScanDeps,
+): Promise<number> {
+  const runningJobs = deps.board
+    .list()
+    .filter((j: BackgroundJobRecord) => j.state === 'running')
+
+  let finalized = 0
+  for (const job of runningJobs) {
+    try {
+      // If the child already has an MD report, finalize was already handled
+      // by handleDelegationEvent — skip.
+      if (deps.hasReport(job)) continue
+      // Child is idle on the board but has no report — proactively finalize.
+      await deps.finalize(job.taskID, { state: 'completed' })
+      finalized++
+    } catch (err) {
+      deps.logger?.warn?.(
+        `[delegation-notify] proactive finalize failed for ${job.taskID}: ${err}`,
+      )
+    }
+  }
+  return finalized
+}
+
+// ─── Periodic scan launcher ─────────────────────────────────────────────
+
+/**
+ * Start a periodic scan that proactively finalizes idle board children
+ * without MD reports. The scan runs every `intervalMs` (default 30 s) and
+ * is **unref'd** so it never holds the process open on its own.
+ *
+ * The timer is idempotent — calling this function multiple times is safe
+ * (each call creates an independent timer, but the underlying finalize
+ * operation is itself idempotent due to the board's same-terminal guard).
+ *
+ * @returns A `NodeJS.Timeout` handle that can be cleared with
+ *   `clearInterval(handle)` to stop the scan.
+ */
+export function startIdleChildScan(
+  deps: IdleChildScanDeps,
+  intervalMs: number = IDLE_SCAN_INTERVAL_MS,
+): NodeJS.Timeout {
+  const timer = setInterval(() => {
+    void finalizeIdleChildrenWithoutMd(deps).catch((err) => {
+      deps.logger?.warn?.(`[delegation-notify] periodic idle scan failed: ${err}`)
+    })
+  }, intervalMs)
+  timer.unref()
+  return timer
 }
