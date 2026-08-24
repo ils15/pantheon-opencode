@@ -17,6 +17,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [1.3.7] - 2026-08-24
+
+## 🆕 What's New
+
+- **Stale-running detector (src/pantheon/delegation-notify.ts)** — entries running >30min without activity now show a ⚠️ warning in the job board; running state is rejected in the MD parser (should only come from live channels).
+- **Auto-update mechanism (scripts/sync-tui.mjs)** — postinstall script syncs TUI plugin files from the main package; runtime version staleness check at plugin init ensures the TUI stays current.
+
+## 🐞 Fixed
+
+- **Delegate stale-running display (src/plugins/tui/src/index.tsx)** — resolved stale-running entries appearing in the TUI delegation view.
+- **finalizeIdleChildrenWithoutMd** — wired into periodic 30s scan at plugin init to clean up orphaned children.
+
+## ✅ Closed Issues
+
+- #68 — fix(tui): resolve delegate stale-running display and add auto-update
+
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## 🆕 What's New
+
+## 🐞 Fixed
+
+## ⚠️ Known Issues
+
+## ✅ Closed Issues
+
 ## [1.3.6] - 2026-08-22
 
 ## 🆕 What's New
