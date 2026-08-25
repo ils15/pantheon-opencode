@@ -11,7 +11,7 @@ type DelegationEntry = {
   taskID?: string;
   /** Agent name, e.g. "apollo". */
   agent: string;
-  state: 'running' | 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled';
+  state: 'running' | 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled' | 'stale-running';
   /** Epoch ms of the `Started` header. */
   startedAt: number;
   /** Epoch ms of the `Finalized` header — null while still running. */
@@ -77,7 +77,22 @@ declare function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry
  *  recent terminal reports (capped). Pure — so the history-only panel (no
  *  sessionID) is testable without the TUI runtime. The header count uses the
  *  same "running + recentes" list. */
-declare function visibleDelegationList(all: readonly DelegationEntry[], maxTerminal?: number): DelegationEntry[];
+declare function visibleDelegationList(all: readonly DelegationEntry[], maxTerminal?: number, now?: number, staleThresholdMs?: number): DelegationEntry[];
+/** Default stale-running threshold: 30 minutes. */
+declare const STALE_RUNNING_THRESHOLD_MS: number;
+/** Idle silence window: if no updatedAt change in this window, the entry is
+ *  considered stale. Combined with the stale-running threshold to produce the
+ *  display-only `stale-running` state. */
+declare const IDLE_SILENCE_MS: number;
+/**
+ * Mark a running entry as `stale-running` if it has been running longer than
+ * the threshold AND has no recent activity (no `updatedAt` change in the last
+ * `IDLE_SILENCE_MS`). This is DISPLAY-ONLY — the board state is unchanged.
+ *
+ * A `stale-running` entry renders with a warning indicator but the underlying
+ * delegation is still treated as running by the backend.
+ */
+declare function markStaleIfRunning(entry: DelegationEntry, now: number, thresholdMs?: number): DelegationEntry;
 /** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
  *  second for running jobs. */
 declare function fmtElapsed(ms: number): string;
@@ -306,5 +321,5 @@ declare const plugin: TuiPluginModule & {
   id: string;
 };
 //#endregion
-export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isValidSessionId, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
+export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isValidSessionId, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
 //# sourceMappingURL=tui.d.ts.map

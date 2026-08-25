@@ -120,8 +120,14 @@ async function resolvePresetForTui(env, cwd) {
 }
 async function detectVersion(api) {
 	try {
-		const match = (await readFile(fileURLToPath(new URL("../../../../package.json", import.meta.url)), "utf8")).match(/"version":\s*"([^"]+)"/);
-		if (match?.[1]) return match[1];
+		const pkgContent = await readFile(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf8");
+		const pkg = JSON.parse(pkgContent);
+		if (pkg.version) return pkg.version;
+	} catch {}
+	try {
+		const pkgContent = await readFile(fileURLToPath(new URL("../../../../package.json", import.meta.url)), "utf8");
+		const pkg = JSON.parse(pkgContent);
+		if (pkg.version) return pkg.version;
 	} catch {}
 	try {
 		const wt = api.state.path?.worktree ?? "";
@@ -765,7 +771,8 @@ function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 	const startedAt = started !== void 0 ? Date.parse(started) : NaN;
 	if (agent === void 0 || state === void 0 || Number.isNaN(startedAt)) return null;
 	const normalized = state.toLowerCase();
-	if (normalized !== "running" && normalized !== "completed" && normalized !== "error" && normalized !== "startup_failed" && normalized !== "startup_unknown" && normalized !== "cancelled") return null;
+	if (normalized === "running") return null;
+	if (normalized !== "completed" && normalized !== "error" && normalized !== "startup_failed" && normalized !== "startup_unknown" && normalized !== "cancelled") return null;
 	const finalizedAt = finalized !== void 0 ? Date.parse(finalized) : NaN;
 	return {
 		alias: title ?? (fileAlias !== void 0 ? stripMdSuffix(fileAlias) : "unknown"),
@@ -861,8 +868,8 @@ function tuiLogPath(projectRoot) {
 *  falling back to startedAt, descending). Shared by the md reader and
 *  mergeDelegationSources. */
 function compareDelegationEntries(a, b) {
-	const aRun = a.state === "running" ? 1 : 0;
-	const bRun = b.state === "running" ? 1 : 0;
+	const aRun = a.state === "running" || a.state === "stale-running" ? 1 : 0;
+	const bRun = b.state === "running" || b.state === "stale-running" ? 1 : 0;
 	if (aRun !== bRun) return bRun - aRun;
 	return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt);
 }
@@ -870,10 +877,33 @@ function compareDelegationEntries(a, b) {
 *  recent terminal reports (capped). Pure — so the history-only panel (no
 *  sessionID) is testable without the TUI runtime. The header count uses the
 *  same "running + recentes" list. */
-function visibleDelegationList(all, maxTerminal = 8) {
-	const running = all.filter((d) => d.state === "running");
+function visibleDelegationList(all, maxTerminal = 8, now = Date.now(), staleThresholdMs = 1800 * 1e3) {
+	const running = all.filter((d) => d.state === "running").map((d) => markStaleIfRunning(d, now, staleThresholdMs));
 	const terminal = all.filter((d) => d.state !== "running").slice(0, maxTerminal);
 	return [...running, ...terminal];
+}
+/** Default stale-running threshold: 30 minutes. */
+const STALE_RUNNING_THRESHOLD_MS = 1800 * 1e3;
+/** Idle silence window: if no updatedAt change in this window, the entry is
+*  considered stale. Combined with the stale-running threshold to produce the
+*  display-only `stale-running` state. */
+const IDLE_SILENCE_MS = 60 * 1e3;
+/**
+* Mark a running entry as `stale-running` if it has been running longer than
+* the threshold AND has no recent activity (no `updatedAt` change in the last
+* `IDLE_SILENCE_MS`). This is DISPLAY-ONLY — the board state is unchanged.
+*
+* A `stale-running` entry renders with a warning indicator but the underlying
+* delegation is still treated as running by the backend.
+*/
+function markStaleIfRunning(entry, now, thresholdMs = STALE_RUNNING_THRESHOLD_MS) {
+	if (entry.state !== "running") return entry;
+	if (now - entry.startedAt < thresholdMs) return entry;
+	if (entry.updatedAt !== null && now - entry.updatedAt < 6e4) return entry;
+	return {
+		...entry,
+		state: "stale-running"
+	};
 }
 /** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
 *  second for running jobs. */
@@ -891,7 +921,7 @@ function fmtElapsed(ms) {
 /** Elapsed label for one entry: running → ticks `now - startedAt`, terminal
 *  → fixed `updatedAt - startedAt` (em dash when no finalized timestamp). */
 function delegationElapsed(entry, now) {
-	if (entry.state === "running") return fmtElapsed(now - entry.startedAt);
+	if (entry.state === "running" || entry.state === "stale-running") return fmtElapsed(now - entry.startedAt);
 	return entry.updatedAt !== null ? fmtElapsed(entry.updatedAt - entry.startedAt) : "—";
 }
 /** The activity labels shown by the animated row. Keeping this pure makes the
@@ -1318,7 +1348,7 @@ function childrenToDelegationEntries(children, md, now = Date.now()) {
 			agent: mdEntry?.agent ?? child.agent ?? "agent",
 			state,
 			startedAt: mdEntry?.startedAt ?? child.time?.created ?? now,
-			updatedAt: mdEntry?.updatedAt ?? (state === "running" ? null : child.time?.updated ?? null),
+			updatedAt: mdEntry?.updatedAt ?? (state === "running" || state === "stale-running" ? null : child.time?.updated ?? null),
 			timedOut: mdEntry?.timedOut ?? false,
 			description: mdEntry !== void 0 && mdEntry.description !== "" ? mdEntry.description : child.title ?? "",
 			source: mdEntry !== void 0 ? "md" : "children-only"
@@ -1399,6 +1429,7 @@ function DelegationRow(props) {
 		const t = theme();
 		switch (props.job.state) {
 			case "running": return t.warning;
+			case "stale-running": return t.error;
 			case "completed": return t.success;
 			case "error": return t.error;
 			default: return t.textMuted;
@@ -1406,6 +1437,7 @@ function DelegationRow(props) {
 	});
 	const marker = createMemo(() => {
 		if (props.job.state === "running") return `${delegationSpinnerFrame(props.animationNow)} `;
+		if (props.job.state === "stale-running") return "⚠ ";
 		switch (props.job.state) {
 			case "completed": return "✓ ";
 			case "error": return "✕ ";
@@ -1842,6 +1874,6 @@ const plugin = {
 	tui
 };
 //#endregion
-export { buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isValidSessionId, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
+export { IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isValidSessionId, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
 
 //# sourceMappingURL=tui.js.map
