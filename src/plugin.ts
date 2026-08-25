@@ -1,8 +1,9 @@
-import type { Plugin, PluginInput } from '@opencode-ai/plugin'
-import type { PluginConfig } from 'opencode'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import type { Plugin, PluginInput } from '@opencode-ai/plugin'
+import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
+import { createCommandNormalizer } from './pantheon/command-normalizer.ts'
 import { reassertAfterCompaction } from './pantheon/compaction-assert.ts'
 import { createCostCommand } from './pantheon/cost-command.ts'
 import {
@@ -130,6 +131,13 @@ const enforcementGuard = createEnforcementGuard({
     logger: log,
   },
 })
+
+// Fase 1 (command-normalizer): deterministic `python` → `python3` rewrite for
+// `bash` commands (PEP 394 — Ubuntu 20.04+ has no bare `python`). Unlike the
+// enforcement guard above (which THROWS to deny), this guard REWRITES the
+// command in place and lets it run. Logs every rewrite + `python -c` warning
+// to the shared hooks.log for @nyx frequency measurement.
+const commandNormalizer = createCommandNormalizer({ logger: log })
 
 // Mirrors routing.yml background_delegation.max_compaction_items.
 const COMPACTION_MAX_ITEMS = 10
@@ -578,6 +586,7 @@ const plugin: Plugin = async (input: PluginInput) => {
       // no-ops for non-matching sessions/tools.
       zeusReadGuard(input.tool, output?.args, sessionAgents.get(input.sessionID))
       await enforcementGuard(input, output)
+      await commandNormalizer(input, output)
       await todoPreserver.beforeTodoWrite(input, output)
     },
     // Wave 2 (PR #46): augment `read` output with hashline tags. Additive —

@@ -27,7 +27,8 @@
       "npx *": "allow",
       "pytest *": "allow",
       "ruff *": "allow",
-      "pip *": "allow"
+      "pip *": "allow",
+      "python3 *": "allow"
     }
   },
   "mcp": {
