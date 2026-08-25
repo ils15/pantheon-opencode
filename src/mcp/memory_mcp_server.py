@@ -20,12 +20,13 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import os
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,18 @@ import sqlite_vec
 from _pantheon_paths import pantheon_home
 from fastembed import TextEmbedding
 from mcp.server.fastmcp import FastMCP
+
+try:
+    import mcp_codemap_module as _codemap
+except ImportError:  # pragma: no cover - deployed runtime may need path fix
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _sys.path.insert(0, str(_Path(__file__).parent))
+        import mcp_codemap_module as _codemap  # type: ignore[no-redef]
+    except ImportError:
+        _codemap = None  # type: ignore[assignment]
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -128,6 +141,9 @@ def _get_db() -> sqlite3.Connection:
 
     sqlite_vec.load(conn)
     conn.executescript(SCHEMA_SQL)
+    if _codemap is not None:
+        with contextlib.suppress(Exception):
+            _codemap.ensure_codemap_schema(conn)
     return conn
 
 
@@ -198,7 +214,7 @@ def _parse_iso_ts(value: str) -> float:
     """
     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.timestamp()
 
 
@@ -351,7 +367,7 @@ def memory_store(
     "freshness half-life (2^(-days/decay_days)) so recent entries rank "
     "higher; default None keeps the original rank-only behavior.",
 )
-def memory_search(  # noqa: PLR0912
+def memory_search(  # noqa: C901, PLR0912
     query: str,
     namespace: str | None = None,
     top_k: int = 5,
@@ -673,6 +689,78 @@ def memory_stats() -> dict[str, Any]:
         stats["db_size_human"] = "unknown"
 
     return stats
+
+
+# ── Codemap Tools ───────────────────────────────────────────────────────────
+
+
+@mcp.tool(
+    description="Index codebase files incrementally (hash-based skip). "
+    "Parses Python (ast) and TypeScript (regex) to build knowledge graph.",
+)
+def code_index(
+    path: str | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Index code files into knowledge graph.
+
+    Args:
+        path: File or directory to index; None = cwd.
+        force: Re-parse even if hash unchanged.
+
+    Returns:
+        Dict with indexed, skipped, errors, large_skipped, unsupported.
+    """
+    if _codemap is None:
+        return {"error": "codemap module not available"}
+    db = _get_conn()
+    return _codemap.code_index(db, path, force)
+
+
+@mcp.tool(
+    description="Search code entities via FTS5 (with LIKE fallback) and optional type filter.",
+)
+def code_query(
+    query: str,
+    type: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Search code entities.
+
+    Args:
+        query: Search term (FTS5).
+        type: Optional entity type filter (class, function, method, etc.).
+        limit: Max results (1-50).
+
+    Returns:
+        List of matching entities.
+    """
+    if _codemap is None:
+        return [{"error": "codemap module not available"}]
+    db = _get_conn()
+    return _codemap.code_query(db, query, type, limit)
+
+
+@mcp.tool(
+    description="Get neighbors of a code entity via relations graph (BFS depth 1-3).",
+)
+def code_neighbors(
+    entity_id: str,
+    depth: int = 1,
+) -> dict[str, Any]:
+    """Get graph neighbors for an entity.
+
+    Args:
+        entity_id: Entity ID (hash).
+        depth: BFS depth 1-3.
+
+    Returns:
+        Dict with entity, neighbors, relations or error if not found.
+    """
+    if _codemap is None:
+        return {"error": "codemap module not available"}
+    db = _get_conn()
+    return _codemap.code_neighbors(db, entity_id, depth)
 
 
 # ── Main Entrypoint ───────────────────────────────────────────────────────────

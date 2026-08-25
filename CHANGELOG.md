@@ -17,6 +17,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.4.0] - 2026-08-25
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Knowledge Graph de Codebase — extensão pantheon-memory (src/mcp/mcp_codemap_module.py)** — módulo codemap dentro do MCP pantheon-memory (zero novo processo): 3 tabelas (code_entities, code_relations, code_files) + FTS5 `porter unicode61` + 3 tools (`code_index`, `code_query`, `code_neighbors`) com parsers Python (ast) + TypeScript (regex), incremental via sha256 hash, 185 linhas, 24 testes, 94% coverage. @apollo usa `code_query` antes de glob/grep. Council aprovado: estender vs novo MCP (70% menos código).
+- **Context Window Optimization — plugin hook `tool.execute.after` (src/pantheon/context-sandbox.ts)** — sandboxing de tool outputs: `read` 200 linhas (head 50/tail 10), `grep` 20 resultados, `glob` 50 arquivos, `webfetch` 5000 chars com `[TRUNCATED: N hidden]`, 273 linhas, 52 testes, 100% stmts. Session memory auto-save já conectado via `experimental.session.compacting`. Zero novo MCP/processo, <1ms/call, 50-60% menos tokens por sessão.
+
+## 🐞 Fixed
+
+- **TUI version display when installed elsewhere (src/plugins/tui/src/index.tsx)** — `detectVersion` now tries `../../package.json` (installed: pantheon-tui/package.json) before `../../../../package.json` (dev: raiz), fixing null version when installed via `npm install -g` or in sandbox. Rebuilt dist/tui.js + dist/tui.tsx.
+- **Bash command normalization `python` → `python3` (src/pantheon/command-normalizer.ts, src/plugin.ts, opencode.json)** — plugin guard normalizes `python` to `python3` in bash tool calls for systems where `python` is not available.
 ## [1.3.7] - 2026-08-24
 
 ## 🆕 What's New

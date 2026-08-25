@@ -45,3 +45,10 @@ Generate a hierarchical map of the codebase to understand its structure, key mod
 - Focus on structure, not implementation details
 - Max 3 levels deep unless a module is critical
 - Return to agent: "Codemap generated. Send to @athena for planning."
+
+## Integração @apollo
+Antes de glob/grep manual, tente `code_query`:
+- `code_query("MyClass")` → busca FTS5 por entidade
+- Fallback para glob/grep se não indexado ou query vazia
+- `code_index("src/")` para indexação incremental (hash-based, skip se não mudou, force=true para re-index)
+- `code_neighbors(entity_id, depth=2)` para grafo de imports/calls

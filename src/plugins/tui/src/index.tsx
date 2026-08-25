@@ -154,25 +154,29 @@ async function resolvePresetForTui(
  * Se falhar, retorna null e a View omite a versão.
  *
  * Try order:
+ *   0a. pantheon-tui/package.json (installed: dist/tui.js → 2 níveis)
+ *   0b. pantheon/package.json (dev: src/plugins/tui/dist/tui.tsx → 4 níveis)
  *   1. api.client.file.read package.json
  *   2. git describe --tags
  *   3. opencode --version
  *   4. null                                                      */
 
 async function detectVersion(api: TuiPluginApi): Promise<string | null> {
-  // Try 0: package.json do PACOTE PANTHEON instalado. O TUI é carregado de
-  // <pacote>/src/plugins/tui/dist/tui.tsx (fix #32 garante esse path) →
-  // 4 níveis acima (dist → tui → plugins → src → raiz) está o package.json
-  // do pacote. Funciona em QUALQUER cwd (ex: sandbox sem package.json/git) e
-  // também em dev (source no repo). Se falhar, cai para os tries abaixo.
+  // Try 0a: installed location (2 levels: dist/tui.js → pantheon-tui/package.json)
+  try {
+    const pkgUrl = new URL('../../package.json', import.meta.url)
+    const pkgContent = await readFile(fileURLToPath(pkgUrl), 'utf8')
+    const pkg = JSON.parse(pkgContent)
+    if (pkg.version) return pkg.version
+  } catch {}
+
+  // Try 0b: dev location (4 levels: src/plugins/tui/dist/tui.tsx → package.json)
   try {
     const pkgUrl = new URL('../../../../package.json', import.meta.url)
     const pkgContent = await readFile(fileURLToPath(pkgUrl), 'utf8')
-    const match = pkgContent.match(/"version":\s*"([^"]+)"/)
-    if (match?.[1]) return match[1]
-  } catch {
-    /* fall through */
-  }
+    const pkg = JSON.parse(pkgContent)
+    if (pkg.version) return pkg.version
+  } catch {}
 
   // Try 1: package.json do projeto (via worktree path)
   try {

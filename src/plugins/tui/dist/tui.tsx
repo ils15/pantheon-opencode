@@ -154,25 +154,29 @@ async function resolvePresetForTui(
  * Se falhar, retorna null e a View omite a versão.
  *
  * Try order:
+ *   0a. pantheon-tui/package.json (installed: dist/tui.js → 2 níveis)
+ *   0b. pantheon/package.json (dev: src/plugins/tui/dist/tui.tsx → 4 níveis)
  *   1. api.client.file.read package.json
  *   2. git describe --tags
  *   3. opencode --version
  *   4. null                                                      */
 
 async function detectVersion(api: TuiPluginApi): Promise<string | null> {
-  // Try 0: package.json do PACOTE PANTHEON instalado. O TUI é carregado de
-  // <pacote>/src/plugins/tui/dist/tui.tsx (fix #32 garante esse path) →
-  // 4 níveis acima (dist → tui → plugins → src → raiz) está o package.json
-  // do pacote. Funciona em QUALQUER cwd (ex: sandbox sem package.json/git) e
-  // também em dev (source no repo). Se falhar, cai para os tries abaixo.
+  // Try 0a: installed location (2 levels: dist/tui.js → pantheon-tui/package.json)
+  try {
+    const pkgUrl = new URL('../../package.json', import.meta.url)
+    const pkgContent = await readFile(fileURLToPath(pkgUrl), 'utf8')
+    const pkg = JSON.parse(pkgContent)
+    if (pkg.version) return pkg.version
+  } catch {}
+
+  // Try 0b: dev location (4 levels: src/plugins/tui/dist/tui.tsx → package.json)
   try {
     const pkgUrl = new URL('../../../../package.json', import.meta.url)
     const pkgContent = await readFile(fileURLToPath(pkgUrl), 'utf8')
-    const match = pkgContent.match(/"version":\s*"([^"]+)"/)
-    if (match?.[1]) return match[1]
-  } catch {
-    /* fall through */
-  }
+    const pkg = JSON.parse(pkgContent)
+    if (pkg.version) return pkg.version
+  } catch {}
 
   // Try 1: package.json do projeto (via worktree path)
   try {
@@ -942,7 +946,14 @@ export type DelegationEntry = {
   taskID?: string
   /** Agent name, e.g. "apollo". */
   agent: string
-  state: 'running' | 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled'
+  state:
+    | 'running'
+    | 'completed'
+    | 'error'
+    | 'startup_failed'
+    | 'startup_unknown'
+    | 'cancelled'
+    | 'stale-running'
   /** Epoch ms of the `Started` header. */
   startedAt: number
   /** Epoch ms of the `Finalized` header — null while still running. */
@@ -1048,8 +1059,10 @@ export function parseDelegationMarkdown(
   const startedAt = started !== undefined ? Date.parse(started) : NaN
   if (agent === undefined || state === undefined || Number.isNaN(startedAt)) return null
   const normalized = state.toLowerCase()
+  // Running state should only come from live channels, never from persisted
+  // reports. A stale "running" MD artifact contaminates the panel — skip it.
+  if (normalized === 'running') return null
   if (
-    normalized !== 'running' &&
     normalized !== 'completed' &&
     normalized !== 'error' &&
     normalized !== 'startup_failed' &&
@@ -1171,8 +1184,8 @@ export function tuiLogPath(projectRoot: string): string {
  *  falling back to startedAt, descending). Shared by the md reader and
  *  mergeDelegationSources. */
 export function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry): number {
-  const aRun = a.state === 'running' ? 1 : 0
-  const bRun = b.state === 'running' ? 1 : 0
+  const aRun = a.state === 'running' || a.state === 'stale-running' ? 1 : 0
+  const bRun = b.state === 'running' || b.state === 'stale-running' ? 1 : 0
   if (aRun !== bRun) return bRun - aRun
   return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt)
 }
@@ -1184,10 +1197,43 @@ export function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry)
 export function visibleDelegationList(
   all: readonly DelegationEntry[],
   maxTerminal = 8,
+  now = Date.now(),
+  staleThresholdMs = 30 * 60 * 1000, // 30 minutes
 ): DelegationEntry[] {
-  const running = all.filter((d) => d.state === 'running')
+  const running = all
+    .filter((d) => d.state === 'running')
+    .map((d) => markStaleIfRunning(d, now, staleThresholdMs))
   const terminal = all.filter((d) => d.state !== 'running').slice(0, maxTerminal)
   return [...running, ...terminal]
+}
+
+/** Default stale-running threshold: 30 minutes. */
+export const STALE_RUNNING_THRESHOLD_MS = 30 * 60 * 1000
+
+/** Idle silence window: if no updatedAt change in this window, the entry is
+ *  considered stale. Combined with the stale-running threshold to produce the
+ *  display-only `stale-running` state. */
+export const IDLE_SILENCE_MS = 60 * 1000
+
+/**
+ * Mark a running entry as `stale-running` if it has been running longer than
+ * the threshold AND has no recent activity (no `updatedAt` change in the last
+ * `IDLE_SILENCE_MS`). This is DISPLAY-ONLY — the board state is unchanged.
+ *
+ * A `stale-running` entry renders with a warning indicator but the underlying
+ * delegation is still treated as running by the backend.
+ */
+export function markStaleIfRunning(
+  entry: DelegationEntry,
+  now: number,
+  thresholdMs = STALE_RUNNING_THRESHOLD_MS,
+): DelegationEntry {
+  if (entry.state !== 'running') return entry
+  const elapsed = now - entry.startedAt
+  if (elapsed < thresholdMs) return entry
+  // If updatedAt exists and is recent, entry is still active — not stale.
+  if (entry.updatedAt !== null && now - entry.updatedAt < IDLE_SILENCE_MS) return entry
+  return { ...entry, state: 'stale-running' as const }
 }
 
 /** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
@@ -1207,7 +1253,8 @@ export function fmtElapsed(ms: number): string {
 /** Elapsed label for one entry: running → ticks `now - startedAt`, terminal
  *  → fixed `updatedAt - startedAt` (em dash when no finalized timestamp). */
 export function delegationElapsed(entry: DelegationEntry, now: number): string {
-  if (entry.state === 'running') return fmtElapsed(now - entry.startedAt)
+  if (entry.state === 'running' || entry.state === 'stale-running')
+    return fmtElapsed(now - entry.startedAt)
   return entry.updatedAt !== null ? fmtElapsed(entry.updatedAt - entry.startedAt) : '\u2014'
 }
 
@@ -1874,7 +1921,9 @@ export function childrenToDelegationEntries(
       agent: mdEntry?.agent ?? child.agent ?? 'agent',
       state,
       startedAt: mdEntry?.startedAt ?? child.time?.created ?? now,
-      updatedAt: mdEntry?.updatedAt ?? (state === 'running' ? null : (child.time?.updated ?? null)),
+      updatedAt:
+        mdEntry?.updatedAt ??
+        (state === 'running' || state === 'stale-running' ? null : (child.time?.updated ?? null)),
       timedOut: mdEntry?.timedOut ?? false,
       description:
         mdEntry !== undefined && mdEntry.description !== ''
@@ -2008,6 +2057,8 @@ function DelegationRow(props: {
     switch (props.job.state) {
       case 'running':
         return t.warning
+      case 'stale-running':
+        return t.error // warning color for stale delegations
       case 'completed':
         return t.success
       case 'error':
@@ -2019,6 +2070,7 @@ function DelegationRow(props: {
 
   const marker = createMemo(() => {
     if (props.job.state === 'running') return `${delegationSpinnerFrame(props.animationNow)} `
+    if (props.job.state === 'stale-running') return '\u26a0 ' // warning triangle
     switch (props.job.state) {
       case 'completed':
         return '\u2713 '

@@ -859,3 +859,42 @@ When `01-active-context.md` exceeds 100 lines:
 - `skills/wisdom-accumulation/SKILL.md` — learning extraction
 - `skills/memory-bank/SKILL.md` — memory bank maintenance
 - `instructions/backend-standards.instructions.md` — zeus scoring reference
+
+---
+
+## 19. Tool Output Sandboxing (v2 P0 — Plugin Hook, 0 MCPs)
+
+Camada P0 do Deepwork Plan "Context Window Optimization" (council 2026-08-25, 3/3 High): truncamento simples via `tool.execute.after`, sem tiktoken/LLM em v1 (YAGNI).
+
+**Módulo:** `src/pantheon/context-sandbox.ts` (~120 LOC) — `sandboxOutput(tool, output)` + `createContextSandbox(config)`
+
+**Limites (defaults sensatos, cobrem 80% do problema):**
+
+| Tool | Limite | Ação no excesso |
+|------|--------|-----------------|
+| read | 200 linhas | Primeiras 50 + `[TRUNCATED: N lines]` + últimas 10 |
+| grep | 20 resultados | Top 10 + `[Showing 10 of N matches]` |
+| glob | 50 arquivos | Top 20 + `[showing 20 of N files]` |
+| webfetch | 5000 chars | Primeiros 2000 + `[Content truncated]` |
+
+**Integração (ordem fixa — 0-overhead extra):** `tool.execute.after` → `sandboxHandler` (trunca) → `readEnhancer` (hashline tags). Sandbox sempre antes de compression: outputs já chegam enxutos ao context window; compress-inline (L1) só atua sobre o que sobrou. Custo <1ms por call, 0 novos processos.
+
+**Config opcional em `opencode.json` (fail-open — defaults quando ausente):**
+```json
+{
+  "context_sandbox": {
+    "enabled": true,
+    "limits": {
+      "read": { "maxLines": 200, "keepHead": 50, "keepTail": 10 },
+      "grep": { "maxResults": 20, "keepTop": 10 },
+      "glob": { "maxFiles": 50, "keepTop": 20 },
+      "webfetch": { "maxChars": 5000, "keepHead": 2000 }
+    }
+  }
+}
+```
+Desabilitar: `"enabled": false` (plugin vira no-op, sem throw).
+
+**Session Memory (P1 — já existe, só conectado):** `pantheon-persistence` KV com TTL 4h já fornece `context_save`/`context_get`. Auto-save antes de compactar (`experimental.session.compacting` → `buildCompactionContext` + `todoPreserver.capture`) e recovery pós-compactação (`session.compacted` → `todoPreserver.onCompacted` + `reassertAfterCompaction`) preservam estado sem novo MCP. Testado em `delegation-compaction.test.ts` + `todo-preserve.test.ts`.
+
+**Fora de escopo v1 (YAGNI):** tiktoken counting, LLM summarization, budget dashboard — só se medição provar necessidade.

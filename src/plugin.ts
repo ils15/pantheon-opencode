@@ -5,6 +5,13 @@ import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { createCommandNormalizer } from './pantheon/command-normalizer.ts'
 import { reassertAfterCompaction } from './pantheon/compaction-assert.ts'
+import {
+  type ContextSandboxConfig,
+  createContextSandbox,
+  resolveSandboxConfig,
+  DEFAULT_CONFIG as SANDBOX_DEFAULT_CONFIG,
+  DEFAULT_LIMITS as SANDBOX_DEFAULT_LIMITS,
+} from './pantheon/context-sandbox.ts'
 import { createCostCommand } from './pantheon/cost-command.ts'
 import {
   collectRootSessionIDs,
@@ -444,6 +451,24 @@ const plugin: Plugin = async (input: PluginInput) => {
   const hashlineEdit = createHashlineEditTool()
   const readEnhancer = createReadEnhancer()
 
+  // Context Window Optimization (v2 P0) — tool output sandboxing
+  // Pure truncation hook: read/grep/glob/webfetch → head + [TRUNCATED] + tail
+  // Fail-open: never throws, disabled via opencode.json context_sandbox.enabled
+  const sandboxConfig: ContextSandboxConfig = {
+    enabled: SANDBOX_DEFAULT_CONFIG.enabled,
+    limits: {
+      read: { ...SANDBOX_DEFAULT_LIMITS.read },
+      grep: { ...SANDBOX_DEFAULT_LIMITS.grep },
+      glob: { ...SANDBOX_DEFAULT_LIMITS.glob },
+      webfetch: { ...SANDBOX_DEFAULT_LIMITS.webfetch },
+    },
+  }
+  const sandboxHandler = createContextSandbox(sandboxConfig)
+  const combinedAfter: typeof readEnhancer = async (input, output) => {
+    await sandboxHandler(input, output)
+    await readEnhancer(input, output)
+  }
+
   // Wave 4 (PR #46): /cost — delegation cost + token visibility. Reads
   // opencode.db read-only (node:sqlite, falls back to scripts/cost.mjs).
   // Fully wired (unlike dispatch-guard, which is manual-orchestration-only
@@ -460,6 +485,15 @@ const plugin: Plugin = async (input: PluginInput) => {
       // WITHOUT a parentID is a root. Fail-open: a failed/throttled list
       // leaves the set untouched (delegation.ts treats unknown sessions as
       // roots), and config setup must never wait for the session API.
+      // Context sandbox config — opencode.json → context_sandbox: {enabled, limits}
+      try {
+        const raw = (config as unknown as Record<string, unknown>).context_sandbox
+        const resolved = resolveSandboxConfig(raw)
+        sandboxConfig.enabled = resolved.enabled
+        sandboxConfig.limits = resolved.limits
+      } catch {
+        // fail-open: keep defaults
+      }
       seedRootSessionsInBackground(input)
       config.agentsPath = config.agentsPath ?? []
       config.agentsPath.push(new URL('./agents', import.meta.url).pathname)
@@ -589,11 +623,13 @@ const plugin: Plugin = async (input: PluginInput) => {
       await commandNormalizer(input, output)
       await todoPreserver.beforeTodoWrite(input, output)
     },
-    // Wave 2 (PR #46): augment `read` output with hashline tags. Additive —
+    // Wave 2 (PR #46) + Context Sandbox (v2 P0): sandbox truncates oversized
+    // outputs BEFORE hashline tags (so tags remain stable on kept lines).
+    // Additive —
     // pantheon-hooks.ts (a separate plugin instance) owns its own
     // tool.execute.after, so there is no key collision. Non-read tools pass
     // through untouched.
-    'tool.execute.after': readEnhancer,
+    'tool.execute.after': combinedAfter,
     // Phase 4 + release-134 Phase 2: keep the session's working state across
     // compaction — preservation directive, active goals (<mission_context>),
     // pending todos (<todo_context>), and in-flight background delegations
