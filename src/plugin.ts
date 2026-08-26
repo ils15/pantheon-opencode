@@ -4,7 +4,6 @@ import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
 import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { createCommandNormalizer } from './pantheon/command-normalizer.ts'
-import { reassertAfterCompaction } from './pantheon/compaction-assert.ts'
 import {
   type ContextSandboxConfig,
   createContextSandbox,
@@ -29,6 +28,7 @@ import {
   zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
 import { handleDelegationEvent } from './pantheon/delegation-notify.ts'
+import { showDelegationTerminalToast, type ToastClient } from './pantheon/delegation-toast.ts'
 import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
 import { GOAL_LOOP_DEFAULTS, GoalLoop, GoalStore } from './pantheon/goal-loop.ts'
 import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
@@ -62,17 +62,6 @@ import { activePresetCandidates, createVisionHandler } from './pantheon/vision.t
 // .pantheon/logs/hooks.log; the console echo is opt-in via PANTHEON_HOOKS_LOG=1.
 const log = createPantheonLogger({ module: 'pantheon-plugin' })
 
-// Fase 6 (release-134): the delegation toolset's options.agentModels (branch
-// (b) of resolveChildModel) is wired from routing.yml's default (first)
-// preset — a STATIC per-agent model mapping independent of the active preset,
-// so delegated children get a sane model even without an active preset (the
-// previous production wiring left branch (b) dead: delegation depended 100%
-// on the active preset). Built ONCE at module load, never per dispatch.
-// Fail-open: a missing/corrupt routing.yml yields {} (warned by the helper)
-// and delegation falls back to the active preset / opencode default — the
-// plugin never throws at startup.
-const routingAgentModels = loadRoutingAgentModels({ logger: log })
-
 // R4: per-agent step caps from routing.yml `agents.<name>.max_steps`
 // (fail-open → {} = no agent capped). R1 retry_policy/cooldown are NOT
 // wired here — the plugin has no retry path (opencode cannot intercept task
@@ -90,6 +79,7 @@ const board = new BackgroundJobBoard({
 })
 const persistence = new FilePersistenceAdapter('.pantheon/board/state.json')
 board.setPersistence(persistence)
+let terminalToastClient: ToastClient = {}
 board
   .recoverRunningJobs()
   .catch((err) => log.error('[Pantheon Plugin] Failed to recover running jobs:', err))
@@ -108,6 +98,8 @@ board.onTerminal((taskID: string) => {
   log.info(
     `[Pantheon Plugin] Board terminal: [${job.alias}] ${job.description} → ${job.state}${job.resultSummary ? ` — ${job.resultSummary}` : ''}`,
   )
+  // Deliberately direct-to-TUI: onTerminal must not inject chat/transcript text.
+  void showDelegationTerminalToast(terminalToastClient, job)
 })
 
 // Periodically prune terminal/reconciled jobs (24h TTL, every 30 min).
@@ -223,8 +215,7 @@ function adaptDelegationClient(client: PluginInput['client']): DelegationClient 
           model?: { id: string; providerID: string }
         } = { parentID: input.body.parentID }
         if (input.body.title !== undefined) body.title = input.body.title
-        // Forward the routed child model (E2E fix): without it the child
-        // falls back to the key-gated default model and dies at startup.
+        // Forward a model only when the active routing profile supplied one.
         if (input.body.model !== undefined) body.model = input.body.model
         const result = await client.session.create({ body })
         if (result.error) throw new Error(sdkErrorMessage(result.error))
@@ -343,6 +334,7 @@ function adaptTodoEnforcerClient(client: PluginInput['client']): TodoEnforcerCli
  * Helpers live in src/pantheon/vision.ts and are imported from there directly.
  */
 const plugin: Plugin = async (input: PluginInput) => {
+  terminalToastClient = input.client as unknown as ToastClient
   // release-134: runtime guard against DOUBLE registration (duplicate toasts +
   // duplicate task_ids in one process — 2026-08-12 live logs). opencode
   // merges the global config (npm-package plugin paths) with the project
@@ -377,7 +369,12 @@ const plugin: Plugin = async (input: PluginInput) => {
       },
       enforceRuntimeMatrix: true,
       readOnlyAgents: new Set(['apollo', 'gaia']),
-      agentModels: routingAgentModels,
+      // Only an explicitly active routing profile may provide child models.
+      // An empty map deliberately lets OpenCode inherit the parent model.
+      agentModels: loadRoutingAgentModels({
+        candidates: activePresetCandidates(),
+        logger: log,
+      }),
       delegationBudgets,
       stepCapTracker,
       ...(routingPermissionTask != null ? { permissionTask: routingPermissionTask } : {}),
@@ -546,9 +543,7 @@ const plugin: Plugin = async (input: PluginInput) => {
     'chat.message': async (hookInput, output) => {
       await vision.chatMessage(hookInput, output)
       // No delegation notification delivery here — the user policy is ZERO
-      // notification text injected into the chat transcript (previously the
-      // notifier.flushQueue prepend). pantheon-hooks' chat-reminders.ts keeps
-      // its own <system-reminder> channel, untouched.
+      // notification text injected into the chat transcript.
       // Wave 1: a user message is activity — the todo enforcer's
       // user-activity gate skips injection for userActivityQuietMs afterwards.
       todoEnforcer.noteUserActivity(hookInput.sessionID)
@@ -573,17 +568,6 @@ const plugin: Plugin = async (input: PluginInput) => {
       // rewritten with the exact list (see todo-preserve.ts). Fail-open.
       if (ev.type === 'session.compacted') {
         await todoPreserver.onCompacted(ev.properties.sessionID)
-        // release-134 Phase 4: re-assert post-compaction state — enqueue a
-        // fresh-state reminder (running/unread board jobs + active goals) for
-        // the session's next chat.message delivery. Fail-open (never throws).
-        await reassertAfterCompaction({
-          sessionID: ev.properties.sessionID,
-          board,
-          goals: {
-            enabled: GOAL_LOOP_DEFAULTS.enabled,
-            list: (s: string) => goalStore.list(s),
-          },
-        })
       }
       // Phase 3: observe completion on child sessions → finalizeDelegation.
       // The board transition fires onTerminal → the file-only audit log (no

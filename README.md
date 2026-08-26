@@ -2,7 +2,7 @@
 <h1 align="center">Pantheon</h1>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.3.6--beta-blue" alt="Version"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.4.1--candidate-blue" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
   <a href="docs/agents/README.md"><img src="https://img.shields.io/badge/agents-14-purple" alt="Agents"></a>
   <a href="src/skills/README.md"><img src="https://img.shields.io/badge/skills-21-orange" alt="Skills"></a>
@@ -239,17 +239,16 @@ Fail-open: if the child session messages are unavailable (or empty), the read
 returns the report exactly as before — the activity sampling never breaks the
 delegation read.
 
-**Completion visibility — no chat injection.** User policy: ZERO delegation
-notifications in the chat transcript — no `<task-notification>` block is ever
-injected into a `chat.message` output (the old queue + flush channel was
-removed). When a job reaches a terminal state (completion observed via
-`session.idle`/`session.error` on the child, or the timeout finalize path), the
-plugin writes a file-only audit log line (echo opt-in via `PANTHEON_HOOKS_LOG`).
-Completion visibility lives in the legitimate channels: the board `[unread]`
-marker (`pantheon_delegation_list`), `pantheon_delegation_read`, TUI toasts
-(pantheon-hooks, `PANTHEON_TOASTS` gate) and compaction carry-forward. Reconcile
-is an acknowledgment, not a completion — it never re-fires the terminal
-transition.
+**Completion visibility — zero chat noise.** Delegation notifications are never
+injected into the chat transcript: neither `chat.message` nor any other chat
+hook or transcript marker is used as a delivery channel. When a job reaches a
+terminal state (completion observed via `session.idle`/`session.error` on the
+child, or the timeout finalize path), the plugin writes a file-only audit log
+line (echo opt-in via `PANTHEON_HOOKS_LOG`). Completion visibility lives in the
+legitimate channels: the board `[unread]` marker
+(`pantheon_delegation_list`), `pantheon_delegation_read`, TUI toasts
+(`PANTHEON_TOASTS` gate), and compaction carry-forward. Reconcile is an
+acknowledgment, not a completion — it never re-fires the terminal transition.
 
 **Timeout:** `background_delegation.timeout_ms` (default `900000` = 15 min). A job
 that has not reached a terminal state is finalized as `error`/`timedOut`.
@@ -338,10 +337,9 @@ logged warn and pass-through.
 
 **Post-compaction state re-assertion (1.3.4):** on `session.compacted`, fresh
 state — running/unread delegations from the board + active goals, capped at 10
-lines — is re-injected as a `<system-reminder>` into the session's next
-message via the shared chat-reminder buffer (`chat-reminders.ts`, the same P0
-messageID guard that protects subagent fires). A session with nothing to
-assert is a silent skip.
+lines — remains available through compaction carry-forward and the board
+(`pantheon_delegation_list` / `pantheon_delegation_read`). A session with
+nothing to assert is a silent skip; no chat transcript injection is performed.
 
 **Preemptive compaction check (1.3.4):** a pure threshold core
 (`preemptive-compact.ts`) warns the model before the context fills: at 78%
@@ -350,36 +348,22 @@ dormant / ready-to-wire — opencode 1.18.x exposes no runtime context-usage
 percentage, so nothing observes it yet; when a source appears, the caller
 wires it in (the enqueue callback is injected).
 
-**Model API-key validation (1.3.4):** `pantheon_delegate` gates the resolved
-child model's provider before dispatching (single source of truth:
-`routing.yml` preset definitions' `apiKeyEnv` — the same check `applyPreset`
-enforces at startup). If an **auto-resolved** model (`options.agentModels` or
-the active preset) points to a provider that requires an API key
-(`apiKeyEnv`) and the env var is unset, the delegate falls back to
-`opencode-go/deepseek-v4-flash` (validated the same way). If the fallback is
-also unusable, the tool returns a clear error **text** (never throws) naming
-the missing env var — and registers **no job** on the board. An **explicit**
-`model` passed by the caller is always respected (warned, not overridden).
-Setting `PANTHEON_MODEL_PRESET` to a preset whose providers have keys, or
-filling the required `PANTHEON_*_API_KEY` env var for the preset's provider,
-resolves the fallback path. If nothing resolves at all (no model, no preset),
-the child keeps using opencode's default model (warned).
+**Model selection (1.4.1):** the child session inherits the parent session's
+model through OpenCode. A model override is supplied only when the active
+routing profile defines one; no model API-key validation is performed here.
 
-**agentModels wiring (1.3.4):** the delegate now also resolves the child model
-via `routing.yml` — `loadRoutingAgentModels` extracts the per-agent models of
-the FIRST-listed preset (the static default, `go-deepseek` today) and passes
-them as `options.agentModels`, branch (b) of the resolve precedence: explicit
-`model` > `options.agentModels` > active preset > opencode default. Delegation
-no longer depends exclusively on the active preset — a delegated child gets a
-sane per-agent model even when no preset is active. Fail-open: a missing or
-unparseable routing.yml yields `{}` (previous behavior, warned).
+**agentModels wiring (1.3.4):** `loadRoutingAgentModels` extracts only the
+per-agent models from the explicitly active routing profile and passes them as
+`options.agentModels`. No active profile, missing profile entry, or profile
+without `model` produces an empty map; there is no implicit first-preset or
+DeepSeek fallback. A missing or unparseable `routing.yml` is fail-open and
+omits the child model.
 
 **Delegation log hygiene (1.3.4):** `delegations.log` now records the real
 `task_id` (omitted when empty, never `""`) and a **numeric** `duration_ms`
-(null when unset) so downstream aggregation works. The idle-flush log entry is
-deduplicated: the flush logs a summary (count + aggregated line count) and the
-reminder content is logged exactly once, at `chat.message` delivery — no more
-duplicate lines for the same notification.
+(null when unset) so downstream aggregation works. Terminal events are
+file-only audit entries; completion is surfaced by TUI toast (when enabled),
+the board, and the list/read tools — never by chat delivery.
 
 **Env vars & config:**
 
@@ -1040,11 +1024,17 @@ Use the isolated sandbox (`~/pantheon-sandbox/`) — **never** the dev environme
 
 **Happy path (clean edit):** any normal tool call (exit 0) is **silent** — no console output by design, even though the audit hooks append their log files (`sessions.log`, `delegations.log`). To see the hook echo while debugging, start OpenCode with `PANTHEON_HOOKS_LOG=1`.
 
-**Delegation path (chat.message reminders):** on OpenCode 1.18.13 the TUI drops `tui.toast.show` events, so delegation signals are injected into the next user message as a single `<system-reminder>` text part (oh-my-openagent fallback pattern). Ask something that dispatches subagents (e.g. *"dispare 2 subagentes apollo em paralelo para listar arquivos e comparar resultados"*) and expect:
+**Delegation path (zero chat noise):** delegation signals are surfaced through
+TUI toasts (when enabled), the board's `[unread]` marker, and the
+`pantheon_delegation_list` / `pantheon_delegation_read` tools. Ask something
+that dispatches subagents (e.g. *"dispare 2 subagentes apollo em paralelo para
+listar arquivos e comparar resultados"*) and expect:
 
-- A `<system-reminder>` in the chat with `🚀 apollo em execução` / `✅ apollo concluiu` (or the aggregate `✅ N agentes concluídos (...)` for 3+ agents completing within 6s)
+- A TUI toast with `🚀 apollo em execução` / `✅ apollo concluiu` when
+  `PANTHEON_TOASTS` permits it
+- `[unread]` in `pantheon_delegation_list` until the terminal result is read
 - An honest append to `logs/agent-sessions/delegations.log`: the **real agent name** (extracted from `tool_input.subagent_type`, never `unknown` when present) and a **non-fabricated status** — `success` only on explicit completion evidence, `failure` for refusals/errors, `unknown` otherwise
-- With `export PANTHEON_TOASTS=off` before starting OpenCode: no toasts/reminders at all
+- With `export PANTHEON_TOASTS=off` before starting OpenCode: no toasts; board/list/read and audit-log visibility remain available
 
 ### Pre-commit hooks (local secret gate)
 

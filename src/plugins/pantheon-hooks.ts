@@ -79,7 +79,7 @@
  *       PANTHEON_TOASTS=council       → {errors, council}
  *       PANTHEON_TOASTS=all           → {errors, delegations, council}
  *     Unknown values fall back to the default. The gate controls the TUI
- *     display + chat-reminder fallback ONLY — every fired toast is also
+ *     display only — every fired toast is also
  *     recorded to the structured log + hooks.log (script 'toast', level
  *     'info') so the toast trail stays auditable at any setting.
  *   - Severity priority (2026-08-06): errors/blockers — hook failures
@@ -96,15 +96,9 @@
  *     One group buffer at a time (groups rarely overlap); a task call more
  *     than OLYMPIANS_DETECT_WINDOW_MS after the previous one starts a fresh
  *     group.
- *   - session.idle flush (2026-08-06): the `event` hook additionally handles
- *     `session.idle`. When the orchestrator goes idle, pending completion
- *     reminders are flushed as ONE aggregated chat reminder (individual
- *     "✅ <agent> concluiu" lines collapse into "✅ N agentes concluídos (...)")
- *     and re-armed with a fresh timestamp — so the completion summary
- *     survives until the next user message (delivered via chat.message) instead
- *     of expiring after CHAT_REMINDER_TTL_MS while the user reads the reply.
- *     Partial groups (some members completed, some never reported) and
- *     interrupted council counters are also flushed/reset here.
+ *   - session.idle handling (2026-08-06): the `event` hook additionally handles
+ *     `session.idle` to reset partial aggregation state and interrupted council
+ *     counters. Completion visibility remains in the board and TUI only.
  *   - Council notifications (new category 2026-08-06): a `task` whose prompt/
  *     description matches "council"/"conselho"/"synthesi" is treated as council
  *     activity — "🏛️ Council: especialistas consultados" on start and
@@ -122,11 +116,8 @@
  *     with wrk"). The upstream fix (server-side workspace tagging) only exists
  *     in NEWER opencode versions. THEREFORE on 1.18.13 the toast path below is
  *     a documented TUI no-op and agent-lifecycle feedback is surfaced via the
- *     oh-my-openagent fallback pattern: a `chat.message` hook injects queued
- *     signals (see pendingChatReminders / enqueueChatReminder below) as ONE
- *     <system-reminder> text part into the next user message. Toasts stay in
- *     place for future opencode versions that render them — upgrade opencode
- *     for real TUI toasts.
+ *     no transcript fallback is used. Toasts stay in place for future opencode
+ *     versions that render them — upgrade opencode for real TUI toasts.
  *   - tool.execute.after payload fix (P1-1 follow-up, 2026-08-06): the after
  *     hook receives `(input, output)` where `output` = {title, output,
  *     metadata} — the REAL tool result. It is now merged into the payload
@@ -185,13 +176,6 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
-import type { Part } from '@opencode-ai/sdk'
-import {
-  CHAT_REMINDER_TTL_MS,
-  drainFreshChatReminders,
-  enqueueChatReminder,
-  pendingChatReminders,
-} from '../pantheon/chat-reminders.ts'
 import { pantheonPluginOnce } from '../pantheon/plugin-once.ts'
 import { type HookPayload, type HookResult, runHook } from './hook-runner.ts'
 
@@ -231,7 +215,7 @@ type ToastCategory = 'errors' | 'delegations' | 'council'
  * of enabled categories; every notification declares its category and is
  * skipped unless enabled. "off" = empty set, "all" = every category. Unknown
  * values fall back to the default. The gate controls the TUI display +
- * chat-reminder fallback ONLY — the structured log + hooks.log channels
+ * display only — the structured log + hooks.log channels
  * always write (every fired toast is recorded via reportFailure with script
  * 'toast').
  */
@@ -427,26 +411,8 @@ const BACKGROUND_DISPATCH_TEXT_RE =
 const TASK_ID_TEXT_RE = /\btask\s+id="(ses_[^"]+)"/i
 
 /**
- * 1.18.13 chat.message fallback buffer (oh-my-openagent pattern — see header):
- * opencode 1.18.13 drops tui.toast.show events (untagged), so every signal
- * that would fire a toast is ALSO queued here and injected into the next user
- * message by the 'chat.message' hook as a single <system-reminder> text part.
- *
- * The buffer itself lives in the SHARED chat-reminders.ts module: this plugin
- * file must export EXACTLY ONE function-valued export (legacy loader —
- * see the IMPORTANT note at the top), so the enqueue API cannot be exported
- * from here. Importing the shared module instead gives src/plugin.ts (a
- * separate plugin file, loaded via plain dynamic import) the SAME buffer
- * instance — release-134 Phase 4 (compaction-assert.ts) enqueues
- * post-compaction state re-assertions here and this hook delivers them.
- *
- * Bounded: at most CHAT_REMINDER_MAX entries, each expiring
- * CHAT_REMINDER_TTL_MS after its tool event. Consumed (and cleared) by the
- * chat.message hook. Full-buffer enqueues are SKIPPED, never unbounded — the
- * olympians/3-in-6s aggregates still cover delegation groups, matching the
- * "throttled toasts are skipped, never backlogged" anti-spam philosophy.
- * session.idle flushes the buffer into ONE fresh aggregated entry (see
- * flushIdleReminders) so completions survive until the next user message.
+ * Delegation lifecycle state is intentionally not mirrored into the transcript.
+ * The board/list/read tools and TUI toasts are the supported visibility channels.
  */
 
 /** Variants accepted by the opencode TUI showToast (TuiShowToastData.body.variant). */
@@ -462,11 +428,6 @@ type ToastOptions = {
   dedupeKey?: string
   /** Optional TUI toast headline (opencode showToast body.title). */
   title?: string
-  /**
-   * Optional text for the 1.18.13 chat.message <system-reminder> fallback.
-   * Defaults to `message` when omitted — the reminder mirrors the toast.
-   */
-  reminder?: string
 }
 
 /** Logging context threaded through safeRun — provided by the plugin input. */
@@ -757,10 +718,6 @@ async function notifyToast(ctx: HookContext, opts: ToastOptions): Promise<void> 
       toastShown.add(opts.dedupeKey)
     }
     if (!toastCategoryEnabled(opts.category)) return
-    // 1.18.13 fallback: queue the same signal for the chat.message hook (the
-    // TUI drops tui.toast.show on 1.18.13 — see header). Enqueued even if
-    // showToast fails, so headless/no-TUI servers still surface feedback.
-    enqueueChatReminder(opts.reminder ?? opts.message)
     await ctx.client.tui.showToast({
       body: {
         ...(opts.title !== undefined ? { title: opts.title } : {}),
@@ -907,7 +864,7 @@ async function agentFailedToast(
 ): Promise<void> {
   const raw = result?.output ?? result?.title ?? ''
   // Fix 1: the failure reason echoes tool RESULT content — mask any token so
-  // the toast/chat-reminder/hooks.log trail never exposes a raw secret.
+  // the toast/hooks.log trail never exposes a raw secret.
   const reason = maskSecret(
     trim(typeof raw === 'string' && raw.trim() !== '' ? raw : 'tool failed', 120),
   )
@@ -1057,40 +1014,7 @@ function onCouncilDone(ctx: HookContext): void {
   }
 }
 
-/**
- * session.idle flush (see header): aggregate any pending chat reminders into
- * ONE fresh <system-reminder> entry (individual ✅ completions collapse into
- * "✅ N agentes concluídos (...)"), report partial groups whose members never
- * all completed, and reset interrupted council counters. The chat.message
- * hook remains the delivery path — the flushed entry has a fresh timestamp so
- * it survives until the next user message instead of expiring while the user
- * reads the reply.
- */
 function flushIdleReminders(ctx: HookContext): void {
-  if (ENABLED_TOAST_CATEGORIES.size === 0) {
-    pendingChatReminders.length = 0
-    activeOlympians = null
-    return
-  }
-  const now = Date.now()
-  const fresh = pendingChatReminders.filter((r) => now - r.at <= CHAT_REMINDER_TTL_MS)
-  pendingChatReminders.length = 0
-
-  // Partial group: some members completed but the group never finished (their
-  // completion was suppressed waiting for the aggregate). Report the subset.
-  const partialGroup = activeOlympians
-  if (partialGroup !== null) {
-    const done = [...partialGroup.agents].filter((a) => !partialGroup.pendingCompletions.has(a))
-    if (partialGroup.detected && partialGroup.doneCount > 0 && done.length > 0) {
-      fresh.push({
-        text:
-          done.length === 1
-            ? `✅ ${done[0]} concluiu`
-            : `✅ ${done.length} agentes concluídos (${done.sort().join(', ')})`,
-        at: now,
-      })
-    }
-  }
   activeOlympians = null
 
   // Interrupted council counters must not block a later council's verdict —
@@ -1105,34 +1029,12 @@ function flushIdleReminders(ctx: HookContext): void {
     councilStartNotified = false
   }
 
-  // Collapse individual ✅ completions into one aggregate line.
-  const doneAgents: string[] = []
-  const others: string[] = []
-  for (const r of fresh) {
-    const m = /^✅ (.+?) concluiu$/.exec(r.text)
-    if (m?.[1] !== undefined) doneAgents.push(m[1])
-    else others.push(r.text)
-  }
-  const lines: string[] = []
-  if (doneAgents.length > 0) {
-    lines.push(
-      doneAgents.length === 1
-        ? `✅ ${doneAgents[0]} concluiu`
-        : `✅ ${doneAgents.length} agentes concluídos (${doneAgents.sort().join(', ')})`,
-    )
-  }
-  lines.push(...others)
-  if (lines.length === 0) return
-
-  // ONE aggregated entry, fresh timestamp — chat.message delivers it next.
-  enqueueChatReminder(lines.join('\n'))
-  // 1.3.4 dedup: log a SUMMARY here (count only), never the joined body — the
-  // SAME lines used to be echoed twice (idle-flush with " | ", chat-reminder
-  // delivery with "\n"). The content is logged exactly once, at delivery.
   void reportFailure(
     ctx,
-    `[pantheon-hooks:idle-flush] ${fresh.length} reminder(s) flushed into the chat buffer (${lines.length} line(s) after aggregation)`,
-    { script: 'idle-flush', count: fresh.length, lineCount: lines.length },
+    '[pantheon-hooks:idle-flush] delegation state reset',
+    {
+      script: 'idle-flush',
+    },
     'info',
   )
 }
@@ -1213,7 +1115,7 @@ const plugin: Plugin = async ({ client, directory }) => {
   // merges the global config (npm-package plugin paths) with the project
   // config (repo source paths), so this module loads from TWO filesystem
   // paths in the same process and the factory would otherwise run twice —
-  // every hook (tool.execute.before/after, chat.message, event) firing
+  // every lifecycle hook (tool.execute.before/after and event) firing
   // TWICE. The second invocation becomes a no-op (empty hooks object) so
   // hooks register exactly once.
   if (pantheonPluginOnce('pantheon:hooks')) {
@@ -1435,51 +1337,6 @@ const plugin: Plugin = async ({ client, directory }) => {
             }
           }
         }
-      } catch {
-        // Never let a hook take down the opencode session.
-      }
-    },
-    // 1.18.13 fallback (Path C, oh-my-openagent pattern): the TUI drops
-    // tui.toast.show events on opencode 1.18.13 (untagged — see header), so
-    // queued agent-lifecycle signals (delegation start/done, hook failures,
-    // olympians/council summaries) are injected here as ONE <system-reminder> text
-    // part into the next user message, then cleared.
-    // P0 (2026-08-11, live E2E — release blocker): this hook ALSO fires for the
-    // child session's client.session.promptAsync (the old "subagent prompts use
-    // a different path" claim is FALSE on 1.18.13), where input.messageID is
-    // EMPTY/undefined. Injecting there with `?? ''` produced a part opencode's
-    // schema rejects (SchemaError: Expected a string starting with "msg", got
-    // "") → prompt_async failed → every delegation died in ~20ms. The guard
-    // below skips injection ENTIRELY on that path WITHOUT draining the buffer,
-    // so the reminder still lands on the parent's next real message.
-    'chat.message': async (input, output) => {
-      try {
-        if (ENABLED_TOAST_CATEGORIES.size === 0) return
-        if (pendingChatReminders.length === 0) return
-        // Subagent promptAsync fires have no messageID — injecting any part
-        // with an empty messageID crashes the child session (schema reject).
-        // Early return BEFORE the buffer drain keeps the reminder queued for
-        // the parent's next real (msg_-ID'd) message.
-        if (!input.messageID) return
-        const body = drainFreshChatReminders()
-        if (body === undefined) return
-        // Minimal TextPart — the core backfills messageID/sessionID for
-        // hook-injected parts (see opencode chat.message trigger pipeline).
-        // The guard above guarantees input.messageID is a non-empty string,
-        // so no `?? ''` fallback is needed (an explicit "" is schema-rejected).
-        output.parts.push({
-          id: `prt_${crypto.randomUUID()}`,
-          sessionID: input.sessionID,
-          messageID: input.messageID,
-          type: 'text',
-          text: `<system-reminder>\n${body}\n</system-reminder>`,
-        } satisfies Part)
-        await reportFailure(
-          ctx,
-          `[pantheon-hooks:chat-reminder] ${body}`,
-          { script: 'chat-reminder' },
-          'info',
-        )
       } catch {
         // Never let a hook take down the opencode session.
       }

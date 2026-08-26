@@ -1,7 +1,7 @@
 """
 Node harness wrapper for model-routing presets tests.
 
-Runs tests/test_presets.mjs (T1-T42: resolver, validator, set-tier CLI,
+Runs tests/test_presets.mjs (T1-T42 plus T1a/T1b: resolver, validator, set-tier CLI,
 picker, validate-routing, npm packaging, vision capability) as a
 subprocess, mirroring the existing node subprocess test pattern.
 """
@@ -19,11 +19,12 @@ def test_presets_node_harness() -> None:
         capture_output=True,
         text=True,
         timeout=360,
+        check=False,
     )
     assert result.returncode == 0, (
         f"node tests/test_presets.mjs failed (exit {result.returncode}):\n"
         f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     )
-    assert "42 passed" in result.stdout, (
-        f"expected 42 passing tests, got:\n{result.stdout}"
+    assert "44 passed" in result.stdout, (
+        f"expected 44 passing tests, got:\n{result.stdout}"
     )

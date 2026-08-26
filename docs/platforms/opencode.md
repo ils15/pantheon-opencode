@@ -314,8 +314,6 @@ The default **Go** profile in [`opencode.json`](../../opencode.json):
 
 ```json
 {
-  "model": "deepseek/deepseek-v4-flash",
-  "small_model": "deepseek/deepseek-v4-flash",
   "agent": {
     "zeus":    { "model": "deepseek/deepseek-v4-pro" },
     "athena":  { "model": "deepseek/deepseek-v4-pro" },
@@ -411,7 +409,7 @@ When resolving which model an agent uses:
 
 ```
 1. Agent-specific model (string/auto/null)
-2. If null: top-level model in opencode.json
+2. If null: inherit the parent session's model (OpenCode decides)
 3. If auto: chat-selected model via /model
 4. If missing: platform default
 ```

@@ -14,8 +14,6 @@
   "experimental": {
     "subagent_depth": 2
   },
-  "model": "opencode-go/deepseek-v4-flash",
-  "small_model": "opencode-go/deepseek-v4-flash",
   "permission": {
     "skill": {
       "*": "allow"

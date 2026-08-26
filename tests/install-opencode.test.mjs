@@ -188,12 +188,12 @@ test('upgrade preserves user plugins and adds both pantheon plugins (dedupe)', a
   }
 })
 
-test('model + small_model merged from repo config when absent', async () => {
+test('model defaults are not injected when absent from repo config', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-model-'))
   try {
     const config = await runInstall(target, {})
-    assert.equal(config.model, 'opencode-go/deepseek-v4-flash')
-    assert.equal(config.small_model, 'opencode-go/deepseek-v4-flash')
+    assert.equal(config.model, undefined)
+    assert.equal(config.small_model, undefined)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

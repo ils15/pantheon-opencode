@@ -172,24 +172,48 @@ export const DELEGATION_DEFAULTS = {
 
 // ─── Output pulling ────────────────────────────────────────────────────
 
-/** Concatenate every non-empty text part across the child's messages. */
-async function pullOutput(client: DelegationClient, childSessionID: string): Promise<string> {
+interface PulledOutput {
+  text: string
+  /** True only when the child produced an assistant message or tool activity. */
+  hasWork: boolean
+}
+
+/** Pull visible text and structurally identify real child work. */
+async function pullOutput(client: DelegationClient, childSessionID: string): Promise<PulledOutput> {
   if (typeof client.session.messages !== 'function')
-    return '(child session messages API unavailable)'
+    return { text: '(child session messages API unavailable)', hasWork: false }
   try {
     const bundles = await client.session.messages({ path: { id: childSessionID } })
     const lines: string[] = []
+    let hasWork = false
     for (const bundle of bundles) {
+      const hasToolPart = (bundle.parts ?? []).some((part) => part.type === 'tool')
+      const hasTextPart = (bundle.parts ?? []).some(
+        (part) => part.type === 'text' && typeof part.text === 'string' && part.text.trim() !== '',
+      )
+      if (
+        bundle.info?.role === 'assistant' &&
+        bundle.info.error === undefined &&
+        (hasToolPart || hasTextPart)
+      ) {
+        hasWork = true
+      }
       for (const part of bundle.parts ?? []) {
+        if (
+          part.type === 'tool' &&
+          bundle.info?.role === 'assistant' &&
+          bundle.info.error === undefined
+        )
+          hasWork = true
         if (part.type === 'text' && typeof part.text === 'string' && part.text.trim() !== '') {
           lines.push(part.text)
         }
       }
     }
-    return lines.join('\n\n')
+    return { text: lines.join('\n\n'), hasWork }
   } catch (err: unknown) {
     const reason = err instanceof Error ? err.message : String(err)
-    return `(failed to pull child session output: ${reason})`
+    return { text: `(failed to pull child session output: ${reason})`, hasWork: false }
   }
 }
 
@@ -311,9 +335,18 @@ export async function finalizeDelegation(
   const job = deps.board.get(childSessionID)
   if (!job) return undefined
 
-  const output = await pullOutput(deps.client, childSessionID)
+  const pulled = await pullOutput(deps.client, childSessionID)
+  const output = pulled.text
+  const effectiveOpts: FinalizeInput =
+    opts.state === 'completed' && !pulled.hasWork
+      ? {
+          state: 'error',
+          error: opts.error ?? 'Child session produced no assistant or tool output',
+          ...(opts.timedOut !== undefined ? { timedOut: opts.timedOut } : {}),
+        }
+      : opts
   const outputDir = deps.options.outputDir ?? DELEGATION_DEFAULTS.outputDir
-  await writeDelegationReport(outputDir, job, renderDelegationMarkdown(job, output, opts))
+  await writeDelegationReport(outputDir, job, renderDelegationMarkdown(job, output, effectiveOpts))
 
   const status: {
     taskID: string
@@ -323,15 +356,15 @@ export async function finalizeDelegation(
     resultSummary?: string
   } = {
     taskID: childSessionID,
-    state: opts.state,
+    state: effectiveOpts.state,
     resultSummary: summarizeOutput(output),
   }
-  if (opts.error !== undefined) status.error = opts.error
-  if (opts.timedOut !== undefined) status.timedOut = opts.timedOut
+  if (effectiveOpts.error !== undefined) status.error = effectiveOpts.error
+  if (effectiveOpts.timedOut !== undefined) status.timedOut = effectiveOpts.timedOut
 
   const current = deps.board.get(childSessionID)
   if (current !== undefined) {
-    if (current.state === 'running' || current.state === opts.state) {
+    if (current.state === 'running' || current.state === effectiveOpts.state) {
       await deps.board.updateStatus(status)
     }
     // Terminal in a DIFFERENT state (e.g. timeout already recorded) — the

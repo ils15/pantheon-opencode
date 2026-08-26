@@ -91,6 +91,25 @@ test('T1: no env, no candidate file → null (default)', () => {
   assert.equal(resolved, null)
 })
 
+test('T1a: agent model wiring is empty without an active profile', () => {
+  const models = presets.loadRoutingAgentModels({
+    env: {},
+    candidates: [join(makeTmp(), 'nope.json')],
+    logger: silent,
+  })
+  assert.deepEqual(models, {})
+})
+
+test('T1b: agent model wiring uses only the explicitly selected profile', () => {
+  const models = presets.loadRoutingAgentModels({
+    env: { PANTHEON_MODEL_PRESET: 'go-fast' },
+    candidates: [],
+    logger: silent,
+  })
+  assert.equal(typeof models.apollo, 'string')
+  assert.ok(models.apollo.includes('/'))
+})
+
 // ─── T2: env beats file ────────────────────────────────────────────────
 test('T2: PANTHEON_MODEL_PRESET wins over existing file', () => {
   const file = join(makeTmp(), 'active-preset.json')
@@ -1285,11 +1304,10 @@ test('T37: hasVision stays true for qwen3.7-plus; visionBrokenOnGateway is runti
 })
 
 // ─── T38-T42: loadRoutingAgentModels (Fase 6 — wiring agentModels) ─────
-// The delegation toolset's `options.agentModels` (branch b) is sourced from
-// routing.yml's DEFAULT (first) preset — a static mapping INDEPENDENT of the
-// active preset, so delegation no longer depends 100% on the active preset.
-test('T38: loadRoutingAgentModels maps every repo preset agent to provider/model (lowercase)', () => {
-  const models = presets.loadRoutingAgentModels()
+// The delegation toolset's `options.agentModels` is sourced only from an
+// explicitly active routing profile.
+test('T38: loadRoutingAgentModels maps the explicitly selected profile', () => {
+  const models = presets.loadRoutingAgentModels({ env: { PANTHEON_MODEL_PRESET: 'go-deepseek' } })
   const repo = repoAgents()
   assert.ok(Object.keys(models).length >= repo.length, 'default preset must cover the repo agents')
   for (const agent of repo) {
@@ -1300,9 +1318,9 @@ test('T38: loadRoutingAgentModels maps every repo preset agent to provider/model
     )
     assert.equal(models[agent], models[agent.toLowerCase()], 'keys must be lowercase')
   }
-  assert.equal(models['apollo'], 'opencode/deepseek-v4-flash-free')
-  assert.equal(models['hermes'], 'opencode/deepseek-v4-flash')
-  assert.equal(models['athena'], 'opencode/deepseek-v4-pro')
+  assert.equal(models.apollo, 'opencode/deepseek-v4-flash-free')
+  assert.equal(models.hermes, 'opencode/deepseek-v4-flash')
+  assert.equal(models.athena, 'opencode/deepseek-v4-pro')
 })
 
 test('T39: loadRoutingAgentModels ignores agents without a model entry', () => {
@@ -1314,11 +1332,14 @@ presets:
       no-model:     { reasoning_effort: low }
       empty-model:  { model: "", reasoning_effort: low }
 `)
-  const models = presets.loadRoutingAgentModels({ routingPath: p })
+  const models = presets.loadRoutingAgentModels({
+    routingPath: p,
+    env: { PANTHEON_MODEL_PRESET: 'first' },
+  })
   assert.deepEqual(models, { 'has-model': 'opencode/deepseek-v4-flash' })
 })
 
-test('T40: loadRoutingAgentModels uses the FIRST preset when several exist', () => {
+test('T40: loadRoutingAgentModels uses the explicitly selected profile', () => {
   const p = fixtureRouting(`
 presets:
   first:
@@ -1329,8 +1350,11 @@ presets:
     agents:
       apollo: { model: opencode/model-z }
 `)
-  const models = presets.loadRoutingAgentModels({ routingPath: p })
-  assert.deepEqual(models, { apollo: 'opencode/model-a', hermes: 'opencode/model-b' })
+  const models = presets.loadRoutingAgentModels({
+    routingPath: p,
+    env: { PANTHEON_MODEL_PRESET: 'second' },
+  })
+  assert.deepEqual(models, { apollo: 'opencode/model-z' })
 })
 
 test('T41: loadRoutingAgentModels — missing routing.yml → {} without throw (warn)', () => {
