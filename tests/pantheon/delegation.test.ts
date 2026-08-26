@@ -80,6 +80,7 @@ class FakeClient {
   messagesCalls: string[] = []
   /** When set, session.create rejects with this error (F3). */
   createError: Error | null = null
+  rejectMissingModel = false
   /** Delay session.create to exercise concurrent budget reservations. */
   createDelayMs = 0
   /** When set, session.messages rejects with this error (fail-open paths). */
@@ -93,6 +94,9 @@ class FakeClient {
   readonly session = {
     create: async (input: FakeCreateInput): Promise<{ id: string }> => {
       if (this.createError) throw this.createError
+      if (this.rejectMissingModel && input.body.model === undefined) {
+        throw new Error('host requires model for child session')
+      }
       if (this.createDelayMs > 0) await sleep(this.createDelayMs)
       this.created.push(input)
       this.childCounter += 1
@@ -153,6 +157,8 @@ async function main() {
         assert.equal(client.prompted.length, 1)
         assert.equal(client.prompted[0]?.path.id, 'ses_child_1')
         assert.equal(client.prompted[0]?.body.agent, 'apollo')
+        assert.equal(client.created[0]?.body.model, undefined)
+        assert.equal(client.prompted[0]?.body.model, undefined)
         assert.equal(client.prompted[0]?.body.parts[0]?.text, 'Find auth patterns')
       } finally {
         rmSync(tmp, { recursive: true, force: true })
@@ -189,6 +195,36 @@ async function main() {
     },
   )
 
+  await testAsync('routing profile model is the only automatic child-model override', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-model-profile-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: {
+          rootSessions: new Set([ROOT]),
+          outputDir: tmp,
+          agentModels: { apollo: 'provider-x/model-y' },
+        },
+      })
+
+      await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+
+      assert.deepEqual(client.created[0]?.body.model, {
+        id: 'model-y',
+        providerID: 'provider-x',
+      })
+      assert.deepEqual(client.prompted[0]?.body.model, {
+        id: 'model-y',
+        providerID: 'provider-x',
+      })
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
   await testAsync(
     'delegate resolves child model from options.agentModels (routing.yml agent entry)',
     async () => {
@@ -221,44 +257,37 @@ async function main() {
     },
   )
 
-  await testAsync(
-    'delegate falls back to resolveActivePreset agent model when no explicit/agentModels model',
-    async () => {
-      const tmp = mkdtempSync(join(tmpdir(), 'delegation-model-preset-'))
-      try {
-        const board = new BackgroundJobBoard()
-        const client = new FakeClient()
-        const warnings: string[] = []
-        const tools = createDelegationTools({
-          board,
-          client,
-          options: {
-            rootSessions: new Set([ROOT]),
-            outputDir: tmp,
-            // No agentModels — the delegate must resolve the active preset
-            // itself (default routing.yml) and use the preset's apollo model.
-            // opencode provider requires PANTHEON_OPENCODE_API_KEY (routing.yml).
-            presetEnv: {
-              PANTHEON_MODEL_PRESET: 'go-deepseek',
-              PANTHEON_OPENCODE_API_KEY: 'sk-test',
-            },
-            logger: { warn: (msg) => warnings.push(msg) },
+  await testAsync('active preset is not an implicit child-model source', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-model-preset-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      const warnings: string[] = []
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: {
+          rootSessions: new Set([ROOT]),
+          outputDir: tmp,
+          // No agentModels — active preset must not select a child model.
+          presetEnv: {
+            PANTHEON_MODEL_PRESET: 'go-deepseek',
+            PANTHEON_OPENCODE_API_KEY: 'sk-test',
           },
-        })
+          logger: { warn: (msg) => warnings.push(msg) },
+        },
+      })
 
-        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+      await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
 
-        assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]?.body.model, {
-          id: 'deepseek-v4-flash-free',
-          providerID: 'opencode',
-        })
-        assert.equal(warnings.length, 0, 'preset model resolves — no warning expected')
-      } finally {
-        rmSync(tmp, { recursive: true, force: true })
-      }
-    },
-  )
+      assert.equal(client.created.length, 1)
+      assert.equal(client.created[0]?.body.model, undefined)
+      assert.equal(client.prompted[0]?.body.model, undefined)
+      assert.ok(warnings.some((warning) => /no model/i.test(warning)))
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
 
   await testAsync(
     'delegate without any model source: still creates child, logs a warning, no model in body',
@@ -298,7 +327,7 @@ async function main() {
   )
 
   await testAsync(
-    '(P1) resolved provider without API key → child created with fallback opencode-go/deepseek-v4-flash + warn',
+    'routing profile without an explicit model does not select a fallback',
     async () => {
       const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-fallback-'))
       try {
@@ -311,9 +340,8 @@ async function main() {
           options: {
             rootSessions: new Set([ROOT]),
             outputDir: tmp,
-            // go-openai: apollo → openai/gpt-5.6-luna-fast. PANTHEON_OPENAI_API_KEY
-            // is UNSET → fallback must kick in. The fallback provider
-            // (opencode-go) is exempt from the key gate → usable.
+            // A preset may be active, but it must not implicitly select a
+            // child model when this agent has no routing profile override.
             presetEnv: {
               PANTHEON_MODEL_PRESET: 'go-openai',
               PANTHEON_OPENCODE_API_KEY: 'sk-fallback',
@@ -327,16 +355,11 @@ async function main() {
           makeCtx(),
         )
 
-        assert.ok(result.includes('apo-1'), `delegation proceeds via fallback, got: ${result}`)
+        assert.ok(result.includes('apo-1'), `delegation proceeds without a model, got: ${result}`)
         assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]?.body.model, {
-          id: 'deepseek-v4-flash',
-          providerID: 'opencode-go',
-        })
-        assert.ok(
-          warnings.some((w) => /API key/i.test(w) && /fallback|deepseek-v4-flash/i.test(w)),
-          `expected a missing-key fallback warning, got: ${warnings.join('; ')}`,
-        )
+        assert.equal(client.created[0]?.body.model, undefined)
+        assert.equal(client.prompted[0]?.body.model, undefined)
+        assert.ok(!warnings.some((w) => /fallback|deepseek/i.test(w)))
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }
@@ -344,7 +367,7 @@ async function main() {
   )
 
   await testAsync(
-    '(P1) fallback provider (opencode-go) needs no API key → delegation proceeds even with no keys configured',
+    'active preset does not override the parent model when no profile model exists',
     async () => {
       const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-none-'))
       try {
@@ -357,10 +380,7 @@ async function main() {
           options: {
             rootSessions: new Set([ROOT]),
             outputDir: tmp,
-            // go-openai: resolved provider openai key UNSET. The fallback
-            // provider opencode-go is exempt from the key gate (sandbox
-            // default, 2026-08-21) → the delegation proceeds via the
-            // fallback instead of erroring.
+            // Active preset configuration is not a child-model override.
             presetEnv: { PANTHEON_MODEL_PRESET: 'go-openai' },
             logger: { warn: (msg) => warnings.push(msg) },
           },
@@ -371,19 +391,11 @@ async function main() {
           makeCtx(),
         )
 
-        assert.ok(
-          result.includes('apo-1'),
-          `delegation proceeds via opencode-go fallback, got: ${result}`,
-        )
+        assert.ok(result.includes('apo-1'), `delegation proceeds without a model, got: ${result}`)
         assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]?.body.model, {
-          id: 'deepseek-v4-flash',
-          providerID: 'opencode-go',
-        })
-        assert.ok(
-          warnings.some((w) => /API key/i.test(w) && /fallback|deepseek-v4-flash/i.test(w)),
-          `expected a missing-key fallback warning, got: ${warnings.join('; ')}`,
-        )
+        assert.equal(client.created[0]?.body.model, undefined)
+        assert.equal(client.prompted[0]?.body.model, undefined)
+        assert.ok(!warnings.some((w) => /fallback|deepseek/i.test(w)))
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }
@@ -391,7 +403,7 @@ async function main() {
   )
 
   await testAsync(
-    '(P1) resolved provider WITH API key configured → resolved model used normally, no warning',
+    'active preset model is ignored even when its provider key is configured',
     async () => {
       const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-present-'))
       try {
@@ -415,11 +427,9 @@ async function main() {
         await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
 
         assert.equal(client.created.length, 1)
-        assert.deepEqual(client.created[0]?.body.model, {
-          id: 'gpt-5.6-luna-fast',
-          providerID: 'openai',
-        })
-        assert.equal(warnings.length, 0, 'key present — no warning expected')
+        assert.equal(client.created[0]?.body.model, undefined)
+        assert.equal(client.prompted[0]?.body.model, undefined)
+        assert.ok(warnings.some((warning) => /no model/i.test(warning)))
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }
@@ -427,7 +437,7 @@ async function main() {
   )
 
   await testAsync(
-    '(P1) EXPLICIT model in the tool call is respected even without provider key (warn only)',
+    'explicit model in the tool call is passed through without provider substitution',
     async () => {
       const tmp = mkdtempSync(join(tmpdir(), 'delegation-key-explicit-'))
       try {
@@ -456,10 +466,7 @@ async function main() {
           id: 'gpt-5.6-terra',
           providerID: 'openai',
         })
-        assert.ok(
-          warnings.some((w) => /API key/i.test(w)),
-          `explicit model must still warn on the missing key, got: ${warnings.join('; ')}`,
-        )
+        assert.equal(warnings.length, 0)
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }
@@ -497,10 +504,7 @@ async function main() {
         id: 'gpt-5.6-terra',
         providerID: 'openai',
       })
-      assert.ok(
-        warnings.some((w) => /API key/i.test(w)),
-        `explicit model wins but must still warn on the missing key, got: ${warnings.join('; ')}`,
-      )
+      assert.equal(warnings.length, 0)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
@@ -522,7 +526,9 @@ async function main() {
             // Same source the plugin wires (Fase 6): routing.yml's default
             // agent→model mapping. The opencode provider requires
             // PANTHEON_OPENCODE_API_KEY (routing.yml go-deepseek apiKeyEnv).
-            agentModels: loadRoutingAgentModels(),
+            agentModels: loadRoutingAgentModels({
+              env: { PANTHEON_MODEL_PRESET: 'go-deepseek' },
+            }),
             presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
           },
         })
@@ -575,43 +581,40 @@ async function main() {
     }
   })
 
-  await testAsync(
-    '(e) promptAsync forwards resolved model to child session',
-    async () => {
-      const tmp = mkdtempSync(join(tmpdir(), 'delegation-prompt-model-'))
-      try {
-        const board = new BackgroundJobBoard()
-        const client = new FakeClient()
-        const tools = createDelegationTools({
-          board,
-          client,
-          options: {
-            rootSessions: new Set([ROOT]),
-            outputDir: tmp,
-            agentModels: { apollo: 'opencode/deepseek-v4-flash-free' },
-            presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
-          },
-        })
+  await testAsync('(e) promptAsync forwards resolved model to child session', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-prompt-model-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: {
+          rootSessions: new Set([ROOT]),
+          outputDir: tmp,
+          agentModels: { apollo: 'opencode/deepseek-v4-flash-free' },
+          presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
+        },
+      })
 
-        await tools.pantheon_delegate.execute({ prompt: 'Do X', agent: 'apollo' }, makeCtx())
+      await tools.pantheon_delegate.execute({ prompt: 'Do X', agent: 'apollo' }, makeCtx())
 
-        assert.equal(client.prompted.length, 1, 'promptAsync must be called exactly once')
-        const body = client.prompted[0]?.body as {
-          agent: string
-          model?: { id: string; providerID: string }
-          parts: Array<{ type: string; text: string }>
-        }
-        assert.deepEqual(
-          body.model,
-          { id: 'deepseek-v4-flash-free', providerID: 'opencode' },
-          'promptAsync must receive the resolved model in body.model',
-        )
-        assert.equal(body.agent, 'apollo')
-      } finally {
-        rmSync(tmp, { recursive: true, force: true })
+      assert.equal(client.prompted.length, 1, 'promptAsync must be called exactly once')
+      const body = client.prompted[0]?.body as {
+        agent: string
+        model?: { id: string; providerID: string }
+        parts: Array<{ type: string; text: string }>
       }
-    },
-  )
+      assert.deepEqual(
+        body.model,
+        { id: 'deepseek-v4-flash-free', providerID: 'opencode' },
+        'promptAsync must receive the resolved model in body.model',
+      )
+      assert.equal(body.agent, 'apollo')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
 
   await testAsync(
     '(b) depth guard preserved: a child WE created is rejected even when rootSessions does not contain it',
@@ -1719,6 +1722,31 @@ async function main() {
       }
     },
   )
+
+  await testAsync('host rejection without model preserves the original cause', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-host-model-required-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      client.rejectMissingModel = true
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+      })
+
+      const result = await tools.pantheon_delegate.execute(
+        { prompt: 'Do the thing', agent: 'apollo' },
+        makeCtx(),
+      )
+
+      assert.match(result, /host requires model for child session/)
+      assert.doesNotMatch(result, /fallback|deepseek/i)
+      assert.equal(board.list().length, 0)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
 
   // ═══════════════════════════════════════════════════════════════════════
 

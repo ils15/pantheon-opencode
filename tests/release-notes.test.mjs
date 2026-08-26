@@ -280,7 +280,10 @@ test('CLI normal mode exits 0 and prints the final emoji sections (lastTag..HEAD
     // result. Verify the range itself explains the empty output rather than
     // treating an empty stdout as an unconditional success.
     const entries = collectEntries({ since: getLastTag() })
-    assert.ok(entries.length > 0, 'empty output requires a non-empty internal-only range')
+    // A freshly prepared release can legitimately have no commits after the
+    // latest stable tag. Empty output is valid for both an empty range and an
+    // internal-only range.
+    if (entries.length === 0) return
     const parsed = entries.map(parseCommitLine)
     assert.ok(
       parsed.every(

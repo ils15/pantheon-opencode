@@ -9,58 +9,76 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
-## 🆕 What's New
+### Added
 
-## 🐞 Fixed
+### Changed
 
-## ⚠️ Known Issues
+### Fixed
 
-## ✅ Closed Issues
+### Tests
 
-## [v1.4.0] - 2026-08-25
+### Breaking Changes
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
+## [1.4.1] - 2026-08-26 (candidate)
 
-## 🆕 What's New
+### Changed
 
-- **Knowledge Graph de Codebase — extensão pantheon-memory (src/mcp/mcp_codemap_module.py)** — módulo codemap dentro do MCP pantheon-memory (zero novo processo): 3 tabelas (code_entities, code_relations, code_files) + FTS5 `porter unicode61` + 3 tools (`code_index`, `code_query`, `code_neighbors`) com parsers Python (ast) + TypeScript (regex), incremental via sha256 hash, 185 linhas, 24 testes, 94% coverage. @apollo usa `code_query` antes de glob/grep. Council aprovado: estender vs novo MCP (70% menos código).
-- **Context Window Optimization — plugin hook `tool.execute.after` (src/pantheon/context-sandbox.ts)** — sandboxing de tool outputs: `read` 200 linhas (head 50/tail 10), `grep` 20 resultados, `glob` 50 arquivos, `webfetch` 5000 chars com `[TRUNCATED: N hidden]`, 273 linhas, 52 testes, 100% stmts. Session memory auto-save já conectado via `experimental.session.compacting`. Zero novo MCP/processo, <1ms/call, 50-60% menos tokens por sessão.
+- **Delegation output:** removed the legacy delegate echo path. Terminal visibility now uses the board, list/read tools, file-only audit logs, and TUI toasts; chat transcript delivery remains disabled.
+- **Model inheritance:** child sessions no longer receive a hardcoded `model` or `small_model`. Only an explicitly active routing profile (or an explicit delegate model) supplies an override; otherwise OpenCode inherits the parent model.
+- **Compaction carry-forward:** context is written through `output.context` during `experimental.session.compacting`, before `session.compacted` runs, preserving the correct lifecycle order without chat injection.
 
-## 🐞 Fixed
+### Fixed
 
-- **TUI version display when installed elsewhere (src/plugins/tui/src/index.tsx)** — `detectVersion` now tries `../../package.json` (installed: pantheon-tui/package.json) before `../../../../package.json` (dev: raiz), fixing null version when installed via `npm install -g` or in sandbox. Rebuilt dist/tui.js + dist/tui.tsx.
-- **Bash command normalization `python` → `python3` (src/pantheon/command-normalizer.ts, src/plugin.ts, opencode.json)** — plugin guard normalizes `python` to `python3` in bash tool calls for systems where `python` is not available.
+- **Empty child output:** a child marked completed without assistant or tool output now becomes an explicit error: `Child session produced no assistant or tool output`.
+- **Terminal toast delivery:** toast delivery is resilient to missing or failing TUI clients, is gated by `PANTHEON_TOASTS`, and deduplicates repeated terminal events for the same delegation.
+- **Chat noise:** removed the remaining transcript/reminder delivery paths for delegation completion and compaction state.
+
+### Tests
+
+- Added regression coverage for delegate output validation, terminal-toast gating/deduplication, native model inheritance, and compaction context ordering.
+- Updated the relevant Node/TypeScript tests and installation/model-routing checks; global-install behavior remains validated through the isolated sandbox when run.
+- Release verification caveat: `npm test` reported 240 passing tests and 1 environmental failure (`fork: Resource temporarily unavailable`); rerun on a host with sufficient process resources before treating the candidate as fully verified.
+
+## [1.4.0] - 2026-08-25
+
+### Added
+
+- **Codebase knowledge graph:** added the `pantheon-memory` codemap module with code entities, relations, file hashes, FTS5 search, and `code_index`, `code_query`, and `code_neighbors` tools for Python and TypeScript codebases.
+- **Context-window optimization:** added `tool.execute.after` output sandboxing for `read`, `grep`, `glob`, and `webfetch`, with truncation markers and lower per-session output volume.
+
+### Fixed
+
+- **Installed TUI version display:** version detection now checks the installed TUI package before the development-tree package, fixing null versions in global installs and the sandbox.
+- **Bash command portability:** normalized `python` commands to `python3` where the host does not provide a `python` executable.
+
+### Tests
+
+- The release entry records the implementation and coverage reported by the session; no additional release-level test result is asserted here.
+
 ## [1.3.7] - 2026-08-24
 
-## 🆕 What's New
+### Added
 
-- **Stale-running detector (src/pantheon/delegation-notify.ts)** — entries running >30min without activity now show a ⚠️ warning in the job board; running state is rejected in the MD parser (should only come from live channels).
-- **Auto-update mechanism (scripts/sync-tui.mjs)** — postinstall script syncs TUI plugin files from the main package; runtime version staleness check at plugin init ensures the TUI stays current.
+- **Stale-running detector:** the job board warns about entries running for more than 30 minutes without activity, and the Markdown parser rejects synthetic `running` states.
+- **TUI auto-update:** postinstall synchronization and a runtime version check keep the installed TUI files current.
 
-## 🐞 Fixed
+### Fixed
 
-- **Delegate stale-running display (src/plugins/tui/src/index.tsx)** — resolved stale-running entries appearing in the TUI delegation view.
-- **finalizeIdleChildrenWithoutMd** — wired into periodic 30s scan at plugin init to clean up orphaned children.
+- **Stale delegate display:** corrected stale-running entries in the TUI delegation view.
+- **Orphan cleanup:** connected `finalizeIdleChildrenWithoutMd` to the periodic 30-second scan at plugin initialization.
 
-## ✅ Closed Issues
+### Tests
 
-- #68 — fix(tui): resolve delegate stale-running display and add auto-update
+- Closed issue #68 covering the TUI stale-state and auto-update fixes.
 
-<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. -->
+[1.4.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.0
+[1.3.7]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.3.7
+[1.3.6]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.3.6
 
-## 🆕 What's New
-
-## 🐞 Fixed
-
-## ⚠️ Known Issues
-
-## ✅ Closed Issues
 
 ## [1.3.6] - 2026-08-22
 
-## 🆕 What's New
+### Added
 
 - **Recency decay in `memory_search` (src/mcp/memory_mcp_server.py)** — new `decay_days` param (default `None`, backward compatible) applies a freshness half-life `2^(-days_since_created/decay_days)` to RRF-fused scores, so older memories rank lower when enabled. `_rrf_fuse` accepts an optional `created_at_map`; tool description and docs updated (docs/MEMORY.md, docs/MCP.md, docs/mcp-tools.md).
 - **Themis Comment Checker (src/agents/themis.md)** — Layer 1 review now flags generated code that is indistinguishable from human-written: excessive/obvious comments (`// increment i`, `# set x to 5`), commented-out dead code, and boilerplate headers.
@@ -79,11 +97,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **O5 permission.task globs (src/pantheon/permission-globs.ts)** — allow/deny glob rules controlling which subagents may be delegated; deny rules remove the target from Zeus's task tool entirely (`delegation-enforce`), with matching filtering in finalize and the agent-list description.
 - **plugin-eval certification suite (.pantheon/code-mode/)** — `eval-static.py` (structural checks: frontmatter/secrets/file refs), `eval-llm-judge.py` (LLM quality layer), `eval-monte-carlo.py` (simulated-run reliability, exits 1 below 75%), `eval-run.py` (orchestrator emitting one report JSON; below-threshold layers still score), plus `eval_store` persistence and `pantheon://eval` resources exposing latest certification scores.
 
-## 🐞 Fixed
+### Fixed
 
 - memory_search doc drift: freshness decay was documented but not implemented — now real via `decay_days`.
 - scripts/ copies stale vs src/mcp/ canonical sources (missing routing project fallback, stale comments).
 - .pantheon/mcp-registry.yml listed non-existent tools (memory_compress, memory_expand, list_agents) and missed pantheon-vision.
+
+
+### Tests
+
+- The entry records the persistence, integration, and certification test coverage explicitly listed above; no aggregate release-level result was available in the source notes.
 
 
 ## [1.3.6-beta] - 2026-08-21
@@ -136,7 +159,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Compaction summary V2** (preservation directive + mission/todo/delegation sections): `buildCompactionContext` is now async and accepts goal/todo sources — `PANTHEON_COMPACTION_DIRECTIVE` prefix section (emitted before any other section, skipped on totally-empty state), `<mission_context>` with active goals (id/objective/status), `<todo_context>` with pending (not completed/cancelled) todos; delegation blocks byte-for-byte unchanged; failing/disabled sources are skipped fail-open (logged to hooks.log)
 - **Post-compaction todo preservation**: TodoPreserver captures the session's todo list on `experimental.session.compacting`, activates the snapshot on `session.compacted`, and rewrites the first post-compaction `todowrite` with the exact pre-compaction list — additive + fail-open (every step degrades to a logged warn, never throws in a hook)
 - **Post-compaction state re-assertion**: re-asserts session state after compaction so the rebuilt context reflects the live board
-- **agentModels wiring from routing.yml**: delegation toolset's `options.agentModels` is now wired from the routing.yml default (first) preset — a static per-agent model mapping built once at module load, so branch (b) of `resolveChildModel` (previously dead) gives delegated children a sane model even without an active preset; fail-open `{}` on missing/corrupt routing.yml
+- **Historical (superseded) agentModels wiring from routing.yml**: the old release wired `options.agentModels` from the first preset. Current behavior requires an explicitly active profile and omits child models otherwise.
 - **Preemptive compaction threshold logic** (dormant/experimental): threshold-based preemptive compaction — not active by default
 - **File-first logging**: `createPantheonLogger` — console echo opt-in via `PANTHEON_HOOKS_LOG=1`, everything routed to `.pantheon/logs/hooks.log` (silences TUI console pollution)
 - **Real-time Delegations TUI panel**: sidebar panel sourced from `api.client.session.children` — shows `pantheon_delegate` children (board alias tag) AND native `task()` children (`[task]` tag, distinct info color); animated states (DELEGATING/WORKING/READING RESULT/DONE/DONE (TIMED OUT)/ERROR/CANCELLED) with a 140ms spinner; click-to-navigate into the child session; all-sessions history via `.pantheon/delegations/` reports; `panel: children=N md=N events=N` diagnostics in hooks.log
@@ -149,6 +172,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **delegations.log typing**: `task_id` was always `""` (now omitted when empty) and `duration_ms` was logged as a STRING (now parsed to a number, null when unset), breaking downstream aggregation
 - **Idle-flush log duplication**: `flushIdleReminders` echoed the reminder body joined with `" | "` while chat.message delivery echoed the same body with `"\n"` — the identical line appeared twice; idle-flush is now an audit summary (count + aggregated line count), content logged exactly once at chat-reminder delivery
 - **TUI console log pollution**: console output in the plugin/hooks rendered directly into the opencode TUI; now env-gated, log-file only by default
+
+### Tests
+
+- No aggregate test result was recorded in the original 1.3.4 release notes; the factual test counts that were documented remain attached to their individual changes above.
+
 
 ## [v1.3.3] - 2026-08-11
 

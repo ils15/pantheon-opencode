@@ -86,13 +86,14 @@ export declare function loadPresetDefs(routingPath?: string): Record<string, Pre
 
 export interface RoutingAgentModelsOptions {
   routingPath?: string
+  candidates?: string[]
+  env?: Record<string, string | undefined>
   logger?: { warn?: (msg: string) => void }
 }
 
 /**
- * Lowercase agent → "provider/model" mapping from routing.yml's FIRST
- * (default) preset — the static source for the delegation toolset's
- * options.agentModels. Fail-open: missing/corrupt routing.yml → {}.
+ * Lowercase agent → "provider/model" mapping from the explicitly active
+ * routing profile. No active profile (or a profile without model) → {}.
  */
 export declare function loadRoutingAgentModels(
   options?: RoutingAgentModelsOptions,

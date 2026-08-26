@@ -345,46 +345,42 @@ export function loadRoutingPermissionTask({ routingPath, logger = console } = {}
 }
 
 /**
- * Load the DEFAULT agent → model mapping from routing.yml for the delegation
+ * Load the active routing profile's agent → model mapping for the delegation
  * toolset (Fase 6 — wiring agentModels).
  *
  * routing.yml keeps per-agent models ONLY inside presets
  * (`presets.<name>.agents.<agent>.model`) — the top-level `agents:` section
- * carries no model field. The FIRST-listed preset is the static default
- * (go-deepseek today): a mapping INDEPENDENT of the active preset, so a
- * delegated child always gets a sane per-agent model even when no preset is
- * active — delegation no longer depends 100% on the active preset (branch (b)
- * of resolveChildModel, which outranks the active-preset branch (c)).
+ * carries no model field. No profile means an empty mapping; there is no
+ * implicit first/default preset or fallback model.
  *
- * Fail-open: a missing or unparseable routing.yml yields {} (the caller keeps
- * the previous behavior — active preset / opencode default) and warns via the
+ * Fail-open: a missing or unparseable routing.yml yields {} and warns via the
  * optional logger; it NEVER throws at startup.
  *
  * @param {object} [opts]
  * @param {string} [opts.routingPath]
+ * @param {string[]} [opts.candidates]
+ * @param {Record<string, string|undefined>} [opts.env]
  * @param {{warn?: Function}} [opts.logger]
  * @returns {Record<string, string>} lowercase agent → "provider/model"
  */
-export function loadRoutingAgentModels({ routingPath, logger = console } = {}) {
-  let defs
+export function loadRoutingAgentModels({ routingPath, candidates, env, logger = console } = {}) {
   try {
-    defs = loadPresetDefs(routingPath)
+    const active = resolveActivePreset({ routingPath, candidates, env, logger })
+    if (active === null) return {}
+    const models = {}
+    for (const [agent, spec] of Object.entries(active.agents ?? {})) {
+      if (spec && typeof spec === 'object' && typeof spec.model === 'string' && spec.model !== '') {
+        models[agent.toLowerCase()] = spec.model
+      }
+    }
+    return models
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     logger.warn?.(
-      `presets: routing.yml agent models unavailable (${reason}) — delegation falls back to the active preset/default`,
+      `presets: routing.yml active profile models unavailable (${reason}) — child model omitted`,
     )
     return {}
   }
-  const names = Object.keys(defs)
-  if (names.length === 0) return {}
-  const models = {}
-  for (const [agent, spec] of Object.entries(defs[names[0]]?.agents ?? {})) {
-    if (spec && typeof spec === 'object' && typeof spec.model === 'string' && spec.model !== '') {
-      models[agent.toLowerCase()] = spec.model
-    }
-  }
-  return models
 }
 
 /**

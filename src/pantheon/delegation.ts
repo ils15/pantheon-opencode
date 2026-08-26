@@ -58,14 +58,9 @@ import {
   finalizeDelegation as finalizeDelegationReport,
   readDelegationReport,
 } from './delegation-finalize.ts'
-import {
-  type IdleChildScanDeps,
-  finalizeIdleChildrenWithoutMd,
-  startIdleChildScan,
-} from './delegation-notify.ts'
+import { finalizeIdleChildrenWithoutMd } from './delegation-notify.ts'
 import { createPantheonLogger } from './logger.ts'
 import { buildAgentListDescription } from './permission-globs.ts'
-import { missingProviderKeyEnv, resolveActivePreset } from './presets.mjs'
 import { buildStopInstruction, cappedSummary, DEFAULT_MAX_STEPS } from './step-cap.ts'
 
 export type {
@@ -217,8 +212,10 @@ async function bootstrapChild(
     const remainingMs = timeoutMs - (now() - startedAt)
     if (hasMessagesAPI) {
       try {
+        const messagesAPI = client.session.messages
+        if (messagesAPI === undefined) continue
         const messages = await boundedProbe(
-          client.session.messages!({ path: { id: childSessionID } }),
+          messagesAPI({ path: { id: childSessionID } }),
           remainingMs,
         )
         if (messages !== undefined) {
@@ -231,8 +228,10 @@ async function bootstrapChild(
     }
     if (hasStatusAPI) {
       try {
+        const statusAPI = client.session.get
+        if (statusAPI === undefined) continue
         const status = await boundedProbe(
-          client.session.get!({ path: { id: childSessionID } }),
+          statusAPI({ path: { id: childSessionID } }),
           timeoutMs - (now() - startedAt),
         )
         if (status !== undefined) {
@@ -592,20 +591,6 @@ export interface ChildSessionModelRef {
 }
 
 /**
- * Known-good fallback model (P1, 2026-08-11 — release 1.3.4, updated
- * 2026-08-21 for sandbox without PANTHEON_OPENCODE_API_KEY): when an
- * AUTO-RESOLVED model (routing.yml agent entry / active preset) points at a
- * provider whose API key is not configured, the child is dispatched on the
- * `opencode-go` provider instead — `opencode-go/deepseek-v4-flash`
- * via https://opencode.ai/zen/go/v1 works without an external API key
- * (Go subscription / opencode auth, sandbox default). Validated with the
- * same providerKeyConfigured gate as the resolved model, with an
- * opencode-go exception for the sandbox; an explicit caller-supplied
- * `model` always wins over this fallback.
- */
-const FALLBACK_MODEL = 'opencode-go/deepseek-v4-flash'
-
-/**
  * Split a `provider/model` model ID (e.g. `opencode/deepseek-v4-flash-free`)
  * into the `{ id, providerID }` ref the session.create body expects.
  * Returns undefined for malformed IDs (no slash, empty segments).
@@ -617,12 +602,10 @@ function splitModelRef(model: string): ChildSessionModelRef | undefined {
 }
 
 /**
- * Resolve the child session model with priority:
- *   1. explicit `model` option passed to the delegate tool;
- *   2. `options.agentModels[agent]` (routing.yml agent entry, case-insensitive);
- *   3. the active preset's agent entry via resolveActivePreset();
- *   4. fallback: undefined — the child is created without a model (the
- *      caller warns) so opencode's default applies.
+ * Resolve only an explicitly supplied model. A routing profile's `model` is
+ * passed through as `options.agentModels`; profiles without one, and agents
+ * without a profile, intentionally resolve to undefined so the OpenCode
+ * parent session can provide inheritance.
  */
 function resolveChildModel(
   options: DelegationOptions,
@@ -641,43 +624,14 @@ function resolveChildModel(
     const ref = splitModelRef(mapped)
     if (ref !== undefined) return ref
   }
-  // (c) active preset agent entry (resolveActivePreset reads routing.yml
-  // presets + .pantheon/active-preset.json). Guarded — a broken routing.yml
-  // must never kill the delegate.
-  try {
-    const presetModel = resolveActivePreset({
-      ...(options.presetEnv !== undefined ? { env: options.presetEnv } : {}),
-      ...(options.logger !== undefined ? { logger: options.logger } : {}),
-    })?.agents?.[key]?.model
-    if (presetModel !== undefined && presetModel !== '') {
-      const ref = splitModelRef(presetModel)
-      if (ref !== undefined) return ref
-    }
-  } catch (err: unknown) {
-    const reason = err instanceof Error ? err.message : String(err)
-    options.logger?.warn?.(`[pantheon-delegate] active preset resolution failed: ${reason}`)
-  }
   return undefined
 }
 
 /**
- * Resolve a USABLE child model for a delegate dispatch, gating the resolved
- * provider's API key (P1, 2026-08-11 — release 1.3.4):
- *
- *   1. resolve the model with the existing precedence (explicit `model` >
- *      options.agentModels > active preset) — see resolveChildModel.
- *   2. provider key gate: the resolved provider requires its apiKeyEnv env
- *      var (routing.yml preset defs — same source applyPreset enforces at
- *      startup). No gate (native providers) or key present → usable as-is.
- *   3. key MISSING + EXPLICIT caller model → respected anyway (user intent),
- *      warned.
- *   4. key MISSING + AUTO-resolved model → fall back to FALLBACK_MODEL
- *      (validated the same way). Fallback also unusable → returns an `error`
- *      TEXT (the caller returns it from the tool — never throws) and the
- *      caller registers NO job on the board.
- *
- * The no-model case (nothing resolved) keeps the pre-existing behavior:
- * warn and let the child use opencode's default.
+ * Resolve a child model without selecting a provider or model on the caller's
+ * behalf. OpenCode owns model inheritance when this returns no model; if the
+ * host requires one, its session.create/promptAsync error is returned with
+ * the normal diagnostic rather than silently choosing a fallback.
  *
  * @returns `{ model, error }` — at most one of `model` / `error` is set;
  *   both may be unset (no model resolved, warn emitted).
@@ -687,50 +641,15 @@ function resolveUsableChildModel(
   agent: string,
   explicitModel: string | undefined,
 ): { model: ChildSessionModelRef | undefined; error: string | undefined } {
-  const env = options.presetEnv ?? process.env
-  const explicit = explicitModel !== undefined && explicitModel !== ''
-  const warn = (msg: string) => options.logger?.warn?.(msg)
-
   const model = resolveChildModel(options, agent, explicitModel)
   if (model === undefined) {
-    warn(
+    options.logger?.warn?.(
       `[pantheon-delegate] no model resolved for agent "${agent}" — ` +
-        "child session will use opencode's default model (may require API keys)",
+        'omitting model so OpenCode can inherit it from the parent session',
     )
     return { model: undefined, error: undefined }
   }
-
-  const missingVar = missingProviderKeyEnv(model.providerID, { env })
-  if (missingVar === undefined) return { model, error: undefined }
-
-  if (explicit) {
-    // Rule of precedence: the caller's explicit model is respected — warn only.
-    warn(
-      `[pantheon-delegate] model "${explicitModel}" provider "${model.providerID}" requires ` +
-        `API key ${missingVar} (unset) — respecting the explicit model anyway`,
-    )
-    return { model, error: undefined }
-  }
-
-  // Auto-resolved (agentModels / preset) → try the known-good fallback.
-  const fallback = splitModelRef(FALLBACK_MODEL)
-  if (
-    fallback !== undefined &&
-    (fallback.providerID === 'opencode-go' ||
-      missingProviderKeyEnv(fallback.providerID, { env }) === undefined)
-  ) {
-    warn(
-      `[pantheon-delegate] provider "${model.providerID}" requires API key ${missingVar} ` +
-        `(unset) — falling back to ${FALLBACK_MODEL}`,
-    )
-    return { model: fallback, error: undefined }
-  }
-
-  const message =
-    `pantheon_delegate: no usable model for agent "${agent}" — provider "${model.providerID}" ` +
-    `requires API key (set ${missingVar} or PANTHEON_MODEL_PRESET)`
-  warn(`[pantheon-delegate] ${message}`)
-  return { model: undefined, error: message }
+  return { model, error: undefined }
 }
 
 // ─── Factory ───────────────────────────────────────────────────────────
@@ -900,13 +819,8 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       // session.create failure → return a clear error as TEXT (tools return
       // errors as text, not thrown) and register NO job on the board — an
       // unhandled rejection here would otherwise lose the failure entirely.
-      // The child model is resolved with a provider API-key gate (P1): the
-      // resolved model (explicit `model` > options.agentModels > active
-      // preset) is used when its provider key is configured; an explicit
-      // caller model is always respected (warned); an auto-resolved model
-      // whose provider key is missing falls back to the known-good
-      // opencode-go/deepseek-v4-flash; if nothing usable remains the
-      // failure is returned as TEXT below — no session, no board job.
+      // Only an explicit delegate model or routing profile model is sent.
+      // Otherwise omit it so OpenCode inherits the parent model.
       const resolved = resolveUsableChildModel(options, args.agent, args.model)
       if (resolved.error !== undefined) {
         if (budgetReserved && budgetKey !== undefined)
