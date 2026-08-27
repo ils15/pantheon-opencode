@@ -607,9 +607,9 @@ async function main() {
             outputDir: tmp,
             // Same source the plugin wires (Fase 6): routing.yml's default
             // agent→model mapping. The opencode provider requires
-            // PANTHEON_OPENCODE_API_KEY (routing.yml go-deepseek apiKeyEnv).
+            // PANTHEON_OPENCODE_API_KEY (routing.yml go-free apiKeyEnv).
             agentModels: loadRoutingAgentModels({
-              env: { PANTHEON_MODEL_PRESET: 'go-deepseek' },
+              env: { PANTHEON_MODEL_PRESET: 'go-free' },
             }),
             presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
           },
@@ -619,11 +619,11 @@ async function main() {
 
         assert.equal(client.created.length, 1)
         assert.deepEqual(client.created[0]?.body.model, {
-          id: 'deepseek-v4-flash',
+          id: 'mimo-v2.5-free',
           providerID: 'opencode',
         })
         assert.deepEqual(client.prompted[0]?.body.model, {
-          id: 'deepseek-v4-flash',
+          id: 'mimo-v2.5-free',
           providerID: 'opencode',
         })
       } finally {

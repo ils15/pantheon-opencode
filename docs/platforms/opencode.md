@@ -1,6 +1,6 @@
 # Pantheon for OpenCode
 
-Complete setup and usage guide for running Pantheon in [OpenCode](https://opencode.ai) — the open-source AI coding agent for the terminal, desktop, and IDE.
+Complete setup and usage guide for running Pantheon **v1.4.2** in [OpenCode](https://opencode.ai) — 4 presets (`go-free`/`go-fast`/`go-premium`/`openai` puro), wizard 3 perguntas, herança nativa default — the open-source AI coding agent for the terminal, desktop, and IDE.
 
 ---
 
@@ -292,141 +292,156 @@ Built into every agent's workflow, the **YAGNI Ladder** prevents overengineering
 - **Step 2**: Extract only if duplication appears 3+ times
 - **Step 3**: Abstract only when the pattern is proven stable
 
-### Model Configuration
+### Model Configuration — 4 Presets (gerado de `src/routing.yml`)
 
-OpenCode uses `provider/model` format for model IDs (e.g., `deepseek/deepseek-v4-pro`). The repo ships with **profile-based model configuration** — multiple `opencode.*.json` files for different use cases:
+> **Default = herdar do chat (sem `active-preset.json`)** — sem preset ativo, delegates herdam nativamente o modelo do chat pai. O plugin (`src/plugin.ts` → `resolveActivePreset`) lê `PANTHEON_MODEL_PRESET` env > primeiro `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) > **`null` (herança nativa)**. `loadRoutingAgentModels` vazio quando `null`; `delegation.ts` omite `model` em `session.create`/`promptAsync` para herança nativa. `small_model` nunca usado.
 
-| Profile | File | Use Case |
-|---------|------|----------|
-| **Go** (default) | `opencode.json` | Premium agents (Zeus, Athena, Themis, Hephaestus) use `deepseek-v4-pro`; standard agents use `deepseek-v4-flash` |
-| **Zen** | `opencode.zen.json` | All agents use the cheaper `deepseek-v4-flash` — for cost-sensitive sessions |
-| **Multimodal** | `opencode.multimodal.json` | Vision-capable agents (Zeus, Athena, Hermes, Themis, Hephaestus, Aphrodite) use `claude-sonnet-4`; others use `deepseek-v4-flash` |
-| **DeepSeek-only** | `opencode.deepseek-only.json` | All agents use DeepSeek models only (pro for premium, flash for standard) |
+Tabelas abaixo são **geradas a partir de [`src/routing.yml`](../../src/routing.yml)** via `node scripts/generate-preset-docs.mjs` (sem hardcodar segredos — só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` nomes + `baseURL`s). Pricing 2026 verificado via `scripts/install/model-picker.mjs` (`PRESET_PRICE`).
 
-Switch profiles by copying the desired file over `opencode.json`:
+#### Presets — resumo (provider / BaseURL / key / pricing / vision)
+
+| Preset | Provider / BaseURL | Key env (nome) | Pricing 2026 | Vision (fallback) | Papéis / Modelos |
+|---|---|---|---|---|---|
+| `go-free` | `opencode` `https://opencode.ai/zen/v1` (env: `PANTHEON_OPENCODE_API_KEY`) | `PANTHEON_OPENCODE_API_KEY` | Gratuito — Zen free, sem custo, quota limitada, só modelos `-free` | `opencode/mimo-v2.5-free` [low] 👁️ vision | zeus: `opencode/big-pickle` [medium]<br>athena: `opencode/nemotron-3-super-free` [high]<br>themis: `opencode/qwen3.6-plus-free` [high]<br>hermes,aphrodite,demeter,prometheus,hephaestus: `opencode/deepseek-v4-flash-free` [medium]<br>apollo,nyx,gaia,iris,mnemosyne,talos: `opencode/mimo-v2.5-free` [low] |
+| `go-fast` | `opencode-go` `https://opencode.ai/zen/go/v1` (env: `PANTHEON_OPENCODE_API_KEY`) | `PANTHEON_OPENCODE_API_KEY` | Baixo custo — Go gateway, baixa latência (kimi-k2.7-code / glm-5.3-flash) | `opencode-go/mimo-v2.5` [low] 👁️ vision | athena: `opencode-go/kimi-k2.7-code` [high]<br>themis: `opencode-go/glm-5.3-flash` [high]<br>zeus: `opencode-go/kimi-k2.7-code` [medium]<br>hermes,prometheus: `opencode-go/deepseek-v4-flash` [medium]<br>aphrodite,hephaestus: `opencode-go/mimo-v2.5` [low]<br>demeter: `opencode-go/gpt-5.6-luna` [low]<br>apollo,nyx,gaia,iris,mnemosyne,talos: `opencode-go/gpt-5.6-luna-fast` [low] |
+| `go-premium` | `opencode-go` `https://opencode.ai/zen/go/v1` (env: `PANTHEON_OPENCODE_API_KEY`) | `PANTHEON_OPENCODE_API_KEY` | Premium — Go gateway, melhor qualidade (gpt-5.6-sol / qwen3.8-max / deepseek-v4-pro) | `opencode-go/gpt-5.6-sol` [high] 👁️ vision | zeus: `opencode-go/gpt-5.6-sol` [medium]<br>athena: `opencode-go/deepseek-v4-pro` [high]<br>themis: `opencode-go/qwen3.8-max` [high]<br>hermes,demeter,hephaestus: `opencode-go/gpt-5.6-terra` [medium]<br>aphrodite,prometheus: `opencode-go/kimi-k3` [medium]<br>apollo,nyx,gaia,iris,mnemosyne,talos: `opencode-go/gpt-5.6-luna` [low] |
+| `openai` | `openai` `https://api.openai.com/v1` (env: `OPENAI_API_KEY`) | `OPENAI_API_KEY` | Pago (OpenAI) — Direto OpenAI, `gpt-5.6` family | `openai/gpt-5.6-sol` [high] 👁️ vision | athena,themis,zeus: `openai/gpt-5.6-sol` [high]<br>hermes,aphrodite,demeter,prometheus,hephaestus: `openai/gpt-5.6-luna` [high]<br>apollo,nyx,gaia,iris,mnemosyne,talos: `openai/gpt-5.6-luna-fast` [low] |
+
+#### Provider / BaseURL / Key env (nomes, sem valores)
+
+| Preset | Provider | BaseURL | Key env |
+|---|---|---|---|
+| `go-free` | `opencode` | `https://opencode.ai/zen/v1` | `PANTHEON_OPENCODE_API_KEY` |
+| `go-fast` | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` |
+| `go-premium` | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` |
+| `openai` | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+
+> Alias `OPENCODE_GO_API_KEY` aceito no wizard Q2 para `go-*` (mesma chave `PANTHEON_OPENCODE_API_KEY`). Nenhum `.env` é escrito.
+
+#### Pricing 2026
+
+| Preset | Pricing 2026 | Detalhe | Gateway / Custo |
+|---|---|---|---|
+| `go-free` | Gratuito | Zen free – sem custo, quota limitada, só modelos `-free` | `opencode` — $0 (free-tier Zen) |
+| `go-fast` | Baixo custo | Go gateway – baixa latência, kimi-k2.7-code / glm-5.3-flash | `opencode-go` — Baixo custo, baixa latência |
+| `go-premium` | Premium | Go gateway – melhor qualidade, gpt-5.6-sol / qwen3.8-max / deepseek-v4-pro | `opencode-go` — Premium, melhor qualidade |
+| `openai` | Pago (OpenAI) | Direto OpenAI – https://api.openai.com/v1, gpt-5.6 family | `openai` — Pago por uso |
+
+*Pricing verificado 2026 via `PRESET_PRICE` + `routing.yml` descrições. Custos reais dependem de conta/assinatura.
+
+#### 14 agentes × 4 presets — modelo + effort + vision
+
+| Agente | `go-free` | `go-fast` | `go-premium` | `openai` |
+|---|---|---|---|---|
+| `zeus` | `opencode/big-pickle` [medium] · | `opencode-go/kimi-k2.7-code` [medium] · | `opencode-go/gpt-5.6-sol` [medium] 👁️ | `openai/gpt-5.6-sol` [high] 👁️ |
+| `athena` | `opencode/nemotron-3-super-free` [high] · | `opencode-go/kimi-k2.7-code` [high] · | `opencode-go/deepseek-v4-pro` [high] · | `openai/gpt-5.6-sol` [high] 👁️ |
+| `themis` | `opencode/qwen3.6-plus-free` [high] · | `opencode-go/glm-5.3-flash` [high] · | `opencode-go/qwen3.8-max` [high] · | `openai/gpt-5.6-sol` [high] 👁️ |
+| `hermes` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/deepseek-v4-flash` [medium] · | `opencode-go/gpt-5.6-terra` [medium] 👁️ | `openai/gpt-5.6-luna` [high] 👁️ |
+| `aphrodite` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/mimo-v2.5` [low] 👁️ | `opencode-go/kimi-k3` [medium] · | `openai/gpt-5.6-luna` [high] 👁️ |
+| `demeter` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/gpt-5.6-luna` [low] 👁️ | `opencode-go/gpt-5.6-terra` [medium] 👁️ | `openai/gpt-5.6-luna` [high] 👁️ |
+| `prometheus` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/deepseek-v4-flash` [medium] · | `opencode-go/kimi-k3` [medium] · | `openai/gpt-5.6-luna` [high] 👁️ |
+| `hephaestus` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/mimo-v2.5` [low] 👁️ | `opencode-go/gpt-5.6-terra` [medium] 👁️ | `openai/gpt-5.6-luna` [high] 👁️ |
+| `apollo` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
+| `nyx` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
+| `gaia` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
+| `iris` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
+| `mnemosyne` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
+| `talos` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
+
+`·` = text-only, `👁️` = vision (image-input) via `CAPABILITY_TABLE` (`src/pantheon/presets.mjs`). Ex.: `mimo-v2.5*` e `gpt-5.6*` são multimodais; `deepseek*`, `kimi-k2.7-code`, `glm-5.3-flash`, `qwen3.6-plus-free`, `big-pickle`, `nemotron-3-super-free` são text-only.
+
+#### Capability — text-only vs multimodal + esforço máximo
+
+| Prefix | Max Effort | Vision | Strip Effort | Uso nos presets |
+|---|---|---|---|---|
+| `deepseek/deepseek-v4-pro` | high | — | no | `go-premium` athena |
+| `deepseek/deepseek-v4-flash` | medium | — | no | `go-free` implementers, `go-fast` hermes/prometheus |
+| `claude` | — | 👁️ | yes | não usado nos 4 presets atuais (legado `go-claude` removido) |
+| `gpt-5.6-sol` | high | 👁️ | no | `go-premium` zeus/vision, `openai` planners/vision |
+| `gpt-5.6-terra` | medium | 👁️ | no | `go-premium` implementers |
+| `gpt-5.6-luna-fast` | low | 👁️ | no | scouts `go-fast`/`openai` |
+| `gpt-5.6-luna` | low | 👁️ | no | scouts `go-premium`, implementer `go-fast` demeter |
+| `gpt-5.6` | medium | 👁️ | no | fallback `gpt-5.6*` |
+| `mimo/` | low | 👁️ | no | `mimo` family gateway |
+| `mimo-v2.5` | low | 👁️ | no | `go-fast` visão + aphrodite/hephaestus |
+| `mimo-v2.5-free` | low | 👁️ | — | `go-free` scouts + visão |
+| `mimo-v2.5-pro` | low | — | no | text-only (não usado nos presets ativos) |
+| `glm-5.3-flash` | high | — | no | `go-fast` themis |
+| `kimi-k2.7-code` | high | — | no | `go-fast` athena/zeus |
+| `kimi-k3` | medium | — | no | `go-premium` aphrodite/prometheus |
+| `qwen3.8-max` | high | — | no | `go-premium` themis |
+| `qwen3.6-plus-free` | medium | — | no | `go-free` themis |
+| `big-pickle` | medium | — | no | `go-free` zeus |
+| `nemotron-3-super-free` | high | — | no | `go-free` athena |
+| `deepseek-v4-flash` | medium | — | no | bare prefix para `opencode-go/deepseek-v4-flash` |
+| `deepseek-v4-pro` | high | — | no | bare prefix para `opencode-go/deepseek-v4-pro` |
+
+*Tabela gerada de `CAPABILITY_TABLE` em `presets.mjs` (verificado 2026-08-27 via `models.dev`). `stripEffort` = remove `reasoning_effort` (ex.: `claude`). `maxEffort` = teto clamped via `normalizeCapability`/`EFFORT_RANK`.*
+
+#### Per-agent overrides — `/pantheon-model set --agent`
+
+Desde v1.4.2, personalização fina **por agente** sem tocar `opencode.json` top-level nem `.env`:
 
 ```bash
-# Switch to Zen profile (all cheap models)
-cp opencode.zen.json opencode.json
+# wizard interativo (agente → modelo → effort → scope)
+/pantheon-model
+# status — 14 agentes com modelo/effort/origem (preset|override|env|none), sem segredos
+/pantheon-model status   # alias: show
+# set por agente — validação CAPABILITY_TABLE + clamp + hasVision warning
+/pantheon-model set --agent hermes --model opencode-go/gpt-5.6-terra --effort medium --scope project
+/pantheon-model set --agent apollo --model opencode/mimo-v2.5-free --effort low
+/pantheon-model reset --agent hermes --scope project
 ```
 
-The default **Go** profile in [`opencode.json`](../../opencode.json):
+- Valida `agent ∈ {zeus, athena, apollo, hermes, aphrodite, demeter, themis, prometheus, hephaestus, nyx, gaia, iris, mnemosyne, talos}`.
+- Valida `provider/model-id` via `MODEL_REF_PATTERN` e `capabilityEntry(model)` (sem entrada → erro); clampa `effort` via `normalizeCapability`; avisa se `hasVision(model)===false` para uso multimodal.
+- Persiste em `.pantheon/active-preset.json` em `overrides.agents[agent].model` + `variant` (mapeado para `reasoning_effort` no merge) — escrita atômica `tmp`+`rename` com `.bak` + lock por path + `O_NOFOLLOW` + health-check. Default scope `project`; `global` exige `confirm`+`authorize_global`.
+- Nunca escreve `.env` nem injeta `model`/`small_model` global — herança nativa segue: `explicit model` > `overrides.agents` > `preset agents` > nativo.
+
+#### Model Value Types (legado → 1.4.2)
+
+| Valor | Antes (≤1.4.1) | Agora (1.4.2) |
+|---|---|---|
+| **String explícita** `provider/model-id` | `agent.model` em `opencode.json` | `presets.<name>.agents[agent].model` em `routing.yml` + `overrides.agents[agent].model` via `/pantheon-model set --agent` |
+| **`"auto"`** | herdava `chat` via `/model` | deprecated — herança nativa automática quando sem preset/override (sem `model` enviado) |
+| **`null`** | fallback para top-level `model` | não usado — sem top-level `model`; ausência = herança nativa |
+| **Ausência** | default do OpenCode | **herança nativa** — delegação omite `model` e OpenCode herda da sessão pai (chat) |
+
+#### Switching from Hardcoded to Per-agent Override
 
 ```json
-{
-  "agent": {
-    "zeus":    { "model": "deepseek/deepseek-v4-pro" },
-    "athena":  { "model": "deepseek/deepseek-v4-pro" },
-    "apollo":  { "model": "deepseek/deepseek-v4-flash" },
-    "hermes":  { "model": "deepseek/deepseek-v4-flash" },
-    "aphrodite": { "model": "deepseek/deepseek-v4-flash" },
-    "demeter": { "model": "deepseek/deepseek-v4-flash" },
-    "themis":  { "model": "deepseek/deepseek-v4-pro" },
-    "prometheus": { "model": "deepseek/deepseek-v4-flash" },
-    "hephaestus": { "model": "deepseek/deepseek-v4-pro" },
-    "nyx":     { "model": "deepseek/deepseek-v4-flash" },
-    "gaia":    { "model": "deepseek/deepseek-v4-flash" },
-    "iris":    { "model": "deepseek/deepseek-v4-flash" },
-    "mnemosyne": { "model": "deepseek/deepseek-v4-flash" },
-    "talos":   { "model": "deepseek/deepseek-v4-flash" }
-  }
-}
-```
-
-> **Note:** The `model_tier` field and `fallback_chains` section have been removed from `routing.yml` — model selection is now fully managed in `opencode.json` profiles. The `routing.yml` still controls agent roles, capabilities, and delegation rules.
-
-#### Model Value Types
-
-Model fields support **three value types** for flexible configuration:
-
-| Value Type | Example | Behavior |
-|------------|---------|----------|
-| **Explicit String** | `"opencode/kimi-k2.6"` | Uses exactly this model ID |
-| **`"auto"`** | `"auto"` | Inherits from chat's active model (set via `/model` command) |
-| **`null`** | `null` | Falls back to top-level `model` in `opencode.json`, then platform default |
-
-**Explicit String (Default):**
-```json
-{
-  "agent": {
-    "zeus": { "model": "opencode/kimi-k2.6" }
-  }
-}
-```
-Use when you want deterministic, predictable model assignment.
-
-**`"auto"` — Dynamic Inheritance:**
-```json
-{
-  "agent": {
-    "apollo": { "model": "auto" },
-    "talos": { "model": "auto" }
-  }
-}
-```
-The agent follows the user's chat model selection. When you run `/model opencode-go/deepseek-v4-pro`, these agents automatically switch. Useful for:
-- Experimenting with different models without editing configs
-- Cost control (switch to cheaper models mid-session)
-- Testing agent behavior across multiple providers
-
-**`null` — Fallback Chain:**
-```json
-{
-  "model": "opencode/kimi-k2.5",
-  "agent": {
-    "hermes": { "model": null },
-    "aphrodite": { "model": null }
-  }
-}
-```
-Omits the model field, triggering the fallback chain: agent → top-level `model` → platform default. Use when you want most agents to share a common default.
-
-#### Switching from Hardcoded to Auto
-
-To convert an agent from hardcoded to dynamic:
-
-```json
-// Before: Hardcoded model
+// Antes (≤1.4.1) — top-level opencode.json
 {
   "agent": {
     "apollo": { "model": "opencode/deepseek-v4-flash" }
   }
 }
 
-// After: Dynamic inheritance
-{
-  "agent": {
-    "apollo": { "model": "auto" }
-  }
-}
+// Agora (1.4.2) — sem top-level; use /pantheon-model
+// no chat OpenCode:
+/pantheon-model set --agent apollo --model opencode/mimo-v2.5-free --effort low --scope project
+// persiste em .pantheon/active-preset.json:
+// { "preset": "go-fast", "overrides": { "agents": { "apollo": { "model": "opencode/mimo-v2.5-free", "variant": "low" } } } }
 ```
 
-Now Apollo follows your `/model` command changes in real-time.
+Apollo agora segue o override (se houver) ou preset agente; se nenhum, herda do chat `/model`.
 
-#### Model Priority Chain
-
-When resolving which model an agent uses:
+#### Model Priority Chain (1.4.2)
 
 ```
-1. Agent-specific model (string/auto/null)
-2. If null: inherit the parent session's model (OpenCode decides)
-3. If auto: chat-selected model via /model
-4. If missing: platform default
+1. explicit model em pantheon_delegate({model: "provider/model-id"})
+2. overrides.agents[agent].model em active-preset.json (/pantheon-model set --agent)
+3. presets.<active>.agents[agent].model  (loadRoutingAgentModels)
+4. (ausência) → herança nativa — OpenCode herda modelo da sessão pai (chat)
+   — small_model nunca usado para delegates
+   — top-level opencode.json model ignorado (removido no install)
 ```
 
-This chain ensures predictable behavior while allowing flexibility.
+---
 
-> **Note:** The `/model` command in OpenCode sets the chat's active model. Agents configured with `"auto"` immediately follow this selection. Use `/models` to see available models and `/model <id>` to switch.
+### Model Tiers (legado → 1.4.2 presets)
 
-### Model Tiers
-
-Agents declare abstract **tiers** (`fast`/`default`/`premium`) instead of concrete model names. Configure the models you want for each tier directly in your `~/.config/opencode/opencode.json` or project-level `opencode.json` under the `provider` key.
-
-| Agent Tier | Example mapping |
-|---|---|
-| `fast` | A lightweight/cheap model (e.g. `gpt-4o-mini`, `haiku`) |
-| `default` | A balanced model (e.g. `gpt-4o`, `sonnet`) |
-| `premium` | A frontier model (e.g. `o3`, `opus`) |
+> **Legado**: tiers `fast`/`default`/`premium` eram abstrações manuais em `opencode.json` (ex.: `gpt-4o-mini`, `gpt-4o`, `o3`). **Em 1.4.2**, tiers são **pinados via 4 presets** (`go-free`/`go-fast`/`go-premium`/`openai`) em [`src/routing.yml`](../../src/routing.yml) — cada agente recebe `model` + `reasoning_effort` concretos. Veja seção **Model Configuration — 4 Presets** acima para tabelas geradas (`node scripts/generate-preset-docs.mjs`). Sem preset, herança nativa do chat pai.
 
 ### ACP (Agent Client Protocol)
 

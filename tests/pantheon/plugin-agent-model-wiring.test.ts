@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   const withProfile = await runFactory('go-fast')
   assert.deepEqual(withProfile.model, {
     providerID: 'opencode-go',
-    id: 'deepseek-v4-flash',
+    id: 'gpt-5.6-luna-fast',
   })
 
   console.log('✅ plugin agentModels wiring: 2 passed, 0 failed')

@@ -502,8 +502,13 @@ function providerDefKeyConfigured(provider, env) {
   if (!provider || typeof provider !== 'object') return true
   const envVar = provider.apiKeyEnv
   if (typeof envVar !== 'string' || envVar === '') return true
-  const key = env[envVar]
-  return typeof key === 'string' && key.trim() !== ''
+  const candidates =
+    envVar === 'PANTHEON_OPENCODE_API_KEY' ? [envVar, 'OPENCODE_GO_API_KEY'] : [envVar]
+  for (const candidate of candidates) {
+    const key = env[candidate]
+    if (typeof key === 'string' && key.trim() !== '') return true
+  }
+  return false
 }
 
 /**
@@ -521,7 +526,6 @@ function providerDefKeyConfigured(provider, env) {
  * @returns {string|undefined} missing env var name, or undefined when usable
  */
 export function missingProviderKeyEnv(providerID, { env = process.env, routingPath } = {}) {
-  if (providerID === 'opencode-go') return undefined
   const defs = loadPresetDefs(routingPath)
   for (const def of Object.values(defs)) {
     const provider = def?.providers?.[providerID]
@@ -572,7 +576,11 @@ export function applyPreset(config, resolved, { env = process.env } = {}) {
     config.provider[id] ??= {}
     config.provider[id].options ??= {}
     config.provider[id].options.baseURL = provider.baseURL
-    config.provider[id].options.apiKey = env[provider.apiKeyEnv]
+    const apiKey =
+      provider.apiKeyEnv === 'PANTHEON_OPENCODE_API_KEY'
+        ? (env[provider.apiKeyEnv] ?? env.OPENCODE_GO_API_KEY)
+        : env[provider.apiKeyEnv]
+    config.provider[id].options.apiKey = apiKey
   }
 
   for (const [agent, spec] of Object.entries(resolved.agents ?? {})) {

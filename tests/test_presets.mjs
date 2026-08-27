@@ -720,7 +720,148 @@ await testAsync('T19: picker persists; opencode.mjs gates on autoYes/opts.preset
   assert.ok(src.includes('export function isGlobalConfigDir'), 'isGlobalConfigDir must be exported')
   assert.ok(src.includes('!autoYes'), 'picker must be gated by !autoYes')
   assert.ok(src.includes('!opts.preset'), 'picker must be gated by !opts.preset')
-  assert.ok(src.includes('runModelPicker'), 'opencode.mjs must import/use runModelPicker')
+  assert.ok(src.includes('runInitWizard'), 'opencode.mjs must import/use runInitWizard')
+})
+
+// ─── T19b: init wizard readline — blank Q1 defaults to inherit (no write) ─
+await testAsync('T19b: init wizard blank Q1 defaults to inherit and writes nothing', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const mockRl = { question: async () => '', close: () => {} }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env: {},
+    dryRun: false,
+    logger: silent,
+    rl: mockRl,
+  })
+  assert.equal(result.preset, 'inherit')
+  assert.equal(result.scope, 'project')
+  assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
+})
+
+// ─── T19c: init wizard readline — explicit 'inherit' also writes nothing ─
+await testAsync('T19c: init wizard readline explicit inherit writes nothing', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const mockRl = { question: async () => '0', close: () => {} }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env: {},
+    dryRun: false,
+    logger: silent,
+    rl: mockRl,
+  })
+  assert.equal(result.preset, 'inherit')
+  assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
+})
+
+// ─── T19d: init wizard readline — preset + key + project scope writes ───
+await testAsync('T19d: init wizard readline writes project preset with collected key', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const answers = ['go-fast', 'sk-test-key', 'project']
+  let i = 0
+  const mockRl = { question: async () => answers[i++], close: () => {} }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env: {},
+    dryRun: false,
+    logger: silent,
+    rl: mockRl,
+  })
+  assert.equal(result.preset, 'go-fast')
+  assert.equal(result.scope, 'project')
+  const file = presetFile(dir)
+  assert.ok(existsSync(file), 'project preset must be written')
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).preset, 'go-fast')
+})
+
+// ─── T19e: init wizard ask path — global scope writes XDG global file ───
+await testAsync('T19e: init wizard ask path global scope writes XDG_CONFIG_HOME/opencode', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const xdgHome = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const ask = async () => ({ preset: 'go-fast', key: 'sk-test', scope: 'global' })
+  const env = { HOME: dir, XDG_CONFIG_HOME: xdgHome, PANTHEON_OPENCODE_API_KEY: 'sk-test' }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env,
+    dryRun: false,
+    logger: silent,
+    ask,
+  })
+  assert.equal(result.preset, 'go-fast')
+  assert.equal(result.scope, 'global')
+  const globalFile = join(xdgHome, 'opencode', '.pantheon', 'active-preset.json')
+  assert.ok(existsSync(globalFile), 'global preset must be written to XDG_CONFIG_HOME/opencode')
+  assert.ok(!existsSync(presetFile(dir)), 'project file must NOT be written for global scope')
+  assert.equal(JSON.parse(readFileSync(globalFile, 'utf8')).preset, 'go-fast')
+})
+
+// ─── T19f: init wizard ask path — project scope writes project file ─────
+await testAsync('T19f: init wizard ask path project scope writes project file', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const ask = async () => ({ preset: 'go-fast', key: 'sk-test', scope: 'project' })
+  const env = { HOME: dir, PANTHEON_OPENCODE_API_KEY: 'sk-test' }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env,
+    dryRun: false,
+    logger: silent,
+    ask,
+  })
+  assert.equal(result.preset, 'go-fast')
+  assert.equal(result.scope, 'project')
+  assert.ok(existsSync(presetFile(dir)), 'project preset must be written')
+})
+
+// ─── T19g: init wizard ask path — inherit writes nothing ────────────────
+await testAsync('T19g: init wizard ask path inherit writes nothing', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const ask = async () => ({ preset: 'inherit', scope: 'project' })
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env: {},
+    dryRun: false,
+    logger: silent,
+    ask,
+  })
+  assert.equal(result.preset, 'inherit')
+  assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
+})
+
+// ─── T19h: init wizard accepts OPENCODE_GO_API_KEY alias ────────────────
+await testAsync('T19h: init wizard accepts OPENCODE_GO_API_KEY alias key', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const ask = async () => ({ preset: 'go-fast', scope: 'project' })
+  const env = { HOME: dir, OPENCODE_GO_API_KEY: 'sk-alias' }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env,
+    dryRun: false,
+    logger: silent,
+    ask,
+  })
+  assert.equal(result.preset, 'go-fast')
+  assert.ok(existsSync(presetFile(dir)), 'alias key must satisfy validation and write')
 })
 
 // ─── T20: validate-routing passes with 6 presets ───────────────────────

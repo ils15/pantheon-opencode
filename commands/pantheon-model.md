@@ -1,30 +1,34 @@
 ---
-description: "Inspect or change only OpenCode's top-level model settings"
+description: "Inspect or change per-agent model overrides in active-preset.json"
 agent: zeus
 ---
-# /pantheon-model — Model settings
+# /pantheon-model — Per-agent model overrides
 
-Use the deterministic `pantheon_model` tool for this command. Do not edit
-`opencode.json` directly and do not modify providers, credentials, the active
-preset, or agent model settings.
+Use the deterministic `pantheon_model` tool for this command. Operates exclusively
+on `active-preset.json` `overrides.agents[agent]` (project or global). Never
+writes `.env` and never injects top-level `model`/`small_model` into `opencode.json`.
 
 ## Usage
 
-- `/pantheon-model status` or `/pantheon-model show` — show `model`,
-  `small_model`, each field's origin (`project`, `global`, or `default`), and
-  the active preset without showing secrets.
-- `/pantheon-model set --model <provider/model-id>` — set only `model`.
-- `/pantheon-model set --small-model <provider/model-id>` — set only
-  `small_model`.
-- `/pantheon-model set --model <provider/model-id> --small-model <provider/model-id>`
-  — set both fields independently.
-- `/pantheon-model reset` — remove only the managed fields.
+- `/pantheon-model status` or `/pantheon-model show` — list 14 canonical agents
+  (`zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`,
+  `prometheus`, `hephaestus`, `nyx`, `gaia`, `iris`, `mnemosyne`, `talos`)
+  with effective `model`, `effort`, and origin (`preset` | `override` | `env` | `none`)
+  and the active preset, without showing secrets.
+- `/pantheon-model` (no args) — interactive wizard via `askQuestions`:
+  agente → modelo (`provider/model-id`) → effort (`low`/`medium`/`high`) → scope.
 
-`--scope project|global` is supported by `set` and `reset`. The safe default is
-`project`, so a command without `--scope` never changes the global config.
-Values must use the `provider/model-id` format. Changes are backed up and
-written atomically; restart OpenCode after a successful change.
+- `/pantheon-model set --agent <name> --model <provider/model-id> [--effort low|medium|high] [--scope project|global]`
+  — set per-agent override. Validates agent is one of the 14, `provider/model-id`
+  format, `CAPABILITY_TABLE` entry via `capabilityEntry()` and clamps effort via
+  `normalizeCapability()`; warns via `hasVision` for text-only models. Persists
+  atomically with `.bak` backup and per-path lock. Default scope is `project`.
 
-The installer leaves `model`/`small_model` absent without explicit flags;
-`small_model` is never used for delegates — inheritance is via the chat /
-preset model.
+- `/pantheon-model reset --agent <name> [--scope project|global]` — remove the
+  per-agent override from `overrides.agents[agent]`.
+
+`--scope project|global` is supported by `set` and `reset`. Global changes require
+explicit `confirm` and `authorize_global`. Values must use `provider/model-id`.
+Changes are backed up (`.bak`) and written atomically; restart OpenCode after a
+successful change. The tool never writes `.env` and never injects `model`/`small_model`
+global keys — delegate inheritance is native (no model → inherits chat/preset model).

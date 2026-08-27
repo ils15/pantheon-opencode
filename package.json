@@ -7,7 +7,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "postinstall": "node scripts/postinstall.mjs",
+    "postinstall": "node scripts/postinstall.mjs && node scripts/sync-tui.mjs",
     "prepare": "husky",
     "setup": "node bin/pantheon-init.mjs init",
     "build:agents-md": "node scripts/build-agents-md.mjs",

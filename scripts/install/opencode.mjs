@@ -1020,12 +1020,14 @@ export async function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
-  // 5. Model preset selection (--components agents). Interactive picker runs
+  // 5. Model preset selection (--components agents). Interactive wizard runs
   //    unless autoYes (use defaults) or an explicit --preset was given.
+  //    Q1 default "herdar do chat" (inherit) writes no active-preset.json —
+  //    delegates inherit the parent chat model (native inheritance).
   // -----------------------------------------------------------------------
   if (interactive && !dryRun && !autoYes && !opts.preset) {
-    const { runModelPicker } = await import('./model-picker.mjs')
-    await runModelPicker({ presetDir: target, logger: console })
+    const { runInitWizard } = await import('./model-picker.mjs')
+    await runInitWizard({ presetDir: target, logger: console })
   }
 
   if (opts.preset && !dryRun) {
