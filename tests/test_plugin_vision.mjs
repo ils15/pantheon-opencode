@@ -162,21 +162,21 @@ await (async () => {
       mkdirSync(presetDir, { recursive: true })
       writeFileSync(
         join(presetDir, 'active-preset.json'),
-        JSON.stringify({ version: 1, preset: 'go-deepseek', source: 'cli' }),
+        JSON.stringify({ version: 1, preset: 'go-free', source: 'cli' }),
       )
       try {
         const config = {}
         await hooks.config(config)
         assert.equal(
           config.agent.zeus.model,
-          'opencode/deepseek-v4-flash',
+          'opencode/big-pickle',
           'preset applied to agent model',
         )
         assert.equal(config.agent.zeus.variant, 'medium', 'preset applied to reasoning effort')
-        assert.deepEqual(
+        assert.equal(
           config.agent.zeus.fallback_models,
-          ['opencode/mimo-v2.5-free'],
-          'preset applied to fallback models',
+          undefined,
+          'go-free has no fallback_models',
         )
         assert.equal(
           config.provider.opencode.options.baseURL,
@@ -959,11 +959,11 @@ await (async () => {
 
   // env PANTHEON_MODEL_PRESET resolves through the repo routing.yml
   const viaEnv = resolveNativeVisionConfig(null, {
-    PANTHEON_MODEL_PRESET: 'go-deepseek',
+    PANTHEON_MODEL_PRESET: 'go-free',
     PANTHEON_OPENCODE_API_KEY: 'test-key',
   })
-  assert.equal(viaEnv.modelID, 'opencode-go/minimax-m3', 'env preset go-deepseek → minimax-m3')
-  assert.equal(viaEnv.baseURL, 'https://opencode.ai/zen/go/v1', 'env preset uses zen go')
+  assert.equal(viaEnv.modelID, 'opencode/mimo-v2.5-free', 'env preset go-free → mimo-v2.5-free')
+  assert.equal(viaEnv.baseURL, 'https://opencode.ai/zen/v1', 'env preset uses zen v1')
 
   // opencode (Zen) provider → zen/v1 endpoint
   const zenFree = resolveNativeVisionConfig({ vision: { model: 'opencode/mimo-v2.5-free' } }, key)
