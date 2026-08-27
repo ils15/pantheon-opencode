@@ -153,7 +153,8 @@ function buildProviderTable(){
   lines.push('|---|---|---|---|')
   for(const [name,def] of Object.entries(presets)){
     for(const [pid,prov] of Object.entries(def.providers ?? {})){
-      lines.push(`| \`${name}\` | \`${pid}\` | \`${prov.baseURL ?? ''}\` | \`${prov.apiKeyEnv ?? 'none'}\` |`)
+      const keyEnvStatus = prov.apiKeyEnv ? 'configured' : 'none'
+      lines.push(`| \`${name}\` | \`${pid}\` | \`${prov.baseURL ?? ''}\` | \`${keyEnvStatus}\` |`)
     }
   }
   return lines.join('\n')
