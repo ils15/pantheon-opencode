@@ -33,12 +33,13 @@ export const EFFORT_RANK = { low: 0, medium: 1, high: 2 }
 /**
  * Capability table: reasoning-effort ceiling + image-input (vision) support.
  *
- * `vision` flags mark models that accept image input. Verified against
- * models.dev api.json on 2026-08-02 (council decision): qwen3.7-max,
- * minimax-m2.5 and minimax-m2.7 and glm-5.1/glm-5.2 are TEXT-ONLY (vision:
- * false); mimo-v2.5 / mimo-v2.5-free / qwen3.7-plus / minimax-m3 and the
- * o-series (o1/o3/o4) are multimodal (models.dev input: text+image).
- * claude-* and gpt-5.6-* carry native image support.
+ * `vision` flags mark models that accept image input. Verified 2026-08-27:
+ * deepseek-v4-pro high, deepseek-v4-flash medium text-only; mimo-v2.5 /
+ * mimo-v2.5-free multimodal low; qwen3.6-plus-free / qwen3.8-max text-only;
+ * glm-5.3-flash high text-only; kimi-k2.7-code high, kimi-k3 medium text-only;
+ * nemotron-3-super-free high text-only; big-pickle medium text-only;
+ * minimax-m3 multimodal high; gpt-5.6 family native image support.
+ * Removed: minimax-m2.5, kimi-k2.5, glm-5.1/5.2, ox-alpha (deprecated 2026).
  */
 export const CAPABILITY_TABLE = [
   { prefix: 'deepseek/deepseek-v4-pro', maxEffort: 'high', stripEffort: false, vision: false },
@@ -60,31 +61,18 @@ export const CAPABILITY_TABLE = [
   // entry above matches 'mimo/v2.5' (full-string) but NOT 'mimo-v2.5'
   // (segment 'mimo-v2.5' has no slash, so 'mimo/' prefix cannot match).
   { prefix: 'mimo-v2.5', maxEffort: 'low', stripEffort: false, vision: true },
-  // mimo-v2.5-pro is text-only per models.dev api.json (2026-08-02).
-  // Explicit entry needed: the 'mimo-v2.5' prefix substring-matches
-  // 'mimo-v2.5-pro' (longest-prefix wins), which would wrongly report
-  // vision: true for a text-only model.
+  // mimo-v2.5-pro is text-only per models.dev api.json (2026-08-27).
   { prefix: 'mimo-v2.5-pro', maxEffort: 'low', stripEffort: false, vision: false },
-  // opencode-go (OpenCode Go subscription) — bare segment prefixes so
-  // opencode-go/<model> IDs match; the provider-scoped deepseek/ entries
-  // above still win by length for deepseek/ models. glm-5.1/glm-5.2 are
-  // text-only per models.dev api.json (2026-08-02).
-  { prefix: 'glm-5.2', maxEffort: 'medium', stripEffort: false, vision: false },
-  { prefix: 'glm-5.1', maxEffort: 'medium', stripEffort: false, vision: false },
-  { prefix: 'kimi-k2.6', maxEffort: 'high', stripEffort: false, vision: true },
-  // qwen3.7-max is text-only per models.dev api.json (2026-08-02); the
-  // multimodal variant is qwen3.7-plus.
+  // Go subscription specific — bare segment prefixes so opencode-go/<model> IDs match
+  { prefix: 'glm-5.3-flash', maxEffort: 'high', stripEffort: false, vision: false },
+  { prefix: 'kimi-k2.7-code', maxEffort: 'high', stripEffort: false, vision: false },
+  { prefix: 'kimi-k3', maxEffort: 'medium', stripEffort: false, vision: false },
+  { prefix: 'qwen3.8-max', maxEffort: 'high', stripEffort: false, vision: false },
+  { prefix: 'qwen3.6-plus-free', maxEffort: 'medium', stripEffort: false, vision: false },
+  // Legacy qwen3.7 retained for capability checks (not used in new presets)
   { prefix: 'qwen3.7-max', maxEffort: 'high', stripEffort: false, vision: false },
-  // qwen3.7-plus IS multimodal (models.dev input: text+image) but image
-  // turns through the OpenCode Go gateway return HTTP 500 (opencode#33942
-  // + #29956). Flag stays true per models.dev; presets must NOT use it as a
-  // vision fallback — minimax-m3 is the confirmed opencode-go fallback.
   { prefix: 'qwen3.7-plus', maxEffort: 'medium', stripEffort: false, vision: true },
-  // minimax-m2.7 / minimax-m2.5 are text-only per models.dev api.json
-  // (2026-08-02). minimax-m3 is the vision-capable MiniMax on opencode-go
-  // (confirmed multimodal via the Go gateway, opencode#29956).
   { prefix: 'minimax-m2.7', maxEffort: 'medium', stripEffort: false, vision: false },
-  { prefix: 'minimax-m2.5', maxEffort: 'medium', stripEffort: false, vision: false },
   { prefix: 'minimax-m3', maxEffort: 'high', stripEffort: false, vision: true },
   // BARE prefix — needed for opencode-go/deepseek-v4-flash (segment match);
   // provider-scoped deepseek/deepseek-v4-flash entry still wins by length
@@ -94,9 +82,10 @@ export const CAPABILITY_TABLE = [
   // provider-scoped deepseek/deepseek-v4-pro entry still wins by length.
   { prefix: 'deepseek-v4-pro', maxEffort: 'high', stripEffort: false, vision: false },
   // opencode (Zen free tier) — bare segment prefixes for opencode/<model>.
-  // big-pickle / nemotron-3-ultra-free / north-mini-code-free verified
-  // text-only via models.dev (2026-08-02).
+  // big-pickle / nemotron-3-super-free / north-mini-code-free verified
+  // text-only via models.dev (2026-08-27).
   { prefix: 'big-pickle', maxEffort: 'medium', stripEffort: false, vision: false },
+  { prefix: 'nemotron-3-super-free', maxEffort: 'high', stripEffort: false, vision: false },
   { prefix: 'nemotron-3-ultra-free', maxEffort: 'high', stripEffort: false, vision: false },
   { prefix: 'north-mini-code-free', maxEffort: 'high', stripEffort: false, vision: false },
 ]
