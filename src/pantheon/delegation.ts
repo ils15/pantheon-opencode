@@ -590,46 +590,57 @@ export interface ChildSessionModelRef {
   providerID: string
 }
 
+const MODEL_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/
+const MODEL_REF_HINT =
+  'Expected a non-empty "provider/model-id" reference with exactly one slash, no whitespace/control characters, backslashes, or path traversal. Remove the override or use that format.'
+
+type ModelOverrideSource = 'explicit' | 'agentModels'
+
+function invalidModelOverride(source: ModelOverrideSource): string {
+  return `pantheon_delegate rejected: invalid ${source} model override. ${MODEL_REF_HINT}`
+}
+
 /**
  * Split a `provider/model` model ID (e.g. `opencode/deepseek-v4-flash-free`)
  * into the `{ id, providerID }` ref the session.create body expects.
- * Returns undefined for malformed IDs (no slash, empty segments).
+ * Returns undefined for malformed or unsafe IDs.
  */
-function splitModelRef(model: string): ChildSessionModelRef | undefined {
+function splitModelRef(model: unknown): ChildSessionModelRef | undefined {
+  if (typeof model !== 'string' || !MODEL_REF_PATTERN.test(model)) return undefined
   const slash = model.indexOf('/')
-  if (slash <= 0 || slash === model.length - 1) return undefined
   return { providerID: model.slice(0, slash), id: model.slice(slash + 1) }
 }
 
 /**
- * Resolve only an explicitly supplied model. A routing profile's `model` is
- * passed through as `options.agentModels`; profiles without one, and agents
- * without a profile, intentionally resolve to undefined so the OpenCode
- * parent session can provide inheritance.
+ * Resolve the child session model from explicit or agent-specific overrides.
+ * When neither override is present, return undefined so OpenCode can apply
+ * native model inheritance.
  */
 function resolveChildModel(
   options: DelegationOptions,
   agent: string,
   explicitModel?: string,
-): ChildSessionModelRef | undefined {
+): { model: ChildSessionModelRef | undefined; error: string | undefined } {
   // (a) explicit model option on the delegate tool call
-  if (explicitModel !== undefined && explicitModel !== '') {
+  if (explicitModel !== undefined) {
     const ref = splitModelRef(explicitModel)
-    if (ref !== undefined) return ref
+    if (ref !== undefined) return { model: ref, error: undefined }
+    return { model: undefined, error: invalidModelOverride('explicit') }
   }
   const key = agent.toLowerCase()
-  // (b) routing.yml agent entry wired through options.agentModels
+  // (b) agent-specific model override (routing.yml agent entry via agentModels)
   const mapped = options.agentModels?.[key]
-  if (mapped !== undefined && mapped !== '') {
+  if (mapped !== undefined) {
     const ref = splitModelRef(mapped)
-    if (ref !== undefined) return ref
+    if (ref !== undefined) return { model: ref, error: undefined }
+    return { model: undefined, error: invalidModelOverride('agentModels') }
   }
-  return undefined
+  return { model: undefined, error: undefined }
 }
 
 /**
  * Resolve a child model without selecting a provider or model on the caller's
- * behalf. OpenCode owns model inheritance when this returns no model; if the
+ * behalf. OpenCode owns native inheritance when this returns no model; if the
  * host requires one, its session.create/promptAsync error is returned with
  * the normal diagnostic rather than silently choosing a fallback.
  *
@@ -641,15 +652,13 @@ function resolveUsableChildModel(
   agent: string,
   explicitModel: string | undefined,
 ): { model: ChildSessionModelRef | undefined; error: string | undefined } {
-  const model = resolveChildModel(options, agent, explicitModel)
-  if (model === undefined) {
-    options.logger?.warn?.(
-      `[pantheon-delegate] no model resolved for agent "${agent}" — ` +
-        'omitting model so OpenCode can inherit it from the parent session',
-    )
-    return { model: undefined, error: undefined }
-  }
-  return { model, error: undefined }
+  const resolved = resolveChildModel(options, agent, explicitModel)
+  if (resolved.error !== undefined || resolved.model !== undefined) return resolved
+  options.logger?.warn?.(
+    `[pantheon-delegate] no model resolved for agent "${agent}" — ` +
+      'omitting model so OpenCode can inherit it from the parent session',
+  )
+  return resolved
 }
 
 // ─── Factory ───────────────────────────────────────────────────────────
@@ -819,8 +828,9 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       // session.create failure → return a clear error as TEXT (tools return
       // errors as text, not thrown) and register NO job on the board — an
       // unhandled rejection here would otherwise lose the failure entirely.
-      // Only an explicit delegate model or routing profile model is sent.
-      // Otherwise omit it so OpenCode inherits the parent model.
+      // Resolution order: explicit delegate model > active-preset agent model
+      // > omit (native inheritance). small_model is never used for delegated
+      // children.
       const resolved = resolveUsableChildModel(options, args.agent, args.model)
       if (resolved.error !== undefined) {
         if (budgetReserved && budgetKey !== undefined)

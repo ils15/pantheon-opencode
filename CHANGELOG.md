@@ -9,16 +9,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
-### Added
+## 🆕 What's New
+
+## 🐞 Fixed
+
+## ⚠️ Known Issues
+
+## ✅ Closed Issues
+
+## [v1.4.2] - 2026-08-27
 
 ### Changed
-
-### Fixed
-
-### Tests
-
-### Breaking Changes
-
+- Synchronized release metadata across project manifests.
 ## [1.4.1] - 2026-08-26 (candidate)
 
 ### Changed

@@ -120,6 +120,67 @@ async function main() {
   // classification is covered at the low level in routing-features.test.ts.
 
   await testAsync(
+    'high-level: forwards the resolved model to promptAsync on initial run and retry',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'model-forward-retry-'))
+      let created = 0
+      const promptedModels: Array<{ id: string; providerID: string } | undefined> = []
+      const resolvedModel = { id: 'resolved-model', providerID: 'resolved-provider' }
+      const board = new BackgroundJobBoard()
+      const client = {
+        session: {
+          create: async () => ({ id: `ses_child_${++created}` }),
+          promptAsync: async (input: {
+            path: { id: string }
+            body: { model?: { id: string; providerID: string } }
+          }) => {
+            promptedModels.push(input.body.model)
+            if (input.path.id === 'ses_child_2') {
+              const job = board.get(input.path.id)
+              if (job) {
+                await mkdir(join(tmp, 'ses_root'), { recursive: true })
+                await writeFile(
+                  join(tmp, 'ses_root', `${job.alias}.md`),
+                  '# Delegation Report — recovered\n\n## Output\n\nrecovered content\n',
+                  'utf-8',
+                )
+                await board.updateStatus({
+                  taskID: input.path.id,
+                  state: 'completed',
+                  resultSummary: 'recovered content',
+                })
+              }
+            }
+            return { state: 'running' }
+          },
+          messages: async () => [],
+        },
+      }
+
+      try {
+        const out = await zeusDelegateWithRetry({
+          board,
+          client,
+          sessionID: 'ses_root',
+          agent: 'apollo',
+          prompt: 'scout the codebase',
+          model: resolvedModel,
+          outputDir: tmp,
+          readTimeoutMs: 50,
+          retryPolicy: { ...DEFAULT_RETRY_POLICY, other: 1 },
+          provider: 'default',
+          logger: { warn: () => {} },
+        })
+
+        assert.equal(out.retried, true)
+        assert.deepEqual(promptedModels, [resolvedModel, resolvedModel])
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
     'R1 high-level: retryPolicy other:1 → empty first result retries once, second run recovers content',
     async () => {
       const tmp = mkdtempSync(join(tmpdir(), 'r1-high-retry-'))

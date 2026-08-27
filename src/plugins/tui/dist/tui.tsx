@@ -150,7 +150,7 @@ async function resolvePresetForTui(
 }
 
 /* ─── Version Detection ────────────────────────────────────
- * 100% dinâmico — zero fallback hardcoded.
+ * 100% dinâmico — fallback embutido em build (__PANTHEON_VERSION__).
  * Se falhar, retorna null e a View omite a versão.
  *
  * Try order:
@@ -159,7 +159,12 @@ async function resolvePresetForTui(
  *   1. api.client.file.read package.json
  *   2. git describe --tags
  *   3. opencode --version
- *   4. null                                                      */
+ *   4. __PANTHEON_VERSION__ (tsdown define — build-time embed)
+ *   5. null                                                      */
+
+// Build-time embedded version (tsdown `define` in tsdown.config.ts). Injected
+// only into the bundled dist/tui.js; the raw dist/tui.tsx copy falls through.
+declare const __PANTHEON_VERSION__: string | undefined
 
 async function detectVersion(api: TuiPluginApi): Promise<string | null> {
   // Try 0a: installed location (2 levels: dist/tui.js → pantheon-tui/package.json)
@@ -221,6 +226,12 @@ async function detectVersion(api: TuiPluginApi): Promise<string | null> {
     }
   } catch {
     /* fall through */
+  }
+
+  // Try 4: build-time embedded version (tsdown define) — last-resort fallback
+  // so the sidebar ALWAYS shows a version even when every probe above fails.
+  if (typeof __PANTHEON_VERSION__ !== 'undefined' && __PANTHEON_VERSION__) {
+    return __PANTHEON_VERSION__
   }
 
   return null // sem fallback — versão não aparece

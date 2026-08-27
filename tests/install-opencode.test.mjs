@@ -12,6 +12,7 @@
  * Run: node --test tests/install-opencode.test.mjs
  */
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -188,12 +189,170 @@ test('upgrade preserves user plugins and adds both pantheon plugins (dedupe)', a
   }
 })
 
-test('model defaults are not injected when absent from repo config', async () => {
+test('fresh install does not inject top-level model defaults', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-model-'))
   try {
     const config = await runInstall(target, {})
-    assert.equal(config.model, undefined)
-    assert.equal(config.small_model, undefined)
+    assert.equal(Object.hasOwn(config, 'model'), false)
+    assert.equal(Object.hasOwn(config, 'small_model'), false)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('invalid existing config aborts without replacing it or touching its backup', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-invalid-config-'))
+  const configPath = join(target, 'opencode.json')
+  const backupPath = `${configPath}.bak`
+  const invalidConfig = '{"provider":'
+  const backup = '{"provider":{"kept":true}}\n'
+  try {
+    writeFileSync(configPath, invalidConfig)
+    writeFileSync(backupPath, backup)
+
+    await assert.rejects(
+      () => installOpenCode(target, false, false, COMPONENTS, { yes: true, headless: true }),
+      /Invalid JSON.*opencode\.json/,
+    )
+    assert.equal(readFileSync(configPath, 'utf8'), invalidConfig)
+    assert.equal(readFileSync(backupPath, 'utf8'), backup)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('preserves existing falsy values and user-owned config keys', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-falsy-config-'))
+  try {
+    const config = await runInstall(target, {
+      model: null,
+      small_model: false,
+      default_agent: 0,
+      provider: null,
+      compaction: '',
+      permission: false,
+      instructions: 0,
+      plugin: null,
+      experimental: false,
+      $schema: '',
+      credentials: '',
+      active_preset: false,
+      user_setting: 0,
+    })
+
+    assert.equal(config.model, null)
+    assert.equal(config.small_model, false)
+    assert.equal(config.default_agent, 0)
+    assert.equal(config.provider, null)
+    assert.equal(config.compaction, '')
+    assert.equal(config.permission, false)
+    assert.equal(config.instructions, 0)
+    assert.equal(config.plugin, null)
+    assert.equal(config.experimental, false)
+    assert.equal(config.$schema, '')
+    assert.equal(config.credentials, '')
+    assert.equal(config.active_preset, false)
+    assert.equal(config.user_setting, 0)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('--model/--small-model flags override the install default', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-model-flags-'))
+  try {
+    mkdirSync(target, { recursive: true })
+    await installOpenCode(target, false, false, COMPONENTS, {
+      yes: true,
+      headless: true,
+      model: 'opencode-go/mimo-v2.5-pro',
+      smallModel: 'opencode/mimo-v2.5-free',
+    })
+    const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+    assert.equal(config.model, 'opencode-go/mimo-v2.5-pro')
+    assert.equal(config.small_model, 'opencode/mimo-v2.5-free')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('--model only changes model and preserves an existing small_model', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-model-only-'))
+  try {
+    const configPath = join(target, 'opencode.json')
+    mkdirSync(target, { recursive: true })
+    writeFileSync(configPath, JSON.stringify({ small_model: 'existing/small' }))
+    await installOpenCode(target, false, false, COMPONENTS, {
+      yes: true,
+      headless: true,
+      model: 'provider/main-model',
+    })
+    const config = JSON.parse(readFileSync(configPath, 'utf8'))
+    assert.equal(config.model, 'provider/main-model')
+    assert.equal(config.small_model, 'existing/small')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('--small-model only changes small_model and preserves an existing model', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-small-model-only-'))
+  try {
+    const configPath = join(target, 'opencode.json')
+    mkdirSync(target, { recursive: true })
+    writeFileSync(configPath, JSON.stringify({ model: 'existing/main' }))
+    await installOpenCode(target, false, false, COMPONENTS, {
+      yes: true,
+      headless: true,
+      smallModel: 'provider/small-model',
+    })
+    const config = JSON.parse(readFileSync(configPath, 'utf8'))
+    assert.equal(config.model, 'existing/main')
+    assert.equal(config.small_model, 'provider/small-model')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('existing target model values are preserved independently', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-model-repo-'))
+  try {
+    // The helper seeds TARGET/opencode.json; this is a user config, not the
+    // repository's canonical opencode.json.
+    const config = await runInstall(target, {
+      model: 'repo/custom-model',
+      small_model: 'repo/custom-small-model',
+    })
+    assert.equal(config.model, 'repo/custom-model')
+    assert.equal(config.small_model, 'repo/custom-small-model')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('CLI forwards --model and --small-model to a project install', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-model-cli-'))
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(ROOT, 'bin', 'pantheon-init.mjs'),
+        'init',
+        '--project',
+        '--headless',
+        '--yes',
+        '--no-mcp',
+        '--model',
+        'provider/main-model',
+        '--small-model',
+        'provider/small-model',
+      ],
+      { cwd: target, encoding: 'utf8' },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+    assert.equal(config.model, 'provider/main-model')
+    assert.equal(config.small_model, 'provider/small-model')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

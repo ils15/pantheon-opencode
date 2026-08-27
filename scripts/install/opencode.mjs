@@ -43,6 +43,7 @@ import {
   syncDir,
   writeIfChanged,
 } from './shared.mjs'
+
 import { setupVenv, venvPythonPath } from './venv.mjs'
 
 const COMPONENT_NAMES = [
@@ -57,6 +58,16 @@ const COMPONENT_NAMES = [
 
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
+}
+
+function readJsonConfig(filePath) {
+  if (!existsSync(filePath)) return {}
+
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'))
+  } catch (cause) {
+    throw new Error(`Invalid JSON in ${filePath}`, { cause })
+  }
 }
 
 function mergeMissing(target, source) {
@@ -273,6 +284,11 @@ export async function installOpenCode(
       target = process.cwd()
     }
   }
+
+  const pantheonConfigPath = join(ROOT, 'opencode.json')
+  const targetConfigPath = join(target, 'opencode.json')
+  const config = readJsonConfig(targetConfigPath)
+  const pantheonConfig = readJsonConfig(pantheonConfigPath)
 
   // Determine layout based on install scope.
   // Global config dir (~/.opencode or ~/.config/opencode) uses a flat layout:
@@ -533,27 +549,6 @@ export async function installOpenCode(
   //    Reads TARGET's existing config first, then merges Pantheon settings
   //    on top. Preserves user's MCP, provider, plugin, compaction, theme.
   // -----------------------------------------------------------------------
-  const pantheonConfigPath = join(ROOT, 'opencode.json')
-  const targetConfigPath = join(target, 'opencode.json')
-
-  let config = {}
-  if (existsSync(targetConfigPath)) {
-    try {
-      config = JSON.parse(readFileSync(targetConfigPath, 'utf8'))
-    } catch {
-      config = {}
-    }
-  }
-
-  let pantheonConfig = {}
-  if (existsSync(pantheonConfigPath)) {
-    try {
-      pantheonConfig = JSON.parse(readFileSync(pantheonConfigPath, 'utf8'))
-    } catch {
-      pantheonConfig = {}
-    }
-  }
-
   // --------------------------------------------------------------------
   // A. Parse canonical agent config from agents/*.agent.md frontmatter
   //    and merge into opencode.json config.
@@ -622,61 +617,64 @@ export async function installOpenCode(
     'disable_model_invocation',
   ]
 
-  if (!config.agent) config.agent = {}
+  if (config.agent === undefined) config.agent = {}
 
-  for (const [agentName, agentCfg] of Object.entries(canonicalAgentConfig)) {
-    if (!agentCfg || typeof agentCfg !== 'object') continue
+  if (config.agent && typeof config.agent === 'object' && !Array.isArray(config.agent)) {
+    for (const [agentName, agentCfg] of Object.entries(canonicalAgentConfig)) {
+      if (!agentCfg || typeof agentCfg !== 'object') continue
 
-    if (config.agent[agentName]) {
-      // ── Agent exists in target config ──
-      // Update framework-managed fields from canonical source
-      // Preserve user-customized fields (model, provider, mcp, etc.)
-      const existing = config.agent[agentName]
-      if (agentSources[agentName]) existing.source = agentSources[agentName]
-      for (const field of MANAGED_FIELDS) {
-        if (field in agentCfg) {
-          existing[field] = JSON.parse(JSON.stringify(agentCfg[field]))
+      if (Object.hasOwn(config.agent, agentName)) {
+        // ── Agent exists in target config ──
+        // Update framework-managed fields from canonical source
+        // Preserve user-customized fields (model, provider, mcp, etc.)
+        const existing = config.agent[agentName]
+        if (!existing || typeof existing !== 'object' || Array.isArray(existing)) continue
+        if (agentSources[agentName]) existing.source = agentSources[agentName]
+        for (const field of MANAGED_FIELDS) {
+          if (field in agentCfg) {
+            existing[field] = JSON.parse(JSON.stringify(agentCfg[field]))
+          }
         }
-      }
-      // Remove stale fields that are no longer in canonical config
-      delete existing.model
-      delete existing.small_model
-    } else {
-      // ── New agent ──
-      const newAgent = {}
-      if (agentSources[agentName]) newAgent.source = agentSources[agentName]
-      if (agentCfg.description) newAgent.description = agentCfg.description
+        // Remove stale fields that are no longer in canonical config
+        delete existing.model
+        delete existing.small_model
+      } else {
+        // ── New agent ──
+        const newAgent = {}
+        if (agentSources[agentName]) newAgent.source = agentSources[agentName]
+        if (agentCfg.description) newAgent.description = agentCfg.description
 
-      // Copy all framework-managed fields from canonical config
-      for (const field of MANAGED_FIELDS) {
-        if (field in agentCfg) {
-          newAgent[field] = JSON.parse(JSON.stringify(agentCfg[field]))
+        // Copy all framework-managed fields from canonical config
+        for (const field of MANAGED_FIELDS) {
+          if (field in agentCfg) {
+            newAgent[field] = JSON.parse(JSON.stringify(agentCfg[field]))
+          }
         }
-      }
 
-      // Ensure bash permission is set from canonical (default to deny if missing)
-      if (!newAgent.permission) {
-        newAgent.permission = {}
-      }
-      if (!newAgent.permission.bash && agentCfg.permission?.bash) {
-        newAgent.permission.bash = JSON.parse(JSON.stringify(agentCfg.permission.bash))
-      }
+        // Ensure bash permission is set from canonical (default to deny if missing)
+        if (newAgent.permission === undefined) {
+          newAgent.permission = {}
+        }
+        if (newAgent.permission.bash === undefined && agentCfg.permission?.bash) {
+          newAgent.permission.bash = JSON.parse(JSON.stringify(agentCfg.permission.bash))
+        }
 
-      config.agent[agentName] = newAgent
+        config.agent[agentName] = newAgent
+      }
     }
-  }
 
-  // Remove stale agents (exist in target config but not in canonical source)
-  // Only removes agents whose source is managed (starts with our prefix)
-  // so user-defined agents with different source paths are preserved.
-  const canonicalNames = new Set(Object.keys(canonicalAgentConfig))
-  for (const [agentName, agentCfg] of Object.entries(config.agent)) {
-    const source = agentCfg?.source || ''
-    if (source.startsWith(agentPrefix) && !canonicalNames.has(agentName)) {
-      delete config.agent[agentName]
+    // Remove stale agents (exist in target config but not in canonical source)
+    // Only removes agents whose source is managed (starts with our prefix)
+    // so user-defined agents with different source paths are preserved.
+    const canonicalNames = new Set(Object.keys(canonicalAgentConfig))
+    for (const [agentName, agentCfg] of Object.entries(config.agent)) {
+      const source = agentCfg?.source || ''
+      if (source.startsWith(agentPrefix) && !canonicalNames.has(agentName)) {
+        delete config.agent[agentName]
+      }
     }
+    if (Object.keys(config.agent).length === 0) delete config.agent
   }
-  if (Object.keys(config.agent).length === 0) delete config.agent
 
   // --------------------------------------------------------------------
   // B. Commands from .md frontmatter (commands.json removed)
@@ -687,19 +685,16 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   // B.5 Ensure critical top-level OpenCode config sections
   // --------------------------------------------------------------------
-  if (!config.default_agent && pantheonConfig.default_agent) {
+  if (config.default_agent === undefined && pantheonConfig.default_agent !== undefined) {
     config.default_agent = pantheonConfig.default_agent
   }
-  // Merge top-level model/small_model from the repo config when the target
-  // config has no top-level `model` (fresh sandbox installs have none). The
-  // repo's opencode.json carries the default pair
-  // (opencode-go/deepseek-v4-flash); a user-set model is never overwritten.
-  if (!config.model && pantheonConfig.model) {
-    config.model = pantheonConfig.model
-    if (!config.small_model && pantheonConfig.small_model) {
-      config.small_model = pantheonConfig.small_model
-    }
-  }
+  // Apply only explicit top-level model overrides. Existing values remain
+  // untouched and an install without either flag leaves both fields absent.
+  const modelFlag = typeof opts.model === 'string' && opts.model !== '' ? opts.model : undefined
+  const smallModelFlag =
+    typeof opts.smallModel === 'string' && opts.smallModel !== '' ? opts.smallModel : undefined
+  if (modelFlag !== undefined) config.model = modelFlag
+  if (smallModelFlag !== undefined) config.small_model = smallModelFlag
   // Merge subagent_depth HERE (the config merge always runs, including on a
   // fresh install) instead of a file-existence-gated block, so run #1 already
   // produces the final config — run #2 must be a byte-identical no-op (#19).
@@ -710,16 +705,24 @@ export async function installOpenCode(
   // experimental (preserving the user's choice) and default fresh installs to
   // experimental.subagent_depth = 2. V1 reads experimental.subagent_depth
   // too, so the V1-shape config stays valid under both versions.
-  if (config.experimental === undefined || typeof config.experimental !== 'object') {
+  if (config.experimental === undefined) {
     config.experimental = {}
   }
-  if (config.subagent_depth !== undefined) {
-    if (config.experimental.subagent_depth === undefined) {
-      config.experimental.subagent_depth = config.subagent_depth
+  if (
+    typeof config.experimental === 'object' &&
+    config.experimental !== null &&
+    !Array.isArray(config.experimental)
+  ) {
+    if (config.subagent_depth !== undefined) {
+      if (config.experimental.subagent_depth === undefined) {
+        config.experimental.subagent_depth = config.subagent_depth
+      }
+      delete config.subagent_depth
+    } else if (config.experimental.subagent_depth === undefined) {
+      config.experimental.subagent_depth = 2
     }
+  } else if (config.subagent_depth !== undefined) {
     delete config.subagent_depth
-  } else if (config.experimental.subagent_depth === undefined) {
-    config.experimental.subagent_depth = 2
   }
 
   // --------------------------------------------------------------------
@@ -735,74 +738,82 @@ export async function installOpenCode(
   // The source opencode.json keeps its dev path for local development; the
   // transform happens at install/sync time only.
 
-  if (!Array.isArray(config.plugin)) {
+  if (config.plugin === undefined) {
     config.plugin = []
   }
-  if (Array.isArray(pantheonConfig.plugin)) {
-    for (const plugin of pantheonConfig.plugin) {
-      const resolved = resolveInstalledPlugin(plugin)
+  if (Array.isArray(config.plugin)) {
+    if (Array.isArray(pantheonConfig.plugin)) {
+      for (const plugin of pantheonConfig.plugin) {
+        const resolved = resolveInstalledPlugin(plugin)
+        const file = basename(resolved)
+        // Replace any pre-existing entry for the same plugin file (e.g. a stale
+        // dev-machine path from an earlier install) so upgrades stay hermetic.
+        config.plugin = config.plugin.filter((p) => basename(p) !== file)
+        config.plugin.push(resolved)
+      }
+    }
+
+    // The two Pantheon plugins MUST always be registered, on fresh installs AND
+    // upgrades. The packaged opencode.json carries no `plugin` key (dev-machine
+    // paths removed in 3e552cc), so config.plugin would otherwise only contain
+    // whatever the user had — a fresh install would register NOTHING and lose
+    // delegation tools, GoalLoop, cost command, hashline and vision. Register
+    // both unconditionally, replacing any stale entry for the same file
+    // (basename-dedup) so installs and upgrades are idempotent and hermetic
+    // while preserving any user plugins.
+    const ensurePantheonPlugin = (ref) => {
+      const resolved = resolveInstalledPlugin(ref)
       const file = basename(resolved)
-      // Replace any pre-existing entry for the same plugin file (e.g. a stale
-      // dev-machine path from an earlier install) so upgrades stay hermetic.
       config.plugin = config.plugin.filter((p) => basename(p) !== file)
       config.plugin.push(resolved)
     }
+    // Root-level delegation plugin (PR #45): tools, GoalLoop, cost, hashline.
+    ensurePantheonPlugin('src/plugin.ts')
+    // Runtime hooks plugin: chat hooks, hook-runner, TUI wiring.
+    ensurePantheonPlugin('src/plugins/pantheon-hooks.ts')
   }
 
-  // The two Pantheon plugins MUST always be registered, on fresh installs AND
-  // upgrades. The packaged opencode.json carries no `plugin` key (dev-machine
-  // paths removed in 3e552cc), so config.plugin would otherwise only contain
-  // whatever the user had — a fresh install would register NOTHING and lose
-  // delegation tools, GoalLoop, cost command, hashline and vision. Register
-  // both unconditionally, replacing any stale entry for the same file
-  // (basename-dedup) so installs and upgrades are idempotent and hermetic
-  // while preserving any user plugins.
-  const ensurePantheonPlugin = (ref) => {
-    const resolved = resolveInstalledPlugin(ref)
-    const file = basename(resolved)
-    config.plugin = config.plugin.filter((p) => basename(p) !== file)
-    config.plugin.push(resolved)
-  }
-  // Root-level delegation plugin (PR #45): tools, GoalLoop, cost, hashline.
-  ensurePantheonPlugin('src/plugin.ts')
-  // Runtime hooks plugin: chat hooks, hook-runner, TUI wiring.
-  ensurePantheonPlugin('src/plugins/pantheon-hooks.ts')
-
-  if (!config.provider && pantheonConfig.provider) {
+  if (config.provider === undefined && pantheonConfig.provider !== undefined) {
     config.provider = deepClone(pantheonConfig.provider)
-  } else if (config.provider && pantheonConfig.provider) {
+  } else if (config.provider !== undefined && pantheonConfig.provider !== undefined) {
     mergeMissing(config.provider, pantheonConfig.provider)
   }
 
-  if (!config.compaction && pantheonConfig.compaction) {
+  if (config.compaction === undefined && pantheonConfig.compaction !== undefined) {
     config.compaction = deepClone(pantheonConfig.compaction)
-  } else if (config.compaction && pantheonConfig.compaction) {
+  } else if (config.compaction !== undefined && pantheonConfig.compaction !== undefined) {
     mergeMissing(config.compaction, pantheonConfig.compaction)
   }
 
   // --------------------------------------------------------------------
   // C. Merge permissions
   // --------------------------------------------------------------------
-  if (!config.permission) config.permission = {}
-  if (pantheonConfig.permission) {
+  if (config.permission === undefined) config.permission = {}
+  if (pantheonConfig.permission !== undefined) {
     mergeMissing(config.permission, pantheonConfig.permission)
   }
-  if (componentSet.has('skills')) {
-    config.permission.skill = { '*': 'allow' }
-  }
-  if (!config.permission.bash) {
-    config.permission.bash = {
-      'git *': 'allow',
-      'npm *': 'allow',
-      'npx *': 'allow',
-      'pytest *': 'allow',
-      'ruff *': 'allow',
-      'black *': 'allow',
-      'pip *': 'allow',
-      'docker *': 'allow',
-      'curl *': 'allow',
-      'gh *': 'allow',
-      'make *': 'allow',
+  if (
+    typeof config.permission === 'object' &&
+    config.permission !== null &&
+    !Array.isArray(config.permission)
+  ) {
+    if (componentSet.has('skills')) {
+      config.permission.skill = { '*': 'allow' }
+    }
+    if (config.permission.bash === undefined) {
+      config.permission.bash = {
+        'git *': 'allow',
+        'npm *': 'allow',
+        'npx *': 'allow',
+        'pytest *': 'allow',
+        'ruff *': 'allow',
+        'black *': 'allow',
+        'pip *': 'allow',
+        'docker *': 'allow',
+        'curl *': 'allow',
+        'gh *': 'allow',
+        'make *': 'allow',
+      }
     }
   }
 
@@ -816,9 +827,9 @@ export async function installOpenCode(
   // glob is no longer needed — keeping it would duplicate content under V1
   // and is ignored under V2 anyway. Only ensure AGENTS.md is present.
   const pantheonInstructions = ['AGENTS.md']
-  if (!config.instructions) {
+  if (config.instructions === undefined) {
     config.instructions = [...pantheonInstructions]
-  } else {
+  } else if (Array.isArray(config.instructions)) {
     // Strip stale per-file instruction globs from PREVIOUS installs
     // (e.g. `instructions/*.instructions.md` / `src/instructions/*.md`).
     // The merge is additive-only otherwise, so without this filter existing
@@ -838,7 +849,7 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   // E. Ensure $schema
   // --------------------------------------------------------------------
-  if (!config.$schema) {
+  if (config.$schema === undefined) {
     config.$schema = 'https://opencode.ai/config.json'
   }
 
@@ -1009,12 +1020,14 @@ export async function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
-  // 5. Model preset selection (--components agents). Interactive picker runs
+  // 5. Model preset selection (--components agents). Interactive wizard runs
   //    unless autoYes (use defaults) or an explicit --preset was given.
+  //    Q1 default "herdar do chat" (inherit) writes no active-preset.json —
+  //    delegates inherit the parent chat model (native inheritance).
   // -----------------------------------------------------------------------
   if (interactive && !dryRun && !autoYes && !opts.preset) {
-    const { runModelPicker } = await import('./model-picker.mjs')
-    await runModelPicker({ presetDir: target, logger: console })
+    const { runInitWizard } = await import('./model-picker.mjs')
+    await runInitWizard({ presetDir: target, logger: console })
   }
 
   if (opts.preset && !dryRun) {

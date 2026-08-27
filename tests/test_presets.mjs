@@ -397,16 +397,20 @@ test('T10: normalizeCapability matrix', () => {
     variant: 'high',
     clamped: false,
   })
-  // opencode-go model families
-  assert.deepEqual(presets.normalizeCapability('opencode-go/kimi-k2.6', 'high'), {
+  // opencode-go model families (2026-08-27): kimi-k2.7-code, glm-5.3-flash, qwen8, etc.
+  assert.deepEqual(presets.normalizeCapability('opencode-go/kimi-k2.7-code', 'high'), {
     variant: 'high',
     clamped: false,
   })
-  assert.deepEqual(presets.normalizeCapability('opencode-go/qwen3.7-plus', 'high'), {
+  assert.deepEqual(presets.normalizeCapability('opencode-go/kimi-k3', 'high'), {
     variant: 'medium',
     clamped: true,
   })
-  assert.deepEqual(presets.normalizeCapability('opencode-go/qwen3.7-max', 'high'), {
+  assert.deepEqual(presets.normalizeCapability('opencode-go/qwen3.6-plus-free', 'high'), {
+    variant: 'medium',
+    clamped: true,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode-go/qwen3.8-max', 'high'), {
     variant: 'high',
     clamped: false,
   })
@@ -414,30 +418,38 @@ test('T10: normalizeCapability matrix', () => {
     variant: 'medium',
     clamped: false,
   })
-  assert.deepEqual(presets.normalizeCapability('opencode-go/glm-5.1', 'medium'), {
+  assert.deepEqual(presets.normalizeCapability('opencode-go/glm-5.3-flash', 'medium'), {
     variant: 'medium',
     clamped: false,
   })
-  assert.deepEqual(presets.normalizeCapability('opencode-go/glm-5.2', 'medium'), {
-    variant: 'medium',
-    clamped: false,
-  })
-  // opencode (Zen free tier): big-pickle clamps high→medium; nemotron
-  // accepts high; north-mini-code-free accepts low
+  // opencode (Zen): big-pickle clamps high→medium; nemotron accepts high;
+  // confirmed mimo-v2.5-free accepts low
   assert.deepEqual(presets.normalizeCapability('opencode/big-pickle', 'high'), {
     variant: 'medium',
     clamped: true,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode/nemotron-3-super-free', 'high'), {
+    variant: 'high',
+    clamped: false,
   })
   assert.deepEqual(presets.normalizeCapability('opencode/nemotron-3-ultra-free', 'high'), {
     variant: 'high',
     clamped: false,
   })
-  assert.deepEqual(presets.normalizeCapability('opencode/north-mini-code-free', 'low'), {
+  assert.deepEqual(presets.normalizeCapability('opencode/mimo-v2.5-free', 'low'), {
     variant: 'low',
     clamped: false,
   })
   assert.deepEqual(presets.normalizeCapability('opencode/deepseek-v4-flash-free', 'medium'), {
     variant: 'medium',
+    clamped: false,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode/qwen3.6-plus-free', 'high'), {
+    variant: 'medium',
+    clamped: true,
+  })
+  assert.deepEqual(presets.normalizeCapability('opencode-go/qwen3.8-max', 'high'), {
+    variant: 'high',
     clamped: false,
   })
   // unknown model throws
@@ -451,7 +463,7 @@ test('T11: file overrides win per-agent and per-provider', () => {
     file,
     JSON.stringify({
       version: 1,
-      preset: 'go-deepseek',
+      preset: 'go-free',
       source: 'cli',
       updated_at: '2026-07-26T00:00:00.000Z',
       overrides: {
@@ -467,14 +479,14 @@ test('T11: file overrides win per-agent and per-provider', () => {
   )
   const resolved = presets.resolveActivePreset({ env: {}, candidates: [file], logger: silent })
   assert.ok(resolved)
-  assert.equal(resolved.name, 'go-deepseek')
+  assert.equal(resolved.name, 'go-free')
   assert.equal(resolved.source, 'file')
   assert.ok(resolved.overrides, 'overrides should be present')
   // per-agent override wins; variant becomes reasoning_effort
   assert.equal(resolved.agents.hermes.model, 'opencode/deepseek-v4-pro')
   assert.equal(resolved.agents.hermes.reasoning_effort, 'high')
   // non-overridden agent keeps preset value
-  assert.equal(resolved.agents.athena.model, 'opencode/deepseek-v4-pro')
+  assert.equal(resolved.agents.athena.model, 'opencode/nemotron-3-super-free')
   // provider override wins
   assert.equal(resolved.providers.opencode.baseURL, 'https://alt.opencode.ai/zen/v1')
 })
@@ -485,15 +497,13 @@ test('T12: validatePresetDefs passes on repo routing.yml presets', () => {
   const result = presets.validatePresetDefs(defs, { agents: repoAgents() })
   assert.equal(result.ok, true)
   assert.deepEqual(result.errors, [])
-  assert.equal(Object.keys(defs).length, 6)
+  assert.equal(Object.keys(defs).length, 4)
   // every surviving preset validates clean on its own
   for (const name of [
-    'go-deepseek',
-    'go-fast',
-    'go-claude',
-    'go-openai',
-    'go-premium',
     'go-free',
+    'go-fast',
+    'go-premium',
+    'openai',
   ]) {
     const r = presets.validatePresetDefs({ [name]: defs[name] }, { agents: repoAgents() })
     assert.equal(r.ok, true, `preset "${name}" should validate clean: ${JSON.stringify(r.errors)}`)
@@ -629,10 +639,10 @@ test('T14: set-tier writes active-preset.json + .bak on second run', () => {
 })
 
 // ─── T15: unknown name → exit 1, lists presets ─────────────────────────
-test('T15: set-tier unknown name exits 1 and lists go-deepseek', () => {
+test('T15: set-tier unknown name exits 1 and lists go-free', () => {
   const r = runCli(['set-tier', 'bogus', '--project'], { cwd: makeTmp(), env: cliEnv() })
   assert.equal(r.status, 1)
-  assert.ok((r.stdout + r.stderr).includes('go-deepseek'), r.stdout + r.stderr)
+  assert.ok((r.stdout + r.stderr).includes('go-free'), r.stdout + r.stderr)
 })
 
 // ─── T16: fail-fast missing key ────────────────────────────────────────
@@ -710,17 +720,158 @@ await testAsync('T19: picker persists; opencode.mjs gates on autoYes/opts.preset
   assert.ok(src.includes('export function isGlobalConfigDir'), 'isGlobalConfigDir must be exported')
   assert.ok(src.includes('!autoYes'), 'picker must be gated by !autoYes')
   assert.ok(src.includes('!opts.preset'), 'picker must be gated by !opts.preset')
-  assert.ok(src.includes('runModelPicker'), 'opencode.mjs must import/use runModelPicker')
+  assert.ok(src.includes('runInitWizard'), 'opencode.mjs must import/use runInitWizard')
+})
+
+// ─── T19b: init wizard readline — blank Q1 defaults to inherit (no write) ─
+await testAsync('T19b: init wizard blank Q1 defaults to inherit and writes nothing', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const mockRl = { question: async () => '', close: () => {} }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env: {},
+    dryRun: false,
+    logger: silent,
+    rl: mockRl,
+  })
+  assert.equal(result.preset, 'inherit')
+  assert.equal(result.scope, 'project')
+  assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
+})
+
+// ─── T19c: init wizard readline — explicit 'inherit' also writes nothing ─
+await testAsync('T19c: init wizard readline explicit inherit writes nothing', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const mockRl = { question: async () => '0', close: () => {} }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env: {},
+    dryRun: false,
+    logger: silent,
+    rl: mockRl,
+  })
+  assert.equal(result.preset, 'inherit')
+  assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
+})
+
+// ─── T19d: init wizard readline — preset + key + project scope writes ───
+await testAsync('T19d: init wizard readline writes project preset with collected key', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const answers = ['go-fast', 'sk-test-key', 'project']
+  let i = 0
+  const mockRl = { question: async () => answers[i++], close: () => {} }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env: {},
+    dryRun: false,
+    logger: silent,
+    rl: mockRl,
+  })
+  assert.equal(result.preset, 'go-fast')
+  assert.equal(result.scope, 'project')
+  const file = presetFile(dir)
+  assert.ok(existsSync(file), 'project preset must be written')
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).preset, 'go-fast')
+})
+
+// ─── T19e: init wizard ask path — global scope writes XDG global file ───
+await testAsync('T19e: init wizard ask path global scope writes XDG_CONFIG_HOME/opencode', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const xdgHome = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const ask = async () => ({ preset: 'go-fast', key: 'sk-test', scope: 'global' })
+  const env = { HOME: dir, XDG_CONFIG_HOME: xdgHome, PANTHEON_OPENCODE_API_KEY: 'sk-test' }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env,
+    dryRun: false,
+    logger: silent,
+    ask,
+  })
+  assert.equal(result.preset, 'go-fast')
+  assert.equal(result.scope, 'global')
+  const globalFile = join(xdgHome, 'opencode', '.pantheon', 'active-preset.json')
+  assert.ok(existsSync(globalFile), 'global preset must be written to XDG_CONFIG_HOME/opencode')
+  assert.ok(!existsSync(presetFile(dir)), 'project file must NOT be written for global scope')
+  assert.equal(JSON.parse(readFileSync(globalFile, 'utf8')).preset, 'go-fast')
+})
+
+// ─── T19f: init wizard ask path — project scope writes project file ─────
+await testAsync('T19f: init wizard ask path project scope writes project file', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const ask = async () => ({ preset: 'go-fast', key: 'sk-test', scope: 'project' })
+  const env = { HOME: dir, PANTHEON_OPENCODE_API_KEY: 'sk-test' }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env,
+    dryRun: false,
+    logger: silent,
+    ask,
+  })
+  assert.equal(result.preset, 'go-fast')
+  assert.equal(result.scope, 'project')
+  assert.ok(existsSync(presetFile(dir)), 'project preset must be written')
+})
+
+// ─── T19g: init wizard ask path — inherit writes nothing ────────────────
+await testAsync('T19g: init wizard ask path inherit writes nothing', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const ask = async () => ({ preset: 'inherit', scope: 'project' })
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env: {},
+    dryRun: false,
+    logger: silent,
+    ask,
+  })
+  assert.equal(result.preset, 'inherit')
+  assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
+})
+
+// ─── T19h: init wizard accepts OPENCODE_GO_API_KEY alias ────────────────
+await testAsync('T19h: init wizard accepts OPENCODE_GO_API_KEY alias key', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const dir = makeTmp()
+  const defs = { 'go-fast': { description: 'fast' } }
+  const ask = async () => ({ preset: 'go-fast', scope: 'project' })
+  const env = { HOME: dir, OPENCODE_GO_API_KEY: 'sk-alias' }
+  const result = await picker.runInitWizard({
+    presetDir: dir,
+    presets: defs,
+    env,
+    dryRun: false,
+    logger: silent,
+    ask,
+  })
+  assert.equal(result.preset, 'go-fast')
+  assert.ok(existsSync(presetFile(dir)), 'alias key must satisfy validation and write')
 })
 
 // ─── T20: validate-routing passes with 6 presets ───────────────────────
-test('T20: validate-routing exits 0 and reports 6 presets', () => {
+test('T20: validate-routing exits 0 and reports 4 presets', () => {
   const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'validate-routing.mjs')], {
     cwd: ROOT,
     encoding: 'utf8',
   })
   assert.equal(r.status, 0, r.stdout + r.stderr)
-  assert.ok(r.stdout.includes('Presets defined: 6'), r.stdout)
+  assert.ok(r.stdout.includes('Presets defined: 4'), r.stdout)
 })
 
 // ─── T21: packaging smoke ──────────────────────────────────────────────
@@ -749,28 +900,28 @@ test('T21: npm pack includes presets.mjs + model-picker.mjs', () => {
   )
 })
 
-// ─── T22: applyPreset go-openai (repo presets) ─────────────────────────
-test('T22: applyPreset go-openai injects OpenAI provider + gpt-5.6 agents', () => {
+// ─── T22: applyPreset openai (repo presets) ───────────────────────────
+test('T22: applyPreset openai injects OpenAI provider + gpt-5.6 agents', () => {
   const resolved = presets.resolveActivePreset({
-    env: { PANTHEON_MODEL_PRESET: 'go-openai' },
+    env: { PANTHEON_MODEL_PRESET: 'openai' },
     candidates: [],
     logger: silent,
   })
-  assert.ok(resolved, 'go-openai should resolve from repo presets')
-  assert.equal(resolved.name, 'go-openai')
+  assert.ok(resolved, 'openai should resolve from repo presets')
+  assert.equal(resolved.name, 'openai')
   assert.equal(resolved.source, 'env')
 
   const config = {}
-  presets.applyPreset(config, resolved, { env: { PANTHEON_OPENAI_API_KEY: 'sk-openai' } })
+  presets.applyPreset(config, resolved, { env: { OPENAI_API_KEY: 'sk-oai' } })
   assert.deepEqual(config.provider.openai.options, {
     baseURL: 'https://api.openai.com/v1',
-    apiKey: 'sk-openai',
+    apiKey: 'sk-oai',
   })
-  // tiering: sol → high, terra → medium, luna-fast → low
+  // tiering: sol → high, luna high→clamped low, luna-fast low
   assert.equal(config.agent.athena.model, 'openai/gpt-5.6-sol')
   assert.equal(config.agent.athena.variant, 'high')
-  assert.equal(config.agent.hermes.model, 'openai/gpt-5.6-terra')
-  assert.equal(config.agent.hermes.variant, 'medium')
+  assert.equal(config.agent.hermes.model, 'openai/gpt-5.6-luna')
+  assert.equal(config.agent.hermes.variant, 'low')
   assert.equal(config.agent.apollo.model, 'openai/gpt-5.6-luna-fast')
   assert.equal(config.agent.apollo.variant, 'low')
   assert.equal(config.agent.talos.model, 'openai/gpt-5.6-luna-fast')
@@ -784,31 +935,29 @@ test('T22: applyPreset go-openai injects OpenAI provider + gpt-5.6 agents', () =
   }
   assert.ok(thrown, 'should throw on missing OpenAI key')
   assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
-  assert.equal(thrown.envVar, 'PANTHEON_OPENAI_API_KEY')
+  assert.equal(thrown.envVar, 'OPENAI_API_KEY')
 })
 
-// ─── T23: applyPreset go-claude (repo presets) ─────────────────────────
-test('T23: applyPreset go-claude strips variant for claude models', () => {
+// ─── T23: openai provider uses OPENAI_API_KEY and no strip ─────────────
+test('T23: applyPreset openai uses OPENAI_API_KEY (no claude strip)', () => {
   const resolved = presets.resolveActivePreset({
-    env: { PANTHEON_MODEL_PRESET: 'go-claude' },
+    env: { PANTHEON_MODEL_PRESET: 'openai' },
     candidates: [],
     logger: silent,
   })
-  assert.ok(resolved, 'go-claude should resolve from repo presets')
-  assert.equal(resolved.name, 'go-claude')
-
+  assert.ok(resolved, 'openai should resolve')
+  assert.equal(resolved.name, 'openai')
   const config = {}
-  presets.applyPreset(config, resolved, { env: { PANTHEON_ANTHROPIC_API_KEY: 'sk-ant' } })
-  assert.deepEqual(config.provider.anthropic.options, {
-    baseURL: 'https://api.anthropic.com',
-    apiKey: 'sk-ant',
+  presets.applyPreset(config, resolved, { env: { OPENAI_API_KEY: 'sk-oai2' } })
+  assert.deepEqual(config.provider.openai.options, {
+    baseURL: 'https://api.openai.com/v1',
+    apiKey: 'sk-oai2',
   })
-  assert.equal(config.agent.athena.model, 'anthropic/claude-opus-4-8')
-  assert.ok(!('variant' in config.agent.athena), 'claude variant key must be stripped')
-  assert.equal(config.agent.hermes.model, 'anthropic/claude-sonnet-5')
-  assert.ok(!('variant' in config.agent.hermes), 'claude variant key must be stripped')
-  assert.equal(config.agent.apollo.model, 'anthropic/claude-haiku-4-5')
-  assert.ok(!('variant' in config.agent.apollo), 'claude variant key must be stripped')
+  // openai models keep variant (claude strip not applied)
+  assert.equal(config.agent.athena.model, 'openai/gpt-5.6-sol')
+  assert.equal(config.agent.athena.variant, 'high')
+  assert.equal(config.agent.apollo.model, 'openai/gpt-5.6-luna-fast')
+  assert.equal(config.agent.apollo.variant, 'low')
 })
 
 // ─── T24: applyPreset go-premium (repo presets) ────────────────────────
@@ -828,21 +977,20 @@ test('T24: applyPreset go-premium injects opencode-go provider + tiered agents',
     baseURL: 'https://opencode.ai/zen/go/v1',
     apiKey: 'sk-gogo',
   })
-  // tiering: GLM-5.1 zeus, V4 Pro athena (high), Qwen3.7 Max themis,
-  // MiniMax M2.7 hermes, Kimi K2.6 aphrodite, V4 Flash apollo (low)
-  assert.equal(config.agent.zeus.model, 'opencode-go/glm-5.1')
+  // tiering: sol zeus medium, V4 Pro athena high, Qwen3.8 Max themis high, terra/k3 implementers, luna scouts low
+  assert.equal(config.agent.zeus.model, 'opencode-go/gpt-5.6-sol')
   assert.equal(config.agent.zeus.variant, 'medium')
   assert.equal(config.agent.athena.model, 'opencode-go/deepseek-v4-pro')
   assert.equal(config.agent.athena.variant, 'high')
-  assert.equal(config.agent.themis.model, 'opencode-go/qwen3.7-max')
+  assert.equal(config.agent.themis.model, 'opencode-go/qwen3.8-max')
   assert.equal(config.agent.themis.variant, 'high')
-  assert.equal(config.agent.hermes.model, 'opencode-go/minimax-m2.7')
+  assert.equal(config.agent.hermes.model, 'opencode-go/gpt-5.6-terra')
   assert.equal(config.agent.hermes.variant, 'medium')
-  assert.equal(config.agent.aphrodite.model, 'opencode-go/kimi-k2.6')
+  assert.equal(config.agent.aphrodite.model, 'opencode-go/kimi-k3')
   assert.equal(config.agent.aphrodite.variant, 'medium')
-  assert.equal(config.agent.apollo.model, 'opencode-go/deepseek-v4-flash')
+  assert.equal(config.agent.apollo.model, 'opencode-go/gpt-5.6-luna')
   assert.equal(config.agent.apollo.variant, 'low')
-  assert.equal(config.agent.talos.model, 'opencode-go/deepseek-v4-flash')
+  assert.equal(config.agent.talos.model, 'opencode-go/gpt-5.6-luna')
   assert.equal(config.agent.talos.variant, 'low')
 
   let thrown = null
@@ -872,13 +1020,14 @@ test('T25: applyPreset go-free injects opencode provider + free models', () => {
     baseURL: 'https://opencode.ai/zen/v1',
     apiKey: 'sk-zen',
   })
-  // Big Pickle zeus (medium), Nemotron 3 Ultra Free athena (high),
-  // North Mini Code apollo (low), flash-free implementers
+  // Big Pickle zeus (medium), Nemotron 3 Super athena (high), Qwen3.6 plus themis, mimo scouts, flash implementers
   assert.equal(config.agent.zeus.model, 'opencode/big-pickle')
   assert.equal(config.agent.zeus.variant, 'medium')
-  assert.equal(config.agent.athena.model, 'opencode/nemotron-3-ultra-free')
+  assert.equal(config.agent.athena.model, 'opencode/nemotron-3-super-free')
   assert.equal(config.agent.athena.variant, 'high')
-  assert.equal(config.agent.apollo.model, 'opencode/north-mini-code-free')
+  assert.equal(config.agent.themis.model, 'opencode/qwen3.6-plus-free')
+  assert.equal(config.agent.themis.variant, 'medium')
+  assert.equal(config.agent.apollo.model, 'opencode/mimo-v2.5-free')
   assert.equal(config.agent.apollo.variant, 'low')
   assert.equal(config.agent.hermes.model, 'opencode/deepseek-v4-flash-free')
   assert.equal(config.agent.hermes.variant, 'medium')
@@ -894,46 +1043,8 @@ test('T25: applyPreset go-free injects opencode provider + free models', () => {
   assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
 })
 
-// ─── T26: applyPreset go-deepseek (repo presets) ───────────────────────
-test('T26: applyPreset go-deepseek injects opencode provider + Zen tiered models', () => {
-  const resolved = presets.resolveActivePreset({
-    env: { PANTHEON_MODEL_PRESET: 'go-deepseek' },
-    candidates: [],
-    logger: silent,
-  })
-  assert.ok(resolved, 'go-deepseek should resolve from repo presets')
-  assert.equal(resolved.name, 'go-deepseek')
-  assert.equal(resolved.source, 'env')
-
-  const config = {}
-  presets.applyPreset(config, resolved, { env: { PANTHEON_OPENCODE_API_KEY: 'sk-zen' } })
-  assert.deepEqual(config.provider.opencode.options, {
-    baseURL: 'https://opencode.ai/zen/v1',
-    apiKey: 'sk-zen',
-  })
-  // tiering: V4 Pro athena (high), V4 Flash hermes (medium),
-  // V4 Flash Free apollo (low), fallback opencode/mimo-v2.5 (low)
-  assert.equal(config.agent.athena.model, 'opencode/deepseek-v4-pro')
-  assert.equal(config.agent.athena.variant, 'high')
-  assert.equal(config.agent.hermes.model, 'opencode/deepseek-v4-flash')
-  assert.equal(config.agent.hermes.variant, 'medium')
-  assert.equal(config.agent.apollo.model, 'opencode/deepseek-v4-flash-free')
-  assert.equal(config.agent.apollo.variant, 'low')
-  assert.deepEqual(config.agent.hermes.fallback_models, ['opencode/mimo-v2.5'])
-
-  let thrown = null
-  try {
-    presets.applyPreset({}, resolved, { env: {} })
-  } catch (e) {
-    thrown = e
-  }
-  assert.ok(thrown, 'should throw on missing OpenCode Zen key')
-  assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
-  assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
-})
-
-// ─── T27: applyPreset go-fast (repo presets) ───────────────────────────
-test('T27: applyPreset go-fast injects opencode-go provider + all-flash agents', () => {
+// ─── T26: applyPreset go-fast (repo presets) detailed ─────────────────
+test('T26: applyPreset go-fast injects opencode-go provider + fast tiered models', () => {
   const resolved = presets.resolveActivePreset({
     env: { PANTHEON_MODEL_PRESET: 'go-fast' },
     candidates: [],
@@ -949,27 +1060,15 @@ test('T27: applyPreset go-fast injects opencode-go provider + all-flash agents',
     baseURL: 'https://opencode.ai/zen/go/v1',
     apiKey: 'sk-go',
   })
-  // all 14 agents on deepseek-v4-flash via OpenCode Go, reasoning low
-  const flashAgents = [
-    'athena',
-    'themis',
-    'zeus',
-    'hermes',
-    'aphrodite',
-    'demeter',
-    'prometheus',
-    'hephaestus',
-    'apollo',
-    'nyx',
-    'gaia',
-    'iris',
-    'mnemosyne',
-    'talos',
-  ]
-  for (const name of flashAgents) {
-    assert.equal(config.agent[name].model, 'opencode-go/deepseek-v4-flash', name)
-    assert.equal(config.agent[name].variant, 'low', name)
-  }
+  // tiering: kimi-k2.7-code athena high, glm-5.3-flash themis high, deepseek flash hermes medium, luna-fast scouts low
+  assert.equal(config.agent.athena.model, 'opencode-go/kimi-k2.7-code')
+  assert.equal(config.agent.athena.variant, 'high')
+  assert.equal(config.agent.themis.model, 'opencode-go/glm-5.3-flash')
+  assert.equal(config.agent.themis.variant, 'high')
+  assert.equal(config.agent.hermes.model, 'opencode-go/deepseek-v4-flash')
+  assert.equal(config.agent.hermes.variant, 'medium')
+  assert.equal(config.agent.apollo.model, 'opencode-go/gpt-5.6-luna-fast')
+  assert.equal(config.agent.apollo.variant, 'low')
 
   let thrown = null
   try {
@@ -977,25 +1076,38 @@ test('T27: applyPreset go-fast injects opencode-go provider + all-flash agents',
   } catch (e) {
     thrown = e
   }
-  assert.ok(thrown, 'should throw on missing OpenCode Go key')
+  assert.ok(thrown, 'should throw on missing Go key')
   assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
   assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
 })
 
+// ─── T27: applyPreset openai scouts luna-fast fallback ────────────────
+test('T27: applyPreset openai luna-fast fallback to luna low', () => {
+  const resolved = presets.resolveActivePreset({
+    env: { PANTHEON_MODEL_PRESET: 'openai' },
+    candidates: [],
+    logger: silent,
+  })
+  assert.ok(resolved, 'openai should resolve')
+  assert.equal(resolved.name, 'openai')
+  const config = {}
+  presets.applyPreset(config, resolved, { env: { OPENAI_API_KEY: 'sk-oai' } })
+  assert.equal(config.agent.apollo.model, 'openai/gpt-5.6-luna-fast')
+  assert.equal(config.agent.apollo.variant, 'low')
+  // implementers luna high is clamped to low
+  assert.equal(config.agent.hermes.model, 'openai/gpt-5.6-luna')
+  assert.equal(config.agent.hermes.variant, 'low')
+  assert.equal(config.agent.athena.model, 'openai/gpt-5.6-sol')
+  assert.equal(config.agent.athena.variant, 'high')
+})
+
 // ─── T28: resolveActivePreset returns vision fallback per preset ───────
-test('T28: resolveActivePreset returns vision for all 6 presets', () => {
+test('T28: resolveActivePreset returns vision for all 4 presets', () => {
   const expected = {
-    // opencode#29956: qwen3.7-plus image input 500s on the Go gateway;
-    // go-deepseek vision fallback moved to confirmed multimodal minimax-m3.
-    'go-deepseek': { model: 'opencode-go/minimax-m3', reasoning_effort: 'medium' },
-    'go-fast': { model: 'opencode-go/mimo-v2.5', reasoning_effort: 'low' },
-    // council 2026-08-02: qwen3.7-max is text-only (models.dev api.json);
-    // go-premium vision fallback moved to multimodal minimax-m3 (strong
-    // generalist; medium effort keeps premium tier costs in check).
-    'go-premium': { model: 'opencode-go/minimax-m3', reasoning_effort: 'medium' },
     'go-free': { model: 'opencode/mimo-v2.5-free', reasoning_effort: 'low' },
-    'go-claude': { model: 'anthropic/claude-sonnet-5', reasoning_effort: 'medium' },
-    'go-openai': { model: 'openai/gpt-5.6-sol', reasoning_effort: 'high' },
+    'go-fast': { model: 'opencode-go/mimo-v2.5', reasoning_effort: 'low' },
+    'go-premium': { model: 'opencode-go/gpt-5.6-sol', reasoning_effort: 'high' },
+    'openai': { model: 'openai/gpt-5.6-sol', reasoning_effort: 'high' },
   }
   for (const [name, vision] of Object.entries(expected)) {
     const resolved = presets.resolveActivePreset({
@@ -1016,14 +1128,15 @@ test('T28: resolveActivePreset returns vision for all 6 presets', () => {
 // ─── T29: hasVision matrix ─────────────────────────────────────────────
 test('T29: hasVision matrix (image input per CAPABILITY_TABLE)', () => {
   assert.equal(presets.hasVision('deepseek/deepseek-v4-flash'), false)
-  // qwen3.7-plus stays vision:true per models.dev even though the Go
-  // gateway 500s on image input (opencode#33942/#29956) — capability-table
-  // truth, not a recommendation for vision fallback.
   assert.equal(presets.hasVision('opencode-go/qwen3.7-plus'), true)
   assert.equal(presets.hasVision('opencode-go/qwen3.7-max'), false)
   assert.equal(presets.hasVision('opencode-go/minimax-m3'), true)
   assert.equal(presets.hasVision('opencode/mimo-v2.5-free'), true)
-  assert.equal(presets.hasVision('opencode-go/glm-5.2'), false)
+  assert.equal(presets.hasVision('opencode-go/glm-5.3-flash'), false)
+  assert.equal(presets.hasVision('opencode-go/kimi-k2.7-code'), false)
+  assert.equal(presets.hasVision('opencode-go/kimi-k3'), false)
+  assert.equal(presets.hasVision('opencode/qwen3.6-plus-free'), false)
+  assert.equal(presets.hasVision('opencode-go/qwen3.8-max'), false)
   assert.equal(presets.hasVision('anthropic/claude-sonnet-5'), true)
   assert.equal(presets.hasVision('openai/gpt-5.6-sol'), true)
   assert.throws(() => presets.hasVision('unknown/model-x'), /no capability entry/)
@@ -1194,7 +1307,7 @@ test('T33: applyActivePresetToConfig resolves file + applies agents/providers', 
   mkdirSync(join(dir, '.pantheon'), { recursive: true })
   writeFileSync(
     presetFile(dir),
-    JSON.stringify({ version: 1, preset: 'go-deepseek', source: 'cli' }),
+    JSON.stringify({ version: 1, preset: 'go-free', source: 'cli' }),
   )
   const config = {}
   const resolved = presets.applyActivePresetToConfig(config, {
@@ -1203,13 +1316,12 @@ test('T33: applyActivePresetToConfig resolves file + applies agents/providers', 
     logger: silent,
   })
   assert.ok(resolved, 'resolved preset returned')
-  assert.equal(resolved.name, 'go-deepseek')
+  assert.equal(resolved.name, 'go-free')
   assert.equal(resolved.source, 'file')
-  // agents: model + reasoning effort (variant) + fallback_models
-  assert.equal(config.agent.zeus.model, 'opencode/deepseek-v4-flash')
+  // agents: model + reasoning effort (variant)
+  assert.equal(config.agent.zeus.model, 'opencode/big-pickle')
   assert.equal(config.agent.zeus.variant, 'medium')
-  assert.deepEqual(config.agent.zeus.fallback_models, ['opencode/mimo-v2.5'])
-  assert.equal(config.agent.athena.model, 'opencode/deepseek-v4-pro')
+  assert.equal(config.agent.athena.model, 'opencode/nemotron-3-super-free')
   assert.equal(config.agent.athena.variant, 'high')
   // providers injected from the preset def
   assert.equal(config.provider.opencode.options.baseURL, 'https://opencode.ai/zen/v1')
@@ -1235,7 +1347,7 @@ test('T35: applyActivePresetToConfig throws PANTHEON_MISSING_API_KEY', () => {
   mkdirSync(join(dir, '.pantheon'), { recursive: true })
   writeFileSync(
     presetFile(dir),
-    JSON.stringify({ version: 1, preset: 'go-deepseek', source: 'cli' }),
+    JSON.stringify({ version: 1, preset: 'go-free', source: 'cli' }),
   )
   let thrown = null
   try {
@@ -1307,7 +1419,7 @@ test('T37: hasVision stays true for qwen3.7-plus; visionBrokenOnGateway is runti
 // The delegation toolset's `options.agentModels` is sourced only from an
 // explicitly active routing profile.
 test('T38: loadRoutingAgentModels maps the explicitly selected profile', () => {
-  const models = presets.loadRoutingAgentModels({ env: { PANTHEON_MODEL_PRESET: 'go-deepseek' } })
+  const models = presets.loadRoutingAgentModels({ env: { PANTHEON_MODEL_PRESET: 'go-free' } })
   const repo = repoAgents()
   assert.ok(Object.keys(models).length >= repo.length, 'default preset must cover the repo agents')
   for (const agent of repo) {
@@ -1318,9 +1430,9 @@ test('T38: loadRoutingAgentModels maps the explicitly selected profile', () => {
     )
     assert.equal(models[agent], models[agent.toLowerCase()], 'keys must be lowercase')
   }
-  assert.equal(models.apollo, 'opencode/deepseek-v4-flash-free')
-  assert.equal(models.hermes, 'opencode/deepseek-v4-flash')
-  assert.equal(models.athena, 'opencode/deepseek-v4-pro')
+  assert.equal(models.apollo, 'opencode/mimo-v2.5-free')
+  assert.equal(models.hermes, 'opencode/deepseek-v4-flash-free')
+  assert.equal(models.athena, 'opencode/nemotron-3-super-free')
 })
 
 test('T39: loadRoutingAgentModels ignores agents without a model entry', () => {

@@ -35,6 +35,7 @@ import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
 import { createPantheonLogger } from './pantheon/logger.ts'
+import { createModelCommand } from './pantheon/model-command.ts'
 import { pantheonPluginOnce } from './pantheon/plugin-once.ts'
 import {
   applyActivePresetToConfig,
@@ -471,6 +472,7 @@ const plugin: Plugin = async (input: PluginInput) => {
   // Fully wired (unlike dispatch-guard, which is manual-orchestration-only
   // because opencode 1.18.x cannot intercept task completion via hooks).
   const costCommand = createCostCommand()
+  const modelCommand = createModelCommand()
 
   return {
     config: async (config: PluginConfig) => {
@@ -539,6 +541,8 @@ const plugin: Plugin = async (input: PluginInput) => {
       pantheon_goal_get: goalTools.pantheon_goal_get,
       // Wave 4 (PR #46): /cost — delegation cost report from opencode.db.
       pantheon_cost: costCommand.pantheon_cost,
+      // Deterministic /pantheon-model management of top-level model fields.
+      pantheon_model: modelCommand.pantheon_model,
     },
     'chat.message': async (hookInput, output) => {
       await vision.chatMessage(hookInput, output)

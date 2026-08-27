@@ -1,13 +1,13 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "postinstall": "node scripts/postinstall.mjs",
+    "postinstall": "node scripts/postinstall.mjs && node scripts/sync-tui.mjs",
     "prepare": "husky",
     "setup": "node bin/pantheon-init.mjs init",
     "build:agents-md": "node scripts/build-agents-md.mjs",

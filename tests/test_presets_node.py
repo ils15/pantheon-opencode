@@ -25,6 +25,6 @@ def test_presets_node_harness() -> None:
         f"node tests/test_presets.mjs failed (exit {result.returncode}):\n"
         f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     )
-    assert "44 passed" in result.stdout, (
-        f"expected 44 passing tests, got:\n{result.stdout}"
+    assert "51 passed" in result.stdout, (
+        f"expected 51 passing tests, got:\n{result.stdout}"
     )

@@ -83,6 +83,8 @@ class FakeClient {
   rejectMissingModel = false
   /** Delay session.create to exercise concurrent budget reservations. */
   createDelayMs = 0
+  /** Rejections consumed by promptAsync, in call order. */
+  promptErrors: Error[] = []
   /** When set, session.messages rejects with this error (fail-open paths). */
   messagesError: Error | null = null
   messagesResult: Array<{
@@ -104,6 +106,8 @@ class FakeClient {
     },
     promptAsync: async (input: FakePromptInput): Promise<unknown> => {
       this.prompted.push(input)
+      const error = this.promptErrors.shift()
+      if (error !== undefined) throw error
       return { task_id: input.path.id, state: 'running' }
     },
     messages: async (input: { path: { id: string } }): Promise<unknown> => {
@@ -157,8 +161,8 @@ async function main() {
         assert.equal(client.prompted.length, 1)
         assert.equal(client.prompted[0]?.path.id, 'ses_child_1')
         assert.equal(client.prompted[0]?.body.agent, 'apollo')
-        assert.equal(client.created[0]?.body.model, undefined)
-        assert.equal(client.prompted[0]?.body.model, undefined)
+        assert.equal('model' in (client.created[0]?.body ?? {}), false)
+        assert.equal('model' in (client.prompted[0]?.body ?? {}), false)
         assert.equal(client.prompted[0]?.body.parts[0]?.text, 'Find auth patterns')
       } finally {
         rmSync(tmp, { recursive: true, force: true })
@@ -189,6 +193,74 @@ async function main() {
           id: 'deepseek-v4-flash-free',
           providerID: 'opencode',
         })
+        assert.deepEqual(client.prompted[0]?.body.model, {
+          id: 'deepseek-v4-flash-free',
+          providerID: 'opencode',
+        })
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'invalid explicit model is rejected before session.create without preset fallback',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-model-invalid-explicit-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            agentModels: { apollo: 'provider-x/model-y' },
+          },
+        })
+
+        const result = await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo', model: 'provider/model/extra' },
+          makeCtx(),
+        )
+
+        assert.match(result, /invalid explicit model override/i)
+        assert.match(result, /provider\/model-id/i)
+        assert.equal(client.created.length, 0)
+        assert.equal(board.list().length, 0)
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'invalid agentModels model is rejected before session.create without native omission',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-model-invalid-preset-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            agentModels: { apollo: 'provider/../model' },
+          },
+        })
+
+        const result = await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo' },
+          makeCtx(),
+        )
+
+        assert.match(result, /invalid agentModels model override/i)
+        assert.match(result, /provider\/model-id/i)
+        assert.equal(client.created.length, 0)
+        assert.equal(board.list().length, 0)
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }
@@ -220,6 +292,7 @@ async function main() {
         id: 'model-y',
         providerID: 'provider-x',
       })
+      assert.deepEqual(client.messagesCalls, ['ses_child_1'])
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
@@ -248,6 +321,10 @@ async function main() {
 
         assert.equal(client.created.length, 1)
         assert.deepEqual(client.created[0]?.body.model, {
+          id: 'deepseek-v4-flash-free',
+          providerID: 'opencode',
+        })
+        assert.deepEqual(client.prompted[0]?.body.model, {
           id: 'deepseek-v4-flash-free',
           providerID: 'opencode',
         })
@@ -504,6 +581,11 @@ async function main() {
         id: 'gpt-5.6-terra',
         providerID: 'openai',
       })
+      assert.deepEqual(client.prompted[0]?.body.model, {
+        id: 'gpt-5.6-terra',
+        providerID: 'openai',
+      })
+      assert.deepEqual(client.messagesCalls, ['ses_child_1'])
       assert.equal(warnings.length, 0)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
@@ -525,9 +607,9 @@ async function main() {
             outputDir: tmp,
             // Same source the plugin wires (Fase 6): routing.yml's default
             // agent→model mapping. The opencode provider requires
-            // PANTHEON_OPENCODE_API_KEY (routing.yml go-deepseek apiKeyEnv).
+            // PANTHEON_OPENCODE_API_KEY (routing.yml go-free apiKeyEnv).
             agentModels: loadRoutingAgentModels({
-              env: { PANTHEON_MODEL_PRESET: 'go-deepseek' },
+              env: { PANTHEON_MODEL_PRESET: 'go-free' },
             }),
             presetEnv: { PANTHEON_OPENCODE_API_KEY: 'sk-test' },
           },
@@ -537,9 +619,168 @@ async function main() {
 
         assert.equal(client.created.length, 1)
         assert.deepEqual(client.created[0]?.body.model, {
-          id: 'deepseek-v4-flash-free',
+          id: 'mimo-v2.5-free',
           providerID: 'opencode',
         })
+        assert.deepEqual(client.prompted[0]?.body.model, {
+          id: 'mimo-v2.5-free',
+          providerID: 'opencode',
+        })
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    '(f) native model inheritance omits model without reading parent messages',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-parent-model-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        // A parent message model must not become a delegated-child override.
+        client.messagesResult = [
+          {
+            info: { role: 'assistant', providerID: 'opencode-go', modelID: 'mimo-v2.5-free' },
+            parts: [{ type: 'text', text: 'parent turn' }],
+          },
+        ]
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+        })
+
+        await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+
+        assert.equal(client.created.length, 1)
+        assert.equal('model' in (client.created[0]?.body ?? {}), false)
+        assert.equal('model' in (client.prompted[0]?.body ?? {}), false)
+        assert.deepEqual(client.messagesCalls, ['ses_child_1'])
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('(f) explicit model override is not replaced by parent messages', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-parent-explicit-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      client.messagesResult = [
+        {
+          info: { role: 'assistant', providerID: 'opencode-go', modelID: 'mimo-v2.5-free' },
+          parts: [{ type: 'text', text: 'parent turn' }],
+        },
+      ]
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: { rootSessions: new Set([ROOT]), outputDir: tmp },
+      })
+
+      await tools.pantheon_delegate.execute(
+        { prompt: 'Find X', agent: 'apollo', model: 'openai/gpt-5.6-terra' },
+        makeCtx(),
+      )
+
+      assert.deepEqual(client.created[0]?.body.model, {
+        id: 'gpt-5.6-terra',
+        providerID: 'openai',
+      })
+      assert.deepEqual(client.prompted[0]?.body.model, {
+        id: 'gpt-5.6-terra',
+        providerID: 'openai',
+      })
+      assert.deepEqual(client.messagesCalls, ['ses_child_1'])
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('(f) preset model override beats native omission', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-parent-preset-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      client.messagesResult = [
+        {
+          info: { role: 'assistant', providerID: 'opencode-go', modelID: 'mimo-v2.5-free' },
+          parts: [{ type: 'text', text: 'parent turn' }],
+        },
+      ]
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: {
+          rootSessions: new Set([ROOT]),
+          outputDir: tmp,
+          agentModels: { apollo: 'provider-x/model-y' },
+        },
+      })
+
+      await tools.pantheon_delegate.execute({ prompt: 'Find X', agent: 'apollo' }, makeCtx())
+
+      assert.deepEqual(client.created[0]?.body.model, {
+        id: 'model-y',
+        providerID: 'provider-x',
+      })
+      assert.deepEqual(client.prompted[0]?.body.model, {
+        id: 'model-y',
+        providerID: 'provider-x',
+      })
+      assert.deepEqual(client.messagesCalls, ['ses_child_1'])
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
+    '(f) no model override omits model without consulting parent messages',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'delegation-parent-fail-'))
+      try {
+        const board = new BackgroundJobBoard()
+        const client = new FakeClient()
+        client.messagesError = new Error('messages unavailable')
+        let nonAgentModelReads = 0
+        const agentModels = new Proxy<Record<string, string>>(
+          { model: 'provider/config-model', small_model: 'provider/small-model' },
+          {
+            get(target, property, receiver) {
+              if (property === 'model' || property === 'small_model') nonAgentModelReads += 1
+              return Reflect.get(target, property, receiver)
+            },
+          },
+        )
+        const warnings: string[] = []
+        const tools = createDelegationTools({
+          board,
+          client,
+          options: {
+            rootSessions: new Set([ROOT]),
+            outputDir: tmp,
+            agentModels,
+            logger: { warn: (msg) => warnings.push(msg) },
+          },
+        })
+
+        const result = await tools.pantheon_delegate.execute(
+          { prompt: 'Find X', agent: 'apollo' },
+          makeCtx(),
+        )
+
+        assert.ok(result.includes('apo-1'), `delegation proceeds, got: ${result}`)
+        assert.equal('model' in (client.created[0]?.body ?? {}), false)
+        assert.equal('model' in (client.prompted[0]?.body ?? {}), false)
+        assert.deepEqual(client.messagesCalls, ['ses_child_1'])
+        assert.equal(nonAgentModelReads, 0)
+        assert.ok(
+          warnings.some((w) => /no model/i.test(w)),
+          `expected a no-model warning, got: ${warnings.join('; ')}`,
+        )
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }
@@ -611,6 +852,41 @@ async function main() {
         'promptAsync must receive the resolved model in body.model',
       )
       assert.equal(body.agent, 'apollo')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('(e) model override is forwarded to the retry child session', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'delegation-retry-model-'))
+    try {
+      const board = new BackgroundJobBoard()
+      const client = new FakeClient()
+      client.promptErrors = [new Error('prompt not accepted')]
+      const tools = createDelegationTools({
+        board,
+        client,
+        options: {
+          rootSessions: new Set([ROOT]),
+          outputDir: tmp,
+        },
+      })
+
+      const result = await tools.pantheon_delegate.execute(
+        { prompt: 'Retry X', agent: 'apollo', model: 'openai/gpt-5.6-terra' },
+        makeCtx(),
+      )
+
+      assert.match(result, /retry=1/)
+      assert.equal(client.created.length, 2)
+      assert.equal(client.prompted.length, 2)
+      for (const create of client.created) {
+        assert.deepEqual(create.body.model, { id: 'gpt-5.6-terra', providerID: 'openai' })
+      }
+      for (const prompt of client.prompted) {
+        assert.deepEqual(prompt.body.model, { id: 'gpt-5.6-terra', providerID: 'openai' })
+      }
+      assert.ok(!client.messagesCalls.includes(ROOT), 'retry bootstrap must not inspect the parent')
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
@@ -1591,7 +1867,7 @@ async function main() {
         assert.equal(job?.terminalUnreconciled, true)
         assert.equal(job?.timedOut, false)
 
-        // Messages were pulled from the child session
+        // Messages were pulled twice from the child (activity sample + finalize pull).
         assert.deepEqual(client.messagesCalls, ['ses_child_1', 'ses_child_1'])
 
         // md file written atomically under .pantheon/delegations/<root>/<alias>.md

@@ -272,9 +272,9 @@ export async function zeusDelegateWithRetry(
     report: string
     dispatchResult: DispatchResultLike
   }> {
-    // 1. Create child session (parentID = caller). No model forwarding here —
-    // delegation.ts resolves models via routing.yml; this helper uses the
-    // bare SDK default unless opts.model is supplied (explicit caller intent).
+    // 1. Create child session (parentID = caller). When a model is resolved,
+    // the same model is forwarded to session.create and promptAsync; otherwise
+    // both requests omit it so the host keeps native model inheritance.
     let childID: string
     try {
       const created = await client.session.create({
@@ -310,10 +310,15 @@ export async function zeusDelegateWithRetry(
     // board.waitForTerminal, not via noReply — the spike refuted noReply.
     // A promptAsync failure is logged but does not abort the wait — the board
     // timeout will finalize the job.
+    const promptBody = {
+      agent: opts.agent,
+      ...(opts.model !== undefined ? { model: opts.model } : {}),
+      parts: [{ type: 'text' as const, text: opts.prompt }],
+    }
     void client.session
       .promptAsync({
         path: childPath.path,
-        body: { agent: opts.agent, parts: [{ type: 'text', text: opts.prompt }] },
+        body: promptBody,
       })
       .catch((err: unknown) => {
         const reason = err instanceof Error ? err.message : String(err)
