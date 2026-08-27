@@ -32,10 +32,14 @@ const KNOWN_AGENTS_ORDER = ['zeus','athena','themis','hermes','aphrodite','demet
 
 function agentSort(a,b){ const ia = KNOWN_AGENTS_ORDER.indexOf(a); const ib = KNOWN_AGENTS_ORDER.indexOf(b); if(ia===-1&&ib===-1) return a.localeCompare(b); if(ia===-1) return 1; if(ib===-1) return -1; return ia-ib; }
 
+function safeEnvLabel(_apiKeyEnv){
+  return '`[redacted]`'
+}
+
 function providerLabel(def){
   const entries = Object.entries(def.providers ?? {})
   if(entries.length===0) return '—'
-  return entries.map(([id,p]) => `\`${id}\` \`${p.baseURL ?? ''}\` (env: \`${p.apiKeyEnv ?? 'none'}\`)`).join('<br>')
+  return entries.map(([id,p]) => `\`${id}\` \`${p.baseURL ?? ''}\` (env: ${safeEnvLabel(p.apiKeyEnv)})`).join('<br>')
 }
 
 function pricingLabel(name){
@@ -73,8 +77,8 @@ function buildSummaryTable(){
   for(const name of Object.keys(presets)){
     const def = presets[name]
     const prov = providerLabel(def)
-    // env names only
-    const envs = Object.values(def.providers ?? {}).map(p=>`\`${p.apiKeyEnv ?? 'none'}\``).join(', ') || '—'
+    // env names redacted to avoid exposing credential-related metadata
+    const envs = Object.values(def.providers ?? {}).map(p=>safeEnvLabel(p.apiKeyEnv)).join(', ') || '—'
     // Actually use providerLabel already includes env, but separate column for key env
     const pricing = pricingLabel(name)
     const vision = visionLabel(def)
