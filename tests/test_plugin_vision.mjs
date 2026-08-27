@@ -175,7 +175,7 @@ await (async () => {
         assert.equal(config.agent.zeus.variant, 'medium', 'preset applied to reasoning effort')
         assert.deepEqual(
           config.agent.zeus.fallback_models,
-          ['opencode/mimo-v2.5'],
+          ['opencode/mimo-v2.5-free'],
           'preset applied to fallback models',
         )
         assert.equal(

@@ -89,12 +89,72 @@ npx pantheon-opencode init --project
 
 This installs to `.opencode/agents/` in the current project directory.
 
+## Top-Level Model Overrides
+
+The installer does **not** inject hardcoded top-level `model` or `small_model`
+defaults. Without `--model` / `--small-model` no top-level field is created —
+OpenCode then resolves the model from the active preset / chat selection. An
+existing value in the target's `opencode.json` is always preserved. The two
+flags are independent and can be used separately:
+
+```bash
+# Set only the main model
+npx pantheon-opencode init --headless --model opencode-go/mimo-v2.5-pro
+
+# Set only the small model
+npx pantheon-opencode init --headless --small-model opencode/mimo-v2.5-free
+
+# Set both independently
+npx pantheon-opencode init --headless \
+  --model openai/gpt-5.6-sol \
+  --small-model openai/gpt-5.6-mini
+```
+
+Resolution is independent per field: if the target already has a value it is
+kept; otherwise only an explicit CLI flag creates the field. There is no
+repository-config fallback and no general default. A `--model` flag never
+touches `small_model` and vice-versa. Delegate inheritance does not use
+`small_model` and does not depend on top-level fields — it follows the model
+selected in the chat / active preset: explicit `model` on `pantheon_delegate`
+> target agent's model in the active preset > parent session's current model
+> native inheritance. Values use the `provider/model-id` form. The installer
+only writes the reference; actual provider/model availability still depends on
+OpenCode configuration, credentials, account/subscription, and the provider
+endpoint.
+
+## `/pantheon-model` Command
+
+After the command component is installed, use the deterministic
+`/pantheon-model` command to inspect or change only OpenCode's top-level model
+fields:
+
+```text
+/pantheon-model status                         # alias: show
+/pantheon-model set --model openai/gpt-5.6-sol --scope project
+/pantheon-model set --small-model openai/gpt-5.6-mini --scope global
+/pantheon-model reset --scope project
+```
+
+`status` and `show` display `model`, `small_model`, each field's origin
+(`project`, `global`, or `default`), and the active preset without secrets.
+`set` accepts either or both fields independently; `reset` removes only these
+managed fields. The default scope for `set` and `reset` is `project`, so
+omitting `--scope` does not modify global configuration. References are
+validated as `provider/model-id`; provider/model existence is not checked by
+this syntax validation.
+
+Writes create a sibling `.bak` backup when replacing an existing config and
+use an atomic temporary-file rename. Invalid JSON or a failed write leaves the
+current file preserved when possible. Restart OpenCode after a successful
+change; the command does not hot-swap the running process.
+
 ## Background Delegation
 
 Pantheon's plugin layer provides **background delegation** via three tools
 (`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`),
 tracked on a persistent job board with completion notifications injected into
-the parent's next message (no polling, no client push).
+the board and exposed through list/read, TUI toasts, and compaction
+carry-forward; no completion text is injected into the chat transcript.
 
 **Requirement:** Set the environment variable before launching OpenCode:
 
@@ -113,7 +173,7 @@ npm run start
 
 ```javascript
 // Dispatch a background agent — returns immediately with a readable alias
-pantheon_delegate({ prompt: "search the codebase", agent: "apollo", description: "Find X" })
+pantheon_delegate({ prompt: "search the codebase", agent: "apollo", description: "Find X", model: "opencode/deepseek-v4-flash-free" })
 // → Delegated to apollo: [apo-1] (task ses_xxx). Read with pantheon_delegation_read.
 
 // Collect results later (blocks until finished, then returns the report)
@@ -134,8 +194,8 @@ pantheon_delegation_list({})
 | Talos, Iris, Nyx, Mnemosyne, Gaia | ❌ No | Quick operations |
 
 See the **Background Delegation** section in the [README](../README.md) for the
-notification model, timeout, read-only enforcement, and `background_delegation`
-routing.yml configuration.
+notification model, model-resolution order, timeout, read-only enforcement,
+and `background_delegation` routing.yml configuration.
 
 ## TUI Sidebar Plugin
 
@@ -178,6 +238,7 @@ Type these in the OpenCode chat:
 | `/pantheon` | Multi-perspective council synthesis via inline agents |
 | `/pantheon-audit` | 3-layer code audit: heuristic scan → Themis deep review → OWASP Top 10 |
 | `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints and Themis review gates |
+| `/pantheon-model status\|show\|set\|reset` | Inspect or change only the top-level `model` and `small_model` settings |
 | `/pantheon-optimize` | Project optimization: bloat scan, deepwork archive, cache migration, token report |
 | `/pantheon-consolidate` | Merge and deduplicate memory entries in the vector database |
 

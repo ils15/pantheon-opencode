@@ -225,7 +225,7 @@ via three delegation tools, tracked on a persistent job board
 
 | Tool | Signature | Behavior |
 |------|-----------|----------|
-| `pantheon_delegate` | `{prompt, agent, description?, read_only?}` | Creates a child session (parentID = caller), registers it on the job board, arms a 15-minute timeout, and fire-and-forgets `promptAsync` on the child. Returns the readable alias (e.g. `apo-1`). Only root sessions may delegate (sub-sessions are rejected by the depth guard). |
+| `pantheon_delegate` | `{prompt, agent, description?, read_only?, model?}` | Creates a child session (parentID = caller), registers it on the job board, arms a 15-minute timeout, and sends `promptAsync` to the child. `model` is optional and uses `provider/model-id`. Returns the readable alias (e.g. `apo-1`). Only root sessions may delegate (sub-sessions are rejected by the depth guard). |
 | `pantheon_delegation_read` | `{id}` | Blocks (`waitForTerminal`, up to 15 min) until the delegation reaches a terminal state, returns the report markdown, and marks the job reconciled. Resolves by alias or task ID. |
 | `pantheon_delegation_list` | `{}` | Lists the current session's delegations with `[unread]` on finished, unreconciled jobs. |
 
@@ -276,6 +276,22 @@ reservations for that parent session during the factory lifetime.
 agent in `background_delegation.read_only_agents` (`apollo`, `gaia`), registers
 the child session as read-only — the `tool.execute.before` guard denies
 `edit`/`write`/`bash`/`task` inside that session.
+
+**Delegated model resolution:** the optional child model is resolved in this
+order: (1) explicit `model` on `pantheon_delegate`; (2) the target agent's
+model in the active preset; (3) the current model of the parent session; (4)
+no model, allowing OpenCode's native inheritance. `small_model` is never used
+for delegates. When a model resolves, the same `provider/model-id` is sent as
+`{providerID, id}` to both `session.create` and `promptAsync`, including the
+single safe bootstrap retry; the retry does not select a different model. If
+the resolution lookup yields no model, the model field is omitted and the
+delegation continues with native inheritance.
+
+Model availability is not inferred from the string. The provider must exist in
+OpenCode and the referenced model must be available through that provider's
+account, subscription, or configured endpoint; otherwise the child host may
+reject startup. An active preset supplies provider configuration and model
+mappings, but does not make an unavailable provider or model available.
 
 **R1 — Per-error-type retry + provider cooldown (LiteLLM pattern):**
 `retry_policy` in `src/routing.yml` maps an error class (`auth`, `rate_limit`,
@@ -655,7 +671,7 @@ subscription (OpenCode Go, Copilot Pro, Claude Pro, etc.).
 
 ## Model Routing Presets
 
-The abstract tiers above are pinned to concrete `provider/model` IDs by **6 built-in model presets**. Each preset maps all 14 agents to a specific model plus a reasoning effort per role (planners/reviewers, implementers, scouts). **Zero-mutation default**: without an active preset, agents run on OpenCode's default model — behavior is unchanged.
+The abstract tiers above are pinned to concrete `provider/model` IDs by **6 built-in model presets**. Each preset maps all 14 agents to a specific model plus a reasoning effort per role (planners/reviewers, implementers, scouts). **Zero-mutation default**: without an active preset, agents run on OpenCode's default model — behavior is unchanged. The installer does not create top-level `model`/`small_model` unless you pass `--model`/`--small-model`; `small_model` is never used for delegates — child model inheritance follows the selected model in the chat / active preset (explicit `model` > preset agent model > parent session model > native inheritance).
 
 ### Presets
 
@@ -778,6 +794,7 @@ Type these in the OpenCode chat:
 | `/pantheon-remember` | Store in memory |
 | `/pantheon-search` | Search memory |
 | `/pantheon-status` | System health and agent status |
+| `/pantheon-model status\|show\|set\|reset` | Inspect or change only the top-level `model` and `small_model` settings |
 | `/pantheon-verify` | Hash edit verification |
 
 ---

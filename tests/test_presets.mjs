@@ -422,8 +422,8 @@ test('T10: normalizeCapability matrix', () => {
     variant: 'medium',
     clamped: false,
   })
-  // opencode (Zen free tier): big-pickle clamps high→medium; nemotron
-  // accepts high; north-mini-code-free accepts low
+  // opencode (Zen): big-pickle clamps high→medium; nemotron accepts high;
+  // confirmed mimo-v2.5-free accepts low
   assert.deepEqual(presets.normalizeCapability('opencode/big-pickle', 'high'), {
     variant: 'medium',
     clamped: true,
@@ -432,7 +432,7 @@ test('T10: normalizeCapability matrix', () => {
     variant: 'high',
     clamped: false,
   })
-  assert.deepEqual(presets.normalizeCapability('opencode/north-mini-code-free', 'low'), {
+  assert.deepEqual(presets.normalizeCapability('opencode/mimo-v2.5-free', 'low'), {
     variant: 'low',
     clamped: false,
   })
@@ -750,7 +750,7 @@ test('T21: npm pack includes presets.mjs + model-picker.mjs', () => {
 })
 
 // ─── T22: applyPreset go-openai (repo presets) ─────────────────────────
-test('T22: applyPreset go-openai injects OpenAI provider + gpt-5.6 agents', () => {
+test('T22: applyPreset go-openai injects OpenCode Zen provider + gpt-5.6 agents', () => {
   const resolved = presets.resolveActivePreset({
     env: { PANTHEON_MODEL_PRESET: 'go-openai' },
     candidates: [],
@@ -761,19 +761,19 @@ test('T22: applyPreset go-openai injects OpenAI provider + gpt-5.6 agents', () =
   assert.equal(resolved.source, 'env')
 
   const config = {}
-  presets.applyPreset(config, resolved, { env: { PANTHEON_OPENAI_API_KEY: 'sk-openai' } })
-  assert.deepEqual(config.provider.openai.options, {
-    baseURL: 'https://api.openai.com/v1',
-    apiKey: 'sk-openai',
+  presets.applyPreset(config, resolved, { env: { PANTHEON_OPENCODE_API_KEY: 'sk-zen' } })
+  assert.deepEqual(config.provider.opencode.options, {
+    baseURL: 'https://opencode.ai/zen/v1',
+    apiKey: 'sk-zen',
   })
-  // tiering: sol → high, terra → medium, luna-fast → low
-  assert.equal(config.agent.athena.model, 'openai/gpt-5.6-sol')
+  // tiering: sol → high, terra → medium, confirmed luna → low
+  assert.equal(config.agent.athena.model, 'opencode/gpt-5.6-sol')
   assert.equal(config.agent.athena.variant, 'high')
-  assert.equal(config.agent.hermes.model, 'openai/gpt-5.6-terra')
+  assert.equal(config.agent.hermes.model, 'opencode/gpt-5.6-terra')
   assert.equal(config.agent.hermes.variant, 'medium')
-  assert.equal(config.agent.apollo.model, 'openai/gpt-5.6-luna-fast')
+  assert.equal(config.agent.apollo.model, 'opencode/gpt-5.6-luna')
   assert.equal(config.agent.apollo.variant, 'low')
-  assert.equal(config.agent.talos.model, 'openai/gpt-5.6-luna-fast')
+  assert.equal(config.agent.talos.model, 'opencode/gpt-5.6-luna')
   assert.equal(config.agent.talos.variant, 'low')
 
   let thrown = null
@@ -784,7 +784,7 @@ test('T22: applyPreset go-openai injects OpenAI provider + gpt-5.6 agents', () =
   }
   assert.ok(thrown, 'should throw on missing OpenAI key')
   assert.equal(thrown.code, 'PANTHEON_MISSING_API_KEY')
-  assert.equal(thrown.envVar, 'PANTHEON_OPENAI_API_KEY')
+  assert.equal(thrown.envVar, 'PANTHEON_OPENCODE_API_KEY')
 })
 
 // ─── T23: applyPreset go-claude (repo presets) ─────────────────────────
@@ -872,13 +872,13 @@ test('T25: applyPreset go-free injects opencode provider + free models', () => {
     baseURL: 'https://opencode.ai/zen/v1',
     apiKey: 'sk-zen',
   })
-  // Big Pickle zeus (medium), Nemotron 3 Ultra Free athena (high),
-  // North Mini Code apollo (low), flash-free implementers
+  // Big Pickle zeus (medium), Nemotron 3 Ultra athena (high),
+  // confirmed MiMo V2.5 Free apollo (low), flash implementers
   assert.equal(config.agent.zeus.model, 'opencode/big-pickle')
   assert.equal(config.agent.zeus.variant, 'medium')
   assert.equal(config.agent.athena.model, 'opencode/nemotron-3-ultra-free')
   assert.equal(config.agent.athena.variant, 'high')
-  assert.equal(config.agent.apollo.model, 'opencode/north-mini-code-free')
+  assert.equal(config.agent.apollo.model, 'opencode/mimo-v2.5-free')
   assert.equal(config.agent.apollo.variant, 'low')
   assert.equal(config.agent.hermes.model, 'opencode/deepseek-v4-flash-free')
   assert.equal(config.agent.hermes.variant, 'medium')
@@ -911,15 +911,15 @@ test('T26: applyPreset go-deepseek injects opencode provider + Zen tiered models
     baseURL: 'https://opencode.ai/zen/v1',
     apiKey: 'sk-zen',
   })
-  // tiering: V4 Pro athena (high), V4 Flash hermes (medium),
-  // V4 Flash Free apollo (low), fallback opencode/mimo-v2.5 (low)
+  // tiering: V4 Pro athena (high), V4 Flash hermes/apollo (medium/low),
+  // confirmed MiMo V2.5 Free fallback
   assert.equal(config.agent.athena.model, 'opencode/deepseek-v4-pro')
   assert.equal(config.agent.athena.variant, 'high')
   assert.equal(config.agent.hermes.model, 'opencode/deepseek-v4-flash')
   assert.equal(config.agent.hermes.variant, 'medium')
-  assert.equal(config.agent.apollo.model, 'opencode/deepseek-v4-flash-free')
+  assert.equal(config.agent.apollo.model, 'opencode/deepseek-v4-flash')
   assert.equal(config.agent.apollo.variant, 'low')
-  assert.deepEqual(config.agent.hermes.fallback_models, ['opencode/mimo-v2.5'])
+  assert.deepEqual(config.agent.hermes.fallback_models, ['opencode/mimo-v2.5-free'])
 
   let thrown = null
   try {
@@ -933,7 +933,7 @@ test('T26: applyPreset go-deepseek injects opencode provider + Zen tiered models
 })
 
 // ─── T27: applyPreset go-fast (repo presets) ───────────────────────────
-test('T27: applyPreset go-fast injects opencode-go provider + all-flash agents', () => {
+test('T27: applyPreset go-fast injects opencode-go provider + all-MiMo agents', () => {
   const resolved = presets.resolveActivePreset({
     env: { PANTHEON_MODEL_PRESET: 'go-fast' },
     candidates: [],
@@ -949,7 +949,7 @@ test('T27: applyPreset go-fast injects opencode-go provider + all-flash agents',
     baseURL: 'https://opencode.ai/zen/go/v1',
     apiKey: 'sk-go',
   })
-  // all 14 agents on deepseek-v4-flash via OpenCode Go, reasoning low
+  // all 14 agents on confirmed MiMo V2.5 via OpenCode Go, reasoning low
   const flashAgents = [
     'athena',
     'themis',
@@ -967,7 +967,7 @@ test('T27: applyPreset go-fast injects opencode-go provider + all-flash agents',
     'talos',
   ]
   for (const name of flashAgents) {
-    assert.equal(config.agent[name].model, 'opencode-go/deepseek-v4-flash', name)
+    assert.equal(config.agent[name].model, 'opencode-go/mimo-v2.5', name)
     assert.equal(config.agent[name].variant, 'low', name)
   }
 
@@ -995,7 +995,7 @@ test('T28: resolveActivePreset returns vision for all 6 presets', () => {
     'go-premium': { model: 'opencode-go/minimax-m3', reasoning_effort: 'medium' },
     'go-free': { model: 'opencode/mimo-v2.5-free', reasoning_effort: 'low' },
     'go-claude': { model: 'anthropic/claude-sonnet-5', reasoning_effort: 'medium' },
-    'go-openai': { model: 'openai/gpt-5.6-sol', reasoning_effort: 'high' },
+    'go-openai': { model: 'opencode/gpt-5.6-sol', reasoning_effort: 'high' },
   }
   for (const [name, vision] of Object.entries(expected)) {
     const resolved = presets.resolveActivePreset({
@@ -1208,7 +1208,7 @@ test('T33: applyActivePresetToConfig resolves file + applies agents/providers', 
   // agents: model + reasoning effort (variant) + fallback_models
   assert.equal(config.agent.zeus.model, 'opencode/deepseek-v4-flash')
   assert.equal(config.agent.zeus.variant, 'medium')
-  assert.deepEqual(config.agent.zeus.fallback_models, ['opencode/mimo-v2.5'])
+  assert.deepEqual(config.agent.zeus.fallback_models, ['opencode/mimo-v2.5-free'])
   assert.equal(config.agent.athena.model, 'opencode/deepseek-v4-pro')
   assert.equal(config.agent.athena.variant, 'high')
   // providers injected from the preset def
@@ -1318,7 +1318,7 @@ test('T38: loadRoutingAgentModels maps the explicitly selected profile', () => {
     )
     assert.equal(models[agent], models[agent.toLowerCase()], 'keys must be lowercase')
   }
-  assert.equal(models.apollo, 'opencode/deepseek-v4-flash-free')
+  assert.equal(models.apollo, 'opencode/deepseek-v4-flash')
   assert.equal(models.hermes, 'opencode/deepseek-v4-flash')
   assert.equal(models.athena, 'opencode/deepseek-v4-pro')
 })

@@ -190,6 +190,11 @@ async function main() {
     const autoYes = args.includes('--yes') || args.includes('-y')
     const presetIndex = args.indexOf('--preset')
     const presetOpt = presetIndex >= 0 ? (args[presetIndex + 1] ?? null) : null
+    // Explicit top-level model overrides for the generated config.
+    const modelIndex = args.indexOf('--model')
+    const modelOpt = modelIndex >= 0 ? (args[modelIndex + 1] ?? null) : null
+    const smallModelIndex = args.indexOf('--small-model')
+    const smallModelOpt = smallModelIndex >= 0 ? (args[smallModelIndex + 1] ?? null) : null
     // --version v1|v2 labels the install target (informational; the config is
     // shared and V1-shaped under both versions). Invalid values fail fast.
     const versionIndex = args.indexOf('--version')
@@ -218,6 +223,8 @@ async function main() {
         interactive: forceInteractive,
         headless: forceHeadless,
         yes: autoYes,
+        model: modelOpt,
+        smallModel: smallModelOpt,
         preset: presetOpt,
         version: versionOpt ?? 'v1',
       })
