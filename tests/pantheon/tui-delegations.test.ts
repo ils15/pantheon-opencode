@@ -1,7 +1,8 @@
 /**
  * Tests for the TUI sidebar Delegations panel channel — the markdown reports
- * the job board persists under `.pantheon/delegations/<sessionID>/<alias>.md`
- * (written by src/pantheon/delegation-finalize.ts `renderDelegationMarkdown`).
+ * under `.pantheon/delegations/<sessionID>/<alias>.md`. These are LEGACY
+ * files (the writer, src/pantheon/delegation-finalize.ts, was removed); the
+ * panel still reads them for history.
  *
  * The TUI never touches the in-memory board; it only reads these files via
  * the pure `parseDelegationMarkdown` / `readDelegationEntries` helpers. These
@@ -1676,13 +1677,15 @@ async function main() {
         assert.equal(sessionID, null)
         const md = await readAllDelegationEntries(root)
         // Running MD reports are now rejected (Fix 3) — only terminal reports parse
-        assert.equal(md.length, 3, 'history collected from disk despite null sessionID (running MD rejected)')
+        assert.equal(
+          md.length,
+          3,
+          'history collected from disk despite null sessionID (running MD rejected)',
+        )
         const panelList = visibleDelegationList(md)
         assert.equal(panelList.length, 3, 'history renders — panel is NOT (0)')
         assert.deepEqual(
-          panelList
-            .map((e) => e.alias)
-            .sort(),
+          panelList.map((e) => e.alias).sort(),
           ['apo-1', 'her-7', 'the-9'],
           'terminal history present',
         )

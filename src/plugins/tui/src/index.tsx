@@ -905,9 +905,10 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      board row for the same child (a child WITH a report keeps the md
  *      entry, source 'md').
  *
- *   2. ENRICHMENT + HISTORY — markdown reports the job board persists under
- *      `.pantheon/delegations/<sessionID>/<alias>.md` (written by
- *      src/pantheon/delegation-finalize.ts at terminal state). Each child
+ *   2. ENRICHMENT + HISTORY — markdown reports under
+ *      `.pantheon/delegations/<sessionID>/<alias>.md`. These are LEGACY files
+ *      (the writer, src/pantheon/delegation-finalize.ts, was removed); the
+ *      panel still reads them for history. Each child
  *      is matched to its report by the `Task ID` header (== child session
  *      id == board task id), which supplies the alias (apo-N), agent,
  *      description and terminal duration/timedOut. No report → the child
@@ -1151,7 +1152,8 @@ export async function readDelegationEntries(dir: string): Promise<DelegationEntr
 
 /** Read delegation reports from EVERY session under
  *  `<root>/.pantheon/delegations/<sessionID>/<alias>.md` — the panel's
- *  HISTORY channel. Unlike the children/live channels it does NOT depend on a
+ *  HISTORY channel (reads legacy files; the writer, delegation-finalize.ts,
+ *  was removed). Unlike the children/live channels it does NOT depend on a
  *  resolved sessionID: with no focused session (null/placeholder), the panel
  *  still shows the reports from all past sessions (running first, Finalized
  *  desc — the sort applied by readDelegationEntries). Fail-open: a
@@ -1160,8 +1162,8 @@ export async function readAllDelegationEntries(root: string): Promise<Delegation
   return readDelegationEntries(join(root, '.pantheon', 'delegations'))
 }
 
-/** Resolve the directory where the job board writes delegation md reports.
- *  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
+/** Resolve the directory holding delegation md reports.
+ *  The reports live under `.pantheon/delegations` RELATIVE to the server cwd,
  *  which the TUI exposes as `TuiState.path.directory`. `project` does NOT
  *  exist on `TuiState.path` (the old `state?.project ?? state?.worktree`
  *  resolution was always undefined for the first term) and `worktree` is

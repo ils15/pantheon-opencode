@@ -4,22 +4,18 @@
  *
  * Priority: an ACTIVE GOAL owns the idle (goalLoop.onIdle); without an
  * active goal the todo enforcer gets it (self-guards on its own enabled
- * flag). Board-child sessions never reach the dispatcher — the plugin's
- * event hook routes those to the delegation finalize path first
- * (`handleDelegationEvent` returns true) and only calls the dispatcher on
- * the `!delegated` branch.
+ * flag).
  *
  * Uses fake loop/enforcer spies (independent testability) plus a real
- * TodoEnforcer for the disabled case and a real BackgroundJobBoard +
- * handleDelegationEvent for the board-child semantics.
+ * TodoEnforcer for the disabled case and a real BackgroundJobBoard for the
+ * board-running guard.
  *
  * Run with: npx tsx tests/pantheon/idle-continuation.test.ts
  */
 import { strict as assert } from 'node:assert'
 
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
-import { handleDelegationEvent } from '../../src/pantheon/delegation-notify.ts'
-import { createIdleDispatcher, type IdleDispatcher } from '../../src/pantheon/idle-continuation.ts'
+import { createIdleDispatcher } from '../../src/pantheon/idle-continuation.ts'
 import { TodoEnforcer } from '../../src/pantheon/todo-enforcer.ts'
 
 // ─── Harness ───────────────────────────────────────────────────────────
@@ -134,48 +130,6 @@ async function main() {
         0,
         'disabled enforcer never injects through the dispatcher',
       )
-    },
-  )
-
-  await testAsync(
-    'board child session idle → delegation path claims it; dispatcher never invoked',
-    async () => {
-      const board = new BackgroundJobBoard()
-      const childID = 'ses_child'
-      await board.registerLaunch({
-        taskID: childID,
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Search codebase',
-      })
-
-      // The plugin event hook runs handleDelegationEvent FIRST; board children
-      // return true (delegated), so the dispatcher branch is never reached.
-      const delegated = await handleDelegationEvent(
-        { type: 'session.idle', properties: { sessionID: childID } },
-        { board, finalize: async () => ({}) },
-      )
-      assert.equal(delegated, true, 'delegation path claims board-child idles')
-
-      let dispatcherCalls = 0
-      const dispatcher: IdleDispatcher = createIdleDispatcher({
-        goalLoop: {
-          hasActiveGoal: async () => true,
-          onIdle: async () => {
-            dispatcherCalls += 1
-          },
-        },
-        todoEnforcer: {
-          onIdle: async () => {
-            dispatcherCalls += 1
-          },
-        },
-      })
-      // Mirror of the plugin gate: `if (!delegated && ev.type === 'session.idle')`.
-      if (!delegated) {
-        await dispatcher.onIdle(childID)
-      }
-      assert.equal(dispatcherCalls, 0, 'dispatcher is not invoked for board-child idles')
     },
   )
 

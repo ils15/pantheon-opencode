@@ -1,7 +1,7 @@
 /**
  * Read-Only Enforcement (Phase 4) — deny mutating tools inside sessions that
- * were delegated as read-only (advisory `read_only: true` on
- * pantheon_delegate, or the agent ∈ `readOnlyAgents` from routing.yml).
+ * were delegated as read-only (advisory `read_only: true` on the native
+ * `task` delegate, or the agent ∈ `readOnlyAgents` from routing.yml).
  *
  * OpenCode hook: `tool.execute.before`. The hook shape is
  * `(input, output) => Promise<void>`; THROWING from the hook denies the tool
@@ -18,11 +18,11 @@
  *   - `task` is blocked too, which hard-enforces depth-2: a read-only agent
  *     cannot spawn its own subagents.
  *
- * Unknown sessions are allowed for ordinary tools. Delegation tools are
- * fail-closed when the runtime matrix is wired: missing agent identity or
+ * Unknown sessions are allowed for ordinary tools. The runtime matrix is
+ * fail-closed when wired: missing agent identity or
  * target metadata is denied rather than inferred.
  *
- * The registry is populated by delegation.ts at delegate time: the CHILD
+ * The registry is populated at delegate time: the CHILD
  * session is registered when the delegate call is read-only.
  *
  * @module delegation-enforce
@@ -147,7 +147,6 @@ export function isDelegationAllowed(
 function targetFromTool(tool: string, args: unknown): string | undefined {
   if (args === null || typeof args !== 'object') return undefined
   const record = args as Record<string, unknown>
-  if (tool === 'pantheon_delegate') return normalizeDelegationAgent(record.agent)
   if (tool === 'task') {
     return normalizeDelegationAgent(record.subagent_type ?? record.subagentType)
   }
@@ -236,7 +235,7 @@ export function zeusReadGuard(tool: string, args: unknown, agent: string | undef
 // ─── Registry ──────────────────────────────────────────────────────────
 
 /**
- * Read-only session registry. `createDelegationTools` registers child
+ * Read-only session registry. The plugin's delegate wiring registers child
  * sessions here; the plugin's `tool.execute.before` guard consults it.
  * Process-wide singleton for plugin wiring + factory for test isolation.
  */
@@ -291,19 +290,19 @@ export function createEnforcementGuard(input: {
   options?: EnforcementGuardOptions
 }): ToolExecuteBeforeHandler {
   const blockedTools = input.options?.blockedTools ?? DEFAULT_BLOCKED_TOOLS
-  const prefix = input.options?.messagePrefix ?? 'pantheon_delegate guard'
+  const prefix = input.options?.messagePrefix ?? 'delegation guard'
 
   return async (hook: ToolExecuteBeforeInput, output?: ToolExecuteBeforeOutput): Promise<void> => {
-    const isDelegationTool = hook.tool === 'task' || hook.tool === 'pantheon_delegate'
+    const isDelegationTool = hook.tool === 'task'
     if (isDelegationTool && input.options?.isChildSession?.(hook.sessionID) === true) {
       throw new Error(
         `${prefix}: session ${hook.sessionID} is a child session — delegation tools are denied ` +
           'to prevent nested delegation',
       )
     }
-    // pantheon_delegate has the authoritative ToolContext.agent at execution
-    // time, so its matrix check lives in delegation.ts. The hook only has the
-    // session-scoped agent learned from chat.params for native task().
+    // The native task() delegate has the authoritative ToolContext.agent at
+    // execution time, so its matrix check lives in dispatch-guard.ts. The hook
+    // only has the session-scoped agent learned from chat.params.
     if (
       hook.tool === 'task' &&
       input.options?.isRootSession !== undefined &&
@@ -336,7 +335,7 @@ export function createEnforcementGuard(input: {
         `This session was delegated for investigation only (read-only agent); it cannot ` +
         `modify files, run commands, or spawn subagents. ` +
         `If a write result is needed, dispatch a write-capable agent ` +
-        `(e.g. hermes, aphrodite) with pantheon_delegate instead.`,
+        `(e.g. hermes, aphrodite) with the native task() tool instead.`,
     )
   }
 }

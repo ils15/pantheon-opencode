@@ -144,33 +144,23 @@ task_status(task_id="ses_xxx", wait=true)
   -> bloqueia ate completar: { state: "completed", task_result: "..." }
 ```
 
-### Pantheon Delegation Tools (plugin) — 3-tool API
+### Pantheon Delegation — BackgroundJobBoard (plugin)
 
-O plugin Pantheon adiciona 3 tools de delegacao gerenciada pelo BackgroundJobBoard:
+O plugin Pantheon mantém um **BackgroundJobBoard** persistente
+(`.pantheon/board/state.json`) que rastreia trabalho em voo e o carrega para o
+contexto de compactação. O toolset de delegação do plugin
+(`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`)
+foi **removido em 1.4.3** — dispatch e coleta usam a API nativa
+`task(background=true)` / `task_status(wait=true)`.
 
-```
-pantheon_delegate({prompt, agent, description?, read_only?})
-  -> cria sessao filha, registra no board, retorna alias: [apo-1]
-pantheon_delegation_read({id: "apo-1"})
-  -> BLOQUEIA ate o job terminar, retorna o report markdown, marca reconciled
-  -> durante a espera, mostra o que o agente esta fazendo: seccao final "## Agent Activity"
-     (amostra as messages do child a cada ~2s; tool calls + args truncados / texto)
-pantheon_delegation_list()
-  -> lista jobs da sessao, com [unread] para jobs terminados nao lidos
-  -> jobs RUNNING mostram "last activity:" (ultima acao visivel do child)
-  -> fail-open: sem suporte a messages, formato atual inalterado
-```
-
-- **Read-only enforcement:** agentes read-only (apollo, gaia — `read_only_agents` no routing.yml) tem `edit`, `write`, `bash`, `task` NEGADOS dentro da sessao delegada (o guard de `tool.execute.before` THROW com mensagem acionavel). Use `read_only: true` no delegate para qualquer agente de investigacao.
-- **Depth-2 hard-enforced:** sessao read-only NAO cria subagentes (`task` bloqueado) — investigacao nunca vira arvore.
 - **Compactacao:** jobs em voo (running + unread terminal) sao injetados no contexto de compactacao via `experimental.session.compacting` — delegacao em andamento nao se perde ao compactar.
 
-### DELEGATION_RULES (plugin path)
+### DELEGATION_RULES (native task path)
 
-1. **NUNCA** polle `pantheon_delegation_list` para checar se um job terminou.
-2. Voce NAO recebe notificacao injetada no chat — politica do usuario: ZERO `task-notification` no transcript. Visibilidade de conclusao: marcador `[unread]` em `pantheon_delegation_list`, `pantheon_delegation_read({id})`, toasts TUI (pantheon-hooks) e carry-forward de compactacao.
-3. Use `pantheon_delegation_read({id})` APENAS para fan-in explicito / recuperacao de resultado sob demanda (bloqueia ate o fim).
-4. `pantheon_delegation_list` e para diagnostico, nao para polling.
+1. **NUNCA** polle `task_status` para checar se um job terminou — use `wait=true` para fan-in explicito.
+2. Voce NAO recebe notificacao injetada no chat — politica do usuario: ZERO `task-notification` no transcript. Visibilidade de conclusao: marcador `[unread]` no board, toasts TUI (pantheon-hooks) e carry-forward de compactacao.
+3. Use `task_status({task_id, wait: true})` APENAS para fan-in explicito / recuperacao de resultado sob demanda (bloqueia ate o fim).
+4. `task_status` sem `wait` e para diagnostico, nao para polling.
 
 ### Background (sempre usar)
 - **Apollo, Hermes, Aphrodite, Demeter, Hephaestus, Prometheus**
@@ -324,9 +314,8 @@ out = await guard.maybeRetry(result, async () => { ...task() de novo... })
 Regra: retry 1x APENAS em `empty-mode1`/`empty-mode2`. Resultado com conteudo
 nunca redispara. Apos 1 retry vazio → escalate (mesma regra do TODO Enforcer).
 
-> **Waves DEVEM usar `zeusDelegateWithRetry`** (`src/pantheon/zeus-delegate-with-retry.ts`) — encapsula `delegate → waitForTerminal → classify → retry 1x → escalate` com cap duro 1; se ainda vazio throw `ZeusEscalationError` (escale: tente outro agente, simplifique, manual).
-> Uso alto-nível: `import { zeusDelegateWithRetry } from './pantheon/zeus-delegate-with-retry.ts'` → `await zeusDelegateWithRetry({ board, client, sessionID, agent, prompt })`.
-> Uso baixo-nível: `createZeusRetryHelper().executeWithRetry(first, () => secondRead())` — classifica empty e decide retry/escalate (mesmo cap 1).
+> **Waves DEVEM usar `dispatch-guard`** (`src/pantheon/dispatch-guard.ts`) — encapsula `task → classify → retry 1x → escalate` com cap duro 1; se ainda vazio throw `ZeusEscalationError` (escale: tente outro agente, simplifique, manual).
+> Uso alto-nível: `import { createDispatchGuard } from './pantheon/dispatch-guard.ts'` → `await guard.maybeRetry(result, () => task(...))`.
 
 ### /cost — pantheon_cost tool (WIRED no plugin)
 `pantheon_cost({ days?: number })` le o `opencode.db` READ-ONLY (node:sqlite;

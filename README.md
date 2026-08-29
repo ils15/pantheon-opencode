@@ -218,112 +218,27 @@ incompatible schema.
 
 ### Background Delegation
 
-Zeus (and other root sessions) can dispatch agents as **background child sessions**
-via three delegation tools, tracked on a persistent job board
-(`.pantheon/board/state.json`, 24h TTL) with reports written to
-`.pantheon/delegations/<parent>/<alias>.md`:
+Zeus (and other root sessions) dispatch agents as **background child sessions**
+via OpenCode's native `task(background=true, ...)` API. The plugin layer keeps a
+persistent job board (`BackgroundJobBoard`, `.pantheon/board/state.json`, 24h
+TTL) that tracks in-flight work and carries it forward across context
+compaction, so a compacted session does not lose track of running delegations.
 
-| Tool | Signature | Behavior |
-|------|-----------|----------|
-| `pantheon_delegate` | `{prompt, agent, description?, read_only?, model?}` | Creates a child session (parentID = caller), registers it on the job board, arms a 15-minute timeout, and sends `promptAsync` to the child. `model` is optional and uses `provider/model-id`. Returns the readable alias (e.g. `apo-1`). Only root sessions may delegate (sub-sessions are rejected by the depth guard). |
-| `pantheon_delegation_read` | `{id}` | Blocks (`waitForTerminal`, up to 15 min) until the delegation reaches a terminal state, returns the report markdown, and marks the job reconciled. Resolves by alias or task ID. |
-| `pantheon_delegation_list` | `{}` | Lists the current session's delegations with `[unread]` on finished, unreconciled jobs. |
-
-**Agent activity visibility.** While `pantheon_delegation_read` blocks on a
-running job, it samples the child session's messages every ~2s and appends the
-collected lines to the report as a trailing `## Agent Activity` section (latest
-tool calls with truncated args, or user/assistant text, capped at ~200 chars per
-line) — so you can see what the agent is doing during the wait. Likewise,
-`pantheon_delegation_list` shows a `last activity:` line for running jobs.
-Fail-open: if the child session messages are unavailable (or empty), the read
-returns the report exactly as before — the activity sampling never breaks the
-delegation read.
+The plugin no longer ships a delegate toolset (`pantheon_delegate`,
+`pantheon_delegation_read`, `pantheon_delegation_list` were removed in 1.4.3).
+Dispatch and result collection use the native `task()` / `task_status()` API.
 
 **Completion visibility — zero chat noise.** Delegation notifications are never
 injected into the chat transcript: neither `chat.message` nor any other chat
 hook or transcript marker is used as a delivery channel. When a job reaches a
-terminal state (completion observed via `session.idle`/`session.error` on the
-child, or the timeout finalize path), the plugin writes a file-only audit log
-line (echo opt-in via `PANTHEON_HOOKS_LOG`). Completion visibility lives in the
-legitimate channels: the board `[unread]` marker
-(`pantheon_delegation_list`), `pantheon_delegation_read`, TUI toasts
-(`PANTHEON_TOASTS` gate), and compaction carry-forward. Reconcile is an
-acknowledgment, not a completion — it never re-fires the terminal transition.
+terminal state, the plugin writes a file-only audit log line (echo opt-in via
+`PANTHEON_HOOKS_LOG`). Completion visibility lives in the legitimate channels:
+the board `[unread]` marker, TUI toasts (`PANTHEON_TOASTS` gate), and compaction
+carry-forward. Reconcile is an acknowledgment, not a completion — it never
+re-fires the terminal transition.
 
 **Timeout:** `background_delegation.timeout_ms` (default `900000` = 15 min). A job
 that has not reached a terminal state is finalized as `error`/`timedOut`.
-
-**Runtime delegation environment variables:**
-
-| Variable | Default | Scope and behavior |
-|---|---:|---|
-| `PANTHEON_ATHENA_APOLLO_BUDGET` | `5` dispatches | In-memory per `createDelegationTools()` factory/process instance and parent session, for the `athena → apollo` read-only exception. |
-| `PANTHEON_HERMES_APOLLO_BUDGET` | `5` dispatches | In-memory per `createDelegationTools()` factory/process instance and parent session, for the `hermes → apollo` read-only exception. |
-| `PANTHEON_DELEGATION_TIMEOUT_MS` | `900000` ms (15 min) | Per delegated child wall-clock timeout. The value is read when the plugin factory is created; unset or invalid values use the default. |
-
-Budgets are reserved before asynchronous child-session creation, so real
-concurrent calls cannot overshoot them. They reset when the factory/process
-restarts. If `ToolContext.agent` is missing, the default runtime matrix rejects
-the delegation (fail-closed); no caller identity or budget is inferred from the
-target, prompt, or session state. An explicitly legacy host using
-`enforceRuntimeMatrix: false` skips the budget because the caller cannot be
-identified and emits a warning. These budgets are separate from
-`background_delegation.max_concurrent_per_agent`: concurrency limits the number
-of currently running children, while an exception budget limits total dispatch
-reservations for that parent session during the factory lifetime.
-
-**Read-only enforcement:** delegating with `read_only: true`, or delegating to an
-agent in `background_delegation.read_only_agents` (`apollo`, `gaia`), registers
-the child session as read-only — the `tool.execute.before` guard denies
-`edit`/`write`/`bash`/`task` inside that session.
-
-**Delegated model resolution:** the optional child model is resolved in this
-order: (1) explicit `model` on `pantheon_delegate`; (2) the target agent's
-model in the active preset; (3) the current model of the parent session; (4)
-no model, allowing OpenCode's native inheritance. `small_model` is never used
-for delegates. When a model resolves, the same `provider/model-id` is sent as
-`{providerID, id}` to both `session.create` and `promptAsync`, including the
-single safe bootstrap retry; the retry does not select a different model. If
-the resolution lookup yields no model, the model field is omitted and the
-delegation continues with native inheritance.
-
-Model availability is not inferred from the string. The provider must exist in
-OpenCode and the referenced model must be available through that provider's
-account, subscription, or configured endpoint; otherwise the child host may
-reject startup. An active preset supplies provider configuration and model
-mappings, but does not make an unavailable provider or model available.
-
-**R1 — Per-error-type retry + provider cooldown (LiteLLM pattern):**
-`retry_policy` in `src/routing.yml` maps an error class (`auth`, `rate_limit`,
-`timeout`, `other`) to max retries before escalating — `auth` is never retried
-(0), `rate_limit` gets 3, `timeout` 2, `other` 1. Retries use exponential
-backoff (base 1s, doubling, capped 30s). `cooldown` (`allowed_fails`,
-`cooldown_time_seconds`) skips a provider for the configured window after that
-many consecutive failures; a success resets the counter. Enforcement lives in
-`RetryPolicyEngine` (`src/pantheon/retry-policy.ts`) and the R1 path of
-`zeusDelegateWithRetry` (`src/pantheon/zeus-delegate-with-retry.ts`) — pass
-`retryPolicy`/`cooldown`/`provider` to `createZeusRetryHelper`. In-memory only
-(no Redis).
-
-**R4 — Per-agent step caps:** `agents.<name>.max_steps` in `src/routing.yml`
-gives each agent a step budget (e.g. `apollo: 25`, `themis: 25`, `athena: 15`).
-When an agent reaches `max_steps` it is forced to summarize-and-stop: a
-delegation to an already-capped agent is skipped with a `[STEP CAP REACHED]`
-summary (no child session created), and a dispatch that hits the cap appends a
-stop instruction to the prompt. Enforcement: `StepCapTracker`
-(`src/pantheon/step-cap.ts`) wired into `pantheon_delegate`. The tracker is
-**permanent-per-process** — counters accumulate for the process lifetime and
-are intentionally not reset on success/session end (a per-session reset would
-let an agent exceed its process budget).
-
-**O5 — Permission globs for delegation:** `permission.task` in `src/routing.yml`
-controls which subagents an agent may invoke via glob patterns (last matching
-rule wins). A deny removes the agent from the delegate tool description
-entirely (not just blocks the call) — preventing circular delegation at the
-permission layer. Default `"*": allow` keeps the existing runtime matrix
-(zeus → anyone; athena/hermes → apollo only). Enforcement:
-`src/pantheon/permission-globs.ts` + the `permissionTask` option on
-`createDelegationTools` / `createEnforcementGuard`.
 
 **Compaction carry-forward:** during context compaction, running and unread
 terminal delegations (capped at `background_delegation.max_compaction_items`,
@@ -353,8 +268,7 @@ logged warn and pass-through.
 
 **Post-compaction state re-assertion (1.3.4):** on `session.compacted`, fresh
 state — running/unread delegations from the board + active goals, capped at 10
-lines — remains available through compaction carry-forward and the board
-(`pantheon_delegation_list` / `pantheon_delegation_read`). A session with
+lines — remains available through compaction carry-forward. A session with
 nothing to assert is a silent skip; no chat transcript injection is performed.
 
 **Preemptive compaction check (1.3.4):** a pure threshold core
@@ -378,8 +292,8 @@ omits the child model.
 **Delegation log hygiene (1.3.4):** `delegations.log` now records the real
 `task_id` (omitted when empty, never `""`) and a **numeric** `duration_ms`
 (null when unset) so downstream aggregation works. Terminal events are
-file-only audit entries; completion is surfaced by TUI toast (when enabled),
-the board, and the list/read tools — never by chat delivery.
+file-only audit entries; completion is surfaced by TUI toast (when enabled)
+and the board — never by chat delivery.
 
 **Env vars & config:**
 
@@ -387,14 +301,13 @@ the board, and the list/read tools — never by chat delivery.
 - `PANTHEON_TOASTS` — TUI toast gate for the delegation lifecycle signals.
   Default `{errors, delegations, council}`; `PANTHEON_TOASTS=off` disables all
   TUI toasts (delegation signals then only surface via the board `[unread]`
-  marker, `pantheon_delegation_read` and the on-disk audit log — never via
-  chat.message injection from the plugin).
+  marker and the on-disk audit log — never via chat.message injection from the
+  plugin).
 - `background_delegation` section in `src/routing.yml` — `timeout_ms`,
-  `poll_ms`, `max_compaction_items`, `prune_ttl_ms`, `read_only_agents`,
-  `session_max`, `retry_count`.
+  `poll_ms`, `max_compaction_items`, `prune_ttl_ms`, `session_max`,
+  `retry_count`.
 
-See `src/agents/zeus.md` for the agent-facing delegation protocol and
-`src/pantheon/delegation.ts` for the tool implementations.
+See `src/agents/zeus.md` for the agent-facing delegation protocol.
 
 ### Real-time Delegations panel (1.3.4)
 
@@ -402,7 +315,7 @@ The TUI sidebar ships a live **Delegations** panel (open by default, above the
 collapsed Sessions list). Its primary source is `api.client.session.children`,
 so it shows **both** kinds of background work in one place:
 
-- **`pantheon_delegate` children** — rendered with their board alias tag
+- **Board-tracked children** — rendered with their board alias tag
   (`[apo-1]`) and enriched from the `.pantheon/delegations/` report.
 - **Native `task()` children** — rendered with a distinct `[task]` tag (info
   color) when no board report exists for the session.
@@ -674,7 +587,7 @@ and is pinned to concrete `provider/model` IDs in [src/routing.yml](src/routing.
 The abstract tiers above are pinned to concrete `provider/model` IDs by **4 built-in model presets**.
 Cada preset mapeia os 14 agentes para um modelo específico + `reasoning_effort` por papel (planners/reviewers, implementers, scouts).
 
-> **Default = herdar do chat (sem `active-preset.json`)** — sem preset ativo, os delegates **herdam nativamente** o modelo do chat pai ([herança nativa](src/pantheon/delegation.ts)). O instalador **não grava** `active-preset.json` quando você escolhe `0`/`inherit` no wizard (ou não seleciona preset via `--preset`). A resolução do modelo delegado segue: `explicit model` em `pantheon_delegate` > modelo do agente-alvo no preset ativo > modelo atual da sessão pai > herança nativa (sem `model`, sem `small_model`). `small_model` nunca é usado para delegates.
+> **Default = herdar do chat (sem `active-preset.json`)** — sem preset ativo, os delegates **herdam nativamente** o modelo do chat pai. O instalador **não grava** `active-preset.json` quando você escolhe `0`/`inherit` no wizard (ou não seleciona preset via `--preset`). A resolução do modelo delegado segue: modelo do agente-alvo no preset ativo > modelo atual da sessão pai > herança nativa (sem `model`, sem `small_model`). `small_model` nunca é usado para delegates.
 
 Tabelas abaixo são **geradas a partir de [src/routing.yml](src/routing.yml)** — rode `node scripts/generate-preset-docs.mjs` para regenerar. Nenhum segredo é hardcoded: apenas nomes de env vars (`PANTHEON_OPENCODE_API_KEY`, `OPENAI_API_KEY`) e `baseURL`s.
 
@@ -1141,16 +1054,15 @@ Use the isolated sandbox (`~/pantheon-sandbox/`) — **never** the dev environme
 **Happy path (clean edit):** any normal tool call (exit 0) is **silent** — no console output by design, even though the audit hooks append their log files (`sessions.log`, `delegations.log`). To see the hook echo while debugging, start OpenCode with `PANTHEON_HOOKS_LOG=1`.
 
 **Delegation path (zero chat noise):** delegation signals are surfaced through
-TUI toasts (when enabled), the board's `[unread]` marker, and the
-`pantheon_delegation_list` / `pantheon_delegation_read` tools. Ask something
+TUI toasts (when enabled) and the board's `[unread]` marker. Ask something
 that dispatches subagents (e.g. *"dispare 2 subagentes apollo em paralelo para
 listar arquivos e comparar resultados"*) and expect:
 
 - A TUI toast with `🚀 apollo em execução` / `✅ apollo concluiu` when
   `PANTHEON_TOASTS` permits it
-- `[unread]` in `pantheon_delegation_list` until the terminal result is read
+- `[unread]` on the board until the terminal result is read
 - An honest append to `logs/agent-sessions/delegations.log`: the **real agent name** (extracted from `tool_input.subagent_type`, never `unknown` when present) and a **non-fabricated status** — `success` only on explicit completion evidence, `failure` for refusals/errors, `unknown` otherwise
-- With `export PANTHEON_TOASTS=off` before starting OpenCode: no toasts; board/list/read and audit-log visibility remain available
+- With `export PANTHEON_TOASTS=off` before starting OpenCode: no toasts; board and audit-log visibility remain available
 
 ### Pre-commit hooks (local secret gate)
 

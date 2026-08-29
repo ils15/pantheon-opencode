@@ -23,8 +23,6 @@ import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
-
-import type { ToolContextLike } from './delegation.ts'
 import {
   capabilityEntry,
   hasVision,
@@ -32,6 +30,7 @@ import {
   normalizeCapability,
   resolveActivePreset,
 } from './presets.mjs'
+import type { ToolContextLike } from './tool-context.ts'
 
 export type ModelScope = 'project' | 'global'
 export type ModelAction = 'status' | 'show' | 'set' | 'reset'
@@ -65,10 +64,7 @@ const modelArgs = {
     .optional()
     .describe('Operation: status/show, set, or reset. No args runs wizard.'),
   agent: z.string().optional().describe('Agent name (one of 14 canonical agents).'),
-  model: z
-    .string()
-    .optional()
-    .describe('Model in provider/model-id format; used by set.'),
+  model: z.string().optional().describe('Model in provider/model-id format; used by set.'),
   effort: z
     .enum(['low', 'medium', 'high'])
     .optional()
@@ -357,10 +353,7 @@ function presetPathForScope(options: ModelCommandOptions, scope: ModelScope): st
   return globalCandidates[0] ?? candidates[0]!
 }
 
-async function readActivePresetRaw(
-  path: string,
-  label: string,
-): Promise<ReadFileResult> {
+async function readActivePresetRaw(path: string, label: string): Promise<ReadFileResult> {
   const file = await readRegularFile(path, label)
   if (file === undefined) return { exists: false, valid: true, data: null }
   try {
@@ -368,7 +361,13 @@ async function readActivePresetRaw(
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return { exists: true, valid: false, data: null, content: file.content, mode: file.mode }
     }
-    return { exists: true, valid: true, data: parsed as Record<string, unknown>, content: file.content, mode: file.mode }
+    return {
+      exists: true,
+      valid: true,
+      data: parsed as Record<string, unknown>,
+      content: file.content,
+      mode: file.mode,
+    }
   } catch {
     return { exists: true, valid: false, data: null, content: file.content, mode: file.mode }
   }
@@ -444,9 +443,21 @@ async function writeActivePresetAtomically(
     if (current.content === undefined) {
       throw new ModelCommandError('configuration content could not be read; file preserved')
     }
-    await atomicReplace(backupPath, current.content, backupMode, 'configuration backup', backup !== undefined)
+    await atomicReplace(
+      backupPath,
+      current.content,
+      backupMode,
+      'configuration backup',
+      backup !== undefined,
+    )
   }
-  await atomicReplace(path, `${JSON.stringify(data, null, 2)}\n`, originalMode, 'configuration file', current.exists)
+  await atomicReplace(
+    path,
+    `${JSON.stringify(data, null, 2)}\n`,
+    originalMode,
+    'configuration file',
+    current.exists,
+  )
 }
 
 function ensureActivePresetShape(
@@ -460,11 +471,21 @@ function ensureActivePresetShape(
   }
   if (typeof out.source !== 'string') out.source = 'cli'
   out.updated_at = new Date().toISOString()
-  if (out.overrides === undefined || out.overrides === null || typeof out.overrides !== 'object' || Array.isArray(out.overrides)) {
+  if (
+    out.overrides === undefined ||
+    out.overrides === null ||
+    typeof out.overrides !== 'object' ||
+    Array.isArray(out.overrides)
+  ) {
     out.overrides = {}
   }
   const overrides = out.overrides as Record<string, unknown>
-  if (overrides.agents === undefined || overrides.agents === null || typeof overrides.agents !== 'object' || Array.isArray(overrides.agents)) {
+  if (
+    overrides.agents === undefined ||
+    overrides.agents === null ||
+    typeof overrides.agents !== 'object' ||
+    Array.isArray(overrides.agents)
+  ) {
     overrides.agents = {}
   }
   return out
@@ -509,14 +530,25 @@ async function updateActivePreset(
       } catch {
         // ignore
       }
-    } else if (current.data && typeof current.data === 'object' && (current.data as Record<string, unknown>).preset) {
+    } else if (
+      current.data &&
+      typeof current.data === 'object' &&
+      (current.data as Record<string, unknown>).preset
+    ) {
       const existing = (current.data as Record<string, unknown>).preset as string
-      if (typeof existing === 'string' && existing.trim() !== '' && SAFE_PRESET_NAME.test(existing.trim())) {
+      if (
+        typeof existing === 'string' &&
+        existing.trim() !== '' &&
+        SAFE_PRESET_NAME.test(existing.trim())
+      ) {
         fallbackPreset = existing.trim()
       }
     }
 
-    const shaped = ensureActivePresetShape(current.data as Record<string, unknown> | null, fallbackPreset)
+    const shaped = ensureActivePresetShape(
+      current.data as Record<string, unknown> | null,
+      fallbackPreset,
+    )
     const overrides = shaped.overrides as Record<string, unknown>
     const agents = overrides.agents as Record<string, unknown>
 
@@ -551,7 +583,10 @@ async function updateActivePreset(
 
       // If clamped, append warning
       if (variantInfo.clamped) {
-        visionWarning = [visionWarning, `effort clamped to ${variantInfo.variant} for model ${model}`]
+        visionWarning = [
+          visionWarning,
+          `effort clamped to ${variantInfo.variant} for model ${model}`,
+        ]
           .filter(Boolean)
           .join('; ')
       }
@@ -583,10 +618,6 @@ async function updateActivePreset(
 }
 
 // ─── Status ─────────────────────────────────────────────────────────────────
-
-function silentLogger(): ModelCommandLogger {
-  return { warn: () => {}, log: () => {} }
-}
 
 async function resolvePerAgentStatus(options: ModelCommandOptions): Promise<{
   presetName: string | null
@@ -624,12 +655,20 @@ async function resolvePerAgentStatus(options: ModelCommandOptions): Promise<{
     let vision: boolean | undefined
 
     if (resolved) {
-      const merged = (resolved.agents as Record<string, { model?: string; reasoning_effort?: string; variant?: string }>)?.[key]
+      const merged = (
+        resolved.agents as Record<
+          string,
+          { model?: string; reasoning_effort?: string; variant?: string }
+        >
+      )?.[key]
       if (merged?.model) {
         model = merged.model
-        effort = (merged as { reasoning_effort?: string }).reasoning_effort ?? (merged as { variant?: string }).variant
+        effort =
+          (merged as { reasoning_effort?: string }).reasoning_effort ??
+          (merged as { variant?: string }).variant
         // Determine origin: file overrides > file preset > env
-        const fileOverrides = (resolved.overrides as { agents?: Record<string, unknown> } | null)?.agents
+        const fileOverrides = (resolved.overrides as { agents?: Record<string, unknown> } | null)
+          ?.agents
         if (resolved.source === 'file' && fileOverrides && Object.hasOwn(fileOverrides, key)) {
           origin = 'override'
         } else if (resolved.source === 'env') {
@@ -665,7 +704,8 @@ async function renderStatus(options: ModelCommandOptions): Promise<string> {
   const lines: string[] = []
   lines.push('Pantheon model configuration per-agent (restart OpenCode after changes):')
   if (presetName) {
-    const originLabel = presetSource === 'env' ? 'env' : presetSource === 'file' ? 'preset' : presetSource
+    const originLabel =
+      presetSource === 'env' ? 'env' : presetSource === 'file' ? 'preset' : presetSource
     lines.push(`active preset: ${presetName} (${presetSource ?? 'unknown'})`)
     // For test compatibility, also show origin mapping explicitly
     void originLabel
@@ -700,7 +740,8 @@ export function buildWizardQuestions(): unknown[] {
     },
     {
       header: 'Modelo',
-      question: 'Informe o modelo em provider/model-id (ex: openai/gpt-5.6 ou opencode-go/kimi-k2.7-code)',
+      question:
+        'Informe o modelo em provider/model-id (ex: openai/gpt-5.6 ou opencode-go/kimi-k2.7-code)',
       kind: 'text',
     },
     {
@@ -717,8 +758,14 @@ export function buildWizardQuestions(): unknown[] {
       header: 'Escopo',
       question: 'Onde salvar o override?',
       options: [
-        { label: 'project', description: './.pantheon/active-preset.json (escopo do projeto, seguro)' },
-        { label: 'global', description: '~/.config/opencode/.pantheon/active-preset.json (global)' },
+        {
+          label: 'project',
+          description: './.pantheon/active-preset.json (escopo do projeto, seguro)',
+        },
+        {
+          label: 'global',
+          description: '~/.config/opencode/.pantheon/active-preset.json (global)',
+        },
       ],
       multiSelect: false,
     },
@@ -741,11 +788,15 @@ async function promptViaReadline(
   answers.model = modelAns
 
   const effortQ = questions[2]!
-  const effortAns = (await rl.question(`${effortQ.question} [low/medium/high] : `)).trim().toLowerCase()
+  const effortAns = (await rl.question(`${effortQ.question} [low/medium/high] : `))
+    .trim()
+    .toLowerCase()
   answers.effort = effortAns || 'medium'
 
   const scopeQ = questions[3]!
-  const scopeAns = (await rl.question(`${scopeQ.question} [project/global] : `)).trim().toLowerCase()
+  const scopeAns = (await rl.question(`${scopeQ.question} [project/global] : `))
+    .trim()
+    .toLowerCase()
   answers.scope = scopeAns || 'project'
 
   return answers
@@ -779,7 +830,8 @@ async function runWizard(options: ModelCommandOptions): Promise<string> {
   const agent = typeof answers.agent === 'string' ? answers.agent.trim() : ''
   const model = typeof answers.model === 'string' ? answers.model.trim() : ''
   const effort = typeof answers.effort === 'string' ? answers.effort.trim().toLowerCase() : ''
-  const scopeRaw = typeof answers.scope === 'string' ? answers.scope.trim().toLowerCase() : 'project'
+  const scopeRaw =
+    typeof answers.scope === 'string' ? answers.scope.trim().toLowerCase() : 'project'
   const scope: ModelScope = scopeRaw === 'global' ? 'global' : 'project'
 
   if (!agent) return 'pantheon_model wizard failed: agent is required'
@@ -830,7 +882,8 @@ export function createModelCommand(options: ModelCommandOptions = {}): ModelTool
             return await runWizard(options)
           }
 
-          const action: ModelAction = (args.action ?? (hasAgentModelEffort ? 'set' : 'status')) as ModelAction
+          const action: ModelAction = (args.action ??
+            (hasAgentModelEffort ? 'set' : 'status')) as ModelAction
 
           if (action === 'status' || action === 'show') return await renderStatus(options)
 

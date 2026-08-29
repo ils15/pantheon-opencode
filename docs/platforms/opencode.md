@@ -294,7 +294,7 @@ Built into every agent's workflow, the **YAGNI Ladder** prevents overengineering
 
 ### Model Configuration — 4 Presets (gerado de `src/routing.yml`)
 
-> **Default = herdar do chat (sem `active-preset.json`)** — sem preset ativo, delegates herdam nativamente o modelo do chat pai. O plugin (`src/plugin.ts` → `resolveActivePreset`) lê `PANTHEON_MODEL_PRESET` env > primeiro `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) > **`null` (herança nativa)**. `loadRoutingAgentModels` vazio quando `null`; `delegation.ts` omite `model` em `session.create`/`promptAsync` para herança nativa. `small_model` nunca usado.
+> **Default = herdar do chat (sem `active-preset.json`)** — sem preset ativo, delegates herdam nativamente o modelo do chat pai. O plugin (`src/plugin.ts` → `resolveActivePreset`) lê `PANTHEON_MODEL_PRESET` env > primeiro `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) > **`null` (herança nativa)**. `loadRoutingAgentModels` vazio quando `null`; o delegate nativo (`task`) omite `model` para herança nativa. `small_model` nunca usado.
 
 Tabelas abaixo são **geradas a partir de [`src/routing.yml`](../../src/routing.yml)** via `node scripts/generate-preset-docs.mjs` (sem hardcodar segredos — só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` nomes + `baseURL`s). Pricing 2026 verificado via `scripts/install/model-picker.mjs` (`PRESET_PRICE`).
 
@@ -429,7 +429,7 @@ Apollo agora segue o override (se houver) ou preset agente; se nenhum, herda do 
 #### Model Priority Chain (1.4.2)
 
 ```
-1. explicit model em pantheon_delegate({model: "provider/model-id"})
+1. explicit model em task({model: "provider/model-id"})
 2. overrides.agents[agent].model em active-preset.json (/pantheon-model set --agent)
 3. presets.<active>.agents[agent].model  (loadRoutingAgentModels)
 4. (ausência) → herança nativa — OpenCode herda modelo da sessão pai (chat)

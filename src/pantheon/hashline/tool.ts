@@ -2,8 +2,8 @@
  * Hashline edit tool (Wave 2, PR #46) — structural `hashline_edit` tool that
  * anchors edits to stable sha256 content tags instead of fragile line numbers.
  *
- * Tool shape matches the delegation tools (`{description, args, execute}`,
- * zod-validated — same import pattern as delegation.ts).
+ * Tool shape follows the plugin tool convention (`{description, args, execute}`,
+ * zod-validated) used across the Pantheon toolset.
  *
  * Safety model (council-approved):
  *   1. ALL refs are validated against the ORIGINAL file snapshot BEFORE any

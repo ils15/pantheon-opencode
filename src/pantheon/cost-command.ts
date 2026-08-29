@@ -1,6 +1,6 @@
 /**
  * Cost Command (Wave 4, PR #46) — `pantheon_cost` structural tool: cost +
- * token visibility for delegation traffic, straight from opencode.db.
+ * token visibility by agent, straight from opencode.db.
  *
  * Reads the opencode session database READ-ONLY (sum cost + tokens by
  * agent over the last N days → markdown table). Zero new dependencies:
@@ -13,8 +13,8 @@
  * dbPath resolution: explicit option > env PANTHEON_COST_DB > the version-aware
  * default selected by PANTHEON_OPENCODE_VERSION (v1 or v2). An unset version
  * deliberately preserves V1 behavior. The tool is wired in
- * plugin.ts alongside the delegation toolset (usable by zeus and any agent
- * with tool access — no routing change needed).
+ * plugin.ts (usable by zeus and any agent with tool access — no routing change
+ * needed).
  *
  * @module cost-command
  */
@@ -25,7 +25,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { z } from 'zod'
 
-import type { ToolContextLike } from './delegation.ts'
+import type { ToolContextLike } from './tool-context.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -44,7 +44,7 @@ export interface CostCommandOptions {
 
 export type OpenCodeVersion = 'v1' | 'v2'
 
-/** One cost tool: description + zod args shape + execute (delegation.ts shape). */
+/** One cost tool: description + zod args shape + execute. */
 export interface CostTool<Args extends z.ZodRawShape = typeof costArgs> {
   description: string
   args: Args
@@ -62,7 +62,7 @@ const costArgs = {
     .min(1)
     .max(365)
     .optional()
-    .describe('Number of days of delegation history to include (default 7).'),
+    .describe('Number of days of cost history to include (default 7).'),
 } satisfies z.ZodRawShape
 
 /** Return the safe, isolated state DB name for an OpenCode version. */
@@ -239,7 +239,7 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
   return {
     pantheon_cost: {
       description:
-        'Report delegation cost + token usage by agent over the last N days, read from opencode.db (read-only, no writes).',
+        'Report cost + token usage by agent over the last N days, read from opencode.db (read-only, no writes).',
       args: costArgs,
       execute,
     },

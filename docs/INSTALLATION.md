@@ -109,12 +109,11 @@ This installs to `.opencode/agents/` in the current project directory.
 
 Desde **v1.4.2** o instalador **não cria** `model`/`small_model` top-level em `opencode.json` e o plugin/wizard **não grava** `active-preset.json` quando o usuário escolhe `0`/`inherit` (default da Q1). Comportamento:
 
-- **Sem preset = herança nativa**: `resolveActivePreset()` retorna `null`; `loadRoutingAgentModels()` retorna `{}`; `delegation.ts` (`resolveChildModel` → `resolveUsableChildModel`) omite `model` em `session.create`/`promptAsync` para que OpenCode herde o modelo do chat pai. `small_model` nunca é usado para delegates.
+- **Sem preset = herança nativa**: `resolveActivePreset()` retorna `null`; `loadRoutingAgentModels()` retorna `{}`; o modelo é omitido em `session.create`/`promptAsync` para que OpenCode herde o modelo do chat pai. `small_model` nunca é usado para delegates.
 - **Ordem de resolução do modelo filho** (fontes sem hardcode de segredos, só nomes):
-  1. `explicit model` em `pantheon_delegate({model: "provider/model-id"})`
-  2. `overrides.agents[agent].model` em `.pantheon/active-preset.json` (via `/pantheon-model set --agent`)
-  3. `presets.<active>.agents[agent].model` (via `loadRoutingAgentModels`)
-  4. omitir → herança nativa (herda modelo atual da sessão pai)
+  1. `overrides.agents[agent].model` em `.pantheon/active-preset.json` (via `/pantheon-model set --agent`)
+  2. `presets.<active>.agents[agent].model` (via `loadRoutingAgentModels`)
+  3. omitir → herança nativa (herda modelo atual da sessão pai)
 - O instalador **remove** `model`/`small_model` antigos de `config.agent[agentName]` durante `installOpencode()` (limpeza de legado), preservando apenas campos gerenciados (`MANAGED_FIELDS`). Flags `--model`/`--small-model` ainda existem para override explícito, mas **não são necessárias** para o fluxo padrão; se usadas, validam `provider/model-id` via `MODEL_REF_PATTERN` e nunca tocam o outro campo.
 - Provider/model disponibilidade **não** é inferida da string: deve existir no OpenCode e via conta/assinatura/endpoint configurado (`PANTHEON_OPENCODE_API_KEY` para `opencode`/`opencode-go`, `OPENAI_API_KEY` para `openai`).
 
@@ -132,7 +131,7 @@ npx pantheon-opencode init --preset go-fast
 # via comando Pantheon (ver próxima seção) — nunca via top-level opencode.json
 ```
 
-> **Nota:** Em `src/pantheon/delegation.ts` a validação usa `MODEL_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/` com hint sem expor segredos. Model inválido → erro `pantheon_delegate rejected: invalid explicit/agentModels model override. Expected provider/model-id...`.
+> **Nota:** A validação de modelo usa `MODEL_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/` com hint sem expor segredos. Model inválido → erro `invalid explicit/agentModels model override. Expected provider/model-id...`.
 
 ## `/pantheon-model` — Per-agent Overrides em `active-preset.json`
 
@@ -180,11 +179,13 @@ O comando é determinístico (`src/pantheon/model-command.ts`) — leitura/escri
 
 ## Background Delegation
 
-Pantheon's plugin layer provides **background delegation** via three tools
-(`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`),
-tracked on a persistent job board with completion notifications injected into
-the board and exposed through list/read, TUI toasts, and compaction
-carry-forward; no completion text is injected into the chat transcript.
+Pantheon's plugin layer supports **background delegation** via OpenCode's
+native `task(background=true, ...)` API, tracked on a persistent job board with
+completion surfaced through the board `[unread]` marker, TUI toasts, and
+compaction carry-forward; no completion text is injected into the chat
+transcript. The plugin no longer ships a delegate toolset
+(`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`
+were removed in 1.4.3).
 
 **Requirement:** Set the environment variable before launching OpenCode:
 
@@ -202,17 +203,13 @@ npm run start
 **How it works:**
 
 ```javascript
-// Dispatch a background agent — returns immediately with a readable alias
-pantheon_delegate({ prompt: "search the codebase", agent: "apollo", description: "Find X", model: "opencode/deepseek-v4-flash-free" })
-// → Delegated to apollo: [apo-1] (task ses_xxx). Read with pantheon_delegation_read.
+// Dispatch a background agent — returns immediately with a task id
+const { task_id } = await task({ background: true, subagent_type: "apollo", prompt: "search the codebase" })
+// → { task_id: "ses_xxx", state: "running" }
 
 // Collect results later (blocks until finished, then returns the report)
-pantheon_delegation_read({ id: "apo-1" })
-// → report markdown (job marked reconciled)
-
-// See what's running / finished-unread
-pantheon_delegation_list({})
-// → [apo-1] apollo — Find X — OK [unread]
+const result = await task_status({ task_id, wait: true })
+// → { state: "completed", task_result: "..." }
 ```
 
 **Which agents run in background:**
@@ -224,8 +221,8 @@ pantheon_delegation_list({})
 | Talos, Iris, Nyx, Mnemosyne, Gaia | ❌ No | Quick operations |
 
 See the **Background Delegation** section in the [README](../README.md) for the
-notification model, model-resolution order, timeout, read-only enforcement,
-and `background_delegation` routing.yml configuration.
+notification model, model-resolution order, timeout, and `background_delegation`
+routing.yml configuration.
 
 ## TUI Sidebar Plugin
 
@@ -247,9 +244,9 @@ Pantheon v1.4.2
   preset (`⚡ Preset: <name> (source)`, or `Preset: default`).
 - **Sessions** — collapsible recent-sessions list (click a row to open).
 - **Delegations (real-time, 1.4.2)** — live view sourced from
-  `api.client.session.children`: children spawned by `pantheon_delegate`
-  (board alias tag `[apo-1]`) **and** native `task()` children (`[task]` tag,
-  distinct info color). Animated states
+  `api.client.session.children`: children spawned by native `task()`
+  (`[task]` tag, distinct info color) and board-tracked children (board alias
+  tag `[apo-1]`). Animated states
   (DELEGATING / WORKING / READING RESULT / DONE / DONE (TIMED OUT) / ERROR /
   CANCELLED) with a 140ms spinner; clicking a row navigates to the child
   session. Also reads `.pantheon/delegations/` reports from all sessions, so
