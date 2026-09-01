@@ -2,15 +2,22 @@
 /**
  * opencode.mjs — OpenCode platform installer
  *
- * Dual-version install (Phase 3): the generated config is V1-shaped and valid
- * under BOTH OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2`
- * v0.0.0-next-17444). V2 reads the same config locations and normalizes V1
- * fields in memory — do NOT convert to native V2 format. Known V2 beta gaps
- * handled here: top-level `subagent_depth` is silently ignored (migrated to
- * `experimental.subagent_depth`), and the `instructions` config key is
- * accepted-but-not-loaded (content consolidated into AGENTS.md, which both
- * versions load). Pass --version v2 to pantheon-init for an informational
- * label; state isolation is handled at runtime via OPENCODE_DB.
+ * Dual-version install (Phase 3): generates a config that is valid under BOTH
+ * OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2` v0.0.0-next-17444).
+ *
+ * - V1 path: writes V1-shaped config directly (no migration).
+ * - V2 path: applies config-migration.mjs (migrateV1toV2) to convert the
+ *   merged config into native V2 format before writing. This produces:
+ *     * `providers` array (not `provider` object)
+ *     * `permissions` array (not `permission` object)
+ *     * `agents` array (not `agent` object)
+ *     * `mcp.servers` (not top-level `mcp` flat keys)
+ *
+ * Known V2 beta gaps handled here: top-level `subagent_depth` is silently
+ * ignored (migrated to `experimental.subagent_depth`), and the `instructions`
+ * config key is accepted-but-not-loaded (content consolidated into AGENTS.md,
+ * which both versions load). State isolation is handled at runtime via
+ * OPENCODE_DB.
  */
 
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
@@ -29,6 +36,7 @@ import {
   success,
   warning,
 } from './cli-ui.mjs'
+import { migrateV1toV2 } from './config-migration.mjs'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
 import { resolveOpenCodeVersion } from './opencode-version.mjs'
@@ -341,12 +349,11 @@ export async function installOpenCode(
   const componentSet = new Set(components)
   const stats = summary.opencode
 
-  // V1/V2 dual-version awareness (Phase 3): the SAME config works under both
-  // OpenCode V1 (`opencode`) and V2 (`opencode2`, beta v0.0.0-next-17444).
-  // V2 normalizes V1 fields in memory (no rewrite) and isolates its state DB
-  // via OPENCODE_DB (~/.local/share/opencode/opencode-v2.db) with a distinct
-  // service port (49375 vs V1's 49374). The installer writes one shared
-  // config; the --version flag only labels the install for the operator.
+  // V1/V2 dual-version awareness (Phase 3): the installer builds a unified
+  // config, then applies V2-native migration (migrateV1toV2) when
+  // --opencode-version=v2. V2 normalizes V1 fields in memory (no rewrite) and
+  // isolates its state DB via OPENCODE_DB (~/.local/share/opencode/opencode-v2.db)
+  // with a distinct service port (49375 vs V1's 49374).
   const version = resolveOpenCodeVersion(opts.version ?? 'v1')
   if (version === 'v2') {
     info(
@@ -1055,7 +1062,16 @@ export async function installOpenCode(
     }
   }
 
-  const configContent = `${JSON.stringify(config, null, 2)}\n`
+  // ── V2 native migration ──
+  // When targeting V2, convert the merged V1-shaped config to native V2 format
+  // before writing. V1 path is untouched (zero regression).
+  let configToWrite = config
+  if (version === 'v2') {
+    info('Migrating config to V2 native format...')
+    configToWrite = migrateV1toV2(config)
+  }
+
+  const configContent = `${JSON.stringify(configToWrite, null, 2)}\n`
   const status = writeIfChanged(targetConfigPath, configContent, dryRun)
   if (status === 'created') stats.created++
   else stats.skipped++

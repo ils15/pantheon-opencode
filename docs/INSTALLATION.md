@@ -26,14 +26,15 @@ selected generation:
 | Selection | OpenCode key | Pantheon registration | Contract |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Legacy `pantheon_delegate`, read/list tools, V1 events/tool hooks and V1 compaction path |
-| `v2` | plural `plugins` | `pantheon-opencode/plugin-v2` | Configuration adapter that transforms agent/catalog/command/reference/skill drafts; it does not register V1 APIs or hooks |
+| `v2` | plural `plugins` | `pantheon-opencode/plugin-v2` | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks, tool hooks, plus configuration transforms |
 
-The V2 adapter is intentionally narrower than V1. It does not provide
-`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`,
-the V1 event/tool hooks, the BackgroundJobBoard integration, or a Pantheon
-compaction hook. Native OpenCode `task()` is an OpenCode capability, not a
-V2 Pantheon delegate API. Do not add the V1 plugin beside `plugin-v2` to try to
-restore those features: that is an unsupported mixed registration.
+The V2 plugin is now a **full orchestration plugin** — not just a configuration
+adapter. It registers 9 tools via `ctx.tool.transform()`, subscribes to 4
+session lifecycle events, and wires session/tool hooks. The only unsupported
+V2 feature is `legacy-hooks` (V1-specific delegate API surface). Native OpenCode
+`task()` is an OpenCode capability, not a V2 Pantheon delegate API. Do not add
+the V1 plugin beside `plugin-v2` to try to restore V1-specific features: that
+is an unsupported mixed registration.
 
 Choose the target explicitly when needed:
 
@@ -50,6 +51,50 @@ use `--opencode-version auto` for the conservative selector.
 `opencode2` selects V2, and all other cases select V1. It never installs both
 Pantheon plugin generations. Third-party plugin entries are retained as
 third-party entries and are not converted by this selection.
+
+### Config nativo V2
+
+O installer V2 grava campos nativos V2 em vez de shims V1:
+
+- `providers` — configuração de provedores de modelo (formato V2 nativo)
+- `permissions` — array de regras de permissão de tools (formato V2 nativo)
+- `mcp.servers` — registro de servidores MCP (formato V2 nativo)
+
+Exemplo de `opencode.json` V2:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["pantheon-opencode/plugin-v2"],
+  "providers": {
+    "opencode": {
+      "baseURL": "https://opencode.ai/zen/v1"
+    }
+  },
+  "permissions": [
+    {
+      "tool": "pantheon_delegate",
+      "allow": ["zeus", "athena"]
+    }
+  ],
+  "mcp": {
+    "servers": {
+      "pantheon-memory": { "command": "python", "args": ["-m", "pantheon.mcp.memory"] },
+      "pantheon-persistence": { "command": "python", "args": ["-m", "pantheon.mcp.persistence"] }
+    }
+  }
+}
+```
+
+Diferenças do V1:
+
+| Aspecto | V1 | V2 |
+|---|---|---|
+| Plugin registration | singular `plugin` | plural `plugins` |
+| Config shape | `plugin` array | `plugins` array + `providers` + `permissions` |
+| MCP servers | Via `scripts/hooks/` | Via `mcp.servers` nativo |
+| Tools | Via V1 tool hook API | Via `ctx.tool.transform()` |
+| Events | Via V1 event hook API | Via `ctx.event.subscribe()` |
 
 The TUI plugin is a separate component and a separate `tui.json` registration;
 it is not evidence that the V1 runtime was loaded. It is copied and registered

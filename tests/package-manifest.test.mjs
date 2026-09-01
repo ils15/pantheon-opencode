@@ -28,7 +28,7 @@ test('package allow-list contains manifests, plugin entrypoints, and TUI payload
 
   assert.ok(packageJson.files.includes('plugin.json'))
   for (const [exportName, target] of Object.entries(packageJson.exports)) {
-    assert.ok(exportName === './plugin' || exportName === './plugin-v2')
+    assert.ok(exportName === './plugin' || exportName === './plugin-v2' || exportName === './v2-bridge')
     assert.ok(existsSync(join(ROOT, target.replace(/^\.\//, ''))), `${exportName} target exists`)
   }
   for (const target of ['./dist/tui.js', './dist/server.js']) {

@@ -193,14 +193,21 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
 | Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `pantheon-opencode/plugin-v2` (`src/plugin-v2.ts`) |
-| Runtime contract | Legacy Pantheon plugin, including `pantheon_delegate`, read/list tools, event/tool hooks and V1 compaction handling | Configuration adapter only: transforms agent, catalog, command, reference and skill drafts |
-| V1 APIs | Registered | **Not registered** — no `pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`, or V1 event/tool hooks |
+| Runtime contract | Legacy Pantheon plugin, including `pantheon_delegate`, read/list tools, event/tool hooks and V1 compaction handling | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks (prompt, context), tool hooks (execute.before/after), plus configuration transforms |
+| V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 
-The V2 adapter intentionally does not provide the V1 runtime surface. Its
-declared unsupported features include `legacy-hooks`, `tool-execute-hooks`,
-`session-hooks`, `event-stream`, and `compaction-hook`. Native OpenCode
-`task()` behavior belongs to OpenCode itself and is not a V2 Pantheon delegate
-implementation.
+The V2 plugin provides 9 orchestration tools (`pantheon_delegate`,
+`pantheon_delegation_read`, `pantheon_delegation_list`, `pantheon_goal_create`,
+`pantheon_goal_get`, `pantheon_goal_update`, `pantheon_cost`, `pantheon_model`,
+`hashline_edit`), 4 event subscriptions (`session.created`, `session.idle`,
+`session.error`, `session.compacted`), session hooks (`prompt`, `context`),
+and tool hooks (`execute.before`, `execute.after`). The only unsupported V2
+feature is `legacy-hooks` (the V1-specific delegate API surface).
+
+The V1→V2 bridge (`src/pantheon/v2-bridge.ts`) enables optional interop:
+V1 infrastructure singletons (BackgroundJobBoard, DelegationClient, GoalStore,
+TodoEnforcer, VisionHandler) are passed through V2 `ctx.options`. The bridge is
+optional — V2 works standalone with graceful degradation.
 
 Select the contract explicitly when installing:
 

@@ -396,3 +396,98 @@ test('user-set model is never overwritten by the merge', async () => {
     rmSync(target, { recursive: true, force: true })
   }
 })
+
+// ---------------------------------------------------------------------------
+// V2 native config migration tests
+// ---------------------------------------------------------------------------
+
+/** Run install with --opencode-version=v2, returning the native V2 config. */
+async function runV2Install(target, existingConfig = null) {
+  if (existingConfig !== null) {
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'opencode.json'), JSON.stringify(existingConfig, null, 2))
+  }
+  await installOpenCode(target, false, false, COMPONENTS, { yes: true, headless: true, version: 'v2' })
+  return JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+}
+
+test('V2 install produces providers (not provider) in output', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-providers-'))
+  try {
+    const config = await runV2Install(target)
+    // V2 format: providers is an array (or undefined if none configured)
+    // V1 format: provider is an object
+    assert.ok(!('provider' in config), 'V2 config must not have top-level provider')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 install produces permissions as array (not object)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-permissions-'))
+  try {
+    const config = await runV2Install(target)
+    // V2 format: permissions is an array
+    // V1 format: permission is an object with keys like bash, mcp, skill
+    assert.ok(!('permission' in config), 'V2 config must not have top-level permission object')
+    if ('permissions' in config) {
+      assert.ok(Array.isArray(config.permissions), 'V2 permissions must be an array')
+    }
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 install produces mcp.servers (not flat mcp keys)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mcp-'))
+  try {
+    const config = await runV2Install(target)
+    // V2 format: mcp is { servers: [...] } with ordered array
+    // V1 format: mcp has flat keys like mcp['pantheon-resources'] = { ... }
+    if ('mcp' in config) {
+      assert.ok(typeof config.mcp === 'object' && config.mcp !== null, 'V2 mcp must be an object')
+      assert.ok('servers' in config.mcp, 'V2 mcp must have servers key')
+      assert.ok(Array.isArray(config.mcp.servers), 'V2 mcp.servers must be an array')
+    }
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 install produces agents as named object (not flat agent)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-agents-'))
+  try {
+    const config = await runV2Install(target)
+    // V2 format: agents is { name: { model, permissions: [...] } } (named object)
+    // V1 format: agent has the same shape but uses flat permission objects
+    assert.ok(!('agent' in config), 'V2 config must not have top-level agent key')
+    if ('agents' in config) {
+      assert.ok(typeof config.agents === 'object' && !Array.isArray(config.agents),
+        'V2 agents must be a named object (not an array)')
+      // Per-agent permissions should be arrays (V2 format)
+      for (const [, agentCfg] of Object.entries(config.agents)) {
+        if (agentCfg.permissions !== undefined) {
+          assert.ok(Array.isArray(agentCfg.permissions),
+            'V2 agent.permissions must be an array')
+        }
+      }
+    }
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 install is idempotent (same output on rerun)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-idempotent-'))
+  try {
+    await runV2Install(target)
+    const configPath = join(target, 'opencode.json')
+    const firstBytes = readFileSync(configPath, 'utf8')
+
+    await installOpenCode(target, false, false, COMPONENTS, { yes: true, headless: true, version: 'v2' })
+    const secondBytes = readFileSync(configPath, 'utf8')
+    assert.equal(secondBytes, firstBytes, 'V2 config must be byte-identical on rerun')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})

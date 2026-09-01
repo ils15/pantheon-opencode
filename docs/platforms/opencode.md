@@ -53,14 +53,19 @@ selected generation; do not hand-add the other generation afterward.
 | Selection | OpenCode key | Pantheon plugin | What it provides |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` (and the V1 `src/plugins/pantheon-hooks.ts` entry) | Legacy `pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`, event/tool hooks and the implemented V1 compaction path |
-| `v2` | plural `plugins` | `pantheon-opencode/plugin-v2` | Configuration adapter for agent, catalog, command, reference and skill drafts; no V1 runtime APIs |
+| `v2` | plural `plugins` | `pantheon-opencode/plugin-v2` | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks (prompt, context), tool hooks (execute.before/after), plus configuration transforms for agent/catalog/command/reference/skill drafts |
 
-`plugin-v2` is not a V1 runtime compatibility layer. It does not register the
-legacy delegate tools, BackgroundJobBoard integration, V1 hooks, or a
-compaction hook. Its unsupported-feature contract includes
-`legacy-hooks`, `tool-execute-hooks`, `session-hooks`, `event-stream`, and
-`compaction-hook`. OpenCode native `task()` remains a host feature and must not
-be documented as `pantheon_delegate` in V2.
+`plugin-v2` is now a **full orchestration plugin** for V2. It registers 9
+tools via `ctx.tool.transform()` (with V1 bridge fallback), subscribes to 4
+session lifecycle events, and wires session/tool hooks. The only unsupported
+V2 feature is `legacy-hooks` (the V1-specific delegate API surface —
+`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`
+are registered by V2 via its own tool definitions, not the V1 plugin path).
+
+The V1→V2 bridge (`src/pantheon/v2-bridge.ts`) enables optional interop:
+V1 infrastructure singletons (BackgroundJobBoard, DelegationClient, GoalStore,
+TodoEnforcer, VisionHandler) are passed through V2 `ctx.options`. The bridge is
+optional — V2 works standalone with graceful degradation.
 
 Use one of these selectors:
 
@@ -80,6 +85,75 @@ Third-party plugin entries are retained as third-party entries.
 The TUI is separate from both registrations. It is copied and added to
 `tui.json` only when the `plugins` component is selected; that component does
 not imply that the V1 runtime or V2 adapter has been loaded.
+
+### OpenCode V2 — Installation & Capabilities
+
+Install Pantheon for OpenCode V2 with the explicit version selector:
+
+```bash
+npx pantheon-opencode init --opencode-version v2
+```
+
+Or set the environment variable for `auto` detection:
+
+```bash
+OPENCODE_VERSION=v2 npx pantheon-opencode init
+```
+
+**What changes in V2 config:**
+
+The V2 installer writes native V2 config fields instead of V1 shims:
+
+- `providers` — model provider configuration (V2-native format)
+- `permissions` array — tool permission rules (V2-native format)
+- `mcp.servers` — MCP server registration (V2-native format)
+
+Third-party plugin entries are preserved. The installer removes only
+Pantheon references from both config shapes before writing the selected
+generation.
+
+**9 V2 Orchestration Tools:**
+
+| Tool | Description |
+|---|---|
+| `pantheon_delegate` | Dispatch background agent as child session |
+| `pantheon_delegation_read` | Block until delegation finishes, return report |
+| `pantheon_delegation_list` | List background delegations with status |
+| `pantheon_goal_create` | Create the single active goal for session |
+| `pantheon_goal_get` | Return active goal status and objective |
+| `pantheon_goal_update` | Update goal status/objective |
+| `pantheon_cost` | Report delegation cost and token usage |
+| `pantheon_model` | Show/set/reset per-agent model overrides |
+| `hashline_edit` | Edit files anchored by hashline refs |
+
+**4 V2 Event Subscriptions:**
+
+| Event | Handler |
+|---|---|
+| `session.created` | Seed session hierarchy + root sessions |
+| `session.idle` | Delegation finalize / goal loop / todo enforcer |
+| `session.error` | Delegation finalize as error |
+| `session.compacted` | Todo preserve / compaction context |
+
+**Session & Tool Hooks:**
+
+- `prompt` hook: Vision message interception (paste-and-ask) — graceful
+  no-op without V1 bridge
+- `context` hook: Injects routing policy, active goals, pending todos, and
+  compaction context into system context before each LLM call
+- `tool.execute.before`: Read-only enforcement, command normalization
+- `tool.execute.after`: Hashline tag augmentation, context sandbox truncation
+
+**Known Limitations:**
+
+- **Compaction hook:** V2 compaction works via the context hook injecting
+  state, but the V1 `session.compacted` restore path is not fully
+  replicated. Use V1 for full compaction support.
+- **Vision handler:** The prompt hook is a no-op without V1 client access.
+  Full vision interception requires the V1 bridge or V2 SDK client access.
+- **Legacy hooks:** V1-specific delegate API surface (`pantheon_delegate`
+  via V1 plugin path, V1 event hooks) is not available in V2. The V2 plugin
+  provides its own tool definitions instead.
 
 ### Desktop App
 

@@ -9,7 +9,8 @@
   },
   "exports": {
     "./plugin": "./src/plugin.ts",
-    "./plugin-v2": "./src/plugin-v2.ts"
+    "./plugin-v2": "./src/plugin-v2.ts",
+    "./v2-bridge": "./src/pantheon/v2-bridge.ts"
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs && node scripts/sync-tui.mjs",
@@ -51,6 +52,7 @@
     "scripts/*.py",
     "src/plugin.ts",
     "src/plugin-v2.ts",
+    "src/pantheon/v2-bridge.ts",
     "README.md",
     "src/mcp/*.txt",
     "commands/*.md",
