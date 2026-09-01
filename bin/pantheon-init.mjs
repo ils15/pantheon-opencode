@@ -50,7 +50,7 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --interactive  # Force interactive TUI mode')
   console.log('  npx pantheon-opencode init --headless     # Force non-interactive mode')
   console.log('  npx pantheon-opencode init -y             # Skip confirmations, use defaults')
-  console.log('  npx pantheon-opencode init --version v2    # Label install for OpenCode V2 (beta)')
+  console.log('  npx pantheon-opencode init --opencode-version v1|v2|auto')
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
   console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)')
   console.log(
@@ -195,12 +195,12 @@ async function main() {
     const modelOpt = modelIndex >= 0 ? (args[modelIndex + 1] ?? null) : null
     const smallModelIndex = args.indexOf('--small-model')
     const smallModelOpt = smallModelIndex >= 0 ? (args[smallModelIndex + 1] ?? null) : null
-    // --version v1|v2 labels the install target (informational; the config is
-    // shared and V1-shaped under both versions). Invalid values fail fast.
-    const versionIndex = args.indexOf('--version')
-    const versionOpt = versionIndex >= 0 ? (args[versionIndex + 1] ?? null) : null
-    if (versionOpt !== null && versionOpt !== 'v1' && versionOpt !== 'v2') {
-      console.error(`❌ Invalid --version "${versionOpt}" — expected v1 or v2`)
+    const { parseOpenCodeVersion } = await import('../scripts/install/opencode-version.mjs')
+    let versionOpt
+    try {
+      versionOpt = parseOpenCodeVersion(args)
+    } catch (err) {
+      console.error(`❌ ${err.message}`)
       process.exit(1)
     }
 

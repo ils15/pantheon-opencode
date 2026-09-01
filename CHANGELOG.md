@@ -17,6 +17,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [1.5.0] - 2026-09-01 (candidate)
+
+### Added
+
+- **OpenCode V2/plugin-v2 path:** added `src/plugin-v2.ts` and the `pantheon-opencode/plugin-v2` package export. The V2 entrypoint currently provides agent, model-catalog, command, skill, and reference transforms; it does not claim parity with the V1 hook/runtime surface.
+- **Version-aware installer:** `init --opencode-version v1|v2|auto` selects the target generation, with legacy `--version v1|v2` compatibility. `auto` resolves only from an explicit `OPENCODE_VERSION` value or an `opencode2` binary hint.
+- **Separated plugin registrations:** V1 installs use the singular `plugin` list for `src/plugin.ts` and `src/plugins/pantheon-hooks.ts`; V2 uses the plural `plugins` list with `pantheon-opencode/plugin-v2`. Third-party entries are preserved, and TUI setup is controlled by the `plugins` component.
+
+### Changed
+
+- **V1 delegate compatibility:** the legacy `src/plugin.ts` delegate remains the V1 runtime path for hooks, tools, the delegation board, and lifecycle integration. For V2 it is historical/superseded as the registration target: V2 must use `plugin-v2` and must not mix Pantheon V1 entries into `plugins`.
+- **TUI child provenance:** report-less `session.children` rows remain generic child sessions. The absence of a Markdown report no longer infers native `task()` provenance or renders a `[task]` label; stale history cannot relabel a live/unknown child.
+
+### Fixed
+
+- **Recovery boundary:** persisted jobs still running at process startup are marked `error` as orphaned by a process restart; they are not automatically restarted or resumed. Proactive idle finalization runs only when the V1 session-status API explicitly reports `idle`; an unavailable or unknown status fails closed.
+- **Bounded auto-resume:** the V1 full-auto goal loop remains opt-in (`full_auto.enabled: false`), allows one active goal per session, skips while a board job is running or a continuation is in flight, enforces a 5-second cooldown, and stops at 25 continuations per goal. These V1 lifecycle guarantees are not claimed for the transform-only V2 entrypoint.
+
+### Historical / superseded notes
+
+- The 1.3.4 TUI note that every report-less child is a native `task()` child with a `[task]` tag is superseded by the provenance-safe behavior above.
+
 ## [v1.4.2] - 2026-08-27
 
 ### Changed
@@ -164,7 +186,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Historical (superseded) agentModels wiring from routing.yml**: the old release wired `options.agentModels` from the first preset. Current behavior requires an explicitly active profile and omits child models otherwise.
 - **Preemptive compaction threshold logic** (dormant/experimental): threshold-based preemptive compaction — not active by default
 - **File-first logging**: `createPantheonLogger` — console echo opt-in via `PANTHEON_HOOKS_LOG=1`, everything routed to `.pantheon/logs/hooks.log` (silences TUI console pollution)
-- **Real-time Delegations TUI panel**: sidebar panel sourced from `api.client.session.children` — shows `pantheon_delegate` children (board alias tag) AND native `task()` children (`[task]` tag, distinct info color); animated states (DELEGATING/WORKING/READING RESULT/DONE/DONE (TIMED OUT)/ERROR/CANCELLED) with a 140ms spinner; click-to-navigate into the child session; all-sessions history via `.pantheon/delegations/` reports; `panel: children=N md=N events=N` diagnostics in hooks.log
+- **Historical (superseded by 1.5.0):** the 1.3.4 TUI delegation panel described every report-less child as native `task()` work with a `[task]` tag. Current behavior keeps child origin unclassified unless explicit provenance is available.
 - **README docs**: 1.3.4 compaction + delegation features documented
 - **Zero chat-notification policy**: removed the `chat.message` injection channel for delegation signals — completion visibility lives in the board `[unread]` marker, `pantheon_delegation_read`, TUI toasts and compaction carry-forward, never in the chat transcript
 

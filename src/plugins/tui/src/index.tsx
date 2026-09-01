@@ -895,15 +895,10 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      tool-part events, which runtime 1.18.13 may not deliver for
  *      pantheon_delegate (the "(0) even while delegating" symptom).
  *
- *   1b. NATIVE task() CHILDREN — `session.children` returns ALL children,
- *      and the native `task()` tool ALSO spawns a child session with
- *      parentID = caller. A child WITHOUT a board report is a native
- *      task() child: childrenToDelegationEntries tags it source
- *      'children-only' with the `[task]` row tag (distinct info color),
- *      so native task() work is visible in the panel alongside board
- *      delegates ([apo-1]) — never filtered out, never duplicated with a
- *      board row for the same child (a child WITH a report keeps the md
- *      entry, source 'md').
+ *   1b. CHILD ORIGIN — `session.children` returns child sessions, but this
+ *      path does not expose an origin/tool marker. A child without an
+ *      explicit report or live event is therefore kept as a generic child;
+ *      it is never inferred to be a native `task()` invocation.
  *
  *   2. ENRICHMENT + HISTORY — markdown reports the job board persists under
  *      `.pantheon/delegations/<sessionID>/<alias>.md` (written by
@@ -911,7 +906,8 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      is matched to its report by the `Task ID` header (== child session
  *      id == board task id), which supplies the alias (apo-N), agent,
  *      description and terminal duration/timedOut. No report → the child
- *      itself still renders (title as description, derived state). The md
+ *      itself still renders (title as description, derived state). Trusted V1
+ *      reports are the only md entries used to enrich a child. The md
  *      channel is ALSO read from EVERY session (readAllDelegationEntries) —
  *      the panel shows the full delegation history even without a focused
  *      session.
@@ -974,9 +970,12 @@ export type DelegationEntry = {
   /** True while the panel is waiting for pantheon_delegation_read. */
   read?: boolean
   /** Internal provenance used to keep a finalized md report authoritative.
-   *  'children-only' = a native task() child session with NO board report
-   *  (rendered with the distinct `[task]` tag); 'md' = board report wins. */
-  source?: 'child' | 'live' | 'md' | 'children-only'
+   *  'child' = an unclassified child session; 'md' = a matched report. */
+  source?: 'child' | 'live' | 'md'
+  /** Known V1 Markdown report marker. Absent for legacy/arbitrary Markdown. */
+  reportVersion?: 'v1'
+  /** Explicit native task provenance; never inferred from missing Markdown. */
+  origin?: 'native_task'
 }
 
 /** True for `\s` characters (space, tab, newline, CR) — plain char checks so
@@ -1011,6 +1010,7 @@ export function parseDelegationMarkdown(
   let started: string | undefined
   let finalized: string | undefined
   let taskID: string | undefined
+  let hasV1Marker = false
 
   for (const rawLine of raw.split('\n')) {
     // H1 title: `# Delegation Report — <alias>` (empty alias → fallback later).
@@ -1022,7 +1022,10 @@ export function parseDelegationMarkdown(
         while (i < rawLine.length && isWs(rawLine[i])) i++
         if (i < rawLine.length && TITLE_SEPARATORS.includes(rawLine[i])) {
           const rest = rawLine.slice(i + 1).trim()
-          if (rest !== '' && title === undefined) title = rest
+          if (rest !== '') {
+            hasV1Marker = true
+            if (title === undefined) title = rest
+          }
         }
       }
       continue
@@ -1094,6 +1097,7 @@ export function parseDelegationMarkdown(
     updatedAt: Number.isNaN(finalizedAt) ? null : finalizedAt,
     timedOut,
     description,
+    ...(hasV1Marker ? { reportVersion: 'v1' as const } : {}),
     source: 'md',
   }
 }
@@ -1346,8 +1350,15 @@ export function mergeChildDelegationSources(
     )
       continue
     const incoming = toDelegationEntry(liveEntry)
+    const taskIndex = incoming.taskID !== undefined ? byTask.get(incoming.taskID) : undefined
+    const taskEntry = taskIndex === undefined ? undefined : result[taskIndex]
+    const sameParent =
+      taskEntry !== undefined &&
+      (taskEntry.sessionID === '' ||
+        incoming.sessionID === '' ||
+        taskEntry.sessionID === incoming.sessionID)
     const index =
-      (incoming.taskID !== undefined ? byTask.get(incoming.taskID) : undefined) ??
+      (sameParent ? taskIndex : undefined) ??
       (incoming.alias !== ''
         ? bySessionAlias.get(key(incoming.sessionID, incoming.alias))
         : undefined)
@@ -1362,6 +1373,27 @@ export function mergeChildDelegationSources(
 
     const existing = result[index]
     if (existing === undefined) continue
+    if (liveEntry.origin === 'native_task') {
+      // Explicit native provenance is stronger than V1 history, including a
+      // terminal report for the same child id. Generic live events retain the
+      // terminal-state rule below.
+      result[index] = {
+        alias: incoming.alias,
+        sessionID: existing.sessionID || incoming.sessionID,
+        taskID: existing.taskID ?? incoming.taskID,
+        agent: incoming.agent !== 'agent' ? incoming.agent : existing.agent,
+        state: incoming.state,
+        startedAt: Math.min(existing.startedAt, incoming.startedAt),
+        updatedAt: incoming.updatedAt,
+        timedOut: false,
+        description: incoming.description !== '' ? incoming.description : existing.description,
+        read: incoming.read,
+        source: 'live',
+        origin: 'native_task',
+      }
+      bySessionAlias.set(key(incoming.sessionID, incoming.alias), index)
+      continue
+    }
     // Any terminal state is authoritative — a child session that went idle
     // correctly derives 'completed' via childStatusToState before the MD
     // report is written. The live tool-part channel stays 'running' until
@@ -1446,6 +1478,8 @@ export type LiveDelegationEntry = {
   updatedAt: number | null
   /** True once a pantheon_delegation_read for this job has been observed. */
   read: boolean
+  /** Optional explicit native task provenance from the live channel. */
+  origin?: 'native_task'
 }
 
 /** Result of parsing one tool part into lifecycle-relevant fields. */
@@ -1730,6 +1764,7 @@ export function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry {
     description: live.description,
     read: live.read,
     source: 'live',
+    ...(live.origin === 'native_task' ? { origin: 'native_task' as const } : {}),
   }
 }
 
@@ -1753,6 +1788,19 @@ export function mergeDelegationSources(
   const aliasless: DelegationEntry[] = []
   for (const l of live) {
     const e = toDelegationEntry(l)
+    if (l.origin === 'native_task') {
+      // An explicitly identified native task is the live source of truth. A
+      // historical report can use a different alias, so remove by task id
+      // before indexing the live row by its display alias.
+      if (l.taskID !== null) {
+        for (const [key, candidate] of byKey) {
+          if (candidate.sessionID === l.sessionID && candidate.taskID === l.taskID)
+            byKey.delete(key)
+        }
+      }
+      byKey.set(keyOf(l.sessionID, e.alias), e)
+      continue
+    }
     if (l.alias === null) {
       aliasless.push(e)
       continue
@@ -1805,6 +1853,28 @@ export function mergeDelegationSources(
  *  the placeholder is rejected WITHOUT an explicit denylist (covered by tests). */
 export function isValidSessionId(id: unknown): id is string {
   return typeof id === 'string' && id.startsWith('ses')
+}
+
+/**
+ * Trust a Markdown entry for child enrichment only when it carries the known
+ * V1 report marker and both sides of its scope are explicit: the parent
+ * session directory and the child/task session id. History entries without
+ * this contract remain display-only and can never relabel a live child.
+ * Pure — no I/O.
+ */
+export function isV1DelegationEntry(
+  entry: DelegationEntry | null | undefined,
+  parentSessionID?: string,
+): boolean {
+  if (
+    entry?.source !== 'md' ||
+    entry.reportVersion !== 'v1' ||
+    !isValidSessionId(entry.sessionID) ||
+    !isValidSessionId(entry.taskID)
+  ) {
+    return false
+  }
+  return parentSessionID === undefined || entry.sessionID === parentSessionID
 }
 
 /** Sources the sidebar can resolve the CURRENT session id from. Duck-typed
@@ -1867,6 +1937,8 @@ export type ChildDelegationLike = {
   /** Agent name when the child session carries one (duck-typed; native
    *  task() children may expose it, board reports always do). */
   agent?: string
+  /** Explicit origin from a native task lifecycle, when the SDK provides it. */
+  origin?: 'native_task'
   /** Status type from api.state.session.status: 'busy' | 'retry' | 'idle',
    *  or undefined when the status API is unavailable. */
   status?: string
@@ -1885,12 +1957,23 @@ export function childStatusToState(status: string | undefined): 'running' | 'com
   return 'running' // busy, retry, or unknown
 }
 
-/** Row tag for a delegation entry: `[task]` for native task() children
- *  (source 'children-only' — no board report), `[<alias>]` for board rows
- *  ([apo-1]). The panel renders the tag with a distinct style so native
- *  task() children are visually separable from pantheon_delegate jobs. */
+/** Native task provenance is valid only when the runtime supplies it
+ * explicitly. Missing Markdown, a child title, or a child status is never a
+ * native-task signal. */
+function isNativeTaskOrigin(origin: unknown): origin is 'native_task' {
+  return origin === 'native_task'
+}
+
+/** Row tag for a delegation entry. Explicit native provenance renders the
+ *  documented `[native-task]` label; generic children keep their id/alias and
+ *  are never relabeled merely because they lack a Markdown report. */
 export function delegationTag(entry: DelegationEntry): string {
-  return entry.source === 'children-only' ? '[task]' : `[${entry.alias}]`
+  return entry.origin === 'native_task' ? '[native-task]' : `[${entry.alias}]`
+}
+
+/** Compact readable alias for an unclassified child session. */
+function childAlias(id: string): string {
+  return id.length > 14 ? `${id.slice(0, 12)}\u2026` : id
 }
 
 /** Turn child sessions (PRIMARY) enriched with md reports into the display
@@ -1899,35 +1982,44 @@ export function delegationTag(entry: DelegationEntry): string {
  *  agent, description, terminal state and duration. A child without a
  *  report still renders: description from its title, agent from the child
  *  itself (fallback 'agent'), state derived from its status, startedAt from
- *  time.created. A report-less child is a NATIVE task() child (every
- *  child of the current session — pantheon_delegate OR the native `task()`
- *  tool — carries parentID = caller), so it gets source 'children-only'
- *  and the `[task]` tag instead of a board alias.
+ *  time.created. A report-less child remains an unclassified child session;
+ *  the SDK shape used here has no origin marker that would justify calling it
+ *  a native `task()` child.
  *  Terminal md state wins over the derived state; a running md defers to
  *  the child's live status. Sorted running-first (compareDelegationEntries).
- *  Pure — no I/O. */
+ *  `parentSessionID` is required to accept Markdown, so callers cannot
+ *  accidentally merge history from an unknown parent. Pure — no I/O. */
 export function childrenToDelegationEntries(
   children: readonly ChildDelegationLike[] | undefined,
   md: readonly DelegationEntry[],
   now = Date.now(),
+  parentSessionID?: string,
 ): DelegationEntry[] {
   const byTaskID = new Map<string, DelegationEntry>()
+  const hasParentScope = isValidSessionId(parentSessionID)
   for (const m of md) {
-    if (m.taskID !== undefined && !byTaskID.has(m.taskID)) byTaskID.set(m.taskID, m)
+    if (
+      hasParentScope &&
+      isV1DelegationEntry(m, parentSessionID) &&
+      m.taskID !== undefined &&
+      !byTaskID.has(m.taskID)
+    ) {
+      byTaskID.set(m.taskID, m)
+    }
   }
   const out: DelegationEntry[] = []
   const seen = new Set<string>()
   for (const child of children ?? []) {
     if (child.id === '' || seen.has(child.id)) continue
     seen.add(child.id)
-    const mdEntry = byTaskID.get(child.id)
+    const mdEntry = isNativeTaskOrigin(child.origin) ? undefined : byTaskID.get(child.id)
     const state =
       mdEntry !== undefined && mdEntry.state !== 'running'
         ? mdEntry.state
         : childStatusToState(child.status)
     out.push({
-      alias: mdEntry?.alias ?? 'task',
-      sessionID: mdEntry?.sessionID ?? '',
+      alias: mdEntry?.alias ?? childAlias(child.id),
+      sessionID: parentSessionID ?? mdEntry?.sessionID ?? '',
       taskID: child.id,
       agent: mdEntry?.agent ?? child.agent ?? 'agent',
       state,
@@ -1940,7 +2032,8 @@ export function childrenToDelegationEntries(
         mdEntry !== undefined && mdEntry.description !== ''
           ? mdEntry.description
           : (child.title ?? ''),
-      source: mdEntry !== undefined ? 'md' : 'children-only',
+      source: mdEntry !== undefined ? 'md' : 'child',
+      ...(isNativeTaskOrigin(child.origin) ? { origin: 'native_task' as const } : {}),
     })
   }
   out.sort(compareDelegationEntries)
@@ -2092,10 +2185,7 @@ function DelegationRow(props: {
     }
   })
 
-  // The row tag: `[task]` for native task() children (no board report),
-  // `[apo-1]`-style alias for pantheon_delegate board rows. Rendered with
-  // the info color so task() children are visually distinct from delegates.
-  const tagColor = createMemo(() => (props.job.source === 'children-only' ? theme().info : color()))
+  const tagColor = createMemo(() => (props.job.origin === 'native_task' ? theme().info : color()))
 
   const detail = createMemo(() => {
     const elapsed = delegationElapsed(props.job, props.now)
@@ -2311,8 +2401,6 @@ function View(props: {
             return undefined // status API unavailable — child state fallback
           }
         }
-        const withStatus = children.map((c) => ({ ...c, status: resolveStatus(c.id) }))
-        const childEntries = childrenToDelegationEntries(withStatus, md, now())
         for (const [k, v] of props.liveStore.map)
           if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 30_000)
             props.liveStore.map.delete(k)
@@ -2321,6 +2409,18 @@ function View(props: {
         // different focused session never leaks rows into this sidebar.
         const liveEntries = [...props.liveStore.map.values()].filter(
           (entry) => entry.sessionID === sessionID,
+        )
+        // Markdown is history, not proof by itself. A restart has no live
+        // tool-part events, so a *trusted* V1 report may restore the alias;
+        // legacy/arbitrary reports and reports from another parent remain
+        // history-only and cannot relabel this session's child rows.
+        const currentV1Markdown = md.filter((entry) => isV1DelegationEntry(entry, sessionID))
+        const withStatus = children.map((c) => ({ ...c, status: resolveStatus(c.id) }))
+        const childEntries = childrenToDelegationEntries(
+          withStatus,
+          currentV1Markdown,
+          now(),
+          sessionID,
         )
         setChildDelegations(mergeChildDelegationSources(childEntries, liveEntries))
         // 4. diagnostic line — every re-fetch (silence-by-default, hooks.log).

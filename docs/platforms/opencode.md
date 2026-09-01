@@ -1,6 +1,6 @@
 # Pantheon for OpenCode
 
-Complete setup and usage guide for running Pantheon **v1.4.2** in [OpenCode](https://opencode.ai) — 4 presets (`go-free`/`go-fast`/`go-premium`/`openai` puro), wizard 3 perguntas, herança nativa default — the open-source AI coding agent for the terminal, desktop, and IDE.
+Complete setup and usage guide for running Pantheon **v1.5.0** in [OpenCode](https://opencode.ai) — 4 presets (`go-free`/`go-fast`/`go-premium`/`openai` puro), wizard 3 perguntas, herança nativa default, and an explicit V1/V2 plugin contract — the open-source AI coding agent for the terminal, desktop, and IDE.
 
 ---
 
@@ -24,15 +24,62 @@ OpenCode is available in three form factors:
 | **Desktop app** | Download from [opencode.ai/download](https://opencode.ai/download) — macOS, Linux, Windows |
 | **IDE extension** | Available for VS Code, JetBrains, and Zed |
 
-Pantheon ships a hooks plugin at `src/plugins/pantheon-hooks.ts`, backed by the `src/plugins/hook-runner.ts` runner (spawns each script with `node:child_process` and delivers the `{tool_name, tool_input, agent_id, session_id}` payload as JSON on stdin — version-proof, no Bun Shell `$` dependency). It bridges the shell scripts from `scripts/hooks/` to OpenCode events: tool.execute.before (validate-talos-scope, scan-secrets, validate-tool-safety, on-subagent-delegation-start), tool.execute.after (format-multi-language, log-session-start, on-subagent-delegation-stop), and event session.created (log-session-start, validate-post-conditions). Register it explicitly in `opencode.json`: `"plugin": ["<path>/src/plugins/pantheon-hooks.ts"]` (absolute path — project or, for global installs, `<prefix>/lib/node_modules/pantheon-opencode/src/plugins/pantheon-hooks.ts`). It is **not** auto-discovered from `.opencode/plugins/`.
+The V1 path includes the security-hook plugin at
+`src/plugins/pantheon-hooks.ts`, backed by `src/plugins/hook-runner.ts` (the
+runner uses `node:child_process`, not Bun Shell `$`). It bridges the scripts in
+`scripts/hooks/` to the V1 OpenCode events. Register it only in the V1
+singular `plugin` list; it is not auto-discovered from `.opencode/plugins/`.
+The V2 `plugin-v2` adapter does not register this hook plugin or any V1
+delegate/event/tool API.
 
-The fastest way to set up Pantheon in any project is with the universal install script:
+The OpenCode-specific installer is the supported setup path:
 
 ```bash
 npx pantheon-opencode init --project
 ```
 
-This auto-detects the platform (OpenCode, VS Code, Cursor, etc.), installs agents to the correct directories, and creates platform config files. The generated `opencode.json` includes only `$schema`, `permission`, and `instructions` — model overrides are stripped and resolved at runtime via plan files.
+This installs the selected OpenCode components in the global or project-local
+OpenCode directories and updates the selected plugin registration. It does not
+autodetect or configure VS Code, Cursor, or other platforms. Use
+`--opencode-version v1|v2|auto` to select the plugin contract; `auto` is the
+conservative version hint described below, not general platform detection.
+
+### V1/V2 plugin contract
+
+Pantheon 1.5.0 has two mutually exclusive OpenCode registrations. The
+installer cleans Pantheon entries from both config shapes and writes only the
+selected generation; do not hand-add the other generation afterward.
+
+| Selection | OpenCode key | Pantheon plugin | What it provides |
+|---|---|---|---|
+| `v1` | singular `plugin` | `src/plugin.ts` (and the V1 `src/plugins/pantheon-hooks.ts` entry) | Legacy `pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`, event/tool hooks and the implemented V1 compaction path |
+| `v2` | plural `plugins` | `pantheon-opencode/plugin-v2` | Configuration adapter for agent, catalog, command, reference and skill drafts; no V1 runtime APIs |
+
+`plugin-v2` is not a V1 runtime compatibility layer. It does not register the
+legacy delegate tools, BackgroundJobBoard integration, V1 hooks, or a
+compaction hook. Its unsupported-feature contract includes
+`legacy-hooks`, `tool-execute-hooks`, `session-hooks`, `event-stream`, and
+`compaction-hook`. OpenCode native `task()` remains a host feature and must not
+be documented as `pantheon_delegate` in V2.
+
+Use one of these selectors:
+
+```bash
+npx pantheon-opencode init --opencode-version v1
+npx pantheon-opencode init --opencode-version v2
+npx pantheon-opencode init --opencode-version auto
+```
+
+The legacy `--version v1|v2` spelling is accepted after `init`; use
+`--opencode-version auto` for the conservative selector.
+`auto` resolves only from the explicit `OPENCODE_VERSION=v1|v2` hint, then an
+`OPENCODE_BIN` path ending in `opencode2`; otherwise it selects V1. It does not
+inspect the host generally and never installs both Pantheon plugin generations.
+Third-party plugin entries are retained as third-party entries.
+
+The TUI is separate from both registrations. It is copied and added to
+`tui.json` only when the `plugins` component is selected; that component does
+not imply that the V1 runtime or V2 adapter has been loaded.
 
 ### Desktop App
 
@@ -45,17 +92,67 @@ Pantheon works seamlessly with the OpenCode Desktop app. Agents, skills, and ins
 git clone https://github.com/ils15/pantheon.git
 cd pantheon
 
-# Copy the pre-generated OpenCode agents into your project
+# Copy the packaged OpenCode agents into your project
 mkdir -p /path/to/your-project/.opencode/agents
-cp -r platform/opencode/agents/. /path/to/your-project/.opencode/agents/
+cp -r src/agents/. /path/to/your-project/.opencode/agents/
 
-# Copy the root opencode.json as a starting point
+```
+
+Choose exactly one plugin contract before creating the config. In Pantheon
+1.5.0, the singular `plugin` key selects the preserved V1 runtime; the
+plural `plugins` key with `pantheon-opencode/plugin-v2` selects the V2
+configuration adapter. Do not register both Pantheon generations.
+
+For the preserved V1 runtime, create `/path/to/your-project/opencode.json`
+with the singular `plugin` key. Replace `<pantheon-checkout>` with the
+absolute path to the cloned repository so both the legacy plugin and its
+explicitly registered V1 hooks are loaded:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    "<pantheon-checkout>/src/plugin.ts",
+    "<pantheon-checkout>/src/plugins/pantheon-hooks.ts"
+  ]
+}
+```
+
+Use this V1 registration when you need `pantheon_delegate`, the V1
+BackgroundJobBoard and its event/tool hooks, or the implemented V1 compaction
+path. The hooks are not auto-discovered from `.opencode/plugins/`.
+
+For the V2 adapter, and only when V1 delegate APIs are not expected, copy the
+repository's root config as a V2 starting point:
+
+```bash
 cp opencode.json /path/to/your-project/opencode.json
 ```
 
+That file intentionally contains the V2-only registration:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["pantheon-opencode/plugin-v2"]
+}
+```
+
+`plugin-v2` transforms configuration drafts; it does not provide V1 delegate
+tools, hooks, BackgroundJobBoard integration, compaction, or automatic resume.
+If you prefer the supported installer, use
+`npx pantheon-opencode init --project --opencode-version v1` or `v2` instead;
+`auto` is only the conservative selector described above, not general
+platform detection.
+
 ### How It Works
 
-The OpenCode agents live in `platform/opencode/agents/` (generated from canonical `agents/` by `npm run sync`). The adapter (v2.0.0) uses a tool map to convert canonical VS Code tool names to OpenCode-native names, moves permissions from body blocks to frontmatter, and excludes tools not available in OpenCode (`read/problems`, browser tools).
+The installer copies the packaged agent Markdown into `.opencode/agents/`
+(project-local) or the global OpenCode agent directory. V1 runtime behavior is
+provided by the selected V1 plugin. The V2 `plugin-v2` export is a separate
+configuration adapter that transforms the host's agent/catalog/command,
+reference and skill drafts; it is not a general Markdown-to-runtime converter
+and does not add V1 hooks or delegate APIs.
 
 ### `/init` Command
 
@@ -112,9 +209,11 @@ The `default_agent` option in `opencode.json` controls which primary agent OpenC
 
 If not set, OpenCode defaults to the built-in `build` agent. This is useful when Pantheon's Zeus orchestrator should be the primary interaction point.
 
-### Agent Permissions (adapter v2)
+### Agent permissions
 
-In OpenCode adapter v2, permissions are declared in **frontmatter** rather than appended as body blocks. The sync engine generates them automatically:
+OpenCode agent permissions are supplied by the host configuration and the
+selected installation. The V1 `tool.execute.before` guard can enforce the
+read-only delegate matrix; `plugin-v2` does not add that runtime guard.
 
 ```yaml
 ---
@@ -127,15 +226,13 @@ permission:
 ---
 ```
 
-Body-level permission blocks are no longer used — removed in v2.0.0.
-
-Override generated permissions per-agent in `opencode.json`:
+Override permissions per-agent in `opencode.json` when the host supports it:
 
 ```json
 {
   "agent": {
     "hermes": {
-      "source": "opencode/agents/hermes.md",
+      "source": ".opencode/agents/hermes.md",
       "permission": {
         "edit": "allow",
         "bash": "allow",
@@ -188,7 +285,10 @@ This can also be set per-agent to restrict which subagents each Pantheon agent c
 
 ## Agent Format
 
-OpenCode agents are `.md` files with YAML frontmatter. They live in `.opencode/agents/` (project) or `~/.config/opencode/agents/` (global). The Pantheon sync engine (adapter v2.0.0) generates them from the canonical VS Code `.agent.md` sources into `platform/opencode/agents/`, applying tool name mapping and permissions conversion.
+OpenCode agents are `.md` files with YAML frontmatter. They live in
+`.opencode/agents/` (project) or the global OpenCode agent directory. The
+installer copies the packaged agent files; it does not claim a general
+VS Code-to-OpenCode conversion layer.
 
 ```yaml
 ---
@@ -232,24 +332,20 @@ Pantheon agents are configured as `mode: subagent` by default, with Zeus as the 
 }
 ```
 
-### Differences from VS Code Format
+### V1/V2 agent behavior
 
-The OpenCode adapter v2 (2.0.0) maps canonical VS Code tool names to OpenCode-native names and manages differences:
+Both paths can expose the installed agent Markdown to OpenCode, but the runtime
+contracts are different:
 
-| Aspect | VS Code (.agent.md) | OpenCode (.md) |
-|---|---|---|---|
-| **File extension** | `.agent.md` | `.md` |
-| **Tools format** | YAML list | YAML list (with name mapping) |
-| **Model format** | YAML list | YAML list (identity) |
-| **Handoffs** | Full support with UI buttons | **Stripped** — not supported |
-| **`agents:` field** | Required for subagent delegation | **Stripped** — OpenCode uses Task tool |
-| **`disable-model-invocation`** | Supported | **Stripped** |
-| **Permissions** | Set via settings.json / hooks | **Frontmatter** (v2) — body blocks removed |
-| **`read/problems`** | Supported | **Excluded** — not available in OpenCode |
-| **Browser tools** | `openBrowserPage`, etc. | **Excluded** — no browser in terminal UI |
-| **`mode` field** | Not supported | **Added** — `primary` or `subagent` |
-| **Skills** | Declared in settings.json | Declared in `opencode.json` skill registry |
-| **Instructions** | `.github/copilot-instructions.md` | `instructions` array in `opencode.json` |
+| Concern | V1 | V2 |
+|---|---|---|
+| Agent runtime | Legacy Pantheon plugin plus OpenCode agent config | `plugin-v2` transforms agent drafts and sets Zeus to `primary` |
+| Delegation | Pantheon `pantheon_delegate` tools and V1 board | No Pantheon delegate tools; use native OpenCode behavior only where supported |
+| Hooks/events | V1 plugin and separately registered V1 hooks | Not registered by `plugin-v2` |
+| Compaction/restart | Only the V1 paths documented below | No Pantheon compaction or auto-resume contract |
+
+The former “adapter v2.0.0” description is superseded by this table. It does not
+claim conversion or feature parity with another editor's Markdown format.
 
 ### Frontmatter Fields
 
@@ -267,18 +363,36 @@ The OpenCode adapter v2 (2.0.0) maps canonical VS Code tool names to OpenCode-na
 
 ## OpenCode-Specific Features
 
-### TUI Plugin (v4.0)
+### TUI Plugin (1.5.0)
 
-Pantheon v4.0 ships a **TUI plugin** for OpenCode that provides:
+Pantheon 1.5.0 ships an optional **TUI plugin** for OpenCode that provides:
 - **Live deepwork status** — see active phases, progress, and checkpoints
 - **Activity feed** — real-time agent delegation events
 - **Toast notifications** — phase completion, review results, gate approvals
 
-The plugin auto-discovers from `.opencode/plugins/` when running from the project directory. It's also synced globally to `~/.config/opencode/plugins/` via `npm run sync opencode`.
+The installer copies the TUI package to the selected OpenCode config and writes
+its registration to `tui.json` only when the `plugins` component is selected.
+It is not auto-discovered from `.opencode/plugins/`, and this separate TUI
+registration does not load either the V1 runtime plugin or the V2 adapter.
 
-### Themis 2.0
+The panel can follow native OpenCode `task()` children only when OpenCode
+provides explicit origin, parent/child and status metadata. A child without
+that contract remains a generic child; absence of a Markdown report is not
+evidence that it is a native task. Markdown reports in
+`.pantheon/delegations/` are historical output from the V1 delegate/board
+path, not a V2 task protocol.
 
-Pantheon v4.0 introduces **Themis 2.0** — a 3-layer review pipeline:
+### Recovery and compaction limits
+
+The V1 `experimental.session.compacting` hook carries forward the V1 board
+context where that host hook is available. On process restart, running legacy
+board jobs are marked errored; old jobs are not auto-resumed and child work is
+not restarted automatically. `plugin-v2` registers no Pantheon compaction
+hook, BackgroundJobBoard lifecycle, or automatic resume/restart behavior.
+
+### Themis 2.0 (available in 1.5.0)
+
+Pantheon 1.5.0 includes **Themis 2.0** — a 3-layer review pipeline:
 1. **Heuristic Scanner** — zero-LLM static analysis (ruff, biome, anti-pattern detection, hash verification)
 2. **Deep Review** — LLM-powered code review with OWASP Top 10, coverage enforcement, and correctness checks
 3. **Verification Planning** — structured verification plan with test gap analysis
@@ -294,7 +408,7 @@ Built into every agent's workflow, the **YAGNI Ladder** prevents overengineering
 
 ### Model Configuration — 4 Presets (gerado de `src/routing.yml`)
 
-> **Default = herdar do chat (sem `active-preset.json`)** — sem preset ativo, delegates herdam nativamente o modelo do chat pai. O plugin (`src/plugin.ts` → `resolveActivePreset`) lê `PANTHEON_MODEL_PRESET` env > primeiro `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) > **`null` (herança nativa)**. `loadRoutingAgentModels` vazio quando `null`; `delegation.ts` omite `model` em `session.create`/`promptAsync` para herança nativa. `small_model` nunca usado.
+> **Default = herdar do chat (sem `active-preset.json`) no caminho V1** — sem preset ativo, os delegates V1 herdam nativamente o modelo do chat pai. O plugin V1 (`src/plugin.ts` → `resolveActivePreset`) lê `PANTHEON_MODEL_PRESET` env > primeiro `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) > **`null` (herança nativa)**. `loadRoutingAgentModels` vazio quando `null`; `delegation.ts` omite `model` em `session.create`/`promptAsync` para herança nativa. `small_model` nunca usado. O V2 adapter não registra `pantheon_delegate` nem aplica esta cadeia de delegate.
 
 Tabelas abaixo são **geradas a partir de [`src/routing.yml`](../../src/routing.yml)** via `node scripts/generate-preset-docs.mjs` (sem hardcodar segredos — só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` nomes + `baseURL`s). Pricing 2026 verificado via `scripts/install/model-picker.mjs` (`PRESET_PRICE`).
 
@@ -380,7 +494,7 @@ Tabelas abaixo são **geradas a partir de [`src/routing.yml`](../../src/routing.
 
 #### Per-agent overrides — `/pantheon-model set --agent`
 
-Desde v1.4.2, personalização fina **por agente** sem tocar `opencode.json` top-level nem `.env`:
+Desde v1.5.0, personalização fina **por agente** sem tocar `opencode.json` top-level nem `.env`:
 
 ```bash
 # wizard interativo (agente → modelo → effort → scope)
@@ -398,9 +512,9 @@ Desde v1.4.2, personalização fina **por agente** sem tocar `opencode.json` top
 - Persiste em `.pantheon/active-preset.json` em `overrides.agents[agent].model` + `variant` (mapeado para `reasoning_effort` no merge) — escrita atômica `tmp`+`rename` com `.bak` + lock por path + `O_NOFOLLOW` + health-check. Default scope `project`; `global` exige `confirm`+`authorize_global`.
 - Nunca escreve `.env` nem injeta `model`/`small_model` global — herança nativa segue: `explicit model` > `overrides.agents` > `preset agents` > nativo.
 
-#### Model Value Types (legado → 1.4.2)
+#### Model Value Types (legado → 1.5.0)
 
-| Valor | Antes (≤1.4.1) | Agora (1.4.2) |
+| Valor | Antes (≤1.4.1) | Agora (1.5.0) |
 |---|---|---|
 | **String explícita** `provider/model-id` | `agent.model` em `opencode.json` | `presets.<name>.agents[agent].model` em `routing.yml` + `overrides.agents[agent].model` via `/pantheon-model set --agent` |
 | **`"auto"`** | herdava `chat` via `/model` | deprecated — herança nativa automática quando sem preset/override (sem `model` enviado) |
@@ -417,7 +531,7 @@ Desde v1.4.2, personalização fina **por agente** sem tocar `opencode.json` top
   }
 }
 
-// Agora (1.4.2) — sem top-level; use /pantheon-model
+// Agora (1.5.0) — sem top-level; use /pantheon-model
 // no chat OpenCode:
 /pantheon-model set --agent apollo --model opencode/mimo-v2.5-free --effort low --scope project
 // persiste em .pantheon/active-preset.json:
@@ -426,7 +540,7 @@ Desde v1.4.2, personalização fina **por agente** sem tocar `opencode.json` top
 
 Apollo agora segue o override (se houver) ou preset agente; se nenhum, herda do chat `/model`.
 
-#### Model Priority Chain (1.4.2)
+#### Model Priority Chain (V1, 1.5.0)
 
 ```
 1. explicit model em pantheon_delegate({model: "provider/model-id"})
@@ -437,11 +551,14 @@ Apollo agora segue o override (se houver) ou preset agente; se nenhum, herda do 
    — top-level opencode.json model ignorado (removido no install)
 ```
 
+This priority chain is V1 `pantheon_delegate` behavior. It is not a V2
+`plugin-v2` API or a promise about native OpenCode `task()` model selection.
+
 ---
 
-### Model Tiers (legado → 1.4.2 presets)
+### Model Tiers (legado → 1.5.0 presets)
 
-> **Legado**: tiers `fast`/`default`/`premium` eram abstrações manuais em `opencode.json` (ex.: `gpt-4o-mini`, `gpt-4o`, `o3`). **Em 1.4.2**, tiers são **pinados via 4 presets** (`go-free`/`go-fast`/`go-premium`/`openai`) em [`src/routing.yml`](../../src/routing.yml) — cada agente recebe `model` + `reasoning_effort` concretos. Veja seção **Model Configuration — 4 Presets** acima para tabelas geradas (`node scripts/generate-preset-docs.mjs`). Sem preset, herança nativa do chat pai.
+> **Legado superseded**: tiers `fast`/`default`/`premium` eram abstrações manuais em `opencode.json` (ex.: `gpt-4o-mini`, `gpt-4o`, `o3`). **Em 1.5.0**, tiers são **pinados via 4 presets** (`go-free`/`go-fast`/`go-premium`/`openai`) em [`src/routing.yml`](../../src/routing.yml) — cada agente recebe `model` + `reasoning_effort` concretos no caminho V1. Veja seção **Model Configuration — 4 Presets** acima para tabelas geradas (`node scripts/generate-preset-docs.mjs`). Sem preset, a herança nativa documentada aplica-se à delegação V1; o V2 adapter não registra essa API.
 
 ### ACP (Agent Client Protocol)
 
@@ -453,7 +570,7 @@ Start the ACP server:
 opencode acp
 ```
 
-This starts OpenCode as an ACP-compatible subprocess communicating via JSON-RPC over stdio. All Pantheon features work through ACP: built-in tools, MCP servers, AGENTS.md rules, custom commands, and the agent/permissions system.
+This starts OpenCode as an ACP-compatible subprocess communicating via JSON-RPC over stdio. ACP does not change the selected plugin contract: V1 hook/delegate behavior still depends on V1 host events, while `plugin-v2` remains a configuration adapter without V1 runtime APIs. Verify the selected registration in the OpenCode config before relying on a feature.
 
 For Zed, configure in `~/.config/zed/settings.json`:
 

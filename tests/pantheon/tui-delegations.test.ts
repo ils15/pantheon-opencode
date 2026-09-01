@@ -32,6 +32,7 @@ import {
   delegationSpinnerFrame,
   delegationTag,
   fmtElapsed,
+  isV1DelegationEntry,
   isValidSessionId,
   type LiveDelegationEntry,
   markStaleIfRunning,
@@ -138,7 +139,7 @@ async function main() {
   // ─── parseDelegationMarkdown ───────────────────────────────────────────
 
   await testAsync('parse: completed report → structured entry', async () => {
-    const e = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md')
+    const e = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md', 'ses_root')
     assert.ok(e, 'completed report must parse')
     assert.equal(e.alias, 'apo-1')
     assert.equal(e.agent, 'apollo')
@@ -147,6 +148,8 @@ async function main() {
     assert.equal(e.startedAt, Date.parse('2026-08-11T14:46:13.477Z'))
     assert.equal(e.updatedAt, Date.parse('2026-08-11T14:48:01.974Z'))
     assert.equal(e.description, 'Localizar código do hook e seleção de modelo')
+    assert.equal(e.reportVersion, 'v1', 'the known V1 report marker is retained')
+    assert.equal(isV1DelegationEntry(e, 'ses_root'), true, 'report has explicit scoped identity')
   })
 
   await testAsync('parse: running report → null (running state rejected from MD)', async () => {
@@ -948,6 +951,13 @@ async function main() {
     assert.equal(e.description, 'Busca')
     const noAlias = toDelegationEntry({ ...live, alias: null })
     assert.ok(noAlias.alias.startsWith('live-'), 'alias falls back to a live- prefix')
+    const native = toDelegationEntry({ ...live, alias: null, origin: 'native_task' })
+    assert.equal(native.origin, 'native_task', 'native provenance survives live conversion')
+    assert.equal(
+      delegationTag(native),
+      '[native-task]',
+      'native label matches the TUI documentation',
+    )
   })
 
   await testAsync(
@@ -1162,18 +1172,38 @@ async function main() {
         [live],
       )
       assert.equal(finalized[0]?.state, 'completed', 'finalized md remains authoritative')
+
+      const native = mergeChildDelegationSources(
+        [
+          {
+            ...child,
+            alias: 'apo-1',
+            sessionID: 'ses_root',
+            state: 'completed',
+            updatedAt: 9000,
+            source: 'md',
+            reportVersion: 'v1',
+          },
+        ],
+        [{ ...live, alias: null, origin: 'native_task' }],
+      )
+      assert.equal(native.length, 1)
+      assert.equal(native[0]?.source, 'live', 'explicit native live entry takes precedence')
+      assert.equal(native[0]?.origin, 'native_task')
+      assert.equal(delegationTag(native[0] as DelegationEntry), '[native-task]')
+      assert.equal(native[0]?.state, 'running', 'native live state is not masked by V1 history')
     },
   )
 
   await testAsync(
-    'merge: children-only terminal state is NOT overwritten by stale live running entry',
+    'merge: child terminal state is NOT overwritten by stale live running entry',
     async () => {
       // BUG FIX: when a child session goes idle before the MD report is
       // written, childrenToDelegationEntries derives state 'completed' from
-      // childStatusToState('idle') with source 'children-only'. The live
+      // childStatusToState('idle') with source 'child'. The live
       // entry from the delegate tool part is still 'running' (it only
       // transitions on pantheon_delegation_read). The merge must NOT
-      // overwrite the terminal children-only state with the stale live state.
+      // overwrite the terminal child state with the stale live state.
       const child: DelegationEntry = {
         alias: 'task',
         sessionID: 'ses_root',
@@ -1184,7 +1214,7 @@ async function main() {
         updatedAt: 5000,
         timedOut: false,
         description: 'Fetch data',
-        source: 'children-only',
+        source: 'child',
       }
       const live: LiveDelegationEntry = {
         callID: 'call_1',
@@ -1205,7 +1235,7 @@ async function main() {
       assert.equal(
         merged[0]?.state,
         'completed',
-        'children-only terminal state must not be downgraded to running by a stale live entry',
+        'child terminal state must not be downgraded to running by a stale live entry',
       )
       // The live entry should still contribute metadata (alias, agent, read).
       assert.equal(merged[0]?.alias, 'apo-1', 'live alias is absorbed')
@@ -1287,6 +1317,7 @@ async function main() {
           '- **Started**: 2026-08-11T15:00:00.000Z\n' +
           '- **Finalized**: 2026-08-11T15:10:00.000Z\n',
         'apo-1.md',
+        'ses_root',
       )
       assert.ok(md, 'report with Task ID must parse')
       assert.equal(md.taskID, 'ses_child_9', 'backticked Task ID is stripped')
@@ -1295,6 +1326,7 @@ async function main() {
         [{ id: 'ses_child_9', title: 'fallback title', status: 'idle' }],
         [md],
         10_000,
+        'ses_root',
       )
       assert.equal(entries.length, 1)
       const e = entries[0]
@@ -1306,6 +1338,52 @@ async function main() {
       assert.equal(e.state, 'completed', 'terminal md state wins over idle-derived')
       assert.equal(e.startedAt, Date.parse('2026-08-11T15:00:00.000Z'))
       assert.equal(e.updatedAt, Date.parse('2026-08-11T15:10:00.000Z'))
+    },
+  )
+
+  await testAsync(
+    'children: restart re-enriches only a scoped V1 report and preserves its alias',
+    async () => {
+      const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md', 'ses_root')
+      assert.ok(md)
+      const entries = childrenToDelegationEntries(
+        [{ id: md.taskID ?? '', title: 'child fallback', status: 'idle' }],
+        [md],
+        10_000,
+        'ses_root',
+      )
+      assert.equal(entries.length, 1)
+      assert.equal(entries[0]?.alias, 'apo-1', 'restart history restores the delegate alias')
+      assert.equal(entries[0]?.source, 'md')
+    },
+  )
+
+  await testAsync(
+    'children: legacy/arbitrary and other-parent Markdown cannot replace a live child',
+    async () => {
+      const otherParent = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md', 'ses_other')
+      assert.ok(otherParent)
+      const unmarked = parseDelegationMarkdown(
+        '- **Task ID**: `ses_child_9`\n' +
+          '- **Agent**: apollo\n' +
+          '- **Description**: arbitrary file\n' +
+          '- **State**: completed\n' +
+          '- **Started**: 2026-08-11T15:00:00.000Z\n',
+        'apo-1.md',
+        'ses_root',
+      )
+      assert.ok(unmarked)
+      assert.equal(isV1DelegationEntry(unmarked, 'ses_root'), false)
+      const entries = childrenToDelegationEntries(
+        [{ id: 'ses_child_9', title: 'native live child', status: 'busy' }],
+        [otherParent, unmarked],
+        10_000,
+        'ses_root',
+      )
+      assert.equal(entries.length, 1)
+      assert.equal(entries[0]?.alias, 'ses_child_9', 'native live child remains the winner')
+      assert.equal(entries[0]?.description, 'native live child')
+      assert.equal(entries[0]?.source, 'child')
     },
   )
 
@@ -1340,49 +1418,44 @@ async function main() {
       assert.equal(e.state, 'running')
       assert.equal(e.startedAt, 5000, 'startedAt from time.created')
       assert.equal(e.timedOut, false)
+      assert.equal(e.source, 'child', 'an unmarked child stays a generic session')
+      assert.notEqual(delegationTag(e), '[task]', 'native task requires explicit provenance')
     },
   )
 
-  // ─── Native task() children ([task] tag) ─────────────────────────────────
-  // `session.children` returns EVERY child of the current session — both
-  // pantheon_delegate jobs AND subagent sessions spawned by the native
-  // `task()` tool (parentID = caller). A child WITHOUT a board report is a
-  // native task child: it renders with source 'children-only' and the `[task]`
-  // tag (vs the board's [apo-1] alias), agent from child.agent ?? 'agent',
-  // state derived from the live child status (busy/retry→running,
-  // idle→completed) and duration from the child's own time (created→updated).
+  // ─── Unclassified child sessions ─────────────────────────────────────────
+  // `session.children` does not expose an origin/tool marker in the shape
+  // consumed by the TUI. A child without explicit live provenance therefore
+  // remains a regular child row, never an inferred native task.
+
+  await testAsync('children: unmarked child without md → generic source and id tag', async () => {
+    const entries = childrenToDelegationEntries(
+      [
+        {
+          id: 'ses_task_1',
+          title: 'Tarefa nativa (task tool)',
+          status: 'busy',
+          time: { created: 5000 },
+        },
+      ],
+      [],
+      10_000,
+    )
+    assert.equal(entries.length, 1)
+    const e = entries[0]
+    assert.ok(e)
+    assert.equal(e.source, 'child', 'child without provenance is generic')
+    assert.equal(e.alias, 'ses_task_1', 'unmarked child keeps a readable id alias')
+    assert.equal(delegationTag(e), '[ses_task_1]', 'row tag does not claim native task')
+    assert.equal(e.agent, 'agent', 'agent falls back to "agent" without child.agent')
+    assert.equal(e.state, 'running', 'busy → running')
+    assert.equal(e.startedAt, 5000, 'startedAt from child time.created')
+    assert.equal(e.updatedAt, null, 'running child has no end timestamp')
+    assert.equal(e.description, 'Tarefa nativa (task tool)', 'title becomes the description')
+  })
 
   await testAsync(
-    'children-only: native task() child without md → source children-only, [task] tag, derived state',
-    async () => {
-      const entries = childrenToDelegationEntries(
-        [
-          {
-            id: 'ses_task_1',
-            title: 'Tarefa nativa (task tool)',
-            status: 'busy',
-            time: { created: 5000 },
-          },
-        ],
-        [],
-        10_000,
-      )
-      assert.equal(entries.length, 1)
-      const e = entries[0]
-      assert.ok(e)
-      assert.equal(e.source, 'children-only', 'child without md is children-only')
-      assert.equal(e.alias, 'task', 'label/alias is the [task] tag')
-      assert.equal(delegationTag(e), '[task]', 'row tag renders [task]')
-      assert.equal(e.agent, 'agent', 'agent falls back to "agent" without child.agent')
-      assert.equal(e.state, 'running', 'busy → running')
-      assert.equal(e.startedAt, 5000, 'startedAt from child time.created')
-      assert.equal(e.updatedAt, null, 'running child has no end timestamp')
-      assert.equal(e.description, 'Tarefa nativa (task tool)', 'title becomes the description')
-    },
-  )
-
-  await testAsync(
-    'children-only: native task() child agent honored + idle → completed with duration',
+    'children: unmarked child agent honored + idle → completed with duration',
     async () => {
       const entries = childrenToDelegationEntries(
         [
@@ -1400,7 +1473,7 @@ async function main() {
       assert.equal(entries.length, 1)
       const e = entries[0]
       assert.ok(e)
-      assert.equal(e.source, 'children-only')
+      assert.equal(e.source, 'child')
       assert.equal(e.agent, 'hermes', 'child.agent is honored')
       assert.equal(e.state, 'completed', 'idle → completed')
       assert.equal(e.updatedAt, 9000, 'duration end from child time.updated')
@@ -1409,12 +1482,12 @@ async function main() {
   )
 
   await testAsync(
-    'children-only: child WITH md → board entry (alias) wins, same child NOT duplicated',
+    'children: explicit md report → board entry (alias) wins, same child NOT duplicated',
     async () => {
       // A pantheon_delegate child has BOTH a board report (md) and appears in
       // session.children — the board entry (alias [apo-1]) must prevail and
       // the same child must NOT render twice.
-      const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md')
+      const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md', 'ses_root')
       assert.ok(md)
       assert.equal(md.taskID, 'ses_00eb6331dffelZ3iaSnCBdJIGe')
       const entries = childrenToDelegationEntries(
@@ -1425,6 +1498,7 @@ async function main() {
         ],
         [md],
         10_000,
+        'ses_root',
       )
       assert.equal(entries.length, 1, 'board row only — no duplicate from children')
       const e = entries[0]
@@ -1437,11 +1511,11 @@ async function main() {
   )
 
   await testAsync(
-    'children-only: delegate + task mixture → correct ordering and count',
+    'children: board report + unmarked children → correct ordering and count',
     async () => {
-      // One pantheon_delegate child (has md → board [apo-1]), two native
-      // task() children (no md → [task]) — all from session.children.
-      const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md')
+      // One child with an explicit board report ([apo-1]) and two unmarked
+      // child sessions — all from session.children.
+      const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md', 'ses_root')
       assert.ok(md)
       const children: ChildDelegationLike[] = [
         {
@@ -1458,8 +1532,8 @@ async function main() {
           time: { created: 500, updated: 4000 },
         },
       ]
-      const entries = childrenToDelegationEntries(children, [md], 10_000)
-      assert.equal(entries.length, 3, '3 children → 3 rows (1 board + 2 task)')
+      const entries = childrenToDelegationEntries(children, [md], 10_000, 'ses_root')
+      assert.equal(entries.length, 3, '3 children → 3 rows (1 board + 2 generic children)')
       const byId = new Map(entries.map((e) => [e.taskID, e]))
       const board = byId.get(md.taskID ?? '')
       assert.ok(board)
@@ -1470,8 +1544,10 @@ async function main() {
         'completed',
         'terminal md state wins over the busy-derived child state',
       )
-      assert.equal(byId.get('ses_task_a')?.source, 'children-only')
-      assert.equal(byId.get('ses_task_b')?.source, 'children-only')
+      assert.equal(byId.get('ses_task_a')?.source, 'child')
+      assert.equal(byId.get('ses_task_b')?.source, 'child')
+      assert.equal(delegationTag(byId.get('ses_task_a') as DelegationEntry), '[ses_task_a]')
+      assert.equal(delegationTag(byId.get('ses_task_b') as DelegationEntry), '[ses_task_b]')
       // Ordering: running first, then terminal by recency (board md Finalized
       // timestamp >> the task child's time.updated) — sources interleave.
       assert.equal(entries[0]?.state, 'running', 'running first')
@@ -1482,7 +1558,7 @@ async function main() {
   )
 
   await testAsync(
-    'children-only: task child status derived (busy/retry→running, idle→completed)',
+    'children: unmarked child status derived (busy/retry→running, idle→completed)',
     async () => {
       const children: ChildDelegationLike[] = [
         { id: 'ses_t1', status: 'busy', time: { created: 100 } },
@@ -1676,13 +1752,15 @@ async function main() {
         assert.equal(sessionID, null)
         const md = await readAllDelegationEntries(root)
         // Running MD reports are now rejected (Fix 3) — only terminal reports parse
-        assert.equal(md.length, 3, 'history collected from disk despite null sessionID (running MD rejected)')
+        assert.equal(
+          md.length,
+          3,
+          'history collected from disk despite null sessionID (running MD rejected)',
+        )
         const panelList = visibleDelegationList(md)
         assert.equal(panelList.length, 3, 'history renders — panel is NOT (0)')
         assert.deepEqual(
-          panelList
-            .map((e) => e.alias)
-            .sort(),
+          panelList.map((e) => e.alias).sort(),
           ['apo-1', 'her-7', 'the-9'],
           'terminal history present',
         )

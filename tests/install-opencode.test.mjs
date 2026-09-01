@@ -3,10 +3,8 @@
  * scripts/install/opencode.mjs (resolveInstalledPlugin).
  *
  * Validates the packaging fix for PR #45 (delegation plugin at package root):
- *  - plugin ref `src/plugin.ts` (registered in the packaged opencode.json)
- *    resolves to <ROOT>/src/plugin.ts inside the INSTALLED package, never a
- *    developer-machine absolute path
- *  - `src/plugins/*` refs (pantheon-hooks) keep resolving to the package
+ *  - exact managed refs resolve to <ROOT>/src/* inside the installed package
+ *  - absolute third-party refs with the same basename remain untouched
  *  - non-src plugin refs (npm specs, etc.) pass through unchanged
  *
  * Run: node --test tests/install-opencode.test.mjs
@@ -17,42 +15,56 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { installOpenCode, resolveInstalledPlugin } from '../scripts/install/opencode.mjs'
+import {
+  installOpenCode,
+  pluginReferenceIdentity,
+  resolveInstalledPlugin,
+} from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
-// Simulates the developer machine path being baked into the packaged config
-// (the REAL dev path differs per machine — this one must never appear in
-// resolver output regardless of the machine running the test).
-const FOREIGN_DEV_PATH = '/home/otherdev/pantheon'
+const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
+const THIRD_PARTY_HOOKS = '/tmp/pantheon-opencode-vendor/src/plugins/pantheon-hooks.ts'
+const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
+const THIRD_PARTY_PANTHEON_PLUGIN = '/tmp/vendor/pantheon/src/plugin.ts'
 
-test('resolveInstalledPlugin maps root-level src/plugin.ts into the installed package', () => {
-  const result = resolveInstalledPlugin(`${FOREIGN_DEV_PATH}/src/plugin.ts`)
-  assert.equal(result, join(ROOT, 'src', 'plugin.ts'))
-  assert.ok(!result.startsWith(FOREIGN_DEV_PATH), 'must not leak the developer path')
-})
-
-test('resolveInstalledPlugin maps relative src/plugin.ts into the installed package', () => {
+test('resolveInstalledPlugin maps the exact relative root plugin into the installed package', () => {
   const result = resolveInstalledPlugin('src/plugin.ts')
   assert.equal(result, join(ROOT, 'src', 'plugin.ts'))
 })
 
-test('resolveInstalledPlugin still maps src/plugins/* hooks plugin into the installed package', () => {
-  const result = resolveInstalledPlugin(`${FOREIGN_DEV_PATH}/src/plugins/pantheon-hooks.ts`)
+test('resolveInstalledPlugin preserves a third-party plugin with the same basename', () => {
+  assert.equal(resolveInstalledPlugin(THIRD_PARTY_PLUGIN), THIRD_PARTY_PLUGIN)
+  assert.equal(resolveInstalledPlugin(THIRD_PARTY_HOOKS), THIRD_PARTY_HOOKS)
+})
+
+test('resolveInstalledPlugin preserves third-party paths under pantheon-named directories', () => {
+  assert.equal(
+    resolveInstalledPlugin(THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN),
+    THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN,
+  )
+  assert.equal(resolveInstalledPlugin(THIRD_PARTY_PANTHEON_PLUGIN), THIRD_PARTY_PANTHEON_PLUGIN)
+  assert.notEqual(
+    pluginReferenceIdentity(THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN),
+    pluginReferenceIdentity('src/plugin.ts'),
+  )
+  assert.notEqual(
+    pluginReferenceIdentity(THIRD_PARTY_PANTHEON_PLUGIN),
+    pluginReferenceIdentity('src/plugin.ts'),
+  )
+})
+
+test('resolveInstalledPlugin maps the exact relative hooks plugin into the installed package', () => {
+  const result = resolveInstalledPlugin('src/plugins/pantheon-hooks.ts')
   assert.equal(result, join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'))
 })
 
-test('resolveInstalledPlugin never emits a developer-machine absolute path', () => {
+test('resolveInstalledPlugin recognizes only exact installed paths as managed', () => {
   for (const ref of [
-    `${FOREIGN_DEV_PATH}/src/plugin.ts`,
-    `${FOREIGN_DEV_PATH}/src/plugins/pantheon-hooks.ts`,
-    'src/plugin.ts',
-    'src/plugins/pantheon-hooks.ts',
+    join(ROOT, 'src', 'plugin.ts'),
+    join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),
   ]) {
     const result = resolveInstalledPlugin(ref)
-    assert.ok(
-      !result.includes(FOREIGN_DEV_PATH),
-      `leaked developer path for ref ${ref}: got ${result}`,
-    )
+    assert.equal(result, ref)
   }
 })
 
@@ -67,6 +79,21 @@ test('resolved plugin paths exist inside the package (ROOT-derived, not stale re
 test('resolveInstalledPlugin passes through non-src plugin refs unchanged', () => {
   assert.equal(resolveInstalledPlugin('@scope/custom-plugin'), '@scope/custom-plugin')
   assert.equal(resolveInstalledPlugin('pantheon-hooks'), 'pantheon-hooks')
+})
+
+test('plugin identities do not collapse third-party paths by basename or marker text', () => {
+  assert.notEqual(
+    pluginReferenceIdentity(THIRD_PARTY_PLUGIN),
+    pluginReferenceIdentity('src/plugin.ts'),
+  )
+  assert.notEqual(
+    pluginReferenceIdentity(THIRD_PARTY_HOOKS),
+    pluginReferenceIdentity('src/plugins/pantheon-hooks.ts'),
+  )
+  assert.equal(
+    pluginReferenceIdentity({ package: 'pantheon-opencode/plugin' }),
+    pluginReferenceIdentity('src/plugin.ts'),
+  )
 })
 
 // ─── End-to-end config merge (installOpenCode into temp dirs) ──────────────
@@ -168,10 +195,11 @@ test('upgrade preserves user plugins and adds both pantheon plugins (dedupe)', a
   const target = mkdtempSync(join(tmpdir(), 'pantheon-upgrade-plugins-'))
   try {
     const config = await runInstall(target, {
-      plugin: ['@scope/custom-plugin', '/home/otherdev/pantheon/src/plugin.ts'],
+      plugin: ['@scope/custom-plugin', THIRD_PARTY_PLUGIN, THIRD_PARTY_HOOKS],
     })
     assert.ok(config.plugin.includes('@scope/custom-plugin'), 'user plugin preserved')
-    // Stale dev-machine path replaced by the installed-package path.
+    assert.ok(config.plugin.includes(THIRD_PARTY_PLUGIN), 'third-party plugin path preserved')
+    assert.ok(config.plugin.includes(THIRD_PARTY_HOOKS), 'third-party hooks path preserved')
     assert.ok(
       config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
       `delegation plugin not re-registered: ${JSON.stringify(config.plugin)}`,
@@ -180,10 +208,11 @@ test('upgrade preserves user plugins and adds both pantheon plugins (dedupe)', a
       config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
       `hooks plugin not registered: ${JSON.stringify(config.plugin)}`,
     )
-    // No duplicate entries for the same plugin file.
+    // The managed entries are unique, while third-party entries with the same
+    // basenames remain independent registrations.
     const pluginFiles = config.plugin.map((p) => p.split('/').pop())
-    assert.equal(pluginFiles.filter((f) => f === 'plugin.ts').length, 1)
-    assert.equal(pluginFiles.filter((f) => f === 'pantheon-hooks.ts').length, 1)
+    assert.equal(pluginFiles.filter((f) => f === 'plugin.ts').length, 2)
+    assert.equal(pluginFiles.filter((f) => f === 'pantheon-hooks.ts').length, 2)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

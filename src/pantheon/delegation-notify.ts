@@ -21,10 +21,11 @@
  * acknowledgment, not a completion), so every job gets exactly ONE terminal
  * transition — never a reconciled echo. Unknown sessions are ignored.
  *
- * `finalizeIdleChildrenWithoutMd` proactively finalizes children that are
- * idle on the board but have no MD report on disk — eliminates the phantom
- * "running" window during `pullOutput` (Fix 2 for the TUI stale-running bug).
- * Wired into a periodic scan via `startIdleChildScan` (default 30 s cadence).
+ * `finalizeIdleChildrenWithoutMd` proactively finalizes children confirmed
+ * idle by the V1 session-status API but with no MD report on disk — eliminates
+ * the phantom "running" window during `pullOutput` without treating a board
+ * record's `running` state as proof that the child is idle. Wired into a
+ * periodic scan via `startIdleChildScan` (default 30 s cadence).
  *
  * Pure TypeScript — zero runtime dependencies beyond the board types.
  *
@@ -119,6 +120,11 @@ export interface IdleChildScanDeps {
   /** Bound Phase 2 finalize — clears the timeout timer + writes the report. */
   finalize: (childSessionID: string, opts: FinalizeInput) => Promise<unknown>
   /**
+   * Confirm the child's native V1 session status. `undefined` means the
+   * status is unavailable and MUST NOT be treated as idle.
+   */
+  isIdle?: (childSessionID: string) => Promise<boolean | undefined>
+  /**
    * Check whether an MD report exists for the given board job.
    * Receives the full job record so the caller can construct the report
    * path from `job.parentSessionID` + `job.alias`.
@@ -130,30 +136,41 @@ export interface IdleChildScanDeps {
 }
 
 /**
- * Scan running board jobs for children whose sessions are idle but have no MD
- * report on disk, and proactively finalize them. This eliminates the phantom
- * "running" window that occurs between `session.idle` firing and the
- * `pullOutput`→`writeDelegationReport` cycle completing.
+ * Scan running board jobs for children whose V1 session status is confirmed
+ * idle but have no MD report on disk, and proactively finalize them. This
+ * eliminates the phantom "running" window that occurs between `session.idle`
+ * firing and the `pullOutput`→`writeDelegationReport` cycle completing.
  *
  * Called from the periodic idle-child scan (`startIdleChildScan`, default 30 s).
  * The scan is O(N) where N = number of running jobs (typically < 10).
  *
- * Each child is finalized exactly once — the board's same-terminal idempotency
- * ensures repeated scans are harmless. Errors are caught per-child so one
- * failure never blocks the rest.
+ * A missing status probe is an explicit unknown state, not an idle signal, so
+ * legacy embedders without the V1 API fail closed. Errors are caught
+ * per-child so one failure never blocks the rest.
  *
  * @returns Number of children finalized (for diagnostics).
  */
-export async function finalizeIdleChildrenWithoutMd(
-  deps: IdleChildScanDeps,
-): Promise<number> {
-  const runningJobs = deps.board
-    .list()
-    .filter((j: BackgroundJobRecord) => j.state === 'running')
+export async function finalizeIdleChildrenWithoutMd(deps: IdleChildScanDeps): Promise<number> {
+  const runningJobs = deps.board.list().filter((j: BackgroundJobRecord) => j.state === 'running')
 
   let finalized = 0
   for (const job of runningJobs) {
     try {
+      if (deps.isIdle === undefined) {
+        deps.logger?.warn?.(
+          `[delegation-notify] idle status unknown for ${job.taskID}; proactive finalize skipped`,
+        )
+        continue
+      }
+      const idle = await deps.isIdle(job.taskID)
+      if (idle !== true) {
+        if (idle === undefined) {
+          deps.logger?.warn?.(
+            `[delegation-notify] idle status unknown for ${job.taskID}; proactive finalize skipped`,
+          )
+        }
+        continue
+      }
       // If the child already has an MD report, finalize was already handled
       // by handleDelegationEvent — skip.
       if (deps.hasReport(job)) continue
@@ -161,9 +178,7 @@ export async function finalizeIdleChildrenWithoutMd(
       await deps.finalize(job.taskID, { state: 'completed' })
       finalized++
     } catch (err) {
-      deps.logger?.warn?.(
-        `[delegation-notify] proactive finalize failed for ${job.taskID}: ${err}`,
-      )
+      deps.logger?.warn?.(`[delegation-notify] proactive finalize failed for ${job.taskID}: ${err}`)
     }
   }
   return finalized
