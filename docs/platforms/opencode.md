@@ -1,6 +1,6 @@
 # Pantheon for OpenCode
 
-Complete setup and usage guide for running Pantheon **v1.4.3** in [OpenCode](https://opencode.ai) — 4 presets (`go-free`/`go-fast`/`go-premium`/`openai` puro), wizard 3 perguntas, herança nativa default — the open-source AI coding agent for the terminal, desktop, and IDE.
+Complete setup and usage guide for running Pantheon **v1.5.0** in [OpenCode](https://opencode.ai) — 4 presets (`go-free`/`go-fast`/`go-premium`/`openai` puro), wizard 3 perguntas, herança nativa default — the open-source AI coding agent for the terminal, desktop, and IDE.
 
 ---
 
@@ -9,7 +9,7 @@ Complete setup and usage guide for running Pantheon **v1.4.3** in [OpenCode](htt
 | Requirement | Notes |
 |---|---|
 | **OpenCode** installed | Follow the [OpenCode installation guide](https://opencode.ai/docs/) or use `npm install -g opencode-ai` |
-| **Node.js 18+** | Only needed for the sync engine (`npm run sync`) and installer script |
+| **Node.js 18+** | Required by the installer and Node-based tooling |
 | **Git** | Any recent version |
 
 ---
@@ -24,7 +24,7 @@ OpenCode is available in three form factors:
 | **Desktop app** | Download from [opencode.ai/download](https://opencode.ai/download) — macOS, Linux, Windows |
 | **IDE extension** | Available for VS Code, JetBrains, and Zed |
 
-Pantheon ships a hooks plugin at `src/plugins/pantheon-hooks.ts`, backed by the `src/plugins/hook-runner.ts` runner (spawns each script with `node:child_process` and delivers the `{tool_name, tool_input, agent_id, session_id}` payload as JSON on stdin — version-proof, no Bun Shell `$` dependency). It bridges the shell scripts from `scripts/hooks/` to OpenCode events: tool.execute.before (validate-talos-scope, scan-secrets, validate-tool-safety, on-subagent-delegation-start), tool.execute.after (format-multi-language, log-session-start, on-subagent-delegation-stop), and event session.created (log-session-start, validate-post-conditions). Register it explicitly in `opencode.json`: `"plugin": ["<path>/src/plugins/pantheon-hooks.ts"]` (absolute path — project or, for global installs, `<prefix>/lib/node_modules/pantheon-opencode/src/plugins/pantheon-hooks.ts`). It is **not** auto-discovered from `.opencode/plugins/`.
+The installer registers Pantheon's runtime integrations automatically. It writes the singular `plugin` configuration key for OpenCode V1 and converts it to the plural `plugins` key for OpenCode V2; do not add either key manually. The TUI integration is copied to `plugins/pantheon-tui` in the selected OpenCode config directory and registered in `tui.json`.
 
 The fastest way to set up Pantheon in any project is with the universal install script:
 
@@ -32,7 +32,7 @@ The fastest way to set up Pantheon in any project is with the universal install 
 npx pantheon-opencode init --project
 ```
 
-This auto-detects the platform (OpenCode, VS Code, Cursor, etc.), installs agents to the correct directories, and creates platform config files. The generated `opencode.json` includes only `$schema`, `permission`, and `instructions` — model overrides are stripped and resolved at runtime via plan files.
+This installs agents, runtime files, MCP servers, and the required OpenCode configuration in the project directory. Run `npx pantheon-opencode init` without `--project` for the global installation.
 
 ### Desktop App
 
@@ -45,9 +45,9 @@ Pantheon works seamlessly with the OpenCode Desktop app. Agents, skills, and ins
 git clone https://github.com/ils15/pantheon.git
 cd pantheon
 
-# Copy the pre-generated OpenCode agents into your project
+# Copy the OpenCode agents from this checkout into your project
 mkdir -p /path/to/your-project/.opencode/agents
-cp -r platform/opencode/agents/. /path/to/your-project/.opencode/agents/
+cp -r src/agents/. /path/to/your-project/.opencode/agents/
 
 # Copy the root opencode.json as a starting point
 cp opencode.json /path/to/your-project/opencode.json
@@ -55,7 +55,7 @@ cp opencode.json /path/to/your-project/opencode.json
 
 ### How It Works
 
-The OpenCode agents live in `platform/opencode/agents/` (generated from canonical `agents/` by `npm run sync`). The adapter (v2.0.0) uses a tool map to convert canonical VS Code tool names to OpenCode-native names, moves permissions from body blocks to frontmatter, and excludes tools not available in OpenCode (`read/problems`, browser tools).
+The installed OpenCode agents live in `.opencode/agents/` (project) or `~/.config/opencode/agents/` / `~/.opencode/agents/` (global flat layouts). The installer copies the supported agent definitions and configuration into the selected location; there is no separate platform sync step.
 
 ### `/init` Command
 
@@ -113,7 +113,7 @@ If not set, OpenCode defaults to the built-in `build` agent. This is useful when
 
 ### Agent Permissions (adapter v2)
 
-In OpenCode adapter v2, permissions are declared in **frontmatter** rather than appended as body blocks. The sync engine generates them automatically:
+Permissions are declared in **frontmatter** rather than appended as body blocks:
 
 ```yaml
 ---
@@ -187,7 +187,7 @@ This can also be set per-agent to restrict which subagents each Pantheon agent c
 
 ## Agent Format
 
-OpenCode agents are `.md` files with YAML frontmatter. They live in `.opencode/agents/` (project) or `~/.config/opencode/agents/` (global). The Pantheon sync engine (adapter v2.0.0) generates them from the canonical VS Code `.agent.md` sources into `platform/opencode/agents/`, applying tool name mapping and permissions conversion.
+OpenCode agents are `.md` files with YAML frontmatter. They live in `.opencode/agents/` (project) or `~/.config/opencode/agents/` / `~/.opencode/agents/` (global). The installer copies the definitions from `src/agents/` into the selected OpenCode location.
 
 ```yaml
 ---
@@ -266,18 +266,18 @@ The OpenCode adapter v2 (2.0.0) maps canonical VS Code tool names to OpenCode-na
 
 ## OpenCode-Specific Features
 
-### TUI Plugin (v1.4.3)
+### TUI Plugin (v1.5.0)
 
-Pantheon v1.4.3 ships a **TUI plugin** for OpenCode that provides:
+Pantheon v1.5.0 ships a **TUI plugin** for OpenCode that provides:
 - **Live deepwork status** — see active phases, progress, and checkpoints
 - **Activity feed** — real-time agent delegation events
 - **Toast notifications** — phase completion, review results, gate approvals
 
-The plugin auto-discovers from `.opencode/plugins/` when running from the project directory. It's also synced globally to `~/.config/opencode/plugins/` via `npm run sync opencode`.
+For a project installation use `npx pantheon-opencode init --project`; for a global flat installation use `npx pantheon-opencode init`. The installer registers the copied TUI plugin in `tui.json` rather than relying on directory auto-discovery.
 
 ### Themis 2.0
 
-Pantheon v1.4.3 includes **Themis 2.0** — a 3-layer review pipeline:
+Pantheon v1.5.0 includes **Themis 2.0** — a 3-layer review pipeline:
 1. **Heuristic Scanner** — zero-LLM static analysis (ruff, biome, anti-pattern detection, hash verification)
 2. **Deep Review** — LLM-powered code review with OWASP Top 10, coverage enforcement, and correctness checks
 3. **Verification Planning** — structured verification plan with test gap analysis
@@ -379,7 +379,7 @@ Tabelas abaixo são **geradas a partir de [`src/routing.yml`](../../src/routing.
 
 #### Per-agent overrides — `/pantheon-model set --agent`
 
-Desde v1.4.2, personalização fina **por agente** sem tocar `opencode.json` top-level nem `.env`:
+Desde v1.5.0, personalização fina **por agente** sem tocar `opencode.json` top-level nem `.env`:
 
 ```bash
 # wizard interativo (agente → modelo → effort → scope)
@@ -662,100 +662,6 @@ your-project/
 | View token stats | `opencode stats` |
 | Debug MCP auth | `opencode mcp debug <server>` |
 
-## 🚀 Advanced: Background Orchestration with opencode-pty
-
-By default, OpenCode's `task` tool runs synchronously — the parent waits for the child to complete. For long-running operations (builds, tests, data processing), you can use the **opencode-pty** plugin to run agents in background.
-
-### Installation
-
-Add to your `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "plugin": [
-    "opencode-sm",
-    "shekohex/opencode-pty"
-  ]
-}
-```
-
-Then install:
-```bash
-opencode plugin install shekohex/opencode-pty
-```
-
-### Tools Added
-
-| Tool | Purpose |
-|------|---------|
-| `pty_spawn` | Start a process in background (returns PID) |
-| `pty_read` | Read output from a background process |
-| `pty_list` | List active background processes |
-| `pty_kill` | Terminate a background process |
-| `pty_snapshot_wait` | Wait for process to reach a condition |
-
-### Usage in Pantheon
-
-When Zeus delegates a long-running task:
-
-```text
-Zeus: "@hermes — run the full test suite in background"
-Hermes: Uses pty_spawn to start pytest
-Zeus: Continues with other work
-Later: Zeus checks pty_read for results
-```
-
-### Example Workflow
-
-```json
-{
-  "tool": "pty_spawn",
-  "command": "pytest --tb=short -q",
-  "cwd": "/workspace/project"
-}
-→ Returns: { "pid": "pty-123", "status": "running" }
-
-{
-  "tool": "pty_read",
-  "pid": "pty-123",
-  "offset": 0,
-  "limit": 100
-}
-→ Returns: { "output": "...test results...", "status": "running" }
-
-{
-  "tool": "pty_snapshot_wait",
-  "pid": "pty-123",
-  "pattern": "passed|failed",
-  "timeout": 300000
-}
-→ Returns: { "output": "...", "status": "completed" }
-```
-
-### Limitations
-
-- Background tasks run on the **same machine** (not distributed)
-- No automatic retry or failure recovery (must be handled manually)
-- Process state is lost if OpenCode restarts
-- Requires `opencode-pty` plugin (not available in all OpenCode installations)
-
-### Alternative: Manual Background
-
-Without the plugin, use standard Unix backgrounding:
-
-```bash
-# Start in background, redirect output to file
-nohup pytest --tb=short -q > /tmp/test-results.log 2>&1 &
-echo $! > /tmp/test-pid.txt
-
-# Later, check results
-cat /tmp/test-results.log
-```
-
-This is the approach used by Pantheon's built-in hooks.
-
----
-
 ## 📝 Advanced: Dynamic Prompts with File Templates
 
 OpenCode prompts are static templates (e.g., `{{input}}`). For dynamic prompt generation based on context, use **file-based templates** with the `{file:...}` syntax.
@@ -799,7 +705,7 @@ Add to `scripts/generate-prompts.sh`:
 ```bash
 #!/bin/bash
 # Generate dynamic prompts
-AGENTS=$(ls platform/opencode/agents/ | sed 's/.md//' | paste -sd ', ' -)
+AGENTS=$(ls .opencode/agents/ | sed 's/.md//' | paste -sd ', ' -)
 
 sed -e "s/{{agents}}/$AGENTS/g" \
     prompts/templates/council-template.txt \
@@ -810,7 +716,7 @@ sed -e "s/{{agents}}/$AGENTS/g" \
 
 - Not true runtime generation (generated at plan-switch time)
 - Requires manual regeneration when agents change
-- Platform-specific (OpenCode supports `{file:...}`, others may not)
+- OpenCode-specific (OpenCode supports `{file:...}`)
 
 ---
 

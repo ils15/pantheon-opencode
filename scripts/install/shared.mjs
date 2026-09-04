@@ -1,5 +1,5 @@
 /**
- * shared.mjs — Shared utilities for Pantheon platform installers
+ * shared.mjs — Shared utilities for the OpenCode installer
  */
 
 import {
@@ -26,8 +26,6 @@ import yaml from 'js-yaml'
 export const __dirname = dirname(fileURLToPath(import.meta.url))
 export const ROOT = join(__dirname, '..', '..')
 export const AGENTS_DIR = join(ROOT, 'src', 'agents')
-// PLATFORM_DIR is deprecated — platform/ was removed in v1.0
-export const PLATFORM_DIR = join(ROOT, 'platform')
 
 // Auto-detect agent names from agents/ directory
 export function getAgentNames() {
@@ -43,33 +41,7 @@ export function getAgentNames() {
 // Cached constant for backward compatibility
 export const AGENT_NAMES = getAgentNames()
 
-// DEPRECATED: OpenCode-only since v1.0
-export const PLATFORM_DETECTORS = {
-  opencode: (target) =>
-    existsSync(join(target, 'opencode.json')) ||
-    existsSync(join(target, 'platform', 'opencode', 'opencode.json')),
-  claude: (target) => existsSync(join(target, '.claude')) || existsSync(join(target, 'CLAUDE.md')),
-  cursor: (target) =>
-    existsSync(join(target, '.cursor')) || existsSync(join(target, '.cursorrules')),
-  windsurf: (target) =>
-    existsSync(join(target, '.windsurf')) || existsSync(join(target, '.windsurfrules')),
-  copilot: (target) =>
-    existsSync(join(target, '.github', 'copilot-instructions.md')) ||
-    existsSync(join(target, '.vscode')),
-  continue: (target) =>
-    existsSync(join(target, '.continue', 'config.yaml')) || existsSync(join(target, '.continue')),
-  cline: (target) => existsSync(join(target, '.clinerules')),
-}
-
-export const summary = {
-  opencode: { created: 0, skipped: 0, errors: 0 },
-  claude: { created: 0, skipped: 0, errors: 0 },
-  cursor: { created: 0, skipped: 0, errors: 0 },
-  windsurf: { created: 0, skipped: 0, errors: 0 },
-  copilot: { created: 0, skipped: 0, errors: 0 },
-  continue: { created: 0, skipped: 0, errors: 0 },
-  cline: { created: 0, skipped: 0, errors: 0 },
-}
+export const summary = { opencode: { created: 0, skipped: 0, errors: 0 } }
 
 export function showHelp() {
   console.log(`
@@ -78,9 +50,7 @@ pantheon-init.mjs — Pantheon OpenCode installer
 Usage:
   npx pantheon-opencode init                                        auto-detect, cwd
   npx pantheon-opencode init --project                              auto-detect, project
-  npx pantheon-opencode init --project --platforms opencode,claude  specific platforms
-  npx pantheon-opencode init --project --platforms all              all platforms
-  npx pantheon-opencode init --detect                               detect platforms without installing
+  npx pantheon-opencode init --project                              install in a project
   npx pantheon-opencode init --project --dry-run                    preview without writing
   npx pantheon-opencode init --project --backup                     create timestamped backup before writing
   npx pantheon-opencode init --project --clean                      wipe + fresh install (all components)
@@ -101,19 +71,8 @@ Clean mode (--clean):
   re-installs fresh from source. Useful after removing/renaming agents or skills.
   OFF by default — without --clean only copies new/changed files (never deletes).
 
-Platforms:
+Platform:
   opencode    → .opencode/agents/ + opencode.json
-  claude       → .claude/agents/ + CLAUDE.md + settings.json
-  cursor       → .cursor/rules/ (renamed .mdc files)
-  windsurf     → .windsurf/agents/ + .windsurfrules
-  copilot      → .github/agents/ symlinks + .vscode/settings.json check
-  continue     → .continue/rules/ + .continue/config.yaml
-  cline        → .clinerules/ (no extension, plain markdown)
-  all          → install every platform
-
-When --platforms is omitted, the script auto-detects which platforms
-the target project already supports (based on config files present).
-If none are detected, ALL platforms are installed.
 `)
 }
 
@@ -206,63 +165,25 @@ export function createBackup(target) {
 }
 
 export function detectAndReport(target) {
-  const PLATFORM_LABELS = {
-    opencode: 'OpenCode',
-    claude: 'Claude Code',
-    cursor: 'Cursor',
-    windsurf: 'Windsurf',
-    copilot: 'VS Code / Copilot',
-    continue: 'Continue.dev',
-    cline: 'Cline',
-  }
-
-  const CONFIG_FILES = {
-    opencode: () => 'opencode.json',
-    claude: () => '.claude/ or CLAUDE.md',
-    cursor: () => '.cursor/ or .cursorrules',
-    windsurf: () => '.windsurf/ or .windsurfrules',
-    copilot: () => '.github/copilot-instructions.md or .vscode/',
-    continue: () => '.continue/config.yaml or .continue/',
-    cline: () => '.clinerules',
-  }
+  const found = detectPlatforms(target).length > 0
 
   console.log(`\n  🔍 Pantheon Platform Detection`)
   console.log(`     Target: ${target}\n`)
 
-  const results = []
-  for (const [platform, detector] of Object.entries(PLATFORM_DETECTORS)) {
-    const found = detector(target)
-    results.push({ platform, found })
-  }
-
-  // Table header
   console.log(`  ${'Platform'.padEnd(12)} ${'Detected?'.padEnd(12)} Config file`)
   console.log(`  ${'─'.repeat(55)}`)
-
-  const detected = results.filter((r) => r.found)
-  for (const r of results) {
-    const status = r.found ? '✅ YES' : '❌ no'
-    const configFile = r.found ? CONFIG_FILES[r.platform]() : '(not found)'
-    console.log(`  ${PLATFORM_LABELS[r.platform].padEnd(12)} ${status.padEnd(12)} ${configFile}`)
+  const status = (found ? '✅ YES' : '❌ no').padEnd(12)
+  console.log(`  ${'OpenCode'.padEnd(12)} ${status} ${found ? 'opencode.json' : '(not found)'}`)
+  console.log(`\n  📊 ${found ? 1 : 0} of 1 platforms detected.`)
+  if (found) {
+    console.log('  → Install with: npx pantheon-opencode init')
   }
 
-  console.log(`\n  📊 ${detected.length} of ${results.length} platforms detected.`)
-  if (detected.length > 0) {
-    const names = detected.map((r) => r.platform).join(',')
-    console.log(`  → Install with: npx pantheon-opencode init --platforms ${names}`)
-  }
-
-  return detected.map((r) => r.platform)
+  return found ? ['opencode'] : []
 }
 
 export function detectPlatforms(target) {
-  const detected = []
-  for (const [platform, detector] of Object.entries(PLATFORM_DETECTORS)) {
-    if (detector(target)) {
-      detected.push(platform)
-    }
-  }
-  return detected
+  return existsSync(join(target, 'opencode.json')) ? ['opencode'] : []
 }
 
 export function sourceDirValid(dir) {
@@ -569,16 +490,6 @@ export function validateMcpServers(mcpServers, _agentTools = []) {
 }
 
 export function printSummary(target, platforms) {
-  const PLATFORM_LABELS = {
-    opencode: 'OpenCode',
-    claude: 'Claude Code',
-    cursor: 'Cursor',
-    windsurf: 'Windsurf',
-    copilot: 'VS Code / Copilot',
-    continue: 'Continue.dev',
-    cline: 'Cline',
-  }
-
   console.log('')
   console.log('='.repeat(60))
   console.log('📋 Installation Summary')
@@ -590,7 +501,7 @@ export function printSummary(target, platforms) {
   let totalErrors = 0
 
   for (const platform of platforms) {
-    const label = PLATFORM_LABELS[platform] ?? platform
+    const label = platform === 'opencode' ? 'OpenCode' : platform
     const stats = summary[platform]
     totalCreated += stats.created
     totalSkipped += stats.skipped
@@ -621,62 +532,6 @@ export function printSummary(target, platforms) {
     console.log('    - Invoke agents with @agent-name in chat')
     console.log('    - To customize models: edit opencode.json')
     console.log('    - Skills are in .opencode/skills/ (auto-loaded)')
-    console.log('')
-  }
-
-  if (platforms.includes('claude')) {
-    console.log('  Claude Code:')
-    console.log(`    - Run \`claude\` in ${target}`)
-    console.log('    - Agents in .claude/agents/')
-    console.log('    - Skills in .claude/skills/')
-    console.log('    - Settings in .claude/settings.json')
-    console.log('')
-  }
-
-  if (platforms.includes('cursor')) {
-    console.log('  Cursor:')
-    console.log(`    - Rules in .cursor/rules/ (.mdc format)`)
-    console.log('    - Skills in .cursor/skills/')
-    console.log('    - AGENTS.md in project root')
-    console.log('    - Use @agent-name in Agent mode')
-    console.log('')
-  }
-
-  if (platforms.includes('windsurf')) {
-    console.log('  Windsurf (Cascade):')
-    console.log(`    - Rules in .windsurf/rules/`)
-    console.log('    - Skills in .windsurf/skills/')
-    console.log('    - Workflows in .windsurf/workflows/ (/orchestrate, /code-review)')
-    console.log('    - AGENTS.md in project root')
-    console.log('')
-  }
-
-  if (platforms.includes('copilot')) {
-    console.log('  VS Code / Copilot:')
-    console.log(`    - Agents in .github/agents/`)
-    console.log('    - Ensure .vscode/settings.json has plugin config')
-    console.log('    - Use @agent-name in VS Code Copilot Chat')
-    console.log('    - Plugin manifest in plugin.json')
-    console.log('')
-  }
-
-  if (platforms.includes('continue')) {
-    console.log('  Continue.dev:')
-    console.log(`    - Rules in .continue/rules/`)
-    console.log('    - Config in .continue/config.yaml')
-    console.log('    - Rules are injected into system prompts (no @name invocation)')
-    console.log('    - Edit config.yaml to set API keys and models')
-    console.log('    - Use /reload to apply config changes')
-    console.log('')
-  }
-
-  if (platforms.includes('cline')) {
-    console.log('  Cline:')
-    console.log(`    - Agent rules in .clinerules/ (no extension, plain markdown)`)
-    console.log('    - Skills in .clinerules/skills/')
-    console.log('    - Commands in .clinerules/commands/')
-    console.log('    - AGENTS.md in project root')
-    console.log('    - Invoke agents with @agent-name in Cline chat')
     console.log('')
   }
 

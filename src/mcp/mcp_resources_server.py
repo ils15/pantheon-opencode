@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from _pantheon_paths import pantheon_home, pantheon_project
+from _pantheon_paths import has_symlink_component, pantheon_home, pantheon_project
 from eval_store import get_latest_eval, list_evals
 from mcp.server.fastmcp import FastMCP
 
@@ -36,11 +36,29 @@ def _within(path: Path, parent: Path) -> bool:
 
 
 def _safe_root(root: Path, parent: Path) -> Path | None:
-    """Resolve a resource root, rejecting symlinks that leave its layout."""
+    """Return a physical resource root only when its layout is trusted.
+
+    Local ``.opencode`` and ``.pantheon`` directories are trust boundaries:
+    accepting either as a symlink would make all resources below it
+    untrusted, even when the link happens to point inside the project.
+    """
+    if parent.is_symlink() or has_symlink_component(parent):
+        return None
+    # Keep the project root lexical until this trust-boundary check.  This
+    # rejects PANTHEON_PROJECT/cwd symlinks instead of resolving them away.
+    if parent.name in {".opencode", ".pantheon"} and parent.parent.is_symlink():
+        return None
+    if root.is_symlink():
+        return None
     if not root.exists() or not root.is_dir():
         return None
+    parent_resolved = parent.resolve()
     resolved = root.resolve()
-    return resolved if _within(resolved, parent.resolve()) else None
+    if parent.name in {".opencode", ".pantheon"} and not _within(
+        parent_resolved, parent.parent.resolve()
+    ):
+        return None
+    return resolved if _within(resolved, parent_resolved) else None
 
 
 def _resource_root(name: str) -> Path | None:
@@ -81,8 +99,11 @@ def _resource_roots(name: str) -> list[Path]:
 
 
 def _safe_child(root: Path, relative: str) -> Path | None:
-    """Resolve a relative resource path without leaving its safe root."""
-    resolved = (root / relative).resolve()
+    """Resolve a child while rejecting every lexical symlink component."""
+    candidate = root / relative
+    if has_symlink_component(candidate):
+        return None
+    resolved = candidate.resolve()
     return resolved if _within(resolved, root.resolve()) else None
 
 
@@ -135,8 +156,15 @@ async def list_agents() -> str:
     agents: list[str] = []
     seen: set[str] = set()
     for agents_dir in agents_dirs:
-        for f in sorted(agents_dir.iterdir()):
-            if f.suffix == ".md" and f.stem.lower() != "readme" and f.name not in seen:
+        for entry in sorted(agents_dir.iterdir()):
+            f = _safe_child(agents_dir, entry.name)
+            if (
+                f is not None
+                and f.is_file()
+                and f.suffix == ".md"
+                and f.stem.lower() != "readme"
+                and f.name not in seen
+            ):
                 seen.add(f.name)
                 frontmatter = _parse_yaml_frontmatter(f)
                 name = frontmatter.get("name", f.stem)
@@ -159,10 +187,11 @@ async def list_skills() -> str:
     skills: list[str] = []
     seen: set[str] = set()
     for skills_dir in skills_dirs:
-        for f in sorted(skills_dir.iterdir()):
-            if f.is_dir() and f.name not in seen:
-                skill_file = f / "SKILL.md"
-                if skill_file.exists():
+        for entry in sorted(skills_dir.iterdir()):
+            f = _safe_child(skills_dir, entry.name)
+            if f is not None and f.is_dir() and f.name not in seen:
+                skill_file = _safe_child(f, "SKILL.md")
+                if skill_file is not None and skill_file.is_file():
                     seen.add(f.name)
                     frontmatter = _parse_yaml_frontmatter(skill_file)
                     name = frontmatter.get("name", f.name)
@@ -197,8 +226,14 @@ async def get_agent(agent_name: str) -> str:
     """Return the full content of an agent file, case-insensitively."""
     name_lower = agent_name.lower()
     for agents_dir in _resource_roots("agents"):
-        for f in agents_dir.iterdir():
-            if f.suffix == ".md" and f.stem.lower() == name_lower:
+        for entry in agents_dir.iterdir():
+            f = _safe_child(agents_dir, entry.name)
+            if (
+                f is not None
+                and f.is_file()
+                and f.suffix == ".md"
+                and f.stem.lower() == name_lower
+            ):
                 return f.read_text(encoding="utf-8")
     return f"Agent '{agent_name}' not found."
 

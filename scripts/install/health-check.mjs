@@ -18,12 +18,12 @@ import { join } from 'node:path'
  * NON-FATAL — all checks are reported, none throw.
  *
  * @param {string} target - Installation directory
- * @param {{ dryRun?: boolean }} [options]
+ * @param {{ dryRun?: boolean; pythonTarget?: string }} [options]
  * @returns {{ passed: Array<{check: string, detail: string}>, failed: Array<{check: string, detail: string}>, warnings: Array<{check: string, detail: string}> }}
  */
-export function healthCheck(target, { dryRun = false } = {}) {
+export function healthCheck(target, { dryRun = false, pythonTarget = target } = {}) {
   const results = { passed: [], failed: [], warnings: [] }
-  const python = findPython(target)
+  const python = findPython(pythonTarget)
   const visionServer = resolveVisionServer(target)
 
   // Check 1: Critical runtime scripts exist

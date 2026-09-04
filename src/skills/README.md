@@ -119,9 +119,7 @@ The `SKILL.md` file contains YAML frontmatter with `name`, `description`, and pl
 
 - **On-demand loading**: Skills are loaded when an agent's task matches the skill's description. The agent invokes the skill via the `skill` tool, injecting the domain knowledge into context.
 - **Agent frontmatter**: Agents declare which skills they use via the `skills:` field in their `.agent.md` frontmatter. The platform uses this to determine relevance.
-- **VS Code Copilot**: Automatically injects skill content when the agent detects a matching task description. Skills appear in the Available Skills list and can be loaded via `/skill` commands.
 - **OpenCode platform**: Skills are listed in the system prompt's `<available_skills>` block. The agent invokes `skill` with the matching name to load the full content.
-- **Other platforms**: Each platform loads skills differently. Refer to platform-specific documentation for integration details.
 
 ## Quick Reference Table
 

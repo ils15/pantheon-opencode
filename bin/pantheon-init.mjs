@@ -14,10 +14,10 @@
  * install for the operator; state isolation is a runtime concern
  * (OPENCODE_DB ~/.local/share/opencode/opencode-v2.db, service port 49375).
  */
-import fs from 'fs'
-import os from 'os'
-import path from 'path'
-import { fileURLToPath } from 'url'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
@@ -59,6 +59,8 @@ function printUsage() {
   console.log('  npx pantheon-opencode prune               # List legacy artifacts (dry-run)')
   console.log('  npx pantheon-opencode prune --apply       # Remove stale backups')
   console.log('  npx pantheon-opencode doctor [--profile]  # Run health check')
+  console.log('  npx pantheon-opencode uninstall --project   # Remove project artifacts safely')
+  console.log('  npx pantheon-opencode uninstall --global    # Remove global artifacts safely')
   console.log('  npx pantheon-opencode --version, -v       # Print version and exit')
   console.log('  npx pantheon-opencode --help              # Show this help')
 }
@@ -78,11 +80,21 @@ async function main() {
   // prune handles its own --help (delegated to scripts/prune.mjs), so its
   // dispatch must run BEFORE the generic --help check.
   if (command === 'prune') {
-    const { spawnSync } = await import('child_process')
+    const { spawnSync } = await import('node:child_process')
     const pruneScript = path.join(ROOT, 'scripts', 'prune.mjs')
     const result = spawnSync(process.execPath, [pruneScript, ...args.slice(1)], {
       stdio: 'inherit',
-      cwd: ROOT,
+      cwd: process.cwd(),
+    })
+    process.exit(result.status ?? 1)
+  }
+
+  if (command === 'uninstall') {
+    const { spawnSync } = await import('node:child_process')
+    const uninstallScript = path.join(ROOT, 'scripts', 'uninstall.mjs')
+    const result = spawnSync(process.execPath, [uninstallScript, ...args.slice(1)], {
+      stdio: 'inherit',
+      cwd: process.cwd(),
     })
     process.exit(result.status ?? 1)
   }
@@ -91,7 +103,7 @@ async function main() {
   // Forwarding the FULL args (profile, target, --fix, ...) keeps the packaged
   // CLI a thin wrapper; the doctor banner reports the resolved profile.
   if (command === 'doctor') {
-    const { spawnSync } = await import('child_process')
+    const { spawnSync } = await import('node:child_process')
     const doctorScript = path.join(ROOT, 'scripts', 'doctor.mjs')
     const result = spawnSync(process.execPath, [doctorScript, ...args.slice(1)], {
       stdio: 'inherit',
@@ -198,7 +210,14 @@ async function main() {
     // --version v1|v2 labels the install target (informational; the config is
     // shared and V1-shaped under both versions). Invalid values fail fast.
     const versionIndex = args.indexOf('--version')
-    const versionOpt = versionIndex >= 0 ? (args[versionIndex + 1] ?? null) : null
+    const legacyVersionIndex = args.indexOf('--opencode-version')
+    const inlineVersion = args.find((arg) => arg.startsWith('--opencode-version='))
+    const versionOpt =
+      versionIndex >= 0
+        ? (args[versionIndex + 1] ?? null)
+        : legacyVersionIndex >= 0
+          ? (args[legacyVersionIndex + 1] ?? null)
+          : (inlineVersion?.split('=', 2)[1] ?? null)
     if (versionOpt !== null && versionOpt !== 'v1' && versionOpt !== 'v2') {
       console.error(`❌ Invalid --version "${versionOpt}" — expected v1 or v2`)
       process.exit(1)
@@ -239,7 +258,7 @@ async function main() {
       console.log('')
       console.log('  Running health check...')
       try {
-        const { spawnSync } = await import('child_process')
+        const { spawnSync } = await import('node:child_process')
         const doctorScript = path.join(ROOT, 'scripts', 'doctor.mjs')
         spawnSync(process.execPath, [doctorScript], { stdio: 'inherit', cwd: ROOT })
       } catch {
@@ -255,7 +274,7 @@ async function main() {
     console.log('  Next steps:')
     console.log('  1. Verify installation:')
     console.log('     npx pantheon-opencode doctor')
-    console.log('  2. Launch your AI coding tool (OpenCode, Claude Code, Cursor, etc.)')
+    console.log('  2. Launch OpenCode')
     console.log('  3. Invoke agents with @agent-name in chat')
     console.log('  4. For project-local install:')
     console.log('     npx pantheon-opencode init --project')
