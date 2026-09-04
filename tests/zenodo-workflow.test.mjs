@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { pathToFileURL } from 'node:url'
 import {
   findUniqueZenodoDeposition,
   zenodoReleaseMarker,
@@ -27,6 +29,31 @@ test('resolves every workflow script from a versioned checkout', () => {
   }
 })
 
+test('loads all Zenodo modules when the release checkout predates the tooling', async () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'zenodo-workflow-'))
+  const releaseCheckout = join(fixture, 'release')
+  const toolingCheckout = join(fixture, '.zenodo-workflow')
+  const toolingScripts = join(toolingCheckout, 'scripts')
+  mkdirSync(join(releaseCheckout, 'scripts'), { recursive: true })
+  mkdirSync(toolingScripts, { recursive: true })
+
+  const modules = [
+    'validate-zenodo-release.mjs',
+    'recover-zenodo-deposition.mjs',
+    'zenodo-release-state.mjs',
+    'version-check.mjs',
+  ]
+  for (const module of modules) {
+    cpSync(join(process.cwd(), 'scripts', module), join(toolingScripts, module))
+  }
+
+  for (const module of modules.slice(0, 3)) {
+    const path = join(toolingScripts, module)
+    assert.ok(existsSync(path), `workflow tooling checkout is missing ${module}`)
+    assert.match(workflow, new RegExp(`\\.zenodo-workflow/scripts/${module}`))
+    await import(pathToFileURL(path).href)
+  }
+})
 
 test('passes the release body file from deposition to publication without the token', () => {
   assert.match(
