@@ -1,5 +1,7 @@
 # Pantheon Documentation
 
+[Português (Brasil)](README.pt-BR.md)
+
 Reference documentation for the Pantheon multi-agent framework.
 
 ## Quick Start
@@ -16,7 +18,7 @@ Reference documentation for the Pantheon multi-agent framework.
 |-------|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture & design patterns |
 | [PLATFORMS.md](PLATFORMS.md) | Platform support (OpenCode-only) |
-| [UPGRADING.md](UPGRADING.md) | Version upgrade guide |
+| [UPGRADING.md](UPGRADING.md) | Version upgrade guide ([Português](UPGRADING.pt-BR.md)) |
 
 ## MCP Servers
 

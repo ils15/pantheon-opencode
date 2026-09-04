@@ -138,7 +138,7 @@ def store_eval(
     except sqlite3.IntegrityError:
         conn.rollback()
         return {"error": f"Duplicate key or constraint violation: {key}"}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         conn.rollback()
         return {"error": f"Failed to store eval: {e}"}
     finally:

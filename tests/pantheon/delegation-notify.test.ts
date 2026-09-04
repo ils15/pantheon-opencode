@@ -235,34 +235,6 @@ async function main() {
     },
   )
 
-  await testAsync(
-    'finalizeIdleChildrenWithoutMd: finalizes a real idle child without a report',
-    async () => {
-      const board = new BackgroundJobBoard()
-      await board.registerLaunch({
-        taskID: 'child_idle',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Actually idle',
-      })
-
-      const finalizedIDs: string[] = []
-      const deps = {
-        board,
-        finalize: async (id: string) => {
-          finalizedIDs.push(id)
-          return {}
-        },
-        isIdle: async () => true,
-        hasReport: () => false,
-      }
-
-      const count = await finalizeIdleChildrenWithoutMd(deps)
-      assert.equal(count, 1, 'the confirmed idle child is finalized')
-      assert.deepEqual(finalizedIDs, ['child_idle'])
-    },
-  )
-
   await testAsync('finalizeIdleChildrenWithoutMd: skips non-running jobs', async () => {
     const board = new BackgroundJobBoard()
     await board.registerLaunch({
@@ -304,7 +276,6 @@ async function main() {
         finalizedIDs.push(id)
         return {}
       },
-      isIdle: async () => true,
       hasReport: () => {
         throw new Error('disk error')
       },
@@ -330,7 +301,6 @@ async function main() {
       finalize: async () => {
         throw new Error('finalize exploded')
       },
-      isIdle: async () => true,
       hasReport: () => false,
       logger: {
         warn: (msg: string) => {
@@ -343,89 +313,6 @@ async function main() {
     assert.equal(count, 0, 'error in finalize causes skip, not crash')
     assert.ok(warnMsg.includes('child_finalize_fail'), 'warning logged for failed child')
   })
-
-  await testAsync(
-    'finalizeIdleChildrenWithoutMd: unknown idle status is observable and never finalizes',
-    async () => {
-      const board = new BackgroundJobBoard()
-      await board.registerLaunch({
-        taskID: 'child_unknown_status',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Status unavailable',
-      })
-
-      const finalizedIDs: string[] = []
-      let warning = ''
-      const count = await finalizeIdleChildrenWithoutMd({
-        board,
-        finalize: async (id: string) => {
-          finalizedIDs.push(id)
-          return {}
-        },
-        isIdle: async () => undefined,
-        hasReport: () => false,
-        logger: {
-          warn: (message: string) => {
-            warning = message
-          },
-        },
-      })
-
-      assert.equal(count, 0, 'unknown status must not be treated as idle')
-      assert.deepEqual(finalizedIDs, [])
-      assert.ok(warning.includes('unknown'), 'unknown status must be logged')
-    },
-  )
-
-  await testAsync(
-    'finalizeIdleChildrenWithoutMd: error, cancellation, and timeout remain terminal',
-    async () => {
-      const board = new BackgroundJobBoard()
-      await board.registerLaunch({
-        taskID: 'child_error',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Errored child',
-      })
-      await board.registerLaunch({
-        taskID: 'child_cancelled',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Cancelled child',
-      })
-      await board.registerLaunch({
-        taskID: 'child_timeout',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Timed out child',
-      })
-      await board.updateStatus({ taskID: 'child_error', state: 'error', error: 'provider error' })
-      await board.updateStatus({
-        taskID: 'child_cancelled',
-        state: 'cancelled',
-        error: 'cancelled',
-      })
-      await board.updateStatus({ taskID: 'child_timeout', state: 'error', timedOut: true })
-
-      const finalizedIDs: string[] = []
-      const count = await finalizeIdleChildrenWithoutMd({
-        board,
-        finalize: async (id: string) => {
-          finalizedIDs.push(id)
-          return {}
-        },
-        isIdle: async () => true,
-        hasReport: () => false,
-      })
-
-      assert.equal(count, 0, 'terminal error/cancelled/timeout jobs are not scanned')
-      assert.deepEqual(finalizedIDs, [])
-      assert.equal(board.get('child_error')?.state, 'error')
-      assert.equal(board.get('child_cancelled')?.state, 'cancelled')
-      assert.equal(board.get('child_timeout')?.timedOut, true)
-    },
-  )
 
   // ═══════════════════════════════════════════════════════════════════════
   // startIdleChildScan tests
@@ -440,7 +327,6 @@ async function main() {
         finalizeCalls.push(id)
         return {}
       },
-      isIdle: async () => true,
       hasReport: () => false,
     }
 
@@ -471,7 +357,6 @@ async function main() {
         finalizeCalls.push(id)
         return {}
       },
-      isIdle: async () => true,
       hasReport: () => false,
     }
 

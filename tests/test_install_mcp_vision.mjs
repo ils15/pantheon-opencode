@@ -175,7 +175,10 @@ assert.ok(
 )
 assert.ok(catalog.includes('args: [PANTHEON_VISION_SERVER]'))
 assert.ok(catalog.includes('requirements-vision.txt'))
-assert.ok(catalog.includes("vscode: {\n        type: 'stdio'"))
+assert.equal(catalog.includes('vscode'), false, 'MCP catalog must not retain VS Code entries')
+assert.equal(catalog.includes('cursor'), false, 'MCP catalog must not retain Cursor entries')
+assert.equal(catalog.includes('claude'), false, 'MCP catalog must not retain Claude entries')
+assert.equal(catalog.includes('windsurf'), false, 'MCP catalog must not retain Windsurf entries')
 
 // The package entry point must delegate to the same implementation rather
 // than maintaining a second, subtly different catalog.

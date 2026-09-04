@@ -17,7 +17,7 @@ Reusable prompt templates for common development workflows. Each prompt specifie
 
 ## Usage
 
-### VS Code Copilot Chat
+### OpenCode
 ```
 /implement-feature Add user authentication with JWT
 /plan-architecture Design microservice communication layer
@@ -28,13 +28,4 @@ Reusable prompt templates for common development workflows. Each prompt specifie
 /pantheon Should we use Redis or PostgreSQL for session storage?
 /sketch Add a notification system for order shipments
 /subtask @hermes Implement POST /products endpoint
-```
-
-### Claude Code (project-scoped)
-```
-/project:implement-feature Add user authentication with JWT
-/project:audit Changes in src/auth/
-/project:focus Implement email verification end-to-end
-/project:pantheon Redis vs PostgreSQL for session storage?
-/project:sketch Add notification system
 ```

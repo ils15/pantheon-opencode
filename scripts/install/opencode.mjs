@@ -2,22 +2,14 @@
 /**
  * opencode.mjs — OpenCode platform installer
  *
- * Dual-version install (Phase 3): generates a config that is valid under BOTH
- * OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2` v0.0.0-next-17444).
- *
- * - V1 path: writes V1-shaped config directly (no migration).
- * - V2 path: applies config-migration.mjs (migrateV1toV2) to convert the
- *   merged config into native V2 format before writing. This produces:
- *     * `providers` array (not `provider` object)
- *     * `permissions` array (not `permission` object)
- *     * `agents` array (not `agent` object)
- *     * `mcp.servers` (not top-level `mcp` flat keys)
- *
- * Known V2 beta gaps handled here: top-level `subagent_depth` is silently
- * ignored (migrated to `experimental.subagent_depth`), and the `instructions`
- * config key is accepted-but-not-loaded (content consolidated into AGENTS.md,
- * which both versions load). State isolation is handled at runtime via
- * OPENCODE_DB.
+ * Dual-version install (Phase 3): V1 and V2 receive the schema each runtime
+ * actually consumes. V1 (`opencode` 1.18.x) uses the singular `plugin` key;
+ * V2 (`opencode2` v0.0.0-next-17444) converts that list to `plugins` before
+ * writing its config. Known V2 beta gaps handled here: top-level
+ * `subagent_depth` is migrated to `experimental.subagent_depth`, and the
+ * instruction content is consolidated into AGENTS.md, which both versions
+ * load. Pass --version v2 to pantheon-init for an informational label; state
+ * isolation is handled at runtime via OPENCODE_DB.
  */
 
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
@@ -662,7 +654,7 @@ export async function installOpenCode(
   // -----------------------------------------------------------------------
   // 3. Create/update opencode.json (always runs)
   //    Reads TARGET's existing config first, then merges Pantheon settings
-  //    on top. Preserves user's MCP, provider, plugin, compaction, theme.
+  //    on top. Preserves user's MCP, provider, plugins, compaction, theme.
   // -----------------------------------------------------------------------
   // --------------------------------------------------------------------
   // A. Parse canonical agent config from agents/*.agent.md frontmatter
@@ -842,29 +834,27 @@ export async function installOpenCode(
   // The source opencode.json keeps its dev path for local development; the
   // transform happens at install/sync time only.
 
-  if (version === 'v1') {
-    // V1 loads the singular `plugin` list. Remove every Pantheon V2 entry from
-    // both config shapes before restoring the two V1 plugins. User plugins in
-    // either list are retained verbatim.
-    if (Array.isArray(config.plugins)) {
-      config.plugins = removePantheonPluginReferences(config.plugins)
-    }
-    if (config.plugin === undefined) config.plugin = []
-    if (Array.isArray(config.plugin)) {
-      config.plugin = removePantheonPluginReferences(config.plugin)
-      if (Array.isArray(pantheonConfig.plugin)) {
-        for (const plugin of pantheonConfig.plugin) {
-          if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugin, plugin)) {
-            config.plugin.push(deepClone(plugin))
-          }
-        }
-      }
-
-      const ensurePantheonPlugin = (ref) => {
-        const resolved = resolveInstalledPlugin(ref)
-        config.plugin = config.plugin.filter(
-          (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolved),
-        )
+  // Read both schema spellings before merging. V2 upgrades commonly start
+  // with `plugins`, while older installs (and V1) use `plugin`; dropping the
+  // former here would silently remove user registrations during an upgrade.
+  const pluginConfigEnabled =
+    config.plugin === undefined || Array.isArray(config.plugin) || Array.isArray(config.plugins)
+  const configuredPlugins = [
+    ...(Array.isArray(config.plugin) ? config.plugin : []),
+    ...(Array.isArray(config.plugins) ? config.plugins : []),
+  ]
+  const mergedPlugins = configuredPlugins.filter(
+    (plugin, index, entries) => entries.indexOf(plugin) === index,
+  )
+  if (pluginConfigEnabled) config.plugin = mergedPlugins
+  if (pluginConfigEnabled && Array.isArray(config.plugin)) {
+    if (Array.isArray(pantheonConfig.plugin)) {
+      for (const plugin of pantheonConfig.plugin) {
+        const resolved = resolveInstalledPlugin(plugin)
+        const file = basename(resolved)
+        // Replace any pre-existing entry for the same plugin file (e.g. a stale
+        // dev-machine path from an earlier install) so upgrades stay hermetic.
+        config.plugin = config.plugin.filter((p) => basename(p) !== file)
         config.plugin.push(resolved)
       }
       // Root-level delegation plugin remains a V1-only registration.
@@ -892,6 +882,18 @@ export async function installOpenCode(
     // Use the published package export, not a V1 local-file path. This keeps
     // V1's delegate out of V2 while exercising package.json's ./plugin-v2 map.
     config.plugins.push(PANTHEON_V2_EXPORT)
+  }
+
+  // OpenCode V1 uses the singular plugin configuration key. OpenCode V2 uses
+  // the plural key, so convert the fully merged V1 list before serializing.
+  // Never emit both keys: V2 rejects the legacy shape when its config is
+  // isolated from the user's normal config.
+  if (version === 'v2' && Array.isArray(config.plugin)) {
+    config.plugins = config.plugin
+    delete config.plugin
+  } else if (version === 'v1') {
+    // Keep V1's public shape canonical if a V2 config is downgraded.
+    delete config.plugins
   }
 
   if (config.provider === undefined && pantheonConfig.provider !== undefined) {
@@ -989,6 +991,19 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   if (componentSet.has('runtime')) {
     config.mcp = config.mcp || {}
+    if (version === 'v2') {
+      // V2 requires an explicit server feature toggle in addition to the
+      // named server entries used by V1.
+      // Preserve any user-owned fields and choices; only repair a missing or
+      // malformed container and the required `enabled` member.
+      if (
+        !config.mcp.servers ||
+        typeof config.mcp.servers !== 'object' ||
+        Array.isArray(config.mcp.servers)
+      )
+        config.mcp.servers = {}
+      if (config.mcp.servers.enabled === undefined) config.mcp.servers.enabled = true
+    }
     // P1-3: derive the MCP python from the SAME venv layout setupVenv
     // creates (<target>/.venv via venvPythonPath). For project installs the
     // runtime payload lives under <target>/.opencode (runtimeTarget), but the
@@ -1100,7 +1115,8 @@ export async function installOpenCode(
       const venvSpinner = spinner('Setting up Python virtual environment')
       setupVenv(target, { dryRun, force: clean })
       venvSpinner(true)
-      const health = healthCheck(target, { dryRun })
+      const runtimeTarget = isGlobal ? target : join(target, '.opencode')
+      const health = healthCheck(runtimeTarget, { dryRun, pythonTarget: target })
 
       // Print health summary
       section('\uD83D\uDD0D Health Check')

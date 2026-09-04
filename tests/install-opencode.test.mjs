@@ -12,13 +12,15 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
   installOpenCode,
-  pluginReferenceIdentity,
+  isGlobalConfigDir,
   resolveInstalledPlugin,
+  resolveTuiCopyTarget,
+  tuiConfigLocations,
 } from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
@@ -81,19 +83,17 @@ test('resolveInstalledPlugin passes through non-src plugin refs unchanged', () =
   assert.equal(resolveInstalledPlugin('pantheon-hooks'), 'pantheon-hooks')
 })
 
-test('plugin identities do not collapse third-party paths by basename or marker text', () => {
-  assert.notEqual(
-    pluginReferenceIdentity(THIRD_PARTY_PLUGIN),
-    pluginReferenceIdentity('src/plugin.ts'),
-  )
-  assert.notEqual(
-    pluginReferenceIdentity(THIRD_PARTY_HOOKS),
-    pluginReferenceIdentity('src/plugins/pantheon-hooks.ts'),
-  )
+test('scope helpers distinguish project and flat global layouts', () => {
+  assert.equal(isGlobalConfigDir(join(homedir(), '.config', 'opencode')), true)
+  assert.equal(isGlobalConfigDir(join(homedir(), '.opencode')), true)
+  assert.equal(isGlobalConfigDir('/tmp/project'), false)
   assert.equal(
-    pluginReferenceIdentity({ package: 'pantheon-opencode/plugin' }),
-    pluginReferenceIdentity('src/plugin.ts'),
+    resolveTuiCopyTarget('/tmp/.config/opencode'),
+    join('/tmp/.config/opencode', 'plugins', 'pantheon-tui'),
   )
+  const locations = tuiConfigLocations('/tmp/project')
+  assert.equal(new Set(locations).size, locations.length)
+  assert.ok(locations.includes(join('/tmp/project', '.opencode', 'tui.json')))
 })
 
 // ─── End-to-end config merge (installOpenCode into temp dirs) ──────────────
@@ -105,12 +105,16 @@ const COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins']
 
 /** Run a real (non-dry-run) install into `target`, optionally seeding an
  * existing opencode.json first. Returns the merged config. */
-async function runInstall(target, existingConfig = null) {
+async function runInstall(target, existingConfig = null, version = 'v1') {
   if (existingConfig !== null) {
     mkdirSync(target, { recursive: true })
     writeFileSync(join(target, 'opencode.json'), JSON.stringify(existingConfig, null, 2))
   }
-  await installOpenCode(target, false, false, COMPONENTS, { yes: true, headless: true })
+  await installOpenCode(target, false, false, COMPONENTS, {
+    yes: true,
+    headless: true,
+    version,
+  })
   return JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
 }
 
@@ -127,6 +131,117 @@ test('fresh install registers BOTH pantheon plugins (plugin.ts + pantheon-hooks.
       config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
       `hooks plugin missing from fresh install: ${JSON.stringify(config.plugin)}`,
     )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V1 downgrade removes legacy plugins key while preserving user provider and compaction values', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v1-legacy-'))
+  try {
+    const config = await runInstall(
+      target,
+      {
+        plugins: ['npm:user-plugin'],
+        provider: { custom: { options: { endpoint: 'https://example.test' } } },
+        compaction: { prune: false },
+      },
+      'v1',
+    )
+    assert.equal(config.plugins, undefined)
+    assert.ok(config.plugin.includes('npm:user-plugin'))
+    assert.equal(config.provider.custom.options.endpoint, 'https://example.test')
+    assert.equal(config.compaction.prune, false)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 emits mcp.servers.enabled and preserves user MCP server settings', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mcp-'))
+  try {
+    const config = await runInstall(
+      target,
+      {
+        mcp: {
+          servers: { enabled: false, customSetting: 'keep' },
+          userServer: { type: 'remote', url: 'https://user.example/mcp', enabled: true },
+        },
+      },
+      'v2',
+    )
+    assert.equal(config.mcp.servers.enabled, false)
+    assert.equal(config.mcp.servers.customSetting, 'keep')
+    assert.equal(config.mcp.userServer.url, 'https://user.example/mcp')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('global install uses flat component directories and repairs a legacy V2 config', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'opencode-global-'))
+  const target = join(parent, 'opencode')
+  const previousXdg = process.env.XDG_CONFIG_HOME
+  process.env.XDG_CONFIG_HOME = parent
+  try {
+    const config = await installOpenCode(target, false, false, COMPONENTS, {
+      yes: true,
+      headless: true,
+      version: 'v2',
+    }).then(() => JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')))
+    assert.ok(existsSync(join(target, 'agents')))
+    assert.ok(existsSync(join(target, 'skills')))
+    assert.ok(Array.isArray(config.plugins))
+    assert.equal(config.plugin, undefined)
+  } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previousXdg
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('runtime-only install copies executable MCP assets and remains idempotent', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-runtime-'))
+  try {
+    await installOpenCode(target, false, false, ['runtime'], {
+      yes: true,
+      headless: true,
+      version: 'v2',
+    })
+    const runtime = join(target, '.opencode')
+    const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+    assert.equal(config.mcp.servers.enabled, true)
+    assert.ok(existsSync(join(runtime, 'scripts', 'mcp_resources_server.py')))
+    assert.ok(existsSync(join(runtime, 'requirements-vision.txt')))
+    assert.ok(existsSync(join(runtime, '.pantheon', 'tiers.json')))
+    const before = readFileSync(join(runtime, 'scripts', 'code_mode_server.py'), 'utf8')
+    await installOpenCode(target, false, false, ['runtime'], {
+      yes: true,
+      headless: true,
+      version: 'v2',
+    })
+    assert.equal(readFileSync(join(runtime, 'scripts', 'code_mode_server.py'), 'utf8'), before)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 upgrade merges and deduplicates user plugins without overwriting config.plugins', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-plugins-'))
+  try {
+    const userPlugin = 'npm:@acme/my-plugin'
+    const config = await runInstall(
+      target,
+      { plugins: [userPlugin, userPlugin], theme: 'user-theme' },
+      'v2',
+    )
+    assert.equal(config.plugin, undefined)
+    assert.deepEqual(config.plugins, [
+      userPlugin,
+      join(ROOT, 'src', 'plugin.ts'),
+      join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),
+    ])
+    assert.equal(config.theme, 'user-theme')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

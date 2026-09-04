@@ -7,8 +7,6 @@ Covers:
 from __future__ import annotations
 
 import importlib
-import sys
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -121,7 +119,7 @@ class TestPrlimitPrefix:
     def test_cpu_limit_includes_timeout_plus_5(self, module) -> None:
         """CPU timeout should be timeout_s + 5."""
         result = module._prlimit_prefix("/usr/bin/prlimit", timeout_s=10)
-        cpu_arg = [a for a in result if a.startswith("--cpu=")][0]
+        cpu_arg = next(a for a in result if a.startswith("--cpu="))
         assert cpu_arg == "--cpu=15"
 
 
@@ -144,8 +142,8 @@ class TestSubprocessEnvIntegration:
         )
         from pathlib import Path
 
-        SCRIPTS_DIR = Path(__file__).resolve().parent.parent / ".pantheon" / "code-mode"
-        path = SCRIPTS_DIR / "env_leak_test.py"
+        scripts_dir = Path(__file__).resolve().parent.parent / ".pantheon" / "code-mode"
+        path = scripts_dir / "env_leak_test.py"
         path.write_text(secret_script, encoding="utf-8")
         path.chmod(0o755)
         try:
@@ -173,8 +171,8 @@ class TestSubprocessEnvIntegration:
         )
         from pathlib import Path
 
-        SCRIPTS_DIR = Path(__file__).resolve().parent.parent / ".pantheon" / "code-mode"
-        path = SCRIPTS_DIR / "env_allow_test.py"
+        scripts_dir = Path(__file__).resolve().parent.parent / ".pantheon" / "code-mode"
+        path = scripts_dir / "env_allow_test.py"
         path.write_text(check_script, encoding="utf-8")
         path.chmod(0o755)
         try:

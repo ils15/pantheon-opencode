@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "pantheon"
-version = "1.5.0"
+version = "1.4.3"
 description = "Multi-agent orchestration framework"
 requires-python = ">=3.11"
 dependencies = []
@@ -24,6 +24,31 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+# Legacy command-line scripts intentionally use hyphenated filenames.
+"scripts/ci-validate-yaml.py" = ["N999"]
+"scripts/scrub-secrets.py" = ["N999"]
+# These modules defer optional/heavy imports until the corresponding command is used.
+"scripts/vector_memory/*.py" = ["PLC0415"]
+"tests/test_code_mode_args.py" = ["PLC0415"]
+"tests/test_code_mode_sandbox.py" = ["PLC0415", "N806"]
+"tests/test_code_mode_server.py" = ["PLC0415"]
+"tests/test_eval_store.py" = ["PLC0415", "PLR2004"]
+"tests/test_memory_mcp_server.py" = ["PLC0415", "PLR2004"]
+# Existing public APIs and test fixtures are intentionally broad/simple; refactoring
+# them would be behavior-affecting rather than a mechanical lint correction.
+"scripts/code_mode_server.py" = ["PLR0913"]
+"src/mcp/code_mode_server.py" = ["PLR0913"]
+"scripts/mcp_persistence_server.py" = ["PLR0913"]
+"src/mcp/mcp_persistence_server.py" = ["PLR0913"]
+"scripts/memory_mcp_server.py" = ["C901"]
+"scripts/vector_memory/index.py" = ["C901", "PLR0913", "PLR2004", "PLW0603", "PLW2901"]
+"scripts/vector_memory/cli.py" = ["PLR2004"]
+"scripts/vector_memory/query.py" = ["PLR0913"]
+"src/mcp/eval_store.py" = ["PLR2004"]
+"tests/test_code_mode_frontmatter.py" = ["PLR2004"]
+"tests/test_eval_judge.py" = ["PLR2004"]
+"tests/test_eval_static.py" = ["PLR2004"]
+"tests/test_mcp_persistence_server.py" = ["PLR2004"]
 
 [tool.mypy]
 python_version = "3.11"

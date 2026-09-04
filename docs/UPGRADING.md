@@ -1,6 +1,7 @@
 # Upgrading Pantheon — 1.5.0
 
-## Upgrading to v1.5.0
+[Português (Brasil)](UPGRADING.pt-BR.md)
+
 
 Pantheon 1.5.0 formalizes two exclusive OpenCode plugin contracts. Before
 upgrading, choose the contract that matches the OpenCode host you will run:
@@ -87,7 +88,7 @@ v1.0 removes all multi-platform support. Pantheon now runs exclusively on OpenCo
 4. Add `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` to your shell profile
 
 ### Rollback
-Pantheon v4.x remains available on the v4.x branch if you need multi-platform support.
+For a rollback, use the previous Pantheon release tag that matches your deployment.
 
 
 ### Historical: upgrading to v3.19.0

@@ -8,14 +8,14 @@ Tests cover:
 
 from __future__ import annotations
 
+import importlib
+import os
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
+import eval_store
 import pytest
 from mcp.server.fastmcp import FastMCP
-from mcp.types import Resource as MCPResource
-from mcp.types import ResourceTemplate
 
 # Module path — canonical source lives in src/mcp/
 MODULE_PATH = "src.mcp.mcp_resources_server"
@@ -38,8 +38,6 @@ def _text(contents: list | str) -> str:
 @pytest.fixture(scope="session")
 def module():
     """Import and return the server module."""
-    import importlib
-
     mod = importlib.import_module(MODULE_PATH)
     importlib.reload(mod)
     return mod
@@ -64,6 +62,191 @@ class TestStaticResources:
         resources = await server.list_resources()
         uris = [str(r.uri) for r in resources]
         assert "pantheon://agents" in uris
+
+    async def test_project_local_agents_take_precedence_over_global(
+        self, module, tmp_path: Path
+    ) -> None:
+        """Project .opencode resources should override the global install."""
+        project = tmp_path / "project"
+        local = project / ".opencode" / "agents"
+        global_dir = tmp_path / "global" / "agents"
+        local.mkdir(parents=True)
+        global_dir.mkdir(parents=True)
+        (local / "local.md").write_text(
+            "---\ndescription: Local agent\n---\n", encoding="utf-8"
+        )
+        (global_dir / "global.md").write_text(
+            "---\ndescription: Global agent\n---\n", encoding="utf-8"
+        )
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
+        ):
+            text = await module.list_agents()
+        assert "Local agent" in text
+        assert "Global agent" in text
+
+    @pytest.mark.parametrize(
+        "root_name", ["agents", "skills", "deepwork", "memory-bank"]
+    )
+    async def test_project_root_symlink_escape_is_rejected(
+        self, module, tmp_path: Path, root_name: str
+    ) -> None:
+        """Unsafe project resource symlinks must not be followed."""
+        project = tmp_path / "project"
+        outside = tmp_path / "outside" / root_name
+        project.mkdir()
+        outside.mkdir(parents=True)
+        base = project / (
+            ".opencode" if root_name in {"agents", "skills"} else ".pantheon"
+        )
+        base.mkdir()
+        (base / root_name).symlink_to(outside, target_is_directory=True)
+        global_root = tmp_path / "global" / root_name
+        global_root.mkdir(parents=True)
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
+        ):
+            assert module._resource_root(root_name) == global_root.resolve()
+
+    async def test_symlinked_project_root_is_rejected(
+        self, module, tmp_path: Path
+    ) -> None:
+        """A project reached through PANTHEON_PROJECT or cwd is untrusted."""
+        target = tmp_path / "project"
+        linked = tmp_path / "project-link"
+        (target / ".opencode" / "agents").mkdir(parents=True)
+        linked.symlink_to(target, target_is_directory=True)
+        global_root = tmp_path / "global" / "agents"
+        global_root.mkdir(parents=True)
+        (global_root / "global.md").write_text("global", encoding="utf-8")
+
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", linked),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
+        ):
+            assert module._resource_root("agents") == global_root.resolve()
+
+    @pytest.mark.parametrize("base_name", [".opencode", ".pantheon"])
+    async def test_project_base_symlink_is_rejected(
+        self, module, tmp_path: Path, base_name: str
+    ) -> None:
+        """A project resource base must not itself be a symlink."""
+        project = tmp_path / "project"
+        target = tmp_path / "target"
+        project.mkdir()
+        target.mkdir()
+        (project / base_name).symlink_to(target, target_is_directory=True)
+        with patch.object(module, "_PANTHEON_PROJECT", project):
+            assert module._safe_root(project / base_name, project) is None
+
+    async def test_internal_symlink_is_rejected_even_when_target_stays_inside(
+        self, module, tmp_path: Path
+    ) -> None:
+        """Child symlinks are unsafe even when they resolve within the root."""
+        root = tmp_path / "agents"
+        target = root / "real"
+        root.mkdir()
+        target.write_text("agent", encoding="utf-8")
+        link = root / "linked.md"
+        link.symlink_to(target)
+
+        assert module._safe_child(root, "linked.md") is None
+        assert module._safe_child(root, "real") == target
+
+    async def test_project_symlinked_ancestor_is_rejected(
+        self, module, tmp_path: Path
+    ) -> None:
+        """A symlink in any project ancestor must disable local resources."""
+        real_parent = tmp_path / "real-parent"
+        project = real_parent / "project"
+        (project / ".opencode" / "agents").mkdir(parents=True)
+        linked_parent = tmp_path / "linked-parent"
+        linked_parent.symlink_to(real_parent, target_is_directory=True)
+        linked_project = linked_parent / "project"
+        global_root = tmp_path / "global" / "agents"
+        global_root.mkdir(parents=True)
+
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", linked_project),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
+        ):
+            assert module._resource_root("agents") == global_root
+
+    async def test_symlinked_cwd_is_rejected_by_server(
+        self, module, tmp_path: Path
+    ) -> None:
+        """The server applies the same ancestor check to its cwd project."""
+        real_parent = tmp_path / "real-parent"
+        project = real_parent / "project"
+        (project / ".opencode" / "agents").mkdir(parents=True)
+        linked_parent = tmp_path / "linked-parent"
+        linked_parent.symlink_to(real_parent, target_is_directory=True)
+        global_root = tmp_path / "global" / "agents"
+        global_root.mkdir(parents=True)
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(module, "_PANTHEON_PROJECT", None),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
+            patch(
+                "src.mcp._pantheon_paths.os.getcwd",
+                return_value=str(linked_parent / "project"),
+            ),
+        ):
+            project_from_cwd = module.pantheon_project()
+            assert project_from_cwd == linked_parent / "project"
+            with patch.object(module, "_PANTHEON_PROJECT", project_from_cwd):
+                assert module._resource_root("agents") == global_root
+
+    async def test_symlinked_pantheon_home_is_rejected_by_server(
+        self, module, tmp_path: Path
+    ) -> None:
+        """A symlinked PANTHEON_HOME cannot become a trusted resource root."""
+        real_home = tmp_path / "real-home"
+        (real_home / "agents").mkdir(parents=True)
+        linked_home = tmp_path / "linked-home"
+        linked_home.symlink_to(real_home, target_is_directory=True)
+
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", None),
+            patch.object(module, "_PANTHEON_HOME", linked_home),
+        ):
+            assert module._resource_root("agents") is None
+
+    async def test_agents_list_rejects_symlink_file_escape(
+        self, module, tmp_path: Path
+    ) -> None:
+        """Agent listings must ignore files resolved outside their safe root."""
+        project = tmp_path / "project"
+        agents = project / ".opencode" / "agents"
+        outside = tmp_path / "outside.md"
+        agents.mkdir(parents=True)
+        outside.write_text("outside", encoding="utf-8")
+        (agents / "escaped.md").symlink_to(outside)
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "missing-global"),
+        ):
+            assert await module.list_agents() == "No agents found."
+
+    async def test_skills_list_rejects_symlink_directory_escape(
+        self, module, tmp_path: Path
+    ) -> None:
+        """Skill listings must ignore directories resolved outside their root."""
+        project = tmp_path / "project"
+        skills = project / ".opencode" / "skills"
+        outside = tmp_path / "outside-skill"
+        skills.mkdir(parents=True)
+        outside.mkdir()
+        (outside / "SKILL.md").write_text("outside", encoding="utf-8")
+        (skills / "escaped").symlink_to(outside, target_is_directory=True)
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "missing-global"),
+        ):
+            assert await module.list_skills() == "No skills found."
 
     async def test_agents_list_returns_markdown(self, server: FastMCP) -> None:
         """Reading pantheon://agents should return agent names and roles."""
@@ -100,6 +283,16 @@ class TestStaticResources:
         assert "version:" in text
         assert "agents:" in text
 
+    async def test_routing_missing_global_and_project_returns_message(
+        self, module, tmp_path: Path
+    ) -> None:
+        """Missing global and project routing files must not raise an exception."""
+        with (
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
+            patch.object(module, "_PANTHEON_PROJECT", tmp_path / "project"),
+        ):
+            assert await module.get_routing() == "routing.yml not found."
+
 
 # =============================================================================
 # Resource Templates
@@ -129,6 +322,40 @@ class TestResourceTemplates:
         result = await server.read_resource("pantheon://agents/Zeus")
         text = _text(result)
         assert len(text) > 0
+
+    async def test_get_agent_rejects_symlink_file_escape(
+        self, module, tmp_path: Path
+    ) -> None:
+        """Agent lookup must not read a matching file outside its root."""
+        project = tmp_path / "project"
+        agents = project / ".opencode" / "agents"
+        outside = tmp_path / "zeus.md"
+        agents.mkdir(parents=True)
+        outside.write_text("secret outside", encoding="utf-8")
+        (agents / "zeus.md").symlink_to(outside)
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "missing-global"),
+        ):
+            result = await module.get_agent("zeus")
+        assert "not found" in result.lower()
+
+    async def test_get_agent_local_precedes_global(
+        self, module, tmp_path: Path
+    ) -> None:
+        """A matching local agent must win over the global installation."""
+        project = tmp_path / "project"
+        local = project / ".opencode" / "agents"
+        global_dir = tmp_path / "global" / "agents"
+        local.mkdir(parents=True)
+        global_dir.mkdir(parents=True)
+        (local / "same.md").write_text("local", encoding="utf-8")
+        (global_dir / "same.md").write_text("global", encoding="utf-8")
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
+        ):
+            assert await module.get_agent("SAME") == "local"
 
     async def test_agent_not_found_returns_error(self, server: FastMCP) -> None:
         """A non-existent agent should return a meaningful error."""
@@ -204,6 +431,17 @@ class TestResourceTemplates:
         """Path traversal attempts should be blocked."""
         content = await module.get_memory_bank("../../routing.yml")
         assert "traversal" in content.lower() or "blocked" in content.lower()
+
+    async def test_safe_child_rejects_traversal_and_prefix_collision(
+        self, module, tmp_path: Path
+    ) -> None:
+        """Containment must be path-aware, not a string-prefix comparison."""
+        root = tmp_path / "root"
+        sibling = tmp_path / "root-escape"
+        root.mkdir()
+        sibling.mkdir()
+        assert module._safe_child(root, "../root-escape/file.md") is None
+        assert module._safe_child(root, "../root-escape") is None
 
     async def test_memory_bank_nested_path(self, module) -> None:
         """Nested paths work when handler is called directly."""
@@ -311,8 +549,6 @@ class TestServerLifecycle:
 @pytest.fixture
 def eval_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Seed a temp plugin_eval DB and point eval_store at it."""
-    import eval_store
-
     db_path = tmp_path / "memory" / "memory.db"
     monkeypatch.setattr(eval_store, "_db_path", lambda: db_path)
     eval_store.store_eval(
@@ -357,10 +593,10 @@ class TestEvalResources:
         assert "90" in text
         assert "85" in text
 
-    async def test_eval_list_empty_namespace(self, server: FastMCP, tmp_path, monkeypatch) -> None:
+    async def test_eval_list_empty_namespace(
+        self, server: FastMCP, tmp_path, monkeypatch
+    ) -> None:
         """An empty plugin_eval namespace yields a meaningful message."""
-        import eval_store
-
         monkeypatch.setattr(
             eval_store, "_db_path", lambda: tmp_path / "memory" / "memory.db"
         )
@@ -388,8 +624,6 @@ class TestEvalResources:
 
     async def test_eval_plugin_underscore_not_wildcard(self, server, eval_db) -> None:
         """Underscores in plugin names must not act as SQL LIKE wildcards."""
-        import eval_store
-
         eval_store.store_eval(
             "code_review",
             {"name": "code_review", "score": 99, "checks": {}},

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 from mcp.server.fastmcp import FastMCP
@@ -250,7 +249,7 @@ class TestHelpers:
 
     async def test_validate_script_name_bad_extension(self, module) -> None:
         """Bad extensions should raise ValueError."""
-        with pytest.raises(ValueError, match="not allowed|extension"):
+        with pytest.raises(ValueError, match=r"not allowed|extension"):
             module._validate_script_name("script.js")
 
     async def test_validate_script_name_not_found(self, module) -> None:

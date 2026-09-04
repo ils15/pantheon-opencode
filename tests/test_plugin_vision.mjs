@@ -173,11 +173,7 @@ await (async () => {
           'preset applied to agent model',
         )
         assert.equal(config.agent.zeus.variant, 'medium', 'preset applied to reasoning effort')
-        assert.equal(
-          config.agent.zeus.fallback_models,
-          undefined,
-          'go-free has no fallback_models',
-        )
+        assert.equal(config.agent.zeus.fallback_models, undefined, 'go-free has no fallback_models')
         assert.equal(
           config.provider.opencode.options.baseURL,
           'https://opencode.ai/zen/v1',

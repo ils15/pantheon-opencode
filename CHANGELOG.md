@@ -17,42 +17,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
-## [1.5.0] - 2026-09-01 (candidate)
-
-### Added
-
-- **OpenCode V2/full orchestration plugin:** `src/plugin-v2.ts` is now a full V2 plugin — not just a configuration adapter. It registers 9 orchestration tools (`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`, `pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`, `pantheon_cost`, `pantheon_model`, `hashline_edit`) via `ctx.tool.transform()` with V1 bridge fallback.
-- **V2 event subscriptions:** 4 event handlers (`session.created`, `session.idle`, `session.error`, `session.compacted`) via `ctx.event.subscribe()` — routing session lifecycle to delegation finalize, goal loop, todo enforcer, and compaction context (see `src/pantheon/v2-events.ts`).
-- **V2 session hooks:** `prompt` hook (vision message interception) and `context` hook (inject routing policy, active goals, pending todos, compaction context into system context) via `ctx.session.hook()` (see `src/pantheon/v2-hooks.ts`).
-- **V2 tool hooks:** `execute.before` (read-only enforcement, command normalization) and `execute.after` (hashline tag augmentation, context sandbox truncation) via `ctx.tool.hook()` (see `src/pantheon/v2-hooks.ts`).
-- **V1→V2 bridge adapter:** `src/pantheon/v2-bridge.ts` passes V1 infrastructure singletons (BackgroundJobBoard, DelegationClient, GoalStore, TodoEnforcer, VisionHandler) through V2 `ctx.options` for optional interop. The bridge is optional — V2 plugin works standalone with graceful degradation.
-- **V2 tool definitions:** `src/pantheon/v2-tool-definitions.ts` — pure V2-compatible tool shapes (`{ name, description, input, execute }`) wrapping V1 infrastructure. Zod→JSON-Schema conversion for input definitions.
-- **Config V2 native migration:** `scripts/install/config-migration.mjs` migrates V1 config shapes to V2-native fields (`providers`, `permissions` array, `mcp.servers`).
-- **V2 E2E tests:** `tests/install-e2e-v2.test.mjs` validates V2 plugin installation, tool registration, event subscription, and hook wiring.
-- **Version-aware installer:** `init --opencode-version v1|v2|auto` selects the target generation, with legacy `--version v1|v2` compatibility. `auto` resolves only from an explicit `OPENCODE_VERSION` value or an `opencode2` binary hint.
-- **Separated plugin registrations:** V1 installs use the singular `plugin` list for `src/plugin.ts` and `src/plugins/pantheon-hooks.ts`; V2 uses the plural `plugins` list with `pantheon-opencode/plugin-v2`. Third-party entries are preserved, and TUI setup is controlled by the `plugins` component.
+## [v1.4.3] - 2026-09-03
 
 ### Changed
 
-- **V2 plugin is now a full plugin (not config adapter):** `plugin-v2` registers 9 tools, 4 event subscriptions, session hooks, and tool hooks — matching V1's orchestration surface where the V2 API allows. Configuration transforms (agent, catalog, command, reference, skill drafts) remain as an additional layer.
-- **V2 unsupported features updated:** Removed `tool-execute-hooks`, `session-hooks`, `event-stream` from the unsupported list — these are now implemented. Only `legacy-hooks` (V1-specific delegate API surface) remains unsupported.
-- **V1 delegate compatibility:** the legacy `src/plugin.ts` delegate remains the V1 runtime path for hooks, tools, the delegation board, and lifecycle integration. For V2 it is historical/superseded as the registration target: V2 must use `plugin-v2` and must not mix Pantheon V1 entries into `plugins`.
-- **TUI child provenance:** report-less `session.children` rows remain generic child sessions. The absence of a Markdown report no longer infers native `task()` provenance or renders a `[task]` label; stale history cannot relabel a live/unknown child.
-
-### Fixed
-
-- **V2 config now uses native V2 fields:** `config-migration.mjs` writes `providers`, `permissions` array, and `mcp.servers` — the native V2 config shape — instead of V1-compatible shims.
-- **Recovery boundary:** persisted jobs still running at process startup are marked `error` as orphaned by a process restart; they are not automatically restarted or resumed. Proactive idle finalization runs only when the V1 session-status API explicitly reports `idle`; an unavailable or unknown status fails closed.
-- **Bounded auto-resume:** the V1 full-auto goal loop remains opt-in (`full_auto.enabled: false`), allows one active goal per session, skips while a board job is running or a continuation is in flight, enforces a 5-second cooldown, and stops at 25 continuations per goal. These V1 lifecycle guarantees are not claimed for the transform-only V2 entrypoint.
-
-### Known Issues
-
-- **V2 compaction hook:** the V2 compaction path works via the context hook injecting compaction state, but the V1-specific `session.compacted` restore path is not fully replicated in V2. Use V1 for full compaction support.
-- **V2 vision handler:** the prompt hook is a graceful no-op without V1 client access. Full vision interception requires the V1 bridge or V2 SDK client access (tracked as TODO).
-
-### Historical / superseded notes
-
-- The 1.3.4 TUI note that every report-less child is a native `task()` child with a `[task]` tag is superseded by the provenance-safe behavior above.
+- Synchronized the 1.4.3 release version across `package.json`,
+  `package-lock.json`, `plugin.json`, `pyproject.toml`, and the TUI package.
 
 ## [v1.4.2] - 2026-08-27
 
@@ -110,6 +80,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Closed issue #68 covering the TUI stale-state and auto-update fixes.
 
+[v1.4.3]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.3
 [1.4.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.0
 [1.3.7]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.3.7
 [1.3.6]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.3.6

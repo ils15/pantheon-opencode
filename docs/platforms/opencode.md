@@ -1,6 +1,6 @@
 # Pantheon for OpenCode
 
-Complete setup and usage guide for running Pantheon **v1.5.0** in [OpenCode](https://opencode.ai) — 4 presets (`go-free`/`go-fast`/`go-premium`/`openai` puro), wizard 3 perguntas, herança nativa default, and an explicit V1/V2 plugin contract — the open-source AI coding agent for the terminal, desktop, and IDE.
+Complete setup and usage guide for running Pantheon **v1.5.0** in [OpenCode](https://opencode.ai) — 4 presets (`go-free`/`go-fast`/`go-premium`/`openai` puro), wizard 3 perguntas, herança nativa default — the open-source AI coding agent for the terminal, desktop, and IDE.
 
 ---
 
@@ -8,8 +8,8 @@ Complete setup and usage guide for running Pantheon **v1.5.0** in [OpenCode](htt
 
 | Requirement | Notes |
 |---|---|
-| **OpenCode** installed | Install via `curl -fsSL https://opencode.ai/install.sh | sh` or `npm install -g @opencode/opencode` |
-| **Node.js 18+** | Only needed for the sync engine (`npm run sync`) and installer script |
+| **OpenCode** installed | Follow the [OpenCode installation guide](https://opencode.ai/docs/) or use `npm install -g opencode-ai` |
+| **Node.js 18+** | Required by the installer and Node-based tooling |
 | **Git** | Any recent version |
 
 ---
@@ -24,13 +24,7 @@ OpenCode is available in three form factors:
 | **Desktop app** | Download from [opencode.ai/download](https://opencode.ai/download) — macOS, Linux, Windows |
 | **IDE extension** | Available for VS Code, JetBrains, and Zed |
 
-The V1 path includes the security-hook plugin at
-`src/plugins/pantheon-hooks.ts`, backed by `src/plugins/hook-runner.ts` (the
-runner uses `node:child_process`, not Bun Shell `$`). It bridges the scripts in
-`scripts/hooks/` to the V1 OpenCode events. Register it only in the V1
-singular `plugin` list; it is not auto-discovered from `.opencode/plugins/`.
-The V2 `plugin-v2` adapter does not register this hook plugin or any V1
-delegate/event/tool API.
+The installer registers Pantheon's runtime integrations automatically. It writes the singular `plugin` configuration key for OpenCode V1 and converts it to the plural `plugins` key for OpenCode V2; do not add either key manually. The TUI integration is copied to `plugins/pantheon-tui` in the selected OpenCode config directory and registered in `tui.json`.
 
 The OpenCode-specific installer is the supported setup path:
 
@@ -38,122 +32,7 @@ The OpenCode-specific installer is the supported setup path:
 npx pantheon-opencode init --project
 ```
 
-This installs the selected OpenCode components in the global or project-local
-OpenCode directories and updates the selected plugin registration. It does not
-autodetect or configure VS Code, Cursor, or other platforms. Use
-`--opencode-version v1|v2|auto` to select the plugin contract; `auto` is the
-conservative version hint described below, not general platform detection.
-
-### V1/V2 plugin contract
-
-Pantheon 1.5.0 has two mutually exclusive OpenCode registrations. The
-installer cleans Pantheon entries from both config shapes and writes only the
-selected generation; do not hand-add the other generation afterward.
-
-| Selection | OpenCode key | Pantheon plugin | What it provides |
-|---|---|---|---|
-| `v1` | singular `plugin` | `src/plugin.ts` (and the V1 `src/plugins/pantheon-hooks.ts` entry) | Legacy `pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`, event/tool hooks and the implemented V1 compaction path |
-| `v2` | plural `plugins` | `pantheon-opencode/plugin-v2` | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks (prompt, context), tool hooks (execute.before/after), plus configuration transforms for agent/catalog/command/reference/skill drafts |
-
-`plugin-v2` is now a **full orchestration plugin** for V2. It registers 9
-tools via `ctx.tool.transform()` (with V1 bridge fallback), subscribes to 4
-session lifecycle events, and wires session/tool hooks. The only unsupported
-V2 feature is `legacy-hooks` (the V1-specific delegate API surface —
-`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`
-are registered by V2 via its own tool definitions, not the V1 plugin path).
-
-The V1→V2 bridge (`src/pantheon/v2-bridge.ts`) enables optional interop:
-V1 infrastructure singletons (BackgroundJobBoard, DelegationClient, GoalStore,
-TodoEnforcer, VisionHandler) are passed through V2 `ctx.options`. The bridge is
-optional — V2 works standalone with graceful degradation.
-
-Use one of these selectors:
-
-```bash
-npx pantheon-opencode init --opencode-version v1
-npx pantheon-opencode init --opencode-version v2
-npx pantheon-opencode init --opencode-version auto
-```
-
-The legacy `--version v1|v2` spelling is accepted after `init`; use
-`--opencode-version auto` for the conservative selector.
-`auto` resolves only from the explicit `OPENCODE_VERSION=v1|v2` hint, then an
-`OPENCODE_BIN` path ending in `opencode2`; otherwise it selects V1. It does not
-inspect the host generally and never installs both Pantheon plugin generations.
-Third-party plugin entries are retained as third-party entries.
-
-The TUI is separate from both registrations. It is copied and added to
-`tui.json` only when the `plugins` component is selected; that component does
-not imply that the V1 runtime or V2 adapter has been loaded.
-
-### OpenCode V2 — Installation & Capabilities
-
-Install Pantheon for OpenCode V2 with the explicit version selector:
-
-```bash
-npx pantheon-opencode init --opencode-version v2
-```
-
-Or set the environment variable for `auto` detection:
-
-```bash
-OPENCODE_VERSION=v2 npx pantheon-opencode init
-```
-
-**What changes in V2 config:**
-
-The V2 installer writes native V2 config fields instead of V1 shims:
-
-- `providers` — model provider configuration (V2-native format)
-- `permissions` array — tool permission rules (V2-native format)
-- `mcp.servers` — MCP server registration (V2-native format)
-
-Third-party plugin entries are preserved. The installer removes only
-Pantheon references from both config shapes before writing the selected
-generation.
-
-**9 V2 Orchestration Tools:**
-
-| Tool | Description |
-|---|---|
-| `pantheon_delegate` | Dispatch background agent as child session |
-| `pantheon_delegation_read` | Block until delegation finishes, return report |
-| `pantheon_delegation_list` | List background delegations with status |
-| `pantheon_goal_create` | Create the single active goal for session |
-| `pantheon_goal_get` | Return active goal status and objective |
-| `pantheon_goal_update` | Update goal status/objective |
-| `pantheon_cost` | Report delegation cost and token usage |
-| `pantheon_model` | Show/set/reset per-agent model overrides |
-| `hashline_edit` | Edit files anchored by hashline refs |
-
-**4 V2 Event Subscriptions:**
-
-| Event | Handler |
-|---|---|
-| `session.created` | Seed session hierarchy + root sessions |
-| `session.idle` | Delegation finalize / goal loop / todo enforcer |
-| `session.error` | Delegation finalize as error |
-| `session.compacted` | Todo preserve / compaction context |
-
-**Session & Tool Hooks:**
-
-- `prompt` hook: Vision message interception (paste-and-ask) — graceful
-  no-op without V1 bridge
-- `context` hook: Injects routing policy, active goals, pending todos, and
-  compaction context into system context before each LLM call
-- `tool.execute.before`: Read-only enforcement, command normalization
-- `tool.execute.after`: Hashline tag augmentation, context sandbox truncation
-
-**Known Limitations:**
-
-- **Compaction hook:** V2 compaction works via the context hook injecting
-  state, but the V1 `session.compacted` restore path is not fully
-  replicated. Use V1 for full compaction support.
-- **Vision handler:** The prompt hook is a no-op without V1 client access.
-  Full vision interception requires the V1 bridge or V2 SDK client access.
-- **Legacy hooks:** V1-specific delegate API surface (`pantheon_delegate`
-  via V1 plugin path, V1 event hooks) is not available in V2. The V2 plugin
-  provides its own tool definitions instead.
+This installs agents, runtime files, MCP servers, and the required OpenCode configuration in the project directory. Run `npx pantheon-opencode init` without `--project` for the global installation.
 
 ### Desktop App
 
@@ -166,7 +45,7 @@ Pantheon works seamlessly with the OpenCode Desktop app. Agents, skills, and ins
 git clone https://github.com/ils15/pantheon.git
 cd pantheon
 
-# Copy the packaged OpenCode agents into your project
+# Copy the OpenCode agents from this checkout into your project
 mkdir -p /path/to/your-project/.opencode/agents
 cp -r src/agents/. /path/to/your-project/.opencode/agents/
 
@@ -221,12 +100,7 @@ platform detection.
 
 ### How It Works
 
-The installer copies the packaged agent Markdown into `.opencode/agents/`
-(project-local) or the global OpenCode agent directory. V1 runtime behavior is
-provided by the selected V1 plugin. The V2 `plugin-v2` export is a separate
-configuration adapter that transforms the host's agent/catalog/command,
-reference and skill drafts; it is not a general Markdown-to-runtime converter
-and does not add V1 hooks or delegate APIs.
+The installed OpenCode agents live in `.opencode/agents/` (project) or `~/.config/opencode/agents/` / `~/.opencode/agents/` (global flat layouts). The installer copies the supported agent definitions and configuration into the selected location; there is no separate platform sync step.
 
 ### `/init` Command
 
@@ -242,11 +116,10 @@ If an `AGENTS.md` already exists, `/init` improves it in-place rather than repla
 
 ## Configuration
 
-OpenCode uses `opencode.json` (or `opencode.jsonc`) in your project root. Create one with:
+OpenCode uses `opencode.json` (or `opencode.jsonc`) in your project root. See the [configuration documentation](https://opencode.ai/docs/config/) for schema validation, then create one with:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
   "agent": {
     "zeus":      { "source": ".opencode/agents/zeus.md" },
     "athena":    { "source": ".opencode/agents/athena.md" },
@@ -285,9 +158,7 @@ If not set, OpenCode defaults to the built-in `build` agent. This is useful when
 
 ### Agent permissions
 
-OpenCode agent permissions are supplied by the host configuration and the
-selected installation. The V1 `tool.execute.before` guard can enforce the
-read-only delegate matrix; `plugin-v2` does not add that runtime guard.
+Permissions are declared in **frontmatter** rather than appended as body blocks:
 
 ```yaml
 ---
@@ -359,10 +230,7 @@ This can also be set per-agent to restrict which subagents each Pantheon agent c
 
 ## Agent Format
 
-OpenCode agents are `.md` files with YAML frontmatter. They live in
-`.opencode/agents/` (project) or the global OpenCode agent directory. The
-installer copies the packaged agent files; it does not claim a general
-VS Code-to-OpenCode conversion layer.
+OpenCode agents are `.md` files with YAML frontmatter. They live in `.opencode/agents/` (project) or `~/.config/opencode/agents/` / `~/.opencode/agents/` (global). The installer copies the definitions from `src/agents/` into the selected OpenCode location.
 
 ```yaml
 ---
@@ -437,17 +305,14 @@ claim conversion or feature parity with another editor's Markdown format.
 
 ## OpenCode-Specific Features
 
-### TUI Plugin (1.5.0)
+### TUI Plugin (v1.5.0)
 
-Pantheon 1.5.0 ships an optional **TUI plugin** for OpenCode that provides:
+Pantheon v1.5.0 ships a **TUI plugin** for OpenCode that provides:
 - **Live deepwork status** — see active phases, progress, and checkpoints
 - **Activity feed** — real-time agent delegation events
 - **Toast notifications** — phase completion, review results, gate approvals
 
-The installer copies the TUI package to the selected OpenCode config and writes
-its registration to `tui.json` only when the `plugins` component is selected.
-It is not auto-discovered from `.opencode/plugins/`, and this separate TUI
-registration does not load either the V1 runtime plugin or the V2 adapter.
+For a project installation use `npx pantheon-opencode init --project`; for a global flat installation use `npx pantheon-opencode init`. The installer registers the copied TUI plugin in `tui.json` rather than relying on directory auto-discovery.
 
 The panel can follow native OpenCode `task()` children only when OpenCode
 provides explicit origin, parent/child and status metadata. A child without
@@ -456,17 +321,7 @@ evidence that it is a native task. Markdown reports in
 `.pantheon/delegations/` are historical output from the V1 delegate/board
 path, not a V2 task protocol.
 
-### Recovery and compaction limits
-
-The V1 `experimental.session.compacting` hook carries forward the V1 board
-context where that host hook is available. On process restart, running legacy
-board jobs are marked errored; old jobs are not auto-resumed and child work is
-not restarted automatically. `plugin-v2` registers no Pantheon compaction
-hook, BackgroundJobBoard lifecycle, or automatic resume/restart behavior.
-
-### Themis 2.0 (available in 1.5.0)
-
-Pantheon 1.5.0 includes **Themis 2.0** — a 3-layer review pipeline:
+Pantheon v1.5.0 includes **Themis 2.0** — a 3-layer review pipeline:
 1. **Heuristic Scanner** — zero-LLM static analysis (ruff, biome, anti-pattern detection, hash verification)
 2. **Deep Review** — LLM-powered code review with OWASP Top 10, coverage enforcement, and correctness checks
 3. **Verification Planning** — structured verification plan with test gap analysis
@@ -711,11 +566,10 @@ MCP tools are automatically available to agents alongside built-in tools. You ca
 
 ### Theme Customization
 
-OpenCode offers a customizable TUI with built-in themes (tokyonight, catppuccin, gruvbox, nord, etc.) and custom themes. Configure via `tui.json`:
+OpenCode offers a customizable TUI with built-in themes (tokyonight, catppuccin, gruvbox, nord, etc.) and custom themes. See the [TUI documentation](https://opencode.ai/docs/tui/) and configure via `tui.json`:
 
 ```json
 {
-  "$schema": "https://opencode.ai/tui.json",
   "theme": "catppuccin-macchiato"
 }
 ```
@@ -855,100 +709,6 @@ your-project/
 | View token stats | `opencode stats` |
 | Debug MCP auth | `opencode mcp debug <server>` |
 
-## 🚀 Advanced: Background Orchestration with opencode-pty
-
-By default, OpenCode's `task` tool runs synchronously — the parent waits for the child to complete. For long-running operations (builds, tests, data processing), you can use the **opencode-pty** plugin to run agents in background.
-
-### Installation
-
-Add to your `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "plugin": [
-    "opencode-sm",
-    "shekohex/opencode-pty"
-  ]
-}
-```
-
-Then install:
-```bash
-opencode plugin install shekohex/opencode-pty
-```
-
-### Tools Added
-
-| Tool | Purpose |
-|------|---------|
-| `pty_spawn` | Start a process in background (returns PID) |
-| `pty_read` | Read output from a background process |
-| `pty_list` | List active background processes |
-| `pty_kill` | Terminate a background process |
-| `pty_snapshot_wait` | Wait for process to reach a condition |
-
-### Usage in Pantheon
-
-When Zeus delegates a long-running task:
-
-```text
-Zeus: "@hermes — run the full test suite in background"
-Hermes: Uses pty_spawn to start pytest
-Zeus: Continues with other work
-Later: Zeus checks pty_read for results
-```
-
-### Example Workflow
-
-```json
-{
-  "tool": "pty_spawn",
-  "command": "pytest --tb=short -q",
-  "cwd": "/workspace/project"
-}
-→ Returns: { "pid": "pty-123", "status": "running" }
-
-{
-  "tool": "pty_read",
-  "pid": "pty-123",
-  "offset": 0,
-  "limit": 100
-}
-→ Returns: { "output": "...test results...", "status": "running" }
-
-{
-  "tool": "pty_snapshot_wait",
-  "pid": "pty-123",
-  "pattern": "passed|failed",
-  "timeout": 300000
-}
-→ Returns: { "output": "...", "status": "completed" }
-```
-
-### Limitations
-
-- Background tasks run on the **same machine** (not distributed)
-- No automatic retry or failure recovery (must be handled manually)
-- Process state is lost if OpenCode restarts
-- Requires `opencode-pty` plugin (not available in all OpenCode installations)
-
-### Alternative: Manual Background
-
-Without the plugin, use standard Unix backgrounding:
-
-```bash
-# Start in background, redirect output to file
-nohup pytest --tb=short -q > /tmp/test-results.log 2>&1 &
-echo $! > /tmp/test-pid.txt
-
-# Later, check results
-cat /tmp/test-results.log
-```
-
-This is the approach used by Pantheon's built-in hooks.
-
----
-
 ## 📝 Advanced: Dynamic Prompts with File Templates
 
 OpenCode prompts are static templates (e.g., `{{input}}`). For dynamic prompt generation based on context, use **file-based templates** with the `{file:...}` syntax.
@@ -992,7 +752,7 @@ Add to `scripts/generate-prompts.sh`:
 ```bash
 #!/bin/bash
 # Generate dynamic prompts
-AGENTS=$(ls platform/opencode/agents/ | sed 's/.md//' | paste -sd ', ' -)
+AGENTS=$(ls .opencode/agents/ | sed 's/.md//' | paste -sd ', ' -)
 
 sed -e "s/{{agents}}/$AGENTS/g" \
     prompts/templates/council-template.txt \
@@ -1003,7 +763,7 @@ sed -e "s/{{agents}}/$AGENTS/g" \
 
 - Not true runtime generation (generated at plan-switch time)
 - Requires manual regeneration when agents change
-- Platform-specific (OpenCode supports `{file:...}`, others may not)
+- OpenCode-specific (OpenCode supports `{file:...}`)
 
 ---
 

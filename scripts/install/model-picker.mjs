@@ -14,7 +14,14 @@
  * "herdar do chat" (inherit) é o default da Q1: não grava active-preset.json,
  * então os delegates herdam o modelo do chat pai (herança nativa, sem preset).
  */
-import { copyFileSync, existsSync, mkdirSync, renameSync, writeFileSync, readFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
@@ -22,10 +29,22 @@ import { loadPresetDefs } from '../../src/pantheon/presets.mjs'
 
 /** Preset pricing table (2026 verified). */
 export const PRESET_PRICE = {
-  'go-free': { label: 'Gratuito', detail: 'Zen free – sem custo, quota limitada, só modelos -free' },
-  'go-fast': { label: 'Baixo custo', detail: 'Go gateway – baixa latência, kimi-k2.7-code / glm-5.3-flash' },
-  'go-premium': { label: 'Premium', detail: 'Go gateway – melhor qualidade, gpt-5.6-sol / qwen3.8-max / deepseek-v4-pro' },
-  openai: { label: 'Pago (OpenAI)', detail: 'Direto OpenAI – https://api.openai.com/v1, gpt-5.6 family' },
+  'go-free': {
+    label: 'Gratuito',
+    detail: 'Zen free – sem custo, quota limitada, só modelos -free',
+  },
+  'go-fast': {
+    label: 'Baixo custo',
+    detail: 'Go gateway – baixa latência, kimi-k2.7-code / glm-5.3-flash',
+  },
+  'go-premium': {
+    label: 'Premium',
+    detail: 'Go gateway – melhor qualidade, gpt-5.6-sol / qwen3.8-max / deepseek-v4-pro',
+  },
+  openai: {
+    label: 'Pago (OpenAI)',
+    detail: 'Direto OpenAI – https://api.openai.com/v1, gpt-5.6 family',
+  },
 }
 
 /**
@@ -37,7 +56,9 @@ export const PRESET_PRICE = {
 export function requiredKeyEnvForPreset(name, def) {
   if (name === 'openai') return 'OPENAI_API_KEY'
   // all Go presets use PANTHEON_OPENCODE_API_KEY (alias OPENCODE_GO_API_KEY)
-  const providerEnvs = Object.values(def?.providers ?? {}).map((p) => p.apiKeyEnv).filter(Boolean)
+  const providerEnvs = Object.values(def?.providers ?? {})
+    .map((p) => p.apiKeyEnv)
+    .filter(Boolean)
   if (providerEnvs.includes('PANTHEON_OPENCODE_API_KEY')) return 'PANTHEON_OPENCODE_API_KEY'
   if (providerEnvs.includes('OPENAI_API_KEY')) return 'OPENAI_API_KEY'
   return 'PANTHEON_OPENCODE_API_KEY'
@@ -134,8 +155,14 @@ export function buildInitQuestions(presetDefs) {
       header: 'Escopo',
       question: 'Onde salvar o preset ativo?',
       options: [
-        { label: 'project', description: './.pantheon/active-preset.json (escopo do projeto, seguro)' },
-        { label: 'global', description: '~/.config/opencode/.pantheon/active-preset.json (global)' },
+        {
+          label: 'project',
+          description: './.pantheon/active-preset.json (escopo do projeto, seguro)',
+        },
+        {
+          label: 'global',
+          description: '~/.config/opencode/.pantheon/active-preset.json (global)',
+        },
       ],
       multiSelect: false,
     },
@@ -238,7 +265,10 @@ export async function runModelPicker({
   }
 
   const list = names
-    .map((n, i) => `  ${i + 1}) ${n} — ${defs[n].description ?? ''} | ${buildPresetTableRow(n, defs[n])}`)
+    .map(
+      (n, i) =>
+        `  ${i + 1}) ${n} — ${defs[n].description ?? ''} | ${buildPresetTableRow(n, defs[n])}`,
+    )
     .join('\n')
   const rli = rl ?? createInterface({ input: process.stdin, output: process.stdout })
   try {
@@ -319,7 +349,7 @@ export async function runInitWizard({
   } else {
     // Fallback: readline 3-step wizard
     const rli = rl ?? createInterface({ input: process.stdin, output: process.stdout })
-    let closeAfter = !rl
+    const closeAfter = !rl
     try {
       // Q1: perfil (0 = herdar do chat, default)
       const list = [
@@ -353,20 +383,22 @@ export async function runInitWizard({
       // Q2: key masked
       const requiredEnv = requiredKeyEnvForPreset(presetName, defs[presetName])
       const aliasNote =
-        requiredEnv === 'PANTHEON_OPENCODE_API_KEY'
-          ? ' (alias OPENCODE_GO_API_KEY aceito)'
-          : ''
+        requiredEnv === 'PANTHEON_OPENCODE_API_KEY' ? ' (alias OPENCODE_GO_API_KEY aceito)' : ''
       const envConfigured = isKeyConfiguredForPreset(env, presetName, defs[presetName])
       let keyAnswer = ''
       if (envConfigured) {
-        logger.log?.(`Chave ${requiredEnv}${aliasNote} já configurada no ambiente (mascarada: ${maskKey(env[requiredEnv] ?? env.OPENCODE_GO_API_KEY ?? '')}).`)
+        logger.log?.(
+          `Chave ${requiredEnv}${aliasNote} já configurada no ambiente (mascarada: ${maskKey(env[requiredEnv] ?? env.OPENCODE_GO_API_KEY ?? '')}).`,
+        )
       } else {
         // masked collection
         const prompt = `[2/3] Informe ${requiredEnv}${aliasNote} (entrada mascarada, não escreve .env): `
         // Use questionMasked for tests; real TTY would mask
         keyAnswer = (await questionMasked(rli, prompt)).trim()
         if (keyAnswer === '') {
-          logger.warn?.(`Chave vazia para ${requiredEnv} — wizard canceled. Preencha env ${requiredEnv} antes de continuar.`)
+          logger.warn?.(
+            `Chave vazia para ${requiredEnv} — wizard canceled. Preencha env ${requiredEnv} antes de continuar.`,
+          )
           return null
         }
         // validate non-empty already; optionally check length
@@ -374,7 +406,9 @@ export async function runInitWizard({
           // For health-check, set in current env (not .env file) for this session
           // Prefer primary var
           env[requiredEnv] = keyAnswer
-          logger.log?.(`Chave coletada (mascarada: ${maskKey(keyAnswer)}). Defina export ${requiredEnv}='${maskKey(keyAnswer)}' no seu shell para persistir (não escrevemos .env).`)
+          logger.log?.(
+            `Chave coletada (mascarada: ${maskKey(keyAnswer)}). Defina export ${requiredEnv}='${maskKey(keyAnswer)}' no seu shell para persistir (não escrevemos .env).`,
+          )
         }
       }
 
@@ -398,8 +432,14 @@ export async function runInitWizard({
     })()
     const dir = scope === 'global' ? globalDir : projectDir
     if (!dryRun) {
-      const result = writeActivePreset(dir, presetName, { dryRun: false, source: 'interactive', logger })
-      logger.log?.(`Preset ${presetName} salvo em ${scope} (${result.path})${result.backupPath ? ` backup: ${result.backupPath}` : ''}`)
+      const result = writeActivePreset(dir, presetName, {
+        dryRun: false,
+        source: 'interactive',
+        logger,
+      })
+      logger.log?.(
+        `Preset ${presetName} salvo em ${scope} (${result.path})${result.backupPath ? ` backup: ${result.backupPath}` : ''}`,
+      )
       // health-check: verify file
       try {
         const raw = readFileSync(result.path, 'utf8')
@@ -423,15 +463,18 @@ export async function runInitWizard({
     const a2 = answers[2]?.answer ?? answers[2]
     presetName = a0 && typeof a0 === 'object' && 'label' in a0 ? a0.label : a0
     keyAnswer = a1 && typeof a1 === 'object' && 'answer' in a1 ? a1.answer : a1
-    if (keyAnswer && typeof keyAnswer === 'object' && 'label' in keyAnswer) keyAnswer = keyAnswer.label
+    if (keyAnswer && typeof keyAnswer === 'object' && 'label' in keyAnswer)
+      keyAnswer = keyAnswer.label
     scope = a2 && typeof a2 === 'object' && 'label' in a2 ? a2.label : a2
     if (scope && typeof scope === 'object' && 'answer' in scope) scope = scope.answer
   } else if (answers && typeof answers === 'object') {
     presetName = answers.preset ?? answers['0'] ?? answers.q1 ?? answers.presetName
     keyAnswer = answers.key ?? answers['1'] ?? answers.q2
     scope = answers.scope ?? answers['2'] ?? answers.q3
-    if (presetName && typeof presetName === 'object' && 'label' in presetName) presetName = presetName.label
-    if (presetName && typeof presetName === 'object' && 'answer' in presetName) presetName = presetName.answer
+    if (presetName && typeof presetName === 'object' && 'label' in presetName)
+      presetName = presetName.label
+    if (presetName && typeof presetName === 'object' && 'answer' in presetName)
+      presetName = presetName.answer
     if (scope && typeof scope === 'object' && 'label' in scope) scope = scope.label
     if (scope && typeof scope === 'object' && 'answer' in scope) scope = scope.answer
   }
@@ -459,7 +502,9 @@ export async function runInitWizard({
   }
   if (keyAnswer && !dryRun) {
     env[requiredEnv] = keyAnswer
-    logger.log?.(`Chave coletada (mascarada: ${maskKey(String(keyAnswer))}). Não escrevemos .env; export ${requiredEnv} no shell para persistir.`)
+    logger.log?.(
+      `Chave coletada (mascarada: ${maskKey(String(keyAnswer))}). Não escrevemos .env; export ${requiredEnv} no shell para persistir.`,
+    )
   }
   const finalScope = scope === 'global' ? 'global' : 'project'
   const projectDir = presetDir ?? target ?? process.cwd()
@@ -470,7 +515,11 @@ export async function runInitWizard({
   })()
   const dir = finalScope === 'global' ? globalDir : projectDir
   if (!dryRun) {
-    const result = writeActivePreset(dir, presetName, { dryRun: false, source: 'interactive', logger })
+    const result = writeActivePreset(dir, presetName, {
+      dryRun: false,
+      source: 'interactive',
+      logger,
+    })
     logger.log?.(`Preset ${presetName} salvo em ${finalScope} (${result.path})`)
     try {
       const raw = readFileSync(result.path, 'utf8')
