@@ -39,6 +39,16 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
+      # Release tags can predate the workflow tooling. Keep release validation
+      # against the tagged tree, but load the validator from this workflow's
+      # versioned commit instead of assuming it exists in the tag.
+      - name: Checkout workflow tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .zenodo-workflow
+          fetch-depth: 1
+
       - name: Validate configuration and published release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,7 +61,7 @@ jobs:
             case "${!name}" in https://*) ;; *) echo "::error::$name must use HTTPS."; exit 1 ;; esac
           done
           ZENODO_DEPOSITIONS_URL="$ZENODO_DEPOSITIONS_URL" ZENODO_FILES_URL_TEMPLATE="$ZENODO_FILES_URL_TEMPLATE" ZENODO_PUBLISH_URL_TEMPLATE="$ZENODO_PUBLISH_URL_TEMPLATE" ZENODO_CREATOR_NAME="$ZENODO_CREATOR_NAME" node --input-type=module <<'NODE'
-          import { validateZenodoConfiguration } from './scripts/validate-zenodo-release.mjs'
+          import { validateZenodoConfiguration } from './.zenodo-workflow/scripts/validate-zenodo-release.mjs'
           validateZenodoConfiguration({
             depositionsUrl: process.env.ZENODO_DEPOSITIONS_URL,
             filesUrlTemplate: process.env.ZENODO_FILES_URL_TEMPLATE,
@@ -70,7 +80,7 @@ jobs:
         id: metadata
         run: |
           set -euo pipefail
-          result=$(RELEASE_TAG="$RELEASE_TAG" node scripts/validate-zenodo-release.mjs)
+          result=$(RELEASE_TAG="$RELEASE_TAG" node .zenodo-workflow/scripts/validate-zenodo-release.mjs)
           version=$(printf '%s' "$result" | node -e "process.stdin.on('data', d => process.stdout.write(JSON.parse(d).version))")
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Create deterministic source archive
