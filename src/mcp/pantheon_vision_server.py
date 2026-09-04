@@ -277,7 +277,7 @@ def _strip_provider_prefix(model: str) -> str:
     model ID is rejected by the gateway with a 401 ("Model ... is not
     supported"). Models without a ``/`` are returned unchanged.
     """
-    prefix, separator, model_name = model.rpartition("/")
+    _prefix, separator, model_name = model.rpartition("/")
     return model_name if separator else model
 
 

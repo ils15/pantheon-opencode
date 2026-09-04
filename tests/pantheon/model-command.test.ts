@@ -15,7 +15,11 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createModelCommand, validateModelRef, KNOWN_AGENTS } from '../../src/pantheon/model-command.ts'
+import {
+  createModelCommand,
+  KNOWN_AGENTS,
+  validateModelRef,
+} from '../../src/pantheon/model-command.ts'
 
 type TestScope = {
   root: string
@@ -100,7 +104,13 @@ async function main(): Promise<void> {
         ),
       )
       const setResult = await tool.execute(
-        { action: 'set', agent: 'hermes', model: 'opencode-go/kimi-k2.7-code', effort: 'high', scope: 'project' },
+        {
+          action: 'set',
+          agent: 'hermes',
+          model: 'opencode-go/kimi-k2.7-code',
+          effort: 'high',
+          scope: 'project',
+        },
         { sessionID: 'root', agent: 'zeus' },
       )
       assert.match(setResult, /restart OpenCode/i)
@@ -140,7 +150,13 @@ async function main(): Promise<void> {
 
       // set with effort clamped: deepseek-v4-flash maxEffort medium, request high should clamp
       const clampResult = await tool.execute(
-        { action: 'set', agent: 'apollo', model: 'opencode-go/deepseek-v4-flash', effort: 'high', scope: 'project' },
+        {
+          action: 'set',
+          agent: 'apollo',
+          model: 'opencode-go/deepseek-v4-flash',
+          effort: 'high',
+          scope: 'project',
+        },
         { sessionID: 'root', agent: 'zeus' },
       )
       assert.match(clampResult, /clamped/i)
@@ -149,18 +165,30 @@ async function main(): Promise<void> {
 
       // hasVision warning for text-only (deepseek is text-only)
       const visionResult = await tool.execute(
-        { action: 'set', agent: 'gaia', model: 'opencode-go/deepseek-v4-flash', effort: 'medium', scope: 'project' },
+        {
+          action: 'set',
+          agent: 'gaia',
+          model: 'opencode-go/deepseek-v4-flash',
+          effort: 'medium',
+          scope: 'project',
+        },
         { sessionID: 'root', agent: 'zeus' },
       )
       assert.match(visionResult, /text-only/i)
 
       // reset removes override
-      const resetResult = await tool.execute({ action: 'reset', agent: 'hermes', scope: 'project' }, { sessionID: 'root', agent: 'zeus' })
+      const resetResult = await tool.execute(
+        { action: 'reset', agent: 'hermes', scope: 'project' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
       assert.match(resetResult, /removed/i)
       const afterReset = JSON.parse(readFileSync(projectActive(scope), 'utf8'))
       assert.equal(afterReset.overrides.agents.hermes, undefined)
       // After reset, hermes should fall back to preset origin, not override
-      const statusAfterReset = await tool.execute({ action: 'status' }, { sessionID: 'root', agent: 'zeus' })
+      const statusAfterReset = await tool.execute(
+        { action: 'status' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
       // hermes from go-free preset is deepseek-v4-flash-free, origin preset
       assert.match(statusAfterReset, /hermes: opencode\/deepseek-v4-flash-free \(origin: preset/)
     } finally {
@@ -177,8 +205,13 @@ async function main(): Promise<void> {
         projectActive(scope),
         JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }),
       )
-      const toolEnv = command(scope, { env: { PANTHEON_MODEL_PRESET: 'go-fast', HOME: scope.global } as NodeJS.ProcessEnv })
-      const status = await toolEnv.execute({ action: 'status' }, { sessionID: 'root', agent: 'zeus' })
+      const toolEnv = command(scope, {
+        env: { PANTHEON_MODEL_PRESET: 'go-fast', HOME: scope.global } as NodeJS.ProcessEnv,
+      })
+      const status = await toolEnv.execute(
+        { action: 'status' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
       assert.match(status, /active preset: go-fast \(env\)/i)
       // agents should show env origin
       assert.match(status, /zeus: .*\(origin: env/)
@@ -209,7 +242,10 @@ async function main(): Promise<void> {
     try {
       mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
       mkdirSync(join(scope.global, '.pantheon'), { recursive: true })
-      writeFileSync(projectActive(scope), JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }))
+      writeFileSync(
+        projectActive(scope),
+        JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }),
+      )
       const tool = command(scope)
       const denied = await tool.execute(
         { action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', scope: 'global', confirm: true },
@@ -219,13 +255,27 @@ async function main(): Promise<void> {
       assert.equal(existsSync(globalActive(scope)), false)
 
       const yesOnly = await tool.execute(
-        { action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', scope: 'global', confirm: true } as unknown as Parameters<typeof tool.execute>[0],
+        {
+          action: 'set',
+          agent: 'hermes',
+          model: 'openai/gpt-5.6',
+          scope: 'global',
+          confirm: true,
+        } as unknown as Parameters<typeof tool.execute>[0],
         { sessionID: 'root', agent: 'zeus' },
       )
       assert.match(yesOnly, /explicit confirmation and separate global authorization/i)
 
       const okGlobal = await tool.execute(
-        { action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', effort: 'high', scope: 'global', confirm: true, authorize_global: true },
+        {
+          action: 'set',
+          agent: 'hermes',
+          model: 'openai/gpt-5.6',
+          effort: 'high',
+          scope: 'global',
+          confirm: true,
+          authorize_global: true,
+        },
         { sessionID: 'root', agent: 'zeus' },
       )
       assert.match(okGlobal, /global/i)
@@ -242,7 +292,13 @@ async function main(): Promise<void> {
       assert.ok(existsSync(globalActive(scope)))
 
       const okReset = await tool.execute(
-        { action: 'reset', agent: 'hermes', scope: 'global', confirm: true, authorize_global: true },
+        {
+          action: 'reset',
+          agent: 'hermes',
+          scope: 'global',
+          confirm: true,
+          authorize_global: true,
+        },
         { sessionID: 'root', agent: 'zeus' },
       )
       assert.match(okReset, /removed/i)
@@ -258,7 +314,10 @@ async function main(): Promise<void> {
     const scope = makeScope()
     try {
       mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
-      writeFileSync(projectActive(scope), JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }))
+      writeFileSync(
+        projectActive(scope),
+        JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }),
+      )
       const tool = command(scope)
 
       const invalidFormat = await tool.execute(
@@ -267,7 +326,11 @@ async function main(): Promise<void> {
       )
       assert.match(invalidFormat, /provider\/model/i)
       const afterInvalid = JSON.parse(readFileSync(projectActive(scope), 'utf8'))
-      assert.equal((afterInvalid as unknown as { overrides?: { agents?: Record<string, unknown> } })?.overrides?.agents?.hermes, undefined)
+      assert.equal(
+        (afterInvalid as unknown as { overrides?: { agents?: Record<string, unknown> } })?.overrides
+          ?.agents?.hermes,
+        undefined,
+      )
 
       const unknownAgent = await tool.execute(
         { action: 'set', agent: 'unknown-agent', model: 'openai/gpt-5.6', scope: 'project' },
@@ -276,7 +339,9 @@ async function main(): Promise<void> {
       assert.match(unknownAgent, /unknown agent/i)
 
       const missingModel = await tool.execute(
-        { action: 'set', agent: 'hermes', scope: 'project' } as unknown as Parameters<typeof tool.execute>[0],
+        { action: 'set', agent: 'hermes', scope: 'project' } as unknown as Parameters<
+          typeof tool.execute
+        >[0],
         { sessionID: 'root', agent: 'zeus' },
       )
       assert.match(missingModel, /requires --model/i)
@@ -287,10 +352,16 @@ async function main(): Promise<void> {
       )
       assert.match(unknownCapability, /no capability entry/i)
 
-      const invalidAgentReset = await tool.execute({ action: 'reset', agent: 'nope', scope: 'project' }, { sessionID: 'root', agent: 'zeus' })
+      const invalidAgentReset = await tool.execute(
+        { action: 'reset', agent: 'nope', scope: 'project' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
       assert.match(invalidAgentReset, /unknown agent/i)
 
-      const missingAgentReset = await tool.execute({ action: 'reset', scope: 'project' } as unknown as Parameters<typeof tool.execute>[0], { sessionID: 'root', agent: 'zeus' })
+      const missingAgentReset = await tool.execute(
+        { action: 'reset', scope: 'project' } as unknown as Parameters<typeof tool.execute>[0],
+        { sessionID: 'root', agent: 'zeus' },
+      )
       assert.match(missingAgentReset, /requires --agent/i)
     } finally {
       rmSync(scope.root, { recursive: true, force: true })
@@ -343,11 +414,32 @@ async function main(): Promise<void> {
     const scope = makeScope()
     try {
       mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
-      writeFileSync(projectActive(scope), JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }))
+      writeFileSync(
+        projectActive(scope),
+        JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }),
+      )
       const tool = command(scope)
       const [r1, r2] = await Promise.all([
-        tool.execute({ action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', effort: 'medium', scope: 'project' }, { sessionID: 'root', agent: 'zeus' }),
-        tool.execute({ action: 'set', agent: 'apollo', model: 'openai/gpt-5.6-luna-fast', effort: 'low', scope: 'project' }, { sessionID: 'root', agent: 'zeus' }),
+        tool.execute(
+          {
+            action: 'set',
+            agent: 'hermes',
+            model: 'openai/gpt-5.6',
+            effort: 'medium',
+            scope: 'project',
+          },
+          { sessionID: 'root', agent: 'zeus' },
+        ),
+        tool.execute(
+          {
+            action: 'set',
+            agent: 'apollo',
+            model: 'openai/gpt-5.6-luna-fast',
+            effort: 'low',
+            scope: 'project',
+          },
+          { sessionID: 'root', agent: 'zeus' },
+        ),
       ])
       assert.match(r1, /updated|set/i)
       assert.match(r2, /updated|set/i)
@@ -386,19 +478,30 @@ async function main(): Promise<void> {
     try {
       mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
       const p = projectActive(scope)
-      writeFileSync(p, JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }), { mode: 0o640 })
+      writeFileSync(p, JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }), {
+        mode: 0o640,
+      })
       chmodSync(p, 0o640)
       const tool = command(scope)
-      await tool.execute({ action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', scope: 'project' }, { sessionID: 'root', agent: 'zeus' })
+      await tool.execute(
+        { action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', scope: 'project' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
       assert.equal(statSync(p).mode & 0o7777, 0o640)
       assert.equal(statSync(`${p}.bak`).mode & 0o7777, 0o600)
-      assert.equal(readdirSync(join(scope.project, '.pantheon')).some((e) => e.includes('.tmp-')), false)
+      assert.equal(
+        readdirSync(join(scope.project, '.pantheon')).some((e) => e.includes('.tmp-')),
+        false,
+      )
 
       // new file gets 0o600
       const s2 = makeScope()
       try {
         const p2 = projectActive(s2)
-        await command(s2).execute({ action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', scope: 'project' }, { sessionID: 'root', agent: 'zeus' })
+        await command(s2).execute(
+          { action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', scope: 'project' },
+          { sessionID: 'root', agent: 'zeus' },
+        )
         assert.equal(statSync(p2).mode & 0o7777, 0o600)
       } finally {
         rmSync(s2.root, { recursive: true, force: true })
@@ -420,7 +523,10 @@ async function main(): Promise<void> {
       writeFileSync(bakTarget, 'must remain untouched\n')
       symlinkSync(bakTarget, bak)
       const before = readFileSync(p, 'utf8')
-      const result = await command(scope).execute({ action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', scope: 'project' }, { sessionID: 'root', agent: 'zeus' })
+      const result = await command(scope).execute(
+        { action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', scope: 'project' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
       assert.match(result, /failed|symlink/i)
       assert.equal(readFileSync(p, 'utf8'), before)
       assert.equal(readFileSync(bakTarget, 'utf8'), 'must remain untouched\n')
@@ -434,7 +540,10 @@ async function main(): Promise<void> {
     const scope = makeScope()
     try {
       mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
-      writeFileSync(projectActive(scope), JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }))
+      writeFileSync(
+        projectActive(scope),
+        JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }),
+      )
       let asked: unknown[] | undefined
       const ask = async (questions: unknown[]) => {
         asked = questions
@@ -467,8 +576,16 @@ async function main(): Promise<void> {
     try {
       mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
       mkdirSync(join(scope.global, '.pantheon'), { recursive: true })
-      writeFileSync(projectActive(scope), JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }))
-      const ask = async () => ({ agent: 'iris', model: 'openai/gpt-5.6', effort: 'medium', scope: 'global' })
+      writeFileSync(
+        projectActive(scope),
+        JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }),
+      )
+      const ask = async () => ({
+        agent: 'iris',
+        model: 'openai/gpt-5.6',
+        effort: 'medium',
+        scope: 'global',
+      })
       const tool = command(scope, { ask: ask as never })
       const result = await tool.execute({} as never, { sessionID: 'root', agent: 'zeus' })
       assert.match(result, /global/i)
@@ -484,7 +601,10 @@ async function main(): Promise<void> {
     const scope = makeScope()
     try {
       const tool = command(scope)
-      await tool.execute({ action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', scope: 'project' }, { sessionID: 'root', agent: 'zeus' })
+      await tool.execute(
+        { action: 'set', agent: 'hermes', model: 'openai/gpt-5.6', scope: 'project' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
       assert.equal(existsSync(join(scope.project, '.env')), false)
       assert.equal(existsSync(join(scope.global, '.env')), false)
       assert.equal(existsSync(join(scope.project, '.pantheon', '.env')), false)

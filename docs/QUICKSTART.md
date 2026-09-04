@@ -2,7 +2,9 @@
 
 ## What is Pantheon
 
-A multi-agent framework for **OpenCode**. 14 specialized agents with TDD enforcement, quality gates (Themis 3-layer review), and persistent memory MCP. **v1.0** — single entry point, background subagents, 14 commands.
+A multi-agent framework for **OpenCode**. It provides 14 specialized agents,
+TDD enforcement, Themis quality gates, and persistent memory MCP. The current
+release is **v1.4.3**.
 
 ## Installation
 
@@ -56,12 +58,12 @@ Or add to your shell profile (`~/.zshrc` or `~/.bashrc`):
 echo 'export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true' >> ~/.zshrc
 ```
 
-## v1.0 Highlights
+## Highlights
 
 - **OpenCode-only** — unified, simplified, no multi-platform fragmentation
 - **Global install** — `npx pantheon-opencode init` works from any directory
 - **Background subagents** — up to 5 agents in parallel
-- **14 commands** — all start with `/pantheon-`
+- **7 commands** — all start with `/pantheon-`
 - **Themis 3-layer review** — heuristic scanner + deep review + verification planning
 - **Persistent MCP memory** — sqlite-vec + fastembed
 

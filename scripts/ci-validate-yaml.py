@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Validate agent YAML frontmatter in CI."""
-import os, re, yaml, sys
+import os
+import re
+import sys
+
+import yaml
 
 errors = 0
 for f in sorted(os.listdir('src/agents')):
     if not f.endswith('.md'):
         continue
-    content = open(f'src/agents/{f}').read()
+    with open(f"src/agents/{f}", encoding="utf-8") as agent_file:
+        content = agent_file.read()
     match = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
     if match:
         try:

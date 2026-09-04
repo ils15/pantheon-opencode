@@ -8,14 +8,13 @@ Tests cover:
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
+import eval_store
 import pytest
 from mcp.server.fastmcp import FastMCP
-from mcp.types import Resource as MCPResource
-from mcp.types import ResourceTemplate
 
 # Module path — canonical source lives in src/mcp/
 MODULE_PATH = "src.mcp.mcp_resources_server"
@@ -38,8 +37,6 @@ def _text(contents: list | str) -> str:
 @pytest.fixture(scope="session")
 def module():
     """Import and return the server module."""
-    import importlib
-
     mod = importlib.import_module(MODULE_PATH)
     importlib.reload(mod)
     return mod
@@ -64,6 +61,53 @@ class TestStaticResources:
         resources = await server.list_resources()
         uris = [str(r.uri) for r in resources]
         assert "pantheon://agents" in uris
+
+    async def test_project_local_agents_take_precedence_over_global(
+        self, module, tmp_path: Path
+    ) -> None:
+        """Project .opencode resources should override the global install."""
+        project = tmp_path / "project"
+        local = project / ".opencode" / "agents"
+        global_dir = tmp_path / "global" / "agents"
+        local.mkdir(parents=True)
+        global_dir.mkdir(parents=True)
+        (local / "local.md").write_text(
+            "---\ndescription: Local agent\n---\n", encoding="utf-8"
+        )
+        (global_dir / "global.md").write_text(
+            "---\ndescription: Global agent\n---\n", encoding="utf-8"
+        )
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
+        ):
+            text = await module.list_agents()
+        assert "Local agent" in text
+        assert "Global agent" in text
+
+    @pytest.mark.parametrize(
+        "root_name", ["agents", "skills", "deepwork", "memory-bank"]
+    )
+    async def test_project_root_symlink_escape_is_rejected(
+        self, module, tmp_path: Path, root_name: str
+    ) -> None:
+        """Unsafe project resource symlinks must not be followed."""
+        project = tmp_path / "project"
+        outside = tmp_path / "outside" / root_name
+        project.mkdir()
+        outside.mkdir(parents=True)
+        base = project / (
+            ".opencode" if root_name in {"agents", "skills"} else ".pantheon"
+        )
+        base.mkdir()
+        (base / root_name).symlink_to(outside, target_is_directory=True)
+        global_root = tmp_path / "global" / root_name
+        global_root.mkdir(parents=True)
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
+        ):
+            assert module._resource_root(root_name) == global_root.resolve()
 
     async def test_agents_list_returns_markdown(self, server: FastMCP) -> None:
         """Reading pantheon://agents should return agent names and roles."""
@@ -99,6 +143,16 @@ class TestStaticResources:
         assert len(text) > 0
         assert "version:" in text
         assert "agents:" in text
+
+    async def test_routing_missing_global_and_project_returns_message(
+        self, module, tmp_path: Path
+    ) -> None:
+        """Missing global and project routing files must not raise an exception."""
+        with (
+            patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
+            patch.object(module, "_PANTHEON_PROJECT", tmp_path / "project"),
+        ):
+            assert await module.get_routing() == "routing.yml not found."
 
 
 # =============================================================================
@@ -311,8 +365,6 @@ class TestServerLifecycle:
 @pytest.fixture
 def eval_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Seed a temp plugin_eval DB and point eval_store at it."""
-    import eval_store
-
     db_path = tmp_path / "memory" / "memory.db"
     monkeypatch.setattr(eval_store, "_db_path", lambda: db_path)
     eval_store.store_eval(
@@ -357,10 +409,10 @@ class TestEvalResources:
         assert "90" in text
         assert "85" in text
 
-    async def test_eval_list_empty_namespace(self, server: FastMCP, tmp_path, monkeypatch) -> None:
+    async def test_eval_list_empty_namespace(
+        self, server: FastMCP, tmp_path, monkeypatch
+    ) -> None:
         """An empty plugin_eval namespace yields a meaningful message."""
-        import eval_store
-
         monkeypatch.setattr(
             eval_store, "_db_path", lambda: tmp_path / "memory" / "memory.db"
         )
@@ -388,8 +440,6 @@ class TestEvalResources:
 
     async def test_eval_plugin_underscore_not_wildcard(self, server, eval_db) -> None:
         """Underscores in plugin names must not act as SQL LIKE wildcards."""
-        import eval_store
-
         eval_store.store_eval(
             "code_review",
             {"name": "code_review", "score": 99, "checks": {}},

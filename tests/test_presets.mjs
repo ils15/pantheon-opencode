@@ -499,12 +499,7 @@ test('T12: validatePresetDefs passes on repo routing.yml presets', () => {
   assert.deepEqual(result.errors, [])
   assert.equal(Object.keys(defs).length, 4)
   // every surviving preset validates clean on its own
-  for (const name of [
-    'go-free',
-    'go-fast',
-    'go-premium',
-    'openai',
-  ]) {
+  for (const name of ['go-free', 'go-fast', 'go-premium', 'openai']) {
     const r = presets.validatePresetDefs({ [name]: defs[name] }, { agents: repoAgents() })
     assert.equal(r.ok, true, `preset "${name}" should validate clean: ${JSON.stringify(r.errors)}`)
     assert.deepEqual(r.errors, [])
@@ -784,28 +779,31 @@ await testAsync('T19d: init wizard readline writes project preset with collected
 })
 
 // ─── T19e: init wizard ask path — global scope writes XDG global file ───
-await testAsync('T19e: init wizard ask path global scope writes XDG_CONFIG_HOME/opencode', async () => {
-  const picker = await import('../scripts/install/model-picker.mjs')
-  const dir = makeTmp()
-  const xdgHome = makeTmp()
-  const defs = { 'go-fast': { description: 'fast' } }
-  const ask = async () => ({ preset: 'go-fast', key: 'sk-test', scope: 'global' })
-  const env = { HOME: dir, XDG_CONFIG_HOME: xdgHome, PANTHEON_OPENCODE_API_KEY: 'sk-test' }
-  const result = await picker.runInitWizard({
-    presetDir: dir,
-    presets: defs,
-    env,
-    dryRun: false,
-    logger: silent,
-    ask,
-  })
-  assert.equal(result.preset, 'go-fast')
-  assert.equal(result.scope, 'global')
-  const globalFile = join(xdgHome, 'opencode', '.pantheon', 'active-preset.json')
-  assert.ok(existsSync(globalFile), 'global preset must be written to XDG_CONFIG_HOME/opencode')
-  assert.ok(!existsSync(presetFile(dir)), 'project file must NOT be written for global scope')
-  assert.equal(JSON.parse(readFileSync(globalFile, 'utf8')).preset, 'go-fast')
-})
+await testAsync(
+  'T19e: init wizard ask path global scope writes XDG_CONFIG_HOME/opencode',
+  async () => {
+    const picker = await import('../scripts/install/model-picker.mjs')
+    const dir = makeTmp()
+    const xdgHome = makeTmp()
+    const defs = { 'go-fast': { description: 'fast' } }
+    const ask = async () => ({ preset: 'go-fast', key: 'sk-test', scope: 'global' })
+    const env = { HOME: dir, XDG_CONFIG_HOME: xdgHome, PANTHEON_OPENCODE_API_KEY: 'sk-test' }
+    const result = await picker.runInitWizard({
+      presetDir: dir,
+      presets: defs,
+      env,
+      dryRun: false,
+      logger: silent,
+      ask,
+    })
+    assert.equal(result.preset, 'go-fast')
+    assert.equal(result.scope, 'global')
+    const globalFile = join(xdgHome, 'opencode', '.pantheon', 'active-preset.json')
+    assert.ok(existsSync(globalFile), 'global preset must be written to XDG_CONFIG_HOME/opencode')
+    assert.ok(!existsSync(presetFile(dir)), 'project file must NOT be written for global scope')
+    assert.equal(JSON.parse(readFileSync(globalFile, 'utf8')).preset, 'go-fast')
+  },
+)
 
 // ─── T19f: init wizard ask path — project scope writes project file ─────
 await testAsync('T19f: init wizard ask path project scope writes project file', async () => {
@@ -1107,7 +1105,7 @@ test('T28: resolveActivePreset returns vision for all 4 presets', () => {
     'go-free': { model: 'opencode/mimo-v2.5-free', reasoning_effort: 'low' },
     'go-fast': { model: 'opencode-go/mimo-v2.5', reasoning_effort: 'low' },
     'go-premium': { model: 'opencode-go/gpt-5.6-sol', reasoning_effort: 'high' },
-    'openai': { model: 'openai/gpt-5.6-sol', reasoning_effort: 'high' },
+    openai: { model: 'openai/gpt-5.6-sol', reasoning_effort: 'high' },
   }
   for (const [name, vision] of Object.entries(expected)) {
     const resolved = presets.resolveActivePreset({
@@ -1305,10 +1303,7 @@ test('T32: validator rejects vision model whose provider is not declared', () =>
 test('T33: applyActivePresetToConfig resolves file + applies agents/providers', () => {
   const dir = makeTmp()
   mkdirSync(join(dir, '.pantheon'), { recursive: true })
-  writeFileSync(
-    presetFile(dir),
-    JSON.stringify({ version: 1, preset: 'go-free', source: 'cli' }),
-  )
+  writeFileSync(presetFile(dir), JSON.stringify({ version: 1, preset: 'go-free', source: 'cli' }))
   const config = {}
   const resolved = presets.applyActivePresetToConfig(config, {
     env: { PANTHEON_OPENCODE_API_KEY: 'k' },
@@ -1345,10 +1340,7 @@ test('T34: applyActivePresetToConfig without preset leaves config untouched', ()
 test('T35: applyActivePresetToConfig throws PANTHEON_MISSING_API_KEY', () => {
   const dir = makeTmp()
   mkdirSync(join(dir, '.pantheon'), { recursive: true })
-  writeFileSync(
-    presetFile(dir),
-    JSON.stringify({ version: 1, preset: 'go-free', source: 'cli' }),
-  )
+  writeFileSync(presetFile(dir), JSON.stringify({ version: 1, preset: 'go-free', source: 'cli' }))
   let thrown = null
   try {
     presets.applyActivePresetToConfig(

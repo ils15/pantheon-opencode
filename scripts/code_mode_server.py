@@ -18,8 +18,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import signal
 import shutil
+import signal
 import stat
 import sys
 import time
@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
 from _pantheon_paths import pantheon_home, pantheon_project
 from mcp.server.fastmcp import FastMCP
 

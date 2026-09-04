@@ -1,5 +1,7 @@
 # Upgrading Pantheon
 
+[Português (Brasil)](UPGRADING.pt-BR.md)
+
 
 ## Upgrading to v1.0 (OpenCode-only)
 
@@ -18,7 +20,7 @@ v1.0 removes all multi-platform support. Pantheon now runs exclusively on OpenCo
 4. Add `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` to your shell profile
 
 ### Rollback
-Pantheon v4.x remains available on the v4.x branch if you need multi-platform support.
+For a rollback, use the previous Pantheon release tag that matches your deployment.
 
 
 ## Upgrading to v3.19.0

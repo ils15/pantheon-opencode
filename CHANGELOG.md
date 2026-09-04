@@ -17,6 +17,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.4.3] - 2026-09-03
+
+### Changed
+
+- Synchronized the 1.4.3 release version across `package.json`,
+  `package-lock.json`, `plugin.json`, `pyproject.toml`, and the TUI package.
+- Added canonical English and Brazilian Portuguese project README files and
+  citation metadata for the MIT-licensed repository.
+
 ## [v1.4.2] - 2026-08-27
 
 ### Changed
@@ -73,6 +82,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Closed issue #68 covering the TUI stale-state and auto-update fixes.
 
+[v1.4.3]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.3
 [1.4.0]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.0
 [1.3.7]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.3.7
 [1.3.6]: https://github.com/ils15/pantheon-opencode/releases/tag/v1.3.6

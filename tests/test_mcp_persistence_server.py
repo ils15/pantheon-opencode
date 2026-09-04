@@ -22,7 +22,7 @@ import json
 import sys
 import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -465,7 +465,7 @@ class TestPurgeExpired:
             "kv_store", {"namespace": "ns", "key": "k", "value": "v", "ttl": 3600}
         )
         # Backdate to 1s ago but keep today's date + ISO 'T' separator.
-        stale = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        stale = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         conn = module._db("project")
         conn.execute(
             "UPDATE kv_store SET expires_at = ? WHERE namespace = ? AND key = ?",
@@ -560,7 +560,9 @@ class TestContextCheckpoints:
     async def test_context_ttl_expiry(self, server: FastMCP, module) -> None:
         """An expired checkpoint must be unreachable (crash-recovery path)."""
         saved = _json(
-            await server.call_tool("context_save", {"slug": "s", "key": "phase:1", "content": "x"})
+            await server.call_tool(
+                "context_save", {"slug": "s", "key": "phase:1", "content": "x"}
+            )
         )
         sid = saved["session_id"]
         ns = saved["namespace"]
@@ -577,10 +579,9 @@ class TestContextCheckpoints:
 
     async def test_context_session_isolation(self, server: FastMCP) -> None:
         """A different session_id must not see another session's checkpoints."""
-        saved = _json(
-            await server.call_tool("context_save", {"slug": "s", "key": "phase:1", "content": "x"})
+        await server.call_tool(
+            "context_save", {"slug": "s", "key": "phase:1", "content": "x"}
         )
-        sid = saved["session_id"]
         result = await server.call_tool(
             "context_get", {"slug": "s", "key": "phase:1", "session_id": "other_session"}
         )

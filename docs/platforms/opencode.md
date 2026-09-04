@@ -1,6 +1,6 @@
 # Pantheon for OpenCode
 
-Complete setup and usage guide for running Pantheon **v1.4.2** in [OpenCode](https://opencode.ai) — 4 presets (`go-free`/`go-fast`/`go-premium`/`openai` puro), wizard 3 perguntas, herança nativa default — the open-source AI coding agent for the terminal, desktop, and IDE.
+Complete setup and usage guide for running Pantheon **v1.4.3** in [OpenCode](https://opencode.ai) — 4 presets (`go-free`/`go-fast`/`go-premium`/`openai` puro), wizard 3 perguntas, herança nativa default — the open-source AI coding agent for the terminal, desktop, and IDE.
 
 ---
 
@@ -8,7 +8,7 @@ Complete setup and usage guide for running Pantheon **v1.4.2** in [OpenCode](htt
 
 | Requirement | Notes |
 |---|---|
-| **OpenCode** installed | Install via `curl -fsSL https://opencode.ai/install.sh | sh` or `npm install -g @opencode/opencode` |
+| **OpenCode** installed | Follow the [OpenCode installation guide](https://opencode.ai/docs/) or use `npm install -g opencode-ai` |
 | **Node.js 18+** | Only needed for the sync engine (`npm run sync`) and installer script |
 | **Git** | Any recent version |
 
@@ -71,11 +71,10 @@ If an `AGENTS.md` already exists, `/init` improves it in-place rather than repla
 
 ## Configuration
 
-OpenCode uses `opencode.json` (or `opencode.jsonc`) in your project root. Create one with:
+OpenCode uses `opencode.json` (or `opencode.jsonc`) in your project root. See the [configuration documentation](https://opencode.ai/docs/config/) for schema validation, then create one with:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
   "agent": {
     "zeus":      { "source": ".opencode/agents/zeus.md" },
     "athena":    { "source": ".opencode/agents/athena.md" },
@@ -267,9 +266,9 @@ The OpenCode adapter v2 (2.0.0) maps canonical VS Code tool names to OpenCode-na
 
 ## OpenCode-Specific Features
 
-### TUI Plugin (v4.0)
+### TUI Plugin (v1.4.3)
 
-Pantheon v4.0 ships a **TUI plugin** for OpenCode that provides:
+Pantheon v1.4.3 ships a **TUI plugin** for OpenCode that provides:
 - **Live deepwork status** — see active phases, progress, and checkpoints
 - **Activity feed** — real-time agent delegation events
 - **Toast notifications** — phase completion, review results, gate approvals
@@ -278,7 +277,7 @@ The plugin auto-discovers from `.opencode/plugins/` when running from the projec
 
 ### Themis 2.0
 
-Pantheon v4.0 introduces **Themis 2.0** — a 3-layer review pipeline:
+Pantheon v1.4.3 includes **Themis 2.0** — a 3-layer review pipeline:
 1. **Heuristic Scanner** — zero-LLM static analysis (ruff, biome, anti-pattern detection, hash verification)
 2. **Deep Review** — LLM-powered code review with OWASP Top 10, coverage enforcement, and correctness checks
 3. **Verification Planning** — structured verification plan with test gap analysis
@@ -520,11 +519,10 @@ MCP tools are automatically available to agents alongside built-in tools. You ca
 
 ### Theme Customization
 
-OpenCode offers a customizable TUI with built-in themes (tokyonight, catppuccin, gruvbox, nord, etc.) and custom themes. Configure via `tui.json`:
+OpenCode offers a customizable TUI with built-in themes (tokyonight, catppuccin, gruvbox, nord, etc.) and custom themes. See the [TUI documentation](https://opencode.ai/docs/tui/) and configure via `tui.json`:
 
 ```json
 {
-  "$schema": "https://opencode.ai/tui.json",
   "theme": "catppuccin-macchiato"
 }
 ```
