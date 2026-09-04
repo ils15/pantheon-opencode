@@ -834,27 +834,29 @@ export async function installOpenCode(
   // The source opencode.json keeps its dev path for local development; the
   // transform happens at install/sync time only.
 
-  // Read both schema spellings before merging. V2 upgrades commonly start
-  // with `plugins`, while older installs (and V1) use `plugin`; dropping the
-  // former here would silently remove user registrations during an upgrade.
-  const pluginConfigEnabled =
-    config.plugin === undefined || Array.isArray(config.plugin) || Array.isArray(config.plugins)
-  const configuredPlugins = [
-    ...(Array.isArray(config.plugin) ? config.plugin : []),
-    ...(Array.isArray(config.plugins) ? config.plugins : []),
-  ]
-  const mergedPlugins = configuredPlugins.filter(
-    (plugin, index, entries) => entries.indexOf(plugin) === index,
-  )
-  if (pluginConfigEnabled) config.plugin = mergedPlugins
-  if (pluginConfigEnabled && Array.isArray(config.plugin)) {
-    if (Array.isArray(pantheonConfig.plugin)) {
-      for (const plugin of pantheonConfig.plugin) {
-        const resolved = resolveInstalledPlugin(plugin)
-        const file = basename(resolved)
-        // Replace any pre-existing entry for the same plugin file (e.g. a stale
-        // dev-machine path from an earlier install) so upgrades stay hermetic.
-        config.plugin = config.plugin.filter((p) => basename(p) !== file)
+  if (version === 'v1') {
+    // V1 loads the singular `plugin` list. Remove every Pantheon V2 entry from
+    // both config shapes before restoring the two V1 plugins. User plugins in
+    // either list are retained verbatim.
+    if (Array.isArray(config.plugins)) {
+      config.plugins = removePantheonPluginReferences(config.plugins)
+    }
+    if (config.plugin === undefined) config.plugin = []
+    if (Array.isArray(config.plugin)) {
+      config.plugin = removePantheonPluginReferences(config.plugin)
+      if (Array.isArray(pantheonConfig.plugin)) {
+        for (const plugin of pantheonConfig.plugin) {
+          if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugin, plugin)) {
+            config.plugin.push(deepClone(plugin))
+          }
+        }
+      }
+
+      const ensurePantheonPlugin = (ref) => {
+        const resolved = resolveInstalledPlugin(ref)
+        config.plugin = config.plugin.filter(
+          (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolved),
+        )
         config.plugin.push(resolved)
       }
       // Root-level delegation plugin remains a V1-only registration.
@@ -871,7 +873,7 @@ export async function installOpenCode(
       config.plugin = removePantheonPluginReferences(config.plugin)
     }
     if (!Array.isArray(config.plugins)) config.plugins = []
-    config.plugins = removePantheonPluginReferences(config.plugins)
+    config.plugins = deduplicatePluginReferences(removePantheonPluginReferences(config.plugins))
     if (Array.isArray(pantheonConfig.plugins)) {
       for (const plugin of pantheonConfig.plugins) {
         if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugins, plugin)) {
@@ -882,18 +884,6 @@ export async function installOpenCode(
     // Use the published package export, not a V1 local-file path. This keeps
     // V1's delegate out of V2 while exercising package.json's ./plugin-v2 map.
     config.plugins.push(PANTHEON_V2_EXPORT)
-  }
-
-  // OpenCode V1 uses the singular plugin configuration key. OpenCode V2 uses
-  // the plural key, so convert the fully merged V1 list before serializing.
-  // Never emit both keys: V2 rejects the legacy shape when its config is
-  // isolated from the user's normal config.
-  if (version === 'v2' && Array.isArray(config.plugin)) {
-    config.plugins = config.plugin
-    delete config.plugin
-  } else if (version === 'v1') {
-    // Keep V1's public shape canonical if a V2 config is downgraded.
-    delete config.plugins
   }
 
   if (config.provider === undefined && pantheonConfig.provider !== undefined) {
@@ -991,19 +981,10 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   if (componentSet.has('runtime')) {
     config.mcp = config.mcp || {}
-    if (version === 'v2') {
-      // V2 requires an explicit server feature toggle in addition to the
-      // named server entries used by V1.
-      // Preserve any user-owned fields and choices; only repair a missing or
-      // malformed container and the required `enabled` member.
-      if (
-        !config.mcp.servers ||
-        typeof config.mcp.servers !== 'object' ||
-        Array.isArray(config.mcp.servers)
-      )
-        config.mcp.servers = {}
-      if (config.mcp.servers.enabled === undefined) config.mcp.servers.enabled = true
-    }
+    // MCP stays a flat named-server map for BOTH V1 and V2: OpenCode 1.18.x
+    // has no `mcp.servers` wrapper and rejects one with
+    // "Missing key mcp.servers.enabled". config-migration.mjs normalizes any
+    // legacy wrapper-shaped entries back to the flat map.
     // P1-3: derive the MCP python from the SAME venv layout setupVenv
     // creates (<target>/.venv via venvPythonPath). For project installs the
     // runtime payload lives under <target>/.opencode (runtimeTarget), but the

@@ -114,12 +114,10 @@ const V2_EXPECTED = {
     { action: 'shell', resource: 'python3 *', effect: 'allow' },
   ],
   mcp: {
-    servers: {
-      bifrost: {
-        type: 'remote',
-        url: 'https://llm.ofertachina.cloud/mcp',
-        disabled: false,
-      },
+    bifrost: {
+      type: 'remote',
+      url: 'https://llm.ofertachina.cloud/mcp',
+      enabled: true,
     },
   },
   agents: {
@@ -191,10 +189,10 @@ describe('config-migration', () => {
 
     it('should convert MCP format (enabled → disabled)', () => {
       const v2 = migrateV1toV2(V1_CONFIG)
-      assert.ok(v2.mcp.servers, 'mcp.servers exists')
-      assert.equal(v2.mcp.bifrost, undefined, 'old mcp.bifrost removed')
-      const b = v2.mcp.servers.bifrost
-      assert.equal(b.disabled, false, 'enabled:true → disabled:false')
+      assert.ok(v2.mcp.bifrost, 'flat mcp.bifrost exists')
+      assert.equal(v2.mcp.servers, undefined, 'mcp.servers wrapper is not valid')
+      const b = v2.mcp.bifrost
+      assert.equal(b.enabled, true, 'enabled flag is preserved')
       assert.equal(b.timeout, undefined, 'no timeout when V1 had none')
     })
 
@@ -205,10 +203,23 @@ describe('config-migration', () => {
         },
       }
       const v2 = migrateV1toV2(v1WithTimeout)
-      assert.deepEqual(v2.mcp.servers.myserver.timeout, {
-        catalog: 30000,
-        execution: 30000,
-      })
+      assert.equal(v2.mcp.myserver.timeout, 30000)
+    })
+
+    it('should drop the legacy boolean feature toggle left by the servers wrapper', () => {
+      // Installers that seeded `mcp.servers = { enabled: true }` left a
+      // non-server entry behind; unwrapping must not turn it into an empty
+      // server object that OpenCode 1.18.x would reject.
+      const legacy = {
+        mcp: {
+          servers: { enabled: true },
+          bifrost: { type: 'remote', url: 'https://example.com/mcp', enabled: true },
+        },
+      }
+      const v2 = migrateV1toV2(legacy)
+      assert.ok(v2.mcp.bifrost, 'real server preserved')
+      assert.equal(v2.mcp.servers, undefined, 'wrapper removed')
+      assert.equal(v2.mcp.enabled, undefined, 'boolean toggle not converted to a server entry')
     })
 
     it('should handle provider model variant → #suffix', () => {
@@ -385,14 +396,14 @@ describe('config-migration', () => {
       assert.ok(v2.providers['opencode-go'])
       assert.ok(v2.permissions)
       assert.ok(Array.isArray(v2.permissions))
-      assert.ok(v2.mcp.servers)
+      assert.ok(v2.mcp.bifrost)
       assert.ok(v2.agents)
       // Permission count: 7 shell + 1 skill + 1 websearch = 9
       assert.equal(v2.permissions.length, 9)
       // Agent permission count: 6 edit + 2 shell = 8
       assert.equal(v2.agents.talos.permissions.length, 8)
       // MCP disabled
-      assert.equal(v2.mcp.servers.bifrost.disabled, false)
+      assert.equal(v2.mcp.bifrost.enabled, true)
     })
   })
 })

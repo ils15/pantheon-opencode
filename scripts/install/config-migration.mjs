@@ -3,7 +3,9 @@
  *
  * Converts opencode.json between:
  * - V1 (object-based): `permission`, `agent`, `provider`, `mcp` with flat keys
- * - V2 (array-based):  `permissions`, `agents`, `providers`, `mcp.servers` with ordered arrays
+ * - V2 (array-based):  `permissions`, `agents`, `providers`; MCP remains the
+ *   named top-level server map because OpenCode 1.18.x validates that shape for
+ *   both the V1 and V2 installer paths.
  *
  * Rules:
  * 1. Deep clone before mutating — never modifies input
@@ -230,35 +232,50 @@ function convertProviderV2toV1(name, config) {
  * Convert V1 MCP config to V2.
  *
  * V1: { bifrost: { type: "remote", url: "...", enabled: true, timeout: 30000 } }
- * V2: { servers: { bifrost: { type: "remote", url: "...", disabled: false, timeout: { catalog: 30000, execution: 30000 } } } }
+ * V2 installer output: { bifrost: { type: "remote", url: "...", enabled: true } }
+ *
+ * OpenCode 1.18.18 does not have an `mcp.servers` wrapper. It interprets
+ * `servers` as the name of an MCP server and then rejects it with
+ * `Missing key mcp.servers.enabled`. Keep MCP in the documented shape and
+ * normalize old generated V2 entries back to it.
  */
 function convertMcpV1toV2(mcpConfig) {
   if (!mcpConfig || typeof mcpConfig !== 'object') return mcpConfig
 
-  // Already V2 shape?
-  if (mcpConfig.servers) return { ...mcpConfig }
-
   const servers = {}
-  for (const [name, serverConfig] of Object.entries(mcpConfig)) {
+  const source =
+    mcpConfig.servers && typeof mcpConfig.servers === 'object' && !Array.isArray(mcpConfig.servers)
+      ? { ...mcpConfig, ...mcpConfig.servers }
+      : mcpConfig
+
+  for (const [name, serverConfig] of Object.entries(source)) {
+    if (name === 'servers') continue
+    // Installer versions that seeded the legacy wrapper also wrote a boolean
+    // feature toggle (`servers: { enabled: true }`). After unwrapping, that
+    // toggle surfaces as a non-object entry and is not a server; drop it.
+    if (serverConfig === null || typeof serverConfig !== 'object') continue
     const srv = { ...serverConfig }
 
-    // enabled → disabled (inverse boolean)
-    if ('enabled' in srv) {
-      srv.disabled = !srv.enabled
-      delete srv.enabled
+    // Normalize legacy V2's disabled flag to OpenCode 1.18.x's enabled flag.
+    if ('disabled' in srv) {
+      srv.enabled = !srv.disabled
+      delete srv.disabled
     }
 
-    // timeout: number → { catalog, execution } (only if present)
+    // Normalize legacy V2's split timeout to the V1/V2-compatible number.
     if (srv.timeout !== undefined && srv.timeout !== null) {
-      if (typeof srv.timeout === 'number') {
-        srv.timeout = { catalog: srv.timeout, execution: srv.timeout }
+      if (typeof srv.timeout === 'object') {
+        srv.timeout = srv.timeout.execution || srv.timeout.catalog || 30000
       }
     }
 
+    // A shorthand inherited-server override is valid only when named directly.
+    // Runtime MCP entries always have a complete config, so leave other values
+    // untouched and avoid dropping user-owned servers.
     servers[name] = srv
   }
 
-  return { servers }
+  return servers
 }
 
 /**
@@ -267,30 +284,7 @@ function convertMcpV1toV2(mcpConfig) {
 function convertMcpV2toV1(mcpConfig) {
   if (!mcpConfig || typeof mcpConfig !== 'object') return mcpConfig
 
-  // Already V1 shape (no servers)?
-  if (!mcpConfig.servers) return { ...mcpConfig }
-
-  const result = {}
-  for (const [name, serverConfig] of Object.entries(mcpConfig.servers)) {
-    const srv = { ...serverConfig }
-
-    // disabled → enabled (inverse boolean)
-    if ('disabled' in srv) {
-      srv.enabled = !srv.disabled
-      delete srv.disabled
-    }
-
-    // timeout: { catalog, execution } → number (use execution), only if present
-    if (srv.timeout !== undefined && srv.timeout !== null) {
-      if (typeof srv.timeout === 'object') {
-        srv.timeout = srv.timeout.execution || srv.timeout.catalog || 30000
-      }
-    }
-
-    result[name] = srv
-  }
-
-  return result
+  return convertMcpV1toV2(mcpConfig)
 }
 
 // ---------------------------------------------------------------------------

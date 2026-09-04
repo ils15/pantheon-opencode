@@ -125,18 +125,14 @@ test('V2 fresh install has permissions as array (not permission object)', async 
   }
 })
 
-test('V2 fresh install has mcp.servers (not flat mcp keys)', async () => {
+test('V2 fresh install has flat MCP server keys', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-mcp-'))
   try {
     const config = await runV2Install(target)
     if ('mcp' in config) {
       assert.ok(typeof config.mcp === 'object' && config.mcp !== null, 'V2 mcp must be an object')
-      assert.ok('servers' in config.mcp, 'V2 mcp must have servers sub-key')
-      // servers is an object (name→config), not necessarily an array
-      assert.ok(
-        typeof config.mcp.servers === 'object' && !Array.isArray(config.mcp.servers),
-        'V2 mcp.servers must be a named object (not an array)',
-      )
+      assert.ok(!('servers' in config.mcp), 'V2 mcp must not have servers sub-key')
+      assert.ok(config.mcp.bifrost, 'V2 mcp must retain the flat bifrost server')
     }
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -600,7 +596,7 @@ test('V2 migration converts provider to providers with correct structure', async
   assert.ok('mimo-v2.5' in v2.providers['opencode-go'].models, 'provider model must be preserved')
 })
 
-test('V2 migration converts MCP flat keys to mcp.servers', async () => {
+test('V2 migration preserves flat MCP keys', async () => {
   const v1Config = {
     mcp: {
       bifrost: {
@@ -612,15 +608,10 @@ test('V2 migration converts MCP flat keys to mcp.servers', async () => {
   }
   const v2 = migrateV1toV2(v1Config)
   assert.ok('mcp' in v2)
-  assert.ok('servers' in v2.mcp)
-  // mcp.servers is a named object (name→config), not an array
-  assert.ok(
-    typeof v2.mcp.servers === 'object' && !Array.isArray(v2.mcp.servers),
-    'mcp.servers must be a named object',
-  )
-  assert.ok('bifrost' in v2.mcp.servers, 'bifrost server must be in mcp.servers')
-  // enabled→disabled (inverse boolean)
-  assert.equal(v2.mcp.servers.bifrost.disabled, false)
+  assert.ok(!('servers' in v2.mcp), 'flat MCP config must not gain a servers wrapper')
+  assert.ok('bifrost' in v2.mcp, 'bifrost server must remain a flat MCP key')
+  // The flat format retains OpenCode 1.18.x's enabled flag.
+  assert.equal(v2.mcp.bifrost.enabled, true)
 })
 
 // ---------------------------------------------------------------------------

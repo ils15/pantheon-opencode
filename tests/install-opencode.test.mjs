@@ -18,6 +18,7 @@ import { test } from 'node:test'
 import {
   installOpenCode,
   isGlobalConfigDir,
+  pluginReferenceIdentity,
   resolveInstalledPlugin,
   resolveTuiCopyTarget,
   tuiConfigLocations,
@@ -136,7 +137,7 @@ test('fresh install registers BOTH pantheon plugins (plugin.ts + pantheon-hooks.
   }
 })
 
-test('V1 downgrade removes legacy plugins key while preserving user provider and compaction values', async () => {
+test('V1 downgrade keeps the legacy plugins key with third-party plugins, preserving user provider and compaction values', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-v1-legacy-'))
   try {
     const config = await runInstall(
@@ -148,8 +149,12 @@ test('V1 downgrade removes legacy plugins key while preserving user provider and
       },
       'v1',
     )
-    assert.equal(config.plugins, undefined)
-    assert.ok(config.plugin.includes('npm:user-plugin'))
+    // The legacy `plugins` key is preserved verbatim (minus Pantheon refs) so
+    // third-party registrations survive a V1 downgrade; only Pantheon-owned
+    // entries are stripped and re-registered under the singular `plugin` key.
+    assert.deepEqual(config.plugins, ['npm:user-plugin'])
+    assert.ok(config.plugin.includes(join(ROOT, 'src', 'plugin.ts')))
+    assert.ok(config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')))
     assert.equal(config.provider.custom.options.endpoint, 'https://example.test')
     assert.equal(config.compaction.prune, false)
   } finally {
@@ -157,7 +162,7 @@ test('V1 downgrade removes legacy plugins key while preserving user provider and
   }
 })
 
-test('V2 emits mcp.servers.enabled and preserves user MCP server settings', async () => {
+test('V2 normalizes the legacy mcp.servers wrapper and preserves user MCP servers', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mcp-'))
   try {
     const config = await runInstall(
@@ -170,9 +175,12 @@ test('V2 emits mcp.servers.enabled and preserves user MCP server settings', asyn
       },
       'v2',
     )
-    assert.equal(config.mcp.servers.enabled, false)
-    assert.equal(config.mcp.servers.customSetting, 'keep')
+    // OpenCode 1.18.x has no mcp.servers wrapper ("Missing key
+    // mcp.servers.enabled"): the legacy wrapper is unwrapped to flat keys and
+    // its non-server scalar entries are dropped.
+    assert.equal(config.mcp.servers, undefined)
     assert.equal(config.mcp.userServer.url, 'https://user.example/mcp')
+    assert.equal(config.mcp.userServer.enabled, true)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -210,10 +218,21 @@ test('runtime-only install copies executable MCP assets and remains idempotent',
     })
     const runtime = join(target, '.opencode')
     const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
-    assert.equal(config.mcp.servers.enabled, true)
+    // MCP stays a flat named-server map for BOTH versions (no mcp.servers
+    // wrapper — OpenCode 1.18.x rejects it with "Missing key
+    // mcp.servers.enabled").
+    assert.equal(config.mcp.servers, undefined)
+    assert.equal(config.mcp['pantheon-resources'].enabled, true)
+    assert.equal(config.mcp['pantheon-code-mode'].enabled, true)
     assert.ok(existsSync(join(runtime, 'scripts', 'mcp_resources_server.py')))
     assert.ok(existsSync(join(runtime, 'requirements-vision.txt')))
-    assert.ok(existsSync(join(runtime, '.pantheon', 'tiers.json')))
+    // tiers.json is an untracked dev-repo artifact (not in package "files"),
+    // so the runtime copy is existsSync-gated: the destination must exist
+    // exactly when the source does.
+    assert.equal(
+      existsSync(join(runtime, '.pantheon', 'tiers.json')),
+      existsSync(join(ROOT, '.pantheon', 'tiers.json')),
+    )
     const before = readFileSync(join(runtime, 'scripts', 'code_mode_server.py'), 'utf8')
     await installOpenCode(target, false, false, ['runtime'], {
       yes: true,
@@ -236,11 +255,9 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
       'v2',
     )
     assert.equal(config.plugin, undefined)
-    assert.deepEqual(config.plugins, [
-      userPlugin,
-      join(ROOT, 'src', 'plugin.ts'),
-      join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),
-    ])
+    // V2 registers the published package export (pantheon-opencode/plugin-v2),
+    // never the V1 local-file paths — those stay V1-only.
+    assert.deepEqual(config.plugins, [userPlugin, 'pantheon-opencode/plugin-v2'])
     assert.equal(config.theme, 'user-theme')
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -522,7 +539,11 @@ async function runV2Install(target, existingConfig = null) {
     mkdirSync(target, { recursive: true })
     writeFileSync(join(target, 'opencode.json'), JSON.stringify(existingConfig, null, 2))
   }
-  await installOpenCode(target, false, false, COMPONENTS, { yes: true, headless: true, version: 'v2' })
+  await installOpenCode(target, false, false, COMPONENTS, {
+    yes: true,
+    headless: true,
+    version: 'v2',
+  })
   return JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
 }
 
@@ -553,16 +574,15 @@ test('V2 install produces permissions as array (not object)', async () => {
   }
 })
 
-test('V2 install produces mcp.servers (not flat mcp keys)', async () => {
+test('V2 install keeps MCP as flat named keys (no servers wrapper)', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mcp-'))
   try {
     const config = await runV2Install(target)
-    // V2 format: mcp is { servers: [...] } with ordered array
-    // V1 format: mcp has flat keys like mcp['pantheon-resources'] = { ... }
+    // OpenCode 1.18.x rejects the mcp.servers wrapper with
+    // "Missing key mcp.servers.enabled"; both versions use flat keys.
     if ('mcp' in config) {
       assert.ok(typeof config.mcp === 'object' && config.mcp !== null, 'V2 mcp must be an object')
-      assert.ok('servers' in config.mcp, 'V2 mcp must have servers key')
-      assert.ok(Array.isArray(config.mcp.servers), 'V2 mcp.servers must be an array')
+      assert.ok(!('servers' in config.mcp), 'V2 mcp must not have a servers key')
     }
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -577,13 +597,14 @@ test('V2 install produces agents as named object (not flat agent)', async () => 
     // V1 format: agent has the same shape but uses flat permission objects
     assert.ok(!('agent' in config), 'V2 config must not have top-level agent key')
     if ('agents' in config) {
-      assert.ok(typeof config.agents === 'object' && !Array.isArray(config.agents),
-        'V2 agents must be a named object (not an array)')
+      assert.ok(
+        typeof config.agents === 'object' && !Array.isArray(config.agents),
+        'V2 agents must be a named object (not an array)',
+      )
       // Per-agent permissions should be arrays (V2 format)
       for (const [, agentCfg] of Object.entries(config.agents)) {
         if (agentCfg.permissions !== undefined) {
-          assert.ok(Array.isArray(agentCfg.permissions),
-            'V2 agent.permissions must be an array')
+          assert.ok(Array.isArray(agentCfg.permissions), 'V2 agent.permissions must be an array')
         }
       }
     }
@@ -599,7 +620,11 @@ test('V2 install is idempotent (same output on rerun)', async () => {
     const configPath = join(target, 'opencode.json')
     const firstBytes = readFileSync(configPath, 'utf8')
 
-    await installOpenCode(target, false, false, COMPONENTS, { yes: true, headless: true, version: 'v2' })
+    await installOpenCode(target, false, false, COMPONENTS, {
+      yes: true,
+      headless: true,
+      version: 'v2',
+    })
     const secondBytes = readFileSync(configPath, 'utf8')
     assert.equal(secondBytes, firstBytes, 'V2 config must be byte-identical on rerun')
   } finally {
