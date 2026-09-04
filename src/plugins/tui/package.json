@@ -1,7 +1,7 @@
 {
   "name": "pantheon-tui",
   "type": "module",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "description": "Pantheon TUI plugin — sidebar (version, preset, sessions, real-time delegations) + AI subscription usage gauges incl. OpenCode Go/Zen dollar limits (vendored, MIT)",
   "license": "MIT",
   "exports": {

@@ -2,15 +2,15 @@ cff-version: 1.2.0
 message: "If you use Pantheon, please cite this software."
 title: "Pantheon"
 abstract: >-
-  Pantheon v1.4.3 is an OpenCode plugin and installer for coordinating 14
+  Pantheon v1.5.0 is an OpenCode plugin and installer for coordinating 14
   specialized agents. The repository includes reusable skills, slash-command
   definitions, MCP server implementations, documentation, and tests. O
-  Pantheon v1.4.3 é um plugin e instalador para OpenCode que coordena 14
+  Pantheon v1.5.0 é um plugin e instalador para OpenCode que coordena 14
   agentes especializados, com skills reutilizáveis, comandos slash,
   servidores MCP, documentação e testes.
-version: 1.4.3
-date-released: 2026-09-03
-url: https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.3
+version: 1.5.0
+date-released: 2026-09-01
+url: https://github.com/ils15/pantheon-opencode/releases/tag/v1.5.0
 doi: 10.5281/zenodo.22306637
 repository-code: https://github.com/ils15/pantheon-opencode
 license: MIT
