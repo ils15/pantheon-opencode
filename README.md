@@ -87,11 +87,108 @@ and [changelog](CHANGELOG.md) for the latest changes.
 - OpenCode V2 compatibility: `plugins` / `mcp.servers.enabled` config merge
   and PWD-correct stdio MCP launch.
 - Expanded `doctor` and install health checks.
+- Sandbox validator for global installs (`scripts/test-opencode-v1-v2-sandbox.sh`)
+  covering OpenCode V1/V2 side by side — see
+  [Sandbox validation](#sandbox-validation-v1v2).
 - A `--prompts` installer flag is planned for a future release.
+
+## OpenCode V1/V2 — Dual Version (1.5.0)
+
+Pantheon has two **exclusive** OpenCode plugin contracts. Ordinary OpenCode
+configuration may be shared, but the Pantheon plugin registration is selected
+per installation; V1 and V2 Pantheon plugins must never be registered together.
+
+| | V1 | V2 |
+|---|---|---|
+| OpenCode config key | singular `plugin` | plural `plugins` |
+| Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `pantheon-opencode/plugin-v2` (`src/plugin-v2.ts`) |
+| Runtime contract | Legacy Pantheon plugin, including `pantheon_delegate`, read/list tools, event/tool hooks and V1 compaction handling | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
+| V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
+
+The V2 plugin provides 9 orchestration tools (`pantheon_delegate`,
+`pantheon_delegation_read`, `pantheon_delegation_list`, `hashline_edit`,
+`pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`,
+`pantheon_cost`, `pantheon_model`), 4 event subscriptions (`session.created`,
+`session.idle`, `session.error`, `session.compacted`), session hooks (`prompt`,
+`context`), and tool hooks (`execute.before`, `execute.after`). The only
+unsupported V2 feature is `legacy-hooks` (the V1-specific delegate API surface).
+
+The package exposes both contracts as importable exports: `pantheon-opencode/plugin`
+(V1), `pantheon-opencode/plugin-v2` (V2) and `pantheon-opencode/v2-bridge`
+(optional interop), so a host can load either contract explicitly.
+
+The V1→V2 bridge (`src/pantheon/v2-bridge.ts`) enables optional interop:
+V1 infrastructure singletons (BackgroundJobBoard, DelegationClient, GoalStore,
+TodoEnforcer, VisionHandler) are passed through V2 `ctx.options`. The bridge is
+optional — V2 works standalone with graceful degradation.
+
+Select the contract explicitly when installing:
+
+```bash
+npx pantheon-opencode init --opencode-version v1
+npx pantheon-opencode init --opencode-version v2
+npx pantheon-opencode init --opencode-version auto
+```
+
+`--version v1|v2|auto` is accepted as the older selector spelling when used
+after `init`. `auto` is conservative, not general platform autodetection:
+`OPENCODE_VERSION=v1|v2` wins; otherwise an `OPENCODE_BIN` ending in
+`opencode2` selects V2; every other case selects V1. The installer removes
+Pantheon references from both config shapes before writing only the selected
+Pantheon registration. Third-party entries are not converted or claimed by
+this rule.
+
+The V1-only `pantheon_cost` report can select its database with
+`PANTHEON_OPENCODE_VERSION=v1` or `v2` (`opencode.db` or `opencode-v2.db`).
+`PANTHEON_COST_DB=/absolute/path/to/opencode.db` takes precedence over the
+version selector, and an explicit `dbPath` supplied by the tool caller takes
+precedence over both. The resolver never probes the other version's database
+and reports an actionable error when the selected DB is missing or has an
+incompatible schema.
+
+The installer still writes the compatibility settings required by the selected
+OpenCode host, such as `experimental.subagent_depth`; this does not convert a
+V1 plugin into V2 or provide V2 with V1 hooks.
 
 ## Beta releases
 
 A pull request labeled exactly `release:beta` triggers the beta release path. See [docs/RELEASING.md](docs/RELEASING.md) for validation and recovery details.
+
+## Sandbox validation (V1/V2)
+
+`scripts/test-opencode-v1-v2-sandbox.sh` validates the globally installed
+package as a real user inside an isolated sandbox (own `HOME`, npm prefix and
+venv) — never the dev environment. It checks OpenCode V1 (`opencode`) and V2
+(`opencode2`) side by side: binaries, MCP connectivity, `doctor`, and — with
+`--prompts` — a prompt battery covering the `pantheon://agents` resource,
+memory store/recall, filesystem writes and agent delegation. Environmental
+failures (network, provider auth, Docker) are classified as `AMBIENTAL` and
+never fail the run; only real failures do.
+
+```bash
+scripts/test-opencode-v1-v2-sandbox.sh --prepare          # tarball + install + init in the sandbox
+scripts/test-opencode-v1-v2-sandbox.sh --run v1 --prompts # base validation + prompt battery (V1)
+scripts/test-opencode-v1-v2-sandbox.sh --run v2           # base validation only (V2)
+scripts/test-opencode-v1-v2-sandbox.sh --prompts          # prompt battery for both versions
+scripts/test-opencode-v1-v2-sandbox.sh --reset            # wipe the sandbox root
+```
+
+Modes are combinable (e.g. `--prepare --run v1 --prompts`). Binaries are
+resolved strictly inside the sandbox npm prefix — a non-prepared sandbox fails
+fast instead of silently testing the host installation.
+
+Env overrides:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PANTHEON_SANDBOX_ROOT` | `~/pantheon-sandbox` | Sandbox root (refused if unsafe for `--reset`) |
+| `OPENCODE_V1_SPEC` | `opencode-ai@1.18.18` | npm spec providing the `opencode` binary |
+| `OPENCODE_V2_SPEC` | `@opencode-ai/cli@beta` | npm spec providing the `opencode2` binary |
+| `PANTHEON_SANDBOX_MODEL` | `opencode-go/mimo-v2.5` | Model used by init and prompts |
+| `PANTHEON_PROMPT_TIMEOUT` | `300` | Per-prompt timeout in seconds |
+
+Exit codes: `0` no real failures · `1` real failure (see `prompts-report.md`
+in the sandbox root) · `2` usage error · `3` sandbox not prepared.
 
 ## Documentation
 

@@ -17,6 +17,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [1.5.0] - 2026-09-01 (candidate)
+
+### Changed
+
+- **MCP flat map:** the installer and config migration keep MCP servers as the
+  named top-level map — the `mcp.servers` wrapper is rejected by OpenCode
+  1.18.18 (`Missing key mcp.servers.enabled`). Legacy wrapped entries are
+  unwrapped and `disabled` flags are normalized back to `enabled`.
+- **Deterministic plugin installs:** the TUI plugin now ships its lockfile and
+  installs with `npm ci --omit=dev`; the legacy `npm install` fallback is
+  opt-in via `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1`.
+- **Uninstall CLI:** new `node scripts/uninstall.mjs --project|--global` with
+  ownership checks, `--dry-run` and `--force`.
+- **OpenCode-only:** platform guides consolidated into a single OpenCode
+  guide; Pantheon 1.5.0 targets OpenCode exclusively.
+- **OpenCode V2 plugin:** the V2 contract registers 9 orchestration tools
+  (`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`,
+  `hashline_edit`, `pantheon_goal_create`, `pantheon_goal_get`,
+  `pantheon_goal_update`, `pantheon_cost`, `pantheon_model`), 4 event
+  subscriptions, session hooks (`prompt`, `context`) and tool hooks
+  (`execute.before`, `execute.after`).
+
 ## [v1.4.3] - 2026-09-03
 
 ### Changed
