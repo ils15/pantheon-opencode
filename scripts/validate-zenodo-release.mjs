@@ -15,10 +15,34 @@ function validateHttpsUrl(value, name) {
   } catch {
     throw new Error(`${name} must be an absolute HTTPS URL.`)
   }
-  if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) {
+  if (
+    url.protocol !== 'https:' ||
+    !url.hostname ||
+    url.username ||
+    url.password ||
+    /%(?![0-9A-Fa-f]{2})/.test(value) ||
+    /[\s{}\\|^`]/.test(value)
+  ) {
     throw new Error(`${name} must be an absolute HTTPS URL without credentials.`)
   }
   return url
+}
+
+export function zenodoTemplateUrl(template, id, name = 'Zenodo URL template') {
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Zenodo deposition id is invalid.')
+  if (typeof template !== 'string' || !template.includes('{id}'))
+    throw new Error(`${name} must contain the {id} placeholder.`)
+  return validateHttpsUrl(template.replaceAll('{id}', String(id)), name).href
+}
+
+export function zenodoDepositionUrl(depositionsUrl, id) {
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Zenodo deposition id is invalid.')
+  if (typeof depositionsUrl !== 'string')
+    throw new Error('ZENODO_DEPOSITIONS_URL must be an absolute HTTPS URL.')
+  const base = validateHttpsUrl(depositionsUrl, 'ZENODO_DEPOSITIONS_URL')
+  if (base.search || base.hash)
+    throw new Error('ZENODO_DEPOSITIONS_URL must not contain a query or fragment.')
+  return new URL(`${base.pathname.replace(/\/$/, '')}/${id}`, base.origin).href
 }
 
 export function validateZenodoConfiguration({
@@ -41,8 +65,7 @@ export function validateZenodoConfiguration({
     ) {
       throw new Error(`${name} must be an HTTPS URL template containing the {id} placeholder.`)
     }
-    const expanded = template.replaceAll('{id}', '1')
-    const url = validateHttpsUrl(expanded, name)
+    const url = new URL(zenodoTemplateUrl(template, 1, name))
     if (url.origin !== base.origin) throw new Error(`${name} must use the Zenodo depositions host.`)
   }
   if (typeof creatorName !== 'string' || !creatorName.trim())

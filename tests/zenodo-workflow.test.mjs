@@ -312,6 +312,36 @@ test('recovers the single deposition after a runner crash', async () => {
   )
 })
 
+test('URL-encodes a recovery marker containing special query characters', async () => {
+  const marker = 'pantheon release: v1.4.3 & retry=true? #1'
+  let requestedUrl = ''
+  const result = await findUniqueZenodoDeposition(
+    'https://zenodo.org/api/deposit/depositions',
+    'test-token',
+    marker,
+    async (url) => {
+      requestedUrl = String(url)
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ hits: { total: 1, hits: [{ id: 42, description: marker }] } }),
+      }
+    },
+  )
+  assert.equal(new URL(requestedUrl).searchParams.get('q'), marker)
+  assert.match(new URL(requestedUrl).search, /%26/)
+  assert.deepEqual(result, { id: 42, doi: null })
+})
+
+test('rejects malformed recovery endpoints before making a request', async () => {
+  await assert.rejects(
+    findUniqueZenodoDeposition('https://zenodo.org/api/%ZZ', 'test-token', 'marker', async () => {
+      throw new Error('network must not be called')
+    }),
+    /valid HTTPS URL/,
+  )
+})
+
 test('follows every Zenodo search page and preserves the recovered DOI contract', async () => {
   const marker = zenodoReleaseMarker('v1.4.3')
   const requests = []
