@@ -48,7 +48,6 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: .zenodo-workflow
           fetch-depth: 1
-
       - name: Validate configuration and published release
         env:
           GH_TOKEN: ${{ github.token }}

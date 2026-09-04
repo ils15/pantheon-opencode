@@ -15,7 +15,7 @@ test('resolves every workflow script from a versioned checkout', () => {
   assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/)
 
   const referencedScripts = [
-    ...workflow.matchAll(/(?:node\s+|from\s+['"])((?:\.zenodo-workflow\/)??scripts\/[^'"\s)]+)/g),
+    ...workflow.matchAll(/(?:node\s+|from\s+['"])((?:\.zenodo-workflow\/)?\/?scripts\/[^'"\s)]+)/g),
   ].map((match) => match[1].replace(/^\.zenodo-workflow\//, ''))
 
   assert.ok(referencedScripts.length > 0, 'expected Zenodo workflow script references')
@@ -26,6 +26,7 @@ test('resolves every workflow script from a versioned checkout', () => {
     )
   }
 })
+
 
 test('passes the release body file from deposition to publication without the token', () => {
   assert.match(
