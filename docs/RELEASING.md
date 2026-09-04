@@ -361,3 +361,15 @@ Each release includes:
 | `Source code (zip)` | GitHub auto-generated |
 | `Source code (tar.gz)` | GitHub auto-generated |
 | `pantheon-opencode@<ver>` on npm | Published with `latest` (stable) or `beta` dist-tag, provenance-signed |
+
+## Preserved Releases: Zenodo
+
+[Zenodo](https://zenodo.org/) preserves releases for citation and long-term access. A published GitHub release automatically triggers **Publish release to Zenodo**; the workflow checks out the exact commit identified by the tag, creates or resumes the deposition idempotently, and does not create duplicates.
+
+For a manual run, open **Actions → Publish release to Zenodo** and set `release_tag=v1.4.3`, `confirm_production=true`, and `publish_deposition=false` to create or resume a draft. Review the draft before running again with `publish_deposition=true`; use that value only after human approval.
+
+The protected `zenodo-production` environment must contain secret `ZENODO_TOKEN` and vars `ZENODO_DEPOSITIONS_URL`, `ZENODO_FILES_URL_TEMPLATE`, `ZENODO_PUBLISH_URL_TEMPLATE`, and `ZENODO_CREATOR_NAME`. Never put token values in logs or code. Use sandbox configuration for rehearsal and production only for the reviewed deposition.
+
+The workflow validates metadata, the release archive, and its SHA-256 checksum; after publication it persists the DOI in the GitHub release notes. Post-execution checklist: metadata correct; version **1.4.3**; license **MIT**; `pantheon-opencode-1.4.3.zip`/archive present; SHA-256 matches; state **Published**; DOI present in the Zenodo record and release notes.
+
+Verify the record and DOI on Zenodo and via the DOI link; **v1.4.3** DOI: [10.5281/zenodo.22306637](https://doi.org/10.5281/zenodo.22306637).
