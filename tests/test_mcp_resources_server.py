@@ -248,13 +248,45 @@ class TestStaticResources:
         ):
             assert await module.list_skills() == "No skills found."
 
-    async def test_agents_list_returns_markdown(self, server: FastMCP) -> None:
-        """Reading pantheon://agents should return agent names and roles."""
-        result = await server.read_resource("pantheon://agents")
+    async def test_agents_list_returns_markdown(
+        self,
+        module,
+        server: FastMCP,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Reading pantheon://agents should return agent names and roles.
+
+        Hermetic: PANTHEON_HOME/XDG_CONFIG_HOME/cwd are isolated to tmp_path so
+        the test passes in a dev checkout without a global installation. The
+        real-install integration check stays in the sandbox (run-test.sh).
+        """
+        home = tmp_path / "pantheon-home"
+        agents = home / "agents"
+        agents.mkdir(parents=True)
+        (agents / "zeus.md").write_text(
+            "---\nname: zeus\ndescription: Orchestrator — delegates, never implements\n---\n",
+            encoding="utf-8",
+        )
+        (agents / "hermes.md").write_text(
+            "---\nname: hermes\ndescription: Backend — FastAPI and TDD\n---\n",
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        project.mkdir()
+        monkeypatch.setenv("PANTHEON_HOME", str(home))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        monkeypatch.delenv("PANTHEON_PROJECT", raising=False)
+        monkeypatch.chdir(project)
+        with (
+            patch.object(module, "_PANTHEON_HOME", home),
+            patch.object(module, "_PANTHEON_PROJECT", project),
+        ):
+            result = await server.read_resource("pantheon://agents")
         text = _text(result)
-        assert len(text) > 0
         assert "zeus" in text
         assert "hermes" in text
+        assert "Orchestrator" in text
 
     async def test_skills_list_uri_registered(self, server: FastMCP) -> None:
         """The skills list URI pantheon://skills should be registered."""

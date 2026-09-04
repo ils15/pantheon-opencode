@@ -708,8 +708,29 @@ function checkPermissionMismatches(args) {
 function checkSyncStatus(args) {
   section('D. OpenCode Status')
   const agentsDir = join(args.target, '.opencode', 'agents')
-  if (existsSync(agentsDir)) pass('OpenCode agents directory is present')
-  else info('OpenCode agents directory not present — project may use global agents')
+  if (existsSync(agentsDir)) {
+    pass('OpenCode agents directory is present')
+    // Content gate: validate pantheon://agents CONTENT (zeus/hermes present),
+    // not just connectivity/directory presence.
+    const agentFiles = readdirSync(agentsDir).filter((f) => f.endsWith('.md'))
+    if (agentFiles.length === 0) {
+      warn('OpenCode agents directory is empty — pantheon://agents will serve no agents')
+    } else {
+      const names = new Set(agentFiles.map((f) => f.replace(/\.md$/, '').toLowerCase()))
+      const missingCanonical = ['zeus', 'hermes'].filter((n) => !names.has(n))
+      if (missingCanonical.length > 0) {
+        error(
+          `pantheon://agents content check failed — missing canonical agents in ${agentsDir}: ${missingCanonical.join(', ')}`,
+        )
+      } else {
+        pass(
+          `pantheon://agents content validated (zeus, hermes + ${agentFiles.length - 2} more agents)`,
+        )
+      }
+    }
+  } else {
+    info('OpenCode agents directory not present — project may use global agents')
+  }
 }
 
 // ---------------------------------------------------------------------------
