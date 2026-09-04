@@ -10,7 +10,7 @@ import { ROOT, writeIfChanged } from './shared.mjs'
 
 /**
  * Copy a plugin's runtime payload (src/index.tsx → index.tsx, dist/*,
- * package.json) from source to destination. Pure file copy — no npm install.
+ * package.json and package-lock.json) from source to destination.
  * @param {string} srcDir - Source plugin directory (e.g. ROOT/src/plugins/tui)
  * @param {string} dstDir - Destination plugin directory
  * @param {object} [options]
@@ -58,6 +58,19 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false } = {}) {
     else result.skipped++
   }
 
+  // Copy the lockfile so dependency installation is reproducible. A missing
+  // lockfile is intentionally not synthesized by the installer.
+  const lockSrc = join(srcDir, 'package-lock.json')
+  if (existsSync(lockSrc)) {
+    const lockStatus = writeIfChanged(
+      join(dstDir, 'package-lock.json'),
+      readFileSync(lockSrc, 'utf8'),
+      dryRun,
+    )
+    if (lockStatus === 'created') result.created++
+    else result.skipped++
+  }
+
   return result
 }
 
@@ -81,13 +94,31 @@ export function installPlugin(srcDir, dstDir, { dryRun = false, clean = false } 
   result.created += copyResult.created
   result.skipped += copyResult.skipped
 
-  // Install plugin dependencies (@opentui/core, @opentui/solid, solid-js)
+  // Install plugin dependencies (@opentui/core, @opentui/solid, solid-js).
+  // npm ci is deterministic when the copied lockfile is present. The legacy
+  // fallback is opt-in because npm install may rewrite the dependency graph.
   if (!dryRun) {
     try {
-      execSync('npm install --omit=dev --no-audit', { cwd: dstDir, stdio: 'pipe' })
+      execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: dstDir, stdio: 'pipe' })
     } catch (e) {
-      warning(`Failed to install TUI plugin dependencies: ${e.message}`)
-      result.errors++
+      if (process.env.PANTHEON_ALLOW_NPM_INSTALL_FALLBACK === '1') {
+        warning(`npm ci failed; explicit fallback enabled: ${e.message}`)
+        try {
+          execSync('npm install --omit=dev --no-audit --no-fund --package-lock=false', {
+            cwd: dstDir,
+            stdio: 'pipe',
+          })
+        } catch (fallbackError) {
+          warning(`Failed to install TUI plugin dependencies: ${fallbackError.message}`)
+          result.errors++
+        }
+      } else {
+        warning(
+          `npm ci failed; dependencies were not changed. Set ` +
+            `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1 to explicitly allow npm install: ${e.message}`,
+        )
+        result.errors++
+      }
     }
   }
 
@@ -103,9 +134,12 @@ export function installPlugin(srcDir, dstDir, { dryRun = false, clean = false } 
 export function installPluginDependencies(pluginDir, { dryRun = false } = {}) {
   if (dryRun) return
   try {
-    execSync('npm install --omit=dev --no-audit', { cwd: pluginDir, stdio: 'pipe' })
+    execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: pluginDir, stdio: 'pipe' })
   } catch (e) {
-    warning(`Failed to install plugin dependencies: ${e.message}`)
+    warning(
+      `npm ci failed; dependencies were not changed. Set ` +
+        `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1 to explicitly allow npm install: ${e.message}`,
+    )
   }
 }
 
