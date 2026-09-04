@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
@@ -9,6 +9,24 @@ import {
 import { parseZenodoMarker, zenodoMarker } from '../scripts/zenodo-release-state.mjs'
 
 const workflow = readFileSync(join(process.cwd(), '.github/workflows/zenodo.yml'), 'utf8')
+
+test('resolves every workflow script from a versioned checkout', () => {
+  assert.match(workflow, /path: \.zenodo-workflow/)
+  assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/)
+
+  const referencedScripts = [
+    ...workflow.matchAll(/(?:node\s+|from\s+['"])((?:\.zenodo-workflow\/)?\/?scripts\/[^'"\s)]+)/g),
+  ].map((match) => match[1].replace(/^\.zenodo-workflow\//, ''))
+
+  assert.ok(referencedScripts.length > 0, 'expected Zenodo workflow script references')
+  for (const script of new Set(referencedScripts)) {
+    assert.ok(
+      existsSync(join(process.cwd(), script)),
+      `workflow references missing script: ${script}`,
+    )
+  }
+})
+
 
 test('passes the release body file from deposition to publication without the token', () => {
   assert.match(
