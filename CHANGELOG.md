@@ -17,6 +17,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [1.5.0] - 2026-09-01 (candidate)
+
+### Changed
+
+- **MCP flat map:** the installer and config migration keep MCP servers as the
+  named top-level map — the `mcp.servers` wrapper is rejected by OpenCode
+  1.18.18 (`Missing key mcp.servers.enabled`). Legacy wrapped entries are
+  unwrapped and `disabled` flags are normalized back to `enabled`.
+- **Deterministic plugin installs:** the TUI plugin now ships its lockfile and
+  installs with `npm ci --omit=dev`; the legacy `npm install` fallback is
+  opt-in via `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1`.
+- **Uninstall CLI:** new `node scripts/uninstall.mjs --project|--global` with
+  ownership checks, `--dry-run` and `--force`.
+- **OpenCode-only:** platform guides consolidated into a single OpenCode
+  guide; Pantheon 1.5.0 targets OpenCode exclusively.
+- **OpenCode V2 plugin:** the V2 contract registers 9 orchestration tools
+  (`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`,
+  `hashline_edit`, `pantheon_goal_create`, `pantheon_goal_get`,
+  `pantheon_goal_update`, `pantheon_cost`, `pantheon_model`), 4 event
+  subscriptions, session hooks (`prompt`, `context`) and tool hooks
+  (`execute.before`, `execute.after`).
+
 ## [v1.4.3] - 2026-09-03
 
 ### Changed
@@ -172,7 +194,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Historical (superseded) agentModels wiring from routing.yml**: the old release wired `options.agentModels` from the first preset. Current behavior requires an explicitly active profile and omits child models otherwise.
 - **Preemptive compaction threshold logic** (dormant/experimental): threshold-based preemptive compaction — not active by default
 - **File-first logging**: `createPantheonLogger` — console echo opt-in via `PANTHEON_HOOKS_LOG=1`, everything routed to `.pantheon/logs/hooks.log` (silences TUI console pollution)
-- **Real-time Delegations TUI panel**: sidebar panel sourced from `api.client.session.children` — shows `pantheon_delegate` children (board alias tag) AND native `task()` children (`[task]` tag, distinct info color); animated states (DELEGATING/WORKING/READING RESULT/DONE/DONE (TIMED OUT)/ERROR/CANCELLED) with a 140ms spinner; click-to-navigate into the child session; all-sessions history via `.pantheon/delegations/` reports; `panel: children=N md=N events=N` diagnostics in hooks.log
+- **Historical (superseded by 1.5.0):** the 1.3.4 TUI delegation panel described every report-less child as native `task()` work with a `[task]` tag. Current behavior keeps child origin unclassified unless explicit provenance is available.
 - **README docs**: 1.3.4 compaction + delegation features documented
 - **Zero chat-notification policy**: removed the `chat.message` injection channel for delegation signals — completion visibility lives in the board `[unread]` marker, `pantheon_delegation_read`, TUI toasts and compaction carry-forward, never in the chat transcript
 

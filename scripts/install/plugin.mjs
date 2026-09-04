@@ -4,13 +4,13 @@
 
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { warning } from './cli-ui.mjs'
-import { writeIfChanged } from './shared.mjs'
+import { ROOT, writeIfChanged } from './shared.mjs'
 
 /**
  * Copy a plugin's runtime payload (src/index.tsx → index.tsx, dist/*,
- * package.json) from source to destination. Pure file copy — no npm install.
+ * package.json and package-lock.json) from source to destination.
  * @param {string} srcDir - Source plugin directory (e.g. ROOT/src/plugins/tui)
  * @param {string} dstDir - Destination plugin directory
  * @param {object} [options]
@@ -58,6 +58,19 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false } = {}) {
     else result.skipped++
   }
 
+  // Copy the lockfile so dependency installation is reproducible. A missing
+  // lockfile is intentionally not synthesized by the installer.
+  const lockSrc = join(srcDir, 'package-lock.json')
+  if (existsSync(lockSrc)) {
+    const lockStatus = writeIfChanged(
+      join(dstDir, 'package-lock.json'),
+      readFileSync(lockSrc, 'utf8'),
+      dryRun,
+    )
+    if (lockStatus === 'created') result.created++
+    else result.skipped++
+  }
+
   return result
 }
 
@@ -81,13 +94,31 @@ export function installPlugin(srcDir, dstDir, { dryRun = false, clean = false } 
   result.created += copyResult.created
   result.skipped += copyResult.skipped
 
-  // Install plugin dependencies (@opentui/core, @opentui/solid, solid-js)
+  // Install plugin dependencies (@opentui/core, @opentui/solid, solid-js).
+  // npm ci is deterministic when the copied lockfile is present. The legacy
+  // fallback is opt-in because npm install may rewrite the dependency graph.
   if (!dryRun) {
     try {
-      execSync('npm install --omit=dev --no-audit', { cwd: dstDir, stdio: 'pipe' })
+      execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: dstDir, stdio: 'pipe' })
     } catch (e) {
-      warning(`Failed to install TUI plugin dependencies: ${e.message}`)
-      result.errors++
+      if (process.env.PANTHEON_ALLOW_NPM_INSTALL_FALLBACK === '1') {
+        warning(`npm ci failed; explicit fallback enabled: ${e.message}`)
+        try {
+          execSync('npm install --omit=dev --no-audit --no-fund --package-lock=false', {
+            cwd: dstDir,
+            stdio: 'pipe',
+          })
+        } catch (fallbackError) {
+          warning(`Failed to install TUI plugin dependencies: ${fallbackError.message}`)
+          result.errors++
+        }
+      } else {
+        warning(
+          `npm ci failed; dependencies were not changed. Set ` +
+            `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1 to explicitly allow npm install: ${e.message}`,
+        )
+        result.errors++
+      }
     }
   }
 
@@ -103,9 +134,12 @@ export function installPlugin(srcDir, dstDir, { dryRun = false, clean = false } 
 export function installPluginDependencies(pluginDir, { dryRun = false } = {}) {
   if (dryRun) return
   try {
-    execSync('npm install --omit=dev --no-audit', { cwd: pluginDir, stdio: 'pipe' })
+    execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: pluginDir, stdio: 'pipe' })
   } catch (e) {
-    warning(`Failed to install plugin dependencies: ${e.message}`)
+    warning(
+      `npm ci failed; dependencies were not changed. Set ` +
+        `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1 to explicitly allow npm install: ${e.message}`,
+    )
   }
 }
 
@@ -137,42 +171,70 @@ export function registerPlugin(tuiJsonPath, pluginId, { dryRun = false } = {}) {
 }
 
 /**
- * Suffix patterns that identify a Pantheon TUI registration as STALE. Every
- * reference shape ever written by previous installers must be covered:
- *   - dist file refs (both the old in-package src/plugins/tui target and the
- *     copied plugins/pantheon-tui target, tsx and js eras)
- *   - the in-package source dir (src/plugins/tui) — a registration pointing
- *     into the installed package breaks on reinstall/upgrade (the dir is
- *     replaced under a live registration)
- *   - bare copied dirs (plugins/pantheon-tui) from any OLD install target —
- *     indistinguishable from the current copied dir without knowing the
- *     install target, so they are flagged too; syncTuiRegistration keeps the
- *     current ref via unregister-then-register
- *   - node_modules copies (npx cache installs of the vendored plugin)
+ * Exact relative markers written by previous installers. These are intentionally
+ * complete references, not suffixes: a user-owned path may contain
+ * `pantheon-opencode` or end in the same filename without being ours.
  */
 export const TUI_STALE_SUFFIXES = [
-  '/src/plugins/tui/dist/tui.tsx',
-  '/src/plugins/tui/dist/tui.js',
-  '/src/plugins/tui',
-  '/plugins/pantheon-tui/dist/tui.tsx',
-  '/plugins/pantheon-tui/dist/tui.js',
-  '/plugins/pantheon-tui',
-  '/node_modules/pantheon-tui',
+  'plugins/pantheon-tui',
+  'plugins/pantheon-tui/dist/tui.tsx',
+  'plugins/pantheon-tui/dist/tui.js',
+  'npx pantheon-tui',
+  'npx -y pantheon-tui',
+  'npx:pantheon-tui',
 ]
+
+const PACKAGE_TUI_PATHS = [
+  join(ROOT, 'src', 'plugins', 'tui'),
+  join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.tsx'),
+  join(ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.js'),
+]
+
+function normalizePluginPath(ref) {
+  return ref.replaceAll('\\', '/')
+}
+
+function exactManagedPaths(knownPantheonPaths) {
+  return new Set(
+    [...PACKAGE_TUI_PATHS, ...knownPantheonPaths]
+      .filter((path) => typeof path === 'string')
+      .map((path) => normalizePluginPath(path)),
+  )
+}
+
+function isExactNpxMarker(ref) {
+  return (
+    /^npx(?:\s+-y)?\s+pantheon-tui(?:@[A-Za-z0-9._-]+)?$/i.test(ref) ||
+    /^npx:pantheon-tui(?:@[A-Za-z0-9._-]+)?$/i.test(ref) ||
+    /(?:^|\/)\.npm\/_npx\/[^/]+\/node_modules\/pantheon-tui(?:\/|$)/i.test(ref)
+  )
+}
+
+/**
+ * Return whether a registration is unambiguously one of our old TUI refs.
+ *
+ * @param {unknown} ref - tui.json plugin entry
+ * @param {string[]} [knownPantheonPaths=[]] - paths owned by this installer
+ * @returns {boolean}
+ */
+export function isPantheonTuiRef(ref, knownPantheonPaths = []) {
+  if (typeof ref !== 'string') return false
+  const normalized = normalizePluginPath(ref)
+  if (TUI_STALE_SUFFIXES.includes(normalized)) return true
+  if (isExactNpxMarker(normalized)) return true
+
+  const knownPaths = exactManagedPaths(knownPantheonPaths)
+  if (knownPaths.has(normalized)) return true
+  return isAbsolute(normalized) && knownPaths.has(normalizePluginPath(resolve(normalized)))
+}
 
 /**
  * Whether a single tui.json plugin entry is a stale Pantheon TUI reference.
  * @param {unknown} ref - tui.json plugin entry
  * @returns {boolean}
  */
-export function isStaleTuiRef(ref) {
-  if (typeof ref !== 'string') return false
-  if (ref === 'plugins/pantheon-tui') return true
-  const normalized = ref.replaceAll('\\', '/')
-  // npx spec strings ("npx pantheon-tui", "npx -y pantheon-tui",
-  // "npx:pantheon-tui") and npx cache paths end with /node_modules/pantheon-tui.
-  if (/^npx[\s:]/i.test(normalized) && normalized.includes('pantheon-tui')) return true
-  return TUI_STALE_SUFFIXES.some((suffix) => normalized.endsWith(suffix))
+export function isStaleTuiRef(ref, knownPantheonPaths = []) {
+  return isPantheonTuiRef(ref, knownPantheonPaths)
 }
 
 /**
@@ -181,8 +243,10 @@ export function isStaleTuiRef(ref) {
  * @param {unknown[]} pluginArray - tui.json plugin array
  * @returns {string[]}
  */
-export function staleTuiRefs(pluginArray) {
-  return (Array.isArray(pluginArray) ? pluginArray : []).filter(isStaleTuiRef)
+export function staleTuiRefs(pluginArray, knownPantheonPaths = []) {
+  return (Array.isArray(pluginArray) ? pluginArray : []).filter((ref) =>
+    isStaleTuiRef(ref, knownPantheonPaths),
+  )
 }
 
 /**
@@ -193,7 +257,11 @@ export function staleTuiRefs(pluginArray) {
  * @param {boolean} [options.dryRun=false]
  * @returns {'created'|'skipped'}
  */
-export function unregisterPlugin(tuiJsonPath, pluginId, { dryRun = false } = {}) {
+export function unregisterPlugin(
+  tuiJsonPath,
+  pluginId,
+  { dryRun = false, knownPantheonPaths = [] } = {},
+) {
   if (!existsSync(tuiJsonPath)) {
     // Nothing to clean — and never create an empty tui.json in a location
     // OpenCode reads (the cross-location cleanup also touches global config
@@ -215,10 +283,12 @@ export function unregisterPlugin(tuiJsonPath, pluginId, { dryRun = false } = {})
   // bare copy dirs from previous install targets, and npx cache copies.
   // Without removing the absolute paths, each init run accumulates another
   // TUI plugin and OpenCode loads stale copies.
-  const exactStale = [pluginId, `${pluginId}/dist/tui.tsx`, `${pluginId}/dist/tui.js`]
+  const exactStale = new Set(
+    [pluginId, `${pluginId}/dist/tui.tsx`, `${pluginId}/dist/tui.js`].map(normalizePluginPath),
+  )
   tuiConfig.plugin = tuiConfig.plugin.filter((ref) => {
-    if (exactStale.includes(ref)) return false
-    return !isStaleTuiRef(ref)
+    if (typeof ref === 'string' && exactStale.has(normalizePluginPath(ref))) return false
+    return !isPantheonTuiRef(ref, knownPantheonPaths)
   })
   const tuiContent = `${JSON.stringify(tuiConfig, null, 2)}\n`
   return writeIfChanged(tuiJsonPath, tuiContent, dryRun)

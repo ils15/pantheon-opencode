@@ -3,10 +3,8 @@
  * scripts/install/opencode.mjs (resolveInstalledPlugin).
  *
  * Validates the packaging fix for PR #45 (delegation plugin at package root):
- *  - plugin ref `src/plugin.ts` (registered in the packaged opencode.json)
- *    resolves to <ROOT>/src/plugin.ts inside the INSTALLED package, never a
- *    developer-machine absolute path
- *  - `src/plugins/*` refs (pantheon-hooks) keep resolving to the package
+ *  - exact managed refs resolve to <ROOT>/src/* inside the installed package
+ *  - absolute third-party refs with the same basename remain untouched
  *  - non-src plugin refs (npm specs, etc.) pass through unchanged
  *
  * Run: node --test tests/install-opencode.test.mjs
@@ -14,45 +12,62 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { installOpenCode, resolveInstalledPlugin } from '../scripts/install/opencode.mjs'
+import {
+  installOpenCode,
+  isGlobalConfigDir,
+  pluginReferenceIdentity,
+  resolveInstalledPlugin,
+  resolveTuiCopyTarget,
+  tuiConfigLocations,
+} from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
-// Simulates the developer machine path being baked into the packaged config
-// (the REAL dev path differs per machine — this one must never appear in
-// resolver output regardless of the machine running the test).
-const FOREIGN_DEV_PATH = '/home/otherdev/pantheon'
+const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
+const THIRD_PARTY_HOOKS = '/tmp/pantheon-opencode-vendor/src/plugins/pantheon-hooks.ts'
+const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
+const THIRD_PARTY_PANTHEON_PLUGIN = '/tmp/vendor/pantheon/src/plugin.ts'
 
-test('resolveInstalledPlugin maps root-level src/plugin.ts into the installed package', () => {
-  const result = resolveInstalledPlugin(`${FOREIGN_DEV_PATH}/src/plugin.ts`)
-  assert.equal(result, join(ROOT, 'src', 'plugin.ts'))
-  assert.ok(!result.startsWith(FOREIGN_DEV_PATH), 'must not leak the developer path')
-})
-
-test('resolveInstalledPlugin maps relative src/plugin.ts into the installed package', () => {
+test('resolveInstalledPlugin maps the exact relative root plugin into the installed package', () => {
   const result = resolveInstalledPlugin('src/plugin.ts')
   assert.equal(result, join(ROOT, 'src', 'plugin.ts'))
 })
 
-test('resolveInstalledPlugin still maps src/plugins/* hooks plugin into the installed package', () => {
-  const result = resolveInstalledPlugin(`${FOREIGN_DEV_PATH}/src/plugins/pantheon-hooks.ts`)
+test('resolveInstalledPlugin preserves a third-party plugin with the same basename', () => {
+  assert.equal(resolveInstalledPlugin(THIRD_PARTY_PLUGIN), THIRD_PARTY_PLUGIN)
+  assert.equal(resolveInstalledPlugin(THIRD_PARTY_HOOKS), THIRD_PARTY_HOOKS)
+})
+
+test('resolveInstalledPlugin preserves third-party paths under pantheon-named directories', () => {
+  assert.equal(
+    resolveInstalledPlugin(THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN),
+    THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN,
+  )
+  assert.equal(resolveInstalledPlugin(THIRD_PARTY_PANTHEON_PLUGIN), THIRD_PARTY_PANTHEON_PLUGIN)
+  assert.notEqual(
+    pluginReferenceIdentity(THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN),
+    pluginReferenceIdentity('src/plugin.ts'),
+  )
+  assert.notEqual(
+    pluginReferenceIdentity(THIRD_PARTY_PANTHEON_PLUGIN),
+    pluginReferenceIdentity('src/plugin.ts'),
+  )
+})
+
+test('resolveInstalledPlugin maps the exact relative hooks plugin into the installed package', () => {
+  const result = resolveInstalledPlugin('src/plugins/pantheon-hooks.ts')
   assert.equal(result, join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'))
 })
 
-test('resolveInstalledPlugin never emits a developer-machine absolute path', () => {
+test('resolveInstalledPlugin recognizes only exact installed paths as managed', () => {
   for (const ref of [
-    `${FOREIGN_DEV_PATH}/src/plugin.ts`,
-    `${FOREIGN_DEV_PATH}/src/plugins/pantheon-hooks.ts`,
-    'src/plugin.ts',
-    'src/plugins/pantheon-hooks.ts',
+    join(ROOT, 'src', 'plugin.ts'),
+    join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),
   ]) {
     const result = resolveInstalledPlugin(ref)
-    assert.ok(
-      !result.includes(FOREIGN_DEV_PATH),
-      `leaked developer path for ref ${ref}: got ${result}`,
-    )
+    assert.equal(result, ref)
   }
 })
 
@@ -69,6 +84,19 @@ test('resolveInstalledPlugin passes through non-src plugin refs unchanged', () =
   assert.equal(resolveInstalledPlugin('pantheon-hooks'), 'pantheon-hooks')
 })
 
+test('scope helpers distinguish project and flat global layouts', () => {
+  assert.equal(isGlobalConfigDir(join(homedir(), '.config', 'opencode')), true)
+  assert.equal(isGlobalConfigDir(join(homedir(), '.opencode')), true)
+  assert.equal(isGlobalConfigDir('/tmp/project'), false)
+  assert.equal(
+    resolveTuiCopyTarget('/tmp/.config/opencode'),
+    join('/tmp/.config/opencode', 'plugins', 'pantheon-tui'),
+  )
+  const locations = tuiConfigLocations('/tmp/project')
+  assert.equal(new Set(locations).size, locations.length)
+  assert.ok(locations.includes(join('/tmp/project', '.opencode', 'tui.json')))
+})
+
 // ─── End-to-end config merge (installOpenCode into temp dirs) ──────────────
 // Exercises the full installer config pipeline: plugin registration, the
 // instructions merge (section D) and the model/small_model merge. The
@@ -78,12 +106,16 @@ const COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins']
 
 /** Run a real (non-dry-run) install into `target`, optionally seeding an
  * existing opencode.json first. Returns the merged config. */
-async function runInstall(target, existingConfig = null) {
+async function runInstall(target, existingConfig = null, version = 'v1') {
   if (existingConfig !== null) {
     mkdirSync(target, { recursive: true })
     writeFileSync(join(target, 'opencode.json'), JSON.stringify(existingConfig, null, 2))
   }
-  await installOpenCode(target, false, false, COMPONENTS, { yes: true, headless: true })
+  await installOpenCode(target, false, false, COMPONENTS, {
+    yes: true,
+    headless: true,
+    version,
+  })
   return JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
 }
 
@@ -100,6 +132,133 @@ test('fresh install registers BOTH pantheon plugins (plugin.ts + pantheon-hooks.
       config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
       `hooks plugin missing from fresh install: ${JSON.stringify(config.plugin)}`,
     )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V1 downgrade keeps the legacy plugins key with third-party plugins, preserving user provider and compaction values', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v1-legacy-'))
+  try {
+    const config = await runInstall(
+      target,
+      {
+        plugins: ['npm:user-plugin'],
+        provider: { custom: { options: { endpoint: 'https://example.test' } } },
+        compaction: { prune: false },
+      },
+      'v1',
+    )
+    // The legacy `plugins` key is preserved verbatim (minus Pantheon refs) so
+    // third-party registrations survive a V1 downgrade; only Pantheon-owned
+    // entries are stripped and re-registered under the singular `plugin` key.
+    assert.deepEqual(config.plugins, ['npm:user-plugin'])
+    assert.ok(config.plugin.includes(join(ROOT, 'src', 'plugin.ts')))
+    assert.ok(config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')))
+    assert.equal(config.provider.custom.options.endpoint, 'https://example.test')
+    assert.equal(config.compaction.prune, false)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 normalizes the legacy mcp.servers wrapper and preserves user MCP servers', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mcp-'))
+  try {
+    const config = await runInstall(
+      target,
+      {
+        mcp: {
+          servers: { enabled: false, customSetting: 'keep' },
+          userServer: { type: 'remote', url: 'https://user.example/mcp', enabled: true },
+        },
+      },
+      'v2',
+    )
+    // OpenCode 1.18.x has no mcp.servers wrapper ("Missing key
+    // mcp.servers.enabled"): the legacy wrapper is unwrapped to flat keys and
+    // its non-server scalar entries are dropped.
+    assert.equal(config.mcp.servers, undefined)
+    assert.equal(config.mcp.userServer.url, 'https://user.example/mcp')
+    assert.equal(config.mcp.userServer.enabled, true)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('global install uses flat component directories and repairs a legacy V2 config', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'opencode-global-'))
+  const target = join(parent, 'opencode')
+  const previousXdg = process.env.XDG_CONFIG_HOME
+  process.env.XDG_CONFIG_HOME = parent
+  try {
+    const config = await installOpenCode(target, false, false, COMPONENTS, {
+      yes: true,
+      headless: true,
+      version: 'v2',
+    }).then(() => JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')))
+    assert.ok(existsSync(join(target, 'agents')))
+    assert.ok(existsSync(join(target, 'skills')))
+    assert.ok(Array.isArray(config.plugins))
+    assert.equal(config.plugin, undefined)
+  } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previousXdg
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('runtime-only install copies executable MCP assets and remains idempotent', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-runtime-'))
+  try {
+    await installOpenCode(target, false, false, ['runtime'], {
+      yes: true,
+      headless: true,
+      version: 'v2',
+    })
+    const runtime = join(target, '.opencode')
+    const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+    // MCP stays a flat named-server map for BOTH versions (no mcp.servers
+    // wrapper — OpenCode 1.18.x rejects it with "Missing key
+    // mcp.servers.enabled").
+    assert.equal(config.mcp.servers, undefined)
+    assert.equal(config.mcp['pantheon-resources'].enabled, true)
+    assert.equal(config.mcp['pantheon-code-mode'].enabled, true)
+    assert.ok(existsSync(join(runtime, 'scripts', 'mcp_resources_server.py')))
+    assert.ok(existsSync(join(runtime, 'requirements-vision.txt')))
+    // tiers.json is an untracked dev-repo artifact (not in package "files"),
+    // so the runtime copy is existsSync-gated: the destination must exist
+    // exactly when the source does.
+    assert.equal(
+      existsSync(join(runtime, '.pantheon', 'tiers.json')),
+      existsSync(join(ROOT, '.pantheon', 'tiers.json')),
+    )
+    const before = readFileSync(join(runtime, 'scripts', 'code_mode_server.py'), 'utf8')
+    await installOpenCode(target, false, false, ['runtime'], {
+      yes: true,
+      headless: true,
+      version: 'v2',
+    })
+    assert.equal(readFileSync(join(runtime, 'scripts', 'code_mode_server.py'), 'utf8'), before)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 upgrade merges and deduplicates user plugins without overwriting config.plugins', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-plugins-'))
+  try {
+    const userPlugin = 'npm:@acme/my-plugin'
+    const config = await runInstall(
+      target,
+      { plugins: [userPlugin, userPlugin], theme: 'user-theme' },
+      'v2',
+    )
+    assert.equal(config.plugin, undefined)
+    // V2 registers the published package export (pantheon-opencode/plugin-v2),
+    // never the V1 local-file paths — those stay V1-only.
+    assert.deepEqual(config.plugins, [userPlugin, 'pantheon-opencode/plugin-v2'])
+    assert.equal(config.theme, 'user-theme')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -168,10 +327,11 @@ test('upgrade preserves user plugins and adds both pantheon plugins (dedupe)', a
   const target = mkdtempSync(join(tmpdir(), 'pantheon-upgrade-plugins-'))
   try {
     const config = await runInstall(target, {
-      plugin: ['@scope/custom-plugin', '/home/otherdev/pantheon/src/plugin.ts'],
+      plugin: ['@scope/custom-plugin', THIRD_PARTY_PLUGIN, THIRD_PARTY_HOOKS],
     })
     assert.ok(config.plugin.includes('@scope/custom-plugin'), 'user plugin preserved')
-    // Stale dev-machine path replaced by the installed-package path.
+    assert.ok(config.plugin.includes(THIRD_PARTY_PLUGIN), 'third-party plugin path preserved')
+    assert.ok(config.plugin.includes(THIRD_PARTY_HOOKS), 'third-party hooks path preserved')
     assert.ok(
       config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
       `delegation plugin not re-registered: ${JSON.stringify(config.plugin)}`,
@@ -180,10 +340,11 @@ test('upgrade preserves user plugins and adds both pantheon plugins (dedupe)', a
       config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
       `hooks plugin not registered: ${JSON.stringify(config.plugin)}`,
     )
-    // No duplicate entries for the same plugin file.
+    // The managed entries are unique, while third-party entries with the same
+    // basenames remain independent registrations.
     const pluginFiles = config.plugin.map((p) => p.split('/').pop())
-    assert.equal(pluginFiles.filter((f) => f === 'plugin.ts').length, 1)
-    assert.equal(pluginFiles.filter((f) => f === 'pantheon-hooks.ts').length, 1)
+    assert.equal(pluginFiles.filter((f) => f === 'plugin.ts').length, 2)
+    assert.equal(pluginFiles.filter((f) => f === 'pantheon-hooks.ts').length, 2)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -363,6 +524,109 @@ test('user-set model is never overwritten by the merge', async () => {
   try {
     const config = await runInstall(target, { model: 'user/custom-model' })
     assert.equal(config.model, 'user/custom-model')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// V2 native config migration tests
+// ---------------------------------------------------------------------------
+
+/** Run install with --opencode-version=v2, returning the native V2 config. */
+async function runV2Install(target, existingConfig = null) {
+  if (existingConfig !== null) {
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'opencode.json'), JSON.stringify(existingConfig, null, 2))
+  }
+  await installOpenCode(target, false, false, COMPONENTS, {
+    yes: true,
+    headless: true,
+    version: 'v2',
+  })
+  return JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+}
+
+test('V2 install produces providers (not provider) in output', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-providers-'))
+  try {
+    const config = await runV2Install(target)
+    // V2 format: providers is an array (or undefined if none configured)
+    // V1 format: provider is an object
+    assert.ok(!('provider' in config), 'V2 config must not have top-level provider')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 install produces permissions as array (not object)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-permissions-'))
+  try {
+    const config = await runV2Install(target)
+    // V2 format: permissions is an array
+    // V1 format: permission is an object with keys like bash, mcp, skill
+    assert.ok(!('permission' in config), 'V2 config must not have top-level permission object')
+    if ('permissions' in config) {
+      assert.ok(Array.isArray(config.permissions), 'V2 permissions must be an array')
+    }
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 install keeps MCP as flat named keys (no servers wrapper)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mcp-'))
+  try {
+    const config = await runV2Install(target)
+    // OpenCode 1.18.x rejects the mcp.servers wrapper with
+    // "Missing key mcp.servers.enabled"; both versions use flat keys.
+    if ('mcp' in config) {
+      assert.ok(typeof config.mcp === 'object' && config.mcp !== null, 'V2 mcp must be an object')
+      assert.ok(!('servers' in config.mcp), 'V2 mcp must not have a servers key')
+    }
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 install produces agents as named object (not flat agent)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-agents-'))
+  try {
+    const config = await runV2Install(target)
+    // V2 format: agents is { name: { model, permissions: [...] } } (named object)
+    // V1 format: agent has the same shape but uses flat permission objects
+    assert.ok(!('agent' in config), 'V2 config must not have top-level agent key')
+    if ('agents' in config) {
+      assert.ok(
+        typeof config.agents === 'object' && !Array.isArray(config.agents),
+        'V2 agents must be a named object (not an array)',
+      )
+      // Per-agent permissions should be arrays (V2 format)
+      for (const [, agentCfg] of Object.entries(config.agents)) {
+        if (agentCfg.permissions !== undefined) {
+          assert.ok(Array.isArray(agentCfg.permissions), 'V2 agent.permissions must be an array')
+        }
+      }
+    }
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 install is idempotent (same output on rerun)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-idempotent-'))
+  try {
+    await runV2Install(target)
+    const configPath = join(target, 'opencode.json')
+    const firstBytes = readFileSync(configPath, 'utf8')
+
+    await installOpenCode(target, false, false, COMPONENTS, {
+      yes: true,
+      headless: true,
+      version: 'v2',
+    })
+    const secondBytes = readFileSync(configPath, 'utf8')
+    assert.equal(secondBytes, firstBytes, 'V2 config must be byte-identical on rerun')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

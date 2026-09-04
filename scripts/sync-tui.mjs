@@ -58,7 +58,8 @@ function resolveConfigDir() {
 }
 
 /**
- * Copy plugin runtime files (dist/*, package.json, src/index.tsx) from srcDir
+ * Copy plugin runtime files (dist/*, package.json, package-lock.json,
+ * src/index.tsx) from srcDir
  * to dstDir. Skips files that are byte-identical.
  * @returns {{ created: number, skipped: number }}
  */
@@ -94,6 +95,14 @@ function copyPluginFiles(srcDir, dstDir) {
     else result.skipped++
   }
 
+  // Keep the copied plugin installable with deterministic npm ci.
+  const lockSrc = join(srcDir, 'package-lock.json')
+  if (existsSync(lockSrc)) {
+    const content = readFileSync(lockSrc, 'utf8')
+    if (writeIfChanged(join(dstDir, 'package-lock.json'), content)) result.created++
+    else result.skipped++
+  }
+
   return result
 }
 
@@ -126,11 +135,27 @@ try {
   // Copy fresh files
   const { created } = copyPluginFiles(tuiSrcDir, tuiCopyDir)
 
-  // Refresh dependencies in the copy
+  // Refresh dependencies in the copy. npm install is only allowed when the
+  // operator explicitly opts into the non-deterministic legacy fallback.
   try {
-    execSync('npm install --omit=dev --no-audit', { cwd: tuiCopyDir, stdio: 'pipe' })
-  } catch {
-    // Non-fatal — deps may already be current
+    execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: tuiCopyDir, stdio: 'pipe' })
+  } catch (err) {
+    if (process.env.PANTHEON_ALLOW_NPM_INSTALL_FALLBACK === '1') {
+      console.warn(`⚠️  npm ci failed; explicit fallback enabled: ${err.message}`)
+      try {
+        execSync('npm install --omit=dev --no-audit --no-fund --package-lock=false', {
+          cwd: tuiCopyDir,
+          stdio: 'pipe',
+        })
+      } catch (fallbackError) {
+        console.warn(`⚠️  TUI dependency refresh skipped: ${fallbackError.message}`)
+      }
+    } else {
+      console.warn(
+        `⚠️  TUI dependency refresh skipped after npm ci failure. Set ` +
+          `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1 to explicitly allow npm install: ${err.message}`,
+      )
+    }
   }
 
   // Log result

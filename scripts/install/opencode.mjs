@@ -2,20 +2,19 @@
 /**
  * opencode.mjs — OpenCode platform installer
  *
- * Dual-version install (Phase 3): the generated config is V1-shaped and valid
- * under BOTH OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2`
- * v0.0.0-next-17444). V2 reads the same config locations and normalizes V1
- * fields in memory — do NOT convert to native V2 format. Known V2 beta gaps
- * handled here: top-level `subagent_depth` is silently ignored (migrated to
- * `experimental.subagent_depth`), and the `instructions` config key is
- * accepted-but-not-loaded (content consolidated into AGENTS.md, which both
- * versions load). Pass --version v2 to pantheon-init for an informational
- * label; state isolation is handled at runtime via OPENCODE_DB.
+ * Dual-version install (Phase 3): V1 and V2 receive the schema each runtime
+ * actually consumes. V1 (`opencode` 1.18.x) uses the singular `plugin` key;
+ * V2 (`opencode2` v0.0.0-next-17444) converts that list to `plugins` before
+ * writing its config. Known V2 beta gaps handled here: top-level
+ * `subagent_depth` is migrated to `experimental.subagent_depth`, and the
+ * instruction content is consolidated into AGENTS.md, which both versions
+ * load. Pass --version v2 to pantheon-init for an informational label; state
+ * isolation is handled at runtime via OPENCODE_DB.
  */
 
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import {
   bullet,
   colors,
@@ -29,8 +28,10 @@ import {
   success,
   warning,
 } from './cli-ui.mjs'
+import { migrateV1toV2 } from './config-migration.mjs'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
+import { resolveOpenCodeVersion } from './opencode-version.mjs'
 import { copyPluginFiles, installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
 import {
   collectSkillNames,
@@ -101,23 +102,116 @@ function mergeMissing(target, source) {
  * Resolve a plugin ref from the packaged opencode.json to a path INSIDE the
  * installed package.
  *
- * The packaged config may reference plugins via developer-machine absolute
- * paths (e.g. <dev>/pantheon/.../src/plugin.ts). Copying those verbatim into
- * the user's config would break every install on any other machine. This
- * rewrites the entry to the plugin file inside the INSTALLED package (derived
- * from ROOT — never hardcoded), so both dev and global installs resolve to a
- * path that actually exists.
+ * Only exact Pantheon plugin identities are resolved into the installed
+ * package. In particular, a third-party absolute path ending in
+ * `src/plugin.ts` or `src/plugins/pantheon-hooks.ts` is not evidence that the
+ * plugin belongs to Pantheon and must be preserved verbatim.
  */
 export function resolveInstalledPlugin(plugin) {
-  // Map any ref whose path tail starts with `src/` to the matching file INSIDE
-  // the installed package. This preserves the ref's relative location, so both
-  // src/plugins/* (hooks) and the root-level src/plugin.ts (delegation plugin,
-  // PR #45) resolve correctly — nothing is forced into src/plugins/.
-  const srcIndex = plugin.indexOf('src/')
-  if (srcIndex === -1) return plugin
-  const packaged = join(ROOT, plugin.slice(srcIndex))
-  return existsSync(packaged) ? packaged : plugin
+  if (typeof plugin !== 'string') return plugin
+  const normalized = normalizePluginRef(plugin)
+  if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return join(ROOT, normalized)
+  const identity = managedPluginIdentity(plugin)
+  if (identity !== null && isAbsolute(normalized)) {
+    return INSTALLED_PANTHEON_PLUGIN_PATHS.get(identity) ?? plugin
+  }
+  return plugin
 }
+
+function normalizePluginRef(ref) {
+  return typeof ref === 'string' ? ref.replaceAll('\\', '/').replace(/\/$/, '') : ref
+}
+
+const PANTHEON_V1_PLUGIN = 'src/plugin.ts'
+const PANTHEON_V1_HOOKS = 'src/plugins/pantheon-hooks.ts'
+const PANTHEON_V2_PLUGIN = 'src/plugin-v2.ts'
+const PANTHEON_V1_EXPORT = 'pantheon-opencode/plugin'
+const PANTHEON_V2_EXPORT = 'pantheon-opencode/plugin-v2'
+const PANTHEON_PLUGIN_IDENTITIES = new Set([
+  PANTHEON_V1_PLUGIN,
+  PANTHEON_V1_HOOKS,
+  PANTHEON_V2_PLUGIN,
+])
+
+const INSTALLED_PANTHEON_PLUGIN_PATHS = new Map([
+  [PANTHEON_V1_PLUGIN, resolve(ROOT, PANTHEON_V1_PLUGIN)],
+  [PANTHEON_V1_HOOKS, resolve(ROOT, PANTHEON_V1_HOOKS)],
+  [PANTHEON_V2_PLUGIN, resolve(ROOT, PANTHEON_V2_PLUGIN)],
+])
+
+function normalizePluginPath(ref) {
+  return ref.replaceAll('\\', '/')
+}
+
+function pluginMetadataReferences(ref) {
+  if (typeof ref === 'string') return [ref]
+  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return []
+  return ['package', 'id', 'name', 'path', 'source']
+    .filter((key) => typeof ref[key] === 'string')
+    .map((key) => ref[key])
+}
+
+function managedPluginIdentity(ref) {
+  const normalized = normalizePluginRef(ref)
+  if (typeof normalized !== 'string') return null
+
+  if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return normalized
+  if (normalized === PANTHEON_V1_EXPORT || normalized.startsWith(`${PANTHEON_V1_EXPORT}@`)) {
+    return PANTHEON_V1_PLUGIN
+  }
+  if (normalized === PANTHEON_V2_EXPORT || normalized.startsWith(`${PANTHEON_V2_EXPORT}@`)) {
+    return PANTHEON_V2_PLUGIN
+  }
+
+  if (isAbsolute(normalized)) {
+    const absolutePath = normalizePluginPath(resolve(normalized))
+    for (const [identity, installedPath] of INSTALLED_PANTHEON_PLUGIN_PATHS) {
+      if (absolutePath === normalizePluginPath(installedPath)) return identity
+    }
+  }
+
+  return null
+}
+
+/**
+ * Return the stable identity for a Pantheon plugin, or its normalized path.
+ * Basenames are deliberately not used: unrelated user plugins may share a
+ * filename such as `plugin.ts`.
+ */
+export function pluginReferenceIdentity(ref) {
+  const references = pluginMetadataReferences(ref)
+  for (const reference of references) {
+    const identity = managedPluginIdentity(reference)
+    if (identity !== null) return identity
+  }
+  if (references.length > 0) return normalizePluginPath(normalizePluginRef(references[0]))
+  return ref
+}
+
+function isPantheonPluginReference(ref) {
+  return PANTHEON_PLUGIN_IDENTITIES.has(pluginReferenceIdentity(ref))
+}
+
+function removePantheonPluginReferences(refs) {
+  return (Array.isArray(refs) ? refs : []).filter((ref) => !isPantheonPluginReference(ref))
+}
+
+function hasPluginReference(refs, candidate) {
+  const identity = pluginReferenceIdentity(candidate)
+  return refs.some((ref) => pluginReferenceIdentity(ref) === identity)
+}
+
+export function deduplicatePluginReferences(refs) {
+  const seen = new Set()
+  return (Array.isArray(refs) ? refs : []).filter((ref) => {
+    const identity = pluginReferenceIdentity(ref)
+    if (seen.has(identity)) return false
+    seen.add(identity)
+    return true
+  })
+}
+
+export { parseOpenCodeVersion, resolveOpenCodeVersion } from './opencode-version.mjs'
 
 /**
  * Detect whether `target` is the user's global OpenCode installation directory
@@ -217,10 +311,15 @@ export function syncTuiRegistration(target, { isGlobal = false, dryRun = false }
 
   // 2. Clean stale Pantheon TUI refs from every location OpenCode reads.
   //    unregisterPlugin covers the bare relative id plus the extended stale
-  //    patterns (dist files, in-package src/plugins/tui dir, bare
-  //    plugins/pantheon-tui copies, npx paths).
+  //    patterns (dist files, identifiable in-package paths, owned copied
+  //    directories, relative ids, and npx package identities).
   for (const tuiConfigPath of tuiConfigLocations(target)) {
-    unregisterPlugin(tuiConfigPath, 'plugins/pantheon-tui', { dryRun })
+    const configDirForPath = dirname(tuiConfigPath)
+    const ownedCopy = resolveTuiCopyTarget(configDirForPath)
+    unregisterPlugin(tuiConfigPath, 'plugins/pantheon-tui', {
+      dryRun,
+      knownPantheonPaths: [ownedCopy, tuiCopyDir],
+    })
   }
 
   // 3. Register the copied directory in the selected target only.
@@ -242,13 +341,12 @@ export async function installOpenCode(
   const componentSet = new Set(components)
   const stats = summary.opencode
 
-  // V1/V2 dual-version awareness (Phase 3): the SAME config works under both
-  // OpenCode V1 (`opencode`) and V2 (`opencode2`, beta v0.0.0-next-17444).
-  // V2 normalizes V1 fields in memory (no rewrite) and isolates its state DB
-  // via OPENCODE_DB (~/.local/share/opencode/opencode-v2.db) with a distinct
-  // service port (49375 vs V1's 49374). The installer writes one shared
-  // config; the --version flag only labels the install for the operator.
-  const version = opts.version === 'v2' ? 'v2' : 'v1'
+  // V1/V2 dual-version awareness (Phase 3): the installer builds a unified
+  // config, then applies V2-native migration (migrateV1toV2) when
+  // --opencode-version=v2. V2 normalizes V1 fields in memory (no rewrite) and
+  // isolates its state DB via OPENCODE_DB (~/.local/share/opencode/opencode-v2.db)
+  // with a distinct service port (49375 vs V1's 49374).
+  const version = resolveOpenCodeVersion(opts.version ?? 'v1')
   if (version === 'v2') {
     info(
       'OpenCode V2 target — shared config; state isolated via OPENCODE_DB ' +
@@ -445,11 +543,20 @@ export async function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
-  // 2.9 Create/update tui.json with plugin registration
+  // 2.9 Create/update tui.json with plugin registration (--components plugins)
   // -----------------------------------------------------------------------
-  const tuiStatus = syncTuiRegistration(target, { isGlobal, dryRun })
-  if (tuiStatus === 'created') stats.created++
-  else stats.skipped++
+  if (componentSet.has('plugins')) {
+    let tuiStatus
+    try {
+      tuiStatus = syncTuiRegistration(target, { isGlobal, dryRun })
+    } catch (cause) {
+      error(`TUI plugin setup failed: ${cause.message}`)
+      stats.errors++
+      throw new Error('TUI plugin setup failed; installation was not completed', { cause })
+    }
+    if (tuiStatus === 'created') stats.created++
+    else stats.skipped++
+  }
 
   // -----------------------------------------------------------------------
   // 2.10 Install runtime infrastructure (--components runtime)
@@ -547,7 +654,7 @@ export async function installOpenCode(
   // -----------------------------------------------------------------------
   // 3. Create/update opencode.json (always runs)
   //    Reads TARGET's existing config first, then merges Pantheon settings
-  //    on top. Preserves user's MCP, provider, plugin, compaction, theme.
+  //    on top. Preserves user's MCP, provider, plugins, compaction, theme.
   // -----------------------------------------------------------------------
   // --------------------------------------------------------------------
   // A. Parse canonical agent config from agents/*.agent.md frontmatter
@@ -635,9 +742,8 @@ export async function installOpenCode(
             existing[field] = JSON.parse(JSON.stringify(agentCfg[field]))
           }
         }
-        // Remove stale fields that are no longer in canonical config
-        delete existing.model
-        delete existing.small_model
+        // Existing agent fields belong to the user; never remove them during
+        // an install. Canonical values are merged only when absent.
       } else {
         // ── New agent ──
         const newAgent = {}
@@ -663,17 +769,7 @@ export async function installOpenCode(
       }
     }
 
-    // Remove stale agents (exist in target config but not in canonical source)
-    // Only removes agents whose source is managed (starts with our prefix)
-    // so user-defined agents with different source paths are preserved.
-    const canonicalNames = new Set(Object.keys(canonicalAgentConfig))
-    for (const [agentName, agentCfg] of Object.entries(config.agent)) {
-      const source = agentCfg?.source || ''
-      if (source.startsWith(agentPrefix) && !canonicalNames.has(agentName)) {
-        delete config.agent[agentName]
-      }
-    }
-    if (Object.keys(config.agent).length === 0) delete config.agent
+    // Do not remove stale or user-defined agents. Installation is additive.
   }
 
   // --------------------------------------------------------------------
@@ -738,39 +834,56 @@ export async function installOpenCode(
   // The source opencode.json keeps its dev path for local development; the
   // transform happens at install/sync time only.
 
-  if (config.plugin === undefined) {
-    config.plugin = []
-  }
-  if (Array.isArray(config.plugin)) {
-    if (Array.isArray(pantheonConfig.plugin)) {
-      for (const plugin of pantheonConfig.plugin) {
-        const resolved = resolveInstalledPlugin(plugin)
-        const file = basename(resolved)
-        // Replace any pre-existing entry for the same plugin file (e.g. a stale
-        // dev-machine path from an earlier install) so upgrades stay hermetic.
-        config.plugin = config.plugin.filter((p) => basename(p) !== file)
+  if (version === 'v1') {
+    // V1 loads the singular `plugin` list. Remove every Pantheon V2 entry from
+    // both config shapes before restoring the two V1 plugins. User plugins in
+    // either list are retained verbatim.
+    if (Array.isArray(config.plugins)) {
+      config.plugins = removePantheonPluginReferences(config.plugins)
+    }
+    if (config.plugin === undefined) config.plugin = []
+    if (Array.isArray(config.plugin)) {
+      config.plugin = removePantheonPluginReferences(config.plugin)
+      if (Array.isArray(pantheonConfig.plugin)) {
+        for (const plugin of pantheonConfig.plugin) {
+          if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugin, plugin)) {
+            config.plugin.push(deepClone(plugin))
+          }
+        }
+      }
+
+      const ensurePantheonPlugin = (ref) => {
+        const resolved = resolveInstalledPlugin(ref)
+        config.plugin = config.plugin.filter(
+          (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolved),
+        )
         config.plugin.push(resolved)
       }
+      // Root-level delegation plugin remains a V1-only registration.
+      ensurePantheonPlugin('src/plugin.ts')
+      ensurePantheonPlugin('src/plugins/pantheon-hooks.ts')
     }
+  }
 
-    // The two Pantheon plugins MUST always be registered, on fresh installs AND
-    // upgrades. The packaged opencode.json carries no `plugin` key (dev-machine
-    // paths removed in 3e552cc), so config.plugin would otherwise only contain
-    // whatever the user had — a fresh install would register NOTHING and lose
-    // delegation tools, GoalLoop, cost command, hashline and vision. Register
-    // both unconditionally, replacing any stale entry for the same file
-    // (basename-dedup) so installs and upgrades are idempotent and hermetic
-    // while preserving any user plugins.
-    const ensurePantheonPlugin = (ref) => {
-      const resolved = resolveInstalledPlugin(ref)
-      const file = basename(resolved)
-      config.plugin = config.plugin.filter((p) => basename(p) !== file)
-      config.plugin.push(resolved)
+  if (version === 'v2') {
+    // V2 loads the plural `plugins` list. Keep third-party V1 entries in the
+    // legacy list for users who still use them, but never leave a Pantheon V1
+    // entry configured alongside the V2 package export.
+    if (Array.isArray(config.plugin)) {
+      config.plugin = removePantheonPluginReferences(config.plugin)
     }
-    // Root-level delegation plugin (PR #45): tools, GoalLoop, cost, hashline.
-    ensurePantheonPlugin('src/plugin.ts')
-    // Runtime hooks plugin: chat hooks, hook-runner, TUI wiring.
-    ensurePantheonPlugin('src/plugins/pantheon-hooks.ts')
+    if (!Array.isArray(config.plugins)) config.plugins = []
+    config.plugins = deduplicatePluginReferences(removePantheonPluginReferences(config.plugins))
+    if (Array.isArray(pantheonConfig.plugins)) {
+      for (const plugin of pantheonConfig.plugins) {
+        if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugins, plugin)) {
+          config.plugins.push(deepClone(plugin))
+        }
+      }
+    }
+    // Use the published package export, not a V1 local-file path. This keeps
+    // V1's delegate out of V2 while exercising package.json's ./plugin-v2 map.
+    config.plugins.push(PANTHEON_V2_EXPORT)
   }
 
   if (config.provider === undefined && pantheonConfig.provider !== undefined) {
@@ -854,11 +967,12 @@ export async function installOpenCode(
   }
 
   // --------------------------------------------------------------------
-  // F. Compatibility cleanup (OpenCode >= v1.15.7)
+  // F. Compatibility cleanup (OpenCode V1 >= 1.15.7)
   // --------------------------------------------------------------------
-  // `todoContinuation` is rejected by newer OpenCode versions.
-  // Remove it from merged user config to avoid startup/config failures.
-  if (Object.hasOwn(config, 'todoContinuation')) {
+  // Recent V1 releases reject the legacy `todoContinuation` setting. Remove
+  // it from the merged V1 config, while leaving the V2-shaped configuration
+  // untouched.
+  if (version === 'v1' && Object.hasOwn(config, 'todoContinuation')) {
     delete config.todoContinuation
   }
 
@@ -867,6 +981,10 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   if (componentSet.has('runtime')) {
     config.mcp = config.mcp || {}
+    // MCP stays a flat named-server map for BOTH V1 and V2: OpenCode 1.18.x
+    // has no `mcp.servers` wrapper and rejects one with
+    // "Missing key mcp.servers.enabled". config-migration.mjs normalizes any
+    // legacy wrapper-shaped entries back to the flat map.
     // P1-3: derive the MCP python from the SAME venv layout setupVenv
     // creates (<target>/.venv via venvPythonPath). For project installs the
     // runtime payload lives under <target>/.opencode (runtimeTarget), but the
@@ -940,7 +1058,16 @@ export async function installOpenCode(
     }
   }
 
-  const configContent = `${JSON.stringify(config, null, 2)}\n`
+  // ── V2 native migration ──
+  // When targeting V2, convert the merged V1-shaped config to native V2 format
+  // before writing. V1 path is untouched (zero regression).
+  let configToWrite = config
+  if (version === 'v2') {
+    info('Migrating config to V2 native format...')
+    configToWrite = migrateV1toV2(config)
+  }
+
+  const configContent = `${JSON.stringify(configToWrite, null, 2)}\n`
   const status = writeIfChanged(targetConfigPath, configContent, dryRun)
   if (status === 'created') stats.created++
   else stats.skipped++
@@ -969,7 +1096,8 @@ export async function installOpenCode(
       const venvSpinner = spinner('Setting up Python virtual environment')
       setupVenv(target, { dryRun, force: clean })
       venvSpinner(true)
-      const health = healthCheck(target, { dryRun })
+      const runtimeTarget = isGlobal ? target : join(target, '.opencode')
+      const health = healthCheck(runtimeTarget, { dryRun, pythonTarget: target })
 
       // Print health summary
       section('\uD83D\uDD0D Health Check')
@@ -997,7 +1125,13 @@ export async function installOpenCode(
     const errors = stats.errors
 
     process.stdout.write('\n')
-    process.stdout.write(`  ${colors.bold(colors.green('Installation complete'))}\n`)
+    process.stdout.write(
+      `  ${colors.bold(
+        errors > 0
+          ? colors.yellow('Installation completed with errors')
+          : colors.green('Installation complete'),
+      )}\n`,
+    )
     process.stdout.write(
       `  ${colors.dim('\u2500'.repeat(Math.min(process.stdout.columns || 60, 60)))}\n`,
     )

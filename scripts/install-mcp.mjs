@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 /**
- * install-mcp.mjs — Multi-platform MCP server installer for Pantheon
+ * install-mcp.mjs — OpenCode MCP server installer for Pantheon
  *
- * Detects the user's platform (OpenCode, VS Code, Cursor, Claude, Windsurf),
- * installs MCP servers (Essential Tier 1, optional Domain Tier 2), writes
- * platform-specific config files, and validates each MCP responds.
+ * Installs MCP servers (Essential Tier 1, optional Domain Tier 2) into
+ * OpenCode's configuration and validates each MCP responds.
  *
  * Usage:
  *   node scripts/install-mcp.mjs
- *   node scripts/install-mcp.mjs --platform opencode
  *   node scripts/install-mcp.mjs --tier 2
  *   node scripts/install-mcp.mjs --mcp context7
  *   node scripts/install-mcp.mjs --list
@@ -89,7 +87,7 @@ const PANTHEON_VISION_SERVER = resolveServerScript('src/mcp/pantheon_vision_serv
  *   tier       - 1 (Essential), 2 (Domain), 3 (Project)
  *   name       - Human-readable label
  *   description- Short description
- *   platforms  - Per-platform config; each entry has:
+ *   platforms  - OpenCode config; each entry has:
  *       type    - 'remote' | 'local' | 'stdio' | 'http'
  *       url     - (remote/http) endpoint URL
  *       command - (local/stdio) executable
@@ -97,17 +95,13 @@ const PANTHEON_VISION_SERVER = resolveServerScript('src/mcp/pantheon_vision_serv
  *   env        - Required environment variable names
  *   validate   - Async function returning { ok, message }
  */
-const MCPS = {
+export const MCPS = {
   github: {
     tier: 1,
     name: 'GitHub MCP',
     description: 'Repository access, PR/issue management via GitHub API',
     platforms: {
       opencode: { type: 'remote', url: 'https://api.githubcopilot.com/mcp/' },
-      vscode: { type: 'http', url: 'https://api.githubcopilot.com/mcp/' },
-      cursor: { type: 'http', url: 'https://api.githubcopilot.com/mcp/' },
-      claude: { type: 'remote', url: 'https://api.githubcopilot.com/mcp/' },
-      windsurf: { type: 'http', url: 'https://api.githubcopilot.com/mcp/' },
     },
     env: [],
     validate: async () => ({ ok: true, message: 'remote (OAuth handled by platform)' }),
@@ -118,10 +112,6 @@ const MCPS = {
     description: 'Up-to-date documentation for libraries and frameworks',
     platforms: {
       opencode: { type: 'local', command: 'npx', args: ['-y', '@upstash/context7-mcp'] },
-      vscode: { type: 'stdio', command: 'npx', args: ['-y', '@upstash/context7-mcp'] },
-      cursor: { type: 'local', command: 'npx', args: ['-y', '@upstash/context7-mcp'] },
-      claude: { type: 'local', command: 'npx', args: ['-y', '@upstash/context7-mcp'] },
-      windsurf: { type: 'local', command: 'npx', args: ['-y', '@upstash/context7-mcp'] },
     },
     env: [],
     validate: async () => {
@@ -142,10 +132,6 @@ const MCPS = {
     description: 'Browser automation and E2E testing via Playwright',
     platforms: {
       opencode: { type: 'local', command: 'npx', args: ['-y', '@playwright/mcp@latest'] },
-      vscode: { type: 'stdio', command: 'npx', args: ['-y', '@playwright/mcp@latest'] },
-      cursor: { type: 'local', command: 'npx', args: ['-y', '@playwright/mcp@latest'] },
-      claude: { type: 'local', command: 'npx', args: ['-y', '@playwright/mcp@latest'] },
-      windsurf: { type: 'local', command: 'npx', args: ['-y', '@playwright/mcp@latest'] },
     },
     env: [],
     validate: async () => {
@@ -166,10 +152,6 @@ const MCPS = {
     description: 'Database schema exploration and SQL query execution',
     platforms: {
       opencode: { type: 'local', command: 'npx', args: ['-y', '@anthropic/postgres-mcp'] },
-      vscode: { type: 'stdio', command: 'npx', args: ['-y', '@anthropic/postgres-mcp'] },
-      cursor: { type: 'local', command: 'npx', args: ['-y', '@anthropic/postgres-mcp'] },
-      claude: { type: 'local', command: 'npx', args: ['-y', '@anthropic/postgres-mcp'] },
-      windsurf: { type: 'local', command: 'npx', args: ['-y', '@anthropic/postgres-mcp'] },
     },
     env: ['DATABASE_URL'],
     validate: async () => {
@@ -193,10 +175,6 @@ const MCPS = {
     description: 'Real-time web search via Brave Search API',
     platforms: {
       opencode: { type: 'local', command: 'npx', args: ['-y', '@anthropic/brave-search-mcp'] },
-      vscode: { type: 'stdio', command: 'npx', args: ['-y', '@anthropic/brave-search-mcp'] },
-      cursor: { type: 'local', command: 'npx', args: ['-y', '@anthropic/brave-search-mcp'] },
-      claude: { type: 'local', command: 'npx', args: ['-y', '@anthropic/brave-search-mcp'] },
-      windsurf: { type: 'local', command: 'npx', args: ['-y', '@anthropic/brave-search-mcp'] },
     },
     env: ['BRAVE_API_KEY'],
     validate: async () => {
@@ -218,34 +196,14 @@ const MCPS = {
     tier: 1,
     name: 'Pantheon Resources',
     description: 'Pantheon framework resources — agents, skills, routing, deepwork, memory bank',
+    env: [],
     platforms: {
       opencode: {
         type: 'local',
         command: VENV_PYTHON,
         args: [MCP_RESOURCES_SERVER],
       },
-      vscode: {
-        type: 'stdio',
-        command: VENV_PYTHON,
-        args: [MCP_RESOURCES_SERVER],
-      },
-      cursor: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [MCP_RESOURCES_SERVER],
-      },
-      claude: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [MCP_RESOURCES_SERVER],
-      },
-      windsurf: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [MCP_RESOURCES_SERVER],
-      },
     },
-    env: [],
     validate: async () => {
       const scriptPath = MCP_RESOURCES_SERVER
       if (existsSync(scriptPath)) {
@@ -260,26 +218,6 @@ const MCPS = {
     description: 'Execute orchestration scripts from .pantheon/code-mode/ directory',
     platforms: {
       opencode: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [CODE_MODE_SERVER],
-      },
-      vscode: {
-        type: 'stdio',
-        command: VENV_PYTHON,
-        args: [CODE_MODE_SERVER],
-      },
-      cursor: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [CODE_MODE_SERVER],
-      },
-      claude: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [CODE_MODE_SERVER],
-      },
-      windsurf: {
         type: 'local',
         command: VENV_PYTHON,
         args: [CODE_MODE_SERVER],
@@ -305,21 +243,6 @@ const MCPS = {
         command: VENV_PYTHON,
         args: [MEMORY_MCP_SERVER],
       },
-      claude: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [MEMORY_MCP_SERVER],
-      },
-      cursor: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [MEMORY_MCP_SERVER],
-      },
-      windsurf: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [MEMORY_MCP_SERVER],
-      },
     },
     env: [],
     validate: async () => {
@@ -335,29 +258,14 @@ const MCPS = {
     name: 'Pantheon Persistence',
     description:
       'Pantheon Persistence MCP Server — key-value store with FTS5 full-text search, TTL-based expiration, and namespace isolation',
+    env: [],
     platforms: {
       opencode: {
         type: 'local',
         command: VENV_PYTHON,
         args: [MCP_PERSISTENCE_SERVER],
       },
-      claude: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [MCP_PERSISTENCE_SERVER],
-      },
-      cursor: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [MCP_PERSISTENCE_SERVER],
-      },
-      windsurf: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [MCP_PERSISTENCE_SERVER],
-      },
     },
-    env: [],
     validate: async () => {
       const scriptPath = MCP_PERSISTENCE_SERVER
       if (existsSync(scriptPath)) {
@@ -374,26 +282,6 @@ const MCPS = {
     requirements: join(ROOT, 'src', 'mcp', 'requirements-vision.txt'),
     platforms: {
       opencode: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [PANTHEON_VISION_SERVER],
-      },
-      vscode: {
-        type: 'stdio',
-        command: VENV_PYTHON,
-        args: [PANTHEON_VISION_SERVER],
-      },
-      claude: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [PANTHEON_VISION_SERVER],
-      },
-      cursor: {
-        type: 'local',
-        command: VENV_PYTHON,
-        args: [PANTHEON_VISION_SERVER],
-      },
-      windsurf: {
         type: 'local',
         command: VENV_PYTHON,
         args: [PANTHEON_VISION_SERVER],
@@ -415,10 +303,6 @@ const MCPS = {
     description: 'Container lifecycle management via Docker CLI',
     platforms: {
       opencode: { type: 'local', command: 'docker' },
-      vscode: { type: 'stdio', command: 'docker' },
-      cursor: { type: 'local', command: 'docker' },
-      claude: { type: 'local', command: 'docker' },
-      windsurf: { type: 'local', command: 'docker' },
     },
     env: [],
     validate: async () => {
@@ -439,7 +323,7 @@ const MCPS = {
 // Platform Metadata
 // ---------------------------------------------------------------------------
 
-const PLATFORMS = {
+export const PLATFORMS = {
   opencode: {
     label: 'OpenCode',
     configFile: 'opencode.json',
@@ -455,46 +339,6 @@ const PLATFORMS = {
       existsSync(join(process.cwd(), 'opencode.json')) ||
       existsSync(join(homedir(), '.config', 'opencode', 'opencode.json')),
   },
-  vscode: {
-    label: 'VS Code',
-    configFile: '.vscode/mcp.json',
-    configPaths: [join(ROOT, '.vscode', 'mcp.json'), join(process.cwd(), '.vscode', 'mcp.json')],
-    // VS Code uses "servers" key
-    configKey: 'servers',
-    detect: () =>
-      existsSync(join(ROOT, '.vscode', 'mcp.json')) ||
-      existsSync(join(process.cwd(), '.vscode', 'mcp.json')),
-  },
-  cursor: {
-    label: 'Cursor',
-    configFile: '.cursor/mcp.json',
-    configPaths: [join(ROOT, '.cursor', 'mcp.json'), join(process.cwd(), '.cursor', 'mcp.json')],
-    configKey: 'mcpServers',
-    detect: () =>
-      existsSync(join(ROOT, '.cursor', 'mcp.json')) ||
-      existsSync(join(process.cwd(), '.cursor', 'mcp.json')),
-  },
-  claude: {
-    label: 'Claude',
-    configFile: '.mcp.json',
-    configPaths: [
-      join(ROOT, '.mcp.json'),
-      join(process.cwd(), '.mcp.json'),
-      join(homedir(), '.claude', 'settings.json'),
-    ],
-    configKey: 'mcpServers',
-    detect: () =>
-      existsSync(join(ROOT, '.mcp.json')) ||
-      existsSync(join(process.cwd(), '.mcp.json')) ||
-      existsSync(join(homedir(), '.claude', 'settings.json')),
-  },
-  windsurf: {
-    label: 'Windsurf',
-    configFile: '~/.codeium/windsurf/mcp_config.json',
-    configPaths: [join(homedir(), '.codeium', 'windsurf', 'mcp_config.json')],
-    configKey: 'mcpServers',
-    detect: () => existsSync(join(homedir(), '.codeium', 'windsurf', 'mcp_config.json')),
-  },
 }
 
 // ---------------------------------------------------------------------------
@@ -502,22 +346,31 @@ const PLATFORMS = {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the MCP server entry for a given platform.
- * Each platform has a slightly different JSON shape.
+ * Build the MCP server entry for OpenCode.
  *
  * @param {string} mcpKey       - Canonical MCP key (e.g. 'github', 'context7')
- * @param {string} platformName - Platform key (e.g. 'opencode', 'vscode')
+ * @param {string} platformName - Must be `opencode`
+ * @param {object} [catalog=MCPS] - MCP catalog (injectable for transport fixtures)
  * @returns {object|null}       - The config entry, or null if unsupported
  */
-function buildMcpEntry(mcpKey, platformName) {
-  const mcp = MCPS[mcpKey]
+export function buildMcpEntry(mcpKey, platformName, catalog = MCPS) {
+  const mcp = catalog[mcpKey]
   if (!mcp) return null
   const platform = mcp.platforms[platformName]
   if (!platform) return null
 
   // Collect env vars that are set for inclusion in config
   const env = {}
-  for (const key of mcp.env) {
+  // PWD is a logical working-directory hint, not a general environment
+  // variable. It is valid only for the stdio transport of the two servers
+  // that consume it; never emit it for local or remote platform entries.
+  const environmentKeys = (platform.env ?? mcp.env).filter(
+    (key) =>
+      key !== 'PWD' ||
+      (platform.type === 'stdio' &&
+        (mcpKey === 'pantheon-resources' || mcpKey === 'pantheon-persistence')),
+  )
+  for (const key of environmentKeys) {
     const val = process.env[key]
     if (val) {
       env[key] = `\${${key}}`
@@ -535,19 +388,17 @@ function buildMcpEntry(mcpKey, platformName) {
           enabled: true,
         }
       }
-      // VS Code http format: { type: "http", url }
-      if (platformName === 'vscode') {
-        return { type: 'http', url: platform.url }
-      }
-      // Cursor/Claude/Windsurf http format
-      return { type: 'http', url: platform.url }
+      return null
     }
 
-    case 'local': {
-      // OpenCode uses "mcp" key with { type: "local", command: [...], enabled }
+    case 'local':
+    case 'stdio': {
+      // OpenCode uses { type, command: [...], enabled }. `stdio` is accepted
+      // for transport fixtures and integrations; production entries currently
+      // use OpenCode's `local` spelling.
       if (platformName === 'opencode') {
         const entry = {
-          type: 'local',
+          type: platform.type,
           command: [platform.command, ...(platform.args || [])],
           enabled: true,
         }
@@ -556,24 +407,7 @@ function buildMcpEntry(mcpKey, platformName) {
         }
         return entry
       }
-      // Cursor/Claude/Windsurf format: { command, args?, env? }
-      const entry = {
-        command: platform.command,
-        ...(platform.args ? { args: platform.args } : {}),
-      }
-      if (Object.keys(env).length > 0) {
-        entry.env = env
-      }
-      return entry
-    }
-
-    case 'stdio': {
-      // VS Code stdio format: { type: "stdio", command, args? }
-      return {
-        type: 'stdio',
-        command: platform.command,
-        ...(platform.args ? { args: platform.args } : {}),
-      }
+      return null
     }
 
     default:
@@ -689,7 +523,7 @@ function writeMcpConfig(platformName, mcpKey, dryRun, force) {
 
 function parseArgs(argv) {
   const args = {
-    platforms: [],
+    platforms: ['opencode'],
     tier: 1,
     mcp: null,
     list: false,
@@ -728,28 +562,14 @@ function parseArgs(argv) {
     }
   }
 
-  // If no platforms specified and not --list, auto-detect
-  if (args.platforms.length === 0 && !args.list && !args.help) {
-    const detected = detectPlatforms()
-    if (detected.length > 0) {
-      args.platforms = detected
-    } else {
-      // Default to all platforms if none detected
-      args.platforms = Object.keys(PLATFORMS)
-    }
+  const unsupported = args.platforms.filter((name) => name !== 'opencode')
+  if (unsupported.length > 0) {
+    throw new Error(
+      `Unsupported platform: ${unsupported.join(', ')}. This package supports OpenCode only.`,
+    )
   }
 
   return args
-}
-
-function detectPlatforms() {
-  const detected = []
-  for (const [name, platform] of Object.entries(PLATFORMS)) {
-    if (platform.detect()) {
-      detected.push(name)
-    }
-  }
-  return detected
 }
 
 // ---------------------------------------------------------------------------
@@ -816,7 +636,7 @@ function listMcps() {
       console.log(`  ${key.padEnd(16)} ${mcp.name.padEnd(20)} ${mcp.description}${envInfo}`)
     }
   }
-  console.log(`\nPlatforms supported: ${Object.keys(PLATFORMS).join(', ')}`)
+  console.log(`\nPlatform supported: ${Object.keys(PLATFORMS).join(', ')}`)
   console.log('')
 }
 
@@ -826,11 +646,11 @@ function listMcps() {
 
 function showHelp() {
   console.log(`
-install-mcp.mjs — Multi-platform MCP server installer for Pantheon
+install-mcp.mjs — OpenCode MCP server installer for Pantheon
 
 Usage:
-  node scripts/install-mcp.mjs                              Auto-detect platform, install Tier 1
-  node scripts/install-mcp.mjs --platform opencode          Install for specific platform
+  node scripts/install-mcp.mjs                              Install OpenCode Tier 1 MCPs
+  node scripts/install-mcp.mjs --platform opencode          Install OpenCode MCPs explicitly
   node scripts/install-mcp.mjs --tier 2                     Install Tier 2 (interactive prompt)
   node scripts/install-mcp.mjs --mcp context7               Install a specific MCP only
   node scripts/install-mcp.mjs --list                       List available MCPs
@@ -839,8 +659,7 @@ Usage:
   node scripts/install-mcp.mjs --platform opencode --mcp github,context7
 
 Options:
-  --platform <name>    Target platform (opencode|vscode|cursor|claude|windsurf).
-                       Comma-separated for multiple. Auto-detects if omitted.
+  --platform <name>    Target platform (opencode only).
   --tier <n>           1=Essential (default), 2=Domain, 3=Project
   --mcp <name>         Install specific MCP(s) only. Comma-separated.
   --list               List available MCPs and exit
@@ -848,12 +667,8 @@ Options:
   --force              Overwrite existing MCP entries
   --help, -h           Show this help
 
-Platforms:
+Platform:
   opencode    → opencode.json (mcp key)
-  vscode      → .vscode/mcp.json (servers key)
-  cursor      → .cursor/mcp.json (mcpServers key)
-  claude      → .mcp.json or ~/.claude/settings.json (mcpServers key)
-  windsurf    → ~/.codeium/windsurf/mcp_config.json (mcpServers key)
 
 Environment Variables:
   DATABASE_URL    Required for PostgreSQL MCP (postgresql+ssl://...)
@@ -863,7 +678,6 @@ Examples:
   node scripts/install-mcp.mjs                              Auto-detect + install essentials
   node scripts/install-mcp.mjs --platform opencode --tier 2 OpenCode + interactive Tier 2
   node scripts/install-mcp.mjs --mcp docker                 Install only Docker MCP
-  node scripts/install-mcp.mjs --platform vscode --dry-run  Preview VS Code changes
 `)
 }
 
@@ -1041,9 +855,7 @@ export async function main() {
     }
   }
 
-  console.log('\n⚠️  Reminder: Restart your editor/CLI tool for MCP changes to take effect.')
-  console.log('   For VS Code: Cmd+Shift+P → "Developer: Reload Window"')
-  console.log('   For OpenCode: Just restart the session')
+  console.log('\n⚠️  Reminder: Restart OpenCode for MCP changes to take effect.')
   console.log('')
 
   process.exit(progress.errors.length > 0 ? 1 : 0)

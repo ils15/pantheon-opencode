@@ -9,6 +9,90 @@ Pantheon v1.4.3 is **OpenCode-only**. Instalação global via `npx pantheon-open
 - **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
 
+## OpenCode V1/V2 — contrato de plugin
+
+Pantheon 1.5.0 does not load both Pantheon plugin generations in one
+installation. The ordinary OpenCode settings may be merged, but the installer
+removes Pantheon references from both config shapes before registering only the
+selected generation:
+
+| Selection | OpenCode key | Pantheon registration | Contract |
+|---|---|---|---|
+| `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Legacy `pantheon_delegate`, read/list tools, V1 events/tool hooks and V1 compaction path |
+| `v2` | plural `plugins` | `pantheon-opencode/plugin-v2` | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks, tool hooks, plus configuration transforms |
+
+The V2 plugin is now a **full orchestration plugin** — not just a configuration
+adapter. It registers 9 tools via `ctx.tool.transform()`, subscribes to 4
+session lifecycle events, and wires session/tool hooks. The only unsupported
+V2 feature is `legacy-hooks` (V1-specific delegate API surface). Native OpenCode
+`task()` is an OpenCode capability, not a V2 Pantheon delegate API. Do not add
+the V1 plugin beside `plugin-v2` to try to restore V1-specific features: that
+is an unsupported mixed registration.
+
+Choose the target explicitly when needed:
+
+```bash
+npx pantheon-opencode init --opencode-version v1
+npx pantheon-opencode init --opencode-version v2
+npx pantheon-opencode init --opencode-version auto
+```
+
+`--version v1|v2` remains accepted after `init` as the legacy spelling;
+use `--opencode-version auto` for the conservative selector.
+`auto` is conservative, not general platform or runtime autodetection:
+`OPENCODE_VERSION=v1|v2` wins; otherwise an `OPENCODE_BIN` path ending in
+`opencode2` selects V2, and all other cases select V1. It never installs both
+Pantheon plugin generations. Third-party plugin entries are retained as
+third-party entries and are not converted by this selection.
+
+### Config nativo V2
+
+O installer V2 grava campos nativos V2 em vez de shims V1:
+
+- `providers` — configuração de provedores de modelo (formato V2 nativo)
+- `permissions` — array de regras de permissão de tools (formato V2 nativo)
+- `mcp.servers` — registro de servidores MCP (formato V2 nativo)
+
+Exemplo de `opencode.json` V2:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["pantheon-opencode/plugin-v2"],
+  "providers": {
+    "opencode": {
+      "baseURL": "https://opencode.ai/zen/v1"
+    }
+  },
+  "permissions": [
+    {
+      "tool": "pantheon_delegate",
+      "allow": ["zeus", "athena"]
+    }
+  ],
+  "mcp": {
+    "servers": {
+      "pantheon-memory": { "command": "python", "args": ["-m", "pantheon.mcp.memory"] },
+      "pantheon-persistence": { "command": "python", "args": ["-m", "pantheon.mcp.persistence"] }
+    }
+  }
+}
+```
+
+Diferenças do V1:
+
+| Aspecto | V1 | V2 |
+|---|---|---|
+| Plugin registration | singular `plugin` | plural `plugins` |
+| Config shape | `plugin` array | `plugins` array + `providers` + `permissions` |
+| MCP servers | Via `scripts/hooks/` | Via `mcp.servers` nativo |
+| Tools | Via V1 tool hook API | Via `ctx.tool.transform()` |
+| Events | Via V1 event hook API | Via `ctx.event.subscribe()` |
+
+The TUI plugin is a separate component and a separate `tui.json` registration;
+it is not evidence that the V1 runtime was loaded. It is copied and registered
+only when the installer component set includes `plugins`.
+
 ## Instalação Interativa — Wizard 3 Perguntas (default = herdar do chat)
 
 > **Default = herdar do chat (sem `active-preset.json`)** — sem preset ativo, delegates herdam nativamente o modelo do chat pai. O wizard (`scripts/install/model-picker.mjs`) implementa exatamente 3 perguntas via `askQuestions` (ou `readline` fallback), com tabelas geradas de `src/routing.yml`:
@@ -107,7 +191,7 @@ This installs to `.opencode/agents/` in the current project directory.
 
 ## Herança Nativa — sem `active-preset.json` (default)
 
-Desde **v1.4.2** o instalador **não cria** `model`/`small_model` top-level em `opencode.json` e o plugin/wizard **não grava** `active-preset.json` quando o usuário escolhe `0`/`inherit` (default da Q1). Comportamento:
+Desde **v1.5.0** o instalador **não cria** `model`/`small_model` top-level em `opencode.json` e o plugin/wizard **não grava** `active-preset.json` quando o usuário escolhe `0`/`inherit` (default da Q1). Comportamento:
 
 - **Sem preset = herança nativa**: `resolveActivePreset()` retorna `null`; `loadRoutingAgentModels()` retorna `{}`; `delegation.ts` (`resolveChildModel` → `resolveUsableChildModel`) omite `model` em `session.create`/`promptAsync` para que OpenCode herde o modelo do chat pai. `small_model` nunca é usado para delegates.
 - **Ordem de resolução do modelo filho** (fontes sem hardcode de segredos, só nomes):
@@ -136,7 +220,7 @@ npx pantheon-opencode init --preset go-fast
 
 ## `/pantheon-model` — Per-agent Overrides em `active-preset.json`
 
-> **Novo em v1.4.2** — opera **exclusivamente** em `active-preset.json` `overrides.agents[agent]` (project ou global). **Nunca** escreve `.env` e **nunca** injeta `model`/`small_model` top-level em `opencode.json`. Delegação usa herança nativa (sem modelo → herda chat/preset).
+> **Em v1.5.0** — opera **exclusivamente** em `active-preset.json` `overrides.agents[agent]` (project ou global). **Nunca** escreve `.env` e **nunca** injeta `model`/`small_model` top-level em `opencode.json`. No caminho V1, a delegação usa herança nativa (sem modelo → herda chat/preset); o caminho V2 não registra a API de delegação V1.
 
 O comando é determinístico (`src/pantheon/model-command.ts`) — leitura/escrita local sem resolver providers externos, backup `.bak` + rename atômico + `O_NOFOLLOW` + lock por path. Escopo default `project`; `global` exige `confirm` + `authorize_global` separados (`-y` não basta).
 
@@ -176,17 +260,17 @@ O comando é determinístico (`src/pantheon/model-command.ts`) — leitura/escri
 - Escreve via `writeActivePresetAtomically(path, data, current)` — `mkdir -p`, backup `.bak` (se existia), `atomicReplace(path, JSON.stringify(data,null,2))` (`tmp`+`rename` + `fsync` dir), lock `pathLocks` por `path`, preserva `mode` (default `600`)
 - Reinicie OpenCode após sucesso (sem hot-swap). `status` nunca exibe valores de chaves.
 
-**Contraste com legado (≤1.4.1):** antes manipulava `model`/`small_model` top-level em `opencode.json`; agora manipula apenas `overrides.agents`. Instrução em `commands/pantheon-model.md` atualizada para `agent: zeus` + per-agent semantics.
+**Histórico superseded (≤1.4.1):** antes manipulava `model`/`small_model` top-level em `opencode.json`; em 1.5.0 manipula apenas `overrides.agents`. Instrução em `commands/pantheon-model.md` usa `agent: zeus` + per-agent semantics.
 
-## Background Delegation
+## Background Delegation (V1 plugin only)
 
-Pantheon's plugin layer provides **background delegation** via three tools
+Only the V1 Pantheon plugin provides **background delegation** via three tools
 (`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`),
 tracked on a persistent job board with completion notifications injected into
 the board and exposed through list/read, TUI toasts, and compaction
 carry-forward; no completion text is injected into the chat transcript.
 
-**Requirement:** Set the environment variable before launching OpenCode:
+**Requirement for V1:** Set the environment variable before launching OpenCode:
 
 ```bash
 export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
@@ -227,29 +311,38 @@ See the **Background Delegation** section in the [README](../README.md) for the
 notification model, model-resolution order, timeout, read-only enforcement,
 and `background_delegation` routing.yml configuration.
 
+V1 compaction carry-forward is implemented by
+`experimental.session.compacting`. It is not available through `plugin-v2`.
+When the V1 process restarts, running legacy board jobs are marked errored;
+old jobs are not auto-resumed and child work is not restarted automatically.
+The persisted Markdown reports remain historical V1 records. A native V2 task
+may be followed by the TUI only when OpenCode supplies explicit child origin,
+parent and status metadata; a missing Markdown report is not that metadata.
+
 ## TUI Sidebar Plugin
 
-Pantheon includes a TUI sidebar plugin (reduced sidebar with a real-time
+Pantheon includes an optional TUI sidebar plugin (reduced sidebar with a real-time
 Delegations panel) showing:
 
 ```
-Pantheon v1.4.2
+Pantheon v1.5.0
 ⎇ main
 ⚡ Preset: go-fast (file)      ← or "Preset: default" (herança nativa)
 ────────────────────────────
 ▼ Sessions (12)
 ▼ Delegations (3)                 ← real-time panel
   ⠋ [apo-1] apollo — WORKING — find X
-  ✓ [task] hermes — DONE
+  ✓ [native-task] hermes — DONE (quando o host fornece origem explícita)
 ```
 
 - **Header** — Pantheon version, current git branch, and the active model
   preset (`⚡ Preset: <name> (source)`, or `Preset: default`).
 - **Sessions** — collapsible recent-sessions list (click a row to open).
-- **Delegations (real-time, 1.4.2)** — live view sourced from
-  `api.client.session.children`: children spawned by `pantheon_delegate`
-  (board alias tag `[apo-1]`) **and** native `task()` children (`[task]` tag,
-  distinct info color). Animated states
+- **Delegations (real-time)** — the panel can follow children sourced from
+  `api.client.session.children`. V1 `pantheon_delegate` children use the
+  board alias/report contract. Native `task()` children require explicit
+  origin, parent and status metadata from OpenCode; the panel must not infer a
+  native task from a missing Markdown report. Animated states
   (DELEGATING / WORKING / READING RESULT / DONE / DONE (TIMED OUT) / ERROR /
   CANCELLED) with a 140ms spinner; clicking a row navigates to the child
   session. Also reads `.pantheon/delegations/` reports from all sessions, so
@@ -257,7 +350,10 @@ Pantheon v1.4.2
   Diagnostics: every re-fetch logs `panel: children=N md=N events=N` to
   `.pantheon/logs/hooks.log` (silence-by-default).
 
-The plugin is installed automatically during `npm run setup`. It appears in the right sidebar of OpenCode TUI.
+The TUI plugin is installed by `npm run setup` or a selected install that
+includes the `plugins` component. Without that component, no Pantheon TUI
+registration is written. It appears in the right sidebar of OpenCode TUI when
+the host loads the separate `tui.json` registration.
 
 ## Commands
 
@@ -282,7 +378,7 @@ Type these in the OpenCode chat:
 # ver preset ativo (env vence arquivo)
 echo $PANTHEON_MODEL_PRESET
 cat .pantheon/active-preset.json 2>/dev/null || cat ~/.config/opencode/.pantheon/active-preset.json 2>/dev/null || echo "nenhum active-preset.json (herança nativa)"
-cat ~/.config/opencode/opencode.json | grep -A2 '"model"' || echo "sem model top-level (esperado em 1.4.2)"
+cat ~/.config/opencode/opencode.json | grep -A2 '"model"' || echo "sem model top-level (esperado no fluxo 1.5.0)"
 
 # status per-agent (sem segredos)
 /pantheon-model status
@@ -480,28 +576,27 @@ flowchart LR
     E --> F["MCP servers + skills + TUI"]
     F --> G["export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true"]
     G --> H["opencode"]
-    H --> I["🚀 Pantheon v1.0 ready"]
+    H --> I["🚀 Pantheon v1.5.0 ready"]
 ```
 
-## Background Delegation Flow
+## V1 Background Delegation Flow
 
 ```mermaid
 sequenceDiagram
     participant Z as Zeus
-    participant A as Apollo (bg)
-    participant D as Demeter (bg)
-    participant T as Themis (sync)
+    participant A as Apollo (child)
+    participant D as Demeter (child)
+    participant B as V1 Board
 
-    Z->>+A: task(background=true, "discover")
-    Z->>+D: task(background=true, "schema")
-    Note over Z: Max 5 concurrent
+    Z->>+A: pantheon_delegate(prompt, agent)
+    Z->>+D: pantheon_delegate(prompt, agent)
+    A-->>B: terminal state + V1 report
+    D-->>B: terminal state + V1 report
 
-    A-->>Z: task_status(wait=true) → result
-    D-->>Z: task_status(wait=true) → result
+    Z->>B: pantheon_delegation_list()
+    Z->>B: pantheon_delegation_read(id)
 
-    Z->>+T: task("review")
-    Note over T: Athena/Themis NEVER background
-    T-->>-Z: review complete
+    Note over Z: V1 APIs only; V2 uses no Pantheon delegate API
 ```
 
 ## TUI Sidebar Layout
@@ -509,7 +604,7 @@ sequenceDiagram
 ```mermaid
 block-beta
     columns 1
-    block["Pantheon v1.0.0"]
+    block["Pantheon v1.5.0"]
         block("⎇ main")
         end
         block Sessions["▶ Sessions (N total)"]

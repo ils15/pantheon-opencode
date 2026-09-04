@@ -1,12 +1,12 @@
 {
   "name": "pantheon",
   "publisher": "ils15",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "displayName": "Pantheon",
   "description": "Conductor-Delegate orchestration platform with 14 specialized agents, 21 skills, and OpenCode support.",
-  "agents": "./agents",
-  "skills": "./skills",
-  "instructions": "./instructions",
+  "agents": "./src/agents",
+  "skills": "./src/skills",
+  "instructions": "./src/instructions",
   "prompts": "./prompts",
   "repository": "https://github.com/ils15/pantheon-opencode",
   "exports": {

@@ -161,7 +161,14 @@ export function printSummary(target, platforms, stats) {
   if (_quiet) return
 
   const line = '\u2500'.repeat(Math.min(process.stdout.columns || 60, 60))
-  console.log(tag(`${icons.rocket} OpenCode instalado em ${target}`))
+  const hasErrors = stats && stats.errors > 0
+  console.log(
+    tag(
+      hasErrors
+        ? `${icons.warning} Instalação concluída com erros em ${target}`
+        : `${icons.rocket} OpenCode instalado em ${target}`,
+    ),
+  )
   console.log(tag(line))
   console.log('')
 

@@ -1,13 +1,44 @@
 # 🗺️ Pantheon Roadmap
 
-> **Last updated:** v1.0-dev (2026-07-24)
+> **Last updated:** v1.5.0 (2026-09-01)
 >
 > Roadmap atualizado com base em pesquisa do ecossistema awesome-opencode.
 > Sem referências a concorrentes. Foco no que Pantheon já tem e no que falta.
 
 ---
 
-## ✅ v1.0-dev — Em desenvolvimento (Julho 2026)
+## ✅ v1.5.0 — Contrato atual
+
+### Entregue e suportado
+
+| Área | Contrato verificável |
+|---|---|
+| OpenCode V1 | `src/plugin.ts` preserva o plugin legado: `pantheon_delegate`, APIs V1 de leitura/listagem, BackgroundJobBoard, eventos/tool hooks e compaction hook quando registrados no caminho V1. |
+| OpenCode V2 | `pantheon-opencode/plugin-v2` (`src/plugin-v2.ts`) é um adapter de configuração separado; transforma drafts de agents/catalog/commands/references/skills e não registra APIs, hooks, Board ou compaction V1. |
+| Installer | `v1`, `v2` e `auto` selecionam uma única geração de plugin Pantheon. A seleção remove referências Pantheon da outra configuração e não mistura `plugin` V1 com `plugins` V2. |
+| TUI | `pantheon-tui` é componente separado, registrado em `tui.json` somente quando `plugins` é instalado. Native tasks exigem origem, relação parent/child e status fornecidos explicitamente pelo host; ausência de Markdown não é autodetecção. |
+| Histórico e recuperação | `.pantheon/delegations/` é o canal histórico de relatórios V1. A compaction carry-forward existe no caminho V1 comprovado; jobs V1 antigos/running não são auto-retomados após restart e são marcados como erro. |
+
+### Limites que não são promessa de roadmap
+
+- `plugin-v2` não é um adapter de paridade do runtime V1 e não adiciona hooks
+  Pantheon, delegate tools, Board ou auto-resume.
+- `auto` não é autodetecção geral de plataforma/runtime; só usa os hints
+  explícitos documentados em [UPGRADING.md](docs/UPGRADING.md).
+- A classificação de um native task e qualquer continuidade após restart só
+  podem ser ampliadas depois de um contrato do host ser demonstrado e testado.
+
+## 🔭 Próxima iteração — ainda não implementada
+
+- Validar, no host V2, o contrato explícito de origem/status para native tasks
+  antes de ampliar a integração da TUI.
+- Definir uma migração deliberada para relatórios V1, sem tratá-los como
+  protocolo V2 e sem auto-retomar jobs antigos.
+- Documentar apenas novas capacidades depois de validação runtime e regressão.
+
+---
+
+## Histórico — plano v1.0-dev (superseded by v1.5.0)
 
 ### Entregue desde v3.14.0
 
@@ -21,7 +52,7 @@
 
 ---
 
-## 🔜 v1.0 — Próximos Sprints
+## Histórico — plano v1.0 (superseded by v1.5.0)
 
 ### Sprint 1 ✅ — Memory Commands & Limpeza (Concluído)
 
@@ -96,7 +127,7 @@ IntentGate: routing.yml classifica request antes de delegar (regex, zero LLM)
 
 ---
 
-## 🆕 v1.0+ — Novos Sprints (Pesquisa Community-Informed)
+## Histórico — plano v1.0+ (superseded by v1.5.0)
 
 **Baseado em pesquisa do ecossistema awesome-opencode (9k⭐, 300+ plugins)
 por 5 agentes — 2.717 linhas de análise.**
@@ -174,7 +205,7 @@ por 5 agentes — 2.717 linhas de análise.**
 
 ---
 
-## 🧠 Decisões de Arquitetura (v1.x)
+## Histórico — decisões de arquitetura (v1.x)
 
 1. **IntentGate heurístico** — Zero LLM, regex no routing.yml.
 2. **Themis é o diferencial** — Gate de qualidade multi-camada.
@@ -189,9 +220,9 @@ por 5 agentes — 2.717 linhas de análise.**
 
 ---
 
-## 📈 Métricas de Sucesso
+## Histórico — métricas de sucesso planejadas (v1.0)
 
-| Métrica | Atual | v1.0 Target |
+| Métrica | Atual no plano histórico | v1.0 Target |
 |---------|-------|-------------|
 | **npm downloads** | 0 | 500/mo |
 | **awesome-opencode listed** | ❌ | ✅ |
@@ -203,7 +234,7 @@ por 5 agentes — 2.717 linhas de análise.**
 
 ---
 
-## 🔬 Fontes da Pesquisa
+## Histórico — fontes da pesquisa
 
 ### Deepwork Session: roadmap-v4-community
 5 agentes, 2.717 linhas de análise:

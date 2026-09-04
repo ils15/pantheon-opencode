@@ -4,16 +4,15 @@
  * doctor.mjs — Pantheon health check CLI tool
  *
  * Validates that a Pantheon installation is working correctly:
- *   - Agent file presence across canonical → platform
+ *   - Canonical agent file presence
  *   - MCP configuration (gh_grep, Context7, etc.)
  *   - Permission/frontmatter mismatches
- *   - Sync freshness
+ *   - OpenCode artifact freshness
  *   - Git status
  *
  * Usage:
  *   node scripts/doctor.mjs                          # auto-detect, cwd
  *   node scripts/doctor.mjs --target /path/to/project
- *   node scripts/doctor.mjs --platform opencode
  *   node scripts/doctor.mjs --fix                    # attempt auto-fixes
  *   node scripts/doctor.mjs --verbose
  *   node scripts/doctor.mjs --help
@@ -23,7 +22,7 @@
  */
 
 import { spawn as spawnAsync, spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -35,15 +34,6 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 const AGENTS_DIR = join(ROOT, 'src', 'agents')
-const PLATFORM_DIR = join(ROOT, 'platform')
-
-// All known platforms (must match platform/ subdirectories with adapter.json)
-const _ALL_PLATFORMS = ['opencode']
-
-const PLATFORM_LABELS = {
-  opencode: 'OpenCode',
-}
-
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -72,9 +62,6 @@ function parseArgs(argv) {
     switch (argv[i]) {
       case '--target':
         args.target = argv[++i]
-        break
-      case '--platform':
-        args.platform = argv[++i]
         break
       case '--fix':
         args.fix = true
@@ -157,19 +144,18 @@ function showHelp() {
  Usage:
    node scripts/doctor.mjs                              auto-detect, cwd
    node scripts/doctor.mjs --target /path/to/project     target project
-   node scripts/doctor.mjs --platform opencode           specific platform
    node scripts/doctor.mjs --profile global|lite|sandbox profile policy
    node scripts/doctor.mjs --fix                         attempt auto-fixes
    node scripts/doctor.mjs --verbose                     detailed output
    node scripts/doctor.mjs --help                        show this help
 
  Checks:
-   A. Agent Files          — canonical vs platform sync
+   A. Agent Files          — canonical agent files
    B. MCP Configuration    — opencode.json MCP settings (Config layer)
    B.5 MCP Spawn Paths     — local MCP exe/args resolve to existing files
    B.6 MCP Runtime Smoke   — spawn each local MCP + JSON-RPC initialize handshake
    C. Permission Checks    — frontmatter validation
-   D. Sync Status          — npm run sync freshness
+   D. OpenCode Status      — OpenCode artifact layout
    E. Git Status           — uncommitted changes
    F. Runtime Layer        — venv python + pinned pip dependencies
 
@@ -256,7 +242,7 @@ function spawn(prog, args, cwd = null) {
 // Check A: Agent Files
 // ---------------------------------------------------------------------------
 
-function checkAgentFiles(args) {
+function checkAgentFiles() {
   section('A. Agent Files')
 
   const canonical = getCanonicalAgentNames()
@@ -265,86 +251,6 @@ function checkAgentFiles(args) {
     return
   }
   pass(`${canonical.length} canonical agents found in agents/`)
-
-  // Determine which platforms to check
-  if (!existsSync(PLATFORM_DIR)) {
-    info(
-      `Platform component not distributed in this package — platform check skipped (${args.profile} profile)`,
-    )
-    return
-  }
-  const platformDirs = readdirSync(PLATFORM_DIR, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && d.name !== '_template' && d.name !== 'plans')
-    .map((d) => d.name)
-    .filter((name) => !args.platform || name === args.platform)
-
-  if (platformDirs.length === 0) {
-    info(
-      `No platform directories found in platform/ — platform check skipped (${args.profile} profile)`,
-    )
-    return
-  }
-
-  for (const platform of platformDirs) {
-    const adapterPath = join(PLATFORM_DIR, platform, 'adapter.json')
-    if (!existsSync(adapterPath)) {
-      info(`${platform}: no adapter.json — skipping`)
-      continue
-    }
-
-    const adapter = readJson(adapterPath)
-    if (!adapter) {
-      warn(`${platform}: adapter.json parse error — skipping`)
-      continue
-    }
-
-    const label = PLATFORM_LABELS[platform] ?? platform
-    const outputDir = adapter.outputDir ?? 'agents'
-    const ext = adapter.fileExtension ?? '.md'
-    const agentDir = join(PLATFORM_DIR, platform, outputDir)
-
-    if (!existsSync(agentDir)) {
-      if (adapter.skipAgentSync) {
-        info(`${label}: agent sync skipped (skipAgentSync) — n/a`)
-        continue
-      }
-      warn(`${label}: output directory missing: ${agentDir}`)
-      continue
-    }
-
-    if (adapter.skipAgentSync) {
-      info(`${label}: agent sync skipped (skipAgentSync) — skipping agent check`)
-      continue
-    }
-
-    const platformFiles = readdirSync(agentDir)
-      .filter((f) => statSync(join(agentDir, f)).isFile() && f.endsWith(ext))
-      .map((f) => f.replace(new RegExp(`${ext}$`), ''))
-
-    // Check every canonical agent exists in platform output
-    let allPresent = true
-    const missing = []
-    for (const agent of canonical) {
-      if (!platformFiles.includes(agent)) {
-        missing.push(agent)
-        allPresent = false
-      }
-    }
-
-    // Detect phantom agents (in platform but not canonical — stale)
-    const phantom = platformFiles.filter((f) => !canonical.includes(f))
-
-    if (allPresent && phantom.length === 0) {
-      pass(`${label}: all ${canonical.length} agents present`)
-    } else {
-      if (missing.length > 0) {
-        error(`${label}: ${missing.length} canonical agent(s) missing: ${missing.join(', ')}`)
-      }
-      if (phantom.length > 0) {
-        warn(`${label}: ${phantom.length} stale agent(s) in output: ${phantom.join(', ')}`)
-      }
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -364,10 +270,12 @@ export function resolveOpenCodeConfigDir(env = process.env) {
  * @returns {{label:string, path:string, data:object}[]}
  */
 export function collectMcpConfigs(args) {
-  const candidates = [
-    { label: 'project root', path: join(args.target, 'opencode.json') },
-    { label: 'repository root', path: join(ROOT, 'opencode.json') },
-  ]
+  const candidates = [{ label: 'project root', path: join(args.target, 'opencode.json') }]
+  // The package's own template is useful when doctor is run from the
+  // repository, but must not be treated as a user's config from an installed
+  // package. Otherwise every global/project sandbox reports false MCP errors.
+  if (resolve(args.target) === resolve(ROOT))
+    candidates.push({ label: 'repository root', path: join(ROOT, 'opencode.json') })
 
   // OpenCode resolves user configuration independently of cwd. Keep the
   // project-local .opencode config for repository checks, but always include
@@ -495,11 +403,13 @@ function checkMcpConfig(args) {
         )
         continue
       }
-      if (!existsSync(exe)) {
-        error(`${cfg.label}: MCP "${name}" executable does not exist: ${exe}`)
+      const effectiveCwd = resolveMcpCwd(mcpEntry, cfg.path)
+      const effectiveExe = exe.startsWith('/') ? exe : resolve(effectiveCwd, exe)
+      if (!existsSync(effectiveExe)) {
+        error(`${cfg.label}: MCP "${name}" executable does not exist: ${effectiveExe}`)
         continue
       }
-      const deadArgs = cmd.slice(1).filter((a) => a.startsWith('/') && !existsSync(a))
+      const deadArgs = resolveMcpScriptPaths(mcpEntry, cfg.path).filter((path) => !existsSync(path))
       if (deadArgs.length > 0) {
         error(`${cfg.label}: MCP "${name}" has missing script path(s): ${deadArgs.join(', ')}`)
       }
@@ -622,7 +532,11 @@ async function checkMcpRuntimeSmoke(args) {
     for (const [name, entry] of Object.entries(cfg.data.mcp ?? {})) {
       if (!entry || entry.type !== 'local') continue
       if (!Array.isArray(entry.command) || entry.command.length === 0) continue
-      local.push({ name, command: entry.command, cwd: dirname(cfg.path), source: cfg.label })
+      const cwd = resolveMcpCwd(entry, cfg.path)
+      const command = entry.command.map((part, index) =>
+        index === 0 || part.startsWith('-') || part.startsWith('/') ? part : resolve(cwd, part),
+      )
+      local.push({ name, command, cwd, source: cfg.label })
     }
   }
 
@@ -702,8 +616,7 @@ function checkPermissionMismatches(args) {
   }
 
   // Determine which agent directories to check
-  // Validation script checks ~/.config/opencode/agents and platform/opencode/agents
-  // Let's run it regardless
+  // Validate the canonical agents and the OpenCode installation independently.
   info('Running validate-agent-frontmatter.py...')
 
   const result = spawn('python3', [validator])
@@ -789,14 +702,35 @@ function checkPermissionMismatches(args) {
 }
 
 // ---------------------------------------------------------------------------
-// Check D: Sync Status
+// Check D: OpenCode Status
 // ---------------------------------------------------------------------------
 
-function checkSyncStatus(_args) {
-  section('D. Sync Status')
-
-  // Platform sync removed in v1.0 (OpenCode-only)
-  info('Sync check skipped — platform sync was removed in v1.0')
+function checkSyncStatus(args) {
+  section('D. OpenCode Status')
+  const agentsDir = join(args.target, '.opencode', 'agents')
+  if (existsSync(agentsDir)) {
+    pass('OpenCode agents directory is present')
+    // Content gate: validate pantheon://agents CONTENT (zeus/hermes present),
+    // not just connectivity/directory presence.
+    const agentFiles = readdirSync(agentsDir).filter((f) => f.endsWith('.md'))
+    if (agentFiles.length === 0) {
+      warn('OpenCode agents directory is empty — pantheon://agents will serve no agents')
+    } else {
+      const names = new Set(agentFiles.map((f) => f.replace(/\.md$/, '').toLowerCase()))
+      const missingCanonical = ['zeus', 'hermes'].filter((n) => !names.has(n))
+      if (missingCanonical.length > 0) {
+        error(
+          `pantheon://agents content check failed — missing canonical agents in ${agentsDir}: ${missingCanonical.join(', ')}`,
+        )
+      } else {
+        pass(
+          `pantheon://agents content validated (zeus, hermes + ${agentFiles.length - 2} more agents)`,
+        )
+      }
+    }
+  } else {
+    info('OpenCode agents directory not present — project may use global agents')
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -813,8 +747,16 @@ function checkGitStatus(args) {
     return
   }
 
-  // Check for uncommitted changes in agents/ and platform/
-  const gitStatus = spawn('git', ['status', '--porcelain', '--', 'agents/', 'platform/'])
+  // Check the repository source and OpenCode configuration paths.
+  const gitStatus = spawn('git', [
+    'status',
+    '--porcelain',
+    '--',
+    'src/agents/',
+    'src/instructions/',
+    '.opencode/',
+    'opencode.json',
+  ])
 
   if (gitStatus.status !== 0) {
     warn('Could not check git status')
@@ -824,7 +766,7 @@ function checkGitStatus(args) {
   const lines = gitStatus.stdout ? gitStatus.stdout.split('\n').filter(Boolean) : []
 
   if (lines.length === 0) {
-    pass('No uncommitted changes in agents/ or platform/')
+    pass('No uncommitted changes in Pantheon/OpenCode paths')
     return
   }
 
@@ -851,7 +793,7 @@ function checkGitStatus(args) {
   if (deleted.length > 0) details.push(`${deleted.length} deleted`)
   if (untracked.length > 0) details.push(`${untracked.length} untracked`)
 
-  warn(`${total} uncommitted change(s) in agents/ or platform/ (${details.join(', ')})`)
+  warn(`${total} uncommitted change(s) in Pantheon/OpenCode paths (${details.join(', ')})`)
   if (args.verbose) {
     for (const f of modified.slice(0, 10)) {
       console.log(`    M  ${f}`)
@@ -963,8 +905,7 @@ function checkRequirementLine(line, installed) {
 function checkVenvLayer(args) {
   section('F. Runtime Layer — Venv, Python & Dependencies')
 
-  const configDir = resolveOpenCodeConfigDir()
-  const venvPython = join(configDir, '.venv', 'bin', 'python3')
+  const venvPython = resolveRuntimePython(args)
 
   if (!existsSync(venvPython)) {
     if (args.profile === 'lite') {
@@ -1011,6 +952,38 @@ function checkVenvLayer(args) {
     }
     if (checked === 0) warn(`${base}: no requirement entries found`)
   }
+}
+
+/** Resolve the venv created by init for either a project or global install. */
+export function resolveRuntimePython(args) {
+  const target = resolve(args.target)
+  const isProject = existsSync(join(target, '.opencode'))
+  const runtimeRoot = isProject ? target : resolveOpenCodeConfigDir(args.env ?? process.env)
+  return join(runtimeRoot, '.venv', 'bin', 'python3')
+}
+
+/** Return relative script arguments as absolute paths using an MCP entry cwd. */
+export function resolveMcpScriptPaths(entry, configPath = '') {
+  const cwd = resolveMcpCwd(entry, configPath)
+  if (!Array.isArray(entry?.command)) return []
+  return entry.command
+    .slice(1)
+    .filter(
+      (arg) =>
+        typeof arg === 'string' &&
+        !arg.startsWith('-') &&
+        (arg.endsWith('.py') || arg.includes('/')),
+    )
+    .map((arg) => (arg.startsWith('/') ? arg : resolve(cwd, arg)))
+}
+
+/** Resolve an MCP entry's cwd relative to the config file, as OpenCode does. */
+export function resolveMcpCwd(entry, configPath = '') {
+  const configured = entry?.cwd
+  if (typeof configured === 'string' && configured !== '') {
+    return configured.startsWith('/') ? configured : resolve(dirname(configPath), configured)
+  }
+  return dirname(configPath)
 }
 
 // ---------------------------------------------------------------------------
@@ -1285,16 +1258,18 @@ async function main() {
     process.exit(2)
   }
 
-  // Verify it looks like a Pantheon project (has agents/ and platform/)
-  const agentsOk = existsSync(join(args.target, 'agents'))
-  const platformOk = existsSync(join(args.target, 'platform'))
+  // Verify it looks like a Pantheon project or an OpenCode install target.
+  const agentsOk = existsSync(join(args.target, 'src', 'agents'))
+  const opencodeOk = existsSync(join(args.target, '.opencode'))
 
-  if (!agentsOk && !platformOk) {
+  if (!agentsOk && !opencodeOk) {
     // Maybe they pointed at a project root that isn't Pantheon
     // Check if this is a Pantheon install target (has opencode.json with mcp)
     const opencodeJson = readJson(join(args.target, 'opencode.json'))
     if (!opencodeJson) {
-      warn(`Target does not appear to be a Pantheon project (no agents/ or platform/ directory)`)
+      warn(
+        'Target does not appear to be a Pantheon project (no src/agents/ or .opencode/ directory)',
+      )
     }
   }
 
