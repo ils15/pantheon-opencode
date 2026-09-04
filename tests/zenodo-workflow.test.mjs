@@ -306,7 +306,12 @@ test('recovers the single deposition after a runner crash', async () => {
       'https://zenodo.org/api/deposit/depositions',
       'test-token',
       marker,
-      fakeFetch({ hits: { total: 1, hits: [{ id: 42, metadata: { description: marker } }] } }),
+      fakeFetch({
+        hits: {
+          total: { value: 1, relation: 'eq' },
+          hits: [{ id: 42, metadata: { description: marker } }],
+        },
+      }),
     ),
     { id: 42, doi: null },
   )
@@ -371,6 +376,39 @@ test('follows every Zenodo search page and preserves the recovered DOI contract'
   assert.deepEqual(result, { id: 42, doi: '10.5281/zenodo.42' })
 })
 
+test('derives supported page parameters when Zenodo omits pagination links', async () => {
+  const marker = zenodoReleaseMarker('v1.4.3')
+  const requests = []
+  const result = await findUniqueZenodoDeposition(
+    'https://zenodo.org/api/deposit/depositions',
+    'test-token',
+    marker,
+    async (url) => {
+      const requested = new URL(url)
+      requests.push(requested)
+      const page = requested.searchParams.get('page')
+      const payload =
+        page === '1'
+          ? { hits: { total: { value: 2, relation: 'eq' }, hits: [{ id: 7 }] } }
+          : {
+              hits: {
+                total: { value: 2, relation: 'eq' },
+                hits: [{ id: 42, description: marker }],
+              },
+            }
+      return { ok: true, status: 200, json: async () => payload }
+    },
+  )
+  assert.deepEqual(
+    requests.map((url) => [url.searchParams.get('page'), url.searchParams.get('size')]),
+    [
+      ['1', '100'],
+      ['2', '100'],
+    ],
+  )
+  assert.deepEqual(result, { id: 42, doi: null })
+})
+
 test('fails closed for incomplete or ambiguous pagination metadata', async () => {
   const marker = zenodoReleaseMarker('v1.4.3')
   for (const payload of [
@@ -392,28 +430,32 @@ test('fails closed for incomplete or ambiguous pagination metadata', async () =>
   }
 })
 
-test('fails closed when recovery finds zero or multiple exact matches', async () => {
+test('returns no deposition for zero matches and fails closed for multiple matches', async () => {
   const marker = zenodoReleaseMarker('v1.4.3')
-  for (const payload of [
-    { hits: { total: 0, hits: [] } },
-    {
-      hits: {
-        total: 2,
-        hits: [
-          { id: 1, metadata: { description: marker } },
-          { id: 2, metadata: { description: marker } },
-        ],
-      },
-    },
-  ]) {
-    await assert.rejects(
-      findUniqueZenodoDeposition(
-        'https://zenodo.org/api/deposit/depositions',
-        'test-token',
-        marker,
-        fakeFetch(payload),
-      ),
-      /exactly one matching deposition/,
-    )
-  }
+  assert.equal(
+    await findUniqueZenodoDeposition(
+      'https://zenodo.org/api/deposit/depositions',
+      'test-token',
+      marker,
+      fakeFetch({ hits: { total: 0, hits: [] } }),
+    ),
+    null,
+  )
+  await assert.rejects(
+    findUniqueZenodoDeposition(
+      'https://zenodo.org/api/deposit/depositions',
+      'test-token',
+      marker,
+      fakeFetch({
+        hits: {
+          total: 2,
+          hits: [
+            { id: 1, metadata: { description: marker } },
+            { id: 2, metadata: { description: marker } },
+          ],
+        },
+      }),
+    ),
+    /exactly one matching deposition/,
+  )
 })
