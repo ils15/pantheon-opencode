@@ -19,8 +19,24 @@ export async function findUniqueZenodoDeposition(
   releaseMarker,
   fetchImpl = fetch,
 ) {
-  const url = new URL(depositionsUrl)
-  if (url.protocol !== 'https:') throw new Error('Zenodo deposition URL must use HTTPS.')
+  let url
+  try {
+    url = new URL(depositionsUrl)
+  } catch {
+    throw new Error('Zenodo deposition URL must be a valid absolute HTTPS URL.')
+  }
+  if (
+    url.protocol !== 'https:' ||
+    !url.hostname ||
+    url.username ||
+    url.password ||
+    url.hash ||
+    /%(?![0-9A-Fa-f]{2})/.test(depositionsUrl) ||
+    /[\s{}\\|^`]/.test(depositionsUrl)
+  )
+    throw new Error('Zenodo deposition URL must be a valid HTTPS URL without credentials.')
+  if (typeof releaseMarker !== 'string' || !releaseMarker)
+    throw new Error('Zenodo release marker is required.')
   if (typeof token !== 'string' || !token) throw new Error('Zenodo token is required.')
   url.searchParams.set('q', releaseMarker)
   const candidates = []

@@ -6,6 +6,8 @@ import { test } from 'node:test'
 import {
   validateZenodoConfiguration,
   validateZenodoRelease,
+  zenodoDepositionUrl,
+  zenodoTemplateUrl,
 } from '../scripts/validate-zenodo-release.mjs'
 import {
   parseZenodoMarker,
@@ -84,6 +86,51 @@ test('validates absolute HTTPS Zenodo URLs, expected placeholders, and matching 
         creatorName: 'Test Author',
       }),
     /placeholder/,
+  )
+})
+
+test('accepts the four protected environment values without exposing credentials', () => {
+  assert.equal(
+    validateZenodoConfiguration({
+      depositionsUrl: 'https://zenodo.org/api/deposit/depositions',
+      filesUrlTemplate: 'https://zenodo.org/api/deposit/depositions/{id}/files',
+      publishUrlTemplate: 'https://zenodo.org/api/deposit/depositions/{id}/actions/publish',
+      creatorName: 'Author & Researcher',
+    }),
+    true,
+  )
+})
+
+test('builds only validated HTTPS endpoint URLs for a numeric deposition id', () => {
+  assert.equal(
+    zenodoDepositionUrl('https://zenodo.org/api/deposit/depositions', 42),
+    'https://zenodo.org/api/deposit/depositions/42',
+  )
+  assert.equal(
+    zenodoTemplateUrl('https://zenodo.org/api/deposit/depositions/{id}/actions/publish', 42),
+    'https://zenodo.org/api/deposit/depositions/42/actions/publish',
+  )
+})
+
+test('rejects invalid ids, malformed percent escapes, and credentials in endpoints', () => {
+  assert.throws(() => zenodoDepositionUrl('https://zenodo.org/api/depositions', 0), /invalid/)
+  assert.throws(
+    () => zenodoTemplateUrl('https://zenodo.org/api/depositions/{id}%ZZ/files', 42),
+    /HTTPS URL/,
+  )
+  assert.throws(
+    () => zenodoDepositionUrl('https://zenodo.org/api/depositions with-space', 42),
+    /HTTPS URL/,
+  )
+  assert.throws(
+    () =>
+      validateZenodoConfiguration({
+        depositionsUrl: 'https://user:secret@zenodo.org/api/depositions',
+        filesUrlTemplate: 'https://zenodo.org/api/depositions/{id}/files',
+        publishUrlTemplate: 'https://zenodo.org/api/depositions/{id}/publish',
+        creatorName: 'Author',
+      }),
+    /without credentials/,
   )
 })
 

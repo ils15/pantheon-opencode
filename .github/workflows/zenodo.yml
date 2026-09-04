@@ -155,10 +155,12 @@ jobs:
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/zenodo/pantheon-opencode-${{ steps.metadata.outputs.version }}.tar.gz"
-          files_url=${ZENODO_FILES_URL_TEMPLATE//\{id\}/$DEPOSITION_ID}
-          publish_url=${ZENODO_PUBLISH_URL_TEMPLATE//\{id\}/$DEPOSITION_ID}
+          urls=$(DEPOSITIONS_URL="$ZENODO_DEPOSITIONS_URL" FILES_TEMPLATE="$ZENODO_FILES_URL_TEMPLATE" PUBLISH_TEMPLATE="$ZENODO_PUBLISH_URL_TEMPLATE" DEPOSITION_ID="$DEPOSITION_ID" node --input-type=module -e 'import { zenodoDepositionUrl, zenodoTemplateUrl } from "./.zenodo-workflow/scripts/validate-zenodo-release.mjs"; const id=Number(process.env.DEPOSITION_ID); process.stdout.write(JSON.stringify({ record: zenodoDepositionUrl(process.env.DEPOSITIONS_URL, id), files: zenodoTemplateUrl(process.env.FILES_TEMPLATE, id, "ZENODO_FILES_URL_TEMPLATE"), publish: zenodoTemplateUrl(process.env.PUBLISH_TEMPLATE, id, "ZENODO_PUBLISH_URL_TEMPLATE") }))')
+          record_url=$(printf '%s' "$urls" | node -e 'process.stdin.on("data", d => process.stdout.write(JSON.parse(d).record))')
+          files_url=$(printf '%s' "$urls" | node -e 'process.stdin.on("data", d => process.stdout.write(JSON.parse(d).files))')
+          publish_url=$(printf '%s' "$urls" | node -e 'process.stdin.on("data", d => process.stdout.write(JSON.parse(d).publish))')
           record="$RUNNER_TEMP/zenodo-record.json"
-          curl --fail-with-body --silent --show-error --retry 2 --retry-all-errors "$ZENODO_DEPOSITIONS_URL/$DEPOSITION_ID" -H "Authorization: Bearer $ZENODO_TOKEN" > "$record"
+          curl --fail-with-body --silent --show-error --retry 2 --retry-all-errors "$record_url" -H "Authorization: Bearer $ZENODO_TOKEN" > "$record"
           submitted=$(node -e "const r=require(process.argv[1]); process.stdout.write(r.submitted?'true':'false')" "$record")
           if [ "$submitted" = true ]; then
             doi=$(RESPONSE_FILE="$record" node --input-type=module -e 'import { readFileSync } from "node:fs"; import { validateZenodoResponse } from "./.zenodo-workflow/scripts/zenodo-release-state.mjs"; const response = JSON.parse(readFileSync(process.env.RESPONSE_FILE, "utf8")); process.stdout.write(validateZenodoResponse(response, { requireDoi: true }).doi)') || { echo '::error::Published Zenodo deposition has no DOI.'; exit 1; }

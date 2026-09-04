@@ -84,8 +84,11 @@ non-secret variables `ZENODO_DEPOSITIONS_URL`, `ZENODO_FILES_URL_TEMPLATE`,
 Zenodo instance, using `{id}` where applicable), and `ZENODO_CREATOR_NAME`.
 The workflow intentionally does not assume Zenodo Cloud versus Sandbox
 endpoints; verify these values against the instance API before enabling the
-environment. It validates the tag and manifests, accepts an optional
-`CITATION.cff`, records the deposition ID in release notes, and never invents a DOI.
+environment. It validates and safely composes every endpoint (including encoded
+recovery queries and numeric deposition IDs), fails closed on malformed values,
+and preserves idempotent reruns. It validates the tag and manifests, accepts an
+optional `CITATION.cff`, records the deposition ID in release notes, and never
+invents a DOI.
 
 ## Project limits
 
