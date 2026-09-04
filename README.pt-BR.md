@@ -1,102 +1,104 @@
-<h1 align="center">Pantheon</h1>
+# Pantheon
 
-<p align="center">
-  <strong>Orquestração multiagente para OpenCode.</strong><br>
-  Planeje, implemente, revise e documente software com agentes especializados,
-  memória persistente e gates explícitos de qualidade.
-</p>
+**Uma forma mais clara de trabalhar com OpenCode em projetos reais.** O
+Pantheon reúne planejamento, implementação, revisão e documentação em uma
+experiência guiada. É um plugin e instalador para OpenCode, feito para pessoas
+e equipes que querem mais estrutura sem perder o controle do próprio código.
 
-<p align="center">
-  <a href="README.md">English</a> ·
-  <a href="https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.3">v1.4.3</a> ·
-  <a href="LICENSE">Licença MIT</a> ·
-  <a href="https://doi.org/10.5281/zenodo.22306637"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg" alt="DOI: 10.5281/zenodo.22306637"></a>
-</p>
+[English](README.md) ·
+[Repositório](https://github.com/ils15/pantheon-opencode) · [Licença MIT](LICENSE)
 
-## O que ele faz
+[![Versão](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=versão)](https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.3)
+[![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg)](https://doi.org/10.5281/zenodo.22306637)
 
-Pantheon é um plugin e instalador para OpenCode que coordena 14 agentes
-especializados. Zeus orquestra o trabalho, enquanto planejamento,
-implementação, revisão, memória e operações do GitHub são atribuídos a agentes
-focados, em vez de um único contexto generalista.
+## O que é?
 
-O repositório contém atualmente 21 skills reutilizáveis e 7 definições de
-comandos slash. Essas contagens vêm de `src/agents/`, `src/skills/` e
-`commands/`.
+O Pantheon é um companheiro para o [OpenCode](https://opencode.ai/) que ajuda a
+transformar uma ideia em uma alteração revisada. Ele oferece uma forma comum
+de planejar o trabalho, avançar, conferir resultados e preservar o contexto
+útil do projeto.
 
-## Início rápido
+## Por que usar?
 
-Requisitos: Node.js 18+, OpenCode 1.18.4+ e Python 3.11+ quando os servidores
-MCP estiverem habilitados.
+- **Menos troca de contexto:** planeje e construa no mesmo fluxo.
+- **Alterações mais conscientes:** peça revisões e verificações antes de
+  considerar o trabalho concluído.
+- **Um ponto de partida repetível:** use a mesma configuração em projetos e
+  com colaboradores diferentes.
+- **Você continua no comando:** o Pantheon apoia suas decisões, mas não
+  substitui seu julgamento nem a revisão do código gerado.
+
+## Comece em 2 minutos
+
+Requisitos: [OpenCode 1.18.4+](https://opencode.ai/docs/) e Node.js 18+.
+
+No projeto em que você quer usar o Pantheon:
 
 ```bash
-cd seu-projeto
 npx pantheon-opencode init
-npm run doctor
 opencode
 ```
 
-Para configurar MCP, execute `npm run setup`. Consulte o
-[guia de instalação](docs/INSTALLATION.md) para opções interativas e headless.
+O instalador orienta você pelas opções disponíveis. Para servidores MCP
+opcionais, instalação local no projeto ou uso sem perguntas, consulte o
+[guia de instalação](docs/INSTALLATION.md).
+
+## Um exemplo simples
+
+Com o OpenCode em execução, descreva o resultado que você quer:
+
+```text
+/pantheon Adicione exportação CSV à página de relatórios, com testes e revisão.
+```
+
+O Pantheon ajuda a transformar esse pedido em um plano e em etapas revisadas.
+
+## Para quem é?
+
+Para desenvolvedores, mantenedores e equipes que usam OpenCode e querem uma
+forma mais consistente de lidar com correções pequenas e mudanças maiores. É
+especialmente útil quando o projeto se beneficia de decisões registradas,
+verificações repetíveis e passagens claras entre etapas do trabalho.
+
+## O que inclui?
+
+- Um instalador guiado para disponibilizar o Pantheon no OpenCode.
+- Instruções e comandos reutilizáveis para planejar, construir, revisar e
+  documentar o trabalho.
+- Memória de projeto para preservar contexto relevante entre sessões.
+- Integrações opcionais para tarefas comuns de desenvolvimento.
+
+## Status
+
+Versão atual: **v1.4.3**. O Pantheon foi feito para OpenCode e depende da
+disponibilidade e da configuração do OpenCode e dos serviços opcionais que você
+escolher. Veja as [releases](https://github.com/ils15/pantheon-opencode/releases)
+e o [changelog](CHANGELOG.md) para acompanhar as mudanças.
 
 ## Documentação
 
 - [Instalação](docs/INSTALLATION.md) · [Início rápido](docs/QUICKSTART.md)
-- [Referência de agentes](docs/agents/README.md) · [Referência de skills](src/skills/README.md)
 - [Arquitetura](docs/ARCHITECTURE.md) · [Ferramentas MCP](docs/mcp-tools.md)
-- [Releases](docs/RELEASING.md) · [Contribuição](CONTRIBUTING.md)
+- [Plataformas](docs/PLATFORMS.md) · [Atualização](docs/UPGRADING.pt-BR.md)
+- [Referência de agentes](docs/agents/README.md) · [Referência de skills](src/skills/README.md)
+- [Processo de release](docs/RELEASING.md) · [Contribuição](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 
-O README em inglês é a documentação canônica; este arquivo oferece uma visão
-geral em português e aponta para os mesmos guias detalhados.
+## Contribua
 
-## Releases beta
+Ideias, relatos de problemas, melhorias na documentação e contribuições de
+código são bem-vindos. Leia [CONTRIBUTING.md](CONTRIBUTING.md) antes de abrir
+uma issue ou pull request.
 
-Um pull request com o label exatamente `release:beta` aciona o fluxo beta do
-workflow `Release`. Ele publica uma pré-release no npm com a dist-tag `beta` e
-uma pré-release no GitHub; pushes comuns não publicam versões beta. A
-recuperação beta só ocorre por dispatch explícito com todos os parâmetros
-exigidos. Consulte [docs/RELEASING.md](docs/RELEASING.md) para os detalhes.
+## Citação e DOI
 
-## Contribuição
-
-Leia [CONTRIBUTING.md](CONTRIBUTING.md) antes de abrir um pull request. As
-alterações são validadas pela CI; releases estáveis só são publicadas pelo
-dispatch explícito do workflow `Release` do GitHub Actions, descrito em
-[docs/RELEASING.md](docs/RELEASING.md).
-
-### Integração de releases com o Zenodo
-
-`.github/workflows/zenodo.yml` é executado apenas para um GitHub Release
-publicado ou por dispatch manual com confirmação explícita de produção.
-Configure o ambiente protegido `zenodo-production` com o segredo
-`ZENODO_TOKEN` e as variáveis não secretas `ZENODO_DEPOSITIONS_URL`,
-`ZENODO_FILES_URL_TEMPLATE`, `ZENODO_PUBLISH_URL_TEMPLATE` (os endpoints exatos
-documentados pela instância Zenodo selecionada, usando `{id}` quando aplicável)
-e `ZENODO_CREATOR_NAME`. O workflow não presume endpoints do Zenodo Cloud ou
-Sandbox; confirme esses valores na API da instância antes de habilitar o
-ambiente. Ele valida a tag e os manifestos, aceita um `CITATION.cff` opcional,
-registra o ID do depósito nas notas da release e nunca inventa um DOI.
-As quatro variáveis são passadas explicitamente a cada step que as utiliza; a
-validação também emite apenas presença, protocolo e host mascarado, sem
-imprimir URLs completas ou credenciais. Espaços ocultos continuam inválidos.
-Em dispatchs manuais, `publish_deposition: false` cria ou retoma um rascunho
-e verifica metadados, arquivo enviado e SHA-256 antes da publicação. Use
-`true` somente em um segundo dispatch deliberado; o arquivo sempre é criado a
-partir do commit exato da tag da release.
-
-## Limites do projeto
-
-O Pantheon é um plugin e instalador para OpenCode, não um serviço hospedado de
-orquestração. Ele não fornece acesso a modelos, chaves de API, cotas nem
-garantias sobre provedores externos e serviços MCP opcionais. Esses serviços
-exigem contas, credenciais, disponibilidade e configuração próprias. Agentes
-também podem cometer erros; revise o trabalho gerado e mantenha os gates de
-qualidade do repositório habilitados.
-
-## Licença e citação
-
-Pantheon é distribuído sob a [Licença MIT](LICENSE). Os metadados de citação
-estão em [CITATION.cff](CITATION.cff).
+O Pantheon é distribuído sob a [Licença MIT](LICENSE). Para o registro publicado
+da v1.4.3, use o [DOI do Zenodo](https://doi.org/10.5281/zenodo.22306637); os
+metadados de citação também estão em [CITATION.cff](CITATION.cff).
 
 Repositório canônico: <https://github.com/ils15/pantheon-opencode>
+
+---
+
+[Read in English](README.md)
