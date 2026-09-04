@@ -76,6 +76,9 @@ e `ZENODO_CREATOR_NAME`. O workflow não presume endpoints do Zenodo Cloud ou
 Sandbox; confirme esses valores na API da instância antes de habilitar o
 ambiente. Ele valida a tag e os manifestos, aceita um `CITATION.cff` opcional,
 registra o ID do depósito nas notas da release e nunca inventa um DOI.
+As quatro variáveis são passadas explicitamente a cada step que as utiliza; a
+validação também emite apenas presença, protocolo e host mascarado, sem
+imprimir URLs completas ou credenciais. Espaços ocultos continuam inválidos.
 
 ## Limites do projeto
 

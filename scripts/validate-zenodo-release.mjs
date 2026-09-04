@@ -28,6 +28,48 @@ function validateHttpsUrl(value, name) {
   return url
 }
 
+function maskHost(hostname) {
+  if (hostname.length <= 2) return '***'
+  return `${hostname[0]}***${hostname.at(-1)}`
+}
+
+export function summarizeZenodoConfiguration({
+  depositionsUrl,
+  filesUrlTemplate,
+  publishUrlTemplate,
+  creatorName,
+}) {
+  const values = [
+    ['ZENODO_DEPOSITIONS_URL', depositionsUrl, true],
+    ['ZENODO_FILES_URL_TEMPLATE', filesUrlTemplate, true],
+    ['ZENODO_PUBLISH_URL_TEMPLATE', publishUrlTemplate, true],
+    ['ZENODO_CREATOR_NAME', creatorName, false],
+  ]
+  return values.map(([name, value, isUrl]) => {
+    if (typeof value !== 'string' || !value) return { name, present: false }
+    if (!isUrl) return { name, present: true }
+    try {
+      const url = new URL(value.replaceAll('{id}', '1'))
+      return {
+        name,
+        present: true,
+        protocol: url.protocol,
+        host: maskHost(url.hostname),
+        hasWhitespace: /\s/.test(value),
+        hasCredentials: Boolean(url.username || url.password),
+      }
+    } catch {
+      return {
+        name,
+        present: true,
+        protocol: 'invalid',
+        host: '***',
+        hasWhitespace: /\s/.test(value),
+      }
+    }
+  })
+}
+
 export function zenodoTemplateUrl(template, id, name = 'Zenodo URL template') {
   if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Zenodo deposition id is invalid.')
   if (typeof template !== 'string' || !template.includes('{id}'))
