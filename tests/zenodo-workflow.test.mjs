@@ -50,20 +50,36 @@ function unclosedHeredocs(source) {
   return pending
 }
 
-test('resolves every workflow script from a versioned checkout', () => {
+test('resolves every workflow script from one versioned tooling checkout', () => {
   assert.match(workflow, /path: \.zenodo-workflow/)
   assert.match(workflow, /ref: \$\{\{ github\.workflow_sha \}\}/)
 
-  const referencedScripts = [
-    ...workflow.matchAll(/(?:node\s+|from\s+['"])((?:\.zenodo-workflow\/)?\/?scripts\/[^'"\s)]+)/g),
-  ].map((match) => match[1].replace(/^\.zenodo-workflow\//, ''))
-
-  assert.ok(referencedScripts.length > 0, 'expected Zenodo workflow script references')
-  for (const script of new Set(referencedScripts)) {
+  const toolingScripts = [
+    'validate-zenodo-release.mjs',
+    'recover-zenodo-deposition.mjs',
+    'zenodo-release-state.mjs',
+  ]
+  const firstNodeImport = workflow.indexOf('node ')
+  const toolingPreflight = workflow.indexOf('test -f "$tooling_dir/$script"')
+  assert.ok(toolingPreflight >= 0, 'expected tooling files preflight')
+  assert.ok(toolingPreflight < firstNodeImport, 'preflight must precede every node import')
+  for (const script of toolingScripts) {
     assert.ok(
-      existsSync(join(process.cwd(), script)),
-      `workflow references missing script: ${script}`,
+      existsSync(join(process.cwd(), 'scripts', script)),
+      `repository tooling is missing ${script}`,
     )
+    assert.match(workflow, new RegExp(`\\.zenodo-workflow/scripts/${script}`))
+    assert.match(workflow, /test -f "\$tooling_dir\/\$script"/)
+  }
+})
+
+test('never imports Zenodo modules from the release checkout', () => {
+  for (const module of [
+    'validate-zenodo-release.mjs',
+    'recover-zenodo-deposition.mjs',
+    'zenodo-release-state.mjs',
+  ]) {
+    assert.doesNotMatch(workflow, new RegExp(`(?:node\\s+|from\\s+['"])scripts/${module}`))
   }
 })
 
@@ -94,7 +110,12 @@ test('simulates the idempotent deposition creation step with stubbed network com
   mkdirSync(join(runnerTemp, 'zenodo'), { recursive: true })
   mkdirSync(join(fixture, 'scripts'), { recursive: true })
   mkdirSync(join(fixture, '.zenodo-workflow/scripts'), { recursive: true })
-  for (const name of ['recover-zenodo-deposition.mjs', 'zenodo-release-state.mjs']) {
+  for (const name of [
+    'validate-zenodo-release.mjs',
+    'recover-zenodo-deposition.mjs',
+    'zenodo-release-state.mjs',
+    'version-check.mjs',
+  ]) {
     cpSync(join(process.cwd(), `scripts/${name}`), join(fixture, `scripts/${name}`))
     cpSync(
       join(process.cwd(), `scripts/${name}`),
