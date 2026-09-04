@@ -13,6 +13,19 @@ function depositionDescription(deposition) {
     .join('\n')
 }
 
+function exactTotal(value) {
+  if (Number.isSafeInteger(value) && value >= 0) return value
+  if (
+    value &&
+    typeof value === 'object' &&
+    Number.isSafeInteger(value.value) &&
+    value.value >= 0 &&
+    (value.relation === undefined || value.relation === 'eq')
+  )
+    return value.value
+  return null
+}
+
 export async function findUniqueZenodoDeposition(
   depositionsUrl,
   token,
@@ -39,9 +52,14 @@ export async function findUniqueZenodoDeposition(
     throw new Error('Zenodo release marker is required.')
   if (typeof token !== 'string' || !token) throw new Error('Zenodo token is required.')
   url.searchParams.set('q', releaseMarker)
+  // Zenodo documents page/size for this endpoint.  The response's links are
+  // optional, so keep a deterministic fallback for the real hits/total shape.
+  url.searchParams.set('page', '1')
+  url.searchParams.set('size', '100')
   const candidates = []
   const visitedUrls = new Set()
   let nextUrl = url
+  let pageNumber = 1
   let expectedTotal = null
   while (nextUrl) {
     const currentUrl = String(nextUrl)
@@ -57,12 +75,7 @@ export async function findUniqueZenodoDeposition(
     }
     const page = payload?.hits?.hits
     const total = payload?.hits?.total
-    const normalizedTotal =
-      Number.isSafeInteger(total) && total >= 0
-        ? total
-        : Number.isSafeInteger(total?.value) && total.value >= 0
-          ? total.value
-          : null
+    const normalizedTotal = exactTotal(total)
     if (!Array.isArray(page) || normalizedTotal === null)
       throw new Error('Zenodo search returned ambiguous pagination.')
     if (expectedTotal !== null && expectedTotal !== normalizedTotal)
@@ -70,10 +83,18 @@ export async function findUniqueZenodoDeposition(
     expectedTotal = normalizedTotal
     candidates.push(...page)
     const rawNext = payload?.links?.next
-    if (rawNext === null || rawNext === undefined || rawNext === '') {
-      if (candidates.length < expectedTotal)
-        throw new Error('Zenodo search ended before all results were examined.')
+    if (candidates.length >= expectedTotal) {
       nextUrl = null
+    } else if (rawNext === null || rawNext === undefined || rawNext === '') {
+      // Some Zenodo Cloud responses omit links entirely.  Continue with the
+      // documented page parameter instead of treating the first page as the
+      // complete search result.
+      if (page.length === 0)
+        throw new Error('Zenodo search ended before all results were examined.')
+      pageNumber += 1
+      const pagedNext = new URL(url)
+      pagedNext.searchParams.set('page', String(pageNumber))
+      nextUrl = pagedNext
     } else {
       if (typeof rawNext !== 'string')
         throw new Error('Zenodo search returned an invalid pagination link.')
@@ -89,6 +110,10 @@ export async function findUniqueZenodoDeposition(
         parsedNext.pathname !== url.pathname
       )
         throw new Error('Zenodo search returned an unsafe pagination link.')
+      const linkedPage = Number(parsedNext.searchParams.get('page'))
+      if (Number.isSafeInteger(linkedPage) && linkedPage > pageNumber) {
+        pageNumber = linkedPage
+      }
       nextUrl = parsedNext
     }
   }
@@ -97,6 +122,7 @@ export async function findUniqueZenodoDeposition(
   const matches = candidates.filter((deposition) =>
     markerPattern.test(depositionDescription(deposition)),
   )
+  if (matches.length === 0) return null
   if (matches.length !== 1) {
     throw new Error(
       `Zenodo recovery requires exactly one matching deposition; found ${matches.length}.`,
