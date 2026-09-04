@@ -11,6 +11,7 @@ abstract: >-
 version: 1.4.3
 date-released: 2026-09-03
 url: https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.3
+doi: 10.5281/zenodo.22306637
 repository-code: https://github.com/ils15/pantheon-opencode
 license: MIT
 authors:
