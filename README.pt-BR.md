@@ -76,6 +76,11 @@ disponibilidade e da configuração do OpenCode e dos serviços opcionais que vo
 escolher. Veja as [releases](https://github.com/ils15/pantheon-opencode/releases)
 e o [changelog](CHANGELOG.md) para acompanhar as mudanças.
 
+
+## Releases beta
+
+Um pull request com o label exato `release:beta` aciona o fluxo de release beta. Consulte [docs/RELEASING.md](docs/RELEASING.md) para detalhes de validação e recuperação.
+
 ## Documentação
 
 - [Instalação](docs/INSTALLATION.md) · [Início rápido](docs/QUICKSTART.md)
