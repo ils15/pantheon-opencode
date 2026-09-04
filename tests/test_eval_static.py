@@ -1,4 +1,3 @@
-# noqa: N999
 """Tests for eval-static.py — static structural checks for skill/agent dirs.
 
 Loads the script from .pantheon/code-mode/ via importlib (same pattern as
@@ -69,7 +68,10 @@ def test_valid_skill_cli_exit_zero(tmp_path: Path) -> None:
     (d / "guide.md").write_text("# g\n", encoding="utf-8")
 
     proc = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), str(d)], capture_output=True, text=True
+        [sys.executable, str(SCRIPT_PATH), str(d)],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert proc.returncode == 0, proc.stderr
     report = json.loads(proc.stdout)

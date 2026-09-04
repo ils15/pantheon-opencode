@@ -10,7 +10,7 @@
  * If the user hasn't initialized yet → do nothing (silent exit).
  */
 import { execSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -124,7 +124,7 @@ try {
   const sourceVersion = readVersion(join(tuiSrcDir, 'package.json'))
 
   // Copy fresh files
-  const { created, skipped } = copyPluginFiles(tuiSrcDir, tuiCopyDir)
+  const { created } = copyPluginFiles(tuiSrcDir, tuiCopyDir)
 
   // Refresh dependencies in the copy
   try {

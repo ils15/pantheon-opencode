@@ -456,7 +456,7 @@ class TestMemoryRecall:
         )
         text = _text_from_tool(result)
         # Returns None (serialized as JSON null)
-        assert text == "null" or text == "" or text is None
+        assert text in {"null", ""} or text is None
 
     async def test_recall_no_key(self, server: FastMCP) -> None:
         """Empty key should return null."""
@@ -465,7 +465,7 @@ class TestMemoryRecall:
             {"key": ""},
         )
         text = _text_from_tool(result)
-        assert text == "null" or text == "" or text is None
+        assert text in {"null", ""} or text is None
 
 
 class TestMemoryForget:
@@ -661,7 +661,7 @@ class TestErrorHandling:
             {"key": "nonexistent_key"},
         )
         text = _text_from_tool(result)
-        assert text == "null" or text == "" or text is None
+        assert text in {"null", ""} or text is None
 
     async def test_list_large_limit(self, server: FastMCP) -> None:
         """Large limit should be clamped without error."""

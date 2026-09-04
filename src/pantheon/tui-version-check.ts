@@ -44,9 +44,7 @@ function readVersion(pkgPath: string): string | null {
  *
  * @param logger - Logging function (defaults to console.warn)
  */
-export function checkTuiVersionStaleness(
-  logger: (msg: string) => void = console.warn,
-): void {
+export function checkTuiVersionStaleness(logger: (msg: string) => void = console.warn): void {
   try {
     const configDir = resolveConfigDir()
     if (!configDir) return // Not initialized — nothing to check

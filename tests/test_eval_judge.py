@@ -1,4 +1,3 @@
-# noqa: N999
 """Tests for eval-llm-judge.py (LLM judge layer of the plugin-eval pipeline).
 
 The HTTP call is mocked at urllib.request.urlopen — no network access.
@@ -13,7 +12,6 @@ import io
 import json
 import urllib.error
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -50,7 +48,7 @@ class _FakeResponse:
             {"choices": [{"message": {"role": "assistant", "content": content}}]}
         ).encode("utf-8")
 
-    def __enter__(self) -> "_FakeResponse":
+    def __enter__(self) -> _FakeResponse:
         return self
 
     def __exit__(self, *exc: object) -> bool:
@@ -100,7 +98,7 @@ def test_successful_judgement_shape(
     """A valid LLM reply yields the spec'd JSON shape and one structured POST."""
     captured: dict[str, Any] = {}
 
-    def fake_urlopen(request, timeout):  # noqa: ANN001, ARG001
+    def fake_urlopen(request, timeout):
         captured["url"] = request.full_url
         captured["body"] = json.loads(request.data.decode("utf-8"))
         return _fake_response(json.dumps(VALID_SCORES))
@@ -136,7 +134,7 @@ def test_openai_base_url_override(
     """OPENAI_BASE_URL redirects the endpoint; default model applies otherwise."""
     seen_urls: list[str] = []
 
-    def fake_urlopen(request, timeout):  # noqa: ANN001, ARG001
+    def fake_urlopen(request, timeout):
         seen_urls.append(request.full_url)
         return _fake_response(json.dumps(VALID_SCORES))
 
@@ -163,7 +161,7 @@ def test_invalid_endpoint_is_rejected(
 def test_request_timeout_is_reported(
     skill_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
-    def timeout_urlopen(request, timeout):  # noqa: ANN001
+    def timeout_urlopen(request, timeout):
         assert timeout == MOD.REQUEST_TIMEOUT
         raise TimeoutError("slow endpoint")
 
@@ -177,7 +175,7 @@ def test_fenced_json_accepted(skill_dir: Path, monkeypatch: pytest.MonkeyPatch):
     """Models that wrap JSON in code fences are still parsed."""
     fenced = "```json\n" + json.dumps(VALID_SCORES) + "\n```"
 
-    def fake_urlopen(request, timeout):  # noqa: ANN001, ARG001
+    def fake_urlopen(request, timeout):
         return _fake_response(fenced)
 
     monkeypatch.setattr(MOD.urllib.request, "urlopen", fake_urlopen)
@@ -189,7 +187,7 @@ def test_fenced_json_accepted(skill_dir: Path, monkeypatch: pytest.MonkeyPatch):
 
 def test_http_error_exits_2(skill_dir: Path, monkeypatch: pytest.MonkeyPatch):
     """An HTTP error from the endpoint surfaces as a clean exit-2 message."""
-    def fake_urlopen(request, timeout):  # noqa: ANN001, ARG001
+    def fake_urlopen(request, timeout):
         raise urllib.error.HTTPError(
             request.full_url, 503, "unavailable", None, io.BytesIO(b"down")
         )
@@ -205,7 +203,7 @@ def test_out_of_range_score_exits_2(skill_dir: Path, monkeypatch: pytest.MonkeyP
     """Scores outside 0-100 are rejected instead of trusted."""
     bad = {**VALID_SCORES, "security": 150}
 
-    def fake_urlopen(request, timeout):  # noqa: ANN001, ARG001
+    def fake_urlopen(request, timeout):
         return _fake_response(json.dumps(bad))
 
     monkeypatch.setattr(MOD.urllib.request, "urlopen", fake_urlopen)

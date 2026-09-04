@@ -144,12 +144,8 @@ export interface IdleChildScanDeps {
  *
  * @returns Number of children finalized (for diagnostics).
  */
-export async function finalizeIdleChildrenWithoutMd(
-  deps: IdleChildScanDeps,
-): Promise<number> {
-  const runningJobs = deps.board
-    .list()
-    .filter((j: BackgroundJobRecord) => j.state === 'running')
+export async function finalizeIdleChildrenWithoutMd(deps: IdleChildScanDeps): Promise<number> {
+  const runningJobs = deps.board.list().filter((j: BackgroundJobRecord) => j.state === 'running')
 
   let finalized = 0
   for (const job of runningJobs) {
@@ -161,9 +157,7 @@ export async function finalizeIdleChildrenWithoutMd(
       await deps.finalize(job.taskID, { state: 'completed' })
       finalized++
     } catch (err) {
-      deps.logger?.warn?.(
-        `[delegation-notify] proactive finalize failed for ${job.taskID}: ${err}`,
-      )
+      deps.logger?.warn?.(`[delegation-notify] proactive finalize failed for ${job.taskID}: ${err}`)
     }
   }
   return finalized

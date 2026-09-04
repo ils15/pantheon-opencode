@@ -28,10 +28,10 @@ import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
 import { createDelegationTools, type FinalizeInput } from '../../src/pantheon/delegation.ts'
 import {
   type DelegationEventLike,
-  handleDelegationEvent,
   finalizeIdleChildrenWithoutMd,
-  startIdleChildScan,
+  handleDelegationEvent,
   IDLE_SCAN_INTERVAL_MS,
+  startIdleChildScan,
 } from '../../src/pantheon/delegation-notify.ts'
 
 // ─── Harness ───────────────────────────────────────────────────────────
@@ -234,157 +234,146 @@ async function main() {
     },
   )
 
-  await testAsync(
-    'finalizeIdleChildrenWithoutMd: skips non-running jobs',
-    async () => {
-      const board = new BackgroundJobBoard()
-      await board.registerLaunch({
-        taskID: 'child_completed',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Already done',
-      })
-      await board.updateStatus({ taskID: 'child_completed', state: 'completed' })
+  await testAsync('finalizeIdleChildrenWithoutMd: skips non-running jobs', async () => {
+    const board = new BackgroundJobBoard()
+    await board.registerLaunch({
+      taskID: 'child_completed',
+      parentSessionID: ROOT,
+      agent: 'apollo',
+      description: 'Already done',
+    })
+    await board.updateStatus({ taskID: 'child_completed', state: 'completed' })
 
-      const finalizedIDs: string[] = []
-      const deps = {
-        board,
-        finalize: async (id: string) => {
-          finalizedIDs.push(id)
-          return {}
+    const finalizedIDs: string[] = []
+    const deps = {
+      board,
+      finalize: async (id: string) => {
+        finalizedIDs.push(id)
+        return {}
+      },
+      hasReport: () => false,
+    }
+
+    const count = await finalizeIdleChildrenWithoutMd(deps)
+    assert.equal(count, 0, 'no children finalized for non-running jobs')
+    assert.deepEqual(finalizedIDs, [])
+  })
+
+  await testAsync('finalizeIdleChildrenWithoutMd: fail-open on hasReport error', async () => {
+    const board = new BackgroundJobBoard()
+    await board.registerLaunch({
+      taskID: 'child_error',
+      parentSessionID: ROOT,
+      agent: 'apollo',
+      description: 'Will error',
+    })
+
+    const finalizedIDs: string[] = []
+    const deps = {
+      board,
+      finalize: async (id: string) => {
+        finalizedIDs.push(id)
+        return {}
+      },
+      hasReport: () => {
+        throw new Error('disk error')
+      },
+    }
+
+    const count = await finalizeIdleChildrenWithoutMd(deps)
+    assert.equal(count, 0, 'error in hasReport causes skip, not crash')
+    assert.deepEqual(finalizedIDs, [])
+  })
+
+  await testAsync('finalizeIdleChildrenWithoutMd: fail-open on finalize error', async () => {
+    const board = new BackgroundJobBoard()
+    await board.registerLaunch({
+      taskID: 'child_finalize_fail',
+      parentSessionID: ROOT,
+      agent: 'apollo',
+      description: 'Finalize will fail',
+    })
+
+    let warnMsg = ''
+    const deps = {
+      board,
+      finalize: async () => {
+        throw new Error('finalize exploded')
+      },
+      hasReport: () => false,
+      logger: {
+        warn: (msg: string) => {
+          warnMsg = msg
         },
-        hasReport: () => false,
-      }
+      },
+    }
 
-      const count = await finalizeIdleChildrenWithoutMd(deps)
-      assert.equal(count, 0, 'no children finalized for non-running jobs')
-      assert.deepEqual(finalizedIDs, [])
-    },
-  )
-
-  await testAsync(
-    'finalizeIdleChildrenWithoutMd: fail-open on hasReport error',
-    async () => {
-      const board = new BackgroundJobBoard()
-      await board.registerLaunch({
-        taskID: 'child_error',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Will error',
-      })
-
-      const finalizedIDs: string[] = []
-      const deps = {
-        board,
-        finalize: async (id: string) => {
-          finalizedIDs.push(id)
-          return {}
-        },
-        hasReport: () => {
-          throw new Error('disk error')
-        },
-      }
-
-      const count = await finalizeIdleChildrenWithoutMd(deps)
-      assert.equal(count, 0, 'error in hasReport causes skip, not crash')
-      assert.deepEqual(finalizedIDs, [])
-    },
-  )
-
-  await testAsync(
-    'finalizeIdleChildrenWithoutMd: fail-open on finalize error',
-    async () => {
-      const board = new BackgroundJobBoard()
-      await board.registerLaunch({
-        taskID: 'child_finalize_fail',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Finalize will fail',
-      })
-
-      let warnMsg = ''
-      const deps = {
-        board,
-        finalize: async () => {
-          throw new Error('finalize exploded')
-        },
-        hasReport: () => false,
-        logger: { warn: (msg: string) => { warnMsg = msg } },
-      }
-
-      const count = await finalizeIdleChildrenWithoutMd(deps)
-      assert.equal(count, 0, 'error in finalize causes skip, not crash')
-      assert.ok(warnMsg.includes('child_finalize_fail'), 'warning logged for failed child')
-    },
-  )
+    const count = await finalizeIdleChildrenWithoutMd(deps)
+    assert.equal(count, 0, 'error in finalize causes skip, not crash')
+    assert.ok(warnMsg.includes('child_finalize_fail'), 'warning logged for failed child')
+  })
 
   // ═══════════════════════════════════════════════════════════════════════
   // startIdleChildScan tests
   // ═══════════════════════════════════════════════════════════════════════
 
-  await testAsync(
-    'startIdleChildScan: returns a timer that can be cleared',
-    async () => {
-      const board = new BackgroundJobBoard()
-      const finalizeCalls: string[] = []
-      const deps = {
-        board,
-        finalize: async (id: string) => {
-          finalizeCalls.push(id)
-          return {}
-        },
-        hasReport: () => false,
-      }
+  await testAsync('startIdleChildScan: returns a timer that can be cleared', async () => {
+    const board = new BackgroundJobBoard()
+    const finalizeCalls: string[] = []
+    const deps = {
+      board,
+      finalize: async (id: string) => {
+        finalizeCalls.push(id)
+        return {}
+      },
+      hasReport: () => false,
+    }
 
-      const timer = startIdleChildScan(deps, 50)
-      assert.ok(timer, 'timer is returned')
+    const timer = startIdleChildScan(deps, 50)
+    assert.ok(timer, 'timer is returned')
 
-      // Wait for at least one tick.
-      await new Promise((resolve) => setTimeout(resolve, 80))
-      clearInterval(timer)
+    // Wait for at least one tick.
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    clearInterval(timer)
 
-      // No running jobs → no finalize calls.
-      assert.equal(finalizeCalls.length, 0, 'no finalize calls with empty board')
-    },
-  )
+    // No running jobs → no finalize calls.
+    assert.equal(finalizeCalls.length, 0, 'no finalize calls with empty board')
+  })
 
-  await testAsync(
-    'startIdleChildScan: scans and finalizes idle children on interval',
-    async () => {
-      const board = new BackgroundJobBoard()
-      await board.registerLaunch({
-        taskID: 'scan_child',
-        parentSessionID: ROOT,
-        agent: 'apollo',
-        description: 'Scan me',
-      })
+  await testAsync('startIdleChildScan: scans and finalizes idle children on interval', async () => {
+    const board = new BackgroundJobBoard()
+    await board.registerLaunch({
+      taskID: 'scan_child',
+      parentSessionID: ROOT,
+      agent: 'apollo',
+      description: 'Scan me',
+    })
 
-      const finalizeCalls: string[] = []
-      const deps = {
-        board,
-        finalize: async (id: string) => {
-          finalizeCalls.push(id)
-          return {}
-        },
-        hasReport: () => false,
-      }
+    const finalizeCalls: string[] = []
+    const deps = {
+      board,
+      finalize: async (id: string) => {
+        finalizeCalls.push(id)
+        return {}
+      },
+      hasReport: () => false,
+    }
 
-      const timer = startIdleChildScan(deps, 50)
-      // Wait for two ticks.
-      await new Promise((resolve) => setTimeout(resolve, 130))
-      clearInterval(timer)
+    const timer = startIdleChildScan(deps, 50)
+    // Wait for two ticks.
+    await new Promise((resolve) => setTimeout(resolve, 130))
+    clearInterval(timer)
 
-      assert.ok(finalizeCalls.length >= 1, 'at least one finalize call made')
-      assert.ok(finalizeCalls.every((id) => id === 'scan_child'), 'all calls target the running child')
-    },
-  )
+    assert.ok(finalizeCalls.length >= 1, 'at least one finalize call made')
+    assert.ok(
+      finalizeCalls.every((id) => id === 'scan_child'),
+      'all calls target the running child',
+    )
+  })
 
-  await testAsync(
-    'startIdleChildScan: default interval is IDLE_SCAN_INTERVAL_MS',
-    async () => {
-      assert.equal(IDLE_SCAN_INTERVAL_MS, 30_000, 'default interval is 30s')
-    },
-  )
+  await testAsync('startIdleChildScan: default interval is IDLE_SCAN_INTERVAL_MS', async () => {
+    assert.equal(IDLE_SCAN_INTERVAL_MS, 30_000, 'default interval is 30s')
+  })
 
   // ═══════════════════════════════════════════════════════════════════════
 
