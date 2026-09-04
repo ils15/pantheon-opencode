@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
+  summarizeZenodoConfiguration,
   validateZenodoConfiguration,
   validateZenodoRelease,
   zenodoDepositionUrl,
@@ -99,6 +100,54 @@ test('accepts the four protected environment values without exposing credentials
     }),
     true,
   )
+})
+
+test('summarizes the four Zenodo values without returning their contents', () => {
+  const summary = summarizeZenodoConfiguration({
+    depositionsUrl: 'https://zenodo.org/api/deposit/depositions',
+    filesUrlTemplate: 'https://zenodo.org/api/deposit/depositions/{id}/files',
+    publishUrlTemplate: 'https://zenodo.org/api/deposit/depositions/{id}/actions/publish',
+    creatorName: 'Author & Researcher',
+  })
+  assert.deepEqual(summary, [
+    {
+      name: 'ZENODO_DEPOSITIONS_URL',
+      present: true,
+      protocol: 'https:',
+      host: 'z***g',
+      hasWhitespace: false,
+      hasCredentials: false,
+    },
+    {
+      name: 'ZENODO_FILES_URL_TEMPLATE',
+      present: true,
+      protocol: 'https:',
+      host: 'z***g',
+      hasWhitespace: false,
+      hasCredentials: false,
+    },
+    {
+      name: 'ZENODO_PUBLISH_URL_TEMPLATE',
+      present: true,
+      protocol: 'https:',
+      host: 'z***g',
+      hasWhitespace: false,
+      hasCredentials: false,
+    },
+    { name: 'ZENODO_CREATOR_NAME', present: true },
+  ])
+  assert.doesNotMatch(JSON.stringify(summary), /Author|depositions|Researcher/)
+})
+
+test('diagnoses hidden whitespace without revealing the configured URL', () => {
+  const summary = summarizeZenodoConfiguration({
+    depositionsUrl: 'https://zenodo.org/api/deposit/depositions\n',
+    filesUrlTemplate: 'https://zenodo.org/api/deposit/depositions/{id}/files',
+    publishUrlTemplate: 'https://zenodo.org/api/deposit/depositions/{id}/actions/publish',
+    creatorName: 'Author',
+  })
+  assert.equal(summary[0].hasWhitespace, true)
+  assert.doesNotMatch(JSON.stringify(summary), /api|zenodo\.org|Author/i)
 })
 
 test('builds only validated HTTPS endpoint URLs for a numeric deposition id', () => {

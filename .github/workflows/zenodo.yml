@@ -29,10 +29,6 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
-      ZENODO_DEPOSITIONS_URL: ${{ vars.ZENODO_DEPOSITIONS_URL }}
-      ZENODO_FILES_URL_TEMPLATE: ${{ vars.ZENODO_FILES_URL_TEMPLATE }}
-      ZENODO_PUBLISH_URL_TEMPLATE: ${{ vars.ZENODO_PUBLISH_URL_TEMPLATE }}
-      ZENODO_CREATOR_NAME: ${{ vars.ZENODO_CREATOR_NAME }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,6 +47,10 @@ jobs:
       - name: Validate configuration and published release
         env:
           GH_TOKEN: ${{ github.token }}
+          ZENODO_DEPOSITIONS_URL: ${{ vars.ZENODO_DEPOSITIONS_URL }}
+          ZENODO_FILES_URL_TEMPLATE: ${{ vars.ZENODO_FILES_URL_TEMPLATE }}
+          ZENODO_PUBLISH_URL_TEMPLATE: ${{ vars.ZENODO_PUBLISH_URL_TEMPLATE }}
+          ZENODO_CREATOR_NAME: ${{ vars.ZENODO_CREATOR_NAME }}
         run: |
           set -euo pipefail
           tooling_dir=.zenodo-workflow/scripts
@@ -63,6 +63,7 @@ jobs:
           for name in ZENODO_DEPOSITIONS_URL ZENODO_FILES_URL_TEMPLATE ZENODO_PUBLISH_URL_TEMPLATE; do
             case "${!name}" in https://*) ;; *) echo "::error::$name must use HTTPS."; exit 1 ;; esac
           done
+          node --input-type=module -e 'import { summarizeZenodoConfiguration } from "./.zenodo-workflow/scripts/validate-zenodo-release.mjs"; console.log(JSON.stringify(summarizeZenodoConfiguration({ depositionsUrl: process.env.ZENODO_DEPOSITIONS_URL, filesUrlTemplate: process.env.ZENODO_FILES_URL_TEMPLATE, publishUrlTemplate: process.env.ZENODO_PUBLISH_URL_TEMPLATE, creatorName: process.env.ZENODO_CREATOR_NAME })))'
           ZENODO_DEPOSITIONS_URL="$ZENODO_DEPOSITIONS_URL" ZENODO_FILES_URL_TEMPLATE="$ZENODO_FILES_URL_TEMPLATE" ZENODO_PUBLISH_URL_TEMPLATE="$ZENODO_PUBLISH_URL_TEMPLATE" ZENODO_CREATOR_NAME="$ZENODO_CREATOR_NAME" node --input-type=module -e 'import { validateZenodoConfiguration } from "./.zenodo-workflow/scripts/validate-zenodo-release.mjs"; validateZenodoConfiguration({ depositionsUrl: process.env.ZENODO_DEPOSITIONS_URL, filesUrlTemplate: process.env.ZENODO_FILES_URL_TEMPLATE, publishUrlTemplate: process.env.ZENODO_PUBLISH_URL_TEMPLATE, creatorName: process.env.ZENODO_CREATOR_NAME })'
           case "$RELEASE_TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo '::error::Invalid release tag.'; exit 1 ;; esac
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft --jq 'select(.isDraft == false) | .tagName' | grep -Fxq "$RELEASE_TAG"
@@ -73,6 +74,11 @@ jobs:
 
       - name: Validate semver, manifests, and citation
         id: metadata
+        env:
+          ZENODO_DEPOSITIONS_URL: ${{ vars.ZENODO_DEPOSITIONS_URL }}
+          ZENODO_FILES_URL_TEMPLATE: ${{ vars.ZENODO_FILES_URL_TEMPLATE }}
+          ZENODO_PUBLISH_URL_TEMPLATE: ${{ vars.ZENODO_PUBLISH_URL_TEMPLATE }}
+          ZENODO_CREATOR_NAME: ${{ vars.ZENODO_CREATOR_NAME }}
         run: |
           set -euo pipefail
           result=$(RELEASE_TAG="$RELEASE_TAG" node .zenodo-workflow/scripts/validate-zenodo-release.mjs)
@@ -89,6 +95,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+          ZENODO_DEPOSITIONS_URL: ${{ vars.ZENODO_DEPOSITIONS_URL }}
+          ZENODO_FILES_URL_TEMPLATE: ${{ vars.ZENODO_FILES_URL_TEMPLATE }}
+          ZENODO_PUBLISH_URL_TEMPLATE: ${{ vars.ZENODO_PUBLISH_URL_TEMPLATE }}
+          ZENODO_CREATOR_NAME: ${{ vars.ZENODO_CREATOR_NAME }}
         run: |
           set -euo pipefail
           [ -n "$ZENODO_TOKEN" ] || { echo '::error::Missing protected secret: ZENODO_TOKEN'; exit 1; }
@@ -151,6 +161,9 @@ jobs:
         if: steps.deposition.outputs.state != 'published'
         env:
           ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+          ZENODO_DEPOSITIONS_URL: ${{ vars.ZENODO_DEPOSITIONS_URL }}
+          ZENODO_FILES_URL_TEMPLATE: ${{ vars.ZENODO_FILES_URL_TEMPLATE }}
+          ZENODO_PUBLISH_URL_TEMPLATE: ${{ vars.ZENODO_PUBLISH_URL_TEMPLATE }}
           DEPOSITION_ID: ${{ steps.deposition.outputs.id }}
         run: |
           set -euo pipefail
