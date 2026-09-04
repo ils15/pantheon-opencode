@@ -8,7 +8,7 @@ e equipes que querem mais estrutura sem perder o controle do próprio código.
 [English](README.md) ·
 [Repositório](https://github.com/ils15/pantheon-opencode) · [Licença MIT](LICENSE)
 
-[![Versão](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=versão)](https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.3)
+[![Versão](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=versão)](https://github.com/ils15/pantheon-opencode/releases/tag/v1.5.0)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg)](https://doi.org/10.5281/zenodo.22306637)
 
@@ -71,11 +71,24 @@ verificações repetíveis e passagens claras entre etapas do trabalho.
 
 ## Status
 
-Versão atual: **v1.4.3**. O Pantheon foi feito para OpenCode e depende da
+Versão atual: **v1.5.0**. O Pantheon foi feito para OpenCode e depende da
 disponibilidade e da configuração do OpenCode e dos serviços opcionais que você
 escolher. Veja as [releases](https://github.com/ils15/pantheon-opencode/releases)
 e o [changelog](CHANGELOG.md) para acompanhar as mudanças.
 
+
+## Novidades da 1.5.0
+
+- Instalador exclusivo para OpenCode: guias de plataformas consolidados em um
+  único [guia OpenCode](docs/platforms/opencode.md).
+- Novo CLI `uninstall` com escopos project/global e checagem de ownership:
+  `node scripts/uninstall.mjs --project|--global [--dry-run] [--force]`.
+- Recursos MCP endurecidos: correção do `pantheon://agents` e proteção contra
+  symlink/traversal nos caminhos de recursos.
+- Compatibilidade com OpenCode V2: merge de configuração `plugins` /
+  `mcp.servers.enabled` e launch stdio MCP com PWD correto.
+- `doctor` e health checks de instalação expandidos.
+- A flag `--prompts` do instalador está planejada para uma release futura.
 
 ## Releases beta
 
