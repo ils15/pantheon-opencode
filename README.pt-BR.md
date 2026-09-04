@@ -9,7 +9,8 @@
 <p align="center">
   <a href="README.md">English</a> ·
   <a href="https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.3">v1.4.3</a> ·
-  <a href="LICENSE">Licença MIT</a>
+  <a href="LICENSE">Licença MIT</a> ·
+  <a href="https://doi.org/10.5281/zenodo.22306637"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg" alt="DOI: 10.5281/zenodo.22306637"></a>
 </p>
 
 ## O que ele faz

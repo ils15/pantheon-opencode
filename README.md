@@ -17,6 +17,7 @@
   <a href="https://github.com/ils15/pantheon-opencode"><img src="https://img.shields.io/badge/agents-14-purple" alt="14 agents"></a>
   <a href="https://github.com/ils15/pantheon-opencode"><img src="https://img.shields.io/badge/skills-21-orange" alt="21 skills"></a>
   <a href="https://github.com/ils15/pantheon-opencode"><img src="https://img.shields.io/badge/commands-7-red" alt="7 commands"></a>
+  <a href="https://doi.org/10.5281/zenodo.22306637"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg" alt="DOI: 10.5281/zenodo.22306637"></a>
 </p>
 
 ## What it does
