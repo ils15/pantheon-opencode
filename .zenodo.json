@@ -1,0 +1,22 @@
+{
+  "title": "Pantheon",
+  "upload_type": "software",
+  "description": "Pantheon v1.4.3 is an OpenCode plugin and installer for coordinating 14 specialized agents. The repository includes reusable skills, slash-command definitions, MCP server implementations, documentation, and tests. This release records version 1.4.3 synchronized across package.json, package-lock.json, plugin.json, pyproject.toml, and src/plugins/tui/package.json.\n\nO Pantheon v1.4.3 é um plugin e instalador para OpenCode que coordena 14 agentes especializados. O repositório inclui skills reutilizáveis, definições de comandos slash, implementações de servidores MCP, documentação e testes. Esta release registra a versão 1.4.3 sincronizada em package.json, package-lock.json, plugin.json, pyproject.toml e src/plugins/tui/package.json.",
+  "creators": [
+    {
+      "name": "Igor Leite da Silva"
+    }
+  ],
+  "version": "1.4.3",
+  "publication_date": "2026-09-03",
+  "license": "MIT",
+  "language": "eng",
+  "url": "https://github.com/ils15/pantheon-opencode/releases/tag/v1.4.3",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/ils15/pantheon-opencode",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    }
+  ]
+}

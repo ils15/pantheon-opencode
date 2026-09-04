@@ -89,6 +89,10 @@ recovery queries and numeric deposition IDs), fails closed on malformed values,
 and preserves idempotent reruns. It validates the tag and manifests, accepts an
 optional `CITATION.cff`, records the deposition ID in release notes, and never
 invents a DOI.
+For manual runs, `publish_deposition: false` creates or resumes a draft and
+verifies its metadata, uploaded archive, and SHA-256 before publication. Set it
+to `true` only in a deliberate second dispatch; the archive is always created
+from the exact release-tag commit.
 
 ## Project limits
 

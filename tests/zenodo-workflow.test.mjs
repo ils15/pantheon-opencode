@@ -17,9 +17,32 @@ import {
   findUniqueZenodoDeposition,
   zenodoReleaseMarker,
 } from '../scripts/recover-zenodo-deposition.mjs'
+import { findZenodoFile, sha256File } from '../scripts/zenodo-artifact.mjs'
 import { parseZenodoMarker, zenodoMarker } from '../scripts/zenodo-release-state.mjs'
 
 const workflow = readFileSync(join(process.cwd(), '.github/workflows/zenodo.yml'), 'utf8')
+
+test('validates the exact archive checksum and rejects a different upload', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zenodo-artifact-'))
+  const archive = join(root, 'release.tar.gz')
+  writeFileSync(archive, 'tagged release bytes')
+  const checksum = sha256File(archive)
+  const record = { files: [{ filename: 'release.tar.gz', checksum: `sha256:${checksum}` }] }
+  assert.equal(findZenodoFile(record, 'release.tar.gz', checksum).filename, 'release.tar.gz')
+  assert.throws(() => findZenodoFile(record, 'release.tar.gz', '0'.repeat(64)), /checksum mismatch/)
+})
+
+test('fails closed when a deposition contains duplicate archive names', () => {
+  assert.throws(
+    () =>
+      findZenodoFile(
+        { files: [{ filename: 'release.tar.gz' }, { filename: 'release.tar.gz' }] },
+        'release.tar.gz',
+        'a'.repeat(64),
+      ),
+    /duplicate file/,
+  )
+})
 
 function shellBlocks(source) {
   const lines = source.split('\n')
@@ -58,6 +81,7 @@ test('resolves every workflow script from one versioned tooling checkout', () =>
     'validate-zenodo-release.mjs',
     'recover-zenodo-deposition.mjs',
     'zenodo-release-state.mjs',
+    'zenodo-artifact.mjs',
   ]
   const firstNodeImport = workflow.indexOf('node ')
   const toolingPreflight = workflow.indexOf('test -f "$tooling_dir/$script"')
@@ -78,6 +102,7 @@ test('never imports Zenodo modules from the release checkout', () => {
     'validate-zenodo-release.mjs',
     'recover-zenodo-deposition.mjs',
     'zenodo-release-state.mjs',
+    'zenodo-artifact.mjs',
   ]) {
     assert.doesNotMatch(workflow, new RegExp(`(?:node\\s+|from\\s+['"])scripts/${module}`))
   }
@@ -253,8 +278,9 @@ test('created marker rerun reuses its id and reaches upload/publication without 
     workflow,
     /\[ -n "\$existing" \] \|\| \{ echo '::error::Created Zenodo marker has no deposition id.'/,
   )
-  assert.match(workflow, /if \[ "\$submitted" != true \] && ! node -e/)
-  assert.match(workflow, /state: ["']published["']/)
+  assert.match(workflow, /findZenodoFile\(record,process\.env\.NAME,process\.env\.CHECKSUM\)/)
+  assert.match(workflow, /if \[ "\$submitted" != true \] && \[ "\$existing_file" = missing \]/)
+  assert.match(workflow, /marker_state=published/)
 
   let createCalls = 0
   let uploadCalls = 0
@@ -272,6 +298,17 @@ test('created marker rerun reuses its id and reaches upload/publication without 
     { createCalls, uploadCalls, publishCalls },
     { createCalls: 0, uploadCalls: 1, publishCalls: 1 },
   )
+})
+
+test('supports a resumable draft and publishes only on explicit release intent', () => {
+  assert.match(workflow, /publish_deposition:/)
+  assert.match(workflow, /default: false/)
+  assert.match(
+    workflow,
+    /PUBLISH_DEPOSITION: \$\{\{ github\.event_name == 'release' \|\| inputs\.publish_deposition == true \}\}/,
+  )
+  assert.match(workflow, /marker_state=created/)
+  assert.match(workflow, /\[ "\$PUBLISH_DEPOSITION" = true \] && marker_state=published/)
 })
 
 test('recovered id and DOI survive the pending handoff and are persisted in the published marker', () => {

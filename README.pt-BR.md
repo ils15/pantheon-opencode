@@ -79,6 +79,10 @@ registra o ID do depósito nas notas da release e nunca inventa um DOI.
 As quatro variáveis são passadas explicitamente a cada step que as utiliza; a
 validação também emite apenas presença, protocolo e host mascarado, sem
 imprimir URLs completas ou credenciais. Espaços ocultos continuam inválidos.
+Em dispatchs manuais, `publish_deposition: false` cria ou retoma um rascunho
+e verifica metadados, arquivo enviado e SHA-256 antes da publicação. Use
+`true` somente em um segundo dispatch deliberado; o arquivo sempre é criado a
+partir do commit exato da tag da release.
 
 ## Limites do projeto
 

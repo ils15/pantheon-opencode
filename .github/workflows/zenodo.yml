@@ -13,6 +13,11 @@ on:
         description: 'Confirm publication to the protected Zenodo environment'
         required: true
         type: boolean
+      publish_deposition:
+        description: 'Publish the deposition (false leaves a resumable draft)'
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: zenodo-${{ github.event.release.tag_name || inputs.release_tag }}
@@ -54,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           tooling_dir=.zenodo-workflow/scripts
-          for script in validate-zenodo-release.mjs recover-zenodo-deposition.mjs zenodo-release-state.mjs; do
+          for script in validate-zenodo-release.mjs recover-zenodo-deposition.mjs zenodo-release-state.mjs zenodo-artifact.mjs; do
             test -f "$tooling_dir/$script" || { echo "::error::Missing Zenodo workflow tooling: $tooling_dir/$script"; exit 1; }
           done
           for name in ZENODO_DEPOSITIONS_URL ZENODO_FILES_URL_TEMPLATE ZENODO_PUBLISH_URL_TEMPLATE ZENODO_CREATOR_NAME; do
@@ -88,7 +93,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/zenodo"
-          git archive --format=tar.gz --prefix="pantheon-opencode-${{ steps.metadata.outputs.version }}/" "$RELEASE_TAG" > "$RUNNER_TEMP/zenodo/pantheon-opencode-${{ steps.metadata.outputs.version }}.tar.gz"
+          tag_commit=$(git rev-parse "${RELEASE_TAG}^{commit}")
+          test "$(git rev-parse HEAD)" = "$tag_commit" || { echo '::error::Checked out commit is not the release tag.'; exit 1; }
+          git archive --format=tar.gz --prefix="pantheon-opencode-${{ steps.metadata.outputs.version }}/" "${RELEASE_TAG}^{commit}" > "$RUNNER_TEMP/zenodo/pantheon-opencode-${{ steps.metadata.outputs.version }}.tar.gz"
+          archive="$RUNNER_TEMP/zenodo/pantheon-opencode-${{ steps.metadata.outputs.version }}.tar.gz"
+          checksum=$(ARCHIVE="$archive" node --input-type=module -e 'import { sha256File } from "./.zenodo-workflow/scripts/zenodo-artifact.mjs"; process.stdout.write(sha256File(process.env.ARCHIVE))')
+          printf 'ZENODO_ARCHIVE_SHA256=%s\n' "$checksum" >> "$GITHUB_ENV"
 
       - name: Create or resume idempotent Zenodo deposition
         id: deposition
@@ -164,7 +174,9 @@ jobs:
           ZENODO_DEPOSITIONS_URL: ${{ vars.ZENODO_DEPOSITIONS_URL }}
           ZENODO_FILES_URL_TEMPLATE: ${{ vars.ZENODO_FILES_URL_TEMPLATE }}
           ZENODO_PUBLISH_URL_TEMPLATE: ${{ vars.ZENODO_PUBLISH_URL_TEMPLATE }}
+          ZENODO_CREATOR_NAME: ${{ vars.ZENODO_CREATOR_NAME }}
           DEPOSITION_ID: ${{ steps.deposition.outputs.id }}
+          PUBLISH_DEPOSITION: ${{ github.event_name == 'release' || inputs.publish_deposition == true }}
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/zenodo/pantheon-opencode-${{ steps.metadata.outputs.version }}.tar.gz"
@@ -175,17 +187,35 @@ jobs:
           record="$RUNNER_TEMP/zenodo-record.json"
           curl --fail-with-body --silent --show-error --retry 2 --retry-all-errors "$record_url" -H "Authorization: Bearer $ZENODO_TOKEN" > "$record"
           submitted=$(node -e "const r=require(process.argv[1]); process.stdout.write(r.submitted?'true':'false')" "$record")
+          metadata="$RUNNER_TEMP/zenodo-metadata.json"
+          release_marker="pantheon-opencode-release:$RELEASE_TAG"
+          node -e 'const fs=require("node:fs"); fs.writeFileSync(process.argv[1], JSON.stringify({metadata:{title:"Pantheon",version:process.argv[2],upload_type:"software",description:`Pantheon release archive. ${process.argv[3]}`,creators:[{name:process.argv[4]}]}}))' "$metadata" "${{ steps.metadata.outputs.version }}" "$release_marker" "$ZENODO_CREATOR_NAME"
+          if [ "$submitted" != true ]; then
+            curl --fail-with-body --silent --show-error --request PUT "$record_url" -H "Authorization: Bearer $ZENODO_TOKEN" -H 'Content-Type: application/json' --data-binary "@$metadata" > "$RUNNER_TEMP/zenodo-metadata-response.json"
+          fi
           if [ "$submitted" = true ]; then
             doi=$(RESPONSE_FILE="$record" node --input-type=module -e 'import { readFileSync } from "node:fs"; import { validateZenodoResponse } from "./.zenodo-workflow/scripts/zenodo-release-state.mjs"; const response = JSON.parse(readFileSync(process.env.RESPONSE_FILE, "utf8")); process.stdout.write(validateZenodoResponse(response, { requireDoi: true }).doi)') || { echo '::error::Published Zenodo deposition has no DOI.'; exit 1; }
           fi
-          if [ "$submitted" != true ] && ! node -e "const r=require(process.argv[1]); const n=process.argv[2]; process.exit((r.files||[]).some(f=>f.filename===n)?0:1)" "$record" "$(basename "$archive")"; then
+          archive="$RUNNER_TEMP/zenodo/pantheon-opencode-${{ steps.metadata.outputs.version }}.tar.gz"
+          if [ "$submitted" != true ]; then
+            existing_file=$(RECORD="$record" CHECKSUM="$ZENODO_ARCHIVE_SHA256" NAME="$(basename "$archive")" node --input-type=module -e 'import { readFileSync } from "node:fs"; import { findZenodoFile } from "./.zenodo-workflow/scripts/zenodo-artifact.mjs"; const record=JSON.parse(readFileSync(process.env.RECORD,"utf8")); process.stdout.write(findZenodoFile(record,process.env.NAME,process.env.CHECKSUM)?"present":"missing")')
+          else
+            existing_file=present
+          fi
+          if [ "$submitted" != true ] && [ "$existing_file" = missing ]; then
             curl --fail-with-body --silent --show-error --retry 2 --retry-all-errors --request POST "$files_url" -H "Authorization: Bearer $ZENODO_TOKEN" -F "file=@$archive" -F "data={\"filename\":\"$(basename "$archive")\"};type=application/json"
           fi
+          curl --fail-with-body --silent --show-error --retry 2 --retry-all-errors "$record_url" -H "Authorization: Bearer $ZENODO_TOKEN" > "$record"
           if [ "$submitted" != true ]; then
+            RECORD="$record" CHECKSUM="$ZENODO_ARCHIVE_SHA256" NAME="$(basename "$archive")" node --input-type=module -e 'import { readFileSync } from "node:fs"; import { findZenodoFile } from "./.zenodo-workflow/scripts/zenodo-artifact.mjs"; findZenodoFile(JSON.parse(readFileSync(process.env.RECORD,"utf8")),process.env.NAME,process.env.CHECKSUM) || (()=>{throw new Error("Zenodo upload did not produce the expected file.")})()'
+          fi
+          if [ "$submitted" != true ] && [ "$PUBLISH_DEPOSITION" = true ]; then
             curl --fail-with-body --silent --show-error --request POST "$publish_url" -H "Authorization: Bearer $ZENODO_TOKEN" > "$RUNNER_TEMP/zenodo-publish.json"
             doi=$(RESPONSE_FILE="$RUNNER_TEMP/zenodo-publish.json" node --input-type=module -e 'import { readFileSync } from "node:fs"; import { validateZenodoResponse } from "./.zenodo-workflow/scripts/zenodo-release-state.mjs"; process.stdout.write(validateZenodoResponse(JSON.parse(readFileSync(process.env.RESPONSE_FILE, "utf8")), { requireDoi: true }).doi)') || { echo '::error::Zenodo did not return a DOI after publication.'; exit 1; }
           fi
-          marker=$(ID="$DEPOSITION_ID" DOI="$doi" node --input-type=module -e 'import { zenodoMarker } from "./.zenodo-workflow/scripts/zenodo-release-state.mjs"; process.stdout.write(zenodoMarker({ id: Number(process.env.ID), doi: process.env.DOI, state: "published" }))')
+          marker_state=created
+          [ "$PUBLISH_DEPOSITION" = true ] && marker_state=published
+          marker=$(ID="$DEPOSITION_ID" DOI="$doi" STATE="$marker_state" node --input-type=module -e 'import { zenodoMarker } from "./.zenodo-workflow/scripts/zenodo-release-state.mjs"; process.stdout.write(zenodoMarker({ id: Number(process.env.ID), doi: process.env.DOI || null, state: process.env.STATE }))')
           BODY_FILE="$ZENODO_RELEASE_BODY_FILE" MARKER="$marker" OUT="$RUNNER_TEMP/release-notes" node --input-type=module -e 'import { readFileSync, writeFileSync } from "node:fs"; const release = JSON.parse(readFileSync(process.env.BODY_FILE, "utf8")); const notes = String(release.body || "").replace(/\n?<!-- zenodo-deposition:[^>]+-->/g, "").trimEnd(); writeFileSync(process.env.OUT, notes + "\n\n" + process.env.MARKER + "\n")'
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/release-notes"
           echo 'Zenodo deposition published or was already published; DOI persisted in the release marker.'

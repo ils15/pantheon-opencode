@@ -23,8 +23,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Synchronized the 1.4.3 release version across `package.json`,
   `package-lock.json`, `plugin.json`, `pyproject.toml`, and the TUI package.
-- Added canonical English and Brazilian Portuguese project README files and
-  citation metadata for the MIT-licensed repository.
 
 ## [v1.4.2] - 2026-08-27
 
