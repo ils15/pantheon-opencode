@@ -1,10 +1,10 @@
-# Pantheon Installation Guide — v1.4.2 (OpenCode)
+# Pantheon Installation Guide — v1.4.3 (OpenCode)
 
-Pantheon v1.4.2 is **OpenCode-only**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. Geração de tabelas via `node scripts/generate-preset-docs.mjs` a partir de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
+Pantheon v1.4.3 is **OpenCode-only**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. Geração de tabelas via `node scripts/generate-preset-docs.mjs` a partir de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
 
 ## Prerequisites
 
-- **OpenCode v1.18.4+** — [Install OpenCode](https://opencode.ai/docs/install)
+- **OpenCode v1.18.4+** — [Install OpenCode](https://opencode.ai/docs/)
 - **Node.js 18+** — for `npx pantheon-opencode init`
 - **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
