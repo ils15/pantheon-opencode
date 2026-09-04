@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -11,6 +20,35 @@ import {
 import { parseZenodoMarker, zenodoMarker } from '../scripts/zenodo-release-state.mjs'
 
 const workflow = readFileSync(join(process.cwd(), '.github/workflows/zenodo.yml'), 'utf8')
+
+function shellBlocks(source) {
+  const lines = source.split('\n')
+  const blocks = []
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^ {8}run: \|$/.test(lines[index])) continue
+    const body = []
+    for (
+      index += 1;
+      index < lines.length && (/^ {10}/.test(lines[index]) || lines[index] === '');
+      index += 1
+    ) {
+      body.push(lines[index].replace(/^ {10}/, ''))
+    }
+    blocks.push(body.join('\n'))
+    index -= 1
+  }
+  return blocks
+}
+
+function unclosedHeredocs(source) {
+  const pending = []
+  for (const line of source.split('\n')) {
+    const opener = line.match(/<<-?['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/)?.[1]
+    if (opener) pending.push(opener)
+    while (pending.length > 0 && pending[pending.length - 1] === line.trim()) pending.pop()
+  }
+  return pending
+}
 
 test('resolves every workflow script from a versioned checkout', () => {
   assert.match(workflow, /path: \.zenodo-workflow/)
@@ -27,6 +65,74 @@ test('resolves every workflow script from a versioned checkout', () => {
       `workflow references missing script: ${script}`,
     )
   }
+})
+
+test('detects unclosed heredocs and keeps the workflow free of fragile heredocs', () => {
+  assert.deepEqual(unclosedHeredocs("node <<'NODE'\nconsole.log('broken')"), ['NODE'])
+  assert.deepEqual(unclosedHeredocs(workflow), [])
+  assert.doesNotMatch(workflow, /<<-?['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/)
+})
+
+test('all workflow run blocks pass real bash syntax validation', () => {
+  const blocks = shellBlocks(workflow)
+  assert.ok(blocks.length >= 5, 'expected every workflow shell step to be extracted')
+  for (const block of blocks) {
+    const normalized = block.replace(/\$\{\{[^}]+\}\}/g, 'workflow-value')
+    execFileSync('bash', ['-n'], { input: normalized, encoding: 'utf8' })
+  }
+})
+
+test('simulates the idempotent deposition creation step with stubbed network commands', () => {
+  const start = workflow.indexOf('      - name: Create or resume idempotent Zenodo deposition')
+  const end = workflow.indexOf('\n      - name:', start + 1)
+  const step = workflow.slice(start, end).match(/ {6}run: \|\n((?: {10}.*\n|\n)*)/)?.[1]
+  assert.ok(step, 'expected deposition step shell body')
+  const fixture = mkdtempSync(join(tmpdir(), 'zenodo-step-'))
+  const bin = join(fixture, 'bin')
+  const runnerTemp = join(fixture, 'runner')
+  mkdirSync(bin)
+  mkdirSync(join(runnerTemp, 'zenodo'), { recursive: true })
+  mkdirSync(join(fixture, 'scripts'), { recursive: true })
+  mkdirSync(join(fixture, '.zenodo-workflow/scripts'), { recursive: true })
+  for (const name of ['recover-zenodo-deposition.mjs', 'zenodo-release-state.mjs']) {
+    cpSync(join(process.cwd(), `scripts/${name}`), join(fixture, `scripts/${name}`))
+    cpSync(
+      join(process.cwd(), `scripts/${name}`),
+      join(fixture, `.zenodo-workflow/scripts/${name}`),
+    )
+  }
+  const gh = join(bin, 'gh')
+  const curl = join(bin, 'curl')
+  writeFileSync(
+    gh,
+    '#!/bin/sh\nif [ "$1" = api ]; then printf \'{"body":"Release notes"}\'; fi\nexit 0\n',
+  )
+  writeFileSync(curl, '#!/bin/sh\nprintf \'{"id":42}\'\n')
+  chmodSync(gh, 0o755)
+  chmodSync(curl, 0o755)
+  const script = step
+    .replace(/^ {10}/gm, '')
+    .replace(/\$\{\{ steps\.metadata\.outputs\.version \}\}/g, '1.4.3')
+  execFileSync('bash', ['-euo', 'pipefail', '-c', script], {
+    cwd: fixture,
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      RUNNER_TEMP: runnerTemp,
+      GITHUB_ENV: join(fixture, 'github-env'),
+      GITHUB_OUTPUT: join(fixture, 'github-output'),
+      GITHUB_REPOSITORY: 'ils15/pantheon-opencode',
+      GITHUB_RUN_ID: '33868542275',
+      RELEASE_TAG: 'v1.4.3',
+      ZENODO_TOKEN: 'test-token',
+      ZENODO_DEPOSITIONS_URL: 'https://zenodo.org/api/deposit/depositions',
+      ZENODO_CREATOR_NAME: 'Test Author',
+    },
+    encoding: 'utf8',
+  })
+  const output = readFileSync(join(fixture, 'github-output'), 'utf8')
+  assert.match(output, /id=42/)
+  assert.match(output, /state=created/)
 })
 
 test('loads all Zenodo modules when the release checkout predates the tooling', async () => {
@@ -72,7 +178,7 @@ test('passes the release body file from deposition to publication without the to
   )
   assert.match(
     workflow,
-    /writeFileSync\(process\.env\.STATE_FILE, JSON\.stringify\(\{ \.\.\.recovered, state: 'created' \}\)\)/,
+    /writeFileSync\(process\.env\.STATE_FILE, JSON\.stringify\(\{ \.\.\.recovered, state: ["']created["'] \}\)\)/,
   )
   assert.match(workflow, /state=created/)
   assert.doesNotMatch(workflow, /submitted=.*recovered/)
@@ -127,7 +233,7 @@ test('created marker rerun reuses its id and reaches upload/publication without 
     /\[ -n "\$existing" \] \|\| \{ echo '::error::Created Zenodo marker has no deposition id.'/,
   )
   assert.match(workflow, /if \[ "\$submitted" != true \] && ! node -e/)
-  assert.match(workflow, /state: 'published'/)
+  assert.match(workflow, /state: ["']published["']/)
 
   let createCalls = 0
   let uploadCalls = 0
