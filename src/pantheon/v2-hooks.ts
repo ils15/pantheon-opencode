@@ -250,7 +250,9 @@ export interface V2ToolAfterEvent {
   sessionID: string
   callID: string
   args?: unknown
-  output: string
+  // The host may send a non-string output (shape drift on beta). Keep this
+  // honest as unknown and narrow with typeof at the use site — never assume.
+  output: unknown
 }
 
 export function createV2ToolAfterHookHandler(
@@ -271,6 +273,9 @@ export function createV2ToolAfterHookHandler(
         callID: event.callID,
         args: event.args,
       }
+      // Narrow the honest unknown: only strings flow through the enhancers.
+      // Non-string output is left untouched (fail-open, preserve host shape).
+      if (typeof event.output !== 'string') return
       const output = { output: event.output }
       await sandboxHandler(input, output)
       await readEnhancer(input, output)
