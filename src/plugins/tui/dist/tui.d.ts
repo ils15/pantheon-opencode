@@ -21,9 +21,12 @@ type DelegationEntry = {
   /** True while the panel is waiting for pantheon_delegation_read. */
   read?: boolean;
   /** Internal provenance used to keep a finalized md report authoritative.
-   *  'children-only' = a native task() child session with NO board report
-   *  (rendered with the distinct `[task]` tag); 'md' = board report wins. */
-  source?: 'child' | 'live' | 'md' | 'children-only';
+   *  'child' = an unclassified child session; 'md' = a matched report. */
+  source?: 'child' | 'live' | 'md';
+  /** Known V1 Markdown report marker. Absent for legacy/arbitrary Markdown. */
+  reportVersion?: 'v1';
+  /** Explicit native task provenance; never inferred from missing Markdown. */
+  origin?: 'native_task';
 };
 /** Parse one delegation report md header into a structured entry.
  *  Returns null (skip) when the file is not a recognizable report:
@@ -152,6 +155,8 @@ type LiveDelegationEntry = {
   updatedAt: number | null;
   /** True once a pantheon_delegation_read for this job has been observed. */
   read: boolean;
+  /** Optional explicit native task provenance from the live channel. */
+  origin?: 'native_task';
 };
 /** Result of parsing one tool part into lifecycle-relevant fields. */
 type ParsedDelegationToolPart = {
@@ -210,6 +215,14 @@ declare function mergeDelegationSources(live: readonly LiveDelegationEntry[], md
  *  with "{" and "%7BsessionID%7D" with "%" — both fail startsWith("ses"), so
  *  the placeholder is rejected WITHOUT an explicit denylist (covered by tests). */
 declare function isValidSessionId(id: unknown): id is string;
+/**
+ * Trust a Markdown entry for child enrichment only when it carries the known
+ * V1 report marker and both sides of its scope are explicit: the parent
+ * session directory and the child/task session id. History entries without
+ * this contract remain display-only and can never relabel a live child.
+ * Pure — no I/O.
+ */
+declare function isV1DelegationEntry(entry: DelegationEntry | null | undefined, parentSessionID?: string): boolean;
 /** Sources the sidebar can resolve the CURRENT session id from. Duck-typed
  *  subsets of TuiPluginApi / TuiState / TuiRouteCurrent so the helper stays
  *  pure and testable without the TUI runtime. */
@@ -266,6 +279,8 @@ type ChildDelegationLike = {
   /** Agent name when the child session carries one (duck-typed; native
    *  task() children may expose it, board reports always do). */
   agent?: string;
+  /** Explicit origin from a native task lifecycle, when the SDK provides it. */
+  origin?: 'native_task';
   /** Status type from api.state.session.status: 'busy' | 'retry' | 'idle',
    *  or undefined when the status API is unavailable. */
   status?: string;
@@ -279,10 +294,9 @@ type ChildDelegationLike = {
  *  (fail-open: a freshly-seen child is assumed active; the 1s poll + md
  *  correct it as soon as terminal data exists). */
 declare function childStatusToState(status: string | undefined): 'running' | 'completed';
-/** Row tag for a delegation entry: `[task]` for native task() children
- *  (source 'children-only' — no board report), `[<alias>]` for board rows
- *  ([apo-1]). The panel renders the tag with a distinct style so native
- *  task() children are visually separable from pantheon_delegate jobs. */
+/** Row tag for a delegation entry. Explicit native provenance renders the
+ *  documented `[native-task]` label; generic children keep their id/alias and
+ *  are never relabeled merely because they lack a Markdown report. */
 declare function delegationTag(entry: DelegationEntry): string;
 /** Turn child sessions (PRIMARY) enriched with md reports into the display
  *  list. One entry per child id (duplicates across re-fetches collapse).
@@ -290,14 +304,14 @@ declare function delegationTag(entry: DelegationEntry): string;
  *  agent, description, terminal state and duration. A child without a
  *  report still renders: description from its title, agent from the child
  *  itself (fallback 'agent'), state derived from its status, startedAt from
- *  time.created. A report-less child is a NATIVE task() child (every
- *  child of the current session — pantheon_delegate OR the native `task()`
- *  tool — carries parentID = caller), so it gets source 'children-only'
- *  and the `[task]` tag instead of a board alias.
+ *  time.created. A report-less child remains an unclassified child session;
+ *  the SDK shape used here has no origin marker that would justify calling it
+ *  a native `task()` child.
  *  Terminal md state wins over the derived state; a running md defers to
  *  the child's live status. Sorted running-first (compareDelegationEntries).
- *  Pure — no I/O. */
-declare function childrenToDelegationEntries(children: readonly ChildDelegationLike[] | undefined, md: readonly DelegationEntry[], now?: number): DelegationEntry[];
+ *  `parentSessionID` is required to accept Markdown, so callers cannot
+ *  accidentally merge history from an unknown parent. Pure — no I/O. */
+declare function childrenToDelegationEntries(children: readonly ChildDelegationLike[] | undefined, md: readonly DelegationEntry[], now?: number, parentSessionID?: string): DelegationEntry[];
 /** Navigate the TUI to a child session (click/Enter on a delegation row).
  *  Returns false when the route API is unavailable or the target id is
  *  missing/placeholder — the row stays inert instead of crashing. Only a
@@ -319,7 +333,8 @@ type LiveDelegationStore = {
 };
 declare const plugin: TuiPluginModule & {
   id: string;
+  setup: () => Promise<void>;
 };
 //#endregion
-export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isValidSessionId, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
+export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isV1DelegationEntry, isValidSessionId, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
 //# sourceMappingURL=tui.d.ts.map
