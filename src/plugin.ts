@@ -200,6 +200,38 @@ function sdkErrorMessage(error: { data?: { message?: string } } | null | undefin
 }
 
 /**
+ * Read the native V1 session status before the proactive child scan can
+ * finalize a running board job. A missing status entry or an unavailable
+ * endpoint is intentionally reported as unknown, never idle.
+ */
+async function isChildSessionIdle(
+  client: PluginInput['client'],
+  childSessionID: string,
+): Promise<boolean | undefined> {
+  try {
+    const statusRequest = client.session.status
+    if (typeof statusRequest !== 'function') {
+      log.warn('[Pantheon Plugin] V1 session status API unavailable; idle scan skipped')
+      return undefined
+    }
+    const result = await statusRequest.call(client.session)
+    if ('error' in result && result.error) {
+      log.warn('[Pantheon Plugin] V1 session status lookup failed; idle scan skipped')
+      return undefined
+    }
+    if (!('data' in result) || result.data === undefined) {
+      log.warn('[Pantheon Plugin] V1 session status lookup returned no data; idle scan skipped')
+      return undefined
+    }
+    const status = result.data[childSessionID]
+    return status === undefined ? undefined : status.type === 'idle'
+  } catch {
+    log.warn('[Pantheon Plugin] V1 session status lookup failed; idle scan skipped')
+    return undefined
+  }
+}
+
+/**
  * Adapt the opencode SDK client to the structural DelegationClient the
  * delegation toolset expects: the SDK wraps every call in a
  * `{data, error, request, response}` result while delegation.ts uses direct
@@ -392,6 +424,7 @@ const plugin: Plugin = async (input: PluginInput) => {
     {
       board,
       finalize: (childSessionID, opts) => delegation.finalizeDelegation(childSessionID, opts),
+      isIdle: (childSessionID) => isChildSessionIdle(input.client, childSessionID),
       hasReport: (job) => {
         try {
           const filePath = join('.pantheon/delegations', job.parentSessionID, `${job.alias}.md`)

@@ -1,16 +1,15 @@
 # Pantheon Platforms
 
-Installation guide for all supported platforms.
+Installation guide for OpenCode.
 
 ---
 
-## Quick Install (all platforms)
+## Quick Install
 
 ```bash
 git clone https://github.com/ils15/pantheon.git
 cd pantheon
 
-# Auto-detect and install for your current platform
 npx pantheon-opencode init
 
 # Or target a specific project
@@ -19,7 +18,7 @@ npx pantheon-opencode init --project
 
 ---
 
-## Platform Guides
+## OpenCode Guide
 
 | Platform | Link | Install Method | Config File(s) |
 |---|---|---|---|---|
@@ -62,5 +61,5 @@ your-project/
 ├── skills/              # (copied from pantheon/skills/)
 ├── instructions/        # (copied from pantheon/instructions/)
 ├── prompts/             # (copied from pantheon/prompts/)
-└── opencode.json        # Main config (OpenCode) or platform config
+└── opencode.json        # Main OpenCode config
 ```

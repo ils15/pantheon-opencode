@@ -200,7 +200,7 @@ async function main() {
   // ═══════════════════════════════════════════════════════════════════════
 
   await testAsync(
-    'finalizeIdleChildrenWithoutMd: finalizes running jobs without reports, skips those with reports',
+    'finalizeIdleChildrenWithoutMd: never finalizes a running child without idle proof',
     async () => {
       const board = new BackgroundJobBoard()
       await board.registerLaunch({
@@ -225,12 +225,13 @@ async function main() {
           finalizedIDs.push(id)
           return {}
         },
+        isIdle: async () => false,
         hasReport: (job: { taskID: string }) => job.taskID === 'child_has_report',
       }
 
       const count = await finalizeIdleChildrenWithoutMd(deps)
-      assert.equal(count, 1, 'only one child finalized')
-      assert.deepEqual(finalizedIDs, ['child_no_report'])
+      assert.equal(count, 0, 'a running child is not finalized without idle proof')
+      assert.deepEqual(finalizedIDs, [])
     },
   )
 

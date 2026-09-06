@@ -1,32 +1,13 @@
 #!/usr/bin/env node
 
-/**
- * uninstall.mjs — Multi-platform Pantheon agent uninstaller
- *
- * Removes Pantheon agent files and config from a project directory.
- * The reverse of the installer.
- *
- * Usage:
- *   node scripts/uninstall.mjs                                  auto-detect, cwd
- *   node scripts/uninstall.mjs --target /path/to/project        auto-detect, target
- *   node scripts/uninstall.mjs --platforms opencode,claude      specific platforms
- *   node scripts/uninstall.mjs --target /path --platforms all   all platforms
- *   node scripts/uninstall.mjs --dry-run                        preview without deleting
- *   node scripts/uninstall.mjs --force                          skip confirmation
- *   node scripts/uninstall.mjs --help                           show this help
- */
-
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+/** Remove only files and registrations owned by Pantheon for OpenCode. */
+import { lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { basename, join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { isatty } from 'node:tty'
-import { detectPlatforms, resolveTarget } from './install/shared.mjs'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const PANTHEON_AGENT_NAMES = [
+const AGENT_NAMES = new Set([
   'zeus',
   'athena',
   'apollo',
@@ -36,1020 +17,383 @@ const PANTHEON_AGENT_NAMES = [
   'themis',
   'prometheus',
   'hephaestus',
-
   'nyx',
   'gaia',
   'iris',
   'mnemosyne',
   'talos',
-]
-
-const PLATFORM_LABELS = {
-  opencode: 'OpenCode',
-  claude: 'Claude Code',
-  cursor: 'Cursor',
-  windsurf: 'Windsurf',
-  copilot: 'VS Code / Copilot',
-  continue: 'Continue.dev',
-  cline: 'Cline',
-}
-
-const ALL_PLATFORMS = Object.keys(PLATFORM_LABELS)
-
-// ---------------------------------------------------------------------------
-// Summary tracker
-// ---------------------------------------------------------------------------
-
-const stats = {
-  opencode: { removed: 0, skipped: 0, errors: 0 },
-  claude: { removed: 0, skipped: 0, errors: 0 },
-  cursor: { removed: 0, skipped: 0, errors: 0 },
-  windsurf: { removed: 0, skipped: 0, errors: 0 },
-  copilot: { removed: 0, skipped: 0, errors: 0 },
-  continue: { removed: 0, skipped: 0, errors: 0 },
-  cline: { removed: 0, skipped: 0, errors: 0 },
-}
-
-// ---------------------------------------------------------------------------
-// Help
-// ---------------------------------------------------------------------------
+])
+const OWNERSHIP_MARKER =
+  /(?:pantheon-opencode|pantheon[- ]agent system|managed[- ]by[: ]+pantheon|pantheon-(?:resources|memory|persistence|code-mode|tui|hooks))/i
+const stats = { removed: 0, skipped: 0, errors: 0 }
 
 function showHelp() {
   console.log(`
-uninstall.mjs — Multi-platform Pantheon agent uninstaller
 
 Usage:
-  node scripts/uninstall.mjs                                     auto-detect, cwd
-  node scripts/uninstall.mjs --target /path/to/project           auto-detect, target
-  node scripts/uninstall.mjs --platforms opencode,claude         specific platforms, cwd
-  node scripts/uninstall.mjs --target /path --platforms all      all platforms
-  node scripts/uninstall.mjs --dry-run                           preview without deleting
-  node scripts/uninstall.mjs --force                             skip confirmation prompt
-  node scripts/uninstall.mjs --help                              show this help
+  node scripts/uninstall.mjs [--project|--global] [--target /path] [--dry-run] [--force]
 
-Flags:
-  --target /path     Project to uninstall from (default: cwd)
-  --platforms list   Comma-separated platforms (default: auto-detect or all)
-  --dry-run          Preview what would be removed without deleting
-  --force            Skip confirmation prompt
-  --help             Show this help
-
-Platforms:
-  opencode    → .opencode/agents/ + opencode.json Pantheon entries
-  claude      → .claude/agents/ + CLAUDE.md (if Pantheon content)
-  cursor      → .cursor/rules/*.mdc (only Pantheon rules)
-  windsurf    → .windsurf/rules/ + .windsurf/workflows/ (if empty)
-  copilot     → .github/agents/ + .vscode/settings.json Pantheon keys
-  continue    → .continue/rules/ + check .continue/config.yaml
-  cline       → .clinerules/ (only agent rules, not commands/skills)
-  all         → uninstall every platform
-
-When --platforms is omitted, auto-detects which platforms are configured.
-If none detected, all platforms are uninstalled.
+Target may be a project directory (containing .opencode), or a flat global
+OpenCode directory (~/.config/opencode or ~/.opencode). Symlinks are rejected.
 `)
 }
 
-// ---------------------------------------------------------------------------
-// CLI args
-// ---------------------------------------------------------------------------
-
 function parseArgs(argv) {
-  const args = {
-    target: null,
-    platforms: null,
-    dryRun: false,
-    force: false,
-    help: false,
+  const args = { target: process.cwd(), dryRun: false, force: false, help: false, scope: 'project' }
+  let explicitTarget = false
+  for (let index = 2; index < argv.length; index += 1) {
+    const option = argv[index]
+    if (option === '--target') {
+      args.target = argv[++index]
+      explicitTarget = true
+    } else if (option === '--project') {
+      if (args.scope === 'global') throw new Error('--project and --global are mutually exclusive')
+      args.scope = 'project'
+    } else if (option === '--global') {
+      if (args.scope === 'project' && argv.slice(2, index).includes('--project'))
+        throw new Error('--project and --global are mutually exclusive')
+      args.scope = 'global'
+    } else if (option === '--dry-run') args.dryRun = true
+    else if (option === '--force') args.force = true
+    else if (option === '--help') args.help = true
+    else if (option === '--platforms')
+      throw new Error('--platforms was removed; this uninstaller supports OpenCode only')
+    else throw new Error(`Unknown option: ${option}`)
   }
-
-  for (let i = 2; i < argv.length; i++) {
-    switch (argv[i]) {
-      case '--target':
-        args.target = argv[++i]
-        break
-      case '--platforms':
-        args.platforms = argv[++i].split(',').map((s) => s.trim().toLowerCase())
-        break
-      case '--dry-run':
-        args.dryRun = true
-        break
-      case '--force':
-        args.force = true
-        break
-      case '--help':
-        args.help = true
-        break
-      default:
-        console.warn(`⚠️  Unknown option: ${argv[i]}`)
-        break
-    }
+  if (args.scope === 'global' && !explicitTarget) {
+    args.target = resolveGlobalTarget()
   }
-
-  if (!args.target) {
-    args.target = process.cwd()
-  }
-  args.target = resolveTarget(args.target)
-
+  args.target = resolve(args.target)
   return args
 }
 
-// ---------------------------------------------------------------------------
-// Confirmation prompt
-// ---------------------------------------------------------------------------
-
-async function confirmPrompt(message) {
-  if (!isatty(process.stdin.fd)) {
-    // Non-interactive — skip prompt (caller must use --force if desired)
-    return true
-  }
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
-  return new Promise((resolve) => {
-    rl.question(message, (answer) => {
-      rl.close()
-      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes')
-    })
-  })
+/**
+ * Resolve the isolated global OpenCode directory without consulting cwd.
+ *
+ * PANTHEON_HOME is intentionally a directory override (not a parent), which
+ * makes sandboxed installs safe and keeps uninstall symmetric with the MCP
+ * path resolver. XDG remains the normal user-wide fallback.
+ *
+ * @param {NodeJS.ProcessEnv} [env] environment to inspect
+ * @param {string} [home] home directory fallback
+ * @returns {string} absolute global configuration directory
+ */
+function resolveGlobalTarget(env = process.env, home = homedir()) {
+  const pantheonHome = env.PANTHEON_HOME?.trim()
+  if (pantheonHome) return resolve(pantheonHome)
+  const xdg = env.XDG_CONFIG_HOME?.trim() || join(home, '.config')
+  return resolve(join(xdg, 'opencode'))
 }
 
-// ---------------------------------------------------------------------------
-// Safety checks
-// ---------------------------------------------------------------------------
-
-/** Check if a filename matches a Pantheon agent file pattern. */
-function isPantheonAgentFile(filename) {
-  const basename = filename.replace(/\.(md|mdc)$/, '')
-  return PANTHEON_AGENT_NAMES.includes(basename)
-}
-
-/** Check if a string is a Pantheon skill directory name. */
-function _isPantheonSkillEntry(dirname) {
-  // Skill directories are dynamically fetched from ROOT/skills/
-  // We use a dynamic check via readdirSync when needed, but for safety
-  // we check against a known set of patterns.
-  return /^[a-z-]+$/.test(dirname) && dirname.length > 1
-}
-
-/** Check if a file contains Pantheon content. */
-function fileContainsPantheonContent(filePath) {
+function lstat(path) {
   try {
-    if (!existsSync(filePath)) return false
-    const content = readFileSync(filePath, 'utf8')
-    return (
-      content.includes('Pantheon Agent System') ||
-      content.includes('# Pantheon Agent System') ||
-      content.includes('Pantheon multi-agent framework')
+    return lstatSync(path)
+  } catch {
+    return null
+  }
+}
+
+function isSymlink(path) {
+  return lstat(path)?.isSymbolicLink() === true
+}
+
+function isInside(path, root) {
+  const child = relative(resolve(root), resolve(path))
+  return child === '' || (!child.startsWith('..') && !child.includes(`${pathSeparator()}..`))
+}
+
+function pathSeparator() {
+  return '/'
+}
+
+function isPantheonContent(path) {
+  const info = lstat(path)
+  if (!info?.isFile() || info.isSymbolicLink()) return false
+  try {
+    return OWNERSHIP_MARKER.test(readFileSync(path, 'utf8'))
+  } catch {
+    return false
+  }
+}
+
+function isPantheonRouting(path) {
+  const info = lstat(path)
+  if (!info?.isFile() || info.isSymbolicLink()) return false
+  try {
+    // routing.yml is also a legitimate user configuration. Unlike generated
+    // agents, its contents can mention Pantheon without being Pantheon-owned,
+    // so only an explicit ownership marker permits removal.
+    return /(?:^|\n)\s*(?:#|<!--)\s*(?:managed-by:\s*)?pantheon-opencode\b/i.test(
+      readFileSync(path, 'utf8'),
     )
   } catch {
     return false
   }
 }
 
-// ---------------------------------------------------------------------------
-// Platform uninstallers
-// ---------------------------------------------------------------------------
-
-/**
- * OpenCode — remove .opencode/agents/, restore opencode.json
- */
-function uninstallOpenCode(target, dryRun) {
-  const s = stats.opencode
-
-  // 1. Remove .opencode/agents/ (entire directory — Pantheon-created)
-  const agentsDir = join(target, '.opencode', 'agents')
-  if (existsSync(agentsDir)) {
-    if (!dryRun) {
-      try {
-        rmSync(agentsDir, { recursive: true, force: true })
-        s.removed++
-      } catch (err) {
-        console.error(`  ⚠️  Failed to remove ${agentsDir}: ${err.message}`)
-        s.errors++
-      }
-    } else {
-      const count = readdirSync(agentsDir).length
-      s.removed++
-      console.log(`  ~ Would remove .opencode/agents/ (${count} files)`)
-    }
-  } else {
-    s.skipped++
+function removePath(path, dryRun, root, label = path) {
+  if (!isInside(path, root) || isSymlink(path)) {
+    stats.skipped += 1
+    return false
   }
-
-  // 2. Remove .opencode/skills/ (entire directory — Pantheon-created)
-  const skillsDir = join(target, '.opencode', 'skills')
-  if (existsSync(skillsDir)) {
-    if (!dryRun) {
-      try {
-        rmSync(skillsDir, { recursive: true, force: true })
-        s.removed++
-      } catch (err) {
-        console.error(`  ⚠️  Failed to remove ${skillsDir}: ${err.message}`)
-        s.errors++
-      }
-    } else {
-      s.removed++
-      console.log('  ~ Would remove .opencode/skills/')
-    }
-  } else {
-    s.skipped++
+  const info = lstat(path)
+  if (!info) {
+    stats.skipped += 1
+    return false
   }
-
-  // 3. Remove .opencode/commands/ (entire directory — Pantheon-created)
-  const cmdsDir = join(target, '.opencode', 'commands')
-  if (existsSync(cmdsDir)) {
-    if (!dryRun) {
-      try {
-        rmSync(cmdsDir, { recursive: true, force: true })
-        s.removed++
-      } catch (err) {
-        console.error(`  ⚠️  Failed to remove ${cmdsDir}: ${err.message}`)
-        s.errors++
-      }
-    } else {
-      s.removed++
-      console.log('  ~ Would remove .opencode/commands/')
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 4. Remove .opencode/plugins/ (Pantheon TUI plugin)
-  const pluginsDir = join(target, '.opencode', 'plugins')
-  if (existsSync(pluginsDir)) {
-    let isPluginEmpty = true
+  if (dryRun) console.log(`  ~ Would remove ${label}`)
+  else {
     try {
-      isPluginEmpty = readdirSync(pluginsDir).length === 0
-    } catch {
-      /* ignore */
-    }
-    if (!dryRun) {
-      try {
-        rmSync(pluginsDir, { recursive: true, force: true })
-        s.removed++
-      } catch (err) {
-        console.error(`  ⚠️  Failed to remove ${pluginsDir}: ${err.message}`)
-        s.errors++
-      }
-    } else if (!isPluginEmpty) {
-      s.removed++
-      console.log('  ~ Would remove .opencode/plugins/ (Pantheon TUI plugin)')
-    } else {
-      s.skipped++
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 5. Remove .opencode/package.json and .opencode/tsconfig.json (Pantheon-created)
-  for (const f of ['package.json', 'tsconfig.json']) {
-    const fp = join(target, '.opencode', f)
-    if (existsSync(fp)) {
-      if (!dryRun) {
-        try {
-          rmSync(fp, { force: true })
-          s.removed++
-        } catch (err) {
-          console.error(`  ⚠️  Failed to remove ${fp}: ${err.message}`)
-          s.errors++
-        }
-      } else {
-        s.removed++
-        console.log(`  ~ Would remove .opencode/${f}`)
-      }
-    } else {
-      s.skipped++
+      rmSync(path, { recursive: info.isDirectory(), force: false })
+    } catch (error) {
+      console.error(`  ⚠️ Failed to remove ${path}: ${error.message}`)
+      stats.errors += 1
+      return false
     }
   }
+  stats.removed += 1
+  return true
+}
 
-  // 6. Clean up empty .opencode/ directory
-  const opencodeDir = join(target, '.opencode')
-  if (existsSync(opencodeDir)) {
-    let isEmpty = true
-    try {
-      isEmpty = readdirSync(opencodeDir).length === 0
-    } catch {
-      /* ignore */
-    }
-    if (isEmpty) {
-      if (!dryRun) {
-        try {
-          rmSync(opencodeDir, { recursive: true, force: true })
-          s.removed++
-        } catch (_err) {
-          /* ignore */
-        }
-      } else {
-        s.removed++
-        console.log('  ~ Would remove empty .opencode/ directory')
-      }
-    }
+function removeMatchingEntries(directory, predicate, dryRun, root) {
+  const info = lstat(directory)
+  if (!info || info.isSymbolicLink() || !info.isDirectory()) {
+    stats.skipped += 1
+    return
   }
+  for (const entry of readdirSync(directory)) {
+    const path = join(directory, entry)
+    const child = lstat(path)
+    if (!child || child.isSymbolicLink()) {
+      stats.skipped += 1
+      continue
+    }
+    if (predicate(path, entry)) removePath(path, dryRun, root, path)
+    else if (child.isDirectory()) removeMatchingEntries(path, predicate, dryRun, root)
+  }
+  const remaining = lstat(directory)
+  if (remaining?.isDirectory() && readdirSync(directory).length === 0)
+    removePath(directory, dryRun, root, directory)
+}
 
-  // 7. Restore opencode.json — remove Pantheon agent config entries
+function readJson(path) {
+  const info = lstat(path)
+  if (!info || info.isSymbolicLink() || !info.isFile()) return null
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function ownedReference(value) {
+  return typeof value === 'string' && /pantheon(?:[-/]|$)/i.test(value)
+}
+
+function ownedPluginEntry(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return ['managed-by', 'managedBy', 'owner'].some(
+      (key) => typeof value[key] === 'string' && /^pantheon(?:-|$)/i.test(value[key]),
+    )
+  }
+  if (typeof value !== 'string') return false
+  const normalized = value.replaceAll('\\', '/')
+  return (
+    /(?:^|\/)src\/plugin\.ts$/i.test(normalized) ||
+    /(?:^|\/)src\/plugins\/pantheon-hooks\.ts$/i.test(normalized) ||
+    /^(?:plugins\/)?pantheon-(?:hooks|plugin|tui)$/i.test(normalized) ||
+    /^pantheon-opencode$/i.test(normalized)
+  )
+}
+
+function ownedMcpEntry(name, value) {
+  if (typeof name === 'string' && /^pantheon(?:-|$)/i.test(name)) return true
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return ['managed-by', 'managedBy', 'owner'].some(
+    (key) => typeof value[key] === 'string' && /^pantheon(?:-|$)/i.test(value[key]),
+  )
+}
+
+function cleanOpenCodeConfig(target, dryRun, ownedRoot = target) {
   const configPath = join(target, 'opencode.json')
-  if (existsSync(configPath)) {
-    try {
-      const raw = readFileSync(configPath, 'utf8')
-      const config = JSON.parse(raw)
-      let changed = false
-
-      // Remove Pantheon-managed agent entries
-      if (config.agent && typeof config.agent === 'object') {
-        for (const [name, cfg] of Object.entries(config.agent)) {
-          const source = cfg?.source || ''
-          if (
-            source.startsWith('.opencode/agents/') ||
-            source.startsWith('agents/') ||
-            (PANTHEON_AGENT_NAMES.includes(name) && source === '')
-          ) {
-            delete config.agent[name]
-            changed = true
-          }
-        }
-        if (Object.keys(config.agent).length === 0) {
-          delete config.agent
-        }
-      }
-
-      // Remove Pantheon-specific instructions
-      if (Array.isArray(config.instructions)) {
-        const filtered = config.instructions.filter(
-          (i) => i !== 'AGENTS.md' && i !== 'instructions/*.instructions.md',
-        )
-        if (filtered.length !== config.instructions.length) {
-          changed = true
-        }
-        if (filtered.length === 0) {
-          delete config.instructions
-        } else {
-          config.instructions = filtered
-        }
-      }
-
-      // Remove Pantheon plugin entry (stub — reserved for future plugin cleanup)
-      if (Array.isArray(config.plugin) && config.plugin.length === 0) {
-        delete config.plugin
-      }
-
-      // Remove default_agent if it points to zeus
-      if (config.default_agent === 'zeus') {
-        delete config.default_agent
+  const config = readJson(configPath)
+  if (!config) {
+    stats.skipped += 1
+    return
+  }
+  let changed = false
+  const removedAgents = new Set()
+  if (config.agent && typeof config.agent === 'object' && !Array.isArray(config.agent)) {
+    for (const [name, value] of Object.entries(config.agent)) {
+      const source = value && typeof value === 'object' ? value.source : undefined
+      const sourcePath = typeof source === 'string' ? resolve(target, source) : ''
+      if (
+        typeof source === 'string' &&
+        isInside(sourcePath, ownedRoot) &&
+        isPantheonContent(sourcePath)
+      ) {
+        delete config.agent[name]
+        removedAgents.add(name)
         changed = true
       }
-
-      if (changed) {
-        if (!dryRun) {
-          writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
-          s.removed++
-        } else {
-          s.removed++
-          console.log('  ~ Would restore opencode.json (remove Pantheon agent config entries)')
-        }
-      } else {
-        s.skipped++
-      }
-    } catch (err) {
-      console.error(`  ⚠️  Failed to process opencode.json: ${err.message}`)
-      s.errors++
     }
-  } else {
-    s.skipped++
-  }
-
-  // 8. Remove Pantheon-installed instructions/ directory
-  const instrDir = join(target, 'instructions')
-  if (existsSync(instrDir)) {
-    // Only remove if it was Pantheon-installed (heuristic: contains .instructions.md files)
-    try {
-      const entries = readdirSync(instrDir)
-      const hasInstructions = entries.some((e) => e.endsWith('.instructions.md'))
-      if (hasInstructions) {
-        if (!dryRun) {
-          rmSync(instrDir, { recursive: true, force: true })
-          s.removed++
-        } else {
-          s.removed++
-          console.log('  ~ Would remove instructions/ (Pantheon-installed)')
-        }
-      } else {
-        s.skipped++
-      }
-    } catch {
-      s.skipped++
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 9. Remove Pantheon-installed prompts/ directory
-  const promptsDir = join(target, 'prompts')
-  if (existsSync(promptsDir)) {
-    try {
-      const entries = readdirSync(promptsDir)
-      const hasPromptMds = entries.some((e) => e.endsWith('.prompt.md'))
-      if (hasPromptMds) {
-        if (!dryRun) {
-          rmSync(promptsDir, { recursive: true, force: true })
-          s.removed++
-        } else {
-          s.removed++
-          console.log('  ~ Would remove prompts/ (Pantheon-installed)')
-        }
-      } else {
-        s.skipped++
-      }
-    } catch {
-      s.skipped++
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 10. Remove AGENTS.md if it has Pantheon content
-  const agentsMd = join(target, 'AGENTS.md')
-  if (fileContainsPantheonContent(agentsMd)) {
-    if (!dryRun) {
-      try {
-        rmSync(agentsMd, { force: true })
-        s.removed++
-      } catch (err) {
-        console.error(`  ⚠️  Failed to remove AGENTS.md: ${err.message}`)
-        s.errors++
-      }
-    } else {
-      s.removed++
-      console.log('  ~ Would remove AGENTS.md (Pantheon content)')
-    }
-  } else {
-    s.skipped++
-  }
-}
-
-/**
- * Claude Code — remove .claude/agents/, remove CLAUDE.md if Pantheon content
- */
-function uninstallClaude(target, dryRun) {
-  const s = stats.claude
-
-  // 1. Remove .claude/agents/
-  const agentsDir = join(target, '.claude', 'agents')
-  if (existsSync(agentsDir)) {
-    if (!dryRun) {
-      try {
-        rmSync(agentsDir, { recursive: true, force: true })
-        s.removed++
-      } catch (err) {
-        console.error(`  ⚠️  Failed to remove ${agentsDir}: ${err.message}`)
-        s.errors++
-      }
-    } else {
-      const count = existsSync(agentsDir) ? readdirSync(agentsDir).length : 0
-      s.removed++
-      console.log(`  ~ Would remove .claude/agents/ (${count} files)`)
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 2. Remove .claude/settings.json Pantheon section (or entire file if Pantheon-only)
-  const settingsPath = join(target, '.claude', 'settings.json')
-  if (existsSync(settingsPath)) {
-    try {
-      const raw = readFileSync(settingsPath, 'utf8')
-      const settings = JSON.parse(raw)
-      // The installer creates settings with only permissions.allow
-      // If the file only has permissions, it's Pantheon-created
-      if (settings.permissions && Object.keys(settings).length === 1 && !dryRun) {
-        rmSync(settingsPath, { force: true })
-        s.removed++
-      } else if (settings.permissions && !dryRun) {
-        // User had other settings — just remove the permissions key
-        delete settings.permissions
-        writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
-        s.removed++
-      } else if (settings.permissions) {
-        s.removed++
-        console.log('  ~ Would remove Pantheon permissions from .claude/settings.json')
-      } else {
-        s.skipped++
-      }
-    } catch {
-      s.skipped++
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 3. Remove CLAUDE.md if it has Pantheon content
-  const claudeMdPath = join(target, 'CLAUDE.md')
-  if (fileContainsPantheonContent(claudeMdPath)) {
-    if (!dryRun) {
-      try {
-        rmSync(claudeMdPath, { force: true })
-        s.removed++
-      } catch (err) {
-        console.error(`  ⚠️  Failed to remove CLAUDE.md: ${err.message}`)
-        s.errors++
-      }
-    } else {
-      s.removed++
-      console.log('  ~ Would remove CLAUDE.md (Pantheon content)')
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 4. Remove .claude/ (if empty after cleanup)
-  const claudeDir = join(target, '.claude')
-  if (existsSync(claudeDir)) {
-    try {
-      const entries = readdirSync(claudeDir)
-      if (entries.length === 0) {
-        if (!dryRun) {
-          rmSync(claudeDir, { recursive: true, force: true })
-        }
-        // No need to count this — it's a cleanup step
-      }
-    } catch {
-      /* ignore */
+    if (!Object.keys(config.agent).length) {
+      delete config.agent
+      changed = true
     }
   }
-  // Note: AGENTS.md is handled by opencode uninstaller
-}
-
-/**
- * Cursor — remove .cursor/rules/*.mdc (only Pantheon rules)
- */
-function uninstallCursor(target, dryRun) {
-  const s = stats.cursor
-
-  const rulesDir = join(target, '.cursor', 'rules')
-  if (!existsSync(rulesDir)) {
-    s.skipped++
-    return
+  if (Array.isArray(config.instructions)) {
+    const instructions = config.instructions.filter((entry) => {
+      if (typeof entry !== 'string') return true
+      const path = resolve(target, entry)
+      return !(isInside(path, ownedRoot) && isPantheonContent(path))
+    })
+    changed ||= instructions.length !== config.instructions.length
+    if (instructions.length) config.instructions = instructions
+    else delete config.instructions
   }
-
-  try {
-    const entries = readdirSync(rulesDir)
-    const pantheonFiles = entries.filter((f) => f.endsWith('.mdc') && isPantheonAgentFile(f))
-
-    if (pantheonFiles.length === 0) {
-      s.skipped++
-      return
-    }
-
-    for (const f of pantheonFiles) {
-      const fp = join(rulesDir, f)
-      if (!dryRun) {
-        try {
-          rmSync(fp, { force: true })
-          s.removed++
-        } catch (err) {
-          console.error(`  ⚠️  Failed to remove ${fp}: ${err.message}`)
-          s.errors++
-        }
-      } else {
-        s.removed++
-        console.log(`  ~ Would remove .cursor/rules/${f}`)
-      }
-    }
-
-    // Remove rules/ directory if empty
-    if (!dryRun && readdirSync(rulesDir).length === 0) {
-      try {
-        rmSync(rulesDir, { recursive: true, force: true })
-      } catch {
-        /* ignore */
-      }
-    }
-  } catch (err) {
-    console.error(`  ⚠️  Failed to read ${rulesDir}: ${err.message}`)
-    s.errors++
-  }
-
-  // Note: AGENTS.md is handled by opencode uninstaller
-}
-
-/**
- * Windsurf — remove .windsurf/rules/, remove .windsurf/workflows/ if empty
- */
-function uninstallWindsurf(target, dryRun) {
-  const s = stats.windsurf
-
-  // 1. Remove .windsurf/rules/
-  const rulesDir = join(target, '.windsurf', 'rules')
-  if (existsSync(rulesDir)) {
-    if (!dryRun) {
-      try {
-        rmSync(rulesDir, { recursive: true, force: true })
-        s.removed++
-      } catch (err) {
-        console.error(`  ⚠️  Failed to remove ${rulesDir}: ${err.message}`)
-        s.errors++
-      }
-    } else {
-      const count = readdirSync(rulesDir).length
-      s.removed++
-      console.log(`  ~ Would remove .windsurf/rules/ (${count} files)`)
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 2. Remove workflows that match Pantheon workflow names
-  const wfDir = join(target, '.windsurf', 'workflows')
-  if (existsSync(wfDir)) {
-    try {
-      const entries = readdirSync(wfDir)
-      const pantheonWorkflows = entries.filter(
-        (f) =>
-          f.endsWith('.md') &&
-          [
-            'orchestrate.md',
-            'code-review.md',
-            'audit.md',
-            'cancel.md',
-            'deepwork.md',
-            'focus.md',
-            'forge.md',
-            'metamorphosis.md',
-            'mirrordeps.md',
-            'optimize.md',
-            'pantheon-status.md',
-            'pantheon.md',
-            'ping.md',
-            'praxis.md',
-            'reflect.md',
-            'sketch.md',
-            'stop-continuation.md',
-            'subtask.md',
-          ].includes(f),
+  for (const key of ['mcp', 'plugin', 'plugins']) {
+    if (Array.isArray(config[key])) {
+      const kept = config[key].filter((entry) =>
+        key === 'mcp'
+          ? !ownedMcpEntry(typeof entry === 'string' ? entry : '', entry)
+          : !ownedPluginEntry(entry),
       )
-
-      for (const f of pantheonWorkflows) {
-        const fp = join(wfDir, f)
-        if (!dryRun) {
-          try {
-            rmSync(fp, { force: true })
-            s.removed++
-          } catch (err) {
-            console.error(`  ⚠️  Failed to remove ${fp}: ${err.message}`)
-            s.errors++
-          }
-        } else {
-          s.removed++
-          console.log(`  ~ Would remove .windsurf/workflows/${f}`)
-        }
-      }
-
-      // Remove workflows/ directory if empty
-      if (!dryRun && existsSync(wfDir) && readdirSync(wfDir).length === 0) {
-        try {
-          rmSync(wfDir, { recursive: true, force: true })
-        } catch {
-          /* ignore */
-        }
-      }
-    } catch (err) {
-      console.error(`  ⚠️  Failed to read ${wfDir}: ${err.message}`)
-      s.errors++
-    }
-  } else {
-    s.skipped++
-  }
-
-  // Note: AGENTS.md is handled by opencode uninstaller
-}
-
-/**
- * VS Code / Copilot — remove .github/agents/, restore .vscode/settings.json
- */
-function uninstallCopilot(target, dryRun) {
-  const s = stats.copilot
-
-  // 1. Remove .github/agents/ (entire directory — Pantheon-created)
-  const agentsDir = join(target, '.github', 'agents')
-  if (existsSync(agentsDir)) {
-    if (!dryRun) {
-      try {
-        rmSync(agentsDir, { recursive: true, force: true })
-        s.removed++
-      } catch (err) {
-        console.error(`  ⚠️  Failed to remove ${agentsDir}: ${err.message}`)
-        s.errors++
-      }
-    } else {
-      const count = existsSync(agentsDir) ? readdirSync(agentsDir).length : 0
-      s.removed++
-      console.log(`  ~ Would remove .github/agents/ (${count} files)`)
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 2. Restore .vscode/settings.json — remove Pantheon-added keys
-  const settingsPath = join(target, '.vscode', 'settings.json')
-  if (existsSync(settingsPath)) {
-    try {
-      const raw = readFileSync(settingsPath, 'utf8')
-      const settings = JSON.parse(raw)
-      let changed = false
-
-      // Remove the Pantheon-specific settings that the installer added
-      const pantheonKeys = ['chat.subagents.allowInvocationsFromSubagents', 'chat.plugins.enabled']
-
-      for (const key of pantheonKeys) {
-        if (key in settings) {
-          delete settings[key]
+      changed ||= kept.length !== config[key].length
+      config[key] = kept
+    } else if (config[key] && typeof config[key] === 'object') {
+      for (const [name, value] of Object.entries(config[key])) {
+        if (
+          key === 'mcp'
+            ? ownedMcpEntry(name, value)
+            : ownedPluginEntry(name) || ownedPluginEntry(value)
+        ) {
+          delete config[key][name]
           changed = true
         }
       }
-
-      if (changed) {
-        if (!dryRun) {
-          writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
-          s.removed++
-        } else {
-          s.removed++
-          console.log('  ~ Would restore .vscode/settings.json (remove Pantheon keys)')
-        }
-      } else {
-        s.skipped++
+      if (!Object.keys(config[key]).length) {
+        delete config[key]
+        changed = true
       }
-    } catch (err) {
-      console.error(`  ⚠️  Failed to process .vscode/settings.json: ${err.message}`)
-      s.errors++
-    }
-  } else {
-    s.skipped++
-  }
-
-  // Note: AGENTS.md is handled by opencode uninstaller
-}
-
-/**
- * Continue.dev — remove .continue/rules/, check .continue/config.yaml
- */
-function uninstallContinue(target, dryRun) {
-  const s = stats.continue
-
-  // 1. Remove .continue/rules/ (entire directory — Pantheon-created)
-  const rulesDir = join(target, '.continue', 'rules')
-  if (existsSync(rulesDir)) {
-    if (!dryRun) {
-      try {
-        rmSync(rulesDir, { recursive: true, force: true })
-        s.removed++
-      } catch (err) {
-        console.error(`  ⚠️  Failed to remove ${rulesDir}: ${err.message}`)
-        s.errors++
-      }
-    } else {
-      const count = readdirSync(rulesDir).length
-      s.removed++
-      console.log(`  ~ Would remove .continue/rules/ (${count} files)`)
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 2. Check .continue/config.yaml for Pantheon references
-  const configPath = join(target, '.continue', 'config.yaml')
-  if (existsSync(configPath)) {
-    try {
-      const content = readFileSync(configPath, 'utf8')
-      if (
-        content.includes('Pantheon') ||
-        content.includes('pantheon') ||
-        /rules\/\w+\.md/.test(content)
-      ) {
-        if (!dryRun) {
-          // Note: We don't auto-edit yaml (too risky with formatting),
-          // but we inform the user
-          console.log(
-            '  ℹ️  .continue/config.yaml references Pantheon rules — manual cleanup may be needed',
-          )
-        } else {
-          console.log('  ~ Would check .continue/config.yaml for Pantheon references')
-        }
-        s.removed++
-      } else {
-        s.skipped++
-      }
-    } catch {
-      s.skipped++
-    }
-  } else {
-    s.skipped++
-  }
-
-  // 3. Remove .continue/.opencode/ if present (from sync)
-  const opencodeDir = join(target, '.continue', '.opencode')
-  if (existsSync(opencodeDir)) {
-    if (!dryRun) {
-      try {
-        rmSync(opencodeDir, { recursive: true, force: true })
-        s.removed++
-      } catch (_err) {
-        /* ignore */
-      }
-    } else {
-      s.removed++
-      console.log('  ~ Would remove .continue/.opencode/ shared config')
     }
   }
-}
-
-/**
- * Cline — remove .clinerules/ (only agent rules, not commands/skills if shared)
- */
-function uninstallCline(target, dryRun) {
-  const s = stats.cline
-
-  const clineDir = join(target, '.clinerules')
-  if (!existsSync(clineDir)) {
-    s.skipped++
+  if (removedAgents.has(config.default_agent)) {
+    delete config.default_agent
+    changed = true
+  }
+  if (!changed) {
+    stats.skipped += 1
     return
   }
-
-  try {
-    const entries = readdirSync(clineDir)
-    const agentFiles = entries.filter(
-      (f) => statSync(join(clineDir, f)).isFile() && isPantheonAgentFile(f),
-    )
-
-    if (agentFiles.length === 0) {
-      s.skipped++
-      return
-    }
-
-    for (const f of agentFiles) {
-      const fp = join(clineDir, f)
-      if (!dryRun) {
-        try {
-          rmSync(fp, { force: true })
-          s.removed++
-        } catch (err) {
-          console.error(`  ⚠️  Failed to remove ${fp}: ${err.message}`)
-          s.errors++
-        }
-      } else {
-        s.removed++
-        console.log(`  ~ Would remove .clinerules/${f}`)
-      }
-    }
-
-    // Remove .clinerules/ directory if empty (no shared commands/skills remain)
-    if (!dryRun && readdirSync(clineDir).length === 0) {
-      try {
-        rmSync(clineDir, { recursive: true, force: true })
-      } catch {
-        /* ignore */
-      }
-    }
-  } catch (err) {
-    console.error(`  ⚠️  Failed to read ${clineDir}: ${err.message}`)
-    s.errors++
-  }
+  if (dryRun) console.log('  ~ Would update opencode.json (remove Pantheon-owned entries)')
+  else writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  stats.removed += 1
 }
 
-// ---------------------------------------------------------------------------
-// Summary
-// ---------------------------------------------------------------------------
+function configDirFor(target) {
+  const name = basename(target)
+  const looksFlat = lstat(join(target, 'agents'))?.isDirectory() === true
+  return name === '.opencode' || name === 'opencode' || looksFlat
+    ? target
+    : join(target, '.opencode')
+}
 
-function printUninstallSummary(target, platforms) {
-  console.log('')
-  console.log('='.repeat(60))
-  console.log('🗑️  Uninstall Summary')
-  console.log(`   Target: ${target}`)
-  console.log('='.repeat(60))
-
-  let totalRemoved = 0
-  let totalSkipped = 0
-  let totalErrors = 0
-
-  for (const platform of platforms) {
-    const label = PLATFORM_LABELS[platform] ?? platform
-    const pStats = stats[platform]
-    totalRemoved += pStats.removed
-    totalSkipped += pStats.skipped
-    totalErrors += pStats.errors
-
-    const status = pStats.errors > 0 ? '⚠️' : '✅'
-    console.log(
-      ` ${status} ${label}: ${pStats.removed} removed, ${pStats.skipped} skipped${pStats.errors > 0 ? `, ${pStats.errors} errors` : ''}`,
-    )
+function uninstallOpenCode(target, dryRun) {
+  const root = resolve(target)
+  if (isSymlink(root)) throw new Error(`Target must not be a symlink: ${root}`)
+  const configDir = configDirFor(root)
+  const configInfo = lstat(configDir)
+  if (configInfo?.isSymbolicLink()) {
+    stats.skipped += 1
+    return
   }
-
-  console.log('-'.repeat(60))
-  console.log(
-    `   Total: ${totalRemoved} items removed, ${totalSkipped} items skipped, ${totalErrors} errors`,
+  const ownedRoot = root
+  cleanOpenCodeConfig(root, dryRun, ownedRoot)
+  removeMatchingEntries(
+    join(configDir, 'agents'),
+    (_path, name) => AGENT_NAMES.has(name.replace(/\.md$/, '')) && isPantheonContent(_path),
+    dryRun,
+    ownedRoot,
   )
-
-  if (totalErrors > 0) {
-    console.log('   ⚠️  Some platforms had errors — review warnings above.')
+  for (const directory of ['skills', 'commands', 'plugins'])
+    removeMatchingEntries(join(configDir, directory), isPantheonContent, dryRun, ownedRoot)
+  for (const file of ['package.json', 'tsconfig.json', 'routing.yml']) {
+    const path = join(configDir, file)
+    if (file === 'routing.yml' ? isPantheonRouting(path) : isPantheonContent(path))
+      removePath(path, dryRun, ownedRoot, path)
   }
-
-  if (totalRemoved === 0 && totalSkipped > 0) {
-    console.log('   ℹ️  No Pantheon files found for the selected platforms.')
-  }
-
-  console.log('')
-  if (totalRemoved > 0) {
-    console.log('   📖 To verify, check the target directory for remaining Pantheon files.')
-    console.log(`   📚 Reinstall: npx pantheon-opencode init --project  (in ${target})`)
-  }
-  console.log('')
+  const tui = join(configDir, 'tui.json')
+  cleanTuiConfig(tui, dryRun, ownedRoot)
+  const agentsMd = join(root, 'AGENTS.md')
+  if (isPantheonContent(agentsMd)) removePath(agentsMd, dryRun, ownedRoot, agentsMd)
+  if (configInfo?.isDirectory() && readdirSync(configDir).length === 0)
+    removePath(configDir, dryRun, ownedRoot, configDir)
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
+function cleanTuiConfig(path, dryRun, root) {
+  const config = readJson(path)
+  if (!config || !Array.isArray(config.plugin)) {
+    stats.skipped += 1
+    return
+  }
+  const plugin = config.plugin.filter(
+    (entry) => !(ownedReference(entry) && isInside(resolve(dirname(path), entry), root)),
+  )
+  if (plugin.length === config.plugin.length) {
+    stats.skipped += 1
+    return
+  }
+  config.plugin = plugin
+  if (dryRun) console.log('  ~ Would update tui.json (remove Pantheon-owned plugin references)')
+  else writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  stats.removed += 1
+}
+
+function dirname(path) {
+  return path.slice(0, path.lastIndexOf('/'))
+}
+
+async function confirmPrompt(message) {
+  if (!isatty(process.stdin.fd)) return true
+  const readline = createInterface({ input: process.stdin, output: process.stdout })
+  return new Promise((answer) =>
+    readline.question(message, (value) => {
+      readline.close()
+      answer(['y', 'yes'].includes(value.trim().toLowerCase()))
+    }),
+  )
+}
 
 async function main() {
   const args = parseArgs(process.argv)
-
-  if (args.help) {
-    showHelp()
-    process.exit(0)
-  }
-
-  const target = args.target
-
-  if (!existsSync(target)) {
-    console.error(`❌ Target directory does not exist: ${target}`)
-    process.exit(1)
-  }
-
-  let platforms = args.platforms
-
-  if (platforms?.includes('all')) {
-    platforms = [...ALL_PLATFORMS]
-  } else if (!platforms) {
-    const detected = detectPlatforms(target)
-    if (detected.length === 0) {
-      console.log(`🔍 No Pantheon platform config detected in ${target}`)
-      console.log('   Uninstalling all platforms.\n')
-      platforms = [...ALL_PLATFORMS]
-    } else {
-      console.log(`🔍 Detected platforms in ${target}: ${detected.join(', ')}\n`)
-      platforms = detected
-    }
-  }
-
-  console.log(args.dryRun ? '🔍 Dry-run mode — no files will be deleted\n' : '')
-  console.log(`📦 Pantheon Uninstaller`)
-  console.log(`   Target: ${target}`)
-  console.log(`   Platforms: ${platforms.join(', ')}\n`)
-
-  // Confirmation (skip in dry-run mode, unless --force)
-  if (!args.dryRun && !args.force) {
-    const ok = await confirmPrompt(
-      `⚠️  This will remove Pantheon agent files from ${target}\n   Proceed? [y/N] `,
-    )
-    if (!ok) {
-      console.log('❌ Uninstall cancelled.')
-      process.exit(0)
-    }
-    console.log('')
-  }
-
-  for (const platform of platforms) {
-    const label = PLATFORM_LABELS[platform] ?? platform
-    console.log(`🗑️  ${label}`)
-
-    switch (platform) {
-      case 'opencode':
-        uninstallOpenCode(target, args.dryRun)
-        break
-      case 'claude':
-        uninstallClaude(target, args.dryRun)
-        break
-      case 'cursor':
-        uninstallCursor(target, args.dryRun)
-        break
-      case 'windsurf':
-        uninstallWindsurf(target, args.dryRun)
-        break
-      case 'copilot':
-        uninstallCopilot(target, args.dryRun)
-        break
-      case 'continue':
-        uninstallContinue(target, args.dryRun)
-        break
-      case 'cline':
-        uninstallCline(target, args.dryRun)
-        break
-      default:
-        console.warn(`  ⚠️  Unknown platform: ${platform} — skipping`)
-        break
-    }
-  }
-
-  printUninstallSummary(target, platforms)
-  process.exit(0)
+  if (args.help) return showHelp()
+  const info = lstat(args.target)
+  if (!info?.isDirectory() || info.isSymbolicLink())
+    throw new Error(`Target directory does not exist or is a symlink: ${args.target}`)
+  if (
+    !args.dryRun &&
+    !args.force &&
+    !(await confirmPrompt(`⚠️ Remove Pantheon OpenCode artifacts from ${args.target}? [y/N] `))
+  )
+    return console.log('❌ Uninstall cancelled.')
+  console.log(`${args.dryRun ? '🔍 Dry-run' : '🗑️ Uninstall'}: OpenCode/Pantheon only`)
+  uninstallOpenCode(args.target, args.dryRun)
+  console.log(`✅ ${stats.removed} removed, ${stats.skipped} skipped, ${stats.errors} errors`)
+  if (stats.errors) process.exitCode = 1
 }
 
-main().catch((err) => {
-  console.error(`❌ Uninstall failed: ${err.message}`)
-  process.exit(1)
-})
+export {
+  cleanOpenCodeConfig,
+  isPantheonContent,
+  main,
+  parseArgs,
+  resolveGlobalTarget,
+  uninstallOpenCode,
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname))
+  main().catch((error) => {
+    console.error(`❌ Uninstall failed: ${error.message}`)
+    process.exit(1)
+  })

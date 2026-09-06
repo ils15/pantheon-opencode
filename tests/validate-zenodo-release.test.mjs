@@ -31,10 +31,10 @@ function fixture() {
 
 test('accepts a matching stable release and optional citation', () => {
   const root = fixture()
-  writeFileSync(join(root, 'CITATION.cff'), 'cff-version: 1.2.0\nversion: 1.4.3\n')
-  assert.deepEqual(validateZenodoRelease(root, 'v1.4.3').citation, {
+  writeFileSync(join(root, 'CITATION.cff'), 'cff-version: 1.2.0\nversion: 1.5.0\n')
+  assert.deepEqual(validateZenodoRelease(root, 'v1.5.0').citation, {
     present: true,
-    version: '1.4.3',
+    version: '1.5.0',
   })
 })
 
@@ -45,7 +45,7 @@ test('rejects a tag that differs from the manifests', () => {
 test('rejects a mismatching citation version', () => {
   const root = fixture()
   writeFileSync(join(root, 'CITATION.cff'), 'version: 9.9.9\n')
-  assert.throws(() => validateZenodoRelease(root, 'v1.4.3'), /CITATION.cff version differs/)
+  assert.throws(() => validateZenodoRelease(root, 'v1.5.0'), /CITATION.cff version differs/)
 })
 
 test('validates absolute HTTPS Zenodo URLs, expected placeholders, and matching host', () => {

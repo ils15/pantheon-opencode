@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PANTHEON_DIR="$(dirname "$SCRIPT_DIR")"
 
 # ── Read active plan ─────────────────────────────────────────────────────────
-PLAN_FILE="$PANTHEON_DIR/platform/plans/plan-active.json"
+PLAN_FILE="$PANTHEON_DIR/.pantheon/active-preset.json"
 if [[ -f "$PLAN_FILE" ]]; then
     PLAN=$(jq -r '.plan // "unknown"' "$PLAN_FILE")
     SERVICE=$(jq -r '.service // "unknown"' "$PLAN_FILE")
@@ -38,7 +38,7 @@ else
 fi
 
 # ── List agents ──────────────────────────────────────────────────────────────
-AGENTS_DIR="$PANTHEON_DIR/platform/opencode/agents"
+AGENTS_DIR="$PANTHEON_DIR/src/agents"
 AGENTS_LIST=""
 if [[ -d "$AGENTS_DIR" ]]; then
     AGENTS_LIST=$(ls "$AGENTS_DIR"/*.md 2>/dev/null | xargs -n1 basename | sed 's/\.md$//' | sort | paste -sd ', ' -)

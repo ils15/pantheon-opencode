@@ -12,8 +12,12 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { resolveTuiCopyTarget, syncTuiRegistration } from '../scripts/install/opencode.mjs'
-import { staleTuiRefs } from '../scripts/install/plugin.mjs'
+import {
+  resolveInstalledPlugin,
+  resolveTuiCopyTarget,
+  syncTuiRegistration,
+} from '../scripts/install/opencode.mjs'
+import { staleTuiRefs, TUI_STALE_SUFFIXES } from '../scripts/install/plugin.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
 const opencodeInstaller = readFileSync('scripts/install/opencode.mjs', 'utf8')
@@ -53,25 +57,38 @@ assert.ok(visionConfig.includes('enabled: true'))
 assert.ok(opencodeInstaller.includes("config.permission.mcp['pantheon-vision'] = 'ask'"))
 assert.ok(healthCheck.includes("'pantheon_vision_server.py'"))
 
-// P2-4: the hooks plugin must be rewritten at install/sync time to the
-// INSTALLED package location (derived from ROOT), never copied verbatim from
-// the packaged opencode.json — otherwise global installs leak the developer's
-// absolute path and break the plugin for every other machine.
+// P2-4: only exact managed plugin references may be treated as Pantheon-owned.
+// A third-party checkout can use either of the historical directory names, so
+// the directory name alone must never rewrite its absolute path.
 assert.ok(
   opencodeInstaller.includes('function resolveInstalledPlugin'),
-  'installer rewrites plugin paths through resolveInstalledPlugin',
+  'installer handles plugin paths through resolveInstalledPlugin',
 )
 assert.ok(
-  opencodeInstaller.includes('const packaged = join(ROOT, plugin.slice(srcIndex))'),
-  'resolved plugin path is derived from the installed package ROOT, never hardcoded',
+  resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts')) === join(ROOT, 'src', 'plugin.ts') &&
+    resolveInstalledPlugin(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')) ===
+      join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),
+  'exact installed Pantheon paths remain managed',
 )
-assert.ok(
-  opencodeInstaller.includes("const srcIndex = plugin.indexOf('src/')"),
-  'resolveInstalledPlugin maps ANY src/ ref (src/plugins/* and root-level src/plugin.ts) into the package',
+assert.equal(
+  resolveInstalledPlugin('/old/vendor/src/plugin.ts'),
+  '/old/vendor/src/plugin.ts',
+  'external paths with the same filename remain untouched',
 )
-assert.ok(
-  opencodeInstaller.includes('config.plugin = config.plugin.filter((p) => basename(p) !== file)'),
-  'stale plugin entries with the same basename (e.g. dev paths) are replaced on upgrade',
+assert.equal(
+  resolveInstalledPlugin('/tmp/vendor/pantheon-opencode/src/plugin.ts'),
+  '/tmp/vendor/pantheon-opencode/src/plugin.ts',
+  'external paths under a pantheon-opencode directory remain untouched',
+)
+assert.equal(
+  resolveInstalledPlugin('/tmp/vendor/pantheon/src/plugin.ts'),
+  '/tmp/vendor/pantheon/src/plugin.ts',
+  'external paths under a pantheon directory remain untouched',
+)
+assert.equal(
+  opencodeInstaller.includes('basename(p) !== file'),
+  false,
+  'plugin cleanup must not dedupe unrelated user plugins by basename',
 )
 
 // P2-5: the TUI plugin must be COPIED from the single source of truth
@@ -118,11 +135,9 @@ assert.ok(
   'plugin.mjs exposes the pure staleTuiRefs() filter',
 )
 assert.ok(
-  pluginInstaller.includes("'/src/plugins/tui'") &&
-    pluginInstaller.includes("'/plugins/pantheon-tui'") &&
-    pluginInstaller.includes("'/src/plugins/tui/dist/tui.tsx'") &&
-    pluginInstaller.includes("'/plugins/pantheon-tui/dist/tui.js'"),
-  'unregisterPlugin removes stale absolute TUI registrations (package source dir, bare copy dir, dist file refs)',
+  TUI_STALE_SUFFIXES.includes('plugins/pantheon-tui') &&
+    TUI_STALE_SUFFIXES.includes('plugins/pantheon-tui/dist/tui.js'),
+  'unregisterPlugin exposes exact stale TUI registration markers',
 )
 
 // P2-5c: the TUI plugin package must expose the opencode loader contract that
@@ -160,7 +175,10 @@ assert.ok(
 )
 assert.ok(catalog.includes('args: [PANTHEON_VISION_SERVER]'))
 assert.ok(catalog.includes('requirements-vision.txt'))
-assert.ok(catalog.includes("vscode: {\n        type: 'stdio'"))
+assert.equal(catalog.includes('vscode'), false, 'MCP catalog must not retain VS Code entries')
+assert.equal(catalog.includes('cursor'), false, 'MCP catalog must not retain Cursor entries')
+assert.equal(catalog.includes('claude'), false, 'MCP catalog must not retain Claude entries')
+assert.equal(catalog.includes('windsurf'), false, 'MCP catalog must not retain Windsurf entries')
 
 // The package entry point must delegate to the same implementation rather
 // than maintaining a second, subtly different catalog.
@@ -196,12 +214,13 @@ for (const dependency of ['pillow', 'paddle', 'gemini', 'torch']) {
 // absolute directory reference.
 // ---------------------------------------------------------------------------
 const PACKAGE_TUI_SRC = join(ROOT, 'src', 'plugins', 'tui')
-// Every reference shape that must NEVER survive an install:
+// Old Pantheon references are removed only when their identity is unambiguous;
+// the same-suffix user path below is intentionally retained.
 const STALE_REFS = [
-  '/home/olddev/pantheon/src/plugins/tui/dist/tui.tsx', // legacy dist file (tsx era)
-  '/home/olddev/pantheon/src/plugins/tui/dist/tui.js', // legacy dist file (js era)
-  '/home/olddev/node_modules/pantheon-opencode/src/plugins/tui', // in-package source dir
-  '/home/olddev/pantheon/.opencode/plugins/pantheon-tui', // bare copied dir (old target)
+  join(PACKAGE_TUI_SRC, 'dist', 'tui.tsx'), // legacy dist file (tsx era)
+  join(PACKAGE_TUI_SRC, 'dist', 'tui.js'), // legacy dist file (js era)
+  PACKAGE_TUI_SRC, // in-package source dir
+  '/home/olddev/.opencode/plugins/pantheon-tui', // user-owned same-suffix dir
   'plugins/pantheon-tui', // bare relative id (pre-1.19 writes)
   '/home/olddev/.npm/_npx/ab12cd34/node_modules/pantheon-tui', // npx cache copy
   'npx -y pantheon-tui', // npx spec string
@@ -307,17 +326,25 @@ withGlobalDirs(({ home, xdg }) => {
 
     assert.deepEqual(
       readTuiJson(projectTui).plugin,
-      [resolveTuiCopyTarget(projectTuiDir)],
-      'project target keeps exactly the copied-dir registration',
+      [STALE_REFS[3], resolveTuiCopyTarget(projectTuiDir)],
+      'project target keeps the user plugin and adds exactly one copied-dir registration',
     )
     for (const p of [global1, global2]) {
-      assert.equal(readTuiJson(p)?.plugin.length ?? 0, 0, `old Pantheon TUI refs cleaned from ${p}`)
+      assert.deepEqual(
+        readTuiJson(p)?.plugin ?? [],
+        [STALE_REFS[3]],
+        `same-suffix user plugin is preserved in ${p}`,
+      )
     }
     const allRefs = [global1, global2, projectTui]
       .filter(existsSync)
       .flatMap((p) => readTuiJson(p)?.plugin ?? [])
       .filter((r) => typeof r === 'string' && r.includes('pantheon-tui'))
-    assert.equal(allRefs.length, 1, 'exactly ONE Pantheon TUI reference system-wide after install')
+    assert.equal(
+      allRefs.filter((ref) => ref !== STALE_REFS[3]).length,
+      1,
+      'exactly ONE Pantheon TUI reference is installed system-wide',
+    )
   } finally {
     rmSync(project, { recursive: true, force: true })
   }
@@ -350,21 +377,20 @@ withGlobalDirs(({ home }) => {
 })
 
 // (e) pure helpers: resolveTuiCopyTarget derives the copy dir; staleTuiRefs
-// flags every old Pantheon TUI reference shape (dist file, package source,
-// bare copy dir, npx). The bare-copy-dir shape is indistinguishable from a
-// stale one without knowing the install target, so it is flagged too —
-// syncTuiRegistration keeps the current ref by unregister-then-register.
+// flags old Pantheon TUI references only when their identity is unambiguous;
+// a user-owned plugin with the same suffix must survive cleanup.
 assert.equal(
   resolveTuiCopyTarget('/x/.opencode'),
   join('/x/.opencode', 'plugins', 'pantheon-tui'),
   'resolveTuiCopyTarget appends plugins/pantheon-tui under the config dir',
 )
 const currentShape = '/home/current/.opencode/plugins/pantheon-tui'
-const staleOnly = staleTuiRefs([...STALE_REFS, currentShape])
+const userSameSuffix = '/home/user/plugins/pantheon-tui'
+const staleOnly = staleTuiRefs([...STALE_REFS, currentShape, userSameSuffix])
 assert.deepEqual(
   staleOnly,
-  [...STALE_REFS, currentShape],
-  'staleTuiRefs flags old shapes AND bare copy dirs (current ref is kept by re-registration)',
+  STALE_REFS.filter((ref) => !ref.includes('/home/olddev/.opencode/plugins/pantheon-tui')),
+  'staleTuiRefs flags identifiable Pantheon refs but preserves same-suffix user plugins',
 )
 
 console.log('✅ Pantheon Vision MCP installation contract passed')
