@@ -42,6 +42,10 @@ test('package allow-list contains manifests, plugin entrypoints, and TUI payload
   assert.ok(packageJson.files.includes('src/plugin.ts'))
   assert.ok(packageJson.files.includes('src/plugin-v2.ts'))
   assert.ok(
+    packageJson.files.includes('.pantheon/code-mode/**'),
+    'files must ship the code-mode payload (.pantheon/code-mode/**)',
+  )
+  assert.ok(
     packageJson.files.includes('src/plugin-v2'),
     'files must include the V2 plugin directory (beta loader contract)',
   )

@@ -273,3 +273,19 @@ class TestHelpers:
         """Format output should show non-zero exit code."""
         result = module._format_output("output text", "error text", 42)
         assert "exit code: 42" in result
+
+
+class TestPackagedFallback:
+    """Tests for the packaged-payload fallback (no candidate dir exists)."""
+
+    async def test_packaged_scripts_dir_resolves_to_repo_payload(self, module) -> None:
+        """_packaged_scripts_dir should find the shipped .pantheon/code-mode."""
+        found = module._packaged_scripts_dir()
+        assert found is not None
+        assert found.is_dir()
+        assert (found / "example-sync.sh").exists()
+
+    async def test_scripts_dir_is_usable(self, module) -> None:
+        """SCRIPTS_DIR must point at an existing directory with scripts."""
+        assert module.SCRIPTS_DIR.is_dir()
+        assert (module.SCRIPTS_DIR / "example-sync.sh").exists()

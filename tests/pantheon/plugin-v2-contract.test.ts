@@ -328,6 +328,49 @@ async function main(): Promise<void> {
     )
   })
 
+  test('V2 tool execute resolves to {output} object, never a bare string', async () => {
+    // Beta host reads a field off the resolved value (minified `Ce`) and
+    // throws `Ce is not an Object` on bare strings — every registered tool
+    // must resolve to the object shape (see toV2ToolResult).
+    const added: Array<{
+      name: string
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>
+    }> = []
+    await plugin.setup(
+      makeBaseContext({
+        tool: {
+          transform: async (callback: (draft: never) => void) => {
+            callback({
+              namespace: () => {},
+              add: (tool: (typeof added)[number]) => added.push(tool),
+            } as never)
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(added.length, 9)
+    for (const tool of added) {
+      const result = await tool.execute({}, {})
+      assert.ok(
+        typeof result === 'object' && result !== null,
+        `${tool.name} execute must resolve to an object, got ${typeof result}`,
+      )
+      assert.equal(
+        typeof (result as { output?: unknown }).output,
+        'string',
+        `${tool.name} execute result must carry a string .output`,
+      )
+    }
+  })
+
+  test('toV2ToolResult wraps strings and degrades non-strings without throwing', async () => {
+    const { toV2ToolResult } = await import('../../src/plugin-v2.ts')
+    assert.deepEqual(toV2ToolResult('hello'), { output: 'hello' })
+    assert.deepEqual(toV2ToolResult(42).output, '42')
+    assert.deepEqual(toV2ToolResult(undefined).output, 'undefined')
+  })
+
   // ─── Event Subscription Tests ──────────────────────────────────────
 
   console.log('\n📡 V2 Event Subscription Tests')
