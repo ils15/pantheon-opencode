@@ -52,6 +52,7 @@
     "scripts/*.py",
     "src/plugin.ts",
     "src/plugin-v2.ts",
+    "src/plugin-v2",
     "src/pantheon/v2-bridge.ts",
     "README.md",
     "src/mcp/*.txt",

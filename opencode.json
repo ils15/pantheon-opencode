@@ -11,7 +11,7 @@
     }
   },
   "default_agent": "zeus",
-  "plugins": ["pantheon-opencode/plugin-v2"],
+  "plugins": ["src/plugin-v2"],
   "experimental": {
     "subagent_depth": 2
   },

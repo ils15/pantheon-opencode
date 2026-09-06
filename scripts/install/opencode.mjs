@@ -111,6 +111,9 @@ export function resolveInstalledPlugin(plugin) {
   if (typeof plugin !== 'string') return plugin
   const normalized = normalizePluginRef(plugin)
   if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return join(ROOT, normalized)
+  // Legacy V2 file ref (pre-directory-contract): migrate to the installed
+  // plugin directory so the beta loader accepts the entry.
+  if (normalized === PANTHEON_V2_LEGACY_FILE) return join(ROOT, PANTHEON_V2_PLUGIN)
   const identity = managedPluginIdentity(plugin)
   if (identity !== null && isAbsolute(normalized)) {
     return INSTALLED_PANTHEON_PLUGIN_PATHS.get(identity) ?? plugin
@@ -124,7 +127,14 @@ function normalizePluginRef(ref) {
 
 const PANTHEON_V1_PLUGIN = 'src/plugin.ts'
 const PANTHEON_V1_HOOKS = 'src/plugins/pantheon-hooks.ts'
-const PANTHEON_V2_PLUGIN = 'src/plugin-v2.ts'
+// Canonical V2 entry is the plugin DIRECTORY (beta loader contract: entries
+// must be dirs with a real index.ts — file paths warn "must be a directory",
+// symlinks are ignored). The shim at src/plugin-v2/index.ts re-exports the
+// real entry src/plugin-v2.ts (single source of truth).
+const PANTHEON_V2_PLUGIN = 'src/plugin-v2'
+// Legacy V2 file ref from before the directory contract (installer + template
+// used to register src/plugin-v2.ts). Still recognized for migration.
+const PANTHEON_V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const PANTHEON_V1_EXPORT = 'pantheon-opencode/plugin'
 const PANTHEON_V2_EXPORT = 'pantheon-opencode/plugin-v2'
 const PANTHEON_PLUGIN_IDENTITIES = new Set([
@@ -156,6 +166,7 @@ function managedPluginIdentity(ref) {
   if (typeof normalized !== 'string') return null
 
   if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return normalized
+  if (normalized === PANTHEON_V2_LEGACY_FILE) return PANTHEON_V2_PLUGIN
   if (normalized === PANTHEON_V1_EXPORT || normalized.startsWith(`${PANTHEON_V1_EXPORT}@`)) {
     return PANTHEON_V1_PLUGIN
   }
@@ -167,6 +178,12 @@ function managedPluginIdentity(ref) {
     const absolutePath = normalizePluginPath(resolve(normalized))
     for (const [identity, installedPath] of INSTALLED_PANTHEON_PLUGIN_PATHS) {
       if (absolutePath === normalizePluginPath(installedPath)) return identity
+    }
+    // Legacy absolute V2 file path inside OUR installed package (pre-
+    // directory-contract installs) migrates to the directory identity.
+    // ROOT-scoped: third-party paths ending in src/plugin-v2.ts stay theirs.
+    if (absolutePath === normalizePluginPath(resolve(ROOT, PANTHEON_V2_LEGACY_FILE))) {
+      return PANTHEON_V2_PLUGIN
     }
   }
 
@@ -881,9 +898,23 @@ export async function installOpenCode(
         }
       }
     }
-    // Use the published package export, not a V1 local-file path. This keeps
-    // V1's delegate out of V2 while exercising package.json's ./plugin-v2 map.
-    config.plugins.push(PANTHEON_V2_EXPORT)
+    // The beta resolves every `plugins` entry through npm install, so an
+    // `a/b` shorthand (e.g. the published `pantheon-opencode/plugin-v2`
+    // export) is treated as a GitHub repo and dies with NpmInstallFailedError
+    // (beta log evidence). The beta loader additionally requires each entry
+    // to be a DIRECTORY with a real index.js/index.ts — a file path warns
+    // "must be a directory" and a symlink is ignored (sandbox probe
+    // evidence). Register the V2 plugin DIRECTORY inside the INSTALLED
+    // package — exactly like V1's ensurePantheonPlugin, but pointing at
+    // src/plugin-v2 whose index.ts shim re-exports the real entry.
+    // Legacy refs (npm shorthand, the old src/plugin-v2.ts file path) are
+    // recognized via managedPluginIdentity and already stripped above, so
+    // they migrate here.
+    const resolvedV2 = resolveInstalledPlugin(PANTHEON_V2_PLUGIN)
+    config.plugins = config.plugins.filter(
+      (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedV2),
+    )
+    config.plugins.push(resolvedV2)
   }
 
   if (config.provider === undefined && pantheonConfig.provider !== undefined) {
