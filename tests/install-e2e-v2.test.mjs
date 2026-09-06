@@ -14,7 +14,15 @@
  * Run: node --test tests/install-e2e-v2.test.mjs
  */
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -26,7 +34,12 @@ import { ROOT } from '../scripts/install/shared.mjs'
 // Constants
 // ---------------------------------------------------------------------------
 
-const V2_PLUGIN = 'pantheon-opencode/plugin-v2'
+const V2_PLUGIN = join(ROOT, 'src', 'plugin-v2')
+// Legacy V2 refs (migrated by the installer into V2_PLUGIN): the npm
+// shorthand the beta resolves via npm install (NpmInstallFailedError) and the
+// pre-directory-contract file path (loader warns "must be a directory").
+const V2_EXPORT = 'pantheon-opencode/plugin-v2'
+const V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 const _THIRD_PARTY_HOOKS = '/tmp/pantheon-opencode-vendor/src/plugins/pantheon-hooks.ts'
 const _THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
@@ -71,13 +84,31 @@ test('V2 fresh install produces plugins (plural) as array', async () => {
   }
 })
 
-test('V2 fresh install registers pantheon-opencode/plugin-v2', async () => {
+test('V2 fresh install registers the pantheon plugin directory', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-entry-'))
   try {
     const config = await runV2Install(target)
     assert.ok(
       config.plugins.includes(V2_PLUGIN),
-      `V2 plugin ${V2_PLUGIN} missing from plugins array: ${JSON.stringify(config.plugins)}`,
+      `V2 plugin dir ${V2_PLUGIN} missing from plugins array: ${JSON.stringify(config.plugins)}`,
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 fresh install registers a directory that carries the loader contract', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-dircontract-'))
+  try {
+    const config = await runV2Install(target)
+    assert.ok(config.plugins.includes(V2_PLUGIN), 'V2 plugin entry missing')
+    assert.ok(
+      existsSync(V2_PLUGIN) && statSync(V2_PLUGIN).isDirectory(),
+      `entry must be a directory: ${V2_PLUGIN}`,
+    )
+    assert.ok(
+      existsSync(join(V2_PLUGIN, 'index.ts')),
+      `entry directory must carry a real index.ts: ${V2_PLUGIN}`,
     )
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -249,11 +280,13 @@ test('V2 removes Pantheon V2 refs from plugins before adding the managed entry',
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-dedup-'))
   try {
     const config = await runV2Install(target, {
-      plugins: [V2_PLUGIN, 'other-plugin'],
+      plugins: [V2_EXPORT, V2_LEGACY_FILE, V2_PLUGIN, 'other-plugin'],
     })
-    // V2_PLUGIN should appear exactly once (added by installer)
+    // Every legacy shape migrates to the single managed directory entry.
     const v2Count = config.plugins.filter((p) => p === V2_PLUGIN).length
     assert.equal(v2Count, 1, 'V2 plugin must appear exactly once')
+    assert.ok(!config.plugins.includes(V2_EXPORT), 'npm-shorthand ref must migrate')
+    assert.ok(!config.plugins.includes(V2_LEGACY_FILE), 'legacy file ref must migrate')
     // Other plugin preserved
     assert.ok(config.plugins.includes('other-plugin'))
   } finally {
@@ -408,7 +441,7 @@ test('V2 config snapshot plugins array contains V2 entry', async () => {
     const config = await runV2Install(target)
     assert.ok(
       config.plugins.includes(V2_PLUGIN),
-      'V2 snapshot must include pantheon-opencode/plugin-v2',
+      'V2 snapshot must include the pantheon plugin directory',
     )
     // Must NOT have V1 paths
     assert.ok(
@@ -460,7 +493,7 @@ test('V2 after V1 adds V2 config keys (plugins, providers, permissions)', async 
 
     // V2 config must have V2 shape keys
     assert.ok('plugins' in v2Config, 'After V2 overwrite, config must have plugins (plural)')
-    assert.ok(v2Config.plugins.includes('pantheon-opencode/plugin-v2'), 'V2 plugin must be present')
+    assert.ok(v2Config.plugins.includes(V2_PLUGIN), 'V2 plugin must be present')
     // V2 may coexist with leftover V1 keys from previous install
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -641,7 +674,7 @@ test('V1→V2 round-trip adds V2 plugin entry', async () => {
     // Verify V2 shape
     const v2Config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
     assert.ok('plugins' in v2Config, 'Must have V2 plugins key after V2 install')
-    assert.ok(v2Config.plugins.includes('pantheon-opencode/plugin-v2'), 'V2 plugin must be present')
+    assert.ok(v2Config.plugins.includes(V2_PLUGIN), 'V2 plugin must be present')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

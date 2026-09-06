@@ -24,7 +24,8 @@ import { ROOT } from '../scripts/install/shared.mjs'
 // Constants
 // ---------------------------------------------------------------------------
 
-const V2_PLUGIN = 'pantheon-opencode/plugin-v2'
+const V2_EXPORT = 'pantheon-opencode/plugin-v2'
+const V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 const _THIRD_PARTY_HOOKS = '/tmp/pantheon-opencode-vendor/src/plugins/pantheon-hooks.ts'
 const _THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
@@ -102,7 +103,11 @@ test('V1 fresh install does NOT include V2 plugin entry in plugin array', async 
   try {
     const config = await runV1Install(target)
     const hasV2Export = config.plugin.some(
-      (p) => p === V2_PLUGIN || p === join(ROOT, 'src', 'plugin-v2.ts'),
+      (p) =>
+        p === V2_EXPORT ||
+        p === V2_LEGACY_FILE ||
+        p === join(ROOT, 'src', 'plugin-v2.ts') ||
+        p === join(ROOT, 'src', 'plugin-v2'),
     )
     assert.ok(!hasV2Export, 'V1 config must not contain V2 plugin entry')
   } finally {

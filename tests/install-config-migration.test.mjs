@@ -27,7 +27,7 @@ const V1_CONFIG = {
     },
   },
   default_agent: 'zeus',
-  plugins: ['pantheon-opencode/plugin-v2'],
+  plugins: ['src/plugin-v2'],
   experimental: { subagent_depth: 2 },
   permission: {
     skill: { '*': 'allow' },
@@ -100,7 +100,7 @@ const V2_EXPECTED = {
     },
   },
   default_agent: 'zeus',
-  plugins: ['pantheon-opencode/plugin-v2'],
+  plugins: ['src/plugin-v2'],
   experimental: { subagent_depth: 2 },
   permissions: [
     { action: 'skill', resource: '*', effect: 'allow' },

@@ -91,6 +91,8 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     for (const file of ['package/scripts/doctor.mjs', 'package/src/plugins/pantheon-hooks.ts']) {
       assert.match(listing, new RegExp(`^${file.replaceAll('/', '\\/')}$`, 'm'))
     }
+    assert.match(listing, /^package\/src\/plugin-v2\/index\.ts$/m)
+    assert.match(listing, /^package\/src\/plugin-v2\.ts$/m)
     assert.match(listing, /^package\/bin\/pantheon-init\.mjs$/m)
     const doctor = readFileSync(join(work, 'package', 'scripts', 'doctor.mjs'), 'utf8')
     // Packaged doctor must expose the profile policy flag (incl. sandbox) and

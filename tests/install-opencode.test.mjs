@@ -61,6 +61,33 @@ test('resolveInstalledPlugin maps the exact relative hooks plugin into the insta
   assert.equal(result, join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'))
 })
 
+test('resolveInstalledPlugin maps the V2 plugin directory into the installed package', () => {
+  const result = resolveInstalledPlugin('src/plugin-v2')
+  assert.equal(result, join(ROOT, 'src', 'plugin-v2'))
+})
+
+test('resolveInstalledPlugin migrates the legacy V2 file ref to the plugin directory', () => {
+  assert.equal(resolveInstalledPlugin('src/plugin-v2.ts'), join(ROOT, 'src', 'plugin-v2'))
+  assert.equal(
+    resolveInstalledPlugin(join(ROOT, 'src', 'plugin-v2.ts')),
+    join(ROOT, 'src', 'plugin-v2'),
+  )
+})
+
+test('V2 npm-shorthand and legacy refs share the directory identity', () => {
+  const dir = join(ROOT, 'src', 'plugin-v2')
+  for (const ref of ['pantheon-opencode/plugin-v2', 'src/plugin-v2.ts']) {
+    assert.equal(pluginReferenceIdentity(ref), 'src/plugin-v2')
+  }
+  assert.equal(pluginReferenceIdentity(dir), 'src/plugin-v2')
+})
+
+test('resolveInstalledPlugin preserves a third-party plugin-v2 file path', () => {
+  const thirdParty = '/tmp/vendor/pantheon-opencode/src/plugin-v2.ts'
+  assert.equal(resolveInstalledPlugin(thirdParty), thirdParty)
+  assert.notEqual(pluginReferenceIdentity(thirdParty), 'src/plugin-v2')
+})
+
 test('resolveInstalledPlugin recognizes only exact installed paths as managed', () => {
   for (const ref of [
     join(ROOT, 'src', 'plugin.ts'),
@@ -72,7 +99,7 @@ test('resolveInstalledPlugin recognizes only exact installed paths as managed', 
 })
 
 test('resolved plugin paths exist inside the package (ROOT-derived, not stale refs)', () => {
-  for (const ref of ['src/plugin.ts', 'src/plugins/pantheon-hooks.ts']) {
+  for (const ref of ['src/plugin.ts', 'src/plugins/pantheon-hooks.ts', 'src/plugin-v2']) {
     const result = resolveInstalledPlugin(ref)
     assert.ok(result.startsWith(join(ROOT, 'src')), `expected ROOT-derived path, got ${result}`)
     assert.ok(existsSync(result), `resolved path does not exist in package: ${result}`)
@@ -255,9 +282,12 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
       'v2',
     )
     assert.equal(config.plugin, undefined)
-    // V2 registers the published package export (pantheon-opencode/plugin-v2),
-    // never the V1 local-file paths — those stay V1-only.
-    assert.deepEqual(config.plugins, [userPlugin, 'pantheon-opencode/plugin-v2'])
+    // V2 registers the plugin DIRECTORY inside the installed package
+    // (<pkg>/src/plugin-v2, whose index.ts shim re-exports the real entry):
+    // the beta loader rejects file paths ("must be a directory") and resolves
+    // `a/b` shorthands via npm install (NpmInstallFailedError) — never the V1
+    // local-file paths, which stay V1-only.
+    assert.deepEqual(config.plugins, [userPlugin, join(ROOT, 'src', 'plugin-v2')])
     assert.equal(config.theme, 'user-theme')
   } finally {
     rmSync(target, { recursive: true, force: true })

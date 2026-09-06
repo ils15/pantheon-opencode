@@ -15,7 +15,12 @@ import {
 import { ROOT } from '../scripts/install/shared.mjs'
 
 const NO_COMPONENTS = []
-const V2_PLUGIN = 'pantheon-opencode/plugin-v2'
+// Canonical V2 entry: the plugin directory inside the installed package.
+// V2_EXPORT / V2_LEGACY_FILE are pre-directory-contract refs the installer
+// migrates into V2_PLUGIN.
+const V2_PLUGIN = join(ROOT, 'src', 'plugin-v2')
+const V2_EXPORT = 'pantheon-opencode/plugin-v2'
+const V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
 const THIRD_PARTY_PANTHEON_PLUGIN = '/tmp/vendor/pantheon/src/plugin.ts'
 
@@ -87,6 +92,7 @@ test('v2 preserves config.plugin and registers the shipped V2 entrypoint', async
   assert.deepEqual(config.plugin, ['user-v1-plugin'])
   assert.equal(config.plugins[0], 'user-v2-plugin')
   assert.ok(config.plugins.includes(V2_PLUGIN))
+  assert.ok(!config.plugins.includes(V2_EXPORT))
   assert.ok(!config.plugins.includes(join(ROOT, 'src', 'plugin-v2.ts')))
   assert.ok(!config.plugins.some((entry) => entry === join(ROOT, 'src', 'plugin.ts')))
 })
@@ -95,7 +101,7 @@ test('v1 to v2 migration removes Pantheon V1 refs and preserves third-party plug
   const config = await installConfig(
     {
       plugin: [THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN, THIRD_PARTY_PANTHEON_PLUGIN, 'third-party-v1'],
-      plugins: [V2_PLUGIN, 'third-party-v2'],
+      plugins: [V2_EXPORT, V2_LEGACY_FILE, 'third-party-v2'],
     },
     'v2',
   )
@@ -112,7 +118,13 @@ test('v2 to v1 migration removes Pantheon V2 refs and preserves third-party plug
   const config = await installConfig(
     {
       plugin: ['third-party-v1', THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN],
-      plugins: [V2_PLUGIN, 'third-party-v2', THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN],
+      plugins: [
+        V2_EXPORT,
+        V2_LEGACY_FILE,
+        V2_PLUGIN,
+        'third-party-v2',
+        THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN,
+      ],
     },
     'v1',
   )

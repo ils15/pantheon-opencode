@@ -2,12 +2,15 @@
  * Adversarial tests for the installer's TUI cleanup markers.
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { isPantheonTuiRef, staleTuiRefs, unregisterPlugin } from '../scripts/install/plugin.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 const THIRD_PARTY_TUI = '/tmp/acme/pantheon-opencode/plugins/pantheon-tui'
 const THIRD_PARTY_SOURCE = '/tmp/acme/pantheon-opencode/src/plugins/tui'
@@ -75,4 +78,16 @@ test('unregisterPlugin preserves unmanaged paths containing pantheon-opencode', 
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
+})
+
+test('TUI plugin entry exposes the beta loader setup contract', () => {
+  // Beta loader contract: every `plugins` directory entry must expose a
+  // no-op `setup` so the entry loads with zero errors. The TUI boots via
+  // `tui()`; `setup` exists only to satisfy the loader.
+  const source = readFileSync(join(REPO_ROOT, 'src', 'plugins', 'tui', 'src', 'index.tsx'), 'utf8')
+  assert.match(source, /setup:\s*async\s*\(\)\s*=>\s*\{\}/)
+  assert.match(source, /id:\s*['"]pantheon\.tui['"]/)
+  const dist = join(REPO_ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.js')
+  assert.ok(existsSync(dist), `TUI dist must exist: ${dist}`)
+  assert.match(readFileSync(dist, 'utf8'), /setup/)
 })

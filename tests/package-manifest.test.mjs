@@ -28,7 +28,9 @@ test('package allow-list contains manifests, plugin entrypoints, and TUI payload
 
   assert.ok(packageJson.files.includes('plugin.json'))
   for (const [exportName, target] of Object.entries(packageJson.exports)) {
-    assert.ok(exportName === './plugin' || exportName === './plugin-v2' || exportName === './v2-bridge')
+    assert.ok(
+      exportName === './plugin' || exportName === './plugin-v2' || exportName === './v2-bridge',
+    )
     assert.ok(existsSync(join(ROOT, target.replace(/^\.\//, ''))), `${exportName} target exists`)
   }
   for (const target of ['./dist/tui.js', './dist/server.js']) {
@@ -39,6 +41,14 @@ test('package allow-list contains manifests, plugin entrypoints, and TUI payload
   }
   assert.ok(packageJson.files.includes('src/plugin.ts'))
   assert.ok(packageJson.files.includes('src/plugin-v2.ts'))
+  assert.ok(
+    packageJson.files.includes('src/plugin-v2'),
+    'files must include the V2 plugin directory (beta loader contract)',
+  )
+  assert.ok(
+    existsSync(join(ROOT, 'src', 'plugin-v2', 'index.ts')),
+    'V2 plugin directory must carry a real index.ts',
+  )
   assert.ok(packageJson.files.includes('src/plugins/tui/**'))
   assert.equal(tuiPackage.exports['./tui'], './dist/tui.js')
   assert.equal(tuiPackage.exports['./server'], './dist/server.js')
