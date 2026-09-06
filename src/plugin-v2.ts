@@ -49,6 +49,54 @@ const POLICY_MARKER = '<!-- pantheon-v2-policy -->'
 const POLICY = `${POLICY_MARKER}\nFollow Pantheon routing policy: delegate implementation work to the named specialist and do not claim work was performed without verification.`
 
 /**
+ * SystemPart shape sniffing (beta 19192 `Schema validation failed` in
+ * system[N]): host sends SystemPart objects ({type,text}) but pinned SDK
+ * (@opencode-ai/plugin 1.18.18) only knows string/string[]. Detect at runtime.
+ * Never throws (fail-open).
+ */
+function systemEntryText(entry: unknown): string | null {
+  try {
+    if (typeof entry === 'string') return entry
+    if (
+      typeof entry === 'object' &&
+      entry !== null &&
+      typeof (entry as { text?: unknown }).text === 'string'
+    ) {
+      return (entry as { text: string }).text
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function hasPolicyMarker(arr: unknown[]): boolean {
+  try {
+    return arr.some((s) => {
+      const t = systemEntryText(s)
+      return t?.includes(POLICY_MARKER) ?? false
+    })
+  } catch {
+    return false
+  }
+}
+
+function usesObjectShape(arr: unknown[]): boolean {
+  try {
+    return arr.some(
+      (s) =>
+        typeof s === 'object' && s !== null && typeof (s as { text?: unknown }).text === 'string',
+    )
+  } catch {
+    return false
+  }
+}
+
+function toSystemEntry(text: string, useObject: boolean): string | { type: 'text'; text: string } {
+  return useObject ? { type: 'text', text } : text
+}
+
+/**
  * Add a feature to the unsupported list (idempotent).
  */
 function markUnsupported(feature: string): void {
@@ -113,15 +161,27 @@ function transformAgents(draft: AgentDraft): void {
   try {
     for (const agent of agents) {
       draft.update(agent.id, (current) => {
-        // Beta 19192 hardening: `system` may be a non-string (host shape
-        // drift). `?.` covers only null/undefined, not wrong types — guard
-        // with typeof. Non-string/empty degrades to POLICY. Never throw.
-        if (typeof current.system === 'string' && current.system.includes(POLICY_MARKER)) {
-          // Policy already present — nothing to do.
-        } else if (typeof current.system === 'string' && current.system) {
-          current.system = `${current.system}\n\n${POLICY}`
-        } else {
-          current.system = POLICY
+        // Beta 19192 hardening + SystemPart SKIP: `system` may be a non-string
+        // (host shape drift, e.g. object). `?.` covers only null/undefined, not
+        // wrong types — guard with typeof. String path preserved; empty/absent
+        // degrades to POLICY; truthy non-string OBJECT is SKIPPED (preserve host
+        // shape, avoid schema validation failure). Other primitives degrade to
+        // POLICY. Never throw.
+        try {
+          const sys: unknown = (current as { system?: unknown }).system
+          if (typeof sys === 'string' && sys.includes(POLICY_MARKER)) {
+            // Policy already present — nothing to do.
+          } else if (typeof sys === 'string' && sys) {
+            current.system = `${sys}\n\n${POLICY}`
+          } else if (sys == null || sys === '') {
+            current.system = POLICY
+          } else if (typeof sys === 'object') {
+            // Host object shape (e.g. SystemPart): SKIP instead of overwriting.
+          } else {
+            current.system = POLICY
+          }
+        } catch {
+          // Fail-open: leave agent untouched on unexpected shape.
         }
         if (agent.id === 'zeus') current.mode = 'primary'
       })
@@ -393,19 +453,18 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
     // "context" hook — inject routing policy + compaction state
     await sessionCtx.hook('context', (event: unknown) => {
       try {
-        // Beta 19192 hardening: host may send non-string elements, a single
-        // string, or a non-array system. Normalize defensively and never
-        // throw to the host (fail-open).
+        // Beta 19192 hardening + SystemPart sniffing: host may send string[],
+        // SystemPart objects ({type,text}), mixed arrays, a single string, or
+        // a non-array system. Preserve string-path behavior; inject object
+        // shape when the array contains objects (else `Schema validation
+        // failed` in system[N]). Never throw to the host (fail-open).
         const ctx = event as { system?: unknown } | null | undefined
         const rawSystem: unknown = ctx?.system
         if (typeof rawSystem === 'string' && ctx != null) {
           ctx.system = rawSystem.includes(POLICY_MARKER) ? [rawSystem] : [rawSystem, POLICY]
         } else if (Array.isArray(rawSystem)) {
-          const hasPolicy = rawSystem.some(
-            (s) => typeof s === 'string' && s.includes(POLICY_MARKER),
-          )
-          if (!hasPolicy) {
-            rawSystem.push(POLICY)
+          if (!hasPolicyMarker(rawSystem)) {
+            rawSystem.push(toSystemEntry(POLICY, usesObjectShape(rawSystem)))
           }
         }
         // Non-string, non-array system (or null event): ignore silently.

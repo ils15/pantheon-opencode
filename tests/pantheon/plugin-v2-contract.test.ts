@@ -379,9 +379,18 @@ async function main(): Promise<void> {
     const event = { system: ['existing', null, 42, { text: 'obj' }, undefined], generation: {} }
     await handler(event) // must not throw: s.includes is not a function
     const system = event.system as unknown[]
+    const textOf = (s: unknown): string | null =>
+      typeof s === 'string'
+        ? s
+        : typeof s === 'object' && s !== null && typeof (s as { text?: unknown }).text === 'string'
+          ? (s as { text: string }).text
+          : null
     assert.ok(
-      system.some((s) => typeof s === 'string' && s.includes('Pantheon routing policy')),
-      'policy should be injected despite junk elements',
+      system.some((s) => {
+        const t = textOf(s)
+        return t?.includes('Pantheon routing policy') ?? false
+      }),
+      'policy should be injected despite junk elements (string or SystemPart shape)',
     )
     assert.equal(system.length, 6)
   })
@@ -419,6 +428,66 @@ async function main(): Promise<void> {
     assert.equal(count, 1)
   })
 
+  test('Fase 4 context handler injects object shape into SystemPart array', async () => {
+    const handler = fase4Handlers.context
+    assert.ok(handler != null)
+    const event = {
+      system: [{ type: 'text', text: 'existing part' }],
+      generation: {},
+    }
+    await handler(event) // must not throw: Schema validation failed in system[N]
+    const system = event.system as unknown[]
+    assert.equal(system.length, 2)
+    const injected = system[1] as { type?: unknown; text?: unknown }
+    assert.equal(injected.type, 'text')
+    assert.ok(
+      typeof injected.text === 'string' && injected.text.includes('Pantheon routing policy'),
+    )
+  })
+
+  test('Fase 4 context handler does not duplicate policy in object .text', async () => {
+    const handler = fase4Handlers.context
+    assert.ok(handler != null)
+    const event = {
+      system: [
+        { type: 'text', text: '<!-- pantheon-v2-policy -->\nFollow Pantheon routing policy' },
+      ],
+      generation: {},
+    }
+    await handler(event) // must not throw
+    assert.equal(event.system.length, 1)
+  })
+
+  test('Fase 4 context handler handles mixed string+object array', async () => {
+    const handler = fase4Handlers.context
+    assert.ok(handler != null)
+    const event = {
+      system: ['existing string', { type: 'text', text: 'existing part' }],
+      generation: {},
+    }
+    await handler(event) // must not throw
+    const system = event.system as unknown[]
+    assert.equal(system.length, 3)
+    const last = system[2] as { type?: unknown; text?: unknown }
+    assert.equal(last.type, 'text')
+    assert.ok(typeof last.text === 'string' && last.text.includes('Pantheon routing policy'))
+  })
+
+  test('Fase 4 context handler preserves single-string behavior', async () => {
+    const handler = fase4Handlers.context
+    assert.ok(handler != null)
+    const event = { system: 'solo happy', generation: {} }
+    await handler(event) // happy path preserved
+    const system = (event as { system?: unknown }).system as unknown[]
+    assert.ok(Array.isArray(system))
+    assert.ok(system.some((s) => typeof s === 'string' && (s as string).includes('solo happy')))
+    assert.ok(
+      system.some(
+        (s) => typeof s === 'string' && (s as string).includes('Pantheon routing policy'),
+      ),
+    )
+  })
+
   test('agent transform degrades non-string system without throwing', async () => {
     const badAgent = { id: 'helper', mode: 'subagent', system: 42 as unknown as string }
     let resolved = false
@@ -444,6 +513,33 @@ async function main(): Promise<void> {
     assert.equal(resolved, true)
     assert.equal(typeof badAgent.system, 'string')
     assert.match(badAgent.system, /Pantheon routing policy/)
+  })
+
+  test('agent transform skips object system without throwing', async () => {
+    const objSystem = { type: 'text', text: 'host part' }
+    const objAgent = { id: 'helper-obj', mode: 'subagent', system: objSystem as unknown as string }
+    let resolved = false
+    try {
+      await plugin.setup(
+        makeBaseContext({
+          agent: {
+            transform: async (callback: (draft: never) => void) => {
+              callback({
+                list: () => [{ id: 'helper-obj' }],
+                update: (_id: string, update: (current: typeof objAgent) => void) =>
+                  update(objAgent),
+              } as never)
+              return { dispose: async () => {} }
+            },
+          },
+        }) as never,
+      )
+      resolved = true
+    } catch {
+      resolved = false
+    }
+    assert.equal(resolved, true)
+    assert.deepEqual(objAgent.system as unknown, objSystem)
   })
 
   // ─── Tool Hook Tests ───────────────────────────────────────────────
@@ -848,9 +944,18 @@ async function main(): Promise<void> {
     }
     await handler(event as never) // must not throw: s.includes is not a function
     const system = event.system as unknown[]
+    const textOf = (s: unknown): string | null =>
+      typeof s === 'string'
+        ? s
+        : typeof s === 'object' && s !== null && typeof (s as { text?: unknown }).text === 'string'
+          ? (s as { text: string }).text
+          : null
     assert.ok(
-      system.some((s) => typeof s === 'string' && s.includes('Pantheon routing policy')),
-      'policy should be injected despite junk elements',
+      system.some((s) => {
+        const t = textOf(s)
+        return t?.includes('Pantheon routing policy') ?? false
+      }),
+      'policy should be injected despite junk elements (string or SystemPart shape)',
     )
     assert.equal(system.length, 5)
   })
@@ -878,6 +983,81 @@ async function main(): Promise<void> {
     const event = { sessionID: 'test', system: 42, generation: {} }
     await handler(event as never) // must not throw (fail-open early return)
     assert.equal(event.system, 42)
+  })
+
+  test('v2-hooks context handler injects object shape into SystemPart array', async () => {
+    const handler = createV2ContextHookHandler({
+      board: { get: () => undefined, list: () => [] } as never,
+      goalStore: { list: async () => [] } as never,
+      todoEnforcer: { listPendingTodos: async () => [] } as never,
+    })
+    const event = {
+      sessionID: 'test',
+      system: [{ type: 'text', text: 'existing part' }],
+      generation: {},
+    }
+    await handler(event as never) // must not throw: Schema validation failed
+    const system = event.system as unknown[]
+    assert.equal(system.length, 2)
+    const injected = system[1] as { type?: unknown; text?: unknown }
+    assert.equal(injected.type, 'text')
+    assert.ok(
+      typeof injected.text === 'string' && injected.text.includes('Pantheon routing policy'),
+    )
+  })
+
+  test('v2-hooks context handler does not duplicate policy in object .text', async () => {
+    const handler = createV2ContextHookHandler({
+      board: { get: () => undefined, list: () => [] } as never,
+      goalStore: { list: async () => [] } as never,
+      todoEnforcer: { listPendingTodos: async () => [] } as never,
+    })
+    const event = {
+      sessionID: 'test',
+      system: [
+        { type: 'text', text: '<!-- pantheon-v2-policy -->\nFollow Pantheon routing policy' },
+      ],
+      generation: {},
+    }
+    await handler(event as never) // must not throw
+    assert.equal((event.system as unknown[]).length, 1)
+  })
+
+  test('v2-hooks context handler handles mixed string+object array', async () => {
+    const handler = createV2ContextHookHandler({
+      board: { get: () => undefined, list: () => [] } as never,
+      goalStore: { list: async () => [] } as never,
+      todoEnforcer: { listPendingTodos: async () => [] } as never,
+    })
+    const event = {
+      sessionID: 'test',
+      system: ['existing string', { type: 'text', text: 'existing part' }],
+      generation: {},
+    }
+    await handler(event as never) // must not throw
+    const system = event.system as unknown[]
+    assert.equal(system.length, 3)
+    const last = system[2] as { type?: unknown; text?: unknown }
+    assert.equal(last.type, 'text')
+    assert.ok(typeof last.text === 'string' && last.text.includes('Pantheon routing policy'))
+  })
+
+  test('v2-hooks context handler preserves single-string behavior', async () => {
+    const handler = createV2ContextHookHandler({
+      board: { get: () => undefined, list: () => [] } as never,
+      goalStore: { list: async () => [] } as never,
+      todoEnforcer: { listPendingTodos: async () => [] } as never,
+    })
+    const event = { sessionID: 'test', system: 'solo happy', generation: {} }
+    await handler(event as never) // happy path preserved
+    const system = (event as { system?: unknown }).system as unknown[]
+    assert.ok(Array.isArray(system))
+    assert.ok(system.some((s) => typeof s === 'string' && (s as string).includes('solo happy')))
+    assert.ok(
+      system.some(
+        (s) => typeof s === 'string' && (s as string).includes('Pantheon routing policy'),
+      ),
+    )
   })
 
   test('createV2PromptHookHandler returns an async function', () => {

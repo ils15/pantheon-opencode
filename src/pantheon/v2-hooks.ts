@@ -29,7 +29,9 @@ const log = createPantheonLogger({ module: 'pantheon-v2-hooks' })
  */
 export interface V2ContextHookEvent {
   sessionID: string
-  system: string[] | string
+  // Unknown: host beta may send string, string[], SystemPart objects
+  // ({type,text}), mixed arrays, or non-array. Narrow internally (fail-open).
+  system: unknown
   generation: {
     temperature?: number
   }
@@ -64,6 +66,54 @@ const ROUTING_POLICY =
 const DEFAULT_MAX_COMPACTION_ITEMS = 10
 
 /**
+ * Extract comparable text from a system entry: plain string or
+ * SystemPart-like object ({type,text}). Returns null for junk (null/number).
+ * Runtime sniffing: pinned SDK (@opencode-ai/plugin 1.18.18) only knows
+ * string/string[] — host beta sends objects. Never throws (fail-open).
+ */
+function systemEntryText(entry: unknown): string | null {
+  try {
+    if (typeof entry === 'string') return entry
+    if (
+      typeof entry === 'object' &&
+      entry !== null &&
+      typeof (entry as { text?: unknown }).text === 'string'
+    ) {
+      return (entry as { text: string }).text
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function hasPolicyMarker(arr: unknown[]): boolean {
+  try {
+    return arr.some((s) => {
+      const t = systemEntryText(s)
+      return t?.includes(POLICY_MARKER) ?? false
+    })
+  } catch {
+    return false
+  }
+}
+
+function usesObjectShape(arr: unknown[]): boolean {
+  try {
+    return arr.some(
+      (s) =>
+        typeof s === 'object' && s !== null && typeof (s as { text?: unknown }).text === 'string',
+    )
+  } catch {
+    return false
+  }
+}
+
+function toSystemEntry(text: string, useObject: boolean): string | { type: 'text'; text: string } {
+  return useObject ? { type: 'text', text } : text
+}
+
+/**
  * Context hook handler — injects Pantheon policy, routing, and compaction
  * state into the system context before each LLM call.
  *
@@ -72,27 +122,29 @@ const DEFAULT_MAX_COMPACTION_ITEMS = 10
 export function createV2ContextHookHandler(deps: V2HookDeps) {
   return async (event: V2ContextHookEvent): Promise<void> => {
     try {
-      // Beta 19192 hardening (defense-in-depth): the host may send
-      // non-string elements, a single string, or a non-array system.
-      // Normalize defensively; ignore non-strings silently (fail-open).
+      // Beta 19192 hardening (defense-in-depth) + SystemPart sniffing: the
+      // host may send string[], SystemPart objects ({type,text}), mixed
+      // arrays, a single string, or a non-array system. Preserve the string
+      // path behavior; inject object shape when the array contains objects
+      // (else host schema validation fails on system[N]). Never throw.
       const rawSystem: unknown = (event as { system?: unknown } | null | undefined)?.system
-      let system: string[]
+      let system: unknown[]
       if (typeof rawSystem === 'string') {
         system = rawSystem.includes(POLICY_MARKER) ? [rawSystem] : [rawSystem, ROUTING_POLICY]
-        event.system = system
+        ;(event as { system?: unknown }).system = system
       } else if (Array.isArray(rawSystem)) {
-        // 1. Inject routing policy if not already present
-        const hasPolicy = rawSystem.some((s) => typeof s === 'string' && s.includes(POLICY_MARKER))
-        if (!hasPolicy) {
-          rawSystem.push(ROUTING_POLICY)
+        // 1. Inject routing policy if not already present (string OU .text)
+        if (!hasPolicyMarker(rawSystem)) {
+          rawSystem.push(toSystemEntry(ROUTING_POLICY, usesObjectShape(rawSystem)))
         }
-        system = rawSystem as string[]
+        system = rawSystem
       } else {
         // Non-string, non-array system: ignore silently (fail-open).
         return
       }
 
       // 2. Inject compaction context (active goals, pending todos, delegations)
+      // Convert blocks to the same shape as the host array (object vs string).
       const blocks = await buildCompactionContext(deps.board, {
         sessionID: event.sessionID,
         maxItems: DEFAULT_MAX_COMPACTION_ITEMS,
@@ -106,7 +158,10 @@ export function createV2ContextHookHandler(deps: V2HookDeps) {
         },
       })
       if (blocks.length > 0) {
-        system.push(...blocks)
+        const useObject = usesObjectShape(system)
+        for (const b of blocks) {
+          system.push(useObject ? { type: 'text' as const, text: b } : b)
+        }
       }
 
       // 3. Apply conservative temperature for routing decisions
