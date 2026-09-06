@@ -88,13 +88,39 @@ function resolveBridge(ctx?: V2ContextLike): PantheonV2Bridge | null {
 // ─── V2 Transform Functions ─────────────────────────────────────────────
 
 function transformAgents(draft: AgentDraft): void {
-  for (const agent of draft.list()) {
-    draft.update(agent.id, (current) => {
-      if (!current.system?.includes(POLICY_MARKER)) {
-        current.system = current.system ? `${current.system}\n\n${POLICY}` : POLICY
-      }
-      if (agent.id === 'zeus') current.mode = 'primary'
-    })
+  // Beta 19192 guard (issue #92): draft may not have `list`, or list()
+  // may return a non-iterable. Never throw — mark unsupported and return.
+  let agents: Iterable<{ id: string }>
+  try {
+    const maybeList = (draft as unknown as { list?: unknown }).list
+    if (typeof maybeList !== 'function') {
+      markUnsupported('agent-transform-list')
+      return
+    }
+    const result = (maybeList as (this: unknown) => unknown).call(draft)
+    if (
+      result == null ||
+      typeof (result as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== 'function'
+    ) {
+      markUnsupported('agent-transform-list')
+      return
+    }
+    agents = result as Iterable<{ id: string }>
+  } catch {
+    markUnsupported('agent-transform-list')
+    return
+  }
+  try {
+    for (const agent of agents) {
+      draft.update(agent.id, (current) => {
+        if (!current.system?.includes(POLICY_MARKER)) {
+          current.system = current.system ? `${current.system}\n\n${POLICY}` : POLICY
+        }
+        if (agent.id === 'zeus') current.mode = 'primary'
+      })
+    }
+  } catch {
+    markUnsupported('agent-transform')
   }
 }
 
@@ -109,19 +135,73 @@ function transformCatalog(draft: CatalogDraft, options: PluginContext['options']
 }
 
 function transformCommands(draft: CommandDraft): void {
-  for (const command of draft.list()) {
-    if (command.name.startsWith('pantheon-')) {
-      draft.update(command.name, (current) => {
-        current.description ??= 'Pantheon orchestration command'
-      })
+  // Beta 19192 guard (issue #92): draft may not have `list`, or list()
+  // may return a non-iterable. Never throw — mark unsupported and return.
+  let commands: Iterable<{ name: string }>
+  try {
+    const maybeList = (draft as unknown as { list?: unknown }).list
+    if (typeof maybeList !== 'function') {
+      markUnsupported('command-transform-list')
+      return
     }
+    const result = (maybeList as (this: unknown) => unknown).call(draft)
+    if (
+      result == null ||
+      typeof (result as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== 'function'
+    ) {
+      markUnsupported('command-transform-list')
+      return
+    }
+    commands = result as Iterable<{ name: string }>
+  } catch {
+    markUnsupported('command-transform-list')
+    return
+  }
+  try {
+    for (const command of commands) {
+      if (command.name.startsWith('pantheon-')) {
+        draft.update(command.name, (current) => {
+          current.description ??= 'Pantheon orchestration command'
+        })
+      }
+    }
+  } catch {
+    markUnsupported('command-transform')
   }
 }
 
 function transformSkills(draft: SkillDraft): void {
-  const path = fileURLToPath(new URL('./skills', import.meta.url))
-  if (!draft.list().some((source) => source.type === 'directory' && source.path === path)) {
-    draft.source({ type: 'directory', path })
+  // Beta 19192 guard (issue #92): draft may not have `list`, or list()
+  // may return a non-iterable. Never throw — mark unsupported and return.
+  let sources: Array<{ type: string; path: string }>
+  try {
+    const maybeList = (draft as unknown as { list?: unknown }).list
+    if (typeof maybeList !== 'function') {
+      markUnsupported('skill-transform-list')
+      return
+    }
+    const result = (maybeList as (this: unknown) => unknown).call(draft)
+    if (
+      result == null ||
+      typeof (result as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== 'function'
+    ) {
+      markUnsupported('skill-transform-list')
+      return
+    }
+    sources = Array.isArray(result)
+      ? (result as Array<{ type: string; path: string }>)
+      : Array.from(result as Iterable<{ type: string; path: string }>)
+  } catch {
+    markUnsupported('skill-transform-list')
+    return
+  }
+  try {
+    const path = fileURLToPath(new URL('./skills', import.meta.url))
+    if (!sources.some((source) => source.type === 'directory' && source.path === path)) {
+      draft.source({ type: 'directory', path })
+    }
+  } catch {
+    markUnsupported('skill-transform')
   }
 }
 
@@ -532,14 +612,38 @@ export const plugin = define({
   id: 'pantheon-opencode-v2',
 
   async setup(context: PluginContext): Promise<void> {
-    // ─── Phase 1: V2 Transforms (always available) ────────────────────
-    await Promise.all([
-      context.agent.transform(transformAgents),
-      context.catalog.transform((draft) => transformCatalog(draft, context.options)),
-      context.command.transform(transformCommands),
-      context.reference.transform(transformReferences),
-      context.skill.transform(transformSkills),
-    ])
+    // ─── Phase 1: V2 Transforms (isolated per-domain, best-effort) ────
+    // Each domain registers independently: a failure in one transform
+    // (e.g. draft.list missing on beta 19192 → TypeError) must never
+    // reject setup() nor prevent the other domains from registering.
+    // See issue #92.
+    const phase1Transforms: Array<{ feature: string; register: () => Promise<unknown> }> = [
+      { feature: 'agent-transform', register: () => context.agent.transform(transformAgents) },
+      {
+        feature: 'catalog-transform',
+        register: () =>
+          context.catalog.transform((draft) => transformCatalog(draft, context.options)),
+      },
+      {
+        feature: 'command-transform',
+        register: () => context.command.transform(transformCommands),
+      },
+      {
+        feature: 'reference-transform',
+        register: () => context.reference.transform(transformReferences),
+      },
+      { feature: 'skill-transform', register: () => context.skill.transform(transformSkills) },
+    ]
+    const phase1Results = await Promise.allSettled(
+      phase1Transforms.map((t) => Promise.resolve().then(() => t.register())),
+    )
+    phase1Results.forEach((result, index) => {
+      // biome-ignore lint/style/noNonNullAssertion: index always in bounds — parallel arrays
+      const feature = phase1Transforms[index]!.feature
+      if (result.status === 'rejected') {
+        markUnsupported(feature)
+      }
+    })
 
     // ─── Phase 2: V2 Tool Registration (best-effort) ─────────────────
     const toolsRegistered = await registerV2Tools(context).catch(() => false)

@@ -164,6 +164,156 @@ async function main(): Promise<void> {
     assert.deepEqual(disposed, [])
   })
 
+  // ─── Phase 1 Failure Isolation Tests (issue #92) ────────────────────
+
+  console.log('\n🛡️ Phase 1 Failure Isolation Tests')
+
+  function makeBaseContext(overrides: Record<string, unknown> = {}) {
+    const noopRegistration = { dispose: async () => {} }
+    return {
+      options: {},
+      agent: { transform: async () => noopRegistration },
+      catalog: { transform: async () => noopRegistration },
+      command: { transform: async () => noopRegistration },
+      reference: { transform: async () => noopRegistration },
+      skill: { transform: async () => noopRegistration },
+      ...overrides,
+    }
+  }
+
+  // Case 1: agent draft without `list` (beta 19192) — setup must resolve.
+  let case1Resolved = false
+  try {
+    await plugin.setup(
+      makeBaseContext({
+        agent: {
+          transform: async (callback: (draft: never) => void) => {
+            callback({ update: () => {} } as never)
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    case1Resolved = true
+  } catch {
+    case1Resolved = false
+  }
+
+  test('setup resolves when agent draft has no list', () => {
+    assert.equal(case1Resolved, true)
+  })
+
+  test('agent-transform-list marked unsupported when list is absent', () => {
+    assert.ok(V2_UNSUPPORTED_FEATURES.includes('agent-transform-list'))
+  })
+
+  // Case 2: command list() returns undefined (non-iterable) — setup must resolve.
+  let case2Resolved = false
+  try {
+    await plugin.setup(
+      makeBaseContext({
+        command: {
+          transform: async (callback: (draft: never) => void) => {
+            callback({ list: () => undefined, update: () => {} } as never)
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    case2Resolved = true
+  } catch {
+    case2Resolved = false
+  }
+
+  test('setup resolves when command list() returns undefined', () => {
+    assert.equal(case2Resolved, true)
+  })
+
+  test('command-transform-list marked unsupported when list() is non-iterable', () => {
+    assert.ok(V2_UNSUPPORTED_FEATURES.includes('command-transform-list'))
+  })
+
+  // Case 3: skill list() returns undefined — setup must resolve.
+  let case3Resolved = false
+  try {
+    await plugin.setup(
+      makeBaseContext({
+        skill: {
+          transform: async (callback: (draft: never) => void) => {
+            callback({ list: () => undefined, source: () => {} } as never)
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    case3Resolved = true
+  } catch {
+    case3Resolved = false
+  }
+
+  test('setup resolves when skill list() returns undefined', () => {
+    assert.equal(case3Resolved, true)
+  })
+
+  test('skill-transform-list marked unsupported when list() is non-iterable', () => {
+    assert.ok(V2_UNSUPPORTED_FEATURES.includes('skill-transform-list'))
+  })
+
+  // Case 4: one domain transform rejects — setup resolves, others still register.
+  const case4Registered: string[] = []
+  let case4Resolved = false
+  try {
+    await plugin.setup(
+      makeBaseContext({
+        agent: {
+          transform: async (callback: (draft: never) => void) => {
+            case4Registered.push('agent')
+            callback({ list: () => [], update: () => {} } as never)
+            return { dispose: async () => {} }
+          },
+        },
+        catalog: {
+          transform: async (callback: (draft: never) => void) => {
+            case4Registered.push('catalog')
+            callback({ model: { get: () => undefined, default: { set: () => {} } } } as never)
+            return { dispose: async () => {} }
+          },
+        },
+        command: {
+          transform: async () => {
+            throw new Error('boom-command-transform')
+          },
+        },
+        reference: {
+          transform: async (callback: (draft: never) => void) => {
+            case4Registered.push('reference')
+            callback({ add: () => {} } as never)
+            return { dispose: async () => {} }
+          },
+        },
+        skill: {
+          transform: async (callback: (draft: never) => void) => {
+            case4Registered.push('skill')
+            callback({ list: () => [], source: () => {} } as never)
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    case4Resolved = true
+  } catch {
+    case4Resolved = false
+  }
+
+  test('setup resolves when one domain transform throws', () => {
+    assert.equal(case4Resolved, true)
+  })
+
+  test('failing domain marked unsupported without blocking others', () => {
+    assert.ok(V2_UNSUPPORTED_FEATURES.includes('command-transform'))
+    assert.deepEqual(case4Registered, ['agent', 'catalog', 'reference', 'skill'])
+  })
+
   // ─── Tool Registration Tests ────────────────────────────────────────
 
   console.log('\n🔧 V2 Tool Registration Tests')
