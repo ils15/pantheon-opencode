@@ -113,8 +113,15 @@ function transformAgents(draft: AgentDraft): void {
   try {
     for (const agent of agents) {
       draft.update(agent.id, (current) => {
-        if (!current.system?.includes(POLICY_MARKER)) {
-          current.system = current.system ? `${current.system}\n\n${POLICY}` : POLICY
+        // Beta 19192 hardening: `system` may be a non-string (host shape
+        // drift). `?.` covers only null/undefined, not wrong types — guard
+        // with typeof. Non-string/empty degrades to POLICY. Never throw.
+        if (typeof current.system === 'string' && current.system.includes(POLICY_MARKER)) {
+          // Policy already present — nothing to do.
+        } else if (typeof current.system === 'string' && current.system) {
+          current.system = `${current.system}\n\n${POLICY}`
+        } else {
+          current.system = POLICY
         }
         if (agent.id === 'zeus') current.mode = 'primary'
       })
@@ -385,12 +392,25 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   try {
     // "context" hook — inject routing policy + compaction state
     await sessionCtx.hook('context', (event: unknown) => {
-      const ctx = event as { system?: string[]; generation?: { temperature?: number } }
-      if (Array.isArray(ctx.system)) {
-        const hasPolicy = ctx.system.some((s: string) => s.includes(POLICY_MARKER))
-        if (!hasPolicy) {
-          ctx.system.push(POLICY)
+      try {
+        // Beta 19192 hardening: host may send non-string elements, a single
+        // string, or a non-array system. Normalize defensively and never
+        // throw to the host (fail-open).
+        const ctx = event as { system?: unknown } | null | undefined
+        const rawSystem: unknown = ctx?.system
+        if (typeof rawSystem === 'string' && ctx != null) {
+          ctx.system = rawSystem.includes(POLICY_MARKER) ? [rawSystem] : [rawSystem, POLICY]
+        } else if (Array.isArray(rawSystem)) {
+          const hasPolicy = rawSystem.some(
+            (s) => typeof s === 'string' && s.includes(POLICY_MARKER),
+          )
+          if (!hasPolicy) {
+            rawSystem.push(POLICY)
+          }
         }
+        // Non-string, non-array system (or null event): ignore silently.
+      } catch {
+        // Fail-open: never throw to the host.
       }
     })
     registered = true

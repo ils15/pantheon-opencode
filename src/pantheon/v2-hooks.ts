@@ -29,7 +29,7 @@ const log = createPantheonLogger({ module: 'pantheon-v2-hooks' })
  */
 export interface V2ContextHookEvent {
   sessionID: string
-  system: string[]
+  system: string[] | string
   generation: {
     temperature?: number
   }
@@ -72,10 +72,24 @@ const DEFAULT_MAX_COMPACTION_ITEMS = 10
 export function createV2ContextHookHandler(deps: V2HookDeps) {
   return async (event: V2ContextHookEvent): Promise<void> => {
     try {
-      // 1. Inject routing policy if not already present
-      const hasPolicy = event.system.some((s) => s.includes(POLICY_MARKER))
-      if (!hasPolicy) {
-        event.system.push(ROUTING_POLICY)
+      // Beta 19192 hardening (defense-in-depth): the host may send
+      // non-string elements, a single string, or a non-array system.
+      // Normalize defensively; ignore non-strings silently (fail-open).
+      const rawSystem: unknown = (event as { system?: unknown } | null | undefined)?.system
+      let system: string[]
+      if (typeof rawSystem === 'string') {
+        system = rawSystem.includes(POLICY_MARKER) ? [rawSystem] : [rawSystem, ROUTING_POLICY]
+        event.system = system
+      } else if (Array.isArray(rawSystem)) {
+        // 1. Inject routing policy if not already present
+        const hasPolicy = rawSystem.some((s) => typeof s === 'string' && s.includes(POLICY_MARKER))
+        if (!hasPolicy) {
+          rawSystem.push(ROUTING_POLICY)
+        }
+        system = rawSystem as string[]
+      } else {
+        // Non-string, non-array system: ignore silently (fail-open).
+        return
       }
 
       // 2. Inject compaction context (active goals, pending todos, delegations)
@@ -92,12 +106,13 @@ export function createV2ContextHookHandler(deps: V2HookDeps) {
         },
       })
       if (blocks.length > 0) {
-        event.system.push(...blocks)
+        system.push(...blocks)
       }
 
       // 3. Apply conservative temperature for routing decisions
-      if (event.generation.temperature === undefined) {
-        event.generation.temperature = 0.2
+      const generation = (event as { generation?: { temperature?: number } }).generation
+      if (generation != null && generation.temperature === undefined) {
+        generation.temperature = 0.2
       }
     } catch (err) {
       log.warn('[Pantheon V2] Context hook failed:', err)
