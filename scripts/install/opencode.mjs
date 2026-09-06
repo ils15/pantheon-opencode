@@ -655,6 +655,14 @@ export async function installOpenCode(
       const cmResult = syncDir(srcCodeModeDir, dstCodeModeDir, dryRun, clean)
       stats.created += cmResult.created
       stats.skipped += cmResult.skipped
+    } else {
+      // The code-mode payload ships inside the published tarball
+      // (package.json `files` includes .pantheon/code-mode/**). When it is
+      // absent, still create the runtime dir so the code-mode MCP server has
+      // a stable home, and warn loudly instead of silently skipping.
+      warning(`Code-mode source not found: ${srcCodeModeDir} — creating empty ${dstCodeModeDir}`)
+      if (!dryRun) mkdirSync(dstCodeModeDir, { recursive: true })
+      stats.created++
     }
 
     // ── tiers.json ──

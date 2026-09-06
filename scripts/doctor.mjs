@@ -22,7 +22,7 @@
  */
 
 import { spawn as spawnAsync, spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -954,6 +954,38 @@ function checkVenvLayer(args) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Check F.2: Code-Mode Scripts Directory
+// ---------------------------------------------------------------------------
+
+/**
+ * Verify the code-mode scripts directory exists for the resolved runtime
+ * root (project → <target>/.opencode, otherwise the global config dir).
+ * When absent, create it with a warning so the pantheon-code-mode MCP
+ * server has a stable home (mirrors the installer's runtime seeding).
+ */
+export function checkCodeModeDir(args) {
+  section('F.2 Code-Mode Scripts')
+  const target = resolve(args.target)
+  const isProject = existsSync(join(target, '.opencode'))
+  const runtimeRoot = isProject ? target : resolveOpenCodeConfigDir(args.env ?? process.env)
+  const codeModeDir = isProject
+    ? join(runtimeRoot, '.opencode', '.pantheon', 'code-mode')
+    : join(runtimeRoot, '.pantheon', 'code-mode')
+  if (existsSync(codeModeDir)) {
+    pass(`Code-mode scripts directory exists: ${codeModeDir}`)
+    return codeModeDir
+  }
+  warn(`Code-mode scripts directory missing — creating empty ${codeModeDir}`)
+  try {
+    mkdirSync(codeModeDir, { recursive: true })
+    info(`Created ${codeModeDir} (run \`pantheon-opencode init --components runtime\` to seed it)`)
+  } catch (err) {
+    error(`Cannot create code-mode directory ${codeModeDir}: ${err.message}`)
+  }
+  return codeModeDir
+}
+
 /** Resolve the venv created by init for either a project or global install. */
 export function resolveRuntimePython(args) {
   const target = resolve(args.target)
@@ -1281,6 +1313,7 @@ async function main() {
   checkAgentFiles(args)
   checkMcpConfig(args)
   checkVenvLayer(args)
+  checkCodeModeDir(args)
   await checkMcpRuntimeSmoke(args)
   checkPermissionMismatches(args)
   checkSyncStatus(args)
