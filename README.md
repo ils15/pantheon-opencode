@@ -101,7 +101,7 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 | | V1 | V2 |
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
-| Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `pantheon-opencode/plugin-v2` (`src/plugin-v2.ts`) |
+| Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) |
 | Runtime contract | Legacy Pantheon plugin, including `pantheon_delegate`, read/list tools, event/tool hooks and V1 compaction handling | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
 | V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 

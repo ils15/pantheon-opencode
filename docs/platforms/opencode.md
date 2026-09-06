@@ -53,7 +53,7 @@ cp -r src/agents/. /path/to/your-project/.opencode/agents/
 
 Choose exactly one plugin contract before creating the config. In Pantheon
 1.5.0, the singular `plugin` key selects the preserved V1 runtime; the
-plural `plugins` key with `pantheon-opencode/plugin-v2` selects the V2
+plural `plugins` key with the `<installed>/src/plugin-v2` directory selects the V2
 configuration adapter. Do not register both Pantheon generations.
 
 For the preserved V1 runtime, create `/path/to/your-project/opencode.json`
@@ -87,7 +87,7 @@ That file intentionally contains the V2-only registration:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["pantheon-opencode/plugin-v2"]
+  "plugins": ["<installed>/src/plugin-v2"]
 }
 ```
 

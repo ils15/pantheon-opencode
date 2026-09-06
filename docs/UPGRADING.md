@@ -9,11 +9,11 @@ upgrading, choose the contract that matches the OpenCode host you will run:
 | Selector | Config key | Pantheon entry | Scope |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and the V1 `src/plugins/pantheon-hooks.ts` | Legacy Pantheon delegate tools, board lifecycle, V1 hooks and implemented compaction path |
-| `v2` | plural `plugins` | `pantheon-opencode/plugin-v2` | Configuration adapter for agent/catalog/command/reference/skill drafts; no V1 runtime APIs |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
 
 The installer removes Pantheon entries from both config shapes and writes only
 the selected generation. It does not mix `src/plugin.ts` or
-`src/plugins/pantheon-hooks.ts` with `pantheon-opencode/plugin-v2`; unrelated
+`src/plugins/pantheon-hooks.ts` with `<installed>/src/plugin-v2`; unrelated
 third-party entries are retained and are not converted.
 
 ```bash
@@ -40,7 +40,7 @@ plugin generations.
    a separate `tui.json` registration; installing V2 does not imply that the
    TUI or V1 runtime is loaded.
 4. Inspect the result: V1 Pantheon entries belong in `plugin`; the V2 Pantheon
-   entry is `pantheon-opencode/plugin-v2` in `plugins`.
+   entry is the `<installed>/src/plugin-v2` directory in `plugins`.
 5. Restart OpenCode after changing configuration. This restart reloads the
    selected plugin; it is not an automatic resume of delegated work.
 

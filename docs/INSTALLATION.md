@@ -19,7 +19,7 @@ selected generation:
 | Selection | OpenCode key | Pantheon registration | Contract |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Legacy `pantheon_delegate`, read/list tools, V1 events/tool hooks and V1 compaction path |
-| `v2` | plural `plugins` | `pantheon-opencode/plugin-v2` | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks, tool hooks, plus configuration transforms |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks, tool hooks, plus configuration transforms |
 
 The V2 plugin is now a **full orchestration plugin** — not just a configuration
 adapter. It registers 9 tools via `ctx.tool.transform()`, subscribes to 4
@@ -58,7 +58,7 @@ Exemplo de `opencode.json` V2:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["pantheon-opencode/plugin-v2"],
+  "plugins": ["<installed>/src/plugin-v2"],
   "providers": {
     "opencode": {
       "baseURL": "https://opencode.ai/zen/v1"
@@ -78,6 +78,8 @@ Exemplo de `opencode.json` V2:
   }
 }
 ```
+
+Contrato: a entrada V2 é o diretório `<installed>/src/plugin-v2` (cujo `index.ts` re-exporta `src/plugin-v2.ts`) — o loader beta exige diretório, não spec npm nem path de arquivo. O TUI é registro separado via `npm run setup` (`tui.json` → `plugins/pantheon-tui`), alinhado a `@opentui/core`/`solid` 0.5.x.
 
 Diferenças do V1:
 
