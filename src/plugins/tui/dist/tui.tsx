@@ -2593,9 +2593,13 @@ const tui: TuiPlugin = (api, _options, _meta) => {
   })
 }
 
-const plugin: TuiPluginModule & { id: string } = {
+const plugin: TuiPluginModule & { id: string; setup: () => Promise<void> } = {
   id: 'pantheon.tui',
   tui,
+  // Beta loader contract: every `plugins` directory entry must expose a
+  // no-op `setup` so the entry loads as `pantheon.tui` with zero errors
+  // (sandbox probe evidence). The TUI itself boots via `tui()`.
+  setup: async () => {},
 }
 
 export default plugin

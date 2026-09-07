@@ -164,7 +164,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.4.3";
+	return "1.5.0";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.
@@ -1873,7 +1873,8 @@ const tui = (api, _options, _meta) => {
 };
 const plugin = {
 	id: "pantheon.tui",
-	tui
+	tui,
+	setup: async () => {}
 };
 //#endregion
 export { IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isValidSessionId, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };

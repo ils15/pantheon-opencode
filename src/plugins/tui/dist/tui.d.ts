@@ -59,7 +59,7 @@ declare function readAllDelegationEntries(root: string): Promise<DelegationEntry
 declare function resolveDelegationsDir(state: {
   directory?: string;
   worktree?: string;
-} | undefined, cwd?: string): string;
+} | undefined, cwd?: any): string;
 /** Project root derived from the delegations dir: `<root>/.pantheon/delegations`
  *  → `<root>`. Used to point the panel logger at the REAL hooks.log — passing
  *  the delegations dir (or its dirname) directly made createTuiLogger append
@@ -321,6 +321,7 @@ type LiveDelegationStore = {
 };
 declare const plugin: TuiPluginModule & {
   id: string;
+  setup: () => Promise<void>;
 };
 //#endregion
 export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isValidSessionId, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
