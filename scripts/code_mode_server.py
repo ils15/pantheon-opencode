@@ -132,6 +132,34 @@ def _detect_prlimit() -> str | None:
 # 1. /.opencode/.pantheon/code-mode/  (project install)
 # 2. /.pantheon/code-mode/            (legacy fallback)
 # 3. /.pantheon/code-mode/               (global fallback)
+# 4. .pantheon/code-mode/ shipped inside the installed package (tarball
+#    fallback — package.json `files` includes .pantheon/code-mode/**)
+
+
+def _packaged_scripts_dir() -> Path | None:
+    """Return the code-mode dir shipped inside the installed package, if any.
+
+    Walks up from this file looking for a `.pantheon/code-mode/` directory
+    (e.g. `<pkg>/.pantheon/code-mode` when installed from the tarball).
+    Returns None when no packaged copy exists.
+    """
+    try:
+        here = Path(__file__).resolve()
+    except Exception:
+        return None
+    for parent in [here.parent, *here.parents]:
+        try:
+            candidate = parent / ".pantheon" / "code-mode"
+        except Exception:
+            continue
+        try:
+            if candidate.is_dir():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
 _PANTHEON_HOME: Path = pantheon_home()
 _SCRIPTS_DIR_CANDIDATES: list[Path] = []
 _proj = pantheon_project()
@@ -145,6 +173,10 @@ for _candidate in _SCRIPTS_DIR_CANDIDATES:
     if _candidate.is_dir():
         SCRIPTS_DIR = _candidate
         break
+else:
+    _packaged = _packaged_scripts_dir()
+    if _packaged is not None:
+        SCRIPTS_DIR = _packaged
 
 # ── FastMCP App ───────────────────────────────────────────────────────────────
 mcp = FastMCP(

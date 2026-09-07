@@ -130,8 +130,12 @@ async function queryWithNodeSqlite(dbPath: string, days: number): Promise<CostRo
   try {
     assertCompatibleSchema(db)
     const since = Date.now() - days * 86_400_000
-    const rows = db.prepare('SELECT data FROM message WHERE time_created >= ?').all(since)
-    return aggregateMessages(rows.map((row) => String(row.data)))
+    const rows = db
+      .prepare('SELECT data FROM message WHERE time_created >= ?')
+      .all(since) as Array<{ data?: unknown }>
+    // Rows without a data payload carry no cost info — skip them instead of
+    // coercing null/undefined into "null"/"undefined" strings.
+    return aggregateMessages(rows.flatMap((row) => (row?.data == null ? [] : [String(row.data)])))
   } finally {
     db.close()
   }

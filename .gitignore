@@ -6,7 +6,16 @@ dist/
 !src/plugins/tui/dist/
 !src/plugins/tui/dist/**
 .venv/
-.pantheon/
+.pantheon/*
+# The code-mode payload ships inside the published tarball (package.json
+# `files` includes .pantheon/code-mode/**) and the installer seeds the
+# runtime scripts dir from it. It MUST be git-tracked: a fresh CI checkout
+# without these files produces a tarball missing
+# package/.pantheon/code-mode/compress-inline.py and empty runtime seed dirs.
+# NOTE: `.pantheon/*` (not `.pantheon/`) so this negation can take effect —
+# git cannot re-include paths under an excluded directory.
+!.pantheon/code-mode/
+!.pantheon/code-mode/**
 .env
 *.tgz
 *.pyc

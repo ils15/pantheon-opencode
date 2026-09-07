@@ -72,6 +72,7 @@
     "src/mcp/*.sh",
     "src/routing.yml",
     "src/pantheon/**",
+    ".pantheon/code-mode/**",
     "src/plugins/**",
     "scripts/hooks/**",
     "src/mcp/requirements*",

@@ -94,6 +94,9 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     assert.match(listing, /^package\/src\/plugin-v2\/index\.ts$/m)
     assert.match(listing, /^package\/src\/plugin-v2\.ts$/m)
     assert.match(listing, /^package\/bin\/pantheon-init\.mjs$/m)
+    // The code-mode payload must ship inside the tarball so fresh installs
+    // can seed the runtime scripts directory.
+    assert.match(listing, /^package\/\.pantheon\/code-mode\/compress-inline\.py$/m)
     const doctor = readFileSync(join(work, 'package', 'scripts', 'doctor.mjs'), 'utf8')
     // Packaged doctor must expose the profile policy flag (incl. sandbox) and
     // the blocking-error exit code contract.

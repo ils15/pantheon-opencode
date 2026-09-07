@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  checkCodeModeDir,
   classifyAgentsMdFreshness,
   classifyPermissionTaskCheck,
   collectMcpConfigs,
@@ -241,3 +242,30 @@ try {
 }
 
 console.log('✅ Doctor layered healthcheck contract passed')
+
+// ---------------------------------------------------------------------------
+// F.2 Code-mode scripts directory check
+// ---------------------------------------------------------------------------
+
+assert.ok(doctor.includes('function checkCodeModeDir'), 'code-mode directory check present (F.2)')
+assert.ok(doctor.includes('checkCodeModeDir(args)'), 'F.2 check is wired into main')
+
+// Project layout: missing <target>/.opencode/.pantheon/code-mode is created
+// with a warning (no throw, no exit-code change beyond warnings).
+const codeModeFixture = mkdtempSync(join(tmpdir(), 'pantheon-doctor-codemode-'))
+try {
+  mkdirSync(join(codeModeFixture, '.opencode'), { recursive: true })
+  const created = checkCodeModeDir({ target: codeModeFixture })
+  assert.equal(
+    created,
+    join(codeModeFixture, '.opencode', '.pantheon', 'code-mode'),
+    'F.2 resolves the project runtime code-mode dir',
+  )
+  // Second call: dir now exists → pass path, no creation needed.
+  const existing = checkCodeModeDir({ target: codeModeFixture })
+  assert.equal(existing, created, 'F.2 is idempotent when the dir exists')
+} finally {
+  rmSync(codeModeFixture, { recursive: true, force: true })
+}
+
+console.log('✅ Doctor code-mode directory check passed')

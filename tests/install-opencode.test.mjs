@@ -253,6 +253,14 @@ test('runtime-only install copies executable MCP assets and remains idempotent',
     assert.equal(config.mcp['pantheon-code-mode'].enabled, true)
     assert.ok(existsSync(join(runtime, 'scripts', 'mcp_resources_server.py')))
     assert.ok(existsSync(join(runtime, 'requirements-vision.txt')))
+    // Code-mode payload is seeded from the packaged .pantheon/code-mode dir
+    // (project layout: <target>/.opencode/.pantheon/code-mode).
+    const codeModeDir = join(runtime, '.pantheon', 'code-mode')
+    assert.ok(existsSync(codeModeDir), 'code-mode dir must be created by runtime install')
+    assert.ok(
+      existsSync(join(codeModeDir, 'compress-inline.py')),
+      'code-mode scripts must be seeded from the packaged payload',
+    )
     // tiers.json is an untracked dev-repo artifact (not in package "files"),
     // so the runtime copy is existsSync-gated: the destination must exist
     // exactly when the source does.
@@ -269,6 +277,30 @@ test('runtime-only install copies executable MCP assets and remains idempotent',
     assert.equal(readFileSync(join(runtime, 'scripts', 'code_mode_server.py'), 'utf8'), before)
   } finally {
     rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('global runtime install seeds <config>/.pantheon/code-mode', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'opencode-global-runtime-'))
+  const target = join(parent, 'opencode')
+  const previousXdg = process.env.XDG_CONFIG_HOME
+  process.env.XDG_CONFIG_HOME = parent
+  try {
+    await installOpenCode(target, false, false, ['runtime'], {
+      yes: true,
+      headless: true,
+      version: 'v2',
+    })
+    const codeModeDir = join(target, '.pantheon', 'code-mode')
+    assert.ok(existsSync(codeModeDir), 'global code-mode dir must be created')
+    assert.ok(
+      existsSync(join(codeModeDir, 'compress-inline.py')),
+      'global code-mode scripts must be seeded from the packaged payload',
+    )
+  } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previousXdg
+    rmSync(parent, { recursive: true, force: true })
   }
 })
 

@@ -594,8 +594,34 @@ interface V2ToolDraft {
     name: string
     description: string
     input: Record<string, unknown>
-    execute: (input: Record<string, unknown>, context: unknown) => Promise<string>
+    execute: (input: Record<string, unknown>, context: unknown) => Promise<V2ToolResult>
   }): void
+}
+
+/**
+ * V2 tool result shape.
+ *
+ * The V1 SDK types `ToolResult` as `string | { output: string, ... }`, but
+ * the V2 beta host reads a field off the resolved value (minified `Ce`) and
+ * throws `Ce is not an Object` when a tool resolves to a bare string. Our
+ * handlers are fail-open, so that host-side TypeError escapes instead of
+ * being contained. Always resolve to the object shape — it satisfies both
+ * the SDK union and the beta host.
+ */
+export interface V2ToolResult {
+  output: string
+}
+
+/**
+ * Wrap raw tool text into the object shape the V2 beta host requires.
+ * Never throws (fail-open): non-string input degrades to String(input).
+ */
+export function toV2ToolResult(text: unknown): V2ToolResult {
+  try {
+    return { output: typeof text === 'string' ? text : String(text) }
+  } catch {
+    return { output: '[pantheon] tool output unavailable' }
+  }
 }
 
 /**
@@ -605,7 +631,7 @@ interface V2ToolDef {
   name: string
   description: string
   input: Record<string, unknown>
-  execute: (input: Record<string, unknown>, context: unknown) => Promise<string>
+  execute: (input: Record<string, unknown>, context: unknown) => Promise<V2ToolResult>
 }
 
 /**
@@ -667,8 +693,14 @@ function createV2ToolDefinitionsFromContext(_context: PluginContext): V2ToolDef[
     name,
     description: toolDescriptions[name] ?? `Pantheon tool: ${name}`,
     input: { type: 'object' as const, properties: {} },
-    execute: async (_input: Record<string, unknown>, _context: unknown): Promise<string> => {
-      return `${name}: ${v2UnavailableMessage}`
+    // FOLLOW-UP: connect the real wrappers from
+    // src/pantheon/v2-tool-definitions.ts (createV2ToolDefinitions with
+    // costCommand/goalTools) once V1 infrastructure is resolvable in the V2
+    // standalone context. The before/after factories in v2-hooks.ts:216-282
+    // are likewise unwired. Until then, placeholders resolve to the object
+    // shape via toV2ToolResult so the beta host never sees a bare string.
+    execute: async (_input: Record<string, unknown>, _context: unknown): Promise<V2ToolResult> => {
+      return toV2ToolResult(`${name}: ${v2UnavailableMessage}`)
     },
   }))
 }
