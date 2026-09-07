@@ -13,6 +13,11 @@ import {
 } from './pantheon/context-sandbox.ts'
 import { createCostCommand } from './pantheon/cost-command.ts'
 import {
+  buildPluginNativeDelegation,
+  resolveDelegateMode,
+  withDelegationKillSwitch,
+} from './pantheon/delegate-task-adapter.ts'
+import {
   collectRootSessionIDs,
   createDelegationTools,
   type DelegationClient,
@@ -118,6 +123,14 @@ setInterval(
 
 // ─── Phase 4: Read-Only Enforcement + Compaction Context ───────────────
 
+// WS1 (PR #94): root-session predicate shared by the Phase 4 enforcement
+// guard and the native delegate toolset — both must agree on what a root is.
+// (Hoisted function: `rootSessions`/`sessionHierarchy` below are resolved at
+// call time, after module init.)
+function isRootSession(sessionID: string): boolean {
+  return rootSessions.has(sessionID) || sessionHierarchy.isRoot(sessionID)
+}
+
 // The read-only registry is populated by createDelegationTools (delegation.ts)
 // when a delegate is read-only (explicit flag or agent ∈ readOnlyAgents).
 // The guard denies edit/write/bash/task inside those sessions by throwing
@@ -126,7 +139,7 @@ const enforcementGuard = createEnforcementGuard({
   getReadOnlySessions: () => readOnlyRegistry.sessionIDs(),
   options: {
     getSessionAgent: (sessionID) => sessionAgents.get(sessionID),
-    isRootSession: (sessionID) => rootSessions.has(sessionID) || sessionHierarchy.isRoot(sessionID),
+    isRootSession,
     isChildSession: (sessionID) => sessionHierarchy.isChild(sessionID),
     logger: log,
   },
@@ -197,38 +210,6 @@ function seedRootSessionsInBackground(input: PluginInput): void {
 function sdkErrorMessage(error: { data?: { message?: string } } | null | undefined): string {
   const message = error?.data?.message
   return typeof message === 'string' && message.trim() !== '' ? message : 'request failed'
-}
-
-/**
- * Read the native V1 session status before the proactive child scan can
- * finalize a running board job. A missing status entry or an unavailable
- * endpoint is intentionally reported as unknown, never idle.
- */
-async function isChildSessionIdle(
-  client: PluginInput['client'],
-  childSessionID: string,
-): Promise<boolean | undefined> {
-  try {
-    const statusRequest = client.session.status
-    if (typeof statusRequest !== 'function') {
-      log.warn('[Pantheon Plugin] V1 session status API unavailable; idle scan skipped')
-      return undefined
-    }
-    const result = await statusRequest.call(client.session)
-    if ('error' in result && result.error) {
-      log.warn('[Pantheon Plugin] V1 session status lookup failed; idle scan skipped')
-      return undefined
-    }
-    if (!('data' in result) || result.data === undefined) {
-      log.warn('[Pantheon Plugin] V1 session status lookup returned no data; idle scan skipped')
-      return undefined
-    }
-    const status = result.data[childSessionID]
-    return status === undefined ? undefined : status.type === 'idle'
-  } catch {
-    log.warn('[Pantheon Plugin] V1 session status lookup failed; idle scan skipped')
-    return undefined
-  }
 }
 
 /**
@@ -391,9 +372,25 @@ const plugin: Plugin = async (input: PluginInput) => {
   const delegationBudgets = resolveDelegationBudgets()
   const wallClockTimeoutMs = resolveDelegationTimeoutMs()
 
-  const delegation = createDelegationTools({
+  // WS1 (PR #94): delegation backend gate. Default = legacy (the V1
+  // fire-and-forget toolset, intact); PANTHEON_DELEGATE_MODE=native selects
+  // the thin manager over native task() semantics. Kill-switch
+  // PANTHEON_DELEGATION=off covers BOTH modes (native guards internally;
+  // legacy via withDelegationKillSwitch). finalizeDelegation always stays on
+  // the legacy observer: it works on the shared board in both modes and must
+  // never be kill-switched, so children never orphan. The idle hook below is
+  // untouched.
+  const delegationClient = adaptDelegationClient(input.client)
+  // Only an explicitly active routing profile may provide child models.
+  // An empty map deliberately lets OpenCode inherit the parent model.
+  const routingAgentModels = loadRoutingAgentModels({
+    candidates: activePresetCandidates(),
+    logger: log,
+  })
+  const readOnlyAgents = new Set(['apollo', 'gaia'])
+  const legacyDelegation = createDelegationTools({
     board,
-    client: adaptDelegationClient(input.client),
+    client: delegationClient,
     options: {
       rootSessions,
       isChildSession: (sessionID) => sessionHierarchy.isChild(sessionID),
@@ -401,19 +398,37 @@ const plugin: Plugin = async (input: PluginInput) => {
         sessionHierarchy.register({ id: sessionID, parentID })
       },
       enforceRuntimeMatrix: true,
-      readOnlyAgents: new Set(['apollo', 'gaia']),
-      // Only an explicitly active routing profile may provide child models.
-      // An empty map deliberately lets OpenCode inherit the parent model.
-      agentModels: loadRoutingAgentModels({
-        candidates: activePresetCandidates(),
-        logger: log,
-      }),
+      readOnlyAgents,
+      agentModels: routingAgentModels,
       delegationBudgets,
       stepCapTracker,
       ...(routingPermissionTask != null ? { permissionTask: routingPermissionTask } : {}),
       ...(wallClockTimeoutMs !== undefined ? { wallClockTimeoutMs } : {}),
     },
   })
+  const delegateMode = resolveDelegateMode()
+  if (delegateMode === 'native') {
+    log.info('[Pantheon Plugin] Delegation mode: native (PANTHEON_DELEGATE_MODE=native)')
+  }
+  const delegation =
+    delegateMode === 'native'
+      ? buildPluginNativeDelegation({
+          board,
+          client: delegationClient,
+          isRootSession,
+          registerChildSession: (sessionID, parentID) => {
+            sessionHierarchy.register({ id: sessionID, parentID })
+          },
+          registerReadOnlySession: (sessionID, info) => {
+            readOnlyRegistry.register(sessionID, info)
+          },
+          readOnlyAgents,
+          agentModels: routingAgentModels,
+          stepCap: stepCapTracker,
+          ...(wallClockTimeoutMs !== undefined ? { wallClockTimeoutMs } : {}),
+          finalizeDelegation: legacyDelegation.finalizeDelegation,
+        })
+      : withDelegationKillSwitch(legacyDelegation)
 
   // Proactive idle-child scan (Fix 2): finalize children that are idle on the
   // board but have no MD report on disk — eliminates the phantom "running"
@@ -424,7 +439,6 @@ const plugin: Plugin = async (input: PluginInput) => {
     {
       board,
       finalize: (childSessionID, opts) => delegation.finalizeDelegation(childSessionID, opts),
-      isIdle: (childSessionID) => isChildSessionIdle(input.client, childSessionID),
       hasReport: (job) => {
         try {
           const filePath = join('.pantheon/delegations', job.parentSessionID, `${job.alias}.md`)
