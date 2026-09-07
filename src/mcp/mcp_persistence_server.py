@@ -11,6 +11,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
 import sqlite3
 import sys
@@ -287,7 +289,9 @@ async def kv_stats(
     """
     conn = _db(scope)
 
-    total = conn.execute("SELECT COUNT(*) FROM kv_store WHERE deleted_at IS NULL").fetchone()[0]
+    total = conn.execute(
+        "SELECT COUNT(*) FROM kv_store WHERE deleted_at IS NULL"
+    ).fetchone()[0]
     expired = conn.execute(
         "SELECT COUNT(*) FROM kv_store "
         "WHERE expires_at IS NOT NULL AND datetime(expires_at) < datetime('now') "
@@ -300,10 +304,7 @@ async def kv_stats(
         "FROM kv_store WHERE deleted_at IS NULL GROUP BY namespace ORDER BY cnt DESC"
     ).fetchall()
 
-    namespaces = {
-        r[0]: {"count": r[1], "expired": r[2]}
-        for r in ns_rows
-    }
+    namespaces = {r[0]: {"count": r[1], "expired": r[2]} for r in ns_rows}
 
     db_path = _resolve_db_path(scope)
     db_size = db_path.stat().st_size if db_path and db_path.exists() else 0
@@ -315,6 +316,7 @@ async def kv_stats(
         "namespaces": namespaces,
         "db_size_bytes": db_size,
     }
+
 
 @mcp.tool(
     name="kv_delete",
@@ -504,8 +506,9 @@ async def purge_expired(
     return {"purged": count, "dry_run": False}
 
 
-
-def _opportunistic_auto_purge(conn: sqlite3.Connection, namespace: str, threshold: int = 500) -> None:
+def _opportunistic_auto_purge(
+    conn: sqlite3.Connection, namespace: str, threshold: int = 500
+) -> None:
     """Lightweight auto-purge: if namespace exceeds threshold, soft-delete expired entries."""
     count = conn.execute(
         "SELECT COUNT(*) FROM kv_store WHERE namespace = ? AND deleted_at IS NULL",
@@ -630,7 +633,13 @@ async def context_save(
         )
         conn.commit()
 
-    return {"status": "stored", "namespace": ns, "key": key, "session_id": actual_session, "ttl": actual_ttl}
+    return {
+        "status": "stored",
+        "namespace": ns,
+        "key": key,
+        "session_id": actual_session,
+        "ttl": actual_ttl,
+    }
 
 
 @mcp.tool(
@@ -731,8 +740,7 @@ async def context_stats(
     ns = f"checkpoint:{slug}:{session_id}" if session_id else f"checkpoint:{slug}"
 
     count = conn.execute(
-        "SELECT COUNT(*) FROM kv_store "
-        "WHERE namespace = ? AND deleted_at IS NULL",
+        "SELECT COUNT(*) FROM kv_store WHERE namespace = ? AND deleted_at IS NULL",
         (ns,),
     ).fetchone()[0]
 
@@ -772,6 +780,327 @@ async def context_stats(
         "total_bytes": size,
         "ttl_remaining_seconds": remaining,
     }
+
+
+# ── Post-Compaction Injector (WS2 PR #94) ─────────────────────────────────────
+# Deterministic rehydration after a native compaction event: a long session
+# reads ``latest`` + serialized ``tail`` from ``checkpoint:<slug>`` and
+# rebuilds its critical context (active goal, in-flight delegations,
+# current phase) WITHOUT any LLM call or generative embedding.
+#
+# Checkpoint JSON convention (written by Zeus via context_save):
+#   {"version": 1,
+#    "goal": {"id": ..., "objective": ..., "status": ...},
+#    "phase": {"current": ..., "total": ..., "name": ...},
+#    "delegations": {"in_flight": [{"alias": ..., "agent": ..., "task_id": ...}]},
+#    "tail": ["phase:1 ...", ...],   # serialized last-N phase digests
+#    "heartbeat": {...}}
+# ``tail`` may also live under a separate ``tail`` key (JSON array).
+#
+# Guarantees: kill-switch PANTHEON_COMPACTION=off, TTL-respecting reads,
+# heartbeat TTL refresh (extended, never shortened), idempotent (pure reads
+# + TTL touch — no checkpoint rows are added or duplicated).
+
+COMPACTION_KILL_SWITCH_ENV: str = "PANTHEON_COMPACTION"
+SESSION_END_SUMMARY_ENV: str = "PANTHEON_SESSION_END_SUMMARY"
+REHYDRATE_TAIL_CAP: int = 10
+SUMMARY_TAIL_CAP: int = 5
+
+
+def _compaction_disabled() -> bool:
+    """True when the PANTHEON_COMPACTION kill-switch is off."""
+    return os.environ.get(COMPACTION_KILL_SWITCH_ENV, "").lower() == "off"
+
+
+def _read_checkpoint_value(
+    conn: sqlite3.Connection, namespace: str, key: str
+) -> str | None:
+    """Read one unexpired, non-deleted checkpoint value (None when absent)."""
+    row = conn.execute(
+        "SELECT value FROM kv_store "
+        "WHERE namespace = ? AND key = ? "
+        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND deleted_at IS NULL",
+        (namespace, key),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _parse_checkpoint(content: str) -> dict:
+    """Parse checkpoint JSON; unparsable content degrades to {} (fail-open)."""
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _checkpoint_tail(checkpoint: dict, tail_raw: str | None) -> list[str]:
+    """Tail lines from embedded ``tail`` with fallback to the ``tail`` key."""
+    tail = checkpoint.get("tail")
+    if isinstance(tail, list):
+        lines = [str(line) for line in tail]
+    elif isinstance(tail_raw, str):
+        try:
+            parsed = json.loads(tail_raw)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            parsed = None
+        lines = [str(line) for line in parsed] if isinstance(parsed, list) else []
+    else:
+        lines = []
+    return [line for line in lines if line.strip()][:REHYDRATE_TAIL_CAP]
+
+
+def _mission_block(checkpoint: dict) -> str | None:
+    """<mission_context> for a non-done goal (done goals stay buried)."""
+    goal = checkpoint.get("goal")
+    if not isinstance(goal, dict):
+        return None
+    status = str(goal.get("status", ""))
+    objective = str(goal.get("objective", "")).strip()
+    if status == "done" or not objective:
+        return None
+    gid = str(goal.get("id", "goal")).strip() or "goal"
+    return f"<mission_context>\n  [{gid}] {objective} — {status}"
+
+
+def _phase_block(checkpoint: dict) -> str | None:
+    """<phase_context> for the current phase (omitted when unknown)."""
+    phase = checkpoint.get("phase")
+    if not isinstance(phase, dict) or phase.get("current") is None:
+        return None
+    total = phase.get("total")
+    current = phase.get("current")
+    span = f"{current}/{total}" if total is not None else str(current)
+    name = str(phase.get("name", "")).strip()
+    line = f"  phase {span}" + (f" — {name}" if name else "")
+    return f"<phase_context>\n{line}"
+
+
+def _delegation_block(checkpoint: dict) -> str | None:
+    """<delegation_context> for in-flight delegations (never capped)."""
+    delegations = checkpoint.get("delegations")
+    if not isinstance(delegations, dict):
+        return None
+    in_flight = delegations.get("in_flight")
+    if not isinstance(in_flight, list):
+        return None
+    lines = []
+    for job in in_flight:
+        if not isinstance(job, dict):
+            continue
+        alias = str(job.get("alias") or job.get("task_id") or "?").strip()
+        agent = str(job.get("agent", "?")).strip()
+        task_id = str(job.get("task_id", "")).strip()
+        detail = f" — {task_id}" if task_id and task_id != alias else ""
+        lines.append(f"  [{alias}] {agent}{detail} [in-flight]")
+    if not lines:
+        return None
+    return "<delegation_context>\n" + "\n".join(lines)
+
+
+def _tail_block(checkpoint: dict) -> str | None:
+    """<tail_context> for the serialized tail (already capped on load)."""
+    tail_lines = checkpoint.get("_tail_raw")
+    if not isinstance(tail_lines, list) or not tail_lines:
+        return None
+    quoted = "\n".join(f"  - {line}" for line in tail_lines)
+    return f"<tail_context>\n{quoted}"
+
+
+def build_rehydration_blocks(checkpoint: dict) -> list[str] | None:
+    """Build deterministic rehydration blocks from a checkpoint dict.
+
+    Pure string templating — no LLM, no embeddings. Mirrors the
+    ``<mission_context>`` convention of delegation-compaction.ts: only a
+    non-done goal is re-emitted. Returns None when nothing critical remains.
+    """
+    if not isinstance(checkpoint, dict) or not checkpoint:
+        return None
+    blocks = [
+        block
+        for block in (
+            _mission_block(checkpoint),
+            _phase_block(checkpoint),
+            _delegation_block(checkpoint),
+            _tail_block(checkpoint),
+        )
+        if block is not None
+    ]
+    return blocks if blocks else None
+
+
+def build_session_end_summary(checkpoint: dict) -> str | None:
+    """Build the Tier 2 session-end summary deterministically (no LLM).
+
+    Fires automatically at session end — no Themis approval gate. Returns
+    None when the checkpoint carries nothing worth compressing.
+    """
+    if not isinstance(checkpoint, dict) or not checkpoint:
+        return None
+    parts: list[str] = []
+
+    goal = checkpoint.get("goal")
+    if isinstance(goal, dict):
+        objective = str(goal.get("objective", "")).strip()
+        if objective:
+            parts.append(f"Goal: {objective} ({goal.get('status', '?')})")
+
+    phase = checkpoint.get("phase")
+    if isinstance(phase, dict) and phase.get("current") is not None:
+        total = phase.get("total")
+        span = (
+            f"{phase.get('current')}/{total}"
+            if total is not None
+            else phase.get("current")
+        )
+        name = str(phase.get("name", "")).strip()
+        parts.append(f"Phase: {span}" + (f" {name}" if name else ""))
+
+    delegations = checkpoint.get("delegations")
+    if isinstance(delegations, dict):
+        in_flight = delegations.get("in_flight")
+        if isinstance(in_flight, list):
+            aliases = [
+                str(job.get("alias") or job.get("task_id") or "?")
+                for job in in_flight
+                if isinstance(job, dict)
+            ]
+            if aliases:
+                parts.append(f"In-flight: {', '.join(aliases)}")
+
+    tail_raw = checkpoint.get("_tail_raw")
+    if isinstance(tail_raw, list) and tail_raw:
+        kept = [str(line) for line in tail_raw[:SUMMARY_TAIL_CAP]]
+        parts.append("Tail: " + " | ".join(kept))
+
+    if not parts:
+        return None
+    return "# Session summary (Tier 2 auto — no approval gate)\n" + "\n".join(
+        f"- {part}" for part in parts
+    )
+
+
+def _load_checkpoint_for_rehydrate(
+    conn: sqlite3.Connection, namespace: str
+) -> dict | None:
+    """Load ``latest`` (+ ``tail`` fallback) or None when expired/absent.
+
+    Resilient to pointer clobbering: ``context_save`` refreshes ``latest``
+    on every write, so a later heartbeat can overwrite the checkpoint
+    pointer. When ``latest`` is not a checkpoint, scan sibling keys
+    newest-first and use the first value that rebuilds critical blocks.
+    Deterministic (created_at DESC, bounded scan).
+    """
+    tail_raw = _read_checkpoint_value(conn, namespace, "tail")
+
+    def _with_tail(raw: str | None) -> dict | None:
+        if raw is None:
+            return None
+        checkpoint = _parse_checkpoint(raw)
+        if not checkpoint:
+            return None
+        checkpoint["_tail_raw"] = _checkpoint_tail(checkpoint, tail_raw)
+        if build_rehydration_blocks(checkpoint) is None:
+            return None
+        return checkpoint
+
+    found = _with_tail(_read_checkpoint_value(conn, namespace, "latest"))
+    if found is not None:
+        return found
+    rows = conn.execute(
+        "SELECT value FROM kv_store "
+        "WHERE namespace = ? AND key != 'latest' "
+        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND deleted_at IS NULL "
+        "ORDER BY created_at DESC, key DESC LIMIT 20",
+        (namespace,),
+    ).fetchall()
+    for row in rows:
+        found = _with_tail(row[0] if row else None)
+        if found is not None:
+            return found
+    return None
+
+
+def _refresh_heartbeat_ttl(conn: sqlite3.Connection, namespace: str) -> None:
+    """Extend an unexpired heartbeat TTL; never shorten, never resurrect."""
+    row = conn.execute(
+        "SELECT expires_at FROM kv_store "
+        "WHERE namespace = ? AND key = 'heartbeat' "
+        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND deleted_at IS NULL",
+        (namespace,),
+    ).fetchone()
+    if not row or not row[0]:
+        return
+    try:
+        current_exp = datetime.fromisoformat(row[0])
+    except (ValueError, TypeError):
+        return
+    now = datetime.now(UTC)
+    if current_exp.tzinfo is None:
+        current_exp = current_exp.replace(tzinfo=UTC)
+    fresh_exp = now + timedelta(seconds=DEFAULT_CONTEXT_TTL)
+    if fresh_exp <= current_exp:
+        return
+    conn.execute(
+        "UPDATE kv_store SET expires_at = ?, updated_at = datetime('now') "
+        "WHERE namespace = ? AND key = 'heartbeat'",
+        (fresh_exp.isoformat(), namespace),
+    )
+    conn.commit()
+
+
+@mcp.tool(
+    name="context_rehydrate",
+    description="Rehydrate critical context after native compaction. "
+    "Reads 'latest' + serialized 'tail' from checkpoint:<slug> and rebuilds "
+    "goal/phase/delegation blocks deterministically (no LLM). Refreshes the "
+    "heartbeat TTL. Idempotent. Honors PANTHEON_COMPACTION=off.",
+)
+async def context_rehydrate(
+    slug: str,
+    session_id: str | None = None,
+    scope: str = "project",
+) -> list[str] | None:
+    """Post-compaction injector: deterministic rehydration, fail-open."""
+    if _compaction_disabled():
+        return None
+    conn = _db(scope)
+    ns = f"checkpoint:{slug}:{session_id}" if session_id else f"checkpoint:{slug}"
+    checkpoint = _load_checkpoint_for_rehydrate(conn, ns)
+    if checkpoint is None:
+        return None
+    blocks = build_rehydration_blocks(checkpoint)
+    if blocks is None:
+        return None
+    _refresh_heartbeat_ttl(conn, ns)
+    return blocks
+
+
+@mcp.tool(
+    name="context_session_summary",
+    description="Tier 2 session-end summary without Themis approval. "
+    "Compresses the checkpoint (goal, phase, in-flight, tail) into a "
+    "memory-bank-ready summary deterministically (no LLM). "
+    "Opt-out via PANTHEON_SESSION_END_SUMMARY=off.",
+)
+async def context_session_summary(
+    slug: str,
+    session_id: str | None = None,
+    scope: str = "project",
+) -> str | None:
+    """Session-end Tier 2 trigger: automatic, opt-out instead of opt-in."""
+    if os.environ.get(SESSION_END_SUMMARY_ENV, "").lower() == "off":
+        return None
+    conn = _db(scope)
+    ns = f"checkpoint:{slug}:{session_id}" if session_id else f"checkpoint:{slug}"
+    checkpoint = _load_checkpoint_for_rehydrate(conn, ns)
+    if checkpoint is None:
+        return None
+    return build_session_end_summary(checkpoint)
+
 
 def _resolve_db_path(scope: str) -> Path | None:
     """Resolve the database file path for a given scope.
