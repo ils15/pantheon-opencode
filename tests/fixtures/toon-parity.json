@@ -1,0 +1,149 @@
+{
+ "fixtures": [
+  {
+   "name": "pipe-in-table",
+   "value": [
+    {
+     "a": "x|y",
+     "b": "1"
+    }
+   ],
+   "toon": "@table a|b\n\"x|y\"|\"1\""
+  },
+  {
+   "name": "pipe-and-quote-in-table",
+   "value": [
+    {
+     "a": "x|\"y\"",
+     "b": "p|q|r"
+    }
+   ],
+   "toon": "@table a|b\n\"x|\\\"y\\\"\"|\"p|q|r\""
+  },
+  {
+   "name": "quoted-colon-key",
+   "value": {
+    "a:b": 2
+   },
+   "toon": "\"a:b\": 2"
+  },
+  {
+   "name": "spaced-key",
+   "value": {
+    "a b": 1
+   },
+   "toon": "\"a b\": 1"
+  },
+  {
+   "name": "board-signal",
+   "value": {
+    "taskID": "ses_child_1",
+    "alias": "apo-1",
+    "agent": "hermes",
+    "state": "completed",
+    "summary": "Done: auth router implemented, 12 tests green",
+    "timestamp": 1787955800816
+   },
+   "toon": "taskID: ses_child_1\nalias: apo-1\nagent: hermes\nstate: completed\nsummary: Done: auth router implemented, 12 tests green\ntimestamp: 1787955800816"
+  },
+  {
+   "name": "kv-list",
+   "value": [
+    {
+     "namespace": "checkpoint:auth:abc123",
+     "key": "phase:3",
+     "value": "relaunch green"
+    },
+    {
+     "namespace": "checkpoint:auth:abc123",
+     "key": "latest",
+     "value": "relaunch green"
+    },
+    {
+     "namespace": "checkpoint:auth:abc123",
+     "key": "heartbeat",
+     "value": "alive"
+    }
+   ],
+   "toon": "@table namespace|key|value\ncheckpoint:auth:abc123|phase:3|relaunch green\ncheckpoint:auth:abc123|latest|relaunch green\ncheckpoint:auth:abc123|heartbeat|alive"
+  },
+  {
+   "name": "nested-dict",
+   "value": {
+    "phase": 3,
+    "nested": {
+     "retries": 1,
+     "capped": false
+    },
+    "remaining": [
+     "monitor",
+     "reconcile"
+    ]
+   },
+   "toon": "phase: 3\nnested:\n  retries: 1\n  capped: false\nremaining:\n  - monitor\n  - reconcile"
+  },
+  {
+   "name": "scalar-types",
+   "value": {
+    "count": 123,
+    "neg": -7,
+    "f": 2.5,
+    "flag": true,
+    "missing": null,
+    "code": "123",
+    "name": "apo-1",
+    "truthy": "true",
+    "numlike": "1e10"
+   },
+   "toon": "count: 123\nneg: -7\nf: 2.5\nflag: true\nmissing: null\ncode: \"123\"\nname: apo-1\ntruthy: \"true\"\nnumlike: \"1e10\""
+  },
+  {
+   "name": "empty-containers",
+   "value": {
+    "a": {},
+    "b": [],
+    "c": [
+     {},
+     []
+    ]
+   },
+   "toon": "a: {}\nb: []\nc:\n  - {}\n  - []"
+  },
+  {
+   "name": "colon-in-value",
+   "value": {
+    "summary": "a: b: c"
+   },
+   "toon": "summary: a: b: c"
+  },
+  {
+   "name": "keylike-list-item-quoted",
+   "value": [
+    "a: b",
+    "plain"
+   ],
+   "toon": "- \"a: b\"\n- plain"
+  },
+  {
+   "name": "table-quoted-header-key",
+   "value": [
+    {
+     "a b": 1,
+     "c": 2
+    },
+    {
+     "a b": 3,
+     "c": 4
+    }
+   ],
+   "toon": "@table \"a b\"|c\n1|2\n3|4"
+  },
+  {
+   "name": "multiline-quoted",
+   "value": {
+    "note": "line1\nline2"
+   },
+   "toon": "note: \"line1\\nline2\""
+  }
+ ]
+}
