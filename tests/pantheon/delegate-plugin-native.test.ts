@@ -25,7 +25,7 @@ import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
 import {
   buildPluginNativeDelegation,
   resolveDelegateMode,
-} from '../../src/pantheon/delegate-task-adapter.ts'
+} from '../../src/pantheon/delegate-manager.ts'
 import {
   type DelegationClient,
   type DelegationMessageBundle,

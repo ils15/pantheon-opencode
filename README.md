@@ -90,6 +90,9 @@ and [changelog](CHANGELOG.md) for the latest changes.
 - Sandbox validator for global installs (`scripts/test-opencode-v1-v2-sandbox.sh`)
   covering OpenCode V1/V2 side by side — see
   [Sandbox validation](#sandbox-validation-v1v2).
+- Beta2 agent-economy policy: direct native delegation, bounded compaction
+  carry-forward, compact context encoding, and quality floors — see
+  [Beta2 agent economy policy](docs/ws3-token-opt-measurements.md#beta2-agent-economy-policy).
 - A `--prompts` installer flag is planned for a future release.
 
 ## OpenCode V1/V2 — Dual Version (1.5.0)

@@ -12,11 +12,7 @@ import {
   DEFAULT_LIMITS as SANDBOX_DEFAULT_LIMITS,
 } from './pantheon/context-sandbox.ts'
 import { createCostCommand } from './pantheon/cost-command.ts'
-import {
-  buildPluginNativeDelegation,
-  resolveDelegateMode,
-  withDelegationKillSwitch,
-} from './pantheon/delegate-task-adapter.ts'
+import { buildPluginNativeDelegation, resolveDelegateMode } from './pantheon/delegate-manager.ts'
 import {
   collectRootSessionIDs,
   createDelegationTools,
@@ -375,8 +371,7 @@ const plugin: Plugin = async (input: PluginInput) => {
   // WS1 (PR #94): delegation backend gate. Default = legacy (the V1
   // fire-and-forget toolset, intact); PANTHEON_DELEGATE_MODE=native selects
   // the thin manager over native task() semantics. Kill-switch
-  // PANTHEON_DELEGATION=off covers BOTH modes (native guards internally;
-  // legacy via withDelegationKillSwitch). finalizeDelegation always stays on
+  // PANTHEON_DELEGATION=off covers the native manager; finalizeDelegation stays on
   // the legacy observer: it works on the shared board in both modes and must
   // never be kill-switched, so children never orphan. The idle hook below is
   // untouched.
@@ -428,7 +423,7 @@ const plugin: Plugin = async (input: PluginInput) => {
           ...(wallClockTimeoutMs !== undefined ? { wallClockTimeoutMs } : {}),
           finalizeDelegation: legacyDelegation.finalizeDelegation,
         })
-      : withDelegationKillSwitch(legacyDelegation)
+      : legacyDelegation
 
   // Proactive idle-child scan (Fix 2): finalize children that are idle on the
   // board but have no MD report on disk — eliminates the phantom "running"

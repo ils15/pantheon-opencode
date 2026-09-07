@@ -1,11 +1,11 @@
 /**
- * WS1 — V1 session task adapter tests (delegate-task-adapter.ts).
+ * WS1 — native delegate manager tests.
  *
  * Covers createSessionTaskFn over a fake V1 client + the real board +
  * finalizeDelegation (simulated idle hook), plus the native toolset wiring:
- * kill-switch, depth guard, create-failure TEXT, read/list passthrough.
+ * depth guard, create-failure TEXT, read/list passthrough.
  *
- * Run with: npx tsx tests/pantheon/delegate-task-adapter.test.ts
+ * Run with: npx tsx tests/pantheon/delegate-manager-native.test.ts
  */
 import { strict as assert } from 'node:assert'
 import { existsSync, mkdtempSync, readdirSync } from 'node:fs'
@@ -13,15 +13,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
-import { createDelegateManager } from '../../src/pantheon/delegate-manager.ts'
 import {
+  createDelegateManager,
   createNativeDelegateTools,
   createSessionTaskFn,
   extractOutputSection,
   parseModelRef,
   resolveDelegateMode,
-  withDelegationKillSwitch,
-} from '../../src/pantheon/delegate-task-adapter.ts'
+} from '../../src/pantheon/delegate-manager.ts'
 import {
   type DelegationClient,
   type DelegationMessageBundle,
@@ -278,7 +277,7 @@ async function main(): Promise<void> {
     )
   })
 
-  // ─── Mode gate + kill-switch helper ──────────────────────────────────
+  // ─── Mode gate ────────────────────────────────────────────────────────
 
   await testAsync('resolveDelegateMode: default + garbage → legacy (V1 intacto)', async () => {
     assert.equal(resolveDelegateMode({}), 'legacy')
@@ -287,47 +286,6 @@ async function main(): Promise<void> {
     assert.equal(resolveDelegateMode({ PANTHEON_DELEGATE_MODE: 'native' }), 'native')
     assert.equal(resolveDelegateMode({ PANTHEON_DELEGATE_MODE: ' Native ' }), 'native')
     assert.equal(resolveDelegateMode({ PANTHEON_DELEGATE_MODE: 'NATIVE' }), 'native')
-  })
-
-  await testAsync(
-    'withDelegationKillSwitch: off blocks tools, passes finalizeDelegation through',
-    async () => {
-      let calls = 0
-      const finalize = async (_childID: string) => {
-        calls += 1
-        return calls
-      }
-      const toolset = {
-        pantheon_delegate: {
-          description: 'd',
-          args: {},
-          execute: async () => 'launched',
-        },
-        finalizeDelegation: finalize,
-      }
-      const wrapped = withDelegationKillSwitch(toolset, { PANTHEON_DELEGATION: 'off' })
-      await assert.rejects(
-        () => wrapped.pantheon_delegate.execute({}, { sessionID: 's' }),
-        /disabled/,
-      )
-      assert.equal(await wrapped.finalizeDelegation('child-1'), 1, 'observer never kill-switched')
-      assert.notEqual(wrapped.pantheon_delegate, toolset.pantheon_delegate, 'returns a new object')
-    },
-  )
-
-  await testAsync('withDelegationKillSwitch: enabled is a transparent passthrough', async () => {
-    const toolset = {
-      pantheon_delegation_list: {
-        description: 'l',
-        args: {},
-        execute: async () => 'No delegations.',
-      },
-    }
-    const wrapped = withDelegationKillSwitch(toolset, {})
-    assert.equal(
-      await wrapped.pantheon_delegation_list.execute({}, { sessionID: 's' }),
-      'No delegations.',
-    )
   })
 
   await testAsync(
