@@ -613,18 +613,6 @@ export interface V2ToolResult {
 }
 
 /**
- * Wrap raw tool text into the object shape the V2 beta host requires.
- * Never throws (fail-open): non-string input degrades to String(input).
- */
-export function toV2ToolResult(text: unknown): V2ToolResult {
-  try {
-    return { output: typeof text === 'string' ? text : String(text) }
-  } catch {
-    return { output: '[pantheon] tool output unavailable' }
-  }
-}
-
-/**
  * A V2 tool definition ready for registration.
  */
 interface V2ToolDef {
@@ -698,9 +686,9 @@ function createV2ToolDefinitionsFromContext(_context: PluginContext): V2ToolDef[
     // costCommand/goalTools) once V1 infrastructure is resolvable in the V2
     // standalone context. The before/after factories in v2-hooks.ts:216-282
     // are likewise unwired. Until then, placeholders resolve to the object
-    // shape via toV2ToolResult so the beta host never sees a bare string.
+    // shape so the beta host never sees a bare string.
     execute: async (_input: Record<string, unknown>, _context: unknown): Promise<V2ToolResult> => {
-      return toV2ToolResult(`${name}: ${v2UnavailableMessage}`)
+      return { output: `${name}: ${v2UnavailableMessage}` }
     },
   }))
 }

@@ -23,7 +23,14 @@
  * @module delegate-manager
  */
 
+import { z } from 'zod'
 import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-board.ts'
+import type { DelegationToolset } from './delegation.ts'
+import {
+  DELEGATION_DEFAULTS,
+  type DelegationClient,
+  readDelegationReport,
+} from './delegation-finalize.ts'
 import {
   buildStopInstruction,
   cappedSummary,
@@ -111,6 +118,13 @@ export function isDelegationEnabled(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
   return (env.PANTHEON_DELEGATION ?? '').trim().toLowerCase() !== 'off'
+}
+
+export type DelegateMode = 'native' | 'legacy'
+export function resolveDelegateMode(
+  env: Record<string, string | undefined> = process.env,
+): DelegateMode {
+  return (env.PANTHEON_DELEGATE_MODE ?? '').trim().toLowerCase() === 'native' ? 'native' : 'legacy'
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -380,5 +394,276 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
     async recover(): Promise<void> {
       await board.recoverRunningJobs()
     },
+  }
+}
+
+// Native delegation tools live with the manager so the plugin mounts the
+// manager directly; there is intentionally no adapter or kill-switch wrapper.
+const delegateArgs = {
+  prompt: z.string().min(1),
+  agent: z.string().min(1),
+  description: z.string().optional(),
+  read_only: z.boolean().optional(),
+  model: z.string().optional(),
+} satisfies z.ZodRawShape
+const readArgs = { id: z.string().min(1) } satisfies z.ZodRawShape
+const listArgs = {} satisfies z.ZodRawShape
+export interface ToolContextLike {
+  sessionID: string
+  agent?: string
+}
+export interface SessionTaskOptions {
+  client: DelegationClient
+  board: BackgroundJobBoard
+  outputDir?: string
+  promptTimeoutMs?: number
+  settleTimeoutMs?: number
+}
+export function parseModelRef(model: string): { id: string; providerID: string } | undefined {
+  const idx = model.indexOf('/')
+  return idx > 0 && idx < model.length - 1
+    ? { providerID: model.slice(0, idx), id: model.slice(idx + 1) }
+    : undefined
+}
+export function extractOutputSection(md: string | undefined): string {
+  if (md === undefined) return ''
+  const at = md.indexOf('## Output')
+  const body = at < 0 ? md : md.slice(at + 9)
+  const errAt = body.indexOf('\n**Error**:')
+  return (errAt < 0 ? body : body.slice(0, errAt)).trim()
+}
+async function promptAccept(
+  client: DelegationClient,
+  taskID: string,
+  agent: string,
+  prompt: string,
+  model: string | undefined,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<void> {
+  const modelRef = model === undefined ? undefined : parseModelRef(model)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      client.session
+        .promptAsync({
+          path: { id: taskID },
+          body: {
+            agent,
+            ...(modelRef === undefined ? {} : { model: modelRef }),
+            parts: [{ type: 'text', text: prompt }],
+          },
+          ...(signal === undefined ? {} : { signal }),
+        })
+        .then(undefined, (error: unknown) => {
+          throw new Error(
+            `promptAsync rejected: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`promptAsync timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        )
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+export function createSessionTaskFn(options: SessionTaskOptions): NativeTaskFn {
+  const {
+    client,
+    board,
+    outputDir = DELEGATION_DEFAULTS.outputDir,
+    promptTimeoutMs = 60_000,
+    settleTimeoutMs = DELEGATION_DEFAULTS.timeoutMs,
+  } = options
+  return async ({ agent, prompt, model, signal, taskID }) => {
+    await promptAccept(client, taskID, agent, prompt, model, signal, promptTimeoutMs)
+    const terminal = await board.waitForTerminal(taskID, settleTimeoutMs)
+    const md = await readDelegationReport(outputDir, terminal)
+    return { content: extractOutputSection(md) || terminal.resultSummary || '' }
+  }
+}
+export interface NativeDelegateWiring {
+  board: BackgroundJobBoard
+  client: DelegationClient
+  outputDir?: string
+  env?: Record<string, string | undefined>
+  isRootSession: (sessionID: string) => boolean
+  registerChildSession?: (sessionID: string, parentID: string) => void
+  registerReadOnlySession?: (
+    sessionID: string,
+    info: { agent: string; readOnlyFlag?: boolean },
+  ) => void
+  isReadOnlyAgent?: (agent: string) => boolean
+  agentModel?: (agent: string) => string | undefined
+  managerOptions?: Partial<
+    Omit<DelegateManagerOptions, 'board' | 'task' | 'parentSessionID' | 'env'>
+  >
+  stepCap?: StepCapTracker
+}
+export interface NativeDelegateToolset {
+  pantheon_delegate: {
+    description: string
+    args: typeof delegateArgs
+    execute(args: z.infer<z.ZodObject<typeof delegateArgs>>, ctx: ToolContextLike): Promise<string>
+  }
+  pantheon_delegation_read: {
+    description: string
+    args: typeof readArgs
+    execute(args: z.infer<z.ZodObject<typeof readArgs>>, ctx: ToolContextLike): Promise<string>
+  }
+  pantheon_delegation_list: {
+    description: string
+    args: typeof listArgs
+    execute(args: z.infer<z.ZodObject<typeof listArgs>>, ctx: ToolContextLike): Promise<string>
+  }
+}
+function shortFirstLine(text: string, max = 60): string {
+  const line =
+    text
+      .split('\n')
+      .map((item) => item.trim())
+      .find(Boolean) ?? ''
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line
+}
+export function createNativeDelegateTools(wiring: NativeDelegateWiring): NativeDelegateToolset {
+  const {
+    board,
+    client,
+    env = process.env,
+    isRootSession,
+    registerChildSession,
+    registerReadOnlySession,
+    isReadOnlyAgent,
+    agentModel,
+    managerOptions = {},
+    stepCap,
+  } = wiring
+  const task = createSessionTaskFn({
+    client,
+    board,
+    ...(wiring.outputDir === undefined ? {} : { outputDir: wiring.outputDir }),
+    ...(managerOptions.timeoutMs === undefined
+      ? {}
+      : { promptTimeoutMs: managerOptions.timeoutMs }),
+  })
+  const managers = new Map<string, DelegateManager>()
+  const managerFor = (parentSessionID: string): DelegateManager => {
+    const existing = managers.get(parentSessionID)
+    if (existing !== undefined) return existing
+    const manager = createDelegateManager({
+      ...managerOptions,
+      board,
+      task,
+      parentSessionID,
+      env,
+      ...(stepCap === undefined ? {} : { stepCap }),
+    })
+    managers.set(parentSessionID, manager)
+    return manager
+  }
+  return {
+    pantheon_delegate: {
+      description: 'Dispatch a background agent as a child session and return a verified receipt.',
+      args: delegateArgs,
+      execute: async (args, ctx) => {
+        if (!isDelegationEnabled(env))
+          throw new Error('pantheon delegation disabled (PANTHEON_DELEGATION=off)')
+        if (!isRootSession(ctx.sessionID))
+          throw new Error(
+            `pantheon_delegate rejected: session ${ctx.sessionID} is a sub-session — only root sessions can delegate`,
+          )
+        const model = args.model ?? agentModel?.(args.agent)
+        let childID: string
+        try {
+          const modelRef = model === undefined ? undefined : parseModelRef(model)
+          const created = await client.session.create({
+            body: {
+              parentID: ctx.sessionID,
+              title: args.description ?? shortFirstLine(args.prompt),
+              ...(modelRef === undefined ? {} : { model: modelRef }),
+            },
+          })
+          childID = created.id
+        } catch (error) {
+          return `pantheon_delegate failed: session.create rejected: ${error instanceof Error ? error.message : String(error)}`
+        }
+        registerChildSession?.(childID, ctx.sessionID)
+        if (args.read_only === true || isReadOnlyAgent?.(args.agent) === true)
+          registerReadOnlySession?.(childID, {
+            agent: args.agent,
+            ...(args.read_only === undefined ? {} : { readOnlyFlag: args.read_only }),
+          })
+        const receipt = await managerFor(ctx.sessionID).launch({
+          agent: args.agent,
+          prompt: args.prompt,
+          ...(args.description === undefined ? {} : { description: args.description }),
+          ...(args.model === undefined ? {} : { model: args.model }),
+          taskID: childID,
+        })
+        return receipt.line
+      },
+    },
+    pantheon_delegation_read: {
+      description: 'Block until a delegation finishes, then return its verified report.',
+      args: readArgs,
+      execute: async (args, ctx) => {
+        if (!isDelegationEnabled(env))
+          throw new Error('pantheon delegation disabled (PANTHEON_DELEGATION=off)')
+        return managerFor(ctx.sessionID).read(args.id)
+      },
+    },
+    pantheon_delegation_list: {
+      description: 'List background delegations.',
+      args: listArgs,
+      execute: async (_args, ctx) => {
+        if (!isDelegationEnabled(env))
+          throw new Error('pantheon delegation disabled (PANTHEON_DELEGATION=off)')
+        const lines = await managerFor(ctx.sessionID).list()
+        return lines.length > 0 ? lines.join('\n') : 'No delegations.'
+      },
+    },
+  }
+}
+export interface PluginNativeDelegationWiring {
+  board: BackgroundJobBoard
+  client: DelegationClient
+  isRootSession: (sessionID: string) => boolean
+  registerChildSession: (sessionID: string, parentID: string) => void
+  registerReadOnlySession: (
+    sessionID: string,
+    info: { agent: string; readOnlyFlag?: boolean },
+  ) => void
+  readOnlyAgents: ReadonlySet<string>
+  agentModels: Record<string, string | undefined>
+  stepCap: StepCapTracker
+  wallClockTimeoutMs?: number
+  finalizeDelegation: DelegationToolset['finalizeDelegation']
+}
+export type PluginNativeDelegation = NativeDelegateToolset & {
+  finalizeDelegation: DelegationToolset['finalizeDelegation']
+}
+export function buildPluginNativeDelegation(
+  wiring: PluginNativeDelegationWiring,
+): PluginNativeDelegation {
+  return {
+    ...createNativeDelegateTools({
+      board: wiring.board,
+      client: wiring.client,
+      isRootSession: wiring.isRootSession,
+      registerChildSession: wiring.registerChildSession,
+      registerReadOnlySession: wiring.registerReadOnlySession,
+      isReadOnlyAgent: (agent) => wiring.readOnlyAgents.has(agent.toLowerCase()),
+      agentModel: (agent) => wiring.agentModels[agent.toLowerCase()],
+      stepCap: wiring.stepCap,
+      ...(wiring.wallClockTimeoutMs === undefined
+        ? {}
+        : { managerOptions: { timeoutMs: wiring.wallClockTimeoutMs } }),
+    }),
+    finalizeDelegation: wiring.finalizeDelegation,
   }
 }

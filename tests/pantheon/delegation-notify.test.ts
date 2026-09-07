@@ -253,6 +253,7 @@ async function main() {
         return {}
       },
       hasReport: () => false,
+      isIdle: async () => true,
     }
 
     const count = await finalizeIdleChildrenWithoutMd(deps)
@@ -328,6 +329,7 @@ async function main() {
         return {}
       },
       hasReport: () => false,
+      isIdle: async () => true,
     }
 
     const timer = startIdleChildScan(deps, 50)
@@ -358,6 +360,7 @@ async function main() {
         return {}
       },
       hasReport: () => false,
+      isIdle: async () => true,
     }
 
     const timer = startIdleChildScan(deps, 50)
