@@ -53,3 +53,14 @@ python3 -m pytest tests/test_toon_codec.py -q
 npx tsx tests/pantheon/toon-codec.test.ts
 npx tsx tests/pantheon/token-opt.test.ts
 ```
+
+## Beta2 agent economy policy
+
+Beta2 keeps the agent runtime deliberately small and deterministic:
+
+- Native `task()` delegation is mounted directly in the delegate manager; there is no adapter or kill-switch wrapper around the toolset.
+- Compaction carry-forward uses a bounded checkpoint/tail and deterministic rehydration. It restores only verified state and does not silently resume child work.
+- Token optimization applies TOON encoding, C9 filtering, pre-retrieval, and detail-on-demand only when the measured net saving clears the quality floor.
+- Agent selection follows a diet: prefer the smallest capable specialist, keep read-only discovery separate from implementation, and escalate only when the scope or risk requires it.
+
+These rules are operational guidance for the 1.5.0 beta2 review; they do not change the package version or publish a release.
