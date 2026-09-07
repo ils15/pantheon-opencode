@@ -8,9 +8,9 @@ abstract: >-
   Pantheon v1.5.0 é um plugin e instalador para OpenCode que coordena 14
   agentes especializados, com skills reutilizáveis, comandos slash,
   servidores MCP, documentação e testes.
-version: 1.5.0
+version: 1.5.0-beta.1
 date-released: 2026-09-01
-url: https://github.com/ils15/pantheon-opencode/releases/tag/v1.5.0
+url: https://github.com/ils15/pantheon-opencode/releases/tag/v1.5.0-beta.1
 doi: 10.5281/zenodo.22306637
 repository-code: https://github.com/ils15/pantheon-opencode
 license: MIT

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -31,10 +31,13 @@ function fixture() {
 
 test('accepts a matching stable release and optional citation', () => {
   const root = fixture()
-  writeFileSync(join(root, 'CITATION.cff'), 'cff-version: 1.2.0\nversion: 1.5.0\n')
-  assert.deepEqual(validateZenodoRelease(root, 'v1.5.0').citation, {
+  // Version-agnostic: derive the expected tag from the fixture manifests so
+  // this passes on stable (1.5.0) and beta (1.5.0-beta.1) branches alike.
+  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+  writeFileSync(join(root, 'CITATION.cff'), `cff-version: 1.2.0\nversion: ${version}\n`)
+  assert.deepEqual(validateZenodoRelease(root, `v${version}`).citation, {
     present: true,
-    version: '1.5.0',
+    version,
   })
 })
 
@@ -44,8 +47,11 @@ test('rejects a tag that differs from the manifests', () => {
 
 test('rejects a mismatching citation version', () => {
   const root = fixture()
+  // Version-agnostic: validate the fixture's own tag so the citation check
+  // (not the package.json check) is what fails here.
+  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
   writeFileSync(join(root, 'CITATION.cff'), 'version: 9.9.9\n')
-  assert.throws(() => validateZenodoRelease(root, 'v1.5.0'), /CITATION.cff version differs/)
+  assert.throws(() => validateZenodoRelease(root, `v${version}`), /CITATION.cff version differs/)
 })
 
 test('validates absolute HTTPS Zenodo URLs, expected placeholders, and matching host', () => {
