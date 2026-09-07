@@ -720,7 +720,6 @@ function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 	let started;
 	let finalized;
 	let taskID;
-	let hasV1Marker = false;
 	for (const rawLine of raw.split("\n")) {
 		if (rawLine[0] === "#" && isWs(rawLine[1])) {
 			let i = 2;
@@ -730,10 +729,7 @@ function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 				while (i < rawLine.length && isWs(rawLine[i])) i++;
 				if (i < rawLine.length && TITLE_SEPARATORS.includes(rawLine[i])) {
 					const rest = rawLine.slice(i + 1).trim();
-					if (rest !== "") {
-						hasV1Marker = true;
-						if (title === void 0) title = rest;
-					}
+					if (rest !== "" && title === void 0) title = rest;
 				}
 			}
 			continue;
@@ -788,7 +784,6 @@ function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 		updatedAt: Number.isNaN(finalizedAt) ? null : finalizedAt,
 		timedOut,
 		description,
-		...hasV1Marker ? { reportVersion: "v1" } : {},
 		source: "md"
 	};
 }
@@ -984,9 +979,7 @@ function mergeChildDelegationSources(children, live) {
 	for (const liveEntry of live) {
 		if (liveEntry.alias === null && liveEntry.taskID === null && Date.now() - liveEntry.startedAt > 3e4) continue;
 		const incoming = toDelegationEntry(liveEntry);
-		const taskIndex = incoming.taskID !== void 0 ? byTask.get(incoming.taskID) : void 0;
-		const taskEntry = taskIndex === void 0 ? void 0 : result[taskIndex];
-		const index = (taskEntry !== void 0 && (taskEntry.sessionID === "" || incoming.sessionID === "" || taskEntry.sessionID === incoming.sessionID) ? taskIndex : void 0) ?? (incoming.alias !== "" ? bySessionAlias.get(key(incoming.sessionID, incoming.alias)) : void 0);
+		const index = (incoming.taskID !== void 0 ? byTask.get(incoming.taskID) : void 0) ?? (incoming.alias !== "" ? bySessionAlias.get(key(incoming.sessionID, incoming.alias)) : void 0);
 		if (index === void 0) {
 			result.push(incoming);
 			const newIndex = result.length - 1;
@@ -996,24 +989,6 @@ function mergeChildDelegationSources(children, live) {
 		}
 		const existing = result[index];
 		if (existing === void 0) continue;
-		if (liveEntry.origin === "native_task") {
-			result[index] = {
-				alias: incoming.alias,
-				sessionID: existing.sessionID || incoming.sessionID,
-				taskID: existing.taskID ?? incoming.taskID,
-				agent: incoming.agent !== "agent" ? incoming.agent : existing.agent,
-				state: incoming.state,
-				startedAt: Math.min(existing.startedAt, incoming.startedAt),
-				updatedAt: incoming.updatedAt,
-				timedOut: false,
-				description: incoming.description !== "" ? incoming.description : existing.description,
-				read: incoming.read,
-				source: "live",
-				origin: "native_task"
-			};
-			bySessionAlias.set(key(incoming.sessionID, incoming.alias), index);
-			continue;
-		}
 		if (existing.state !== "running") {
 			if (liveEntry.alias !== null && existing.alias !== incoming.alias) existing.alias = incoming.alias;
 			if (incoming.agent !== "agent" && existing.agent !== incoming.agent) existing.agent = incoming.agent;
@@ -1249,8 +1224,7 @@ function toDelegationEntry(live) {
 		timedOut: false,
 		description: live.description,
 		read: live.read,
-		source: "live",
-		...live.origin === "native_task" ? { origin: "native_task" } : {}
+		source: "live"
 	};
 }
 /** Combine the live channel with the md (historical) channel into one
@@ -1269,13 +1243,6 @@ function mergeDelegationSources(live, md) {
 	const aliasless = [];
 	for (const l of live) {
 		const e = toDelegationEntry(l);
-		if (l.origin === "native_task") {
-			if (l.taskID !== null) {
-				for (const [key, candidate] of byKey) if (candidate.sessionID === l.sessionID && candidate.taskID === l.taskID) byKey.delete(key);
-			}
-			byKey.set(keyOf(l.sessionID, e.alias), e);
-			continue;
-		}
 		if (l.alias === null) {
 			aliasless.push(e);
 			continue;
@@ -1299,17 +1266,6 @@ function mergeDelegationSources(live, md) {
 *  the placeholder is rejected WITHOUT an explicit denylist (covered by tests). */
 function isValidSessionId(id) {
 	return typeof id === "string" && id.startsWith("ses");
-}
-/**
-* Trust a Markdown entry for child enrichment only when it carries the known
-* V1 report marker and both sides of its scope are explicit: the parent
-* session directory and the child/task session id. History entries without
-* this contract remain display-only and can never relabel a live child.
-* Pure — no I/O.
-*/
-function isV1DelegationEntry(entry, parentSessionID) {
-	if (entry?.source !== "md" || entry.reportVersion !== "v1" || !isValidSessionId(entry.sessionID) || !isValidSessionId(entry.taskID)) return false;
-	return parentSessionID === void 0 || entry.sessionID === parentSessionID;
 }
 /** Sources the sidebar can resolve the CURRENT session id from. Duck-typed
 *  subsets of TuiPluginApi / TuiState / TuiRouteCurrent so the helper stays
@@ -1355,21 +1311,14 @@ function childStatusToState(status) {
 	if (status === "idle") return "completed";
 	return "running";
 }
-/** Native task provenance is valid only when the runtime supplies it
-* explicitly. Missing Markdown, a child title, or a child status is never a
-* native-task signal. */
-function isNativeTaskOrigin(origin) {
-	return origin === "native_task";
-}
-/** Row tag for a delegation entry. Explicit native provenance renders the
-*  documented `[native-task]` label; generic children keep their id/alias and
-*  are never relabeled merely because they lack a Markdown report. */
+/** Row tag for a delegation entry: `[native]` for native task() children
+*  (source 'children-only' — no board report), `[pantheon:<alias>]` for board
+*  rows ([pantheon:apo-1]) — the same tags the manager prints in
+*  pantheon_delegation_list, so panel rows and CLI list lines match. The
+*  panel renders the tag with a distinct style so native task() children are
+*  visually separable from pantheon_delegate jobs. */
 function delegationTag(entry) {
-	return entry.origin === "native_task" ? "[native-task]" : `[${entry.alias}]`;
-}
-/** Compact readable alias for an unclassified child session. */
-function childAlias(id) {
-	return id.length > 14 ? `${id.slice(0, 12)}\u2026` : id;
+	return entry.source === "children-only" ? "[native]" : `[pantheon:${entry.alias}]`;
 }
 /** Turn child sessions (PRIMARY) enriched with md reports into the display
 *  list. One entry per child id (duplicates across re-fetches collapse).
@@ -1377,27 +1326,26 @@ function childAlias(id) {
 *  agent, description, terminal state and duration. A child without a
 *  report still renders: description from its title, agent from the child
 *  itself (fallback 'agent'), state derived from its status, startedAt from
-*  time.created. A report-less child remains an unclassified child session;
-*  the SDK shape used here has no origin marker that would justify calling it
-*  a native `task()` child.
+*  time.created. A report-less child is a NATIVE task() child (every
+*  child of the current session — pantheon_delegate OR the native `task()`
+*  tool — carries parentID = caller), so it gets source 'children-only'
+*  and the `[native]` tag instead of a board alias.
 *  Terminal md state wins over the derived state; a running md defers to
 *  the child's live status. Sorted running-first (compareDelegationEntries).
-*  `parentSessionID` is required to accept Markdown, so callers cannot
-*  accidentally merge history from an unknown parent. Pure — no I/O. */
-function childrenToDelegationEntries(children, md, now = Date.now(), parentSessionID) {
+*  Pure — no I/O. */
+function childrenToDelegationEntries(children, md, now = Date.now()) {
 	const byTaskID = /* @__PURE__ */ new Map();
-	const hasParentScope = isValidSessionId(parentSessionID);
-	for (const m of md) if (hasParentScope && isV1DelegationEntry(m, parentSessionID) && m.taskID !== void 0 && !byTaskID.has(m.taskID)) byTaskID.set(m.taskID, m);
+	for (const m of md) if (m.taskID !== void 0 && !byTaskID.has(m.taskID)) byTaskID.set(m.taskID, m);
 	const out = [];
 	const seen = /* @__PURE__ */ new Set();
 	for (const child of children ?? []) {
 		if (child.id === "" || seen.has(child.id)) continue;
 		seen.add(child.id);
-		const mdEntry = isNativeTaskOrigin(child.origin) ? void 0 : byTaskID.get(child.id);
+		const mdEntry = byTaskID.get(child.id);
 		const state = mdEntry !== void 0 && mdEntry.state !== "running" ? mdEntry.state : childStatusToState(child.status);
 		out.push({
-			alias: mdEntry?.alias ?? childAlias(child.id),
-			sessionID: parentSessionID ?? mdEntry?.sessionID ?? "",
+			alias: mdEntry?.alias ?? "task",
+			sessionID: mdEntry?.sessionID ?? "",
 			taskID: child.id,
 			agent: mdEntry?.agent ?? child.agent ?? "agent",
 			state,
@@ -1405,8 +1353,7 @@ function childrenToDelegationEntries(children, md, now = Date.now(), parentSessi
 			updatedAt: mdEntry?.updatedAt ?? (state === "running" || state === "stale-running" ? null : child.time?.updated ?? null),
 			timedOut: mdEntry?.timedOut ?? false,
 			description: mdEntry !== void 0 && mdEntry.description !== "" ? mdEntry.description : child.title ?? "",
-			source: mdEntry !== void 0 ? "md" : "child",
-			...isNativeTaskOrigin(child.origin) ? { origin: "native_task" } : {}
+			source: mdEntry !== void 0 ? "md" : "children-only"
 		});
 	}
 	out.sort(compareDelegationEntries);
@@ -1499,7 +1446,7 @@ function DelegationRow(props) {
 			default: return "○ ";
 		}
 	});
-	const tagColor = createMemo(() => props.job.origin === "native_task" ? theme().info : color());
+	const tagColor = createMemo(() => props.job.source === "children-only" ? theme().info : color());
 	const detail = createMemo(() => {
 		const line = `${delegationElapsed(props.job, props.now)}${props.job.description !== "" ? ` \u2014 ${props.job.description}` : ""}`;
 		return line.length > 180 ? `${line.slice(0, 177)}\u2026` : line;
@@ -1633,13 +1580,12 @@ function View(props) {
 						return;
 					}
 				};
-				for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 3e4) props.liveStore.map.delete(k);
-				const liveEntries = [...props.liveStore.map.values()].filter((entry) => entry.sessionID === sessionID);
-				const currentV1Markdown = md.filter((entry) => isV1DelegationEntry(entry, sessionID));
 				const childEntries = childrenToDelegationEntries(children.map((c) => ({
 					...c,
 					status: resolveStatus(c.id)
-				})), currentV1Markdown, now(), sessionID);
+				})), md, now());
+				for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 3e4) props.liveStore.map.delete(k);
+				const liveEntries = [...props.liveStore.map.values()].filter((entry) => entry.sessionID === sessionID);
 				setChildDelegations(mergeChildDelegationSources(childEntries, liveEntries));
 				panelLog.info(`panel: children=${children.length} md=${md.length} events=${eventRefreshCount}`);
 			} finally {
@@ -1931,6 +1877,6 @@ const plugin = {
 	setup: async () => {}
 };
 //#endregion
-export { IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isV1DelegationEntry, isValidSessionId, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
+export { IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isValidSessionId, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
 
 //# sourceMappingURL=tui.js.map

@@ -173,6 +173,8 @@ class TestTools:
             "context_get",
             "context_list",
             "context_stats",
+            "context_rehydrate",
+            "context_session_summary",
         ]
         for name in expected:
             assert name in names, f"Missing tool: {name}"

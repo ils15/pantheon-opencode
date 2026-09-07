@@ -10,7 +10,7 @@
  * @module background-job-board
  */
 
-import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import { createPantheonLogger } from './logger.ts'
@@ -199,6 +199,16 @@ export class BackgroundJobBoard {
   }
 
   // ─── Persistence ────────────────────────────────────────────────────
+
+  /** Maximum concurrent jobs per agent (mirrors the constructor option). */
+  get maxConcurrentPerAgent(): number {
+    return this.options.maxConcurrentPerAgent
+  }
+
+  /** Total entries currently held (running + terminal + reconciled). */
+  size(): number {
+    return this.jobs.size
+  }
 
   /** Inject a persistence adapter. Must be called before `recoverRunningJobs()`. */
   setPersistence(adapter: PersistenceAdapter): void {
@@ -597,6 +607,62 @@ export class BackgroundJobBoard {
         this.jobs.delete(taskID)
       }
     }
+  }
+
+  /**
+   * Delete the auto-wake signal file for an alias (`<alias>.signal.json`).
+   * No-op (false) when no signalDir is configured or the file is absent.
+   * The delegate manager calls this on the spot right after auto-reconcile.
+   */
+  async deleteSignal(alias: string): Promise<boolean> {
+    const signalDir = this.options.signalDir
+    if (!signalDir) return false
+    const signalPath = join(signalDir, `${alias}.signal.json`)
+    try {
+      await unlink(signalPath)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Aggressive prune of finished jobs: keep only the `keepNewest` most
+   * recently updated completed/error/cancelled/reconciled jobs, evict the
+   * rest (memory + persistence). Running jobs are never touched.
+   * Returns the number of evicted jobs.
+   */
+  async pruneCompleted(keepNewest: number): Promise<number> {
+    const done = Array.from(this.jobs.values())
+      .filter((j) => TERMINAL_STATES.has(j.state) || j.state === 'reconciled')
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+    const evict = done.slice(Math.max(0, keepNewest))
+    for (const job of evict) {
+      this.jobs.delete(job.taskID)
+      await this.deletePersisted(job.taskID)
+    }
+    return evict.length
+  }
+
+  /**
+   * Hard entry cap: while the board holds more than `maxEntries` jobs,
+   * evict the oldest finished job (by updatedAt). Running jobs are never
+   * evicted — when only running jobs remain the cap cannot shrink further
+   * and the loop stops. Returns the number of evicted jobs.
+   */
+  async enforceEntryCap(maxEntries: number): Promise<number> {
+    let evicted = 0
+    for (;;) {
+      if (this.jobs.size <= Math.max(0, maxEntries)) break
+      const oldest = Array.from(this.jobs.values())
+        .filter((j) => TERMINAL_STATES.has(j.state) || j.state === 'reconciled')
+        .sort((a, b) => a.updatedAt - b.updatedAt)[0]
+      if (!oldest) break
+      this.jobs.delete(oldest.taskID)
+      await this.deletePersisted(oldest.taskID)
+      evicted += 1
+    }
+    return evicted
   }
 
   // ─── Internal Helpers ────────────────────────────────────────────────
