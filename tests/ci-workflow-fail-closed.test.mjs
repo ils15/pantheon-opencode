@@ -26,5 +26,12 @@ test('CI dependency installation and required gates are fail-closed', () => {
 test('CI validates YAML and installs locked dependencies only', () => {
   assert.match(workflow, /python3 scripts\/ci-validate-yaml\.py/)
   assert.match(workflow, /npm ci --ignore-scripts/)
+  assert.match(
+    workflow,
+    /npm ci --prefix src\/plugins\/tui --ignore-scripts/,
+    'CI must install isolated TUI plugin deps from its committed lockfile so test:ts resolves solid-js',
+  )
+  assert.doesNotMatch(workflow, /npm install(?!.*--dry-run)/)
+  assert.doesNotMatch(workflow, /\|\| true/)
   assert.doesNotMatch(workflow, /echo ["']?(?:test|audit) warnings/i)
 })
