@@ -4,14 +4,14 @@ export const VALIDATION_STATUS = Object.freeze({
   WARN: 'WARN',
   ERROR: 'ERROR',
   SKIP: 'SKIP',
+  AMBIENTAL: 'AMBIENTAL',
+  NOT_TESTED: 'NOT_TESTED',
 })
 
-export function classifyDoctorExit(exitStatus, output = '') {
-  if (exitStatus === 0) return VALIDATION_STATUS.PASS
-  if (exitStatus === 1 && !/(?:❌\s*)?[1-9]\d*\s+errors?/i.test(output)) {
-    return VALIDATION_STATUS.WARN
-  }
-  return VALIDATION_STATUS.ERROR
+export function classifyDoctorExit(exitStatus, _output = '') {
+  return Number.isInteger(exitStatus) && exitStatus === 0
+    ? VALIDATION_STATUS.PASS
+    : VALIDATION_STATUS.ERROR
 }
 
 export function classifyTuiExit(exitStatus) {
@@ -19,5 +19,5 @@ export function classifyTuiExit(exitStatus) {
 }
 
 export function validationExitCode(doctorStatus, tuiStatus) {
-  return doctorStatus === VALIDATION_STATUS.ERROR || tuiStatus === VALIDATION_STATUS.ERROR ? 1 : 0
+  return doctorStatus === VALIDATION_STATUS.PASS && tuiStatus === VALIDATION_STATUS.PASS ? 0 : 1
 }

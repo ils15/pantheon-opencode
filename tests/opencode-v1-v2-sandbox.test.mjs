@@ -78,20 +78,26 @@ test('offline context probes use a real synthetic checkpoint and no LLM', () => 
   assert.ok(costProbe.includes('tokens-only output'), 'tokens-only cost probe must remain intact')
 })
 
-test('offline context probe fixture runs without OpenCode or LLM', () => {
+test('offline context probe fixture runs without OpenCode or LLM and stays fail-closed', () => {
   for (const version of ['v1', 'v2']) {
     const result = spawnSync(process.execPath, [CONTEXT_PROBE, '--version', version, '--json'], {
       encoding: 'utf8',
       timeout: 35000,
     })
+    // Fail-closed contract: the probe may report honest FAIL (blocking) for
+    // environmental or persistence issues, but never silently degrades.
     assert.ok(result.status === 0 || result.status === 1, `probe process failed: ${result.stderr}`)
     const payload = JSON.parse(result.stdout)
     assert.ok(
-      ['PASS', 'NOT_TESTED', 'AMBIENTAL'].includes(payload.status),
+      ['PASS', 'FAIL'].includes(payload.status),
       `unexpected probe status: ${result.stdout}`,
     )
     if (payload.status === 'PASS') {
       assert.ok(payload.checks.length >= 6, 'PASS requires all offline fixture checks')
+      assert.equal(result.status, 0, 'PASS must exit 0')
+    } else {
+      assert.notEqual(result.status, 0, 'FAIL must exit non-zero (blocking)')
+      assert.ok(payload.detail && payload.detail.length > 0, 'FAIL must carry a detail')
     }
   }
 })
@@ -157,27 +163,28 @@ test('prompts run via opencode run --format json', () => {
   )
 })
 
-test('runner writes prompts-report.md with PASS/FAIL/AMBIENTAL classification', () => {
+test('runner writes prompts-report.md and only PASS can authorize evidence', () => {
   const src = readScript(RUNNER)
   assert.ok(src.includes('prompts-report.md'), 'report file missing')
-  assert.ok(src.includes('AMBIENTAL_RE'), 'ambiental signature list missing')
-  for (const verdict of ['PASS', 'FAIL', 'AMBIENTAL']) {
-    assert.ok(src.includes(`"${verdict}"`), `verdict ${verdict} missing`)
-  }
+  assert.match(src, /\[ "\$\{RESULTS\["\$v:\$id"\]:-\}" = "PASS" \] \|\| fail=/)
+  assert.doesNotMatch(src, /no real failures \(NOT_TESTED\/AMBIENTAL is non-blocking\)/)
+  assert.doesNotMatch(src, /AMBIENTAL is non-blocking|is non-blocking/)
 })
 
-test('known ambiental failures are classified, not fatal', () => {
+test('timeout, auth, network, provider and missing prerequisites are blocking', () => {
   const src = readScript(RUNNER)
-  // edgesOut npm TUI, bifrost/auth, missing Docker
-  for (const signature of ['bifrost', 'edgesout', 'docker']) {
-    assert.ok(
-      src.toLowerCase().includes(signature),
-      `ambiental signature "${signature}" not classified`,
-    )
+  const attempt = src.slice(src.indexOf('run_prompt_attempt()'), src.indexOf('check_mcp_list()'))
+  assert.match(attempt, /\[ "\$rc" -eq 124 \][\s\S]*ATTEMPT_RESULT="FAIL"/)
+  assert.doesNotMatch(attempt, /ATTEMPT_RESULT="AMBIENTAL"/)
+  for (const check of [
+    'binary not installed',
+    'package is not installed',
+    'node runtime is not available',
+  ]) {
+    const index = src.indexOf(check)
+    assert.ok(index >= 0, `missing prerequisite check: ${check}`)
+    assert.equal(src.slice(Math.max(0, index - 120), index).includes('"FAIL"'), true)
   }
-  // AMBIENTAL never increments the real-failure counter; FAIL does
-  assert.ok(src.includes('Verdict: FAIL'), 'report must state FAIL verdict')
-  assert.ok(src.includes('Verdict: PASS'), 'report must state PASS verdict')
 })
 
 test('runner embeds gate (b): pantheon://agents content check in run-test.sh', () => {
@@ -231,25 +238,12 @@ test('run_base resolves the version binary strictly in the sandbox prefix', () =
   assert.ok(base.includes('exit 3'), 'run_base must exit 3 when sandbox is not prepared')
 })
 
-test('run_prompt retries once on real FAIL with cooldown; AMBIENTAL never retried', () => {
+test('run_prompt executes exactly once with no retry or cooldown', () => {
   const src = readScript(RUNNER)
-  const attempt = src.slice(src.indexOf('run_prompt_attempt()'))
-  const wrapper = attempt.slice(attempt.indexOf('run_prompt()'))
-  assert.ok(
-    attempt.includes('ATTEMPT_RESULT') && attempt.includes('ATTEMPT_DETAIL'),
-    'attempt must expose result/detail for the retry wrapper',
-  )
-  assert.ok(
-    wrapper.includes('[ "$ATTEMPT_RESULT" = "FAIL" ]'),
-    'retry must trigger only on real FAIL',
-  )
-  assert.ok(wrapper.includes('sleep "$RETRY_COOLDOWN"'), 'retry cooldown missing')
-  assert.ok(
-    wrapper.includes('RETRIES_USED=$((RETRIES_USED + 1))'),
-    'retry usage must be counted for the report',
-  )
-  assert.ok(wrapper.includes('retry used'), 'report detail must record when retry was used')
-  assert.ok(src.includes('PANTHEON_RETRY_COOLDOWN'), 'retry cooldown must be env-overridable')
+  const wrapper = src.slice(src.indexOf('run_prompt()'), src.indexOf('check_mcp_list()'))
+  assert.equal((wrapper.match(/run_prompt_attempt/g) ?? []).length, 1)
+  assert.doesNotMatch(wrapper, /sleep|RETRY|retry/i)
+  assert.doesNotMatch(src, /PANTHEON_RETRY_COOLDOWN/)
 })
 
 test('prepare resolves pantheon-opencode via sandbox prefix after install', () => {

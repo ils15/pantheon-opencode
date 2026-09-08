@@ -13,10 +13,10 @@
 #                    (config is regenerated for that version first).
 #   --prompts        Prompt battery via `opencode run --format json` for every
 #                    requested version (with --run vX) or both versions alone.
-#   --cost           Offline/ambiental pantheon_cost probe for the requested
+#   --cost           Offline pantheon_cost probe for the requested
 #                    version (with --run vX) or both versions alone.
 #                    The probe's synthetic checks run in explicit --fixture mode.
-#   --rehydrate      Offline/ambiental context_rehydrate + context_session_summary
+#   --rehydrate      Offline context_rehydrate + context_session_summary
 #                    probe for the requested version (with --run vX) or both.
 #   --reset          Wipe the sandbox root.
 #   --help           Usage.
@@ -30,11 +30,8 @@
 #   PANTHEON_SANDBOX_MODEL   Model used by init/prompts
 #                            (default: opencode-go/mimo-v2.5)
 #   PANTHEON_PROMPT_TIMEOUT  Per-prompt timeout in seconds (default: 300)
-#   PANTHEON_RETRY_COOLDOWN  Cooldown seconds before the single FAIL retry
-#                            (default: 60; retry only for real FAIL, never AMBIENTAL)
-#
-# Exit codes: 0 = no real failures (AMBIENTAL issues do not fail the run),
-#             1 = real FAIL (see prompts-report.md in the sandbox root),
+# Exit codes: 0 = every required check returned explicit PASS,
+#             1 = any failure or untested check (see reports in the sandbox root),
 #             2 = usage error, 3 = sandbox not prepared.
 set -euo pipefail
 
@@ -134,18 +131,14 @@ export PATH="$NPM_PREFIX/bin:$SANDBOX_VENV/bin:$PATH"
 export npm_config_prefix="$NPM_PREFIX"
 
 STATUS_FAIL=0
-STATUS_AMBIENTAL=0
-STATUS_NOT_TESTED=0
 STATUS_PASS=0
-MCP_AMBIENTAL_RE='needs authentication|unauthorized|authentication failure|api key|credentials|401|docker|econnrefused|enotfound|etimedout|econnreset|connection refused|rate.?limit|429|quota|overloaded|edgesout|npm err'
 
 record_status() { # label status detail
   local label="$1" status="$2" detail="$3"
   case "$status" in
     PASS) STATUS_PASS=$((STATUS_PASS + 1)) ;;
     FAIL) STATUS_FAIL=$((STATUS_FAIL + 1)) ;;
-    AMBIENTAL) STATUS_AMBIENTAL=$((STATUS_AMBIENTAL + 1)) ;;
-    NOT_TESTED) STATUS_NOT_TESTED=$((STATUS_NOT_TESTED + 1)) ;;
+    *) STATUS_FAIL=$((STATUS_FAIL + 1)); status="FAIL" ;;
   esac
   printf '%s: %s — %s\n' "$status" "$label" "$detail"
 }
@@ -153,7 +146,7 @@ record_status() { # label status detail
 check_binary() { # label binary
   local label="$1" bin="$2" out rc=0
   if ! command -v "$bin" >/dev/null 2>&1; then
-    record_status "$label" "NOT_TESTED" "binary '$bin' is not installed in the sandbox prefix"
+    record_status "$label" "FAIL" "binary '$bin' is not installed in the sandbox prefix"
     return 0
   fi
   set +e
@@ -162,8 +155,6 @@ check_binary() { # label binary
   set -e
   if [ "$rc" -eq 0 ]; then
     record_status "$label" "PASS" "${out:-version command exited 0}"
-  elif printf '%s' "$out" | grep -Eiq "$MCP_AMBIENTAL_RE"; then
-    record_status "$label" "AMBIENTAL" "version check unavailable (exit $rc)"
   else
     record_status "$label" "FAIL" "version check exited $rc"
   fi
@@ -172,11 +163,11 @@ check_binary() { # label binary
 check_mcp() { # label binary project
   local label="$1" bin="$2" project="$3" out connected_count rc=0
   if ! command -v "$bin" >/dev/null 2>&1; then
-    record_status "$label MCP" "NOT_TESTED" "binary '$bin' is not installed in the sandbox prefix"
+    record_status "$label MCP" "FAIL" "binary '$bin' is not installed in the sandbox prefix"
     return 0
   fi
   if [ ! -d "$project" ]; then
-    record_status "$label MCP" "NOT_TESTED" "project directory is missing: $project"
+    record_status "$label MCP" "FAIL" "project directory is missing: $project"
     return 0
   fi
   set +e
@@ -186,20 +177,13 @@ check_mcp() { # label binary project
   out="$(printf '%s' "$out" | sed -E $'s/\x1B\\[[0-?]*[ -/]*[@-~]//g')"
   printf '%s\n' "$out"
   if [ "$rc" -ne 0 ]; then
-    if printf '%s' "$out" | grep -Eiq "$MCP_AMBIENTAL_RE"; then
-      record_status "$label MCP" "AMBIENTAL" "mcp list environmental failure (exit $rc)"
-    else
-      record_status "$label MCP" "FAIL" "mcp list exited $rc"
-    fi
+    record_status "$label MCP" "FAIL" "mcp list exited $rc"
     return 0
   fi
   connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)')" || connected_count=0
   if [ "$connected_count" -eq 5 ] \
-    && ! printf '%s' "$out" | grep -Eiq 'failed|✘' \
-    && ! printf '%s' "$out" | grep -Eiq "$MCP_AMBIENTAL_RE"; then
+    && ! printf '%s' "$out" | grep -Eiq 'failed|✘'; then
     record_status "$label MCP" "PASS" "exactly 5 connected MCPs"
-  elif printf '%s' "$out" | grep -Eiq "$MCP_AMBIENTAL_RE"; then
-    record_status "$label MCP" "AMBIENTAL" "environmental MCP status; found $connected_count connected"
   else
     record_status "$label MCP" "FAIL" "expected exactly 5 connected MCPs; found $connected_count or failures reported"
   fi
@@ -232,19 +216,17 @@ if command -v pantheon-opencode >/dev/null 2>&1; then
   set -e
   if [ "$DOCTOR_RC" -eq 0 ]; then
     record_status "doctor" "PASS" "exit 0"
-  elif printf '%s' "$DOCTOR_OUTPUT" | grep -Eiq "$MCP_AMBIENTAL_RE"; then
-    record_status "doctor" "AMBIENTAL" "environmental doctor failure (exit $DOCTOR_RC)"
   else
     record_status "doctor" "FAIL" "doctor exited $DOCTOR_RC"
   fi
 else
-  record_status "doctor" "NOT_TESTED" "pantheon-opencode is not installed in the sandbox prefix"
+  record_status "doctor" "FAIL" "pantheon-opencode is not installed in the sandbox prefix"
 fi
 
 echo "--- Gate (b): pantheon://agents CONTENT check ---"
 RESOURCES_SRV="$PANTHEON_GLOBAL/scripts/mcp_resources_server.py"
 if [ ! -f "$RESOURCES_SRV" ]; then
-  record_status "pantheon://agents resource" "NOT_TESTED" "resources server not found at $RESOURCES_SRV"
+  record_status "pantheon://agents resource" "FAIL" "resources server not found at $RESOURCES_SRV"
 else
   set +e
   AGENTS_CONTENT="$("$SANDBOX_VENV/bin/python" - "$RESOURCES_SRV" <<'PYEOF'
@@ -262,11 +244,7 @@ PYEOF
   set -e
   printf '%s\n' "$AGENTS_CONTENT" | head -8
   if [ "$AGENTS_RC" -ne 0 ]; then
-    if printf '%s' "$AGENTS_CONTENT" | grep -Eiq "$MCP_AMBIENTAL_RE"; then
-      record_status "pantheon://agents resource" "AMBIENTAL" "resource probe environmental failure (exit $AGENTS_RC)"
-    else
-      record_status "pantheon://agents resource" "FAIL" "resource probe exited $AGENTS_RC"
-    fi
+    record_status "pantheon://agents resource" "FAIL" "resource probe exited $AGENTS_RC"
   elif printf '%s\n' "$AGENTS_CONTENT" | grep -qi 'zeus' \
     && printf '%s\n' "$AGENTS_CONTENT" | grep -qi 'hermes'; then
     record_status "pantheon://agents resource" "PASS" "pantheon://agents content includes zeus and hermes"
@@ -276,17 +254,13 @@ PYEOF
 fi
 echo ""
 echo "=== VALIDATION COMPLETE ==="
-if [ "$STATUS_FAIL" -gt 0 ]; then
+if [ "$STATUS_FAIL" -gt 0 ] || [ "$STATUS_PASS" -eq 0 ]; then
   FINAL_VERDICT="FAIL"
-elif [ "$STATUS_NOT_TESTED" -gt 0 ]; then
-  FINAL_VERDICT="NOT_TESTED"
-elif [ "$STATUS_AMBIENTAL" -gt 0 ]; then
-  FINAL_VERDICT="AMBIENTAL"
 else
   FINAL_VERDICT="PASS"
 fi
 printf 'Final verdict: %s\n' "$FINAL_VERDICT"
-if [ "$FINAL_VERDICT" = "FAIL" ]; then
+if [ "$FINAL_VERDICT" != "PASS" ]; then
   exit 1
 fi
 echo "Next: open the isolated TUI with: $SANDBOX_DIR/start-pantheon.sh"
@@ -316,11 +290,9 @@ install_binaries() {
   npm install -g "$REPO_DIR/$tgz" || die "install of $tgz failed"
   if ! git -C "$REPO_DIR" ls-files --error-unmatch -- "$tgz" >/dev/null 2>&1; then rm -f -- "$tgz"; fi
   log "--- Installing OpenCode V1 ($OPENCODE_V1_SPEC) ---"
-  npm install -g "$OPENCODE_V1_SPEC" \
-    || warn "V1 binary install failed ($OPENCODE_V1_SPEC) — v1 prompts will be AMBIENTAL"
+  npm install -g "$OPENCODE_V1_SPEC" || die "install of $OPENCODE_V1_SPEC failed"
   log "--- Installing OpenCode V2 ($OPENCODE_V2_SPEC) ---"
-  npm install -g "$OPENCODE_V2_SPEC" \
-    || warn "V2 binary install failed ($OPENCODE_V2_SPEC) — v2 prompts will be AMBIENTAL"
+  npm install -g "$OPENCODE_V2_SPEC" || die "install of $OPENCODE_V2_SPEC failed"
 }
 
 prepare_project() {
@@ -391,20 +363,14 @@ PYEOF
 
 # ── Prompt battery ────────────────────────────────────────────────────────────
 
-# Known environmental failure signatures (never fail the run).
-AMBIENTAL_RE='bifrost|unauthorized|authentication failure|api key|credentials|401|docker|econnrefused|enotfound|etimedout|econnreset|connection refused|rate.?limit|429|quota|overloaded|edgesout|npm err'
-MCP_AMBIENTAL_RE='needs authentication|unauthorized|authentication failure|api key|credentials|401|docker|econnrefused|enotfound|etimedout|econnreset|connection refused|rate.?limit|429|quota|overloaded|edgesout|npm err'
-
 PROMPT_IDS=()
 PROMPT_TEXTS=()
 PROMPT_MARKERS=()
-PROMPT_AMB_MARKERS=()
 PROMPT_VERIFY=()
 
-add_prompt() { # id marker ambiental_marker verify text
+add_prompt() { # id marker ignored verify text
   PROMPT_IDS+=("$1")
   PROMPT_MARKERS+=("$2")
-  PROMPT_AMB_MARKERS+=("$3")
   PROMPT_VERIFY+=("$4")
   PROMPT_TEXTS+=("$5")
 }
@@ -414,9 +380,8 @@ build_battery() {
   PROMPT_IDS=()
   PROMPT_TEXTS=()
   PROMPT_MARKERS=()
-  PROMPT_AMB_MARKERS=()
   PROMPT_VERIFY=()
-  add_prompt "agents-resource" "AGENTS-OK" "AGENTS-MISSING" "" \
+  add_prompt "agents-resource" "AGENTS-OK" "" "" \
     "List your MCP resources and read the resource pantheon://agents. If the returned agent list includes an agent named 'zeus' and one named 'hermes', reply with exactly: AGENTS-OK. Otherwise reply with exactly: AGENTS-MISSING."
   add_prompt "memory-store" "MEMORY-STORE-OK" "" "" \
     "Use the pantheon-memory memory_store tool to store this exact entry: namespace 'default', key 'pantheon-sandbox-probe-$v', value 'alive'. Then reply with exactly: MEMORY-STORE-OK"
@@ -425,7 +390,7 @@ build_battery() {
   add_prompt "tmp-write-read" "TMP-OK" "" \
     "${TMPDIR:-/tmp}/pantheon-sandbox-probe-$v.txt::TMP-OK" \
     "Using the bash tool, run a python3 -c command that writes the text TMP-OK to the file ${TMPDIR:-/tmp}/pantheon-sandbox-probe-$v.txt (overwrite it), then run another python3 -c command to read that file back. Do not use any other tool or command to write or read the file — only python3 -c. If what you read back is exactly TMP-OK, reply with exactly: TMP-OK"
-  add_prompt "delegation" "DELEGATION-OK" "DELEGATION-UNAVAILABLE" "" \
+  add_prompt "delegation" "DELEGATION-OK" "" "" \
     "Delegate a tiny task to the @talos agent via the task tool: ask it to reply with the single word PONG. If the delegated response contains PONG, reply with exactly: DELEGATION-OK. If you cannot delegate to agents in this context, reply with exactly: DELEGATION-UNAVAILABLE"
 }
 
@@ -443,10 +408,9 @@ ATTEMPT_RESULT=""
 ATTEMPT_DETAIL=""
 
 run_prompt_attempt() { # v idx current_bin — sets ATTEMPT_RESULT / ATTEMPT_DETAIL
-  local v="$1" idx="$2" bin="$3" id marker amb_marker verify text
+  local v="$1" idx="$2" bin="$3" id marker verify text
   id="${PROMPT_IDS[$idx]}"
   marker="${PROMPT_MARKERS[$idx]}"
-  amb_marker="${PROMPT_AMB_MARKERS[$idx]}"
   verify="${PROMPT_VERIFY[$idx]}"
   text="${PROMPT_TEXTS[$idx]}"
 
@@ -473,19 +437,11 @@ run_prompt_attempt() { # v idx current_bin — sets ATTEMPT_RESULT / ATTEMPT_DET
   rm -f "$out_file" "$err_file"
 
   if [ "$rc" -eq 124 ]; then
-    ATTEMPT_RESULT="AMBIENTAL"
-    ATTEMPT_DETAIL="timeout after ${PANTHEON_PROMPT_TIMEOUT}s (provider latency)"
+    ATTEMPT_RESULT="FAIL"
+    ATTEMPT_DETAIL="timeout after ${PANTHEON_PROMPT_TIMEOUT}s"
   elif [ "$rc" -ne 0 ]; then
-    if [ -n "$amb_marker" ] && printf '%s' "$extracted" | grep -q "$amb_marker"; then
-      ATTEMPT_RESULT="AMBIENTAL"
-      ATTEMPT_DETAIL="explicit $amb_marker (exit $rc)"
-    elif printf '%s' "$raw" | grep -Eiq "$AMBIENTAL_RE"; then
-      ATTEMPT_RESULT="AMBIENTAL"
-      ATTEMPT_DETAIL="environmental signature with exit $rc"
-    else
-      ATTEMPT_RESULT="FAIL"
-      ATTEMPT_DETAIL="marker $marker absent; exit $rc; snippet: $(printf '%s' "$raw" | cut -c1-160)"
-    fi
+    ATTEMPT_RESULT="FAIL"
+    ATTEMPT_DETAIL="marker $marker absent; exit $rc; snippet: $(printf '%s' "$raw" | cut -c1-160)"
   elif printf '%s' "$extracted" | grep -q "$marker"; then
     ATTEMPT_RESULT="PASS"
     ATTEMPT_DETAIL="marker $marker found"
@@ -493,43 +449,23 @@ run_prompt_attempt() { # v idx current_bin — sets ATTEMPT_RESULT / ATTEMPT_DET
     && [ "$(cat "${verify%%::*}" 2>/dev/null)" = "${verify##*::}" ]; then
     ATTEMPT_RESULT="PASS"
     ATTEMPT_DETAIL="probe file verified: ${verify%%::*} contains ${verify##*::}"
-  elif printf '%s' "$raw" | grep -Eiq "$AMBIENTAL_RE"; then
-    local sig
-    sig="$(printf '%s' "$raw" | grep -Eio "$AMBIENTAL_RE" | head -1)"
-    ATTEMPT_RESULT="AMBIENTAL"
-    ATTEMPT_DETAIL="environmental signature: $sig"
   else
     ATTEMPT_RESULT="FAIL"
     ATTEMPT_DETAIL="marker $marker absent; rc=$rc; snippet: $(printf '%s' "$raw" | cut -c1-160)"
   fi
 }
 
-RETRY_COOLDOWN="${PANTHEON_RETRY_COOLDOWN:-60}"
-RETRIES_USED=0
-
-run_prompt() { # v idx current_bin — ONE retry after cooldown for real FAIL only
-  local v="$1" idx="$2" bin="$3" id first_detail
+run_prompt() { # v idx current_bin — exactly one attempt
+  local v="$1" idx="$2" bin="$3" id
   id="${PROMPT_IDS[$idx]}"
   run_prompt_attempt "$v" "$idx" "$bin"
-  if [ "$ATTEMPT_RESULT" = "FAIL" ]; then
-    first_detail="$ATTEMPT_DETAIL"
-    log "[$v] prompt $id FAIL on first attempt — retrying once after ${RETRY_COOLDOWN}s cooldown"
-    sleep "$RETRY_COOLDOWN"
-    run_prompt_attempt "$v" "$idx" "$bin"
-    RETRIES_USED=$((RETRIES_USED + 1))
-    if [ "$ATTEMPT_RESULT" != "FAIL" ]; then
-      ATTEMPT_DETAIL="$ATTEMPT_DETAIL [retry used — first attempt: $first_detail]"
-    else
-      ATTEMPT_DETAIL="$ATTEMPT_DETAIL [FAIL persisted after retry — first attempt: $first_detail]"
-    fi
-  fi
   record "$v" "$id" "$ATTEMPT_RESULT" "$ATTEMPT_DETAIL"
 }
 
 check_mcp_list() { # v
   local v="$1" bin out connected_count rc=0
   if ! bin="$(sandbox_bin_v "$v")"; then
-    record "$v" "mcp-list" "AMBIENTAL" "binary not installed in sandbox prefix"
+    record "$v" "mcp-list" "FAIL" "binary not installed in sandbox prefix"
     return 0
   fi
   set +e
@@ -538,20 +474,13 @@ check_mcp_list() { # v
   set -e
   out="$(printf '%s' "$out" | sed -E $'s/\x1B\\[[0-?]*[ -/]*[@-~]//g')"
   if [ "$rc" -ne 0 ]; then
-    if printf '%s' "$out" | grep -Eiq "$MCP_AMBIENTAL_RE"; then
-      record "$v" "mcp-list" "AMBIENTAL" "mcp list environmental failure (exit $rc)"
-    else
-      record "$v" "mcp-list" "FAIL" "opencode mcp list exited $rc"
-    fi
+    record "$v" "mcp-list" "FAIL" "opencode mcp list exited $rc"
     return 0
   fi
   connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)')" || connected_count=0
   if [ "$connected_count" -eq 5 ] \
-    && ! printf '%s' "$out" | grep -Eiq "failed|✘" \
-    && ! printf '%s' "$out" | grep -Eiq "$MCP_AMBIENTAL_RE"; then
+    && ! printf '%s' "$out" | grep -Eiq "failed|✘"; then
     record "$v" "mcp-list" "PASS" "$connected_count connected (expected exactly 5)"
-  elif printf '%s' "$out" | grep -Eiq "$MCP_AMBIENTAL_RE"; then
-    record "$v" "mcp-list" "AMBIENTAL" "environmental MCP status; found $connected_count connected"
   else
     record "$v" "mcp-list" "FAIL" "expected exactly 5 connected MCPs; found $connected_count or failures reported"
   fi
@@ -560,7 +489,7 @@ check_mcp_list() { # v
 check_doctor() { # v
   local v="$1" pan rc=0
   if ! pan="$(sandbox_bin_for "pantheon-opencode")"; then
-    record "$v" "doctor" "AMBIENTAL" "pantheon-opencode not installed in sandbox prefix"
+    record "$v" "doctor" "FAIL" "pantheon-opencode not installed in sandbox prefix"
     return 0
   fi
   set +e
@@ -587,16 +516,16 @@ installed_package_root() {
 run_cost_probe() { # v
   local v="$1" package_root probe raw status detail
   if ! package_root="$(installed_package_root)"; then
-    record "$v" "pantheon-cost" "NOT_TESTED" "sandbox package is not installed"
+    record "$v" "pantheon-cost" "FAIL" "sandbox package is not installed"
     return 0
   fi
   probe="$package_root/scripts/probe-pantheon-cost.mjs"
   if [ ! -f "$probe" ]; then
-    record "$v" "pantheon-cost" "NOT_TESTED" "installed package has no offline cost probe"
+    record "$v" "pantheon-cost" "FAIL" "installed package has no offline cost probe"
     return 0
   fi
   if ! command -v node >/dev/null 2>&1; then
-    record "$v" "pantheon-cost" "AMBIENTAL" "node runtime is not available"
+    record "$v" "pantheon-cost" "FAIL" "node runtime is not available"
     return 0
   fi
   set +e
@@ -605,8 +534,8 @@ run_cost_probe() { # v
   set -e
   case "$raw" in
     *'"status":"PASS"'*) status="PASS" ;;
-    *'"status":"NOT_TESTED"'*) status="NOT_TESTED" ;;
-    *'"status":"AMBIENTAL"'*) status="AMBIENTAL" ;;
+    *'"status":"NOT_TESTED"'*) status="FAIL" ;;
+    *'"status":"AMBIENTAL"'*) status="FAIL" ;;
     *) status="FAIL" ;;
   esac
   detail="$(printf '%s' "$raw" | tr '\n' ' ' | cut -c1-400)"
@@ -622,16 +551,16 @@ run_cost_probe() { # v
 run_rehydrate_probe() { # v
   local v="$1" package_root probe raw status detail
   if ! package_root="$(installed_package_root)"; then
-    record "$v" "context-rehydrate" "NOT_TESTED" "sandbox package is not installed"
+    record "$v" "context-rehydrate" "FAIL" "sandbox package is not installed"
     return 0
   fi
   probe="$package_root/scripts/probe-context-rehydrate.mjs"
   if [ ! -f "$probe" ]; then
-    record "$v" "context-rehydrate" "NOT_TESTED" "installed package has no offline context probe"
+    record "$v" "context-rehydrate" "FAIL" "installed package has no offline context probe"
     return 0
   fi
   if ! command -v node >/dev/null 2>&1; then
-    record "$v" "context-rehydrate" "AMBIENTAL" "node runtime is not available"
+    record "$v" "context-rehydrate" "FAIL" "node runtime is not available"
     return 0
   fi
   set +e
@@ -640,13 +569,13 @@ run_rehydrate_probe() { # v
   set -e
   case "$raw" in
     *'"status":"PASS"'*) status="PASS" ;;
-    *'"status":"NOT_TESTED"'*) status="NOT_TESTED" ;;
-    *'"status":"AMBIENTAL"'*) status="AMBIENTAL" ;;
+    *'"status":"NOT_TESTED"'*) status="FAIL" ;;
+    *'"status":"AMBIENTAL"'*) status="FAIL" ;;
     *) status="FAIL" ;;
   esac
   detail="$(printf '%s' "$raw" | tr '\n' ' ' | cut -c1-400)"
   if [ "$rc" -eq 124 ]; then
-    status="AMBIENTAL"
+    status="FAIL"
     detail="context probe timed out after 30s"
   elif [ "$rc" -ne 0 ] && [ "$status" = "PASS" ]; then
     # A non-zero probe exit must never be reported as PASS.
@@ -661,14 +590,14 @@ run_rehydrate_probe() { # v
 run_version_prompts() { # v
   local v="$1" bin
   if ! bin="$(sandbox_bin_v "$v")"; then
-    log "Binary '$(bin_for "$v")' not in sandbox prefix — marking all $v prompts AMBIENTAL."
+    log "Binary '$(bin_for "$v")' not in sandbox prefix — failing all $v checks."
     build_battery "$v"
     local i
     for i in "${!PROMPT_IDS[@]}"; do
-      record "$v" "${PROMPT_IDS[$i]}" "AMBIENTAL" "binary $(bin_for "$v") not installed in sandbox"
+      record "$v" "${PROMPT_IDS[$i]}" "FAIL" "binary $(bin_for "$v") not installed in sandbox"
     done
-    record "$v" "mcp-list" "AMBIENTAL" "binary $(bin_for "$v") not installed in sandbox"
-    record "$v" "doctor" "AMBIENTAL" "binary $(bin_for "$v") not installed in sandbox"
+    record "$v" "mcp-list" "FAIL" "binary $(bin_for "$v") not installed in sandbox"
+    record "$v" "doctor" "FAIL" "binary $(bin_for "$v") not installed in sandbox"
     return 0
   fi
   prepare_project "$v"
@@ -683,22 +612,17 @@ run_version_prompts() { # v
   check_doctor "$v"
 }
 
-probe_verdict() { # fail pass ambiental not_tested → one final status
-  # Verdict: PASS; Verdict: FAIL; Verdict: AMBIENTAL; Verdict: NOT_TESTED remain distinct.
-  local fail="$1" pass="$2" ambiental="$3" not_tested="$4"
-  if [ "$fail" -gt 0 ]; then
-    printf 'FAIL'
-  elif [ "$not_tested" -gt 0 ]; then
-    printf 'NOT_TESTED'
-  elif [ "$ambiental" -gt 0 ]; then
-    printf 'AMBIENTAL'
-  else
+probe_verdict() { # pass total → PASS when every required check was explicitly PASS
+  local pass="$1" total="$2"
+  if [ "$pass" -eq "$total" ] && [ "$pass" -gt 0 ]; then
     printf 'PASS'
+  else
+    printf 'FAIL'
   fi
 }
 
 write_report() { # versions...
-  local versions=("$@") total_fail=0 total_pass=0 total_amb=0 total_not_tested=0
+  local versions=("$@") total_fail=0 total_pass=0
   {
     printf '# Pantheon Sandbox Prompts Report\n\n'
     printf -- '- **Date:** %s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')"
@@ -714,24 +638,22 @@ write_report() { # versions...
         res="${RESULTS["$v:$id"]:-SKIP}"
         case "$res" in
         PASS) total_pass=$((total_pass + 1)) ;;
-        AMBIENTAL) total_amb=$((total_amb + 1)) ;;
-        FAIL) total_fail=$((total_fail + 1)) ;;
-        NOT_TESTED) total_not_tested=$((total_not_tested + 1)) ;;
+        *) total_fail=$((total_fail + 1)) ;;
         esac
         printf '| %s | %s | %s |\n' "$id" "$res" "${DETAILS["$v:$id"]:-—}"
       done
       printf '\n'
     done
     printf '## Summary\n\n'
-    printf -- '- PASS: %d\n- FAIL (real): %d\n- AMBIENTAL: %d\n- NOT_TESTED: %d\n- Retries used: %d\n\n' \
-      "$total_pass" "$total_fail" "$total_amb" "$total_not_tested" "$RETRIES_USED"
-    printf '**Verdict: %s**\n' "$(probe_verdict "$total_fail" "$total_pass" "$total_amb" "$total_not_tested")"
+    printf -- '- PASS: %d\n- Not PASS (blocking): %d\n\n' \
+      "$total_pass" "$total_fail"
+    printf '**Verdict: %s**\n' "$(probe_verdict "$total_pass" "$((total_pass + total_fail))")"
   } > "$REPORT_FILE"
   log "Report written to $REPORT_FILE"
 }
 
 write_cost_report() { # versions...
-  local versions=("$@") total_fail=0 total_pass=0 total_ambient=0 total_not_tested=0
+  local versions=("$@") total_fail=0 total_pass=0
   {
     printf '# Pantheon Cost Probe Report\n\n'
     printf -- '- **Date:** %s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')"
@@ -742,22 +664,20 @@ write_cost_report() { # versions...
       result="${RESULTS["$v:pantheon-cost"]:-NOT_TESTED}"
       case "$result" in
         PASS) total_pass=$((total_pass + 1)) ;;
-        FAIL) total_fail=$((total_fail + 1)) ;;
-        AMBIENTAL) total_ambient=$((total_ambient + 1)) ;;
-        NOT_TESTED) total_not_tested=$((total_not_tested + 1)) ;;
+        *) total_fail=$((total_fail + 1)) ;;
       esac
       printf '| %s | %s | %s |\n' "$v" "$result" "${DETAILS["$v:pantheon-cost"]:-—}"
     done
     printf '\n## Summary\n\n'
-    printf -- '- PASS: %d\n- FAIL (real): %d\n- AMBIENTAL: %d\n- NOT_TESTED: %d\n\n' \
-      "$total_pass" "$total_fail" "$total_ambient" "$total_not_tested"
-    printf '**Verdict: %s**\n' "$(probe_verdict "$total_fail" "$total_pass" "$total_ambient" "$total_not_tested")"
+    printf -- '- PASS: %d\n- Not PASS (blocking): %d\n\n' \
+      "$total_pass" "$total_fail"
+    printf '**Verdict: %s**\n' "$(probe_verdict "$total_pass" "$((total_pass + total_fail))")"
   } > "$COST_REPORT_FILE"
   log "Cost probe report written to $COST_REPORT_FILE"
 }
 
 write_rehydrate_report() { # versions...
-  local versions=("$@") total_fail=0 total_pass=0 total_ambient=0 total_not_tested=0
+  local versions=("$@") total_fail=0 total_pass=0
   {
     printf '# Pantheon Context Rehydration Probe Report\n\n'
     printf -- '- **Date:** %s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')"
@@ -768,17 +688,15 @@ write_rehydrate_report() { # versions...
       result="${RESULTS["$v:context-rehydrate"]:-NOT_TESTED}"
       case "$result" in
         PASS) total_pass=$((total_pass + 1)) ;;
-        FAIL) total_fail=$((total_fail + 1)) ;;
-        AMBIENTAL) total_ambient=$((total_ambient + 1)) ;;
-        NOT_TESTED) total_not_tested=$((total_not_tested + 1)) ;;
+        *) total_fail=$((total_fail + 1)) ;;
       esac
       printf '| %s | context_rehydrate + context_session_summary | %s | %s |\n' \
         "$v" "$result" "${DETAILS["$v:context-rehydrate"]:-—}"
     done
     printf '\n## Summary\n\n'
-    printf -- '- PASS: %d\n- FAIL (real): %d\n- AMBIENTAL: %d\n- NOT_TESTED: %d\n\n' \
-      "$total_pass" "$total_fail" "$total_ambient" "$total_not_tested"
-    printf '**Verdict: %s**\n' "$(probe_verdict "$total_fail" "$total_pass" "$total_ambient" "$total_not_tested")"
+    printf -- '- PASS: %d\n- Not PASS (blocking): %d\n\n' \
+      "$total_pass" "$total_fail"
+    printf '**Verdict: %s**\n' "$(probe_verdict "$total_pass" "$((total_pass + total_fail))")"
   } > "$REHYDRATE_REPORT_FILE"
   log "Context probe report written to $REHYDRATE_REPORT_FILE"
 }
@@ -793,13 +711,13 @@ run_cost() { # versions...
   done
   write_cost_report "${versions[@]}"
   for v in "${versions[@]}"; do
-    [ "${RESULTS["$v:pantheon-cost"]:-}" = "FAIL" ] && fail=$((fail + 1)) || true
+    [ "${RESULTS["$v:pantheon-cost"]:-}" = "PASS" ] || fail=$((fail + 1))
   done
   if [ "$fail" -gt 0 ]; then
-    log "Cost probe: $fail real FAIL(s)."
+    log "Cost probe: $fail check(s) without explicit PASS."
     exit 1
   fi
-  log "Cost probe: no real failures (NOT_TESTED/AMBIENTAL is non-blocking)."
+  log "Cost probe: PASS."
 }
 
 run_rehydrate() { # versions...
@@ -812,13 +730,13 @@ run_rehydrate() { # versions...
   done
   write_rehydrate_report "${versions[@]}"
   for v in "${versions[@]}"; do
-    [ "${RESULTS["$v:context-rehydrate"]:-}" = "FAIL" ] && fail=$((fail + 1)) || true
+    [ "${RESULTS["$v:context-rehydrate"]:-}" = "PASS" ] || fail=$((fail + 1))
   done
   if [ "$fail" -gt 0 ]; then
-    log "Context probe: $fail real FAIL(s)."
+    log "Context probe: $fail check(s) without explicit PASS."
     exit 1
   fi
-  log "Context probe: no real failures (NOT_TESTED/AMBIENTAL is non-blocking)."
+  log "Context probe: PASS."
 }
 
 run_battery() { # versions...
@@ -833,14 +751,14 @@ run_battery() { # versions...
   local v fail=0 id
   for v in "${versions[@]}"; do
     for id in "${PROMPT_IDS[@]}" mcp-list doctor; do
-      [ "${RESULTS["$v:$id"]:-}" = "FAIL" ] && fail=$((fail + 1)) || true
+      [ "${RESULTS["$v:$id"]:-}" = "PASS" ] || fail=$((fail + 1))
     done
   done
   if [ "$fail" -gt 0 ]; then
-    log "Prompts battery: $fail real FAIL(s)."
+    log "Prompts battery: $fail check(s) without explicit PASS."
     exit 1
   fi
-  log "Prompts battery: no real failures."
+  log "Prompts battery: PASS."
 }
 
 # ── Base validation (no prompts) ──────────────────────────────────────────────
@@ -861,13 +779,13 @@ run_base() { # v
   check_doctor "$v"
   log "[$v] doctor → ${RESULTS["$v:doctor"]}"
   local fail=0
-  [ "${RESULTS["$v:mcp-list"]}" = "FAIL" ] && fail=$((fail + 1)) || true
-  [ "${RESULTS["$v:doctor"]}" = "FAIL" ] && fail=$((fail + 1)) || true
+  [ "${RESULTS["$v:mcp-list"]}" = "PASS" ] || fail=$((fail + 1))
+  [ "${RESULTS["$v:doctor"]}" = "PASS" ] || fail=$((fail + 1))
   if [ "$fail" -gt 0 ]; then
-    log "Base validation $v: $fail real FAIL(s)."
+    log "Base validation $v: $fail check(s) without explicit PASS."
     exit 1
   fi
-  log "Base validation $v: OK."
+  log "Base validation $v: PASS."
 }
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
