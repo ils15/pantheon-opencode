@@ -1,0 +1,62 @@
+{
+  "schema_version": "beta2.responses.v1",
+  "description": "Deterministic, secret-free response fixtures for the 14-agent offline pilot.",
+  "responses": {
+    "zeus.routing-pilot": {
+      "baseline": {"output": "ZEUS_OK route=hermes", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "ZEUS_OK route=hermes", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "apollo.discovery-pilot": {
+      "baseline": {"output": "APOLLO_OK paths=2", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "APOLLO_OK paths=2", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "hermes.tdd-pilot": {
+      "baseline": {"output": "HERMES_OK red-green", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "HERMES_OK red-green", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "aphrodite.accessibility": {
+      "baseline": {"output": "APHRODITE_OK keyboard", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "APHRODITE_OK keyboard", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "demeter.migration": {
+      "baseline": {"output": "DEMETER_OK rollback", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "DEMETER_OK rollback", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "prometheus.infrastructure": {
+      "baseline": {"output": "PROMETHEUS_OK offline", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "PROMETHEUS_OK offline", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "hephaestus.pipeline": {
+      "baseline": {"output": "HEPHAESTUS_OK deterministic", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "HEPHAESTUS_OK deterministic", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "nyx.telemetry": {
+      "baseline": {"output": "NYX_OK latency tokens", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "NYX_OK latency tokens", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "gaia.domain": {
+      "baseline": {"output": "GAIA_OK reference", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "GAIA_OK reference", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "iris.release": {
+      "baseline": {"output": "IRIS_OK approval", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "IRIS_OK approval", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "athena.plan-holdout": {
+      "baseline": {"output": "ATHENA_OK testable", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "ATHENA_OK testable", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "themis.review-holdout": {
+      "baseline": {"output": "THEMIS_OK security quality", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "THEMIS_OK security quality", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "mnemosyne.memory-holdout": {
+      "baseline": {"output": "MNEMOSYNE_OK context decision", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "MNEMOSYNE_OK context decision", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    },
+    "talos.hotfix-holdout": {
+      "baseline": {"output": "TALOS_OK minimal", "usage": {"input_tokens": 20, "output_tokens": 10}, "latency_ms": 1},
+      "candidate": {"output": "TALOS_OK minimal", "usage": {"input_tokens": 18, "output_tokens": 8}, "latency_ms": 1}
+    }
+  }
+}

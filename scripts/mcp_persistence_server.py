@@ -566,7 +566,7 @@ async def kv_delete_namespace(
 # ── Context Checkpoint Tools ────────────────────────────────────────────────────
 # Session-scoped context storage for deepwork checkpoints, phase state,
 # tool call history, and reasoning chains. All entries use namespace
-# "checkpoint:{slug}" with auto-TTL of 4 hours (session duration).
+# "checkpoint:{slug}:{session}" with auto-TTL of 4 hours (session duration).
 
 DEFAULT_CONTEXT_TTL: int = 14400  # 4 hours
 
@@ -1023,6 +1023,31 @@ def _load_checkpoint_for_rehydrate(
     return None
 
 
+def _checkpoint_namespaces(
+    conn: sqlite3.Connection, slug: str, session_id: str | None
+) -> list[str]:
+    """Resolve checkpoint namespaces while preserving session isolation.
+
+    ``context_save`` always creates a session-qualified namespace, including
+    when the caller omits ``session_id`` (it generates one and returns it).
+    Runtime callers may not retain that return value after compaction, so an
+    unqualified rehydrate/summary must discover the newest matching session.
+    The prefix comparison is parameterized and avoids LIKE wildcard leakage.
+    """
+    if session_id:
+        return [f"checkpoint:{slug}:{session_id}"]
+    prefix = f"checkpoint:{slug}:"
+    rows = conn.execute(
+        "SELECT namespace FROM kv_store "
+        "WHERE substr(namespace, 1, ?) = ? "
+        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND deleted_at IS NULL "
+        "GROUP BY namespace ORDER BY MAX(updated_at) DESC LIMIT 20",
+        (len(prefix), prefix),
+    ).fetchall()
+    return [str(row[0]) for row in rows if row and row[0]]
+
+
 def _refresh_heartbeat_ttl(conn: sqlite3.Connection, namespace: str) -> None:
     """Extend an unexpired heartbeat TTL; never shorten, never resurrect."""
     row = conn.execute(
@@ -1055,7 +1080,8 @@ def _refresh_heartbeat_ttl(conn: sqlite3.Connection, namespace: str) -> None:
 @mcp.tool(
     name="context_rehydrate",
     description="Rehydrate critical context after native compaction. "
-    "Reads 'latest' + serialized 'tail' from checkpoint:<slug> and rebuilds "
+    "Reads 'latest' + serialized 'tail' from a session-qualified checkpoint "
+    "namespace and rebuilds "
     "goal/phase/delegation blocks deterministically (no LLM). Refreshes the "
     "heartbeat TTL. Idempotent. Honors PANTHEON_COMPACTION=off.",
 )
@@ -1068,14 +1094,21 @@ async def context_rehydrate(
     if _compaction_disabled():
         return None
     conn = _db(scope)
-    ns = f"checkpoint:{slug}:{session_id}" if session_id else f"checkpoint:{slug}"
-    checkpoint = _load_checkpoint_for_rehydrate(conn, ns)
+    namespaces = _checkpoint_namespaces(conn, slug, session_id)
+    checkpoint = None
+    selected_namespace = None
+    for namespace in namespaces:
+        checkpoint = _load_checkpoint_for_rehydrate(conn, namespace)
+        if checkpoint is not None:
+            selected_namespace = namespace
+            break
     if checkpoint is None:
         return None
     blocks = build_rehydration_blocks(checkpoint)
     if blocks is None:
         return None
-    _refresh_heartbeat_ttl(conn, ns)
+    if selected_namespace is not None:
+        _refresh_heartbeat_ttl(conn, selected_namespace)
     return blocks
 
 
@@ -1095,8 +1128,12 @@ async def context_session_summary(
     if os.environ.get(SESSION_END_SUMMARY_ENV, "").lower() == "off":
         return None
     conn = _db(scope)
-    ns = f"checkpoint:{slug}:{session_id}" if session_id else f"checkpoint:{slug}"
-    checkpoint = _load_checkpoint_for_rehydrate(conn, ns)
+    namespaces = _checkpoint_namespaces(conn, slug, session_id)
+    checkpoint = None
+    for namespace in namespaces:
+        checkpoint = _load_checkpoint_for_rehydrate(conn, namespace)
+        if checkpoint is not None:
+            break
     if checkpoint is None:
         return None
     return build_session_end_summary(checkpoint)

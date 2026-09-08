@@ -54,6 +54,7 @@ function createDb(path: string, compatible: boolean, agent = 'hermes'): void {
     const data = JSON.stringify({
       role: 'assistant',
       agent,
+      phase: 'green',
       cost: 1.25,
       tokens: { input: 10, output: 20 },
     })
@@ -202,7 +203,13 @@ async function main() {
     try {
       assert.ok(existsSync(SCRIPT_PATH), 'scripts/cost.mjs ships with the plugin')
       const missing = join(dir, 'nope.db')
-      const out = await execFileAsync(process.execPath, [SCRIPT_PATH, missing, '7'])
+      const out = await execFileAsync(process.execPath, [
+        SCRIPT_PATH,
+        '--db-path',
+        missing,
+        '--days',
+        '7',
+      ])
       const parsed = JSON.parse(out.stdout) as { ok: boolean; error?: string }
       assert.equal(parsed.ok, false, 'script reports ok:false on missing db')
       assert.ok(typeof parsed.error === 'string' && parsed.error !== '')
@@ -216,16 +223,70 @@ async function main() {
     }
   })
 
+  await testAsync('scripts/cost.mjs emits tokens-only rows with the flag-based CLI', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'usage.db')
+      createDb(dbPath, true, 'script-agent')
+      const out = await execFileAsync(process.execPath, [
+        SCRIPT_PATH,
+        '--db-path',
+        dbPath,
+        '--days',
+        '7',
+      ])
+      const parsed = JSON.parse(out.stdout) as {
+        ok: boolean
+        rows?: Array<Record<string, unknown>>
+      }
+      assert.equal(parsed.ok, true)
+      assert.deepEqual(parsed.rows, [
+        {
+          agent: 'script-agent',
+          phase: 'green',
+          tokensInput: 10,
+          tokensOutput: 20,
+          tokensTotal: 30,
+        },
+      ])
+      assert.ok(!('costUsd' in (parsed.rows?.[0] ?? {})))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   await testAsync('pantheon_cost exposes zod days arg (default applied by caller)', async () => {
     const command = createCostCommand({ dbPath: '/definitely/missing.db' })
     const args = command.pantheon_cost.args
     assert.ok(args.days, 'days arg schema present')
-    assert.equal(
-      command.pantheon_cost.description.includes('cost'),
-      true,
-      'description names the cost report',
+    assert.match(
+      command.pantheon_cost.description,
+      /input, output, and total token usage/,
+      'description names the tokens-only report',
+    )
+    assert.ok(
+      command.pantheon_cost.description.includes('no monetary values'),
+      'description states that monetary values are excluded',
     )
   })
+
+  await testAsync(
+    'pantheon_cost reports tokens by agent/phase without monetary values',
+    async () => {
+      const dir = freshDir()
+      try {
+        const dbPath = join(dir, 'usage.db')
+        createDb(dbPath, true, 'token-agent')
+        const output = await createCostCommand({ dbPath }).pantheon_cost.execute(undefined, {
+          sessionID: 'ses_root',
+        })
+        assert.match(output, /token-agent \| green \| 10 \| 20 \| 30/)
+        assert.doesNotMatch(output, /Cost \(USD\)|\$1\.25|costUsd/i)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
 
   // ═══════════════════════════════════════════════════════════════════════
 

@@ -15,10 +15,12 @@ Tests cover:
 These are correctness-critical: TTL expiry + checkpoint recovery is the
 crash-recovery path (Zeus anti-stall / pre-compaction checkpoints).
 """
+
 from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
 import tempfile
 import time
@@ -204,21 +206,25 @@ class TestKVStoreGet:
 
     async def test_get_missing_returns_null(self, server: FastMCP) -> None:
         """Missing key should return null."""
-        result = await server.call_tool(
-            "kv_get", {"namespace": "ns", "key": "ghost"}
-        )
+        result = await server.call_tool("kv_get", {"namespace": "ns", "key": "ghost"})
         assert _json(result) is None
 
     async def test_upsert_overwrites(self, server: FastMCP) -> None:
         """Storing the same namespace+key replaces the value."""
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "k", "value": "old"})
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "k", "value": "new"})
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "k", "value": "old"}
+        )
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "k", "value": "new"}
+        )
         result = await server.call_tool("kv_get", {"namespace": "ns", "key": "k"})
         assert _json(result) == "new"
 
     async def test_no_ttl_persists(self, server: FastMCP) -> None:
         """Entries without TTL never expire."""
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "k", "value": "v"})
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "k", "value": "v"}
+        )
         _force_expiry  # noqa: B018 — placeholder guard; no TTL set
         result = await server.call_tool("kv_get", {"namespace": "ns", "key": "k"})
         assert _json(result) == "v"
@@ -229,7 +235,10 @@ class TestKVStoreGet:
             "kv_store", {"namespace": "ns", "key": "k", "value": "v", "ttl": 1}
         )
         # Immediately readable
-        assert _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k"})) == "v"
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k"}))
+            == "v"
+        )
         time.sleep(1.2)
         result = await server.call_tool("kv_get", {"namespace": "ns", "key": "k"})
         assert _json(result) is None, "TTL entry must expire after the TTL elapses"
@@ -254,10 +263,18 @@ class TestKVList:
 
     async def test_list_with_prefix(self, server: FastMCP) -> None:
         """Prefix filter should narrow results by key prefix."""
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "alpha_1", "value": "a"})
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "alpha_2", "value": "b"})
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "beta_1", "value": "c"})
-        result = await server.call_tool("kv_list", {"namespace": "ns", "prefix": "alpha"})
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "alpha_1", "value": "a"}
+        )
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "alpha_2", "value": "b"}
+        )
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "beta_1", "value": "c"}
+        )
+        result = await server.call_tool(
+            "kv_list", {"namespace": "ns", "prefix": "alpha"}
+        )
         data = _json(result)
         assert isinstance(data, list)
         assert len(data) == 2
@@ -290,7 +307,8 @@ class TestKVSearch:
     async def test_search_finds_value(self, server: FastMCP) -> None:
         """FTS5 search should find entries by value content."""
         await server.call_tool(
-            "kv_store", {"namespace": "ns", "key": "doc", "value": "the quick brown fox"}
+            "kv_store",
+            {"namespace": "ns", "key": "doc", "value": "the quick brown fox"},
         )
         result = await server.call_tool("kv_search", {"query": "brown fox"})
         data = _json(result)
@@ -302,10 +320,12 @@ class TestKVSearch:
     async def test_search_namespace_filter(self, server: FastMCP) -> None:
         """Namespace filter should narrow search results."""
         await server.call_tool(
-            "kv_store", {"namespace": "ns1", "key": "a", "value": "shared token content"}
+            "kv_store",
+            {"namespace": "ns1", "key": "a", "value": "shared token content"},
         )
         await server.call_tool(
-            "kv_store", {"namespace": "ns2", "key": "b", "value": "shared token content"}
+            "kv_store",
+            {"namespace": "ns2", "key": "b", "value": "shared token content"},
         )
         result = await server.call_tool(
             "kv_search", {"query": "shared token", "namespace": "ns1"}
@@ -323,10 +343,22 @@ class TestKVSearch:
     async def test_search_excludes_expired(self, server: FastMCP, module) -> None:
         """Expired entries must not appear in search results."""
         await server.call_tool(
-            "kv_store", {"namespace": "ns", "key": "fresh", "value": "unique term alpha", "ttl": 3600}
+            "kv_store",
+            {
+                "namespace": "ns",
+                "key": "fresh",
+                "value": "unique term alpha",
+                "ttl": 3600,
+            },
         )
         await server.call_tool(
-            "kv_store", {"namespace": "ns", "key": "stale", "value": "unique term beta", "ttl": 3600}
+            "kv_store",
+            {
+                "namespace": "ns",
+                "key": "stale",
+                "value": "unique term beta",
+                "ttl": 3600,
+            },
         )
         _force_expiry(module, "ns", "stale")
         result = await server.call_tool("kv_search", {"query": "unique term"})
@@ -345,14 +377,21 @@ class TestKVDelete:
 
     async def test_delete_existing(self, server: FastMCP) -> None:
         """Deleting an existing key should report deleted."""
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "k", "value": "v"})
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "k", "value": "v"}
+        )
         result = await server.call_tool("kv_delete", {"namespace": "ns", "key": "k"})
         assert _json(result) == {"status": "deleted"}
-        assert _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k"})) is None
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k"}))
+            is None
+        )
 
     async def test_delete_missing(self, server: FastMCP) -> None:
         """Deleting a missing key should report not_found."""
-        result = await server.call_tool("kv_delete", {"namespace": "ns", "key": "ghost"})
+        result = await server.call_tool(
+            "kv_delete", {"namespace": "ns", "key": "ghost"}
+        )
         assert _json(result) == {"status": "not_found"}
 
 
@@ -366,26 +405,48 @@ class TestKVDeleteNamespace:
 
     async def test_delete_all_in_namespace(self, server: FastMCP) -> None:
         """Clearing a namespace should remove all its entries only."""
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "a", "value": "1"})
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "b", "value": "2"})
-        await server.call_tool("kv_store", {"namespace": "other", "key": "c", "value": "3"})
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "a", "value": "1"}
+        )
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "b", "value": "2"}
+        )
+        await server.call_tool(
+            "kv_store", {"namespace": "other", "key": "c", "value": "3"}
+        )
         result = await server.call_tool("kv_delete_namespace", {"namespace": "ns"})
         assert _json(result) == {"deleted": 2}
-        assert _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "a"})) is None
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "a"}))
+            is None
+        )
         # Other namespace untouched
-        assert _json(await server.call_tool("kv_get", {"namespace": "other", "key": "c"})) == "3"
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "other", "key": "c"}))
+            == "3"
+        )
 
     async def test_delete_older_than_days(self, server: FastMCP, module) -> None:
         """older_than_days should only delete entries older than N days."""
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "old", "value": "1"})
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "new", "value": "2"})
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "old", "value": "1"}
+        )
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "new", "value": "2"}
+        )
         _force_old_created(module, "ns", "old")
         result = await server.call_tool(
             "kv_delete_namespace", {"namespace": "ns", "older_than_days": 30}
         )
         assert _json(result) == {"deleted": 1}
-        assert _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "old"})) is None
-        assert _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "new"})) == "2"
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "old"}))
+            is None
+        )
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "new"}))
+            == "2"
+        )
 
 
 # =============================================================================
@@ -396,7 +457,9 @@ class TestKVDeleteNamespace:
 class TestPurgeExpired:
     """Tests for purge_expired."""
 
-    async def test_dry_run_reports_without_purging(self, server: FastMCP, module) -> None:
+    async def test_dry_run_reports_without_purging(
+        self, server: FastMCP, module
+    ) -> None:
         """dry_run should report the count but leave entries un-purged."""
         await server.call_tool(
             "kv_store", {"namespace": "ns", "key": "k", "value": "v", "ttl": 3600}
@@ -433,12 +496,17 @@ class TestPurgeExpired:
         assert _json(result) == {"purged": 2, "dry_run": False}
 
         # Soft-deleted: kv_get returns None, but the row still exists (deleted_at set)
-        assert _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k1"})) is None
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k1"}))
+            is None
+        )
         conn = module._db("project")
         row = conn.execute(
             "SELECT deleted_at FROM kv_store WHERE namespace = 'ns' AND key = 'k1'"
         ).fetchone()
-        assert row is not None and row[0] is not None, "purge must soft-delete (deleted_at set)"
+        assert row is not None and row[0] is not None, (
+            "purge must soft-delete (deleted_at set)"
+        )
 
         # Deletelog written next to the actual project DB (not the repo's)
         db_path = module._resolve_db_path("project")
@@ -451,7 +519,9 @@ class TestPurgeExpired:
 
     async def test_purge_nothing(self, server: FastMCP) -> None:
         """No expired entries → purged 0, no deletelog."""
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "k", "value": "v"})
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "k", "value": "v"}
+        )
         result = await server.call_tool("purge_expired", {})
         assert _json(result) == {"purged": 0, "dry_run": False}
 
@@ -484,7 +554,10 @@ class TestPurgeExpired:
         assert row is not None and row[0] is not None, (
             "same-day expired row must be soft-deleted by auto-purge"
         )
-        assert _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k"})) is None
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k"}))
+            is None
+        )
 
 
 # =============================================================================
@@ -499,7 +572,8 @@ class TestContextCheckpoints:
         """Save a checkpoint and read it back with the returned session_id."""
         saved = _json(
             await server.call_tool(
-                "context_save", {"slug": "my-task", "key": "phase:1", "content": '{"a": 1}'}
+                "context_save",
+                {"slug": "my-task", "key": "phase:1", "content": '{"a": 1}'},
             )
         )
         assert saved["status"] == "stored"
@@ -520,23 +594,31 @@ class TestContextCheckpoints:
         )
         sid = saved["session_id"]
         await server.call_tool(
-            "context_save", {"slug": "s", "key": "phase:3", "content": "third", "session_id": sid}
+            "context_save",
+            {"slug": "s", "key": "phase:3", "content": "third", "session_id": sid},
         )
         latest = _json(
-            await server.call_tool("context_get", {"slug": "s", "key": "latest", "session_id": sid})
+            await server.call_tool(
+                "context_get", {"slug": "s", "key": "latest", "session_id": sid}
+            )
         )
         assert latest == "third"
 
     async def test_context_list(self, server: FastMCP) -> None:
         """context_list should return keys with timestamps."""
         saved = _json(
-            await server.call_tool("context_save", {"slug": "s", "key": "phase:1", "content": "a"})
+            await server.call_tool(
+                "context_save", {"slug": "s", "key": "phase:1", "content": "a"}
+            )
         )
         sid = saved["session_id"]
         await server.call_tool(
-            "context_save", {"slug": "s", "key": "phase:2", "content": "b", "session_id": sid}
+            "context_save",
+            {"slug": "s", "key": "phase:2", "content": "b", "session_id": sid},
         )
-        result = await server.call_tool("context_list", {"slug": "s", "session_id": sid})
+        result = await server.call_tool(
+            "context_list", {"slug": "s", "session_id": sid}
+        )
         data = _json(result)
         keys = {r["key"] for r in data}
         assert "phase:1" in keys
@@ -548,10 +630,14 @@ class TestContextCheckpoints:
     async def test_context_stats(self, server: FastMCP) -> None:
         """context_stats should report entry count and TTL remaining."""
         saved = _json(
-            await server.call_tool("context_save", {"slug": "s", "key": "phase:1", "content": "hello"})
+            await server.call_tool(
+                "context_save", {"slug": "s", "key": "phase:1", "content": "hello"}
+            )
         )
         sid = saved["session_id"]
-        result = await server.call_tool("context_stats", {"slug": "s", "session_id": sid})
+        result = await server.call_tool(
+            "context_stats", {"slug": "s", "session_id": sid}
+        )
         data = _json(result)
         assert data["slug"] == "s"
         assert data["entry_count"] >= 2  # phase:1 + latest
@@ -585,12 +671,77 @@ class TestContextCheckpoints:
             "context_save", {"slug": "s", "key": "phase:1", "content": "x"}
         )
         result = await server.call_tool(
-            "context_get", {"slug": "s", "key": "phase:1", "session_id": "other_session"}
+            "context_get",
+            {"slug": "s", "key": "phase:1", "session_id": "other_session"},
         )
         assert _json(result) is None
         # Without session_id, the unscoped namespace has nothing
         result2 = await server.call_tool("context_get", {"slug": "s", "key": "phase:1"})
         assert _json(result2) is None
+
+    async def test_rehydrate_and_summary_discover_generated_session(
+        self, server: FastMCP
+    ) -> None:
+        """Lifecycle calls discover a session generated by context_save."""
+        checkpoint = json.dumps(
+            {
+                "version": 1,
+                "goal": {"objective": "ship beta2", "status": "in_progress"},
+                "phase": {"current": 2, "total": 3, "name": "verification"},
+                "delegations": {"in_flight": [{"alias": "apo-1", "agent": "apollo"}]},
+                "tail": ["phase 1 complete", "phase 2 validating"],
+            }
+        )
+        await server.call_tool(
+            "context_save",
+            {"slug": "rehydrate-task", "key": "phase:2", "content": checkpoint},
+        )
+
+        blocks = _json(
+            await server.call_tool("context_rehydrate", {"slug": "rehydrate-task"})
+        )
+        summary = _json(
+            await server.call_tool(
+                "context_session_summary", {"slug": "rehydrate-task"}
+            )
+        )
+        assert isinstance(blocks, list)
+        assert any("ship beta2" in block for block in blocks)
+        assert any("phase 2/3" in block for block in blocks)
+        assert any("apo-1" in block for block in blocks)
+        assert any("phase 2 validating" in block for block in blocks)
+        assert isinstance(summary, str)
+        assert "ship beta2" in summary
+        assert "2/3" in summary
+        assert "apo-1" in summary
+        assert "phase 2 validating" in summary
+
+    async def test_rehydrate_and_summary_kill_switches_are_preserved(
+        self, server: FastMCP
+    ) -> None:
+        """Compaction and session-summary opt-outs still return null."""
+        checkpoint = json.dumps(
+            {"goal": {"objective": "do not inject", "status": "in_progress"}}
+        )
+        await server.call_tool(
+            "context_save",
+            {"slug": "switches", "key": "phase:1", "content": checkpoint},
+        )
+
+        with patch.dict(os.environ, {"PANTHEON_COMPACTION": "off"}):
+            assert (
+                _json(await server.call_tool("context_rehydrate", {"slug": "switches"}))
+                is None
+            )
+        with patch.dict(os.environ, {"PANTHEON_SESSION_END_SUMMARY": "off"}):
+            assert (
+                _json(
+                    await server.call_tool(
+                        "context_session_summary", {"slug": "switches"}
+                    )
+                )
+                is None
+            )
 
 
 # =============================================================================
@@ -603,18 +754,34 @@ class TestIsolation:
 
     async def test_namespaces_isolated(self, server: FastMCP) -> None:
         """Same key in different namespaces must not collide."""
-        await server.call_tool("kv_store", {"namespace": "ns_a", "key": "k", "value": "A"})
-        await server.call_tool("kv_store", {"namespace": "ns_b", "key": "k", "value": "B"})
-        assert _json(await server.call_tool("kv_get", {"namespace": "ns_a", "key": "k"})) == "A"
-        assert _json(await server.call_tool("kv_get", {"namespace": "ns_b", "key": "k"})) == "B"
+        await server.call_tool(
+            "kv_store", {"namespace": "ns_a", "key": "k", "value": "A"}
+        )
+        await server.call_tool(
+            "kv_store", {"namespace": "ns_b", "key": "k", "value": "B"}
+        )
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "ns_a", "key": "k"}))
+            == "A"
+        )
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "ns_b", "key": "k"}))
+            == "B"
+        )
 
     async def test_global_scope_isolated_from_project(self, server: FastMCP) -> None:
         """Global scope must be a separate database from project scope."""
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "k", "value": "project"})
         await server.call_tool(
-            "kv_store", {"namespace": "ns", "key": "k", "value": "global", "scope": "global"}
+            "kv_store", {"namespace": "ns", "key": "k", "value": "project"}
         )
-        assert _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k"})) == "project"
+        await server.call_tool(
+            "kv_store",
+            {"namespace": "ns", "key": "k", "value": "global", "scope": "global"},
+        )
+        assert (
+            _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k"}))
+            == "project"
+        )
         assert (
             _json(
                 await server.call_tool(
@@ -626,8 +793,12 @@ class TestIsolation:
 
     async def test_kv_stats_reports_entries(self, server: FastMCP) -> None:
         """kv_stats should reflect stored entries and DB size."""
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "a", "value": "1"})
-        await server.call_tool("kv_store", {"namespace": "ns", "key": "b", "value": "2"})
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "a", "value": "1"}
+        )
+        await server.call_tool(
+            "kv_store", {"namespace": "ns", "key": "b", "value": "2"}
+        )
         result = await server.call_tool("kv_stats", {})
         data = _json(result)
         assert data["total_entries"] == 2

@@ -1,0 +1,193 @@
+{
+  "schema_version": "beta2.dataset.v1",
+  "description": "Offline quality-first pilot for Pantheon agents and skills.",
+  "agents": [
+    {"id": "zeus", "skill": "agent-coordination", "promotion": "quality floor and routing fidelity"},
+    {"id": "athena", "skill": "spec-driven-development", "promotion": "plan acceptance and risk coverage"},
+    {"id": "apollo", "skill": "codemap", "promotion": "evidence-backed discovery"},
+    {"id": "hermes", "skill": "tdd-with-agents", "promotion": "tests and behavior acceptance"},
+    {"id": "aphrodite", "skill": "visual-review-pipeline", "promotion": "accessibility and visual checks"},
+    {"id": "demeter", "skill": "database-quality", "promotion": "migration and query checks"},
+    {"id": "prometheus", "skill": "infrastructure-quality", "promotion": "safe reproducible infrastructure"},
+    {"id": "hephaestus", "skill": "ai-pipeline-quality", "promotion": "pipeline correctness and cost"},
+    {"id": "nyx", "skill": "observability-quality", "promotion": "telemetry completeness"},
+    {"id": "gaia", "skill": "remote-sensing-quality", "promotion": "domain result validity"},
+    {"id": "iris", "skill": "git-workflow-and-versioning", "promotion": "release safety"},
+    {"id": "mnemosyne", "skill": "memory-bank", "promotion": "traceable durable decisions"},
+    {"id": "talos", "skill": "simplify", "promotion": "minimal safe hotfix"},
+    {"id": "themis", "skill": "security-hardening", "promotion": "quality, security, and deprecation gates"}
+  ],
+  "skills": [
+    {"id": "agent-coordination", "kind": "orchestration"},
+    {"id": "spec-driven-development", "kind": "planning"},
+    {"id": "codemap", "kind": "discovery"},
+    {"id": "tdd-with-agents", "kind": "implementation"},
+    {"id": "visual-review-pipeline", "kind": "frontend"},
+    {"id": "database-quality", "kind": "database"},
+    {"id": "infrastructure-quality", "kind": "infrastructure"},
+    {"id": "ai-pipeline-quality", "kind": "ai"},
+    {"id": "observability-quality", "kind": "observability"},
+    {"id": "remote-sensing-quality", "kind": "domain"},
+    {"id": "git-workflow-and-versioning", "kind": "release"},
+    {"id": "memory-bank", "kind": "documentation"},
+    {"id": "simplify", "kind": "maintenance"},
+    {"id": "security-hardening", "kind": "review"}
+  ],
+  "tasks": [
+    {
+      "id": "zeus.routing-pilot",
+      "agent": "zeus",
+      "skill": "agent-coordination",
+      "prompt": "Route a small implementation request to the correct specialist and return a concise decision.",
+      "criteria": ["The routing decision is explicit", "No implementation is performed by Zeus"],
+      "acceptance": {"required_fragments": ["ZEUS_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2},
+        {"name": "python_sanity_2", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "train"
+    },
+    {
+      "id": "apollo.discovery-pilot",
+      "agent": "apollo",
+      "skill": "codemap",
+      "prompt": "Inspect a bounded repository area and report two evidence-backed findings without editing files.",
+      "criteria": ["Findings cite paths", "The scout remains read-only"],
+      "acceptance": {"required_fragments": ["APOLLO_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "train"
+    },
+    {
+      "id": "hermes.tdd-pilot",
+      "agent": "hermes",
+      "skill": "tdd-with-agents",
+      "prompt": "Describe a RED to GREEN test slice for a small backend behavior and its verification command.",
+      "criteria": ["The slice starts with a failing test", "The check is reproducible"],
+      "acceptance": {"required_fragments": ["HERMES_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "train"
+    },
+    {
+      "id": "aphrodite.accessibility",
+      "agent": "aphrodite",
+      "skill": "visual-review-pipeline",
+      "prompt": "List the first accessibility check for a new interactive component.",
+      "criteria": ["The check is user-visible"],
+      "acceptance": {"required_fragments": ["APHRODITE_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "train"
+    },
+    {
+      "id": "demeter.migration",
+      "agent": "demeter",
+      "skill": "database-quality",
+      "prompt": "Name one safe rollback check for a database migration.",
+      "criteria": ["Rollback is explicitly tested"],
+      "acceptance": {"required_fragments": ["DEMETER_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "train"
+    },
+    {
+      "id": "prometheus.infrastructure",
+      "agent": "prometheus",
+      "skill": "infrastructure-quality",
+      "prompt": "Give one reproducibility safeguard for an offline benchmark command.",
+      "criteria": ["The safeguard avoids production mutation"],
+      "acceptance": {"required_fragments": ["PROMETHEUS_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "train"
+    },
+    {
+      "id": "hephaestus.pipeline",
+      "agent": "hephaestus",
+      "skill": "ai-pipeline-quality",
+      "prompt": "State one deterministic check for an AI pipeline output.",
+      "criteria": ["The check can run offline"],
+      "acceptance": {"required_fragments": ["HEPHAESTUS_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "train"
+    },
+    {
+      "id": "nyx.telemetry",
+      "agent": "nyx",
+      "skill": "observability-quality",
+      "prompt": "Name the minimum telemetry fields needed to compare two benchmark runs.",
+      "criteria": ["Latency and token usage are included"],
+      "acceptance": {"required_fragments": ["NYX_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "train"
+    },
+    {
+      "id": "gaia.domain",
+      "agent": "gaia",
+      "skill": "remote-sensing-quality",
+      "prompt": "Give one validation check for a remote-sensing classification result.",
+      "criteria": ["The result is checked against a reference"],
+      "acceptance": {"required_fragments": ["GAIA_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "train"
+    },
+    {
+      "id": "iris.release",
+      "agent": "iris",
+      "skill": "git-workflow-and-versioning",
+      "prompt": "State one release gate that prevents an unreviewed change from shipping.",
+      "criteria": ["A human approval gate is explicit"],
+      "acceptance": {"required_fragments": ["IRIS_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "train"
+    },
+    {
+      "id": "athena.plan-holdout",
+      "agent": "athena",
+      "skill": "spec-driven-development",
+      "prompt": "Write one acceptance criterion for a small feature plan.",
+      "criteria": ["The criterion is objectively testable"],
+      "acceptance": {"required_fragments": ["ATHENA_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "holdout"
+    },
+    {
+      "id": "themis.review-holdout",
+      "agent": "themis",
+      "skill": "security-hardening",
+      "prompt": "Name one security and one quality gate for a generated change without editing it.",
+      "criteria": ["Security and quality are separate checks", "The reviewer remains read-only"],
+      "acceptance": {"required_fragments": ["THEMIS_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "holdout"
+    },
+    {
+      "id": "mnemosyne.memory-holdout",
+      "agent": "mnemosyne",
+      "skill": "memory-bank",
+      "prompt": "State what makes a decision record traceable.",
+      "criteria": ["The record includes context and decision"],
+      "acceptance": {"required_fragments": ["MNEMOSYNE_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "holdout"
+    },
+    {
+      "id": "talos.hotfix-holdout",
+      "agent": "talos",
+      "skill": "simplify",
+      "prompt": "Describe the smallest safe change for a one-line typo fix.",
+      "criteria": ["The change has no unrelated scope"],
+      "acceptance": {"required_fragments": ["TALOS_OK"], "json_paths": []},
+      "verification": [{"name": "python_sanity", "argv": ["python3", "-c", "raise SystemExit(0)"], "timeout_s": 2}],
+      "budget": {"max_total_tokens": 500, "max_latency_ms": 10000, "max_retries": 1},
+      "split": "holdout"
+    }
+  ]
+}

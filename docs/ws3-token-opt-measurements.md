@@ -5,6 +5,22 @@ payloads the codec serves (board signals, checkpoints, KV payloads).
 Deterministic: no LLM, no external gateway, fixed `ceil(chars / 4)` token
 basis — the same metering used by `src/pantheon/token-opt.ts`.
 
+## Safe C9 context contract
+
+`prepareC9Context({ query, candidates }, options)` is a pure boundary for
+already-retrieved `C9Chunk` values. It checks `options.env.PANTHEON_TOKEN_OPT`
+before filtering, passes the batch query explicitly to `c9Filter`, and applies
+the default cutoff `0.3` plus top-k `3` independently per category (or the
+explicit `perCategory` overrides). A low-score fallback is allowed only when
+candidate text overlaps the query; empty or nonsense queries produce no
+injected context. The original candidate score is retained in auditable
+context output.
+
+The discriminated result is `enabled: true | false`; the false branch is used
+only by the kill-switch and always has an empty context. `telemetry` contains
+only `signal`, `counts` (`candidates`, `selected`, `dropped`), `recall`,
+`injectedChars`, and `injectedTokens`—never candidate or context text.
+
 ## Per-class table
 
 | class | json_chars | toon_chars | saved_pct | json_tokens | toon_tokens | token_saved_pct |
@@ -64,3 +80,17 @@ Beta2 keeps the agent runtime deliberately small and deterministic:
 - Agent selection follows a diet: prefer the smallest capable specialist, keep read-only discovery separate from implementation, and escalate only when the scope or risk requires it.
 
 These rules are operational guidance for the 1.5.0 beta2 review; they do not change the package version or publish a release.
+
+## SDK tool-registration contract (beta2)
+
+The current SDK V1/V2 contract is **eager**: V1 returns the complete `tool`
+map during plugin setup, while V2 calls `ctx.tool.transform` and `draft.add`
+for each definition during setup. Neither surface supports hiding individual
+MCP schemas and invoking that MCP tool later without a dispatcher; a lazy
+execute wrapper is not lazy schema registration. Therefore a real lazy tool
+surface is classified **`NOT_SUPPORTED_BY_SDK`** and is outside beta2 scope.
+
+Future work is either an upstream SDK capability for deferred MCP schemas and
+invocation, or an explicit product decision to add a dispatcher (and its
+runtime/adapter contract). Beta2 makes neither change; its token measurements
+cover payload/context optimization only, not unimplemented lazy registration.

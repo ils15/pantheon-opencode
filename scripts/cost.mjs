@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * cost.mjs — read-only cost aggregation from opencode.db (Wave 4, PR #46).
+ * cost.mjs — read-only token aggregation from opencode.db.
  *
- * Fallback for the `pantheon_cost` tool when node:sqlite is unavailable in
- * the plugin process (node < 22.5). Uses node:sqlite itself and prints a
- * single JSON object to stdout:
- *   { ok: true,  days, rows: [{agent, costUsd, tokensInput, tokensOutput}] }
+ * CLI fallback for the `pantheon_cost` tool when node:sqlite is unavailable
+ * in the plugin process. Uses node:sqlite itself and prints a single JSON
+ * object to stdout:
+ *   { ok: true, days, rows: [{agent, phase, tokensInput, tokensOutput, tokensTotal}] }
  *   { ok: false, error: "<message>" }          (exit code 1)
  *
  * NEVER writes to the database — opened read-only. Malformed rows are
- * skipped; assistant messages carry the authoritative cost + tokens.
+ * skipped; assistant messages carry the authoritative token usage.
  *
- * Usage: node scripts/cost.mjs <dbPath> <days>
+ * Usage: node scripts/cost.mjs --db-path <dbPath> --days <days>
  */
 import { existsSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
@@ -43,8 +43,13 @@ function assertCompatibleSchema(db) {
 }
 
 function main() {
-  const [, , dbPath, daysArg] = process.argv
-  const days = Number(daysArg ?? '7')
+  const argv = process.argv.slice(2)
+  const valueFor = (name) => {
+    const index = argv.indexOf(name)
+    return index >= 0 ? argv[index + 1] : undefined
+  }
+  const dbPath = valueFor('--db-path')
+  const days = Number(valueFor('--days') ?? '7')
 
   if (!dbPath) return fail('missing <dbPath> argument')
   if (!existsSync(dbPath)) return fail(`database not found: ${dbPath}`)
@@ -64,19 +69,30 @@ function main() {
         if (info.role !== 'assistant') continue
         const agent = typeof info.agent === 'string' && info.agent !== '' ? info.agent : null
         if (!agent) continue
-        const costUsd = Number(info.cost) || 0
+        const metadata = info.metadata
+        const phase =
+          (typeof info.phase === 'string' && info.phase) ||
+          (typeof metadata?.phase === 'string' && metadata.phase) ||
+          'unknown'
         const tokensInput = Number(info.tokens?.input) || 0
         const tokensOutput = Number(info.tokens?.output) || 0
-        const acc = byAgent.get(agent) ?? { agent, costUsd: 0, tokensInput: 0, tokensOutput: 0 }
-        acc.costUsd += costUsd
+        const key = `${agent}\u0000${phase}`
+        const acc = byAgent.get(key) ?? {
+          agent,
+          phase,
+          tokensInput: 0,
+          tokensOutput: 0,
+          tokensTotal: 0,
+        }
         acc.tokensInput += tokensInput
         acc.tokensOutput += tokensOutput
-        byAgent.set(agent, acc)
+        acc.tokensTotal += tokensInput + tokensOutput
+        byAgent.set(key, acc)
       } catch {
         // Skip malformed rows — a partial ledger never breaks the report.
       }
     }
-    const result = [...byAgent.values()].sort((a, b) => b.costUsd - a.costUsd)
+    const result = [...byAgent.values()].sort((a, b) => b.tokensTotal - a.tokensTotal)
     process.stdout.write(JSON.stringify({ ok: true, days, rows: result }))
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err))

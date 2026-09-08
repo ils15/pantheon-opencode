@@ -19,6 +19,7 @@ import {
   buildC9Context,
   C9_DEFAULT_CUTOFF,
   C9_DEFAULT_TOP_K,
+  type C9CandidateBatch,
   type C9Chunk,
   c9Filter,
   classifyTool,
@@ -36,6 +37,7 @@ import {
   lazyRoute,
   measureLever,
   measureLeverFull,
+  prepareC9Context,
   TokenMeter,
   totalOverheadChars,
   truncateTurn,
@@ -200,6 +202,50 @@ async function main() {
     assert.deepEqual(out.selected, [])
   })
 
+  await testAsync(
+    'c9Filter uses an auditable lexical/relative fallback for relevant low scores',
+    async () => {
+      const chunks = [
+        {
+          ...chunk('relevant', 'memory', 0.016),
+          text: 'token optimization keeps context relevant',
+        },
+        { ...chunk('other', 'memory', 0.015), text: 'unrelated deployment notes' },
+      ]
+      const out = c9Filter(chunks, { query: 'token optimization' })
+      assert.deepEqual(
+        out.selected.map((item) => item.id),
+        ['relevant'],
+      )
+      assert.ok(out.selected.every((item) => item.score < C9_DEFAULT_CUTOFF))
+      assert.equal(out.signal, 'fallback-relative')
+      assert.match(out.notice ?? '', /lexical\/relative fallback/)
+      assert.match(out.notice ?? '', /remain below cutoff/)
+      assert.ok(out.injectedTokens > 0)
+    },
+  )
+
+  await testAsync(
+    'c9Filter rejects a nonsense query instead of injecting low-score junk',
+    async () => {
+      const out = c9Filter(
+        [
+          {
+            ...chunk('relevant', 'memory', 0.016),
+            text: 'token optimization keeps context relevant',
+          },
+        ],
+        undefined,
+        'qzxv nonsense query',
+      )
+      assert.deepEqual(out.selected, [])
+      assert.equal(out.injectedTokens, 0)
+      assert.equal(out.signal, 'nonsense')
+      assert.match(out.notice ?? '', /no lexical overlap/)
+      assert.match(out.notice ?? '', /no context was injected/)
+    },
+  )
+
   await testAsync('c9Filter recall debits top-k overflow honestly', async () => {
     const chunks = [
       chunk('m1', 'memory', 0.9),
@@ -211,6 +257,140 @@ async function main() {
     const out = c9Filter(chunks)
     assert.equal(out.selected.length, 3)
     assert.ok(Math.abs(out.recall - 0.6) < 1e-9, `recall 3/5 eligible, got ${out.recall}`)
+  })
+
+  // ── C9 contract/preparation boundary ──────────────────────────────────
+  await testAsync(
+    'prepareC9Context returns a discriminated disabled result for the kill-switch',
+    async () => {
+      const batch: C9CandidateBatch = {
+        query: 'token optimization',
+        candidates: [chunk('secret', 'memory', 0.99)],
+      }
+      const out = prepareC9Context(batch, { env: { PANTHEON_TOKEN_OPT: 'off' } })
+      assert.equal(out.enabled, false)
+      assert.equal(out.context, '')
+      assert.equal(out.telemetry.signal, 'disabled')
+      assert.equal(out.telemetry.injectedChars, 0)
+      assert.equal(out.telemetry.injectedTokens, 0)
+    },
+  )
+
+  await testAsync(
+    'prepareC9Context applies the normal cutoff and reports auditable counts',
+    async () => {
+      const out = prepareC9Context({
+        query: 'token optimization',
+        candidates: [
+          { ...chunk('kept', 'memory', 0.9), text: 'token optimization' },
+          { ...chunk('dropped', 'memory', 0.29), text: 'old notes' },
+        ],
+      })
+      assert.equal(out.enabled, true)
+      assert.match(out.context, /\[memory:kept\|0\.9\]/)
+      assert.deepEqual(out.telemetry.counts, { candidates: 2, selected: 1, dropped: 1 })
+      assert.equal(out.telemetry.signal, 'ok')
+    },
+  )
+
+  await testAsync(
+    'prepareC9Context allows a relevant low-score fallback and preserves its score',
+    async () => {
+      const out = prepareC9Context({
+        query: 'token optimization',
+        candidates: [
+          {
+            ...chunk('relevant', 'memory', 0.016),
+            text: 'token optimization keeps context relevant',
+          },
+          { ...chunk('other', 'memory', 0.015), text: 'unrelated deployment notes' },
+        ],
+      })
+      assert.equal(out.enabled, true)
+      assert.equal(out.telemetry.signal, 'fallback-relative')
+      assert.match(out.context, /\[memory:relevant\|0\.016\]/)
+      assert.ok(!out.context.includes('0.3'), 'fallback must not rewrite the original score')
+      assert.deepEqual(out.telemetry.counts, { candidates: 2, selected: 1, dropped: 1 })
+    },
+  )
+
+  await testAsync('prepareC9Context does not inject for a nonsense query', async () => {
+    const out = prepareC9Context({
+      query: 'qzxv nonsense query',
+      candidates: [{ ...chunk('junk', 'memory', 0.9), text: 'token optimization context' }],
+    })
+    assert.equal(out.enabled, true)
+    assert.equal(out.context, '')
+    assert.equal(out.telemetry.signal, 'nonsense')
+    assert.equal(out.telemetry.injectedChars, 0)
+    assert.equal(out.telemetry.injectedTokens, 0)
+  })
+
+  await testAsync('prepareC9Context does not inject for an empty query', async () => {
+    const out = prepareC9Context({ query: '', candidates: [chunk('candidate', 'memory', 0.9)] })
+    assert.equal(out.enabled, true)
+    assert.equal(out.context, '')
+    assert.equal(out.telemetry.signal, 'empty-query')
+    assert.deepEqual(out.telemetry.counts, { candidates: 1, selected: 0, dropped: 1 })
+    assert.equal(out.telemetry.injectedTokens, 0)
+  })
+
+  await testAsync('prepareC9Context does not inject an empty candidate batch', async () => {
+    const out = prepareC9Context({ query: 'token optimization', candidates: [] })
+    assert.equal(out.enabled, true)
+    assert.equal(out.context, '')
+    assert.equal(out.telemetry.signal, 'empty-input')
+    assert.deepEqual(out.telemetry.counts, { candidates: 0, selected: 0, dropped: 0 })
+    assert.equal(out.telemetry.injectedChars, 0)
+  })
+
+  await testAsync('prepareC9Context keeps top-k independently for each category', async () => {
+    const out = prepareC9Context(
+      {
+        query: 'memory kv',
+        candidates: [
+          { ...chunk('m1', 'memory', 0.9), text: 'memory result' },
+          { ...chunk('m2', 'memory', 0.8), text: 'memory result' },
+          { ...chunk('k1', 'kv', 0.95), text: 'kv result' },
+          { ...chunk('k2', 'kv', 0.94), text: 'kv result' },
+        ],
+      },
+      { perCategory: { memory: { topK: 1 }, kv: { topK: 1 } } },
+    )
+    assert.deepEqual(
+      out.context.split('\n').map((line) => line.slice(line.indexOf(':') + 1, line.indexOf('|'))),
+      ['m1', 'k1'],
+    )
+    assert.deepEqual(out.telemetry.counts, { candidates: 4, selected: 2, dropped: 2 })
+  })
+
+  await testAsync('prepareC9Context does not mutate the readonly candidate batch', async () => {
+    const batch: C9CandidateBatch = {
+      query: 'immutable context',
+      candidates: Object.freeze([
+        Object.freeze({ ...chunk('candidate', 'memory', 0.9), text: 'immutable context' }),
+      ]),
+    }
+    const before = JSON.stringify(batch)
+    prepareC9Context(batch)
+    assert.equal(JSON.stringify(batch), before)
+  })
+
+  await testAsync('C9 telemetry contains metrics only and never injected text', async () => {
+    const out = prepareC9Context({
+      query: 'private phrase',
+      candidates: [{ ...chunk('audited', 'memory', 0.9), text: 'private phrase' }],
+    })
+    assert.deepEqual(Object.keys(out.telemetry).sort(), [
+      'counts',
+      'injectedChars',
+      'injectedTokens',
+      'recall',
+      'signal',
+    ])
+    assert.ok(!JSON.stringify(out.telemetry).includes('private phrase'))
+    assert.ok(!('context' in out.telemetry))
+    assert.ok(!('text' in out.telemetry))
   })
 
   // ── 4 meta-tools ceiling + lazy ───────────────────────────────────────
@@ -380,7 +560,7 @@ async function main() {
     },
   )
 
-  await testAsync('real gate integration: measured levers drive flags end-to-end', async () => {
+  await testAsync('applyGate contract preserves measured lever flags', async () => {
     const c9 = measureLever('c9', 1000, 600, 50)
     const toon = measureLeverFull('toon', 500, 300, { ...EMPTY_OVERHEAD })
     const losing = measureLeverFull('schema', 100, 95, {
@@ -395,7 +575,7 @@ async function main() {
   })
 
   await testAsync(
-    'real TOON board-flat payload gates toon lever (no overhead enables, overhead>gross disables)',
+    'TOON board-flat payload contract gates toon lever (no overhead enables, overhead>gross disables)',
     async () => {
       const board = {
         taskID: 'ses_child_1',
