@@ -30,6 +30,8 @@ jobs:
       - name: Install dependencies
         run: |
           python3 -m pip install --quiet pytest pyyaml yamllint pip-audit
+          python3 -m pip install --quiet -r src/mcp/requirements-mcp.txt
+          python3 -m pip install --quiet -r src/mcp/requirements-vision.txt
           npm ci --ignore-scripts
           npm ci --prefix src/plugins/tui --ignore-scripts
 

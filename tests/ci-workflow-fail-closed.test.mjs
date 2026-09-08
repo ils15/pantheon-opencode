@@ -31,6 +31,25 @@ test('CI validates YAML and installs locked dependencies only', () => {
     /npm ci --prefix src\/plugins\/tui --ignore-scripts/,
     'CI must install isolated TUI plugin deps from its committed lockfile so test:ts resolves solid-js',
   )
+  assert.match(
+    workflow,
+    /pip install[^\n]*-r src\/mcp\/requirements-mcp\.txt/,
+    'CI must install locked MCP runtime deps before pytest so mcp/sqlite-vec imports resolve',
+  )
+  assert.match(
+    workflow,
+    /pip install[^\n]*-r src\/mcp\/requirements-vision\.txt/,
+    'CI must install locked vision deps before pytest so httpx imports resolve',
+  )
+  assert.doesNotMatch(workflow, /pip install[^\n]*\|\|/)
+  assert.ok(
+    workflow.indexOf('requirements-mcp.txt') < workflow.indexOf('npm run test:ci'),
+    'Locked MCP pip install must run BEFORE the pytest gate',
+  )
+  assert.ok(
+    workflow.indexOf('requirements-vision.txt') < workflow.indexOf('npm run test:ci'),
+    'Locked vision pip install must run BEFORE the pytest gate',
+  )
   assert.doesNotMatch(workflow, /npm install(?!.*--dry-run)/)
   assert.doesNotMatch(workflow, /\|\| true/)
   assert.doesNotMatch(workflow, /echo ["']?(?:test|audit) warnings/i)
