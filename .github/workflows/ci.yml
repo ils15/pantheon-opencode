@@ -28,7 +28,9 @@ jobs:
         with: { node-version: '22' }
 
       - name: Install dependencies
-        run: pip install --quiet pytest pyyaml yamllint 2>&1 && npm ci --ignore-scripts 2>&1 || npm install 2>&1
+        run: |
+          python3 -m pip install --quiet pytest pyyaml yamllint pip-audit
+          npm ci --ignore-scripts
 
       - name: Validate agent YAML
         run: python3 scripts/ci-validate-yaml.py
@@ -36,14 +38,27 @@ jobs:
       - name: Validate routing.yml
         run: node scripts/validate-routing.mjs
 
-      - name: Run tests
-        run: python3 -m pytest tests/ -q --tb=short 2>&1 || echo "test warnings"
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run TypeScript tests
+        run: npm run test:ts
+
+      - name: Run Python tests
+        run: npm run test:ci
 
       - name: Run Node tests (PR #31 wiring — prune, hooks, install contracts)
         run: npm run test:node
 
       - name: Security audit
-        run: npm audit --audit-level=high 2>&1 || echo "audit warnings"
+        run: |
+          npm run audit
+          python3 -m pip_audit -r src/mcp/requirements-mcp.txt
+          python3 -m pip_audit -r src/mcp/requirements-vision.txt
+          python3 -m pip_audit -r scripts/vector_memory/requirements.txt
 
       - name: Scan versionable files for credentials
         run: npm run test:security
@@ -59,6 +74,6 @@ jobs:
         with:
           node-version: '20'
       - name: Install dependencies
-        run: npm ci --ignore-scripts 2>/dev/null || npm install
+        run: npm ci --ignore-scripts
       - name: Verify version manifests are in sync
         run: npm run version:check
