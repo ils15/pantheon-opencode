@@ -1207,4 +1207,10 @@ export async function installOpenCode(
     const { writeActivePreset } = await import('./model-picker.mjs')
     writeActivePreset(target, opts.preset, { source: 'cli' })
   }
+
+  // Fail-closed: accumulated stats.errors (bad sources, missing requirements,
+  // failed health checks) must never masquerade as a successful installation.
+  if (stats.errors > 0) {
+    throw new Error(`installation completed with ${stats.errors} error(s); see output above`)
+  }
 }
