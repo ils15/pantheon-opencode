@@ -2,7 +2,8 @@
 
 **Server:** `pantheon-persistence`
 **Script:** `scripts/mcp_persistence_server.py`
-**Dependencies:** Zero (stdlib only: sqlite3)
+**Dependencies:** `mcp.server.fastmcp` and project path helpers; SQLite/FTS5
+storage uses the Python standard library.
 
 A lightweight key-value store with SQLite + FTS5, TTL, and namespaces.
 Separate from `pantheon-memory` (vector/ChromaDB).
@@ -25,7 +26,27 @@ pantheon-persistence MCP
 - **Global**: dados cross-projeto (cache de agentes, preferências)
 - **Project**: dados específicos do projeto atual
 
-## Tools (12)
+## Tools (14)
+
+The server exposes these 14 MCP tools. `scope` defaults to `"project"`; use
+`"global"` for the global database.
+
+| Tool | Signature | Description / return value |
+|---|---|---|
+| `kv_store` | `kv_store(namespace, key, value, ttl?, scope?)` | Stores or replaces a key-value pair. Returns `status`, `namespace`, and `key`. |
+| `kv_get` | `kv_get(namespace, key, scope?)` | Retrieves a value, returning `null` when missing or expired. |
+| `kv_stats` | `kv_stats(scope?)` | Returns `scope`, `total_entries`, `expired_entries`, per-namespace counts, and `db_size_bytes`. |
+| `kv_delete` | `kv_delete(namespace, key, scope?)` | Deletes one key-value pair and returns `status: deleted` or `status: not_found`. |
+| `kv_list` | `kv_list(namespace, prefix?, scope?, limit?)` | Lists up to `limit` keys (default 100), values, timestamps, and expiry data. |
+| `kv_search` | `kv_search(query, namespace?, scope?, limit?)` | Performs FTS5 search over keys and values, optionally filtered by namespace; returns ranked matches. |
+| `purge_expired` | `purge_expired(scope?, dry_run?)` | Purges expired TTL entries, optionally as a dry run, and records deleted keys in the deletelog. |
+| `kv_delete_namespace` | `kv_delete_namespace(namespace, scope?, older_than_days?)` | Deletes all entries in a namespace, optionally restricted by age; returns the deleted count. |
+| `context_save` | `context_save(slug, key, content, session_id, ttl?, scope?, revision?)` | Saves a bounded session checkpoint and atomically updates `latest` for checkpoint keys. |
+| `context_get` | `context_get(slug, key?, session_id?, legacy?, scope?)` | Reads raw context content from the session-qualified namespace, or the legacy namespace only with explicit opt-in. |
+| `context_list` | `context_list(slug, session_id?, legacy?, scope?)` | Lists up to 50 context keys with creation and expiry timestamps. |
+| `context_stats` | `context_stats(slug, session_id?, legacy?, scope?)` | Returns context counts, expired entries, active bytes, and latest TTL remaining. |
+| `context_rehydrate` | `context_rehydrate(slug, session_id, scope?)` | Rebuilds deterministic mission, phase, delegation, and tail blocks from the exact session checkpoint. |
+| `context_session_summary` | `context_session_summary(slug, session_id, scope?)` | Builds a deterministic Tier 2 session-end summary for the exact session. |
 
 ### kv_stats
 Return storage statistics with total entries, expired count, per-namespace breakdown, and DB file size.
@@ -38,7 +59,8 @@ Return storage statistics with total entries, expired count, per-namespace break
 Store a key-value pair with optional TTL.
 
 `kv_store(namespace, key, value, ttl?, scope?)`
-- `ttl`: seconds. null = forever
+- `ttl`: `null` = forever; an explicit TTL must be an integer from 1 to
+  31,536,000 seconds (365 days)
 - `scope`: "project" (default) or "global"
 - Auto-purges expired entries when namespace exceeds 500 items
 - Returns `{"status": "stored", "namespace": ns, "key": k}`
@@ -89,39 +111,91 @@ Remove expired entries and rotate deletelog.
 ## Context Checkpoint Tools
 
 Session-scoped checkpoint storage for deepwork phases, heartbeat, and reasoning state.
-All entries use namespace `checkpoint:{slug}` with **auto-TTL of 4 hours**.
-No cleanup needed — TTL handles expiry automatically.
+Session-scoped entries use `checkpoint:{slug}:{session_id}`. `session_id` is
+required and is never generated or inferred from `slug`; this prevents a reused
+slug from recovering another session. The legacy unqualified namespace is
+available only through the explicit `legacy=true` opt-in on read/list/stats.
+
+`context_save` commits the checkpoint and its raw `latest` pointer in one SQLite
+`BEGIN IMMEDIATE` transaction. Optional caller `revision` values are monotonic;
+an older or equal revision returns `status: "stale"` and does not overwrite
+the stored value. Without a caller revision, persistence assigns a monotonic
+revision while holding the write lock. This is last-writer-wins for callers
+that omit revisions; the schema has no separate CAS column and no migration is
+performed.
+
+Content is bounded to 64 KiB. Structured checkpoint JSON is an object with
+bounded `goal`, `phase`, `delegations.in_flight`, `tail`, and `heartbeat`
+fields. Rehydrated values are untrusted data: output blocks include an
+informational label and escape markup/control delimiters without executing or
+rewriting the stored value. Invalid JSON or an invalid checkpoint shape fails
+closed; recovery never scans sibling keys. Explicit TTLs are validated as
+integers from 1 to 31,536,000 seconds; omitted `context_save.ttl` uses the
+key policy (300 seconds for `heartbeat`, 14,400 seconds for other context
+keys).
 
 ### context_save
 Save a context checkpoint for a session/phase.
 
-`context_save(slug, key, content, ttl?, scope?)`
+`context_save(slug, key, content, session_id, ttl?, scope?, revision?)`
 - `slug`: session identifier (e.g. "auth-refactor")
 - `key`: checkpoint key (e.g. "phase:3", "latest", "heartbeat")
 - `content`: JSON-serializable string
-- `ttl`: seconds (default 4h / 14400)
-- Auto-updates a "latest" pointer on every save
-- Returns `{"status": "stored", "namespace": "...", "key": "...", "ttl": N}`
+- `session_id`: required opaque session identifier
+- `ttl`: optional integer from 1 to 31,536,000 seconds; omitted values default
+  to heartbeat 300s and 14,400s for latest, tail, and other context keys
+- `revision`: optional positive monotonic revision for stale-write rejection
+- Updates `latest` for checkpoint keys, but not operational `heartbeat`/`tail`
+- Returns status, namespace, session_id, ttl, and revision
 
 ### context_get
 Retrieve a context checkpoint by slug and key.
 
-`context_get(slug, key?, scope?)`
+`context_get(slug, key?, session_id?, legacy?, scope?)`
 - `key`: defaults to "latest" (most recent checkpoint)
+- `session_id`: required for session-scoped reads
+- `legacy=true`: explicit opt-in for `checkpoint:{slug}` compatibility reads
 - Returns raw content string or `null` if expired/not found
 
 ### context_list
 List all checkpoints for a session slug.
 
-`context_list(slug, scope?)`
+`context_list(slug, session_id?, legacy?, scope?)`
+- `session_id`: required for session-scoped reads
+- `legacy=true`: explicit opt-in for the unqualified legacy namespace
 - Returns keys, created_at, expires_at
 - Ordered by most recent first, max 50
 
 ### context_stats
 Return storage statistics for a session's context.
 
-`context_stats(slug, scope?)`
+`context_stats(slug, session_id?, legacy?, scope?)`
+- `session_id`: required for session-scoped reads
+- `legacy=true`: explicit opt-in for the unqualified legacy namespace
 - Returns slug, namespace, entry_count, expired_entries, total_bytes, ttl_remaining_seconds
+- `entry_count` and `total_bytes` include only currently active entries;
+  `expired_entries` remains a separate metric
+
+### context_rehydrate
+
+`context_rehydrate(slug, session_id, scope?)`
+- `session_id` is required; missing/blank values fail closed
+- Reads only the exact session-qualified `latest` entry
+- Malformed/oversized JSON returns `null`; no sibling fallback is attempted
+- Rebuilds deterministic goal/phase/delegation/tail blocks and refreshes an
+  unexpired heartbeat conditionally (heartbeat default TTL: 300s)
+- Fallback tail JSON must be an array of at most 100 strings, each at most
+  4,096 bytes and with a total payload at most 64 KiB; invalid or oversized
+  fallback data is ignored fail-closed, and output is capped at 10 nonblank
+  lines
+- Honors `PANTHEON_COMPACTION=off`
+
+### context_session_summary
+
+`context_session_summary(slug, session_id, scope?)`
+- `session_id` is required; no slug discovery fallback
+- Deterministic summary of the exact session; honors
+  `PANTHEON_SESSION_END_SUMMARY=off`
 
 
 ## TTL Lifecycle
@@ -158,7 +232,6 @@ purge_expired(scope="project")
 | Search | FTS5 (exato/keyword) | Cosine similarity (semântico) |
 | TTL | ✅ Por entrada | ❌ Nenhum |
 | Namespace | ✅ Coluna + scope | ✅ Session + category |
-| Deploys | stdlib, 0 deps | chromadb + sentence-transformers |
-| Startup | <0.5s | 3-8s |
-| Tools | 12 | 14 |
-| Lines | ~530 | 1,344 |
+| Dependencies | FastMCP + stdlib SQLite/FTS5 | sqlite-vec + fastembed |
+| Tools | 14 | 6 |
+| Source lines | 1,514 (`src/mcp`) | 769 (`src/mcp`) |
