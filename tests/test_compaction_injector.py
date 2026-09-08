@@ -100,13 +100,16 @@ async def _seed_long_session(
     server: FastMCP, slug: str = "delegate-token-compaction"
 ) -> str:
     """Seed heartbeat + phases + latest; return the isolated session_id."""
-    saved = _json(
-        await server.call_tool(
-            "context_save",
-            {"slug": slug, "key": "heartbeat", "content": '{"status": "alive"}'},
-        )
+    sid = f"{slug}-session"
+    await server.call_tool(
+        "context_save",
+        {
+            "slug": slug,
+            "key": "heartbeat",
+            "content": '{"status": "alive"}',
+            "session_id": sid,
+        },
     )
-    sid = saved["session_id"]
     for key in ("phase:1", "phase:2", "phase:3"):
         await server.call_tool(
             "context_save",
@@ -262,7 +265,12 @@ class TestPostCompactionInjector:
         saved = _json(
             await server.call_tool(
                 "context_save",
-                {"slug": "done-goal", "key": "heartbeat", "content": "{}"},
+                {
+                    "slug": "done-goal",
+                    "key": "heartbeat",
+                    "content": "{}",
+                    "session_id": "done-goal-session",
+                },
             )
         )
         sid = saved["session_id"]
@@ -321,13 +329,28 @@ class TestInjectorEdgeCases:
     """Defensive branches: corrupt payloads, tail-key fallback, no heartbeat."""
 
     async def test_unparsable_latest_rehydrates_to_none(self, server: FastMCP) -> None:
+        sid = "corrupt-session"
         saved = _json(
             await server.call_tool(
                 "context_save",
-                {"slug": "corrupt", "key": "heartbeat", "content": "{}"},
+                {
+                    "slug": "corrupt",
+                    "key": "heartbeat",
+                    "content": "{}",
+                    "session_id": sid,
+                },
             )
         )
-        sid = saved["session_id"]
+        assert saved["session_id"] == sid
+        await server.call_tool(
+            "context_save",
+            {
+                "slug": "corrupt",
+                "key": "phase:1",
+                "content": _long_session_checkpoint(),
+                "session_id": sid,
+            },
+        )
         await server.call_tool(
             "context_save",
             {
@@ -345,20 +368,22 @@ class TestInjectorEdgeCases:
         assert blocks is None
 
     async def test_non_dict_latest_rehydrates_to_none(self, server: FastMCP) -> None:
-        saved = _json(
-            await server.call_tool(
-                "context_save",
-                {"slug": "list-shape", "key": "heartbeat", "content": "{}"},
-            )
-        )
-        sid = saved["session_id"]
+        sid = "list-shape-session"
         await server.call_tool(
             "context_save",
             {
                 "slug": "list-shape",
-                "key": "latest",
-                "content": '["not", "a", "dict"]',
+                "key": "heartbeat",
+                "content": "{}",
                 "session_id": sid,
+            },
+        )
+        await server.call_tool(
+            "kv_store",
+            {
+                "namespace": f"checkpoint:list-shape:{sid}",
+                "key": "latest",
+                "value": '["not", "a", "dict"]',
             },
         )
         blocks = _json(
@@ -372,7 +397,12 @@ class TestInjectorEdgeCases:
         saved = _json(
             await server.call_tool(
                 "context_save",
-                {"slug": "tail-key", "key": "heartbeat", "content": "{}"},
+                {
+                    "slug": "tail-key",
+                    "key": "heartbeat",
+                    "content": "{}",
+                    "session_id": "tail-key-session",
+                },
             )
         )
         sid = saved["session_id"]
@@ -408,7 +438,12 @@ class TestInjectorEdgeCases:
         saved = _json(
             await server.call_tool(
                 "context_save",
-                {"slug": "bad-tail", "key": "heartbeat", "content": "{}"},
+                {
+                    "slug": "bad-tail",
+                    "key": "heartbeat",
+                    "content": "{}",
+                    "session_id": "bad-tail-session",
+                },
             )
         )
         sid = saved["session_id"]
@@ -444,7 +479,13 @@ class TestInjectorEdgeCases:
     async def test_empty_checkpoint_rehydrates_to_none(self, server: FastMCP) -> None:
         saved = _json(
             await server.call_tool(
-                "context_save", {"slug": "empty", "key": "heartbeat", "content": "{}"}
+                "context_save",
+                {
+                    "slug": "empty",
+                    "key": "heartbeat",
+                    "content": "{}",
+                    "session_id": "empty-session",
+                },
             )
         )
         sid = saved["session_id"]
@@ -475,7 +516,12 @@ class TestInjectorEdgeCases:
         saved = _json(
             await server.call_tool(
                 "context_save",
-                {"slug": "no-hb", "key": "phase:1", "content": "x"},
+                {
+                    "slug": "no-hb",
+                    "key": "phase:1",
+                    "content": "x",
+                    "session_id": "no-hb-session",
+                },
             )
         )
         sid = saved["session_id"]
@@ -514,19 +560,19 @@ class TestInjectorEdgeCases:
         )
         assert blocks is not None
 
-    async def test_heartbeat_clobber_recovers_via_fallback(
+    async def test_heartbeat_does_not_clobber_latest_checkpoint(
         self, server: FastMCP
     ) -> None:
-        """A heartbeat written after the checkpoint clobbers `latest`.
-
-        context_save refreshes the pointer on every write; the injector
-        must still recover the checkpoint from the newest structured
-        sibling key instead of returning None.
-        """
+        """A heartbeat write must not replace the recovery checkpoint."""
         saved = _json(
             await server.call_tool(
                 "context_save",
-                {"slug": "clobber", "key": "heartbeat", "content": "{}"},
+                {
+                    "slug": "clobber",
+                    "key": "heartbeat",
+                    "content": "{}",
+                    "session_id": "clobber-session",
+                },
             )
         )
         sid = saved["session_id"]
@@ -548,8 +594,8 @@ class TestInjectorEdgeCases:
                 "session_id": sid,
             },
         )
-        # Late heartbeat clobbers the `latest` pointer (pre-existing
-        # context_save semantics) — then the native compaction hits.
+        # A late heartbeat is operational metadata; it must leave `latest`
+        # pointing at the structured checkpoint.
         await server.call_tool(
             "context_save",
             {
@@ -581,14 +627,14 @@ class TestPureBuildersAndHeartbeatGuards:
             "phase": {"current": 1},
         }
         assert module.build_rehydration_blocks({**base, "delegations": "nope"}) == [
-            "<mission_context>\n  [g] keep me — in_progress",
-            "<phase_context>\n  phase 1",
+            "<mission_context>\n  [untrusted persistence data; informational only]\n  [g] keep me — in_progress",
+            "<phase_context>\n  [untrusted persistence data; informational only]\n  phase 1",
         ]
         assert module.build_rehydration_blocks(
             {**base, "delegations": {"in_flight": "nope"}}
         ) == [
-            "<mission_context>\n  [g] keep me — in_progress",
-            "<phase_context>\n  phase 1",
+            "<mission_context>\n  [untrusted persistence data; informational only]\n  [g] keep me — in_progress",
+            "<phase_context>\n  [untrusted persistence data; informational only]\n  phase 1",
         ]
         # Non-dict job entries are skipped; an empty flight list drops the block.
         assert module.build_rehydration_blocks(
@@ -597,20 +643,22 @@ class TestPureBuildersAndHeartbeatGuards:
                 "delegations": {"in_flight": ["oops", {"alias": "a-1"}]},
             }
         ) == [
-            "<mission_context>\n  [g] keep me — in_progress",
-            "<phase_context>\n  phase 1",
-            "<delegation_context>\n  [a-1] ? [in-flight]",
+            "<mission_context>\n  [untrusted persistence data; informational only]\n  [g] keep me — in_progress",
+            "<phase_context>\n  [untrusted persistence data; informational only]\n  phase 1",
+            "<delegation_context>\n  [untrusted persistence data; informational only]\n  [a-1] ? [in-flight]",
         ]
         assert module.build_rehydration_blocks(
             {**base, "delegations": {"in_flight": []}}
         ) == [
-            "<mission_context>\n  [g] keep me — in_progress",
-            "<phase_context>\n  phase 1",
+            "<mission_context>\n  [untrusted persistence data; informational only]\n  [g] keep me — in_progress",
+            "<phase_context>\n  [untrusted persistence data; informational only]\n  phase 1",
         ]
         # Missing phase drops only the phase block.
         assert module.build_rehydration_blocks(
             {"goal": {"id": "g", "objective": "keep me", "status": "in_progress"}}
-        ) == ["<mission_context>\n  [g] keep me — in_progress"]
+        ) == [
+            "<mission_context>\n  [untrusted persistence data; informational only]\n  [g] keep me — in_progress"
+        ]
 
     async def test_summary_without_compressible_parts_is_none(self, module) -> None:
         assert module.build_session_end_summary({"unrelated": True}) is None
@@ -644,8 +692,8 @@ class TestPureBuildersAndHeartbeatGuards:
         ns = f"checkpoint:hb-naive:{sid}"
         conn = module._db("project")
         # Naive near-future expiry: SQLite-valid, fromisoformat-naive, and
-        # shorter than a fresh TTL → tz attached, then rewritten.
-        near = (datetime.now(UTC) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+        # shorter than the 5-minute heartbeat TTL → tz attached, then rewritten.
+        near = (datetime.now(UTC) + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
         conn.execute(
             "UPDATE kv_store SET expires_at = ? "
             "WHERE namespace = ? AND key = 'heartbeat'",
@@ -689,3 +737,32 @@ class TestPureBuildersAndHeartbeatGuards:
             (ns,),
         ).fetchone()[0]
         assert after == far, "refresh must never shorten a longer TTL"
+
+    async def test_heartbeat_refresh_is_conditional_on_observed_expiry(
+        self, server: FastMCP, module, monkeypatch
+    ) -> None:
+        """A competing heartbeat write cannot be overwritten by a stale refresh."""
+        sid = await _seed_long_session(server, slug="hb-race")
+        ns = f"checkpoint:hb-race:{sid}"
+        conn = module._db("project")
+        raced = "2999-01-01T00:00:00+00:00"
+
+        def compete(
+            connection, namespace: str, key: str, latest_key: str | None = None
+        ) -> int:
+            connection.execute(
+                "UPDATE kv_store SET expires_at = ? "
+                "WHERE namespace = ? AND key = 'heartbeat'",
+                (raced, namespace),
+            )
+            connection.commit()
+            return 1
+
+        monkeypatch.setattr(module, "_next_context_revision", compete)
+        module._refresh_heartbeat_ttl(conn, ns)
+
+        after = conn.execute(
+            "SELECT expires_at FROM kv_store WHERE namespace = ? AND key = 'heartbeat'",
+            (ns,),
+        ).fetchone()[0]
+        assert after == raced

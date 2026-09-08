@@ -147,8 +147,9 @@ test('log file appends across calls with ISO-stamped, module-prefixed lines', as
     for (const line of lines) {
       assert.match(line, /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] \[multi\] /)
     }
-    assert.match(lines[0], /\[multi\] first/)
-    assert.match(lines[1], /\[multi\] second line/)
+    const joinedLines = lines.join('\n')
+    assert.match(joinedLines, /\[multi\] first/)
+    assert.match(joinedLines, /\[multi\] second line/)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }

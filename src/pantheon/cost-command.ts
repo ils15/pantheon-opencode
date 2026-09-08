@@ -1,12 +1,12 @@
 /**
- * Cost Command (Wave 4, PR #46) — `pantheon_cost` structural tool: cost +
- * token visibility for delegation traffic, straight from opencode.db.
+ * Token Command — `pantheon_cost` structural tool: token visibility for
+ * delegation traffic, straight from opencode.db.
  *
- * Reads the opencode session database READ-ONLY (sum cost + tokens by
- * agent over the last N days → markdown table). Zero new dependencies:
+ * Reads the opencode session database READ-ONLY (sum tokens by agent and
+ * phase over the last N days → markdown table). Zero new dependencies:
  *   - primary path: node:sqlite (DatabaseSync, readOnly) — node ≥ 22.5;
- *   - fallback: spawn scripts/cost.mjs (node:sqlite, prints JSON) when the
- *     direct import is unavailable;
+ *   - CLI fallback: spawn scripts/cost.mjs with its explicit flag-based
+ *     interface when the direct import is unavailable;
  *   - missing/unreadable db → FRIENDLY error string, never a crash (tools
  *     return errors as TEXT).
  *
@@ -29,12 +29,13 @@ import type { ToolContextLike } from './delegation.ts'
 
 const execFileAsync = promisify(execFile)
 
-/** One aggregated cost row (per agent). */
+/** One aggregated token row (per agent and phase). */
 export interface CostRow {
   agent: string
-  costUsd: number
+  phase: string
   tokensInput: number
   tokensOutput: number
+  tokensTotal: number
 }
 
 export interface CostCommandOptions {
@@ -123,7 +124,7 @@ function assertCompatibleSchema(db: {
   }
 }
 
-/** Aggregate cost + tokens by agent via node:sqlite (read-only). */
+/** Aggregate tokens by agent and phase via node:sqlite (read-only). */
 async function queryWithNodeSqlite(dbPath: string, days: number): Promise<CostRow[]> {
   const sqlite = await import('node:sqlite')
   const db = new sqlite.DatabaseSync(dbPath, { readOnly: true })
@@ -141,24 +142,28 @@ async function queryWithNodeSqlite(dbPath: string, days: number): Promise<CostRo
   }
 }
 
-/** Fallback: delegate the same aggregation to scripts/cost.mjs (node:sqlite). */
+/** CLI fallback: delegate the same aggregation to scripts/cost.mjs. */
 async function queryWithScript(
   scriptPath: string,
   dbPath: string,
   days: number,
 ): Promise<CostRow[]> {
-  const { stdout } = await execFileAsync(process.execPath, [scriptPath, dbPath, String(days)], {
-    timeout: 15_000,
-    encoding: 'utf8',
-  })
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [scriptPath, '--db-path', dbPath, '--days', String(days)],
+    {
+      timeout: 15_000,
+      encoding: 'utf8',
+    },
+  )
   const parsed = JSON.parse(stdout) as { ok: boolean; rows?: CostRow[]; error?: string }
   if (!parsed.ok) throw new Error(parsed.error ?? 'cost.mjs failed')
   return parsed.rows ?? []
 }
 
-/** Parse message.data JSON rows and aggregate cost + tokens by assistant agent. */
+/** Parse message.data JSON rows and aggregate tokens by assistant agent/phase. */
 function aggregateMessages(dataValues: readonly string[]): CostRow[] {
-  const byAgent = new Map<string, CostRow>()
+  const byAgentAndPhase = new Map<string, CostRow>()
   for (const value of dataValues) {
     try {
       const outer = JSON.parse(value) as Record<string, unknown>
@@ -169,45 +174,57 @@ function aggregateMessages(dataValues: readonly string[]): CostRow[] {
       if (info.role !== 'assistant') continue
       const agent = typeof info.agent === 'string' && info.agent !== '' ? info.agent : null
       if (agent === null) continue
-      const costUsd = Number(info.cost) || 0
+      const metadata = info.metadata as Record<string, unknown> | undefined
+      const phase =
+        (typeof info.phase === 'string' && info.phase) ||
+        (typeof metadata?.phase === 'string' && metadata.phase) ||
+        'unknown'
       const tokens = (info.tokens ?? {}) as Record<string, unknown>
       const tokensInput = Number(tokens.input) || 0
       const tokensOutput = Number(tokens.output) || 0
-      const acc = byAgent.get(agent) ?? { agent, costUsd: 0, tokensInput: 0, tokensOutput: 0 }
-      acc.costUsd += costUsd
+      const key = `${agent}\u0000${phase}`
+      const acc = byAgentAndPhase.get(key) ?? {
+        agent,
+        phase,
+        tokensInput: 0,
+        tokensOutput: 0,
+        tokensTotal: 0,
+      }
       acc.tokensInput += tokensInput
       acc.tokensOutput += tokensOutput
-      byAgent.set(agent, acc)
+      acc.tokensTotal += tokensInput + tokensOutput
+      byAgentAndPhase.set(key, acc)
     } catch {
       // Skip malformed rows — a partial ledger never breaks the report.
     }
   }
-  return [...byAgent.values()].sort((a, b) => b.costUsd - a.costUsd)
+  return [...byAgentAndPhase.values()].sort((a, b) => b.tokensTotal - a.tokensTotal)
 }
 
 /** Render the aggregate as a markdown table with a total row. */
 function renderMarkdown(rows: readonly CostRow[], days: number): string {
   if (rows.length === 0) {
-    return `## Cost by agent (last ${days} days)\n\nNo cost records in the last ${days} days.`
+    return `## Token usage by agent and phase (last ${days} days)\n\nNo token records in the last ${days} days.`
   }
   const total = rows.reduce(
     (acc, r) => {
-      acc.costUsd += r.costUsd
       acc.tokensInput += r.tokensInput
       acc.tokensOutput += r.tokensOutput
+      acc.tokensTotal += r.tokensTotal
       return acc
     },
-    { costUsd: 0, tokensInput: 0, tokensOutput: 0 },
+    { tokensInput: 0, tokensOutput: 0, tokensTotal: 0 },
   )
   const lines = [
-    `## Cost by agent (last ${days} days)`,
+    `## Token usage by agent and phase (last ${days} days)`,
     '',
-    '| Agent | Cost (USD) | Tokens In | Tokens Out |',
-    '|-------|-----------:|----------:|-----------:|',
+    '| Agent | Phase | Tokens In | Tokens Out | Tokens Total |',
+    '|-------|-------|----------:|-----------:|-------------:|',
     ...rows.map(
-      (r) => `| ${r.agent} | $${r.costUsd.toFixed(6)} | ${r.tokensInput} | ${r.tokensOutput} |`,
+      (r) =>
+        `| ${r.agent} | ${r.phase} | ${r.tokensInput} | ${r.tokensOutput} | ${r.tokensTotal} |`,
     ),
-    `| **Total** | **$${total.costUsd.toFixed(6)}** | **${total.tokensInput}** | **${total.tokensOutput}** |`,
+    `| **Total** | — | **${total.tokensInput}** | **${total.tokensOutput}** | **${total.tokensTotal}** |`,
     '',
     `Source: opencode.db (read-only)`,
   ]
@@ -218,14 +235,14 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
   const scriptPath = new URL('../../scripts/cost.mjs', import.meta.url).pathname
 
   const execute = async (args: { days?: number }, _ctx: ToolContextLike): Promise<string> => {
-    const days = args.days ?? 7
+    const days = args?.days ?? 7
     try {
       const dbPath = findExistingDb(options?.dbPath)
       if (dbPath === undefined) {
         const expected = resolveCostDbPath(options)
         return (
           `pantheon_cost failed: opencode.db not found (expected at ${expected}). ` +
-          `No cost history is available until opencode has stored session data.`
+          `No token history is available until opencode has stored session data.`
         )
       }
       const rows = await queryWithNodeSqlite(dbPath, days).catch(async (err: unknown) => {
@@ -243,7 +260,7 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
   return {
     pantheon_cost: {
       description:
-        'Report delegation cost + token usage by agent over the last N days, read from opencode.db (read-only, no writes).',
+        'Report input, output, and total token usage by agent and phase over the last N days, read from opencode.db (read-only, no monetary values).',
       args: costArgs,
       execute,
     },

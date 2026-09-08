@@ -19,6 +19,7 @@ async function main(): Promise<void> {
     v2Dispose,
   } = await import('../../src/plugin-v2.ts')
   const pluginSource = await readFile(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
+  const pluginV1Source = await readFile(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
 
   let passed = 0
   let failed = 0
@@ -72,6 +73,13 @@ async function main(): Promise<void> {
     const features = getUnsupportedFeatures()
     assert.ok(Array.isArray(features))
     assert.ok(features.length > 0)
+  })
+
+  test('V1/V2 tool contract is eager, not lazy MCP schema registration', () => {
+    assert.match(pluginV1Source, /tool:\s*\{/)
+    assert.match(pluginSource, /toolCtx\?\.transform/)
+    assert.match(pluginSource, /for \(const def of toolDefs\)/)
+    assert.match(pluginSource, /draft\.add\(/)
   })
 
   // ─── Transform Tests ────────────────────────────────────────────────

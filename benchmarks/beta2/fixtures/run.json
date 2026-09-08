@@ -1,0 +1,17 @@
+{
+  "schema_version": "beta2.run.v1",
+  "description": "Offline fixture-run manifest; it never invokes an LLM provider.",
+  "dataset": "../dataset.json",
+  "responses": "responses.json",
+  "mode": "fixture",
+  "dry_run": false,
+  "expected": {
+    "agents": 14,
+    "tasks": 14,
+    "rows": 28,
+    "baseline_quality_accepted": 14,
+    "candidate_quality_accepted": 14,
+    "candidate_net_tokens_less_than_baseline": true,
+    "holdout_quality_floor": 1.0
+  }
+}

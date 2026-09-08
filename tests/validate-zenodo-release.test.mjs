@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -26,6 +26,26 @@ function fixture() {
     join(process.cwd(), 'src/plugins/tui/package.json'),
     join(root, 'src/plugins/tui/package.json'),
   )
+  // Keep this fixture modeling the stable release independently of a beta branch.
+  const stableVersion = '1.5.0'
+  const packagePath = join(root, 'package.json')
+  const packageJson = JSON.parse(readFileSync(packagePath, 'utf8'))
+  packageJson.version = stableVersion
+  writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`)
+  const pluginPath = join(root, 'plugin.json')
+  const pluginJson = JSON.parse(readFileSync(pluginPath, 'utf8'))
+  pluginJson.version = stableVersion
+  writeFileSync(pluginPath, `${JSON.stringify(pluginJson, null, 2)}\n`)
+  const pyprojectPath = join(root, 'pyproject.toml')
+  const pyproject = readFileSync(pyprojectPath, 'utf8').replace(
+    /^(version\s*=\s*")[^"]+(")/m,
+    `$1${stableVersion}$2`,
+  )
+  writeFileSync(pyprojectPath, pyproject)
+  const tuiPackagePath = join(root, 'src/plugins/tui/package.json')
+  const tuiPackageJson = JSON.parse(readFileSync(tuiPackagePath, 'utf8'))
+  tuiPackageJson.version = stableVersion
+  writeFileSync(tuiPackagePath, `${JSON.stringify(tuiPackageJson, null, 2)}\n`)
   return root
 }
 
