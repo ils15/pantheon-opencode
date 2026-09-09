@@ -33,6 +33,11 @@ test('CI validates YAML and installs locked dependencies only', () => {
   )
   assert.match(
     workflow,
+    /pip install[^\n]*pytest-asyncio==\d+\.\d+\.\d+/,
+    'CI must install locked pytest-asyncio before pytest so asyncio_mode=auto resolves async tests',
+  )
+  assert.match(
+    workflow,
     /pip install[^\n]*-r src\/mcp\/requirements-mcp\.txt/,
     'CI must install locked MCP runtime deps before pytest so mcp/sqlite-vec imports resolve',
   )
@@ -42,6 +47,10 @@ test('CI validates YAML and installs locked dependencies only', () => {
     'CI must install locked vision deps before pytest so httpx imports resolve',
   )
   assert.doesNotMatch(workflow, /pip install[^\n]*\|\|/)
+  assert.ok(
+    workflow.indexOf('pytest-asyncio==') < workflow.indexOf('npm run test:ci'),
+    'Locked pytest-asyncio pip install must run BEFORE the pytest gate',
+  )
   assert.ok(
     workflow.indexOf('requirements-mcp.txt') < workflow.indexOf('npm run test:ci'),
     'Locked MCP pip install must run BEFORE the pytest gate',
