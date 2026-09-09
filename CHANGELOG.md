@@ -4,10 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+
 ## [Unreleased]
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
+
+## 🆕 What's New
+
+### Changed
+
+- (add new changes here)
+
+### Breaking Changes
+
+- (add breaking changes here)
+
+### Fixed
+
+- (add fixes here)
+
+⚠️ Known Issues
+
+- (add known issues here)
+
+## [1.4.4-beta.84.c9de80d] - 2026-09-09
 
 ## 🆕 What's New
 
@@ -64,6 +85,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## ⚠️ Known Issues
 
 ## ✅ Closed Issues
+
 
 ## [1.5.0] - 2026-09-01 (candidate)
 
