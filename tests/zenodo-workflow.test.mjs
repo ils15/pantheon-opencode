@@ -139,6 +139,7 @@ test('simulates the idempotent deposition creation step with stubbed network com
     'validate-zenodo-release.mjs',
     'recover-zenodo-deposition.mjs',
     'zenodo-release-state.mjs',
+    'manifest-inventory.mjs',
     'version-check.mjs',
   ]) {
     cpSync(join(process.cwd(), `scripts/${name}`), join(fixture, `scripts/${name}`))
@@ -193,6 +194,7 @@ test('loads all Zenodo modules when the release checkout predates the tooling', 
     'validate-zenodo-release.mjs',
     'recover-zenodo-deposition.mjs',
     'zenodo-release-state.mjs',
+    'manifest-inventory.mjs',
     'version-check.mjs',
   ]
   for (const module of modules) {

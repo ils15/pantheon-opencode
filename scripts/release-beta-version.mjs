@@ -1,80 +1,112 @@
 #!/usr/bin/env node
-/** Compute and optionally apply the beta version for a release PR. */
+/** Compute and apply a fail-closed beta version for a release PR. */
 
-import { readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import {
+  MANIFEST_INVENTORY,
+  SEMVER_PATTERN,
+  validateInventory,
+  writeInventoryVersion,
+} from './manifest-inventory.mjs'
 
-export const MANIFESTS = [
-  { file: 'package.json', kind: 'json' },
-  { file: 'pyproject.toml', kind: 'toml' },
-  { file: 'plugin.json', kind: 'json' },
-  { file: 'src/plugins/tui/package.json', kind: 'json' },
-]
+// Kept as a public compatibility API. The shared inventory is authoritative.
+export const MANIFESTS = Object.freeze(
+  MANIFEST_INVENTORY.filter(({ role }) => role === 'manifest').map(({ file, kind }) => ({
+    file,
+    kind,
+  })),
+)
 
-const STABLE = /^(\d+)\.(\d+)\.(\d+)$/
+const STABLE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+const BASELINE =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
+const FULL_SHA = /^[0-9a-f]{40}$/i
+const BETA_RELEASE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.[1-9]\d*\.[0-9a-f]{7}$/
+
+function parseBaseline(version) {
+  const value = String(version).trim()
+  const match = BASELINE.exec(value)
+  if (!match) throw new Error(`npm latest is not a valid semver baseline: "${version}"`)
+  const components = match.slice(1, 4).map(Number)
+  if (components.some((component) => !Number.isSafeInteger(component))) {
+    throw new Error(`npm latest has an unsafe semver component: "${version}"`)
+  }
+  return { stable: components.join('.'), prerelease: match[4] ?? null }
+}
 
 export function nextStableVersion(latest, intent = 'patch') {
-  const match = STABLE.exec(String(latest))
+  const match = STABLE.exec(String(latest).trim())
   if (!match) throw new Error(`npm latest is not a stable semver: "${latest}"`)
-  const [major, minor, patch] = match.slice(1).map(Number)
   if (!['patch', 'minor', 'major'].includes(intent)) {
     throw new Error(`release intent must be patch, minor, or major: "${intent}"`)
   }
+  const [major, minor, patch] = match.slice(1).map(Number)
   if (intent === 'major') return `${major + 1}.0.0`
   if (intent === 'minor') return `${major}.${minor + 1}.0`
   return `${major}.${minor}.${patch + 1}`
 }
 
-export function betaVersion(latest, intent, pr, sha) {
-  if (!/^\d+$/.test(String(pr)) || Number(pr) < 1) throw new Error(`invalid PR number: "${pr}"`)
-  const shortSha = String(sha).slice(0, 7)
-  if (!/^[0-9a-f]{7,}$/i.test(shortSha)) throw new Error(`invalid commit SHA: "${sha}"`)
-  return `${nextStableVersion(latest, intent)}-beta.${pr}.${shortSha}`
-}
-
-function writeVersion(root, { file, kind }, version) {
-  const path = join(root, file)
-  const raw = readFileSync(path, 'utf8')
-  if (kind === 'toml') {
-    const updated = raw.replace(/^(version\s*=\s*")[^"]+("\s*)$/m, `$1${version}$2`)
-    if (updated === raw) throw new Error(`no version field in ${file}`)
-    writeFileSync(path, updated)
-    return
+export function betaVersion(latest, intent = 'patch', pr, sha) {
+  if (!/^[1-9]\d*$/.test(String(pr)) || !Number.isSafeInteger(Number(pr))) {
+    throw new Error(`invalid PR number: "${pr}"`)
   }
-  const content = JSON.parse(raw)
-  content.version = version
-  writeFileSync(path, `${JSON.stringify(content, null, 2)}\n`)
+  const normalizedSha = String(sha).trim().toLowerCase()
+  if (!FULL_SHA.test(normalizedSha)) throw new Error(`invalid full commit SHA: "${sha}"`)
+
+  const baseline = parseBaseline(latest)
+  const baseVersion = baseline.prerelease
+    ? intent === 'patch'
+      ? baseline.stable
+      : nextStableVersion(baseline.stable, intent)
+    : nextStableVersion(baseline.stable, intent)
+  return `${baseVersion}-beta.${pr}.${normalizedSha.slice(0, 7)}`
 }
 
+function validateReleaseVersion(version) {
+  if (typeof version !== 'string' || !SEMVER_PATTERN.test(version)) {
+    throw new Error(`invalid release semver: "${version}"`)
+  }
+  if (!BETA_RELEASE.test(version)) {
+    throw new Error(`recovery version must be a lowercase seven-character beta SHA: "${version}"`)
+  }
+}
+
+/** Preflight all six entries, then update metadata only. */
 export function applyBetaVersion(root, version) {
-  for (const manifest of MANIFESTS) writeVersion(root, manifest, version)
-  // Keep npm's lockfile metadata consistent without changing dependency data.
-  const lockPath = join(root, 'package-lock.json')
-  const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
-  lock.version = version
-  if (lock.packages?.['']) lock.packages[''].version = version
-  writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`)
+  validateReleaseVersion(version)
+  const inventory = validateInventory(root, { allowVersionDivergence: true })
+  writeInventoryVersion(inventory, version)
+  const after = validateInventory(root)
+  if (after.sourceVersion !== version) throw new Error('beta version post-write validation failed')
 }
 
-const args = new Map(
-  process.argv.slice(2).map((arg) => {
-    const [key, ...value] = arg.split('=')
-    return [key.replace(/^--/, ''), value.join('=')]
-  }),
-)
+function parseArgs(args) {
+  return new Map(
+    args.map((arg) => {
+      const [key, ...value] = arg.split('=')
+      return [key.replace(/^--/, ''), value.join('=')]
+    }),
+  )
+}
 
-if (args.has('latest')) {
+const args = parseArgs(process.argv.slice(2))
+if (args.has('latest') || args.has('version')) {
   try {
-    const version = betaVersion(
-      args.get('latest'),
-      args.get('intent') || 'patch',
-      args.get('pr'),
-      args.get('sha'),
-    )
+    const version = args.has('version')
+      ? args.get('version')
+      : betaVersion(
+          args.get('latest'),
+          args.get('intent') || 'patch',
+          args.get('pr'),
+          args.get('sha'),
+        )
     if (args.has('apply')) applyBetaVersion(process.cwd(), version)
+    else if (args.has('apply-version')) applyBetaVersion(process.cwd(), args.get('apply-version'))
     console.log(version)
   } catch (error) {
     console.error(`release-beta-version: ${error.message}`)
     process.exit(1)
   }
+} else if (process.argv[1]?.endsWith('release-beta-version.mjs')) {
+  console.error('release-beta-version: --latest or --version is required')
+  process.exit(1)
 }

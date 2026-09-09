@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { commitPreparedUpdates } from '../scripts/manifest-inventory.mjs'
 import { compareVersions, MANIFESTS, syncToSource } from '../scripts/version-check.mjs'
 
 const SCRIPT = fileURLToPath(new URL('../scripts/version-check.mjs', import.meta.url))
@@ -43,18 +44,56 @@ const TUI_PKG_FIXTURE = `{
 
 const SOURCE_PKG = '1.2.1'
 
-/** Build a fixture tree: package.json (source) + 3 manifests, returns the root. */
-function makeFixture({ pyproject = '1.1.0', plugin = '1.1.0', tui = '1.2.0' } = {}) {
+/** Build a fixture tree: four manifests plus both lockfiles. */
+function makeFixture({
+  pyproject = '1.1.0',
+  plugin = '1.1.0',
+  tui = '1.2.0',
+  rootLock = SOURCE_PKG,
+  tuiLock = tui,
+} = {}) {
   const root = mkdtempSync(join(tmpdir(), 'version-check-'))
   writeFileSync(
     join(root, 'package.json'),
-    JSON.stringify({ name: 'pantheon-opencode', version: SOURCE_PKG }, null, 2) + '\n',
+    `${JSON.stringify({ name: 'pantheon-opencode', version: SOURCE_PKG }, null, 2)}\n`,
   )
   writeFileSync(join(root, 'pyproject.toml'), TOML_FIXTURE.replace('1.1.0', pyproject))
   writeFileSync(join(root, 'plugin.json'), PLUGIN_FIXTURE.replace('1.1.0', plugin))
   const tuiDir = join(root, 'src', 'plugins', 'tui')
   mkdirSyncRecursive(tuiDir)
   writeFileSync(join(tuiDir, 'package.json'), TUI_PKG_FIXTURE.replace('1.2.0', tui))
+  writeFileSync(
+    join(root, 'package-lock.json'),
+    `${JSON.stringify(
+      {
+        name: 'pantheon-opencode',
+        version: rootLock,
+        lockfileVersion: 3,
+        packages: {
+          '': { name: 'pantheon-opencode', version: rootLock, dependencies: { fixture: '^1.0.0' } },
+        },
+        dependencies: { fixture: { version: '1.0.0', integrity: 'sha512-fixture-root' } },
+      },
+      null,
+      2,
+    )}\n`,
+  )
+  writeFileSync(
+    join(tuiDir, 'package-lock.json'),
+    `${JSON.stringify(
+      {
+        name: 'pantheon-tui',
+        version: tuiLock,
+        lockfileVersion: 3,
+        packages: {
+          '': { name: 'pantheon-tui', version: tuiLock, dependencies: { fixture: '^1.0.0' } },
+        },
+        dependencies: { fixture: { version: '1.0.0', integrity: 'sha512-fixture-tui' } },
+      },
+      null,
+      2,
+    )}\n`,
+  )
   return root
 }
 
@@ -121,10 +160,84 @@ test('syncToSource rewrites every divergent manifest to the source version', () 
   const root = makeFixture()
   try {
     const changed = syncToSource(root)
-    assert.equal(changed, 3, 'three manifests must be rewritten')
+    assert.equal(changed, 4, 'three manifests and the TUI lock must be rewritten')
     const result = compareVersions(root)
     assert.equal(result.ok, true)
     for (const m of result.manifests) assert.equal(m.version, SOURCE_PKG)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('missing lockfile is a hard preflight failure before --fix writes', () => {
+  const root = makeFixture()
+  const before = readFileSync(join(root, 'package.json'), 'utf8')
+  try {
+    rmSync(join(root, 'package-lock.json'))
+    assert.throws(() => syncToSource(root), /missing: package-lock\.json/i)
+    assert.equal(readFileSync(join(root, 'package.json'), 'utf8'), before)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('an internally divergent lock fails closed without partial writes', () => {
+  const root = makeFixture()
+  try {
+    const lockPath = join(root, 'package-lock.json')
+    const paths = [
+      'package.json',
+      'pyproject.toml',
+      'plugin.json',
+      'src/plugins/tui/package.json',
+      'package-lock.json',
+      'src/plugins/tui/package-lock.json',
+    ].map((file) => join(root, file))
+    const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+    lock.packages[''].version = '9.9.9'
+    writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`)
+    const before = new Map(paths.map((path) => [path, readFileSync(path, 'utf8')]))
+    assert.equal(compareVersions(root).ok, false)
+    assert.throws(() => syncToSource(root), /top-level version diverges/i)
+    for (const [path, content] of before) assert.equal(readFileSync(path, 'utf8'), content, path)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a lock divergent from its manifest is repairable when internally consistent', () => {
+  const root = makeFixture()
+  try {
+    const lockPath = join(root, 'package-lock.json')
+    const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+    lock.version = '9.9.9'
+    lock.packages[''].version = '9.9.9'
+    writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`)
+    assert.equal(compareVersions(root).ok, false)
+    assert.equal(syncToSource(root), 5)
+    const fixed = JSON.parse(readFileSync(lockPath, 'utf8'))
+    assert.equal(fixed.version, SOURCE_PKG)
+    assert.equal(fixed.packages[''].version, SOURCE_PKG)
+    assert.equal(fixed.dependencies.fixture.integrity, 'sha512-fixture-root')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('prepared batch failure leaves every original file unchanged', () => {
+  const root = makeFixture()
+  try {
+    const packagePath = join(root, 'package.json')
+    const before = readFileSync(packagePath, 'utf8')
+    assert.throws(
+      () =>
+        commitPreparedUpdates([
+          { path: packagePath, content: `${before} ` },
+          { path: join(root, 'missing.json'), content: '{}' },
+        ]),
+      /ENOENT|no such file/i,
+    )
+    assert.equal(readFileSync(packagePath, 'utf8'), before)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -196,7 +309,7 @@ test('CLI --fix syncs all manifests to the source version and exits 0', () => {
   try {
     const { status, stdout } = runCli(['--fix'], root)
     assert.equal(status, 0)
-    assert.match(stdout, /Synced 3 manifest\(s\) to v1\.2\.1/)
+    assert.match(stdout, /Synced 4 metadata entries to v1\.2\.1/)
     assert.equal(compareVersions(root).ok, true)
   } finally {
     rmSync(root, { recursive: true, force: true })

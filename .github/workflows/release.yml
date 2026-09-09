@@ -49,6 +49,7 @@ jobs:
       # mutation can be reached before the recovery inputs are a coherent set.
       - name: Validate release inputs before checkout
         run: |
+          set -euo pipefail
           RECOVERY_VERSION="$RECOVERY_VERSION" RECOVERY_TARGET_SHA="$RECOVERY_TARGET_SHA" RECOVERY_PR_NUMBER="$RECOVERY_PR_NUMBER" EVENT_NAME="$EVENT_NAME" node <<'NODE'
           const version = process.env.RECOVERY_VERSION ?? '';
           const sha = process.env.RECOVERY_TARGET_SHA ?? '';
@@ -80,6 +81,7 @@ jobs:
 
       - name: Assert validation has no release credentials
         run: |
+          set -euo pipefail
           test -z "${NODE_AUTH_TOKEN:-}" || { echo "::error::Validation received NODE_AUTH_TOKEN."; exit 1; }
           test -z "${NPM_TOKEN:-}" || { echo "::error::Validation received NPM_TOKEN."; exit 1; }
           test -z "${RELEASE_TOKEN:-}" || { echo "::error::Validation received RELEASE_TOKEN."; exit 1; }
@@ -88,19 +90,31 @@ jobs:
         with:
           ref: ${{ env.TARGET_SHA }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Confirm checkout matches TARGET_SHA
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${TARGET_SHA,,}"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || {
+            echo "::error::Checked out commit does not match TARGET_SHA."
+            exit 1
+          }
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      # Dispatched ref code is untrusted. There is no fallback to npm install
-      # and no lifecycle script is allowed to run in this job.
+      # Dispatched ref code is untrusted. No lifecycle script is allowed to run
+      # in this job.
       - name: Install dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
 
       - name: Determine release type
         id: type
         run: |
+          set -euo pipefail
           if [ -n "$RECOVERY_VERSION" ]; then
             echo "channel=beta" >> "$GITHUB_OUTPUT"
             echo "tag=beta" >> "$GITHUB_OUTPUT"
@@ -117,20 +131,54 @@ jobs:
       - name: Apply exact recovery version
         if: steps.type.outputs.recovery == 'true'
         run: |
+          set -euo pipefail
           npm version "$RECOVERY_VERSION" --no-git-tag-version --ignore-scripts >/dev/null
           node scripts/version-check.mjs --fix
+
+      - name: Query published stable version
+        if: steps.type.outputs.channel == 'beta' && steps.type.outputs.recovery != 'true'
+        id: npm_latest
+        run: |
+          set -euo pipefail
+          LATEST_RESPONSE="$RUNNER_TEMP/npm-latest-response"
+          LATEST_ERROR="$RUNNER_TEMP/npm-latest-error"
+          if npm view pantheon-opencode dist-tags.latest --json > "$LATEST_RESPONSE" 2> "$LATEST_ERROR"; then
+            LATEST=$(tr -d '"[:space:]' < "$LATEST_RESPONSE")
+            printf '%s' "$LATEST" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$' || { echo "::error::npm latest is not a valid semver baseline: $LATEST"; exit 1; }
+          elif grep -Eqi 'E404|404[[:space:]]+Not Found|code[[:space:]]+E404' "$LATEST_ERROR" "$LATEST_RESPONSE"; then
+            echo '::error::Published npm package was not found; refusing to compute a beta version.'; exit 1
+          else
+            echo '::error::Could not determine published npm metadata; refusing to compute a beta version.'; cat "$LATEST_ERROR"; exit 1
+          fi
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+
+      - name: Compute and apply beta version
+        if: steps.type.outputs.channel == 'beta' && steps.type.outputs.recovery != 'true'
+        id: beta_version
+        env:
+          LATEST_BASELINE: ${{ steps.npm_latest.outputs.latest }}
+        run: |
+          set -euo pipefail
+          FULL_TARGET_SHA="$(git rev-parse HEAD)"
+          [ "$FULL_TARGET_SHA" = "${TARGET_SHA,,}" ] || { echo '::error::Computed beta version SHA is not TARGET_SHA.'; exit 1; }
+          VERSION=$(node scripts/release-beta-version.mjs --latest="$LATEST_BASELINE" --intent=patch --pr="$GITHUB_RUN_NUMBER" --sha="$FULL_TARGET_SHA" --apply)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Version gate
         id: version_gate
         env:
           GATE_CHANNEL: ${{ steps.type.outputs.channel }}
           RECOVERY_VERSION: ${{ inputs.recovery_version }}
+          COMPUTED_BETA_VERSION: ${{ steps.beta_version.outputs.version }}
         run: |
+          set -euo pipefail
           node <<'NODE'
           const { execFileSync } = require('node:child_process');
           const fs = require('node:fs');
           const pkgVer = String(JSON.parse(fs.readFileSync('package.json', 'utf8')).version || '');
           const channel = process.env.GATE_CHANNEL || 'stable';
+          const stable = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+          const beta = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.[1-9]\d*\.[0-9a-f]{7}$/;
           if (process.env.RECOVERY_VERSION) {
             if (pkgVer !== process.env.RECOVERY_VERSION) {
               console.error('::error::Recovery package version was not applied exactly.');
@@ -148,36 +196,17 @@ jobs:
           };
           tags.sort((a, b) => cmp(a.slice(1), b.slice(1)));
           const latest = tags.length ? tags.at(-1) : 'v0.0.0';
-          if (!/^\d+\.\d+\.\d+$/.test(pkgVer) || (channel === 'stable' && cmp(pkgVer, latest.slice(1)) < 0)) {
+          if (channel === 'beta') {
+            if (!beta.test(pkgVer) || (process.env.COMPUTED_BETA_VERSION && pkgVer !== process.env.COMPUTED_BETA_VERSION)) {
+              console.error(`::error::Beta version gate failed: ${pkgVer}.`);
+              process.exit(1);
+            }
+          } else if (!stable.test(pkgVer) || cmp(pkgVer, latest.slice(1)) < 0) {
             console.error(`::error::Version gate failed: ${pkgVer} (latest stable ${latest}).`);
             process.exit(1);
           }
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${pkgVer}\nlatest_stable=${latest}\n`);
           NODE
-
-      - name: Query published stable version
-        if: steps.type.outputs.channel == 'beta' && steps.type.outputs.recovery != 'true'
-        id: npm_latest
-        run: |
-          LATEST_RESPONSE="$RUNNER_TEMP/npm-latest-response"
-          LATEST_ERROR="$RUNNER_TEMP/npm-latest-error"
-          if npm view pantheon-opencode dist-tags.latest --json > "$LATEST_RESPONSE" 2> "$LATEST_ERROR"; then
-            LATEST=$(tr -d '"[:space:]' < "$LATEST_RESPONSE")
-            printf '%s' "$LATEST" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::npm latest is not a stable semver: $LATEST"; exit 1; }
-          elif grep -Eqi 'E404|404[[:space:]]+Not Found|code[[:space:]]+E404' "$LATEST_ERROR" "$LATEST_RESPONSE"; then
-            echo '::error::Published npm package was not found; refusing to compute a beta version.'; exit 1
-          else
-            echo '::error::Could not determine published npm metadata; refusing to compute a beta version.'; cat "$LATEST_ERROR"; exit 1
-          fi
-          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
-
-      - name: Compute and apply beta version
-        if: steps.type.outputs.channel == 'beta' && steps.type.outputs.recovery != 'true'
-        env:
-          LATEST_STABLE: ${{ steps.npm_latest.outputs.latest }}
-        run: |
-          VERSION=$(node scripts/release-beta-version.mjs --latest="$LATEST_STABLE" --intent=patch --pr="$GITHUB_RUN_NUMBER" --sha="$(git rev-parse --short HEAD)" --apply)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Validate release manifests
         # Both channels must validate the checked-out manifests before an
@@ -189,17 +218,33 @@ jobs:
           BASE_VERSION: ${{ steps.version_gate.outputs.version }}
           RECOVERY_VERSION: ${{ inputs.recovery_version }}
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release-artifact"
           if [ -n "$RECOVERY_VERSION" ]; then
-            printf '%s\n' "Recovery publish for existing GitHub Release $RECOVERY_VERSION." > "$RUNNER_TEMP/release-artifact/release-notes.md"
-          elif ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-artifact/release-notes.md"; then
+            printf '%s\n' "Recovery publish for existing GitHub Release $RECOVERY_VERSION." > "$RUNNER_TEMP/release-notes.md"
+          elif ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-notes.md"; then
             echo "::error::CHANGELOG.md has no [$BASE_VERSION] section."; exit 1
           fi
-          VERSION=$(node -p "require('./package.json').version")
-          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+\.[0-9a-f]+)?$' || { echo "::error::Invalid release version."; exit 1; }
-          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/release-artifact" >/dev/null
-          printf '%s\n' "$VERSION" > "$RUNNER_TEMP/release-artifact/version"
-          printf '%s\n' "$TARGET_SHA" | tr '[:upper:]' '[:lower:]' > "$RUNNER_TEMP/release-artifact/target-sha"
+          npm run package:evidence -- --output-dir="$RUNNER_TEMP/release-artifact" --target-sha="$TARGET_SHA" > "$RUNNER_TEMP/package-evidence.json"
+          TARBALLS=("$RUNNER_TEMP/release-artifact"/*.tgz)
+          [ "${#TARBALLS[@]}" -eq 1 ] && [ -f "${TARBALLS[0]}" ] || {
+            echo "::error::Package evidence must contain exactly one .tgz."
+            exit 1
+          }
+          METADATA_PATH="$RUNNER_TEMP/release-artifact/metadata.json" TARGET_SHA="$TARGET_SHA" TARBALL="${TARBALLS[0]}" node <<'NODE'
+          const { createHash } = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const metadata = JSON.parse(fs.readFileSync(process.env.METADATA_PATH, 'utf8'));
+          const targetSha = String(process.env.TARGET_SHA || '').trim().toLowerCase();
+          const tarball = process.env.TARBALL;
+          const actualSha = createHash('sha256').update(fs.readFileSync(tarball)).digest('hex');
+          if (!/^\d+\.\d+\.\d+(?:-beta\.\d+\.[0-9a-f]+)?$/.test(metadata.version || '')) throw new Error('Invalid package evidence version.');
+          if (metadata.targetSha !== targetSha) throw new Error('Package evidence target SHA does not match TARGET_SHA.');
+          if (!/^[0-9a-f]{64}$/.test(metadata.tarballSha256 || '') || metadata.tarballSha256 !== actualSha) throw new Error('Package evidence tarball SHA-256 is invalid.');
+          if (metadata.tarball !== path.basename(tarball)) throw new Error('Package evidence tarball name is invalid.');
+          NODE
+          cp "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/release-artifact/release-notes.md"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -228,6 +273,7 @@ jobs:
       # mutation in this job. It does not inspect or execute the artifact.
       - name: Revalidate release inputs before mutations
         run: |
+          set -euo pipefail
           RELEASE_REPO="$RELEASE_REPO" node <<'NODE'
           const repo = process.env.RELEASE_REPO ?? '';
           if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(repo)) {
@@ -252,6 +298,7 @@ jobs:
           TARGET_SHA=$(printf '%s' "$TARGET_SHA" | tr '[:upper:]' '[:lower:]')
           case "$TARGET_SHA" in ''|*[!0-9a-fA-F]*) echo "::error::Target SHA must be hexadecimal."; exit 1 ;; esac
           [ "${#TARGET_SHA}" -eq 40 ] || { echo "::error::Target SHA must be 40 characters."; exit 1; }
+          printf 'TARGET_SHA=%s\n' "$TARGET_SHA" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v4
         with:
@@ -261,35 +308,46 @@ jobs:
       - name: Validate immutable artifact metadata
         id: metadata
         run: |
-          ARTIFACT_SHA=$(tr -d '\n' < release-artifact/target-sha)
-          case "$ARTIFACT_SHA" in
-            ''|*[!0-9a-fA-F]*) echo "::error::Artifact target SHA must be hexadecimal."; exit 1 ;;
-          esac
-          [ "${#ARTIFACT_SHA}" -eq 40 ] || { echo "::error::Artifact target SHA must be 40 characters."; exit 1; }
-          [ "$ARTIFACT_SHA" = "$TARGET_SHA" ] || { echo "::error::Validation and release TARGET_SHA differ."; exit 1; }
-          VERSION=$(tr -d '\n' < release-artifact/version)
-          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+\.[0-9a-f]+)?$' || { echo "::error::Invalid artifact version."; exit 1; }
-          PACKAGE_REL=$(find release-artifact -maxdepth 1 -type f -name '*.tgz' -print -quit)
-          [ -n "$PACKAGE_REL" ] || { echo "::error::Release package artifact is missing."; exit 1; }
-          PACKAGE=$(realpath -- "$PACKAGE_REL")
+          set -euo pipefail
+          TARBALLS=(release-artifact/*.tgz)
+          [ "${#TARBALLS[@]}" -eq 1 ] && [ -f "${TARBALLS[0]}" ] || {
+            echo "::error::Release artifact must contain exactly one .tgz."
+            exit 1
+          }
+          PACKAGE=$(realpath -- "${TARBALLS[0]}")
           [ -f "$PACKAGE" ] || { echo "::error::Release package artifact path is invalid."; exit 1; }
           tar -tzf "$PACKAGE" > "$RUNNER_TEMP/package-contents" || {
             echo "::error::Release package artifact is not a readable tarball."; exit 1;
           }
           grep -Fxq 'package/package.json' "$RUNNER_TEMP/package-contents" || {
-            echo "::error::Release package artifact is not an npm pack tarball."; exit 1;
+            echo "::error::Release package artifact is not an npm package tarball."; exit 1;
           }
           tar -xOzf "$PACKAGE" package/package.json > "$RUNNER_TEMP/package.json" || {
             echo "::error::Could not read package metadata from release artifact."; exit 1;
           }
-          ARTIFACT_VERSION="$VERSION" node <<'NODE'
+          METADATA_VALUES=$(METADATA_PATH=release-artifact/metadata.json TARGET_SHA="$TARGET_SHA" PACKAGE="$PACKAGE" PACKAGE_JSON="$RUNNER_TEMP/package.json" node <<'NODE'
+          const { createHash } = require('node:crypto');
           const fs = require('node:fs');
-          const packageJson = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/package.json', 'utf8'));
-          if (packageJson.name !== 'pantheon-opencode' || packageJson.version !== process.env.ARTIFACT_VERSION) {
-            console.error('::error::Release tarball package metadata does not match the validated artifact.');
-            process.exit(1);
+          const path = require('node:path');
+          const metadata = JSON.parse(fs.readFileSync(process.env.METADATA_PATH, 'utf8'));
+          const packageJson = JSON.parse(fs.readFileSync(process.env.PACKAGE_JSON, 'utf8'));
+          const expectedTarget = String(process.env.TARGET_SHA || '').trim().toLowerCase();
+          const actualSha = createHash('sha256').update(fs.readFileSync(process.env.PACKAGE)).digest('hex');
+          if (!/^\d+\.\d+\.\d+(?:-beta\.\d+\.[0-9a-f]+)?$/.test(metadata.version || '')) throw new Error('Invalid artifact version.');
+          if (!/^[0-9a-f]{40}$/.test(metadata.targetSha || '') || metadata.targetSha !== expectedTarget) throw new Error('Artifact target SHA does not match TARGET_SHA.');
+          if (!/^[0-9a-f]{64}$/.test(metadata.tarballSha256 || '') || metadata.tarballSha256 !== actualSha) throw new Error('Downloaded tarball SHA-256 does not match metadata.');
+          if (metadata.tarball !== path.basename(process.env.PACKAGE)) throw new Error('Artifact metadata tarball name does not match the downloaded file.');
+          if (packageJson.name !== 'pantheon-opencode' || packageJson.version !== metadata.version) throw new Error('Release tarball package metadata does not match the validated artifact.');
+          for (const [file, expected] of [['version', metadata.version], ['target-sha', metadata.targetSha], ['tarball-sha256', metadata.tarballSha256]]) {
+            if (fs.readFileSync(path.join('release-artifact', file), 'utf8').trim() !== expected) throw new Error(`Artifact ${file} does not match metadata.`);
           }
+          process.stdout.write(`${metadata.version}\t${metadata.targetSha}\t${metadata.tarballSha256}`);
           NODE
+          )
+          IFS=$'\t' read -r VERSION ARTIFACT_SHA TARBALL_SHA256 <<< "$METADATA_VALUES"
+          [ -n "$VERSION" ] && [ "$ARTIFACT_SHA" = "${TARGET_SHA,,}" ] && [ "${#TARBALL_SHA256}" -eq 64 ] || {
+            echo "::error::Artifact metadata output is malformed."; exit 1;
+          }
           echo "version=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
 
@@ -304,6 +362,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
+          set -euo pipefail
           TAG_REF="$VERSION"
           if [ -n "$RECOVERY_VERSION" ]; then
             EXPECTED_TAG="v${RECOVERY_VERSION}"
@@ -316,6 +375,8 @@ jobs:
           }
           NODE
           if TAG_RESPONSE=$(gh api "repos/$RELEASE_REPO/git/ref/tags/$TAG_REF" --include 2>"$RUNNER_TEMP/tag-ref-error"); then
+            TAG_STATUS=$(printf '%s\n' "$TAG_RESPONSE" | awk 'NR == 1 { print $2; exit }')
+            [ "$TAG_STATUS" = 200 ] || { echo "::error::Unexpected GitHub tag API status: ${TAG_STATUS:-unknown}."; exit 1; }
             printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body { print }' > "$RUNNER_TEMP/tag-ref-body"
             TAG_OBJECT=$(TAG_BODY="$RUNNER_TEMP/tag-ref-body" node <<'NODE'
           const fs = require('node:fs');
@@ -334,6 +395,8 @@ jobs:
             while [ "$TAG_OBJECT_TYPE" = tag ]; do
               [ "$TAG_DEPTH" -lt 4 ] || { echo '::error::Annotated tag nesting is too deep.'; exit 1; }
               TAG_RESPONSE=$(gh api "repos/$RELEASE_REPO/git/tags/$TAG_OBJECT_SHA" --include 2>"$RUNNER_TEMP/tag-object-error") || { echo '::error::Could not resolve annotated tag object.'; cat "$RUNNER_TEMP/tag-object-error"; exit 1; }
+              TAG_STATUS=$(printf '%s\n' "$TAG_RESPONSE" | awk 'NR == 1 { print $2; exit }')
+              [ "$TAG_STATUS" = 200 ] || { echo "::error::Unexpected GitHub tag object API status: ${TAG_STATUS:-unknown}."; exit 1; }
               printf '%s\n' "$TAG_RESPONSE" | awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body { print }' > "$RUNNER_TEMP/tag-object-body"
               TAG_OBJECT=$(TAG_BODY="$RUNNER_TEMP/tag-object-body" node <<'NODE'
           const fs = require('node:fs');
@@ -367,11 +430,12 @@ jobs:
           if [ -n "$RECOVERY_VERSION" ]; then
             [ "$TAG_OBJECT_SHA" = "$TARGET_SHA" ] || { echo '::error::Recovery tag does not point to recovery target SHA.'; exit 1; }
           fi
-          # A release lookup is a state check, not a best-effort probe. Only
-          # an explicit 404 means "missing"; auth, API, and network errors
+          # Only an explicit 404 means "missing"; auth, API, and network errors
           # stop here before any tag/release/npm mutation.
           RELEASE_RESPONSE="$RUNNER_TEMP/release-response"
           if gh api --include "repos/$RELEASE_REPO/releases/tags/$VERSION" > "$RELEASE_RESPONSE" 2> "$RUNNER_TEMP/release-error"; then
+            RELEASE_STATUS=$(awk 'NR == 1 { print $2; exit }' "$RELEASE_RESPONSE")
+            [ "$RELEASE_STATUS" = 200 ] || { echo "::error::Unexpected GitHub release API status: ${RELEASE_STATUS:-unknown}."; exit 1; }
             awk 'BEGIN { body=0 } /^\r?$/ { body=1; next } body { print }' "$RELEASE_RESPONSE" > "$RUNNER_TEMP/release-body"
             RELEASE_BODY="$RUNNER_TEMP/release-body" TARGET_SHA="$TARGET_SHA" VERSION="$VERSION" node <<'NODE'
           const fs = require('node:fs');
@@ -428,6 +492,7 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
           RELEASE_CHANNEL: ${{ inputs.release_channel }}
         run: |
+          set -euo pipefail
           if [ "$RELEASE_CHANNEL" = "beta" ]; then
             gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --prerelease --notes-file release-artifact/release-notes.md
           else

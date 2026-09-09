@@ -8,7 +8,7 @@ want useful structure without giving up control of their code.
 [Português (Brasil)](README.pt-BR.md) ·
 [Repository](https://github.com/ils15/pantheon-opencode) · [MIT License](LICENSE)
 
-[![Version](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=version)](https://github.com/ils15/pantheon-opencode/releases/tag/v1.5.0)
+[![Version](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=version)](https://github.com/ils15/pantheon-opencode/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg)](https://doi.org/10.5281/zenodo.22306637)
 
@@ -70,13 +70,14 @@ clear handoff between stages of work.
 
 ## Status
 
-Current release: **v1.5.0**. Pantheon is designed for OpenCode and depends on
-the availability and configuration of OpenCode and any optional services you
-choose to use. Check the [releases](https://github.com/ils15/pantheon-opencode/releases)
-and [changelog](CHANGELOG.md) for the latest changes.
+Operational checkout version: **v1.5.0-beta.2** (candidate; publication is not
+asserted here). Pantheon is designed for OpenCode and depends on the
+availability and configuration of OpenCode and any optional services you choose
+to use. Check the [releases](https://github.com/ils15/pantheon-opencode/releases)
+and [changelog](CHANGELOG.md) for the latest published changes.
 
 
-## What's new in 1.5.0
+## What's new in 1.5.0-beta.2
 
 - OpenCode-only installer: platform guides consolidated into a single
   [OpenCode guide](docs/platforms/opencode.md).
@@ -95,7 +96,7 @@ and [changelog](CHANGELOG.md) for the latest changes.
   [Beta2 agent economy policy](docs/ws3-token-opt-measurements.md#beta2-agent-economy-policy).
 - A `--prompts` installer flag is planned for a future release.
 
-## OpenCode V1/V2 — Dual Version (1.5.0)
+## OpenCode V1/V2 — Dual Version (1.5.0-beta.2)
 
 Pantheon has two **exclusive** OpenCode plugin contracts. Ordinary OpenCode
 configuration may be shared, but the Pantheon plugin registration is selected
@@ -161,6 +162,14 @@ pushes, merges, and tags never publish anything, and every validation gate is
 fail-closed: only an explicit PASS authorizes release evidence. See
 [docs/RELEASING.md](docs/RELEASING.md) for validation and recovery details.
 
+Release validation keeps each manifest with its lockfile: the root
+`package.json` + `package-lock.json` and the TUI
+`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`. Both use
+`npm ci --ignore-scripts`; an `npm ci` failure blocks the run and there is no
+`npm install` fallback. A release carries one `.tgz` tarball, computes the
+SHA-256 of that same artifact, and binds the tarball and GitHub release to the
+full `TARGET_SHA`; a second pack is not interchangeable.
+
 ## Sandbox validation (V1/V2)
 
 `scripts/test-opencode-v1-v2-sandbox.sh` validates the globally installed
@@ -184,6 +193,9 @@ Modes are combinable (e.g. `--prepare --run v1 --prompts`). Binaries are
 resolved strictly inside the sandbox npm prefix — a non-prepared sandbox fails
 fast instead of silently testing the host installation.
 
+This validates the prepared isolated sandbox only. A PASS is not proof of
+support for every real host or for host configurations that were not exercised.
+
 Env overrides:
 
 | Variable | Default | Purpose |
@@ -196,6 +208,15 @@ Env overrides:
 
 Exit codes: `0` no real failures · `1` real failure (see `prompts-report.md`
 in the sandbox root) · `2` usage error · `3` sandbox not prepared.
+
+### Intentional memory MCP divergence
+
+`scripts/memory_mcp_server.py` and `src/mcp/memory_mcp_server.py` are
+intentionally different. The standalone `scripts/` copy keeps the lightweight
+`memory_*` contract; the installed `src/mcp/` copy additionally exposes the
+optional codemap schema and `code_index`, `code_query`, and `code_neighbors`.
+The other shared MCP copies remain identical. Do not overwrite one memory copy
+with the other.
 
 ## Documentation
 
@@ -214,9 +235,10 @@ or pull request.
 
 ## Citation and DOI
 
-Pantheon is released under the [MIT License](LICENSE). For the published v1.4.3
-record, use the [Zenodo DOI](https://doi.org/10.5281/zenodo.22306637); citation
-metadata is also available in [CITATION.cff](CITATION.cff).
+Pantheon is released under the [MIT License](LICENSE). For the historical
+published v1.4.3 record only, use the [Zenodo DOI](https://doi.org/10.5281/zenodo.22306637);
+it is not the current operational version. Citation metadata is also available
+in [CITATION.cff](CITATION.cff).
 
 Canonical repository: <https://github.com/ils15/pantheon-opencode>
 

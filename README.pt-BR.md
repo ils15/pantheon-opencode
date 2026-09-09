@@ -8,7 +8,7 @@ e equipes que querem mais estrutura sem perder o controle do próprio código.
 [English](README.md) ·
 [Repositório](https://github.com/ils15/pantheon-opencode) · [Licença MIT](LICENSE)
 
-[![Versão](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=versão)](https://github.com/ils15/pantheon-opencode/releases/tag/v1.5.0)
+[![Versão](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=versão)](https://github.com/ils15/pantheon-opencode/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg)](https://doi.org/10.5281/zenodo.22306637)
 
@@ -71,13 +71,14 @@ verificações repetíveis e passagens claras entre etapas do trabalho.
 
 ## Status
 
-Versão atual: **v1.5.0**. O Pantheon foi feito para OpenCode e depende da
+Versão operacional neste checkout: **v1.5.0-beta.2** (candidata; esta página
+não afirma publicação). O Pantheon foi feito para OpenCode e depende da
 disponibilidade e da configuração do OpenCode e dos serviços opcionais que você
 escolher. Veja as [releases](https://github.com/ils15/pantheon-opencode/releases)
-e o [changelog](CHANGELOG.md) para acompanhar as mudanças.
+e o [changelog](CHANGELOG.md) para acompanhar as mudanças publicadas.
 
 
-## Novidades da 1.5.0
+## Novidades da 1.5.0-beta.2
 
 - Instalador exclusivo para OpenCode: guias de plataformas consolidados em um
   único [guia OpenCode](docs/platforms/opencode.md).
@@ -93,7 +94,7 @@ e o [changelog](CHANGELOG.md) para acompanhar as mudanças.
   lado — veja [Validação em sandbox](#validação-em-sandbox-v1v2).
 - A flag `--prompts` do instalador está planejada para uma release futura.
 
-## OpenCode V1/V2 — Versão dupla (1.5.0)
+## OpenCode V1/V2 — Versão dupla (1.5.0-beta.2)
 
 O Pantheon tem dois contratos de plugin OpenCode **exclusivos**. A configuração
 comum do OpenCode pode ser compartilhada, mas o registro do plugin Pantheon é
@@ -161,6 +162,14 @@ de PR, push, merge e tag nunca publicam nada, e todos os gates de validação s�
 fail-closed: somente um PASS explícito autoriza release evidence. Consulte
 [docs/RELEASING.md](docs/RELEASING.md) para detalhes de validação e recuperação.
 
+A validação mantém cada manifest junto do seu lockfile: o root
+`package.json` + `package-lock.json` e o TUI
+`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`. Ambos usam
+`npm ci --ignore-scripts`; uma falha em `npm ci` bloqueia a execução e não há
+fallback para `npm install`. Uma release carrega um único tarball `.tgz`, calcula
+o SHA-256 desse mesmo artefato e vincula o tarball e o GitHub Release ao
+`TARGET_SHA` completo; um segundo pack não é intercambiável.
+
 ## Validação em sandbox (V1/V2)
 
 O `scripts/test-opencode-v1-v2-sandbox.sh` valida o pacote instalado
@@ -185,6 +194,9 @@ Os modos são combináveis (ex.: `--prepare --run v1 --prompts`). Os binários s
 resolvidos estritamente dentro do prefix npm do sandbox — um sandbox não
 preparado falha rápido em vez de testar silenciosamente a instalação do host.
 
+Isso valida somente o sandbox isolado e preparado. Um PASS não prova suporte
+para todo host real nem para configurações de host que não foram exercitadas.
+
 Variáveis de ambiente:
 
 | Variável | Padrão | Finalidade |
@@ -198,6 +210,15 @@ Variáveis de ambiente:
 Códigos de saída: `0` sem falhas reais · `1` falha real (veja
 `prompts-report.md` na raiz do sandbox) · `2` erro de uso · `3` sandbox não
 preparado.
+
+### Divergência intencional do memory MCP
+
+`scripts/memory_mcp_server.py` e `src/mcp/memory_mcp_server.py` são
+intencionalmente diferentes. A cópia independente em `scripts/` mantém o
+contrato leve de `memory_*`; a cópia instalada em `src/mcp/` também expõe o
+schema opcional de codemap e `code_index`, `code_query` e `code_neighbors`. As
+outras cópias compartilhadas permanecem idênticas. Não sobrescreva uma cópia de
+memória com a outra.
 
 ## Documentação
 
@@ -216,9 +237,10 @@ uma issue ou pull request.
 
 ## Citação e DOI
 
-O Pantheon é distribuído sob a [Licença MIT](LICENSE). Para o registro publicado
-da v1.4.3, use o [DOI do Zenodo](https://doi.org/10.5281/zenodo.22306637); os
-metadados de citação também estão em [CITATION.cff](CITATION.cff).
+O Pantheon é distribuído sob a [Licença MIT](LICENSE). Para o registro histórico
+publicado da v1.4.3 apenas, use o [DOI do Zenodo](https://doi.org/10.5281/zenodo.22306637);
+essa não é a versão operacional atual. Os metadados de citação também estão em
+[CITATION.cff](CITATION.cff).
 
 Repositório canônico: <https://github.com/ils15/pantheon-opencode>
 

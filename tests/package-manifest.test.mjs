@@ -27,6 +27,8 @@ test('package allow-list contains manifests, plugin entrypoints, and TUI payload
   const tuiPackage = readJson('src/plugins/tui/package.json')
 
   assert.ok(packageJson.files.includes('plugin.json'))
+  assert.ok(packageJson.files.includes('package-lock.json'))
+  assert.ok(packageJson.files.includes('pyproject.toml'))
   for (const [exportName, target] of Object.entries(packageJson.exports)) {
     assert.ok(
       exportName === './plugin' || exportName === './plugin-v2' || exportName === './v2-bridge',
@@ -54,6 +56,10 @@ test('package allow-list contains manifests, plugin entrypoints, and TUI payload
     'V2 plugin directory must carry a real index.ts',
   )
   assert.ok(packageJson.files.includes('src/plugins/tui/**'))
+  assert.ok(
+    existsSync(join(ROOT, 'src', 'plugins', 'tui', 'package-lock.json')),
+    'TUI lockfile must exist in the published payload',
+  )
   assert.equal(tuiPackage.exports['./tui'], './dist/tui.js')
   assert.equal(tuiPackage.exports['./server'], './dist/server.js')
 })
