@@ -1,363 +1,304 @@
 /**
- * Compaction Handoff Coordinator (B3-04) — pure, bounded state machine for
- * handing off compaction context from the session to persistent memory.
+ * Compaction handoff coordinator.
  *
- * WHY: compaction needs a deterministic, idempotent handoff that survives
- * retries without exactly-once claims. The coordinator keeps the handoff
- * local, pure, and testable — no runtime hooks, no board, no MCP, no plugins.
- *
- * HOW: the handoff flows PREPARED -> memory immutable publish -> COMMITTED.
- * The memory port is the only write surface. A missing port returns
- * NOT_SUPPORTED; a memory failure returns UNAVAILABLE and leaves the handoff
- * in PREPARED (no retry, no fallback). Idempotency is enforced by
- * (sessionId, digest): same key/digest is a no-op COMMITTED, same key/different
- * digest is CONFLICT. Lease token and version are checked before publish.
- *
- * @module compaction-handoff
+ * Coordinates the handoff of a compaction checkpoint from in-memory state to
+ * durable persistence. The coordinator is deliberately dependency-free: it
+ * does not import plugin, board, MCP, hooks, or provider modules.
  */
 
-// ─── Types ──────────────────────────────────────────────────────────────
-
-/** A persisted handoff record stored by the memory port. */
 export interface HandoffRecord {
-  /** Immutable digest of the handoff payload. */
   digest: string
-  /** Original payload bytes (UTF-8). */
   payload: string
-  /** Monotonic handoff version. */
-  version: string
-  /** Session this handoff belongs to. */
+  version: number
   sessionId: string
+  leaseToken: string
 }
 
-/** Persistence port — thin read/write surface injected by the caller. */
 export interface PersistencePort {
-  /** Read a record by key, or null when absent. */
-  load(key: string): Promise<HandoffRecord | null>
-  /** Atomically write a record. */
-  save(key: string, record: HandoffRecord): Promise<void>
-  /** Remove a record by key. */
-  delete(key: string): Promise<void>
+  prepare(input: HandoffRecord): Promise<void>
+  read(sessionId: string, key: string): Promise<HandoffRecord | null>
+  commit(sessionId: string, key: string, record: HandoffRecord): Promise<void>
 }
 
-/** Memory port — the immutable publish surface for handoff records. */
 export interface MemoryPort {
-  /**
-   * Immutable publish: writes the record only if the key is absent.
-   * Returns true on success, false when the key already exists.
-   */
-  publish(key: string, record: HandoffRecord): Promise<boolean>
-  /** Read a record by key, or null when absent. */
-  read(key: string): Promise<HandoffRecord | null>
+  publishImmutable(sessionId: string, key: string, record: HandoffRecord): Promise<void>
+  readByIdempotencyKey(key: string): Promise<HandoffRecord | null>
 }
 
-/** Result of a handoff attempt. */
-export interface HandoffResult {
-  /** Final status of the attempt. */
-  status: HandoffStatus
-  /** The session key used for the handoff. */
-  key: string
-  /** The digest that was (or would have been) committed. */
-  digest: string
-  /** Human-readable reason for non-COMMITTED outcomes. */
-  message?: string
-}
+export type HandoffStatus =
+  | 'COMMITTED'
+  | 'UNAVAILABLE'
+  | 'CONFLICT'
+  | 'NOT_SUPPORTED'
+  | 'INVALID_INPUT'
 
-/** All possible outcomes of a handoff attempt. */
-export const HandoffStatus = {
-  /** Handoff was committed (or idempotently re-committed). */
-  COMMITTED: 'COMMITTED' as const,
-  /** The memory port was unavailable; the handoff stays PREPARED. */
-  UNAVAILABLE: 'UNAVAILABLE' as const,
-  /** The key/digest or lease/version collided. */
-  CONFLICT: 'CONFLICT' as const,
-  /** The persistence or memory port was not supplied. */
-  NOT_SUPPORTED: 'NOT_SUPPORTED' as const,
-  /** One or more input fields failed validation. */
-  INVALID_INPUT: 'INVALID_INPUT' as const,
-} as const
+/** Maximum allowed integer version value. */
+export const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER
 
-/** Type of handoff status values. */
-export type HandoffStatus = (typeof HandoffStatus)[keyof typeof HandoffStatus]
+/** Maximum encoded payload size in bytes (128 KiB). */
+export const MAX_PAYLOAD_BYTES = 65_536
 
-/**
- * Validation result for a handoff request.
- * `true` means valid; `string` carries the failure reason.
- */
-type ValidationResult = true | string
+/** Maximum length of URL-safe identifiers. */
+export const MAX_ID_LENGTH = 128
 
-// ─── Constants ──────────────────────────────────────────────────────────
+const URL_SAFE_PATTERN = /^[A-Za-z0-9._~-]+$/
+const DIGEST_PATTERN = /^[a-f0-9]{64}$/
 
-/** Maximum payload size in bytes (64 KiB). */
-export const MAX_PAYLOAD_BYTES = 64 * 1024
-
-/** Payloads must not contain control characters (except tab, LF, CR). */
-const CONTROL_CHAR_RE = new RegExp(`[^${printableRanges()}]`)
-
-/** Payload must be valid UTF-8 with no embedded NUL bytes. */
-const NUL_RE = new RegExp(String.fromCharCode(0))
-
-/** Build a printable-character class for the control-char regex. */
-function printableRanges(): string {
-  return [
-    '\\x20-\\x7e', // printable ASCII
-    '\\x09', // tab
-    '\\x0a', // LF
-    '\\x0d', // CR
-  ].join('')
-}
-
-/** Digest format: lowercase hex, 64 chars (SHA-256). */
-const DIGEST_RE = /^[0-9a-f]{64}$/
-
-/** Version format: semantic version (e.g. 1.2.3). */
-const VERSION_RE = /^\d+\.\d+\.\d+$/
-
-/** Lease token format: URL-safe token (e.g. 32+ chars of [A-Za-z0-9_-]). */
-const LEASE_TOKEN_RE = /^[A-Za-z0-9_.-]{32,}$/
-
-/** Session ID format: non-empty, URL-safe, 1–128 chars. */
-const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
-
-/** Idempotency key format: non-empty, URL-safe, 1–128 chars. */
-const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9_-]{1,128}$/
-
-// ─── Validation ─────────────────────────────────────────────────────────
-
-/** Validate a handoff request. Returns `true` when valid, else a reason. */
-export function validateHandoff(
-  sessionId: string,
-  idempotencyKey: string,
-  leaseToken: string,
-  version: string,
-  digest: string,
-  payload: string,
-): ValidationResult {
-  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) {
-    return 'Invalid sessionId'
+/** Validate a URL-safe identifier: 1-128 chars, no control characters. */
+function isValidIdentifier(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false
   }
-  if (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY_RE.test(idempotencyKey)) {
-    return 'Invalid idempotencyKey'
+  if (value.length < 1 || value.length > MAX_ID_LENGTH) {
+    return false
   }
-  if (typeof leaseToken !== 'string' || !LEASE_TOKEN_RE.test(leaseToken)) {
-    return 'Invalid lease token'
-  }
-  if (typeof version !== 'string' || !VERSION_RE.test(version)) {
-    return 'Invalid version'
-  }
-  if (typeof digest !== 'string' || !DIGEST_RE.test(digest)) {
-    return 'Invalid digest'
-  }
-  if (typeof payload !== 'string') {
-    return 'Invalid payload'
-  }
-  const payloadBytes = Buffer.byteLength(payload, 'utf8')
-  if (payloadBytes > MAX_PAYLOAD_BYTES) {
-    return 'Payload too large'
-  }
-  if (CONTROL_CHAR_RE.test(payload) || NUL_RE.test(payload)) {
-    return 'Payload contains control characters'
+  if (value.length > 0 && !URL_SAFE_PATTERN.test(value)) {
+    return false
   }
   return true
 }
 
-// ─── Coordinator ────────────────────────────────────────────────────────
+/** Validate a lease token: 1-128 chars, no control characters. */
+function isValidLeaseToken(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false
+  }
+  if (value.length < 1 || value.length > MAX_ID_LENGTH) {
+    return false
+  }
+  for (const char of value) {
+    const code = char.charCodeAt(0)
+    if (code < 0x20 || code === 0x7f) {
+      return false
+    }
+  }
+  return true
+}
+
+/** Validate a positive integer version within the safe integer range. */
+function isValidVersion(value: unknown): value is number {
+  return (
+    typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= MAX_SAFE_INTEGER
+  )
+}
+
+/** Validate a 64-character lowercase hex digest. */
+function isValidDigest(value: unknown): value is string {
+  return typeof value === 'string' && DIGEST_PATTERN.test(value)
+}
 
 /**
- * Pure compaction handoff coordinator.
+ * Validate that a payload is UTF-8 encodable and contains no NUL or control
+ * characters (tab, LF, and CR are permitted).
+ */
+function isValidPayload(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false
+  }
+  if (value.length < 1 || value.length > MAX_PAYLOAD_BYTES) {
+    return false
+  }
+
+  const bytes = Buffer.byteLength(value, 'utf8')
+  if (bytes < 1 || bytes > MAX_PAYLOAD_BYTES) {
+    return false
+  }
+  if (value.includes('\0')) {
+    return false
+  }
+
+  for (const char of value) {
+    const code = char.charCodeAt(0)
+    if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
+ * Compute the digest over the exact UTF-8 encoded bytes of a payload.
+ */
+export function computeDigest(payload: string): string {
+  const bytes = Buffer.from(payload, 'utf8')
+  let hash = ''
+  for (const byte of bytes) {
+    hash += byte.toString(16).padStart(2, '0')
+  }
+  return hash
+}
+
+/** Create a result describing a failed validation. */
+function invalid(message: string): { status: 'INVALID_INPUT'; message: string } {
+  return { status: 'INVALID_INPUT', message }
+}
+
+/** Create a result describing a missing dependency. */
+function notSupported(): { status: 'NOT_SUPPORTED' } {
+  return { status: 'NOT_SUPPORTED' }
+}
+
+/** Create a result describing a conflict. */
+function conflict(message: string): { status: 'CONFLICT'; message: string } {
+  return { status: 'CONFLICT', message }
+}
+
+/** Create a result describing an unavailable memory port. */
+function unavailable(message: string): { status: 'UNAVAILABLE'; message: string } {
+  return { status: 'UNAVAILABLE', message }
+}
+
+/** Create a successful committed result. */
+function committed(digest: string): { status: 'COMMITTED'; digest: string } {
+  return { status: 'COMMITTED', digest }
+}
+
+/**
+ * Compaction handoff coordinator.
  *
- * The coordinator is dependency-injected with a persistence port and a memory
- * port. It performs no I/O of its own and makes no exactly-once guarantees:
- * callers must treat COMMITTED as "published at least once" and re-read by key
- * to determine the current state.
+ * The coordinator drives the handoff FSM:
+ *
+ *   no record -> prepare -> PREPARED -> memory.publishImmutable
+ *   -> memory.readByIdempotencyKey -> persistence.commit -> COMMITTED
+ *
+ * It never retries after memory becomes unavailable; the PREPARED state is
+ * left intact for a later explicit attempt.
  */
 export class CompactionHandoffCoordinator {
-  /**
-   * Create a coordinator.
-   *
-   * @param persistence Persistence port for record lookup. Optional; when
-   *   missing the coordinator returns NOT_SUPPORTED without touching memory.
-   * @param memory Memory port for immutable publish. Optional; when missing
-   *   the coordinator returns NOT_SUPPORTED.
-   */
-  constructor(
-    private readonly persistence?: PersistencePort | null,
-    private readonly memory?: MemoryPort | null,
-  ) {}
+  private readonly persistence: PersistencePort | undefined
+  private readonly memory: MemoryPort | undefined
+
+  constructor(persistence?: PersistencePort, memory?: MemoryPort) {
+    this.persistence = persistence
+    this.memory = memory
+  }
 
   /**
-   * Execute one handoff attempt.
+   * Attempt to hand off a compaction checkpoint.
    *
-   * The attempt flows PREPARED -> memory immutable publish -> COMMITTED.
-   * Memory failure leaves the handoff PREPARED and returns UNAVAILABLE;
-   * there is no retry and no fallback path.
-   *
-   * @param sessionId Session this handoff belongs to.
-   * @param idempotencyKey Idempotency key for deduplication.
-   * @param leaseToken Lease token proving the caller still owns the session.
-   * @param version Monotonic handoff version.
-   * @param digest SHA-256 digest of the payload.
-   * @param payload UTF-8 handoff payload.
-   * @returns The outcome of the attempt.
+   * Returns immediately with INVALID_INPUT if any argument fails validation.
+   * Returns NOT_SUPPORTED if either required port is missing.
+   * Returns CONFLICT for digest or lease/version mismatches.
+   * Returns UNAVAILABLE if the memory port cannot publish/read the record.
+   * Returns COMMITTED when the record is durably committed.
    */
   async prepare(
     sessionId: string,
     idempotencyKey: string,
     leaseToken: string,
-    version: string,
+    version: number,
     digest: string,
     payload: string,
-  ): Promise<HandoffResult> {
-    const validation = validateHandoff(
-      sessionId,
-      idempotencyKey,
-      leaseToken,
-      version,
-      digest,
-      payload,
-    )
-    if (validation !== true) {
-      return {
-        status: HandoffStatus.INVALID_INPUT,
-        key: sessionId ?? '',
-        digest: '',
-        message: validation,
+  ): Promise<{ status: HandoffStatus; key?: string; digest?: string; message?: string }> {
+    // Validation first: no port calls are made before this block completes.
+    if (
+      !isValidIdentifier(sessionId) ||
+      !isValidIdentifier(idempotencyKey) ||
+      !isValidLeaseToken(leaseToken) ||
+      !isValidVersion(version) ||
+      !isValidDigest(digest) ||
+      !isValidPayload(payload)
+    ) {
+      return invalid('Invalid handoff input')
+    }
+
+    if (this.persistence === undefined || this.memory === undefined) {
+      return notSupported()
+    }
+
+    const _key = `${sessionId}:${idempotencyKey}`
+
+    // Check for an existing committed record before preparing a new one.
+    const existingRecord = await this.persistence.read(sessionId, idempotencyKey)
+    if (existingRecord !== null) {
+      if (existingRecord.digest === digest && existingRecord.sessionId === sessionId) {
+        // Idempotent replay: same digest and session. Verify lease/version match.
+        if (existingRecord.leaseToken !== leaseToken || existingRecord.version !== version) {
+          return conflict('Stale lease or version')
+        }
+
+        // Verify the record is also in memory. If missing, try to recover by publishing once.
+        let memoryRecord: HandoffRecord | null = null
+        try {
+          memoryRecord = await this.memory.readByIdempotencyKey(idempotencyKey)
+        } catch {
+          return unavailable('Memory port unavailable')
+        }
+
+        if (memoryRecord === null) {
+          // Recovery: memory lost the record but persistence has it. Publish once.
+          try {
+            await this.memory.publishImmutable(sessionId, idempotencyKey, existingRecord)
+          } catch (_error) {
+            return unavailable('Memory port unavailable')
+          }
+          try {
+            memoryRecord = await this.memory.readByIdempotencyKey(idempotencyKey)
+          } catch (_error) {
+            return unavailable('Memory port unavailable')
+          }
+        }
+
+        if (memoryRecord === null) {
+          return unavailable('Record not found in memory')
+        }
+
+        await this.persistence.commit(sessionId, idempotencyKey, existingRecord)
+        return committed(memoryRecord.digest)
       }
+      // Different digest or session: conflict.
+      return conflict('Digest or session mismatch')
     }
 
-    if (!this.persistence || !this.memory) {
-      return {
-        status: HandoffStatus.NOT_SUPPORTED,
-        key: sessionId,
-        digest,
-        message: 'Persistence or memory port not available',
-      }
-    }
+    // Phase 1: prepare in persistence (PREPARED).
+    await this.persistence.prepare({ digest, payload, version, sessionId, leaseToken })
 
-    const record: HandoffRecord = {
-      digest,
-      payload,
-      version,
-      sessionId,
-    }
-
-    // PREPARED: read the current record to detect idempotent replay or a
-    // key/digest collision before attempting any write.
-    let existing: HandoffRecord | null = null
+    // Phase 2: publish the record to memory. If memory is unavailable, the
+    // coordinator stays in PREPARED and never retries automatically.
     try {
-      existing = await this.persistence.load(sessionId)
-    } catch {
-      return {
-        status: HandoffStatus.UNAVAILABLE,
-        key: sessionId,
+      await this.memory.publishImmutable(sessionId, idempotencyKey, {
         digest,
-        message: 'Persistence unavailable',
-      }
+        payload,
+        version,
+        sessionId,
+        leaseToken,
+      })
+    } catch (_error) {
+      return unavailable('Memory port unavailable')
     }
 
-    // Lease/version check happens after the idempotency read, so a stale
-    // caller cannot resurrect a key that has already been committed.
-    if (!this.isLeaseValid(leaseToken, version, existing)) {
-      return {
-        status: HandoffStatus.CONFLICT,
-        key: sessionId,
-        digest,
-        message: 'Stale lease or version',
-      }
-    }
-
-    if (existing !== null) {
-      if (existing.digest === digest) {
-        // Same key/digest: idempotent replay, already committed.
-        return { status: HandoffStatus.COMMITTED, key: sessionId, digest }
-      }
-      // Same key/different digest: collision, never overwrite.
-      return {
-        status: HandoffStatus.CONFLICT,
-        key: sessionId,
-        digest,
-        message: 'Key already exists with a different digest',
-      }
-    }
-
-    // Immutable publish: the memory port refuses to overwrite an existing key.
-    let published: boolean
+    // Phase 3: read back from memory by idempotency key.
+    let memoryRecord: HandoffRecord | null = null
     try {
-      published = await this.memory.publish(sessionId, record)
-    } catch {
-      // Memory unavailable: leave PREPARED, no retry, no fallback.
-      return {
-        status: HandoffStatus.UNAVAILABLE,
-        key: sessionId,
-        digest,
-        message: 'Memory unavailable',
-      }
+      memoryRecord = await this.memory.readByIdempotencyKey(idempotencyKey)
+    } catch (_error) {
+      return unavailable('Memory port unavailable')
     }
 
-    if (!published) {
-      // Publish raced with another writer: treat as a conflict, never retry.
-      return {
-        status: HandoffStatus.CONFLICT,
-        key: sessionId,
-        digest,
-        message: 'Concurrent publish detected',
-      }
+    if (memoryRecord === null) {
+      return unavailable('Record not found in memory')
     }
 
-    // COMMITTED: the record is now immutable in memory.
-    // Persist the record for future idempotency checks.
-    if (this.persistence) {
-      await this.persistence.save(sessionId, record)
+    // Stale lease or version check.
+    if (memoryRecord.leaseToken !== leaseToken || memoryRecord.version !== version) {
+      return conflict('Stale lease or version')
     }
-    return { status: HandoffStatus.COMMITTED, key: sessionId, digest }
-  }
 
-  /**
-   * Check lease freshness and version monotonicity.
-   *
-   * @param leaseToken Lease token supplied by the caller.
-   * @param version Version supplied by the caller.
-   * @param existing Existing record, if any.
-   * @returns True when the lease is still valid.
-   */
-  private isLeaseValid(
-    leaseToken: string,
-    version: string,
-    _existing: HandoffRecord | null,
-  ): boolean {
-    if (!LEASE_TOKEN_RE.test(leaseToken)) {
-      return false
-    }
-    if (!VERSION_RE.test(version)) {
-      return false
-    }
-    // A stale lease/version is one that is older than the record's version.
-    // The token carries the version as a prefix: `v{major}.{minor}.{patch}_{random}`.
-    const tokenPrefix = leaseToken.startsWith('v') ? leaseToken.slice(1) : leaseToken
-    const versionPrefix = tokenPrefix.split('_')[0]
-    if (!versionPrefix) {
-      return false
-    }
-    const tokenParts = versionPrefix.split('.')
-    const recordParts = version.split('.')
-    if (tokenParts.length !== 3 || recordParts.length !== 3) {
-      return false
-    }
-    const tokenNum = tokenParts.map(Number)
-    const recordNum = recordParts.map(Number)
-    for (let i = 0; i < 3; i += 1) {
-      const t = tokenNum[i]
-      const r = recordNum[i]
-      if (t === undefined || r === undefined) {
-        return false
+    // Idempotent replay: same key and session is a success.
+    // The memory record is authoritative for recovery after crash.
+    if (memoryRecord.sessionId === sessionId) {
+      // Phase 4: commit to persistence.
+      try {
+        await this.persistence.commit(sessionId, idempotencyKey, memoryRecord)
+      } catch (_error) {
+        return conflict('Persistence commit failed')
       }
-      if (t > r) {
-        return true // token is ahead of the record -> still valid
-      }
-      if (t < r) {
-        return false // token is behind the record -> stale
-      }
+      return committed(memoryRecord.digest)
     }
-    return true // equal versions are valid
+
+    // Same key, different digest or session: conflict.
+    return conflict('Digest or session mismatch')
   }
 }
+
+export default CompactionHandoffCoordinator

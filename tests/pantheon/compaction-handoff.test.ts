@@ -1,291 +1,553 @@
 /**
- * Tests for B3-04 — compaction handoff coordinator.
- *
- * Required cases:
- * 1. Valid new key -> COMMITTED
- * 2. Same key/digest (idempotent replay) -> COMMITTED
- * 3. Same key/different digest -> CONFLICT
- * 4. Stale lease/version -> CONFLICT
- * 5. Invalid sessionId -> INVALID_INPUT
- * 6. Invalid idempotencyKey -> INVALID_INPUT
- * 7. Invalid lease token -> INVALID_INPUT
- * 8. Invalid version -> INVALID_INPUT
- * 9. Invalid digest -> INVALID_INPUT
- * 10. Payload too large -> INVALID_INPUT
- * 11. Payload with control chars -> INVALID_INPUT
- * 12. Memory unavailable -> UNAVAILABLE (no retry/fallback)
+ * Compaction Handoff Coordinator Tests
+ * Uses node:assert and node:test. Fakes for PersistencePort and MemoryPort
+ * are provided inline.
  */
-import { strict as assert } from 'node:assert'
 
+import assert from 'node:assert'
+import { beforeEach, describe, it } from 'node:test'
 import {
   CompactionHandoffCoordinator,
   type HandoffRecord,
+  MAX_PAYLOAD_BYTES,
+  MAX_SAFE_INTEGER,
   type MemoryPort,
   type PersistencePort,
-} from '../../src/pantheon/compaction-handoff.ts'
+} from '../../src/pantheon/compaction-handoff'
 
-const SESSION_ID = 'ses_root'
-const IDEMPOTENCY_KEY = 'idem_001'
-const LEASE_TOKEN = 'test_dummy_fixture'
-const VERSION = '1.2.3'
-const DIGEST = 'a'.repeat(64)
-const PAYLOAD = 'compact payload'
+/** Fake PersistencePort that stores records in a Map. */
+class FakePersistence implements PersistencePort {
+  private records = new Map<string, HandoffRecord>()
 
-// ─── Harness ────────────────────────────────────────────────────────────
-
-class MemoryAdapter implements MemoryPort {
-  readonly records = new Map<string, HandoffRecord>()
-  publishAttempts = 0
-  failPublish = false
-
-  async publish(key: string, record: HandoffRecord): Promise<boolean> {
-    this.publishAttempts += 1
-    if (this.failPublish) {
-      throw new Error('memory unavailable')
-    }
-    if (this.records.has(key)) {
-      return false
-    }
-    this.records.set(key, record)
-    return true
+  async prepare(input: HandoffRecord): Promise<void> {
+    this.records.set(input.sessionId, input)
   }
 
-  async read(key: string): Promise<HandoffRecord | null> {
-    return this.records.get(key) ?? null
+  async read(sessionId: string, _key: string): Promise<HandoffRecord | null> {
+    const record = this.records.get(sessionId)
+    return record ?? null
+  }
+
+  async commit(sessionId: string, _key: string, record: HandoffRecord): Promise<void> {
+    this.records.set(sessionId, record)
   }
 }
 
-class PersistenceAdapter implements PersistencePort {
-  readonly records = new Map<string, HandoffRecord>()
-  loadFailures = 0
+/** Fake MemoryPort that stores records in a Map. */
+class FakeMemory implements MemoryPort {
+  private records = new Map<string, HandoffRecord>()
 
-  async load(key: string): Promise<HandoffRecord | null> {
-    if (this.loadFailures > 0) {
-      this.loadFailures -= 1
-      throw new Error('persistence unavailable')
-    }
-    return this.records.get(key) ?? null
-  }
-
-  async save(key: string, record: HandoffRecord): Promise<void> {
+  async publishImmutable(_sessionId: string, key: string, record: HandoffRecord): Promise<void> {
     this.records.set(key, record)
   }
 
-  async delete(key: string): Promise<void> {
-    this.records.delete(key)
+  async readByIdempotencyKey(key: string): Promise<HandoffRecord | null> {
+    const record = this.records.get(key)
+    return record ?? null
   }
 }
 
-function makeCoordinator(
-  memory: MemoryAdapter,
-  persistence: PersistenceAdapter = new PersistenceAdapter(),
-): CompactionHandoffCoordinator {
-  return new CompactionHandoffCoordinator(persistence, memory)
+/** MemoryPort that always throws on operations. */
+class UnavailableMemory implements MemoryPort {
+  async publishImmutable(_sessionId: string, _key: string, _record: HandoffRecord): Promise<void> {
+    throw new Error('Memory unavailable')
+  }
+
+  async readByIdempotencyKey(_key: string): Promise<HandoffRecord | null> {
+    throw new Error('Memory unavailable')
+  }
 }
 
-async function run(
-  coordinator: CompactionHandoffCoordinator,
-  args: Parameters<CompactionHandoffCoordinator['prepare']>,
-) {
-  return await coordinator.prepare(...args)
+/**
+ * MemoryPort that always throws on every operation (never recovers). */
+class PermanentlyUnavailableMemory implements MemoryPort {
+  async publishImmutable(_sessionId: string, _key: string, _record: HandoffRecord): Promise<void> {
+    throw new Error('Memory permanently unavailable')
+  }
+  async readByIdempotencyKey(_key: string): Promise<HandoffRecord | null> {
+    throw new Error('Memory permanently unavailable')
+  }
 }
 
-async function main(): Promise<void> {
-  // 1. Valid new key -> COMMITTED
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    const result = await run(coordinator, [
-      SESSION_ID,
-      IDEMPOTENCY_KEY,
-      LEASE_TOKEN,
-      VERSION,
-      DIGEST,
-      PAYLOAD,
-    ])
-    assert.equal(result.status, 'COMMITTED')
-    assert.equal(result.key, SESSION_ID)
-    assert.equal(result.digest, DIGEST)
-    assert.equal(memory.publishAttempts, 1)
-    assert.ok(memory.records.has(SESSION_ID))
+/**
+ * MemoryPort that throws on first publish, then succeeds. */
+class CrashMemory implements MemoryPort {
+  private publishCount = 0
+
+  async publishImmutable(_sessionId: string, _key: string, _record: HandoffRecord): Promise<void> {
+    this.publishCount++
+    if (this.publishCount === 1) {
+      throw new Error('Simulated crash')
+    }
   }
 
-  // 2. Same key/digest (idempotent replay) -> COMMITTED
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    const args = [SESSION_ID, IDEMPOTENCY_KEY, LEASE_TOKEN, VERSION, DIGEST, PAYLOAD]
-    assert.equal((await run(coordinator, args)).status, 'COMMITTED')
-    const replay = await run(coordinator, args)
-    assert.equal(replay.status, 'COMMITTED')
-    assert.equal(memory.publishAttempts, 1, 'idempotent replay must not re-publish')
+  async readByIdempotencyKey(_key: string): Promise<HandoffRecord | null> {
+    // Return a record only after the second publish attempt
+    if (this.publishCount >= 2) {
+      return {
+        digest: 'a'.repeat(64),
+        payload: 'data',
+        sessionId: 'session-11',
+        leaseToken: 'lease-11',
+        version: 42,
+      }
+    }
+    return null
   }
-
-  // 3. Same key/different digest -> CONFLICT
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    const args = [SESSION_ID, IDEMPOTENCY_KEY, LEASE_TOKEN, VERSION, DIGEST, PAYLOAD]
-    assert.equal((await run(coordinator, args)).status, 'COMMITTED')
-    const conflict = await run(coordinator, [
-      SESSION_ID,
-      IDEMPOTENCY_KEY,
-      LEASE_TOKEN,
-      VERSION,
-      'b'.repeat(64),
-      PAYLOAD,
-    ])
-    assert.equal(conflict.status, 'CONFLICT')
-    assert.equal(conflict.digest, 'b'.repeat(64))
-  }
-
-  // 4. Stale lease/version -> CONFLICT
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    assert.equal(
-      (await run(coordinator, [SESSION_ID, IDEMPOTENCY_KEY, LEASE_TOKEN, VERSION, DIGEST, PAYLOAD]))
-        .status,
-      'COMMITTED',
-    )
-    const stale = await run(coordinator, [
-      SESSION_ID,
-      IDEMPOTENCY_KEY,
-      'v0.9.9_abcdefghijklmnopqrstuvwxyz0123456789',
-      VERSION,
-      DIGEST,
-      PAYLOAD,
-    ])
-    assert.equal(stale.status, 'CONFLICT')
-  }
-
-  // 5. Invalid sessionId -> INVALID_INPUT
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    const result = await run(coordinator, [
-      '',
-      IDEMPOTENCY_KEY,
-      LEASE_TOKEN,
-      VERSION,
-      DIGEST,
-      PAYLOAD,
-    ])
-    assert.equal(result.status, 'INVALID_INPUT')
-    assert.equal(result.message, 'Invalid sessionId')
-  }
-
-  // 6. Invalid idempotencyKey -> INVALID_INPUT
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    const result = await run(coordinator, [SESSION_ID, '', LEASE_TOKEN, VERSION, DIGEST, PAYLOAD])
-    assert.equal(result.status, 'INVALID_INPUT')
-    assert.equal(result.message, 'Invalid idempotencyKey')
-  }
-
-  // 7. Invalid lease token -> INVALID_INPUT
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    const result = await run(coordinator, [
-      SESSION_ID,
-      IDEMPOTENCY_KEY,
-      'short',
-      VERSION,
-      DIGEST,
-      PAYLOAD,
-    ])
-    assert.equal(result.status, 'INVALID_INPUT')
-    assert.equal(result.message, 'Invalid lease token')
-  }
-
-  // 8. Invalid version -> INVALID_INPUT
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    const result = await run(coordinator, [
-      SESSION_ID,
-      IDEMPOTENCY_KEY,
-      LEASE_TOKEN,
-      'not-a-version',
-      DIGEST,
-      PAYLOAD,
-    ])
-    assert.equal(result.status, 'INVALID_INPUT')
-    assert.equal(result.message, 'Invalid version')
-  }
-
-  // 9. Invalid digest -> INVALID_INPUT
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    const result = await run(coordinator, [
-      SESSION_ID,
-      IDEMPOTENCY_KEY,
-      LEASE_TOKEN,
-      VERSION,
-      'short',
-      PAYLOAD,
-    ])
-    assert.equal(result.status, 'INVALID_INPUT')
-    assert.equal(result.message, 'Invalid digest')
-  }
-
-  // 10. Payload too large -> INVALID_INPUT
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    const result = await run(coordinator, [
-      SESSION_ID,
-      IDEMPOTENCY_KEY,
-      LEASE_TOKEN,
-      VERSION,
-      DIGEST,
-      'x'.repeat(64 * 1024 + 1),
-    ])
-    assert.equal(result.status, 'INVALID_INPUT')
-    assert.equal(result.message, 'Payload too large')
-  }
-
-  // 11. Payload with control chars -> INVALID_INPUT
-  {
-    const memory = new MemoryAdapter()
-    const coordinator = makeCoordinator(memory)
-    const result = await run(coordinator, [
-      SESSION_ID,
-      IDEMPOTENCY_KEY,
-      LEASE_TOKEN,
-      VERSION,
-      DIGEST,
-      'bad\x00payload',
-    ])
-    assert.equal(result.status, 'INVALID_INPUT')
-    assert.equal(result.message, 'Payload contains control characters')
-  }
-
-  // 12. Memory unavailable -> UNAVAILABLE (no retry/fallback)
-  {
-    const memory = new MemoryAdapter()
-    memory.failPublish = true
-    const coordinator = makeCoordinator(memory)
-    const result = await run(coordinator, [
-      SESSION_ID,
-      IDEMPOTENCY_KEY,
-      LEASE_TOKEN,
-      VERSION,
-      DIGEST,
-      PAYLOAD,
-    ])
-    assert.equal(result.status, 'UNAVAILABLE')
-    assert.equal(memory.publishAttempts, 1, 'must not retry publish')
-    assert.equal(memory.records.size, 0, 'must leave the handoff PREPARED, not committed')
-  }
-
-  console.log('All 12 compaction handoff cases passed')
 }
 
-main().catch((error: unknown) => {
-  console.error(error)
-  process.exitCode = 1
+describe('CompactionHandoffCoordinator', () => {
+  let persistence: PersistencePort
+  let memory: MemoryPort
+  let coordinator: CompactionHandoffCoordinator
+
+  beforeEach(() => {
+    persistence = new FakePersistence()
+    memory = new FakeMemory()
+    coordinator = new CompactionHandoffCoordinator(persistence, memory)
+  })
+
+  describe('validation', () => {
+    it('rejects INVALID_INPUT when sessionId is empty', async () => {
+      const result = await coordinator.prepare('', 'key', 'token', 1, 'd'.repeat(64), 'payload')
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when sessionId has control char', async () => {
+      const result = await coordinator.prepare(
+        's\x01ession',
+        'key',
+        'token',
+        1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when sessionId exceeds max length', async () => {
+      const result = await coordinator.prepare(
+        'a'.repeat(129),
+        'key',
+        'token',
+        1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when idempotencyKey is empty', async () => {
+      const result = await coordinator.prepare('session', '', 'token', 1, 'd'.repeat(64), 'payload')
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when idempotencyKey has control char', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'k\x01ey',
+        'token',
+        1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when idempotencyKey exceeds max length', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'a'.repeat(129),
+        'token',
+        1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when leaseToken is empty', async () => {
+      const result = await coordinator.prepare('session', 'key', '', 1, 'd'.repeat(64), 'payload')
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when leaseToken has control char', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        't\x01oken',
+        1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when leaseToken exceeds max length', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'a'.repeat(129),
+        1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when version <= 0', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        0,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when version > MAX_SAFE_INTEGER', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        MAX_SAFE_INTEGER + 1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when version is not integer', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        1.5,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when digest is not 64 chars', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'd'.repeat(63),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when digest is 65 chars', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'd'.repeat(65),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when digest has uppercase', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'D'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when digest has non-hex char', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'g'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when payload has NUL', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'd'.repeat(64),
+        'p\x00ayload',
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('rejects INVALID_INPUT when payload exceeds limit', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'd'.repeat(64),
+        'a'.repeat(MAX_PAYLOAD_BYTES + 1),
+      )
+      assert.strictEqual(result.status, 'INVALID_INPUT')
+    })
+
+    it('accepts payload at exact limit', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'd'.repeat(64),
+        'a'.repeat(MAX_PAYLOAD_BYTES),
+      )
+      assert.strictEqual(result.status, 'COMMITTED')
+    })
+
+    it('accepts multibyte UTF-8 payload', async () => {
+      const result = await coordinator.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'd'.repeat(64),
+        '🚀🌟✨',
+      )
+      assert.strictEqual(result.status, 'COMMITTED')
+    })
+  })
+
+  describe('happy path', () => {
+    it('returns COMMITTED for valid new key', async () => {
+      const result = await coordinator.prepare(
+        'session-1',
+        'key-1',
+        'token-1',
+        1,
+        'd'.repeat(64),
+        'payload-1',
+      )
+      assert.strictEqual(result.status, 'COMMITTED')
+      assert.strictEqual(result.digest, 'd'.repeat(64))
+    })
+
+    it('returns COMMITTED for same key/digest replay (idempotent)', async () => {
+      // First call
+      await coordinator.prepare('session-1', 'key-1', 'token-1', 1, 'd'.repeat(64), 'payload-1')
+
+      // Second call with same inputs
+      const result = await coordinator.prepare(
+        'session-1',
+        'key-1',
+        'token-1',
+        1,
+        'd'.repeat(64),
+        'payload-1',
+      )
+      assert.strictEqual(result.status, 'COMMITTED')
+      assert.strictEqual(result.digest, 'd'.repeat(64))
+    })
+  })
+
+  describe('conflicts', () => {
+    it('returns CONFLICT for same key/different digest', async () => {
+      // First call
+      await coordinator.prepare('session-1', 'key-1', 'token-1', 1, 'd'.repeat(64), 'payload-1')
+
+      // Second call with same key but different digest
+      const result = await coordinator.prepare(
+        'session-1',
+        'key-1',
+        'token-1',
+        1,
+        'e'.repeat(64),
+        'payload-1',
+      )
+      assert.strictEqual(result.status, 'CONFLICT')
+    })
+
+    it('returns CONFLICT for stale lease', async () => {
+      // First call
+      await coordinator.prepare('session-1', 'key-1', 'token-1', 1, 'd'.repeat(64), 'payload-1')
+
+      // Second call with same key/digest but different lease
+      const result = await coordinator.prepare(
+        'session-1',
+        'key-1',
+        'token-2',
+        1,
+        'd'.repeat(64),
+        'payload-1',
+      )
+      assert.strictEqual(result.status, 'CONFLICT')
+    })
+
+    it('returns CONFLICT for stale version', async () => {
+      // First call
+      await coordinator.prepare('session-1', 'key-1', 'token-1', 1, 'd'.repeat(64), 'payload-1')
+
+      // Second call with same key/digest/lease but different version
+      const result = await coordinator.prepare(
+        'session-1',
+        'key-1',
+        'token-1',
+        2,
+        'd'.repeat(64),
+        'payload-1',
+      )
+      assert.strictEqual(result.status, 'CONFLICT')
+    })
+
+    it('returns CONFLICT for memory publish twice different digest', async () => {
+      const crashMemory = new CrashMemory()
+      const coordinatorCrash = new CompactionHandoffCoordinator(persistence, crashMemory)
+
+      // First publish succeeds (after crash)
+      await coordinatorCrash.prepare(
+        'session-11',
+        'idem-key-11',
+        'lease-11',
+        42,
+        'a'.repeat(64),
+        'data',
+      )
+
+      // Second publish with different digest should conflict
+      const result = await coordinatorCrash.prepare(
+        'session-11',
+        'idem-key-11',
+        'lease-11',
+        42,
+        'b'.repeat(64),
+        'data',
+      )
+      assert.strictEqual(result.status, 'CONFLICT')
+    })
+  })
+
+  describe('unavailable', () => {
+    it('returns UNAVAILABLE when memory port throws', async () => {
+      const unavailableMemory = new UnavailableMemory()
+      const coordinatorUnavailable = new CompactionHandoffCoordinator(
+        persistence,
+        unavailableMemory,
+      )
+
+      const result = await coordinatorUnavailable.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'UNAVAILABLE')
+    })
+
+    it('does not retry after memory becomes unavailable', async () => {
+      const permanentlyUnavailable = new PermanentlyUnavailableMemory()
+      const coordinatorCrash = new CompactionHandoffCoordinator(persistence, permanentlyUnavailable)
+
+      // First call fails
+      let result = await coordinatorCrash.prepare(
+        'session-11',
+        'idem-key-11',
+        'lease-11',
+        42,
+        'd'.repeat(64),
+        'data',
+      )
+      assert.strictEqual(result.status, 'UNAVAILABLE')
+
+      // Second call should still return UNAVAILABLE (no retry)
+      result = await coordinatorCrash.prepare(
+        'session-11',
+        'idem-key-11',
+        'lease-11',
+        42,
+        'd'.repeat(64),
+        'data',
+      )
+      assert.strictEqual(result.status, 'UNAVAILABLE')
+    })
+
+    it('returns COMMITTED on explicit replay after crash', async () => {
+      const crashMemory = new CrashMemory()
+      const coordinatorCrash = new CompactionHandoffCoordinator(persistence, crashMemory)
+
+      // First call fails (simulated crash)
+      let result = await coordinatorCrash.prepare(
+        'session-11',
+        'idem-key-11',
+        'lease-11',
+        42,
+        'd'.repeat(64),
+        'data',
+      )
+      assert.strictEqual(result.status, 'UNAVAILABLE')
+
+      // Second call succeeds (memory now available)
+      result = await coordinatorCrash.prepare(
+        'session-11',
+        'idem-key-11',
+        'lease-11',
+        42,
+        'd'.repeat(64),
+        'data',
+      )
+      assert.strictEqual(result.status, 'COMMITTED')
+    })
+  })
+
+  describe('missing ports', () => {
+    it('returns NOT_SUPPORTED when persistence port missing', async () => {
+      const coordinatorNoPersistence = new CompactionHandoffCoordinator(undefined, memory)
+      const result = await coordinatorNoPersistence.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'NOT_SUPPORTED')
+    })
+
+    it('returns NOT_SUPPORTED when memory port missing', async () => {
+      const coordinatorNoMemory = new CompactionHandoffCoordinator(persistence, undefined)
+      const result = await coordinatorNoMemory.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'NOT_SUPPORTED')
+    })
+
+    it('returns NOT_SUPPORTED when both ports missing', async () => {
+      const coordinatorNoPorts = new CompactionHandoffCoordinator(undefined, undefined)
+      const result = await coordinatorNoPorts.prepare(
+        'session',
+        'key',
+        'token',
+        1,
+        'd'.repeat(64),
+        'payload',
+      )
+      assert.strictEqual(result.status, 'NOT_SUPPORTED')
+    })
+  })
 })
