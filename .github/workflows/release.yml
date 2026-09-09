@@ -367,7 +367,9 @@ jobs:
           if [ -n "$RECOVERY_VERSION" ]; then
             EXPECTED_TAG="v${RECOVERY_VERSION}"
             [ "$TAG_REF" = "$EXPECTED_TAG" ] || { echo '::error::Recovery artifact version differs from requested version.'; exit 1; }
-          fi
+            fi
+
+          TAG_OBJECT_SHA=""
           TAG_REF="$TAG_REF" node <<'NODE'
           const tag = process.env.TAG_REF ?? '';
           if (!/^v\d+\.\d+\.\d+(?:-beta\.\d+\.[0-9a-f]+)?$/.test(tag)) {
@@ -421,6 +423,11 @@ jobs:
             STATUS=$(printf '%s\n' "$TAG_RESPONSE" | awk 'NR == 1 { print $2; exit }')
             if [ "$STATUS" = 404 ]; then
               tag_exists=false
+              if [ -n "$RECOVERY_VERSION" ]; then
+                echo '::error::Recovery requires an existing GitHub Release tag.'
+                exit 1
+              fi
+              echo 'tag_exists=false' >> "$GITHUB_OUTPUT"
               echo 'tag_exists=false' >> "$GITHUB_OUTPUT"
             else
               echo "::error::Could not determine whether release tag exists (HTTP ${STATUS:-unknown})."; exit 1
