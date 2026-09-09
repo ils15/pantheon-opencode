@@ -14,7 +14,9 @@ Pantheon follows **Semantic Versioning** based on [Conventional Commits](https:/
 | `feat:` | **MINOR** (x.y.0) |
 | `fix:`, `chore:`, `docs:`, `refactor:`, etc. | **PATCH** (x.y.z) |
 
-Current version: **v1.4.3**
+Operational version in this checkout: **v1.5.0-beta.2**. The published
+**v1.4.3** reference below is historical Zenodo material only; it is not the
+current release version or a release target.
 
 ---
 
@@ -41,10 +43,13 @@ node scripts/version-check.mjs
 npm run release:dry-run
 ```
 
-`apply` syncs all version manifests (`package.json`, `plugin.json`,
+`apply` syncs the version manifests (`package.json`, `plugin.json`,
 `pyproject.toml`, `src/plugins/tui/package.json`) and promotes the
-`[Unreleased]` changelog section to a versioned entry. **It no longer creates
-git tags** — tags are workflow-owned (see below).
+`[Unreleased]` changelog section to a versioned entry. Release validation also
+keeps the root pair (`package.json` + `package-lock.json`) and the TUI pair
+(`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`) in the
+same versioned inventory. **It no longer creates git tags** — tags are
+workflow-owned (see below).
 
 ---
 
@@ -59,11 +64,20 @@ git tags** — tags are workflow-owned (see below).
 3. Fill in the promoted changelog section with the release notes for the
    upcoming version. The release body is **extracted from this section**, so
    it must exist and be accurate.
-4. Commit + push + open a PR to `main`:
+4. Commit + push + open a PR to `main`. Stage only these intentional release
+   files; do not include untracked RED tests, generated artifacts, or any
+   other paths:
+
    ```bash
-   git add -A && git commit -m "chore(release): vX.Y.Z"
+   git add CHANGELOG.md docs/RELEASING.md package.json package-lock.json \
+     plugin.json pyproject.toml src/plugins/tui/package.json \
+     src/plugins/tui/package-lock.json
+   git diff --cached --check
+   git diff --cached --name-only
+   git commit -m "chore(release): vX.Y.Z"
    git push -u origin <branch>
    ```
+
 5. Wait for CI. The PR must pass `version-check` (package.json must be
    **ahead** of the latest stable tag; pre-releases excluded) plus the other
    required checks before merging.
@@ -149,8 +163,10 @@ without recovery inputs runs the stable release path:
    behind the latest stable git tag (exact `vX.Y.Z` tags only; `-beta.*`
    pre-release tags are excluded from the comparison). Fails loudly if the
    version was never bumped.
-3. **Pack and verify** — the validation job packs an immutable artifact with
-   lifecycle scripts disabled.
+3. **Pack and verify** — the validation job packs exactly one immutable npm
+   tarball with lifecycle scripts disabled. It records that tarball's
+   SHA-256 together with the full `TARGET_SHA`; the release job recomputes the
+   digest and rejects any mismatch.
 4. **Idempotent guard** — if tag `vX.Y.Z` exists AND its GitHub Release
    exists, exit 0 (already released). If the tag exists but the release is
    missing, continue and complete the release (tag creation is skipped).
@@ -161,11 +177,43 @@ without recovery inputs runs the stable release path:
    repository-scoped GitHub API **on the exact dispatch target SHA**.
 7. **GitHub Release** —
    `gh release create vX.Y.Z --target <dispatch-sha> --verify-tag --title "Pantheon vX.Y.Z" --notes-file release-artifact/release-notes.md`.
-8. **npm publish (LAST)** — gated by the idempotency lookup, then the immutable
-   artifact is published with `--tag latest --access public --provenance`.
+8. **npm publish (LAST)** — gated by the idempotency lookup, then that same
+   tarball (without repacking) is published with `--tag latest --access public
+   --provenance`. The SHA-256 validated in the validation job is therefore the
+   SHA-256 of the file published to npm.
 
 A global concurrency group (`release`, no cancel-in-progress) serializes
 runs so beta and stable paths can never double-publish.
+
+---
+
+## Package and evidence contract
+
+The release evidence is fail-closed and has one artifact identity:
+
+- root dependencies use `npm ci --ignore-scripts` with `package.json` and
+  `package-lock.json`;
+- the TUI is checked independently with
+  `npm ci --prefix src/plugins/tui --ignore-scripts` and its own manifest and
+  lockfile;
+- a release creates one npm `.tgz` tarball, computes one SHA-256, and carries
+  that exact file and digest from validation to publication; a second `npm
+  pack` is not a valid replacement;
+- the tarball and GitHub tag/release are bound to the same full `TARGET_SHA`.
+
+Any `npm ci` failure blocks the run. There is no `npm install` fallback, and
+`PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` is not part of the current contract.
+
+### Intentional MCP source divergence
+
+`scripts/memory_mcp_server.py` and `src/mcp/memory_mcp_server.py` are
+intentionally divergent. The standalone `scripts/` copy preserves the
+lightweight `memory_*` server contract; the installed `src/mcp/` copy also
+loads the optional codemap schema and exposes `code_index`, `code_query`, and
+`code_neighbors`. The other shared MCP copies remain byte-identical. The
+separate behavior and required markers are tested by
+`tests/test_mcp_scripts_sync.py`; do not resolve this pair by copying one file
+over the other.
 
 ---
 

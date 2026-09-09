@@ -28,6 +28,36 @@ function fixture() {
   )
   // Keep this fixture modeling the stable release independently of a beta branch.
   const stableVersion = '1.5.0'
+  writeFileSync(
+    join(root, 'package-lock.json'),
+    `${JSON.stringify(
+      {
+        name: 'pantheon-opencode',
+        version: stableVersion,
+        lockfileVersion: 3,
+        packages: {
+          '': { name: 'pantheon-opencode', version: stableVersion },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  )
+  writeFileSync(
+    join(root, 'src/plugins/tui/package-lock.json'),
+    `${JSON.stringify(
+      {
+        name: 'pantheon-tui',
+        version: stableVersion,
+        lockfileVersion: 3,
+        packages: {
+          '': { name: 'pantheon-tui', version: stableVersion },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  )
   const packagePath = join(root, 'package.json')
   const packageJson = JSON.parse(readFileSync(packagePath, 'utf8'))
   packageJson.version = stableVersion

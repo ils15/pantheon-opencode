@@ -1,6 +1,6 @@
-# Pantheon Installation Guide — v1.4.3 (OpenCode)
+# Pantheon Installation Guide — v1.5.0-beta.2 (OpenCode)
 
-Pantheon v1.4.3 is **OpenCode-only**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. Geração de tabelas via `node scripts/generate-preset-docs.mjs` a partir de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
+Pantheon v1.5.0-beta.2 is **OpenCode-only**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. Geração de tabelas via `node scripts/generate-preset-docs.mjs` a partir de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
 
 ## Prerequisites
 
@@ -9,9 +9,24 @@ Pantheon v1.4.3 is **OpenCode-only**. Instalação global via `npx pantheon-open
 - **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
 
+## Package and dependency contract
+
+The checkout contains two lockfile-backed Node projects. Keep each manifest and
+lockfile together:
+
+- root: `package.json` + `package-lock.json`;
+- TUI: `src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`.
+
+For a checkout validation, install dependencies with `npm ci --ignore-scripts`
+at the root and `npm ci --prefix src/plugins/tui --ignore-scripts` for the TUI.
+`npm ci` is the only accepted path: there is no fallback to `npm install`, and
+`PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` is not a supported escape hatch. The
+post-install TUI sync likewise propagates a failing `npm ci`; it does not
+silently repair or rewrite a lockfile.
+
 ## OpenCode V1/V2 — contrato de plugin
 
-Pantheon 1.5.0 does not load both Pantheon plugin generations in one
+Pantheon 1.5.0-beta.2 does not load both Pantheon plugin generations in one
 installation. The ordinary OpenCode settings may be merged, but the installer
 removes Pantheon references from both config shapes before registering only the
 selected generation:
@@ -449,8 +464,6 @@ import('./src/pantheon/model-command.ts').then(m=>console.log('import ok'))
 
 ## Verification
 
-## Verification
-
 After installation, verify everything works:
 
 ```bash
@@ -472,7 +485,12 @@ opencode
 npm run doctor
 ```
 
-**Instalação global isolada:** para testar o pacote instalado globalmente como um usuário real (sem contaminar o ambiente de dev, que mistura várias instalações), use o sandbox `~/pantheon-sandbox/` — rode `bash ~/pantheon-sandbox/run-test.sh` (mcp list 5/5 + doctor + TUI isolado). Descarte com `rm -rf ~/pantheon-sandbox`; detalhes em `~/pantheon-sandbox/README.md`.
+**Instalação global isolada:** para testar o pacote instalado em um sandbox
+isolado (sem contaminar o ambiente de dev, que mistura várias instalações), use
+`~/pantheon-sandbox/` — rode `bash ~/pantheon-sandbox/run-test.sh` (mcp list 5/5
++ doctor + TUI isolado). Esse gate cobre o sandbox preparado; não é uma alegação
+de suporte para todo host real. Descarte com `rm -rf ~/pantheon-sandbox`; detalhes
+em `~/pantheon-sandbox/README.md`.
 
 ## Troubleshooting
 
@@ -507,6 +525,16 @@ removed from all `tui.json` locations OpenCode reads: `~/.opencode/tui.json`,
 | TUI sidebar not showing | Check the installed config's `tui.json` has exactly one `plugins/pantheon-tui` entry (absolute path) |
 | Plugin not loading | Ensure `<config>/plugins/pantheon-tui/dist/tui.js` exists (copied at install time) |
 | Health check fails | Run `npm run doctor` for detailed diagnostics |
+
+### Intentional memory MCP copies
+
+`scripts/memory_mcp_server.py` and `src/mcp/memory_mcp_server.py` are
+intentionally divergent, not a failed synchronization. The standalone
+`scripts/` copy keeps the lightweight `memory_*` contract; the installed
+`src/mcp/` copy additionally wires the optional codemap schema and
+`code_index`/`code_query`/`code_neighbors` tools. The other shared MCP copies
+remain byte-identical. `tests/test_mcp_scripts_sync.py` tests both rules and
+their contract markers, so do not overwrite one memory copy with the other.
 
 ### MCP servers e falha de spawn (ENOENT)
 

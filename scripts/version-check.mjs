@@ -1,151 +1,156 @@
 #!/usr/bin/env node
-/**
- * version-check.mjs — Single source of truth enforcement
- *
- * package.json is the SOURCE OF TRUTH for the Pantheon version.
- * Every other manifest (pyproject.toml, plugin.json, src/plugins/tui/package.json)
- * MUST carry the same version. This script:
- *
- *   - compares every manifest against package.json and prints a divergence
- *     table when they differ (exit code 1),
- *   - with --fix, rewrites each divergent manifest to the package.json version.
- *
- * Mirrors the MANIFEST_FILES list in scripts/versioning.mjs so `apply`
- * and `check` can never drift apart.
- *
- * Usage:
- *   node scripts/version-check.mjs          # verify (exit 0 = in sync)
- *   node scripts/version-check.mjs --fix    # sync all manifests
- */
+/** Fail-closed version and lockfile validation. */
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { pathToFileURL } from 'node:url'
+import {
+  LOCK_INVENTORY,
+  VERSION_MANIFEST_INVENTORY,
+  validateInventory,
+  writeInventoryVersion,
+} from './manifest-inventory.mjs'
 
-/** Same set of manifests as versioning.mjs (minus package.json itself). */
-export const MANIFESTS = [
-  { name: 'pyproject.toml', file: 'pyproject.toml', kind: 'toml' },
-  { name: 'plugin.json', file: 'plugin.json', kind: 'json' },
-  {
-    name: 'src/plugins/tui/package.json',
-    file: join('src', 'plugins', 'tui', 'package.json'),
-    kind: 'json',
-  },
-]
+// Kept as a public compatibility API. New code must use MANIFEST_INVENTORY.
+export const MANIFESTS = Object.freeze(
+  ['pyproject.toml', 'plugin.json', 'src/plugins/tui/package.json'].map((file) => {
+    const entry = VERSION_MANIFEST_INVENTORY.find((item) => item.file === file)
+    return { name: file, file, kind: entry.kind }
+  }),
+)
 
-function readTomlVersion(filePath) {
-  const text = readFileSync(filePath, 'utf-8')
-  const match = text.match(/^version\s*=\s*"([^"]+)"/m)
-  if (!match) throw new Error(`no version field in ${filePath}`)
-  return match[1]
-}
-
-function readJsonVersion(filePath) {
-  return JSON.parse(readFileSync(filePath, 'utf-8')).version
-}
-
-function readManifestVersion(filePath, kind) {
-  try {
-    return kind === 'toml' ? readTomlVersion(filePath) : readJsonVersion(filePath)
-  } catch {
-    return null
+function readLegacyVersion(root, manifest) {
+  const path = join(root, manifest.file)
+  const text = readFileSync(path, 'utf8')
+  if (manifest.kind === 'toml') {
+    const match = text.match(/^version\s*=\s*"([^"]+)"/m)
+    if (!match) throw new Error(`${manifest.file} is missing version`)
+    return match[1]
   }
+  const data = JSON.parse(text)
+  if (typeof data.version !== 'string') throw new Error(`${manifest.file} is missing version`)
+  return data.version
 }
 
-function writeManifestVersion(filePath, kind, version) {
-  if (kind === 'toml') {
-    const text = readFileSync(filePath, 'utf-8')
-    const updated = text.replace(/^(version\s*=\s*")[^"]+(")/m, `$1${version}$2`)
-    writeFileSync(filePath, updated)
-  } else {
-    const content = JSON.parse(readFileSync(filePath, 'utf-8'))
-    content.version = version
-    writeFileSync(filePath, `${JSON.stringify(content, null, 2)}\n`)
-  }
+function readSourceVersion(root) {
+  const data = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  return typeof data.version === 'string' ? data.version : null
+}
+
+function readLockVersion(root, entry) {
+  const data = JSON.parse(readFileSync(join(root, entry.file), 'utf8'))
+  return typeof data.version === 'string' ? data.version : null
 }
 
 /**
- * Compare every manifest version against package.json (source of truth).
- *
- * @param {string} root - repository root containing package.json + manifests
- * @returns {{source: string, manifests: Array<{name: string, version: string|null, ok: boolean}>, ok: boolean}}
- *   - source: version read from package.json
- *   - manifests: per-manifest {name, version (null when unreadable), ok}
- *   - ok: true when every manifest matches the source version
+ * Compare versions while retaining the historical MANIFESTS result shape.
+ * Invalid/missing inventory entries are represented as null so callers can
+ * display a useful table; all CLI mutation paths use validateInventory first.
  */
 export function compareVersions(root) {
-  const source = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8')).version
-  const manifests = MANIFESTS.map(({ name, file, kind }) => {
-    const version = readManifestVersion(join(root, file), kind)
-    return { name, version, ok: version === source }
+  let source = null
+  const errors = []
+  try {
+    source = readSourceVersion(root)
+  } catch (error) {
+    errors.push(`package.json: ${error.message}`)
+  }
+  const manifests = MANIFESTS.map((manifest) => {
+    let version = null
+    try {
+      version = readLegacyVersion(root, manifest)
+    } catch (error) {
+      errors.push(`${manifest.file}: ${error.message}`)
+    }
+    return { name: manifest.name, version, ok: version !== null && version === source }
   })
-  return { source, manifests, ok: manifests.every((m) => m.ok) }
+  const locks = LOCK_INVENTORY.map((entry) => {
+    let version = null
+    try {
+      version = readLockVersion(root, entry)
+    } catch (error) {
+      errors.push(`${entry.file}: ${error.message}`)
+    }
+    return { name: entry.file, version, ok: version !== null && version === source }
+  })
+  try {
+    validateInventory(root)
+  } catch (error) {
+    errors.push(error.message)
+  }
+  return {
+    source,
+    manifests,
+    locks,
+    errors: [...new Set(errors)],
+    ok:
+      source !== null &&
+      manifests.every((item) => item.ok) &&
+      locks.every((item) => item.ok) &&
+      errors.length === 0,
+  }
 }
 
 /**
- * Rewrite every divergent manifest to the package.json version.
- *
- * @param {string} root - repository root
- * @returns {number} count of manifests rewritten
+ * Rewrite only version metadata after every inventory entry has passed the
+ * structural preflight. A second validation is performed by the CLI.
  */
 export function syncToSource(root) {
-  const { source, manifests } = compareVersions(root)
-  let changed = 0
-  for (const manifest of manifests) {
-    if (manifest.ok) continue
-    const def = MANIFESTS.find((m) => m.name === manifest.name)
-    writeManifestVersion(join(root, def.file), def.kind, source)
-    changed += 1
-  }
-  return changed
+  const inventory = validateInventory(root, { allowVersionDivergence: true })
+  const source = inventory.sourceVersion
+  const changed = inventory.versions.filter(({ version }) => version !== source).length
+  const lockChanged = inventory.documents.filter(
+    ({ entry, data }) => entry.role === 'lock' && data.version !== source,
+  ).length
+  if (changed || lockChanged) writeInventoryVersion(inventory, source)
+  return changed + lockChanged
 }
 
 function printDivergenceTable(result) {
   const rows = [
     ['manifest', 'version', 'status'],
-    ...result.manifests.map((m) => [m.name, m.version ?? 'MISSING', m.ok ? 'ok' : 'DIVERGENT']),
+    ...result.manifests.map((item) => [
+      item.name,
+      item.version ?? 'MISSING',
+      item.ok ? 'ok' : 'DIVERGENT',
+    ]),
+    ...result.locks.map((item) => [
+      item.name,
+      item.version ?? 'MISSING',
+      item.ok ? 'ok' : 'DIVERGENT',
+    ]),
   ]
-  const widths = rows[0].map((_, i) => Math.max(...rows.map((row) => row[i].length)))
-  console.log(`Source of truth: package.json → v${result.source}\n`)
-  for (const row of rows) {
-    console.log(row.map((cell, i) => cell.padEnd(widths[i])).join('  '))
-  }
+  const widths = rows[0].map((_, index) => Math.max(...rows.map((row) => row[index].length)))
+  console.log(`Source of truth: package.json → v${result.source ?? 'INVALID'}\n`)
+  for (const row of rows)
+    console.log(row.map((cell, index) => cell.padEnd(widths[index])).join('  '))
+  for (const error of result.errors) console.error(`version-check: ${error}`)
   console.log('')
 }
 
 const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 
 if (isDirectRun) {
-  // npm scripts run from the package root, so the working directory is the
-  // repository root to check. Explicit cwd keeps the CLI testable.
   const root = process.cwd()
   const fix = process.argv.includes('--fix')
-  let result
-  try {
-    result = compareVersions(root)
-  } catch (error) {
-    console.error(`version-check: cannot read package.json — ${error.message}`)
-    process.exit(1)
-  }
-
+  const result = compareVersions(root)
   if (result.ok) {
-    console.log(`✓ All manifests match package.json v${result.source}`)
+    console.log(`✓ All manifests match package.json v${result.source}; locks are in sync`)
     process.exit(0)
   }
-
   printDivergenceTable(result)
-  if (fix) {
-    const changed = syncToSource(root)
-    const after = compareVersions(root)
-    if (after.ok) {
-      console.log(`✓ Synced ${changed} manifest(s) to v${after.source}`)
-      process.exit(0)
-    }
-    console.error(
-      `version-check: sync incomplete — ${after.manifests.filter((m) => !m.ok).length} manifest(s) still divergent`,
-    )
+  if (!fix) {
+    console.error('version-check: inventory is invalid or out of sync')
     process.exit(1)
   }
-  console.error('version-check: manifests out of sync (run with --fix to sync)')
-  process.exit(1)
+  try {
+    const changed = syncToSource(root)
+    const after = compareVersions(root)
+    if (!after.ok) throw new Error(after.errors.join('; ') || 'inventory remains divergent')
+    console.log(`✓ Synced ${changed} metadata entries to v${after.source}`)
+    process.exit(0)
+  } catch (error) {
+    console.error(`version-check: refusing to write: ${error.message}`)
+    process.exit(1)
+  }
 }

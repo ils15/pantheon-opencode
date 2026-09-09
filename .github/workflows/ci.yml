@@ -68,7 +68,7 @@ jobs:
         run: npm run test:security
 
       - name: Verify package
-        run: npm pack --dry-run
+        run: npm run package:evidence -- --output-dir="$RUNNER_TEMP/package-evidence" --target-sha="$(git rev-parse HEAD)"
 
   version-check:
     runs-on: ubuntu-latest

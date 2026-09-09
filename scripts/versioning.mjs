@@ -16,22 +16,20 @@
  * No version bumping ever happens inside GitHub Actions.
  */
 
-import { execSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  commitPreparedUpdates,
+  prepareInventoryVersion,
+  SEMVER_PATTERN,
+  validateInventory,
+} from './manifest-inventory.mjs'
 import { collectEntries, groupCommits, parseCommitLine, renderChangelog } from './release-notes.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
-
-const MANIFEST_FILES = [
-  // 'platform/forge.json' removed in v1.0 — directory no longer exists
-  'pyproject.toml',
-  'package.json',
-  'plugin.json',
-  'src/plugins/tui/package.json',
-]
 
 const CHANGELOG_PATH = join(ROOT, 'CHANGELOG.md')
 
@@ -39,12 +37,8 @@ const CHANGELOG_PATH = join(ROOT, 'CHANGELOG.md')
 // Git helpers
 // ---------------------------------------------------------------------------
 
-function run(cmd) {
-  try {
-    return execSync(cmd, { cwd: ROOT, encoding: 'utf-8' }).trim()
-  } catch {
-    return ''
-  }
+function runGit(args) {
+  return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }).trim()
 }
 
 function getLatestTag() {
@@ -52,12 +46,15 @@ function getLatestTag() {
   // The loose glob `v[0-9]*.[0-9]*.[0-9]*` ALSO matches v1.2.0-beta.9.*
   // (the trailing `*` swallows the -beta suffix), which would poison the
   // version gate — so filter strictly before sorting.
-  const tag = run("git tag -l 'v*' | grep -E '^v[0-9]+\\.[0-9]+\\.[0-9]+$' | sort -V | tail -1")
-  return tag || 'v0.0.0'
+  const tags = runGit(['tag', '-l', 'v*'])
+    .split('\n')
+    .filter((tag) => /^v\d+\.\d+\.\d+$/.test(tag))
+  tags.sort((left, right) => compareStable(left.slice(1), right.slice(1)))
+  return tags.at(-1) || 'v0.0.0'
 }
 
 function getCurrentVersion() {
-  return JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8')).version
+  return validateInventory(ROOT).sourceVersion
 }
 
 // ---------------------------------------------------------------------------
@@ -65,7 +62,10 @@ function getCurrentVersion() {
 // ---------------------------------------------------------------------------
 
 function bumpVersion(version, type) {
-  const [major, minor, patch] = version.split('.').map(Number)
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(version)
+  if (!match) throw new Error(`cannot bump invalid semver: ${version}`)
+  if (!['major', 'minor', 'patch'].includes(type)) throw new Error(`invalid bump type: ${type}`)
+  const [major, minor, patch] = match.slice(1).map(Number)
   switch (type) {
     case 'major':
       return `${major + 1}.0.0`
@@ -76,8 +76,17 @@ function bumpVersion(version, type) {
   }
 }
 
+function compareStable(left, right) {
+  const a = left.split('.').map(Number)
+  const b = right.split('.').map(Number)
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index]
+  }
+  return 0
+}
+
 function analyzeConventionalCommits(since) {
-  const log = run(`git log ${since}..HEAD --format="%s"`)
+  const log = runGit(['log', `${since}..HEAD`, '--format=%s'])
   if (!log) return 'patch'
   let bump = 'patch'
   for (const msg of log.split('\n').filter(Boolean)) {
@@ -91,27 +100,10 @@ function analyzeConventionalCommits(since) {
 // Manifest updater
 // ---------------------------------------------------------------------------
 
-function updateManifests(newVersion) {
-  for (const file of MANIFEST_FILES) {
-    const path = join(ROOT, file)
-    try {
-      const raw = readFileSync(path, 'utf-8')
-      if (file.endsWith('.toml')) {
-        // TOML: replace version = "X.Y.Z"
-        const updated = raw.replace(/^(version\s*=\s*")[^"]+(")/m, `$1${newVersion}$2`)
-        writeFileSync(path, updated)
-        console.log(`  ✓ ${file} → ${newVersion}`)
-      } else {
-        // JSON
-        const content = JSON.parse(raw)
-        content.version = newVersion
-        writeFileSync(path, `${JSON.stringify(content, null, 2)}\n`)
-        console.log(`  ✓ ${file} → ${newVersion}`)
-      }
-    } catch {
-      console.log(`  ⚠ ${file} not found — skipped`)
-    }
-  }
+function prepareManifests(newVersion) {
+  if (!SEMVER_PATTERN.test(newVersion)) throw new Error(`invalid version: ${newVersion}`)
+  const inventory = validateInventory(ROOT, { allowVersionDivergence: true })
+  return { inventory, updates: prepareInventoryVersion(inventory, newVersion) }
 }
 
 // ---------------------------------------------------------------------------
@@ -181,15 +173,17 @@ function stripEmptySections(body) {
   return keep.join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
-function promoteUnreleased(newVersion, dateStr, notesBody = null) {
+function prepareUnreleased(newVersion, dateStr, notesBody = null) {
+  if (!SEMVER_PATTERN.test(newVersion)) throw new Error(`invalid changelog version: ${newVersion}`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw new Error(`invalid changelog date: ${dateStr}`)
+  if (notesBody !== null && typeof notesBody !== 'string') {
+    throw new Error('generated release notes must be text')
+  }
   const content = readFileSync(CHANGELOG_PATH, 'utf-8')
 
   const unreleasedHeader = '## [Unreleased]'
   const idx = content.indexOf(unreleasedHeader)
-  if (idx === -1) {
-    console.log('  ⚠ [Unreleased] section not found in CHANGELOG — skipping')
-    return false
-  }
+  if (idx === -1) throw new Error('CHANGELOG.md is missing the [Unreleased] section')
 
   // Find the end of [Unreleased]: next ## header or end of file
   const afterHeader = idx + unreleasedHeader.length
@@ -211,15 +205,10 @@ function promoteUnreleased(newVersion, dateStr, notesBody = null) {
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith('###') && !l.startsWith('## '))
 
-  if (notesBody === null && realLines.length === 0) {
-    console.log('  ℹ [Unreleased] is empty — CHANGELOG not modified')
-    return false
-  }
+  if (notesBody === null && realLines.length === 0) return { changed: false, content }
 
   if (notesBody !== null && realLines.length > 0) {
-    console.log(
-      '  ⚠ --notes replaces the manual [Unreleased] content — review the diff before committing',
-    )
+    console.log('  --notes replaces the manual [Unreleased] content')
   }
 
   // Strip lines that are just empty subsections (### X or ## 🆕/🐞/⚠️/✅
@@ -239,13 +228,32 @@ function promoteUnreleased(newVersion, dateStr, notesBody = null) {
 
   const updated = `${before + unreleasedHeader + newTemplate}\n\n${newVersionHeader}${writtenBody}${after}`
 
-  writeFileSync(CHANGELOG_PATH, updated)
-  console.log(
-    notesBody !== null
-      ? `  ✓ CHANGELOG: [Unreleased] → [v${newVersion}] (notes generated from commits)`
-      : `  ✓ CHANGELOG: [Unreleased] → [v${newVersion}]`,
-  )
-  return true
+  if (!updated.includes('## [Unreleased]') || !updated.includes(newVersionHeader)) {
+    throw new Error('prepared CHANGELOG.md failed structural validation')
+  }
+  return { changed: true, content: updated, notesGenerated: notesBody !== null }
+}
+
+function contentHasUnreleased() {
+  return readFileSync(CHANGELOG_PATH, 'utf8').includes('## [Unreleased]')
+}
+
+function commitPreparedRelease(manifestPlan, changelogPlan) {
+  const updates = [...manifestPlan.updates]
+  if (changelogPlan.changed) {
+    updates.push({ path: CHANGELOG_PATH, content: changelogPlan.content })
+  }
+  commitPreparedUpdates(updates)
+  for (const document of manifestPlan.inventory.documents) {
+    console.log(`  ✓ ${document.entry.file} → ${manifestPlan.version}`)
+  }
+  if (changelogPlan.changed) {
+    console.log(
+      changelogPlan.notesGenerated
+        ? `  ✓ CHANGELOG: [Unreleased] → [v${manifestPlan.version}] (notes generated from commits)`
+        : `  ✓ CHANGELOG: [Unreleased] → [v${manifestPlan.version}]`,
+    )
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -298,23 +306,21 @@ switch (command) {
       const since = latestTag === 'v0.0.0' ? null : latestTag
       const raw = collectEntries({ since, draft: since === null })
       const body = renderChangelog(groupCommits(raw.map(parseCommitLine)))
-      if (!body) {
-        console.log('  ⚠ --notes: no groupable commits — manual [Unreleased] content used')
-        return null
-      }
-      console.log(`  ℹ --notes: release notes generated from ${raw.length} commits`)
+      if (!body) return null
+      console.log(`  --notes generated from ${raw.length} commits`)
       return body
     }
 
-    // If package.json is already ahead of the latest tag, someone bumped
-    // without tagging — warn and use the current version as-is. Tags are
-    // workflow-owned, so there is nothing to create here.
+    if (!contentHasUnreleased()) throw new Error('CHANGELOG.md is missing the [Unreleased] section')
     if (current !== latestVer) {
-      console.log(`⚠ package.json (${current}) already ahead of latest tag (${latestTag}).`)
-      console.log(`  Syncing all manifests to ${current} and promoting CHANGELOG.`)
-      updateManifests(current)
+      console.log(
+        `package.json (${current}) is ahead of latest tag (${latestTag}); synchronizing inventory.`,
+      )
       const date = new Date().toISOString().slice(0, 10)
-      promoteUnreleased(current, date, generateNotes())
+      const notesBody = generateNotes()
+      const changelogPlan = prepareUnreleased(current, date, notesBody)
+      const manifestPlan = prepareManifests(current)
+      commitPreparedRelease({ ...manifestPlan, version: current }, changelogPlan)
       console.log(`Tag v${current} will be created by the release workflow after merge to main.`)
       break
     }
@@ -324,13 +330,11 @@ switch (command) {
     const date = new Date().toISOString().slice(0, 10)
 
     console.log(`Bumping ${current} → ${newVersion} (${bumpType})`)
-    updateManifests(newVersion)
-    promoteUnreleased(newVersion, date, generateNotes())
-    console.log(`\nDone. Commit with: git add -A && git commit -m "chore(release): v${newVersion}"`)
-
-    // Tags are owned by the release workflow — never create them locally.
-    // A local tag on a pre-merge commit drifts from the merged main state
-    // (the untagged-v1.2.1 root cause) and would desync the version gate.
+    const notesBody = generateNotes()
+    const changelogPlan = prepareUnreleased(newVersion, date, notesBody)
+    const manifestPlan = prepareManifests(newVersion)
+    commitPreparedRelease({ ...manifestPlan, version: newVersion }, changelogPlan)
+    console.log(`\nDone. Commit the version inventory and CHANGELOG as v${newVersion}.`)
     console.log(`Tag v${newVersion} will be created by the release workflow after merge to main.`)
     break
   }
@@ -339,7 +343,11 @@ switch (command) {
   case 'changelog': {
     const version = arg || getCurrentVersion()
     const date = new Date().toISOString().slice(0, 10)
-    promoteUnreleased(version, date)
+    const changelogPlan = prepareUnreleased(version, date)
+    if (changelogPlan.changed) {
+      commitPreparedUpdates([{ path: CHANGELOG_PATH, content: changelogPlan.content }])
+      console.log(`  ✓ CHANGELOG: [Unreleased] → [v${version}]`)
+    }
     break
   }
 
@@ -357,7 +365,7 @@ Commands:
 
 Release flow:
   1. node scripts/versioning.mjs apply [minor]
-  2. git add -A && git commit -m "chore(release): vX.Y.Z"
-  3. git push     ← CI passes → auto-release fires because pkg > tag
+  2. Commit the version inventory and CHANGELOG.
+  3. Push after review; CI and the dispatch-only release workflow create the tag.
 `)
 }

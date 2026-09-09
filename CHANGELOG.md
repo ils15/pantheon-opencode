@@ -31,8 +31,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   WARN/SKIP/AMBIENTAL/NOT_TESTED never produce exit 0.
 - **No npm install fallback in TUI/install paths:** `sync-tui.mjs` and the
   plugin installer propagate `npm ci` failures instead of falling back to
-  `npm install` (the `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` escape hatch is
-  gone).
+  `npm install`; `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` is not supported.
+- **Lockfile-backed installs:** the root (`package.json` + `package-lock.json`)
+  and TUI (`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`)
+  are validated independently with `npm ci --ignore-scripts`. A failure blocks
+  the run; there is no `npm install` fallback.
+- **Release artifact identity:** each release carries one `.tgz` tarball and
+  the SHA-256 of that same file from validation through publication. The
+  tarball and release metadata are bound to the full `TARGET_SHA`; repacking is
+  not an equivalent artifact.
+- **Intentional MCP divergence:** `scripts/memory_mcp_server.py` keeps the
+  lightweight `memory_*` contract while `src/mcp/memory_mcp_server.py` also
+  exposes the optional codemap tools. The other shared MCP copies remain
+  identical; this pair is not to be overwritten by synchronization.
+- **Sandbox scope:** a PASS from the prepared isolated sandbox is not proof of
+  support for every real host or untested host configuration.
 
 ### Breaking Changes
 
@@ -60,9 +73,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   named top-level map — the `mcp.servers` wrapper is rejected by OpenCode
   1.18.18 (`Missing key mcp.servers.enabled`). Legacy wrapped entries are
   unwrapped and `disabled` flags are normalized back to `enabled`.
-- **Deterministic plugin installs:** the TUI plugin now ships its lockfile and
-  installs with `npm ci --omit=dev`; the legacy `npm install` fallback is
-  opt-in via `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1`.
+- **Deterministic plugin installs:** the TUI plugin ships its lockfile and
+  installs with `npm ci --omit=dev`; failures are propagated without an
+  `npm install` fallback.
 - **Uninstall CLI:** new `node scripts/uninstall.mjs --project|--global` with
   ownership checks, `--dry-run` and `--force`.
 - **OpenCode-only:** platform guides consolidated into a single OpenCode
