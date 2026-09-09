@@ -262,6 +262,22 @@ class TestHelpers:
         with pytest.raises(ValueError, match=r"(?i)empty|cannot be empty"):
             module._validate_script_name("")
 
+    async def test_validate_script_name_rejects_external_symlink_prefix_collision(
+        self, module, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A symlink outside the root must not pass a shared path prefix."""
+        scripts_dir = tmp_path / "scripts"
+        external_dir = tmp_path / "scripts-escape"
+        scripts_dir.mkdir()
+        external_dir.mkdir()
+        external_script = external_dir / "escape.py"
+        external_script.write_text("print('outside')\n", encoding="utf-8")
+        (scripts_dir / "escape.py").symlink_to(external_script)
+        monkeypatch.setattr(module, "SCRIPTS_DIR", scripts_dir)
+
+        with pytest.raises(ValueError, match=r"(?i)invalid"):
+            module._validate_script_name("escape.py")
+
     async def test_format_output_with_stderr(self, module) -> None:
         """Format output should include stderr section."""
         result = module._format_output("", "error occurred", 1)
@@ -277,6 +293,47 @@ class TestHelpers:
 
 class TestPackagedFallback:
     """Tests for the packaged-payload fallback (no candidate dir exists)."""
+
+    @pytest.fixture
+    def candidate_scripts_dirs(self, tmp_path: Path) -> tuple[Path, Path]:
+        """Create an empty project-local candidate and a usable lower one."""
+        project_local = tmp_path / ".opencode" / ".pantheon" / "code-mode"
+        lower_priority = tmp_path / ".pantheon" / "code-mode"
+        project_local.mkdir(parents=True)
+        lower_priority.mkdir(parents=True)
+        (lower_priority / "fixture-script.py").write_text(
+            "print('fixture')\n", encoding="utf-8"
+        )
+        return project_local, lower_priority
+
+    async def test_empty_project_local_dir_does_not_shadow_lower_candidate(
+        self, module, candidate_scripts_dirs: tuple[Path, Path]
+    ) -> None:
+        """An empty higher-priority dir must not hide usable scripts below it."""
+        project_local, lower_priority = candidate_scripts_dirs
+
+        resolved = module._resolve_scripts_dir([project_local, lower_priority])
+
+        assert resolved == lower_priority
+
+    async def test_external_symlinked_directory_does_not_shadow_lower_candidate(
+        self, module, tmp_path: Path
+    ) -> None:
+        """A candidate directory symlinked outside its parent must be skipped."""
+        symlinked_candidate = tmp_path / "scripts"
+        external_dir = tmp_path / "scripts-escape"
+        lower_priority = tmp_path / "lower"
+        external_dir.mkdir()
+        lower_priority.mkdir()
+        (external_dir / "escape.py").write_text("print('outside')\n", encoding="utf-8")
+        (lower_priority / "fixture-script.py").write_text(
+            "print('fixture')\n", encoding="utf-8"
+        )
+        symlinked_candidate.symlink_to(external_dir, target_is_directory=True)
+
+        resolved = module._resolve_scripts_dir([symlinked_candidate, lower_priority])
+
+        assert resolved == lower_priority
 
     async def test_packaged_scripts_dir_resolves_to_repo_payload(self, module) -> None:
         """_packaged_scripts_dir should find the shipped .pantheon/code-mode."""

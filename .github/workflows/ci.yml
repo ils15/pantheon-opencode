@@ -68,7 +68,7 @@ jobs:
         run: npm run test:security
 
       - name: Verify package
-        run: npm pack --dry-run 2>&1 | tail -3
+        run: npm pack --dry-run
 
   version-check:
     runs-on: ubuntu-latest

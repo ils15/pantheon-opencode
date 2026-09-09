@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -20,6 +23,34 @@ test('CI dependency installation and required gates are fail-closed', () => {
     'npm run audit',
   ]) {
     assert.ok(workflow.includes(command), `CI must run ${command}`)
+  }
+})
+
+test('CI package verification preserves npm pack failures and remains blocking', () => {
+  const match = workflow.match(/- name: Verify package\n\s+run: ([^\n]+)/)
+  assert.ok(match, 'CI must define a package verification step')
+  const command = match[1].trim()
+  const packageStep = workflow.match(/- name: Verify package\n[\s\S]*?(?=\n\s{2}version-check:)/)
+  assert.ok(packageStep, 'CI package verification step must be present in the validate job')
+
+  assert.equal(command, 'npm pack --dry-run')
+  assert.doesNotMatch(command, /\|(?:\s|$)/, 'npm pack must not be piped to a masking command')
+  assert.doesNotMatch(command, /\|\|/, 'npm pack must not have a fallback that masks failure')
+  assert.doesNotMatch(packageStep[0], /continue-on-error:\s*true/)
+
+  const binDir = mkdtempSync(join(tmpdir(), 'ci-pack-contract-'))
+  const fakeNpm = join(binDir, 'npm')
+  writeFileSync(fakeNpm, '#!/bin/sh\nexit 37\n')
+  chmodSync(fakeNpm, 0o755)
+
+  try {
+    const result = spawnSync('bash', ['-c', command], {
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` },
+      encoding: 'utf8',
+    })
+    assert.equal(result.status, 37, 'npm pack failure must fail the workflow step')
+  } finally {
+    rmSync(binDir, { recursive: true, force: true })
   }
 })
 
