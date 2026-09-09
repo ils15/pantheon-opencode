@@ -134,8 +134,8 @@ paste into the `[Unreleased]` CHANGELOG section (diagnostics go to stderr).
    committing.
 4. **Extract** — `release.yml` runs `node scripts/changelog-extract.mjs X.Y.Z`
    to pull the versioned section into the GitHub Release body.
-5. **Publish** — the workflow tags the exact merge commit and publishes to
-   npm (stable or beta per the PR label).
+5. **Publish** — the workflow tags the exact dispatch target SHA and publishes
+   to npm (stable or beta per the `release_channel` input).
 
 ---
 
@@ -169,29 +169,30 @@ runs so beta and stable paths can never double-publish.
 
 ---
 
-## Beta Releases (PR labeled `release:beta`)
+## Beta Releases (explicit dispatch with `release_channel=beta`)
 
-Labeling a PR with exactly `release:beta` triggers `release.yml` on
-`pull_request: labeled` (the real `github.event.number` is used). A beta
-recovery is triggered only by an explicit `workflow_dispatch` with all three
-recovery inputs; a dispatch without recovery inputs is the stable path. Pushes
-do not trigger or republish beta releases.
+Publication is authorized **only** by an explicit `workflow_dispatch` of
+`release.yml`. PR labels, pushes, merges, and tags never trigger or authorize a
+release. Dispatching with `release_channel=beta` runs the beta path; a beta
+recovery is triggered only by a dispatch with all three recovery inputs; a
+dispatch without recovery inputs and `release_channel=stable` (the default) is
+the stable path.
 
 1. Type: channel=`beta`, npm dist-tag=`beta`.
 2. **Published stable lookup** — the workflow queries npm `dist-tags.latest` at
    release time; git tags and the branch's package version are not used as the
    beta base.
 3. **Beta version** — the next semver patch of npm latest by default,
-   `<next-stable>-beta.<PR>.<short-sha>` (e.g. `1.3.5-beta.12.abc1234`). The
+   `<next-stable>-beta.<RUN>.<short-sha>` (e.g. `1.3.5-beta.412.abc1234`), where
+   `<RUN>` is `GITHUB_RUN_NUMBER`. The
    short SHA is exactly the first seven lowercase hexadecimal characters of
    the full commit SHA (`sha.slice(0, 7)`), matching `release-beta-version.mjs`.
    Recovery dispatches fail closed unless the version PR and seven-character
    suffix both match `recovery_pr_number` and `recovery_target_sha`.
-   Only the exact `release:beta` label triggers this path. Alternate label
-   variants do not trigger it. A next-version intent is handled by the
-   workflow inputs/logic. All manifests are rewritten to the calculated
+   All manifests are rewritten to the calculated
    version and `version-check` blocks publishing if they diverge.
-4. Tag is created on the **PR head**, and the GitHub Release is created with
+4. Tag is created on the **dispatch target SHA**, and the GitHub Release is
+   created with
    `--prerelease`, title `Pantheon <ver>`, and the generated release notes.
 5. `npm publish --tag beta` publishes the immutable artifact. The workflow does
    not create a PR comment.
@@ -213,7 +214,7 @@ absent; an existing npm version is a successful no-op. Partial or invalid
 inputs, missing releases, API errors, and tag mismatches fail closed.
 
 The recovery path is beta-only and does not calculate a new version or change
-the normal stable dispatch and PR-label beta paths.
+the normal stable dispatch and beta-channel dispatch paths.
 
 The pipeline is designed so **reruns are safe**:
 

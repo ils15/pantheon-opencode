@@ -151,13 +151,12 @@ async def test_auth_store_fallback_and_gateway_request(
     body = request["json"]
     assert body["model"] == "mimo-v2.5"
     assert "store-key" not in json.dumps(body)
-    assert body["messages"][0]["content"][1]["image_url"]["url"].startswith(
-        "https://"
-    )
+    assert body["messages"][0]["content"][1]["image_url"]["url"].startswith("https://")
 
 
 @pytest.mark.asyncio
 async def test_ocr_uses_ocr_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", "test-key")
     monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
     result = await vision.mcp.call_tool(
         "vision_ocr", {"path": "https://example.test/photo.jpg"}
@@ -172,6 +171,7 @@ async def test_ocr_uses_ocr_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_analyze_returns_png_metadata_and_structured_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", "test-key")
     image = tmp_path / "image.png"
     image.write_bytes(PNG_1X1)
     FakeClient.response = FakeResponse(
@@ -190,7 +190,10 @@ async def test_analyze_returns_png_metadata_and_structured_fields(
 
 
 @pytest.mark.asyncio
-async def test_gateway_500_and_timeout_are_friendly(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_gateway_500_and_timeout_are_friendly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", "test-key")
     monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
     FakeClient.response = FakeResponse(status_code=500)
     failed = await vision.mcp.call_tool(
@@ -225,7 +228,10 @@ async def test_key_never_appears_in_tool_response(
 
 def test_strip_provider_prefix() -> None:
     assert vision._strip_provider_prefix("opencode-go/mimo-v2.5") == "mimo-v2.5"
-    assert vision._strip_provider_prefix("opencode/deepseek-v4-flash") == "deepseek-v4-flash"
+    assert (
+        vision._strip_provider_prefix("opencode/deepseek-v4-flash")
+        == "deepseek-v4-flash"
+    )
     assert vision._strip_provider_prefix("mimo-v2.5") == "mimo-v2.5"
 
 
@@ -237,7 +243,8 @@ async def test_gateway_error_logs_sanitized_status_and_model(
     monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", secret)
     monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
     FakeClient.response = FakeResponse(
-        status_code=401, content=json.dumps({"error": "Model mimo-v2.5 is not supported"})
+        status_code=401,
+        content=json.dumps({"error": "Model mimo-v2.5 is not supported"}),
     )
     result = await vision.mcp.call_tool(
         "vision_describe", {"path": "https://example.test/photo.jpg"}

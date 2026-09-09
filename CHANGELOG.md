@@ -11,6 +11,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🆕 What's New
 
+### Changed
+
+- **CI fail-closed:** `ci.yml` no longer falls back from `npm ci` to
+  `npm install`, and pytest/audit failures are no longer swallowed. The
+  workflow now runs lint, typecheck, `test:ts`, Python tests, Node tests and
+  `npm audit`/`pip-audit` as blocking gates.
+- **Release authorization is dispatch-only:** `release.yml` no longer triggers
+  on PR labels or any `pull_request` event. Publication is
+  authorized only by an explicit `workflow_dispatch`; the `release_channel`
+  input (`stable` default, `beta`) selects the channel. Beta versions use
+  `GITHUB_RUN_NUMBER` instead of the PR number.
+- **Sandbox gate is PASS-only:** `test-opencode-v1-v2-sandbox.sh` no longer
+  classifies failures as `AMBIENTAL`/`NOT_TESTED`, has no prompt retry, and
+  treats missing binaries/projects/probes, timeouts and auth/network/provider
+  failures as blocking. Exit 0 now requires an explicit PASS on every check.
+- **Validation policy is PASS-only:** `doctor` exit != 0 (including legacy
+  exit 1 warnings), unknown or non-numeric statuses block validation;
+  WARN/SKIP/AMBIENTAL/NOT_TESTED never produce exit 0.
+- **No npm install fallback in TUI/install paths:** `sync-tui.mjs` and the
+  plugin installer propagate `npm ci` failures instead of falling back to
+  `npm install` (the `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` escape hatch is
+  gone).
+
+### Breaking Changes
+
+- Release automation requires a manual `workflow_dispatch`; labeling a PR no
+  longer publishes anything.
+- The sandbox validator exits non-zero when environmental checks cannot run
+  (missing binaries, provider auth, timeouts) instead of reporting them as
+  non-blocking.
+- `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` has no effect; `npm ci` failures now
+  fail the install/sync step.
+
+## 🆕 What's New
+
 ## 🐞 Fixed
 
 ## ⚠️ Known Issues

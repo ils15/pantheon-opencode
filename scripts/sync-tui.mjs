@@ -124,8 +124,7 @@ try {
   // Source: TUI plugin inside the installed package
   const tuiSrcDir = join(ROOT, 'src', 'plugins', 'tui')
   if (!existsSync(tuiSrcDir)) {
-    // Source not found (shouldn't happen in a proper install)
-    process.exit(0)
+    throw new Error(`TUI plugin source not found: ${tuiSrcDir}`)
   }
 
   // Compare versions before copy
@@ -135,28 +134,8 @@ try {
   // Copy fresh files
   const { created } = copyPluginFiles(tuiSrcDir, tuiCopyDir)
 
-  // Refresh dependencies in the copy. npm install is only allowed when the
-  // operator explicitly opts into the non-deterministic legacy fallback.
-  try {
-    execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: tuiCopyDir, stdio: 'pipe' })
-  } catch (err) {
-    if (process.env.PANTHEON_ALLOW_NPM_INSTALL_FALLBACK === '1') {
-      console.warn(`⚠️  npm ci failed; explicit fallback enabled: ${err.message}`)
-      try {
-        execSync('npm install --omit=dev --no-audit --no-fund --package-lock=false', {
-          cwd: tuiCopyDir,
-          stdio: 'pipe',
-        })
-      } catch (fallbackError) {
-        console.warn(`⚠️  TUI dependency refresh skipped: ${fallbackError.message}`)
-      }
-    } else {
-      console.warn(
-        `⚠️  TUI dependency refresh skipped after npm ci failure. Set ` +
-          `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1 to explicitly allow npm install: ${err.message}`,
-      )
-    }
-  }
+  // Lockfile installation is the only accepted dependency path.
+  execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: tuiCopyDir, stdio: 'pipe' })
 
   // Log result
   if (installedVersion && sourceVersion && installedVersion === sourceVersion && created === 0) {
@@ -167,7 +146,6 @@ try {
     )
   }
 } catch (err) {
-  // Postinstall scripts must never break npm install
-  console.warn(`⚠️  TUI sync skipped: ${err.message}`)
-  process.exit(0)
+  console.error(`❌ TUI sync failed: ${err.message}`)
+  process.exitCode = 1
 }

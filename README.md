@@ -153,9 +153,13 @@ The installer still writes the compatibility settings required by the selected
 OpenCode host, such as `experimental.subagent_depth`; this does not convert a
 V1 plugin into V2 or provide V2 with V1 hooks.
 
-## Beta releases
+## Releases
 
-A pull request labeled exactly `release:beta` triggers the beta release path. See [docs/RELEASING.md](docs/RELEASING.md) for validation and recovery details.
+Publication is authorized **only** by an explicit `workflow_dispatch` of the
+`Release` workflow (`release_channel` input selects beta or stable). PR labels,
+pushes, merges, and tags never publish anything, and every validation gate is
+fail-closed: only an explicit PASS authorizes release evidence. See
+[docs/RELEASING.md](docs/RELEASING.md) for validation and recovery details.
 
 ## Sandbox validation (V1/V2)
 
@@ -164,9 +168,9 @@ package as a real user inside an isolated sandbox (own `HOME`, npm prefix and
 venv) — never the dev environment. It checks OpenCode V1 (`opencode`) and V2
 (`opencode2`) side by side: binaries, MCP connectivity, `doctor`, and — with
 `--prompts` — a prompt battery covering the `pantheon://agents` resource,
-memory store/recall, filesystem writes and agent delegation. Environmental
-failures (network, provider auth, Docker) are classified as `AMBIENTAL` and
-never fail the run; only real failures do.
+memory store/recall, filesystem writes and agent delegation. The gate is
+fail-closed: every required check must return an explicit PASS; timeouts,
+auth/network/provider failures and missing prerequisites block the run.
 
 ```bash
 scripts/test-opencode-v1-v2-sandbox.sh --prepare          # tarball + install + init in the sandbox

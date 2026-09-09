@@ -5,7 +5,6 @@
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
-import { warning } from './cli-ui.mjs'
 import { ROOT, writeIfChanged } from './shared.mjs'
 
 /**
@@ -95,31 +94,9 @@ export function installPlugin(srcDir, dstDir, { dryRun = false, clean = false } 
   result.skipped += copyResult.skipped
 
   // Install plugin dependencies (@opentui/core, @opentui/solid, solid-js).
-  // npm ci is deterministic when the copied lockfile is present. The legacy
-  // fallback is opt-in because npm install may rewrite the dependency graph.
+  // Lockfile installation is the only accepted dependency path.
   if (!dryRun) {
-    try {
-      execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: dstDir, stdio: 'pipe' })
-    } catch (e) {
-      if (process.env.PANTHEON_ALLOW_NPM_INSTALL_FALLBACK === '1') {
-        warning(`npm ci failed; explicit fallback enabled: ${e.message}`)
-        try {
-          execSync('npm install --omit=dev --no-audit --no-fund --package-lock=false', {
-            cwd: dstDir,
-            stdio: 'pipe',
-          })
-        } catch (fallbackError) {
-          warning(`Failed to install TUI plugin dependencies: ${fallbackError.message}`)
-          result.errors++
-        }
-      } else {
-        warning(
-          `npm ci failed; dependencies were not changed. Set ` +
-            `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1 to explicitly allow npm install: ${e.message}`,
-        )
-        result.errors++
-      }
-    }
+    execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: dstDir, stdio: 'pipe' })
   }
 
   return result
@@ -133,14 +110,7 @@ export function installPlugin(srcDir, dstDir, { dryRun = false, clean = false } 
  */
 export function installPluginDependencies(pluginDir, { dryRun = false } = {}) {
   if (dryRun) return
-  try {
-    execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: pluginDir, stdio: 'pipe' })
-  } catch (e) {
-    warning(
-      `npm ci failed; dependencies were not changed. Set ` +
-        `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK=1 to explicitly allow npm install: ${e.message}`,
-    )
-  }
+  execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: pluginDir, stdio: 'pipe' })
 }
 
 /**

@@ -41,18 +41,20 @@ MAX_SCRIPT_TIMEOUT: int = 300
 # ── Env Allowlist ──────────────────────────────────────────────────────────────
 # Only these variables are passed to script subprocesses.  Everything else
 # (secrets, cloud credentials, etc.) is stripped to limit blast radius.
-_CODE_MODE_ENV_ALLOWLIST: frozenset[str] = frozenset({
-    "PATH",
-    "HOME",
-    "LANG",
-    "PANTHEON_HOME",
-    "PANTHEON_PROJECT",
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
-    "EVAL_JUDGE_MODEL",
-    "SHELL",
-    "USER",
-})
+_CODE_MODE_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "LANG",
+        "PANTHEON_HOME",
+        "PANTHEON_PROJECT",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "EVAL_JUDGE_MODEL",
+        "SHELL",
+        "USER",
+    }
+)
 
 # Optional extra vars that callers may opt-in to pass through.  Populate
 # this set at startup if needed (e.g. ``CODE_MODE_EXTRA_ENV.add("MY_VAR")``).
@@ -127,6 +129,7 @@ def _detect_prlimit() -> str | None:
         return None
     return shutil.which("prlimit")
 
+
 # ── Scripts Directory Resolution ─────────────────────────────────────────────
 # Priority:
 # 1. /.opencode/.pantheon/code-mode/  (project install)
@@ -134,6 +137,49 @@ def _detect_prlimit() -> str | None:
 # 3. /.pantheon/code-mode/               (global fallback)
 # 4. .pantheon/code-mode/ shipped inside the installed package (tarball
 #    fallback — package.json `files` includes .pantheon/code-mode/**)
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    """Return whether a resolved *path* is contained by a resolved *root*."""
+    try:
+        return os.path.commonpath((str(root), str(path))) == str(root)
+    except (OSError, ValueError):
+        return False
+
+
+def _has_usable_scripts(scripts_dir: Path) -> bool:
+    """Return whether *scripts_dir* contains an executable code-mode target.
+
+    A directory is only a valid resolver candidate when it contains a regular
+    ``.py`` or ``.sh`` file that can pass the same direct-child and path
+    containment rules used by script execution.  This prevents an empty
+    project overlay (or a directory containing only metadata) from masking a
+    lower-priority installation.
+    """
+    try:
+        if scripts_dir.is_symlink():
+            return False
+        resolved_dir = scripts_dir.resolve(strict=True)
+        if not resolved_dir.is_dir():
+            return False
+        for script_path in scripts_dir.iterdir():
+            if script_path.name.startswith("."):
+                continue
+            if script_path.suffix.lower() not in ALLOWED_EXTENSIONS:
+                continue
+            try:
+                resolved_script = script_path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            if (
+                resolved_script.is_file()
+                and resolved_script.parent == resolved_dir
+                and _is_within(resolved_script, resolved_dir)
+            ):
+                return True
+    except (OSError, RuntimeError):
+        return False
+    return False
 
 
 def _packaged_scripts_dir() -> Path | None:
@@ -144,20 +190,25 @@ def _packaged_scripts_dir() -> Path | None:
     Returns None when no packaged copy exists.
     """
     try:
-        here = Path(__file__).resolve()
-    except Exception:
+        here = Path(__file__).resolve(strict=True)
+    except (OSError, RuntimeError):
         return None
     for parent in [here.parent, *here.parents]:
         try:
             candidate = parent / ".pantheon" / "code-mode"
         except Exception:
             continue
-        try:
-            if candidate.is_dir():
-                return candidate
-        except OSError:
-            continue
+        if _has_usable_scripts(candidate):
+            return candidate
     return None
+
+
+def _resolve_scripts_dir(candidates: list[Path]) -> Path | None:
+    """Select the first usable candidate, then try the packaged fallback."""
+    for candidate in candidates:
+        if _has_usable_scripts(candidate):
+            return candidate
+    return _packaged_scripts_dir()
 
 
 _PANTHEON_HOME: Path = pantheon_home()
@@ -168,15 +219,9 @@ if _proj is not None:
     _SCRIPTS_DIR_CANDIDATES.append(_proj / ".pantheon" / "code-mode")
 _SCRIPTS_DIR_CANDIDATES.append(_PANTHEON_HOME / ".pantheon" / "code-mode")
 
-SCRIPTS_DIR: Path = _PANTHEON_HOME / ".pantheon" / "code-mode"  # default
-for _candidate in _SCRIPTS_DIR_CANDIDATES:
-    if _candidate.is_dir():
-        SCRIPTS_DIR = _candidate
-        break
-else:
-    _packaged = _packaged_scripts_dir()
-    if _packaged is not None:
-        SCRIPTS_DIR = _packaged
+SCRIPTS_DIR: Path = _resolve_scripts_dir(_SCRIPTS_DIR_CANDIDATES) or (
+    _PANTHEON_HOME / ".pantheon" / "code-mode"
+)
 
 # ── FastMCP App ───────────────────────────────────────────────────────────────
 mcp = FastMCP(
@@ -208,11 +253,21 @@ def _validate_script_name(script_name: str) -> Path:
         allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
         raise ValueError(f"Extension '{ext}' not allowed. Allowed: {allowed}")
 
-    script_path = (SCRIPTS_DIR / name).resolve()
-    if not str(script_path).startswith(str(SCRIPTS_DIR.resolve())):
+    if SCRIPTS_DIR.is_symlink():
         raise ValueError(f"Invalid script name: '{script_name}'")
-    if not script_path.exists():
-        raise ValueError(f"Script '{script_name}' not found")
+
+    try:
+        scripts_root = SCRIPTS_DIR.resolve(strict=True)
+        script_path = (SCRIPTS_DIR / name).resolve(strict=True)
+    except (FileNotFoundError, OSError, RuntimeError):
+        raise ValueError(f"Script '{script_name}' not found") from None
+
+    if (
+        not _is_within(script_path, scripts_root)
+        or script_path.parent != scripts_root
+        or not script_path.is_file()
+    ):
+        raise ValueError(f"Invalid script name: '{script_name}'")
 
     return script_path
 
@@ -286,7 +341,9 @@ def _parse_frontmatter(script_path: Path) -> dict[str, Any]:
             break
         if not stripped.startswith("#"):
             return {}  # non-comment line inside the block → not frontmatter
-        body_lines.append(stripped[1:].lstrip() if stripped.startswith("# ") else stripped[1:])
+        body_lines.append(
+            stripped[1:].lstrip() if stripped.startswith("# ") else stripped[1:]
+        )
     else:
         return {}  # no closing delimiter
 
@@ -378,7 +435,9 @@ async def list_code_mode_scripts() -> str:
 
 @mcp.resource(
     "pantheon://code-mode/scripts/{script_name}",
-    description="Content of a code-mode script by name, with parsed frontmatter metadata",
+    description=(
+        "Content of a code-mode script by name, with parsed frontmatter metadata"
+    ),
 )
 async def get_code_mode_script(script_name: str) -> str:
     """Return the source content of a code-mode script plus its metadata."""
@@ -486,8 +545,14 @@ async def execute_code_script(
             await proc.wait()
             duration_ms = int((time.monotonic() - started) * 1000)
             return _build_result(
-                "", "", -1, timed_out=True, duration_ms=duration_ms,
-                metadata=metadata, json_output=json_output, timeout_s=timeout_s,
+                "",
+                "",
+                -1,
+                timed_out=True,
+                duration_ms=duration_ms,
+                metadata=metadata,
+                json_output=json_output,
+                timeout_s=timeout_s,
             )
     except FileNotFoundError:
         return _build_result(

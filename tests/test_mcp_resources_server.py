@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _text(contents: list | str) -> str:
-    """Extract text content from FastMCP read_resource result (list[ReadResourceContents]) or string."""
+    """Extract text from FastMCP results (list[ReadResourceContents]) or strings."""
     if isinstance(contents, str):
         return contents
     if isinstance(contents, list) and len(contents) > 0:
@@ -265,7 +265,8 @@ class TestStaticResources:
         agents = home / "agents"
         agents.mkdir(parents=True)
         (agents / "zeus.md").write_text(
-            "---\nname: zeus\ndescription: Orchestrator — delegates, never implements\n---\n",
+            "---\nname: zeus\ndescription: Orchestrator — delegates, never "
+            "implements\n---\n",
             encoding="utf-8",
         )
         (agents / "hermes.md").write_text(
@@ -294,9 +295,15 @@ class TestStaticResources:
         uris = [str(r.uri) for r in resources]
         assert "pantheon://skills" in uris
 
-    async def test_skills_list_returns_skill_names(self, server: FastMCP) -> None:
+    async def test_skills_list_returns_skill_names(
+        self, module, server: FastMCP
+    ) -> None:
         """Reading pantheon://skills should return skill names."""
-        result = await server.read_resource("pantheon://skills")
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", None),
+            patch.object(module, "_PANTHEON_HOME", ROOT / "src"),
+        ):
+            result = await server.read_resource("pantheon://skills")
         text = _text(result)
         assert len(text) > 0
         assert "tdd-with-agents" in text
@@ -307,9 +314,13 @@ class TestStaticResources:
         uris = [str(r.uri) for r in resources]
         assert "pantheon://routing" in uris
 
-    async def test_routing_returns_yaml_content(self, server: FastMCP) -> None:
+    async def test_routing_returns_yaml_content(self, module, server: FastMCP) -> None:
         """Reading pantheon://routing should return routing.yml content."""
-        result = await server.read_resource("pantheon://routing")
+        with (
+            patch.object(module, "_PANTHEON_PROJECT", None),
+            patch.object(module, "_PANTHEON_HOME", ROOT / "src"),
+        ):
+            result = await server.read_resource("pantheon://routing")
         text = _text(result)
         assert len(text) > 0
         assert "version:" in text
@@ -409,14 +420,14 @@ class TestResourceTemplates:
         assert "not found" in text.lower() or "no such" in text.lower()
 
     async def test_deepwork_status_template_registered(self, server: FastMCP) -> None:
-        """The deepwork status template pantheon://deepwork/{slug}/status should be registered."""
+        """The deepwork status template should be registered."""
         templates = await server.list_resource_templates()
         uris = [str(t.uriTemplate) for t in templates]
         matches = [u for u in uris if "deepwork" in u and "status" in u]
         assert len(matches) > 0
 
     async def test_deepwork_status_no_file(self, server: FastMCP) -> None:
-        """deepwork/{slug}/status should return a default message when STATUS.md doesn't exist."""
+        """deepwork status should default when STATUS.md does not exist."""
         result = await server.read_resource(
             "pantheon://deepwork/nonexistent_slug_xyz/status"
         )

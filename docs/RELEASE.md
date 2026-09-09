@@ -10,32 +10,31 @@
 O beta usa o PR number + SHA curto pra garantir unicidade.
 Semver: `1.2.0-beta.6.a1b2c3d` < `1.2.0` (beta é menor que a release).
 
-## Labels do GitHub
+## Canais de Release
 
-| Label | Efeito |
-|-------|--------|
-| `release:beta` | Publica beta no npm + GitHub Pre-release (next patch from npm `latest`) |
+| Canal | Formato | Exemplo | Como publicar |
+|-------|---------|---------|---------------|
+| Beta | `X.Y.Z-beta.<RUN>.<SHA>` | `1.2.0-beta.642.a1b2c3d` | `workflow_dispatch` com `release_channel=beta` |
+| Stable | `X.Y.Z` | `1.2.0` | `workflow_dispatch` com `release_channel=stable` (default) |
+
+O beta usa o run number do workflow + SHA curto pra garantir unicidade.
+Semver: `1.2.0-beta.642.a1b2c3d` < `1.2.0` (beta é menor que a release).
 
 ## Fluxos
 
-### Beta Release (de um PR aberto)
+Toda publicação é autorizada **somente** por um `workflow_dispatch` explícito.
+Labels de PR, push, merge e tag **não** disparam nenhum fluxo de release.
 
-1. Adicionar a label `release:beta` a um PR aberto
-2. O workflow `release.yml` dispara no evento `pull_request: labeled`:
-   - Consulta o stable publicado em npm e gera `<next-stable>-beta.<PR>.<SHA>`
+### Beta Release (dispatch explícito)
+
+1. No GitHub Actions, execute manualmente `Release` (`workflow_dispatch`) com
+   `release_channel=beta` na revisão desejada:
+   - Consulta o stable publicado em npm e gera `<next-stable>-beta.<RUN>.<SHA>`
    - Publica no npm com tag `beta`
    - Cria GitHub Pre-release com título `Pantheon <versão>`
-3. Instalar: `npm install pantheon-opencode@beta`
+2. Instalar: `npm install pantheon-opencode@beta`
 
-O único label que dispara o beta é exatamente `release:beta`. Intenções de
-próximo `minor` ou `major` não são labels; quando aplicável, são informadas
-pelos inputs/lógica do workflow.
-
-Não há republish automático em push. Um beta só é disparado pelo evento de label
-exatamente `release:beta`; a recuperação exige um `workflow_dispatch` explícito
-com os três inputs de recuperação. O workflow não cria comentários no PR.
-
-### Stable Release (explicit dispatch)
+### Stable Release (dispatch explícito)
 
 1. Merge o PR de release na `main` com mensagem `chore(release): vX.Y.Z`.
 2. No GitHub Actions, execute manualmente `Release` (`workflow_dispatch`) na
@@ -55,6 +54,13 @@ exata ainda não estiver no npm. Versões parciais, inválidas, releases ausente
 ou erros de API abortam sem mutação; se a versão já existir, a execução é
 idempotente.
 
+## Fail-closed
+
+Nenhum caminho de release tem fallback. Validação que não termina em PASS
+explícito bloqueia a publicação; WARN, SKIP, AMBIENTAL e NOT_TESTED nunca
+autorizam release evidence. Ausência de credencial, metadado ou tag é erro
+fatal, não degradação silenciosa.
+
 ## Versões Publicadas Atualmente
 
 | Tag npm | Versão | Git Tag | GitHub Release |
@@ -69,7 +75,8 @@ Antes (removido em jul/2026):
 - Gerava versões `X.Y.Z-beta.N` sequenciais
 - Commit spammado `chore(release):` a cada push
 
-Agora:
-- `release.yml`: label `release:beta` no PR → beta calculado do npm `latest`
-- `release.yml`: stable somente por `workflow_dispatch`
+Depois (set/2026 — fail-closed):
+- `release.yml`: beta e stable somente por `workflow_dispatch` explícito
+  (`release_channel` escolhe o canal; nenhum label de PR publica)
 - Sem commits de bump automáticos no develop
+- Toda validação é PASS-only: status não-PASS bloqueia, nunca degrada

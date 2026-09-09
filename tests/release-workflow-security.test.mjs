@@ -58,19 +58,14 @@ function tagApiOutcome(status, resolvedSha, targetSha) {
   return resolvedSha === targetSha ? 'match' : 'mismatch'
 }
 
-function dispatchReleaseTag({ eventName, recoveryVersion = '' }) {
-  return recoveryVersion !== '' || eventName === 'pull_request' ? 'beta' : 'latest'
+function dispatchReleaseTag({ recoveryVersion = '', releaseChannel = 'stable' }) {
+  return recoveryVersion !== '' || releaseChannel === 'beta' ? 'beta' : 'latest'
 }
 
-test('beta trigger requires the exact release:beta label', () => {
-  assert.ok(
-    workflow.includes(
-      "github.event_name == 'pull_request' && github.event.label.name == 'release:beta'",
-    ),
-  )
-  assert.doesNotMatch(workflow, /startsWith\(github\.event\.label\.name/)
-  assert.match(workflow, /RELEASE_LABEL: \$\{\{ github\.event\.label\.name \}\}/)
-  assert.doesNotMatch(workflow, /release:beta:(?:minor|major)/)
+test('publication is authorized only by explicit workflow_dispatch', () => {
+  assert.match(workflow, /^\s{2}workflow_dispatch:/m)
+  assert.doesNotMatch(workflow, /^\s{2}pull_request:/m)
+  assert.doesNotMatch(workflow, /github\.event\.label|RELEASE_LABEL|release:beta/)
   const releaseDocs = readFileSync(
     fileURLToPath(new URL('../docs/RELEASE.md', import.meta.url)),
     'utf8',
@@ -80,12 +75,31 @@ test('beta trigger requires the exact release:beta label', () => {
     'utf8',
   )
   const readme = readFileSync(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8')
-  for (const docs of [releaseDocs, releasingDocs, readme]) {
-    assert.doesNotMatch(docs, /release:beta:(?:minor|major)/)
-    assert.match(docs, /release:beta/)
+  const readmePtBr = readFileSync(
+    fileURLToPath(new URL('../README.pt-BR.md', import.meta.url)),
+    'utf8',
+  )
+  for (const docs of [releaseDocs, releasingDocs, readme, readmePtBr]) {
+    assert.doesNotMatch(docs, /release:beta/)
+    assert.match(docs, /workflow_dispatch/)
   }
-  assert.match(releaseDocs, /único label que dispara o beta é exatamente `release:beta`/)
-  assert.match(releasingDocs, /Only the exact `release:beta` label triggers this path/)
+})
+
+test('release_channel input is a strict choice and selects the publish tag', () => {
+  assert.match(workflow, /release_channel:/)
+  assert.match(workflow, /type: choice/)
+  for (const option of ["          - 'stable'", "          - 'beta'"]) {
+    assert.ok(workflow.includes(option), `channel option missing: ${option}`)
+  }
+  assert.match(workflow, /release_channel must be 'stable' or 'beta'\./)
+  assert.equal(dispatchReleaseTag({ releaseChannel: 'beta' }), 'beta')
+  assert.equal(dispatchReleaseTag({ releaseChannel: 'stable' }), 'latest')
+  assert.equal(dispatchReleaseTag({ recoveryVersion: '1.3.5-beta.52.c75b04d' }), 'beta')
+  const release = workflow.slice(workflow.indexOf('  release:'))
+  assert.equal(
+    (release.match(/inputs\.release_channel == 'beta' && 'beta' \|\| 'latest'/g) ?? []).length,
+    2,
+  )
 })
 
 test('ordinary pushes cannot start a release and stable remains explicit', () => {
@@ -185,17 +199,16 @@ test('tag API errors and SHA mismatches cannot enter recovery mutations', () => 
 test('recovery workflow_dispatch is always beta while stable dispatch is latest', () => {
   assert.equal(
     dispatchReleaseTag({
-      eventName: 'workflow_dispatch',
       recoveryVersion: '1.3.5-beta.52.c75b04d',
     }),
     'beta',
   )
-  assert.equal(dispatchReleaseTag({ eventName: 'workflow_dispatch' }), 'latest')
+  assert.equal(dispatchReleaseTag({}), 'latest')
 
   const release = workflow.slice(workflow.indexOf('  release:'))
   const recoveryFirstExpression =
-    /inputs\.recovery_version != '' && 'beta' \|\| github\.event_name == 'pull_request' && 'beta' \|\| 'latest'/
-  assert.equal((release.match(new RegExp(recoveryFirstExpression.source, 'g')) ?? []).length, 3)
+    /inputs\.recovery_version != '' && 'beta' \|\| inputs\.release_channel == 'beta' && 'beta' \|\| 'latest'/
+  assert.equal((release.match(new RegExp(recoveryFirstExpression.source, 'g')) ?? []).length, 2)
   assert.doesNotMatch(
     release,
     /RELEASE_(?:TAG|CHANNEL): \$\{\{ github\.event_name == 'pull_request' && 'beta' \|\| 'latest'/,
@@ -217,7 +230,7 @@ test('beta uses published npm latest and does not consult the current version ta
 test('validation and release are separate least-privilege jobs', () => {
   assert.ok(workflow.includes('jobs:\n  validate:'))
   assert.ok(workflow.includes('  release:\n    needs: validate'))
-  assert.ok(workflow.includes('contents: read\n      pull-requests: read'))
+  assert.ok(workflow.includes('    permissions:\n      contents: read\n    env:'))
   assert.ok(workflow.includes('contents: write\n      id-token: write'))
   assert.doesNotMatch(workflow.slice(workflow.indexOf('  release:')), /actions\/checkout/)
 })
@@ -230,7 +243,7 @@ test('untrusted validation installation cannot enable lifecycle scripts or fall 
   assert.match(workflow, /npm publish .*--ignore-scripts/)
 })
 
-test('PR numbers accept only positive safe integers', () => {
+test('recovery PR numbers accept only positive safe integers', () => {
   for (const value of ['1', '0009', '9007199254740991']) {
     assert.equal(validatePrNumber(value), true, value)
   }
@@ -250,7 +263,7 @@ test('PR numbers accept only positive safe integers', () => {
   assert.match(workflow, /value <= 0/)
 })
 
-test('PR validation is before every release mutation and publish credential', () => {
+test('input validation is before every release mutation and publish credential', () => {
   const validation = workflow.indexOf('Revalidate release inputs before mutations')
   const firstMutation = Math.min(
     workflow.indexOf('gh api --method POST'),
@@ -262,15 +275,15 @@ test('PR validation is before every release mutation and publish credential', ()
   assert.ok(firstMutation > validation)
   assert.ok(token > firstMutation)
   assert.equal(workflow.lastIndexOf('NODE_AUTH_TOKEN:'), token)
-  assert.match(workflow, /PR_NUMBER="\$PR_NUMBER" node <<'NODE'/)
+  assert.match(workflow, /release_channel must be 'stable' or 'beta'\./)
 })
 
-test('release consumes an immutable artifact and never executes PR code after token exposure', () => {
+test('release consumes an immutable artifact and never executes dispatch-ref code after token exposure', () => {
   const release = workflow.slice(workflow.indexOf('  release:'))
   assert.match(release, /actions\/download-artifact@v4/)
   assert.match(
     release,
-    /TARGET_SHA: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.recovery_target_sha \|\| github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/,
+    /TARGET_SHA: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.recovery_target_sha \|\| github\.sha \}\}/,
   )
   assert.match(release, /gh release create[\s\S]*--target "\$TARGET_SHA"/)
   const publish = release.indexOf('- name: Publish immutable artifact to npm')
@@ -317,7 +330,7 @@ test('validation, artifact, and release use one immutable event target SHA', () 
   assert.doesNotMatch(workflow, /CHECKOUT_REF|\|\| 'main'/)
   const targetExpression =
     'TARGET_SHA: $' +
-    "{{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+    "{{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.sha }}"
   assert.equal(workflow.split(targetExpression).length - 1, 2)
   assert.match(workflow, /ref: \$\{\{ env\.TARGET_SHA \}\}/)
   assert.match(workflow, /target-sha/)
@@ -388,7 +401,7 @@ test('release creation is repository-explicit and safe to rerun after an existin
 test('stable and beta preserve TARGET_SHA provenance through tag, release, and artifact', () => {
   const targetExpression =
     'TARGET_SHA: $' +
-    "{{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+    "{{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.sha }}"
   assert.equal(workflow.split(targetExpression).length - 1, 2)
   assert.match(
     workflow,

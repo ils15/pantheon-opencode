@@ -9,9 +9,12 @@ import {
   validationExitCode,
 } from '../scripts/validation-policy.mjs'
 
-// Matrix: 0 errors / 7 warnings is a passing global validation.
+// Only an explicit numeric zero is a passing doctor result.
 assert.equal(classifyDoctorExit(0, '7 warnings, 0 errors'), VALIDATION_STATUS.PASS)
-assert.equal(classifyDoctorExit(1, '7 warnings, 0 errors found'), VALIDATION_STATUS.WARN)
+assert.equal(classifyDoctorExit(1, '7 warnings, 0 errors found'), VALIDATION_STATUS.ERROR)
+for (const status of [undefined, null, Number.NaN, '0', 'unknown']) {
+  assert.equal(classifyDoctorExit(status, '0 errors'), VALIDATION_STATUS.ERROR)
+}
 assert.equal(validationExitCode(VALIDATION_STATUS.PASS, VALIDATION_STATUS.PASS), 0)
 
 // A blocking doctor error remains non-zero, including legacy status 1 output.
@@ -23,6 +26,17 @@ assert.equal(validationExitCode(VALIDATION_STATUS.ERROR, VALIDATION_STATUS.PASS)
 assert.equal(classifyTuiExit(0), VALIDATION_STATUS.PASS)
 assert.equal(classifyTuiExit(1), VALIDATION_STATUS.ERROR)
 assert.equal(validationExitCode(VALIDATION_STATUS.PASS, VALIDATION_STATUS.ERROR), 1)
+for (const status of [
+  VALIDATION_STATUS.WARN,
+  VALIDATION_STATUS.SKIP,
+  VALIDATION_STATUS.AMBIENTAL,
+  VALIDATION_STATUS.NOT_TESTED,
+  undefined,
+  'UNKNOWN',
+]) {
+  assert.equal(validationExitCode(status, VALIDATION_STATUS.PASS), 1)
+  assert.equal(validationExitCode(VALIDATION_STATUS.PASS, status), 1)
+}
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const wrapperPath = resolve(repoRoot, 'tests/fixtures/sandbox/run-test.sh')
@@ -30,6 +44,6 @@ assert.ok(existsSync(wrapperPath), 'sandbox validation fixture must be present')
 const wrapper = readFileSync(wrapperPath, 'utf8')
 assert.match(wrapper, /doctor_status/)
 assert.match(wrapper, /tui_status/)
-assert.match(wrapper, /warnings não bloqueiam/)
+assert.match(wrapper, /somente PASS explícito aprova/)
 
 console.log('✅ Validation status matrix passed')

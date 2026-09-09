@@ -1,10 +1,16 @@
 name: Release
 
 on:
-  pull_request:
-    types: [labeled]
   workflow_dispatch:
     inputs:
+      release_channel:
+        description: 'Channel to publish: stable (default) or beta'
+        required: false
+        type: choice
+        default: 'stable'
+        options:
+          - 'stable'
+          - 'beta'
       recovery_version:
         description: 'Existing beta semver prerelease to recover (without v)'
         required: false
@@ -22,30 +28,25 @@ concurrency:
   group: release
   cancel-in-progress: false
 
-# Validation runs on PR-controlled files, so it never receives a release
-# credential. The release job consumes only the immutable artifact produced by
-# that job and has write permissions solely because it performs the release.
+# Every run is an explicit operator action (workflow_dispatch). Validation
+# runs on the checked-out ref, so it never receives a release credential. The
+# release job consumes only the immutable artifact produced by that job and has
+# write permissions solely because it performs the release.
 jobs:
   validate:
-    if: >
-      (github.event_name == 'pull_request' && github.event.label.name == 'release:beta') ||
-      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
     env:
       EVENT_NAME: ${{ github.event_name }}
-      RELEASE_LABEL: ${{ github.event.label.name }}
-      PR_NUMBER: ${{ github.event.number }}
-      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      RELEASE_CHANNEL: ${{ inputs.release_channel }}
       RECOVERY_VERSION: ${{ inputs.recovery_version }}
       RECOVERY_TARGET_SHA: ${{ inputs.recovery_target_sha }}
       RECOVERY_PR_NUMBER: ${{ inputs.recovery_pr_number }}
-      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.sha }}
     steps:
       # This is deliberately the first step. In particular, no release
-      # mutation can be reached before the PR number is a positive safe int.
+      # mutation can be reached before the recovery inputs are a coherent set.
       - name: Validate release inputs before checkout
         run: |
           RECOVERY_VERSION="$RECOVERY_VERSION" RECOVERY_TARGET_SHA="$RECOVERY_TARGET_SHA" RECOVERY_PR_NUMBER="$RECOVERY_PR_NUMBER" EVENT_NAME="$EVENT_NAME" node <<'NODE'
@@ -68,27 +69,10 @@ jobs:
             if (match[3] !== sha.slice(0, 7).toLowerCase()) throw new Error('Recovery version SHA suffix must match recovery_target_sha.');
           }
           NODE
-          if [ "$EVENT_NAME" = "pull_request" ] && [ "$RELEASE_LABEL" != "release:beta" ]; then
-            echo "::error::Only the exact release:beta label can trigger a beta release."
-            exit 1
-          fi
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            case "$PR_NUMBER" in
-              ''|*[!0-9]*) echo "::error::Pull request number must contain digits only."; exit 1 ;;
-            esac
-            PR_NUMBER="$PR_NUMBER" node <<'NODE'
-          const raw = process.env.PR_NUMBER ?? '';
-          const value = Number(raw);
-          if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value <= 0) {
-            console.error('::error::Pull request number must be a positive safe integer.');
-            process.exit(1);
-          }
-          NODE
-            case "$PR_HEAD_SHA" in
-              ''|*[!0-9a-fA-F]*) echo "::error::Pull request head SHA must be hexadecimal."; exit 1 ;;
-            esac
-            [ "${#PR_HEAD_SHA}" -eq 40 ] || { echo "::error::Pull request head SHA must be 40 characters."; exit 1; }
-          fi
+          case "$RELEASE_CHANNEL" in
+            stable|beta) : ;;
+            *) echo "::error::release_channel must be 'stable' or 'beta'."; exit 1 ;;
+          esac
           case "$TARGET_SHA" in
             ''|*[!0-9a-fA-F]*) echo "::error::Target SHA must be hexadecimal."; exit 1 ;;
           esac
@@ -109,8 +93,8 @@ jobs:
         with:
           node-version: '22'
 
-      # PR code is untrusted. There is no fallback to npm install and no
-      # lifecycle script is allowed to run in this job.
+      # Dispatched ref code is untrusted. There is no fallback to npm install
+      # and no lifecycle script is allowed to run in this job.
       - name: Install dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
 
@@ -121,12 +105,13 @@ jobs:
             echo "channel=beta" >> "$GITHUB_OUTPUT"
             echo "tag=beta" >> "$GITHUB_OUTPUT"
             echo "recovery=true" >> "$GITHUB_OUTPUT"
-          elif [ "$EVENT_NAME" = "pull_request" ]; then
-            echo "channel=beta" >> "$GITHUB_OUTPUT"
-            echo "tag=beta" >> "$GITHUB_OUTPUT"
           else
-            echo "channel=stable" >> "$GITHUB_OUTPUT"
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            echo "channel=$RELEASE_CHANNEL" >> "$GITHUB_OUTPUT"
+            if [ "$RELEASE_CHANNEL" = "beta" ]; then
+              echo "tag=beta" >> "$GITHUB_OUTPUT"
+            else
+              echo "tag=latest" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Apply exact recovery version
@@ -191,7 +176,7 @@ jobs:
         env:
           LATEST_STABLE: ${{ steps.npm_latest.outputs.latest }}
         run: |
-          VERSION=$(node scripts/release-beta-version.mjs --latest="$LATEST_STABLE" --intent=patch --pr="$PR_NUMBER" --sha="$(git rev-parse --short HEAD)" --apply)
+          VERSION=$(node scripts/release-beta-version.mjs --latest="$LATEST_STABLE" --intent=patch --pr="$GITHUB_RUN_NUMBER" --sha="$(git rev-parse --short HEAD)" --apply)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Validate release manifests
@@ -225,26 +210,19 @@ jobs:
 
   release:
     needs: validate
-    if: >
-      (github.event_name == 'pull_request' && github.event.label.name == 'release:beta') ||
-      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
     env:
       EVENT_NAME: ${{ github.event_name }}
-      RELEASE_LABEL: ${{ github.event.label.name }}
-      PR_NUMBER: ${{ github.event.number }}
-      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.sha }}
       RECOVERY_VERSION: ${{ inputs.recovery_version }}
       RECOVERY_TARGET_SHA: ${{ inputs.recovery_target_sha }}
       RECOVERY_PR_NUMBER: ${{ inputs.recovery_pr_number }}
       RELEASE_REPO: ${{ github.repository }}
-      # Recovery is always a beta publish, even though it is dispatched
-      # manually. Keep the recovery branch first so it cannot inherit the
-      # workflow_dispatch stable default.
-      RELEASE_TAG: ${{ inputs.recovery_version != '' && 'beta' || github.event_name == 'pull_request' && 'beta' || 'latest' }}
+      # Recovery and beta channel are beta publishes; stable dispatch is latest.
+      RELEASE_TAG: ${{ inputs.recovery_version != '' && 'beta' || inputs.release_channel == 'beta' && 'beta' || 'latest' }}
     steps:
       # Defense in depth: this step must remain before every gh/tag/npm
       # mutation in this job. It does not inspect or execute the artifact.
@@ -272,15 +250,6 @@ jobs:
             TARGET_SHA="$RECOVERY_TARGET_SHA"
           fi
           TARGET_SHA=$(printf '%s' "$TARGET_SHA" | tr '[:upper:]' '[:lower:]')
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            [ "$RELEASE_LABEL" = "release:beta" ] || { echo "::error::Invalid release label."; exit 1; }
-            case "$PR_NUMBER" in ''|*[!0-9]*) echo "::error::PR number must contain digits only."; exit 1 ;; esac
-            PR_NUMBER="$PR_NUMBER" node <<'NODE'
-          const raw = process.env.PR_NUMBER ?? '';
-          const value = Number(raw);
-          if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value <= 0) process.exit(1);
-          NODE
-          fi
           case "$TARGET_SHA" in ''|*[!0-9a-fA-F]*) echo "::error::Target SHA must be hexadecimal."; exit 1 ;; esac
           [ "${#TARGET_SHA}" -eq 40 ] || { echo "::error::Target SHA must be 40 characters."; exit 1; }
 
@@ -457,7 +426,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.metadata.outputs.version }}
-          RELEASE_CHANNEL: ${{ inputs.recovery_version != '' && 'beta' || github.event_name == 'pull_request' && 'beta' || 'latest' }}
+          RELEASE_CHANNEL: ${{ inputs.release_channel }}
         run: |
           if [ "$RELEASE_CHANNEL" = "beta" ]; then
             gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --prerelease --notes-file release-artifact/release-notes.md
@@ -474,5 +443,5 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.metadata.outputs.version }}
           PACKAGE: ${{ steps.metadata.outputs.package }}
-          RELEASE_TAG: ${{ inputs.recovery_version != '' && 'beta' || github.event_name == 'pull_request' && 'beta' || 'latest' }}
+          RELEASE_TAG: ${{ inputs.recovery_version != '' && 'beta' || inputs.release_channel == 'beta' && 'beta' || 'latest' }}
         run: npm publish "$PACKAGE" --ignore-scripts --tag "$RELEASE_TAG" --access public --provenance --registry https://registry.npmjs.org
