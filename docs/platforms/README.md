@@ -48,6 +48,21 @@ Configuration `steps` per agent — controls how many tool calls the agent can m
 
 > Adjust `steps` in `opencode.json` as needed. Each tool call counts as 1 step.
 
+## Provider Usage Capability (B3-02)
+
+Pantheon exposes a pure, in-memory tracker for **exact** provider usage and
+context-limit data. A complete payload must include non-negative finite numeric
+`usage.inputTokens`, `usage.outputTokens`, and `limit.contextTokens`, plus
+non-empty `sessionId`, `providerId`, and `modelId`. Duplicate event/part IDs and
+stale sequence values are ignored per isolated stream.
+
+V1 and V2 capability probes are independent and return the canonical
+`UNSUPPORTED` status when exact data is absent, partial, stringified, invalid,
+or only represented as a percentage. They do not estimate tokens, limits,
+percentages, or dollars, and do not use credentials, retries, cache, polling,
+or TUI state. No host/provider is declared supported by this contract alone;
+integration remains conditional on observed exact host data.
+
 ---
 
 ## File Structure (after install)
