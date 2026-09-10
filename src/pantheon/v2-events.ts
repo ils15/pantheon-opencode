@@ -94,13 +94,22 @@ export function createV2EventDispatcher(deps: V2EventDeps): V2EventDispatcher {
   return {
     handleEvent: async (event: V2SessionEvent): Promise<boolean> => {
       try {
-        // session.created → seed hierarchy
+        // session.created → seed hierarchy + board put-if-absent for native children
         if (event.type === 'session.created') {
           const info = event.properties?.info as SessionInfo | undefined
           if (info) {
             deps.registerSession?.(info)
             if (info.parentID === undefined) {
               deps.addRootSession?.(info.id)
+            } else {
+              // Native task(background=true) child: register on the board
+              // atomically (skip if V1 idle hook or re-dispatch already claimed it).
+              await deps.board.registerLaunchIfAbsent({
+                taskID: info.id,
+                parentSessionID: info.parentID,
+                agent: 'native',
+                description: `native child ${info.id}`,
+              })
             }
           }
         }
