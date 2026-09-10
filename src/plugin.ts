@@ -35,7 +35,7 @@ import { GOAL_LOOP_DEFAULTS, GoalLoop, GoalStore } from './pantheon/goal-loop.ts
 import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
-import { createPantheonLogger } from './pantheon/logger.ts'
+import { createPantheonLogger, type PantheonLogger } from './pantheon/logger.ts'
 import { createModelCommand } from './pantheon/model-command.ts'
 import { pantheonPluginOnce } from './pantheon/plugin-once.ts'
 import {
@@ -54,6 +54,7 @@ import {
   todoEnforcerEnabledFromEnv,
 } from './pantheon/todo-enforcer.ts'
 import { TodoPreserver } from './pantheon/todo-preserve.ts'
+import { probeToolCeilingFromHost, type ToolCeilingResult } from './pantheon/tool-ceiling.ts'
 import { checkTuiVersionStaleness } from './pantheon/tui-version-check.ts'
 import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
@@ -166,6 +167,31 @@ const COMPACTION_MAX_ITEMS = 10
 const rootSessions = new Set<string>()
 const sessionHierarchy = new SessionHierarchyRegistry()
 const sessionAgents = new Map<string, string>()
+const sessionToolCeilings = new Map<string, ToolCeilingResult>()
+
+/**
+ * Handle the host usage event and retain the result for the compaction hook.
+ * Malformed SDK events are diagnostic-only: they must never break the event
+ * pipeline or create an entry under an invalid session identifier.
+ */
+export async function handleToolCeilingEvent(
+  client: PluginInput['client'],
+  event: unknown,
+  ceilings: Map<string, ToolCeilingResult>,
+  logger: Pick<PantheonLogger, 'warn'> = log,
+): Promise<ToolCeilingResult> {
+  const sessionID = (
+    event as { properties?: { info?: { sessionID?: unknown } } } | null | undefined
+  )?.properties?.info?.sessionID
+  if (typeof sessionID !== 'string' || sessionID.trim() === '') {
+    logger.warn('[Pantheon Plugin] message.updated event has no valid sessionID')
+    return { status: 'UNSUPPORTED', detail: 'host SDK event has no valid sessionID' }
+  }
+
+  const result = await probeToolCeilingFromHost(client, event)
+  ceilings.set(sessionID, result)
+  return result
+}
 
 /**
  * Seed resumed root sessions without making OpenCode startup depend on the
@@ -621,6 +647,9 @@ const plugin: Plugin = async (input: PluginInput) => {
       if (ev.type === 'session.compacted') {
         await todoPreserver.onCompacted(ev.properties.sessionID)
       }
+      if (ev.type === 'message.updated') {
+        await handleToolCeilingEvent(input.client, ev, sessionToolCeilings)
+      }
       // Phase 3: observe completion on child sessions → finalizeDelegation.
       // The board transition fires onTerminal → the file-only audit log (no
       // chat delivery — see the onTerminal listener above). Unknown sessions
@@ -686,6 +715,13 @@ const plugin: Plugin = async (input: PluginInput) => {
             list: (sessionID: string) => todoEnforcer.listPendingTodos(sessionID),
           },
         })
+        const ceiling = sessionToolCeilings.get(_input.sessionID)
+        if (ceiling?.status === 'OK') {
+          output.context.push(
+            `<tool_ceiling remaining_context_tokens="${ceiling.ceiling}">` +
+              'Use the remaining host-reported context budget when selecting tools.</tool_ceiling>',
+          )
+        }
         if (blocks.length > 0) {
           output.context.push(...blocks)
         }
