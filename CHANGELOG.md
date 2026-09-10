@@ -14,6 +14,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🐞 Fixed
 
+- **npm tarball inclusion:** CHANGELOG.md is now included in the npm tarball
+  (added to the `files` allowlist in `package.json`).
+
+- **Task Result Guard**: native `task()` empty results are now detected and
+  converted to explicit errors in the `tool.execute.after` hook. Previously,
+  when a provider rejected a child session (e.g. `BackendAdmissionRejected`
+  from free-tier admission control), the error was silently swallowed — the
+  child completed with empty output and the parent LLM proceeded as if the
+  task succeeded. The guard replaces empty `task()` output with an error
+  message so the parent sees a failure. (`task-result-guard.ts`)
+
 ## ⚠️ Known Issues
 
 ## ✅ Closed Issues
