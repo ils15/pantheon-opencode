@@ -83,6 +83,15 @@ delegation. Native mode is strict: it does not use foreground fallback, model
 failover, or retry; it performs a lazy capability probe on the first dispatch,
 and includes the resulting status in the delegation receipt.
 
+## Cost tool backend
+
+`pantheon_cost` has one backend: read-only `node:sqlite` against the selected
+`opencode.db`. On Node versions without `node:sqlite` (Node < 22.5), the tool
+returns `status: UNSUPPORTED`; it has no CLI fallback. Database failures return
+a contract status such as `UNAVAILABLE` or
+`CORRUPT_DATA` and include diagnostic detail, including captured stderr when
+available.
+
 
 ## What's new in 1.5.0-beta.2
 
