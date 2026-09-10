@@ -28,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - (add known issues here)
 
-## [1.4.4-beta.84.c9de80d] - 2026-09-09
+## [1.4.4-beta.84.5f22bcf] - 2026-09-09
 
 ## 🆕 What's New
 
