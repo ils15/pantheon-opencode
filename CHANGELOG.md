@@ -12,6 +12,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🆕 What's New
 
+## 🐞 Fixed
+
+## ⚠️ Known Issues
+
+## ✅ Closed Issues
+
+## [v1.5.0-beta.3] - 2026-09-10
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
 ### Changed
 
 - **CI fail-closed:** `ci.yml` no longer falls back from `npm ci` to
@@ -58,14 +69,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   non-blocking.
 - `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` has no effect; `npm ci` failures now
   fail the install/sync step.
-
-## 🐞 Fixed
-
-## ⚠️ Known Issues
-
-## ✅ Closed Issues
-
-
 ## [1.5.0] - 2026-09-01 (candidate)
 
 ### Changed
