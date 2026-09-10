@@ -65,6 +65,14 @@ integration remains conditional on observed exact host data.
 
 ---
 
+## C9/tool ceiling (B3-07)
+
+The C9 ceiling is calculated only from a live host/SDK response containing
+exact usage and context-limit fields. Pantheon never estimates a ceiling from
+text or query terms; when the SDK does not expose filtering the result is
+`UNSUPPORTED` (also called `NOT_SUPPORTED`), while a failed live probe is
+`UNAVAILABLE` and malformed host data is `CORRUPT_DATA`.
+
 ## File Structure (after install)
 
 ```
