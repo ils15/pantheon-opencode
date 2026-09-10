@@ -23,6 +23,10 @@ on:
         description: 'Positive PR number encoded in the beta version'
         required: false
         type: string
+      pr_number:
+        description: 'PR number encoded in the beta version (defaults to GITHUB_RUN_NUMBER)'
+        required: false
+        type: string
 
 concurrency:
   group: release
@@ -161,7 +165,7 @@ jobs:
           set -euo pipefail
           FULL_TARGET_SHA="$(git rev-parse HEAD)"
           [ "$FULL_TARGET_SHA" = "${TARGET_SHA,,}" ] || { echo '::error::Computed beta version SHA is not TARGET_SHA.'; exit 1; }
-          VERSION=$(node scripts/release-beta-version.mjs --latest="$LATEST_BASELINE" --intent=patch --pr="$GITHUB_RUN_NUMBER" --sha="$FULL_TARGET_SHA" --apply)
+          VERSION=$(node scripts/release-beta-version.mjs --latest="$LATEST_BASELINE" --intent=patch --pr="${{ inputs.pr_number || github.run_number }}" --sha="$FULL_TARGET_SHA" --apply)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Version gate
