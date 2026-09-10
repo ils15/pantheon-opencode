@@ -4,28 +4,26 @@
 
 Este checkout usa **v1.5.0-beta.2** como versão operacional local. Este texto
 não afirma que uma beta futura foi publicada; use os placeholders
-`vX.Y.Z` e `vX.Y.Z-beta.<RUN>.<SHORT_SHA>` ao descrever releases futuras. A
-referência publicada **v1.4.3** é somente histórica e corresponde ao registro
-no [Zenodo](https://doi.org/10.5281/zenodo.22306637); ela não é a versão
+`vX.Y.Z` e `vX.Y.Z-beta.N` ao descrever releases futuras. A referência
+publicada **v1.4.3** é somente histórica e corresponde ao registro no
+[Zenodo](https://doi.org/10.5281/zenodo.22306637); ela não é a versão
 operacional atual nem um alvo de release.
 
 | Release | Formato | Exemplo |
 |---------|---------|---------|
-| Beta | `X.Y.Z-beta.<RUN>.<SHORT_SHA>` | `vX.Y.Z-beta.<RUN>.<SHORT_SHA>` |
+| Beta | `X.Y.Z-beta.N` | `vX.Y.Z-beta.N` |
 | Stable | `X.Y.Z` | `vX.Y.Z` |
 
-O beta usa o run number do workflow + SHA curto para garantir unicidade.
-Semver: `X.Y.Z-beta.<RUN>.<SHORT_SHA>` < `X.Y.Z` (beta é menor que a release).
+A versão é **sempre a versão commitada** em `package.json` (e espelhada nos
+demais manifests). Nada é calculado no runtime do workflow. O beta avança a
+linha sequencial `-beta.N`; semver: `X.Y.Z-beta.N` < `X.Y.Z`.
 
 ## Canais de Release
 
 | Canal | Formato | Exemplo | Como publicar |
 |-------|---------|---------|---------------|
-| Beta | `X.Y.Z-beta.<RUN>.<SHORT_SHA>` | `vX.Y.Z-beta.<RUN>.<SHORT_SHA>` | `workflow_dispatch` com `release_channel=beta` |
+| Beta | `X.Y.Z-beta.N` | `vX.Y.Z-beta.N` | `workflow_dispatch` com `release_channel=beta` |
 | Stable | `X.Y.Z` | `vX.Y.Z` | `workflow_dispatch` com `release_channel=stable` (default) |
-
-O beta usa o run number do workflow + SHA curto para garantir unicidade.
-Semver: `X.Y.Z-beta.<RUN>.<SHORT_SHA>` < `X.Y.Z` (beta é menor que a release).
 
 ## Fluxos
 
@@ -34,12 +32,20 @@ Labels de PR, push, merge e tag **não** disparam nenhum fluxo de release.
 
 ### Beta Release (dispatch explícito)
 
-1. No GitHub Actions, execute manualmente `Release` (`workflow_dispatch`) com
-   `release_channel=beta` na revisão desejada:
-   - Consulta o stable publicado em npm e gera `<next-stable>-beta.<RUN>.<SHORT_SHA>`
-   - Publica no npm com tag `beta`
-   - Cria GitHub Pre-release com título `Pantheon <versão>`
-2. Instalar: `npm install pantheon-opencode@beta`
+1. Na branch de release, avance a versão beta commitada:
+   ```bash
+   node scripts/versioning.mjs apply --beta   # ou: node scripts/versioning.mjs beta
+   ```
+   O comando escreve `X.Y.Z-beta.(N+1)` (ou `X.Y.(Z+1)-beta.1` se a versão
+   atual for stable) em todos os manifests e promove o `[Unreleased]` do
+   `CHANGELOG.md` para `## [vX.Y.Z-beta.N]`, exatamente como o caminho stable.
+   Não edite o `CHANGELOG.md` manualmente.
+2. Commit e push do inventário de versão + `CHANGELOG.md`.
+3. No GitHub Actions, execute manualmente `Release` (`workflow_dispatch`) com
+   `release_channel=beta` na revisão desejada. O workflow lê a versão
+   commitada, exige `X.Y.Z-beta.N`, extrai as notas da seção do `CHANGELOG.md`,
+   cria a tag `vX.Y.Z-beta.N` e publica no npm com tag `beta`.
+4. Instalar: `npm install pantheon-opencode@beta`
 
 ### Stable Release (dispatch explícito)
 
@@ -56,13 +62,30 @@ Labels de PR, push, merge e tag **não** disparam nenhum fluxo de release.
 ### Recuperação de beta já criado
 
 Quando a tag e o GitHub Release já existem, mas o `npm publish` falhou, execute
-`Release` manualmente informando juntos `recovery_version` (sem `v`),
-`recovery_target_sha` (SHA completo de 40 hex) e `recovery_pr_number`. O modo
-valida os três campos antes do checkout, exige a tag e o Release existentes
-exatos, não cria nem move recursos no GitHub e publica somente se a versão
-exata ainda não estiver no npm. Versões parciais, inválidas, releases ausentes
-ou erros de API abortam sem mutação; se a versão já existir, a execução é
-idempotente.
+`Release` manualmente informando `recovery_version` (sem `v`) e
+`recovery_target_sha` (SHA completo de 40 hex). Para a versão commitada
+`X.Y.Z-beta.N` basta esse par; o `recovery_pr_number` é aceito apenas para
+recuperar o formato legado `X.Y.Z-beta.<pr>.<7-char-sha>`, no qual os três
+campos são obrigatórios. O modo valida os campos antes do checkout, exige a tag
+e o Release existentes exatos, não cria nem move recursos no GitHub e publica
+somente se a versão exata ainda não estiver no npm. Versões parciais, inválidas,
+releases ausentes ou erros de API abortam sem mutação; se a versão já existir, a
+execução é idempotente.
+
+## Notas de release por canal
+
+O corpo (release notes) de cada publicação vem da seção versionada do
+`CHANGELOG.md`, extraída por `scripts/changelog-extract.mjs`. O dispatch falha se
+a seção não existir.
+
+| Canal | Fonte das notas |
+|-------|-----------------|
+| Stable | Seção curada `## [X.Y.Z]` do `CHANGELOG.md`. Falha se ausente. |
+| Beta | Seção curada `## [X.Y.Z-beta.N]` do `CHANGELOG.md`. Falha se ausente. |
+| Recuperação | Nota estática (`Recovery publish for existing GitHub Release ...`); as notas originais não são re-geradas. |
+
+Adicionar a seção do `CHANGELOG.md` é obrigatório para os dois canais, inclusive
+beta — assim o mesmo artefato commitado é a única fonte de verdade.
 
 ## Fail-closed
 
@@ -101,7 +124,7 @@ não foram exercitadas.
 | Tag npm | Versão | Git Tag | GitHub Release |
 |---------|--------|---------|----------------|
 | `latest` | `<stable-version>` | `<vX.Y.Z>` | `<GitHub Release>` |
-| `beta` | `<beta-version>` | `vX.Y.Z-beta.<RUN>.<SHORT_SHA>` | `<GitHub Pre-release>` |
+| `beta` | `<beta-version>` | `vX.Y.Z-beta.N` | `<GitHub Pre-release>` |
 
 ## Histórico
 

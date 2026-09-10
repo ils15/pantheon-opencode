@@ -14,26 +14,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- (add new changes here)
-
-### Breaking Changes
-
-- (add breaking changes here)
-
-### Fixed
-
-- (add fixes here)
-
-⚠️ Known Issues
-
-- (add known issues here)
-
-## [1.4.4-beta.84.5f22bcf] - 2026-09-09
-
-## 🆕 What's New
-
-### Changed
-
 - **CI fail-closed:** `ci.yml` no longer falls back from `npm ci` to
   `npm install`, and pytest/audit failures are no longer swallowed. The
   workflow now runs lint, typecheck, `test:ts`, Python tests, Node tests and
@@ -41,8 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Release authorization is dispatch-only:** `release.yml` no longer triggers
   on PR labels or any `pull_request` event. Publication is
   authorized only by an explicit `workflow_dispatch`; the `release_channel`
-  input (`stable` default, `beta`) selects the channel. Beta versions use
-  `GITHUB_RUN_NUMBER` instead of the PR number.
+  input (`stable` default, `beta`) selects the channel. Beta versions are
+  committed sequential `X.Y.Z-beta.N` (bumped via
+  `node scripts/versioning.mjs apply --beta`); no runtime version computation.
 - **Sandbox gate is PASS-only:** `test-opencode-v1-v2-sandbox.sh` no longer
   classifies failures as `AMBIENTAL`/`NOT_TESTED`, has no prompt retry, and
   treats missing binaries/projects/probes, timeouts and auth/network/provider
@@ -77,8 +58,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   non-blocking.
 - `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` has no effect; `npm ci` failures now
   fail the install/sync step.
-
-## 🆕 What's New
 
 ## 🐞 Fixed
 
