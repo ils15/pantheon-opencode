@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🆕 What's New
 
+- **Native delegation contract (B3-05):** adds the nine-code `NativeTaskStatus` contract, a session-lazy cached capability probe, atomic board registration for native children, strict `PANTHEON_DELEGATE_MODE=native` without fallback/failover/retry, and status in delegation receipts.
+
 ## 🐞 Fixed
 
 - **npm tarball inclusion:** CHANGELOG.md is now included in the npm tarball
