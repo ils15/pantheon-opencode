@@ -31,6 +31,8 @@ import {
   type DelegationClient,
   readDelegationReport,
 } from './delegation-finalize.ts'
+import { createNativeProbe, type NativeProbeFn, type ProbeClient } from './native-probe.ts'
+import { classifyNativeResult, type NativeTaskStatus } from './native-task-status.ts'
 import {
   buildStopInstruction,
   cappedSummary,
@@ -66,6 +68,7 @@ export interface ManagerReceipt {
   id: string
   agent: string
   state: 'reconciled' | 'error'
+  status: NativeTaskStatus
   line: string
 }
 
@@ -102,10 +105,15 @@ export interface DelegateManagerOptions {
   keepCompleted?: number
   /** Per-agent step budgets (routing.yml max_steps). */
   stepCap?: StepCapTracker
+  /** Lazy capability probe, invoked once before the first native dispatch. */
+  nativeProbe?: NativeProbeFn
+  /** V1 client used by the lazy capability probe. */
+  probeClient?: ProbeClient
 }
 
 export interface DelegateManager {
   launch(args: LaunchArgs): Promise<ManagerReceipt>
+  ensureNativeAvailable(): Promise<NativeTaskStatus | undefined>
   read(idOrAlias: string): Promise<string>
   list(): Promise<string[]>
   recover(): Promise<void>
@@ -131,9 +139,29 @@ export function resolveDelegateMode(
 
 const LINE_MAX = 160
 
+/** Remove terminal escapes and control characters from untrusted child output. */
+export function sanitizeReceiptText(text: string): string {
+  let clean = ''
+  let skippingAnsi = false
+  for (const char of text) {
+    const code = char.charCodeAt(0)
+    if (skippingAnsi) {
+      if (code === 0x5b) continue
+      if (code >= 0x40 && code <= 0x7e) skippingAnsi = false
+      continue
+    }
+    if (code === 0x1b) {
+      skippingAnsi = true
+      continue
+    }
+    if (char === '\n' || char === '\t' || (code >= 0x20 && code <= 0x7e)) clean += char
+  }
+  return clean
+}
+
 function firstLine(text: string, max = 80): string {
   const line =
-    (text ?? '')
+    sanitizeReceiptText(text ?? '')
       .split('\n')
       .map((l) => l.trim())
       .find((l) => l !== '') ?? ''
@@ -182,14 +210,22 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
     task,
     parentSessionID,
     env = process.env,
-    models = [],
+    models: modelsOpt = [],
     timeoutMs = 120_000,
     readTimeoutMs = 60_000,
-    foregroundFallback = true,
+    foregroundFallback: fgFallbackOpt = true,
     maxEntries = 50,
     keepCompleted = 10,
     stepCap,
+    nativeProbe,
+    probeClient,
   } = options
+
+  // Strict native mode: foregroundFallback and models are overridden.
+  // The user-facing options are ignored when PANTHEON_DELEGATE_MODE=native.
+  const isNativeMode = resolveDelegateMode(env) === 'native'
+  const foregroundFallback = isNativeMode ? false : fgFallbackOpt
+  const models = isNativeMode ? [] : modelsOpt
 
   // Synchronous in-flight reservations per agent: launch() must decide
   // background vs foreground BEFORE its first await, otherwise concurrent
@@ -197,6 +233,7 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
   const pendingByAgent = new Map<string, number>()
   let seq = 0
   const foregroundRecent: { agent: string; line: string; at: number }[] = []
+  let probeResult: Awaited<ReturnType<NativeProbeFn>> | null = null
 
   function pending(agent: string): number {
     return pendingByAgent.get(agent.toLowerCase()) ?? 0
@@ -206,6 +243,12 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
     if (!isDelegationEnabled(env)) {
       throw new Error('pantheon delegation disabled (PANTHEON_DELEGATION=off)')
     }
+  }
+
+  async function ensureNativeAvailable(): Promise<NativeTaskStatus | undefined> {
+    if (!isNativeMode || nativeProbe === undefined || probeClient === undefined) return undefined
+    probeResult ??= await nativeProbe({ client: probeClient, parentSessionID })
+    return probeResult.status === 'AVAILABLE' ? undefined : probeResult.status
   }
 
   async function runTask(
@@ -253,6 +296,7 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
     // acknowledgment that the result was consumed.
     const terminalState = job.state
     const failed = verifyError !== undefined || terminalState === 'error'
+    const status = classifyNativeResult(job, verifyError)
     // Auto-reconcile + delete the signal file on the spot.
     if (job.state !== 'reconciled') await board.markReconciled(taskID)
     await board.deleteSignal(alias)
@@ -266,7 +310,7 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
           LINE_MAX,
         )
       : boardLine(settled ?? job)
-    return { id: taskID, agent: job.agent, state: failed ? 'error' : 'reconciled', line }
+    return { id: taskID, agent: job.agent, state: failed ? 'error' : 'reconciled', status, line }
   }
 
   /** Apply a terminal transition best-effort: a racing hook may have gotten there first. */
@@ -333,7 +377,33 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
     )
     foregroundRecent.push({ agent: args.agent, line, at: Date.now() })
     if (foregroundRecent.length > 20) foregroundRecent.splice(0, foregroundRecent.length - 20)
-    return { id, agent: args.agent, state: ok ? 'reconciled' : 'error', line }
+    const status = classifyNativeResult(
+      {
+        taskID: id,
+        parentSessionID,
+        agent: args.agent,
+        description: args.description ?? firstLine(args.prompt, 120),
+        state: ok ? 'completed' : 'error',
+        timedOut: false,
+        alias: id,
+        launchedAt: Date.now(),
+        updatedAt: Date.now(),
+        totalErrors: 0,
+        timeoutCount: 0,
+        terminalUnreconciled: false,
+        contextFiles: [],
+        ...(ok
+          ? {
+              resultSummary: firstLine(
+                (outcome as { ok: true; result: NativeTaskResult }).result.content ?? '',
+                500,
+              ),
+            }
+          : {}),
+      },
+      ok ? undefined : (outcome as { ok: false; error?: string }).error,
+    )
+    return { id, agent: args.agent, state: ok ? 'reconciled' : 'error', status, line }
   }
 
   return {
@@ -346,11 +416,29 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
         const maxSteps = stepCap.maxStepsFor(args.agent)
         if (stepCap.isCapped(args.agent)) {
           const line = cappedSummary(args.agent, maxSteps ?? DEFAULT_MAX_STEPS).slice(0, LINE_MAX)
-          return { id: `cap-${Date.now()}`, agent: args.agent, state: 'reconciled', line }
+          return {
+            id: `cap-${Date.now()}`,
+            agent: args.agent,
+            state: 'reconciled',
+            status: 'ESCALATE',
+            line,
+          }
         }
         const rec = stepCap.recordStep(args.agent)
         if (rec.capped && rec.maxSteps !== undefined) {
           prompt = `${args.prompt}${buildStopInstruction(args.agent, rec.maxSteps)}`
+        }
+      }
+      if (isNativeMode) {
+        const unavailableStatus = await ensureNativeAvailable()
+        if (unavailableStatus !== undefined) {
+          return {
+            id: `probe-${parentSessionID}`,
+            agent: args.agent,
+            state: 'error',
+            status: unavailableStatus,
+            line: `[native] ${args.agent} — native API ${unavailableStatus.toLowerCase()} — ERR`,
+          }
         }
       }
       // Synchronous routing decision: background when a slot is free,
@@ -363,6 +451,7 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
         `pantheon_delegate rejected: concurrency limit reached for agent "${args.agent}"`,
       )
     },
+    ensureNativeAvailable,
 
     async read(idOrAlias: string): Promise<string> {
       guardEnabled()
@@ -376,11 +465,11 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
       if (terminal.state !== 'reconciled') await board.markReconciled(terminal.taskID)
       await board.deleteSignal(terminal.alias)
       if (terminal.state === 'error' && !terminal.resultSummary) {
-        return `# Delegation Report — ${terminal.alias}\n\nERROR: ${terminal.lastStatusError ?? 'failed'}\n`
+        return `# Delegation Report — ${terminal.alias}\n\nERROR: ${sanitizeReceiptText(terminal.lastStatusError ?? 'failed')}\n`
       }
       return (
         `# Delegation Report — ${terminal.alias}\n\n` +
-        `${terminal.resultSummary ?? terminal.lastStatusError ?? terminal.state}\n`
+        `${sanitizeReceiptText(terminal.resultSummary ?? terminal.lastStatusError ?? terminal.state)}\n`
       )
     },
 
@@ -524,7 +613,7 @@ export interface NativeDelegateToolset {
 }
 function shortFirstLine(text: string, max = 60): string {
   const line =
-    text
+    sanitizeReceiptText(text)
       .split('\n')
       .map((item) => item.trim())
       .find(Boolean) ?? ''
@@ -555,6 +644,7 @@ export function createNativeDelegateTools(wiring: NativeDelegateWiring): NativeD
   const managerFor = (parentSessionID: string): DelegateManager => {
     const existing = managers.get(parentSessionID)
     if (existing !== undefined) return existing
+    const nativeProbe = createNativeProbe()
     const manager = createDelegateManager({
       ...managerOptions,
       board,
@@ -562,6 +652,8 @@ export function createNativeDelegateTools(wiring: NativeDelegateWiring): NativeD
       parentSessionID,
       env,
       ...(stepCap === undefined ? {} : { stepCap }),
+      nativeProbe,
+      probeClient: client,
     })
     managers.set(parentSessionID, manager)
     return manager
@@ -577,6 +669,11 @@ export function createNativeDelegateTools(wiring: NativeDelegateWiring): NativeD
           throw new Error(
             `pantheon_delegate rejected: session ${ctx.sessionID} is a sub-session — only root sessions can delegate`,
           )
+        const manager = managerFor(ctx.sessionID)
+        const unavailableStatus = await manager.ensureNativeAvailable()
+        if (unavailableStatus !== undefined) {
+          return `status: ${unavailableStatus}\n[native] ${args.agent} — native API ${unavailableStatus.toLowerCase()} — ERR`
+        }
         const model = args.model ?? agentModel?.(args.agent)
         let childID: string
         try {
@@ -590,7 +687,7 @@ export function createNativeDelegateTools(wiring: NativeDelegateWiring): NativeD
           })
           childID = created.id
         } catch (error) {
-          return `pantheon_delegate failed: session.create rejected: ${error instanceof Error ? error.message : String(error)}`
+          return `pantheon_delegate failed: session.create rejected: ${sanitizeReceiptText(error instanceof Error ? error.message : String(error))}`
         }
         registerChildSession?.(childID, ctx.sessionID)
         if (args.read_only === true || isReadOnlyAgent?.(args.agent) === true)
@@ -598,14 +695,14 @@ export function createNativeDelegateTools(wiring: NativeDelegateWiring): NativeD
             agent: args.agent,
             ...(args.read_only === undefined ? {} : { readOnlyFlag: args.read_only }),
           })
-        const receipt = await managerFor(ctx.sessionID).launch({
+        const receipt = await manager.launch({
           agent: args.agent,
           prompt: args.prompt,
           ...(args.description === undefined ? {} : { description: args.description }),
           ...(args.model === undefined ? {} : { model: args.model }),
           taskID: childID,
         })
-        return receipt.line
+        return `status: ${receipt.status}\n${receipt.line}`
       },
     },
     pantheon_delegation_read: {

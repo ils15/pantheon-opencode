@@ -46,6 +46,7 @@ import {
 } from './pantheon/presets.mjs'
 import { safeSessionPath } from './pantheon/session-guard.ts'
 import { StepCapTracker } from './pantheon/step-cap.ts'
+import { createTaskResultGuard } from './pantheon/task-result-guard.ts'
 import {
   TODO_ENFORCER_DEFAULTS,
   TodoEnforcer,
@@ -54,7 +55,6 @@ import {
 } from './pantheon/todo-enforcer.ts'
 import { TodoPreserver } from './pantheon/todo-preserve.ts'
 import { checkTuiVersionStaleness } from './pantheon/tui-version-check.ts'
-import { createTaskResultGuard } from './pantheon/task-result-guard.ts'
 import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
