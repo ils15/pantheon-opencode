@@ -4,11 +4,8 @@
  *
  * Reads the opencode session database READ-ONLY (sum tokens by agent and
  * phase over the last N days → markdown table). Zero new dependencies:
- *   - primary path: node:sqlite (DatabaseSync, readOnly) — node ≥ 22.5;
- *   - CLI fallback: spawn scripts/cost.mjs with its explicit flag-based
- *     interface when the direct import is unavailable;
- *   - missing/unreadable db → FRIENDLY error string, never a crash (tools
- *     return errors as TEXT).
+ *   - only path: node:sqlite (DatabaseSync, readOnly) — node ≥ 22.5;
+ *   - missing/unreadable db → a diagnostic contract status as TEXT.
  *
  * dbPath resolution: explicit option > env PANTHEON_COST_DB > the version-aware
  * default selected by PANTHEON_OPENCODE_VERSION (v1 or v2). An unset version
@@ -18,16 +15,13 @@
  *
  * @module cost-command
  */
-import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import { z } from 'zod'
 
 import type { ToolContextLike } from './delegation.ts'
-
-const execFileAsync = promisify(execFile)
+import type { NativeTaskStatus } from './native-task-status.ts'
 
 /** One aggregated token row (per agent and phase). */
 export interface CostRow {
@@ -41,9 +35,20 @@ export interface CostRow {
 export interface CostCommandOptions {
   /** Explicit db path (testability / unusual installs). Default: resolved candidates. */
   dbPath?: string
+  /** Injectable loader for tests; production always loads node:sqlite. */
+  sqliteLoader?: () => Promise<SqliteModule>
 }
 
 export type OpenCodeVersion = 'v1' | 'v2'
+
+interface SqliteDatabase {
+  prepare(sql: string): { get(): unknown; all(...args: unknown[]): unknown[] }
+  close(): void
+}
+
+export interface SqliteModule {
+  DatabaseSync: new (path: string, options: { readOnly: boolean }) => SqliteDatabase
+}
 
 /** One cost tool: description + zod args shape + execute (delegation.ts shape). */
 export interface CostTool<Args extends z.ZodRawShape = typeof costArgs> {
@@ -125,8 +130,11 @@ function assertCompatibleSchema(db: {
 }
 
 /** Aggregate tokens by agent and phase via node:sqlite (read-only). */
-async function queryWithNodeSqlite(dbPath: string, days: number): Promise<CostRow[]> {
-  const sqlite = await import('node:sqlite')
+async function queryWithNodeSqlite(
+  dbPath: string,
+  days: number,
+  sqlite: SqliteModule,
+): Promise<CostRow[]> {
   const db = new sqlite.DatabaseSync(dbPath, { readOnly: true })
   try {
     assertCompatibleSchema(db)
@@ -140,25 +148,6 @@ async function queryWithNodeSqlite(dbPath: string, days: number): Promise<CostRo
   } finally {
     db.close()
   }
-}
-
-/** CLI fallback: delegate the same aggregation to scripts/cost.mjs. */
-async function queryWithScript(
-  scriptPath: string,
-  dbPath: string,
-  days: number,
-): Promise<CostRow[]> {
-  const { stdout } = await execFileAsync(
-    process.execPath,
-    [scriptPath, '--db-path', dbPath, '--days', String(days)],
-    {
-      timeout: 15_000,
-      encoding: 'utf8',
-    },
-  )
-  const parsed = JSON.parse(stdout) as { ok: boolean; rows?: CostRow[]; error?: string }
-  if (!parsed.ok) throw new Error(parsed.error ?? 'cost.mjs failed')
-  return parsed.rows ?? []
 }
 
 /** Parse message.data JSON rows and aggregate tokens by assistant agent/phase. */
@@ -232,7 +221,42 @@ function renderMarkdown(rows: readonly CostRow[], days: number): string {
 }
 
 export function createCostCommand(options?: CostCommandOptions): CostCommand {
-  const scriptPath = new URL('../../scripts/cost.mjs', import.meta.url).pathname
+  const loadSqlite =
+    options?.sqliteLoader ?? (async () => (await import('node:sqlite')) as SqliteModule)
+
+  const failure = (status: NativeTaskStatus, detail: string): string =>
+    `status: ${status}\npantheon_cost failed: ${detail}`
+
+  const diagnostic = (err: unknown): string => {
+    if (err instanceof Error) {
+      const stderr = (err as Error & { stderr?: unknown }).stderr
+      const suffix =
+        typeof stderr === 'string' && stderr.trim() !== '' ? `; stderr: ${stderr.trim()}` : ''
+      return `${err.message}${suffix}`
+    }
+    return String(err)
+  }
+
+  const statusForError = (err: unknown): NativeTaskStatus => {
+    const detail = diagnostic(err).toLowerCase()
+    if (
+      detail.includes('not found') ||
+      detail.includes('unknown builtin') ||
+      detail.includes('no such built-in') ||
+      detail.includes('cannot find module')
+    ) {
+      return 'UNSUPPORTED'
+    }
+    if (
+      detail.includes('not a database') ||
+      detail.includes('malformed') ||
+      detail.includes('corrupt') ||
+      detail.includes('incompatible opencode.db schema')
+    ) {
+      return 'CORRUPT_DATA'
+    }
+    return 'UNAVAILABLE'
+  }
 
   const execute = async (args: { days?: number }, _ctx: ToolContextLike): Promise<string> => {
     const days = args?.days ?? 7
@@ -240,20 +264,16 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
       const dbPath = findExistingDb(options?.dbPath)
       if (dbPath === undefined) {
         const expected = resolveCostDbPath(options)
-        return (
-          `pantheon_cost failed: opencode.db not found (expected at ${expected}). ` +
-          `No token history is available until opencode has stored session data.`
+        return failure(
+          'UNAVAILABLE',
+          `opencode.db not found (expected at ${expected}). No token history is available until opencode has stored session data.`,
         )
       }
-      const rows = await queryWithNodeSqlite(dbPath, days).catch(async (err: unknown) => {
-        if (err instanceof Error && err.message.startsWith('incompatible opencode.db schema'))
-          throw err
-        return queryWithScript(scriptPath, dbPath, days)
-      })
-      return renderMarkdown(rows, days)
+      const sqlite = await loadSqlite()
+      const rows = await queryWithNodeSqlite(dbPath, days, sqlite)
+      return `status: OK\n${renderMarkdown(rows, days)}`
     } catch (err: unknown) {
-      const reason = err instanceof Error ? err.message : String(err)
-      return `pantheon_cost failed: ${reason}`
+      return failure(statusForError(err), diagnostic(err))
     }
   }
 

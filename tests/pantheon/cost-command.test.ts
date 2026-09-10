@@ -1,20 +1,19 @@
 /**
  * Tests for the /cost command (Wave 4, PR #46) — `pantheon_cost` structural
- * tool. Reads opencode.db READ-ONLY (node:sqlite on node ≥22.5; falls back
- * to spawning scripts/cost.mjs), aggregates cost + tokens by agent over the
- * last N days and renders a markdown table.
+ * tool. Reads opencode.db READ-ONLY through node:sqlite exclusively,
+ * aggregates cost + tokens by agent over the last N days and renders a
+ * markdown table.
  *
  * Automated coverage (DB-read itself is sandbox-manual — a live opencode.db
  * must not be part of the unit suite):
- *   1. Missing/unreadable database → FRIENDLY error string, never a crash.
- *   2. scripts/cost.mjs exists and fails gracefully on a missing db
- *      (JSON {ok:false} on stdout + non-zero exit).
+ *   1. Missing/unreadable database → FRIENDLY contract error string, never a crash.
+ *   2. An unavailable node:sqlite backend is UNSUPPORTED and never invokes the CLI.
  *
  * Run with: npx tsx tests/pantheon/cost-command.test.ts
  */
 import { strict as assert } from 'node:assert'
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -192,7 +191,74 @@ async function main() {
       const output = await command.pantheon_cost.execute({}, { sessionID: 'ses_root' })
       assert.equal(typeof output, 'string')
       assert.ok(output.includes('pantheon_cost failed'), 'error is surfaced as text')
+      assert.ok(output.includes('status: UNAVAILABLE'))
       assert.ok(output.includes('not found'), 'error names the missing db')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('node:sqlite unavailable → UNSUPPORTED without CLI fallback', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'usage.db')
+      createDb(dbPath, true, 'native-only-agent')
+      let loaderCalls = 0
+      const output = await createCostCommand({
+        dbPath,
+        sqliteLoader: async () => {
+          loaderCalls += 1
+          throw new Error('Cannot find module node:sqlite')
+        },
+      }).pantheon_cost.execute({}, { sessionID: 'ses_root' })
+      assert.equal(loaderCalls, 1)
+      assert.ok(output.includes('status: UNSUPPORTED'))
+      assert.ok(!output.includes('cost.mjs'))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('corrupt database → CORRUPT_DATA with diagnostic detail', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'corrupt.db')
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(dbPath, 'not sqlite')
+      const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+        {},
+        { sessionID: 'ses_root' },
+      )
+      assert.ok(output.includes('status: CORRUPT_DATA'))
+      assert.match(output, /not a database|malformed|file is not a database/i)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('database read error → UNAVAILABLE with stderr detail', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'locked.db')
+      createDb(dbPath, true)
+      const output = await createCostCommand({
+        dbPath,
+        sqliteLoader: async () => ({
+          DatabaseSync: class {
+            constructor() {
+              const error = new Error('database is locked') as Error & { stderr: string }
+              error.stderr = 'sqlite probe: locked by another process'
+              throw error
+            }
+            prepare(): never {
+              throw new Error('unreachable')
+            }
+            close(): void {}
+          },
+        }),
+      }).pantheon_cost.execute({}, { sessionID: 'ses_root' })
+      assert.ok(output.includes('status: UNAVAILABLE'))
+      assert.ok(output.includes('stderr: sqlite probe: locked by another process'))
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
