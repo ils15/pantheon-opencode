@@ -68,6 +68,7 @@
     "!src/agents/README.md",
     "bin/*.mjs",
     "AGENTS.md",
+    "CHANGELOG.md",
     "opencode.json",
     "src/mcp/*.py",
     "src/instructions/*.instructions.md",

@@ -218,6 +218,17 @@ optional codemap schema and `code_index`, `code_query`, and `code_neighbors`.
 The other shared MCP copies remain identical. Do not overwrite one memory copy
 with the other.
 
+### Task-result guard
+
+A `task-result-guard` intercepts calls to the native `task()` tool where the
+child session returns an empty or missing result. Instead of surfacing a silent
+`completed` with no payload (which confuses the orchestrator), the guard now
+raises an explicit error. This catches the common free-tier failure mode where a
+child session exceeds the uncached-prefill token budget (`BackendAdmissionRejected`)
+and returns nothing. For large payloads, prefer `pantheon_delegate` over native
+`task()` — the delegation layer has better timeout and error handling.
+
+
 ## Documentation
 
 - [Installation](docs/INSTALLATION.md) · [Quick start](docs/QUICKSTART.md)
