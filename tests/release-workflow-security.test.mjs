@@ -33,24 +33,32 @@ function normalizeSha(value) {
 
 function recoveryTagApiPath(repo, tagRef) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(repo)) return null
-  if (!/^v\d+\.\d+\.\d+-beta\.\d+\.[0-9a-f]{7}$/.test(tagRef)) return null
+  // Current committed beta (vX.Y.Z-beta.N) and legacy PR+SHA (vX.Y.Z-beta.<pr>.<sha7>).
+  // Recovery is beta-only; a stable tag ref must never resolve.
+  if (!/^v\d+\.\d+\.\d+-beta\.[1-9]\d*(?:\.[0-9a-f]{7})?$/.test(tagRef)) return null
   return `repos/${repo}/git/ref/tags/${tagRef}`
 }
 
 function validateRecoveryInputs({ version = '', sha = '', pr = '' }) {
   const supplied = [version, sha, pr].filter(Boolean).length
-  if (supplied !== 0 && supplied !== 3) return false
   if (!supplied) return true
-  const match = /^(\d+\.\d+\.\d+)-beta\.(\d+)\.([0-9a-f]{7})$/.exec(version)
-  return (
-    match !== null &&
-    /^[0-9a-fA-F]{40}$/.test(sha) &&
-    /^\d+$/.test(pr) &&
-    Number.isSafeInteger(Number(pr)) &&
-    Number(pr) > 0 &&
-    match[2] === pr &&
-    match[3] === sha.slice(0, 7).toLowerCase()
-  )
+  // Every recovery needs at least version + full SHA.
+  if (!version || !sha) return false
+  const modern = /^(\d+\.\d+\.\d+)-beta\.([1-9]\d*)$/.exec(version)
+  const legacy = /^(\d+\.\d+\.\d+)-beta\.(\d+)\.([0-9a-f]{7})$/.exec(version)
+  if (!modern && !legacy) return false
+  if (!/^[0-9a-fA-F]{40}$/.test(sha)) return false
+  if (legacy) {
+    const value = Number(pr)
+    return (
+      Number.isSafeInteger(value) &&
+      value > 0 &&
+      legacy[2] === pr &&
+      legacy[3] === sha.slice(0, 7).toLowerCase()
+    )
+  }
+  // The committed scheme encodes no PR; recovery_pr_number must be absent.
+  return pr === ''
 }
 
 function interpretApiStatus(statusLine) {
@@ -198,18 +206,19 @@ test('GitHub API lookups interpret only 200 and 404 and fail closed otherwise', 
   assert.equal(interpretApiStatus('HTTP/2.0 404 Not Found'), 'missing')
 })
 
-test('beta baseline accepts prerelease semver and computes from the full target SHA before the gate', () => {
-  const query = validate.indexOf('Query published stable version')
-  const compute = validate.indexOf('Compute and apply beta version')
-  const gate = validate.indexOf('Version gate')
-  assert.ok(query >= 0)
-  assert.ok(compute > query)
-  assert.ok(gate > compute)
-  assert.match(validate, /valid semver baseline/)
-  assert.match(validate, /FULL_TARGET_SHA="\$\(git rev-parse HEAD\)"/)
-  assert.match(validate, /--sha="\$FULL_TARGET_SHA"/)
+test('beta gate trusts the committed X.Y.Z-beta.N and notes come from the changelog', () => {
+  // Runtime version computation and the npm-baseline lookup were removed.
+  assert.doesNotMatch(validate, /Query published stable version/)
+  assert.doesNotMatch(validate, /Compute and apply beta version/)
+  assert.doesNotMatch(validate, /valid semver baseline/)
+  assert.doesNotMatch(validate, /FULL_TARGET_SHA/)
+  assert.doesNotMatch(validate, /--sha="\$FULL_TARGET_SHA"/)
   assert.doesNotMatch(validate, /rev-parse --short HEAD/)
-  assert.match(validate, /const beta = \/\^\(0\|\[1-9\]\\d\*\)/)
+  assert.doesNotMatch(workflow, /release-notes\.mjs/)
+  // The gate requires a committed sequential beta version.
+  assert.match(validate, /Expected a committed X\.Y\.Z-beta\.N version/)
+  // Both channels extract release notes from the committed CHANGELOG section.
+  assert.match(validate, /node scripts\/changelog-extract\.mjs "\$BASE_VERSION"/)
 })
 
 test('tag and release provenance remains bound to TARGET_SHA', () => {
@@ -245,15 +254,41 @@ test('recovery inputs, hostile refs, and tag objects are rejected', () => {
   assert.equal(normalizeSha(` ${target.toUpperCase()}\n`), target)
   assert.equal(normalizeSha('a'.repeat(39)), null)
   assert.equal(
+    recoveryTagApiPath('owner/repo', 'v1.2.3-beta.4'),
+    'repos/owner/repo/git/ref/tags/v1.2.3-beta.4',
+  )
+  assert.equal(
     recoveryTagApiPath('owner/repo', 'v1.2.3-beta.4.abcdef0'),
     'repos/owner/repo/git/ref/tags/v1.2.3-beta.4.abcdef0',
   )
   assert.equal(recoveryTagApiPath('owner/repo', 'refs/tags/v1.2.3'), null)
+  assert.equal(recoveryTagApiPath('owner/repo', 'v1.2.3'), null)
   assert.equal(validateRecoveryInputs({}), true)
+  // Current committed scheme: version + full SHA only.
+  assert.equal(validateRecoveryInputs({ version: '1.2.3-beta.4', sha: target }), true)
+  assert.equal(validateRecoveryInputs({ version: '1.2.3-beta.4', sha: target, pr: '4' }), false)
+  assert.equal(validateRecoveryInputs({ version: '1.2.3-beta.4', sha: 'abc' }), false)
+  // Legacy scheme requires the matching PR and 7-char SHA suffix.
+  const legacyTarget = `abcdef0${'b'.repeat(33)}`
+  assert.equal(
+    validateRecoveryInputs({ version: '1.2.3-beta.4.abcdef0', sha: legacyTarget, pr: '4' }),
+    true,
+  )
+  assert.equal(
+    validateRecoveryInputs({ version: '1.2.3-beta.4.abcdef0', sha: legacyTarget }),
+    false,
+  )
   assert.equal(
     validateRecoveryInputs({ version: '1.2.3-beta.4.abcdef0', sha: target, pr: '4' }),
     false,
   )
+  assert.equal(
+    validateRecoveryInputs({ version: '1.2.3-beta.4.abcdef0', sha: legacyTarget, pr: '5' }),
+    false,
+  )
+  // The workflow itself must reject recovery_pr_number for the modern format
+  // (guard is present in both the pre-checkout and pre-mutation validators).
+  assert.equal(workflow.match(/recovery_pr_number is only valid for the legacy/g)?.length, 2)
   assert.match(workflow, /Existing tag does not point to TARGET_SHA/)
   assert.match(workflow, /Could not resolve annotated tag object/)
 })

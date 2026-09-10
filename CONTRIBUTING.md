@@ -21,9 +21,14 @@ feature/* ──PR──→ develop (staging)
    após o merge na `main`
 4. **Branches** — apenas `main` e `develop` são mantidas. Feature branches são deletadas após merge
 
-O fluxo beta é separado: um PR com o label exatamente `release:beta` aciona o
-workflow `Release` e publica com a dist-tag `beta`; pushes comuns não o acionam.
-Consulte [docs/RELEASING.md](docs/RELEASING.md) para recuperação e validações.
+O fluxo beta usa o mesmo `workflow_dispatch`, com `release_channel=beta`, e
+publica com a dist-tag `beta`; labels de PR e pushes comuns não acionam o
+workflow. A versão beta é **commitada** (`X.Y.Z-beta.N`): avance-a com
+`node scripts/versioning.mjs apply --beta` (ou `node scripts/versioning.mjs
+beta`), que também promove o `[Unreleased]` do `CHANGELOG.md` para
+`## [vX.Y.Z-beta.N]`, e só então faça o dispatch; o workflow não calcula versão
+em runtime. Consulte [docs/RELEASING.md](docs/RELEASING.md) para recuperação e
+validações.
 
 ### Branch Protection
 - `main`: requer PR + CI passando
@@ -34,6 +39,9 @@ Consulte [docs/RELEASING.md](docs/RELEASING.md) para recuperação e validaçõe
   `src/plugins/tui/package.json` — sempre sincronizados; valide com
   `npm run version:check`
 - CHANGELOG.md segue formato `## [vX.Y.Z]`
+- Beta usa a linha sequencial commitada `X.Y.Z-beta.N`: `node scripts/versioning.mjs
+  apply --beta` atualiza os manifests e promove o `[Unreleased]` para
+  `## [vX.Y.Z-beta.N]`; a seção é obrigatória antes do dispatch com `release_channel=beta`
 - Release gate valida consistência antes do merge
 
 ### Releases

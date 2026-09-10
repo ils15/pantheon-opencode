@@ -6,14 +6,18 @@
  *   recommend            Analyze commits and suggest next version bump type
  *   apply [type]         Bump manifests + move [Unreleased] → [vX.Y.Z] in CHANGELOG
  *                        type: patch | minor | major | auto (default: auto)
+ *                        --beta: bump the committed beta line instead
+ *   beta                 Alias for `apply --beta`
  *   changelog [ver]      (Internal) Insert a versioned section into CHANGELOG
  *                        Normally called by `apply`; can be run standalone.
  *   status               Show current version, latest tag, and pending bump type
  *
- * Design: the release signal is "package.json version > latest git tag".
- * Developers (or AI agents) call `apply` to bump + update CHANGELOG, then push.
- * The auto-release workflow detects the version bump and creates the release.
- * No version bumping ever happens inside GitHub Actions.
+ * Design: the release signal is "package.json version > latest git tag" for
+ * stable, and "package.json version is a committed X.Y.Z-beta.N" for beta.
+ * Developers (or AI agents) call `apply` (or `apply --beta` / `beta`) to bump
+ * the manifests and promote CHANGELOG.md, then push. The dispatch-only release
+ * workflow reads the committed version and creates the release. No version
+ * bumping ever happens inside GitHub Actions.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -26,6 +30,7 @@ import {
   SEMVER_PATTERN,
   validateInventory,
 } from './manifest-inventory.mjs'
+import { nextBetaVersion } from './release-beta-version.mjs'
 import { collectEntries, groupCommits, parseCommitLine, renderChangelog } from './release-notes.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -290,9 +295,31 @@ switch (command) {
     break
   }
 
+  case 'beta':
   case 'apply': {
     const args = process.argv.slice(3)
     const useNotes = args.includes('--notes')
+    const useBeta = command === 'beta' || args.includes('--beta')
+
+    // Beta: advance the committed X.Y.Z-beta.N line and promote the
+    // [Unreleased] CHANGELOG section into [vX.Y.Z-beta.N], exactly like the
+    // stable path. The committed manifest is the single source of truth — no
+    // npm lookup, no git lookup, and no runtime version computation.
+    if (useBeta) {
+      if (!contentHasUnreleased())
+        throw new Error('CHANGELOG.md is missing the [Unreleased] section')
+      const current = getCurrentVersion()
+      const newVersion = nextBetaVersion(current)
+      const date = new Date().toISOString().slice(0, 10)
+      console.log(`Bumping ${current} → ${newVersion} (beta)`)
+      const changelogPlan = prepareUnreleased(newVersion, date)
+      const manifestPlan = prepareManifests(newVersion)
+      commitPreparedRelease({ ...manifestPlan, version: newVersion }, changelogPlan)
+      console.log(`\nDone. Commit the version inventory and CHANGELOG as v${newVersion}.`)
+      console.log(`Tag v${newVersion} will be created by the release workflow after merge to main.`)
+      break
+    }
+
     const type = args.find((a) => !a.startsWith('--')) || 'auto'
     const latestTag = getLatestTag()
     const current = getCurrentVersion()
@@ -361,11 +388,19 @@ Commands:
                        type: patch | minor | major | auto (default: auto)
                        --notes: pre-fill the promoted entry with release
                        notes generated from conventional commits
+                       --beta: advance the committed X.Y.Z-beta.N line and
+                       promote [Unreleased] → [vX.Y.Z-beta.N] in CHANGELOG
+  beta                 Alias for 'apply --beta'
   changelog [version]  Promote [Unreleased] → [vX.Y.Z] without bumping
 
-Release flow:
+Release flow (stable):
   1. node scripts/versioning.mjs apply [minor]
   2. Commit the version inventory and CHANGELOG.
   3. Push after review; CI and the dispatch-only release workflow create the tag.
+
+Release flow (beta):
+  1. node scripts/versioning.mjs apply --beta   (or: node scripts/versioning.mjs beta)
+  2. Commit the version inventory and CHANGELOG.
+  3. Dispatch the release workflow with release_channel=beta.
 `)
 }
