@@ -28,6 +28,15 @@ function emit(status, detail, checks = []) {
   if (status === 'FAIL') process.exitCode = 1
 }
 
+function diagnostic(error) {
+  const message = error instanceof Error ? error.message : String(error)
+  const stderr =
+    error && typeof error === 'object' && typeof error.stderr === 'string'
+      ? error.stderr.trim()
+      : ''
+  return stderr === '' ? message : `${message}; stderr: ${stderr}`
+}
+
 function ambiental(detail) {
   emit('AMBIENTAL', detail)
 }
@@ -295,7 +304,7 @@ async function main() {
     checks.push('incompatible schema: PASS')
     emit('PASS', 'offline synthetic DB checks passed; no real DB was read', checks)
   } catch (error) {
-    emit('FAIL', error instanceof Error ? error.message : String(error), checks)
+    emit('FAIL', diagnostic(error), checks)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

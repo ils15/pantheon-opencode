@@ -516,7 +516,7 @@ const plugin: Plugin = async (input: PluginInput) => {
   }
 
   // Wave 4 (PR #46): /cost — delegation cost + token visibility. Reads
-  // opencode.db read-only (node:sqlite, falls back to scripts/cost.mjs).
+  // opencode.db read-only via the single node:sqlite backend.
   // Fully wired (unlike dispatch-guard, which is manual-orchestration-only
   // because opencode 1.18.x cannot intercept task completion via hooks).
   const costCommand = createCostCommand()

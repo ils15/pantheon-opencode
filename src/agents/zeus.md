@@ -329,8 +329,8 @@ nunca redispara. Apos 1 retry vazio → escalate (mesma regra do TODO Enforcer).
 > Uso baixo-nível: `createZeusRetryHelper().executeWithRetry(first, () => secondRead())` — classifica empty e decide retry/escalate (mesmo cap 1).
 
 ### /cost — pantheon_cost tool (WIRED no plugin)
-`pantheon_cost({ days?: number })` le o `opencode.db` READ-ONLY (node:sqlite;
-fallback `scripts/cost.mjs`) e devolve tabela markdown de custo + tokens por
+`pantheon_cost({ days?: number })` le o `opencode.db` READ-ONLY usando o backend
+unico `node:sqlite`; se indisponivel, retorna `UNSUPPORTED`, sem fallback. Devolve tabela markdown de custo + tokens por
 agente nos ultimos N dias (default 7). Uso: quando Nyx pedir visibilidade de
 custo, ou antes de escalar tier — decida se o batch valeu o preco.
 

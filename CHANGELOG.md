@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Native delegation contract (B3-05):** adds the nine-code `NativeTaskStatus` contract, a session-lazy cached capability probe, atomic board registration for native children, strict `PANTHEON_DELEGATE_MODE=native` without fallback/failover/retry, and status in delegation receipts.
 
+- **Cost backend (B3-06):** `pantheon_cost` now uses a single read-only `node:sqlite` backend; the CLI fallback was removed. The common contract reports `UNSUPPORTED` when `node:sqlite` is unavailable and `CORRUPT_DATA`/`UNAVAILABLE` with diagnostic details on stderr; includes a sandbox probe.
+
 ## 🐞 Fixed
 
 - **npm tarball inclusion:** CHANGELOG.md is now included in the npm tarball

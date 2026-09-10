@@ -142,7 +142,7 @@ instalador remove referências Pantheon das duas formas de config antes de
 gravar apenas o registro Pantheon selecionado. Entradas de terceiros não são
 convertidas nem reivindicadas por essa regra.
 
-O relatório `pantheon_cost` (apenas V1) pode selecionar o banco com
+O relatório `pantheon_cost`, disponível nos plugins V1 e V2, pode selecionar o banco com
 `PANTHEON_OPENCODE_VERSION=v1` ou `v2` (`opencode.db` ou `opencode-v2.db`).
 `PANTHEON_COST_DB=/caminho/absoluto/para/opencode.db` tem precedência sobre o
 seletor de versão, e um `dbPath` explícito fornecido pelo chamador da
