@@ -273,6 +273,20 @@ export class BackgroundJobBoard {
   }
 
   /**
+   * Register a launch only when taskID has not already been claimed.
+   *
+   * The map check and set happen before the first await, so JavaScript's
+   * single-threaded event loop makes this critical section atomic even when
+   * two event handlers call it concurrently. The existing record is returned
+   * for the losing caller.
+   */
+  async registerLaunchIfAbsent(input: LaunchInput): Promise<BackgroundJobRecord> {
+    const existing = this.jobs.get(input.taskID)
+    if (existing !== undefined) return existing
+    return this.registerLaunch(input)
+  }
+
+  /**
    * Update a job's state to a terminal state.
    *
    * Valid transitions: `running` → `completed`|`error`|`cancelled`

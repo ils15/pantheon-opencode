@@ -323,11 +323,11 @@ async function main(): Promise<void> {
     assert.ok(done.length <= 5, 'completed aggressively pruned')
   })
 
-  await testAsync('minimal records: receipt has id, agent, state, one line', async () => {
+  await testAsync('minimal records: receipt has id, agent, state, status, one line', async () => {
     const board = makeBoard()
     const mgr = makeManager(board)
     const receipt = await mgr.launch({ agent: 'demeter', prompt: 'migrate' })
-    assert.deepEqual(Object.keys(receipt).sort(), ['agent', 'id', 'line', 'state'])
+    assert.deepEqual(Object.keys(receipt).sort(), ['agent', 'id', 'line', 'state', 'status'])
     assert.ok(!receipt.line.includes('\n'), 'single line')
   })
 

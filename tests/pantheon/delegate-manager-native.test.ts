@@ -20,6 +20,7 @@ import {
   extractOutputSection,
   parseModelRef,
   resolveDelegateMode,
+  sanitizeReceiptText,
 } from '../../src/pantheon/delegate-manager.ts'
 import {
   type DelegationClient,
@@ -91,6 +92,51 @@ function fakeClient(
 }
 
 async function main(): Promise<void> {
+  await testAsync('receipt: completed output includes OK status', async () => {
+    const board = new BackgroundJobBoard()
+    const manager = createDelegateManager({
+      board,
+      task: async () => ({ content: 'verified output' }),
+      parentSessionID: 'ses_status',
+      env: {},
+    })
+
+    const receipt = await manager.launch({ agent: 'hermes', prompt: 'work' })
+    assert.equal(receipt.status, 'OK')
+  })
+
+  await testAsync('receipt: empty error output includes UNAVAILABLE status', async () => {
+    const board = new BackgroundJobBoard()
+    const manager = createDelegateManager({
+      board,
+      task: async () => ({ content: '' }),
+      parentSessionID: 'ses_status',
+      env: {},
+    })
+
+    const receipt = await manager.launch({ agent: 'hermes', prompt: 'work' })
+    assert.equal(receipt.status, 'UNAVAILABLE')
+  })
+
+  await testAsync('native delegate tool: output propagates the classified status', async () => {
+    const outputDir = mkdtempSync(join(tmpdir(), 'status-tool-'))
+    const board = new BackgroundJobBoard()
+    const client = fakeClient(board, outputDir)
+    const tools = createNativeDelegateTools({
+      board,
+      client,
+      outputDir,
+      env: {},
+      isRootSession: () => true,
+    })
+
+    const output = await tools.pantheon_delegate.execute(
+      { agent: 'hermes', prompt: 'work' },
+      { sessionID: 'ses_status_tool' },
+    )
+    assert.match(output, /status: OK/)
+  })
+
   await testAsync('adapter e2e: prompt→finalize→verified MD→reconciled', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'adapter-e2e-'))
     const outputDir = join(dir, 'delegations')
@@ -286,6 +332,11 @@ async function main(): Promise<void> {
     assert.equal(resolveDelegateMode({ PANTHEON_DELEGATE_MODE: 'native' }), 'native')
     assert.equal(resolveDelegateMode({ PANTHEON_DELEGATE_MODE: ' Native ' }), 'native')
     assert.equal(resolveDelegateMode({ PANTHEON_DELEGATE_MODE: 'NATIVE' }), 'native')
+  })
+
+  await testAsync('receipt sanitization strips ANSI and carriage returns', async () => {
+    assert.equal(sanitizeReceiptText('\x1b[31mred\x1b[0m\r\nnext'), 'red\nnext')
+    assert.equal(sanitizeReceiptText('keep\x7f\x85\tthis'), 'keep\tthis')
   })
 
   await testAsync(

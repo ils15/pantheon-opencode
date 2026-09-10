@@ -76,6 +76,13 @@ availability and configuration of OpenCode and any optional services you choose
 to use. Check the [releases](https://github.com/ils15/pantheon-opencode/releases)
 and [changelog](CHANGELOG.md) for the latest published changes.
 
+## Native delegation mode
+
+Set `PANTHEON_DELEGATE_MODE=native` to use OpenCode's native child-session
+delegation. Native mode is strict: it does not use foreground fallback, model
+failover, or retry; it performs a lazy capability probe on the first dispatch,
+and includes the resulting status in the delegation receipt.
+
 
 ## What's new in 1.5.0-beta.2
 
