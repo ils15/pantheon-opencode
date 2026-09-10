@@ -54,6 +54,7 @@ import {
 } from './pantheon/todo-enforcer.ts'
 import { TodoPreserver } from './pantheon/todo-preserve.ts'
 import { checkTuiVersionStaleness } from './pantheon/tui-version-check.ts'
+import { createTaskResultGuard } from './pantheon/task-result-guard.ts'
 import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
@@ -504,7 +505,12 @@ const plugin: Plugin = async (input: PluginInput) => {
     },
   }
   const sandboxHandler = createContextSandbox(sandboxConfig)
+  // Task Result Guard (2026-09-10): detect empty task() results from native
+  // opencode subagent calls and convert to explicit errors. Runs FIRST in the
+  // chain so the error message is visible even if later handlers skip.
+  const taskResultGuard = createTaskResultGuard()
   const combinedAfter: typeof readEnhancer = async (input, output) => {
+    await taskResultGuard(input, output)
     await sandboxHandler(input, output)
     await readEnhancer(input, output)
   }
