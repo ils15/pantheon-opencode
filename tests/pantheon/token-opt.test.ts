@@ -188,63 +188,49 @@ async function main() {
     assert.equal(out.recall, 1)
   })
 
-  await testAsync('c9Filter signals empty-input with fallback notice', async () => {
+  await testAsync('c9Filter signals empty-input with actionable notice', async () => {
     const out = c9Filter([])
     assert.equal(out.signal, 'empty-input')
     assert.match(out.notice ?? '', /empty input/)
     assert.equal(out.recall, 1)
   })
 
-  await testAsync('c9Filter signals all-dropped with fallback notice', async () => {
+  await testAsync('c9Filter signals all-dropped with actionable notice', async () => {
     const out = c9Filter([chunk('a', 'memory', 0.1), chunk('b', 'memory', 0.2)])
     assert.equal(out.signal, 'all-dropped')
     assert.match(out.notice ?? '', /all chunks dropped/)
     assert.deepEqual(out.selected, [])
   })
 
-  await testAsync(
-    'c9Filter uses an auditable lexical/relative fallback for relevant low scores',
-    async () => {
-      const chunks = [
+  await testAsync('c9Filter rejects low scores without a lexical fallback', async () => {
+    const chunks = [
+      {
+        ...chunk('relevant', 'memory', 0.016),
+        text: 'token optimization keeps context relevant',
+      },
+      { ...chunk('other', 'memory', 0.015), text: 'unrelated deployment notes' },
+    ]
+    const out = c9Filter(chunks, { query: 'token optimization' })
+    assert.deepEqual(out.selected, [])
+    assert.equal(out.signal, 'all-dropped')
+    assert.equal(out.injectedTokens, 0)
+  })
+
+  await testAsync('c9Filter ignores query text and never injects low-score junk', async () => {
+    const out = c9Filter(
+      [
         {
           ...chunk('relevant', 'memory', 0.016),
           text: 'token optimization keeps context relevant',
         },
-        { ...chunk('other', 'memory', 0.015), text: 'unrelated deployment notes' },
-      ]
-      const out = c9Filter(chunks, { query: 'token optimization' })
-      assert.deepEqual(
-        out.selected.map((item) => item.id),
-        ['relevant'],
-      )
-      assert.ok(out.selected.every((item) => item.score < C9_DEFAULT_CUTOFF))
-      assert.equal(out.signal, 'fallback-relative')
-      assert.match(out.notice ?? '', /lexical\/relative fallback/)
-      assert.match(out.notice ?? '', /remain below cutoff/)
-      assert.ok(out.injectedTokens > 0)
-    },
-  )
-
-  await testAsync(
-    'c9Filter rejects a nonsense query instead of injecting low-score junk',
-    async () => {
-      const out = c9Filter(
-        [
-          {
-            ...chunk('relevant', 'memory', 0.016),
-            text: 'token optimization keeps context relevant',
-          },
-        ],
-        undefined,
-        'qzxv nonsense query',
-      )
-      assert.deepEqual(out.selected, [])
-      assert.equal(out.injectedTokens, 0)
-      assert.equal(out.signal, 'nonsense')
-      assert.match(out.notice ?? '', /no lexical overlap/)
-      assert.match(out.notice ?? '', /no context was injected/)
-    },
-  )
+      ],
+      undefined,
+      'qzxv nonsense query',
+    )
+    assert.deepEqual(out.selected, [])
+    assert.equal(out.injectedTokens, 0)
+    assert.equal(out.signal, 'all-dropped')
+  })
 
   await testAsync('c9Filter recall debits top-k overflow honestly', async () => {
     const chunks = [
@@ -294,7 +280,7 @@ async function main() {
   )
 
   await testAsync(
-    'prepareC9Context allows a relevant low-score fallback and preserves its score',
+    'prepareC9Context never injects a low-score candidate via lexical fallback',
     async () => {
       const out = prepareC9Context({
         query: 'token optimization',
@@ -307,23 +293,20 @@ async function main() {
         ],
       })
       assert.equal(out.enabled, true)
-      assert.equal(out.telemetry.signal, 'fallback-relative')
-      assert.match(out.context, /\[memory:relevant\|0\.016\]/)
-      assert.ok(!out.context.includes('0.3'), 'fallback must not rewrite the original score')
-      assert.deepEqual(out.telemetry.counts, { candidates: 2, selected: 1, dropped: 1 })
+      assert.equal(out.telemetry.signal, 'all-dropped')
+      assert.equal(out.context, '')
+      assert.deepEqual(out.telemetry.counts, { candidates: 2, selected: 0, dropped: 2 })
     },
   )
 
-  await testAsync('prepareC9Context does not inject for a nonsense query', async () => {
+  await testAsync('prepareC9Context does not use query text to filter host scores', async () => {
     const out = prepareC9Context({
       query: 'qzxv nonsense query',
       candidates: [{ ...chunk('junk', 'memory', 0.9), text: 'token optimization context' }],
     })
     assert.equal(out.enabled, true)
-    assert.equal(out.context, '')
-    assert.equal(out.telemetry.signal, 'nonsense')
-    assert.equal(out.telemetry.injectedChars, 0)
-    assert.equal(out.telemetry.injectedTokens, 0)
+    assert.match(out.context, /\[memory:junk\|0\.9\]/)
+    assert.equal(out.telemetry.signal, 'ok')
   })
 
   await testAsync('prepareC9Context does not inject for an empty query', async () => {

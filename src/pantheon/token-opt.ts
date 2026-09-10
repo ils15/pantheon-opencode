@@ -35,6 +35,13 @@
 
 import type { ToonValue } from './toon-codec.ts'
 
+export {
+  type HostToolCeilingSource,
+  probeToolCeiling,
+  type ToolCeilingResult,
+  type ToolCeilingSnapshot,
+} from './tool-ceiling.ts'
+
 // ─── Deterministic token estimator (WS0 extension, tokens-only) ──────────
 
 /** Nominal chars-per-token ratio (fixed so measurements are comparable). */
@@ -220,17 +227,10 @@ export interface C9FilterResult {
   /**
    * Quality-floor signal (never silent on empty):
    * - `ok` — at least one chunk selected;
-   * - `empty-input` — no chunks retrieved at all (fallback: proceed without
-   *   injected context, caller should log `notice`);
-   * - `all-dropped` — chunks existed but none survived cutoff/top-k and no
-   *   lexical query fallback was available;
-   * - `fallback-relative` — the absolute cutoff rejected every chunk, but a
-   *   query-matching lexical/relative ranking selected auditable low-score
-   *   chunks;
-   * - `nonsense` — a supplied query had no lexical overlap, so nothing is
-   *   injected.
+   * - `empty-input` — no chunks retrieved at all;
+   * - `all-dropped` — chunks existed but none survived cutoff/top-k.
    */
-  signal: 'ok' | 'empty-input' | 'all-dropped' | 'fallback-relative' | 'nonsense'
+  signal: 'ok' | 'empty-input' | 'all-dropped'
   /** Human-readable alert for the non-`ok` signals (null when `ok`). */
   notice: string | null
   /**
@@ -245,13 +245,13 @@ export interface C9FilterResult {
 
 /**
  * Filter scored chunks per category: drop below cutoff, keep top-k by
- * score desc. An optional query enables only the explicit low-score fallback.
+ * score desc. Scores must come from retrieval; text is never used as a proxy.
  * The injected context cost is debited (`injectedTokens`).
  */
 export function c9Filter(
   chunks: readonly C9Chunk[],
   perCategoryOrOptions?: Readonly<Record<string, C9CategoryConfig>> | C9FilterOptions | string,
-  query?: string,
+  _query?: string,
 ): C9FilterResult {
   const isOptions = isC9FilterOptions(perCategoryOrOptions)
   const perCategory =
@@ -260,12 +260,6 @@ export function c9Filter(
       : isOptions
         ? perCategoryOrOptions.perCategory
         : perCategoryOrOptions
-  const filterQuery =
-    typeof perCategoryOrOptions === 'string'
-      ? (query ?? perCategoryOrOptions)
-      : isOptions
-        ? (query ?? perCategoryOrOptions.query)
-        : query
   const byCategory = new Map<string, C9Chunk[]>()
   for (const chunk of chunks) {
     const group = byCategory.get(chunk.category)
@@ -288,41 +282,15 @@ export function c9Filter(
     dropped.push(...group.filter((c) => c.score < cutoff))
     dropped.push(...eligible.slice(topK))
   }
-  let signal: C9FilterResult['signal'] =
+  const signal: C9FilterResult['signal'] =
     chunks.length === 0 ? 'empty-input' : selected.length === 0 ? 'all-dropped' : 'ok'
-  let notice =
+  const notice =
     signal === 'empty-input'
-      ? 'C9: empty input — no chunks retrieved; fallback: proceed without injected context'
+      ? 'C9: empty input — no chunks retrieved; proceed without injected context'
       : signal === 'all-dropped'
-        ? 'C9: all chunks dropped by cutoff/top-k; fallback: relax cutoff/top-k or proceed without context'
+        ? 'C9: all chunks dropped by cutoff/top-k; no context was injected'
         : null
 
-  // Keep the absolute cutoff intact. This fallback is deliberately entered
-  // only after it rejects every chunk, and only lexical overlap can authorize
-  // injecting one of those low-score chunks.
-  if (chunks.length > 0 && selected.length === 0 && filterQuery !== undefined) {
-    const queryTerms = lexicalTerms(filterQuery)
-    const fallbackSelected =
-      queryTerms.length > 0 ? relativeLexicalSelection(byCategory, perCategory, queryTerms) : []
-    if (fallbackSelected.length > 0) {
-      selected.push(...fallbackSelected)
-      signal = 'fallback-relative'
-      notice =
-        `C9: absolute cutoff ${C9_DEFAULT_CUTOFF} yielded no eligible chunks; ` +
-        `lexical/relative fallback selected ${fallbackSelected.length} auditable ` +
-        `low-score chunk(s) (${queryTerms.length} query term(s)); selected scores remain below cutoff`
-    } else if (filterQuery.trim().length > 0) {
-      signal = 'nonsense'
-      notice =
-        'C9: query has no lexical overlap with low-score chunks; fallback returned zero and no context was injected'
-    }
-  }
-
-  if (selected.length > 0 && signal === 'fallback-relative') {
-    const selectedSet = new Set(selected)
-    dropped.length = 0
-    dropped.push(...chunks.filter((chunk) => !selectedSet.has(chunk)))
-  }
   const context = buildC9Context(selected)
   return {
     selected,
@@ -384,15 +352,6 @@ function telemetry(
   }
 }
 
-function hasLexicalOverlap(query: string, chunks: readonly C9Chunk[]): boolean {
-  const queryTerms = lexicalTerms(query)
-  if (queryTerms.length === 0) return false
-  return chunks.some((chunk) => {
-    const chunkTerms = new Set(lexicalTerms(chunk.text))
-    return queryTerms.some((term) => chunkTerms.has(term))
-  })
-}
-
 /**
  * Prepare auditable context without performing retrieval or side effects.
  *
@@ -429,13 +388,8 @@ export function prepareC9Context(
     }
   }
 
-  const context =
-    filtered.signal === 'nonsense' ||
-    (filtered.signal === 'ok' && !hasLexicalOverlap(batch.query, filtered.selected))
-      ? ''
-      : buildC9Context(filtered.selected)
-  const signal =
-    context.length === 0 && filtered.signal === 'ok' ? ('nonsense' as const) : filtered.signal
+  const context = buildC9Context(filtered.selected)
+  const signal = filtered.signal
   const selectedCount = context.length === 0 ? 0 : filtered.selected.length
   const droppedCount = context.length === 0 ? candidateCount : filtered.dropped.length
   const recall = context.length === 0 && filtered.signal === 'ok' ? 0 : filtered.recall
@@ -444,52 +398,6 @@ export function prepareC9Context(
     context,
     telemetry: telemetry(signal, candidateCount, selectedCount, droppedCount, recall, context),
   }
-}
-
-/** Normalize query/text terms without introducing a semantic or runtime dependency. */
-function lexicalTerms(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .normalize('NFKD')
-        .replace(/\p{M}/gu, '')
-        .toLowerCase()
-        .match(/[\p{L}\p{N}]+/gu)
-        ?.filter((term) => term.length > 1) ?? [],
-    ),
-  ]
-}
-
-/** Select only query-matching low-score chunks, ranked lexically then relatively. */
-function relativeLexicalSelection(
-  byCategory: Map<string, C9Chunk[]>,
-  perCategory: Readonly<Record<string, C9CategoryConfig>> | undefined,
-  queryTerms: string[],
-): C9Chunk[] {
-  const selected: C9Chunk[] = []
-  for (const [category, group] of byCategory) {
-    const config = perCategory?.[category]
-    const topK = config?.topK ?? C9_DEFAULT_TOP_K
-    const maxScore = Math.max(...group.map((chunk) => chunk.score), 0)
-    const ranked = group
-      .map((chunk, index) => {
-        const textSet = new Set(lexicalTerms(chunk.text))
-        const overlap = queryTerms.filter((term) => textSet.has(term)).length
-        const lexicalScore = overlap / queryTerms.length
-        const relativeScore = maxScore > 0 ? chunk.score / maxScore : 0
-        return { chunk, index, lexicalScore, relativeScore }
-      })
-      .filter((entry) => entry.lexicalScore > 0)
-      .sort(
-        (left, right) =>
-          right.lexicalScore - left.lexicalScore ||
-          right.relativeScore - left.relativeScore ||
-          right.chunk.score - left.chunk.score ||
-          left.index - right.index,
-      )
-    selected.push(...ranked.slice(0, topK).map((entry) => entry.chunk))
-  }
-  return selected
 }
 
 function isC9FilterOptions(
