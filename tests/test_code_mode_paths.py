@@ -7,9 +7,6 @@ import importlib
 import json
 from pathlib import Path
 
-import pytest
-
-
 MODULE_PATH = "src.mcp.code_mode_server"
 
 
@@ -48,7 +45,7 @@ def test_resolves_project_dir_when_project_manifest_present(tmp_path, monkeypatc
     script = _script(target)
     _manifest(target, script)
     module = _reload(monkeypatch, project, tmp_path / "home", tmp_path)
-    assert module.SCRIPTS_DIR == target
+    assert target == module.SCRIPTS_DIR
 
 
 def test_resolves_project_opencode_dir_before_project_root_dir(tmp_path, monkeypatch):
@@ -58,7 +55,7 @@ def test_resolves_project_opencode_dir_before_project_root_dir(tmp_path, monkeyp
     _manifest(preferred, preferred / "run.py")
     _script(project / ".pantheon" / "code-mode")
     module = _reload(monkeypatch, project, tmp_path / "home", tmp_path)
-    assert module.SCRIPTS_DIR == preferred
+    assert preferred == module.SCRIPTS_DIR
 
 
 def test_falls_back_to_global_when_project_context_is_unavailable(tmp_path, monkeypatch):
@@ -78,7 +75,7 @@ def test_does_not_fall_back_to_global_after_project_dir_is_selected(tmp_path, mo
     global_script = _script(global_dir)
     _manifest(global_dir, global_script)
     module = _reload(monkeypatch, project, tmp_path / "home", tmp_path)
-    assert module.SCRIPTS_DIR == project_dir
+    assert project_dir == module.SCRIPTS_DIR
     assert module._manifest_path().parent == project_dir
 
 
@@ -89,7 +86,7 @@ def test_project_wins_when_project_and_global_dirs_exist(tmp_path, monkeypatch):
     global_script = _script(tmp_path / "home" / ".pantheon" / "code-mode")
     _manifest(global_script.parent, global_script)
     module = _reload(monkeypatch, project, tmp_path / "home", tmp_path)
-    assert module.SCRIPTS_DIR == project_script.parent
+    assert project_script.parent == module.SCRIPTS_DIR
 
 
 def test_pantheon_project_env_overrides_cwd(tmp_path, monkeypatch):
@@ -97,7 +94,7 @@ def test_pantheon_project_env_overrides_cwd(tmp_path, monkeypatch):
     script = _script(project / ".pantheon" / "code-mode")
     _manifest(script.parent, script)
     module = _reload(monkeypatch, project, tmp_path / "home", tmp_path / "other")
-    assert module.SCRIPTS_DIR == script.parent
+    assert script.parent == module.SCRIPTS_DIR
 
 
 def test_approve_script_uses_project_manifest_when_both_exist(tmp_path, monkeypatch):
@@ -113,32 +110,3 @@ def test_approve_script_uses_project_manifest_when_both_exist(tmp_path, monkeypa
     assert (project_dir / "manifest.json").exists()
     assert "new.py" in (project_dir / "manifest.json").read_text()
     assert "new.py" not in (global_dir / "manifest.json").read_text()
-
-
-def test_manifest_invalid_version_rejected(tmp_path, monkeypatch):
-    project = tmp_path / "project"
-    script = _script(project / ".pantheon" / "code-mode")
-    module = _reload(monkeypatch, project, tmp_path / "home", tmp_path)
-    digest = hashlib.sha256(script.read_bytes()).hexdigest()
-    (script.parent / "manifest.json").write_text(
-        json.dumps({"version": 2, "scripts": {script.name: digest}}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(module.ManifestError, match="version must be 1") as raised:
-        module._load_manifest(script.parent)
-    assert raised.value.status == "CORRUPT_DATA"
-
-
-def test_manifest_invalid_digest_rejected(tmp_path, monkeypatch):
-    project = tmp_path / "project"
-    script = _script(project / ".pantheon" / "code-mode")
-    module = _reload(monkeypatch, project, tmp_path / "home", tmp_path)
-    (script.parent / "manifest.json").write_text(
-        json.dumps({"version": 1, "scripts": {script.name: "z" * 64}}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(module.ManifestError, match="64-character SHA-256") as raised:
-        module._load_manifest(script.parent)
-    assert raised.value.status == "CORRUPT_DATA"

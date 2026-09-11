@@ -167,6 +167,20 @@ class TestManifestFailClosed:
         result = await _exec(module, "hello.py", json_output=True)
         assert result["status"] == "CORRUPT_DATA"
 
+    async def test_manifest_unsupported_version_returns_corrupt_data(
+        self, module, scripts_env: Path
+    ) -> None:
+        _write_script(scripts_env, "hello.py")
+        digest = hashlib.sha256(scripts_env.joinpath("hello.py").read_bytes()).hexdigest()
+        (scripts_env / "manifest.json").write_text(
+            json.dumps({"version": 2, "scripts": {"hello.py": digest}}),
+            encoding="utf-8",
+        )
+
+        result = await _exec(module, "hello.py", json_output=True)
+        assert result["status"] == "CORRUPT_DATA"
+        assert "version must be 1" in result["error"]
+
     async def test_manifest_top_level_not_object_returns_corrupt_data(
         self, module, scripts_env: Path
     ) -> None:

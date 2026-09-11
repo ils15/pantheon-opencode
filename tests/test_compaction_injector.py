@@ -14,60 +14,14 @@ idempotent (double rehydration never duplicates).
 
 from __future__ import annotations
 
-import importlib
 import json
-import sys
-import tempfile
-import time
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import Any
-from unittest.mock import patch
 
-import pytest
 from mcp.server.fastmcp import FastMCP
 
+from tests.conftest import _json
+
 MODULE_PATH = "src.mcp.mcp_persistence_server"
-
-
-def _json(result: Any) -> Any:
-    """Parse the payload returned by a tool call (mirrors persistence tests)."""
-    if isinstance(result, tuple):
-        _, structured = result
-        if isinstance(structured, dict) and "result" in structured:
-            return structured["result"]
-        return structured
-    block = result[0] if result else None
-    text = getattr(block, "text", None) or str(block)
-    return json.loads(text) if text else None
-
-
-@pytest.fixture(scope="session")
-def temp_persistence_dir() -> str:
-    with tempfile.TemporaryDirectory(prefix="pantheon_injector_test_") as tmpdir:
-        yield tmpdir
-
-
-@pytest.fixture
-def module(temp_persistence_dir: str):
-    test_dir = Path(temp_persistence_dir) / f"db_{time.time_ns()}"
-    test_dir.mkdir(parents=True, exist_ok=True)
-    argv = [
-        "pytest",
-        "--global-db",
-        str(test_dir / "global.db"),
-        "--project-db",
-        str(test_dir / "project.db"),
-    ]
-    with patch.object(sys, "argv", argv):
-        mod = importlib.import_module(MODULE_PATH)
-        importlib.reload(mod)
-    return mod
-
-
-@pytest.fixture
-def server(module) -> FastMCP:
-    return module.mcp
 
 
 def _long_session_checkpoint() -> str:

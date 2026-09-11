@@ -19,12 +19,9 @@ crash-recovery path (Zeus anti-stall / pre-compaction checkpoints).
 from __future__ import annotations
 
 import asyncio
-import importlib
 import json
 import os
 import sqlite3
-import sys
-import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -35,6 +32,8 @@ from unittest.mock import patch
 import pytest
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+
+from tests.conftest import _json
 
 # Module path — canonical source lives in src/mcp/
 MODULE_PATH = "src.mcp.mcp_persistence_server"
@@ -55,61 +54,6 @@ def _text_from_tool(result: Any) -> str:
         return str(block)
     return ""
 
-
-def _json(result: Any) -> Any:
-    """Parse the payload returned by a tool call.
-
-    FastMCP returns ``(content_blocks, structured)`` tuples for tools with an
-    output schema (str/list returns) and plain content-block lists for dict
-    returns. Prefer the structured payload when present; fall back to parsing
-    the JSON text.
-    """
-    if isinstance(result, tuple):
-        _, structured = result
-        if isinstance(structured, dict) and "result" in structured:
-            return structured["result"]
-        return structured
-    text = _text_from_tool(result)
-    return json.loads(text) if text else None
-
-
-# ── Fixtures ────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(scope="session")
-def temp_persistence_dir() -> str:
-    """Create a temporary directory for SQLite storage."""
-    with tempfile.TemporaryDirectory(prefix="pantheon_persistence_test_") as tmpdir:
-        yield tmpdir
-
-
-@pytest.fixture
-def module(temp_persistence_dir: str):
-    """Import the server module with a fresh temp DB per test.
-
-    The module runs argparse + DB init at import time, so we patch sys.argv
-    with --global-db/--project-db pointing into a fresh per-test directory
-    and reload. Each test gets an isolated database.
-    """
-    test_dir = Path(temp_persistence_dir) / f"db_{time.time_ns()}"
-    test_dir.mkdir(parents=True, exist_ok=True)
-    argv = [
-        "pytest",
-        "--global-db",
-        str(test_dir / "global.db"),
-        "--project-db",
-        str(test_dir / "project.db"),
-    ]
-    with patch.object(sys, "argv", argv):
-        mod = importlib.import_module(MODULE_PATH)
-        importlib.reload(mod)
-    return mod
-
-
-@pytest.fixture
-def server(module) -> FastMCP:
-    """Return the FastMCP server instance."""
-    return module.mcp
 
 
 def _force_expiry(module, namespace: str, key: str) -> None:
