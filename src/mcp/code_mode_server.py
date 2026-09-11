@@ -157,12 +157,9 @@ def _detect_prlimit() -> str | None:
 
 
 # ── Scripts Directory Resolution ─────────────────────────────────────────────
-# Priority:
-# 1. /.opencode/.pantheon/code-mode/  (project install)
-# 2. /.pantheon/code-mode/            (legacy fallback)
-# 3. /.pantheon/code-mode/               (global fallback)
-# 4. .pantheon/code-mode/ shipped inside the installed package (tarball
-#    fallback — package.json `files` includes .pantheon/code-mode/**)
+# Project directories are selected before global directories.  Once a usable
+# project directory is selected, manifest errors are deliberately fail-closed;
+# execution must never silently cross the project/global trust boundary.
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -229,25 +226,38 @@ def _packaged_scripts_dir() -> Path | None:
     return None
 
 
-def _resolve_scripts_dir(candidates: list[Path]) -> Path | None:
-    """Select the first usable candidate, then try the packaged fallback."""
+def _resolve_scripts_dir(candidates: list[Path], *, allow_packaged: bool = True) -> Path | None:
+    """Select the first usable candidate, optionally trying the package copy."""
     for candidate in candidates:
         if _has_usable_scripts(candidate):
             return candidate
-    return _packaged_scripts_dir()
+    return _packaged_scripts_dir() if allow_packaged else None
+
+
+def _resolve_code_mode_dir() -> Path:
+    """Resolve code-mode scripts project-first, with a global-only fallback.
+
+    A project directory is a trust boundary: if one is selected, callers use
+    its manifest even when that manifest is missing or corrupt.  Global users
+    retain the packaged/global fallback when no usable project directory is
+    available.
+    """
+    project = pantheon_project()
+    if project is not None:
+        project_candidates = [
+            project / ".opencode" / ".pantheon" / "code-mode",
+            project / ".pantheon" / "code-mode",
+        ]
+        selected = _resolve_scripts_dir(project_candidates, allow_packaged=False)
+        if selected is not None:
+            return selected
+
+    global_dir = pantheon_home() / ".pantheon" / "code-mode"
+    return _resolve_scripts_dir([global_dir]) or global_dir
 
 
 _PANTHEON_HOME: Path = pantheon_home()
-_SCRIPTS_DIR_CANDIDATES: list[Path] = []
-_proj = pantheon_project()
-if _proj is not None:
-    _SCRIPTS_DIR_CANDIDATES.append(_proj / ".opencode" / ".pantheon" / "code-mode")
-    _SCRIPTS_DIR_CANDIDATES.append(_proj / ".pantheon" / "code-mode")
-_SCRIPTS_DIR_CANDIDATES.append(_PANTHEON_HOME / ".pantheon" / "code-mode")
-
-SCRIPTS_DIR: Path = _resolve_scripts_dir(_SCRIPTS_DIR_CANDIDATES) or (
-    _PANTHEON_HOME / ".pantheon" / "code-mode"
-)
+SCRIPTS_DIR: Path = _resolve_code_mode_dir()
 
 # ── FastMCP App ───────────────────────────────────────────────────────────────
 mcp = FastMCP(
@@ -877,4 +887,3 @@ def _cli() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(_cli())
-
