@@ -12,6 +12,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🆕 What's New
 
+## 🐞 Fixed
+
+## ⚠️ Known Issues
+
+## ✅ Closed Issues
+
+## [v1.5.0-beta.4] - 2026-09-11
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
 - **Native delegation contract (B3-05):** adds the nine-code `NativeTaskStatus` contract, a session-lazy cached capability probe, atomic board registration for native children, strict `PANTHEON_DELEGATE_MODE=native` without fallback/failover/retry, and status in delegation receipts.
 
 - **Cost backend (B3-06):** `pantheon_cost` now uses a single read-only `node:sqlite` backend; the CLI fallback was removed. The common contract reports `UNSUPPORTED` when `node:sqlite` is unavailable and `CORRUPT_DATA`/`UNAVAILABLE` with diagnostic details on stderr; includes a sandbox probe.
@@ -33,11 +46,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   child completed with empty output and the parent LLM proceeded as if the
   task succeeded. The guard replaces empty `task()` output with an error
   message so the parent sees a failure. (`task-result-guard.ts`)
-
-## ⚠️ Known Issues
-
-## ✅ Closed Issues
-
 ## [v1.5.0-beta.3] - 2026-09-10
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
