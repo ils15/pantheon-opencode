@@ -73,7 +73,7 @@ function convertPermissionsV2toV1(permArray) {
   const result = {}
   // Reverse action mapping: V2 action → V1 key
   const ACTION_TO_V1 = Object.fromEntries(
-    Object.entries(V1_PERMISSION_TO_ACTION).map(([k, v]) => [v, k])
+    Object.entries(V1_PERMISSION_TO_ACTION).map(([k, v]) => [v, k]),
   )
 
   for (const { action, resource, effect } of permArray) {
@@ -104,7 +104,7 @@ const PROVIDER_RENAME = {
 
 /** Reverse: V2 → V1 */
 const PROVIDER_RENAME_REVERSE = Object.fromEntries(
-  Object.entries(PROVIDER_RENAME).map(([k, v]) => [v, k])
+  Object.entries(PROVIDER_RENAME).map(([k, v]) => [v, k]),
 )
 
 /**
@@ -176,9 +176,7 @@ function convertProviderV2toV1(name, config) {
 
   // package → npm (strip aisdk: prefix)
   if (result.package !== undefined) {
-    result.npm = result.package.startsWith('aisdk:')
-      ? result.package.slice(6)
-      : result.package
+    result.npm = result.package.startsWith('aisdk:') ? result.package.slice(6) : result.package
     delete result.package
   }
 
@@ -303,7 +301,7 @@ const V1_TO_V2_RENAMES = {
 
 /** Build reverse map */
 const V2_TO_V1_RENAMES = Object.fromEntries(
-  Object.entries(V1_TO_V2_RENAMES).map(([k, v]) => [v, k])
+  Object.entries(V1_TO_V2_RENAMES).map(([k, v]) => [v, k]),
 )
 
 // ---------------------------------------------------------------------------

@@ -62,7 +62,7 @@ test('test_doctor_manifest_invalid_version_exits_nonzero', (t) => {
 })
 
 test('test_doctor_manifest_invalid_digest_type_exits_nonzero', (t) => {
-  const { dir, scripts } = fixture(t)
+  const { dir } = fixture(t)
   writeManifest(dir, { version: 1, scripts: { 'script-0.py': 42 } })
   assert.match(validateCodeModeManifest(dir).message, /invalid digest/)
 })
@@ -105,7 +105,10 @@ test('test_doctor_manifest_respects_pantheon_project', (t) => {
   const { dir } = fixture(t)
   const project = join(dir, 'project')
   mkdirSync(join(project, '.pantheon', 'code-mode'), { recursive: true })
-  writeFileSync(join(project, '.pantheon', 'code-mode', 'manifest.json'), readFileSync(join(dir, 'manifest.json')))
+  writeFileSync(
+    join(project, '.pantheon', 'code-mode', 'manifest.json'),
+    readFileSync(join(dir, 'manifest.json')),
+  )
   assert.equal(
     resolveCodeModeDir({ target: '/wrong-target', env: { PANTHEON_PROJECT: project } }),
     join(project, '.pantheon', 'code-mode'),

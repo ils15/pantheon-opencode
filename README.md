@@ -30,7 +30,7 @@ way to plan work, make progress, check results, and keep useful project context.
 
 ## Start in 2 minutes
 
-Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js 18+.
+Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js 22+.
 
 From the project where you want to use Pantheon:
 

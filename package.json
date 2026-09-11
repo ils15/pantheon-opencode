@@ -32,15 +32,15 @@
     "package:evidence": "node scripts/package-evidence.mjs",
     "package:validate": "node scripts/validate-package.mjs",
     "publish:next": "npm publish --tag next --access public",
-    "lint": "npx biome ci .",
-    "typecheck": "npx tsc --noEmit",
+    "lint": "biome ci .",
+    "typecheck": "tsc --noEmit",
     "audit": "npm audit --audit-level=high",
     "secret-scan": "node scripts/secret-scan.mjs",
     "hooks:install": "pre-commit install",
     "hooks:update": "pre-commit autoupdate",
     "test:security": "npm run secret-scan",
     "test:node": "node --test tests/*.mjs tests/pantheon/*.mjs",
-    "test:ts": "for f in tests/pantheon/*.test.ts; do if [ \"$f\" = tests/pantheon/plugin-v2-contract.test.ts ]; then NODE_OPTIONS=--conditions=import npx tsx \"$f\"; else npx tsx \"$f\"; fi || exit 1; done",
+    "test:ts": "for f in tests/pantheon/*.test.ts; do if [ \"$f\" = tests/pantheon/plugin-v2-contract.test.ts ]; then NODE_OPTIONS=--conditions=import tsx \"$f\"; else tsx \"$f\"; fi || exit 1; done",
     "test": "python3 -m pytest tests/ -q 2>&1; status=$?; if [ \"$status\" -eq 5 ]; then echo \"No tests found\"; fi; exit \"$status\"",
     "test:ci": "python3 -m pytest tests/ -q --tb=short 2>&1"
   },
@@ -88,14 +88,17 @@
     "!**/*.pyc"
   ],
   "dependencies": {
-    "@opencode-ai/plugin": "1.18.18",
+    "@opencode-ai/plugin": "1.18.30",
     "js-yaml": "^4.3.2",
     "zod": "4.1.8"
   },
   "devDependencies": {
-    "@commitlint/cli": "^19.8.0",
-    "@commitlint/config-conventional": "^19.8.0",
-    "husky": "^9.1.7"
+    "@biomejs/biome": "2.5.13",
+    "@commitlint/cli": "21.2.2",
+    "@commitlint/config-conventional": "21.2.2",
+    "husky": "^9.1.7",
+    "tsx": "4.23.13",
+    "typescript": "6.0.3"
   },
   "repository": {
     "type": "git",
@@ -116,7 +119,7 @@
   "author": "ils15",
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "preferGlobal": true
 }
