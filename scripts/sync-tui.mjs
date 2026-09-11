@@ -13,7 +13,7 @@ import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -106,46 +106,90 @@ function copyPluginFiles(srcDir, dstDir) {
   return result
 }
 
+// ── npm env hygiene ────────────────────────────────────────────────────
+
+/**
+ * npm lifecycle env vars that put a nested `npm ci` into global context and
+ * make it abort with ECIGLOBAL ("`npm ci` does not work for global packages").
+ * When the package itself is installed with `npm install -g`, npm injects these
+ * into the postinstall environment; the TUI dependency sync is a local
+ * operation and must never inherit them.
+ */
+const GLOBAL_NPM_ENV_KEYS = new Set([
+  'npm_config_global',
+  'npm_config_globalconfig',
+  'npm_config_prefix',
+  'npm_config_location',
+])
+
+/**
+ * Return a copy of `env` with global-context npm config vars removed.
+ * Matching is case-insensitive so Windows-style uppercase keys are handled.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function sanitizeNpmEnv(env = process.env) {
+  const clean = { ...env }
+  for (const key of Object.keys(clean)) {
+    if (GLOBAL_NPM_ENV_KEYS.has(key.toLowerCase())) delete clean[key]
+  }
+  return clean
+}
+
 // ── Main ───────────────────────────────────────────────────────────────
 
-try {
-  const configDir = resolveConfigDir()
-  if (!configDir) {
-    // User hasn't run init yet — silent exit, no error
-    process.exit(0)
+function main() {
+  try {
+    const configDir = resolveConfigDir()
+    if (!configDir) {
+      // User hasn't run init yet — silent exit, no error
+      process.exit(0)
+    }
+
+    const tuiCopyDir = join(configDir, 'plugins', 'pantheon-tui')
+    if (!existsSync(tuiCopyDir)) {
+      // TUI plugin not installed — silent exit
+      process.exit(0)
+    }
+
+    // Source: TUI plugin inside the installed package
+    const tuiSrcDir = join(ROOT, 'src', 'plugins', 'tui')
+    if (!existsSync(tuiSrcDir)) {
+      throw new Error(`TUI plugin source not found: ${tuiSrcDir}`)
+    }
+
+    // Compare versions before copy
+    const installedVersion = readVersion(join(tuiCopyDir, 'package.json'))
+    const sourceVersion = readVersion(join(tuiSrcDir, 'package.json'))
+
+    // Copy fresh files
+    const { created } = copyPluginFiles(tuiSrcDir, tuiCopyDir)
+
+    // Lockfile installation is the only accepted dependency path. Strip
+    // global-context npm vars so a global postinstall can't trigger ECIGLOBAL.
+    execSync('npm ci --omit=dev --no-audit --no-fund', {
+      cwd: tuiCopyDir,
+      stdio: 'pipe',
+      env: sanitizeNpmEnv(),
+    })
+
+    // Log result
+    if (installedVersion && sourceVersion && installedVersion === sourceVersion && created === 0) {
+      console.log(`  TUI plugin already up to date (v${sourceVersion})`)
+    } else {
+      console.log(
+        `  TUI plugin updated to v${sourceVersion || 'latest'}${installedVersion ? ` (was v${installedVersion})` : ''}`,
+      )
+    }
+  } catch (err) {
+    console.error(`❌ TUI sync failed: ${err.message}`)
+    process.exitCode = 1
   }
-
-  const tuiCopyDir = join(configDir, 'plugins', 'pantheon-tui')
-  if (!existsSync(tuiCopyDir)) {
-    // TUI plugin not installed — silent exit
-    process.exit(0)
-  }
-
-  // Source: TUI plugin inside the installed package
-  const tuiSrcDir = join(ROOT, 'src', 'plugins', 'tui')
-  if (!existsSync(tuiSrcDir)) {
-    throw new Error(`TUI plugin source not found: ${tuiSrcDir}`)
-  }
-
-  // Compare versions before copy
-  const installedVersion = readVersion(join(tuiCopyDir, 'package.json'))
-  const sourceVersion = readVersion(join(tuiSrcDir, 'package.json'))
-
-  // Copy fresh files
-  const { created } = copyPluginFiles(tuiSrcDir, tuiCopyDir)
-
-  // Lockfile installation is the only accepted dependency path.
-  execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: tuiCopyDir, stdio: 'pipe' })
-
-  // Log result
-  if (installedVersion && sourceVersion && installedVersion === sourceVersion && created === 0) {
-    console.log(`  TUI plugin already up to date (v${sourceVersion})`)
-  } else {
-    console.log(
-      `  TUI plugin updated to v${sourceVersion || 'latest'}${installedVersion ? ` (was v${installedVersion})` : ''}`,
-    )
-  }
-} catch (err) {
-  console.error(`❌ TUI sync failed: ${err.message}`)
-  process.exitCode = 1
 }
+
+// Only run when invoked directly (`node scripts/sync-tui.mjs`). Importing this
+// module for unit tests must not trigger the side-effecting postinstall sync.
+const isDirectRun =
+  Boolean(process.argv[1]) && pathToFileURL(process.argv[1]).href === import.meta.url
+
+if (isDirectRun) main()
