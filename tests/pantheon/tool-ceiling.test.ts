@@ -1,7 +1,10 @@
 import { strict as assert } from 'node:assert'
 
-import { probeToolCeiling, probeToolCeilingFromHost } from '../../src/pantheon/tool-ceiling.ts'
-import { handleToolCeilingEvent } from '../../src/plugin.ts'
+import {
+  handleToolCeilingEvent,
+  probeToolCeiling,
+  probeToolCeilingFromHost,
+} from '../../src/pantheon/tool-ceiling.ts'
 
 const validSnapshot = {
   usage: { inputTokens: 120, outputTokens: 80 },
