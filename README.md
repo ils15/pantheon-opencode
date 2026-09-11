@@ -127,6 +127,14 @@ contract (`OK`, `UNSUPPORTED`, `UNAVAILABLE`, `INVALID_INPUT`, `INVALID_STATE`,
 `CONFLICT`, `CORRUPT_DATA`, `TIMEOUT`, `ESCALATE`); with `json_output=true`,
 results carry a `status` field.
 
+Code-mode resolves project-first: `.opencode/.pantheon/code-mode` is preferred,
+then `.pantheon/code-mode`. `PANTHEON_PROJECT` overrides the working directory,
+and the installed MCP uses `cwd: "."` so OpenCode supplies the workspace. A
+global directory is used only when no usable project directory is available;
+once a project directory is selected, a missing or corrupt manifest fails
+closed instead of falling back. `doctor` validates the manifest and every
+script's SHA-256 without regenerating it.
+
 
 ## What's new in 1.5.0-beta.2
 

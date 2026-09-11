@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🐞 Fixed
 
+- **Code-mode project resolution (#112):** the MCP now resolves project code-mode
+  scripts before global scripts, honors `PANTHEON_PROJECT`, and fails closed on
+  project manifest errors; the installer sets `cwd: "."`.
+- **Code-mode manifest doctor check (#113):** `doctor` validates manifest shape,
+  script membership, and SHA-256 hashes without regenerating the manifest.
+
 ## ⚠️ Known Issues
 
 ## ✅ Closed Issues
