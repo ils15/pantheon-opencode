@@ -7,6 +7,8 @@ import importlib
 import json
 from pathlib import Path
 
+import pytest
+
 
 MODULE_PATH = "src.mcp.code_mode_server"
 
@@ -111,3 +113,32 @@ def test_approve_script_uses_project_manifest_when_both_exist(tmp_path, monkeypa
     assert (project_dir / "manifest.json").exists()
     assert "new.py" in (project_dir / "manifest.json").read_text()
     assert "new.py" not in (global_dir / "manifest.json").read_text()
+
+
+def test_manifest_invalid_version_rejected(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    script = _script(project / ".pantheon" / "code-mode")
+    module = _reload(monkeypatch, project, tmp_path / "home", tmp_path)
+    digest = hashlib.sha256(script.read_bytes()).hexdigest()
+    (script.parent / "manifest.json").write_text(
+        json.dumps({"version": 2, "scripts": {script.name: digest}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ManifestError, match="version must be 1") as raised:
+        module._load_manifest(script.parent)
+    assert raised.value.status == "CORRUPT_DATA"
+
+
+def test_manifest_invalid_digest_rejected(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    script = _script(project / ".pantheon" / "code-mode")
+    module = _reload(monkeypatch, project, tmp_path / "home", tmp_path)
+    (script.parent / "manifest.json").write_text(
+        json.dumps({"version": 1, "scripts": {script.name: "z" * 64}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.ManifestError, match="64-character SHA-256") as raised:
+        module._load_manifest(script.parent)
+    assert raised.value.status == "CORRUPT_DATA"

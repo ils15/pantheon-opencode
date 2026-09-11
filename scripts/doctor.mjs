@@ -984,14 +984,15 @@ export function checkCodeModeDir(args) {
 
 /** Resolve code-mode using the same project-first rule as the MCP server. */
 export function resolveCodeModeDir(args) {
-  const target = resolve(args.target)
+  const env = args.env ?? process.env
+  const target = resolve(env.PANTHEON_PROJECT ?? args.target)
   const projectCandidates = [
     join(target, '.opencode', '.pantheon', 'code-mode'),
     join(target, '.pantheon', 'code-mode'),
   ]
   const projectDir = projectCandidates.find((candidate) => existsSync(candidate))
   if (projectDir) return projectDir
-  return join(resolveOpenCodeConfigDir(args.env ?? process.env), '.pantheon', 'code-mode')
+  return join(resolveOpenCodeConfigDir(env), '.pantheon', 'code-mode')
 }
 
 /** Validate a code-mode manifest without modifying it. */
