@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🐞 Fixed
 
+- **ECIGLOBAL fix (sync-tui):** `npm install -g` no longer fails with ECIGLOBAL — `scripts/sync-tui.mjs` now sanitizes `npm_config_*` global-context vars (case-insensitive) from the nested `npm ci` environment.
 - **npm tarball inclusion:** CHANGELOG.md is now included in the npm tarball
   (added to the `files` allowlist in `package.json`).
 
