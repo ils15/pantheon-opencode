@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Tool ceiling (B3-07):** C9/tool ceiling is fed only by real host data from `message.updated` plus `config.providers()`; lexical fallback is removed. Hosts without the capability report `UNSUPPORTED`, malformed data reports `CORRUPT_DATA`, and malformed events are guarded defensively.
 
+- **Code-mode explicit installation (B3-08):** `pantheon-code-mode` no longer executes scripts implicitly. A script runs only when listed in `.pantheon/code-mode/manifest.json` with a matching SHA-256; the installer seeds the manifest for bundled scripts and a new `approve_code_script` tool opts in or refreshes a script. Missing manifest reports `INVALID_STATE`, unlisted scripts `CONFLICT`, and hash mismatches `CORRUPT_DATA`.
+
 ## 🐞 Fixed
 
 - **npm tarball inclusion:** CHANGELOG.md is now included in the npm tarball

@@ -12,6 +12,7 @@
  * isolation is handled at runtime via OPENCODE_DB.
  */
 
+import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -59,6 +60,34 @@ const COMPONENT_NAMES = [
 
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
+}
+
+/**
+ * (Re)generate the code-mode manifest with SHA-256 digests for every bundled
+ * script. This is the explicit installation opt-in: the MCP server only
+ * executes scripts listed here whose on-disk hash matches. Missing or empty
+ * directories approve nothing (0) — execution is never implicit.
+ */
+function writeCodeModeManifest(dir, dryRun) {
+  if (!existsSync(dir)) return 0
+  let names
+  try {
+    names = readdirSync(dir)
+      .filter((name) => /\.(sh|py)$/i.test(name) && !name.startsWith('.'))
+      .sort()
+  } catch {
+    return 0
+  }
+  if (names.length === 0) return 0
+  const scripts = {}
+  for (const name of names) {
+    scripts[name] = createHash('sha256')
+      .update(readFileSync(join(dir, name)))
+      .digest('hex')
+  }
+  const payload = `${JSON.stringify({ version: 1, scripts }, null, 2)}\n`
+  writeIfChanged(join(dir, 'manifest.json'), payload, dryRun)
+  return names.length
 }
 
 function readJsonConfig(filePath) {
@@ -663,6 +692,13 @@ export async function installOpenCode(
       warning(`Code-mode source not found: ${srcCodeModeDir} — creating empty ${dstCodeModeDir}`)
       if (!dryRun) mkdirSync(dstCodeModeDir, { recursive: true })
       stats.created++
+    }
+
+    // B3-08: explicit installation mode — seed the manifest with SHA-256
+    // digests so the server never executes a script implicitly.
+    const approvedScripts = writeCodeModeManifest(dstCodeModeDir, dryRun)
+    if (approvedScripts > 0) {
+      info(`Code-mode manifest: ${approvedScripts} script(s) approved`)
     }
 
     // ── tiers.json ──

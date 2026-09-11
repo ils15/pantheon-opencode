@@ -64,6 +64,9 @@ def _write_script(name: str, content: str) -> Path:
     path = SCRIPTS_DIR / name
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
+    # B3-08: execution is opt-in; approve the temp script with its SHA-256.
+    mod = importlib.import_module(MODULE_PATH)
+    mod._approve_script(path.name)
     return path
 
 

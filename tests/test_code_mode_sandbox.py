@@ -146,6 +146,7 @@ class TestSubprocessEnvIntegration:
         path = scripts_dir / "env_leak_test.py"
         path.write_text(secret_script, encoding="utf-8")
         path.chmod(0o755)
+        module._approve_script(path.name)
         try:
             # Inject a secret into the current process env
             import os
@@ -175,6 +176,7 @@ class TestSubprocessEnvIntegration:
         path = scripts_dir / "env_allow_test.py"
         path.write_text(check_script, encoding="utf-8")
         path.chmod(0o755)
+        module._approve_script(path.name)
         try:
             result = await module.execute_code_script("env_allow_test.py", json_output=True)
             assert "PATH_SET:True" in result["stdout"]

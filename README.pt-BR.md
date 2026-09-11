@@ -78,6 +78,23 @@ escolher. Veja as [releases](https://github.com/ils15/pantheon-opencode/releases
 e o [changelog](CHANGELOG.md) para acompanhar as mudanças publicadas.
 
 
+## Execução code-mode (opt-in explícito)
+
+Scripts executados pelo MCP server `pantheon-code-mode` (`execute_code_script`)
+só rodam quando aprovados explicitamente. A aprovação fica em
+`.pantheon/code-mode/manifest.json` com o SHA-256 de cada script.
+
+- **Sem manifest → nada executa** (`INVALID_STATE`); nunca há execução implícita.
+- **Script fora do manifest → `CONFLICT`**; é preciso aprovar antes.
+- **Hash divergente → `CORRUPT_DATA`**; edições após a aprovação são detectadas.
+
+Aprove (ou reaprove) um script com a tool `approve_code_script`. O instalador
+semeia o manifest com o hash de todos os scripts empacotados. Os resultados
+seguem o contrato de nove códigos (`OK`, `UNSUPPORTED`, `UNAVAILABLE`,
+`INVALID_INPUT`, `INVALID_STATE`, `CONFLICT`, `CORRUPT_DATA`, `TIMEOUT`,
+`ESCALATE`) e, com `json_output=true`, incluem o campo `status`.
+
+
 ## Novidades da 1.5.0-beta.2
 
 - Instalador exclusivo para OpenCode: guias de plataformas consolidados em um
