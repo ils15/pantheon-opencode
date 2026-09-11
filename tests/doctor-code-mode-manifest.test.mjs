@@ -1,5 +1,5 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
+import test from 'node:test'
 import { checkCodeModeManifest, validateCodeModeManifest } from '../scripts/doctor.mjs'
 
 test('doctor manifest validator exports the required checks', () => {
