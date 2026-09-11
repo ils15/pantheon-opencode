@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_BYTE_IDENTICAL_PAIRS = [
     ("scripts/_pantheon_paths.py", "src/mcp/_pantheon_paths.py"),
     ("scripts/mcp_resources_server.py", "src/mcp/mcp_resources_server.py"),
+    ("scripts/code_mode_server.py", "src/mcp/code_mode_server.py"),
 ]
 
 # Keep this pair in the byte-identical gate when both copies exist. Some
