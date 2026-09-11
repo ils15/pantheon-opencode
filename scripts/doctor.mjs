@@ -967,7 +967,20 @@ function checkVenvLayer(args) {
  */
 export function checkCodeModeDir(args) {
   section('F.2 Code-Mode Scripts')
-  const codeModeDir = resolveCodeModeDir(args)
+  const env = args.env ?? process.env
+  const target = resolve(env.PANTHEON_PROJECT ?? args.target)
+  const projectCandidates = [
+    join(target, '.opencode', '.pantheon', 'code-mode'),
+    join(target, '.pantheon', 'code-mode'),
+  ]
+  // Seeding semantics: an existing project candidate wins; a project
+  // install (.opencode present) gets its runtime dir created when missing.
+  // Only targets with no project layout fall back to the global config dir.
+  const codeModeDir =
+    projectCandidates.find((candidate) => existsSync(candidate)) ??
+    (existsSync(join(target, '.opencode'))
+      ? projectCandidates[0]
+      : join(resolveOpenCodeConfigDir(env), '.pantheon', 'code-mode'))
   if (existsSync(codeModeDir)) {
     pass(`Code-mode scripts directory exists: ${codeModeDir}`)
     return codeModeDir
