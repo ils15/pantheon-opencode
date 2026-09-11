@@ -16,6 +16,9 @@ dist/
 # git cannot re-include paths under an excluded directory.
 !.pantheon/code-mode/
 !.pantheon/code-mode/**
+# Runtime session state (deepwork checkpoints, heartbeats) created by sandbox
+# runs whose cwd resolves inside the code-mode dir — never version.
+.pantheon/code-mode/.pantheon/
 .env
 *.tgz
 *.pyc
