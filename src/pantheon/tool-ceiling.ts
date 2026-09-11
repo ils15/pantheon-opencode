@@ -1,6 +1,7 @@
 /** Host-real context ceiling probe for C9/tool filtering. */
 
 import type { PluginInput } from '@opencode-ai/plugin'
+import { createPantheonLogger, type PantheonLogger } from './logger.ts'
 import type { NativeTaskStatus } from './native-task-status.ts'
 
 export interface ToolCeilingSnapshot {
@@ -129,4 +130,30 @@ export async function probeToolCeilingFromHost(
     limit: { contextTokens: (model.limit as Record<string, unknown>).context },
     supportsToolFiltering: (model.capabilities as Record<string, unknown>).toolcall,
   }))
+}
+
+const log = createPantheonLogger({ module: 'pantheon-tool-ceiling' })
+
+/**
+ * Handle the host usage event and retain the result for the compaction hook.
+ * Malformed SDK events are diagnostic-only: they must never break the event
+ * pipeline or create an entry under an invalid session identifier.
+ */
+export async function handleToolCeilingEvent(
+  client: PluginInput['client'],
+  event: unknown,
+  ceilings: Map<string, ToolCeilingResult>,
+  logger: Pick<PantheonLogger, 'warn'> = log,
+): Promise<ToolCeilingResult> {
+  const sessionID = (
+    event as { properties?: { info?: { sessionID?: unknown } } } | null | undefined
+  )?.properties?.info?.sessionID
+  if (typeof sessionID !== 'string' || sessionID.trim() === '') {
+    logger.warn('[Pantheon Plugin] message.updated event has no valid sessionID')
+    return { status: 'UNSUPPORTED', detail: 'host SDK event has no valid sessionID' }
+  }
+
+  const result = await probeToolCeilingFromHost(client, event)
+  ceilings.set(sessionID, result)
+  return result
 }
