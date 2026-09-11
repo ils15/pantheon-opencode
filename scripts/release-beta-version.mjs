@@ -14,18 +14,13 @@
  * compatibility only; it is no longer generated.
  */
 
-import {
-  SEMVER_PATTERN,
-  validateInventory,
-  writeInventoryVersion,
-} from './manifest-inventory.mjs'
+import { SEMVER_PATTERN, validateInventory, writeInventoryVersion } from './manifest-inventory.mjs'
 
 const STABLE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 // Current committed sequential beta line.
 const BETA_LINE = /^(\d+\.\d+\.\d+)-beta\.(\d+)$/
 // Legacy PR+SHA beta scheme, accepted for recovery only.
-const LEGACY_BETA =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.[1-9]\d*\.[0-9a-f]{7}$/
+const LEGACY_BETA = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.[1-9]\d*\.[0-9a-f]{7}$/
 const BETA_RELEASE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.[1-9]\d*$/
 
 export function nextStableVersion(latest, intent = 'patch') {

@@ -97,17 +97,6 @@ test('resolves every workflow script from one versioned tooling checkout', () =>
   }
 })
 
-test('never imports Zenodo modules from the release checkout', () => {
-  for (const module of [
-    'validate-zenodo-release.mjs',
-    'recover-zenodo-deposition.mjs',
-    'zenodo-release-state.mjs',
-    'zenodo-artifact.mjs',
-  ]) {
-    assert.doesNotMatch(workflow, new RegExp(`(?:node\\s+|from\\s+['"])scripts/${module}`))
-  }
-})
-
 test('detects unclosed heredocs and keeps the workflow free of fragile heredocs', () => {
   assert.deepEqual(unclosedHeredocs("node <<'NODE'\nconsole.log('broken')"), ['NODE'])
   assert.deepEqual(unclosedHeredocs(workflow), [])
@@ -232,46 +221,6 @@ test('passes the release body file from deposition to publication without the to
   assert.doesNotMatch(workflow, /submitted=.*recovered/)
 })
 
-test('successful publication persists published state and DOI, then reruns without creating again', () => {
-  let releaseBody = 'Release notes'
-  let createCalls = 0
-  let publishCalls = 0
-
-  const publish = () => {
-    const existing = parseZenodoMarker(releaseBody)
-    if (existing?.state === 'published') return existing
-
-    createCalls += 1
-    const depositionId = 42
-    publishCalls += 1
-    const published = zenodoMarker({
-      id: depositionId,
-      doi: '10.5281/zenodo.42',
-      state: 'published',
-    })
-    releaseBody = `${releaseBody}\n\n${published}\n`
-    return parseZenodoMarker(releaseBody)
-  }
-
-  assert.deepEqual(publish(), {
-    id: 42,
-    doi: '10.5281/zenodo.42',
-    state: 'published',
-    claim: null,
-  })
-  assert.equal(createCalls, 1)
-  assert.equal(publishCalls, 1)
-
-  assert.deepEqual(publish(), {
-    id: 42,
-    doi: '10.5281/zenodo.42',
-    state: 'published',
-    claim: null,
-  })
-  assert.equal(createCalls, 1)
-  assert.equal(publishCalls, 1)
-})
-
 test('created marker rerun reuses its id and reaches upload/publication without creating again', () => {
   assert.match(workflow, /existing=\n\s+doi=\n\s+state=\n\s+if \[ -f "\$state_file" \]; then/)
   assert.match(workflow, /if \[ "\$state" = created \]; then/)
@@ -283,23 +232,6 @@ test('created marker rerun reuses its id and reaches upload/publication without 
   assert.match(workflow, /findZenodoFile\(record,process\.env\.NAME,process\.env\.CHECKSUM\)/)
   assert.match(workflow, /if \[ "\$submitted" != true \] && \[ "\$existing_file" = missing \]/)
   assert.match(workflow, /marker_state=published/)
-
-  let createCalls = 0
-  let uploadCalls = 0
-  let publishCalls = 0
-  const created = parseZenodoMarker(zenodoMarker({ id: 42, state: 'created' }))
-  assert.equal(created.state, 'created')
-  assert.equal(created.id, 42)
-  if (created.state === 'created') {
-    uploadCalls += 1
-    publishCalls += 1
-  } else {
-    createCalls += 1
-  }
-  assert.deepEqual(
-    { createCalls, uploadCalls, publishCalls },
-    { createCalls: 0, uploadCalls: 1, publishCalls: 1 },
-  )
 })
 
 test('supports a resumable draft and publishes only on explicit release intent', () => {

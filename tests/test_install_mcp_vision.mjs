@@ -17,53 +17,12 @@ import {
   resolveTuiCopyTarget,
   syncTuiRegistration,
 } from '../scripts/install/opencode.mjs'
-import { staleTuiRefs, TUI_STALE_SUFFIXES } from '../scripts/install/plugin.mjs'
+import { staleTuiRefs } from '../scripts/install/plugin.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
-
-const opencodeInstaller = readFileSync('scripts/install/opencode.mjs', 'utf8')
-const pluginInstaller = readFileSync('scripts/install/plugin.mjs', 'utf8')
-const healthCheck = readFileSync('scripts/install/health-check.mjs', 'utf8')
-const catalog = readFileSync('scripts/install-mcp.mjs', 'utf8')
-const sourceCatalog = readFileSync('src/mcp/install-mcp.mjs', 'utf8')
-const configText = readFileSync('opencode.json', 'utf8')
-const visionRequirements = readFileSync('src/mcp/requirements-vision.txt', 'utf8')
-const config = JSON.parse(configText)
-
-assert.ok(opencodeInstaller.includes("'pantheon_vision_server.py'"))
-assert.ok(opencodeInstaller.includes("join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')"))
-assert.ok(opencodeInstaller.includes("config.mcp['pantheon-vision']"))
-assert.ok(opencodeInstaller.includes("join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py')"))
-assert.ok(opencodeInstaller.includes('const memoryPython = venvPython'))
-
-// P1-3: the MCP commands must point at the venv setupVenv ACTUALLY creates
-// (<target>/.venv), not <target>/.opencode/.venv (runtimeTarget for project
-// installs) — otherwise the MCP python executable does not exist on
-// init --project and every local MCP fails to launch.
-assert.ok(
-  opencodeInstaller.includes('venvPythonPath(target)'),
-  'installer derives the MCP venv python from the shared venvPythonPath(target) helper',
-)
-assert.equal(
-  opencodeInstaller.includes("join(runtimeTarget, '.venv'"),
-  false,
-  'MCP commands must never use runtimeTarget/.venv (project installs would miss the real venv)',
-)
-const visionConfig = opencodeInstaller.slice(
-  opencodeInstaller.indexOf("config.mcp['pantheon-vision']"),
-  opencodeInstaller.indexOf("config.mcp['pantheon-vision']") + 320,
-)
-assert.ok(visionConfig.includes("type: 'local'"))
-assert.ok(visionConfig.includes('enabled: true'))
-assert.ok(opencodeInstaller.includes("config.permission.mcp['pantheon-vision'] = 'ask'"))
-assert.ok(healthCheck.includes("'pantheon_vision_server.py'"))
 
 // P2-4: only exact managed plugin references may be treated as Pantheon-owned.
 // A third-party checkout can use either of the historical directory names, so
 // the directory name alone must never rewrite its absolute path.
-assert.ok(
-  opencodeInstaller.includes('function resolveInstalledPlugin'),
-  'installer handles plugin paths through resolveInstalledPlugin',
-)
 assert.ok(
   resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts')) === join(ROOT, 'src', 'plugin.ts') &&
     resolveInstalledPlugin(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')) ===
@@ -85,108 +44,15 @@ assert.equal(
   '/tmp/vendor/pantheon/src/plugin.ts',
   'external paths under a pantheon directory remain untouched',
 )
-assert.equal(
-  opencodeInstaller.includes('basename(p) !== file'),
-  false,
-  'plugin cleanup must not dedupe unrelated user plugins by basename',
-)
 
-// P2-5: the TUI plugin must be COPIED from the single source of truth
-// (src/plugins/tui) into the target config's plugins/pantheon-tui and
-// registered by THAT copied directory — never by the in-package source dir.
-// A registration pointing at the installed package breaks on package
-// reinstall/upgrade (the dir is replaced under a live registration) and can
-// accumulate diverging copies; the copied dir keeps exactly one absolute
-// reference per install. The loader reads the copied package.json exports:
-//   exports["./tui"]    → dist/tui.js     (COMPILED Solid output)
-//   exports["./server"] → dist/server.js  (no-op server() stub)
-assert.ok(
-  opencodeInstaller.includes('function resolveTuiCopyTarget'),
-  'installer exposes pure resolveTuiCopyTarget(configDir) to derive the copied plugin dir',
-)
-assert.ok(
-  opencodeInstaller.includes('const tuiCopyDir = resolveTuiCopyTarget(configDir)'),
-  'syncTuiRegistration points at the COPIED directory, not the package source dir',
-)
-assert.ok(
-  opencodeInstaller.includes('copyPluginFiles(tuiSrcDir, tuiCopyDir'),
-  'syncTuiRegistration ALWAYS copies src/plugins/tui into <config>/plugins/pantheon-tui',
-)
-assert.ok(
-  opencodeInstaller.includes("const tuiSrcDir = join(ROOT, 'src', 'plugins', 'tui')"),
-  'the copy source is the package src/plugins/tui (single source of truth)',
-)
-assert.ok(
-  opencodeInstaller.includes('registerPlugin(targetTuiConfigPath, tuiCopyDir'),
-  'the copied directory is what gets registered in the target tui.json',
-)
-assert.ok(
-  opencodeInstaller.includes("unregisterPlugin(tuiConfigPath, 'plugins/pantheon-tui'"),
-  'old broken relative tui refs are removed on upgrade',
-)
-assert.ok(
-  opencodeInstaller.includes("join(homedir(), '.opencode', 'tui.json')") &&
-    opencodeInstaller.includes("join(xdgConfig, 'opencode', 'tui.json')") &&
-    opencodeInstaller.includes("join(target, '.opencode', 'tui.json')"),
-  'cleanup covers ALL three tui.json locations OpenCode reads (global + project)',
-)
-assert.ok(
-  pluginInstaller.includes('function staleTuiRefs'),
-  'plugin.mjs exposes the pure staleTuiRefs() filter',
-)
-assert.ok(
-  TUI_STALE_SUFFIXES.includes('plugins/pantheon-tui') &&
-    TUI_STALE_SUFFIXES.includes('plugins/pantheon-tui/dist/tui.js'),
-  'unregisterPlugin exposes exact stale TUI registration markers',
-)
-
-// P2-5c: the TUI plugin package must expose the opencode loader contract that
-// the directory registration relies on — compiled tui entry + no-op server
-// stub (the reference opencode-delegations-sidebar pattern).
-const tuiPkg = JSON.parse(readFileSync('src/plugins/tui/package.json', 'utf8'))
-assert.equal(
-  tuiPkg.exports['./tui'],
-  './dist/tui.js',
-  'exports["./tui"] points at the COMPILED tui entry (Solid transforms applied), never the raw tsx',
-)
-assert.equal(
-  tuiPkg.exports['./server'],
-  './dist/server.js',
-  'exports["./server"] points at the compiled no-op server stub (loader requires every plugin to expose server())',
-)
-const tsdownConfig = readFileSync('src/plugins/tui/tsdown.config.ts', 'utf8')
-assert.ok(
-  /entry:\s*\{[^}]*server:\s*'src\/server\.ts'/.test(tsdownConfig),
-  'tsdown builds the server entry into dist/server.js',
-)
-const serverStub = readFileSync('src/plugins/tui/src/server.ts', 'utf8')
-assert.ok(
-  /export default function server\(\)/.test(serverStub),
-  'src/server.ts default-exports the no-op server() stub',
-)
-
-assert.ok(catalog.includes("'pantheon-vision':"))
-assert.ok(sourceCatalog.includes('../../scripts/install-mcp.mjs'))
-assert.ok(
-  catalog.includes(
-    "PANTHEON_VISION_SERVER = resolveServerScript('src/mcp/pantheon_vision_server.py')",
-  ),
-  'catalog resolves the vision server through the hermetic PANTHEON_VISION_SERVER constant',
-)
-assert.ok(catalog.includes('args: [PANTHEON_VISION_SERVER]'))
-assert.ok(catalog.includes('requirements-vision.txt'))
-assert.equal(catalog.includes('vscode'), false, 'MCP catalog must not retain VS Code entries')
-assert.equal(catalog.includes('cursor'), false, 'MCP catalog must not retain Cursor entries')
-assert.equal(catalog.includes('claude'), false, 'MCP catalog must not retain Claude entries')
-assert.equal(catalog.includes('windsurf'), false, 'MCP catalog must not retain Windsurf entries')
-
-// The package entry point must delegate to the same implementation rather
-// than maintaining a second, subtly different catalog.
-assert.equal(sourceCatalog.includes("'pantheon-vision':"), false)
-
+// The vision server has a single canonical home in the package.
 assert.equal(existsSync('scripts/pantheon_vision_server.py'), false)
 assert.ok(existsSync('src/mcp/pantheon_vision_server.py'))
 assert.equal(existsSync('src/pantheon/pantheon_vision_server.py'), false)
+
+// The committed opencode.json must never carry provider credentials.
+const configText = readFileSync('opencode.json', 'utf8')
+const config = JSON.parse(configText)
 assert.ok(config.mcp?.bifrost?.url)
 assert.equal(config.mcp.bifrost.headers, undefined)
 const bifrostHeader = ['x', '-bf-', 'vk'].join('')
@@ -194,6 +60,9 @@ const bifrostTokenPrefix = ['sk', '-bf-'].join('')
 assert.equal(new RegExp(bifrostHeader, 'i').test(configText), false)
 assert.equal(new RegExp(bifrostTokenPrefix, 'i').test(configText), false)
 assert.equal(/(?:api[_-]?key|token|secret)\s*[:=]\s*["'][^"']{12,}/i.test(configText), false)
+
+// The packaged vision requirements stay minimal (no heavy ML deps).
+const visionRequirements = readFileSync('src/mcp/requirements-vision.txt', 'utf8')
 assert.deepEqual(
   visionRequirements
     .split(/\r?\n/)

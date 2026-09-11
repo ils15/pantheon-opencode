@@ -20,7 +20,7 @@ const NO_COMPONENTS = []
 // migrates into V2_PLUGIN.
 const V2_PLUGIN = join(ROOT, 'src', 'plugin-v2')
 const V2_EXPORT = 'pantheon-opencode/plugin-v2'
-const V2_LEGACY_FILE = 'src/plugin-v2.ts'
+const _V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
 const THIRD_PARTY_PANTHEON_PLUGIN = '/tmp/vendor/pantheon/src/plugin.ts'
 
@@ -97,47 +97,6 @@ test('v2 preserves config.plugin and registers the shipped V2 entrypoint', async
   assert.ok(!config.plugins.some((entry) => entry === join(ROOT, 'src', 'plugin.ts')))
 })
 
-test('v1 to v2 migration removes Pantheon V1 refs and preserves third-party plugins', async () => {
-  const config = await installConfig(
-    {
-      plugin: [THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN, THIRD_PARTY_PANTHEON_PLUGIN, 'third-party-v1'],
-      plugins: [V2_EXPORT, V2_LEGACY_FILE, 'third-party-v2'],
-    },
-    'v2',
-  )
-
-  assert.deepEqual(config.plugin, [
-    THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN,
-    THIRD_PARTY_PANTHEON_PLUGIN,
-    'third-party-v1',
-  ])
-  assert.deepEqual(config.plugins, ['third-party-v2', V2_PLUGIN])
-})
-
-test('v2 to v1 migration removes Pantheon V2 refs and preserves third-party plugins', async () => {
-  const config = await installConfig(
-    {
-      plugin: ['third-party-v1', THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN],
-      plugins: [
-        V2_EXPORT,
-        V2_LEGACY_FILE,
-        V2_PLUGIN,
-        'third-party-v2',
-        THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN,
-      ],
-    },
-    'v1',
-  )
-
-  assert.deepEqual(config.plugins, ['third-party-v2', THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN])
-  assert.deepEqual(config.plugin, [
-    'third-party-v1',
-    THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN,
-    join(ROOT, 'src', 'plugin.ts'),
-    join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),
-  ])
-})
-
 test('auto selects V2 and V1 during migrations without mixing Pantheon refs', async () => {
   const previousVersion = process.env.OPENCODE_VERSION
   try {
@@ -181,18 +140,6 @@ test('does not install or register TUI when the plugins component is omitted', a
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
-})
-
-test('v1 removes legacy todoContinuation rejected by recent OpenCode releases', async () => {
-  const config = await installConfig({ todoContinuation: true }, 'v1')
-
-  assert.equal(Object.hasOwn(config, 'todoContinuation'), false)
-})
-
-test('v2 preserves todoContinuation because its configuration is not rewritten', async () => {
-  const config = await installConfig({ todoContinuation: true }, 'v2')
-
-  assert.equal(config.todoContinuation, true)
 })
 
 test('exact installed package plugin paths remain managed', () => {

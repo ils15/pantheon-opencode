@@ -8,9 +8,9 @@ export const icons = {
   arrow: '\u2192',
   bullet: '\u2022',
   star: '\u2b50',
-  wrench: '\U0001f527',
-  rocket: '\U0001f680',
-  package: '\U0001f4e6',
+  wrench: '\u{1F527}',
+  rocket: '\u{1F680}',
+  package: '\u{1F4E6}',
   gear: '\u2699\ufe0f',
 }
 

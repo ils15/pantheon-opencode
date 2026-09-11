@@ -78,11 +78,7 @@ export async function consumeWakeSignals(signalDir?: string): Promise<WakeSignal
 
       // Step 3: Only add to results after successful rename
       signals.push(data)
-    } catch {
-      // Rename failed (another consumer got there first) or file is corrupted.
-      // Skip silently in either case.
-      continue
-    }
+    } catch {}
   }
 
   return signals

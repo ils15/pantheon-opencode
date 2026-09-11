@@ -12,6 +12,11 @@ treated as a synchronization pair.
 """
 
 import filecmp
+import importlib
+import os
+import subprocess
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -127,3 +132,77 @@ def test_memory_mcp_copies_keep_distinct_contracts(
         "memory MCP copies are intentionally divergent: the src/mcp copy must "
         "retain its codemap contract without being copied into scripts/"
     )
+
+
+# ---------------------------------------------------------------------------
+# Runtime import resolution — conftest.py puts scripts/ FIRST on sys.path, so
+# top-level imports execute the shipped runtime copies. These tests pin that
+# ordering: a sys.path regression must fail loudly via __file__.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def scripts_resources_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> types.ModuleType:
+    """Import the scripts/ resources copy under a hermetic environment."""
+    home = tmp_path / "pantheon-home"
+    project = tmp_path / "project"
+    home.mkdir()
+    project.mkdir()
+    monkeypatch.setenv("PANTHEON_HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("PANTHEON_PROJECT", str(project))
+    monkeypatch.chdir(project)
+    mod = importlib.import_module("mcp_resources_server")
+    importlib.reload(mod)
+    return mod
+
+
+def test_runtime_copy_resolves_to_scripts_dir(
+    scripts_resources_copy: types.ModuleType,
+) -> None:
+    assert Path(scripts_resources_copy.__file__).resolve() == (
+        REPO_ROOT / "scripts" / "mcp_resources_server.py"
+    ).resolve()
+
+
+def test_runtime_copy_globals_come_from_hermetic_env(
+    scripts_resources_copy: types.ModuleType, tmp_path: Path
+) -> None:
+    assert tmp_path / "pantheon-home" == scripts_resources_copy._PANTHEON_HOME
+    assert tmp_path / "project" == scripts_resources_copy._PANTHEON_PROJECT
+
+
+def test_runtime_copy_imports_standalone(tmp_path: Path) -> None:
+    """A fresh interpreter must import the copy like the launcher does."""
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    home.mkdir()
+    project.mkdir()
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"PANTHEON_HOME", "XDG_CONFIG_HOME", "PANTHEON_PROJECT", "PWD"}
+    }
+    env["PANTHEON_HOME"] = str(home)
+    env["PANTHEON_PROJECT"] = str(project)
+    env["PYTHONPATH"] = os.pathsep.join([str(REPO_ROOT / "scripts"), str(REPO_ROOT / "src" / "mcp")])
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import mcp_resources_server as m; "
+            "print(m._PANTHEON_HOME); print(m._PANTHEON_PROJECT)",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=str(project),
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.splitlines()
+    assert Path(lines[0]) == home
+    assert Path(lines[1]) == project

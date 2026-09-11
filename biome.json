@@ -1,11 +1,25 @@
 {
   "files": {
-    "includes": ["**", "!src/plugins/tui/dist/**", "!.pantheon/**"]
+    "includes": [
+      "**",
+      "!src/plugins/tui/dist/**",
+      "!.pantheon/**",
+      "!tests/integration/**",
+      "!tests/fixtures/**",
+      "!.mypy_cache/**",
+      "!.pytest_cache/**",
+      "!.ruff_cache/**",
+      "!.venv/**",
+      "!.opencode/**",
+      "!logs/**",
+      "!benchmarks/**",
+      "!teste/**"
+    ]
   },
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "correctness": {
         "noUnusedVariables": "error"
       },

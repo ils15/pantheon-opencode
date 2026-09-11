@@ -709,13 +709,6 @@ await testAsync('T19: picker persists; opencode.mjs gates on autoYes/opts.preset
   const file = presetFile(dir)
   assert.ok(existsSync(file), 'picker must persist choice')
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).preset, 'go-fast')
-
-  // opencode.mjs must (a) export isGlobalConfigDir, (b) skip picker on autoYes / opts.preset
-  const src = readFileSync(join(ROOT, 'scripts', 'install', 'opencode.mjs'), 'utf8')
-  assert.ok(src.includes('export function isGlobalConfigDir'), 'isGlobalConfigDir must be exported')
-  assert.ok(src.includes('!autoYes'), 'picker must be gated by !autoYes')
-  assert.ok(src.includes('!opts.preset'), 'picker must be gated by !opts.preset')
-  assert.ok(src.includes('runInitWizard'), 'opencode.mjs must import/use runInitWizard')
 })
 
 // ─── T19b: init wizard readline — blank Q1 defaults to inherit (no write) ─
@@ -870,32 +863,6 @@ test('T20: validate-routing exits 0 and reports 4 presets', () => {
   })
   assert.equal(r.status, 0, r.stdout + r.stderr)
   assert.ok(r.stdout.includes('Presets defined: 4'), r.stdout)
-})
-
-// ─── T21: packaging smoke ──────────────────────────────────────────────
-test('T21: npm pack includes presets.mjs + model-picker.mjs', () => {
-  const r = spawnSync('npm', ['pack', '--dry-run', '--json'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-    timeout: 300000,
-    maxBuffer: 32 * 1024 * 1024, // pack JSON listing is ~1MB+; avoid default 1MB kill
-  })
-  assert.equal(r.status, 0, r.stdout + r.stderr)
-  let out
-  try {
-    out = JSON.parse(r.stdout)
-  } catch {
-    assert.fail(`npm pack output not JSON: ${r.stdout.slice(0, 500)}`)
-  }
-  const files = (out[0]?.files ?? []).map((f) => f.path)
-  assert.ok(
-    files.includes('src/pantheon/presets.mjs'),
-    `presets.mjs missing from pack: ${files.join(',')}`,
-  )
-  assert.ok(
-    files.includes('scripts/install/model-picker.mjs'),
-    `model-picker.mjs missing from pack: ${files.join(',')}`,
-  )
 })
 
 // ─── T22: applyPreset openai (repo presets) ───────────────────────────

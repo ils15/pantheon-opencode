@@ -48,7 +48,10 @@ test('V2 export loads from a clean production-only consumer', () => {
     const installedRoot = join(consumer, 'node_modules', 'pantheon-opencode')
     const installedManifest = readJson(join(installedRoot, 'package.json'))
     assert.equal(installedManifest.type, 'module')
-    assert.equal(installedManifest.dependencies['@opencode-ai/plugin'], '1.18.18')
+    assert.equal(
+      installedManifest.dependencies['@opencode-ai/plugin'],
+      readJson(join(ROOT, 'package.json')).dependencies['@opencode-ai/plugin'],
+    )
     assert.equal(installedManifest.devDependencies?.['@opencode-ai/plugin'], undefined)
     assert.equal(installedManifest.exports['./plugin'], './src/plugin.ts')
     assert.equal(installedManifest.exports['./plugin-v2'], './src/plugin-v2.ts')
