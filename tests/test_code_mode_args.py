@@ -28,6 +28,11 @@ def echo_script():
     script_path = SCRIPTS_DIR / "echo_args_test.py"
     script_path.write_text(ECHO_SCRIPT, encoding="utf-8")
     script_path.chmod(0o755)
+    # B3-08: execution is opt-in; approve the temp script with its SHA-256.
+    import importlib
+
+    mod = importlib.import_module(MODULE_PATH)
+    mod._approve_script(script_path.name)
     try:
         yield script_path.name
     finally:

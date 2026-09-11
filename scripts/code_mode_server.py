@@ -16,6 +16,8 @@ Or via MCP client (stdio transport):
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import shutil
@@ -37,6 +39,30 @@ SCRIPT_TIMEOUT: int = 30
 # Hard ceiling for frontmatter `timeout:` overrides — no script may pin the
 # executor for longer than 5 minutes.
 MAX_SCRIPT_TIMEOUT: int = 300
+
+# ── Common status contract ────────────────────────────────────────────────────
+# Mirrors the nine-code `NativeTaskStatus` contract introduced in B3-05. Every
+# code-mode result is labelled with one of these statuses so callers can apply
+# the same retry/skip/escalate strategy across the whole platform.
+CONTRACT_STATUSES: frozenset[str] = frozenset(
+    {
+        "OK",
+        "UNSUPPORTED",
+        "UNAVAILABLE",
+        "INVALID_INPUT",
+        "INVALID_STATE",
+        "CONFLICT",
+        "CORRUPT_DATA",
+        "TIMEOUT",
+        "ESCALATE",
+    }
+)
+
+# Explicit installation mode: a script only runs when it is listed in this
+# manifest with a matching SHA-256. No manifest → nothing executes.
+MANIFEST_FILENAME: str = "manifest.json"
+MANIFEST_VERSION: int = 1
+_SHA256_HEX_LEN: int = 64
 
 # ── Env Allowlist ──────────────────────────────────────────────────────────────
 # Only these variables are passed to script subprocesses.  Everything else
@@ -233,12 +259,19 @@ mcp = FastMCP(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _validate_script_name(script_name: str) -> Path:
+def _validate_script_name(script_name: str, scripts_dir: Path | None = None) -> Path:
     """Validate a script name and return its resolved path.
 
-    Raises ValueError if the name is invalid, traverses paths, or
-    has a disallowed extension.
+    Args:
+        script_name: Bare file name of a script in the code-mode directory.
+        scripts_dir: Directory to resolve against. Defaults to ``SCRIPTS_DIR``.
+
+    Raises:
+        ValueError: If the name is invalid, traverses paths, or has a
+            disallowed extension.
     """
+    scripts_dir = scripts_dir or SCRIPTS_DIR
+
     if not script_name:
         raise ValueError("Script name cannot be empty")
 
@@ -253,12 +286,12 @@ def _validate_script_name(script_name: str) -> Path:
         allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
         raise ValueError(f"Extension '{ext}' not allowed. Allowed: {allowed}")
 
-    if SCRIPTS_DIR.is_symlink():
+    if scripts_dir.is_symlink():
         raise ValueError(f"Invalid script name: '{script_name}'")
 
     try:
-        scripts_root = SCRIPTS_DIR.resolve(strict=True)
-        script_path = (SCRIPTS_DIR / name).resolve(strict=True)
+        scripts_root = scripts_dir.resolve(strict=True)
+        script_path = (scripts_dir / name).resolve(strict=True)
     except (FileNotFoundError, OSError, RuntimeError):
         raise ValueError(f"Script '{script_name}' not found") from None
 
@@ -270,6 +303,213 @@ def _validate_script_name(script_name: str) -> Path:
         raise ValueError(f"Invalid script name: '{script_name}'")
 
     return script_path
+
+
+# ── Installation Mode: Manifest + SHA-256 ─────────────────────────────────────
+# The manifest is the explicit opt-in. A script is executable only when its
+# bare name is present in `manifest.json` AND the SHA-256 of the on-disk file
+# matches the recorded digest. Any deviation fails closed with a contract
+# status instead of executing.
+
+
+class ManifestError(Exception):
+    """Raised when the code-mode manifest cannot authorise execution."""
+
+    def __init__(self, status: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def _manifest_path(scripts_dir: Path | None = None) -> Path:
+    """Return the manifest path for *scripts_dir* (defaults to SCRIPTS_DIR)."""
+    return (scripts_dir or SCRIPTS_DIR) / MANIFEST_FILENAME
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the hex SHA-256 digest of *path* (streamed, binary-safe)."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_manifest(scripts_dir: Path | None = None) -> dict[str, str]:
+    """Load and validate the manifest, returning ``{script_name: sha256}``.
+
+    Raises:
+        ManifestError: With ``INVALID_STATE`` when the manifest is absent (no
+            explicit opt-in), or ``CORRUPT_DATA`` when it is unreadable or
+            malformed.
+    """
+    manifest_file = _manifest_path(scripts_dir)
+    if not manifest_file.is_file():
+        raise ManifestError(
+            "INVALID_STATE",
+            f"Code-mode manifest not found at {manifest_file}. No script executes "
+            "without explicit opt-in — run approve_code_script first.",
+        )
+
+    try:
+        raw = manifest_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ManifestError(
+            "CORRUPT_DATA", f"Code-mode manifest unreadable: {exc}"
+        ) from None
+
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        raise ManifestError(
+            "CORRUPT_DATA",
+            f"Code-mode manifest is malformed JSON: {manifest_file}",
+        ) from None
+
+    if not isinstance(data, dict):
+        raise ManifestError(
+            "CORRUPT_DATA", "Code-mode manifest must be a JSON object."
+        )
+
+    scripts = data.get("scripts")
+    if not isinstance(scripts, dict):
+        raise ManifestError(
+            "CORRUPT_DATA",
+            "Code-mode manifest is malformed: missing 'scripts' object.",
+        )
+
+    approved: dict[str, str] = {}
+    for name, digest in scripts.items():
+        if (
+            not isinstance(name, str)
+            or not isinstance(digest, str)
+            or len(digest) != _SHA256_HEX_LEN
+        ):
+            raise ManifestError(
+                "CORRUPT_DATA",
+                f"Code-mode manifest entry for '{name}' is malformed "
+                "(expected a 64-character SHA-256 hex digest).",
+            )
+        approved[name] = digest.lower()
+    return approved
+
+
+def _verify_approved(script_path: Path, scripts_dir: Path | None = None) -> None:
+    """Authorise *script_path* against the manifest.
+
+    Raises:
+        ManifestError: ``CONFLICT`` when the script is not listed and
+            ``CORRUPT_DATA`` when its hash does not match the recorded digest.
+    """
+    approved = _load_manifest(scripts_dir)
+    name = script_path.name
+    if name not in approved:
+        raise ManifestError(
+            "CONFLICT",
+            f"Script '{name}' is not approved in the code-mode manifest. "
+            "Run approve_code_script to opt in.",
+        )
+    actual = _sha256_file(script_path)
+    if actual != approved[name]:
+        raise ManifestError(
+            "CORRUPT_DATA",
+            f"Script '{name}' hash mismatch (expected {approved[name]}, got "
+            f"{actual}). Re-approve the script after verifying the change.",
+        )
+
+
+def _approve_script(
+    script_name: str, scripts_dir: Path | None = None
+) -> tuple[str, str]:
+    """Add or refresh *script_name* in the manifest with its SHA-256.
+
+    Returns:
+        A ``(status, message)`` tuple; the status is a contract code and is
+        ``OK`` on success.
+    """
+    target_dir = scripts_dir or SCRIPTS_DIR
+    try:
+        script_path = _validate_script_name(script_name, target_dir)
+    except ValueError as exc:
+        return "INVALID_INPUT", str(exc)
+
+    try:
+        approved = _load_manifest(target_dir)
+    except ManifestError as exc:
+        if exc.status == "INVALID_STATE":
+            approved = {}
+        else:
+            return exc.status, exc.message
+
+    approved[script_path.name] = _sha256_file(script_path)
+    payload = {
+        "version": MANIFEST_VERSION,
+        "scripts": dict(sorted(approved.items())),
+    }
+    try:
+        _manifest_path(target_dir).write_text(
+            json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        return "UNAVAILABLE", f"Failed to write code-mode manifest: {exc}"
+
+    digest = approved[script_path.name]
+    return "OK", f"Approved '{script_path.name}' with SHA-256 {digest}"
+
+
+def _generate_manifest(scripts_dir: Path | None = None) -> int:
+    """Write a manifest covering every valid script in *scripts_dir*.
+
+    Used by the installer to (re)seed the explicit opt-in for bundled scripts.
+
+    Returns:
+        The number of scripts recorded.
+    """
+    target_dir = scripts_dir or SCRIPTS_DIR
+    try:
+        resolved_dir = target_dir.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return 0
+
+    approved: dict[str, str] = {}
+    if resolved_dir.is_dir() and not resolved_dir.is_symlink():
+        for candidate in sorted(resolved_dir.iterdir()):
+            if candidate.name.startswith("."):
+                continue
+            if candidate.suffix.lower() not in ALLOWED_EXTENSIONS:
+                continue
+            try:
+                resolved = candidate.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            if (
+                resolved.is_file()
+                and resolved.parent == resolved_dir
+                and _is_within(resolved, resolved_dir)
+            ):
+                approved[candidate.name] = _sha256_file(resolved)
+
+    payload = {
+        "version": MANIFEST_VERSION,
+        "scripts": dict(sorted(approved.items())),
+    }
+    try:
+        _manifest_path(target_dir).write_text(
+            json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        return 0
+    return len(approved)
+
+
+def _contract_result(
+    status: str, message: str, json_output: bool
+) -> str | dict[str, Any]:
+    """Build a contract-labelled error result (text or structured JSON)."""
+    if json_output:
+        return {"status": status, "error": message}
+    return f"[{status}] {message}"
+
 
 
 def _format_output(
@@ -395,10 +635,12 @@ def _build_result(
     metadata: dict[str, Any],
     json_output: bool,
     timeout_s: int,
+    status: str = "OK",
 ) -> str | dict[str, Any]:
     """Build the tool result in plain-text or structured JSON form."""
     if json_output:
         return {
+            "status": status,
             "stdout": stdout,
             "stderr": stderr,
             "exit_code": exit_code,
@@ -484,12 +726,17 @@ async def execute_code_script(
     try:
         script_path = _validate_script_name(script_name)
     except ValueError as e:
-        return str(e)
+        return _contract_result("INVALID_INPUT", str(e), json_output)
 
     metadata = _parse_frontmatter(script_path)
     denied = _validate_args(script_path, args)
     if denied is not None:
-        return denied
+        return _contract_result("INVALID_INPUT", denied, json_output)
+
+    try:
+        _verify_approved(script_path)
+    except ManifestError as e:
+        return _contract_result(e.status, e.message, json_output)
 
     timeout_s = _script_timeout(script_path)
 
@@ -553,6 +800,7 @@ async def execute_code_script(
                 metadata=metadata,
                 json_output=json_output,
                 timeout_s=timeout_s,
+                status="TIMEOUT",
             )
     except FileNotFoundError:
         return _build_result(
@@ -564,6 +812,7 @@ async def execute_code_script(
             metadata=metadata,
             json_output=json_output,
             timeout_s=timeout_s,
+            status="UNAVAILABLE",
         )
     except OSError as e:
         return _build_result(
@@ -575,10 +824,57 @@ async def execute_code_script(
             metadata=metadata,
             json_output=json_output,
             timeout_s=timeout_s,
+            status="UNAVAILABLE",
         )
+
+
+@mcp.tool(
+    name="approve_code_script",
+    description="Approve a .sh/.py script for execution by adding it to the "
+    "code-mode manifest with its SHA-256. Execution is opt-in: only approved "
+    "scripts with a matching hash run. Set json_output=true for structured JSON.",
+)
+async def approve_code_script(
+    script_name: str,
+    json_output: bool = False,
+) -> str | dict[str, Any]:
+    """Approve (or re-approve) a code-mode script.
+
+    Args:
+        script_name: Name of the script in the code-mode directory.
+        json_output: When True, return ``{"status", "message"}`` instead of a
+            ``[STATUS] message`` string.
+
+    Returns:
+        A contract-labelled result. ``OK`` on success, ``INVALID_INPUT`` when
+        the script name is invalid, or ``CORRUPT_DATA``/``UNAVAILABLE`` when
+        the manifest cannot be read or written.
+    """
+    status, message = _approve_script(script_name)
+    if json_output:
+        return {"status": status, "message": message}
+    return f"[{status}] {message}"
 
 
 # ── Main Entrypoint ───────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+
+def _cli() -> int:
+    """Handle CLI subcommands used by the installer; fall back to serving MCP."""
+    argv = sys.argv[1:]
+    if "--generate-manifest" in argv:
+        scripts_dir: Path | None = None
+        if "--scripts-dir" in argv:
+            index = argv.index("--scripts-dir")
+            if index + 1 < len(argv):
+                scripts_dir = Path(argv[index + 1])
+        count = _generate_manifest(scripts_dir)
+        print(f"code-mode manifest: {count} script(s) approved")
+        return 0
     mcp.run()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())
+
