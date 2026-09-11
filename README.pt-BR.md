@@ -94,6 +94,14 @@ seguem o contrato de nove códigos (`OK`, `UNSUPPORTED`, `UNAVAILABLE`,
 `INVALID_INPUT`, `INVALID_STATE`, `CONFLICT`, `CORRUPT_DATA`, `TIMEOUT`,
 `ESCALATE`) e, com `json_output=true`, incluem o campo `status`.
 
+O code-mode resolve primeiro o projeto: `.opencode/.pantheon/code-mode` vem
+antes de `.pantheon/code-mode`. `PANTHEON_PROJECT` sobrescreve o diretório de
+trabalho, e o MCP instalado usa `cwd: "."` para receber o workspace do
+OpenCode. O diretório global só é usado sem um diretório de projeto utilizável;
+depois de selecionar um diretório de projeto, manifest ausente ou corrompido
+falha fechado, sem fallback silencioso. O `doctor` valida o manifest e o
+SHA-256 de cada script sem regenerá-lo.
+
 
 ## Novidades da 1.5.0-beta.2
 

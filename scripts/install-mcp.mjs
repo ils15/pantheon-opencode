@@ -221,6 +221,7 @@ export const MCPS = {
         type: 'local',
         command: VENV_PYTHON,
         args: [CODE_MODE_SERVER],
+        cwd: '.',
       },
     },
     env: [],

@@ -22,7 +22,8 @@
  */
 
 import { spawn as spawnAsync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -966,12 +967,20 @@ function checkVenvLayer(args) {
  */
 export function checkCodeModeDir(args) {
   section('F.2 Code-Mode Scripts')
-  const target = resolve(args.target)
-  const isProject = existsSync(join(target, '.opencode'))
-  const runtimeRoot = isProject ? target : resolveOpenCodeConfigDir(args.env ?? process.env)
-  const codeModeDir = isProject
-    ? join(runtimeRoot, '.opencode', '.pantheon', 'code-mode')
-    : join(runtimeRoot, '.pantheon', 'code-mode')
+  const env = args.env ?? process.env
+  const target = resolve(env.PANTHEON_PROJECT ?? args.target)
+  const projectCandidates = [
+    join(target, '.opencode', '.pantheon', 'code-mode'),
+    join(target, '.pantheon', 'code-mode'),
+  ]
+  // Seeding semantics: an existing project candidate wins; a project
+  // install (.opencode present) gets its runtime dir created when missing.
+  // Only targets with no project layout fall back to the global config dir.
+  const codeModeDir =
+    projectCandidates.find((candidate) => existsSync(candidate)) ??
+    (existsSync(join(target, '.opencode'))
+      ? projectCandidates[0]
+      : join(resolveOpenCodeConfigDir(env), '.pantheon', 'code-mode'))
   if (existsSync(codeModeDir)) {
     pass(`Code-mode scripts directory exists: ${codeModeDir}`)
     return codeModeDir
@@ -984,6 +993,83 @@ export function checkCodeModeDir(args) {
     error(`Cannot create code-mode directory ${codeModeDir}: ${err.message}`)
   }
   return codeModeDir
+}
+
+/** Resolve code-mode using the same project-first rule as the MCP server. */
+export function resolveCodeModeDir(args) {
+  const env = args.env ?? process.env
+  const target = resolve(env.PANTHEON_PROJECT ?? args.target)
+  const projectCandidates = [
+    join(target, '.opencode', '.pantheon', 'code-mode'),
+    join(target, '.pantheon', 'code-mode'),
+  ]
+  const projectDir = projectCandidates.find((candidate) => existsSync(candidate))
+  if (projectDir) return projectDir
+  return join(resolveOpenCodeConfigDir(env), '.pantheon', 'code-mode')
+}
+
+/** Validate a code-mode manifest without modifying it. */
+export function validateCodeModeManifest(codeModeDir) {
+  const manifestPath = join(codeModeDir, 'manifest.json')
+  if (!existsSync(manifestPath)) {
+    return { ok: false, message: `Code-mode manifest missing: ${manifestPath}` }
+  }
+
+  let data
+  try {
+    data = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  } catch {
+    return { ok: false, message: `Code-mode manifest malformed: ${manifestPath}` }
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { ok: false, message: 'Code-mode manifest malformed: root must be an object' }
+  }
+  if (data.version !== 1) {
+    return { ok: false, message: 'Code-mode manifest malformed: version must be 1' }
+  }
+  if (!data.scripts || typeof data.scripts !== 'object' || Array.isArray(data.scripts)) {
+    return { ok: false, message: 'Code-mode manifest malformed: scripts must be an object' }
+  }
+
+  const listed = Object.keys(data.scripts)
+  const invalid = listed.filter(
+    (name) => typeof data.scripts[name] !== 'string' || !/^[a-f0-9]{64}$/i.test(data.scripts[name]),
+  )
+  if (invalid.length) {
+    return { ok: false, message: `Code-mode manifest invalid digest: ${invalid.join(', ')}` }
+  }
+
+  const actualScripts = readdirSync(codeModeDir).filter(
+    (name) =>
+      (name.endsWith('.py') || name.endsWith('.sh')) && statSync(join(codeModeDir, name)).isFile(),
+  )
+  const missing = listed.filter((name) => !existsSync(join(codeModeDir, name)))
+  const extra = actualScripts.filter((name) => !Object.hasOwn(data.scripts, name))
+  const differing = listed.filter((name) => {
+    const path = join(codeModeDir, name)
+    if (!existsSync(path)) return false
+    const digest = createHash('sha256').update(readFileSync(path)).digest('hex')
+    return digest !== data.scripts[name].toLowerCase()
+  })
+  if (missing.length || extra.length || differing.length) {
+    const names = [...new Set([...missing, ...extra, ...differing])]
+    return {
+      ok: false,
+      message: `Code-mode manifest mismatch: ${differing.length + missing.length + extra.length}/${listed.length} scripts differ — ${names.join(', ')}`,
+    }
+  }
+  return { ok: true, count: listed.length, total: actualScripts.length }
+}
+
+/** Run the diagnostic manifest check after directory validation. */
+export function checkCodeModeManifest(args) {
+  const codeModeDir = resolveCodeModeDir(args)
+  const result = validateCodeModeManifest(codeModeDir)
+  if (!result.ok) {
+    error(result.message)
+    return
+  }
+  pass(`✅ Code-mode manifest valid: ${result.count}/${result.total} scripts verified`)
 }
 
 /** Resolve the venv created by init for either a project or global install. */
@@ -1314,6 +1400,7 @@ async function main() {
   checkMcpConfig(args)
   checkVenvLayer(args)
   checkCodeModeDir(args)
+  checkCodeModeManifest(args)
   await checkMcpRuntimeSmoke(args)
   checkPermissionMismatches(args)
   checkSyncStatus(args)
