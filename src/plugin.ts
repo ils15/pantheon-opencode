@@ -54,6 +54,7 @@ import {
   todoEnforcerEnabledFromEnv,
 } from './pantheon/todo-enforcer.ts'
 import { TodoPreserver } from './pantheon/todo-preserve.ts'
+import { handleToolCeilingEvent, type ToolCeilingResult } from './pantheon/tool-ceiling.ts'
 import { checkTuiVersionStaleness } from './pantheon/tui-version-check.ts'
 import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
@@ -166,6 +167,7 @@ const COMPACTION_MAX_ITEMS = 10
 const rootSessions = new Set<string>()
 const sessionHierarchy = new SessionHierarchyRegistry()
 const sessionAgents = new Map<string, string>()
+const sessionToolCeilings = new Map<string, ToolCeilingResult>()
 
 /**
  * Seed resumed root sessions without making OpenCode startup depend on the
@@ -621,6 +623,9 @@ const plugin: Plugin = async (input: PluginInput) => {
       if (ev.type === 'session.compacted') {
         await todoPreserver.onCompacted(ev.properties.sessionID)
       }
+      if (ev.type === 'message.updated') {
+        await handleToolCeilingEvent(input.client, ev, sessionToolCeilings)
+      }
       // Phase 3: observe completion on child sessions → finalizeDelegation.
       // The board transition fires onTerminal → the file-only audit log (no
       // chat delivery — see the onTerminal listener above). Unknown sessions
@@ -686,6 +691,13 @@ const plugin: Plugin = async (input: PluginInput) => {
             list: (sessionID: string) => todoEnforcer.listPendingTodos(sessionID),
           },
         })
+        const ceiling = sessionToolCeilings.get(_input.sessionID)
+        if (ceiling?.status === 'OK') {
+          output.context.push(
+            `<tool_ceiling remaining_context_tokens="${ceiling.ceiling}">` +
+              'Use the remaining host-reported context budget when selecting tools.</tool_ceiling>',
+          )
+        }
         if (blocks.length > 0) {
           output.context.push(...blocks)
         }

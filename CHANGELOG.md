@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Cost backend (B3-06):** `pantheon_cost` now uses a single read-only `node:sqlite` backend; the CLI fallback was removed. The common contract reports `UNSUPPORTED` when `node:sqlite` is unavailable and `CORRUPT_DATA`/`UNAVAILABLE` with diagnostic details on stderr; includes a sandbox probe.
 
+- **Tool ceiling (B3-07):** C9/tool ceiling is fed only by real host data from `message.updated` plus `config.providers()`; lexical fallback is removed. Hosts without the capability report `UNSUPPORTED`, malformed data reports `CORRUPT_DATA`, and malformed events are guarded defensively.
+
 ## 🐞 Fixed
 
 - **npm tarball inclusion:** CHANGELOG.md is now included in the npm tarball
