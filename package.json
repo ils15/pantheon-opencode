@@ -38,7 +38,7 @@
     "secret-scan": "node scripts/secret-scan.mjs",
     "hooks:install": "pre-commit install",
     "hooks:update": "pre-commit autoupdate",
-    "test:security": "npm run secret-scan && node tests/test_install_mcp_vision.mjs && node tests/test_doctor_layers.mjs",
+    "test:security": "npm run secret-scan",
     "test:node": "node --test tests/*.mjs tests/pantheon/*.mjs",
     "test:ts": "for f in tests/pantheon/*.test.ts; do if [ \"$f\" = tests/pantheon/plugin-v2-contract.test.ts ]; then NODE_OPTIONS=--conditions=import npx tsx \"$f\"; else npx tsx \"$f\"; fi || exit 1; done",
     "test": "python3 -m pytest tests/ -q 2>&1; status=$?; if [ \"$status\" -eq 5 ]; then echo \"No tests found\"; fi; exit \"$status\"",
