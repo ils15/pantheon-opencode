@@ -381,6 +381,11 @@ def _load_manifest(scripts_dir: Path | None = None) -> dict[str, str]:
             "CORRUPT_DATA", "Code-mode manifest must be a JSON object."
         )
 
+    if data.get("version") != 1:
+        raise ManifestError(
+            "CORRUPT_DATA", "Code-mode manifest malformed: version must be 1."
+        )
+
     scripts = data.get("scripts")
     if not isinstance(scripts, dict):
         raise ManifestError(
@@ -394,6 +399,7 @@ def _load_manifest(scripts_dir: Path | None = None) -> dict[str, str]:
             not isinstance(name, str)
             or not isinstance(digest, str)
             or len(digest) != _SHA256_HEX_LEN
+            or any(char not in "0123456789abcdefABCDEF" for char in digest)
         ):
             raise ManifestError(
                 "CORRUPT_DATA",
