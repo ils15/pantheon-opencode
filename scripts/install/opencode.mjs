@@ -220,7 +220,7 @@ function managedPluginIdentity(ref) {
     // beta.5: stale refs from OTHER installed copies of this package (older
     // nvm prefixes, npx cache hashes). Only paths inside
     // `node_modules/pantheon-opencode/` count as installed copies — a dev
-    // checkout elsewhere (e.g. /tmp/vendor/pantheon-opencode) remains
+    // checkout elsewhere (e.g. a vendor folder named pantheon-opencode) remains
     // protected by the third-party rule above.
     const installedMarker = '/node_modules/pantheon-opencode/'
     const withSlashes = normalizePluginPath(normalized)
