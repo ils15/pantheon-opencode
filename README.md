@@ -218,8 +218,13 @@ V1 plugin into V2 or provide V2 with V1 hooks.
 One command keeps an existing installation current:
 
 ```bash
-npx pantheon-opencode update            # npm beta channel + config refresh
-npx pantheon-opencode update --stable   # stable channel instead
+# Without a global install, ALWAYS pin the dist-tag — plain `npx
+# pantheon-opencode` resolves `latest`, which is the stable release (1.4.3):
+npx pantheon-opencode@beta update            # npm beta channel + config refresh
+npx pantheon-opencode@beta update --stable   # stable channel instead
+
+# With a global install, use the global bin (defaults to the beta channel):
+pantheon-opencode update
 ```
 
 `update` compares your installed version with the npm dist-tag, runs

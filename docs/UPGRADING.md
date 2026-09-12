@@ -34,11 +34,14 @@ plugin generations.
 ### Updating between beta releases (1.5.0-beta.5+)
 
 1. Stop OpenCode.
-2. Run `npx pantheon-opencode update` (beta channel, the default during
-   1.5.0 prereleases) or `npx pantheon-opencode update --stable`. The command
-   compares the installed version with the npm dist-tag, installs the newer
-   package globally, and re-runs `init --yes --headless` so config merges,
-   the Python venv and MCP entries match the new package.
+2. Run `npx pantheon-opencode@beta update` (beta channel, the default during
+   1.5.0 prereleases) or `npx pantheon-opencode@beta update --stable`. Always
+   pin `@beta` on npx — plain `npx pantheon-opencode` resolves the `latest`
+   dist-tag (the stable release), which predates the `update` command. The
+   command compares the installed version with the npm dist-tag, installs the
+   newer package globally, and re-runs `init --yes --headless` so config
+   merges, the Python venv and MCP entries match the new package. With a
+   global install, `pantheon-opencode update` (no npx) does the same.
 3. If the update was interrupted, just run `init` again — every copy step is
    byte-compare idempotent and the config write leaves an
    `opencode.json.bak` of the previous content.
