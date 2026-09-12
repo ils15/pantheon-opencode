@@ -48,6 +48,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: TUI dist freshness (rebuild must be a no-op)
+        run: |
+          npm run build --prefix src/plugins/tui
+          # Normalize final newlines to match the pre-commit end-of-file-fixer
+          # convention, then fail if the committed dist differs from a fresh
+          # build (guards against shipping a stale TUI bundle).
+          node -e "const fs=require('fs');for(const f of fs.readdirSync('src/plugins/tui/dist')){const p='src/plugins/tui/dist/'+f;const s=fs.readFileSync(p);if(s.length&&s[s.length-1]!==10)fs.appendFileSync(p,String.fromCharCode(10))}"
+          git diff --exit-code src/plugins/tui/dist
+
       - name: Run TypeScript tests
         run: npm run test:ts
 
