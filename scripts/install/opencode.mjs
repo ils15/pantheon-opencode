@@ -217,16 +217,16 @@ function managedPluginIdentity(ref) {
     if (absolutePath === normalizePluginPath(resolve(ROOT, PANTHEON_V2_LEGACY_FILE))) {
       return PANTHEON_V2_PLUGIN
     }
-    // beta.5: stale refs from OTHER installs of this same package (older nvm
-    // prefixes, npx cache hashes). A path inside a `pantheon-opencode`
-    // package dir ending with a known plugin suffix is unambiguously THIS
-    // package's plugin — whichever generation it points at — so the
-    // installer prunes it and re-registers only the current location.
+    // beta.5: stale refs from OTHER installed copies of this package (older
+    // nvm prefixes, npx cache hashes). Only paths inside
+    // `node_modules/pantheon-opencode/` count as installed copies — a dev
+    // checkout elsewhere (e.g. /tmp/vendor/pantheon-opencode) remains
+    // protected by the third-party rule above.
+    const installedMarker = '/node_modules/pantheon-opencode/'
     const withSlashes = normalizePluginPath(normalized)
-    const pkgMarker = '/pantheon-opencode/'
-    const markerIndex = withSlashes.lastIndexOf(pkgMarker)
+    const markerIndex = withSlashes.lastIndexOf(installedMarker)
     if (markerIndex !== -1) {
-      const suffix = withSlashes.slice(markerIndex + pkgMarker.length)
+      const suffix = withSlashes.slice(markerIndex + installedMarker.length)
       if (suffix === PANTHEON_V1_PLUGIN) return PANTHEON_V1_PLUGIN
       if (suffix === PANTHEON_V1_HOOKS) return PANTHEON_V1_HOOKS
       if (suffix === PANTHEON_V2_PLUGIN) return PANTHEON_V2_PLUGIN
