@@ -213,6 +213,36 @@ The installer still writes the compatibility settings required by the selected
 OpenCode host, such as `experimental.subagent_depth`; this does not convert a
 V1 plugin into V2 or provide V2 with V1 hooks.
 
+## Updating between releases (beta.5+)
+
+One command keeps an existing installation current:
+
+```bash
+npx pantheon-opencode update            # npm beta channel + config refresh
+npx pantheon-opencode update --stable   # stable channel instead
+```
+
+`update` compares your installed version with the npm dist-tag, runs
+`npm install -g pantheon-opencode@<channel>`, then re-runs `init --yes
+--headless` so config merges, the venv and MCP entries match the new package.
+Two freshness guarantees back it up:
+
+- **Postinstall artifact sync** — after any `npm install`, copy-only artifacts
+  (agents, skills, AGENTS.md, commands, MCP scripts, code-mode payload) are
+  refreshed into the existing config dir automatically; you never have to
+  re-run `init` just for file copies.
+- **Drift detection** — the installer stamps the installed version in
+  `.pantheon/install-state.json` and `doctor` warns when the package is newer
+  than the last sync, pointing at `update`.
+
+`init` also gained `--components agents,skills,...` (narrow install),
+`--clean` (alias of `--force`), `--opencode-version auto`, atomic config
+writes with an `opencode.json.bak` backup, preflight checks for python3/npm
+before any file is written, and a non-fatal Python runtime: if the venv fails,
+the install completes but MCP entries are omitted (with a warning) instead of
+pointing at a broken interpreter. Installer messages auto-detect pt-BR via
+`LANG`/`LC_ALL`.
+
 ## Releases
 
 Publication is authorized **only** by an explicit `workflow_dispatch` of the

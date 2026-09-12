@@ -179,6 +179,35 @@ O instalador continua gravando as configurações de compatibilidade exigidas
 pelo host OpenCode selecionado, como `experimental.subagent_depth`; isso não
 converte um plugin V1 em V2 nem dá hooks V1 ao V2.
 
+## Atualizando entre releases (beta.5+)
+
+Um comando mantém uma instalação existente em dia:
+
+```bash
+npx pantheon-opencode update            # canal beta do npm + refresh do config
+npx pantheon-opencode update --stable   # canal estável
+```
+
+O `update` compara a versão instalada com o dist-tag do npm, roda
+`npm install -g pantheon-opencode@<canal>` e re-executa `init --yes
+--headless` para alinhar merge de config, venv e entradas de MCP com o novo
+pacote. Duas garantias de freshness sustentam isso:
+
+- **Sync de artifacts no postinstall** — depois de qualquer `npm install`, os
+  artefatos de cópia (agents, skills, AGENTS.md, commands, scripts MCP,
+  payload code-mode) são atualizados automaticamente no config dir existente;
+  você nunca precisa re-rodar `init` só para atualizar arquivos.
+- **Detecção de drift** — o instalador grava a versão instalada em
+  `.pantheon/install-state.json` e o `doctor` avisa quando o pacote é mais
+  novo que o último sync, apontando para o `update`.
+
+O `init` também ganhou `--components agents,skills,...` (instalação enxuta),
+`--clean` (alias de `--force`), `--opencode-version auto`, escrita atômica do
+config com backup em `opencode.json.bak`, pré-checagens de python3/npm antes
+de escrever qualquer arquivo e runtime Python não-fatal: se a venv falha, a
+instalação completa mas as entradas MCP ficam de fora (com aviso) em vez de
+apontar para um interpretador quebrado.
+
 ## Releases
 
 A publicação é autorizada **somente** por um `workflow_dispatch` explícito do

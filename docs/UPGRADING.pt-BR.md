@@ -13,6 +13,25 @@ exclusivamente no OpenCode.
 3. **Delegação em segundo plano**: requer `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`
 4. **Somente OpenCode**: o suporte multiplataforma foi removido. Use `npx pantheon-opencode init` para configurar.
 
+### Atualizando entre betas (1.5.0-beta.5+)
+
+1. Feche o OpenCode.
+2. Rode `npx pantheon-opencode update` (canal beta, o padrão durante os
+   prereleases 1.5.0) ou `npx pantheon-opencode update --stable`. O comando
+   compara a versão instalada com o dist-tag do npm, instala o pacote novo
+   globalmente e re-executa `init --yes --headless` para alinhar merge de
+   config, venv e entradas MCP com o pacote novo.
+3. Se a atualização for interrompida, rode `init` de novo — cada passo de
+   cópia é idempotente (byte-compare) e a escrita do config deixa um
+   `opencode.json.bak` com o conteúdo anterior.
+4. Abra o OpenCode e confirme com `npx pantheon-opencode doctor` (ele compara
+   o marker de versão instalada com o pacote e avisa em caso de drift).
+
+Artefatos de cópia (agents, skills, AGENTS.md, commands, scripts MCP e o
+payload code-mode) são atualizados automaticamente pelo postinstall do
+pacote a cada `npm install`; `init`/`update` só é necessário para merge de
+config, venv e entradas MCP.
+
 ### Etapas de migração
 1. Desinstale as configurações específicas da plataforma antiga
 2. Execute `npx pantheon-opencode init` para instalar os agentes globalmente
