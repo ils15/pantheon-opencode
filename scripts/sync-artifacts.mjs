@@ -21,9 +21,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } fr
 import { join } from 'node:path'
 
 import {
+  collectSkillNames,
   copyFiles,
   installSkills,
-  collectSkillNames,
   ROOT,
   syncDir,
   writeIfChanged,
@@ -62,7 +62,10 @@ export function syncCopyArtifacts(configDir) {
       bump(copyFiles(join(ROOT, 'src', 'agents'), dstAgents, false))
       const routing = join(ROOT, 'src', 'routing.yml')
       if (existsSync(routing)) {
-        if (writeIfChanged(join(configDir, 'routing.yml'), readFileSync(routing, 'utf8'), false) === 'created') {
+        if (
+          writeIfChanged(join(configDir, 'routing.yml'), readFileSync(routing, 'utf8'), false) ===
+          'created'
+        ) {
           result.created++
         } else result.skipped++
       }
@@ -83,7 +86,9 @@ export function syncCopyArtifacts(configDir) {
   try {
     const src = join(ROOT, 'AGENTS.md')
     if (existsSync(src)) {
-      if (writeIfChanged(join(configDir, 'AGENTS.md'), readFileSync(src, 'utf8'), false) === 'created') {
+      if (
+        writeIfChanged(join(configDir, 'AGENTS.md'), readFileSync(src, 'utf8'), false) === 'created'
+      ) {
         result.created++
       } else result.skipped++
     }
@@ -119,8 +124,11 @@ export function syncCopyArtifacts(configDir) {
     const req = join(ROOT, 'src', 'mcp', 'requirements-vision.txt')
     if (existsSync(req)) {
       if (
-        writeIfChanged(join(configDir, 'requirements-vision.txt'), readFileSync(req, 'utf8'), false) ===
-        'created'
+        writeIfChanged(
+          join(configDir, 'requirements-vision.txt'),
+          readFileSync(req, 'utf8'),
+          false,
+        ) === 'created'
       ) {
         result.created++
       } else result.skipped++
@@ -135,7 +143,8 @@ export function syncCopyArtifacts(configDir) {
     const srcTiers = join(ROOT, '.pantheon', 'tiers.json')
     const dstTiers = join(configDir, '.pantheon', 'tiers.json')
     if (existsSync(srcTiers)) {
-      if (writeIfChanged(dstTiers, readFileSync(srcTiers, 'utf8'), false) === 'created') result.created++
+      if (writeIfChanged(dstTiers, readFileSync(srcTiers, 'utf8'), false) === 'created')
+        result.created++
       else result.skipped++
     }
   } catch (err) {

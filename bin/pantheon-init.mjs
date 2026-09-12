@@ -55,7 +55,9 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --opencode-version v1|v2|auto')
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
   console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)')
-  console.log('  npx pantheon-opencode update [--stable]    # Update package + re-run init (default: beta channel)')
+  console.log(
+    '  npx pantheon-opencode update [--stable]    # Update package + re-run init (default: beta channel)',
+  )
   console.log(
     '  npx pantheon-opencode set-tier <name> --project  # Set active model preset (project)',
   )
@@ -121,7 +123,7 @@ async function main() {
     const channel = args.includes('--stable') ? 'latest' : 'beta'
     const current = readVersion()
     const { spawnSync } = await import('node:child_process')
-    const S = (await import('../scripts/install/strings.mjs')).strings()
+    const _S = (await import('../scripts/install/strings.mjs')).strings()
 
     console.log(`Pantheon OpenCode v${current} — checking the "${channel}" channel...`)
     const view = spawnSync('npm', ['view', `pantheon-opencode@${channel}`, 'version'], {
@@ -139,9 +141,14 @@ async function main() {
     // Prerelease-aware compare: core (major.minor.patch) first, then the
     // beta counter; a stable release outranks any beta of the same core.
     const parsePantheonVersion = (v) => {
-      const m = String(v).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
+      const m = String(v)
+        .trim()
+        .match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
       if (!m) return null
-      return { core: [+m[1], +m[2], +m[3]], beta: m[4] === undefined ? Number.POSITIVE_INFINITY : +m[4] }
+      return {
+        core: [+m[1], +m[2], +m[3]],
+        beta: m[4] === undefined ? Number.POSITIVE_INFINITY : +m[4],
+      }
     }
     const cmp = (a, b) => {
       const pa = parsePantheonVersion(a)

@@ -390,7 +390,7 @@ function checkMcpConfig(args) {
     // ENOENT-on-spawn failure class (dead hardcoded path, ambiguous relative
     // path) before opencode tries to spawn the server.
     for (const [name, mcpEntry] of Object.entries(mcp)) {
-      if (!mcpEntry || mcpEntry.type !== 'local') continue
+      if (mcpEntry?.type !== 'local') continue
       const cmd = mcpEntry.command
       if (!Array.isArray(cmd) || cmd.length === 0) {
         warn(`${cfg.label}: MCP "${name}" has no command array`)
@@ -531,7 +531,7 @@ async function checkMcpRuntimeSmoke(args) {
   const local = []
   for (const cfg of collectMcpConfigs(args)) {
     for (const [name, entry] of Object.entries(cfg.data.mcp ?? {})) {
-      if (!entry || entry.type !== 'local') continue
+      if (entry?.type !== 'local') continue
       if (!Array.isArray(entry.command) || entry.command.length === 0) continue
       const cwd = resolveMcpCwd(entry, cfg.path)
       const command = entry.command.map((part, index) =>
@@ -1117,9 +1117,14 @@ export function resolveMcpCwd(entry, configPath = '') {
  */
 function comparePantheonVersions(a, b) {
   const parse = (v) => {
-    const m = String(v).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
+    const m = String(v)
+      .trim()
+      .match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
     if (!m) return null
-    return { core: [+m[1], +m[2], +m[3]], beta: m[4] === undefined ? Number.POSITIVE_INFINITY : +m[4] }
+    return {
+      core: [+m[1], +m[2], +m[3]],
+      beta: m[4] === undefined ? Number.POSITIVE_INFINITY : +m[4],
+    }
   }
   const pa = parse(a)
   const pb = parse(b)

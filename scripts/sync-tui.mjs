@@ -155,7 +155,9 @@ async function main() {
       if (synced.errors.length > 0) {
         for (const e of synced.errors) console.error(`  ⚠️  artifact sync: ${e}`)
       }
-      console.log(`  Artifacts synced: ${synced.created} updated, ${synced.skipped} already current`)
+      console.log(
+        `  Artifacts synced: ${synced.created} updated, ${synced.skipped} already current`,
+      )
       return
     }
 
@@ -200,9 +202,7 @@ async function main() {
     if (synced.errors.length > 0) {
       for (const e of synced.errors) console.error(`  ⚠️  artifact sync: ${e}`)
     }
-    console.log(
-      `  Artifacts synced: ${synced.created} updated, ${synced.skipped} already current`,
-    )
+    console.log(`  Artifacts synced: ${synced.created} updated, ${synced.skipped} already current`)
 
     // Version marker so doctor can detect a stale installation and point the
     // user at `pantheon-opencode update` for the full refresh (config merge,

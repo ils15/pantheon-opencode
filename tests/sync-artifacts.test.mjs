@@ -62,8 +62,11 @@ test('sync never writes config merge artifacts (opencode.json, tui.json, venv)',
     assert.equal(existsSync(join(configDir, 'opencode.json')), false, 'no config merge')
     assert.equal(existsSync(join(configDir, 'tui.json')), false, 'no tui registration')
     assert.equal(existsSync(join(configDir, '.venv')), false, 'no venv setup')
-    assert.equal(existsSync(join(configDir, '.pantheon', 'install-state.json')), false,
-      'version marker is written by the postinstall, not by the artifact sync')
+    assert.equal(
+      existsSync(join(configDir, '.pantheon', 'install-state.json')),
+      false,
+      'version marker is written by the postinstall, not by the artifact sync',
+    )
   } finally {
     rmSync(configDir, { recursive: true, force: true })
   }

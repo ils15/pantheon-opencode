@@ -80,20 +80,16 @@ test('doctor reports in-sync when the marker matches the package version', () =>
 })
 
 test('update on an unreachable registry fails with exit 1 and a clear message', () => {
-  const result = spawnSync(
-    process.execPath,
-    [BIN, 'update'],
-    {
-      encoding: 'utf8',
-      timeout: 60_000,
-      env: {
-        ...process.env,
-        PATH: '/nonexistent-dir',
-        // npm itself lives on PATH — with it stripped, `npm view` cannot run,
-        // which is exactly the unreachable-registry branch.
-      },
+  const result = spawnSync(process.execPath, [BIN, 'update'], {
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: {
+      ...process.env,
+      PATH: '/nonexistent-dir',
+      // npm itself lives on PATH — with it stripped, `npm view` cannot run,
+      // which is exactly the unreachable-registry branch.
     },
-  )
+  })
   assert.notEqual(result.status, 0)
   assert.match(`${result.stderr}${result.stdout}`, /Could not reach the npm registry/)
 })
