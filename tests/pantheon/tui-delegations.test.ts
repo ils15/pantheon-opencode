@@ -31,9 +31,11 @@ import {
   delegationElapsed,
   delegationSpinnerFrame,
   delegationTag,
+  extractToolActivity,
   fmtElapsed,
   isValidSessionId,
   type LiveDelegationEntry,
+  latestToolActivityFor,
   markStaleIfRunning,
   mergeChildDelegationSources,
   mergeDelegationSources,
@@ -48,7 +50,9 @@ import {
   resolveCurrentSessionID,
   resolveDelegationsDir,
   seedLiveDelegationMap,
+  splitDelegationList,
   toDelegationEntry,
+  trackToolActivity,
   tuiLogPath,
   visibleDelegationList,
 } from '../../src/plugins/tui/src/index.tsx'
@@ -1223,9 +1227,9 @@ async function main() {
   // still renders from its own title. These pure helpers power
   // View.refreshDelegations + DelegationRow navigation.
 
-  await testAsync('children: childStatusToState — busy/retry → running', async () => {
+  await testAsync('children: childStatusToState — busy → running, retry → retry', async () => {
     assert.equal(childStatusToState('busy'), 'running')
-    assert.equal(childStatusToState('retry'), 'running')
+    assert.equal(childStatusToState('retry'), 'retry')
   })
 
   await testAsync(
@@ -1264,7 +1268,7 @@ async function main() {
       assert.equal(entries.length, 3)
       const byId = new Map(entries.map((e) => [e.taskID, e]))
       assert.equal(byId.get('ses_child_busy')?.state, 'running')
-      assert.equal(byId.get('ses_child_rty')?.state, 'running')
+      assert.equal(byId.get('ses_child_rty')?.state, 'retry')
       assert.equal(byId.get('ses_child_idle')?.state, 'completed')
       assert.equal(byId.get('ses_child_busy')?.updatedAt, null, 'running child has no end')
       assert.equal(byId.get('ses_child_idle')?.updatedAt, 8000, 'terminal child uses time.updated')
@@ -1493,7 +1497,7 @@ async function main() {
       const entries = childrenToDelegationEntries(children, [], 10_000)
       const byId = new Map(entries.map((e) => [e.taskID, e]))
       assert.equal(byId.get('ses_t1')?.state, 'running')
-      assert.equal(byId.get('ses_t2')?.state, 'running')
+      assert.equal(byId.get('ses_t2')?.state, 'retry')
       assert.equal(byId.get('ses_t3')?.state, 'completed')
       assert.equal(byId.get('ses_t4')?.state, 'running')
       assert.equal(byId.get('ses_t3')?.updatedAt, 1000)
@@ -1897,5 +1901,74 @@ async function main() {
   console.log(`\nResults: ${passed} passed, ${failed.length} failed`)
   process.exit(failed.length > 0 ? 1 : 0)
 }
+
+await testAsync('beta.6: splitDelegationList — active, recent cap, archived tail', async () => {
+  const mk = (id, state, i) => ({
+    alias: `t-${id}`,
+    sessionID: 'ses_p',
+    taskID: `ses_${id}`,
+    agent: 'apollo',
+    state,
+    startedAt: 1000 + i,
+    updatedAt: null,
+    timedOut: false,
+    description: '',
+  })
+  const all = [
+    mk('run', 'running', 1),
+    mk('done-1', 'completed', 2),
+    mk('done-2', 'error', 3),
+    mk('done-3', 'completed', 4),
+  ]
+  const split = splitDelegationList(all, 2, 2000)
+  assert.equal(split.active.length, 1)
+  assert.equal(split.active[0].taskID, 'ses_run')
+  assert.equal(split.recent.length, 2)
+  assert.equal(split.archived.length, 1)
+  assert.equal(split.archived[0].taskID, 'ses_done-3')
+  const small = splitDelegationList(all.slice(0, 3), 8, 2000)
+  assert.equal(small.archived.length, 0)
+  assert.equal(small.recent.length, 2)
+})
+
+await testAsync('beta.6: extractToolActivity — tool part → activity; others → null', async () => {
+  const hit = extractToolActivity({
+    type: 'tool',
+    tool: 'bash',
+    sessionID: 'ses_child_1',
+    state: { status: 'running', input: { command: 'npm test', description: 'run tests' } },
+  })
+  assert.ok(hit !== null)
+  assert.equal(hit.sessionID, 'ses_child_1')
+  assert.equal(hit.activity.tool, 'bash')
+  assert.equal(hit.activity.summary, 'npm test')
+  assert.equal(
+    extractToolActivity({
+      type: 'tool',
+      tool: 'bash',
+      sessionID: 'ses_child_1',
+      state: { status: 'completed', input: { command: 'npm test' } },
+    }),
+    null,
+  )
+  assert.equal(extractToolActivity({ type: 'text', sessionID: 'ses_child_1' }), null)
+  assert.equal(
+    extractToolActivity({ type: 'tool', tool: 'bash', state: { status: 'running' } }),
+    null,
+  )
+})
+
+await testAsync('beta.6: trackToolActivity — bounded map + staleness window', async () => {
+  const map = new Map()
+  trackToolActivity(map, 'ses_a', { tool: 'bash', summary: 'ls', at: 1000 })
+  trackToolActivity(map, 'ses_b', { tool: 'read', summary: 'a.ts', at: 2000 })
+  assert.equal(latestToolActivityFor(map, 'ses_a', 2000)?.tool, 'bash')
+  assert.equal(latestToolActivityFor(map, 'ses_a', 1000 + 5 * 60 * 1000 + 1), null)
+  for (let i = 0; i < 205; i++) {
+    trackToolActivity(map, `ses_x${i}`, { tool: 't', summary: '', at: i })
+  }
+  assert.ok(map.size <= 200, `map size ${map.size} must stay bounded`)
+  assert.equal(latestToolActivityFor(map, 'ses_a', 2000), null, 'oldest evicted')
+})
 
 main()

@@ -11,7 +11,7 @@ type DelegationEntry = {
   taskID?: string;
   /** Agent name, e.g. "apollo". */
   agent: string;
-  state: 'running' | 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled' | 'stale-running';
+  state: 'running' | 'retry' | 'completed' | 'error' | 'startup_failed' | 'startup_unknown' | 'cancelled' | 'stale-running';
   /** Epoch ms of the `Started` header. */
   startedAt: number;
   /** Epoch ms of the `Finalized` header — null while still running. */
@@ -73,10 +73,18 @@ declare function tuiLogPath(projectRoot: string): string;
  *  falling back to startedAt, descending). Shared by the md reader and
  *  mergeDelegationSources. */
 declare function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry): number;
-/** The list the panel actually renders: running jobs first, then the most
- *  recent terminal reports (capped). Pure — so the history-only panel (no
- *  sessionID) is testable without the TUI runtime. The header count uses the
- *  same "running + recentes" list. */
+/** Split the panel list: active jobs (running/retry, stale-marked) first,
+ *  then the most recent terminal reports, then the archived tail (paginated
+ *  in the View). Pure — so the history-only panel (no sessionID) is testable
+ *  without the TUI runtime. */
+declare function splitDelegationList(all: readonly DelegationEntry[], maxRecent?: number, now?: number, staleThresholdMs?: number): {
+  active: DelegationEntry[];
+  recent: DelegationEntry[];
+  archived: DelegationEntry[];
+};
+/** The list the panel actually renders (kept for the header count and
+ *  existing tests): active jobs first, then the most recent terminal
+ *  reports (capped) — the archived tail is rendered separately. Pure. */
 declare function visibleDelegationList(all: readonly DelegationEntry[], maxTerminal?: number, now?: number, staleThresholdMs?: number): DelegationEntry[];
 /** Default stale-running threshold: 30 minutes. */
 declare const STALE_RUNNING_THRESHOLD_MS: number;
@@ -106,6 +114,30 @@ declare function delegationActivity(entry: DelegationEntry): DelegationActivity;
 declare function delegationActivityLabel(entry: DelegationEntry): string;
 /** Return a deterministic spinner frame. The View ticks this every 140ms. */
 declare function delegationSpinnerFrame(now: number): string;
+type ToolActivity = {
+  tool: string;
+  summary: string;
+  at: number;
+};
+/** Reduce one message.part.updated tool part to displayable activity.
+ *  Returns null for non-tool parts, completed/error parts (no live activity)
+ *  or parts without a session id. Pure. */
+declare function extractToolActivity(part: {
+  type?: string;
+  tool?: string;
+  sessionID?: string;
+  state?: {
+    status?: string;
+    input?: Record<string, unknown>;
+  };
+}, now?: number): {
+  sessionID: string;
+  activity: ToolActivity;
+} | null;
+/** Record an activity sample (bounded map, oldest dropped). */
+declare function trackToolActivity(map: Map<string, ToolActivity>, sessionID: string, activity: ToolActivity): void;
+/** Latest live activity for a child session, or null when absent/stale. */
+declare function latestToolActivityFor(map: Map<string, ToolActivity>, sessionID: string | undefined, now?: number, ttlMs?: number): ToolActivity | null;
 /** Merge the immediate tool-event channel into the child-session channel.
  *
  * Children remain the durable source, while live entries make a delegation
@@ -278,7 +310,7 @@ type ChildDelegationLike = {
  *  (the child is actively working), idle → completed, unknown → running
  *  (fail-open: a freshly-seen child is assumed active; the 1s poll + md
  *  correct it as soon as terminal data exists). */
-declare function childStatusToState(status: string | undefined): 'running' | 'completed';
+declare function childStatusToState(status: string | undefined): 'running' | 'completed' | 'retry';
 /** Row tag for a delegation entry: `[native]` for native task() children
  *  (source 'children-only' — no board report), `[pantheon:<alias>]` for board
  *  rows ([pantheon:apo-1]) — the same tags the manager prints in
@@ -324,5 +356,5 @@ declare const plugin: TuiPluginModule & {
   setup: () => Promise<void>;
 };
 //#endregion
-export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, fmtElapsed, isValidSessionId, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, toDelegationEntry, tuiLogPath, visibleDelegationList };
+export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, tuiLogPath, visibleDelegationList };
 //# sourceMappingURL=tui.d.ts.map

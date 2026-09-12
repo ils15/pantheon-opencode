@@ -959,6 +959,7 @@ export type DelegationEntry = {
   agent: string
   state:
     | 'running'
+    | 'retry'
     | 'completed'
     | 'error'
     | 'startup_failed'
@@ -1195,27 +1196,46 @@ export function tuiLogPath(projectRoot: string): string {
  *  falling back to startedAt, descending). Shared by the md reader and
  *  mergeDelegationSources. */
 export function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry): number {
-  const aRun = a.state === 'running' || a.state === 'stale-running' ? 1 : 0
-  const bRun = b.state === 'running' || b.state === 'stale-running' ? 1 : 0
+  const isActive = (st: DelegationEntry['state']) =>
+    st === 'running' || st === 'retry' || st === 'stale-running' ? 1 : 0
+  const aRun = isActive(a.state)
+  const bRun = isActive(b.state)
   if (aRun !== bRun) return bRun - aRun
   return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt)
 }
 
-/** The list the panel actually renders: running jobs first, then the most
- *  recent terminal reports (capped). Pure — so the history-only panel (no
- *  sessionID) is testable without the TUI runtime. The header count uses the
- *  same "running + recentes" list. */
+/** Split the panel list: active jobs (running/retry, stale-marked) first,
+ *  then the most recent terminal reports, then the archived tail (paginated
+ *  in the View). Pure — so the history-only panel (no sessionID) is testable
+ *  without the TUI runtime. */
+export function splitDelegationList(
+  all: readonly DelegationEntry[],
+  maxRecent = 8,
+  now = Date.now(),
+  staleThresholdMs = 30 * 60 * 1000, // 30 minutes
+): { active: DelegationEntry[]; recent: DelegationEntry[]; archived: DelegationEntry[] } {
+  const active = all
+    .filter((d) => d.state === 'running' || d.state === 'retry')
+    .map((d) => markStaleIfRunning(d, now, staleThresholdMs))
+  const terminal = all.filter((d) => d.state !== 'running' && d.state !== 'retry')
+  return {
+    active,
+    recent: terminal.slice(0, maxRecent),
+    archived: terminal.slice(maxRecent),
+  }
+}
+
+/** The list the panel actually renders (kept for the header count and
+ *  existing tests): active jobs first, then the most recent terminal
+ *  reports (capped) — the archived tail is rendered separately. Pure. */
 export function visibleDelegationList(
   all: readonly DelegationEntry[],
   maxTerminal = 8,
   now = Date.now(),
   staleThresholdMs = 30 * 60 * 1000, // 30 minutes
 ): DelegationEntry[] {
-  const running = all
-    .filter((d) => d.state === 'running')
-    .map((d) => markStaleIfRunning(d, now, staleThresholdMs))
-  const terminal = all.filter((d) => d.state !== 'running').slice(0, maxTerminal)
-  return [...running, ...terminal]
+  const { active, recent } = splitDelegationList(all, maxTerminal, now, staleThresholdMs)
+  return [...active, ...recent]
 }
 
 /** Default stale-running threshold: 30 minutes. */
@@ -1294,6 +1314,7 @@ export function delegationActivity(entry: DelegationEntry): DelegationActivity {
 }
 
 export function delegationActivityLabel(entry: DelegationEntry): string {
+  if (entry.state === 'retry') return 'RETRYING'
   switch (delegationActivity(entry)) {
     case 'delegating':
       return 'DELEGATING'
@@ -1316,6 +1337,89 @@ const DELEGATION_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '�
 export function delegationSpinnerFrame(now: number): string {
   const index = Math.floor(Math.max(0, now) / 140) % DELEGATION_SPINNER_FRAMES.length
   return DELEGATION_SPINNER_FRAMES[index] ?? DELEGATION_SPINNER_FRAMES[0]
+}
+
+/* ─── Live tool activity per child session (beta.6) ────────────────────────
+ *  The delegation panel's activity line ("↳ bash npm test") — what the agent
+ *  is doing RIGHT NOW. Sourced from message.part.updated tool parts: every
+ *  pending/running tool part updates a per-child-session record (latest wins).
+ *  Module-level by design: the sidebar remounts on route changes and the
+ *  "what is each agent doing" state should survive that (OMO pattern). */
+
+export type ToolActivity = {
+  tool: string
+  summary: string
+  at: number
+}
+
+/** Bounded tracker: child session id → latest running tool call. */
+const latestToolActivity = new Map<string, ToolActivity>()
+const MAX_TOOL_ACTIVITY_ENTRIES = 200
+const TOOL_ACTIVITY_TTL_MS = 5 * 60 * 1000
+
+/** Archived-section pagination state — module-level so it survives sidebar
+ *  remounts (route changes) without leaking into the component tree. */
+const archivedUiState = { page: 0 }
+
+/** First usable summary string from common tool input fields. */
+function summarizeToolInput(input: Record<string, unknown> | undefined): string {
+  if (!input) return ''
+  const candidates = ['command', 'description', 'prompt', 'filePath', 'pattern', 'url', 'query']
+  for (const key of candidates) {
+    const value = input[key]
+    if (typeof value === 'string' && value.trim() !== '') return value
+  }
+  return ''
+}
+
+/** Reduce one message.part.updated tool part to displayable activity.
+ *  Returns null for non-tool parts, completed/error parts (no live activity)
+ *  or parts without a session id. Pure. */
+export function extractToolActivity(
+  part: {
+    type?: string
+    tool?: string
+    sessionID?: string
+    state?: { status?: string; input?: Record<string, unknown> }
+  },
+  now = Date.now(),
+): { sessionID: string; activity: ToolActivity } | null {
+  if (part?.type !== 'tool') return null
+  const status = part.state?.status
+  if (status !== 'pending' && status !== 'running') return null
+  const sessionID = typeof part.sessionID === 'string' ? part.sessionID : ''
+  if (sessionID === '') return null
+  const tool = typeof part.tool === 'string' && part.tool !== '' ? part.tool : 'tool'
+  const summary = summarizeToolInput(part.state?.input).replace(/\s+/g, ' ').trim().slice(0, 48)
+  return { sessionID, activity: { tool, summary, at: now } }
+}
+
+/** Record an activity sample (bounded map, oldest dropped). */
+export function trackToolActivity(
+  map: Map<string, ToolActivity>,
+  sessionID: string,
+  activity: ToolActivity,
+): void {
+  if (sessionID === '') return
+  if (map.size >= MAX_TOOL_ACTIVITY_ENTRIES) {
+    const oldest = map.keys().next().value
+    if (oldest !== undefined) map.delete(oldest)
+  }
+  map.set(sessionID, activity)
+}
+
+/** Latest live activity for a child session, or null when absent/stale. */
+export function latestToolActivityFor(
+  map: Map<string, ToolActivity>,
+  sessionID: string | undefined,
+  now = Date.now(),
+  ttlMs = TOOL_ACTIVITY_TTL_MS,
+): ToolActivity | null {
+  if (!sessionID) return null
+  const hit = map.get(sessionID)
+  if (hit === undefined) return null
+  if (now - hit.at > ttlMs) return null
+  return hit
 }
 
 /** Merge the immediate tool-event channel into the child-session channel.
@@ -1880,9 +1984,10 @@ export type ChildDelegationLike = {
  *  (the child is actively working), idle → completed, unknown → running
  *  (fail-open: a freshly-seen child is assumed active; the 1s poll + md
  *  correct it as soon as terminal data exists). */
-export function childStatusToState(status: string | undefined): 'running' | 'completed' {
+export function childStatusToState(status: string | undefined): 'running' | 'completed' | 'retry' {
   if (status === 'idle') return 'completed'
-  return 'running' // busy, retry, or unknown
+  if (status === 'retry') return 'retry'
+  return 'running' // busy or unknown
 }
 
 /** Row tag for a delegation entry: `[native]` for native task() children
@@ -2070,6 +2175,8 @@ function DelegationRow(props: {
     switch (props.job.state) {
       case 'running':
         return t.warning
+      case 'retry':
+        return t.warning
       case 'stale-running':
         return t.error // warning color for stale delegations
       case 'completed':
@@ -2083,6 +2190,7 @@ function DelegationRow(props: {
 
   const marker = createMemo(() => {
     if (props.job.state === 'running') return `${delegationSpinnerFrame(props.animationNow)} `
+    if (props.job.state === 'retry') return '\u27f3 ' // ⟳ retrying
     if (props.job.state === 'stale-running') return '\u26a0 ' // warning triangle
     switch (props.job.state) {
       case 'completed':
@@ -2106,6 +2214,12 @@ function DelegationRow(props: {
     return line.length > 180 ? `${line.slice(0, 177)}\u2026` : line
   })
 
+  // beta.6: live tool call the child is running RIGHT NOW ("↳ bash npm test"),
+  // fed by message.part.updated activity tracking. Null while idle/done.
+  const activity = createMemo(() =>
+    latestToolActivityFor(latestToolActivity, props.job.taskID, props.now),
+  )
+
   // Click a row → navigate to the child session (route API guarded in the
   // helper). Enter-key binding is left out (per-row keymap wiring is not
   // worth the complexity in this sidebar); mouse is enabled in tui.json.
@@ -2123,6 +2237,13 @@ function DelegationRow(props: {
         >{` ${props.job.agent} \u2014 ${delegationActivityLabel(props.job)}`}</text>
       </box>
       <text fg={theme().textMuted}>{detail()}</text>
+      <Show when={activity()}>
+        {(a) => (
+          <text
+            fg={theme().textMuted}
+          >{`  \u21b3 ${a().tool}${a().summary !== '' ? ' ' + a().summary : ''}`}</text>
+        )}
+      </Show>
     </box>
   )
 }
@@ -2335,9 +2456,20 @@ function View(props: {
     })()
     return delegationsInflight
   }
-  // Running jobs first, then the 8 most recent terminal reports. The header
-  // count uses this same "running + recentes" list.
-  const visibleDelegations = createMemo(() => visibleDelegationList(childDelegations()))
+  // beta.6: active (running/retry) first, then the 8 most recent terminal
+  // reports, then the archived tail (paginated). Pagination state lives at
+  // module level so sidebar remounts keep the user's page.
+  const delegationSplit = createMemo(() => splitDelegationList(childDelegations()))
+  const visibleDelegations = createMemo(() => [
+    ...delegationSplit().active,
+    ...delegationSplit().recent,
+  ])
+  const [archivedPage, setArchivedPage] = createSignal(archivedUiState.page)
+  const clampArchivedPage = (page: number, pages: number) => {
+    const clamped = Math.max(0, Math.min(page, Math.max(0, pages - 1)))
+    archivedUiState.page = clamped
+    setArchivedPage(clamped)
+  }
 
   // ── Event subscriptions for live session/delegation updates ──
   onMount(() => {
@@ -2504,6 +2636,41 @@ function View(props: {
                 />
               )}
             </For>
+            <Show when={delegationSplit().archived.length > 0}>
+              {(() => {
+                const archived = delegationSplit().archived
+                const pageSize = 8
+                const pages = Math.ceil(archived.length / pageSize)
+                const page = Math.min(archivedPage(), pages - 1)
+                const slice = archived.slice(page * pageSize, page * pageSize + pageSize)
+                return (
+                  <box flexDirection="column">
+                    <box flexDirection="row" marginLeft={0}>
+                      <text
+                        fg={theme().textMuted}
+                        onMouseDown={() => clampArchivedPage(page - 1, pages)}
+                      >{`\u2039 `}</text>
+                      <text fg={theme().textMuted}>{`Archived (${archived.length}) `}</text>
+                      <text fg={theme().textMuted}>{`${page + 1}/${pages}`}</text>
+                      <text
+                        fg={theme().textMuted}
+                        onMouseDown={() => clampArchivedPage(page + 1, pages)}
+                      >{` \u203a`}</text>
+                    </box>
+                    <For each={slice}>
+                      {(job) => (
+                        <DelegationRow
+                          api={props.api}
+                          job={job}
+                          now={now()}
+                          animationNow={animationNow()}
+                        />
+                      )}
+                    </For>
+                  </box>
+                )
+              })()}
+            </Show>
           </box>
         </Show>
       </Show>
@@ -2552,6 +2719,11 @@ const tui: TuiPlugin = (api, _options, _meta) => {
         const props = (event?.properties ?? {}) as { part?: unknown; info?: { part?: unknown } }
         const part = (props.part ?? props.info?.part) as DelegationToolPart | undefined
         if (part === undefined) return
+        // beta.6: track the live tool call per child session (panel's
+        // activity line). Fire-and-forget — display-only state.
+        const sample = extractToolActivity(part as any)
+        if (sample !== null)
+          trackToolActivity(latestToolActivity, sample.sessionID, sample.activity)
         if (reduceDelegationToolPart(liveStore.map, part)) liveStore.bump()
       }),
     )
