@@ -184,8 +184,13 @@ converte um plugin V1 em V2 nem dá hooks V1 ao V2.
 Um comando mantém uma instalação existente em dia:
 
 ```bash
-npx pantheon-opencode update            # canal beta do npm + refresh do config
-npx pantheon-opencode update --stable   # canal estável
+# Sem instalação global, SEMPRE fixe o dist-tag — `npx pantheon-opencode`
+# puro resolve a tag `latest`, que é o release estável (1.4.3):
+npx pantheon-opencode@beta update            # canal beta do npm + refresh do config
+npx pantheon-opencode@beta update --stable   # canal estável
+
+# Com instalação global, use o bin global (o padrão é o canal beta):
+pantheon-opencode update
 ```
 
 O `update` compara a versão instalada com o dist-tag do npm, roda

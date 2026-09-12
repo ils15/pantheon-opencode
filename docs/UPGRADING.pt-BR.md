@@ -16,11 +16,14 @@ exclusivamente no OpenCode.
 ### Atualizando entre betas (1.5.0-beta.5+)
 
 1. Feche o OpenCode.
-2. Rode `npx pantheon-opencode update` (canal beta, o padrão durante os
-   prereleases 1.5.0) ou `npx pantheon-opencode update --stable`. O comando
-   compara a versão instalada com o dist-tag do npm, instala o pacote novo
+2. Rode `npx pantheon-opencode@beta update` (canal beta, o padrão durante os
+   prereleases 1.5.0) ou `npx pantheon-opencode@beta update --stable`. No npx,
+   fixe sempre `@beta` — `npx pantheon-opencode` puro resolve a tag `latest`
+   (o release estável), que é anterior ao comando `update`. O comando compara
+   a versão instalada com o dist-tag do npm, instala o pacote novo
    globalmente e re-executa `init --yes --headless` para alinhar merge de
-   config, venv e entradas MCP com o pacote novo.
+   config, venv e entradas MCP com o pacote novo. Com instalação global,
+   `pantheon-opencode update` (sem npx) faz o mesmo.
 3. Se a atualização for interrompida, rode `init` de novo — cada passo de
    cópia é idempotente (byte-compare) e a escrita do config deixa um
    `opencode.json.bak` com o conteúdo anterior.
