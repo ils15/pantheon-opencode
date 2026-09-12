@@ -12,6 +12,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🆕 What's New
 
+## 🐞 Fixed
+
+## ⚠️ Known Issues
+
+## ✅ Closed Issues
+
+## [v1.5.0-beta.5] - 2026-09-12
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
 - **Native background tasks in the delegation panel:** tasks dispatched via
   the native `task(background=true)` tool are now mirrored onto the shared
   BackgroundJobBoard, so the TUI delegation panel tracks them while running
@@ -41,11 +54,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   project manifest errors; the installer sets `cwd: "."`.
 - **Code-mode manifest doctor check (#113):** `doctor` validates manifest shape,
   script membership, and SHA-256 hashes without regenerating the manifest.
-
-## ⚠️ Known Issues
-
-## ✅ Closed Issues
-
 ## [v1.5.0-beta.4] - 2026-09-11
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
