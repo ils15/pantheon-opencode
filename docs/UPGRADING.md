@@ -31,6 +31,26 @@ npx pantheon-opencode init --opencode-version auto
 `auto` is not general platform autodetection and never installs both Pantheon
 plugin generations.
 
+### Updating between beta releases (1.5.0-beta.5+)
+
+1. Stop OpenCode.
+2. Run `npx pantheon-opencode update` (beta channel, the default during
+   1.5.0 prereleases) or `npx pantheon-opencode update --stable`. The command
+   compares the installed version with the npm dist-tag, installs the newer
+   package globally, and re-runs `init --yes --headless` so config merges,
+   the Python venv and MCP entries match the new package.
+3. If the update was interrupted, just run `init` again — every copy step is
+   byte-compare idempotent and the config write leaves an
+   `opencode.json.bak` of the previous content.
+4. Start OpenCode and optionally confirm with `npx pantheon-opencode doctor`
+   (it compares the installed-version marker against the package and warns on
+   drift).
+
+Copy-only artifacts (agents, skills, AGENTS.md, commands, MCP scripts and the
+code-mode payload) are refreshed automatically by the package postinstall on
+every `npm install`; `init`/`update` is only required for config merges, the
+venv and MCP entries.
+
 ### Migration checklist
 
 1. Stop OpenCode before changing the plugin generation.

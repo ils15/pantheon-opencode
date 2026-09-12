@@ -59,7 +59,7 @@ declare function readAllDelegationEntries(root: string): Promise<DelegationEntry
 declare function resolveDelegationsDir(state: {
   directory?: string;
   worktree?: string;
-} | undefined, cwd?: any): string;
+} | undefined, cwd?: string): string;
 /** Project root derived from the delegations dir: `<root>/.pantheon/delegations`
  *  → `<root>`. Used to point the panel logger at the REAL hooks.log — passing
  *  the delegations dir (or its dirname) directly made createTuiLogger append

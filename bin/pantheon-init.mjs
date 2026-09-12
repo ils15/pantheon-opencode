@@ -22,9 +22,10 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 
-const REQUIRED_NODE_MAJOR = 18
+const REQUIRED_NODE_MAJOR = 22
 if (parseInt(process.versions.node.split('.')[0], 10) < REQUIRED_NODE_MAJOR) {
   console.error(`❌ Node.js >= ${REQUIRED_NODE_MAJOR} required (current: ${process.versions.node})`)
+  console.error('   Install a newer Node via nvm: https://github.com/nvm-sh/nvm')
   process.exit(1)
 }
 
@@ -50,9 +51,13 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --interactive  # Force interactive TUI mode')
   console.log('  npx pantheon-opencode init --headless     # Force non-interactive mode')
   console.log('  npx pantheon-opencode init -y             # Skip confirmations, use defaults')
+  console.log('  npx pantheon-opencode init --components agents,skills,instructions')
   console.log('  npx pantheon-opencode init --opencode-version v1|v2|auto')
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
   console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)')
+  console.log(
+    '  npx pantheon-opencode update [--stable]    # Update package + re-run init (default: beta channel)',
+  )
   console.log(
     '  npx pantheon-opencode set-tier <name> --project  # Set active model preset (project)',
   )
@@ -110,6 +115,78 @@ async function main() {
       cwd: ROOT,
     })
     process.exit(result.status ?? 1)
+  }
+
+  // beta.5: one-command update — check npm dist-tag, install, re-init.
+  // Default channel is `beta` (the prerelease line); `--stable` uses `latest`.
+  if (command === 'update') {
+    const channel = args.includes('--stable') ? 'latest' : 'beta'
+    const current = readVersion()
+    const { spawnSync } = await import('node:child_process')
+    const _S = (await import('../scripts/install/strings.mjs')).strings()
+
+    console.log(`Pantheon OpenCode v${current} — checking the "${channel}" channel...`)
+    const view = spawnSync('npm', ['view', `pantheon-opencode@${channel}`, 'version'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+    const latest = (view.stdout || '').trim().split('\n').filter(Boolean).pop()
+    if (view.status !== 0 || !latest) {
+      console.error(
+        `❌ Could not reach the npm registry: ${(view.stderr || view.stdout || '').trim() || 'no version returned'}`,
+      )
+      process.exit(1)
+    }
+
+    // Prerelease-aware compare: core (major.minor.patch) first, then the
+    // beta counter; a stable release outranks any beta of the same core.
+    const parsePantheonVersion = (v) => {
+      const m = String(v)
+        .trim()
+        .match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
+      if (!m) return null
+      return {
+        core: [+m[1], +m[2], +m[3]],
+        beta: m[4] === undefined ? Number.POSITIVE_INFINITY : +m[4],
+      }
+    }
+    const cmp = (a, b) => {
+      const pa = parsePantheonVersion(a)
+      const pb = parsePantheonVersion(b)
+      if (!pa || !pb) return 0
+      for (let i = 0; i < 3; i++) {
+        if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i]
+      }
+      return pa.beta - pb.beta
+    }
+    if (cmp(latest, current) <= 0) {
+      console.log(`✅ Already up to date (installed v${current}; ${channel} channel: v${latest}).`)
+      return
+    }
+
+    console.log(`Updating v${current} → v${latest} (channel: ${channel})...`)
+    const install = spawnSync('npm', ['install', '-g', `pantheon-opencode@${channel}`], {
+      stdio: 'inherit',
+    })
+    if (install.status !== 0) {
+      console.error('❌ npm install failed — the previous installation is untouched.')
+      process.exit(install.status ?? 1)
+    }
+
+    // Refresh config/venv/MCP entries with the NEW package (resolved via
+    // PATH — the freshly installed global bin).
+    const init = spawnSync('pantheon-opencode', ['init', '--yes', '--headless'], {
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    })
+    if (init.status !== 0 || init.error) {
+      console.error(
+        '⚠️  Updated, but the config refresh did not complete — run `npx pantheon-opencode init` manually.',
+      )
+      process.exit(init.status ?? 1)
+    }
+    console.log(`✅ Updated to v${latest}.`)
+    return
   }
 
   if (args.includes('--help')) {
@@ -195,11 +272,49 @@ async function main() {
     const isProject = args.includes('--project')
     const isDryRun = args.includes('--dry-run')
     const skipMCP = args.includes('--no-mcp')
-    const forceReinstall = args.includes('--force')
+    // --clean is an alias of --force (both wipe component dirs + recreate venv).
+    const forceReinstall = args.includes('--force') || args.includes('--clean')
     const runDoctor = args.includes('--doctor')
     const forceInteractive = args.includes('--interactive')
     const forceHeadless = args.includes('--headless')
     const autoYes = args.includes('--yes') || args.includes('-y')
+
+    // beta.5: warn on unrecognized flags instead of silently ignoring them.
+    const VALUE_FLAGS = new Set([
+      '--preset',
+      '--model',
+      '--small-model',
+      '--version',
+      '--opencode-version',
+      '--components',
+    ])
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i]
+      if (!arg.startsWith('--') || arg === '--help') continue
+      if (VALUE_FLAGS.has(arg)) {
+        i++ // skip the flag's value
+        continue
+      }
+      const bare = arg.split('=', 1)[0]
+      if (
+        !VALUE_FLAGS.has(bare) &&
+        ![
+          '--project',
+          '--dry-run',
+          '--no-mcp',
+          '--force',
+          '--clean',
+          '--doctor',
+          '--interactive',
+          '--headless',
+          '--yes',
+          '-y',
+        ].includes(bare)
+      ) {
+        console.error(`⚠️  Unknown option ignored: ${arg}`)
+      }
+    }
+
     const presetIndex = args.indexOf('--preset')
     const presetOpt = presetIndex >= 0 ? (args[presetIndex + 1] ?? null) : null
     // Explicit top-level model overrides for the generated config.
@@ -207,8 +322,9 @@ async function main() {
     const modelOpt = modelIndex >= 0 ? (args[modelIndex + 1] ?? null) : null
     const smallModelIndex = args.indexOf('--small-model')
     const smallModelOpt = smallModelIndex >= 0 ? (args[smallModelIndex + 1] ?? null) : null
-    // --version v1|v2 labels the install target (informational; the config is
-    // shared and V1-shaped under both versions). Invalid values fail fast.
+    // --version v1|v2|auto labels the install target. `auto` resolves the
+    // generation from the opencode binary at install time (see
+    // scripts/install/opencode-version.mjs). Invalid values fail fast.
     const versionIndex = args.indexOf('--version')
     const legacyVersionIndex = args.indexOf('--opencode-version')
     const inlineVersion = args.find((arg) => arg.startsWith('--opencode-version='))
@@ -218,20 +334,61 @@ async function main() {
         : legacyVersionIndex >= 0
           ? (args[legacyVersionIndex + 1] ?? null)
           : (inlineVersion?.split('=', 2)[1] ?? null)
-    if (versionOpt !== null && versionOpt !== 'v1' && versionOpt !== 'v2') {
-      console.error(`❌ Invalid --version "${versionOpt}" — expected v1 or v2`)
+    if (
+      versionOpt !== null &&
+      versionOpt !== 'v1' &&
+      versionOpt !== 'v2' &&
+      versionOpt !== 'auto'
+    ) {
+      console.error(`❌ Invalid --version "${versionOpt}" — expected v1, v2 or auto`)
       process.exit(1)
     }
 
-    const components = ['agents', 'skills', 'instructions', 'commands', 'plugins']
-    if (!skipMCP) components.push('runtime')
+    // --components agents,skills,... narrows the install; --no-mcp drops the
+    // runtime component. Unknown component names fail fast (typo protection).
+    const KNOWN_COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime']
+    const componentsIndex = args.indexOf('--components')
+    const inlineComponents = args.find((arg) => arg.startsWith('--components='))
+    const componentsOpt =
+      componentsIndex >= 0
+        ? (args[componentsIndex + 1] ?? null)
+        : (inlineComponents?.split('=', 2)[1] ?? null)
+    let requestedComponents = null
+    if (componentsOpt !== null) {
+      requestedComponents = componentsOpt
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean)
+      const unknown = requestedComponents.filter((c) => !KNOWN_COMPONENTS.includes(c))
+      if (requestedComponents.length === 0 || unknown.length > 0) {
+        console.error(
+          `❌ Invalid --components "${componentsOpt}" — expected comma-separated names from: ${KNOWN_COMPONENTS.join(', ')}`,
+        )
+        process.exit(1)
+      }
+    }
+
+    const components = requestedComponents ?? [
+      'agents',
+      'skills',
+      'instructions',
+      'commands',
+      'plugins',
+    ]
+    if (!skipMCP && !components.includes('runtime')) components.push('runtime')
+    if (skipMCP) {
+      const runtimeIndex = components.indexOf('runtime')
+      if (runtimeIndex >= 0) components.splice(runtimeIndex, 1)
+    }
 
     // Version info
     const version = readVersion()
+    const { strings } = await import('../scripts/install/strings.mjs')
+    const S = strings()
 
     console.log('')
     if (!forceInteractive || isDryRun) {
-      console.log(`Pantheon OpenCode v${version} — ${isDryRun ? 'DRY RUN' : 'Installing...'}`)
+      console.log(`Pantheon OpenCode v${version} — ${isDryRun ? S.dryRun : S.installing}`)
       console.log('')
     }
 
@@ -248,15 +405,17 @@ async function main() {
         version: versionOpt ?? 'v1',
       })
     } catch (err) {
-      console.error(
-        `❌ Installation failed: ${err.message}\n   Run with --no-mcp to skip Python dependencies:\n     npx pantheon-opencode init --no-mcp\n   Or retry with --force to recreate the venv:\n     npx pantheon-opencode init --force`,
-      )
+      if (err?.message === 'Canceled') {
+        console.error(S.canceled)
+        process.exit(130)
+      }
+      console.error(`${S.installFailed(err.message)}\n${S.failHintNoMcp}\n${S.failHintForce}`)
       process.exit(1)
     }
 
     if (runDoctor && !isDryRun) {
       console.log('')
-      console.log('  Running health check...')
+      console.log(`  ${S.runningHealthCheck}`)
       try {
         const { spawnSync } = await import('node:child_process')
         const doctorScript = path.join(ROOT, 'scripts', 'doctor.mjs')
@@ -268,16 +427,14 @@ async function main() {
 
     console.log('')
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-    console.log(`  ✅ Pantheon OpenCode v${version} installed!`)
+    console.log(`  ${S.installedTitle(version)}`)
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
     console.log('')
-    console.log('  Next steps:')
-    console.log('  1. Verify installation:')
-    console.log('     npx pantheon-opencode doctor')
-    console.log('  2. Launch OpenCode')
-    console.log('  3. Invoke agents with @agent-name in chat')
-    console.log('  4. For project-local install:')
-    console.log('     npx pantheon-opencode init --project')
+    console.log(`  ${S.nextSteps}`)
+    console.log(`  ${S.nextVerify}`)
+    console.log(`  ${S.nextLaunch}`)
+    console.log(`  ${S.nextAgents}`)
+    console.log(`  ${S.nextProject}`)
     console.log('')
 
     return

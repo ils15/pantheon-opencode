@@ -138,7 +138,7 @@ export function sanitizeNpmEnv(env = process.env) {
 
 // ── Main ───────────────────────────────────────────────────────────────
 
-function main() {
+async function main() {
   try {
     const configDir = resolveConfigDir()
     if (!configDir) {
@@ -148,8 +148,17 @@ function main() {
 
     const tuiCopyDir = join(configDir, 'plugins', 'pantheon-tui')
     if (!existsSync(tuiCopyDir)) {
-      // TUI plugin not installed — silent exit
-      process.exit(0)
+      // beta.5: no TUI install (plugins component omitted) — skip the TUI
+      // sync but STILL refresh the copy-only artifacts below.
+      const { syncCopyArtifacts } = await import('./sync-artifacts.mjs')
+      const synced = syncCopyArtifacts(configDir)
+      if (synced.errors.length > 0) {
+        for (const e of synced.errors) console.error(`  ⚠️  artifact sync: ${e}`)
+      }
+      console.log(
+        `  Artifacts synced: ${synced.created} updated, ${synced.skipped} already current`,
+      )
+      return
     }
 
     // Source: TUI plugin inside the installed package
@@ -181,6 +190,38 @@ function main() {
         `  TUI plugin updated to v${sourceVersion || 'latest'}${installedVersion ? ` (was v${installedVersion})` : ''}`,
       )
     }
+
+    // ── beta.5 freshness guarantee: refresh ALL copy-only artifacts ──
+    // Agents, skills, AGENTS.md, commands, MCP scripts, code-mode payload.
+    // The plugin references in opencode.json already point INTO this package,
+    // so only the copies would go stale after a package update.
+    const { syncCopyArtifacts } = await import('./sync-artifacts.mjs')
+    const { readState, writeState } = await import('./install/state.mjs')
+    const pkgVersion = readVersion(join(ROOT, 'package.json')) ?? 'unknown'
+    const synced = syncCopyArtifacts(configDir)
+    if (synced.errors.length > 0) {
+      for (const e of synced.errors) console.error(`  ⚠️  artifact sync: ${e}`)
+    }
+    console.log(`  Artifacts synced: ${synced.created} updated, ${synced.skipped} already current`)
+
+    // Version marker so doctor can detect a stale installation and point the
+    // user at `pantheon-opencode update` for the full refresh (config merge,
+    // venv, MCP entries).
+    try {
+      const previous = readState(configDir)
+      writeState(configDir, {
+        pantheon_version: pkgVersion,
+        previous_version: previous?.pantheon_version ?? null,
+      })
+      if (previous?.pantheon_version && previous.pantheon_version !== pkgVersion) {
+        console.log(
+          `  ⚠️  Installation moved ${previous.pantheon_version} → ${pkgVersion}. ` +
+            'Run `npx pantheon-opencode init` to refresh config/venv/MCP entries.',
+        )
+      }
+    } catch {
+      // Marker is best-effort — never fail the postinstall over it.
+    }
   } catch (err) {
     console.error(`❌ TUI sync failed: ${err.message}`)
     process.exitCode = 1
@@ -192,4 +233,9 @@ function main() {
 const isDirectRun =
   Boolean(process.argv[1]) && pathToFileURL(process.argv[1]).href === import.meta.url
 
-if (isDirectRun) main()
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error(`❌ TUI sync failed: ${err.message}`)
+    process.exitCode = 1
+  })
+}

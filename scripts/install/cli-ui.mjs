@@ -1,3 +1,5 @@
+import { strings } from './strings.mjs'
+
 export const icons = {
   success: '\u2705',
   warning: '\u26a0\ufe0f ',
@@ -160,28 +162,32 @@ export function spinner(message) {
 export function printSummary(target, platforms, stats) {
   if (_quiet) return
 
+  const S = strings()
   const line = '\u2500'.repeat(Math.min(process.stdout.columns || 60, 60))
   const hasErrors = stats && stats.errors > 0
   console.log(
     tag(
       hasErrors
-        ? `${icons.warning} Instalação concluída com erros em ${target}`
-        : `${icons.rocket} OpenCode instalado em ${target}`,
+        ? `${icons.warning} ${S.summaryWithErrors(target)}`
+        : `${icons.rocket} ${S.summaryInstalled(target)}`,
     ),
   )
   console.log(tag(line))
   console.log('')
 
   if (stats) {
-    console.log(tag(`  Componentes:\t${stats.created} instalados, ${stats.skipped} pulados`))
+    console.log(tag(S.summaryComponents(stats.created, stats.skipped)))
     if (stats.errors > 0) {
-      console.warn(tag(`  ${icons.warning}${stats.errors} erro(s) encontrados`))
+      console.warn(tag(S.summaryErrors(stats.errors)))
+    }
+    if (stats.warnings > 0) {
+      console.warn(tag(S.summaryWarnings(stats.warnings)))
     }
     console.log('')
   }
 
-  console.log(tag(`  ${icons.star} Próximos passos:`))
-  console.log(tag(`    ${icons.bullet} Configure seus agentes em opencode.json`))
-  console.log(tag(`    ${icons.bullet} Adicione MCP servers em mcp.json`))
-  console.log(tag(`    ${icons.bullet} Rode 'opencode doctor' para verificar a instalação`))
+  console.log(tag(`  ${icons.star} ${S.summaryNext.trim()}`))
+  console.log(tag(S.summaryNextAgents))
+  console.log(tag(S.summaryNextMcp))
+  console.log(tag(S.summaryNextDoctor))
 }

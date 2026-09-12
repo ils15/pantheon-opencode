@@ -35,6 +35,7 @@ import { detectVersion, runMigrations } from './migrate.mjs'
 import { resolveOpenCodeVersion } from './opencode-version.mjs'
 import { copyPluginFiles, installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
 import {
+  checkRuntimePrerequisites,
   collectSkillNames,
   copyFiles,
   installSkills,
@@ -43,8 +44,10 @@ import {
   sourceDirValid,
   summary,
   syncDir,
+  writeConfigWithBackup,
   writeIfChanged,
 } from './shared.mjs'
+import { strings } from './strings.mjs'
 
 import { setupVenv, venvPythonPath } from './venv.mjs'
 
@@ -372,6 +375,45 @@ export function syncTuiRegistration(target, { isGlobal = false, dryRun = false }
   return registerPlugin(targetTuiConfigPath, tuiCopyDir, { dryRun })
 }
 
+/**
+ * beta.5: set up the Python venv + run the health check. Never throws —
+ * failures are reported as warnings and return false so the caller omits
+ * MCP entries from the config (entries pointing at a missing venv would
+ * make every MCP fail to launch). `deps` is injectable for tests.
+ */
+export function setupRuntimePhase(target, { dryRun, clean, isGlobal }, stats, deps = {}) {
+  const S = strings()
+  const setup = deps.setupVenv ?? setupVenv
+  const check = deps.healthCheck ?? healthCheck
+  try {
+    const venvSpinner = spinner(S.settingUpRuntime)
+    setup(target, { dryRun, force: clean })
+    venvSpinner(true)
+    const runtimeTarget = isGlobal ? target : join(target, '.opencode')
+    const health = check(runtimeTarget, { dryRun, pythonTarget: target })
+
+    section(`\uD83D\uDD0D ${S.healthSection}`)
+    const healthStep = step(S.runningHealthChecks)
+    for (const p of health.passed) success(`${p.check}: ${p.detail}`)
+    for (const w of health.warnings) warning(`${w.check}: ${w.detail}`)
+    for (const f of health.failed) error(`${f.check}: ${f.detail}`)
+
+    if (health.failed.length > 0) {
+      healthStep(false)
+      warning(`${health.failed.length} check(s) failed — review above`)
+      stats.warnings += health.failed.length
+      return false
+    }
+    healthStep(true)
+    return true
+  } catch (err) {
+    error(S.runtimeFailed(err.message))
+    warning(S.runtimeSkippedMcp)
+    stats.warnings += 1
+    return false
+  }
+}
+
 export async function installOpenCode(
   target,
   dryRun = false,
@@ -386,6 +428,7 @@ export async function installOpenCode(
 
   const componentSet = new Set(components)
   const stats = summary.opencode
+  const S = strings()
 
   // V1/V2 dual-version awareness (Phase 3): the installer builds a unified
   // config, then applies V2-native migration (migrateV1toV2) when
@@ -434,6 +477,17 @@ export async function installOpenCode(
   const config = readJsonConfig(targetConfigPath)
   const pantheonConfig = readJsonConfig(pantheonConfigPath)
 
+  // beta.5 preflight: fail BEFORE any files are written when the runtime
+  // component needs toolchain pieces that are missing. Nothing has been
+  // copied yet at this point, so the failure is clean.
+  if (componentSet.has('runtime') && !dryRun) {
+    const missing = checkRuntimePrerequisites()
+    if (missing.length > 0) {
+      for (const problem of missing) error(problem)
+      throw new Error(S.prereqMissing)
+    }
+  }
+
   // Determine layout based on install scope.
   // Global config dir (~/.opencode or ~/.config/opencode) uses a flat layout:
   //   agents/   skills/   commands/   plugins/
@@ -446,7 +500,7 @@ export async function installOpenCode(
   configure({ dryRun })
 
   if (isGlobal) {
-    info('Global config directory detected — using flat layout (agents/, skills/, commands/)')
+    info(S.globalLayout)
   }
 
   // -----------------------------------------------------------------------
@@ -459,7 +513,7 @@ export async function installOpenCode(
       warning(`Agent source directory not found: ${srcDir}`)
       stats.errors++
     } else {
-      const agentStep = step('Installing agents')
+      const agentStep = step(S.installingAgents)
       const dstDir = isGlobal ? join(target, 'agents') : join(target, '.opencode', 'agents')
       if (!dryRun) mkdirSync(dstDir, { recursive: true })
       if (clean && existsSync(dstDir) && !dryRun) {
@@ -710,6 +764,17 @@ export async function installOpenCode(
       if (status === 'created') stats.created++
       else stats.skipped++
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // 2.11 Setup virtual environment + health check (--components runtime)
+  // beta.5: runs BEFORE the config write and is no longer fatal — on failure
+  // the install completes without MCP entries (which would point at a venv
+  // that does not exist) instead of aborting a half-done installation.
+  // -----------------------------------------------------------------------
+  let runtimeHealthy = !componentSet.has('runtime')
+  if (componentSet.has('runtime')) {
+    runtimeHealthy = setupRuntimePhase(target, { dryRun, clean, isGlobal }, stats)
   }
 
   // -----------------------------------------------------------------------
@@ -1053,8 +1118,10 @@ export async function installOpenCode(
 
   // --------------------------------------------------------------------
   // F.5 MCP server entries (for runtime-deployed scripts)
+  // beta.5: skipped when the Python runtime setup failed — entries pointing
+  // at a venv that does not exist would make every MCP fail to launch.
   // --------------------------------------------------------------------
-  if (componentSet.has('runtime')) {
+  if (componentSet.has('runtime') && runtimeHealthy) {
     config.mcp = config.mcp || {}
     // MCP stays a flat named-server map for BOTH V1 and V2: OpenCode 1.18.x
     // has no `mcp.servers` wrapper and rejects one with
@@ -1138,12 +1205,12 @@ export async function installOpenCode(
   // before writing. V1 path is untouched (zero regression).
   let configToWrite = config
   if (version === 'v2') {
-    info('Migrating config to V2 native format...')
+    info(S.v2Migrating)
     configToWrite = migrateV1toV2(config)
   }
 
   const configContent = `${JSON.stringify(configToWrite, null, 2)}\n`
-  const status = writeIfChanged(targetConfigPath, configContent, dryRun)
+  const status = writeConfigWithBackup(targetConfigPath, configContent, dryRun)
   if (status === 'created') stats.created++
   else stats.skipped++
 
@@ -1164,40 +1231,15 @@ export async function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
-  // 4. Setup virtual environment + health check (--components runtime)
+  // 4. (runtime setup moved to 2.11 — before the config write — so MCP
+  //    entries are only added when the Python runtime is actually healthy)
   // -----------------------------------------------------------------------
-  if (componentSet.has('runtime')) {
-    try {
-      const venvSpinner = spinner('Setting up Python virtual environment')
-      setupVenv(target, { dryRun, force: clean })
-      venvSpinner(true)
-      const runtimeTarget = isGlobal ? target : join(target, '.opencode')
-      const health = healthCheck(runtimeTarget, { dryRun, pythonTarget: target })
-
-      // Print health summary
-      section('\uD83D\uDD0D Health Check')
-      const healthStep = step('Running health checks')
-      for (const p of health.passed) success(`${p.check}: ${p.detail}`)
-      for (const w of health.warnings) warning(`${w.check}: ${w.detail}`)
-      for (const f of health.failed) error(`${f.check}: ${f.detail}`)
-
-      if (health.failed.length > 0) {
-        healthStep(false)
-        warning(`${health.failed.length} check(s) failed — review above`)
-        stats.errors += health.failed.length
-      } else {
-        healthStep(true)
-      }
-    } catch (err) {
-      error(`Setup failed: ${err.message}`)
-      throw err // Fatal — abort installation
-    }
-  }
 
   if (interactive && !dryRun) {
     const created = stats.created
     const skipped = stats.skipped
     const errors = stats.errors
+    const warnings = stats.warnings ?? 0
 
     process.stdout.write('\n')
     process.stdout.write(
@@ -1215,11 +1257,14 @@ export async function installOpenCode(
       process.stdout.write(`  ${colors.dim('\u2014')} ${skipped} already up-to-date\n`)
     if (errors > 0)
       process.stdout.write(`  ${colors.yellow('\u26a0')} ${errors} error(s) encountered\n`)
+    if (warnings > 0)
+      process.stdout.write(
+        `  ${colors.yellow('\u26a0')} ${warnings} warning(s) — run 'pantheon-opencode doctor' for details\n`,
+      )
     process.stdout.write('\n')
     process.stdout.write(`  ${colors.bold('Next steps:')}\n`)
     process.stdout.write(`  ${colors.dim('\u2022')} Configure agents in opencode.json\n`)
-    process.stdout.write(`  ${colors.dim('\u2022')} Add MCP servers in mcp.json\n`)
-    process.stdout.write(`  ${colors.dim('\u2022')} Run 'opencode doctor' to verify\n`)
+    process.stdout.write(`  ${colors.dim('\u2022')} Run 'pantheon-opencode doctor' to verify\n`)
     process.stdout.write(
       `  ${colors.dim('\u2022')} Run 'opencode' to start using Pantheon agents\n`,
     )

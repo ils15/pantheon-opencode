@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
-import { BackgroundJobBoard } from './pantheon/background-job-board.ts'
 import { createCommandNormalizer } from './pantheon/command-normalizer.ts'
 import {
   type ContextSandboxConfig,
@@ -30,7 +29,6 @@ import {
 } from './pantheon/delegation-enforce.ts'
 import { handleDelegationEvent } from './pantheon/delegation-notify.ts'
 import { showDelegationTerminalToast, type ToastClient } from './pantheon/delegation-toast.ts'
-import { FilePersistenceAdapter } from './pantheon/file-persistence.ts'
 import { GOAL_LOOP_DEFAULTS, GoalLoop, GoalStore } from './pantheon/goal-loop.ts'
 import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
@@ -45,6 +43,7 @@ import {
   loadRoutingPermissionTask,
 } from './pantheon/presets.mjs'
 import { safeSessionPath } from './pantheon/session-guard.ts'
+import { getSharedBoard } from './pantheon/shared-board.ts'
 import { StepCapTracker } from './pantheon/step-cap.ts'
 import { createTaskResultGuard } from './pantheon/task-result-guard.ts'
 import {
@@ -77,12 +76,11 @@ const stepCapTracker = new StepCapTracker(loadRoutingMaxSteps({ logger: log }))
 // (fail-open → undefined = existing runtime matrix only).
 const routingPermissionTask = loadRoutingPermissionTask({ logger: log })
 
-const board = new BackgroundJobBoard({
-  maxConcurrentPerAgent: 3,
-  signalDir: '.pantheon/deepwork/board-signals',
-})
-const persistence = new FilePersistenceAdapter('.pantheon/board/state.json')
-board.setPersistence(persistence)
+// beta.5: the board is a PROCESS-wide singleton (getSharedBoard) shared with
+// src/plugins/pantheon-hooks.ts, whose native-task mirror registers children
+// here; the finalize path below (session.idle + idle scan) must observe the
+// SAME instance. globalThis anchoring dedupes the npm+repo double load.
+const board = getSharedBoard()
 let terminalToastClient: ToastClient = {}
 board
   .recoverRunningJobs()
