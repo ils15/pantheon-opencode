@@ -48,6 +48,10 @@ node scripts/version-check.mjs
 npm run release:dry-run
 ```
 
+# beta.5: rebuild the TUI bundle AFTER the version bump — dist embeds the
+# package version and the CI "TUI dist freshness" gate fails otherwise.
+npm install --prefix src/plugins/tui && npm run build --prefix src/plugins/tui
+
 `apply` syncs the version manifests (`package.json`, `plugin.json`,
 `pyproject.toml`, `src/plugins/tui/package.json`) and promotes the
 `[Unreleased]` changelog section to a versioned entry. `apply --beta` (alias
