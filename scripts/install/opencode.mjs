@@ -217,6 +217,21 @@ function managedPluginIdentity(ref) {
     if (absolutePath === normalizePluginPath(resolve(ROOT, PANTHEON_V2_LEGACY_FILE))) {
       return PANTHEON_V2_PLUGIN
     }
+    // beta.5: stale refs from OTHER installed copies of this package (older
+    // nvm prefixes, npx cache hashes). Only paths inside
+    // `node_modules/pantheon-opencode/` count as installed copies — a dev
+    // checkout elsewhere (e.g. a vendor folder named pantheon-opencode) remains
+    // protected by the third-party rule above.
+    const installedMarker = '/node_modules/pantheon-opencode/'
+    const withSlashes = normalizePluginPath(normalized)
+    const markerIndex = withSlashes.lastIndexOf(installedMarker)
+    if (markerIndex !== -1) {
+      const suffix = withSlashes.slice(markerIndex + installedMarker.length)
+      if (suffix === PANTHEON_V1_PLUGIN) return PANTHEON_V1_PLUGIN
+      if (suffix === PANTHEON_V1_HOOKS) return PANTHEON_V1_HOOKS
+      if (suffix === PANTHEON_V2_PLUGIN) return PANTHEON_V2_PLUGIN
+      if (suffix === PANTHEON_V2_LEGACY_FILE) return PANTHEON_V2_PLUGIN
+    }
   }
 
   return null

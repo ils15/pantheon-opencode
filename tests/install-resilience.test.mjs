@@ -148,3 +148,39 @@ test('CLI accepts --opencode-version auto and --components; warns on unknown fla
     rmSync(target, { recursive: true, force: true })
   }
 })
+
+test('install prunes Pantheon refs from stale install locations, keeps third-party', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-stale-refs-'))
+  try {
+    const seed = {
+      plugin: [
+        '/home/old/.nvm/versions/node/v22.22.2/lib/node_modules/pantheon-opencode/src/plugin.ts',
+        '/home/old/.nvm/versions/node/v22.22.2/lib/node_modules/pantheon-opencode/src/plugins/pantheon-hooks.ts',
+        '/home/old/.npm/_npx/deadbeef/node_modules/pantheon-opencode/src/plugin.ts',
+        '/tmp/vendor/src/plugin.ts',
+        '@scope/user-plugin',
+      ],
+    }
+    writeFileSync(join(target, 'opencode.json'), JSON.stringify(seed, null, 2))
+
+    await installOpenCode(target, false, false, ['agents'], {
+      yes: true,
+      headless: true,
+      version: 'v1',
+    })
+
+    const refs = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')).plugin
+    const stale = refs.filter((r) => typeof r === 'string' && r.includes('/old/'))
+    assert.deepEqual(stale, [], `stale install refs must be pruned: ${JSON.stringify(refs)}`)
+    assert.ok(
+      refs.includes(join(ROOT, 'src', 'plugin.ts')) &&
+        refs.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
+      'current install refs must be present',
+    )
+    assert.ok(refs.includes('/tmp/vendor/src/plugin.ts'), 'third-party preserved')
+    assert.ok(refs.includes('@scope/user-plugin'), 'user plugin preserved')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
