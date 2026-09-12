@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🆕 What's New
 
+- **Roadmap zerado:** o plano ativo não tem mais itens pendentes. Sprints
+  nunca implementados dos planos v1.0/v1.0+ foram removidos; o contrato atual
+  passou a documentar o code-mode (manifest SHA-256, resolução project-first).
+
 ## 🐞 Fixed
 
 - **Code-mode project resolution (#112):** the MCP now resolves project code-mode
