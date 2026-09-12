@@ -12,6 +12,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🆕 What's New
 
+- **Native background tasks in the delegation panel:** tasks dispatched via
+  the native `task(background=true)` tool are now mirrored onto the shared
+  BackgroundJobBoard, so the TUI delegation panel tracks them while running
+  and the existing finalize path writes their terminal report.
+- **`pantheon-opencode update`:** one command updates the global package
+  (beta or stable channel) and re-runs init to refresh config, venv and MCP
+  entries. The installer stamps the installed version and `doctor` warns when
+  the package is newer than the last sync.
+- **Always-fresh artifacts:** the package postinstall now refreshes all
+  copy-only artifacts (agents, skills, AGENTS.md, commands, MCP scripts,
+  code-mode payload) into existing installations on every `npm install`; a CI
+  gate rebuilds the TUI bundle and fails if the committed `dist/` is stale.
+- **More resilient installer:** preflight checks for python3/npm before any
+  file is written, atomic `opencode.json` writes with a `.bak` backup,
+  non-fatal Python runtime setup (a venv failure now omits MCP entries with a
+  warning instead of pointing at a broken interpreter), `--components` /
+  `--clean` / `--opencode-version auto` flags, unknown-flag warnings and
+  pt-BR/EN message auto-detection via `LANG`.
 - **Roadmap zerado:** o plano ativo não tem mais itens pendentes. Sprints
   nunca implementados dos planos v1.0/v1.0+ foram removidos; o contrato atual
   passou a documentar o code-mode (manifest SHA-256, resolução project-first).
