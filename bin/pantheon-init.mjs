@@ -308,10 +308,12 @@ async function main() {
 
     // Version info
     const version = readVersion()
+    const { strings } = await import('../scripts/install/strings.mjs')
+    const S = strings()
 
     console.log('')
     if (!forceInteractive || isDryRun) {
-      console.log(`Pantheon OpenCode v${version} — ${isDryRun ? 'DRY RUN' : 'Installing...'}`)
+      console.log(`Pantheon OpenCode v${version} — ${isDryRun ? S.dryRun : S.installing}`)
       console.log('')
     }
 
@@ -329,18 +331,16 @@ async function main() {
       })
     } catch (err) {
       if (err?.message === 'Canceled') {
-        console.error('Installation canceled — nothing was broken; run init again anytime.')
+        console.error(S.canceled)
         process.exit(130)
       }
-      console.error(
-        `❌ Installation failed: ${err.message}\n   Run with --no-mcp to skip Python dependencies:\n     npx pantheon-opencode init --no-mcp\n   Or retry with --force to recreate the venv:\n     npx pantheon-opencode init --force`,
-      )
+      console.error(`${S.installFailed(err.message)}\n${S.failHintNoMcp}\n${S.failHintForce}`)
       process.exit(1)
     }
 
     if (runDoctor && !isDryRun) {
       console.log('')
-      console.log('  Running health check...')
+      console.log(`  ${S.runningHealthCheck}`)
       try {
         const { spawnSync } = await import('node:child_process')
         const doctorScript = path.join(ROOT, 'scripts', 'doctor.mjs')
@@ -352,16 +352,14 @@ async function main() {
 
     console.log('')
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-    console.log(`  ✅ Pantheon OpenCode v${version} installed!`)
+    console.log(`  ${S.installedTitle(version)}`)
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
     console.log('')
-    console.log('  Next steps:')
-    console.log('  1. Verify installation:')
-    console.log('     npx pantheon-opencode doctor')
-    console.log('  2. Launch OpenCode')
-    console.log('  3. Invoke agents with @agent-name in chat')
-    console.log('  4. For project-local install:')
-    console.log('     npx pantheon-opencode init --project')
+    console.log(`  ${S.nextSteps}`)
+    console.log(`  ${S.nextVerify}`)
+    console.log(`  ${S.nextLaunch}`)
+    console.log(`  ${S.nextAgents}`)
+    console.log(`  ${S.nextProject}`)
     console.log('')
 
     return
