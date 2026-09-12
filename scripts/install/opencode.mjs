@@ -35,6 +35,7 @@ import { detectVersion, runMigrations } from './migrate.mjs'
 import { resolveOpenCodeVersion } from './opencode-version.mjs'
 import { copyPluginFiles, installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
 import {
+  checkRuntimePrerequisites,
   collectSkillNames,
   copyFiles,
   installSkills,
@@ -43,6 +44,7 @@ import {
   sourceDirValid,
   summary,
   syncDir,
+  writeConfigWithBackup,
   writeIfChanged,
 } from './shared.mjs'
 
@@ -372,6 +374,47 @@ export function syncTuiRegistration(target, { isGlobal = false, dryRun = false }
   return registerPlugin(targetTuiConfigPath, tuiCopyDir, { dryRun })
 }
 
+/**
+ * beta.5: set up the Python venv + run the health check. Never throws —
+ * failures are reported as warnings and return false so the caller omits
+ * MCP entries from the config (entries pointing at a missing venv would
+ * make every MCP fail to launch). `deps` is injectable for tests.
+ */
+export function setupRuntimePhase(target, { dryRun, clean, isGlobal }, stats, deps = {}) {
+  const setup = deps.setupVenv ?? setupVenv
+  const check = deps.healthCheck ?? healthCheck
+  try {
+    const venvSpinner = spinner('Setting up Python virtual environment')
+    setup(target, { dryRun, force: clean })
+    venvSpinner(true)
+    const runtimeTarget = isGlobal ? target : join(target, '.opencode')
+    const health = check(runtimeTarget, { dryRun, pythonTarget: target })
+
+    section('\uD83D\uDD0D Health Check')
+    const healthStep = step('Running health checks')
+    for (const p of health.passed) success(`${p.check}: ${p.detail}`)
+    for (const w of health.warnings) warning(`${w.check}: ${w.detail}`)
+    for (const f of health.failed) error(`${f.check}: ${f.detail}`)
+
+    if (health.failed.length > 0) {
+      healthStep(false)
+      warning(`${health.failed.length} check(s) failed — review above`)
+      stats.warnings += health.failed.length
+      return false
+    }
+    healthStep(true)
+    return true
+  } catch (err) {
+    error(`Python runtime setup failed: ${err.message}`)
+    warning(
+      'MCP servers were NOT configured because the Python runtime is unavailable. ' +
+        'Fix python3 (or free disk space) and re-run init to add them; everything else was installed.',
+    )
+    stats.warnings += 1
+    return false
+  }
+}
+
 export async function installOpenCode(
   target,
   dryRun = false,
@@ -433,6 +476,19 @@ export async function installOpenCode(
   const targetConfigPath = join(target, 'opencode.json')
   const config = readJsonConfig(targetConfigPath)
   const pantheonConfig = readJsonConfig(pantheonConfigPath)
+
+  // beta.5 preflight: fail BEFORE any files are written when the runtime
+  // component needs toolchain pieces that are missing. Nothing has been
+  // copied yet at this point, so the failure is clean.
+  if (componentSet.has('runtime') && !dryRun) {
+    const missing = checkRuntimePrerequisites()
+    if (missing.length > 0) {
+      for (const problem of missing) error(problem)
+      throw new Error(
+        'runtime prerequisites missing — install the tools above, or re-run with --no-mcp to install without Python MCP servers',
+      )
+    }
+  }
 
   // Determine layout based on install scope.
   // Global config dir (~/.opencode or ~/.config/opencode) uses a flat layout:
@@ -710,6 +766,17 @@ export async function installOpenCode(
       if (status === 'created') stats.created++
       else stats.skipped++
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // 2.11 Setup virtual environment + health check (--components runtime)
+  // beta.5: runs BEFORE the config write and is no longer fatal — on failure
+  // the install completes without MCP entries (which would point at a venv
+  // that does not exist) instead of aborting a half-done installation.
+  // -----------------------------------------------------------------------
+  let runtimeHealthy = !componentSet.has('runtime')
+  if (componentSet.has('runtime')) {
+    runtimeHealthy = setupRuntimePhase(target, { dryRun, clean, isGlobal }, stats)
   }
 
   // -----------------------------------------------------------------------
@@ -1053,8 +1120,10 @@ export async function installOpenCode(
 
   // --------------------------------------------------------------------
   // F.5 MCP server entries (for runtime-deployed scripts)
+  // beta.5: skipped when the Python runtime setup failed — entries pointing
+  // at a venv that does not exist would make every MCP fail to launch.
   // --------------------------------------------------------------------
-  if (componentSet.has('runtime')) {
+  if (componentSet.has('runtime') && runtimeHealthy) {
     config.mcp = config.mcp || {}
     // MCP stays a flat named-server map for BOTH V1 and V2: OpenCode 1.18.x
     // has no `mcp.servers` wrapper and rejects one with
@@ -1143,7 +1212,7 @@ export async function installOpenCode(
   }
 
   const configContent = `${JSON.stringify(configToWrite, null, 2)}\n`
-  const status = writeIfChanged(targetConfigPath, configContent, dryRun)
+  const status = writeConfigWithBackup(targetConfigPath, configContent, dryRun)
   if (status === 'created') stats.created++
   else stats.skipped++
 
@@ -1164,35 +1233,9 @@ export async function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
-  // 4. Setup virtual environment + health check (--components runtime)
+  // 4. (runtime setup moved to 2.11 — before the config write — so MCP
+  //    entries are only added when the Python runtime is actually healthy)
   // -----------------------------------------------------------------------
-  if (componentSet.has('runtime')) {
-    try {
-      const venvSpinner = spinner('Setting up Python virtual environment')
-      setupVenv(target, { dryRun, force: clean })
-      venvSpinner(true)
-      const runtimeTarget = isGlobal ? target : join(target, '.opencode')
-      const health = healthCheck(runtimeTarget, { dryRun, pythonTarget: target })
-
-      // Print health summary
-      section('\uD83D\uDD0D Health Check')
-      const healthStep = step('Running health checks')
-      for (const p of health.passed) success(`${p.check}: ${p.detail}`)
-      for (const w of health.warnings) warning(`${w.check}: ${w.detail}`)
-      for (const f of health.failed) error(`${f.check}: ${f.detail}`)
-
-      if (health.failed.length > 0) {
-        healthStep(false)
-        warning(`${health.failed.length} check(s) failed — review above`)
-        stats.errors += health.failed.length
-      } else {
-        healthStep(true)
-      }
-    } catch (err) {
-      error(`Setup failed: ${err.message}`)
-      throw err // Fatal — abort installation
-    }
-  }
 
   if (interactive && !dryRun) {
     const created = stats.created

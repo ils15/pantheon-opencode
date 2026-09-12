@@ -177,6 +177,11 @@ export function printSummary(target, platforms, stats) {
     if (stats.errors > 0) {
       console.warn(tag(`  ${icons.warning}${stats.errors} erro(s) encontrados`))
     }
+    if (stats.warnings > 0) {
+      console.warn(
+        tag(`  ${icons.warning}${stats.warnings} aviso(s) — rode 'doctor' para detalhes`),
+      )
+    }
     console.log('')
   }
 

@@ -22,9 +22,10 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 
-const REQUIRED_NODE_MAJOR = 18
+const REQUIRED_NODE_MAJOR = 22
 if (parseInt(process.versions.node.split('.')[0], 10) < REQUIRED_NODE_MAJOR) {
   console.error(`❌ Node.js >= ${REQUIRED_NODE_MAJOR} required (current: ${process.versions.node})`)
+  console.error('   Install a newer Node via nvm: https://github.com/nvm-sh/nvm')
   process.exit(1)
 }
 
@@ -50,6 +51,7 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --interactive  # Force interactive TUI mode')
   console.log('  npx pantheon-opencode init --headless     # Force non-interactive mode')
   console.log('  npx pantheon-opencode init -y             # Skip confirmations, use defaults')
+  console.log('  npx pantheon-opencode init --components agents,skills,instructions')
   console.log('  npx pantheon-opencode init --opencode-version v1|v2|auto')
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
   console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)')
@@ -195,11 +197,49 @@ async function main() {
     const isProject = args.includes('--project')
     const isDryRun = args.includes('--dry-run')
     const skipMCP = args.includes('--no-mcp')
-    const forceReinstall = args.includes('--force')
+    // --clean is an alias of --force (both wipe component dirs + recreate venv).
+    const forceReinstall = args.includes('--force') || args.includes('--clean')
     const runDoctor = args.includes('--doctor')
     const forceInteractive = args.includes('--interactive')
     const forceHeadless = args.includes('--headless')
     const autoYes = args.includes('--yes') || args.includes('-y')
+
+    // beta.5: warn on unrecognized flags instead of silently ignoring them.
+    const VALUE_FLAGS = new Set([
+      '--preset',
+      '--model',
+      '--small-model',
+      '--version',
+      '--opencode-version',
+      '--components',
+    ])
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i]
+      if (!arg.startsWith('--') || arg === '--help') continue
+      if (VALUE_FLAGS.has(arg)) {
+        i++ // skip the flag's value
+        continue
+      }
+      const bare = arg.split('=', 1)[0]
+      if (
+        !VALUE_FLAGS.has(bare) &&
+        ![
+          '--project',
+          '--dry-run',
+          '--no-mcp',
+          '--force',
+          '--clean',
+          '--doctor',
+          '--interactive',
+          '--headless',
+          '--yes',
+          '-y',
+        ].includes(bare)
+      ) {
+        console.error(`⚠️  Unknown option ignored: ${arg}`)
+      }
+    }
+
     const presetIndex = args.indexOf('--preset')
     const presetOpt = presetIndex >= 0 ? (args[presetIndex + 1] ?? null) : null
     // Explicit top-level model overrides for the generated config.
@@ -207,8 +247,9 @@ async function main() {
     const modelOpt = modelIndex >= 0 ? (args[modelIndex + 1] ?? null) : null
     const smallModelIndex = args.indexOf('--small-model')
     const smallModelOpt = smallModelIndex >= 0 ? (args[smallModelIndex + 1] ?? null) : null
-    // --version v1|v2 labels the install target (informational; the config is
-    // shared and V1-shaped under both versions). Invalid values fail fast.
+    // --version v1|v2|auto labels the install target. `auto` resolves the
+    // generation from the opencode binary at install time (see
+    // scripts/install/opencode-version.mjs). Invalid values fail fast.
     const versionIndex = args.indexOf('--version')
     const legacyVersionIndex = args.indexOf('--opencode-version')
     const inlineVersion = args.find((arg) => arg.startsWith('--opencode-version='))
@@ -218,13 +259,52 @@ async function main() {
         : legacyVersionIndex >= 0
           ? (args[legacyVersionIndex + 1] ?? null)
           : (inlineVersion?.split('=', 2)[1] ?? null)
-    if (versionOpt !== null && versionOpt !== 'v1' && versionOpt !== 'v2') {
-      console.error(`❌ Invalid --version "${versionOpt}" — expected v1 or v2`)
+    if (
+      versionOpt !== null &&
+      versionOpt !== 'v1' &&
+      versionOpt !== 'v2' &&
+      versionOpt !== 'auto'
+    ) {
+      console.error(`❌ Invalid --version "${versionOpt}" — expected v1, v2 or auto`)
       process.exit(1)
     }
 
-    const components = ['agents', 'skills', 'instructions', 'commands', 'plugins']
-    if (!skipMCP) components.push('runtime')
+    // --components agents,skills,... narrows the install; --no-mcp drops the
+    // runtime component. Unknown component names fail fast (typo protection).
+    const KNOWN_COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime']
+    const componentsIndex = args.indexOf('--components')
+    const inlineComponents = args.find((arg) => arg.startsWith('--components='))
+    const componentsOpt =
+      componentsIndex >= 0
+        ? (args[componentsIndex + 1] ?? null)
+        : (inlineComponents?.split('=', 2)[1] ?? null)
+    let requestedComponents = null
+    if (componentsOpt !== null) {
+      requestedComponents = componentsOpt
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean)
+      const unknown = requestedComponents.filter((c) => !KNOWN_COMPONENTS.includes(c))
+      if (requestedComponents.length === 0 || unknown.length > 0) {
+        console.error(
+          `❌ Invalid --components "${componentsOpt}" — expected comma-separated names from: ${KNOWN_COMPONENTS.join(', ')}`,
+        )
+        process.exit(1)
+      }
+    }
+
+    const components = requestedComponents ?? [
+      'agents',
+      'skills',
+      'instructions',
+      'commands',
+      'plugins',
+    ]
+    if (!skipMCP && !components.includes('runtime')) components.push('runtime')
+    if (skipMCP) {
+      const runtimeIndex = components.indexOf('runtime')
+      if (runtimeIndex >= 0) components.splice(runtimeIndex, 1)
+    }
 
     // Version info
     const version = readVersion()
@@ -248,6 +328,10 @@ async function main() {
         version: versionOpt ?? 'v1',
       })
     } catch (err) {
+      if (err?.message === 'Canceled') {
+        console.error('Installation canceled — nothing was broken; run init again anytime.')
+        process.exit(130)
+      }
       console.error(
         `❌ Installation failed: ${err.message}\n   Run with --no-mcp to skip Python dependencies:\n     npx pantheon-opencode init --no-mcp\n   Or retry with --force to recreate the venv:\n     npx pantheon-opencode init --force`,
       )

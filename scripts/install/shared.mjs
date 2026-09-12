@@ -2,12 +2,15 @@
  * shared.mjs — Shared utilities for the OpenCode installer
  */
 
+import { spawnSync } from 'node:child_process'
 import {
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -41,7 +44,7 @@ export function getAgentNames() {
 // Cached constant for backward compatibility
 export const AGENT_NAMES = getAgentNames()
 
-export const summary = { opencode: { created: 0, skipped: 0, errors: 0 } }
+export const summary = { opencode: { created: 0, skipped: 0, errors: 0, warnings: 0 } }
 
 export function showHelp() {
   console.log(`
@@ -260,9 +263,47 @@ export function writeIfChanged(filePath, content, dryRun) {
     return 'skipped'
   }
   if (!dryRun) {
-    writeFileSync(filePath, content, 'utf8')
+    // Atomic write: write a temp sibling and rename over the target so a
+    // crash mid-write can never leave a truncated file behind (rename is
+    // atomic within the same directory).
+    const tmpPath = `${filePath}.tmp-${process.pid}`
+    writeFileSync(tmpPath, content, 'utf8')
+    renameSync(tmpPath, filePath)
   }
   return 'created'
+}
+
+/**
+ * beta.5: write the user's opencode.json with a same-directory backup of the
+ * previous content. The installer rewrites the whole config; a `.bak` gives
+ * the user a one-step recovery if a merge ever goes wrong.
+ */
+export function writeConfigWithBackup(filePath, content, dryRun) {
+  if (!dryRun && existsSync(filePath)) {
+    copyFileSync(filePath, `${filePath}.bak`)
+  }
+  return writeIfChanged(filePath, content, dryRun)
+}
+
+/**
+ * beta.5 preflight: verify the toolchain pieces the runtime component needs
+ * BEFORE any files are written, so a missing python3/npm fails in seconds
+ * with a clear message instead of aborting a half-done install.
+ * Returns a list of human-readable problems (empty = all good).
+ */
+export function checkRuntimePrerequisites(env = process.env) {
+  const problems = []
+  const checks = [
+    { cmd: 'python3', hint: 'install Python 3.10+ (https://www.python.org/downloads/)' },
+    { cmd: 'npm', hint: 'install Node.js 22+ (https://nodejs.org) — npm ships with it' },
+  ]
+  for (const { cmd, hint } of checks) {
+    const probe = spawnSync(cmd, ['--version'], { encoding: 'utf8', timeout: 10_000, env })
+    if (probe.error || probe.status !== 0) {
+      problems.push(`${cmd} not found or not runnable — ${hint}`)
+    }
+  }
+  return problems
 }
 
 export function collectSkillNames() {
