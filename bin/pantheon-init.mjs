@@ -55,6 +55,7 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --opencode-version v1|v2|auto')
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
   console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)')
+  console.log('  npx pantheon-opencode update [--stable]    # Update package + re-run init (default: beta channel)')
   console.log(
     '  npx pantheon-opencode set-tier <name> --project  # Set active model preset (project)',
   )
@@ -112,6 +113,73 @@ async function main() {
       cwd: ROOT,
     })
     process.exit(result.status ?? 1)
+  }
+
+  // beta.5: one-command update — check npm dist-tag, install, re-init.
+  // Default channel is `beta` (the prerelease line); `--stable` uses `latest`.
+  if (command === 'update') {
+    const channel = args.includes('--stable') ? 'latest' : 'beta'
+    const current = readVersion()
+    const { spawnSync } = await import('node:child_process')
+    const S = (await import('../scripts/install/strings.mjs')).strings()
+
+    console.log(`Pantheon OpenCode v${current} — checking the "${channel}" channel...`)
+    const view = spawnSync('npm', ['view', `pantheon-opencode@${channel}`, 'version'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+    const latest = (view.stdout || '').trim().split('\n').filter(Boolean).pop()
+    if (view.status !== 0 || !latest) {
+      console.error(
+        `❌ Could not reach the npm registry: ${(view.stderr || view.stdout || '').trim() || 'no version returned'}`,
+      )
+      process.exit(1)
+    }
+
+    // Prerelease-aware compare: core (major.minor.patch) first, then the
+    // beta counter; a stable release outranks any beta of the same core.
+    const parsePantheonVersion = (v) => {
+      const m = String(v).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
+      if (!m) return null
+      return { core: [+m[1], +m[2], +m[3]], beta: m[4] === undefined ? Number.POSITIVE_INFINITY : +m[4] }
+    }
+    const cmp = (a, b) => {
+      const pa = parsePantheonVersion(a)
+      const pb = parsePantheonVersion(b)
+      if (!pa || !pb) return 0
+      for (let i = 0; i < 3; i++) {
+        if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i]
+      }
+      return pa.beta - pb.beta
+    }
+    if (cmp(latest, current) <= 0) {
+      console.log(`✅ Already up to date (installed v${current}; ${channel} channel: v${latest}).`)
+      return
+    }
+
+    console.log(`Updating v${current} → v${latest} (channel: ${channel})...`)
+    const install = spawnSync('npm', ['install', '-g', `pantheon-opencode@${channel}`], {
+      stdio: 'inherit',
+    })
+    if (install.status !== 0) {
+      console.error('❌ npm install failed — the previous installation is untouched.')
+      process.exit(install.status ?? 1)
+    }
+
+    // Refresh config/venv/MCP entries with the NEW package (resolved via
+    // PATH — the freshly installed global bin).
+    const init = spawnSync('pantheon-opencode', ['init', '--yes', '--headless'], {
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    })
+    if (init.status !== 0 || init.error) {
+      console.error(
+        '⚠️  Updated, but the config refresh did not complete — run `npx pantheon-opencode init` manually.',
+      )
+      process.exit(init.status ?? 1)
+    }
+    console.log(`✅ Updated to v${latest}.`)
+    return
   }
 
   if (args.includes('--help')) {

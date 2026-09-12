@@ -1105,6 +1105,82 @@ export function resolveMcpCwd(entry, configPath = '') {
 }
 
 // ---------------------------------------------------------------------------
+// Check H2: installed-version drift (beta.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Prerelease-aware comparison for pantheon versions (X.Y.Z or X.Y.Z-beta.N).
+ * A stable release outranks any beta of the same core version. Returns
+ * <0, 0, >0 (a - b). The shared compareVersions/parseVersion above ignores
+ * the `-beta.N` suffix (it only reads 4 numeric groups), which would make
+ * every beta pair compare equal.
+ */
+function comparePantheonVersions(a, b) {
+  const parse = (v) => {
+    const m = String(v).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
+    if (!m) return null
+    return { core: [+m[1], +m[2], +m[3]], beta: m[4] === undefined ? Number.POSITIVE_INFINITY : +m[4] }
+  }
+  const pa = parse(a)
+  const pb = parse(b)
+  if (!pa || !pb) return 0
+  for (let i = 0; i < 3; i++) {
+    if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i]
+  }
+  return pa.beta - pb.beta
+}
+
+/**
+ * Compare the version recorded in the installation marker
+ * (<config>/.pantheon/install-state.json, written by the postinstall sync)
+ * against this package's version. When the package is newer, the config
+ * merge/venv/MCP wiring may be stale — point the user at `update`.
+ * Advisory only: a missing marker (pre-beta.5 install) is not an error.
+ */
+export function checkInstallVersionDrift(args) {
+  section('H2 Installed Version')
+  const env = args.env ?? process.env
+  let pkgVersion = null
+  try {
+    pkgVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+  } catch {
+    return 'no-marker'
+  }
+  if (!pkgVersion) return 'no-marker'
+
+  const statePath = join(resolveOpenCodeConfigDir(env), '.pantheon', 'install-state.json')
+  let installed = null
+  if (existsSync(statePath)) {
+    try {
+      installed = JSON.parse(readFileSync(statePath, 'utf8')).pantheon_version ?? null
+    } catch {
+      installed = null
+    }
+  }
+  if (!installed) {
+    info('No installation version marker found (pre-beta.5 install) — skipping drift check')
+    return 'no-marker'
+  }
+  const drift = comparePantheonVersions(pkgVersion, installed)
+  if (drift > 0) {
+    warn(
+      `Package v${pkgVersion} is newer than the last-synced installation (v${installed}) — ` +
+        'run `npx pantheon-opencode update` (or re-run init) to refresh config, venv and MCP entries',
+    )
+    return 'package-newer'
+  }
+  if (drift < 0) {
+    warn(
+      `Installation marker (v${installed}) is newer than this package (v${pkgVersion}) — ` +
+        'the doctor is running from a different install than the last sync',
+    )
+    return 'install-newer'
+  }
+  pass(`Installation in sync with package v${pkgVersion}`)
+  return 'sync'
+}
+
+// ---------------------------------------------------------------------------
 // Check G: AGENTS.md freshness
 // ---------------------------------------------------------------------------
 
@@ -1401,6 +1477,7 @@ async function main() {
   checkVenvLayer(args)
   checkCodeModeDir(args)
   checkCodeModeManifest(args)
+  checkInstallVersionDrift(args)
   await checkMcpRuntimeSmoke(args)
   checkPermissionMismatches(args)
   checkSyncStatus(args)
