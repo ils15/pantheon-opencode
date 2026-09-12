@@ -177,6 +177,7 @@ import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import { pantheonPluginOnce } from '../pantheon/plugin-once.ts'
+import { getSharedBoard } from '../pantheon/shared-board.ts'
 import { type HookPayload, type HookResult, runHook } from './hook-runner.ts'
 
 /** Tools that represent a subagent delegation (opencode `task` tool etc.). */
@@ -775,6 +776,51 @@ function delegationAgent(tool: string, args?: unknown): string {
   return tool
 }
 
+/**
+ * beta.5: mirror a native background task dispatch onto the SHARED board
+ * (getSharedBoard) so the existing finalize path in plugin.ts (session.idle
+ * event + 30s idle scan) writes the terminal report and the TUI delegation
+ * panel tracks the child end-to-end. Fire-and-forget and silent: a mirror
+ * failure must never surface into the tool call or the transcript.
+ * registerLaunchIfAbsent keeps it idempotent against any other dispatcher
+ * (v2-events, plugin double-load, repeated after-hook firings).
+ */
+function mirrorNativeBackgroundDispatch(
+  input: { tool: string; sessionID: string },
+  args: unknown,
+  result: ToolExecuteAfterResult | null,
+): void {
+  const taskID = extractTaskId(result)
+  if (taskID === '' || typeof input.sessionID !== 'string' || input.sessionID === '') return
+  const description = trim(delegationDescription(args) ?? `native ${input.tool} dispatch`, 200)
+  try {
+    getSharedBoard()
+      .registerLaunchIfAbsent({
+        taskID,
+        parentSessionID: input.sessionID,
+        agent: delegationAgent(input.tool, args),
+        description,
+      })
+      .catch(() => {
+        // Mirror is best-effort — never surface into the tool call.
+      })
+  } catch {
+    // Never let the mirror take down the tool call.
+  }
+}
+
+/** Task description from task-tool args (description ?? prompt); undefined when absent. */
+function delegationDescription(args: unknown): string | undefined {
+  try {
+    const a = (args ?? {}) as Record<string, unknown>
+    const raw = a.description ?? a.prompt
+    if (typeof raw === 'string' && raw.trim() !== '') return raw
+  } catch {
+    // Malformed args — fall through to the generic description.
+  }
+  return undefined
+}
+
 /** 🚀 delegation-started toast (variant 'info', 2500ms), deduped per agent. */
 async function delegationStartedToast(ctx: HookContext, agent: string): Promise<void> {
   await throttledToast(ctx, {
@@ -1311,6 +1357,11 @@ const plugin: Plugin = async ({ client, directory }) => {
             // NOT a completion: do not mark the group done and do not fire ✅
             // — that would corrupt olympians aggregation. Real completion of
             // background tasks is unobservable on 1.18.13 (see header).
+            // beta.5: mirror the native background child onto the SHARED
+            // board so the existing finalize path (session.idle + idle scan
+            // in plugin.ts) writes the terminal report and the TUI
+            // delegation panel tracks the child end-to-end. Fire-and-forget.
+            mirrorNativeBackgroundDispatch(input, args, result)
           } else {
             const handledByOlympians = handleOlympiansCompletion(ctx, agent)
             if (!handledByOlympians) void delegationDoneToast(ctx, agent)
