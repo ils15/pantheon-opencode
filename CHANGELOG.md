@@ -18,6 +18,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.6] - 2026-09-12
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Delegation panel v2:** live tool activity per running delegation
+  (`↳ bash npm test` — what the child is doing right now), a paginated
+  `Archived (n)` section for terminal reports beyond the recent 8, and a
+  distinct `retry` state (⟳ marker, RETRYING label) instead of lumping
+  retries into running.
+
+## 🐞 Fixed
+
+- **Stale plugin refs from old installs:** the installer now prunes
+  `pantheon-opencode` plugin references pointing at other installed copies of
+  the package (older nvm prefixes, npx cache hashes). Previously every init
+  accumulated refs from past installs and the oldest — without the newest
+  fixes — won the plugin load race, silently disabling native-task
+  mirroring. Third-party plugins sharing the same file names remain
+  protected.
+- **Docs:** `@beta` dist-tag guidance on all npx commands — plain
+  `npx pantheon-opencode` resolves the stable release and silently downgrades
+  the installed TUI copy.
 ## [v1.5.0-beta.5] - 2026-09-12
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
