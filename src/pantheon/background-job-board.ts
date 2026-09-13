@@ -457,7 +457,12 @@ export class BackgroundJobBoard {
     job.terminalUnreconciled = false
 
     await this.persistRecord(job)
-    await this.writeSignal(job)
+    // P1-1: reconcile is an acknowledgment, NOT a new terminal transition
+    // (onTerminal does not re-fire). Re-writing a `.signal.json` here leaked
+    // orphan signals with `state:"reconciled"` after the finalize→reconcile
+    // cycle deleted them. Instead, remove any still-pending wake signal so
+    // reconcile leaves no `<alias>.signal.json` behind.
+    await this.deleteSignal(job.alias)
 
     return job
   }

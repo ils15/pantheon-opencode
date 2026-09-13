@@ -4,7 +4,8 @@
  * Run with: npx tsx tests/pantheon/file-persistence.test.ts
  */
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import * as fsp from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { consumeWakeSignals } from '../../src/pantheon/auto-wake.ts'
@@ -12,7 +13,11 @@ import {
   BackgroundJobBoard,
   type BackgroundJobRecord,
 } from '../../src/pantheon/background-job-board.ts'
-import { FilePersistenceAdapter } from '../../src/pantheon/file-persistence.ts'
+import {
+  FilePersistenceAdapter,
+  type PersistenceFsOps,
+  salvageRecords,
+} from '../../src/pantheon/file-persistence.ts'
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
@@ -41,6 +46,46 @@ function makeLaunch(
     parentSessionID: overrides.parentSessionID ?? 'ses_test',
     agent: overrides.agent ?? 'apollo',
     description: overrides.description ?? 'Test job',
+  }
+}
+
+/** Build a complete BackgroundJobRecord with sensible defaults. */
+function makeRecord(
+  taskID: string,
+  overrides: Partial<BackgroundJobRecord> = {},
+): BackgroundJobRecord {
+  const now = Date.now()
+  return {
+    taskID,
+    parentSessionID: 'ses_test',
+    agent: 'apollo',
+    description: 'record',
+    state: 'running',
+    timedOut: false,
+    alias: `apo-${taskID}`,
+    launchedAt: now,
+    updatedAt: now,
+    totalErrors: 0,
+    timeoutCount: 0,
+    terminalUnreconciled: false,
+    contextFiles: [],
+    ...overrides,
+  }
+}
+
+/** Real fs backed ops with overridable rename/readFile for fault injection. */
+function makeOps(
+  renameOverride?: PersistenceFsOps['rename'],
+  readFileOverride?: PersistenceFsOps['readFile'],
+): PersistenceFsOps {
+  return {
+    mkdir: async (dir) => {
+      await fsp.mkdir(dir, { recursive: true })
+    },
+    readFile: readFileOverride ?? ((path, encoding) => fsp.readFile(path, encoding)),
+    rename: renameOverride ?? ((from, to) => fsp.rename(from, to)),
+    openForWrite: (path) => fsp.open(path, 'w'),
+    unlink: (path) => fsp.unlink(path),
   }
 }
 
@@ -545,9 +590,179 @@ async function main() {
   })
 
   // ═══════════════════════════════════════════════════════════════════════
-  // SUMMARY (inside main)
+  // P0 — ROBUST PERSISTENCE (corruption, concurrency, rename ENOENT)
   // ═══════════════════════════════════════════════════════════════════════
 
+  await testAsync('P0: salvageRecords extracts complete records from truncated JSON', async () => {
+    const truncated =
+      '[{"taskID":"a","state":"running"},{"taskID":"b","state":"running"},{"taskID":"c","sta'
+    const salvaged = salvageRecords(truncated)
+    assert.equal(salvaged.length, 2, 'only the two complete objects are salvageable')
+    assert.deepEqual(
+      salvaged.map((r) => r.taskID),
+      ['a', 'b'],
+    )
+  })
+
+  await testAsync(
+    'P0: loadAllJobs survives NUL-corrupted state.json (backup + no throw)',
+    async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'fp-nul-'))
+      try {
+        const statePath = join(tmpDir, 'state.json')
+        writeFileSync(statePath, `\u0000\u0000\u0000${'x'.repeat(32)}\u0000`, 'utf-8')
+        const adapter = new FilePersistenceAdapter(statePath)
+
+        const loaded = await adapter.loadAllJobs()
+        assert.deepEqual(loaded, [], 'corrupt file yields empty state, never throws')
+
+        const backups = readdirSync(tmpDir).filter((f) => f.includes('.corrupt-'))
+        assert.equal(backups.length, 1, 'corrupt file is backed up exactly once')
+        assert.equal(existsSync(statePath), false, 'corrupt file is moved out of the way')
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'P0: loadAllJobs survives unterminated JSON string and salvages valid records',
+    async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'fp-unterminated-'))
+      try {
+        const statePath = join(tmpDir, 'state.json')
+        // First object is valid and complete; the second is truncated mid-string.
+        writeFileSync(
+          statePath,
+          '[{"taskID":"a","state":"completed","alias":"apo-a"},{"taskID":"b","alias":"apo-b',
+          'utf-8',
+        )
+        const adapter = new FilePersistenceAdapter(statePath)
+
+        const loaded = await adapter.loadAllJobs()
+        assert.equal(loaded.length, 1, 'complete leading record is recovered')
+        assert.equal(loaded[0]?.taskID, 'a')
+        assert.ok(
+          readdirSync(tmpDir).some((f) => f.includes('.corrupt-')),
+          'corrupt file is backed up',
+        )
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('P0: deleteJob on corrupted state.json does not throw or loop', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'fp-del-corrupt-'))
+    try {
+      const statePath = join(tmpDir, 'state.json')
+      writeFileSync(statePath, '\u0000[{"taskID":"a","alias":"apo-a', 'utf-8')
+      const adapter = new FilePersistenceAdapter(statePath)
+
+      // Several delete attempts must all resolve without throwing (no loop).
+      await adapter.deleteJob('a')
+      await adapter.deleteJob('a')
+      await adapter.deleteJob('ghost')
+
+      const backups = readdirSync(tmpDir).filter((f) => f.includes('.corrupt-'))
+      assert.equal(backups.length, 1, 'corrupt file backed up only once')
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
+    'P0: concurrent writes from two adapters serialize (no lost job, no rename ENOENT)',
+    async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'fp-concurrent-'))
+      try {
+        const statePath = join(tmpDir, 'state.json')
+        const a = new FilePersistenceAdapter(statePath)
+        const b = new FilePersistenceAdapter(statePath)
+
+        // Simulate plugin×native firing at the same tick.
+        await Promise.all([
+          a.saveJob(makeRecord('job-a', { alias: 'apo-1' })),
+          b.saveJob(makeRecord('job-b', { alias: 'her-1' })),
+          a.saveJob(makeRecord('job-c', { alias: 'apo-2' })),
+        ])
+
+        const raw = readFileSync(statePath, 'utf-8')
+        const parsed = JSON.parse(raw) as BackgroundJobRecord[]
+        assert.equal(parsed.length, 3, 'all concurrent writes survive')
+        assert.deepEqual(parsed.map((r) => r.taskID).sort(), ['job-a', 'job-b', 'job-c'])
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'P0: writeState recovers from rename ENOENT by recreating dir and retrying',
+    async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'fp-enoent-'))
+      try {
+        const statePath = join(tmpDir, 'nested', 'state.json')
+        let renameAttempts = 0
+        const ops = makeOps(async (from, to) => {
+          renameAttempts++
+          if (renameAttempts <= 2) {
+            const err = new Error('rename lost the race') as NodeJS.ErrnoException
+            err.code = 'ENOENT'
+            throw err
+          }
+          await fsp.rename(from, to)
+        })
+        const adapter = new FilePersistenceAdapter(statePath, ops)
+
+        await adapter.saveJob(makeRecord('retry-1', { alias: 'apo-1' }))
+        await adapter.saveJob(makeRecord('retry-2', { alias: 'apo-2' }))
+
+        assert.ok(renameAttempts >= 3, 'retried after ENOENT before succeeding')
+        const parsed = JSON.parse(readFileSync(statePath, 'utf-8')) as BackgroundJobRecord[]
+        assert.equal(parsed.length, 2, 'both records persisted after retry recovery')
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'P0: saveJob aborts on non-ENOENT read error (EIO) and preserves existing state',
+    async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'fp-eio-'))
+      try {
+        const statePath = join(tmpDir, 'state.json')
+        // Seed one real record with a healthy adapter.
+        const healthy = new FilePersistenceAdapter(statePath)
+        await healthy.saveJob(makeRecord('existing', { alias: 'apo-1' }))
+        const before = readFileSync(statePath, 'utf-8')
+
+        // A second adapter whose reads fail with EIO (not ENOENT).
+        const eio = new Error('simulated I/O error') as NodeJS.ErrnoException
+        eio.code = 'EIO'
+        const ops = makeOps(undefined, async () => {
+          throw eio
+        })
+        const faulty = new FilePersistenceAdapter(statePath, ops)
+
+        // Must NOT throw and must NOT overwrite the on-disk state.
+        await faulty.saveJob(makeRecord('new-record', { alias: 'her-1' }))
+
+        const after = readFileSync(statePath, 'utf-8')
+        assert.equal(after, before, 'failed read must not overwrite existing state')
+        const parsed = JSON.parse(after) as BackgroundJobRecord[]
+        assert.equal(parsed.length, 1, 'only the original record remains')
+        assert.equal(parsed[0]?.taskID, 'existing')
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SUMMARY (inside main)
+  // ═══════════════════════════════════════════════════════════════════════
   const passed = results.filter((r) => r.passed).length
   const failed = results.filter((r) => !r.passed)
 
