@@ -61,6 +61,7 @@ import {
 import { finalizeIdleChildrenWithoutMd } from './delegation-notify.ts'
 import { createPantheonLogger } from './logger.ts'
 import { buildAgentListDescription } from './permission-globs.ts'
+import { safeSessionPath } from './session-guard.ts'
 import { buildStopInstruction, cappedSummary, DEFAULT_MAX_STEPS } from './step-cap.ts'
 
 export type {
@@ -96,6 +97,40 @@ function readIntegerEnv(
   return Number.isSafeInteger(value) && value >= minimum ? value : fallback
 }
 
+// ─── B1: unresolved session template guard ─────────────────────────────
+//
+// The TUI/runtime can hand a plugin surface the UNSUBSTITUTED template literal
+// `{sessionID}` (URL-encoded `%7BsessionID%7D`) when no session is focused.
+// Forwarding it to a session API makes the opencode server reject every call
+// (`Expected a string starting with "ses", got "%7BsessionID%7D"`), which the
+// beta.7 E2E recorded at ~1k errors/s. The delegation layer is a defensive
+// choke point too: it is downstream of the plugin adapter in production, but
+// tests, older hosts, and direct embedders can inject a raw client.
+//
+// This guard targets the placeholder ONLY. It is deliberately NOT the full
+// `isValidSessionId` contract: structural test hosts use non-"ses" ids on
+// purpose (delegation-bootstrap.test.ts), and rejecting those would be a
+// behavior change unrelated to this bug. `session-guard.ts` remains the
+// strict choke point for the plugin adapters.
+const UNRESOLVED_SESSION_TEMPLATE = /(?:\{sessionID\}|%7BsessionID%7D)/i
+
+/** True when a session id is an unresolved `{sessionID}` template placeholder. */
+export function isUnresolvedSessionTemplate(id: unknown): boolean {
+  return typeof id === 'string' && UNRESOLVED_SESSION_TEMPLATE.test(id)
+}
+
+/**
+ * Refuse a placeholder session id before it reaches a session API. Returns
+ * true (and logs a clear warning) when the caller must skip the operation.
+ */
+function refuseUnresolvedSessionTemplate(id: unknown, operation: string): boolean {
+  if (!isUnresolvedSessionTemplate(id)) return false
+  log.warn(
+    `[pantheon-delegate] ${operation} skipped: unresolved session template "${String(id)}" — the host did not substitute the session id`,
+  )
+  return true
+}
+
 type BootstrapOutcome =
   | { status: 'started'; elapsedMs: number; reason: string }
   | { status: 'startup_failed' | 'bootstrap_unknown'; elapsedMs: number; reason: string }
@@ -115,6 +150,9 @@ async function promptWithTimeout(
   input: Parameters<DelegationClient['session']['promptAsync']>[0],
   timeoutMs: number,
 ): Promise<PromptOutcome> {
+  if (refuseUnresolvedSessionTemplate(input.path.id, 'promptAsync')) {
+    return { status: 'rejected', reason: `invalid sessionID: ${input.path.id}` }
+  }
   const controller = new AbortController()
   let timer: NodeJS.Timeout | undefined
   const operation = client.session.promptAsync({ ...input, signal: controller.signal }).then(
@@ -189,6 +227,14 @@ async function bootstrapChild(
   const hasMessagesAPI = typeof client.session.messages === 'function'
   const hasStatusAPI = typeof client.session.get === 'function'
   const acceptedRunning = isRunningSession(accepted)
+
+  if (refuseUnresolvedSessionTemplate(childSessionID, 'bootstrap probe')) {
+    return {
+      status: 'bootstrap_unknown',
+      elapsedMs: 0,
+      reason: `invalid child sessionID "${childSessionID}"`,
+    }
+  }
 
   if (!hasMessagesAPI && !hasStatusAPI) {
     return acceptedRunning
@@ -403,6 +449,72 @@ function stateLabel(state: BackgroundJobRecord['state']): string {
   }
 }
 
+// ─── B2: session-scoped delegation target resolution ───────────────────
+//
+// Board aliases restart per parent session (apo-1 in every root), so an alias
+// lookup MUST be scoped to the calling session. `pantheon_delegation_read`
+// previously delegated to the board's first-match resolver and, when the id
+// was not found in the current session, the generic "Unknown delegation"
+// message hid the real cause (the alias belonged to another session). This
+// helper makes the scoping explicit and returns a CLEAR error for each
+// cross-session / ambiguous case.
+
+/** Resolution outcome for a delegation read by task ID or alias. */
+export type DelegationTargetResolution =
+  | { kind: 'found'; job: BackgroundJobRecord }
+  | { kind: 'error'; message: string }
+
+/**
+ * Resolve a `pantheon_delegation_read` target with strict session scoping:
+ *   - exact task-ID match first (must belong to `sessionID`);
+ *   - then alias matches WITHIN `sessionID` (exactly one required);
+ *   - an alias that exists only in another session → clear cross-session
+ *     error (never another session's job);
+ *   - two matches in this session → clear ambiguity error.
+ */
+export function resolveDelegationTarget(
+  board: Pick<BackgroundJobBoard, 'list'>,
+  sessionID: string,
+  idOrAlias: string,
+): DelegationTargetResolution {
+  const jobs = board.list()
+
+  const byTaskID = jobs.find((job) => job.taskID === idOrAlias)
+  if (byTaskID !== undefined) {
+    if (byTaskID.parentSessionID === sessionID) return { kind: 'found', job: byTaskID }
+    return {
+      kind: 'error',
+      message:
+        `Delegation "${idOrAlias}" belongs to a different session ` +
+        `(${byTaskID.parentSessionID}) and cannot be read from ${sessionID}.`,
+    }
+  }
+
+  const aliasMatches = jobs.filter((job) => job.alias === idOrAlias)
+  const inSession = aliasMatches.filter((job) => job.parentSessionID === sessionID)
+  if (inSession.length === 1) return { kind: 'found', job: inSession[0]! }
+  if (inSession.length > 1) {
+    return {
+      kind: 'error',
+      message:
+        `Delegation alias "${idOrAlias}" is ambiguous in session ${sessionID} ` +
+        `(${inSession.length} matches); read it by task ID instead.`,
+    }
+  }
+  if (aliasMatches.length > 0) {
+    return {
+      kind: 'error',
+      message:
+        `Delegation alias "${idOrAlias}" belongs to a different session — ` +
+        'aliases are session-scoped. Use pantheon_delegation_list in the session that created it.',
+    }
+  }
+  return {
+    kind: 'error',
+    message: `Unknown delegation "${idOrAlias}" for this session. Use pantheon_delegation_list to see active delegations.`,
+  }
+}
+
 /** Normalize the SDK-provided caller agent without inventing an identity. */
 const normalizeToolAgent = normalizeDelegationAgent
 
@@ -509,6 +621,7 @@ async function sampleChildActivity(
   collector: ActivityCollector,
 ): Promise<void> {
   if (typeof client.session.messages !== 'function') return
+  if (refuseUnresolvedSessionTemplate(childSessionID, 'activity sample')) return
   try {
     const bundles = await client.session.messages({ path: { id: childSessionID } })
     if (!Array.isArray(bundles)) return
@@ -534,6 +647,7 @@ async function lastChildActivity(
   childSessionID: string,
 ): Promise<string | undefined> {
   if (typeof client.session.messages !== 'function') return undefined
+  if (refuseUnresolvedSessionTemplate(childSessionID, 'last activity fetch')) return undefined
   try {
     const bundles = await client.session.messages({ path: { id: childSessionID } })
     if (!Array.isArray(bundles)) return undefined
@@ -775,8 +889,13 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       delete?: (input: { path: { id: string } }) => Promise<unknown>
     }
     if (typeof session.delete !== 'function') return
+    const sessionPath = safeSessionPath(childSessionID)
+    if (sessionPath === null) {
+      log.warn(`[pantheon-delegate] session.delete skipped: invalid sessionID "${childSessionID}"`)
+      return
+    }
     try {
-      await session.delete({ path: { id: childSessionID } })
+      await session.delete(sessionPath)
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err)
       log.warn(`[pantheon-delegate] failed to delete orphan session ${childSessionID}: ${reason}`)
@@ -899,6 +1018,18 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         return `pantheon_delegate failed to create child session: ${reason}`
       }
       const childSessionID = created.id
+      // B1: a host that passes through the unresolved template must never
+      // produce a board job / bootstrap poll — reject it here with a clear
+      // message and refund the reserved budget (no child was started).
+      if (isUnresolvedSessionTemplate(childSessionID)) {
+        if (budgetReserved && budgetKey !== undefined) {
+          budgetUsage.set(budgetKey, Math.max(0, (budgetUsage.get(budgetKey) ?? 1) - 1))
+        }
+        log.warn(
+          `[pantheon-delegate] session.create returned unresolved session template "${childSessionID}" — child ignored`,
+        )
+        return `pantheon_delegate failed: host returned an unresolved child session template ("${childSessionID}"); expected an id starting with "ses".`
+      }
       knownChildren.add(childSessionID)
       options.registerChildSession?.(childSessionID, ctx.sessionID)
 
@@ -1024,6 +1155,12 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         return `[STARTUP FAILED] ${bootstrap.status}: ${bootstrap.reason}; retry creation failed: ${reason}`
       }
       const retryID = retry.id
+      if (isUnresolvedSessionTemplate(retryID)) {
+        log.warn(
+          `[pantheon-delegate] retry session.create returned unresolved session template "${retryID}" — retry ignored`,
+        )
+        return `[STARTUP FAILED] ${bootstrap.status}: ${bootstrap.reason}; host returned an unresolved retry session template ("${retryID}")`
+      }
       knownChildren.add(retryID)
       options.registerChildSession?.(retryID, ctx.sessionID)
 
@@ -1115,10 +1252,9 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
     args: readArgs,
     execute: async (args, ctx) => {
       guardEnabled()
-      const job = board.resolve(ctx.sessionID, args.id)
-      if (!job) {
-        return `Unknown delegation "${args.id}" for this session. Use pantheon_delegation_list to see active delegations.`
-      }
+      const resolution = resolveDelegationTarget(board, ctx.sessionID, args.id)
+      if (resolution.kind === 'error') return resolution.message
+      const job = resolution.job
 
       // Sample the child's messages while waiting so the caller sees what the
       // agent is doing — fail-open: no messages support → report as before.
