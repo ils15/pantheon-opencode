@@ -104,12 +104,20 @@ export function createV2EventDispatcher(deps: V2EventDeps): V2EventDispatcher {
             } else {
               // Native task(background=true) child: register on the board
               // atomically (skip if V1 idle hook or re-dispatch already claimed it).
-              await deps.board.registerLaunchIfAbsent({
-                taskID: info.id,
-                parentSessionID: info.parentID,
-                agent: 'native',
-                description: `native child ${info.id}`,
-              })
+              try {
+                await deps.board.registerLaunchIfAbsent({
+                  taskID: info.id,
+                  parentSessionID: info.parentID,
+                  agent: 'native',
+                  description: `native child ${info.id}`,
+                })
+              } catch (err) {
+                // The per-agent concurrency limit can refuse the launch. Do not
+                // abort the rest of the handler: this child is simply not
+                // mirrored on the board, while finalize/idle dispatch for every
+                // other event must still run.
+                log.warn(`[Pantheon V2] native child ${info.id} not mirrored on board:`, err)
+              }
             }
           }
         }

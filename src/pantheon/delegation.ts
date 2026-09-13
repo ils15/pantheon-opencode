@@ -740,10 +740,54 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
     return finalizeDelegationReport(deps, childSessionID, opts)
   }
 
+  // Kill-switch gate: when delegationEnabled is explicitly false (mirrors
+  // PANTHEON_DELEGATION=off from the native manager), all legacy tools throw.
+  function guardEnabled(): void {
+    if (options.delegationEnabled === false) {
+      throw new Error('pantheon delegation disabled (PANTHEON_DELEGATION=off)')
+    }
+  }
+
+  /**
+   * Best-effort teardown of a child session whose `registerLaunch` was refused
+   * because the per-agent concurrency limit was hit between the pre-check and
+   * the registration (a race with another concurrent dispatch). Removes every
+   * side effect of the aborted dispatch — known-child marker, read-only
+   * registry entry and any reserved budget slot — then deletes the session when
+   * the host client exposes `session.delete`. Never throws: cleanup must not
+   * mask the original rejection.
+   */
+  async function abortRejectedLaunch(
+    childSessionID: string,
+    wasReadOnly: boolean,
+    refund?: { key: string | undefined; reserved: boolean },
+  ): Promise<void> {
+    knownChildren.delete(childSessionID)
+    if (wasReadOnly) readOnlyRegistry.unregister(childSessionID)
+    if (refund?.reserved && refund.key !== undefined) {
+      budgetUsage.set(refund.key, Math.max(0, (budgetUsage.get(refund.key) ?? 1) - 1))
+    }
+    // The plugin's adapted client (adaptDelegationClient) does not expose
+    // session.delete, and older hosts may not either. Delete best-effort so the
+    // abandoned session is not left behind; the registry cleanup above already
+    // removes the side effects that matter for read-only enforcement.
+    const session = client.session as {
+      delete?: (input: { path: { id: string } }) => Promise<unknown>
+    }
+    if (typeof session.delete !== 'function') return
+    try {
+      await session.delete({ path: { id: childSessionID } })
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err)
+      log.warn(`[pantheon-delegate] failed to delete orphan session ${childSessionID}: ${reason}`)
+    }
+  }
+
   const pantheon_delegate: DelegationTool<typeof delegateArgs> = {
     description: buildDelegateDescription(options),
     args: delegateArgs,
     execute: async (args, ctx) => {
+      guardEnabled()
       if (!isRootSession(ctx.sessionID)) {
         throw new Error(
           `pantheon_delegate rejected: session ${ctx.sessionID} is a sub-session — only root sessions can delegate`,
@@ -871,13 +915,27 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
         readOnlyRegistry.register(childSessionID, entry)
       }
 
-      const job = await board.registerLaunch({
-        taskID: childSessionID,
-        parentSessionID: ctx.sessionID,
-        agent: args.agent,
-        description: args.description ?? effectivePrompt,
-        objective: effectivePrompt,
-      })
+      let job: BackgroundJobRecord
+      try {
+        job = await board.registerLaunch({
+          taskID: childSessionID,
+          parentSessionID: ctx.sessionID,
+          agent: args.agent,
+          description: args.description ?? effectivePrompt,
+          objective: effectivePrompt,
+        })
+      } catch (err: unknown) {
+        // Concurrency race: another dispatch claimed the last slot after the
+        // pre-check above but before this registration. Undo every side effect
+        // of the aborted dispatch so no orphan session/registry survives, then
+        // surface a clear rejection.
+        const reason = err instanceof Error ? err.message : String(err)
+        await abortRejectedLaunch(childSessionID, readOnly, {
+          key: budgetKey,
+          reserved: budgetReserved,
+        })
+        return `pantheon_delegate rejected: ${reason}`
+      }
 
       // Timeout manager: cleared on finalize, unref'd so the timer never
       // keeps the process alive on its own.
@@ -968,13 +1026,34 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       const retryID = retry.id
       knownChildren.add(retryID)
       options.registerChildSession?.(retryID, ctx.sessionID)
-      const retryJob = await board.registerLaunch({
-        taskID: retryID,
-        parentSessionID: ctx.sessionID,
-        agent: args.agent,
-        description: args.description ?? effectivePrompt,
-        objective: effectivePrompt,
-      })
+
+      // Phase 4 read-only enforcement for the retry: recalculate readOnly
+      // (same logic as the initial child at :866-872) and register the retry
+      // session so the plugin's tool.execute.before guard enforces it.
+      const retryReadOnly =
+        args.read_only === true || (options.readOnlyAgents?.has(args.agent.toLowerCase()) ?? false)
+      if (retryReadOnly) {
+        const entry: { agent: string; readOnlyFlag?: boolean } = { agent: args.agent }
+        if (args.read_only !== undefined) entry.readOnlyFlag = args.read_only
+        readOnlyRegistry.register(retryID, entry)
+      }
+
+      let retryJob: BackgroundJobRecord
+      try {
+        retryJob = await board.registerLaunch({
+          taskID: retryID,
+          parentSessionID: ctx.sessionID,
+          agent: args.agent,
+          description: args.description ?? effectivePrompt,
+          objective: effectivePrompt,
+        })
+      } catch (err: unknown) {
+        // Same race as the initial child: the retry registration can be
+        // refused. Clean up the retry session + registry entry before failing.
+        const reason = err instanceof Error ? err.message : String(err)
+        await abortRejectedLaunch(retryID, retryReadOnly)
+        return `pantheon_delegate rejected: ${reason} (retry)`
+      }
       const retryTimer = setTimeout(() => {
         timers.delete(retryID)
         void finalize(retryID, {
@@ -1035,6 +1114,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       'Resolves by alias or task ID.',
     args: readArgs,
     execute: async (args, ctx) => {
+      guardEnabled()
       const job = board.resolve(ctx.sessionID, args.id)
       if (!job) {
         return `Unknown delegation "${args.id}" for this session. Use pantheon_delegation_list to see active delegations.`
@@ -1093,6 +1173,7 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       'List background delegations for the current session, with [unread] for finished jobs.',
     args: listArgs,
     execute: async (_args, ctx) => {
+      guardEnabled()
       const jobs = board.list(ctx.sessionID)
       if (jobs.length === 0) return 'No background delegations for this session.'
 

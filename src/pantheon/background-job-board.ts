@@ -222,14 +222,27 @@ export class BackgroundJobBoard {
   async recoverRunningJobs(): Promise<void> {
     if (!this.persistence) return
     const records = await this.persistence.loadAllJobs()
+    const recoveredIDs: string[] = []
     for (const record of records) {
       if (record.state === 'running') {
         record.state = 'error'
         record.lastStatusError = 'Process restarted — job marked as errored'
         record.updatedAt = Date.now()
+        record.completedAt = Date.now()
         record.totalErrors++
+        record.terminalUnreconciled = true
+        recoveredIDs.push(record.taskID)
       }
       this.jobs.set(record.taskID, record)
+    }
+    // Persist + signal + notify for each recovered job (write-ahead-log pattern)
+    for (const taskID of recoveredIDs) {
+      const job = this.jobs.get(taskID)
+      if (job) {
+        await this.persistRecord(job)
+        await this.writeSignal(job)
+        this.notifyTerminal(job.taskID)
+      }
     }
   }
 
@@ -240,6 +253,16 @@ export class BackgroundJobBoard {
    * The job starts in the `running` state with a generated alias.
    */
   async registerLaunch(input: LaunchInput): Promise<BackgroundJobRecord> {
+    // Atomic concurrency check: validate BEFORE any mutation or await.
+    // JavaScript's single-threaded event loop guarantees this check + set
+    // cannot be interleaved with another registerLaunch call.
+    if (!this.canDispatch(input.agent)) {
+      throw new Error(
+        `Concurrency limit reached for agent "${input.agent}" ` +
+          `(${this.getRunningCount(input.agent)} running, max ${this.options.maxConcurrentPerAgent})`,
+      )
+    }
+
     const prefix = getAgentPrefix(input.agent)
     let sessionCounters = this.aliasCounters.get(input.parentSessionID)
     if (!sessionCounters) {
