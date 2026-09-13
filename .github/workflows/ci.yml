@@ -57,14 +57,8 @@ jobs:
           node -e "const fs=require('fs');for(const f of fs.readdirSync('src/plugins/tui/dist')){const p='src/plugins/tui/dist/'+f;const s=fs.readFileSync(p);if(s.length&&s[s.length-1]!==10)fs.appendFileSync(p,String.fromCharCode(10))}"
           git diff --exit-code src/plugins/tui/dist
 
-      - name: Run TypeScript tests
-        run: npm run test:ts
-
-      - name: Run Python tests
-        run: npm run test:ci
-
-      - name: Run Node tests (PR #31 wiring — prune, hooks, install contracts)
-        run: npm run test:node
+      - name: Run unified test suite (pytest + node + ts)
+        run: npm test
 
       - name: Security audit
         run: |
