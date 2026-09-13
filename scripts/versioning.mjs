@@ -114,6 +114,48 @@ function prepareManifests(newVersion) {
 }
 
 /**
+ * Serialize `.zenodo.json` the way Biome 2.x formats it: objects stay expanded
+ * (matching `JSON.stringify(value, null, 2)`), while arrays containing only
+ * primitives are collapsed onto one line when they fit within the line width.
+ * A plain `JSON.stringify` emits the `keywords` array multiline, which Biome
+ * collapses — reintroducing a lint failure on the next release bump.
+ *
+ * @param {unknown} value parsed JSON document
+ * @param {number} [lineWidth] formatter line width (matches biome.json)
+ * @returns {string} Biome-compatible JSON with a trailing newline
+ */
+function formatZenodoJson(value, lineWidth = 100) {
+  const indent = (depth) => '  '.repeat(depth)
+  const render = (node, depth, column) => {
+    if (Array.isArray(node)) {
+      if (node.length === 0) return '[]'
+      const primitiveOnly = node.every((item) => item === null || typeof item !== 'object')
+      if (primitiveOnly) {
+        const inline = `[${node.map((item) => JSON.stringify(item)).join(', ')}]`
+        if (column + inline.length <= lineWidth) return inline
+      }
+      const body = node
+        .map((item) => `${indent(depth + 1)}${render(item, depth + 1, indent(depth + 1).length)}`)
+        .join(',\n')
+      return `[\n${body}\n${indent(depth)}]`
+    }
+    if (node !== null && typeof node === 'object') {
+      const entries = Object.entries(node)
+      if (entries.length === 0) return '{}'
+      const body = entries
+        .map(([key, item]) => {
+          const keyPrefix = `${indent(depth + 1)}${JSON.stringify(key)}: `
+          return `${keyPrefix}${render(item, depth + 1, keyPrefix.length)}`
+        })
+        .join(',\n')
+      return `{\n${body}\n${indent(depth)}}`
+    }
+    return JSON.stringify(node)
+  }
+  return `${render(value, 0, 0)}\n`
+}
+
+/**
  * Keep the Zenodo deposition metadata (.zenodo.json) and the citation file
  * (CITATION.cff) aligned with the version and date being released. Zenodo's
  * release validator hard-fails when CITATION.cff version differs from the
@@ -134,7 +176,7 @@ function prepareReleaseMetadata(newVersion, dateStr) {
     zenodo.version = newVersion
     zenodo.publication_date = dateStr
     zenodo.url = tagUrl
-    updates.push({ path: ZENODO_PATH, content: `${JSON.stringify(zenodo, null, 2)}\n` })
+    updates.push({ path: ZENODO_PATH, content: formatZenodoJson(zenodo) })
   }
 
   if (existsSync(CITATION_PATH)) {

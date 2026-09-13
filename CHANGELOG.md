@@ -35,8 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Delegation engine contract (ADR-0011):** legacy `pantheon_delegate` remains
   the default engine through v1.5.x; native delegation is opt-in and
   experimental via `PANTHEON_DELEGATE_MODE=native` until v1.6. See
-  [ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md)
-  (Proposed).
+  [ADR-0011](https://github.com/ils15/pantheon-opencode/pull/126) (Proposed).
 
 ## 🐞 Fixed
 
