@@ -18,6 +18,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.8] - 2026-09-13
+
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## 🐞 Fixed
+
+- **Board persistence is corruption- and concurrency-safe:** state writes now go
+  through a UNIQUE temp file (per-process, per-write counter + random suffix), are
+  `fsync`ed, then renamed over the destination with bounded ENOENT retries, and
+  read-modify-write cycles on the same state path are serialized. This closes the
+  window where two writers could interleave and corrupt `state.json` or race the
+  rename.
+- **Corrupt board state is quarantined and salvaged:** a malformed `state.json` is
+  moved aside to `<state>.corrupt-<ts>`, a clear error is logged, and every complete
+  record that can be parsed is salvaged and returned instead of throwing — so
+  delete/prune/recover callers cannot get stuck in a retry loop.
+- **P1-1 — no orphan `.signal.json` on reconcile:** reconcile now deletes any
+  still-pending wake signal instead of re-writing it. Reconcile is an
+  acknowledgment, not a new terminal transition, so the finalize→reconcile cycle
+  no longer leaves a stale `<alias>.signal.json` with `state:"reconciled"` behind.
+- **Unresolved `{sessionID}` template guard:** the TUI/runtime can hand the plugin
+  the unsubstituted literal `{sessionID}` (or `%7BsessionID%7D`) when no session is
+  focused; the plugin now refuses placeholder session ids at the delegation,
+  bootstrap-probe, and activity-sample boundaries instead of forwarding them to the
+  session API (which rejected every call).
+- **Delegation lookup scoped to the calling session:** `pantheon_delegation_read`
+  resolves exact task IDs first (must belong to the caller's session), then alias
+  matches within that session (exactly one required). Cross-session and ambiguous
+  aliases now return explicit errors instead of the generic "Unknown delegation".
+
+
 ## [v1.5.0-beta.7] - 2026-09-13
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
