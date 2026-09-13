@@ -6,7 +6,7 @@
  *  - scripts/validate-routing.mjs        (section F wrapper)
  *  - npm packaging                       (T21)
  *
- * Run: node tests/test_presets.mjs  (also wrapped by tests/test_presets_node.py)
+ * Run: node tests/test_presets.mjs
  */
 import { strict as assert } from 'node:assert'
 import { spawnSync } from 'node:child_process'

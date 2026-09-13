@@ -144,9 +144,25 @@ export interface DelegationOptions {
   promptTimeoutMs?: number
   /** Poll interval used by the bootstrap watchdog. */
   bootstrapPollIntervalMs?: number
+  /**
+   * Max completed jobs to keep per agent after pruning (default: 10).
+   * Matches the native delegate-manager default.
+   */
+  keepCompleted?: number
+  /**
+   * Hard cap on total board entries (default: 50).
+   * Matches the native delegate-manager default.
+   */
+  maxEntries?: number
   /** Injectable clock/sleeper for deterministic watchdog tests. */
   now?: () => number
   sleep?: (ms: number) => Promise<void>
+  /**
+   * Kill-switch: when false, all delegation tools (delegate/read/list) throw
+   * immediately. Mirrors `PANTHEON_DELEGATION=off` from the native manager.
+   * Defaults to true (delegation enabled) when not specified.
+   */
+  delegationEnabled?: boolean
 }
 
 /** Dependencies threaded to the finalize path. */
@@ -370,5 +386,21 @@ export async function finalizeDelegation(
     // Terminal in a DIFFERENT state (e.g. timeout already recorded) — the
     // report above still captures this finalize; the board state stands.
   }
+
+  // P1-1: Delete the auto-wake signal file to prevent leaks. The board
+  // writes .signal.json on every terminal transition, but the legacy path
+  // never called deleteSignal — only the native delegate-manager did.
+  // The consumer (auto-wake.ts consumeWakeSignals) is intentionally NOT
+  // wired in the event hook: finalizeDelegation already handles the
+  // terminal transition, so consuming signals would be redundant and risks
+  // double-processing. deleteSignal on finalize is sufficient.
+  await deps.board.deleteSignal(job.alias)
+
+  // P1-4: Prune old completed jobs and enforce the hard entry cap. The
+  // native delegate-manager called these in settle(), but the legacy
+  // finalize path omitted them, allowing unbounded board growth.
+  await deps.board.pruneCompleted(deps.options.keepCompleted ?? 10)
+  await deps.board.enforceEntryCap(deps.options.maxEntries ?? 50)
+
   return deps.board.get(childSessionID) ?? job
 }

@@ -1,17 +1,26 @@
 /**
- * Native background task → shared board mirror (beta.5).
+ * native-task-board.test.ts — native task() → BackgroundJobBoard
  *
- * Proves the `tool.execute.after` mirror in pantheon-hooks.ts registers a
- * native `task(background=true)` child on the SHARED BackgroundJobBoard so
- * the existing finalize path (session.idle + idle scan) can write the
- * terminal report and the TUI delegation panel tracks the child end-to-end.
+ * Merged coverage (formerly native-task-board-gap.test.ts +
+ * native-task-mirror.test.ts):
+ *
+ * 1. native task_id launched via task(background=true) appears on the board
+ * 2. double session.created for same child does NOT create a duplicate record
+ * 3. concurrent session.created claims exactly one board record
+ * 4. the `tool.execute.after` mirror in pantheon-hooks.ts registers a native
+ *    `task(background=true)` child on the SHARED BackgroundJobBoard so the
+ *    existing finalize path can write the terminal report
+ * 5. foreground (non-dispatched) task results are NOT mirrored
+ * 6. the mirror is idempotent — double dispatch keeps a single record
+ * 7. the mirror never throws into the tool call (resilience)
+ * 8. the shared board singleton survives a cache-busted module re-load
  *
  * Also proves the board singleton is anchored on globalThis: opencode loads
  * each plugin TWICE from different filesystem paths (npm package + repo), so
  * a plain ESM singleton would yield two boards — the mirror must land on the
  * same instance plugin.ts finalizes against.
  *
- * Run with: npx tsx tests/pantheon/native-task-mirror.test.ts
+ * Run with: npx tsx tests/pantheon/native-task-board.test.ts
  */
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -19,6 +28,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
+import { createV2EventDispatcher } from '../../src/pantheon/v2-events.ts'
 
 // ─── Harness ────────────────────────────────────────────────────────────
 
@@ -67,9 +77,90 @@ async function loadHooksFactory(): Promise<(input: unknown) => Promise<Record<st
   }
 }
 
-// ─── Tests ──────────────────────────────────────────────────────────────
+// ─── Board gap + non-duplication (from native-task-board-gap.test.ts) ─────
 
-async function main() {
+async function testBoardGap() {
+  await testAsync(
+    'native task_id launched via task(background=true) appears on the board',
+    async () => {
+      const board = new BackgroundJobBoard()
+      const dispatcher = createV2EventDispatcher({
+        board,
+        finalize: async () => undefined,
+        goalLoop: { hasActiveGoal: async () => false, onIdle: async () => {} },
+        todoEnforcer: { onIdle: async () => {} },
+      })
+
+      // O que o host emite quando um `task(background=true)` inline dispara:
+      // uma child session com parentID (== parent session do dispatch).
+      await dispatcher.handleEvent({
+        type: 'session.created',
+        properties: { info: { id: 'ses_native_task_1', parentID: 'ses_parent_1' } },
+      })
+
+      const job = board.get('ses_native_task_1')
+      assert.ok(
+        job !== undefined,
+        'GAP: native task_id ses_native_task_1 not observed by BackgroundJobBoard ' +
+          '(board.get returned undefined after session.created with parentID)',
+      )
+    },
+  )
+
+  // ─── Non-duplication proof ────────────────────────────────────────
+  await testAsync(
+    'double session.created for same child does NOT create a duplicate board record',
+    async () => {
+      const board = new BackgroundJobBoard()
+      const dispatcher = createV2EventDispatcher({
+        board,
+        finalize: async () => undefined,
+        goalLoop: { hasActiveGoal: async () => false, onIdle: async () => {} },
+        todoEnforcer: { onIdle: async () => {} },
+      })
+
+      const event = {
+        type: 'session.created' as const,
+        properties: { info: { id: 'ses_dedup_child', parentID: 'ses_parent_dedup' } },
+      }
+
+      // Fire the same event twice (simulates re-dispatch or V1 idle hook race).
+      await dispatcher.handleEvent(event)
+      await dispatcher.handleEvent(event)
+
+      const job = board.get('ses_dedup_child')
+      assert.ok(job !== undefined, 'child should exist on the board after first event')
+
+      // Board must have exactly 1 record for this parent — no duplicate.
+      const allJobs = board.list('ses_parent_dedup')
+      assert.strictEqual(
+        allJobs.length,
+        1,
+        `EXACTLY 1 record expected, got ${allJobs.length} — put-if-absent broken`,
+      )
+    },
+  )
+
+  await testAsync('concurrent session.created claims exactly one board record', async () => {
+    const board = new BackgroundJobBoard()
+    const dispatcher = createV2EventDispatcher({
+      board,
+      finalize: async () => undefined,
+      goalLoop: { hasActiveGoal: async () => false, onIdle: async () => {} },
+      todoEnforcer: { onIdle: async () => {} },
+    })
+    const event = {
+      type: 'session.created' as const,
+      properties: { info: { id: 'ses_race_child', parentID: 'ses_race_parent' } },
+    }
+    await Promise.all([dispatcher.handleEvent(event), dispatcher.handleEvent(event)])
+    assert.equal(board.list('ses_race_parent').length, 1)
+  })
+}
+
+// ─── Native mirror (from native-task-mirror.test.ts) ─────────────────────
+
+async function testNativeMirror() {
   const { getSharedBoard } = await import('../../src/pantheon/shared-board.ts')
 
   await testAsync(
@@ -200,18 +291,30 @@ async function main() {
     )
     assert.equal(b.get('ses_child_9')?.taskID, 'ses_child_9')
   })
-
-  // ─── Summary ──────────────────────────────────────────────────────────
-  const passed = results.filter((r) => r.passed).length
-  const failed = results.filter((r) => !r.passed)
-  for (const r of results) {
-    console.log(`  ${r.passed ? '✅' : '❌'} ${r.name}${r.error ? ': ' + r.error : ''}`)
-  }
-  console.log(`\n📊 Results: ${passed} passed, ${failed.length} failed`)
-  if (failed.length > 0) process.exit(1)
 }
 
-main().finally(() => {
-  process.chdir('/')
-  rmSync(workDir, { recursive: true, force: true })
-})
+// ─── Main ────────────────────────────────────────────────────────────────
+
+async function main() {
+  await testBoardGap()
+  await testNativeMirror()
+}
+
+main()
+  .then(() => {
+    const passed = results.filter((r) => r.passed).length
+    const failed = results.filter((r) => !r.passed)
+    for (const r of results) {
+      console.log(`  ${r.passed ? '✅' : '❌'} ${r.name}${r.error ? ': ' + r.error : ''}`)
+    }
+    console.log(`\n📊 Results: ${passed} passed, ${failed.length} failed`)
+    if (failed.length > 0) process.exitCode = 1
+  })
+  .catch((error: unknown) => {
+    console.error(error)
+    process.exitCode = 1
+  })
+  .finally(() => {
+    process.chdir('/')
+    rmSync(workDir, { recursive: true, force: true })
+  })

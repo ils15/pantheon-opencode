@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.5.0-beta.6",
+  "version": "1.5.0-beta.7",
   "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
   "publishConfig": {
@@ -41,8 +41,9 @@
     "test:security": "npm run secret-scan",
     "test:node": "node --test tests/*.mjs tests/pantheon/*.mjs",
     "test:ts": "for f in tests/pantheon/*.test.ts; do if [ \"$f\" = tests/pantheon/plugin-v2-contract.test.ts ]; then NODE_OPTIONS=--conditions=import tsx \"$f\"; else tsx \"$f\"; fi || exit 1; done",
-    "test": "python3 -m pytest tests/ -q 2>&1; status=$?; if [ \"$status\" -eq 5 ]; then echo \"No tests found\"; fi; exit \"$status\"",
-    "test:ci": "python3 -m pytest tests/ -q --tb=short 2>&1"
+    "test:all": "npm run test:ci && npm run test:node && npm run test:ts",
+    "test": "npm run test:all",
+    "test:ci": "python3 -m pytest -q --tb=short 2>&1"
   },
   "bin": {
     "pantheon-opencode": "bin/pantheon-init.mjs"

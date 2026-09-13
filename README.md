@@ -76,21 +76,42 @@ availability and configuration of OpenCode and any optional services you choose
 to use. Check the [releases](https://github.com/ils15/pantheon-opencode/releases)
 and [changelog](CHANGELOG.md) for the latest published changes.
 
-## Native delegation mode
+## Delegation engines (legacy default, native opt-in)
 
-Set `PANTHEON_DELEGATE_MODE=native` to use OpenCode's native child-session
-delegation. Native mode is strict: it does not use foreground fallback, model
-failover, or retry; it performs a lazy capability probe on the first dispatch,
-and includes the resulting status in the delegation receipt.
+Pantheon exposes two delegation engines behind one tool surface:
+
+- **Legacy (default)** — `pantheon_delegate`, the original engine registered by
+  the V1 plugin. No configuration is required.
+- **Native (opt-in, experimental)** — OpenCode's native `task()` child-session
+  engine, selected with `PANTHEON_DELEGATE_MODE=native`. Native is strict: it
+  does not use foreground fallback, model failover, or retry; it performs a
+  lazy capability probe on the first dispatch and includes the resulting
+  status in the delegation receipt.
+
+Legacy stays the default for v1.5.x; native is not promoted to default until
+v1.6. See [ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md)
+(Proposed) for the engine contract, rationale, and migration prerequisites.
+
+**Kill-switch:** set `PANTHEON_DELEGATION=off` (case-insensitive) to disable
+delegation entirely. The switch covers **both** engines — the legacy
+`pantheon_delegate`/read/list tools throw, and the native manager throws too.
 
 ## Cost tool backend
 
-`pantheon_cost` has one backend: read-only `node:sqlite` against the selected
-`opencode.db`. On Node versions without `node:sqlite` (Node < 22.5), the tool
-returns `status: UNSUPPORTED`; it has no CLI fallback. Database failures return
-a contract status such as `UNAVAILABLE` or
-`CORRUPT_DATA` and include diagnostic detail, including captured stderr when
+`pantheon_cost` prefers a read-only `node:sqlite` backend against the selected
+`opencode.db`. When `node:sqlite` is unavailable in the host runtime (for
+example under Bun), the tool falls back to spawning `node scripts/cost.mjs` as
+a read-only subprocess. The fallback resolves a real Node.js binary —
+`PANTHEON_NODE` first, then `node` on `PATH` — verifies it supports
+`node:sqlite` (Node.js >= 22.5), and runs the script with an argument array,
+never a shell. If neither source resolves, the tool returns `status:
+UNSUPPORTED`. Database failures return a contract status such as `UNAVAILABLE`
+or `CORRUPT_DATA` and include diagnostic detail, including captured stderr when
 available.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PANTHEON_NODE` | `node` from `PATH` | Path to a Node.js >= 22.5 binary used by the CLI fallback; an explicit path must exist and be executable, otherwise the tool fails fast instead of ignoring the override |
 
 
 ## Code-mode execution (explicit opt-in)

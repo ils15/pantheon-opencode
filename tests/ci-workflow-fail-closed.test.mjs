@@ -11,18 +11,21 @@ const workflow = readFileSync(
   'utf8',
 )
 
+const packageJson = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
+)
+
 test('CI dependency installation and required gates are fail-closed', () => {
   assert.doesNotMatch(workflow, /npm ci[^\n]*\|\|[^\n]*npm install/)
   assert.doesNotMatch(workflow, /(?:pytest|npm audit)[^\n]*\|\|/)
-  for (const command of [
-    'npm run lint',
-    'npm run typecheck',
-    'npm run test:ts',
-    'npm run test:node',
-    'npm run test:ci',
-    'npm run audit',
-  ]) {
+  for (const command of ['npm run lint', 'npm run typecheck', 'npm test', 'npm run audit']) {
     assert.ok(workflow.includes(command), `CI must run ${command}`)
+  }
+  // `npm test` delegates to `test:all`; the unified runner must still cover
+  // pytest, node, and ts so the single CI step cannot silently drop a suite.
+  const testAll = packageJson.scripts['test:all']
+  for (const step of ['npm run test:ci', 'npm run test:node', 'npm run test:ts']) {
+    assert.ok(testAll.includes(step), `test:all must include ${step}`)
   }
 })
 
@@ -87,16 +90,18 @@ test('CI validates YAML and installs locked dependencies only', () => {
     'CI must install locked vision deps before pytest so httpx imports resolve',
   )
   assert.doesNotMatch(workflow, /pip install[^\n]*\|\|/)
+  const testGate = workflow.indexOf('npm test')
+  assert.ok(testGate >= 0, 'CI must run the unified test gate (npm test)')
   assert.ok(
-    workflow.indexOf('pytest-asyncio==') < workflow.indexOf('npm run test:ci'),
+    workflow.indexOf('pytest-asyncio==') < testGate,
     'Locked pytest-asyncio pip install must run BEFORE the pytest gate',
   )
   assert.ok(
-    workflow.indexOf('requirements-mcp.txt') < workflow.indexOf('npm run test:ci'),
+    workflow.indexOf('requirements-mcp.txt') < testGate,
     'Locked MCP pip install must run BEFORE the pytest gate',
   )
   assert.ok(
-    workflow.indexOf('requirements-vision.txt') < workflow.indexOf('npm run test:ci'),
+    workflow.indexOf('requirements-vision.txt') < testGate,
     'Locked vision pip install must run BEFORE the pytest gate',
   )
   assert.doesNotMatch(workflow, /npm install(?!.*--dry-run)/)

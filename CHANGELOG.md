@@ -18,6 +18,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.7] - 2026-09-13
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Cost CLI fallback + `PANTHEON_NODE`:** `pantheon_cost` falls back to a
+  read-only `node scripts/cost.mjs` subprocess when `node:sqlite` is
+  unavailable in the host runtime (for example under Bun). The fallback
+  resolves a real Node.js binary — `PANTHEON_NODE` first, then `node` on
+  `PATH` — probes it for `node:sqlite` support (Node.js >= 22.5), and runs it
+  with an argument array, never a shell. Previously the tool returned
+  `status: UNSUPPORTED` with no fallback.
+- **Delegation engine contract (ADR-0011):** legacy `pantheon_delegate` remains
+  the default engine through v1.5.x; native delegation is opt-in and
+  experimental via `PANTHEON_DELEGATE_MODE=native` until v1.6. See
+  [ADR-0011](https://github.com/ils15/pantheon-opencode/pull/126) (Proposed).
+
+## 🐞 Fixed
+
+- **Legacy read-only bypass on retry (P0):** a retried delegation now
+  re-applies read-only enforcement (the same rule as the initial child) and
+  registers the retry session, closing the bypass where a retried child could
+  write despite `read_only: true` or being a read-only agent.
+- **Kill-switch scope (P0):** `PANTHEON_DELEGATION=off` now also disables the
+  legacy engine, not only the native manager — the legacy delegate/read/list
+  tools throw as documented.
+- **Delegation signal leak (P1):** the legacy finalize path now deletes the
+  auto-wake signal file, so terminal delegations no longer leave stale
+  `.signal.json` artifacts behind.
+- **Crash recovery is durable (P1):** `recoverRunningJobs` persists the
+  `error` state, marks the job `terminalUnreconciled`, and emits the terminal
+  signal plus notification for every reaped job instead of updating memory
+  only.
+- **Atomic concurrency (P1):** `registerLaunch` validates
+  `maxConcurrentPerAgent` before any mutation, so concurrent dispatches cannot
+  both claim the last slot. A refused launch tears down the orphan child
+  session (read-only unregister plus `session.delete`) and the retry path
+  re-validates the same limit.
+- **Legacy board hygiene (P1):** the legacy finalize path now runs
+  `pruneCompleted` and `enforceEntryCap`, matching the native manager and
+  preventing unbounded board growth.
+- **Resilient V2 events:** a native child refused by the per-agent limit is
+  logged and skipped instead of aborting the rest of the event handler.
 ## [v1.5.0-beta.6] - 2026-09-12
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

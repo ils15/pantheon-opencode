@@ -7,20 +7,26 @@
  * Automated coverage (DB-read itself is sandbox-manual — a live opencode.db
  * must not be part of the unit suite):
  *   1. Missing/unreadable database → FRIENDLY contract error string, never a crash.
- *   2. An unavailable node:sqlite backend is UNSUPPORTED and never invokes the CLI.
+ *   2. An unavailable node:sqlite backend → falls back to CLI (scripts/cost.mjs).
+ *   3. Both node:sqlite and CLI fallback unavailable → clear error, not silent.
  *
  * Run with: npx tsx tests/pantheon/cost-command.test.ts
  */
 import { strict as assert } from 'node:assert'
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
-import { createCostCommand } from '../../src/pantheon/cost-command.ts'
+import {
+  createCostCommand,
+  queryWithCliFallback,
+  resolveNodeExecutable,
+  resolveNodeFromPath,
+} from '../../src/pantheon/cost-command.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SCRIPT_PATH = join(__dirname, '..', '..', 'scripts', 'cost.mjs')
@@ -198,22 +204,273 @@ async function main() {
     }
   })
 
-  await testAsync('node:sqlite unavailable → UNSUPPORTED without CLI fallback', async () => {
+  await testAsync(
+    'node:sqlite unavailable → falls back to CLI (cost.mjs) and succeeds',
+    async () => {
+      const dir = freshDir()
+      try {
+        const dbPath = join(dir, 'usage.db')
+        createDb(dbPath, true, 'cli-fallback-agent')
+        let loaderCalls = 0
+        const output = await createCostCommand({
+          dbPath,
+          sqliteLoader: async () => {
+            loaderCalls += 1
+            throw new Error('Cannot find module node:sqlite')
+          },
+        }).pantheon_cost.execute({}, { sessionID: 'ses_root' })
+        assert.equal(loaderCalls, 1, 'sqliteLoader called once before falling back')
+        assert.ok(
+          output.includes('status: OK'),
+          `expected status: OK, got: ${output.slice(0, 200)}`,
+        )
+        assert.ok(output.includes('cli-fallback-agent'), `expected agent name in output`)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'node:sqlite unavailable AND fallback also fails → clear error, not silent',
+    async () => {
+      const dir = freshDir()
+      try {
+        // Scenario: db exists (so findExistingDb succeeds) but sqliteLoader throws
+        // and the CLI fallback also fails (e.g. db is corrupt).
+        const dbPath = join(dir, 'corrupt.db')
+        writeFileSync(dbPath, 'not a real database')
+        let loaderCalls = 0
+        const output = await createCostCommand({
+          dbPath,
+          sqliteLoader: async () => {
+            loaderCalls += 1
+            throw new Error('Cannot find module node:sqlite')
+          },
+        }).pantheon_cost.execute({}, { sessionID: 'ses_root' })
+        assert.equal(loaderCalls, 1, 'sqliteLoader called once before falling back')
+        assert.ok(
+          output.includes('pantheon_cost failed'),
+          `expected error surfaced as text, got: ${output.slice(0, 200)}`,
+        )
+        assert.ok(
+          output.includes('status: CORRUPT_DATA') || output.includes('status: UNAVAILABLE'),
+          `expected non-OK status, got: ${output.slice(0, 200)}`,
+        )
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  // ─── CLI fallback Node resolution (Bun/old-Node target scenario) ───────
+
+  await testAsync('CLI fallback: invalid PANTHEON_NODE fails fast with a clear error', async () => {
+    let spawned = false
+    await assert.rejects(
+      () =>
+        queryWithCliFallback('/db/opencode.db', 7, {
+          env: { PANTHEON_NODE: '/no/such/node', PATH: '/usr/bin' },
+          isExecutable: () => false,
+          execFile: async () => {
+            spawned = true
+            return { stdout: '' }
+          },
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error)
+        assert.match(err.message, /PANTHEON_NODE/)
+        assert.match(err.message, /not an existing executable/)
+        return true
+      },
+    )
+    assert.equal(spawned, false, 'must not spawn anything when the override is invalid')
+  })
+
+  await testAsync('CLI fallback: resolves node from PATH when PANTHEON_NODE is unset', async () => {
+    const dir = freshDir()
+    try {
+      const fakeNode = join(dir, 'node')
+      writeFileSync(fakeNode, '#!/bin/sh\n')
+      const calls: Array<{ file: string; args: readonly string[] }> = []
+      const scriptRows = [
+        { agent: 'path-agent', phase: 'green', tokensInput: 1, tokensOutput: 2, tokensTotal: 3 },
+      ]
+      const rows = await queryWithCliFallback('/db/opencode.db', 3, {
+        env: { PATH: dir },
+        isExecutable: (candidate) => candidate === fakeNode,
+        execFile: async (file, args) => {
+          calls.push({ file, args: [...args] })
+          if (args[0] === '-e') return { stdout: '' }
+          return { stdout: JSON.stringify({ ok: true, days: 3, rows: scriptRows }) }
+        },
+      })
+      assert.deepEqual(rows, scriptRows)
+      assert.equal(calls.length, 2, 'one probe + one script run')
+      for (const call of calls) {
+        assert.equal(call.file, fakeNode, 'never spawns process.execPath/original runtime')
+      }
+      assert.deepEqual(calls[1]?.args, [SCRIPT_PATH, '--db-path', '/db/opencode.db', '--days', '3'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('resolveNodeFromPath scans PATH entries with no shell', () => {
+    const dir = freshDir()
+    try {
+      const candidate = join(dir, 'node')
+      assert.equal(
+        resolveNodeFromPath({ PATH: dir }, (p) => p === candidate),
+        candidate,
+      )
+      assert.equal(
+        resolveNodeFromPath({ PATH: '' }, () => true),
+        undefined,
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('resolveNodeExecutable prefers PANTHEON_NODE over PATH', () => {
+    const env = { PANTHEON_NODE: '/custom/node', PATH: '/usr/bin' }
+    const resolved = resolveNodeExecutable(env, (p) => p === '/custom/node')
+    assert.deepEqual(resolved, { path: '/custom/node', source: 'env' })
+  })
+
+  await testAsync('CLI fallback: binary without node:sqlite reports a clear error', async () => {
+    const dir = freshDir()
+    try {
+      const fakeNode = join(dir, 'node')
+      writeFileSync(fakeNode, '#!/bin/sh\n')
+      let scriptRuns = 0
+      await assert.rejects(
+        () =>
+          queryWithCliFallback('/db/opencode.db', 7, {
+            env: { PANTHEON_NODE: fakeNode },
+            isExecutable: (candidate) => candidate === fakeNode,
+            execFile: async (_file, args) => {
+              if (args[0] === '-e') {
+                const err = new Error('Unknown builtin module: node:sqlite') as Error & {
+                  stderr?: string
+                }
+                err.stderr = "Error: No such builtin module: 'node:sqlite'"
+                throw err
+              }
+              scriptRuns += 1
+              return { stdout: '' }
+            },
+          }),
+        (err: unknown) => {
+          assert.ok(err instanceof Error)
+          assert.match(err.message, /does not support node:sqlite/)
+          assert.match(err.message, /22\.5/)
+          return true
+        },
+      )
+      assert.equal(scriptRuns, 0, 'cost.mjs must not run on an incompatible binary')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('CLI fallback: no Node anywhere yields an actionable error', async () => {
+    await assert.rejects(
+      () =>
+        queryWithCliFallback('/db/opencode.db', 7, {
+          env: { PATH: '' },
+          isExecutable: () => false,
+          execFile: async () => ({ stdout: '' }),
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error)
+        assert.match(err.message, /no Node\.js executable found/)
+        assert.match(err.message, /PANTHEON_NODE/)
+        return true
+      },
+    )
+  })
+
+  await testAsync(
+    'CLI fallback: non-zero exit surfaces the structured cost.mjs error',
+    async () => {
+      const dir = freshDir()
+      try {
+        const fakeNode = join(dir, 'node')
+        writeFileSync(fakeNode, '#!/bin/sh\n')
+        await assert.rejects(
+          () =>
+            queryWithCliFallback('/db/missing.db', 7, {
+              env: { PANTHEON_NODE: fakeNode },
+              isExecutable: (candidate) => candidate === fakeNode,
+              execFile: async (_file, args) => {
+                if (args[0] === '-e') return { stdout: '' }
+                const err = new Error('Command failed: node cost.mjs') as Error & {
+                  stdout?: string
+                  stderr?: string
+                  code?: number
+                }
+                err.code = 1
+                err.stdout = JSON.stringify({
+                  ok: false,
+                  error: 'database not found: /db/missing.db',
+                })
+                err.stderr = 'cost.mjs: database not found: /db/missing.db\n'
+                throw err
+              },
+            }),
+          (err: unknown) => {
+            assert.ok(err instanceof Error)
+            assert.match(err.message, /CLI fallback failed: database not found/)
+            return true
+          },
+        )
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('CLI fallback: non-JSON stdout is reported, never swallowed', async () => {
+    const dir = freshDir()
+    try {
+      const fakeNode = join(dir, 'node')
+      writeFileSync(fakeNode, '#!/bin/sh\n')
+      await assert.rejects(
+        () =>
+          queryWithCliFallback('/db/opencode.db', 7, {
+            env: { PANTHEON_NODE: fakeNode },
+            isExecutable: (candidate) => candidate === fakeNode,
+            execFile: async (_file, args) =>
+              args[0] === '-e' ? { stdout: '' } : { stdout: 'this is not json' },
+          }),
+        (err: unknown) => {
+          assert.ok(err instanceof Error)
+          assert.match(err.message, /non-JSON output/)
+          return true
+        },
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('CLI fallback: real Node reads the database read-only', async () => {
     const dir = freshDir()
     try {
       const dbPath = join(dir, 'usage.db')
-      createDb(dbPath, true, 'native-only-agent')
-      let loaderCalls = 0
-      const output = await createCostCommand({
-        dbPath,
-        sqliteLoader: async () => {
-          loaderCalls += 1
-          throw new Error('Cannot find module node:sqlite')
-        },
-      }).pantheon_cost.execute({}, { sessionID: 'ses_root' })
-      assert.equal(loaderCalls, 1)
-      assert.ok(output.includes('status: UNSUPPORTED'))
-      assert.ok(!output.includes('cost.mjs'))
+      createDb(dbPath, true, 'readonly-agent')
+      const before = readFileSync(dbPath)
+      // The test process itself imports node:sqlite, so process.execPath is a
+      // genuine compatible Node — use it as an explicit, deterministic override.
+      const rows = await queryWithCliFallback(dbPath, 7, {
+        env: { ...process.env, PANTHEON_NODE: process.execPath },
+      })
+      const after = readFileSync(dbPath)
+      assert.equal(rows.length, 1)
+      assert.equal(rows[0]?.agent, 'readonly-agent')
+      assert.ok(before.equals(after), 'fallback must not modify the database file')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
