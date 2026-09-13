@@ -777,13 +777,32 @@ def _validate_heartbeat(heartbeat: object) -> None:
         raise ValueError("heartbeat.turn_count must be a non-negative integer")
 
 
+def _validate_version_metadata(version: object) -> None:
+    """Validate optional checkpoint ``version`` metadata leniently.
+
+    ``version`` is opaque application metadata (rehydrate does not consume it),
+    not a persistence requirement. It may be a positive integer, a JSON float
+    such as ``1.0``, or a version label like ``"1.5.0-beta.2"``. Absent/null
+    versions and any non-empty string remain valid, preserving existing integer
+    checkpoints while allowing forward-compatible labels. Only bools, empty
+    strings, non-finite/zero/negative numbers, and structured values are
+    rejected.
+    """
+    if version is None:
+        return
+    if isinstance(version, bool):
+        raise ValueError("version must be a positive integer or version label")
+    if isinstance(version, (int, float)):
+        if not 1 <= version < float("inf"):
+            raise ValueError("version must be a positive integer or version label")
+        return
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError("version must be a positive integer or version label")
+
+
 def _validate_checkpoint_shape(checkpoint: dict) -> None:
     """Validate bounded structured checkpoint fields without sanitizing them."""
-    version = checkpoint.get("version")
-    if version is not None and (
-        isinstance(version, bool) or not isinstance(version, int) or version < 1
-    ):
-        raise ValueError("version must be a positive integer")
+    _validate_version_metadata(checkpoint.get("version"))
     validators = (
         ("goal", _validate_goal),
         ("phase", _validate_phase),

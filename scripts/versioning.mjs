@@ -21,8 +21,8 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   commitPreparedUpdates,
@@ -37,6 +37,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 
 const CHANGELOG_PATH = join(ROOT, 'CHANGELOG.md')
+const ZENODO_PATH = join(ROOT, '.zenodo.json')
+const CITATION_PATH = join(ROOT, 'CITATION.cff')
 
 // ---------------------------------------------------------------------------
 // Git helpers
@@ -109,6 +111,48 @@ function prepareManifests(newVersion) {
   if (!SEMVER_PATTERN.test(newVersion)) throw new Error(`invalid version: ${newVersion}`)
   const inventory = validateInventory(ROOT, { allowVersionDivergence: true })
   return { inventory, updates: prepareInventoryVersion(inventory, newVersion) }
+}
+
+/**
+ * Keep the Zenodo deposition metadata (.zenodo.json) and the citation file
+ * (CITATION.cff) aligned with the version and date being released. Zenodo's
+ * release validator hard-fails when CITATION.cff version differs from the
+ * release tag, so these must be bumped together with the manifests.
+ */
+function prepareReleaseMetadata(newVersion, dateStr) {
+  if (!SEMVER_PATTERN.test(newVersion)) throw new Error(`invalid version: ${newVersion}`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw new Error(`invalid date: ${dateStr}`)
+  const tagUrl = `https://github.com/ils15/pantheon-opencode/releases/tag/v${newVersion}`
+  const updates = []
+
+  if (existsSync(ZENODO_PATH)) {
+    const zenodo = JSON.parse(readFileSync(ZENODO_PATH, 'utf8'))
+    const zenodoPrevious = typeof zenodo.version === 'string' ? zenodo.version : null
+    if (zenodoPrevious && zenodoPrevious !== newVersion && typeof zenodo.description === 'string') {
+      zenodo.description = zenodo.description.replaceAll(zenodoPrevious, newVersion)
+    }
+    zenodo.version = newVersion
+    zenodo.publication_date = dateStr
+    zenodo.url = tagUrl
+    updates.push({ path: ZENODO_PATH, content: `${JSON.stringify(zenodo, null, 2)}\n` })
+  }
+
+  if (existsSync(CITATION_PATH)) {
+    const citationRaw = readFileSync(CITATION_PATH, 'utf8')
+    const citationMatch = /^version:\s*["']?([^"'\s]+)["']?\s*$/m.exec(citationRaw)
+    const citationPrevious = citationMatch ? citationMatch[1] : null
+    let citation = citationRaw
+    if (citationPrevious && citationPrevious !== newVersion) {
+      citation = citation.replaceAll(`Pantheon v${citationPrevious}`, `Pantheon v${newVersion}`)
+    }
+    citation = citation
+      .replace(/^version:.*$/m, `version: ${newVersion}`)
+      .replace(/^date-released:.*$/m, `date-released: ${dateStr}`)
+      .replace(/^url:.*$/m, `url: ${tagUrl}`)
+    updates.push({ path: CITATION_PATH, content: citation })
+  }
+
+  return updates
 }
 
 // ---------------------------------------------------------------------------
@@ -243,14 +287,17 @@ function contentHasUnreleased() {
   return readFileSync(CHANGELOG_PATH, 'utf8').includes('## [Unreleased]')
 }
 
-function commitPreparedRelease(manifestPlan, changelogPlan) {
-  const updates = [...manifestPlan.updates]
+function commitPreparedRelease(manifestPlan, changelogPlan, metadataUpdates = []) {
+  const updates = [...manifestPlan.updates, ...metadataUpdates]
   if (changelogPlan.changed) {
     updates.push({ path: CHANGELOG_PATH, content: changelogPlan.content })
   }
   commitPreparedUpdates(updates)
   for (const document of manifestPlan.inventory.documents) {
     console.log(`  ✓ ${document.entry.file} → ${manifestPlan.version}`)
+  }
+  for (const { path } of metadataUpdates) {
+    console.log(`  ✓ ${basename(path)} → ${manifestPlan.version}`)
   }
   if (changelogPlan.changed) {
     console.log(
@@ -314,7 +361,11 @@ switch (command) {
       console.log(`Bumping ${current} → ${newVersion} (beta)`)
       const changelogPlan = prepareUnreleased(newVersion, date)
       const manifestPlan = prepareManifests(newVersion)
-      commitPreparedRelease({ ...manifestPlan, version: newVersion }, changelogPlan)
+      commitPreparedRelease(
+        { ...manifestPlan, version: newVersion },
+        changelogPlan,
+        prepareReleaseMetadata(newVersion, date),
+      )
       console.log(`\nDone. Commit the version inventory and CHANGELOG as v${newVersion}.`)
       console.log(`Tag v${newVersion} will be created by the release workflow after merge to main.`)
       break
@@ -347,7 +398,11 @@ switch (command) {
       const notesBody = generateNotes()
       const changelogPlan = prepareUnreleased(current, date, notesBody)
       const manifestPlan = prepareManifests(current)
-      commitPreparedRelease({ ...manifestPlan, version: current }, changelogPlan)
+      commitPreparedRelease(
+        { ...manifestPlan, version: current },
+        changelogPlan,
+        prepareReleaseMetadata(current, date),
+      )
       console.log(`Tag v${current} will be created by the release workflow after merge to main.`)
       break
     }
@@ -360,7 +415,11 @@ switch (command) {
     const notesBody = generateNotes()
     const changelogPlan = prepareUnreleased(newVersion, date, notesBody)
     const manifestPlan = prepareManifests(newVersion)
-    commitPreparedRelease({ ...manifestPlan, version: newVersion }, changelogPlan)
+    commitPreparedRelease(
+      { ...manifestPlan, version: newVersion },
+      changelogPlan,
+      prepareReleaseMetadata(newVersion, date),
+    )
     console.log(`\nDone. Commit the version inventory and CHANGELOG as v${newVersion}.`)
     console.log(`Tag v${newVersion} will be created by the release workflow after merge to main.`)
     break

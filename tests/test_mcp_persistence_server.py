@@ -1029,6 +1029,125 @@ class TestContextCheckpoints:
         assert stale["status"] == "stale"
         assert latest == "new"
 
+    @pytest.mark.parametrize(
+        "version",
+        [1, 1.0, "1", "1.5.0-beta.2"],
+        ids=["int", "json-float", "numeric-str", "semver-str"],
+    )
+    async def test_context_save_accepts_forward_compatible_version_metadata(
+        self, server: FastMCP, version: object
+    ) -> None:
+        """Checkpoint ``version`` is opaque metadata; non-int labels must not fail.
+
+        Regression: the shape validator required ``version`` to be a positive
+        ``int``, so a valid checkpoint carrying a JSON float (``1.0``) or a
+        semver string (``1.5.0-beta.2``) raised
+        ``Error executing tool context_save: version must be a positive integer``.
+        """
+        payload = json.dumps(
+            {
+                "version": version,
+                "goal": {"objective": "forward compatible", "status": "in_progress"},
+                "phase": {"current": 1, "total": 2, "name": "beta"},
+            }
+        )
+        saved = _json(
+            await server.call_tool(
+                "context_save",
+                {
+                    "slug": "version-metadata",
+                    "key": "phase:1",
+                    "content": payload,
+                    "session_id": "version-session",
+                },
+            )
+        )
+        assert saved["status"] == "stored"
+        stored = _json(
+            await server.call_tool(
+                "context_get",
+                {
+                    "slug": "version-metadata",
+                    "key": "phase:1",
+                    "session_id": "version-session",
+                },
+            )
+        )
+        assert stored == payload
+
+    async def test_context_save_accepts_checkpoint_without_version(
+        self, server: FastMCP
+    ) -> None:
+        """A valid checkpoint that omits ``version`` must be stored verbatim."""
+        payload = json.dumps(
+            {
+                "goal": {"objective": "no version", "status": "in_progress"},
+                "phase": {"current": 1, "total": 1, "name": "solo"},
+            }
+        )
+        saved = _json(
+            await server.call_tool(
+                "context_save",
+                {
+                    "slug": "no-version",
+                    "key": "phase:1",
+                    "content": payload,
+                    "session_id": "no-version-session",
+                },
+            )
+        )
+        assert saved["status"] == "stored"
+        assert saved["revision"] >= 1
+
+        stored = _json(
+            await server.call_tool(
+                "context_get",
+                {
+                    "slug": "no-version",
+                    "key": "phase:1",
+                    "session_id": "no-version-session",
+                },
+            )
+        )
+        assert stored == payload
+
+    async def test_context_save_without_revision_autoincrements_and_uses_key_ttl(
+        self, server: FastMCP
+    ) -> None:
+        """Omitted revision auto-increments per slug+key and TTL follows the key."""
+        base = {
+            "slug": "auto-revision",
+            "key": "phase:1",
+            "session_id": "auto-session",
+        }
+        first = _json(
+            await server.call_tool(
+                "context_save", {**base, "content": "first"}
+            )
+        )
+        second = _json(
+            await server.call_tool(
+                "context_save", {**base, "content": "second"}
+            )
+        )
+        heartbeat = _json(
+            await server.call_tool(
+                "context_save",
+                {
+                    "slug": "auto-revision",
+                    "key": "heartbeat",
+                    "content": json.dumps({"status": "alive", "turn_count": 1}),
+                    "session_id": "auto-session",
+                },
+            )
+        )
+
+        assert first["revision"] >= 1
+        assert second["revision"] > first["revision"]
+        assert first["ttl"] == 14400
+        assert second["ttl"] == 14400
+        assert heartbeat["ttl"] == 300
+
     async def test_context_stats_excludes_expired_entries_from_active_totals(
         self, server: FastMCP, module: Any
     ) -> None:
