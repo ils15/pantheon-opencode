@@ -825,6 +825,48 @@ async function testWakePrune() {
     }
   })
 
+  await testAsync('P1-1: no signal survives finalize + markReconciled reconcile', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'wp-signal-reconcile-'))
+    const signalDir = join(tmpDir, 'signals')
+    mkdirSync(signalDir, { recursive: true })
+
+    try {
+      const board = new BackgroundJobBoard({ signalDir })
+
+      await board.registerLaunch({
+        taskID: 'reconcile-child-1',
+        parentSessionID: 'root',
+        agent: 'prometheus',
+        description: 'reconcile signal leak test',
+      })
+
+      // Terminal transition writes the auto-wake signal.
+      await board.updateStatus({
+        taskID: 'reconcile-child-1',
+        state: 'completed',
+        resultSummary: 'done',
+      })
+      const job = board.get('reconcile-child-1')
+      assert.ok(job, 'job registered')
+      const signalPath = join(signalDir, `${job.alias}.signal.json`)
+      assert.ok(existsSync(signalPath), 'signal file exists before finalize')
+
+      const deps = makeFinalizeDeps(board, tmpDir)
+      await finalizeDelegation(deps, 'reconcile-child-1', { state: 'completed' })
+
+      // The read path acknowledges the job: finalize is followed by reconcile.
+      await board.markReconciled('reconcile-child-1')
+
+      assert.equal(board.get('reconcile-child-1')?.state, 'reconciled')
+      assert.ok(
+        !existsSync(signalPath),
+        'markReconciled must not re-write the signal for a reconciled job (P1-1)',
+      )
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
   await testAsync('WP: pruneCompleted and enforceEntryCap are called', async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'wp-prune-'))
 
