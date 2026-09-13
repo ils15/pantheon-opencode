@@ -1,6 +1,6 @@
 # 🗺️ Pantheon Roadmap
 
-> **Last updated:** v1.5.0-beta.4 (2026-09-12)
+> **Last updated:** v1.5.0-beta.6 (2026-09-12)
 >
 > **Roadmap zerado:** nenhum item pendente no plano ativo. A próxima iteração
 > será definida após o release estável 1.5.0, com base em validação runtime —
@@ -18,6 +18,10 @@
 | TUI | `pantheon-tui` é componente separado, registrado em `tui.json` somente quando `plugins` é instalado. Native tasks exigem origem, relação parent/child e status fornecidos explicitamente pelo host; ausência de Markdown não é autodetecção. |
 | Histórico e recuperação | `.pantheon/delegations/` é o canal histórico de relatórios V1. A compaction carry-forward existe no caminho V1 comprovado; jobs V1 antigos/running não são auto-retomados após restart e são marcados como erro. |
 | Code-mode | Execução de scripts é opt-in via `manifest.json` com SHA-256 por script; resolução project-first (`PANTHEON_PROJECT` → cwd) com fail-closed após seleção; `doctor` valida o manifest sem regenerá-lo. |
+| Native tasks no painel | Children de `task(background=true)` são espelhados no board compartilhado (singleton globalThis, à prova do double-load npm+repo); o painel de Delegations os acompanha enquanto rodam e o finalize existente escreve o relatório terminal. |
+| Painel de Delegations v2 | Atividade ao vivo por delegação (`↳ <tool> <resumo>` via message.part), estado `retry` distinto (⟳) e seção `Archived (n)` paginada para relatórios terminais antigos. |
+| Update e freshness | `pantheon-opencode update` instala o novo pacote pelo dist-tag e re-roda init; o postinstall sincroniza todos os artefatos de cópia; marker `install-state.json` + `doctor` detectam drift de versão; CI falha se o `dist/` da TUI commitada estiver stale. |
+| Installer resiliente | Pré-checagens de python3/npm antes de escrever; `opencode.json` atômico com `.bak`; venv falha → instalação completa sem entradas MCP (aviso); refs Pantheon de instalações antigas (node_modules de outros prefixes/caches npx) são podadas a cada init. |
 
 ### Limites que não são promessa de roadmap
 
@@ -54,6 +58,7 @@ depois do release estável 1.5.0._
 
 | Data | Mudança |
 |------|---------|
+| 2026-09-12 | **beta.5/beta.6 entregues.** Native tasks no painel (mirror no board), painel v2 (atividade ao vivo, Archived paginado, retry), `update` + garantia de freshness (postinstall sync, drift no doctor, CI anti-stale), installer resiliente (preflight, config atômico + .bak, venv não-fatal, poda de refs velhas), i18n pt/en auto-detect. |
 | 2026-09-12 | **Roadmap zerado.** Plano ativo sem itens pendentes; sprints não implementados (S2/S3/S5/S6/S8–S13) removidos; contrato atual atualizado com code-mode (B3-08). |
 | 2026-08-10 | **Sprint 4 (parcial) + Sprint 7 entregues.** 3-tool API de delegação (pantheon_delegate/read/list) sobre BackgroundJobBoard; notificação via session.idle + chat.message flush (spike provou noReply indisponível); timeout 15min + output parcial persistido; enforcement read-only (edit/write/bash/task negados, apollo/gaia); compaction carry-forward; pruning TTL 24h. Commit 084a5a5. TODO Enforcer/full-auto/hash-anchored/auth-interceptor pendentes. |
 | 2026-07-24 v6 | **Cleanup:** removidas referências a concorrentes, tabela competitiva removida. Sprints reorganizados: S6 (YAGNI) reconhecido como já planejado, S4 full-auto = modo autônomo, S5 decay já existe. Novos sprints (S7-S13) são expansões do que já existe, não features do zero. |
