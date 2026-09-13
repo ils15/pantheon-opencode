@@ -13,7 +13,8 @@
       "!.opencode/**",
       "!logs/**",
       "!benchmarks/**",
-      "!teste/**"
+      "!teste/**",
+      "!testes/**"
     ]
   },
   "linter": {

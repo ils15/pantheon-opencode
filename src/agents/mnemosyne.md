@@ -34,7 +34,7 @@ permission:
   bash: deny
   read: allow
   grep: allow
-  edit: deny
+  edit: allow
   task:
     "*": deny
 ---

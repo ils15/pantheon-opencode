@@ -37,6 +37,8 @@ opencode.json.backup
 logs/
 # Local plastic-example lab — never version
 teste/
+# Local scratch/test playgrounds — never version
+testes/
 
 # ZCode session artifacts
 .zcode/
