@@ -1,32 +1,36 @@
 from pathlib import Path
 
-PLUGIN_FILES = (
-    Path("src/plugins/tui/src/index.tsx"),
-    Path("src/plugins/tui/dist/tui.tsx"),
-)
+SRC_DIR = Path("src/plugins/tui/src")
+BUNDLE = Path("src/plugins/tui/dist/tui.js")
+LEGACY_RAW = Path("src/plugins/tui/dist/tui.tsx")
+
+# Scan the whole source tree, not just index.tsx: the entry may be split into
+# relative-imported modules (the bundle inlines them, so the loader is fine).
+SOURCE_FILES = sorted(SRC_DIR.rglob("*.tsx"))
 
 
 def test_tui_reactive_effect_is_imported_in_source_and_runtime_bundle() -> None:
     """The delegation refresh effect must not be emitted as an unresolved global."""
-    source = Path("src/plugins/tui/src/index.tsx").read_text()
-    raw_dist = Path("src/plugins/tui/dist/tui.tsx").read_text()
-    runtime_dist = Path("src/plugins/tui/dist/tui.js").read_text()
-
-    for content in (source, raw_dist):
-        assert "createEffect(() =>" in content
+    for plugin_file in SOURCE_FILES:
+        content = plugin_file.read_text()
+        assert "createEffect(() =>" in content, f"createEffect call missing in {plugin_file}"
         assert "createEffect," in content
         assert "from 'solid-js'" in content
 
+    runtime_dist = BUNDLE.read_text()
     runtime_import = next(line for line in runtime_dist.splitlines() if 'from "solid-js"' in line)
     assert "createEffect" in runtime_import
 
 
-def test_tui_raw_dist_is_a_deterministic_copy_of_source() -> None:
-    """The OpenCode loader consumes the checked-in, self-contained TSX entry."""
-    source = PLUGIN_FILES[0].read_text()
-    raw_dist = PLUGIN_FILES[1].read_text()
+def test_tui_loads_only_from_the_bundle_not_a_raw_tsx_copy() -> None:
+    """The loader consumes the bundled dist/tui.js; no raw TSX copy is shipped.
 
-    assert raw_dist == source
+    The former `cp src/index.tsx dist/tui.tsx` forced a single self-contained
+    file (relative imports would not resolve). Its absence is what unblocks
+    splitting the entry into modules.
+    """
+    assert BUNDLE.is_file(), "bundled TUI entry must exist"
+    assert not LEGACY_RAW.exists(), "raw dist/tui.tsx must not be produced"
 
 
 def test_tui_numeric_text_children_are_stringified() -> None:
@@ -40,7 +44,7 @@ def test_tui_numeric_text_children_are_stringified() -> None:
         "{mem().entries}",
     )
 
-    for plugin_file in PLUGIN_FILES:
+    for plugin_file in SOURCE_FILES:
         content = plugin_file.read_text()
         for child in forbidden_children:
             assert child not in content, f"numeric OpenTUI child remains in {plugin_file}: {child}"

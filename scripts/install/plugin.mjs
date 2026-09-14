@@ -8,8 +8,10 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { ROOT, writeIfChanged } from './shared.mjs'
 
 /**
- * Copy a plugin's runtime payload (src/index.tsx → index.tsx, dist/*,
- * package.json and package-lock.json) from source to destination.
+ * Copy a plugin's runtime payload (the bundled dist/*, package.json and
+ * package-lock.json) from source to destination. Only the bundle is copied —
+ * the raw TSX source is never shipped to the destination, so the plugin can
+ * be modularized without the loader needing relative imports.
  * @param {string} srcDir - Source plugin directory (e.g. ROOT/src/plugins/tui)
  * @param {string} dstDir - Destination plugin directory
  * @param {object} [options]
@@ -22,16 +24,11 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false } = {}) {
   if (!dryRun) mkdirSync(dstDir, { recursive: true })
   if (!dryRun) mkdirSync(join(dstDir, 'dist'), { recursive: true })
 
-  // Copy src/index.tsx -> index.tsx
-  const srcIdx = join(srcDir, 'src', 'index.tsx')
-  if (existsSync(srcIdx)) {
-    const idxStatus = writeIfChanged(
-      join(dstDir, 'index.tsx'),
-      readFileSync(srcIdx, 'utf8'),
-      dryRun,
-    )
-    if (idxStatus === 'created') result.created++
-    else result.skipped++
+  // Drop legacy raw copies from previous installs (root index.tsx + dist/tui.tsx).
+  // The loader consumes only the bundle, so stale raws must not linger.
+  if (!dryRun) {
+    rmSync(join(dstDir, 'index.tsx'), { force: true })
+    rmSync(join(dstDir, 'dist', 'tui.tsx'), { force: true })
   }
 
   // Copy dist/* files

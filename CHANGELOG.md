@@ -18,6 +18,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.12] - 2026-09-14
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **TUI lê o board (4º canal):** o painel Delegations passa a ler o
+  BackgroundJobBoard via `readBoardState()` — jobs `pantheon_delegate` de todas
+  as sessões aparecem, não só os filhos nativos da sessão focada.
+- **Toggle [Sessão]/[Tudo] + chips:** `[Sessão]` (default) mostra só a sessão
+  focada, `[Tudo]` mostra jobs de todas as sessões; chips clicáveis no header.
+- **Raw `dist/tui.tsx` removido (bundle-only):** o dist passa a carregar só o
+  bundle compilado (`tui.js`); o fonte raw sai do pacote publicado.
+- **117 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com
+  117/117 passando, cobrindo board-read, split ativo/recente e toggle de escopo.
 ## [v1.5.0-beta.11] - 2026-09-14
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
