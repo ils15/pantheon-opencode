@@ -164,7 +164,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.5.0-beta.10";
+	return "1.5.0-beta.11";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.
@@ -977,6 +977,49 @@ function delegationSpinnerFrame(now) {
 	const index = Math.floor(Math.max(0, now) / 1e3) % DELEGATION_SPINNER_FRAMES.length;
 	return DELEGATION_SPINNER_FRAMES[index] ?? DELEGATION_SPINNER_FRAMES[0];
 }
+/** Every state the row knows how to draw: the real BackgroundJobBoard FSM
+*  (src/pantheon/background-job-board.ts) plus the TUI display-only states
+*  (`retry`, `stale-running`). Fase 1 deliberately omits speculative
+*  blocked/paused/scheduled/skipped. There is no `pending` display state: a
+*  pre-dispatch tool part maps to `running` in {@link reduceDelegationToolPart}. */
+/** Static glyph per display state. `running` shows its base spinner frame;
+*  callers that animate must prefer {@link delegationStateMarker}. Unicode
+*  geometric shapes only (no Nerd Font) — shape is an independent channel
+*  from color, so rows stay legible without color. */
+const DELEGATION_STATE_GLYPHS = {
+	running: "⠋",
+	retry: "⟳",
+	"stale-running": "⚠",
+	completed: "✓",
+	error: "✕",
+	cancelled: "−",
+	startup_failed: "⚠",
+	startup_unknown: "⚠"
+};
+function delegationStateGlyph(state) {
+	return DELEGATION_STATE_GLYPHS[state];
+}
+/** Row marker (`<glyph> `) — the state channel. `running` animates through
+*  {@link delegationSpinnerFrame} for the given tick; every other state is
+*  static. Pure. */
+function delegationStateMarker(state, now = Date.now()) {
+	return `${state === "running" ? delegationSpinnerFrame(now) : delegationStateGlyph(state)} `;
+}
+/** Semantic tone mapped to the TUI theme at the row ({@link DelegationRow}).
+*  Kept separate + pure so the color channel is testable without booting the
+*  renderer. */
+function delegationStateTone(state) {
+	switch (state) {
+		case "running":
+		case "retry":
+		case "startup_unknown": return "warning";
+		case "stale-running":
+		case "error":
+		case "startup_failed": return "error";
+		case "completed": return "success";
+		case "cancelled": return "muted";
+	}
+}
 /** Bounded tracker: child session id → latest running tool call. */
 const latestToolActivity = /* @__PURE__ */ new Map();
 const MAX_TOOL_ACTIVITY_ENTRIES = 200;
@@ -1603,25 +1646,14 @@ function DelegationRow(props) {
 	const theme = () => props.api.theme.current;
 	const color = createMemo(() => {
 		const t = theme();
-		switch (props.job.state) {
-			case "running": return t.warning;
-			case "retry": return t.warning;
-			case "stale-running": return t.error;
-			case "completed": return t.success;
+		switch (delegationStateTone(props.job.state)) {
+			case "warning": return t.warning;
 			case "error": return t.error;
+			case "success": return t.success;
 			default: return t.textMuted;
 		}
 	});
-	const marker = createMemo(() => {
-		if (props.job.state === "running") return `${delegationSpinnerFrame(props.animationNow)} `;
-		if (props.job.state === "retry") return "⟳ ";
-		if (props.job.state === "stale-running") return "⚠ ";
-		switch (props.job.state) {
-			case "completed": return "✓ ";
-			case "error": return "✕ ";
-			default: return "○ ";
-		}
-	});
+	const marker = createMemo(() => delegationStateMarker(props.job.state, props.animationNow));
 	const tagColor = createMemo(() => props.job.source === "children-only" ? theme().info : color());
 	const description = createMemo(() => truncateDelegationDescription(props.job.description));
 	const elapsed = createMemo(() => formatDelegationElapsed(props.job, props.now));
@@ -2141,6 +2173,6 @@ const plugin = {
 	setup: async () => {}
 };
 //#endregion
-export { DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DELEGATION_STATE_GLYPHS, IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationStateGlyph, delegationStateMarker, delegationStateTone, delegationTag, extractToolActivity, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 
 //# sourceMappingURL=tui.js.map

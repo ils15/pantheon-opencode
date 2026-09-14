@@ -1354,6 +1354,62 @@ export function delegationSpinnerFrame(now: number): string {
   return DELEGATION_SPINNER_FRAMES[index] ?? DELEGATION_SPINNER_FRAMES[0]
 }
 
+/** Every state the row knows how to draw: the real BackgroundJobBoard FSM
+ *  (src/pantheon/background-job-board.ts) plus the TUI display-only states
+ *  (`retry`, `stale-running`). Fase 1 deliberately omits speculative
+ *  blocked/paused/scheduled/skipped. There is no `pending` display state: a
+ *  pre-dispatch tool part maps to `running` in {@link reduceDelegationToolPart}. */
+export type DelegationDisplayState = DelegationEntry['state']
+
+/** Static glyph per display state. `running` shows its base spinner frame;
+ *  callers that animate must prefer {@link delegationStateMarker}. Unicode
+ *  geometric shapes only (no Nerd Font) — shape is an independent channel
+ *  from color, so rows stay legible without color. */
+export const DELEGATION_STATE_GLYPHS: Readonly<Record<DelegationDisplayState, string>> = {
+  running: '\u280b', // ⠋ base frame of the animated spinner
+  retry: '\u27f3', // ⟳ retrying
+  'stale-running': '\u26a0', // ⚠ stale (display-only alert)
+  completed: '\u2713', // ✓
+  error: '\u2715', // ✕
+  cancelled: '\u2212', // − minus: stopped, distinct from error's ✕
+  startup_failed: '\u26a0', // ⚠ boot failed
+  startup_unknown: '\u26a0', // ⚠ boot outcome unknown
+}
+
+export function delegationStateGlyph(state: DelegationDisplayState): string {
+  return DELEGATION_STATE_GLYPHS[state]
+}
+
+/** Row marker (`<glyph> `) — the state channel. `running` animates through
+ *  {@link delegationSpinnerFrame} for the given tick; every other state is
+ *  static. Pure. */
+export function delegationStateMarker(state: DelegationDisplayState, now = Date.now()): string {
+  const glyph = state === 'running' ? delegationSpinnerFrame(now) : delegationStateGlyph(state)
+  return `${glyph} `
+}
+
+/** Semantic tone mapped to the TUI theme at the row ({@link DelegationRow}).
+ *  Kept separate + pure so the color channel is testable without booting the
+ *  renderer. */
+export type DelegationStateTone = 'warning' | 'error' | 'success' | 'muted'
+
+export function delegationStateTone(state: DelegationDisplayState): DelegationStateTone {
+  switch (state) {
+    case 'running':
+    case 'retry':
+    case 'startup_unknown':
+      return 'warning'
+    case 'stale-running':
+    case 'error':
+    case 'startup_failed':
+      return 'error'
+    case 'completed':
+      return 'success'
+    case 'cancelled':
+      return 'muted'
+  }
+}
+
 /* ─── Live tool activity per child session (beta.6) ────────────────────────
  *  The delegation panel's activity line ("↳ bash npm test") — what the agent
  *  is doing RIGHT NOW. Sourced from message.part.updated tool parts: every
@@ -2351,35 +2407,19 @@ function DelegationRow(props: {
 
   const color = createMemo(() => {
     const t = theme()
-    switch (props.job.state) {
-      case 'running':
+    switch (delegationStateTone(props.job.state)) {
+      case 'warning':
         return t.warning
-      case 'retry':
-        return t.warning
-      case 'stale-running':
-        return t.error // warning color for stale delegations
-      case 'completed':
-        return t.success
       case 'error':
         return t.error
+      case 'success':
+        return t.success
       default:
-        return t.textMuted // cancelled
+        return t.textMuted // muted (cancelled)
     }
   })
 
-  const marker = createMemo(() => {
-    if (props.job.state === 'running') return `${delegationSpinnerFrame(props.animationNow)} `
-    if (props.job.state === 'retry') return '\u27f3 ' // ⟳ retrying
-    if (props.job.state === 'stale-running') return '\u26a0 ' // warning triangle
-    switch (props.job.state) {
-      case 'completed':
-        return '\u2713 '
-      case 'error':
-        return '\u2715 '
-      default:
-        return '\u25cb '
-    }
-  })
+  const marker = createMemo(() => delegationStateMarker(props.job.state, props.animationNow))
 
   // Two visual channels split native task() from pantheon_delegate: the tag
   // prefix (`nat:`/`pan:`, via delegationTag) and the glyph color — info

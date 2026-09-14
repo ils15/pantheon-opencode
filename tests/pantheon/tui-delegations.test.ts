@@ -26,12 +26,16 @@ import {
   childStatusToState,
   collectDelegationToolParts,
   countDelegationSources,
+  DELEGATION_STATE_GLYPHS,
   type DelegationEntry,
   delegationActivity,
   delegationActivityLabel,
   delegationElapsed,
   delegationIcon,
   delegationSpinnerFrame,
+  delegationStateGlyph,
+  delegationStateMarker,
+  delegationStateTone,
   delegationTag,
   extractToolActivity,
   fmtElapsed,
@@ -2110,6 +2114,55 @@ async function main() {
   await testAsync('row: marker + glyph + identity (nat has no duplicate agent)', async () => {
     assert.equal(formatDelegationRow(natEntry(), '\u280b '), '\u280b \u25c7 nat:hermes')
     assert.equal(formatDelegationRow(panEntry(), '\u280b '), '\u280b \u25c6 pan:apo-1 apollo')
+  })
+
+  // ─── FASE 1: real FSM state glyphs (geometric Unicode, no Nerd Font) ──
+
+  await testAsync('state glyphs: every REAL job-board state maps to its glyph', async () => {
+    assert.equal(delegationStateGlyph('running'), '\u280b', 'running base spinner frame')
+    assert.equal(delegationStateGlyph('retry'), '\u27f3', 'retry ⟳')
+    assert.equal(delegationStateGlyph('stale-running'), '\u26a0', 'stale ⚠')
+    assert.equal(delegationStateGlyph('completed'), '\u2713', 'completed ✓')
+    assert.equal(delegationStateGlyph('error'), '\u2715', 'error ✕')
+    assert.equal(delegationStateGlyph('cancelled'), '\u2212', 'cancelled −')
+    assert.equal(delegationStateGlyph('startup_failed'), '\u26a0', 'startup_failed ⚠')
+    assert.equal(delegationStateGlyph('startup_unknown'), '\u26a0', 'startup_unknown ⚠')
+    // The map covers exactly the real FSM + display states — no speculative
+    // blocked/paused/scheduled/skipped (Fase 2) and no unused `pending`.
+    assert.equal(Object.keys(DELEGATION_STATE_GLYPHS).length, 8, 'no invented states')
+  })
+
+  await testAsync('state marker: glyph + space; running animates via 1s spinner', async () => {
+    assert.equal(delegationStateMarker('completed'), '\u2713 ')
+    assert.equal(delegationStateMarker('cancelled'), '\u2212 ')
+    assert.equal(
+      delegationStateMarker('running', 0),
+      `${delegationSpinnerFrame(0)} `,
+      'running uses the spinner frame for the given tick',
+    )
+    assert.notEqual(
+      delegationStateMarker('running', 0),
+      delegationStateMarker('running', 1000),
+      'running marker advances once per second',
+    )
+  })
+
+  await testAsync('state tone: color is a separate channel from glyph', async () => {
+    assert.equal(delegationStateTone('running'), 'warning')
+    assert.equal(delegationStateTone('retry'), 'warning')
+    assert.equal(delegationStateTone('stale-running'), 'error')
+    assert.equal(delegationStateTone('completed'), 'success')
+    assert.equal(delegationStateTone('error'), 'error')
+    assert.equal(delegationStateTone('cancelled'), 'muted')
+    assert.equal(delegationStateTone('startup_failed'), 'error')
+    assert.equal(delegationStateTone('startup_unknown'), 'warning')
+  })
+
+  await testAsync('state legibility: terminal glyphs differ without color', async () => {
+    const glyphs = (['completed', 'error', 'cancelled'] as const).map((s) =>
+      delegationStateGlyph(s),
+    )
+    assert.equal(new Set(glyphs).size, glyphs.length, 'unique glyphs, not color-only')
   })
 
   await testAsync('desc: truncated at 44 with ellipsis, short text untouched', async () => {

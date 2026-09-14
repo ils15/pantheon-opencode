@@ -23,7 +23,7 @@
 
 import { spawn as spawnAsync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -960,6 +960,35 @@ function checkVenvLayer(args) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Return whether *dir* contains an executable code-mode target.
+ *
+ * Mirrors `_has_usable_scripts` in `scripts/code_mode_server.py`: a directory
+ * is only a valid resolver candidate when it is a real (non-symlink) directory
+ * containing a regular `.py`/`.sh` direct child. This prevents an empty project
+ * overlay from masking a lower-priority installation that actually ships
+ * scripts. Keep both implementations in sync (see tests/test_doctor_layers.mjs).
+ */
+function hasUsableScripts(dir) {
+  try {
+    if (!existsSync(dir)) return false
+    const stat = lstatSync(dir)
+    if (stat.isSymbolicLink() || !stat.isDirectory()) return false
+    return readdirSync(dir).some((name) => {
+      if (name.startsWith('.')) return false
+      const lower = name.toLowerCase()
+      if (!lower.endsWith('.py') && !lower.endsWith('.sh')) return false
+      try {
+        return statSync(join(dir, name)).isFile()
+      } catch {
+        return false
+      }
+    })
+  } catch {
+    return false
+  }
+}
+
+/**
  * Verify the code-mode scripts directory exists for the resolved runtime
  * root (project → <target>/.opencode, otherwise the global config dir).
  * When absent, create it with a warning so the pantheon-code-mode MCP
@@ -977,7 +1006,7 @@ export function checkCodeModeDir(args) {
   // install (.opencode present) gets its runtime dir created when missing.
   // Only targets with no project layout fall back to the global config dir.
   const codeModeDir =
-    projectCandidates.find((candidate) => existsSync(candidate)) ??
+    projectCandidates.find(hasUsableScripts) ??
     (existsSync(join(target, '.opencode'))
       ? projectCandidates[0]
       : join(resolveOpenCodeConfigDir(env), '.pantheon', 'code-mode'))
@@ -1003,7 +1032,7 @@ export function resolveCodeModeDir(args) {
     join(target, '.opencode', '.pantheon', 'code-mode'),
     join(target, '.pantheon', 'code-mode'),
   ]
-  const projectDir = projectCandidates.find((candidate) => existsSync(candidate))
+  const projectDir = projectCandidates.find(hasUsableScripts)
   if (projectDir) return projectDir
   return join(resolveOpenCodeConfigDir(env), '.pantheon', 'code-mode')
 }
