@@ -18,6 +18,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.9] - 2026-09-14
+
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## 🆕 What's New
+
+- **TUI delegations nativas (gated):** painel Delegations renderiza N delegações native + M pantheon com tag [native], live task em tempo real, click navega para sessão. Implementado em `src/plugins/tui/src/index.tsx` com dist rebuildado.
+- **93 testes TUI delegations:** suite `tests/pantheon/tui-delegations.test.ts` com 93/93 passando (tsc + biome OK).
+- **E2E beta.8 PASS (referência):** baseline E2E da beta.8 mantido como referência de estabilidade para beta.9.
+
+## 🐞 Fixed
+
+- Removido diretório `testyes/` (artefato de teste).
+- Truncado `hooks.log` para baseline limpo de beta.9.
+
 ## [v1.5.0-beta.8] - 2026-09-13
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

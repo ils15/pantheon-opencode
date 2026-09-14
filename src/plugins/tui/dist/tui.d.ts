@@ -171,7 +171,7 @@ type LiveDelegationEntry = {
   partID: string;
   /** Parent session the delegation was launched from. */
   sessionID: string;
-  tool: 'pantheon_delegate' | 'pantheon_delegation_read';
+  tool: 'pantheon_delegate' | 'pantheon_delegation_read' | 'task';
   /** Agent name (from the delegate input args). */
   agent: string;
   description: string;
@@ -190,7 +190,7 @@ type ParsedDelegationToolPart = {
   callID: string;
   partID: string;
   sessionID: string;
-  tool: 'pantheon_delegate' | 'pantheon_delegation_read';
+  tool: 'pantheon_delegate' | 'pantheon_delegation_read' | 'task';
   /** null for read parts (no agent arg — the id targets an existing job). */
   agent: string | null;
   description: string;
@@ -202,7 +202,9 @@ type ParsedDelegationToolPart = {
 };
 /** Extract the tool name + args from a `message.part.updated` part and
  *  reduce it to what the panel needs. Returns null for anything that is
- *  not a pantheon delegation tool part (or is missing its callID). */
+ *  not a pantheon delegation tool part, the native `task` subagent tool
+ *  (same parentID === caller mechanism — its children render `[native]`),
+ *  or is missing its callID. */
 declare function parseDelegationToolPart(part: DelegationToolPart, now?: number): ParsedDelegationToolPart | null;
 /** Apply one tool part to the live map. Returns true when the map changed.
  *  Pure w.r.t. I/O — only mutates `map`. */
@@ -210,11 +212,14 @@ declare function reduceDelegationToolPart(map: Map<string, LiveDelegationEntry>,
 /** Remove a live entry by part id (message.part.removed) or call id.
  *  Returns true when something was removed. */
 declare function removeDelegationEntry(map: Map<string, LiveDelegationEntry>, partIDOrCallID: string): boolean;
-/** Collect pantheon delegation tool parts from a session's messages.
+/** Collect pantheon delegation + native task tool parts from a session's messages.
  *  Messages may carry their parts inline (duck-typed `msg.parts`); when
  *  they don't, the optional `getParts(messageID)` callback is used (the TUI
- *  SDK exposes `api.state.part(messageID)`). Pure w.r.t. I/O — used by the
- *  mount re-scan to re-seed the live map after compaction/attach. */
+ *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
+ *  child session with parentID = caller — the same mechanism as
+ *  pantheon_delegate — so its parts feed the live-map as the native signal
+ *  (rows render `[native]` via the children channel). Pure w.r.t. I/O — used
+ *  by the mount re-scan to re-seed the live map after compaction/attach. */
 declare function collectDelegationToolParts(messages: readonly {
   id?: string;
   parts?: unknown[];
@@ -318,6 +323,18 @@ declare function childStatusToState(status: string | undefined): 'running' | 'co
  *  panel renders the tag with a distinct style so native task() children are
  *  visually separable from pantheon_delegate jobs. */
 declare function delegationTag(entry: DelegationEntry): string;
+/** Split a display list into native task() rows vs pantheon_delegate rows.
+ *  Native = source 'children-only' (no board report); everything else counts
+ *  as pantheon. Pure — powers the header breakdown + the hooks.log line. */
+declare function countDelegationSources(entries: readonly DelegationEntry[]): {
+  native: number;
+  pantheon: number;
+  total: number;
+};
+/** Diagnostic hooks.log line for a panel re-fetch, with the children
+ *  breakdown (pantheon = children WITH a board report, native = children
+ *  WITHOUT one). Pure — the View logs the returned string verbatim. */
+declare function formatPanelLogLine(children: number, pantheon: number, native: number, md: number, events: number): string;
 /** Turn child sessions (PRIMARY) enriched with md reports into the display
  *  list. One entry per child id (duplicates across re-fetches collapse).
  *  The md report is matched by `Task ID` (== child.id) and supplies alias,
@@ -326,10 +343,14 @@ declare function delegationTag(entry: DelegationEntry): string;
  *  itself (fallback 'agent'), state derived from its status, startedAt from
  *  time.created. A report-less child is a NATIVE task() child (every
  *  child of the current session — pantheon_delegate OR the native `task()`
- *  tool — carries parentID = caller), so it gets source 'children-only'
- *  and the `[native]` tag instead of a board alias.
+ *  tool — carries parentID = caller), so it gets source 'children-only',
+ *  the internal alias 'native-task' and the `[native]` tag instead of a
+ *  board alias. The 'task nativa' description fallback keeps the row
+ *  non-empty when the child carries no title.
  *  Terminal md state wins over the derived state; a running md defers to
- *  the child's live status. Sorted running-first (compareDelegationEntries).
+ *  the child's live status. A running child is NEVER archived — it always
+ *  lands in the active split (splitDelegationList active = running/retry).
+ *  Sorted running-first (compareDelegationEntries).
  *  Pure — no I/O. */
 declare function childrenToDelegationEntries(children: readonly ChildDelegationLike[] | undefined, md: readonly DelegationEntry[], now?: number): DelegationEntry[];
 /** Navigate the TUI to a child session (click/Enter on a delegation row).
@@ -356,5 +377,5 @@ declare const plugin: TuiPluginModule & {
   setup: () => Promise<void>;
 };
 //#endregion
-export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, tuiLogPath, visibleDelegationList };
+export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, tuiLogPath, visibleDelegationList };
 //# sourceMappingURL=tui.d.ts.map

@@ -25,6 +25,7 @@ import {
   childrenToDelegationEntries,
   childStatusToState,
   collectDelegationToolParts,
+  countDelegationSources,
   type DelegationEntry,
   delegationActivity,
   delegationActivityLabel,
@@ -33,6 +34,7 @@ import {
   delegationTag,
   extractToolActivity,
   fmtElapsed,
+  formatPanelLogLine,
   isValidSessionId,
   type LiveDelegationEntry,
   latestToolActivityFor,
@@ -1179,7 +1181,7 @@ async function main() {
       // transitions on pantheon_delegation_read). The merge must NOT
       // overwrite the terminal children-only state with the stale live state.
       const child: DelegationEntry = {
-        alias: 'task',
+        alias: 'native-task',
         sessionID: 'ses_root',
         taskID: 'ses_child_idle',
         agent: 'apollo',
@@ -1375,7 +1377,7 @@ async function main() {
       const e = entries[0]
       assert.ok(e)
       assert.equal(e.source, 'children-only', 'child without md is children-only')
-      assert.equal(e.alias, 'task', 'internal label stays task')
+      assert.equal(e.alias, 'native-task', 'internal label stays native-task')
       assert.equal(delegationTag(e), '[native]', 'row tag renders [native]')
       assert.equal(e.agent, 'agent', 'agent falls back to "agent" without child.agent')
       assert.equal(e.state, 'running', 'busy → running')
@@ -1503,6 +1505,172 @@ async function main() {
       assert.equal(byId.get('ses_t3')?.updatedAt, 1000)
     },
   )
+
+  // ─── Native task() live signal + panel breakdown ───────────────────────
+  // The native `task` tool spawns a child session with parentID = caller —
+  // the same mechanism as pantheon_delegate — so its tool parts feed the
+  // live-map (rows render `[native]` via the children channel), the header
+  // reads "Delegations (N native + M pantheon)" and hooks.log carries the
+  // "panel: children=N(pantheon=M native=K) md=N" breakdown.
+
+  await testAsync('collect: native task parts are included in the live signal', async () => {
+    const messages = [
+      {
+        id: 'msg_1',
+        parts: [
+          SEED_DELEGATE_RUNNING,
+          {
+            id: 'part_task_1',
+            sessionID: 'ses_root',
+            type: 'tool',
+            callID: 'call_task_1',
+            tool: 'task',
+            state: {
+              status: 'running',
+              input: { subagent_type: 'Explore', prompt: 'find auth code' },
+              time: { start: 2000 },
+            },
+          },
+          { type: 'text', text: 'hi' },
+        ],
+      },
+    ]
+    const parts = collectDelegationToolParts(messages)
+    assert.equal(parts.length, 2, 'delegate + task parts collected, text skipped')
+    assert.deepEqual(
+      parts.map((p) => p.tool),
+      ['pantheon_delegate', 'task'],
+    )
+  })
+
+  await testAsync(
+    'parse: native task running part → tool task, agent from subagent_type, description from prompt',
+    async () => {
+      const p = parseDelegationToolPart(
+        {
+          id: 'part_task_1',
+          sessionID: 'ses_root',
+          type: 'tool',
+          callID: 'call_task_1',
+          tool: 'task',
+          state: {
+            status: 'running',
+            input: { subagent_type: 'Explore', prompt: 'find auth code' },
+            time: { start: 2000 },
+          },
+        },
+        3000,
+      )
+      assert.ok(p, 'native task part must parse')
+      assert.equal(p.tool, 'task')
+      assert.equal(p.agent, 'Explore')
+      assert.equal(p.description, 'find auth code')
+      assert.equal(p.status, 'running')
+      assert.equal(p.alias, null, 'native task never carries a board alias')
+    },
+  )
+
+  await testAsync('reduce: native task part creates a live entry with tool task', async () => {
+    const map = new Map<string, LiveDelegationEntry>()
+    const changed = reduceDelegationToolPart(
+      map,
+      {
+        id: 'part_task_1',
+        sessionID: 'ses_root',
+        type: 'tool',
+        callID: 'call_task_1',
+        tool: 'task',
+        state: {
+          status: 'running',
+          input: { description: 'Busca nativa' },
+          time: { start: 2000 },
+        },
+      },
+      3000,
+    )
+    assert.equal(changed, true)
+    const e = map.get('call_task_1')
+    assert.ok(e)
+    assert.equal(e.tool, 'task')
+    assert.equal(e.state, 'running')
+    assert.equal(e.description, 'Busca nativa')
+  })
+
+  await testAsync(
+    'children-only: missing/empty title → task nativa fallback + native-task alias',
+    async () => {
+      const entries = childrenToDelegationEntries(
+        [
+          { id: 'ses_noname_1', status: 'busy', time: { created: 100 } },
+          { id: 'ses_noname_2', title: '', status: 'busy', time: { created: 200 } },
+        ],
+        [],
+        10_000,
+      )
+      assert.equal(entries.length, 2)
+      for (const e of entries) {
+        assert.equal(e.alias, 'native-task')
+        assert.equal(e.source, 'children-only')
+        assert.equal(e.description, 'task nativa', 'row never renders empty')
+        assert.equal(delegationTag(e), '[native]')
+      }
+    },
+  )
+
+  await testAsync('split: running native children are NEVER archived', async () => {
+    const entries = childrenToDelegationEntries(
+      [
+        { id: 'ses_nat_run', title: 'Nativa rodando', status: 'busy', time: { created: 100 } },
+        {
+          id: 'ses_nat_done',
+          title: 'Nativa pronta',
+          status: 'idle',
+          time: { created: 50, updated: 200 },
+        },
+      ],
+      [],
+      10_000,
+    )
+    const split = splitDelegationList(entries)
+    assert.ok(
+      split.active.some((e) => e.taskID === 'ses_nat_run'),
+      'running native stays active',
+    )
+    assert.ok(
+      !split.archived.some((e) => e.taskID === 'ses_nat_run'),
+      'running native never lands in the archived tail',
+    )
+  })
+
+  await testAsync('count: native vs pantheon breakdown of a display list', async () => {
+    const entries = childrenToDelegationEntries(
+      [
+        { id: 'ses_nat_1', title: 'Nativa', status: 'busy', time: { created: 100 } },
+        { id: 'ses_nat_2', title: 'Nativa 2', status: 'idle', time: { created: 50, updated: 200 } },
+      ],
+      [],
+      10_000,
+    )
+    const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md')
+    assert.ok(md)
+    const all = [...entries, md]
+    const counts = countDelegationSources(all)
+    assert.equal(counts.native, 2)
+    assert.equal(counts.pantheon, 1)
+    assert.equal(counts.total, 3)
+    assert.deepEqual(countDelegationSources([]), { native: 0, pantheon: 0, total: 0 })
+  })
+
+  await testAsync('log: panel line carries the pantheon/native breakdown', async () => {
+    assert.equal(
+      formatPanelLogLine(3, 1, 2, 5, 7),
+      'panel: children=3(pantheon=1 native=2) md=5 events=7',
+    )
+    assert.equal(
+      formatPanelLogLine(0, 0, 0, 4, 0),
+      'panel: children=0(pantheon=0 native=0) md=4 events=0',
+    )
+  })
 
   await testAsync('navigate: route.navigate present → calls session navigation', async () => {
     const calls: Array<[string, Record<string, unknown> | undefined]> = []

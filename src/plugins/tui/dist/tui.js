@@ -1095,10 +1095,12 @@ const DELEGATE_TASKID_PATTERN = /\(task\s+([a-z0-9_]+)\)/i;
 const READ_ALIAS_PATTERN = /^[a-z]{2,8}-\d+$/i;
 /** Extract the tool name + args from a `message.part.updated` part and
 *  reduce it to what the panel needs. Returns null for anything that is
-*  not a pantheon delegation tool part (or is missing its callID). */
+*  not a pantheon delegation tool part, the native `task` subagent tool
+*  (same parentID === caller mechanism — its children render `[native]`),
+*  or is missing its callID. */
 function parseDelegationToolPart(part, now = Date.now()) {
 	if (part.type !== "tool") return null;
-	if (part.tool !== "pantheon_delegate" && part.tool !== "pantheon_delegation_read") return null;
+	if (part.tool !== "pantheon_delegate" && part.tool !== "pantheon_delegation_read" && part.tool !== "task") return null;
 	const callID = part.callID;
 	if (callID === void 0 || callID === "") return null;
 	const sessionID = part.sessionID ?? "";
@@ -1130,8 +1132,8 @@ function parseDelegationToolPart(part, now = Date.now()) {
 			endAt
 		};
 	}
-	const agent = typeof input.agent === "string" ? input.agent : "agent";
-	const description = typeof input.description === "string" ? input.description : "";
+	const agent = typeof input.agent === "string" ? input.agent : typeof input.subagent_type === "string" ? input.subagent_type : "agent";
+	const description = typeof input.description === "string" ? input.description : typeof input.prompt === "string" ? input.prompt.slice(0, 120) : "";
 	let alias = null;
 	let taskID = null;
 	if (status === "completed") {
@@ -1143,7 +1145,7 @@ function parseDelegationToolPart(part, now = Date.now()) {
 		callID,
 		partID: part.id ?? "",
 		sessionID,
-		tool: "pantheon_delegate",
+		tool: part.tool === "task" ? "task" : "pantheon_delegate",
 		agent,
 		description,
 		status,
@@ -1192,7 +1194,7 @@ function reduceDelegationToolPart(map, part, now = Date.now()) {
 			callID: parsed.callID,
 			partID: parsed.partID,
 			sessionID: parsed.sessionID,
-			tool: "pantheon_delegate",
+			tool: parsed.tool,
 			agent: parsed.agent ?? "agent",
 			description: parsed.description,
 			alias: existing?.alias ?? null,
@@ -1209,7 +1211,7 @@ function reduceDelegationToolPart(map, part, now = Date.now()) {
 			callID: parsed.callID,
 			partID: parsed.partID,
 			sessionID: parsed.sessionID,
-			tool: "pantheon_delegate",
+			tool: parsed.tool,
 			agent: parsed.agent ?? "agent",
 			description: parsed.description,
 			alias: parsed.alias,
@@ -1254,11 +1256,14 @@ function removeDelegationEntry(map, partIDOrCallID) {
 	}
 	return false;
 }
-/** Collect pantheon delegation tool parts from a session's messages.
+/** Collect pantheon delegation + native task tool parts from a session's messages.
 *  Messages may carry their parts inline (duck-typed `msg.parts`); when
 *  they don't, the optional `getParts(messageID)` callback is used (the TUI
-*  SDK exposes `api.state.part(messageID)`). Pure w.r.t. I/O — used by the
-*  mount re-scan to re-seed the live map after compaction/attach. */
+*  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
+*  child session with parentID = caller — the same mechanism as
+*  pantheon_delegate — so its parts feed the live-map as the native signal
+*  (rows render `[native]` via the children channel). Pure w.r.t. I/O — used
+*  by the mount re-scan to re-seed the live map after compaction/attach. */
 function collectDelegationToolParts(messages, getParts) {
 	const out = [];
 	for (const msg of messages ?? []) {
@@ -1268,7 +1273,7 @@ function collectDelegationToolParts(messages, getParts) {
 		if (!parts) continue;
 		for (const raw of parts) {
 			const part = raw;
-			if (part?.type === "tool" && (part.tool === "pantheon_delegate" || part.tool === "pantheon_delegation_read")) out.push(part);
+			if (part?.type === "tool" && (part.tool === "pantheon_delegate" || part.tool === "pantheon_delegation_read" || part.tool === "task")) out.push(part);
 		}
 	}
 	return out;
@@ -1393,6 +1398,24 @@ function childStatusToState(status) {
 function delegationTag(entry) {
 	return entry.source === "children-only" ? "[native]" : `[pantheon:${entry.alias}]`;
 }
+/** Split a display list into native task() rows vs pantheon_delegate rows.
+*  Native = source 'children-only' (no board report); everything else counts
+*  as pantheon. Pure — powers the header breakdown + the hooks.log line. */
+function countDelegationSources(entries) {
+	let native = 0;
+	for (const e of entries) if (e.source === "children-only") native++;
+	return {
+		native,
+		pantheon: entries.length - native,
+		total: entries.length
+	};
+}
+/** Diagnostic hooks.log line for a panel re-fetch, with the children
+*  breakdown (pantheon = children WITH a board report, native = children
+*  WITHOUT one). Pure — the View logs the returned string verbatim. */
+function formatPanelLogLine(children, pantheon, native, md, events) {
+	return `panel: children=${children}(pantheon=${pantheon} native=${native}) md=${md} events=${events}`;
+}
 /** Turn child sessions (PRIMARY) enriched with md reports into the display
 *  list. One entry per child id (duplicates across re-fetches collapse).
 *  The md report is matched by `Task ID` (== child.id) and supplies alias,
@@ -1401,10 +1424,14 @@ function delegationTag(entry) {
 *  itself (fallback 'agent'), state derived from its status, startedAt from
 *  time.created. A report-less child is a NATIVE task() child (every
 *  child of the current session — pantheon_delegate OR the native `task()`
-*  tool — carries parentID = caller), so it gets source 'children-only'
-*  and the `[native]` tag instead of a board alias.
+*  tool — carries parentID = caller), so it gets source 'children-only',
+*  the internal alias 'native-task' and the `[native]` tag instead of a
+*  board alias. The 'task nativa' description fallback keeps the row
+*  non-empty when the child carries no title.
 *  Terminal md state wins over the derived state; a running md defers to
-*  the child's live status. Sorted running-first (compareDelegationEntries).
+*  the child's live status. A running child is NEVER archived — it always
+*  lands in the active split (splitDelegationList active = running/retry).
+*  Sorted running-first (compareDelegationEntries).
 *  Pure — no I/O. */
 function childrenToDelegationEntries(children, md, now = Date.now()) {
 	const byTaskID = /* @__PURE__ */ new Map();
@@ -1417,7 +1444,7 @@ function childrenToDelegationEntries(children, md, now = Date.now()) {
 		const mdEntry = byTaskID.get(child.id);
 		const state = mdEntry !== void 0 && mdEntry.state !== "running" ? mdEntry.state : childStatusToState(child.status);
 		out.push({
-			alias: mdEntry?.alias ?? "task",
+			alias: mdEntry?.alias ?? "native-task",
 			sessionID: mdEntry?.sessionID ?? "",
 			taskID: child.id,
 			agent: mdEntry?.agent ?? child.agent ?? "agent",
@@ -1425,7 +1452,7 @@ function childrenToDelegationEntries(children, md, now = Date.now()) {
 			startedAt: mdEntry?.startedAt ?? child.time?.created ?? now,
 			updatedAt: mdEntry?.updatedAt ?? (state === "running" || state === "stale-running" ? null : child.time?.updated ?? null),
 			timedOut: mdEntry?.timedOut ?? false,
-			description: mdEntry !== void 0 && mdEntry.description !== "" ? mdEntry.description : child.title ?? "",
+			description: mdEntry !== void 0 && mdEntry.description !== "" ? mdEntry.description : child.title !== void 0 && child.title !== "" ? child.title : "task nativa",
 			source: mdEntry !== void 0 ? "md" : "children-only"
 		});
 	}
@@ -1549,7 +1576,7 @@ function DelegationRow(props) {
 			},
 			children: (a) => (() => {
 				var _el$19 = createElement("text");
-				insert(_el$19, () => `  \u21b3 ${a().tool}${a().summary !== "" ? " " + a().summary : ""}`);
+				insert(_el$19, () => `  \u21b3 ${a().tool}${a().summary !== "" ? ` ${a().summary}` : ""}`);
 				effect((_$p) => setProp(_el$19, "fg", theme().textMuted, _$p));
 				return _el$19;
 			})()
@@ -1647,7 +1674,7 @@ function View(props) {
 				});
 				if (sessionID === null) {
 					setChildDelegations(md);
-					panelLog.info(`panel: children=0 md=${md.length} events=${eventRefreshCount} (no sessionID — history shown)`);
+					panelLog.info(`${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — history shown)`);
 					return;
 				}
 				let children = [];
@@ -1674,7 +1701,8 @@ function View(props) {
 				for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 3e4) props.liveStore.map.delete(k);
 				const liveEntries = [...props.liveStore.map.values()].filter((entry) => entry.sessionID === sessionID);
 				setChildDelegations(mergeChildDelegationSources(childEntries, liveEntries));
-				panelLog.info(`panel: children=${children.length} md=${md.length} events=${eventRefreshCount}`);
+				const counts = countDelegationSources(childEntries);
+				panelLog.info(formatPanelLogLine(children.length, counts.pantheon, counts.native, md.length, eventRefreshCount));
 			} finally {
 				delegationsInflight = null;
 			}
@@ -1683,6 +1711,7 @@ function View(props) {
 	};
 	const delegationSplit = createMemo(() => splitDelegationList(childDelegations()));
 	const visibleDelegations = createMemo(() => [...delegationSplit().active, ...delegationSplit().recent]);
+	const delegationCounts = createMemo(() => countDelegationSources(visibleDelegations()));
 	const [archivedPage, setArchivedPage] = createSignal(archivedUiState.page);
 	const clampArchivedPage = (page, pages) => {
 		const clamped = Math.max(0, Math.min(page, Math.max(0, pages - 1)));
@@ -1852,7 +1881,7 @@ function View(props) {
 		setProp(_el$28, "onMouseDown", () => setShowDelegations((x) => !x));
 		setProp(_el$29, "attributes", 1);
 		insert(_el$29, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
-		insert(_el$30, () => ` (${String(visibleDelegations().length)})`);
+		insert(_el$30, () => ` (${String(delegationCounts().native)} native + ${String(delegationCounts().pantheon)} pantheon)`);
 		insert(_el$22, createComponent(Show, {
 			get when() {
 				return showDelegations();
@@ -2033,6 +2062,6 @@ const plugin = {
 	setup: async () => {}
 };
 //#endregion
-export { IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, tuiLogPath, visibleDelegationList };
+export { IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, tuiLogPath, visibleDelegationList };
 
 //# sourceMappingURL=tui.js.map
