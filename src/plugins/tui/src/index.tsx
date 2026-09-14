@@ -900,9 +900,9 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      and the native `task()` tool ALSO spawns a child session with
  *      parentID = caller. A child WITHOUT a board report is a native
  *      task() child: childrenToDelegationEntries tags it source
- *      'children-only' with the `nat:` row tag (distinct info color),
+ *      'children-only' (distinct info color),
  *      so native task() work is visible in the panel alongside board
- *      delegates (`pan:apo-1`) — never filtered out, never duplicated
+ *      delegates — never filtered out, never duplicated
  *      with a board row for the same child (a child WITH a report keeps the
  *      md entry, source 'md').
  *
@@ -984,7 +984,7 @@ export type DelegationEntry = {
   // Reintroduce them once nested rows are actually produced.
   /** Internal provenance used to keep a finalized md report authoritative.
    *  'children-only' = a native task() child session with NO board report
-   *  (rendered with the distinct `nat:` prefix); 'md' = board report wins;
+   *  (a native child row); 'md' = board report wins;
    *  'board' = read from .pantheon/board/state.json (cross-session FSM). */
   source?: 'child' | 'live' | 'md' | 'children-only' | 'board'
 }
@@ -1172,7 +1172,7 @@ export async function readAllDelegationEntries(root: string): Promise<Delegation
 
 /* ─── Job board channel (4th source: .pantheon/board/state.json) ────────
  * `session.children` is scoped to the focused session, so a job running in
- * ANOTHER session is invisible to it (the "Delegations (0)" / nat:0 symptom).
+ * ANOTHER session is invisible to it (the "Delegations (0)" symptom).
  * The board state file is the only durable, cross-session source:
  * FilePersistence (src/pantheon/file-persistence.ts) stores every
  * BackgroundJobRecord there as a JSON array. Reads are fail-open — absent,
@@ -1302,18 +1302,18 @@ export function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry)
 }
 
 /** Split the panel list: active jobs (running/retry, stale-marked) first,
- *  then the most recent terminal reports, then the archived tail (paginated
- *  in the View). Pure — so the history-only panel (no sessionID) is testable
+ *  then the most recent terminal reports; the remaining tail is collapsed
+ *  by the View into a single "… +N more" line. Pure — so the history-only panel (no sessionID) is testable
  *  without the TUI runtime. */
 export function splitDelegationList(
   all: readonly DelegationEntry[],
   maxRecent = 8,
   now = Date.now(),
   staleThresholdMs = 30 * 60 * 1000, // 30 minutes
-): { active: DelegationEntry[]; recent: DelegationEntry[]; archived: DelegationEntry[] } {
+): { active: DelegationEntry[]; recent: DelegationEntry[] } {
   // Active = running OR retry OR the display-only stale-running. A stale row
   // is still a live job (backend state unchanged), so it must never fall into
-  // the terminal/archived tail — archiving a running delegation hid the row
+  // the terminal tail — pushing a running delegation out hid the row
   // the user launched.
   const isActiveState = (st: DelegationEntry['state']): boolean =>
     st === 'running' || st === 'retry' || st === 'stale-running'
@@ -1324,13 +1324,12 @@ export function splitDelegationList(
   return {
     active,
     recent: terminal.slice(0, maxRecent),
-    archived: terminal.slice(maxRecent),
   }
 }
 
-/** The list the panel actually renders (kept for the header count and
- *  existing tests): active jobs first, then the most recent terminal
- *  reports (capped) — the archived tail is rendered separately. Pure. */
+/** Live-first window used by {@link ceilingDelegationList} (kept for the
+ *  ceiling helper and existing tests): active jobs first, then the most
+ *  recent terminal reports (capped). Pure. */
 export function visibleDelegationList(
   all: readonly DelegationEntry[],
   maxTerminal = 8,
@@ -1370,7 +1369,7 @@ export function markStaleIfRunning(
   return { ...entry, state: 'stale-running' as const }
 }
 
-/** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
+/** Compact elapsed-time label, single unit only: "12s"/"3m"/"1h"/"2d" — ticks every
  *  second for running jobs. */
 export function fmtElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
@@ -1378,9 +1377,9 @@ export function fmtElapsed(ms: number): string {
   const hours = Math.floor((total % 86_400) / 3_600)
   const minutes = Math.floor((total % 3_600) / 60)
   const seconds = total % 60
-  if (days > 0) return `${days}d ${hours}h`
-  if (hours > 0) return `${hours}h ${minutes}m`
-  if (minutes > 0) return `${minutes}m ${seconds}s`
+  if (days > 0) return `${days}d`
+  if (hours > 0) return `${hours}h`
+  if (minutes > 0) return `${minutes}m`
   return `${seconds}s`
 }
 
@@ -1451,38 +1450,14 @@ export function delegationSpinnerFrame(now: number): string {
  *  pre-dispatch tool part maps to `running` in {@link reduceDelegationToolPart}. */
 export type DelegationDisplayState = DelegationEntry['state']
 
-/** Static glyph per display state. `running` shows its base spinner frame;
- *  callers that animate must prefer {@link delegationStateMarker}. Unicode
- *  geometric shapes only (no Nerd Font) — shape is an independent channel
- *  from color, so rows stay legible without color. */
-export const DELEGATION_STATE_GLYPHS: Readonly<Record<DelegationDisplayState, string>> = {
-  running: '\u280b', // ⠋ base frame of the animated spinner
-  retry: '\u27f3', // ⟳ retrying
-  'stale-running': '\u26a0', // ⚠ stale (display-only alert)
-  completed: '\u2713', // ✓
-  error: '\u2715', // ✕
-  cancelled: '\u2212', // − minus: stopped, distinct from error's ✕
-  startup_failed: '\u26a0', // ⚠ boot failed
-  startup_unknown: '\u26a0', // ⚠ boot outcome unknown
-}
-
-export function delegationStateGlyph(state: DelegationDisplayState): string {
-  return DELEGATION_STATE_GLYPHS[state]
-}
-
-/** Row marker (`<glyph> `) — the state channel. `running` animates through
- *  {@link delegationSpinnerFrame} for the given tick; every other state is
- *  static. Pure. */
-export function delegationStateMarker(state: DelegationDisplayState, now = Date.now()): string {
-  const glyph = state === 'running' ? delegationSpinnerFrame(now) : delegationStateGlyph(state)
-  return `${glyph} `
-}
-
 /** Semantic tone mapped to the TUI theme at the row ({@link DelegationRow}).
  *  Kept separate + pure so the color channel is testable without booting the
  *  renderer. */
 export type DelegationStateTone = 'warning' | 'error' | 'success' | 'muted'
 
+/** Color is the ONLY channel separating `stale-running` from a live `running`
+ *  row — the 4-glyph row design has no dedicated stale shape. Display-only;
+ *  no behavior change. */
 export function delegationStateTone(state: DelegationDisplayState): DelegationStateTone {
   switch (state) {
     case 'running':
@@ -1517,10 +1492,6 @@ export type ToolActivity = {
 const latestToolActivity = new Map<string, ToolActivity>()
 const MAX_TOOL_ACTIVITY_ENTRIES = 200
 const TOOL_ACTIVITY_TTL_MS = 5 * 60 * 1000
-
-/** Archived-section pagination state — module-level so it survives sidebar
- *  remounts (route changes) without leaking into the component tree. */
-const archivedUiState = { page: 0 }
 
 /** First usable summary string from common tool input fields. */
 function summarizeToolInput(input: Record<string, unknown> | undefined): string {
@@ -1611,6 +1582,17 @@ export function mergeChildDelegationSources(
     )
       continue
     const incoming = toDelegationEntry(liveEntry)
+    // A native task() live part never carries a board alias — it is a
+    // children-only row by definition whether it lands on a new row or
+    // upgrades an existing
+    // children-only one. pantheon_delegate pending parts keep source 'live'.
+    const isNativeLive = liveEntry.tool === 'task' && liveEntry.alias === null
+    if (isNativeLive) {
+      // Native task() rows carry no board alias — reuse the synthetic
+      // 'native-task' marker so the single identity falls back to the agent.
+      incoming.source = 'children-only'
+      incoming.alias = 'native-task'
+    }
     const index =
       (incoming.taskID !== undefined ? byTask.get(incoming.taskID) : undefined) ??
       (incoming.alias !== ''
@@ -1658,7 +1640,10 @@ export function mergeChildDelegationSources(
       startedAt: Math.min(existing.startedAt, incoming.startedAt),
       updatedAt: incoming.updatedAt,
       read: incoming.read,
-      source: 'live',
+      // A native task() live upgrade must not flip a children-only row to
+      // 'live' (that would drop the children-only provenance); pantheon_delegate
+      // upgrades still take source 'live'.
+      source: isNativeLive ? existing.source : 'live',
     }
   }
 
@@ -1803,7 +1788,7 @@ export function parseDelegationToolPart(
   // The alias/taskID only exist once the delegate tool COMPLETES (they are
   // returned in its output); a running/pending part has neither. Native
   // `task` parts never carry a board alias — the children channel supplies
-  // the child session id, so the row renders `nat:`.
+  // the child session id and the row's identity.
   let alias: string | null = null
   let taskID: string | null = null
   if (status === 'completed') {
@@ -1877,7 +1862,7 @@ export function reduceDelegationToolPart(
   // job launched (running). A COMPLETED delegate tool only means the job was
   // registered — it stays running and we pick up alias + taskID from the
   // output. Native `task` parts never yield a board alias, so their rows
-  // stay `nat:` until the children channel resolves them.
+  // stay identity-less until the children channel resolves them.
   const existing = map.get(parsed.callID)
   if (parsed.status === 'error') {
     if (existing !== undefined && existing.state === 'error' && existing.updatedAt === parsed.endAt)
@@ -1962,7 +1947,7 @@ export function removeDelegationEntry(
  *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
  *  child session with parentID = caller — the same mechanism as
  *  pantheon_delegate — so its parts feed the live-map as the native signal
- *  (rows render `nat:` via the children channel). Pure w.r.t. I/O — used
+ *  (rows come from the children channel). Pure w.r.t. I/O — used
  *  by the mount re-scan to re-seed the live map after compaction/attach. */
 export function collectDelegationToolParts(
   messages: readonly { id?: string; parts?: unknown[] }[] | undefined,
@@ -2135,68 +2120,18 @@ export function mergeBoardDelegationSources(
       bySessionAlias.set(key(incoming.sessionID, incoming.alias), next)
       continue
     }
-    out[index] = incoming // board wins — it is the persisted source of truth
+    out[index] = {
+      ...incoming,
+      // Session preservation: the board is authoritative for state/alias/agent,
+      // but an EMPTY board sessionID (record without parentSessionID) must
+      // never clobber a known session — otherwise a focused-session row would
+      // lose its attribution. Keep the known session.
+      sessionID: incoming.sessionID !== '' ? incoming.sessionID : (out[index]?.sessionID ?? ''),
+    } // board wins — it is the persisted source of truth
   }
 
   out.sort(compareDelegationEntries)
   return out
-}
-
-/* ─── Delegation scope toggle ([Sessão]/[Tudo]) ───────────────────────── */
-
-/** 'session' = focused session only (default); 'all' = every session the
- *  board knows about. */
-export type DelegationScope = 'session' | 'all'
-
-/** api.kv key holding the persisted scope (defaults to 'session'). */
-export const DELEGATION_SCOPE_KV_KEY = 'delegations.scope'
-
-/** Structural subset of TuiKV — kept local so the pure helpers are testable
- *  without the TUI runtime. */
-export type DelegationScopeKv = {
-  get: (key: string, fallback?: unknown) => unknown
-  set: (key: string, value: unknown) => void
-}
-
-/** Read the persisted scope; anything malformed/absent → 'session'. */
-export function readDelegationScope(kv: DelegationScopeKv | undefined): DelegationScope {
-  try {
-    const raw = kv?.get?.(DELEGATION_SCOPE_KV_KEY, 'session')
-    return raw === 'all' ? 'all' : 'session'
-  } catch {
-    return 'session'
-  }
-}
-
-/** Persist the scope. Failure is non-fatal — the signal keeps it in memory. */
-export function writeDelegationScope(
-  kv: DelegationScopeKv | undefined,
-  scope: DelegationScope,
-): void {
-  try {
-    kv?.set?.(DELEGATION_SCOPE_KV_KEY, scope)
-  } catch {
-    /* in-memory only */
-  }
-}
-
-/** Keyboard/click toggle target. Pure. */
-export function nextDelegationScope(scope: DelegationScope): DelegationScope {
-  return scope === 'session' ? 'all' : 'session'
-}
-
-/** Keep only the focused session's jobs ('session') or all of them ('all').
- *  An empty sessionID marks a current-session child (the children channel is
- *  session-scoped and only fills sessionID from a matching md report), so it
- *  counts as the current session. With no resolved session there is nothing
- *  to scope against — fail-open to the full list. Pure. */
-export function filterDelegationsByScope(
-  entries: readonly DelegationEntry[],
-  scope: DelegationScope,
-  sessionID: string | null,
-): DelegationEntry[] {
-  if (scope === 'all' || sessionID === null) return [...entries]
-  return entries.filter((entry) => entry.sessionID === sessionID || entry.sessionID === '')
 }
 
 /* ─── Children channel (primary source, delegations-sidebar pattern) ────
@@ -2318,37 +2253,72 @@ export function childStatusToState(status: string | undefined): 'running' | 'com
   return 'running' // busy or unknown
 }
 
-/** Short row prefix for a delegation entry (one of the two visual channels
- *  that split native task() work from pantheon_delegate jobs — the other is
- *  {@link delegationIcon}):
+/** Status-only row model: ONE glyph + ONE identity per row.
  *
- *  - `nat:<agent>` — a native task() child (source 'children-only', no board
- *    report). The child session carries no board alias, so the agent IS the
- *    identity.
- *  - `pan:<alias>` — a pantheon_delegate board row (`pan:apo-1`), the same
- *    alias the manager prints in pantheon_delegation_list.
- *
- *  Short prefixes keep the narrow sidebar readable (the old
- *  `pan:apo-1`/`nat:` tags ate the row width). */
-export function delegationTag(entry: DelegationEntry): string {
-  return entry.source === 'children-only' ? `nat:${entry.agent}` : `pan:${entry.alias}`
+ *  A row is
+ *  `{glyph} {alias:7} {elapsed:>5}` plus a muted description line. The short
+ *  alias (`apo-1`) is the single identity; rows without a board alias show
+ *  the agent instead (never both). */
+export type DelegationRowStatus = 'active' | 'done' | 'failed' | 'retry'
+
+/** Map every FSM/display state to one of the 4 row kinds. reconciled never
+ *  reaches the panel (the board parser drops it) but reads as done;
+ *  cancelled reads as done; startup_failed reads as failed while
+ *  startup_unknown (no error known) reads as retry. Pure. */
+export function delegationRowStatus(state: DelegationDisplayState): DelegationRowStatus {
+  switch (state) {
+    case 'running':
+    case 'stale-running':
+      return 'active'
+    case 'retry':
+    case 'startup_unknown':
+      return 'retry'
+    case 'completed':
+    case 'cancelled':
+      return 'done'
+    case 'error':
+    case 'startup_failed':
+      return 'failed'
+  }
 }
 
-/** Row glyph: hollow diamond `◇` for native task() children (info color,
- *  outline) vs filled diamond `◆` for pantheon_delegate rows (state color).
- *  Shape + color are independent channels, so the split stays legible even
- *  without color. */
-export function delegationIcon(entry: DelegationEntry): string {
-  return entry.source === 'children-only' ? '\u25c7' : '\u25c6'
+/** The only 4 glyphs a row may show: animated active, done, failed, retry.
+ *  Shape is redundant with color (never the only signal). Pure. */
+export const DELEGATION_ROW_GLYPHS: Readonly<Record<DelegationRowStatus, string>> = {
+  active: '⠋', // base frame of the animated spinner
+  done: '✓',
+  failed: '✕',
+  retry: '⟳',
 }
 
-/** Row identity after the status marker + glyph. Pantheon rows append the
- *  agent (`pan:apo-1 apollo`); native rows already carry it inside the tag
- *  (`nat:apollo`) and must not duplicate it. */
-export function formatDelegationIdentity(entry: DelegationEntry): string {
-  return entry.source === 'children-only'
-    ? delegationTag(entry)
-    : `${delegationTag(entry)} ${entry.agent}`
+export function delegationRowGlyph(status: DelegationRowStatus): string {
+  return DELEGATION_ROW_GLYPHS[status]
+}
+
+/** Row marker (`<glyph> `) — the single state channel. `active` animates
+ *  through the 1s spinner for the given tick; every other kind is static.
+ *  Pure. */
+export function delegationRowMarker(state: DelegationDisplayState, now = Date.now()): string {
+  const status = delegationRowStatus(state)
+  const glyph = status === 'active' ? delegationSpinnerFrame(now) : delegationRowGlyph(status)
+  return `${glyph} `
+}
+
+/** ONE identity per row: the short board alias (`apo-1`); a row without a
+ *  board alias (native task() child, alias `native-task`) shows the agent
+ *  instead — never alias + agent stacked. Pure. */
+export function delegationRowIdentity(entry: DelegationEntry): string {
+  if (entry.alias === 'native-task' && entry.agent !== '') return entry.agent
+  return entry.alias
+}
+
+/** Fixed alias cell, pad-right + hard-truncate to `width` (default 7) so
+ *  identities line up across rows. Pure. */
+export const DELEGATION_ALIAS_WIDTH = 7
+
+export function formatDelegationAlias(identity: string, width = DELEGATION_ALIAS_WIDTH): string {
+  if (identity.length >= width) return identity.slice(0, width)
+  return `${identity}${' '.repeat(width - identity.length)}`
 }
 
 /** Max description width on the row detail line — the old 180-char slice
@@ -2382,10 +2352,10 @@ export function truncateDelegationDescription(
   return `${graphemes.slice(0, Math.max(0, max - 1)).join('')}\u2026`
 }
 
-/** Fixed elapsed-time box: right-aligned to `width` (default 8) so elapsed
- *  values line up across rows, e.g. `     12s`. A label that already fills
+/** Fixed elapsed-time box: right-aligned to `width` (default 5) so elapsed
+ *  values line up across rows, e.g. `  12s`. A label that already fills
  *  the box is returned untouched. Pure. */
-export const DELEGATION_ELAPSED_WIDTH = 8
+export const DELEGATION_ELAPSED_WIDTH = 5
 
 export function formatDelegationElapsed(
   entry: DelegationEntry,
@@ -2397,10 +2367,11 @@ export function formatDelegationElapsed(
   return `${' '.repeat(width - label.length)}${label}`
 }
 
-/** First row line: `<marker><glyph> <identity>`. The marker already carries
- *  its trailing space. Pure — the row renders the returned string verbatim. */
-export function formatDelegationRow(entry: DelegationEntry, marker: string): string {
-  return `${marker}${delegationIcon(entry)} ${formatDelegationIdentity(entry)}`
+/** Colored left half of a row line: `<marker><alias:7> ` — the state glyph
+ *  plus the single identity, padded so the muted elapsed column aligns. The
+ *  row renders this colored lead separately from the muted elapsed tail. Pure. */
+export function formatDelegationRowLead(entry: DelegationEntry, marker: string): string {
+  return `${marker}${formatDelegationAlias(delegationRowIdentity(entry))} `
 }
 
 // Tree connectors (`isNestedDelegation` / `delegationTreePrefix`) were removed
@@ -2408,22 +2379,52 @@ export function formatDelegationRow(entry: DelegationEntry, marker: string): str
 // ever actually nested and the connectors were never populated in production.
 // BACKLOG: produce real grandchild rows first, then reintroduce them.
 
-/** Header summary: `(N active · M done · nat:K pan:M)`. Active counts
- *  running/retry AND display-only stale-running (a stale row is still a live
- *  job — it must never read as done). Pure. */
+/** Visible-row ceiling for the panel: the remainder collapses into a single
+ *  "… +N more" line. Live rows render first, so a running job is never hidden
+ *  by the cap. */
+export const DELEGATION_VISIBLE_CEILING = 8
+
+/** Header summary: `(N active · M done)` plus `· K failed` only when K > 0.
+ *  Active counts running/retry AND display-only stale-running (a stale row is
+ *  still a live job — it must never read as done); failed counts
+ *  error/startup_failed; cancelled reads as done. Pure. */
 export function formatDelegationHeader(entries: readonly DelegationEntry[]): string {
   let active = 0
+  let done = 0
+  let failed = 0
   for (const e of entries) {
-    if (e.state === 'running' || e.state === 'retry' || e.state === 'stale-running') active++
+    switch (delegationRowStatus(e.state)) {
+      case 'active':
+      case 'retry':
+        active++
+        break
+      case 'failed':
+        failed++
+        break
+      case 'done':
+        done++
+        break
+    }
   }
-  const done = entries.length - active
-  const counts = countDelegationSources(entries)
-  return `(${active} active \u00b7 ${done} done \u00b7 nat:${counts.native} pan:${counts.pantheon})`
+  const tail = failed > 0 ? ` · ${failed} failed` : ''
+  return `(${active} active · ${done} done${tail})`
+}
+
+/** Cap the panel: live rows first, then most-recent terminal rows, at most
+ *  `maxVisible` total. `hidden` is how many were dropped (rendered as
+ *  "… +N more"). Pure. */
+export function ceilingDelegationList(
+  all: readonly DelegationEntry[],
+  maxVisible = DELEGATION_VISIBLE_CEILING,
+  now = Date.now(),
+): { visible: DelegationEntry[]; hidden: number } {
+  const visible = visibleDelegationList(all, maxVisible, now).slice(0, maxVisible)
+  return { visible, hidden: Math.max(0, all.length - visible.length) }
 }
 
 /** Split a display list into native task() rows vs pantheon_delegate rows.
  *  Native = source 'children-only' (no board report); everything else counts
- *  as pantheon. Pure — powers the header breakdown + the hooks.log line. */
+ *  as pantheon. Pure — powers the hooks.log line. */
 export function countDelegationSources(entries: readonly DelegationEntry[]): {
   native: number
   pantheon: number
@@ -2456,18 +2457,22 @@ export function formatPanelLogLine(
  *  time.created. A report-less child is a NATIVE task() child (every
  *  child of the current session — pantheon_delegate OR the native `task()`
  *  tool — carries parentID = caller), so it gets source 'children-only',
- *  the internal alias 'native-task' and the `nat:` tag instead of a
+ *  the internal alias 'native-task' instead of a
  *  board alias. The 'task nativa' description fallback keeps the row
  *  non-empty when the child carries no title.
  *  Terminal md state wins over the derived state; a running md defers to
  *  the child's live status. A running child is NEVER archived — it always
  *  lands in the active split (splitDelegationList active = running/retry).
+ *  `parentSessionID` (the focused session id) is stamped on report-less
+ *  children so the row carries its origin session; omit it and they stay
+ *  unscoped ('').
  *  Sorted running-first (compareDelegationEntries).
  *  Pure — no I/O. */
 export function childrenToDelegationEntries(
   children: readonly ChildDelegationLike[] | undefined,
   md: readonly DelegationEntry[],
   now = Date.now(),
+  parentSessionID = '',
 ): DelegationEntry[] {
   const byTaskID = new Map<string, DelegationEntry>()
   for (const m of md) {
@@ -2485,7 +2490,11 @@ export function childrenToDelegationEntries(
         : childStatusToState(child.status)
     out.push({
       alias: mdEntry?.alias ?? 'native-task',
-      sessionID: mdEntry?.sessionID ?? '',
+      // A report-less child IS a child of the focused session
+      // (session.children is session-scoped), so the caller-passed
+      // parentSessionID is stamped on it as its origin session; an md
+      // match always carries its own session (the report dir name).
+      sessionID: mdEntry?.sessionID ?? parentSessionID,
       taskID: child.id,
       agent: mdEntry?.agent ?? child.agent ?? 'agent',
       state,
@@ -2624,7 +2633,7 @@ function SessionRow(props: { api: TuiPluginApi; session: any }) {
   )
 }
 
-/* ─── Delegation Row (single job from the children/md channels) ─ */
+/* ─── Delegation Row (single job from the children/md/board channels) ─ */
 
 function DelegationRow(props: {
   api: TuiPluginApi
@@ -2634,7 +2643,10 @@ function DelegationRow(props: {
 }) {
   const theme = () => props.api.theme.current
 
-  const color = createMemo(() => {
+  // Color is a SEPARATE channel from the glyph: the lead (glyph + identity)
+  // carries the state tone, while elapsed + description stay muted so the
+  // state reads at a glance without shouting.
+  const tone = createMemo(() => {
     const t = theme()
     switch (delegationStateTone(props.job.state)) {
       case 'warning':
@@ -2648,16 +2660,10 @@ function DelegationRow(props: {
     }
   })
 
-  const marker = createMemo(() => delegationStateMarker(props.job.state, props.animationNow))
-
-  // Two visual channels split native task() from pantheon_delegate: the tag
-  // prefix (`nat:`/`pan:`, via delegationTag) and the glyph color — info
-  // (cyan) for native, state color for board rows. The glyph shape (◇/◆) is
-  // the third, color-independent channel.
-  const tagColor = createMemo(() => (props.job.source === 'children-only' ? theme().info : color()))
-
-  const description = createMemo(() => truncateDelegationDescription(props.job.description))
+  const marker = createMemo(() => delegationRowMarker(props.job.state, props.animationNow))
+  const lead = createMemo(() => formatDelegationRowLead(props.job, marker()))
   const elapsed = createMemo(() => formatDelegationElapsed(props.job, props.now))
+  const description = createMemo(() => truncateDelegationDescription(props.job.description))
 
   // beta.6: live tool call the child is running RIGHT NOW ("↳ bash npm test"),
   // fed by message.part.updated activity tracking. Null while idle/done.
@@ -2674,22 +2680,22 @@ function DelegationRow(props: {
 
   return (
     <box onMouseDown={open}>
+      {/* Line 1: colored lead (glyph + identity) + muted elapsed tail. */}
       <box flexDirection="row">
-        <text fg={tagColor()}>{formatDelegationRow(props.job, marker())}</text>
+        <text>
+          <span fg={tone()}>{lead()}</span>
+          <span fg={theme().textMuted}>{elapsed()}</span>
+        </text>
       </box>
-      {/* Elapsed is ALWAYS rendered (outside the optional-description Show) so
-       * an active job with no description never loses its timer. */}
-      <box flexDirection="row" justifyContent={description() !== '' ? 'space-between' : 'flex-end'}>
-        <Show when={description() !== ''}>
-          <text fg={theme().textMuted}>{description()}</text>
-        </Show>
-        <text fg={theme().textMuted}>{elapsed()}</text>
-      </box>
+      {/* Line 2: the description, indented under the identity and muted. */}
+      <Show when={description() !== ''}>
+        <text fg={theme().textMuted}>{`  ${description()}`}</text>
+      </Show>
       <Show when={activity()}>
         {(a) => (
           <text
             fg={theme().textMuted}
-          >{`  \u21b3 ${truncateDelegationDescription(`${a().tool}${a().summary !== '' ? ` ${a().summary}` : ''}`)}`}</text>
+          >{`  ↳ ${truncateDelegationDescription(`${a().tool}${a().summary !== '' ? ` ${a().summary}` : ''}`)}`}</text>
         )}
       </Show>
     </box>
@@ -2804,16 +2810,9 @@ function View(props: {
   const projectRoot = createMemo(() => resolvePantheonRoot((props.api.state as any).path))
   // Silence-by-default panel logger → the REAL <root>/.pantheon/logs/hooks.log.
   const panelLog = createTuiLogger(projectRoot())
-  // Scope toggle: [Sessão] = focused session only (default), [Tudo] = every
-  // session the board knows about. Persisted best-effort in api.kv; if the kv
-  // is unavailable the signal keeps it for the process lifetime.
-  const [delegationScope, setDelegationScope] = createSignal<DelegationScope>(
-    readDelegationScope(props.api.kv as unknown as DelegationScopeKv),
-  )
-  const applyDelegationScope = (scope: DelegationScope) => {
-    setDelegationScope(scope)
-    writeDelegationScope(props.api.kv as unknown as DelegationScopeKv, scope)
-  }
+  // Every job the board knows about is shown — no scope filter ("showing is
+  // what matters"). Live-first ordering keeps running rows on top; the
+  // ceiling collapses the rest into "… +N more".
   // The rendered list is childDelegations (children enriched with md);
   // there is no separate md-only signal — the md channel only feeds
   // childrenToDelegationEntries below.
@@ -2901,13 +2900,10 @@ function View(props: {
           }
         }
         const withStatus = children.map((c) => ({ ...c, status: resolveStatus(c.id) }))
-        const childEntries = childrenToDelegationEntries(withStatus, md, now())
-        // childrenToDelegationEntries only fills sessionID from a matching md
-        // report; a report-less row IS a child of the focused session, so tag
-        // it with the resolved id — the scope filter can then keep it.
-        for (const entry of childEntries) {
-          if (entry.sessionID === '') entry.sessionID = sessionID
-        }
+        // Report-less rows ARE children of the focused session
+        // (session.children is session-scoped), so the resolved id is stamped on
+        // the row as its origin session.
+        const childEntries = childrenToDelegationEntries(withStatus, md, now(), sessionID)
         for (const [k, v] of props.liveStore.map)
           if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 30_000)
             props.liveStore.map.delete(k)
@@ -2942,33 +2938,13 @@ function View(props: {
     })()
     return delegationsInflight
   }
-  // beta.6: active (running/retry) first, then the 8 most recent terminal
-  // reports, then the archived tail (paginated). Pagination state lives at
-  // module level so sidebar remounts keep the user's page.
-  // The scope filters the rendered list (and the header counts): children/live
-  // are already session-scoped, md and the board are not.
-  const scopedDelegations = createMemo(() =>
-    filterDelegationsByScope(
-      childDelegations(),
-      delegationScope(),
-      resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api }),
-    ),
+  // Live-first ceiling: at most DELEGATION_VISIBLE_CEILING rows render; the
+  // remainder collapses into a single "… +N more" line. The header counts the
+  // FULL board list — every session, no scope filter.
+  const delegationCeiling = createMemo(() =>
+    ceilingDelegationList(childDelegations(), DELEGATION_VISIBLE_CEILING, now()),
   )
-  const delegationSplit = createMemo(() => splitDelegationList(scopedDelegations()))
-  const visibleDelegations = createMemo(() => [
-    ...delegationSplit().active,
-    ...delegationSplit().recent,
-  ])
-  // Header summary over the FULL scoped list (active + recent + archived):
-  // active vs done plus the native/pantheon breakdown, so a busy session reads
-  // "Delegations (2 active · 9 done · nat:3 pan:8)".
-  const delegationHeader = createMemo(() => formatDelegationHeader(scopedDelegations()))
-  const [archivedPage, setArchivedPage] = createSignal(archivedUiState.page)
-  const clampArchivedPage = (page: number, pages: number) => {
-    const clamped = Math.max(0, Math.min(page, Math.max(0, pages - 1)))
-    archivedUiState.page = clamped
-    setArchivedPage(clamped)
-  }
+  const delegationHeader = createMemo(() => formatDelegationHeader(childDelegations()))
 
   // ── Event subscriptions for live session/delegation updates ──
   onMount(() => {
@@ -3047,29 +3023,6 @@ function View(props: {
       /* re-scan unavailable — children API + 1s poll still cover it */
     }
 
-    // Keyboard shortcut for the scope toggle. `api.keymap` is an optional
-    // peer (@opentui/keymap) — guard the duck-typed call so a degraded/missing
-    // keymap never breaks the sidebar. The clickable [Sessão]/[Tudo] chips are
-    // the always-available fallback.
-    try {
-      const keymap = (props.api as any)?.keymap
-      if (typeof keymap?.registerLayer === 'function') {
-        const off = keymap.registerLayer({
-          priority: 1000,
-          commands: [
-            {
-              name: 'pantheon.delegations.toggleScope',
-              run: () => applyDelegationScope(nextDelegationScope(delegationScope())),
-            },
-          ],
-          bindings: [{ key: 'ctrl+shift+d', cmd: 'pantheon.delegations.toggleScope' }],
-        })
-        if (typeof off === 'function') cleanup.push(off)
-      }
-    } catch {
-      /* keymap unavailable — the click toggle still works */
-    }
-
     onCleanup(() =>
       cleanup.forEach((fn) => {
         fn()
@@ -3136,31 +3089,13 @@ function View(props: {
         <text fg={theme().text} attributes={1}>
           {`${showDelegations() ? '▼' : '▶'} Delegations`}
         </text>
-        <text fg={theme().textMuted}>{` ${delegationHeader()}`}</text>
-        <text fg={theme().textMuted}>{` `}</text>
-        <text
-          fg={delegationScope() === 'session' ? theme().accent : theme().textMuted}
-          attributes={delegationScope() === 'session' ? 1 : undefined}
-          onMouseDown={(e: unknown) => {
-            if (typeof e === 'object' && e !== null && 'stopPropagation' in e)
-              (e as { stopPropagation: () => void }).stopPropagation()
-            applyDelegationScope('session')
-          }}
-        >{`[Sessão]`}</text>
-        <text fg={theme().textMuted}>{`/`}</text>
-        <text
-          fg={delegationScope() === 'all' ? theme().accent : theme().textMuted}
-          attributes={delegationScope() === 'all' ? 1 : undefined}
-          onMouseDown={(e: unknown) => {
-            if (typeof e === 'object' && e !== null && 'stopPropagation' in e)
-              (e as { stopPropagation: () => void }).stopPropagation()
-            applyDelegationScope('all')
-          }}
-        >{`[Tudo]`}</text>
+        <text fg={theme().textMuted}>
+          {childDelegations().length > 0 ? ` ${delegationHeader()}` : ' — idle'}
+        </text>
       </box>
       <Show when={showDelegations()}>
         <Show
-          when={visibleDelegations().length > 0}
+          when={delegationCeiling().visible.length > 0}
           fallback={
             <box marginLeft={1}>
               <text fg={theme().textMuted}>No delegations</text>
@@ -3168,7 +3103,7 @@ function View(props: {
           }
         >
           <box marginLeft={1} flexDirection="column">
-            <For each={visibleDelegations()}>
+            <For each={delegationCeiling().visible}>
               {(job) => (
                 <DelegationRow
                   api={props.api}
@@ -3178,40 +3113,8 @@ function View(props: {
                 />
               )}
             </For>
-            <Show when={delegationSplit().archived.length > 0}>
-              {(() => {
-                const archived = delegationSplit().archived
-                const pageSize = 8
-                const pages = Math.ceil(archived.length / pageSize)
-                const page = Math.min(archivedPage(), pages - 1)
-                const slice = archived.slice(page * pageSize, page * pageSize + pageSize)
-                return (
-                  <box flexDirection="column">
-                    <box flexDirection="row" marginLeft={0}>
-                      <text
-                        fg={theme().textMuted}
-                        onMouseDown={() => clampArchivedPage(page - 1, pages)}
-                      >{`\u2039 `}</text>
-                      <text fg={theme().textMuted}>{`Archived (${archived.length}) `}</text>
-                      <text fg={theme().textMuted}>{`${page + 1}/${pages}`}</text>
-                      <text
-                        fg={theme().textMuted}
-                        onMouseDown={() => clampArchivedPage(page + 1, pages)}
-                      >{` \u203a`}</text>
-                    </box>
-                    <For each={slice}>
-                      {(job) => (
-                        <DelegationRow
-                          api={props.api}
-                          job={job}
-                          now={now()}
-                          animationNow={animationNow()}
-                        />
-                      )}
-                    </For>
-                  </box>
-                )
-              })()}
+            <Show when={delegationCeiling().hidden > 0}>
+              <text fg={theme().textMuted}>{`… +${delegationCeiling().hidden} more`}</text>
             </Show>
           </box>
         </Show>

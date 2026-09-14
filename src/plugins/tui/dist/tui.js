@@ -165,7 +165,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.5.0-beta.12";
+	return "1.5.0-beta.13";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.
@@ -933,22 +933,19 @@ function compareDelegationEntries(a, b) {
 	return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt);
 }
 /** Split the panel list: active jobs (running/retry, stale-marked) first,
-*  then the most recent terminal reports, then the archived tail (paginated
-*  in the View). Pure — so the history-only panel (no sessionID) is testable
+*  then the most recent terminal reports; the remaining tail is collapsed
+*  by the View into a single "… +N more" line. Pure — so the history-only panel (no sessionID) is testable
 *  without the TUI runtime. */
 function splitDelegationList(all, maxRecent = 8, now = Date.now(), staleThresholdMs = 1800 * 1e3) {
 	const isActiveState = (st) => st === "running" || st === "retry" || st === "stale-running";
-	const active = all.filter((d) => isActiveState(d.state)).map((d) => markStaleIfRunning(d, now, staleThresholdMs));
-	const terminal = all.filter((d) => !isActiveState(d.state));
 	return {
-		active,
-		recent: terminal.slice(0, maxRecent),
-		archived: terminal.slice(maxRecent)
+		active: all.filter((d) => isActiveState(d.state)).map((d) => markStaleIfRunning(d, now, staleThresholdMs)),
+		recent: all.filter((d) => !isActiveState(d.state)).slice(0, maxRecent)
 	};
 }
-/** The list the panel actually renders (kept for the header count and
-*  existing tests): active jobs first, then the most recent terminal
-*  reports (capped) — the archived tail is rendered separately. Pure. */
+/** Live-first window used by {@link ceilingDelegationList} (kept for the
+*  ceiling helper and existing tests): active jobs first, then the most
+*  recent terminal reports (capped). Pure. */
 function visibleDelegationList(all, maxTerminal = 8, now = Date.now(), staleThresholdMs = 1800 * 1e3) {
 	const { active, recent } = splitDelegationList(all, maxTerminal, now, staleThresholdMs);
 	return [...active, ...recent];
@@ -976,7 +973,7 @@ function markStaleIfRunning(entry, now, thresholdMs = STALE_RUNNING_THRESHOLD_MS
 		state: "stale-running"
 	};
 }
-/** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
+/** Compact elapsed-time label, single unit only: "12s"/"3m"/"1h"/"2d" — ticks every
 *  second for running jobs. */
 function fmtElapsed(ms) {
 	const total = Math.max(0, Math.floor(ms / 1e3));
@@ -984,9 +981,9 @@ function fmtElapsed(ms) {
 	const hours = Math.floor(total % 86400 / 3600);
 	const minutes = Math.floor(total % 3600 / 60);
 	const seconds = total % 60;
-	if (days > 0) return `${days}d ${hours}h`;
-	if (hours > 0) return `${hours}h ${minutes}m`;
-	if (minutes > 0) return `${minutes}m ${seconds}s`;
+	if (days > 0) return `${days}d`;
+	if (hours > 0) return `${hours}h`;
+	if (minutes > 0) return `${minutes}m`;
 	return `${seconds}s`;
 }
 /** Elapsed label for one entry: an ACTIVE entry (running/retry/stale-running)
@@ -1040,32 +1037,12 @@ function delegationSpinnerFrame(now) {
 *  (`retry`, `stale-running`). Fase 1 deliberately omits speculative
 *  blocked/paused/scheduled/skipped. There is no `pending` display state: a
 *  pre-dispatch tool part maps to `running` in {@link reduceDelegationToolPart}. */
-/** Static glyph per display state. `running` shows its base spinner frame;
-*  callers that animate must prefer {@link delegationStateMarker}. Unicode
-*  geometric shapes only (no Nerd Font) — shape is an independent channel
-*  from color, so rows stay legible without color. */
-const DELEGATION_STATE_GLYPHS = {
-	running: "⠋",
-	retry: "⟳",
-	"stale-running": "⚠",
-	completed: "✓",
-	error: "✕",
-	cancelled: "−",
-	startup_failed: "⚠",
-	startup_unknown: "⚠"
-};
-function delegationStateGlyph(state) {
-	return DELEGATION_STATE_GLYPHS[state];
-}
-/** Row marker (`<glyph> `) — the state channel. `running` animates through
-*  {@link delegationSpinnerFrame} for the given tick; every other state is
-*  static. Pure. */
-function delegationStateMarker(state, now = Date.now()) {
-	return `${state === "running" ? delegationSpinnerFrame(now) : delegationStateGlyph(state)} `;
-}
 /** Semantic tone mapped to the TUI theme at the row ({@link DelegationRow}).
 *  Kept separate + pure so the color channel is testable without booting the
 *  renderer. */
+/** Color is the ONLY channel separating `stale-running` from a live `running`
+*  row — the 4-glyph row design has no dedicated stale shape. Display-only;
+*  no behavior change. */
 function delegationStateTone(state) {
 	switch (state) {
 		case "running":
@@ -1082,9 +1059,6 @@ function delegationStateTone(state) {
 const latestToolActivity = /* @__PURE__ */ new Map();
 const MAX_TOOL_ACTIVITY_ENTRIES = 200;
 const TOOL_ACTIVITY_TTL_MS = 300 * 1e3;
-/** Archived-section pagination state — module-level so it survives sidebar
-*  remounts (route changes) without leaking into the component tree. */
-const archivedUiState = { page: 0 };
 /** First usable summary string from common tool input fields. */
 function summarizeToolInput(input) {
 	if (!input) return "";
@@ -1155,6 +1129,11 @@ function mergeChildDelegationSources(children, live) {
 	for (const liveEntry of live) {
 		if (liveEntry.alias === null && liveEntry.taskID === null && Date.now() - liveEntry.startedAt > 3e4) continue;
 		const incoming = toDelegationEntry(liveEntry);
+		const isNativeLive = liveEntry.tool === "task" && liveEntry.alias === null;
+		if (isNativeLive) {
+			incoming.source = "children-only";
+			incoming.alias = "native-task";
+		}
 		const index = (incoming.taskID !== void 0 ? byTask.get(incoming.taskID) : void 0) ?? (incoming.alias !== "" ? bySessionAlias.get(key(incoming.sessionID, incoming.alias)) : void 0);
 		if (index === void 0) {
 			result.push(incoming);
@@ -1182,7 +1161,7 @@ function mergeChildDelegationSources(children, live) {
 			startedAt: Math.min(existing.startedAt, incoming.startedAt),
 			updatedAt: incoming.updatedAt,
 			read: incoming.read,
-			source: "live"
+			source: isNativeLive ? existing.source : "live"
 		};
 	}
 	result.sort(compareDelegationEntries);
@@ -1366,7 +1345,7 @@ function removeDelegationEntry(map, partIDOrCallID) {
 *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
 *  child session with parentID = caller — the same mechanism as
 *  pantheon_delegate — so its parts feed the live-map as the native signal
-*  (rows render `nat:` via the children channel). Pure w.r.t. I/O — used
+*  (rows come from the children channel). Pure w.r.t. I/O — used
 *  by the mount re-scan to re-seed the live map after compaction/attach. */
 function collectDelegationToolParts(messages, getParts) {
 	const out = [];
@@ -1499,43 +1478,13 @@ function mergeBoardDelegationSources(base, board) {
 			bySessionAlias.set(key(incoming.sessionID, incoming.alias), next);
 			continue;
 		}
-		out[index] = incoming;
+		out[index] = {
+			...incoming,
+			sessionID: incoming.sessionID !== "" ? incoming.sessionID : out[index]?.sessionID ?? ""
+		};
 	}
 	out.sort(compareDelegationEntries);
 	return out;
-}
-/** 'session' = focused session only (default); 'all' = every session the
-*  board knows about. */
-/** api.kv key holding the persisted scope (defaults to 'session'). */
-const DELEGATION_SCOPE_KV_KEY = "delegations.scope";
-/** Structural subset of TuiKV — kept local so the pure helpers are testable
-*  without the TUI runtime. */
-/** Read the persisted scope; anything malformed/absent → 'session'. */
-function readDelegationScope(kv) {
-	try {
-		return kv?.get?.("delegations.scope", "session") === "all" ? "all" : "session";
-	} catch {
-		return "session";
-	}
-}
-/** Persist the scope. Failure is non-fatal — the signal keeps it in memory. */
-function writeDelegationScope(kv, scope) {
-	try {
-		kv?.set?.(DELEGATION_SCOPE_KV_KEY, scope);
-	} catch {}
-}
-/** Keyboard/click toggle target. Pure. */
-function nextDelegationScope(scope) {
-	return scope === "session" ? "all" : "session";
-}
-/** Keep only the focused session's jobs ('session') or all of them ('all').
-*  An empty sessionID marks a current-session child (the children channel is
-*  session-scoped and only fills sessionID from a matching md report), so it
-*  counts as the current session. With no resolved session there is nothing
-*  to scope against — fail-open to the full list. Pure. */
-function filterDelegationsByScope(entries, scope, sessionID) {
-	if (scope === "all" || sessionID === null) return [...entries];
-	return entries.filter((entry) => entry.sessionID === sessionID || entry.sessionID === "");
 }
 /** Server-aligned session id validity: opencode rejects anything not starting
 *  with "ses" (SchemaError). This deliberately mirrors that exact contract —
@@ -1593,33 +1542,59 @@ function childStatusToState(status) {
 	if (status === "retry") return "retry";
 	return "running";
 }
-/** Short row prefix for a delegation entry (one of the two visual channels
-*  that split native task() work from pantheon_delegate jobs — the other is
-*  {@link delegationIcon}):
+/** Status-only row model: ONE glyph + ONE identity per row.
 *
-*  - `nat:<agent>` — a native task() child (source 'children-only', no board
-*    report). The child session carries no board alias, so the agent IS the
-*    identity.
-*  - `pan:<alias>` — a pantheon_delegate board row (`pan:apo-1`), the same
-*    alias the manager prints in pantheon_delegation_list.
-*
-*  Short prefixes keep the narrow sidebar readable (the old
-*  `pan:apo-1`/`nat:` tags ate the row width). */
-function delegationTag(entry) {
-	return entry.source === "children-only" ? `nat:${entry.agent}` : `pan:${entry.alias}`;
+*  A row is
+*  `{glyph} {alias:7} {elapsed:>5}` plus a muted description line. The short
+*  alias (`apo-1`) is the single identity; rows without a board alias show
+*  the agent instead (never both). */
+/** Map every FSM/display state to one of the 4 row kinds. reconciled never
+*  reaches the panel (the board parser drops it) but reads as done;
+*  cancelled reads as done; startup_failed reads as failed while
+*  startup_unknown (no error known) reads as retry. Pure. */
+function delegationRowStatus(state) {
+	switch (state) {
+		case "running":
+		case "stale-running": return "active";
+		case "retry":
+		case "startup_unknown": return "retry";
+		case "completed":
+		case "cancelled": return "done";
+		case "error":
+		case "startup_failed": return "failed";
+	}
 }
-/** Row glyph: hollow diamond `◇` for native task() children (info color,
-*  outline) vs filled diamond `◆` for pantheon_delegate rows (state color).
-*  Shape + color are independent channels, so the split stays legible even
-*  without color. */
-function delegationIcon(entry) {
-	return entry.source === "children-only" ? "◇" : "◆";
+/** The only 4 glyphs a row may show: animated active, done, failed, retry.
+*  Shape is redundant with color (never the only signal). Pure. */
+const DELEGATION_ROW_GLYPHS = {
+	active: "⠋",
+	done: "✓",
+	failed: "✕",
+	retry: "⟳"
+};
+function delegationRowGlyph(status) {
+	return DELEGATION_ROW_GLYPHS[status];
 }
-/** Row identity after the status marker + glyph. Pantheon rows append the
-*  agent (`pan:apo-1 apollo`); native rows already carry it inside the tag
-*  (`nat:apollo`) and must not duplicate it. */
-function formatDelegationIdentity(entry) {
-	return entry.source === "children-only" ? delegationTag(entry) : `${delegationTag(entry)} ${entry.agent}`;
+/** Row marker (`<glyph> `) — the single state channel. `active` animates
+*  through the 1s spinner for the given tick; every other kind is static.
+*  Pure. */
+function delegationRowMarker(state, now = Date.now()) {
+	const status = delegationRowStatus(state);
+	return `${status === "active" ? delegationSpinnerFrame(now) : delegationRowGlyph(status)} `;
+}
+/** ONE identity per row: the short board alias (`apo-1`); a row without a
+*  board alias (native task() child, alias `native-task`) shows the agent
+*  instead — never alias + agent stacked. Pure. */
+function delegationRowIdentity(entry) {
+	if (entry.alias === "native-task" && entry.agent !== "") return entry.agent;
+	return entry.alias;
+}
+/** Fixed alias cell, pad-right + hard-truncate to `width` (default 7) so
+*  identities line up across rows. Pure. */
+const DELEGATION_ALIAS_WIDTH = 7;
+function formatDelegationAlias(identity, width = 7) {
+	if (identity.length >= width) return identity.slice(0, width);
+	return `${identity}${" ".repeat(width - identity.length)}`;
 }
 /** Max description width on the row detail line — the old 180-char slice
 *  wrapped the sidebar; 44 keeps one readable line. */
@@ -1645,33 +1620,61 @@ function truncateDelegationDescription(text, max = 44) {
 	if (graphemes.length <= max) return text;
 	return `${graphemes.slice(0, Math.max(0, max - 1)).join("")}\u2026`;
 }
-/** Fixed elapsed-time box: right-aligned to `width` (default 8) so elapsed
-*  values line up across rows, e.g. `     12s`. A label that already fills
+/** Fixed elapsed-time box: right-aligned to `width` (default 5) so elapsed
+*  values line up across rows, e.g. `  12s`. A label that already fills
 *  the box is returned untouched. Pure. */
-const DELEGATION_ELAPSED_WIDTH = 8;
-function formatDelegationElapsed(entry, now, width = 8) {
+const DELEGATION_ELAPSED_WIDTH = 5;
+function formatDelegationElapsed(entry, now, width = 5) {
 	const label = delegationElapsed(entry, now);
 	if (label.length >= width) return label;
 	return `${" ".repeat(width - label.length)}${label}`;
 }
-/** First row line: `<marker><glyph> <identity>`. The marker already carries
-*  its trailing space. Pure — the row renders the returned string verbatim. */
-function formatDelegationRow(entry, marker) {
-	return `${marker}${delegationIcon(entry)} ${formatDelegationIdentity(entry)}`;
+/** Colored left half of a row line: `<marker><alias:7> ` — the state glyph
+*  plus the single identity, padded so the muted elapsed column aligns. The
+*  row renders this colored lead separately from the muted elapsed tail. Pure. */
+function formatDelegationRowLead(entry, marker) {
+	return `${marker}${formatDelegationAlias(delegationRowIdentity(entry))} `;
 }
-/** Header summary: `(N active · M done · nat:K pan:M)`. Active counts
-*  running/retry AND display-only stale-running (a stale row is still a live
-*  job — it must never read as done). Pure. */
+/** Visible-row ceiling for the panel: the remainder collapses into a single
+*  "… +N more" line. Live rows render first, so a running job is never hidden
+*  by the cap. */
+const DELEGATION_VISIBLE_CEILING = 8;
+/** Header summary: `(N active · M done)` plus `· K failed` only when K > 0.
+*  Active counts running/retry AND display-only stale-running (a stale row is
+*  still a live job — it must never read as done); failed counts
+*  error/startup_failed; cancelled reads as done. Pure. */
 function formatDelegationHeader(entries) {
 	let active = 0;
-	for (const e of entries) if (e.state === "running" || e.state === "retry" || e.state === "stale-running") active++;
-	const done = entries.length - active;
-	const counts = countDelegationSources(entries);
-	return `(${active} active \u00b7 ${done} done \u00b7 nat:${counts.native} pan:${counts.pantheon})`;
+	let done = 0;
+	let failed = 0;
+	for (const e of entries) switch (delegationRowStatus(e.state)) {
+		case "active":
+		case "retry":
+			active++;
+			break;
+		case "failed":
+			failed++;
+			break;
+		case "done":
+			done++;
+			break;
+	}
+	const tail = failed > 0 ? ` · ${failed} failed` : "";
+	return `(${active} active · ${done} done${tail})`;
+}
+/** Cap the panel: live rows first, then most-recent terminal rows, at most
+*  `maxVisible` total. `hidden` is how many were dropped (rendered as
+*  "… +N more"). Pure. */
+function ceilingDelegationList(all, maxVisible = 8, now = Date.now()) {
+	const visible = visibleDelegationList(all, maxVisible, now).slice(0, maxVisible);
+	return {
+		visible,
+		hidden: Math.max(0, all.length - visible.length)
+	};
 }
 /** Split a display list into native task() rows vs pantheon_delegate rows.
 *  Native = source 'children-only' (no board report); everything else counts
-*  as pantheon. Pure — powers the header breakdown + the hooks.log line. */
+*  as pantheon. Pure — powers the hooks.log line. */
 function countDelegationSources(entries) {
 	let native = 0;
 	for (const e of entries) if (e.source === "children-only") native++;
@@ -1696,15 +1699,18 @@ function formatPanelLogLine(children, pantheon, native, md, events) {
 *  time.created. A report-less child is a NATIVE task() child (every
 *  child of the current session — pantheon_delegate OR the native `task()`
 *  tool — carries parentID = caller), so it gets source 'children-only',
-*  the internal alias 'native-task' and the `nat:` tag instead of a
+*  the internal alias 'native-task' instead of a
 *  board alias. The 'task nativa' description fallback keeps the row
 *  non-empty when the child carries no title.
 *  Terminal md state wins over the derived state; a running md defers to
 *  the child's live status. A running child is NEVER archived — it always
 *  lands in the active split (splitDelegationList active = running/retry).
+*  `parentSessionID` (the focused session id) is stamped on report-less
+*  children so the row carries its origin session; omit it and they stay
+*  unscoped ('').
 *  Sorted running-first (compareDelegationEntries).
 *  Pure — no I/O. */
-function childrenToDelegationEntries(children, md, now = Date.now()) {
+function childrenToDelegationEntries(children, md, now = Date.now(), parentSessionID = "") {
 	const byTaskID = /* @__PURE__ */ new Map();
 	for (const m of md) if (m.taskID !== void 0 && !byTaskID.has(m.taskID)) byTaskID.set(m.taskID, m);
 	const out = [];
@@ -1716,7 +1722,7 @@ function childrenToDelegationEntries(children, md, now = Date.now()) {
 		const state = mdEntry !== void 0 && mdEntry.state !== "running" ? mdEntry.state : childStatusToState(child.status);
 		out.push({
 			alias: mdEntry?.alias ?? "native-task",
-			sessionID: mdEntry?.sessionID ?? "",
+			sessionID: mdEntry?.sessionID ?? parentSessionID,
 			taskID: child.id,
 			agent: mdEntry?.agent ?? child.agent ?? "agent",
 			state,
@@ -1802,7 +1808,7 @@ function SessionRow(props) {
 }
 function DelegationRow(props) {
 	const theme = () => props.api.theme.current;
-	const color = createMemo(() => {
+	const tone = createMemo(() => {
 		const t = theme();
 		switch (delegationStateTone(props.job.state)) {
 			case "warning": return t.warning;
@@ -1811,57 +1817,54 @@ function DelegationRow(props) {
 			default: return t.textMuted;
 		}
 	});
-	const marker = createMemo(() => delegationStateMarker(props.job.state, props.animationNow));
-	const tagColor = createMemo(() => props.job.source === "children-only" ? theme().info : color());
-	const description = createMemo(() => truncateDelegationDescription(props.job.description));
+	const marker = createMemo(() => delegationRowMarker(props.job.state, props.animationNow));
+	const lead = createMemo(() => formatDelegationRowLead(props.job, marker()));
 	const elapsed = createMemo(() => formatDelegationElapsed(props.job, props.now));
+	const description = createMemo(() => truncateDelegationDescription(props.job.description));
 	const activity = createMemo(() => latestToolActivityFor(latestToolActivity, props.job.taskID, props.now));
 	const open = () => {
 		navigateToDelegationSession(props.api.route, props.job.taskID);
 	};
 	return (() => {
-		var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$16 = createElement("box"), _el$18 = createElement("text");
+		var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$16 = createElement("span"), _el$17 = createElement("span");
 		insertNode(_el$13, _el$14);
-		insertNode(_el$13, _el$16);
 		setProp(_el$13, "onMouseDown", open);
 		insertNode(_el$14, _el$15);
 		setProp(_el$14, "flexDirection", "row");
-		insert(_el$15, () => formatDelegationRow(props.job, marker()));
-		insertNode(_el$16, _el$18);
-		setProp(_el$16, "flexDirection", "row");
-		insert(_el$16, createComponent(Show, {
+		insertNode(_el$15, _el$16);
+		insertNode(_el$15, _el$17);
+		insert(_el$16, lead);
+		insert(_el$17, elapsed);
+		insert(_el$13, createComponent(Show, {
 			get when() {
 				return description() !== "";
 			},
 			get children() {
-				var _el$17 = createElement("text");
-				insert(_el$17, description);
-				effect((_$p) => setProp(_el$17, "fg", theme().textMuted, _$p));
-				return _el$17;
+				var _el$18 = createElement("text");
+				insert(_el$18, () => `  ${description()}`);
+				effect((_$p) => setProp(_el$18, "fg", theme().textMuted, _$p));
+				return _el$18;
 			}
-		}), _el$18);
-		insert(_el$18, elapsed);
+		}), null);
 		insert(_el$13, createComponent(Show, {
 			get when() {
 				return activity();
 			},
 			children: (a) => (() => {
 				var _el$19 = createElement("text");
-				insert(_el$19, () => `  \u21b3 ${truncateDelegationDescription(`${a().tool}${a().summary !== "" ? ` ${a().summary}` : ""}`)}`);
+				insert(_el$19, () => `  ↳ ${truncateDelegationDescription(`${a().tool}${a().summary !== "" ? ` ${a().summary}` : ""}`)}`);
 				effect((_$p) => setProp(_el$19, "fg", theme().textMuted, _$p));
 				return _el$19;
 			})()
 		}), null);
 		effect((_p$) => {
-			var _v$5 = tagColor(), _v$6 = description() !== "" ? "space-between" : "flex-end", _v$7 = theme().textMuted;
-			_v$5 !== _p$.e && (_p$.e = setProp(_el$15, "fg", _v$5, _p$.e));
-			_v$6 !== _p$.t && (_p$.t = setProp(_el$16, "justifyContent", _v$6, _p$.t));
-			_v$7 !== _p$.a && (_p$.a = setProp(_el$18, "fg", _v$7, _p$.a));
+			var _v$5 = tone(), _v$6 = theme().textMuted;
+			_v$5 !== _p$.e && (_p$.e = setProp(_el$16, "fg", _v$5, _p$.e));
+			_v$6 !== _p$.t && (_p$.t = setProp(_el$17, "fg", _v$6, _p$.t));
 			return _p$;
 		}, {
 			e: void 0,
-			t: void 0,
-			a: void 0
+			t: void 0
 		});
 		return _el$13;
 	})();
@@ -1921,11 +1924,6 @@ function View(props) {
 	});
 	const projectRoot = createMemo(() => resolvePantheonRoot(props.api.state.path));
 	const panelLog = createTuiLogger(projectRoot());
-	const [delegationScope, setDelegationScope] = createSignal(readDelegationScope(props.api.kv));
-	const applyDelegationScope = (scope) => {
-		setDelegationScope(scope);
-		writeDelegationScope(props.api.kv, scope);
-	};
 	const [childDelegations, setChildDelegations] = createSignal([]);
 	const [now, setNow] = createSignal(Date.now());
 	const [animationNow, setAnimationNow] = createSignal(Date.now());
@@ -1977,8 +1975,7 @@ function View(props) {
 				const childEntries = childrenToDelegationEntries(children.map((c) => ({
 					...c,
 					status: resolveStatus(c.id)
-				})), md, now());
-				for (const entry of childEntries) if (entry.sessionID === "") entry.sessionID = sessionID;
+				})), md, now(), sessionID);
 				for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 3e4) props.liveStore.map.delete(k);
 				const liveEntries = [...props.liveStore.map.values()].filter((entry) => entry.sessionID === sessionID);
 				setChildDelegations(mergeBoardDelegationSources(mergeChildDelegationSources(childEntries, liveEntries), board));
@@ -1990,19 +1987,8 @@ function View(props) {
 		})();
 		return delegationsInflight;
 	};
-	const scopedDelegations = createMemo(() => filterDelegationsByScope(childDelegations(), delegationScope(), resolveCurrentSessionID({
-		sessionID: props.sessionID,
-		api: props.api
-	})));
-	const delegationSplit = createMemo(() => splitDelegationList(scopedDelegations()));
-	const visibleDelegations = createMemo(() => [...delegationSplit().active, ...delegationSplit().recent]);
-	const delegationHeader = createMemo(() => formatDelegationHeader(scopedDelegations()));
-	const [archivedPage, setArchivedPage] = createSignal(archivedUiState.page);
-	const clampArchivedPage = (page, pages) => {
-		const clamped = Math.max(0, Math.min(page, Math.max(0, pages - 1)));
-		archivedUiState.page = clamped;
-		setArchivedPage(clamped);
-	};
+	const delegationCeiling = createMemo(() => ceilingDelegationList(childDelegations(), 8, now()));
+	const delegationHeader = createMemo(() => formatDelegationHeader(childDelegations()));
 	onMount(() => {
 		const cleanup = [];
 		try {
@@ -2046,23 +2032,6 @@ function View(props) {
 				if (parts.length > 0 && seedLiveDelegationMap(props.liveStore.map, parts) > 0) props.liveStore.bump();
 			}
 		} catch {}
-		try {
-			const keymap = props.api?.keymap;
-			if (typeof keymap?.registerLayer === "function") {
-				const off = keymap.registerLayer({
-					priority: 1e3,
-					commands: [{
-						name: "pantheon.delegations.toggleScope",
-						run: () => applyDelegationScope(nextDelegationScope(delegationScope()))
-					}],
-					bindings: [{
-						key: "ctrl+shift+d",
-						cmd: "pantheon.delegations.toggleScope"
-					}]
-				});
-				if (typeof off === "function") cleanup.push(off);
-			}
-		} catch {}
 		onCleanup(() => cleanup.forEach((fn) => {
 			fn();
 		}));
@@ -2074,7 +2043,7 @@ function View(props) {
 		return _el$20;
 	})();
 	return (() => {
-		var _el$22 = createElement("box"), _el$23 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text"), _el$26 = createElement("text"), _el$28 = createElement("box"), _el$29 = createElement("text"), _el$30 = createElement("text"), _el$31 = createElement("text"), _el$33 = createElement("text"), _el$35 = createElement("text"), _el$37 = createElement("text");
+		var _el$22 = createElement("box"), _el$23 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text"), _el$26 = createElement("text"), _el$28 = createElement("box"), _el$29 = createElement("text"), _el$30 = createElement("text");
 		insertNode(_el$22, _el$23);
 		insertNode(_el$22, _el$24);
 		insertNode(_el$22, _el$28);
@@ -2087,10 +2056,10 @@ function View(props) {
 				return branch();
 			},
 			children: (b) => (() => {
-				var _el$40 = createElement("text");
-				insert(_el$40, b);
-				effect((_$p) => setProp(_el$40, "fg", theme().textMuted, _$p));
-				return _el$40;
+				var _el$33 = createElement("text");
+				insert(_el$33, b);
+				effect((_$p) => setProp(_el$33, "fg", theme().textMuted, _$p));
+				return _el$33;
 			})()
 		}), _el$24);
 		insert(_el$22, createComponent(Show, {
@@ -2099,37 +2068,37 @@ function View(props) {
 			},
 			get fallback() {
 				return (() => {
-					var _el$41 = createElement("box"), _el$42 = createElement("text");
-					insertNode(_el$41, _el$42);
-					setProp(_el$41, "flexDirection", "row");
-					setProp(_el$41, "gap", 1);
-					insertNode(_el$42, createTextNode(`Preset: default`));
-					effect((_$p) => setProp(_el$42, "fg", theme().textMuted, _$p));
-					return _el$41;
+					var _el$34 = createElement("box"), _el$35 = createElement("text");
+					insertNode(_el$34, _el$35);
+					setProp(_el$34, "flexDirection", "row");
+					setProp(_el$34, "gap", 1);
+					insertNode(_el$35, createTextNode(`Preset: default`));
+					effect((_$p) => setProp(_el$35, "fg", theme().textMuted, _$p));
+					return _el$34;
 				})();
 			},
 			children: (name) => (() => {
-				var _el$44 = createElement("box"), _el$45 = createElement("text"), _el$47 = createElement("text"), _el$48 = createElement("text");
-				insertNode(_el$44, _el$45);
-				insertNode(_el$44, _el$47);
-				insertNode(_el$44, _el$48);
-				setProp(_el$44, "flexDirection", "row");
-				setProp(_el$44, "gap", 1);
-				insertNode(_el$45, createTextNode(`⚡ Preset:`));
-				insert(_el$47, name);
-				insert(_el$48, () => `(${preset().source ?? ""})`);
+				var _el$37 = createElement("box"), _el$38 = createElement("text"), _el$40 = createElement("text"), _el$41 = createElement("text");
+				insertNode(_el$37, _el$38);
+				insertNode(_el$37, _el$40);
+				insertNode(_el$37, _el$41);
+				setProp(_el$37, "flexDirection", "row");
+				setProp(_el$37, "gap", 1);
+				insertNode(_el$38, createTextNode(`⚡ Preset:`));
+				insert(_el$40, name);
+				insert(_el$41, () => `(${preset().source ?? ""})`);
 				effect((_p$) => {
-					var _v$17 = theme().textMuted, _v$18 = theme().accent, _v$19 = theme().textMuted;
-					_v$17 !== _p$.e && (_p$.e = setProp(_el$45, "fg", _v$17, _p$.e));
-					_v$18 !== _p$.t && (_p$.t = setProp(_el$47, "fg", _v$18, _p$.t));
-					_v$19 !== _p$.a && (_p$.a = setProp(_el$48, "fg", _v$19, _p$.a));
+					var _v$10 = theme().textMuted, _v$11 = theme().accent, _v$12 = theme().textMuted;
+					_v$10 !== _p$.e && (_p$.e = setProp(_el$38, "fg", _v$10, _p$.e));
+					_v$11 !== _p$.t && (_p$.t = setProp(_el$40, "fg", _v$11, _p$.t));
+					_v$12 !== _p$.a && (_p$.a = setProp(_el$41, "fg", _v$12, _p$.a));
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0,
 					a: void 0
 				});
-				return _el$44;
+				return _el$37;
 			})()
 		}), _el$24);
 		insert(_el$22, createComponent(HR, {}), _el$24);
@@ -2150,12 +2119,12 @@ function View(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$49 = createElement("box"), _el$50 = createElement("text");
-							insertNode(_el$49, _el$50);
-							setProp(_el$49, "marginLeft", 1);
-							insertNode(_el$50, createTextNode(`No recent sessions`));
-							effect((_$p) => setProp(_el$50, "fg", theme().textMuted, _$p));
-							return _el$49;
+							var _el$42 = createElement("box"), _el$43 = createElement("text");
+							insertNode(_el$42, _el$43);
+							setProp(_el$42, "marginLeft", 1);
+							insertNode(_el$43, createTextNode(`No recent sessions`));
+							effect((_$p) => setProp(_el$43, "fg", theme().textMuted, _$p));
+							return _el$42;
 						})();
 					},
 					get children() {
@@ -2180,26 +2149,13 @@ function View(props) {
 		}), _el$28);
 		insertNode(_el$28, _el$29);
 		insertNode(_el$28, _el$30);
-		insertNode(_el$28, _el$31);
-		insertNode(_el$28, _el$33);
-		insertNode(_el$28, _el$35);
-		insertNode(_el$28, _el$37);
 		setProp(_el$28, "onMouseDown", () => setShowDelegations((x) => !x));
 		setProp(_el$29, "attributes", 1);
 		insert(_el$29, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
-		insert(_el$30, () => ` ${delegationHeader()}`);
-		insertNode(_el$31, createTextNode(` `));
-		insertNode(_el$33, createTextNode(`[Sessão]`));
-		setProp(_el$33, "onMouseDown", (e) => {
-			if (typeof e === "object" && e !== null && "stopPropagation" in e) e.stopPropagation();
-			applyDelegationScope("session");
-		});
-		insertNode(_el$35, createTextNode(`/`));
-		insertNode(_el$37, createTextNode(`[Tudo]`));
-		setProp(_el$37, "onMouseDown", (e) => {
-			if (typeof e === "object" && e !== null && "stopPropagation" in e) e.stopPropagation();
-			applyDelegationScope("all");
-		});
+		insert(_el$30, (() => {
+			var _c$ = memo(() => childDelegations().length > 0);
+			return () => _c$() ? ` ${delegationHeader()}` : " — idle";
+		})());
 		insert(_el$22, createComponent(Show, {
 			get when() {
 				return showDelegations();
@@ -2207,25 +2163,25 @@ function View(props) {
 			get children() {
 				return createComponent(Show, {
 					get when() {
-						return visibleDelegations().length > 0;
+						return delegationCeiling().visible.length > 0;
 					},
 					get fallback() {
 						return (() => {
-							var _el$52 = createElement("box"), _el$53 = createElement("text");
-							insertNode(_el$52, _el$53);
-							setProp(_el$52, "marginLeft", 1);
-							insertNode(_el$53, createTextNode(`No delegations`));
-							effect((_$p) => setProp(_el$53, "fg", theme().textMuted, _$p));
-							return _el$52;
+							var _el$45 = createElement("box"), _el$46 = createElement("text");
+							insertNode(_el$45, _el$46);
+							setProp(_el$45, "marginLeft", 1);
+							insertNode(_el$46, createTextNode(`No delegations`));
+							effect((_$p) => setProp(_el$46, "fg", theme().textMuted, _$p));
+							return _el$45;
 						})();
 					},
 					get children() {
-						var _el$39 = createElement("box");
-						setProp(_el$39, "marginLeft", 1);
-						setProp(_el$39, "flexDirection", "column");
-						insert(_el$39, createComponent(For, {
+						var _el$31 = createElement("box");
+						setProp(_el$31, "marginLeft", 1);
+						setProp(_el$31, "flexDirection", "column");
+						insert(_el$31, createComponent(For, {
 							get each() {
-								return visibleDelegations();
+								return delegationCeiling().visible;
 							},
 							children: (job) => createComponent(DelegationRow, {
 								get api() {
@@ -2240,97 +2196,36 @@ function View(props) {
 								}
 							})
 						}), null);
-						insert(_el$39, createComponent(Show, {
+						insert(_el$31, createComponent(Show, {
 							get when() {
-								return delegationSplit().archived.length > 0;
+								return delegationCeiling().hidden > 0;
 							},
 							get children() {
-								return (() => {
-									const archived = delegationSplit().archived;
-									const pageSize = 8;
-									const pages = Math.ceil(archived.length / pageSize);
-									const page = Math.min(archivedPage(), pages - 1);
-									const slice = archived.slice(page * pageSize, page * pageSize + pageSize);
-									return (() => {
-										var _el$55 = createElement("box"), _el$56 = createElement("box"), _el$57 = createElement("text"), _el$59 = createElement("text"), _el$60 = createElement("text"), _el$61 = createElement("text");
-										insertNode(_el$55, _el$56);
-										setProp(_el$55, "flexDirection", "column");
-										insertNode(_el$56, _el$57);
-										insertNode(_el$56, _el$59);
-										insertNode(_el$56, _el$60);
-										insertNode(_el$56, _el$61);
-										setProp(_el$56, "flexDirection", "row");
-										setProp(_el$56, "marginLeft", 0);
-										insertNode(_el$57, createTextNode(`‹ `));
-										setProp(_el$57, "onMouseDown", () => clampArchivedPage(page - 1, pages));
-										insert(_el$59, () => `Archived (${archived.length}) `);
-										insert(_el$60, `${page + 1}/${pages}`);
-										insertNode(_el$61, createTextNode(` ›`));
-										setProp(_el$61, "onMouseDown", () => clampArchivedPage(page + 1, pages));
-										insert(_el$55, createComponent(For, {
-											each: slice,
-											children: (job) => createComponent(DelegationRow, {
-												get api() {
-													return props.api;
-												},
-												job,
-												get now() {
-													return now();
-												},
-												get animationNow() {
-													return animationNow();
-												}
-											})
-										}), null);
-										effect((_p$) => {
-											var _v$20 = theme().textMuted, _v$21 = theme().textMuted, _v$22 = theme().textMuted, _v$23 = theme().textMuted;
-											_v$20 !== _p$.e && (_p$.e = setProp(_el$57, "fg", _v$20, _p$.e));
-											_v$21 !== _p$.t && (_p$.t = setProp(_el$59, "fg", _v$21, _p$.t));
-											_v$22 !== _p$.a && (_p$.a = setProp(_el$60, "fg", _v$22, _p$.a));
-											_v$23 !== _p$.o && (_p$.o = setProp(_el$61, "fg", _v$23, _p$.o));
-											return _p$;
-										}, {
-											e: void 0,
-											t: void 0,
-											a: void 0,
-											o: void 0
-										});
-										return _el$55;
-									})();
-								})();
+								var _el$32 = createElement("text");
+								insert(_el$32, () => `… +${delegationCeiling().hidden} more`);
+								effect((_$p) => setProp(_el$32, "fg", theme().textMuted, _$p));
+								return _el$32;
 							}
 						}), null);
-						return _el$39;
+						return _el$31;
 					}
 				});
 			}
 		}), null);
 		effect((_p$) => {
-			var _v$8 = theme().accent, _v$9 = theme().text, _v$0 = theme().textMuted, _v$1 = theme().text, _v$10 = theme().textMuted, _v$11 = theme().textMuted, _v$12 = delegationScope() === "session" ? theme().accent : theme().textMuted, _v$13 = delegationScope() === "session" ? 1 : void 0, _v$14 = theme().textMuted, _v$15 = delegationScope() === "all" ? theme().accent : theme().textMuted, _v$16 = delegationScope() === "all" ? 1 : void 0;
-			_v$8 !== _p$.e && (_p$.e = setProp(_el$23, "fg", _v$8, _p$.e));
-			_v$9 !== _p$.t && (_p$.t = setProp(_el$25, "fg", _v$9, _p$.t));
-			_v$0 !== _p$.a && (_p$.a = setProp(_el$26, "fg", _v$0, _p$.a));
-			_v$1 !== _p$.o && (_p$.o = setProp(_el$29, "fg", _v$1, _p$.o));
-			_v$10 !== _p$.i && (_p$.i = setProp(_el$30, "fg", _v$10, _p$.i));
-			_v$11 !== _p$.n && (_p$.n = setProp(_el$31, "fg", _v$11, _p$.n));
-			_v$12 !== _p$.s && (_p$.s = setProp(_el$33, "fg", _v$12, _p$.s));
-			_v$13 !== _p$.h && (_p$.h = setProp(_el$33, "attributes", _v$13, _p$.h));
-			_v$14 !== _p$.r && (_p$.r = setProp(_el$35, "fg", _v$14, _p$.r));
-			_v$15 !== _p$.d && (_p$.d = setProp(_el$37, "fg", _v$15, _p$.d));
-			_v$16 !== _p$.l && (_p$.l = setProp(_el$37, "attributes", _v$16, _p$.l));
+			var _v$7 = theme().accent, _v$8 = theme().text, _v$9 = theme().textMuted, _v$0 = theme().text, _v$1 = theme().textMuted;
+			_v$7 !== _p$.e && (_p$.e = setProp(_el$23, "fg", _v$7, _p$.e));
+			_v$8 !== _p$.t && (_p$.t = setProp(_el$25, "fg", _v$8, _p$.t));
+			_v$9 !== _p$.a && (_p$.a = setProp(_el$26, "fg", _v$9, _p$.a));
+			_v$0 !== _p$.o && (_p$.o = setProp(_el$29, "fg", _v$0, _p$.o));
+			_v$1 !== _p$.i && (_p$.i = setProp(_el$30, "fg", _v$1, _p$.i));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
 			a: void 0,
 			o: void 0,
-			i: void 0,
-			n: void 0,
-			s: void 0,
-			h: void 0,
-			r: void 0,
-			d: void 0,
-			l: void 0
+			i: void 0
 		});
 		return _el$22;
 	})();
@@ -2392,6 +2287,6 @@ const plugin = {
 	setup: async () => {}
 };
 //#endregion
-export { DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DELEGATION_SCOPE_KV_KEY, DELEGATION_STATE_GLYPHS, IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, boardRecordToDelegationEntry, boardRecordsToDelegationEntries, boardStatePath, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationStateGlyph, delegationStateMarker, delegationStateTone, delegationTag, extractToolActivity, filterDelegationsByScope, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeBoardDelegationSources, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, nextDelegationScope, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readBoardState, readDelegationEntries, readDelegationScope, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList, writeDelegationScope };
+export { DELEGATION_ALIAS_WIDTH, DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, boardRecordToDelegationEntry, boardRecordsToDelegationEntries, boardStatePath, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeBoardDelegationSources, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readBoardState, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 
 //# sourceMappingURL=tui.js.map
