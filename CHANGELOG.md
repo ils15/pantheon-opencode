@@ -18,6 +18,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.10] - 2026-09-14
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **TUI delegations com prefixos curtos `nat:` / `pan:`:** cada linha do painel passa
+  a usar `nat:<agent>` para child nativo do `task()` (sem report no board) ou
+  `pan:<alias>` para linha `pantheon_delegate` (ex. `pan:apo-1`) — os prefixos curtos
+  liberam largura no sidebar estreito.
+- **Glyph de 2 canais (◇/◆):** ◇ vazado (info/cyan) para child nativo e ◆ preenchido
+  (cor de estado) para linha do board — forma e cor são canais independentes, então o
+  split segue legível mesmo sem cor.
+- **Header resumido:** `(N active · M done · nat:K pan:M)` calculado sobre a lista
+  completa (active + recent + archived), no lugar do antigo `(N native + M pantheon)`.
+- **Elapsed em caixa fixa:** rótulo alinhado à direita em largura 8 e SEMPRE
+  renderizado, então um job ativo sem descrição nunca perde o timer.
+- **100 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com 100/100
+  passando (tsc + biome OK), acima dos 93 da beta.9.
+
+## 🐞 Fixed
+
+- **`appendFile` sem import (log do painel volta a escrever):** o log em arquivo do
+  painel parou de escrever silenciosamente porque `appendFile` era chamado sem import
+  (ReferenceError engolido pelo `catch` vazio); o import foi restaurado e o `catch`
+  agora reporta a falha (gated por echo) em vez de sumir.
+- **Truncamento grapheme-safe:** descrições truncam em fronteiras de grapheme
+  (`Intl.Segmenter` com fallback `Array.from`) em 44 graphemes, sem cortar emoji ou
+  sequências ZWJ ao meio (mojibake).
+- **Linhas stale-running ficam em Active:** um job stale ainda é um job vivo (estado do
+  backend inalterado), então não é mais arquivado — o que escondia a linha lançada.
+- **Spinner/animação de 140ms → 1000ms:** o tick rápido piscava sem adicionar informação.
+- **Dead code removido:** conectores de árvore (`isNestedDelegation` /
+  `delegationTreePrefix`) e campos `parentTaskID`/`childCount` removidos —
+  `session.children` só devolve filhos diretos, então nenhuma linha nested era
+  produzida (BACKLOG).
 ## [v1.5.0-beta.9] - 2026-09-14
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

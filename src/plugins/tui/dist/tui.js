@@ -1,6 +1,6 @@
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
 import { Buffer } from "node:buffer";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -164,7 +164,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.5.0-beta.9";
+	return "1.5.0-beta.10";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.
@@ -879,8 +879,9 @@ function compareDelegationEntries(a, b) {
 *  in the View). Pure — so the history-only panel (no sessionID) is testable
 *  without the TUI runtime. */
 function splitDelegationList(all, maxRecent = 8, now = Date.now(), staleThresholdMs = 1800 * 1e3) {
-	const active = all.filter((d) => d.state === "running" || d.state === "retry").map((d) => markStaleIfRunning(d, now, staleThresholdMs));
-	const terminal = all.filter((d) => d.state !== "running" && d.state !== "retry");
+	const isActiveState = (st) => st === "running" || st === "retry" || st === "stale-running";
+	const active = all.filter((d) => isActiveState(d.state)).map((d) => markStaleIfRunning(d, now, staleThresholdMs));
+	const terminal = all.filter((d) => !isActiveState(d.state));
 	return {
 		active,
 		recent: terminal.slice(0, maxRecent),
@@ -930,10 +931,11 @@ function fmtElapsed(ms) {
 	if (minutes > 0) return `${minutes}m ${seconds}s`;
 	return `${seconds}s`;
 }
-/** Elapsed label for one entry: running → ticks `now - startedAt`, terminal
-*  → fixed `updatedAt - startedAt` (em dash when no finalized timestamp). */
+/** Elapsed label for one entry: an ACTIVE entry (running/retry/stale-running)
+*  ticks `now - startedAt`; a terminal one is fixed at
+*  `updatedAt - startedAt` (em dash when no finalized timestamp). */
 function delegationElapsed(entry, now) {
-	if (entry.state === "running" || entry.state === "stale-running") return fmtElapsed(now - entry.startedAt);
+	if (entry.state === "running" || entry.state === "retry" || entry.state === "stale-running") return fmtElapsed(now - entry.startedAt);
 	return entry.updatedAt !== null ? fmtElapsed(entry.updatedAt - entry.startedAt) : "—";
 }
 /** The activity labels shown by the animated row. Keeping this pure makes the
@@ -969,9 +971,10 @@ const DELEGATION_SPINNER_FRAMES = [
 	"⠇",
 	"⠏"
 ];
-/** Return a deterministic spinner frame. The View ticks this every 140ms. */
+/** Return a deterministic spinner frame. The View ticks this every 1000ms
+*  (not 140ms — the fast tick flickered without adding information). */
 function delegationSpinnerFrame(now) {
-	const index = Math.floor(Math.max(0, now) / 140) % DELEGATION_SPINNER_FRAMES.length;
+	const index = Math.floor(Math.max(0, now) / 1e3) % DELEGATION_SPINNER_FRAMES.length;
 	return DELEGATION_SPINNER_FRAMES[index] ?? DELEGATION_SPINNER_FRAMES[0];
 }
 /** Bounded tracker: child session id → latest running tool call. */
@@ -1096,7 +1099,7 @@ const READ_ALIAS_PATTERN = /^[a-z]{2,8}-\d+$/i;
 /** Extract the tool name + args from a `message.part.updated` part and
 *  reduce it to what the panel needs. Returns null for anything that is
 *  not a pantheon delegation tool part, the native `task` subagent tool
-*  (same parentID === caller mechanism — its children render `[native]`),
+*  (same parentID === caller mechanism — its children render `nat:`),
 *  or is missing its callID. */
 function parseDelegationToolPart(part, now = Date.now()) {
 	if (part.type !== "tool") return null;
@@ -1262,7 +1265,7 @@ function removeDelegationEntry(map, partIDOrCallID) {
 *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
 *  child session with parentID = caller — the same mechanism as
 *  pantheon_delegate — so its parts feed the live-map as the native signal
-*  (rows render `[native]` via the children channel). Pure w.r.t. I/O — used
+*  (rows render `nat:` via the children channel). Pure w.r.t. I/O — used
 *  by the mount re-scan to re-seed the live map after compaction/attach. */
 function collectDelegationToolParts(messages, getParts) {
 	const out = [];
@@ -1389,14 +1392,81 @@ function childStatusToState(status) {
 	if (status === "retry") return "retry";
 	return "running";
 }
-/** Row tag for a delegation entry: `[native]` for native task() children
-*  (source 'children-only' — no board report), `[pantheon:<alias>]` for board
-*  rows ([pantheon:apo-1]) — the same tags the manager prints in
-*  pantheon_delegation_list, so panel rows and CLI list lines match. The
-*  panel renders the tag with a distinct style so native task() children are
-*  visually separable from pantheon_delegate jobs. */
+/** Short row prefix for a delegation entry (one of the two visual channels
+*  that split native task() work from pantheon_delegate jobs — the other is
+*  {@link delegationIcon}):
+*
+*  - `nat:<agent>` — a native task() child (source 'children-only', no board
+*    report). The child session carries no board alias, so the agent IS the
+*    identity.
+*  - `pan:<alias>` — a pantheon_delegate board row (`pan:apo-1`), the same
+*    alias the manager prints in pantheon_delegation_list.
+*
+*  Short prefixes keep the narrow sidebar readable (the old
+*  `pan:apo-1`/`nat:` tags ate the row width). */
 function delegationTag(entry) {
-	return entry.source === "children-only" ? "[native]" : `[pantheon:${entry.alias}]`;
+	return entry.source === "children-only" ? `nat:${entry.agent}` : `pan:${entry.alias}`;
+}
+/** Row glyph: hollow diamond `◇` for native task() children (info color,
+*  outline) vs filled diamond `◆` for pantheon_delegate rows (state color).
+*  Shape + color are independent channels, so the split stays legible even
+*  without color. */
+function delegationIcon(entry) {
+	return entry.source === "children-only" ? "◇" : "◆";
+}
+/** Row identity after the status marker + glyph. Pantheon rows append the
+*  agent (`pan:apo-1 apollo`); native rows already carry it inside the tag
+*  (`nat:apollo`) and must not duplicate it. */
+function formatDelegationIdentity(entry) {
+	return entry.source === "children-only" ? delegationTag(entry) : `${delegationTag(entry)} ${entry.agent}`;
+}
+/** Max description width on the row detail line — the old 180-char slice
+*  wrapped the sidebar; 44 keeps one readable line. */
+const DELEGATION_DESCRIPTION_MAX = 44;
+/** Lazily-built grapheme segmenter. `Intl.Segmenter` keeps ZWJ emoji families
+*  (and skin-tone/variation sequences) intact; `Array.from` (code points) is
+*  the fallback for runtimes without it. */
+let graphemeSegmenter;
+/** Split `text` into display graphemes so truncation never cuts a multi-unit
+*  emoji in half (surrogate pair → mojibake). */
+function splitGraphemes(text) {
+	if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+		graphemeSegmenter ??= new Intl.Segmenter("pt", { granularity: "grapheme" });
+		return Array.from(graphemeSegmenter.segment(text), (s) => s.segment);
+	}
+	return Array.from(text);
+}
+/** Truncate a description to `max` graphemes appending `…` when cut. Exact
+*  `max`-length text is left untouched. Grapheme-granular, so an emoji made of
+*  several code points is never split into mojibake at the boundary. Pure. */
+function truncateDelegationDescription(text, max = 44) {
+	const graphemes = splitGraphemes(text);
+	if (graphemes.length <= max) return text;
+	return `${graphemes.slice(0, Math.max(0, max - 1)).join("")}\u2026`;
+}
+/** Fixed elapsed-time box: right-aligned to `width` (default 8) so elapsed
+*  values line up across rows, e.g. `     12s`. A label that already fills
+*  the box is returned untouched. Pure. */
+const DELEGATION_ELAPSED_WIDTH = 8;
+function formatDelegationElapsed(entry, now, width = 8) {
+	const label = delegationElapsed(entry, now);
+	if (label.length >= width) return label;
+	return `${" ".repeat(width - label.length)}${label}`;
+}
+/** First row line: `<marker><glyph> <identity>`. The marker already carries
+*  its trailing space. Pure — the row renders the returned string verbatim. */
+function formatDelegationRow(entry, marker) {
+	return `${marker}${delegationIcon(entry)} ${formatDelegationIdentity(entry)}`;
+}
+/** Header summary: `(N active · M done · nat:K pan:M)`. Active counts
+*  running/retry AND display-only stale-running (a stale row is still a live
+*  job — it must never read as done). Pure. */
+function formatDelegationHeader(entries) {
+	let active = 0;
+	for (const e of entries) if (e.state === "running" || e.state === "retry" || e.state === "stale-running") active++;
+	const done = entries.length - active;
+	const counts = countDelegationSources(entries);
+	return `(${active} active \u00b7 ${done} done \u00b7 nat:${counts.native} pan:${counts.pantheon})`;
 }
 /** Split a display list into native task() rows vs pantheon_delegate rows.
 *  Native = source 'children-only' (no board report); everything else counts
@@ -1425,7 +1495,7 @@ function formatPanelLogLine(children, pantheon, native, md, events) {
 *  time.created. A report-less child is a NATIVE task() child (every
 *  child of the current session — pantheon_delegate OR the native `task()`
 *  tool — carries parentID = caller), so it gets source 'children-only',
-*  the internal alias 'native-task' and the `[native]` tag instead of a
+*  the internal alias 'native-task' and the `nat:` tag instead of a
 *  board alias. The 'task nativa' description fallback keeps the row
 *  non-empty when the child carries no title.
 *  Terminal md state wins over the derived state; a running md defers to
@@ -1495,7 +1565,11 @@ function createTuiLogger(projectRoot, module = "pantheon-tui") {
 				await mkdir(dirname(logPath), { recursive: true });
 				const stamp = (/* @__PURE__ */ new Date()).toISOString();
 				await appendFile(logPath, `${lines.map((l) => `[${stamp}] [${module}] ${l}`).join("\n")}\n`, "utf8");
-			} catch {}
+			} catch (err) {
+				if (echo) try {
+					process.stderr.write(`[${module}] file-log failed: ${formatArg(err)}\n`);
+				} catch {}
+			}
 		})();
 		if (echo) for (const line of lines) console.log(`[${module}] ${line}`);
 	};
@@ -1549,50 +1623,55 @@ function DelegationRow(props) {
 		}
 	});
 	const tagColor = createMemo(() => props.job.source === "children-only" ? theme().info : color());
-	const detail = createMemo(() => {
-		const line = `${delegationElapsed(props.job, props.now)}${props.job.description !== "" ? ` \u2014 ${props.job.description}` : ""}`;
-		return line.length > 180 ? `${line.slice(0, 177)}\u2026` : line;
-	});
+	const description = createMemo(() => truncateDelegationDescription(props.job.description));
+	const elapsed = createMemo(() => formatDelegationElapsed(props.job, props.now));
 	const activity = createMemo(() => latestToolActivityFor(latestToolActivity, props.job.taskID, props.now));
 	const open = () => {
 		navigateToDelegationSession(props.api.route, props.job.taskID);
 	};
 	return (() => {
-		var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$16 = createElement("text"), _el$17 = createElement("text"), _el$18 = createElement("text");
+		var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$16 = createElement("box"), _el$18 = createElement("text");
 		insertNode(_el$13, _el$14);
-		insertNode(_el$13, _el$18);
+		insertNode(_el$13, _el$16);
 		setProp(_el$13, "onMouseDown", open);
 		insertNode(_el$14, _el$15);
-		insertNode(_el$14, _el$16);
-		insertNode(_el$14, _el$17);
 		setProp(_el$14, "flexDirection", "row");
-		insert(_el$15, marker);
-		insert(_el$16, () => delegationTag(props.job));
-		insert(_el$17, () => ` ${props.job.agent} \u2014 ${delegationActivityLabel(props.job)}`);
-		insert(_el$18, detail);
+		insert(_el$15, () => formatDelegationRow(props.job, marker()));
+		insertNode(_el$16, _el$18);
+		setProp(_el$16, "flexDirection", "row");
+		insert(_el$16, createComponent(Show, {
+			get when() {
+				return description() !== "";
+			},
+			get children() {
+				var _el$17 = createElement("text");
+				insert(_el$17, description);
+				effect((_$p) => setProp(_el$17, "fg", theme().textMuted, _$p));
+				return _el$17;
+			}
+		}), _el$18);
+		insert(_el$18, elapsed);
 		insert(_el$13, createComponent(Show, {
 			get when() {
 				return activity();
 			},
 			children: (a) => (() => {
 				var _el$19 = createElement("text");
-				insert(_el$19, () => `  \u21b3 ${a().tool}${a().summary !== "" ? ` ${a().summary}` : ""}`);
+				insert(_el$19, () => `  \u21b3 ${truncateDelegationDescription(`${a().tool}${a().summary !== "" ? ` ${a().summary}` : ""}`)}`);
 				effect((_$p) => setProp(_el$19, "fg", theme().textMuted, _$p));
 				return _el$19;
 			})()
 		}), null);
 		effect((_p$) => {
-			var _v$5 = color(), _v$6 = tagColor(), _v$7 = color(), _v$8 = theme().textMuted;
+			var _v$5 = tagColor(), _v$6 = description() !== "" ? "space-between" : "flex-end", _v$7 = theme().textMuted;
 			_v$5 !== _p$.e && (_p$.e = setProp(_el$15, "fg", _v$5, _p$.e));
-			_v$6 !== _p$.t && (_p$.t = setProp(_el$16, "fg", _v$6, _p$.t));
-			_v$7 !== _p$.a && (_p$.a = setProp(_el$17, "fg", _v$7, _p$.a));
-			_v$8 !== _p$.o && (_p$.o = setProp(_el$18, "fg", _v$8, _p$.o));
+			_v$6 !== _p$.t && (_p$.t = setProp(_el$16, "justifyContent", _v$6, _p$.t));
+			_v$7 !== _p$.a && (_p$.a = setProp(_el$18, "fg", _v$7, _p$.a));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
-			a: void 0,
-			o: void 0
+			a: void 0
 		});
 		return _el$13;
 	})();
@@ -1711,7 +1790,7 @@ function View(props) {
 	};
 	const delegationSplit = createMemo(() => splitDelegationList(childDelegations()));
 	const visibleDelegations = createMemo(() => [...delegationSplit().active, ...delegationSplit().recent]);
-	const delegationCounts = createMemo(() => countDelegationSources(visibleDelegations()));
+	const delegationHeader = createMemo(() => formatDelegationHeader(childDelegations()));
 	const [archivedPage, setArchivedPage] = createSignal(archivedUiState.page);
 	const clampArchivedPage = (page, pages) => {
 		const clamped = Math.max(0, Math.min(page, Math.max(0, pages - 1)));
@@ -1746,7 +1825,7 @@ function View(props) {
 			refreshDelegations();
 		}, 1e3);
 		cleanup.push(() => clearInterval(poll));
-		const animation = setInterval(() => setAnimationNow(Date.now()), 140);
+		const animation = setInterval(() => setAnimationNow(Date.now()), 1e3);
 		cleanup.push(() => clearInterval(animation));
 		try {
 			const sdk = props.api.state?.session;
@@ -1817,10 +1896,10 @@ function View(props) {
 				insert(_el$39, name);
 				insert(_el$40, () => `(${preset().source ?? ""})`);
 				effect((_p$) => {
-					var _v$12 = theme().textMuted, _v$13 = theme().accent, _v$14 = theme().textMuted;
-					_v$12 !== _p$.e && (_p$.e = setProp(_el$37, "fg", _v$12, _p$.e));
-					_v$13 !== _p$.t && (_p$.t = setProp(_el$39, "fg", _v$13, _p$.t));
-					_v$14 !== _p$.a && (_p$.a = setProp(_el$40, "fg", _v$14, _p$.a));
+					var _v$11 = theme().textMuted, _v$12 = theme().accent, _v$13 = theme().textMuted;
+					_v$11 !== _p$.e && (_p$.e = setProp(_el$37, "fg", _v$11, _p$.e));
+					_v$12 !== _p$.t && (_p$.t = setProp(_el$39, "fg", _v$12, _p$.t));
+					_v$13 !== _p$.a && (_p$.a = setProp(_el$40, "fg", _v$13, _p$.a));
 					return _p$;
 				}, {
 					e: void 0,
@@ -1881,7 +1960,7 @@ function View(props) {
 		setProp(_el$28, "onMouseDown", () => setShowDelegations((x) => !x));
 		setProp(_el$29, "attributes", 1);
 		insert(_el$29, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
-		insert(_el$30, () => ` (${String(delegationCounts().native)} native + ${String(delegationCounts().pantheon)} pantheon)`);
+		insert(_el$30, () => ` ${delegationHeader()}`);
 		insert(_el$22, createComponent(Show, {
 			get when() {
 				return showDelegations();
@@ -1965,11 +2044,11 @@ function View(props) {
 											})
 										}), null);
 										effect((_p$) => {
-											var _v$15 = theme().textMuted, _v$16 = theme().textMuted, _v$17 = theme().textMuted, _v$18 = theme().textMuted;
-											_v$15 !== _p$.e && (_p$.e = setProp(_el$49, "fg", _v$15, _p$.e));
-											_v$16 !== _p$.t && (_p$.t = setProp(_el$51, "fg", _v$16, _p$.t));
-											_v$17 !== _p$.a && (_p$.a = setProp(_el$52, "fg", _v$17, _p$.a));
-											_v$18 !== _p$.o && (_p$.o = setProp(_el$53, "fg", _v$18, _p$.o));
+											var _v$14 = theme().textMuted, _v$15 = theme().textMuted, _v$16 = theme().textMuted, _v$17 = theme().textMuted;
+											_v$14 !== _p$.e && (_p$.e = setProp(_el$49, "fg", _v$14, _p$.e));
+											_v$15 !== _p$.t && (_p$.t = setProp(_el$51, "fg", _v$15, _p$.t));
+											_v$16 !== _p$.a && (_p$.a = setProp(_el$52, "fg", _v$16, _p$.a));
+											_v$17 !== _p$.o && (_p$.o = setProp(_el$53, "fg", _v$17, _p$.o));
 											return _p$;
 										}, {
 											e: void 0,
@@ -1988,12 +2067,12 @@ function View(props) {
 			}
 		}), null);
 		effect((_p$) => {
-			var _v$9 = theme().accent, _v$0 = theme().text, _v$1 = theme().textMuted, _v$10 = theme().text, _v$11 = theme().textMuted;
-			_v$9 !== _p$.e && (_p$.e = setProp(_el$23, "fg", _v$9, _p$.e));
-			_v$0 !== _p$.t && (_p$.t = setProp(_el$25, "fg", _v$0, _p$.t));
-			_v$1 !== _p$.a && (_p$.a = setProp(_el$26, "fg", _v$1, _p$.a));
-			_v$10 !== _p$.o && (_p$.o = setProp(_el$29, "fg", _v$10, _p$.o));
-			_v$11 !== _p$.i && (_p$.i = setProp(_el$30, "fg", _v$11, _p$.i));
+			var _v$8 = theme().accent, _v$9 = theme().text, _v$0 = theme().textMuted, _v$1 = theme().text, _v$10 = theme().textMuted;
+			_v$8 !== _p$.e && (_p$.e = setProp(_el$23, "fg", _v$8, _p$.e));
+			_v$9 !== _p$.t && (_p$.t = setProp(_el$25, "fg", _v$9, _p$.t));
+			_v$0 !== _p$.a && (_p$.a = setProp(_el$26, "fg", _v$0, _p$.a));
+			_v$1 !== _p$.o && (_p$.o = setProp(_el$29, "fg", _v$1, _p$.o));
+			_v$10 !== _p$.i && (_p$.i = setProp(_el$30, "fg", _v$10, _p$.i));
 			return _p$;
 		}, {
 			e: void 0,
@@ -2062,6 +2141,6 @@ const plugin = {
 	setup: async () => {}
 };
 //#endregion
-export { IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, tuiLogPath, visibleDelegationList };
+export { DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 
 //# sourceMappingURL=tui.js.map

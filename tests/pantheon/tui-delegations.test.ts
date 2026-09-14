@@ -30,10 +30,14 @@ import {
   delegationActivity,
   delegationActivityLabel,
   delegationElapsed,
+  delegationIcon,
   delegationSpinnerFrame,
   delegationTag,
   extractToolActivity,
   fmtElapsed,
+  formatDelegationElapsed,
+  formatDelegationHeader,
+  formatDelegationRow,
   formatPanelLogLine,
   isValidSessionId,
   type LiveDelegationEntry,
@@ -55,6 +59,7 @@ import {
   splitDelegationList,
   toDelegationEntry,
   trackToolActivity,
+  truncateDelegationDescription,
   tuiLogPath,
   visibleDelegationList,
 } from '../../src/plugins/tui/src/index.tsx'
@@ -1094,6 +1099,12 @@ async function main() {
       }
       assert.equal(delegationElapsed(running, 1500), '0s')
       assert.equal(delegationElapsed(running, 6_000), '5s')
+      const retrying: DelegationEntry = { ...running, state: 'retry' }
+      assert.equal(
+        delegationElapsed(retrying, 6_000),
+        '5s',
+        'retry is active — elapsed ticks instead of rendering —',
+      )
       const terminal: DelegationEntry = { ...running, state: 'completed', updatedAt: 8_000 }
       assert.equal(
         delegationElapsed(terminal, 100_000),
@@ -1118,7 +1129,16 @@ async function main() {
       }
       assert.equal(delegationActivity(live), 'delegating')
       assert.equal(delegationActivityLabel(live), 'DELEGATING')
-      assert.notEqual(delegationSpinnerFrame(0), delegationSpinnerFrame(140))
+      assert.equal(
+        delegationSpinnerFrame(0),
+        delegationSpinnerFrame(500),
+        'frames hold for a full 1s tick — no 140ms flicker',
+      )
+      assert.notEqual(
+        delegationSpinnerFrame(0),
+        delegationSpinnerFrame(1000),
+        'frames advance once per second',
+      )
       assert.equal(
         delegationActivityLabel({ ...live, alias: 'apo-1', taskID: 'ses_child', read: true }),
         'READING RESULT',
@@ -1349,17 +1369,17 @@ async function main() {
     },
   )
 
-  // ─── Native task() children ([native] tag) ───────────────────────────────
+  // ─── Native task() children (nat: tag) ───────────────────────────────────
   // `session.children` returns EVERY child of the current session — both
   // pantheon_delegate jobs AND subagent sessions spawned by the native
   // `task()` tool (parentID = caller). A child WITHOUT a board report is a
-  // native task child: it renders with source 'children-only' and the `[native]`
-  // tag (vs the board's [pantheon:apo-1] alias), agent from child.agent ?? 'agent',
+  // native task child: it renders with source 'children-only' and the `nat:`
+  // tag (vs the board's `pan:` alias), agent from child.agent ?? 'agent',
   // state derived from the live child status (busy/retry→running,
   // idle→completed) and duration from the child's own time (created→updated).
 
   await testAsync(
-    'children-only: native task() child without md → source children-only, [native] tag, derived state',
+    'children-only: native task() child without md → source children-only, nat: tag, derived state',
     async () => {
       const entries = childrenToDelegationEntries(
         [
@@ -1378,7 +1398,7 @@ async function main() {
       assert.ok(e)
       assert.equal(e.source, 'children-only', 'child without md is children-only')
       assert.equal(e.alias, 'native-task', 'internal label stays native-task')
-      assert.equal(delegationTag(e), '[native]', 'row tag renders [native]')
+      assert.equal(delegationTag(e), 'nat:agent', 'row tag renders nat:<agent>')
       assert.equal(e.agent, 'agent', 'agent falls back to "agent" without child.agent')
       assert.equal(e.state, 'running', 'busy → running')
       assert.equal(e.startedAt, 5000, 'startedAt from child time.created')
@@ -1418,7 +1438,7 @@ async function main() {
     'children-only: child WITH md → board entry (alias) wins, same child NOT duplicated',
     async () => {
       // A pantheon_delegate child has BOTH a board report (md) and appears in
-      // session.children — the board entry (alias [pantheon:apo-1]) must prevail and
+      // session.children — the board entry (alias pan:apo-1) must prevail and
       // the same child must NOT render twice.
       const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md')
       assert.ok(md)
@@ -1437,7 +1457,7 @@ async function main() {
       assert.ok(e)
       assert.equal(e.source, 'md', 'board provenance wins')
       assert.equal(e.alias, 'apo-1', 'board alias (not native)')
-      assert.equal(delegationTag(e), '[pantheon:apo-1]', 'row tag renders the board alias')
+      assert.equal(delegationTag(e), 'pan:apo-1', 'row tag renders the board alias')
       assert.equal(e.state, 'completed', 'terminal md state wins over busy-derived')
     },
   )
@@ -1445,8 +1465,8 @@ async function main() {
   await testAsync(
     'children-only: delegate + task mixture → correct ordering and count',
     async () => {
-      // One pantheon_delegate child (has md → board [pantheon:apo-1]), two native
-      // task() children (no md → [native]) — all from session.children.
+      // One pantheon_delegate child (has md → board pan:apo-1), two native
+      // task() children (no md → nat:) — all from session.children.
       const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md')
       assert.ok(md)
       const children: ChildDelegationLike[] = [
@@ -1470,7 +1490,7 @@ async function main() {
       const board = byId.get(md.taskID ?? '')
       assert.ok(board)
       assert.equal(board.source, 'md')
-      assert.equal(delegationTag(board), '[pantheon:apo-1]')
+      assert.equal(delegationTag(board), 'pan:apo-1')
       assert.equal(
         board.state,
         'completed',
@@ -1509,7 +1529,7 @@ async function main() {
   // ─── Native task() live signal + panel breakdown ───────────────────────
   // The native `task` tool spawns a child session with parentID = caller —
   // the same mechanism as pantheon_delegate — so its tool parts feed the
-  // live-map (rows render `[native]` via the children channel), the header
+  // live-map (rows render `nat:` via the children channel), the header
   // reads "Delegations (N native + M pantheon)" and hooks.log carries the
   // "panel: children=N(pantheon=M native=K) md=N" breakdown.
 
@@ -1612,7 +1632,7 @@ async function main() {
         assert.equal(e.alias, 'native-task')
         assert.equal(e.source, 'children-only')
         assert.equal(e.description, 'task nativa', 'row never renders empty')
-        assert.equal(delegationTag(e), '[native]')
+        assert.equal(delegationTag(e), 'nat:agent')
       }
     },
   )
@@ -2055,6 +2075,92 @@ async function main() {
     assert.equal(result.length, 2)
     assert.equal(result[0]?.state, 'running', 'fresh entry stays running')
     assert.equal(result[1]?.state, 'stale-running', 'stale entry marked as stale-running')
+  })
+
+  // ─── beta.10: compact row format (nat:/pan:, glyph, desc 44, elapsed w8) ──
+
+  const panEntry = (over: Partial<DelegationEntry> = {}): DelegationEntry => ({
+    alias: 'apo-1',
+    sessionID: 'ses_pantheon',
+    taskID: 'ses_pan_child',
+    agent: 'apollo',
+    state: 'completed',
+    startedAt: 1000,
+    updatedAt: 8000,
+    timedOut: false,
+    description: 'Localizar código do hook e seleção de modelo',
+    source: 'md',
+    ...over,
+  })
+  const natEntry = (over: Partial<DelegationEntry> = {}): DelegationEntry =>
+    panEntry({ alias: 'native-task', agent: 'hermes', source: 'children-only', ...over })
+
+  await testAsync('tag: short prefixes nat:<agent> / pan:<alias>, no brackets', async () => {
+    assert.equal(delegationTag(natEntry()), 'nat:hermes')
+    assert.equal(delegationTag(panEntry()), 'pan:apo-1')
+    assert.equal(delegationTag(natEntry()).includes('['), false)
+    assert.equal(delegationTag(panEntry()).includes('['), false)
+  })
+
+  await testAsync('glyph: hollow ◇ native vs filled ◆ pantheon (shape + color)', async () => {
+    assert.equal(delegationIcon(natEntry()), '\u25c7')
+    assert.equal(delegationIcon(panEntry()), '\u25c6')
+  })
+
+  await testAsync('row: marker + glyph + identity (nat has no duplicate agent)', async () => {
+    assert.equal(formatDelegationRow(natEntry(), '\u280b '), '\u280b \u25c7 nat:hermes')
+    assert.equal(formatDelegationRow(panEntry(), '\u280b '), '\u280b \u25c6 pan:apo-1 apollo')
+  })
+
+  await testAsync('desc: truncated at 44 with ellipsis, short text untouched', async () => {
+    assert.equal(truncateDelegationDescription('curta'), 'curta')
+    assert.equal(truncateDelegationDescription(''), '')
+    const exactly = 'b'.repeat(44)
+    assert.equal(truncateDelegationDescription(exactly), exactly)
+    const long = 'a'.repeat(50)
+    const out = truncateDelegationDescription(long)
+    assert.equal(out.length, 44)
+    assert.equal(out, `${'a'.repeat(43)}\u2026`)
+    // Grapheme-safe: a ZWJ emoji family is ONE unit, never split into mojibake.
+    const family = '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}'
+    assert.equal(truncateDelegationDescription(family.repeat(44)), family.repeat(44))
+    const cut = truncateDelegationDescription(family.repeat(45))
+    assert.equal(cut, `${family.repeat(43)}\u2026`)
+    assert.equal(cut.includes('\uFFFD'), false, 'no replacement char / lone surrogate')
+  })
+
+  await testAsync('elapsed: fixed 8-char right-aligned cell, never "ago"', async () => {
+    const running = natEntry({ state: 'running', startedAt: 0, updatedAt: null })
+    const cell = formatDelegationElapsed(running, 12_000)
+    assert.equal(cell, '     12s')
+    assert.equal(cell.length, 8)
+    assert.equal(cell.includes('ago'), false)
+    assert.equal(formatDelegationElapsed(running, 12_000, 4), ' 12s')
+    assert.equal(formatDelegationElapsed(running, 12_000, 2), '12s')
+  })
+
+  await testAsync('active: stale-running and native running are NEVER archived', async () => {
+    const natRun = natEntry({ state: 'running', startedAt: 0, updatedAt: null })
+    const natStale = natEntry({ taskID: 'ses_stale', state: 'stale-running' })
+    const split = splitDelegationList([natRun, natStale], 8, 0)
+    assert.equal(split.active.length, 2, 'both running rows stay active')
+    assert.equal(split.recent.length, 0)
+    assert.equal(split.archived.length, 0, 'nothing running is ever archived')
+  })
+
+  await testAsync('header: active/done + nat/pan breakdown', async () => {
+    const natRun = natEntry({ state: 'running' })
+    const done1 = panEntry({ taskID: 'ses_done_1', state: 'completed' })
+    const done2 = panEntry({ taskID: 'ses_done_2', state: 'completed' })
+    assert.equal(
+      formatDelegationHeader([natRun, done1, done2]),
+      '(1 active \u00b7 2 done \u00b7 nat:1 pan:2)',
+    )
+    assert.equal(formatDelegationHeader([]), '(0 active \u00b7 0 done \u00b7 nat:0 pan:0)')
+    assert.equal(
+      formatDelegationHeader([natEntry({ state: 'stale-running' })]),
+      '(1 active \u00b7 0 done \u00b7 nat:1 pan:0)',
+    )
   })
 
   // ─── Report ────────────────────────────────────────────────────────────
