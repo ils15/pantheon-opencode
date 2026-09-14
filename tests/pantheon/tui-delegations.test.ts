@@ -30,6 +30,9 @@ import {
   childStatusToState,
   collectDelegationToolParts,
   countDelegationSources,
+  createDelegationRowOpenHandler,
+  DELEGATION_DONE_RETENTION_MS,
+  DELEGATION_FAILED_RETENTION_MS,
   DELEGATION_ROW_GLYPHS,
   DELEGATION_VISIBLE_CEILING,
   type DelegationEntry,
@@ -146,6 +149,21 @@ done
 // ─── Harness ───────────────────────────────────────────────────────────
 
 const results: { name: string; passed: boolean; error?: string }[] = []
+
+function delegation(overrides: Partial<DelegationEntry> = {}): DelegationEntry {
+  return {
+    alias: 'job',
+    sessionID: 'ses_root',
+    taskID: 'ses_job',
+    agent: 'apollo',
+    state: 'completed',
+    startedAt: 1_000,
+    updatedAt: 1_000,
+    timedOut: false,
+    description: 'job',
+    ...overrides,
+  }
+}
 
 async function testAsync(name: string, fn: () => Promise<void>) {
   try {
@@ -1675,6 +1693,82 @@ async function main() {
     )
   })
 
+  await testAsync(
+    'ceiling: expired done rows are filtered, failed rows retain their longer window',
+    async () => {
+      const now = 1_000_000
+      const result = ceilingDelegationList(
+        [
+          delegation({ alias: 'done-old', updatedAt: now - DELEGATION_DONE_RETENTION_MS - 1 }),
+          delegation({
+            alias: 'failed-recent',
+            state: 'error',
+            updatedAt: now - DELEGATION_DONE_RETENTION_MS - 1,
+          }),
+          delegation({
+            alias: 'failed-old',
+            state: 'error',
+            updatedAt: now - DELEGATION_FAILED_RETENTION_MS - 1,
+          }),
+        ],
+        DELEGATION_VISIBLE_CEILING,
+        now,
+      )
+      assert.deepEqual(
+        result.visible.map((entry) => entry.alias),
+        ['failed-recent'],
+      )
+      assert.equal(result.hidden, 0, 'expired terminal history is not reported as hidden')
+    },
+  )
+
+  await testAsync(
+    'ceiling: active rows are first and fill remaining slots with newest terminals',
+    async () => {
+      const now = 1_000_000
+      const entries = [
+        delegation({ alias: 'done-new', updatedAt: now - 1 }),
+        delegation({ alias: 'active', state: 'running', updatedAt: now - 1 }),
+        delegation({ alias: 'done-old', updatedAt: now - 2 }),
+      ]
+      const result = ceilingDelegationList(entries, 2, now)
+      assert.deepEqual(
+        result.visible.map((entry) => entry.alias),
+        ['active', 'done-new'],
+      )
+    },
+  )
+
+  await testAsync(
+    'ceiling: more than eight active rows reports active overflow explicitly',
+    async () => {
+      const now = 1_000_000
+      const entries = Array.from({ length: DELEGATION_VISIBLE_CEILING + 2 }, (_, index) =>
+        delegation({ alias: `active-${index}`, state: 'running', updatedAt: now - index }),
+      )
+      const result = ceilingDelegationList(entries, DELEGATION_VISIBLE_CEILING, now)
+      assert.equal(result.visible.length, DELEGATION_VISIBLE_CEILING)
+      assert.equal(result.hiddenActive, 2)
+      assert.equal(result.hiddenTerminal, 0)
+      assert.equal(result.hidden, 2)
+    },
+  )
+
+  await testAsync(
+    'ceiling: terminal entries without a reliable timestamp are retained',
+    async () => {
+      const result = ceilingDelegationList(
+        [delegation({ alias: 'unknown-age', updatedAt: null })],
+        DELEGATION_VISIBLE_CEILING,
+        1_000_000,
+      )
+      assert.deepEqual(
+        result.visible.map((entry) => entry.alias),
+        ['unknown-age'],
+      )
+    },
+  )
+
   await testAsync('count: native vs pantheon breakdown of a display list', async () => {
     const entries = childrenToDelegationEntries(
       [
@@ -1714,6 +1808,19 @@ async function main() {
     assert.deepEqual(calls, [['session', { sessionID: 'ses_child_9' }]])
   })
 
+  await testAsync('navigate: resolved router promise preserves valid navigation', async () => {
+    const calls: Array<[string, Record<string, unknown> | undefined]> = []
+    const route = {
+      navigate: async (name: string, params?: Record<string, unknown>) => {
+        calls.push([name, params])
+      },
+    }
+
+    assert.equal(navigateToDelegationSession(route, 'ses_valid_child'), true)
+    await Promise.resolve()
+    assert.deepEqual(calls, [['session', { sessionID: 'ses_valid_child' }]])
+  })
+
   await testAsync('navigate: route API absent / taskID missing → false, never calls', async () => {
     const calls: string[] = []
     assert.equal(navigateToDelegationSession(undefined, 'ses_child_9'), false, 'no route → false')
@@ -1726,6 +1833,46 @@ async function main() {
     assert.equal(navigateToDelegationSession(route, undefined), false, 'missing taskID → false')
     assert.equal(navigateToDelegationSession(route, ''), false, 'empty taskID → false')
     assert.deepEqual(calls, [], 'navigate must never be called')
+  })
+
+  await testAsync('navigate: synchronous router failure is contained', async () => {
+    const route = {
+      navigate: () => {
+        throw new Error('Session not found')
+      },
+    }
+
+    assert.equal(navigateToDelegationSession(route, 'ses_orphaned'), false)
+  })
+
+  await testAsync('navigate: rejected router promise is contained', async () => {
+    const route = {
+      navigate: () => Promise.reject(new Error('Session not found')),
+    }
+
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      assert.equal(navigateToDelegationSession(route, 'ses_orphaned'), true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandled)
+    }
+    assert.deepEqual(unhandled, [])
+  })
+
+  await testAsync('navigate: row mouse handler invokes navigation helper', async () => {
+    const calls: Array<[string, Record<string, unknown> | undefined]> = []
+    const open = createDelegationRowOpenHandler(
+      { navigate: (name: string, params?: Record<string, unknown>) => calls.push([name, params]) },
+      'ses_event_child',
+    )
+
+    open()
+    assert.deepEqual(calls, [['session', { sessionID: 'ses_event_child' }]])
   })
 
   // ─── Current-session resolution + children path guard ──────────────────
@@ -1886,7 +2033,7 @@ async function main() {
           3,
           'history collected from disk despite null sessionID (running MD rejected)',
         )
-        const panelList = visibleDelegationList(md)
+        const panelList = visibleDelegationList(md, 8, Date.parse('2026-08-11T14:49:00.000Z'))
         assert.equal(panelList.length, 3, 'history renders — panel is NOT (0)')
         assert.deepEqual(
           panelList.map((e) => e.alias).sort(),
@@ -1906,8 +2053,9 @@ async function main() {
       const ses = join(deleg, 'ses_aaa')
       mkdirSync(ses, { recursive: true })
       writeFileSync(join(ses, 'run-1.md'), RUNNING_MD)
+      const base = Date.UTC(2026, 7, 22, 12)
       for (let i = 0; i < 12; i++) {
-        const ts = new Date(Date.UTC(2026, 7, 10 + i, 12)).toISOString()
+        const ts = new Date(base - i * 1000).toISOString()
         writeFileSync(
           join(ses, `term-${i}.md`),
           `# Delegation Report — her-${i}\n\n` +
@@ -1918,12 +2066,12 @@ async function main() {
       const md = await readAllDelegationEntries(root)
       // Running MD reports are now rejected (Fix 3) — only terminal reports parse
       assert.equal(md.length, 12, 'all terminal reports collected (running MD rejected)')
-      const panelList = visibleDelegationList(md)
+      const panelList = visibleDelegationList(md, 8, Date.UTC(2026, 7, 22, 12))
       assert.equal(panelList.length, 8, 'at most 8 terminal (no running from MD)')
       // Recency: the 8 most recently finalized terminals are kept.
       const terminalAliases = panelList.map((e) => e.alias)
-      assert.ok(terminalAliases.includes('her-11'), 'most recent terminal kept')
-      assert.ok(!terminalAliases.includes('her-0'), 'oldest terminal trimmed by the cap')
+      assert.ok(terminalAliases.includes('her-0'), 'most recent terminal kept')
+      assert.ok(!terminalAliases.includes('her-11'), 'oldest terminal trimmed by the cap')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -2185,7 +2333,9 @@ async function main() {
   await testAsync('state tone: color is a separate channel from glyph', async () => {
     assert.equal(delegationStateTone('running'), 'warning')
     assert.equal(delegationStateTone('retry'), 'warning')
-    assert.equal(delegationStateTone('stale-running'), 'error')
+    assert.equal(delegationStateTone('stale-running'), 'warning')
+    assert.equal(delegationRowStatus('stale-running'), 'active')
+    assert.equal(delegationRowMarker('stale-running', 0), `${delegationSpinnerFrame(0)} `)
     assert.equal(delegationStateTone('completed'), 'success')
     assert.equal(delegationStateTone('error'), 'error')
     assert.equal(delegationStateTone('cancelled'), 'muted')

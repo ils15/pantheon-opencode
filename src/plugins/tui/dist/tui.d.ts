@@ -118,6 +118,10 @@ declare const STALE_RUNNING_THRESHOLD_MS: number;
  *  considered stale. Combined with the stale-running threshold to produce the
  *  display-only `stale-running` state. */
 declare const IDLE_SILENCE_MS: number;
+/** Visual-only terminal retention windows. Reports remain on disk and in the
+ * board; these constants only control which rows enter the TUI window. */
+declare const DELEGATION_DONE_RETENTION_MS: number;
+declare const DELEGATION_FAILED_RETENTION_MS: number;
 /**
  * Mark a running entry as `stale-running` if it has been running longer than
  * the threshold AND has no recent activity (no `updatedAt` change in the last
@@ -422,12 +426,14 @@ declare const DELEGATION_VISIBLE_CEILING = 8;
  *  still a live job — it must never read as done); failed counts
  *  error/startup_failed; cancelled reads as done. Pure. */
 declare function formatDelegationHeader(entries: readonly DelegationEntry[]): string;
-/** Cap the panel: live rows first, then most-recent terminal rows, at most
- *  `maxVisible` total. `hidden` is how many were dropped (rendered as
- *  "… +N more"). Pure. */
+/** Cap the panel: live rows first, then most-recent retained terminal rows, at
+ *  most `maxVisible` total. Hidden counts describe the retained render list,
+ *  not expired history. */
 declare function ceilingDelegationList(all: readonly DelegationEntry[], maxVisible?: number, now?: number): {
   visible: DelegationEntry[];
   hidden: number;
+  hiddenActive: number;
+  hiddenTerminal: number;
 };
 /** Split a display list into native task() rows vs pantheon_delegate rows.
  *  Native = source 'children-only' (no board report); everything else counts
@@ -468,8 +474,12 @@ declare function childrenToDelegationEntries(children: readonly ChildDelegationL
  *  server-valid session id ("ses...") ever reaches the router, so an
  *  unsubstituted "{sessionID}" placeholder can never be routed. */
 declare function navigateToDelegationSession(route: {
-  navigate?: (name: string, params?: Record<string, unknown>) => void;
+  navigate?: (name: string, params?: Record<string, unknown>) => void | PromiseLike<void>;
 } | undefined, taskID: string | undefined): boolean;
+/** Build the mouse handler used by each delegation row. */
+declare function createDelegationRowOpenHandler(route: {
+  navigate?: (name: string, params?: Record<string, unknown>) => void | PromiseLike<void>;
+} | undefined, taskID: string | undefined): () => void;
 /** Plugin-level live delegation store shared with the event subscriptions
  *  in `tui()`: the map of live entries + a version signal bumped on every
  *  mutation. The View subscribes to the version (in an effect) to refresh the
@@ -486,5 +496,5 @@ declare const plugin: TuiPluginModule & {
   setup: () => Promise<void>;
 };
 //#endregion
-export { BoardJobRecord, ChildDelegationLike, DELEGATION_ALIAS_WIDTH, DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, DelegationActivity, DelegationDisplayState, DelegationEntry, DelegationRowStatus, DelegationStateTone, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, boardRecordToDelegationEntry, boardRecordsToDelegationEntries, boardStatePath, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeBoardDelegationSources, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readBoardState, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { BoardJobRecord, ChildDelegationLike, DELEGATION_ALIAS_WIDTH, DELEGATION_DESCRIPTION_MAX, DELEGATION_DONE_RETENTION_MS, DELEGATION_ELAPSED_WIDTH, DELEGATION_FAILED_RETENTION_MS, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, DelegationActivity, DelegationDisplayState, DelegationEntry, DelegationRowStatus, DelegationStateTone, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, boardRecordToDelegationEntry, boardRecordsToDelegationEntries, boardStatePath, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, createDelegationRowOpenHandler, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeBoardDelegationSources, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readBoardState, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 //# sourceMappingURL=tui.d.ts.map

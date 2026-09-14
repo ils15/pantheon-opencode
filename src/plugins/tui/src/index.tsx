@@ -1320,7 +1320,22 @@ export function splitDelegationList(
   const active = all
     .filter((d) => isActiveState(d.state))
     .map((d) => markStaleIfRunning(d, now, staleThresholdMs))
-  const terminal = all.filter((d) => !isActiveState(d.state))
+    .sort(compareDelegationEntries)
+  const terminal = all
+    .filter((d) => !isActiveState(d.state))
+    .filter((d) => {
+      // A missing/invalid finalized timestamp is not evidence that a report is
+      // old. Keep it visible rather than accidentally hiding a terminal job.
+      if (d.updatedAt === null || !Number.isFinite(d.updatedAt)) return true
+      const age = now - d.updatedAt
+      if (age < 0) return true
+      const retention =
+        delegationRowStatus(d.state) === 'failed'
+          ? DELEGATION_FAILED_RETENTION_MS
+          : DELEGATION_DONE_RETENTION_MS
+      return age < retention
+    })
+    .sort(compareDelegationEntries)
   return {
     active,
     recent: terminal.slice(0, maxRecent),
@@ -1347,6 +1362,11 @@ export const STALE_RUNNING_THRESHOLD_MS = 30 * 60 * 1000
  *  considered stale. Combined with the stale-running threshold to produce the
  *  display-only `stale-running` state. */
 export const IDLE_SILENCE_MS = 60 * 1000
+
+/** Visual-only terminal retention windows. Reports remain on disk and in the
+ * board; these constants only control which rows enter the TUI window. */
+export const DELEGATION_DONE_RETENTION_MS = 2 * 60 * 1000
+export const DELEGATION_FAILED_RETENTION_MS = 10 * 60 * 1000
 
 /**
  * Mark a running entry as `stale-running` if it has been running longer than
@@ -1465,6 +1485,7 @@ export function delegationStateTone(state: DelegationDisplayState): DelegationSt
     case 'startup_unknown':
       return 'warning'
     case 'stale-running':
+      return 'warning'
     case 'error':
     case 'startup_failed':
       return 'error'
@@ -2410,16 +2431,23 @@ export function formatDelegationHeader(entries: readonly DelegationEntry[]): str
   return `(${active} active · ${done} done${tail})`
 }
 
-/** Cap the panel: live rows first, then most-recent terminal rows, at most
- *  `maxVisible` total. `hidden` is how many were dropped (rendered as
- *  "… +N more"). Pure. */
+/** Cap the panel: live rows first, then most-recent retained terminal rows, at
+ *  most `maxVisible` total. Hidden counts describe the retained render list,
+ *  not expired history. */
 export function ceilingDelegationList(
   all: readonly DelegationEntry[],
   maxVisible = DELEGATION_VISIBLE_CEILING,
   now = Date.now(),
-): { visible: DelegationEntry[]; hidden: number } {
-  const visible = visibleDelegationList(all, maxVisible, now).slice(0, maxVisible)
-  return { visible, hidden: Math.max(0, all.length - visible.length) }
+): { visible: DelegationEntry[]; hidden: number; hiddenActive: number; hiddenTerminal: number } {
+  const { active, recent } = splitDelegationList(all, all.length, now)
+  const visibleActive = active.slice(0, maxVisible)
+  const visible = [
+    ...visibleActive,
+    ...recent.slice(0, Math.max(0, maxVisible - visibleActive.length)),
+  ]
+  const hiddenActive = Math.max(0, active.length - visibleActive.length)
+  const hiddenTerminal = Math.max(0, recent.length - (visible.length - visibleActive.length))
+  return { visible, hidden: hiddenActive + hiddenTerminal, hiddenActive, hiddenTerminal }
 }
 
 /** Split a display list into native task() rows vs pantheon_delegate rows.
@@ -2522,12 +2550,41 @@ export function childrenToDelegationEntries(
  *  server-valid session id ("ses...") ever reaches the router, so an
  *  unsubstituted "{sessionID}" placeholder can never be routed. */
 export function navigateToDelegationSession(
-  route: { navigate?: (name: string, params?: Record<string, unknown>) => void } | undefined,
+  route:
+    | {
+        navigate?: (name: string, params?: Record<string, unknown>) => void | PromiseLike<void>
+      }
+    | undefined,
   taskID: string | undefined,
 ): boolean {
   if (typeof route?.navigate !== 'function' || !isValidSessionId(taskID)) return false
-  route.navigate('session', { sessionID: taskID })
-  return true
+  try {
+    const navigation = route.navigate('session', { sessionID: taskID })
+    if (navigation !== undefined) {
+      // A removed session can reject route.navigate for historical rows. That
+      // rejection is expected and intentionally absorbed so it cannot break
+      // the TUI; the no-op avoids logging sensitive session details.
+      void Promise.resolve(navigation).catch(() => undefined)
+    }
+    return true
+  } catch {
+    // Synchronous router failures are also fail-open for an inert historical row.
+    return false
+  }
+}
+
+/** Build the mouse handler used by each delegation row. */
+export function createDelegationRowOpenHandler(
+  route:
+    | {
+        navigate?: (name: string, params?: Record<string, unknown>) => void | PromiseLike<void>
+      }
+    | undefined,
+  taskID: string | undefined,
+): () => void {
+  return () => {
+    navigateToDelegationSession(route, taskID)
+  }
 }
 
 /* ─── Silence-by-default panel logger ──────────────────────
@@ -2674,9 +2731,7 @@ function DelegationRow(props: {
   // Click a row → navigate to the child session (route API guarded in the
   // helper). Enter-key binding is left out (per-row keymap wiring is not
   // worth the complexity in this sidebar); mouse is enabled in tui.json.
-  const open = () => {
-    navigateToDelegationSession(props.api.route, props.job.taskID)
-  }
+  const open = createDelegationRowOpenHandler(props.api.route, props.job.taskID)
 
   return (
     <box onMouseDown={open}>
@@ -2944,7 +2999,9 @@ function View(props: {
   const delegationCeiling = createMemo(() =>
     ceilingDelegationList(childDelegations(), DELEGATION_VISIBLE_CEILING, now()),
   )
-  const delegationHeader = createMemo(() => formatDelegationHeader(childDelegations()))
+  // Header counts the same retained rows shown below, so hidden/expired board
+  // history cannot inflate the summary.
+  const delegationHeader = createMemo(() => formatDelegationHeader(delegationCeiling().visible))
 
   // ── Event subscriptions for live session/delegation updates ──
   onMount(() => {
@@ -3090,7 +3147,7 @@ function View(props: {
           {`${showDelegations() ? '▼' : '▶'} Delegations`}
         </text>
         <text fg={theme().textMuted}>
-          {childDelegations().length > 0 ? ` ${delegationHeader()}` : ' — idle'}
+          {delegationCeiling().visible.length > 0 ? ` ${delegationHeader()}` : ' — idle'}
         </text>
       </box>
       <Show when={showDelegations()}>
@@ -3114,7 +3171,11 @@ function View(props: {
               )}
             </For>
             <Show when={delegationCeiling().hidden > 0}>
-              <text fg={theme().textMuted}>{`… +${delegationCeiling().hidden} more`}</text>
+              <text fg={theme().textMuted}>
+                {delegationCeiling().hiddenActive > 0
+                  ? `… +${delegationCeiling().hiddenActive} active`
+                  : `… +${delegationCeiling().hiddenTerminal} more`}
+              </text>
             </Show>
           </box>
         </Show>

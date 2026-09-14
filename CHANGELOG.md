@@ -18,6 +18,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.14] - 2026-09-14
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Ordenação active-first:** delegações ativas aparecem antes das concluídas,
+  falhas e canceladas no painel TUI.
+- **Overflow active:** quando há mais delegações ativas que o teto visível, o
+  excedente ativo permanece representado na linha de overflow.
+
+## 🐞 Fixed
+
+- **Retenção visual:** concluídas permanecem visíveis por 2 min e falhas por
+  10 min antes de saírem do painel; canceladas seguem a retenção configurada.
+
+## ⚠️ Known Issues
+
+- **Stale running warning:** jobs em estado `running` além do limite esperado
+  recebem um aviso visual de stale no painel.
 ## [v1.5.0-beta.13] - 2026-09-14
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
