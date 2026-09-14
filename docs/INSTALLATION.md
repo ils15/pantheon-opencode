@@ -372,6 +372,36 @@ includes the `plugins` component. Without that component, no Pantheon TUI
 registration is written. It appears in the right sidebar of OpenCode TUI when
 the host loads the separate `tui.json` registration.
 
+### TUI dev build (local development)
+
+To iterate on the TUI from a git checkout without publishing, run:
+
+```bash
+scripts/dev-tui.sh          # install deps, build, register the repo path
+scripts/dev-tui.sh --test   # same, plus `npm run test:all`
+```
+
+The script builds `src/plugins/tui`, then registers the **absolute repo path**
+(`<repo>/src/plugins/tui`) in the project-local `.opencode/tui.json` and prints
+a restart hint — TUI plugins are loaded at process start, so restart OpenCode
+after each build.
+
+| Context | `tui.json` target | Written by |
+|---------|-------------------|------------|
+| Development (this repo) | `<repo>/src/plugins/tui` | `scripts/dev-tui.sh` (gitignored) |
+| Installed (user) | `<configDir>/plugins/pantheon-tui` | `npm run setup` / installer |
+
+Notes:
+
+- `.opencode/tui.json` is gitignored; it is machine-specific and must not be
+  committed.
+- **Never** add `src/plugins/tui` to `opencode.json`. That file is packaged and
+  merged into user configs by the installer, so a repo-relative path would leak
+  into third-party installs and fail the CI package gates.
+- While in dev mode, do **not** run `init` inside this repo: the installer treats
+  the repo path as a stale Pantheon TUI reference and removes it. If that
+  happens, re-run `scripts/dev-tui.sh`.
+
 ## Commands
 
 Type these in the OpenCode chat:

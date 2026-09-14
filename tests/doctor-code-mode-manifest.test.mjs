@@ -105,6 +105,9 @@ test('test_doctor_manifest_respects_pantheon_project', (t) => {
   const { dir } = fixture(t)
   const project = join(dir, 'project')
   mkdirSync(join(project, '.pantheon', 'code-mode'), { recursive: true })
+  // A project candidate must be USABLE (contain a .py/.sh script) to win the
+  // project-first resolution — parity with _has_usable_scripts in the MCP.
+  writeFileSync(join(project, '.pantheon', 'code-mode', 'script-0.py'), 'print(0)\n')
   writeFileSync(
     join(project, '.pantheon', 'code-mode', 'manifest.json'),
     readFileSync(join(dir, 'manifest.json')),

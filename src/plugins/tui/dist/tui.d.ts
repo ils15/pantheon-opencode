@@ -116,6 +116,27 @@ declare function delegationActivityLabel(entry: DelegationEntry): string;
 /** Return a deterministic spinner frame. The View ticks this every 1000ms
  *  (not 140ms — the fast tick flickered without adding information). */
 declare function delegationSpinnerFrame(now: number): string;
+/** Every state the row knows how to draw: the real BackgroundJobBoard FSM
+ *  (src/pantheon/background-job-board.ts) plus the TUI display-only states
+ *  (`retry`, `stale-running`). Fase 1 deliberately omits speculative
+ *  blocked/paused/scheduled/skipped. There is no `pending` display state: a
+ *  pre-dispatch tool part maps to `running` in {@link reduceDelegationToolPart}. */
+type DelegationDisplayState = DelegationEntry['state'];
+/** Static glyph per display state. `running` shows its base spinner frame;
+ *  callers that animate must prefer {@link delegationStateMarker}. Unicode
+ *  geometric shapes only (no Nerd Font) — shape is an independent channel
+ *  from color, so rows stay legible without color. */
+declare const DELEGATION_STATE_GLYPHS: Readonly<Record<DelegationDisplayState, string>>;
+declare function delegationStateGlyph(state: DelegationDisplayState): string;
+/** Row marker (`<glyph> `) — the state channel. `running` animates through
+ *  {@link delegationSpinnerFrame} for the given tick; every other state is
+ *  static. Pure. */
+declare function delegationStateMarker(state: DelegationDisplayState, now?: number): string;
+/** Semantic tone mapped to the TUI theme at the row ({@link DelegationRow}).
+ *  Kept separate + pure so the color channel is testable without booting the
+ *  renderer. */
+type DelegationStateTone = 'warning' | 'error' | 'success' | 'muted';
+declare function delegationStateTone(state: DelegationDisplayState): DelegationStateTone;
 type ToolActivity = {
   tool: string;
   summary: string;
@@ -413,5 +434,5 @@ declare const plugin: TuiPluginModule & {
   setup: () => Promise<void>;
 };
 //#endregion
-export { ChildDelegationLike, DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { ChildDelegationLike, DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DELEGATION_STATE_GLYPHS, DelegationActivity, DelegationDisplayState, DelegationEntry, DelegationStateTone, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationStateGlyph, delegationStateMarker, delegationStateTone, delegationTag, extractToolActivity, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 //# sourceMappingURL=tui.d.ts.map

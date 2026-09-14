@@ -13,6 +13,7 @@ import {
   findMissingPermissionTask,
   hasPermissionTask,
   isValidAgentFile,
+  resolveCodeModeDir,
   resolveOpenCodeConfigDir,
   summaryMessage,
 } from '../scripts/doctor.mjs'
@@ -218,6 +219,32 @@ try {
   assert.equal(existing, created, 'F.2 is idempotent when the dir exists')
 } finally {
   rmSync(codeModeFixture, { recursive: true, force: true })
+}
+
+// F.2 parity with the MCP resolver (_has_usable_scripts): an EMPTY project
+// overlay must NOT mask a lower-priority `.pantheon/code-mode` that actually
+// ships scripts. Before the fix, existsSync let the empty overlay win and the
+// manifest check reported a false missing-manifest error.
+const overlayFixture = mkdtempSync(join(tmpdir(), 'pantheon-doctor-codemode-overlay-'))
+try {
+  const emptyOverlay = join(overlayFixture, '.opencode', '.pantheon', 'code-mode')
+  mkdirSync(emptyOverlay, { recursive: true })
+  const seeded = join(overlayFixture, '.pantheon', 'code-mode')
+  mkdirSync(seeded, { recursive: true })
+  writeFileSync(join(seeded, 'seed.sh'), '#!/usr/bin/env bash\necho seed\n')
+
+  assert.equal(
+    resolveCodeModeDir({ target: overlayFixture }),
+    seeded,
+    'F.2 skips an empty overlay and resolves the seeded project dir',
+  )
+  assert.equal(
+    checkCodeModeDir({ target: overlayFixture }),
+    seeded,
+    'F.2 check uses the same usability rule as the MCP resolver',
+  )
+} finally {
+  rmSync(overlayFixture, { recursive: true, force: true })
 }
 
 console.log('✅ Doctor layered healthcheck contract passed')

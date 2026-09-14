@@ -18,6 +18,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.11] - 2026-09-14
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Glyphs da FSM real no painel Delegations:** cada estado do BackgroundJobBoard
+  tem agora um glifo Unicode geométrico próprio — `⠋` running (spinner 1s),
+  `⟳` retry, `⚠` stale/startup, `✓` completed, `✕` error, `−` cancelled. Forma e
+  cor são canais independentes: as linhas seguem legíveis sem cor e sem Nerd Font.
+- **Prefixo `nat:` / `pan:` documentado:** `docs/INSTALLATION.md` passa a
+  descrever os prefixos curtos das linhas nativas (`nat:<agent>`) e do board
+  (`pan:<alias>`) e o par de glyphs ◇/◆.
+- **`scripts/dev-tui.sh` (dev local sem publish):** instala, builda e registra o
+  caminho absoluto do repo em `.opencode/tui.json` (gitignored) com hint de
+  restart — sem tocar `opencode.json` e sem publicar.
+- **104 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com
+  104/104 passando, cobrindo glifos/marker/tone dos estados reais da FSM.
+
+## 🐞 Fixed
+
+- **Doctor F.2 (`hasUsableScripts`):** a resolução do diretório code-mode agora
+  exige um `.py`/`.sh` regular (paridade com `_has_usable_scripts` do MCP), então
+  um overlay de projeto vazio não mascara mais uma instalação que traz scripts.
+- **`publish:next` órfão removido:** nenhum workflow usava o script (o release
+  publica via `--tag beta`); removido do `package.json` para eliminar o dist-tag
+  `next` obsoleto da linha de publicação.
 ## [v1.5.0-beta.10] - 2026-09-14
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
