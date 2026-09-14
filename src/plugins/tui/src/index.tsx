@@ -5,9 +5,10 @@
 /**
  * pantheon-tui — Pantheon TUI plugin for opencode.
  *
- * Single self-contained entry file: `tsdown && cp src/index.tsx dist/tui.tsx`
- * keeps the no-build load path working (dist/tui.tsx is raw source, transpiled
- * on the fly by opencode). All feature code lives in this one file.
+ * Bundled entry: `tsdown` emits `dist/tui.js`, and the package `exports`
+ * (`./tui` → ./dist/tui.js, `./server` → ./dist/server.js) is the ONLY load
+ * path — no raw TSX copy is shipped. Because the bundle inlines relative
+ * imports, this entry may be split into modules without breaking the loader.
  *
  * Slots:
  *   - sidebar_content        (order 900) — Pantheon sidebar (header/version/
@@ -90,9 +91,9 @@ const PRESET_REFRESH_MS = 30_000
 /* ─── Helpers ───────────────────────────────────────────── */
 
 /* ─── Active Preset Detection ──────────────────────────────
- * Inline replica of src/pantheon/presets.mjs resolveActivePreset() — the TUI
- * plugin is self-contained (dist/tui.tsx is a raw copy of this file with no
- * relative imports), so the resolution logic is mirrored here rather than
+ * Inline replica of src/pantheon/presets.mjs resolveActivePreset() — the
+ * copied plugin ships only dist/ + package.json, so it cannot reach
+ * src/pantheon at runtime; the resolution logic is mirrored here rather than
  * importing presets.mjs.
  *
  * Priority: env PANTHEON_MODEL_PRESET > first existing candidate file > none.
@@ -155,7 +156,7 @@ async function resolvePresetForTui(
  *
  * Try order:
  *   0a. pantheon-tui/package.json (installed: dist/tui.js → 2 níveis)
- *   0b. pantheon/package.json (dev: src/plugins/tui/dist/tui.tsx → 4 níveis)
+ *   0b. pantheon/package.json (dev: src/plugins/tui/dist/tui.js → 4 níveis)
  *   1. api.client.file.read package.json
  *   2. git describe --tags
  *   3. opencode --version
@@ -163,7 +164,7 @@ async function resolvePresetForTui(
  *   5. null                                                      */
 
 // Build-time embedded version (tsdown `define` in tsdown.config.ts). Injected
-// only into the bundled dist/tui.js; the raw dist/tui.tsx copy falls through.
+// into the bundled dist/tui.js — the only artifact the loader consumes.
 declare const __PANTHEON_VERSION__: string | undefined
 
 async function detectVersion(api: TuiPluginApi): Promise<string | null> {
@@ -175,7 +176,7 @@ async function detectVersion(api: TuiPluginApi): Promise<string | null> {
     if (pkg.version) return pkg.version
   } catch {}
 
-  // Try 0b: dev location (4 levels: src/plugins/tui/dist/tui.tsx → package.json)
+  // Try 0b: dev location (4 levels: src/plugins/tui/dist/tui.js → package.json)
   try {
     const pkgUrl = new URL('../../../../package.json', import.meta.url)
     const pkgContent = await readFile(fileURLToPath(pkgUrl), 'utf8')
@@ -983,8 +984,9 @@ export type DelegationEntry = {
   // Reintroduce them once nested rows are actually produced.
   /** Internal provenance used to keep a finalized md report authoritative.
    *  'children-only' = a native task() child session with NO board report
-   *  (rendered with the distinct `nat:` prefix); 'md' = board report wins. */
-  source?: 'child' | 'live' | 'md' | 'children-only'
+   *  (rendered with the distinct `nat:` prefix); 'md' = board report wins;
+   *  'board' = read from .pantheon/board/state.json (cross-session FSM). */
+  source?: 'child' | 'live' | 'md' | 'children-only' | 'board'
 }
 
 /** True for `\s` characters (space, tab, newline, CR) — plain char checks so
@@ -1168,20 +1170,108 @@ export async function readAllDelegationEntries(root: string): Promise<Delegation
   return readDelegationEntries(join(root, '.pantheon', 'delegations'))
 }
 
-/** Resolve the directory where the job board writes delegation md reports.
- *  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
- *  which the TUI exposes as `TuiState.path.directory`. `project` does NOT
- *  exist on `TuiState.path` (the old `state?.project ?? state?.worktree`
- *  resolution was always undefined for the first term) and `worktree` is
- *  `/` when there is no git (e.g. the sandbox test project) — a root of
- *  `''` or `'/'` must fall back to `process.cwd()`. */
-export function resolveDelegationsDir(
+/* ─── Job board channel (4th source: .pantheon/board/state.json) ────────
+ * `session.children` is scoped to the focused session, so a job running in
+ * ANOTHER session is invisible to it (the "Delegations (0)" / nat:0 symptom).
+ * The board state file is the only durable, cross-session source:
+ * FilePersistence (src/pantheon/file-persistence.ts) stores every
+ * BackgroundJobRecord there as a JSON array. Reads are fail-open — absent,
+ * corrupt or unreadable → [] — so a broken board never crashes the panel. */
+
+/** The persisted subset of BackgroundJobRecord the panel consumes. Duck-typed
+ *  so a corrupt/older record never breaks parsing. */
+export type BoardJobRecord = {
+  taskID: string
+  parentSessionID: string
+  agent: string
+  description?: string
+  state: string
+  alias: string
+  launchedAt?: number
+  completedAt?: number
+  updatedAt?: number
+  timedOut?: boolean
+}
+
+/** The FilePersistence state path: `<root>/.pantheon/board/state.json`. */
+export function boardStatePath(root: string): string {
+  return join(root, '.pantheon', 'board', 'state.json')
+}
+
+/** Validate one parsed record, keeping only the fields the panel uses.
+ *  Returns null for anything without a taskID/state (a corrupt entry is
+ *  skipped individually — the rest of the snapshot still loads). */
+function normalizeBoardRecord(item: unknown): BoardJobRecord | null {
+  if (typeof item !== 'object' || item === null) return null
+  const rec = item as Record<string, unknown>
+  if (typeof rec.taskID !== 'string' || rec.taskID === '') return null
+  if (typeof rec.state !== 'string' || rec.state === '') return null
+  const record: BoardJobRecord = {
+    taskID: rec.taskID,
+    parentSessionID: typeof rec.parentSessionID === 'string' ? rec.parentSessionID : '',
+    agent: typeof rec.agent === 'string' && rec.agent !== '' ? rec.agent : 'agent',
+    state: rec.state,
+    alias: typeof rec.alias === 'string' ? rec.alias : '',
+  }
+  if (typeof rec.description === 'string') record.description = rec.description
+  if (typeof rec.launchedAt === 'number' && Number.isFinite(rec.launchedAt))
+    record.launchedAt = rec.launchedAt
+  if (typeof rec.completedAt === 'number' && Number.isFinite(rec.completedAt))
+    record.completedAt = rec.completedAt
+  if (typeof rec.updatedAt === 'number' && Number.isFinite(rec.updatedAt))
+    record.updatedAt = rec.updatedAt
+  if (typeof rec.timedOut === 'boolean') record.timedOut = rec.timedOut
+  return record
+}
+
+/** Read `.pantheon/board/state.json` (the cross-session job board snapshot).
+ *  Fail-open: missing file, corrupt JSON, non-array payload or an unreadable
+ *  path all yield [] — the panel keeps rendering from the other channels. */
+export async function readBoardState(root: string): Promise<BoardJobRecord[]> {
+  let raw: string
+  try {
+    raw = await readFile(boardStatePath(root), 'utf8')
+  } catch {
+    return [] // absent/unreadable — no board yet
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return [] // corrupt JSON — never crash the sidebar
+  }
+  if (!Array.isArray(parsed)) return []
+  const records: BoardJobRecord[] = []
+  for (const item of parsed) {
+    const record = normalizeBoardRecord(item)
+    if (record !== null) records.push(record)
+  }
+  return records
+}
+
+/** Resolve the PROJECT ROOT used by every pantheon file channel. `directory`
+ *  wins over `worktree` (the old `resolveDelegationsDir` already did this);
+ *  an absent/empty root or `/` (no git — e.g. the sandbox test project) falls
+ *  back to cwd. Standardised here so the delegations md, the board state file
+ *  and the panel logger all read the SAME root (audit finding: the channels
+ *  resolved the root independently). Pure — no I/O. */
+export function resolvePantheonRoot(
   state: { directory?: string; worktree?: string } | undefined,
   cwd = process.cwd(),
 ): string {
   const root = state?.directory ?? state?.worktree ?? ''
-  if (root === '' || root === '/') return join(cwd, '.pantheon', 'delegations')
-  return join(root, '.pantheon', 'delegations')
+  if (root === '' || root === '/') return cwd
+  return root
+}
+
+/** Resolve the directory where the job board writes delegation md reports.
+ *  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
+ *  which the TUI exposes as `TuiState.path.directory`. */
+export function resolveDelegationsDir(
+  state: { directory?: string; worktree?: string } | undefined,
+  cwd = process.cwd(),
+): string {
+  return join(resolvePantheonRoot(state, cwd), '.pantheon', 'delegations')
 }
 
 /** Project root derived from the delegations dir: `<root>/.pantheon/delegations`
@@ -1970,6 +2060,145 @@ export function mergeDelegationSources(
   return all
 }
 
+/* ─── Board channel: record → display + authoritative merge ───────────── */
+
+/** Job-board FSM → panel display state. `reconciled` is intentionally absent:
+ *  the panel parser rejects it (a reconciled job is done and folded away). */
+const BOARD_STATE_TO_DISPLAY: Record<string, DelegationEntry['state']> = {
+  running: 'running',
+  completed: 'completed',
+  error: 'error',
+  startup_failed: 'startup_failed',
+  startup_unknown: 'startup_unknown',
+  cancelled: 'cancelled',
+}
+
+/** Map one persisted board record into the display shape. Returns null for
+ *  states the panel does not render (reconciled / unknown). Pure. */
+export function boardRecordToDelegationEntry(record: BoardJobRecord): DelegationEntry | null {
+  const state = BOARD_STATE_TO_DISPLAY[record.state]
+  if (state === undefined) return null
+  const running = state === 'running'
+  return {
+    alias: record.alias !== '' ? record.alias : `job-${record.taskID.slice(0, 8)}`,
+    sessionID: record.parentSessionID,
+    taskID: record.taskID,
+    agent: record.agent,
+    state,
+    startedAt: record.launchedAt ?? record.updatedAt ?? 0,
+    updatedAt: running ? null : (record.completedAt ?? record.updatedAt ?? null),
+    timedOut: record.timedOut === true,
+    description: record.description ?? '',
+    source: 'board',
+  }
+}
+
+/** Map a whole board snapshot, dropping unrenderable states. Sorted like every
+ *  other channel (running first, then most recent). Pure. */
+export function boardRecordsToDelegationEntries(
+  records: readonly BoardJobRecord[],
+): DelegationEntry[] {
+  const out: DelegationEntry[] = []
+  for (const record of records) {
+    const entry = boardRecordToDelegationEntry(record)
+    if (entry !== null) out.push(entry)
+  }
+  out.sort(compareDelegationEntries)
+  return out
+}
+
+/** Merge the board over any other channel. The board is AUTHORITATIVE for
+ *  state/alias/agent (it is the persisted FSM) and it is the only channel
+ *  that carries jobs from OTHER sessions. Dedup by taskID first, then by
+ *  (sessionID, alias) — aliases are per parent session. Pure. */
+export function mergeBoardDelegationSources(
+  base: readonly DelegationEntry[],
+  board: readonly DelegationEntry[],
+): DelegationEntry[] {
+  const key = (sessionID: string, alias: string): string => `${sessionID}\u0000${alias}`
+  const byTaskID = new Map<string, number>()
+  const bySessionAlias = new Map<string, number>()
+  const out = [...base]
+  out.forEach((entry, index) => {
+    if (entry.taskID !== undefined) byTaskID.set(entry.taskID, index)
+    bySessionAlias.set(key(entry.sessionID, entry.alias), index)
+  })
+
+  for (const incoming of board) {
+    const index =
+      (incoming.taskID !== undefined ? byTaskID.get(incoming.taskID) : undefined) ??
+      bySessionAlias.get(key(incoming.sessionID, incoming.alias))
+    if (index === undefined) {
+      out.push(incoming)
+      const next = out.length - 1
+      if (incoming.taskID !== undefined) byTaskID.set(incoming.taskID, next)
+      bySessionAlias.set(key(incoming.sessionID, incoming.alias), next)
+      continue
+    }
+    out[index] = incoming // board wins — it is the persisted source of truth
+  }
+
+  out.sort(compareDelegationEntries)
+  return out
+}
+
+/* ─── Delegation scope toggle ([Sessão]/[Tudo]) ───────────────────────── */
+
+/** 'session' = focused session only (default); 'all' = every session the
+ *  board knows about. */
+export type DelegationScope = 'session' | 'all'
+
+/** api.kv key holding the persisted scope (defaults to 'session'). */
+export const DELEGATION_SCOPE_KV_KEY = 'delegations.scope'
+
+/** Structural subset of TuiKV — kept local so the pure helpers are testable
+ *  without the TUI runtime. */
+export type DelegationScopeKv = {
+  get: (key: string, fallback?: unknown) => unknown
+  set: (key: string, value: unknown) => void
+}
+
+/** Read the persisted scope; anything malformed/absent → 'session'. */
+export function readDelegationScope(kv: DelegationScopeKv | undefined): DelegationScope {
+  try {
+    const raw = kv?.get?.(DELEGATION_SCOPE_KV_KEY, 'session')
+    return raw === 'all' ? 'all' : 'session'
+  } catch {
+    return 'session'
+  }
+}
+
+/** Persist the scope. Failure is non-fatal — the signal keeps it in memory. */
+export function writeDelegationScope(
+  kv: DelegationScopeKv | undefined,
+  scope: DelegationScope,
+): void {
+  try {
+    kv?.set?.(DELEGATION_SCOPE_KV_KEY, scope)
+  } catch {
+    /* in-memory only */
+  }
+}
+
+/** Keyboard/click toggle target. Pure. */
+export function nextDelegationScope(scope: DelegationScope): DelegationScope {
+  return scope === 'session' ? 'all' : 'session'
+}
+
+/** Keep only the focused session's jobs ('session') or all of them ('all').
+ *  An empty sessionID marks a current-session child (the children channel is
+ *  session-scoped and only fills sessionID from a matching md report), so it
+ *  counts as the current session. With no resolved session there is nothing
+ *  to scope against — fail-open to the full list. Pure. */
+export function filterDelegationsByScope(
+  entries: readonly DelegationEntry[],
+  scope: DelegationScope,
+  sessionID: string | null,
+): DelegationEntry[] {
+  if (scope === 'all' || sessionID === null) return [...entries]
+  return entries.filter((entry) => entry.sessionID === sessionID || entry.sessionID === '')
+}
+
 /* ─── Children channel (primary source, delegations-sidebar pattern) ────
  * `api.client.session.children` returns the child sessions of the current
  * session — every pantheon_delegate spawns one (parentID = caller). The
@@ -2293,8 +2522,8 @@ export function navigateToDelegationSession(
 }
 
 /* ─── Silence-by-default panel logger ──────────────────────
- * Mirrors src/pantheon/logger.ts createPantheonLogger (the TUI plugin is
- * self-contained — dist/tui.tsx is a raw copy with no relative imports):
+ * Mirrors src/pantheon/logger.ts createPantheonLogger (the copied plugin
+ * ships only dist/ + package.json, so it cannot import from src/pantheon):
  * every line is ALWAYS appended to `<logDir>/.pantheon/logs/hooks.log` and
  * echoed to the console ONLY when PANTHEON_HOOKS_LOG is truthy (opencode
  * renders plugin console output directly into the TUI — the pollution bug).
@@ -2569,14 +2798,22 @@ function View(props: {
   // (.pantheon/delegations) enriches each child with alias/agent/description
   // and terminal duration via the `Task ID` match. Live tool-call events are
   // merged optimistically so the row appears before those channels catch up.
-  const delegationsDir = createMemo(() => resolveDelegationsDir((props.api.state as any).path))
+  // Consistent project root (directory ?? worktree, cwd fallback) — the md
+  // history, the board state file and the panel logger all read the SAME
+  // root (audit finding: the channels resolved it independently).
+  const projectRoot = createMemo(() => resolvePantheonRoot((props.api.state as any).path))
   // Silence-by-default panel logger → the REAL <root>/.pantheon/logs/hooks.log.
-  // panelLogDir(<root>/.pantheon/delegations) = <root>: the old code passed
-  // dirname(delegationsDir()) (= <root>/.pantheon), which createTuiLogger
-  // re-joined with `.pantheon/logs/hooks.log` → a nested
-  // <root>/.pantheon/.pantheon/logs/hooks.log that never reached the real
-  // hooks.log (the empty nested dirs observed in production).
-  const panelLog = createTuiLogger(panelLogDir(delegationsDir()))
+  const panelLog = createTuiLogger(projectRoot())
+  // Scope toggle: [Sessão] = focused session only (default), [Tudo] = every
+  // session the board knows about. Persisted best-effort in api.kv; if the kv
+  // is unavailable the signal keeps it for the process lifetime.
+  const [delegationScope, setDelegationScope] = createSignal<DelegationScope>(
+    readDelegationScope(props.api.kv as unknown as DelegationScopeKv),
+  )
+  const applyDelegationScope = (scope: DelegationScope) => {
+    setDelegationScope(scope)
+    writeDelegationScope(props.api.kv as unknown as DelegationScopeKv, scope)
+  }
   // The rendered list is childDelegations (children enriched with md);
   // there is no separate md-only signal — the md channel only feeds
   // childrenToDelegationEntries below.
@@ -2609,9 +2846,18 @@ function View(props: {
         // the full historical list. Fail-open: a missing dir yields [].
         let md: DelegationEntry[] = []
         try {
-          md = await readAllDelegationEntries(panelLogDir(delegationsDir()))
+          md = await readAllDelegationEntries(projectRoot())
         } catch {
           md = [] // fail-open: never crash the sidebar on a read error
+        }
+        // 0b. board snapshot — the 4th channel. Cross-session and AUTHORITATIVE
+        // for state/alias/agent (the persisted FSM). This is what makes a job
+        // running in ANOTHER session visible. Fail-open: absent/corrupt → [].
+        let board: DelegationEntry[] = []
+        try {
+          board = boardRecordsToDelegationEntries(await readBoardState(projectRoot()))
+        } catch {
+          board = [] // fail-open: never crash the sidebar on a board read error
         }
         // 1. current session — resolve + GUARD (placeholder regression). The
         // runtime may render the sidebar with an unsubstituted "{sessionID}"
@@ -2622,9 +2868,9 @@ function View(props: {
         // (zero children, zero errors).
         const sessionID = resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api })
         if (sessionID === null) {
-          setChildDelegations(md)
+          setChildDelegations(mergeBoardDelegationSources(md, board))
           panelLog.info(
-            `${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — history shown)`,
+            `${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — history+board shown)`,
           )
           return
         }
@@ -2656,6 +2902,12 @@ function View(props: {
         }
         const withStatus = children.map((c) => ({ ...c, status: resolveStatus(c.id) }))
         const childEntries = childrenToDelegationEntries(withStatus, md, now())
+        // childrenToDelegationEntries only fills sessionID from a matching md
+        // report; a report-less row IS a child of the focused session, so tag
+        // it with the resolved id — the scope filter can then keep it.
+        for (const entry of childEntries) {
+          if (entry.sessionID === '') entry.sessionID = sessionID
+        }
         for (const [k, v] of props.liveStore.map)
           if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 30_000)
             props.liveStore.map.delete(k)
@@ -2665,7 +2917,14 @@ function View(props: {
         const liveEntries = [...props.liveStore.map.values()].filter(
           (entry) => entry.sessionID === sessionID,
         )
-        setChildDelegations(mergeChildDelegationSources(childEntries, liveEntries))
+        // Board LAST so it is authoritative over children/md/live for the same
+        // job, and adds the rows from other sessions the children API cannot see.
+        setChildDelegations(
+          mergeBoardDelegationSources(
+            mergeChildDelegationSources(childEntries, liveEntries),
+            board,
+          ),
+        )
         // 4. diagnostic line — every re-fetch (silence-by-default, hooks.log).
         const counts = countDelegationSources(childEntries)
         panelLog.info(
@@ -2686,15 +2945,24 @@ function View(props: {
   // beta.6: active (running/retry) first, then the 8 most recent terminal
   // reports, then the archived tail (paginated). Pagination state lives at
   // module level so sidebar remounts keep the user's page.
-  const delegationSplit = createMemo(() => splitDelegationList(childDelegations()))
+  // The scope filters the rendered list (and the header counts): children/live
+  // are already session-scoped, md and the board are not.
+  const scopedDelegations = createMemo(() =>
+    filterDelegationsByScope(
+      childDelegations(),
+      delegationScope(),
+      resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api }),
+    ),
+  )
+  const delegationSplit = createMemo(() => splitDelegationList(scopedDelegations()))
   const visibleDelegations = createMemo(() => [
     ...delegationSplit().active,
     ...delegationSplit().recent,
   ])
-  // Header summary over the FULL list (active + recent + archived): active
-  // vs done plus the native/pantheon breakdown, so a busy session reads
+  // Header summary over the FULL scoped list (active + recent + archived):
+  // active vs done plus the native/pantheon breakdown, so a busy session reads
   // "Delegations (2 active · 9 done · nat:3 pan:8)".
-  const delegationHeader = createMemo(() => formatDelegationHeader(childDelegations()))
+  const delegationHeader = createMemo(() => formatDelegationHeader(scopedDelegations()))
   const [archivedPage, setArchivedPage] = createSignal(archivedUiState.page)
   const clampArchivedPage = (page: number, pages: number) => {
     const clamped = Math.max(0, Math.min(page, Math.max(0, pages - 1)))
@@ -2779,6 +3047,29 @@ function View(props: {
       /* re-scan unavailable — children API + 1s poll still cover it */
     }
 
+    // Keyboard shortcut for the scope toggle. `api.keymap` is an optional
+    // peer (@opentui/keymap) — guard the duck-typed call so a degraded/missing
+    // keymap never breaks the sidebar. The clickable [Sessão]/[Tudo] chips are
+    // the always-available fallback.
+    try {
+      const keymap = (props.api as any)?.keymap
+      if (typeof keymap?.registerLayer === 'function') {
+        const off = keymap.registerLayer({
+          priority: 1000,
+          commands: [
+            {
+              name: 'pantheon.delegations.toggleScope',
+              run: () => applyDelegationScope(nextDelegationScope(delegationScope())),
+            },
+          ],
+          bindings: [{ key: 'ctrl+shift+d', cmd: 'pantheon.delegations.toggleScope' }],
+        })
+        if (typeof off === 'function') cleanup.push(off)
+      }
+    } catch {
+      /* keymap unavailable — the click toggle still works */
+    }
+
     onCleanup(() =>
       cleanup.forEach((fn) => {
         fn()
@@ -2840,12 +3131,32 @@ function View(props: {
         </Show>
       </Show>
 
-      {/* ── Delegations (session.children primary + .pantheon/delegations md enrichment) ── */}
+      {/* ── Delegations (session.children primary + .pantheon/delegations md enrichment + board snapshot) ── */}
       <box onMouseDown={() => setShowDelegations((x) => !x)}>
         <text fg={theme().text} attributes={1}>
           {`${showDelegations() ? '▼' : '▶'} Delegations`}
         </text>
         <text fg={theme().textMuted}>{` ${delegationHeader()}`}</text>
+        <text fg={theme().textMuted}>{` `}</text>
+        <text
+          fg={delegationScope() === 'session' ? theme().accent : theme().textMuted}
+          attributes={delegationScope() === 'session' ? 1 : undefined}
+          onMouseDown={(e: unknown) => {
+            if (typeof e === 'object' && e !== null && 'stopPropagation' in e)
+              (e as { stopPropagation: () => void }).stopPropagation()
+            applyDelegationScope('session')
+          }}
+        >{`[Sessão]`}</text>
+        <text fg={theme().textMuted}>{`/`}</text>
+        <text
+          fg={delegationScope() === 'all' ? theme().accent : theme().textMuted}
+          attributes={delegationScope() === 'all' ? 1 : undefined}
+          onMouseDown={(e: unknown) => {
+            if (typeof e === 'object' && e !== null && 'stopPropagation' in e)
+              (e as { stopPropagation: () => void }).stopPropagation()
+            applyDelegationScope('all')
+          }}
+        >{`[Tudo]`}</text>
       </box>
       <Show when={showDelegations()}>
         <Show

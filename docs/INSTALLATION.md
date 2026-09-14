@@ -527,8 +527,8 @@ em `~/pantheon-sandbox/README.md`.
 ### TUI runtime versus development build
 
 The installer treats `src/plugins/tui` as the single source of truth and always
-copies it into the target config as `plugins/pantheon-tui` (dist/ + package.json
-+ index.tsx). OpenCode's TUI loader reads the copied `package.json` `exports`
+copies it into the target config as `plugins/pantheon-tui` (the bundled `dist/`
++ `package.json`). OpenCode's TUI loader reads the copied `package.json` `exports`
 map (`./tui` → `dist/tui.js`, `./server` → `dist/server.js`), so users do not
 need `tsconfig.json`, `tsdown`, or development dependencies after installation.
 The TUI `build` and `typecheck` scripts are maintainer/development tasks for the

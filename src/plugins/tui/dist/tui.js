@@ -10,9 +10,10 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, onCl
 /**
 * pantheon-tui — Pantheon TUI plugin for opencode.
 *
-* Single self-contained entry file: `tsdown && cp src/index.tsx dist/tui.tsx`
-* keeps the no-build load path working (dist/tui.tsx is raw source, transpiled
-* on the fly by opencode). All feature code lives in this one file.
+* Bundled entry: `tsdown` emits `dist/tui.js`, and the package `exports`
+* (`./tui` → ./dist/tui.js, `./server` → ./dist/server.js) is the ONLY load
+* path — no raw TSX copy is shipped. Because the bundle inlines relative
+* imports, this entry may be split into modules without breaking the loader.
 *
 * Slots:
 *   - sidebar_content        (order 900) — Pantheon sidebar (header/version/
@@ -164,7 +165,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.5.0-beta.11";
+	return "1.5.0-beta.12";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.
@@ -839,17 +840,74 @@ async function readDelegationEntries(dir) {
 async function readAllDelegationEntries(root) {
 	return readDelegationEntries(join(root, ".pantheon", "delegations"));
 }
+/** The persisted subset of BackgroundJobRecord the panel consumes. Duck-typed
+*  so a corrupt/older record never breaks parsing. */
+/** The FilePersistence state path: `<root>/.pantheon/board/state.json`. */
+function boardStatePath(root) {
+	return join(root, ".pantheon", "board", "state.json");
+}
+/** Validate one parsed record, keeping only the fields the panel uses.
+*  Returns null for anything without a taskID/state (a corrupt entry is
+*  skipped individually — the rest of the snapshot still loads). */
+function normalizeBoardRecord(item) {
+	if (typeof item !== "object" || item === null) return null;
+	const rec = item;
+	if (typeof rec.taskID !== "string" || rec.taskID === "") return null;
+	if (typeof rec.state !== "string" || rec.state === "") return null;
+	const record = {
+		taskID: rec.taskID,
+		parentSessionID: typeof rec.parentSessionID === "string" ? rec.parentSessionID : "",
+		agent: typeof rec.agent === "string" && rec.agent !== "" ? rec.agent : "agent",
+		state: rec.state,
+		alias: typeof rec.alias === "string" ? rec.alias : ""
+	};
+	if (typeof rec.description === "string") record.description = rec.description;
+	if (typeof rec.launchedAt === "number" && Number.isFinite(rec.launchedAt)) record.launchedAt = rec.launchedAt;
+	if (typeof rec.completedAt === "number" && Number.isFinite(rec.completedAt)) record.completedAt = rec.completedAt;
+	if (typeof rec.updatedAt === "number" && Number.isFinite(rec.updatedAt)) record.updatedAt = rec.updatedAt;
+	if (typeof rec.timedOut === "boolean") record.timedOut = rec.timedOut;
+	return record;
+}
+/** Read `.pantheon/board/state.json` (the cross-session job board snapshot).
+*  Fail-open: missing file, corrupt JSON, non-array payload or an unreadable
+*  path all yield [] — the panel keeps rendering from the other channels. */
+async function readBoardState(root) {
+	let raw;
+	try {
+		raw = await readFile(boardStatePath(root), "utf8");
+	} catch {
+		return [];
+	}
+	let parsed;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return [];
+	}
+	if (!Array.isArray(parsed)) return [];
+	const records = [];
+	for (const item of parsed) {
+		const record = normalizeBoardRecord(item);
+		if (record !== null) records.push(record);
+	}
+	return records;
+}
+/** Resolve the PROJECT ROOT used by every pantheon file channel. `directory`
+*  wins over `worktree` (the old `resolveDelegationsDir` already did this);
+*  an absent/empty root or `/` (no git — e.g. the sandbox test project) falls
+*  back to cwd. Standardised here so the delegations md, the board state file
+*  and the panel logger all read the SAME root (audit finding: the channels
+*  resolved the root independently). Pure — no I/O. */
+function resolvePantheonRoot(state, cwd = process.cwd()) {
+	const root = state?.directory ?? state?.worktree ?? "";
+	if (root === "" || root === "/") return cwd;
+	return root;
+}
 /** Resolve the directory where the job board writes delegation md reports.
 *  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
-*  which the TUI exposes as `TuiState.path.directory`. `project` does NOT
-*  exist on `TuiState.path` (the old `state?.project ?? state?.worktree`
-*  resolution was always undefined for the first term) and `worktree` is
-*  `/` when there is no git (e.g. the sandbox test project) — a root of
-*  `''` or `'/'` must fall back to `process.cwd()`. */
+*  which the TUI exposes as `TuiState.path.directory`. */
 function resolveDelegationsDir(state, cwd = process.cwd()) {
-	const root = state?.directory ?? state?.worktree ?? "";
-	if (root === "" || root === "/") return join(cwd, ".pantheon", "delegations");
-	return join(root, ".pantheon", "delegations");
+	return join(resolvePantheonRoot(state, cwd), ".pantheon", "delegations");
 }
 /** Project root derived from the delegations dir: `<root>/.pantheon/delegations`
 *  → `<root>`. Used to point the panel logger at the REAL hooks.log — passing
@@ -1379,6 +1437,106 @@ function mergeDelegationSources(live, md) {
 	all.sort(compareDelegationEntries);
 	return all;
 }
+/** Job-board FSM → panel display state. `reconciled` is intentionally absent:
+*  the panel parser rejects it (a reconciled job is done and folded away). */
+const BOARD_STATE_TO_DISPLAY = {
+	running: "running",
+	completed: "completed",
+	error: "error",
+	startup_failed: "startup_failed",
+	startup_unknown: "startup_unknown",
+	cancelled: "cancelled"
+};
+/** Map one persisted board record into the display shape. Returns null for
+*  states the panel does not render (reconciled / unknown). Pure. */
+function boardRecordToDelegationEntry(record) {
+	const state = BOARD_STATE_TO_DISPLAY[record.state];
+	if (state === void 0) return null;
+	const running = state === "running";
+	return {
+		alias: record.alias !== "" ? record.alias : `job-${record.taskID.slice(0, 8)}`,
+		sessionID: record.parentSessionID,
+		taskID: record.taskID,
+		agent: record.agent,
+		state,
+		startedAt: record.launchedAt ?? record.updatedAt ?? 0,
+		updatedAt: running ? null : record.completedAt ?? record.updatedAt ?? null,
+		timedOut: record.timedOut === true,
+		description: record.description ?? "",
+		source: "board"
+	};
+}
+/** Map a whole board snapshot, dropping unrenderable states. Sorted like every
+*  other channel (running first, then most recent). Pure. */
+function boardRecordsToDelegationEntries(records) {
+	const out = [];
+	for (const record of records) {
+		const entry = boardRecordToDelegationEntry(record);
+		if (entry !== null) out.push(entry);
+	}
+	out.sort(compareDelegationEntries);
+	return out;
+}
+/** Merge the board over any other channel. The board is AUTHORITATIVE for
+*  state/alias/agent (it is the persisted FSM) and it is the only channel
+*  that carries jobs from OTHER sessions. Dedup by taskID first, then by
+*  (sessionID, alias) — aliases are per parent session. Pure. */
+function mergeBoardDelegationSources(base, board) {
+	const key = (sessionID, alias) => `${sessionID}\u0000${alias}`;
+	const byTaskID = /* @__PURE__ */ new Map();
+	const bySessionAlias = /* @__PURE__ */ new Map();
+	const out = [...base];
+	out.forEach((entry, index) => {
+		if (entry.taskID !== void 0) byTaskID.set(entry.taskID, index);
+		bySessionAlias.set(key(entry.sessionID, entry.alias), index);
+	});
+	for (const incoming of board) {
+		const index = (incoming.taskID !== void 0 ? byTaskID.get(incoming.taskID) : void 0) ?? bySessionAlias.get(key(incoming.sessionID, incoming.alias));
+		if (index === void 0) {
+			out.push(incoming);
+			const next = out.length - 1;
+			if (incoming.taskID !== void 0) byTaskID.set(incoming.taskID, next);
+			bySessionAlias.set(key(incoming.sessionID, incoming.alias), next);
+			continue;
+		}
+		out[index] = incoming;
+	}
+	out.sort(compareDelegationEntries);
+	return out;
+}
+/** 'session' = focused session only (default); 'all' = every session the
+*  board knows about. */
+/** api.kv key holding the persisted scope (defaults to 'session'). */
+const DELEGATION_SCOPE_KV_KEY = "delegations.scope";
+/** Structural subset of TuiKV — kept local so the pure helpers are testable
+*  without the TUI runtime. */
+/** Read the persisted scope; anything malformed/absent → 'session'. */
+function readDelegationScope(kv) {
+	try {
+		return kv?.get?.("delegations.scope", "session") === "all" ? "all" : "session";
+	} catch {
+		return "session";
+	}
+}
+/** Persist the scope. Failure is non-fatal — the signal keeps it in memory. */
+function writeDelegationScope(kv, scope) {
+	try {
+		kv?.set?.(DELEGATION_SCOPE_KV_KEY, scope);
+	} catch {}
+}
+/** Keyboard/click toggle target. Pure. */
+function nextDelegationScope(scope) {
+	return scope === "session" ? "all" : "session";
+}
+/** Keep only the focused session's jobs ('session') or all of them ('all').
+*  An empty sessionID marks a current-session child (the children channel is
+*  session-scoped and only fills sessionID from a matching md report), so it
+*  counts as the current session. With no resolved session there is nothing
+*  to scope against — fail-open to the full list. Pure. */
+function filterDelegationsByScope(entries, scope, sessionID) {
+	if (scope === "all" || sessionID === null) return [...entries];
+	return entries.filter((entry) => entry.sessionID === sessionID || entry.sessionID === "");
+}
 /** Server-aligned session id validity: opencode rejects anything not starting
 *  with "ses" (SchemaError). This deliberately mirrors that exact contract —
 *  nothing stricter, nothing looser — so a template placeholder ("{sessionID}"),
@@ -1761,8 +1919,13 @@ function View(props) {
 			return (b.time?.updated ?? b.updated ?? 0) - ta;
 		}).slice(0, 8);
 	});
-	const delegationsDir = createMemo(() => resolveDelegationsDir(props.api.state.path));
-	const panelLog = createTuiLogger(panelLogDir(delegationsDir()));
+	const projectRoot = createMemo(() => resolvePantheonRoot(props.api.state.path));
+	const panelLog = createTuiLogger(projectRoot());
+	const [delegationScope, setDelegationScope] = createSignal(readDelegationScope(props.api.kv));
+	const applyDelegationScope = (scope) => {
+		setDelegationScope(scope);
+		writeDelegationScope(props.api.kv, scope);
+	};
 	const [childDelegations, setChildDelegations] = createSignal([]);
 	const [now, setNow] = createSignal(Date.now());
 	const [animationNow, setAnimationNow] = createSignal(Date.now());
@@ -1775,17 +1938,23 @@ function View(props) {
 				const state = props.api.state;
 				let md = [];
 				try {
-					md = await readAllDelegationEntries(panelLogDir(delegationsDir()));
+					md = await readAllDelegationEntries(projectRoot());
 				} catch {
 					md = [];
+				}
+				let board = [];
+				try {
+					board = boardRecordsToDelegationEntries(await readBoardState(projectRoot()));
+				} catch {
+					board = [];
 				}
 				const sessionID = resolveCurrentSessionID({
 					sessionID: props.sessionID,
 					api: props.api
 				});
 				if (sessionID === null) {
-					setChildDelegations(md);
-					panelLog.info(`${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — history shown)`);
+					setChildDelegations(mergeBoardDelegationSources(md, board));
+					panelLog.info(`${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — history+board shown)`);
 					return;
 				}
 				let children = [];
@@ -1809,9 +1978,10 @@ function View(props) {
 					...c,
 					status: resolveStatus(c.id)
 				})), md, now());
+				for (const entry of childEntries) if (entry.sessionID === "") entry.sessionID = sessionID;
 				for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 3e4) props.liveStore.map.delete(k);
 				const liveEntries = [...props.liveStore.map.values()].filter((entry) => entry.sessionID === sessionID);
-				setChildDelegations(mergeChildDelegationSources(childEntries, liveEntries));
+				setChildDelegations(mergeBoardDelegationSources(mergeChildDelegationSources(childEntries, liveEntries), board));
 				const counts = countDelegationSources(childEntries);
 				panelLog.info(formatPanelLogLine(children.length, counts.pantheon, counts.native, md.length, eventRefreshCount));
 			} finally {
@@ -1820,9 +1990,13 @@ function View(props) {
 		})();
 		return delegationsInflight;
 	};
-	const delegationSplit = createMemo(() => splitDelegationList(childDelegations()));
+	const scopedDelegations = createMemo(() => filterDelegationsByScope(childDelegations(), delegationScope(), resolveCurrentSessionID({
+		sessionID: props.sessionID,
+		api: props.api
+	})));
+	const delegationSplit = createMemo(() => splitDelegationList(scopedDelegations()));
 	const visibleDelegations = createMemo(() => [...delegationSplit().active, ...delegationSplit().recent]);
-	const delegationHeader = createMemo(() => formatDelegationHeader(childDelegations()));
+	const delegationHeader = createMemo(() => formatDelegationHeader(scopedDelegations()));
 	const [archivedPage, setArchivedPage] = createSignal(archivedUiState.page);
 	const clampArchivedPage = (page, pages) => {
 		const clamped = Math.max(0, Math.min(page, Math.max(0, pages - 1)));
@@ -1872,6 +2046,23 @@ function View(props) {
 				if (parts.length > 0 && seedLiveDelegationMap(props.liveStore.map, parts) > 0) props.liveStore.bump();
 			}
 		} catch {}
+		try {
+			const keymap = props.api?.keymap;
+			if (typeof keymap?.registerLayer === "function") {
+				const off = keymap.registerLayer({
+					priority: 1e3,
+					commands: [{
+						name: "pantheon.delegations.toggleScope",
+						run: () => applyDelegationScope(nextDelegationScope(delegationScope()))
+					}],
+					bindings: [{
+						key: "ctrl+shift+d",
+						cmd: "pantheon.delegations.toggleScope"
+					}]
+				});
+				if (typeof off === "function") cleanup.push(off);
+			}
+		} catch {}
 		onCleanup(() => cleanup.forEach((fn) => {
 			fn();
 		}));
@@ -1883,7 +2074,7 @@ function View(props) {
 		return _el$20;
 	})();
 	return (() => {
-		var _el$22 = createElement("box"), _el$23 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text"), _el$26 = createElement("text"), _el$28 = createElement("box"), _el$29 = createElement("text"), _el$30 = createElement("text");
+		var _el$22 = createElement("box"), _el$23 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text"), _el$26 = createElement("text"), _el$28 = createElement("box"), _el$29 = createElement("text"), _el$30 = createElement("text"), _el$31 = createElement("text"), _el$33 = createElement("text"), _el$35 = createElement("text"), _el$37 = createElement("text");
 		insertNode(_el$22, _el$23);
 		insertNode(_el$22, _el$24);
 		insertNode(_el$22, _el$28);
@@ -1896,10 +2087,10 @@ function View(props) {
 				return branch();
 			},
 			children: (b) => (() => {
-				var _el$32 = createElement("text");
-				insert(_el$32, b);
-				effect((_$p) => setProp(_el$32, "fg", theme().textMuted, _$p));
-				return _el$32;
+				var _el$40 = createElement("text");
+				insert(_el$40, b);
+				effect((_$p) => setProp(_el$40, "fg", theme().textMuted, _$p));
+				return _el$40;
 			})()
 		}), _el$24);
 		insert(_el$22, createComponent(Show, {
@@ -1908,37 +2099,37 @@ function View(props) {
 			},
 			get fallback() {
 				return (() => {
-					var _el$33 = createElement("box"), _el$34 = createElement("text");
-					insertNode(_el$33, _el$34);
-					setProp(_el$33, "flexDirection", "row");
-					setProp(_el$33, "gap", 1);
-					insertNode(_el$34, createTextNode(`Preset: default`));
-					effect((_$p) => setProp(_el$34, "fg", theme().textMuted, _$p));
-					return _el$33;
+					var _el$41 = createElement("box"), _el$42 = createElement("text");
+					insertNode(_el$41, _el$42);
+					setProp(_el$41, "flexDirection", "row");
+					setProp(_el$41, "gap", 1);
+					insertNode(_el$42, createTextNode(`Preset: default`));
+					effect((_$p) => setProp(_el$42, "fg", theme().textMuted, _$p));
+					return _el$41;
 				})();
 			},
 			children: (name) => (() => {
-				var _el$36 = createElement("box"), _el$37 = createElement("text"), _el$39 = createElement("text"), _el$40 = createElement("text");
-				insertNode(_el$36, _el$37);
-				insertNode(_el$36, _el$39);
-				insertNode(_el$36, _el$40);
-				setProp(_el$36, "flexDirection", "row");
-				setProp(_el$36, "gap", 1);
-				insertNode(_el$37, createTextNode(`⚡ Preset:`));
-				insert(_el$39, name);
-				insert(_el$40, () => `(${preset().source ?? ""})`);
+				var _el$44 = createElement("box"), _el$45 = createElement("text"), _el$47 = createElement("text"), _el$48 = createElement("text");
+				insertNode(_el$44, _el$45);
+				insertNode(_el$44, _el$47);
+				insertNode(_el$44, _el$48);
+				setProp(_el$44, "flexDirection", "row");
+				setProp(_el$44, "gap", 1);
+				insertNode(_el$45, createTextNode(`⚡ Preset:`));
+				insert(_el$47, name);
+				insert(_el$48, () => `(${preset().source ?? ""})`);
 				effect((_p$) => {
-					var _v$11 = theme().textMuted, _v$12 = theme().accent, _v$13 = theme().textMuted;
-					_v$11 !== _p$.e && (_p$.e = setProp(_el$37, "fg", _v$11, _p$.e));
-					_v$12 !== _p$.t && (_p$.t = setProp(_el$39, "fg", _v$12, _p$.t));
-					_v$13 !== _p$.a && (_p$.a = setProp(_el$40, "fg", _v$13, _p$.a));
+					var _v$17 = theme().textMuted, _v$18 = theme().accent, _v$19 = theme().textMuted;
+					_v$17 !== _p$.e && (_p$.e = setProp(_el$45, "fg", _v$17, _p$.e));
+					_v$18 !== _p$.t && (_p$.t = setProp(_el$47, "fg", _v$18, _p$.t));
+					_v$19 !== _p$.a && (_p$.a = setProp(_el$48, "fg", _v$19, _p$.a));
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0,
 					a: void 0
 				});
-				return _el$36;
+				return _el$44;
 			})()
 		}), _el$24);
 		insert(_el$22, createComponent(HR, {}), _el$24);
@@ -1959,12 +2150,12 @@ function View(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$41 = createElement("box"), _el$42 = createElement("text");
-							insertNode(_el$41, _el$42);
-							setProp(_el$41, "marginLeft", 1);
-							insertNode(_el$42, createTextNode(`No recent sessions`));
-							effect((_$p) => setProp(_el$42, "fg", theme().textMuted, _$p));
-							return _el$41;
+							var _el$49 = createElement("box"), _el$50 = createElement("text");
+							insertNode(_el$49, _el$50);
+							setProp(_el$49, "marginLeft", 1);
+							insertNode(_el$50, createTextNode(`No recent sessions`));
+							effect((_$p) => setProp(_el$50, "fg", theme().textMuted, _$p));
+							return _el$49;
 						})();
 					},
 					get children() {
@@ -1989,10 +2180,26 @@ function View(props) {
 		}), _el$28);
 		insertNode(_el$28, _el$29);
 		insertNode(_el$28, _el$30);
+		insertNode(_el$28, _el$31);
+		insertNode(_el$28, _el$33);
+		insertNode(_el$28, _el$35);
+		insertNode(_el$28, _el$37);
 		setProp(_el$28, "onMouseDown", () => setShowDelegations((x) => !x));
 		setProp(_el$29, "attributes", 1);
 		insert(_el$29, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
 		insert(_el$30, () => ` ${delegationHeader()}`);
+		insertNode(_el$31, createTextNode(` `));
+		insertNode(_el$33, createTextNode(`[Sessão]`));
+		setProp(_el$33, "onMouseDown", (e) => {
+			if (typeof e === "object" && e !== null && "stopPropagation" in e) e.stopPropagation();
+			applyDelegationScope("session");
+		});
+		insertNode(_el$35, createTextNode(`/`));
+		insertNode(_el$37, createTextNode(`[Tudo]`));
+		setProp(_el$37, "onMouseDown", (e) => {
+			if (typeof e === "object" && e !== null && "stopPropagation" in e) e.stopPropagation();
+			applyDelegationScope("all");
+		});
 		insert(_el$22, createComponent(Show, {
 			get when() {
 				return showDelegations();
@@ -2004,19 +2211,19 @@ function View(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$44 = createElement("box"), _el$45 = createElement("text");
-							insertNode(_el$44, _el$45);
-							setProp(_el$44, "marginLeft", 1);
-							insertNode(_el$45, createTextNode(`No delegations`));
-							effect((_$p) => setProp(_el$45, "fg", theme().textMuted, _$p));
-							return _el$44;
+							var _el$52 = createElement("box"), _el$53 = createElement("text");
+							insertNode(_el$52, _el$53);
+							setProp(_el$52, "marginLeft", 1);
+							insertNode(_el$53, createTextNode(`No delegations`));
+							effect((_$p) => setProp(_el$53, "fg", theme().textMuted, _$p));
+							return _el$52;
 						})();
 					},
 					get children() {
-						var _el$31 = createElement("box");
-						setProp(_el$31, "marginLeft", 1);
-						setProp(_el$31, "flexDirection", "column");
-						insert(_el$31, createComponent(For, {
+						var _el$39 = createElement("box");
+						setProp(_el$39, "marginLeft", 1);
+						setProp(_el$39, "flexDirection", "column");
+						insert(_el$39, createComponent(For, {
 							get each() {
 								return visibleDelegations();
 							},
@@ -2033,7 +2240,7 @@ function View(props) {
 								}
 							})
 						}), null);
-						insert(_el$31, createComponent(Show, {
+						insert(_el$39, createComponent(Show, {
 							get when() {
 								return delegationSplit().archived.length > 0;
 							},
@@ -2045,22 +2252,22 @@ function View(props) {
 									const page = Math.min(archivedPage(), pages - 1);
 									const slice = archived.slice(page * pageSize, page * pageSize + pageSize);
 									return (() => {
-										var _el$47 = createElement("box"), _el$48 = createElement("box"), _el$49 = createElement("text"), _el$51 = createElement("text"), _el$52 = createElement("text"), _el$53 = createElement("text");
-										insertNode(_el$47, _el$48);
-										setProp(_el$47, "flexDirection", "column");
-										insertNode(_el$48, _el$49);
-										insertNode(_el$48, _el$51);
-										insertNode(_el$48, _el$52);
-										insertNode(_el$48, _el$53);
-										setProp(_el$48, "flexDirection", "row");
-										setProp(_el$48, "marginLeft", 0);
-										insertNode(_el$49, createTextNode(`‹ `));
-										setProp(_el$49, "onMouseDown", () => clampArchivedPage(page - 1, pages));
-										insert(_el$51, () => `Archived (${archived.length}) `);
-										insert(_el$52, `${page + 1}/${pages}`);
-										insertNode(_el$53, createTextNode(` ›`));
-										setProp(_el$53, "onMouseDown", () => clampArchivedPage(page + 1, pages));
-										insert(_el$47, createComponent(For, {
+										var _el$55 = createElement("box"), _el$56 = createElement("box"), _el$57 = createElement("text"), _el$59 = createElement("text"), _el$60 = createElement("text"), _el$61 = createElement("text");
+										insertNode(_el$55, _el$56);
+										setProp(_el$55, "flexDirection", "column");
+										insertNode(_el$56, _el$57);
+										insertNode(_el$56, _el$59);
+										insertNode(_el$56, _el$60);
+										insertNode(_el$56, _el$61);
+										setProp(_el$56, "flexDirection", "row");
+										setProp(_el$56, "marginLeft", 0);
+										insertNode(_el$57, createTextNode(`‹ `));
+										setProp(_el$57, "onMouseDown", () => clampArchivedPage(page - 1, pages));
+										insert(_el$59, () => `Archived (${archived.length}) `);
+										insert(_el$60, `${page + 1}/${pages}`);
+										insertNode(_el$61, createTextNode(` ›`));
+										setProp(_el$61, "onMouseDown", () => clampArchivedPage(page + 1, pages));
+										insert(_el$55, createComponent(For, {
 											each: slice,
 											children: (job) => createComponent(DelegationRow, {
 												get api() {
@@ -2076,11 +2283,11 @@ function View(props) {
 											})
 										}), null);
 										effect((_p$) => {
-											var _v$14 = theme().textMuted, _v$15 = theme().textMuted, _v$16 = theme().textMuted, _v$17 = theme().textMuted;
-											_v$14 !== _p$.e && (_p$.e = setProp(_el$49, "fg", _v$14, _p$.e));
-											_v$15 !== _p$.t && (_p$.t = setProp(_el$51, "fg", _v$15, _p$.t));
-											_v$16 !== _p$.a && (_p$.a = setProp(_el$52, "fg", _v$16, _p$.a));
-											_v$17 !== _p$.o && (_p$.o = setProp(_el$53, "fg", _v$17, _p$.o));
+											var _v$20 = theme().textMuted, _v$21 = theme().textMuted, _v$22 = theme().textMuted, _v$23 = theme().textMuted;
+											_v$20 !== _p$.e && (_p$.e = setProp(_el$57, "fg", _v$20, _p$.e));
+											_v$21 !== _p$.t && (_p$.t = setProp(_el$59, "fg", _v$21, _p$.t));
+											_v$22 !== _p$.a && (_p$.a = setProp(_el$60, "fg", _v$22, _p$.a));
+											_v$23 !== _p$.o && (_p$.o = setProp(_el$61, "fg", _v$23, _p$.o));
 											return _p$;
 										}, {
 											e: void 0,
@@ -2088,30 +2295,42 @@ function View(props) {
 											a: void 0,
 											o: void 0
 										});
-										return _el$47;
+										return _el$55;
 									})();
 								})();
 							}
 						}), null);
-						return _el$31;
+						return _el$39;
 					}
 				});
 			}
 		}), null);
 		effect((_p$) => {
-			var _v$8 = theme().accent, _v$9 = theme().text, _v$0 = theme().textMuted, _v$1 = theme().text, _v$10 = theme().textMuted;
+			var _v$8 = theme().accent, _v$9 = theme().text, _v$0 = theme().textMuted, _v$1 = theme().text, _v$10 = theme().textMuted, _v$11 = theme().textMuted, _v$12 = delegationScope() === "session" ? theme().accent : theme().textMuted, _v$13 = delegationScope() === "session" ? 1 : void 0, _v$14 = theme().textMuted, _v$15 = delegationScope() === "all" ? theme().accent : theme().textMuted, _v$16 = delegationScope() === "all" ? 1 : void 0;
 			_v$8 !== _p$.e && (_p$.e = setProp(_el$23, "fg", _v$8, _p$.e));
 			_v$9 !== _p$.t && (_p$.t = setProp(_el$25, "fg", _v$9, _p$.t));
 			_v$0 !== _p$.a && (_p$.a = setProp(_el$26, "fg", _v$0, _p$.a));
 			_v$1 !== _p$.o && (_p$.o = setProp(_el$29, "fg", _v$1, _p$.o));
 			_v$10 !== _p$.i && (_p$.i = setProp(_el$30, "fg", _v$10, _p$.i));
+			_v$11 !== _p$.n && (_p$.n = setProp(_el$31, "fg", _v$11, _p$.n));
+			_v$12 !== _p$.s && (_p$.s = setProp(_el$33, "fg", _v$12, _p$.s));
+			_v$13 !== _p$.h && (_p$.h = setProp(_el$33, "attributes", _v$13, _p$.h));
+			_v$14 !== _p$.r && (_p$.r = setProp(_el$35, "fg", _v$14, _p$.r));
+			_v$15 !== _p$.d && (_p$.d = setProp(_el$37, "fg", _v$15, _p$.d));
+			_v$16 !== _p$.l && (_p$.l = setProp(_el$37, "attributes", _v$16, _p$.l));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
 			a: void 0,
 			o: void 0,
-			i: void 0
+			i: void 0,
+			n: void 0,
+			s: void 0,
+			h: void 0,
+			r: void 0,
+			d: void 0,
+			l: void 0
 		});
 		return _el$22;
 	})();
@@ -2173,6 +2392,6 @@ const plugin = {
 	setup: async () => {}
 };
 //#endregion
-export { DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DELEGATION_STATE_GLYPHS, IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationStateGlyph, delegationStateMarker, delegationStateTone, delegationTag, extractToolActivity, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DELEGATION_SCOPE_KV_KEY, DELEGATION_STATE_GLYPHS, IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, boardRecordToDelegationEntry, boardRecordsToDelegationEntries, boardStatePath, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationStateGlyph, delegationStateMarker, delegationStateTone, delegationTag, extractToolActivity, filterDelegationsByScope, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeBoardDelegationSources, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, nextDelegationScope, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readBoardState, readDelegationEntries, readDelegationScope, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList, writeDelegationScope };
 
 //# sourceMappingURL=tui.js.map

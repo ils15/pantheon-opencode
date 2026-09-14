@@ -20,7 +20,7 @@ command -v npm >/dev/null 2>&1 || { echo "error: npm not found in PATH" >&2; exi
 
 echo "==> TUI dev source: $TUI_DIR"
 
-# 1. Install pinned deps + build dist/tui.js (dist/tui.tsx is copied by build).
+# 1. Install pinned deps + build dist/tui.js (the bundle is the only load path).
 echo "==> Installing TUI dev dependencies (npm ci)"
 npm ci --prefix "$TUI_DIR" --ignore-scripts --no-audit --no-fund
 

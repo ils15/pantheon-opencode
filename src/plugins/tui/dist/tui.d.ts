@@ -22,8 +22,9 @@ type DelegationEntry = {
   read?: boolean;
   /** Internal provenance used to keep a finalized md report authoritative.
    *  'children-only' = a native task() child session with NO board report
-   *  (rendered with the distinct `nat:` prefix); 'md' = board report wins. */
-  source?: 'child' | 'live' | 'md' | 'children-only';
+   *  (rendered with the distinct `nat:` prefix); 'md' = board report wins;
+   *  'board' = read from .pantheon/board/state.json (cross-session FSM). */
+  source?: 'child' | 'live' | 'md' | 'children-only' | 'board';
 };
 /** Parse one delegation report md header into a structured entry.
  *  Returns null (skip) when the file is not a recognizable report:
@@ -49,13 +50,39 @@ declare function readDelegationEntries(dir: string): Promise<DelegationEntry[]>;
  *  desc — the sort applied by readDelegationEntries). Fail-open: a
  *  missing/unreadable directory yields []. */
 declare function readAllDelegationEntries(root: string): Promise<DelegationEntry[]>;
+/** The persisted subset of BackgroundJobRecord the panel consumes. Duck-typed
+ *  so a corrupt/older record never breaks parsing. */
+type BoardJobRecord = {
+  taskID: string;
+  parentSessionID: string;
+  agent: string;
+  description?: string;
+  state: string;
+  alias: string;
+  launchedAt?: number;
+  completedAt?: number;
+  updatedAt?: number;
+  timedOut?: boolean;
+};
+/** The FilePersistence state path: `<root>/.pantheon/board/state.json`. */
+declare function boardStatePath(root: string): string;
+/** Read `.pantheon/board/state.json` (the cross-session job board snapshot).
+ *  Fail-open: missing file, corrupt JSON, non-array payload or an unreadable
+ *  path all yield [] — the panel keeps rendering from the other channels. */
+declare function readBoardState(root: string): Promise<BoardJobRecord[]>;
+/** Resolve the PROJECT ROOT used by every pantheon file channel. `directory`
+ *  wins over `worktree` (the old `resolveDelegationsDir` already did this);
+ *  an absent/empty root or `/` (no git — e.g. the sandbox test project) falls
+ *  back to cwd. Standardised here so the delegations md, the board state file
+ *  and the panel logger all read the SAME root (audit finding: the channels
+ *  resolved the root independently). Pure — no I/O. */
+declare function resolvePantheonRoot(state: {
+  directory?: string;
+  worktree?: string;
+} | undefined, cwd?: string): string;
 /** Resolve the directory where the job board writes delegation md reports.
  *  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
- *  which the TUI exposes as `TuiState.path.directory`. `project` does NOT
- *  exist on `TuiState.path` (the old `state?.project ?? state?.worktree`
- *  resolution was always undefined for the first term) and `worktree` is
- *  `/` when there is no git (e.g. the sandbox test project) — a root of
- *  `''` or `'/'` must fall back to `process.cwd()`. */
+ *  which the TUI exposes as `TuiState.path.directory`. */
 declare function resolveDelegationsDir(state: {
   directory?: string;
   worktree?: string;
@@ -261,6 +288,40 @@ declare function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry;
  *  terminal md entry is authoritative over a live running entry for the
  *  same job (it carries Finalized/timedOut/cancelled from finalize). */
 declare function mergeDelegationSources(live: readonly LiveDelegationEntry[], md: readonly DelegationEntry[]): DelegationEntry[];
+/** Map one persisted board record into the display shape. Returns null for
+ *  states the panel does not render (reconciled / unknown). Pure. */
+declare function boardRecordToDelegationEntry(record: BoardJobRecord): DelegationEntry | null;
+/** Map a whole board snapshot, dropping unrenderable states. Sorted like every
+ *  other channel (running first, then most recent). Pure. */
+declare function boardRecordsToDelegationEntries(records: readonly BoardJobRecord[]): DelegationEntry[];
+/** Merge the board over any other channel. The board is AUTHORITATIVE for
+ *  state/alias/agent (it is the persisted FSM) and it is the only channel
+ *  that carries jobs from OTHER sessions. Dedup by taskID first, then by
+ *  (sessionID, alias) — aliases are per parent session. Pure. */
+declare function mergeBoardDelegationSources(base: readonly DelegationEntry[], board: readonly DelegationEntry[]): DelegationEntry[];
+/** 'session' = focused session only (default); 'all' = every session the
+ *  board knows about. */
+type DelegationScope = 'session' | 'all';
+/** api.kv key holding the persisted scope (defaults to 'session'). */
+declare const DELEGATION_SCOPE_KV_KEY = "delegations.scope";
+/** Structural subset of TuiKV — kept local so the pure helpers are testable
+ *  without the TUI runtime. */
+type DelegationScopeKv = {
+  get: (key: string, fallback?: unknown) => unknown;
+  set: (key: string, value: unknown) => void;
+};
+/** Read the persisted scope; anything malformed/absent → 'session'. */
+declare function readDelegationScope(kv: DelegationScopeKv | undefined): DelegationScope;
+/** Persist the scope. Failure is non-fatal — the signal keeps it in memory. */
+declare function writeDelegationScope(kv: DelegationScopeKv | undefined, scope: DelegationScope): void;
+/** Keyboard/click toggle target. Pure. */
+declare function nextDelegationScope(scope: DelegationScope): DelegationScope;
+/** Keep only the focused session's jobs ('session') or all of them ('all').
+ *  An empty sessionID marks a current-session child (the children channel is
+ *  session-scoped and only fills sessionID from a matching md report), so it
+ *  counts as the current session. With no resolved session there is nothing
+ *  to scope against — fail-open to the full list. Pure. */
+declare function filterDelegationsByScope(entries: readonly DelegationEntry[], scope: DelegationScope, sessionID: string | null): DelegationEntry[];
 /** Server-aligned session id validity: opencode rejects anything not starting
  *  with "ses" (SchemaError). This deliberately mirrors that exact contract —
  *  nothing stricter, nothing looser — so a template placeholder ("{sessionID}"),
@@ -434,5 +495,5 @@ declare const plugin: TuiPluginModule & {
   setup: () => Promise<void>;
 };
 //#endregion
-export { ChildDelegationLike, DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DELEGATION_STATE_GLYPHS, DelegationActivity, DelegationDisplayState, DelegationEntry, DelegationStateTone, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationStateGlyph, delegationStateMarker, delegationStateTone, delegationTag, extractToolActivity, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { BoardJobRecord, ChildDelegationLike, DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DELEGATION_SCOPE_KV_KEY, DELEGATION_STATE_GLYPHS, DelegationActivity, DelegationDisplayState, DelegationEntry, DelegationScope, DelegationScopeKv, DelegationStateTone, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, boardRecordToDelegationEntry, boardRecordsToDelegationEntries, boardStatePath, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationStateGlyph, delegationStateMarker, delegationStateTone, delegationTag, extractToolActivity, filterDelegationsByScope, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeBoardDelegationSources, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, nextDelegationScope, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readBoardState, readDelegationEntries, readDelegationScope, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList, writeDelegationScope };
 //# sourceMappingURL=tui.d.ts.map
