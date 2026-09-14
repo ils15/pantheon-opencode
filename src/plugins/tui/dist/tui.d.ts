@@ -22,7 +22,7 @@ type DelegationEntry = {
   read?: boolean;
   /** Internal provenance used to keep a finalized md report authoritative.
    *  'children-only' = a native task() child session with NO board report
-   *  (rendered with the distinct `[native]` tag); 'md' = board report wins. */
+   *  (rendered with the distinct `nat:` prefix); 'md' = board report wins. */
   source?: 'child' | 'live' | 'md' | 'children-only';
 };
 /** Parse one delegation report md header into a structured entry.
@@ -104,15 +104,17 @@ declare function markStaleIfRunning(entry: DelegationEntry, now: number, thresho
 /** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
  *  second for running jobs. */
 declare function fmtElapsed(ms: number): string;
-/** Elapsed label for one entry: running → ticks `now - startedAt`, terminal
- *  → fixed `updatedAt - startedAt` (em dash when no finalized timestamp). */
+/** Elapsed label for one entry: an ACTIVE entry (running/retry/stale-running)
+ *  ticks `now - startedAt`; a terminal one is fixed at
+ *  `updatedAt - startedAt` (em dash when no finalized timestamp). */
 declare function delegationElapsed(entry: DelegationEntry, now: number): string;
 /** The activity labels shown by the animated row. Keeping this pure makes the
  * state machine testable without booting OpenCode's renderer. */
 type DelegationActivity = 'delegating' | 'working' | 'reading' | 'completed' | 'error' | 'cancelled';
 declare function delegationActivity(entry: DelegationEntry): DelegationActivity;
 declare function delegationActivityLabel(entry: DelegationEntry): string;
-/** Return a deterministic spinner frame. The View ticks this every 140ms. */
+/** Return a deterministic spinner frame. The View ticks this every 1000ms
+ *  (not 140ms — the fast tick flickered without adding information). */
 declare function delegationSpinnerFrame(now: number): string;
 type ToolActivity = {
   tool: string;
@@ -203,7 +205,7 @@ type ParsedDelegationToolPart = {
 /** Extract the tool name + args from a `message.part.updated` part and
  *  reduce it to what the panel needs. Returns null for anything that is
  *  not a pantheon delegation tool part, the native `task` subagent tool
- *  (same parentID === caller mechanism — its children render `[native]`),
+ *  (same parentID === caller mechanism — its children render `nat:`),
  *  or is missing its callID. */
 declare function parseDelegationToolPart(part: DelegationToolPart, now?: number): ParsedDelegationToolPart | null;
 /** Apply one tool part to the live map. Returns true when the map changed.
@@ -218,7 +220,7 @@ declare function removeDelegationEntry(map: Map<string, LiveDelegationEntry>, pa
  *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
  *  child session with parentID = caller — the same mechanism as
  *  pantheon_delegate — so its parts feed the live-map as the native signal
- *  (rows render `[native]` via the children channel). Pure w.r.t. I/O — used
+ *  (rows render `nat:` via the children channel). Pure w.r.t. I/O — used
  *  by the mount re-scan to re-seed the live map after compaction/attach. */
 declare function collectDelegationToolParts(messages: readonly {
   id?: string;
@@ -316,13 +318,47 @@ type ChildDelegationLike = {
  *  (fail-open: a freshly-seen child is assumed active; the 1s poll + md
  *  correct it as soon as terminal data exists). */
 declare function childStatusToState(status: string | undefined): 'running' | 'completed' | 'retry';
-/** Row tag for a delegation entry: `[native]` for native task() children
- *  (source 'children-only' — no board report), `[pantheon:<alias>]` for board
- *  rows ([pantheon:apo-1]) — the same tags the manager prints in
- *  pantheon_delegation_list, so panel rows and CLI list lines match. The
- *  panel renders the tag with a distinct style so native task() children are
- *  visually separable from pantheon_delegate jobs. */
+/** Short row prefix for a delegation entry (one of the two visual channels
+ *  that split native task() work from pantheon_delegate jobs — the other is
+ *  {@link delegationIcon}):
+ *
+ *  - `nat:<agent>` — a native task() child (source 'children-only', no board
+ *    report). The child session carries no board alias, so the agent IS the
+ *    identity.
+ *  - `pan:<alias>` — a pantheon_delegate board row (`pan:apo-1`), the same
+ *    alias the manager prints in pantheon_delegation_list.
+ *
+ *  Short prefixes keep the narrow sidebar readable (the old
+ *  `pan:apo-1`/`nat:` tags ate the row width). */
 declare function delegationTag(entry: DelegationEntry): string;
+/** Row glyph: hollow diamond `◇` for native task() children (info color,
+ *  outline) vs filled diamond `◆` for pantheon_delegate rows (state color).
+ *  Shape + color are independent channels, so the split stays legible even
+ *  without color. */
+declare function delegationIcon(entry: DelegationEntry): string;
+/** Row identity after the status marker + glyph. Pantheon rows append the
+ *  agent (`pan:apo-1 apollo`); native rows already carry it inside the tag
+ *  (`nat:apollo`) and must not duplicate it. */
+declare function formatDelegationIdentity(entry: DelegationEntry): string;
+/** Max description width on the row detail line — the old 180-char slice
+ *  wrapped the sidebar; 44 keeps one readable line. */
+declare const DELEGATION_DESCRIPTION_MAX = 44;
+/** Truncate a description to `max` graphemes appending `…` when cut. Exact
+ *  `max`-length text is left untouched. Grapheme-granular, so an emoji made of
+ *  several code points is never split into mojibake at the boundary. Pure. */
+declare function truncateDelegationDescription(text: string, max?: number): string;
+/** Fixed elapsed-time box: right-aligned to `width` (default 8) so elapsed
+ *  values line up across rows, e.g. `     12s`. A label that already fills
+ *  the box is returned untouched. Pure. */
+declare const DELEGATION_ELAPSED_WIDTH = 8;
+declare function formatDelegationElapsed(entry: DelegationEntry, now: number, width?: number): string;
+/** First row line: `<marker><glyph> <identity>`. The marker already carries
+ *  its trailing space. Pure — the row renders the returned string verbatim. */
+declare function formatDelegationRow(entry: DelegationEntry, marker: string): string;
+/** Header summary: `(N active · M done · nat:K pan:M)`. Active counts
+ *  running/retry AND display-only stale-running (a stale row is still a live
+ *  job — it must never read as done). Pure. */
+declare function formatDelegationHeader(entries: readonly DelegationEntry[]): string;
 /** Split a display list into native task() rows vs pantheon_delegate rows.
  *  Native = source 'children-only' (no board report); everything else counts
  *  as pantheon. Pure — powers the header breakdown + the hooks.log line. */
@@ -344,7 +380,7 @@ declare function formatPanelLogLine(children: number, pantheon: number, native: 
  *  time.created. A report-less child is a NATIVE task() child (every
  *  child of the current session — pantheon_delegate OR the native `task()`
  *  tool — carries parentID = caller), so it gets source 'children-only',
- *  the internal alias 'native-task' and the `[native]` tag instead of a
+ *  the internal alias 'native-task' and the `nat:` tag instead of a
  *  board alias. The 'task nativa' description fallback keeps the row
  *  non-empty when the child carries no title.
  *  Terminal md state wins over the derived state; a running md defers to
@@ -377,5 +413,5 @@ declare const plugin: TuiPluginModule & {
   setup: () => Promise<void>;
 };
 //#endregion
-export { ChildDelegationLike, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, tuiLogPath, visibleDelegationList };
+export { ChildDelegationLike, DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 //# sourceMappingURL=tui.d.ts.map
