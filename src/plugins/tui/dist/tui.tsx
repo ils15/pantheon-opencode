@@ -921,9 +921,12 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      children; a 1s safety poll (oh-my-opencode-slim pattern) re-fetches
  *      children + re-reads the md so the panel updates EVEN without events.
  *
- *   4. DIAGNOSTICS — every re-fetch logs "panel: children=N md=N events=N"
+ *   4. DIAGNOSTICS — every re-fetch logs
+ *      "panel: children=N(pantheon=M native=K) md=N events=N"
  *      to `.pantheon/logs/hooks.log` (silence-by-default, createPantheonLogger
- *      policy) so the (0) symptom is diagnosable from disk. A children fetch
+ *      policy) so the (0) symptom is diagnosable from disk: children>0 means
+ *      the source works, pantheon/native splits board vs task() children.
+ *      A children fetch
  *      failure logs "panel: error <msg>" (previously silenced), and a missing
  *      current session (null/placeholder sessionID) logs "panel: children=0
  *      md=N ... (no sessionID — history shown)" — the md HISTORY renders
@@ -1509,9 +1512,11 @@ export function mergeChildDelegationSources(
  * Source of truth for jobs born while opencode is open. The TUI event bus
  * (api.event.on) delivers `message.part.updated` for every part change;
  * we only care about tool parts whose `tool` is pantheon_delegate (job
- * launch) or pantheon_delegation_read (blocking until terminal → closes
- * the entry). Shape-adapted from the SDK v2 ToolPart but duck-typed so the
- * pure helpers are testable without the SDK. */
+ * launch), the native `task` subagent tool (same parentID === caller
+ * mechanism — its rows render `[native]`), or pantheon_delegation_read
+ * (blocking until terminal → closes the entry). Shape-adapted from the
+ * SDK v2 ToolPart but duck-typed so the pure helpers are testable without
+ * the SDK. */
 
 /** Duck-typed subset of a tool part (SDK v2 `ToolPart` / `ToolState`). */
 export type DelegationToolPart = {
@@ -1537,7 +1542,7 @@ export type LiveDelegationEntry = {
   partID: string
   /** Parent session the delegation was launched from. */
   sessionID: string
-  tool: 'pantheon_delegate' | 'pantheon_delegation_read'
+  tool: 'pantheon_delegate' | 'pantheon_delegation_read' | 'task'
   /** Agent name (from the delegate input args). */
   agent: string
   description: string
@@ -1557,7 +1562,7 @@ export type ParsedDelegationToolPart = {
   callID: string
   partID: string
   sessionID: string
-  tool: 'pantheon_delegate' | 'pantheon_delegation_read'
+  tool: 'pantheon_delegate' | 'pantheon_delegation_read' | 'task'
   /** null for read parts (no agent arg — the id targets an existing job). */
   agent: string | null
   description: string
@@ -1577,13 +1582,20 @@ const READ_ALIAS_PATTERN = /^[a-z]{2,8}-\d+$/i
 
 /** Extract the tool name + args from a `message.part.updated` part and
  *  reduce it to what the panel needs. Returns null for anything that is
- *  not a pantheon delegation tool part (or is missing its callID). */
+ *  not a pantheon delegation tool part, the native `task` subagent tool
+ *  (same parentID === caller mechanism — its children render `[native]`),
+ *  or is missing its callID. */
 export function parseDelegationToolPart(
   part: DelegationToolPart,
   now = Date.now(),
 ): ParsedDelegationToolPart | null {
   if (part.type !== 'tool') return null
-  if (part.tool !== 'pantheon_delegate' && part.tool !== 'pantheon_delegation_read') return null
+  if (
+    part.tool !== 'pantheon_delegate' &&
+    part.tool !== 'pantheon_delegation_read' &&
+    part.tool !== 'task'
+  )
+    return null
   const callID = part.callID
   if (callID === undefined || callID === '') return null
   const sessionID = part.sessionID ?? ''
@@ -1618,10 +1630,22 @@ export function parseDelegationToolPart(
     }
   }
 
-  const agent = typeof input.agent === 'string' ? input.agent : 'agent'
-  const description = typeof input.description === 'string' ? input.description : ''
+  const agent =
+    typeof input.agent === 'string'
+      ? input.agent
+      : typeof input.subagent_type === 'string'
+        ? (input.subagent_type as string)
+        : 'agent'
+  const description =
+    typeof input.description === 'string'
+      ? input.description
+      : typeof input.prompt === 'string'
+        ? (input.prompt as string).slice(0, 120)
+        : ''
   // The alias/taskID only exist once the delegate tool COMPLETES (they are
-  // returned in its output); a running/pending part has neither.
+  // returned in its output); a running/pending part has neither. Native
+  // `task` parts never carry a board alias — the children channel supplies
+  // the child session id, so the row renders `[native]`.
   let alias: string | null = null
   let taskID: string | null = null
   if (status === 'completed') {
@@ -1633,7 +1657,7 @@ export function parseDelegationToolPart(
     callID,
     partID: part.id ?? '',
     sessionID,
-    tool: 'pantheon_delegate',
+    tool: part.tool === 'task' ? 'task' : 'pantheon_delegate',
     agent,
     description,
     status,
@@ -1691,9 +1715,11 @@ export function reduceDelegationToolPart(
     return changed
   }
 
-  // Delegate tool: pending/running → job launched (running). A COMPLETED
-  // delegate tool only means the job was registered — it stays running and
-  // we pick up alias + taskID from the output.
+  // Delegate tool (pantheon_delegate AND native task): pending/running →
+  // job launched (running). A COMPLETED delegate tool only means the job was
+  // registered — it stays running and we pick up alias + taskID from the
+  // output. Native `task` parts never yield a board alias, so their rows
+  // stay `[native]` until the children channel resolves them.
   const existing = map.get(parsed.callID)
   if (parsed.status === 'error') {
     if (existing !== undefined && existing.state === 'error' && existing.updatedAt === parsed.endAt)
@@ -1702,7 +1728,7 @@ export function reduceDelegationToolPart(
       callID: parsed.callID,
       partID: parsed.partID,
       sessionID: parsed.sessionID,
-      tool: 'pantheon_delegate',
+      tool: parsed.tool,
       agent: parsed.agent ?? 'agent',
       description: parsed.description,
       alias: existing?.alias ?? null,
@@ -1719,7 +1745,7 @@ export function reduceDelegationToolPart(
       callID: parsed.callID,
       partID: parsed.partID,
       sessionID: parsed.sessionID,
-      tool: 'pantheon_delegate',
+      tool: parsed.tool,
       agent: parsed.agent ?? 'agent',
       description: parsed.description,
       alias: parsed.alias,
@@ -1772,11 +1798,14 @@ export function removeDelegationEntry(
   return false
 }
 
-/** Collect pantheon delegation tool parts from a session's messages.
+/** Collect pantheon delegation + native task tool parts from a session's messages.
  *  Messages may carry their parts inline (duck-typed `msg.parts`); when
  *  they don't, the optional `getParts(messageID)` callback is used (the TUI
- *  SDK exposes `api.state.part(messageID)`). Pure w.r.t. I/O — used by the
- *  mount re-scan to re-seed the live map after compaction/attach. */
+ *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
+ *  child session with parentID = caller — the same mechanism as
+ *  pantheon_delegate — so its parts feed the live-map as the native signal
+ *  (rows render `[native]` via the children channel). Pure w.r.t. I/O — used
+ *  by the mount re-scan to re-seed the live map after compaction/attach. */
 export function collectDelegationToolParts(
   messages: readonly { id?: string; parts?: unknown[] }[] | undefined,
   getParts?: (messageID: string) => readonly unknown[] | undefined,
@@ -1794,7 +1823,9 @@ export function collectDelegationToolParts(
       const part = raw as DelegationToolPart
       if (
         part?.type === 'tool' &&
-        (part.tool === 'pantheon_delegate' || part.tool === 'pantheon_delegation_read')
+        (part.tool === 'pantheon_delegate' ||
+          part.tool === 'pantheon_delegation_read' ||
+          part.tool === 'task')
       ) {
         out.push(part)
       }
@@ -2000,6 +2031,32 @@ export function delegationTag(entry: DelegationEntry): string {
   return entry.source === 'children-only' ? '[native]' : `[pantheon:${entry.alias}]`
 }
 
+/** Split a display list into native task() rows vs pantheon_delegate rows.
+ *  Native = source 'children-only' (no board report); everything else counts
+ *  as pantheon. Pure — powers the header breakdown + the hooks.log line. */
+export function countDelegationSources(entries: readonly DelegationEntry[]): {
+  native: number
+  pantheon: number
+  total: number
+} {
+  let native = 0
+  for (const e of entries) if (e.source === 'children-only') native++
+  return { native, pantheon: entries.length - native, total: entries.length }
+}
+
+/** Diagnostic hooks.log line for a panel re-fetch, with the children
+ *  breakdown (pantheon = children WITH a board report, native = children
+ *  WITHOUT one). Pure — the View logs the returned string verbatim. */
+export function formatPanelLogLine(
+  children: number,
+  pantheon: number,
+  native: number,
+  md: number,
+  events: number,
+): string {
+  return `panel: children=${children}(pantheon=${pantheon} native=${native}) md=${md} events=${events}`
+}
+
 /** Turn child sessions (PRIMARY) enriched with md reports into the display
  *  list. One entry per child id (duplicates across re-fetches collapse).
  *  The md report is matched by `Task ID` (== child.id) and supplies alias,
@@ -2008,10 +2065,14 @@ export function delegationTag(entry: DelegationEntry): string {
  *  itself (fallback 'agent'), state derived from its status, startedAt from
  *  time.created. A report-less child is a NATIVE task() child (every
  *  child of the current session — pantheon_delegate OR the native `task()`
- *  tool — carries parentID = caller), so it gets source 'children-only'
- *  and the `[native]` tag instead of a board alias.
+ *  tool — carries parentID = caller), so it gets source 'children-only',
+ *  the internal alias 'native-task' and the `[native]` tag instead of a
+ *  board alias. The 'task nativa' description fallback keeps the row
+ *  non-empty when the child carries no title.
  *  Terminal md state wins over the derived state; a running md defers to
- *  the child's live status. Sorted running-first (compareDelegationEntries).
+ *  the child's live status. A running child is NEVER archived — it always
+ *  lands in the active split (splitDelegationList active = running/retry).
+ *  Sorted running-first (compareDelegationEntries).
  *  Pure — no I/O. */
 export function childrenToDelegationEntries(
   children: readonly ChildDelegationLike[] | undefined,
@@ -2033,7 +2094,7 @@ export function childrenToDelegationEntries(
         ? mdEntry.state
         : childStatusToState(child.status)
     out.push({
-      alias: mdEntry?.alias ?? 'task',
+      alias: mdEntry?.alias ?? 'native-task',
       sessionID: mdEntry?.sessionID ?? '',
       taskID: child.id,
       agent: mdEntry?.agent ?? child.agent ?? 'agent',
@@ -2046,7 +2107,9 @@ export function childrenToDelegationEntries(
       description:
         mdEntry !== undefined && mdEntry.description !== ''
           ? mdEntry.description
-          : (child.title ?? ''),
+          : child.title !== undefined && child.title !== ''
+            ? child.title
+            : 'task nativa',
       source: mdEntry !== undefined ? 'md' : 'children-only',
     })
   }
@@ -2241,7 +2304,7 @@ function DelegationRow(props: {
         {(a) => (
           <text
             fg={theme().textMuted}
-          >{`  \u21b3 ${a().tool}${a().summary !== '' ? ' ' + a().summary : ''}`}</text>
+          >{`  \u21b3 ${a().tool}${a().summary !== '' ? ` ${a().summary}` : ''}`}</text>
         )}
       </Show>
     </box>
@@ -2370,9 +2433,10 @@ function View(props: {
   // remains on the 1s ticker to avoid unnecessary work.
   const [animationNow, setAnimationNow] = createSignal(Date.now())
   // Cumulative count of event-triggered refreshes — logged with every fetch
-  // ("panel: children=N md=N events=N") so the (0) symptom is diagnosable:
-  // children>0 means the source works; events=0 means the event bus isn't
-  // delivering, and the 1s poll is what keeps the panel honest.
+  // ("panel: children=N(pantheon=M native=K) md=N events=N") so the (0)
+  // symptom is diagnosable: children>0 means the source works; events=0
+  // means the event bus isn't delivering, and the 1s poll is what keeps
+  // the panel honest.
   let eventRefreshCount = 0
   // In-flight guard: overlap between the poll, events and the version effect
   // collapses into one fetch — no duplicate work, no duplicate entries.
@@ -2404,7 +2468,7 @@ function View(props: {
         if (sessionID === null) {
           setChildDelegations(md)
           panelLog.info(
-            `panel: children=0 md=${md.length} events=${eventRefreshCount} (no sessionID — history shown)`,
+            `${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — history shown)`,
           )
           return
         }
@@ -2447,8 +2511,15 @@ function View(props: {
         )
         setChildDelegations(mergeChildDelegationSources(childEntries, liveEntries))
         // 4. diagnostic line — every re-fetch (silence-by-default, hooks.log).
+        const counts = countDelegationSources(childEntries)
         panelLog.info(
-          `panel: children=${children.length} md=${md.length} events=${eventRefreshCount}`,
+          formatPanelLogLine(
+            children.length,
+            counts.pantheon,
+            counts.native,
+            md.length,
+            eventRefreshCount,
+          ),
         )
       } finally {
         delegationsInflight = null
@@ -2464,6 +2535,9 @@ function View(props: {
     ...delegationSplit().active,
     ...delegationSplit().recent,
   ])
+  // Header breakdown: native task() rows vs pantheon_delegate rows, so
+  // Sessions(3) with 3 native children reads "Delegations (3 native + 0 pantheon)".
+  const delegationCounts = createMemo(() => countDelegationSources(visibleDelegations()))
   const [archivedPage, setArchivedPage] = createSignal(archivedUiState.page)
   const clampArchivedPage = (page: number, pages: number) => {
     const clamped = Math.max(0, Math.min(page, Math.max(0, pages - 1)))
@@ -2612,9 +2686,11 @@ function View(props: {
       {/* ── Delegations (session.children primary + .pantheon/delegations md enrichment) ── */}
       <box onMouseDown={() => setShowDelegations((x) => !x)}>
         <text fg={theme().text} attributes={1}>
-          {`${showDelegations() ? '\u25bc' : '\u25b6'} Delegations`}
+          {`${showDelegations() ? '▼' : '▶'} Delegations`}
         </text>
-        <text fg={theme().textMuted}>{` (${String(visibleDelegations().length)})`}</text>
+        <text
+          fg={theme().textMuted}
+        >{` (${String(delegationCounts().native)} native + ${String(delegationCounts().pantheon)} pantheon)`}</text>
       </box>
       <Show when={showDelegations()}>
         <Show
