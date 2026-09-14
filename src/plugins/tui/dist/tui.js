@@ -165,7 +165,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.5.0-beta.13";
+	return "1.5.0-beta.14";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.
@@ -939,8 +939,13 @@ function compareDelegationEntries(a, b) {
 function splitDelegationList(all, maxRecent = 8, now = Date.now(), staleThresholdMs = 1800 * 1e3) {
 	const isActiveState = (st) => st === "running" || st === "retry" || st === "stale-running";
 	return {
-		active: all.filter((d) => isActiveState(d.state)).map((d) => markStaleIfRunning(d, now, staleThresholdMs)),
-		recent: all.filter((d) => !isActiveState(d.state)).slice(0, maxRecent)
+		active: all.filter((d) => isActiveState(d.state)).map((d) => markStaleIfRunning(d, now, staleThresholdMs)).sort(compareDelegationEntries),
+		recent: all.filter((d) => !isActiveState(d.state)).filter((d) => {
+			if (d.updatedAt === null || !Number.isFinite(d.updatedAt)) return true;
+			const age = now - d.updatedAt;
+			if (age < 0) return true;
+			return age < (delegationRowStatus(d.state) === "failed" ? DELEGATION_FAILED_RETENTION_MS : DELEGATION_DONE_RETENTION_MS);
+		}).sort(compareDelegationEntries).slice(0, maxRecent)
 	};
 }
 /** Live-first window used by {@link ceilingDelegationList} (kept for the
@@ -956,6 +961,10 @@ const STALE_RUNNING_THRESHOLD_MS = 1800 * 1e3;
 *  considered stale. Combined with the stale-running threshold to produce the
 *  display-only `stale-running` state. */
 const IDLE_SILENCE_MS = 60 * 1e3;
+/** Visual-only terminal retention windows. Reports remain on disk and in the
+* board; these constants only control which rows enter the TUI window. */
+const DELEGATION_DONE_RETENTION_MS = 120 * 1e3;
+const DELEGATION_FAILED_RETENTION_MS = 600 * 1e3;
 /**
 * Mark a running entry as `stale-running` if it has been running longer than
 * the threshold AND has no recent activity (no `updatedAt` change in the last
@@ -1048,7 +1057,7 @@ function delegationStateTone(state) {
 		case "running":
 		case "retry":
 		case "startup_unknown": return "warning";
-		case "stale-running":
+		case "stale-running": return "warning";
 		case "error":
 		case "startup_failed": return "error";
 		case "completed": return "success";
@@ -1662,14 +1671,20 @@ function formatDelegationHeader(entries) {
 	const tail = failed > 0 ? ` · ${failed} failed` : "";
 	return `(${active} active · ${done} done${tail})`;
 }
-/** Cap the panel: live rows first, then most-recent terminal rows, at most
-*  `maxVisible` total. `hidden` is how many were dropped (rendered as
-*  "… +N more"). Pure. */
+/** Cap the panel: live rows first, then most-recent retained terminal rows, at
+*  most `maxVisible` total. Hidden counts describe the retained render list,
+*  not expired history. */
 function ceilingDelegationList(all, maxVisible = 8, now = Date.now()) {
-	const visible = visibleDelegationList(all, maxVisible, now).slice(0, maxVisible);
+	const { active, recent } = splitDelegationList(all, all.length, now);
+	const visibleActive = active.slice(0, maxVisible);
+	const visible = [...visibleActive, ...recent.slice(0, Math.max(0, maxVisible - visibleActive.length))];
+	const hiddenActive = Math.max(0, active.length - visibleActive.length);
+	const hiddenTerminal = Math.max(0, recent.length - (visible.length - visibleActive.length));
 	return {
 		visible,
-		hidden: Math.max(0, all.length - visible.length)
+		hidden: hiddenActive + hiddenTerminal,
+		hiddenActive,
+		hiddenTerminal
 	};
 }
 /** Split a display list into native task() rows vs pantheon_delegate rows.
@@ -1743,8 +1758,19 @@ function childrenToDelegationEntries(children, md, now = Date.now(), parentSessi
 *  unsubstituted "{sessionID}" placeholder can never be routed. */
 function navigateToDelegationSession(route, taskID) {
 	if (typeof route?.navigate !== "function" || !isValidSessionId(taskID)) return false;
-	route.navigate("session", { sessionID: taskID });
-	return true;
+	try {
+		const navigation = route.navigate("session", { sessionID: taskID });
+		if (navigation !== void 0) Promise.resolve(navigation).catch(() => void 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+/** Build the mouse handler used by each delegation row. */
+function createDelegationRowOpenHandler(route, taskID) {
+	return () => {
+		navigateToDelegationSession(route, taskID);
+	};
 }
 /** Silence-by-default panel logger.
 *  @param projectRoot the PROJECT ROOT — the logger appends to
@@ -1822,9 +1848,7 @@ function DelegationRow(props) {
 	const elapsed = createMemo(() => formatDelegationElapsed(props.job, props.now));
 	const description = createMemo(() => truncateDelegationDescription(props.job.description));
 	const activity = createMemo(() => latestToolActivityFor(latestToolActivity, props.job.taskID, props.now));
-	const open = () => {
-		navigateToDelegationSession(props.api.route, props.job.taskID);
-	};
+	const open = createDelegationRowOpenHandler(props.api.route, props.job.taskID);
 	return (() => {
 		var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$16 = createElement("span"), _el$17 = createElement("span");
 		insertNode(_el$13, _el$14);
@@ -1988,7 +2012,7 @@ function View(props) {
 		return delegationsInflight;
 	};
 	const delegationCeiling = createMemo(() => ceilingDelegationList(childDelegations(), 8, now()));
-	const delegationHeader = createMemo(() => formatDelegationHeader(childDelegations()));
+	const delegationHeader = createMemo(() => formatDelegationHeader(delegationCeiling().visible));
 	onMount(() => {
 		const cleanup = [];
 		try {
@@ -2153,7 +2177,7 @@ function View(props) {
 		setProp(_el$29, "attributes", 1);
 		insert(_el$29, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
 		insert(_el$30, (() => {
-			var _c$ = memo(() => childDelegations().length > 0);
+			var _c$ = memo(() => delegationCeiling().visible.length > 0);
 			return () => _c$() ? ` ${delegationHeader()}` : " — idle";
 		})());
 		insert(_el$22, createComponent(Show, {
@@ -2202,7 +2226,10 @@ function View(props) {
 							},
 							get children() {
 								var _el$32 = createElement("text");
-								insert(_el$32, () => `… +${delegationCeiling().hidden} more`);
+								insert(_el$32, (() => {
+									var _c$2 = memo(() => delegationCeiling().hiddenActive > 0);
+									return () => _c$2() ? `… +${delegationCeiling().hiddenActive} active` : `… +${delegationCeiling().hiddenTerminal} more`;
+								})());
 								effect((_$p) => setProp(_el$32, "fg", theme().textMuted, _$p));
 								return _el$32;
 							}
@@ -2287,6 +2314,6 @@ const plugin = {
 	setup: async () => {}
 };
 //#endregion
-export { DELEGATION_ALIAS_WIDTH, DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, boardRecordToDelegationEntry, boardRecordsToDelegationEntries, boardStatePath, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeBoardDelegationSources, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readBoardState, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { DELEGATION_ALIAS_WIDTH, DELEGATION_DESCRIPTION_MAX, DELEGATION_DONE_RETENTION_MS, DELEGATION_ELAPSED_WIDTH, DELEGATION_FAILED_RETENTION_MS, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, boardRecordToDelegationEntry, boardRecordsToDelegationEntries, boardStatePath, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, createDelegationRowOpenHandler, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeBoardDelegationSources, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readBoardState, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 
 //# sourceMappingURL=tui.js.map
