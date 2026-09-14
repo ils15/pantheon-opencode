@@ -18,6 +18,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.13] - 2026-09-14
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **TUI status-only — rows simplificadas:** cada linha do painel Delegations passa
+  a ser `{glyph} {alias} {elapsed}` + `desc` muted — um glyph de status, uma única
+  identidade e o tempo decorrido, com a descrição em tom muted. São 4 glyphs
+  (running animado, completed, error, cancelled/retry), sem toggle
+  `[Sessão]`/`[Tudo]`, sem prefixos `nat:`/`pan:` e sem losango ◇/◆.
+- **Header `active`/`done`/`failed`:** o cabeçalho do painel resume apenas esses
+  três contadores sobre a lista completa (todas as sessões), sem `nat:`/`pan:`.
+- **Ceiling 8:** no máximo 8 linhas visíveis (live-first); o excedente colapsa em
+  uma única linha `… +N more`.
+- **Board read (jobs de todas as sessões):** o painel lê o BackgroundJobBoard
+  (`.pantheon/board/state.json`), então jobs `pantheon_delegate` de qualquer
+  sessão aparecem — não só os filhos nativos da sessão focada.
+- **118 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com
+  118/118 passando, cobrindo rows status-only, header active/done/failed, ceiling
+  e board read cross-session.
+
+## 🐞 Fixed
+
+- **Sanitização de dead code:** removidos helpers, tipos e estado órfãos do
+  painel Delegations (toggle de escopo `[Sessão]`/`[Tudo]`, prefixos curtos
+  `nat:`/`pan:`, glyphs por estado e paginação de arquivo morto) que sobraram do
+  refactor status-only.
+- **Board merge preserva sessão conhecida:** um record do board com
+  `parentSessionID` vazio não sobrescreve mais a sessão já atribuída à linha.
 ## [v1.5.0-beta.12] - 2026-09-14
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

@@ -25,29 +25,28 @@ import {
   boardStatePath,
   buildChildrenPath,
   type ChildDelegationLike,
+  ceilingDelegationList,
   childrenToDelegationEntries,
   childStatusToState,
   collectDelegationToolParts,
   countDelegationSources,
-  DELEGATION_SCOPE_KV_KEY,
-  DELEGATION_STATE_GLYPHS,
+  DELEGATION_ROW_GLYPHS,
+  DELEGATION_VISIBLE_CEILING,
   type DelegationEntry,
-  type DelegationScope,
   delegationActivity,
   delegationActivityLabel,
   delegationElapsed,
-  delegationIcon,
+  delegationRowIdentity,
+  delegationRowMarker,
+  delegationRowStatus,
   delegationSpinnerFrame,
-  delegationStateGlyph,
-  delegationStateMarker,
   delegationStateTone,
-  delegationTag,
   extractToolActivity,
-  filterDelegationsByScope,
   fmtElapsed,
+  formatDelegationAlias,
   formatDelegationElapsed,
   formatDelegationHeader,
-  formatDelegationRow,
+  formatDelegationRowLead,
   formatPanelLogLine,
   isValidSessionId,
   type LiveDelegationEntry,
@@ -57,14 +56,12 @@ import {
   mergeChildDelegationSources,
   mergeDelegationSources,
   navigateToDelegationSession,
-  nextDelegationScope,
   panelLogDir,
   parseDelegationMarkdown,
   parseDelegationToolPart,
   readAllDelegationEntries,
   readBoardState,
   readDelegationEntries,
-  readDelegationScope,
   reduceDelegationToolPart,
   removeDelegationEntry,
   resolveCurrentSessionID,
@@ -77,7 +74,6 @@ import {
   truncateDelegationDescription,
   tuiLogPath,
   visibleDelegationList,
-  writeDelegationScope,
 } from '../../src/plugins/tui/src/index.tsx'
 
 // ─── Fixtures (real header shapes from renderDelegationMarkdown) ────────
@@ -1090,14 +1086,14 @@ async function main() {
     )
   })
 
-  await testAsync('elapsed: fmtElapsed formatting (s/m/h/d compact)', async () => {
+  await testAsync('elapsed: fmtElapsed formatting (single-unit compact: 12s/3m/1h)', async () => {
     assert.equal(fmtElapsed(0), '0s')
     assert.equal(fmtElapsed(500), '0s')
     assert.equal(fmtElapsed(5_000), '5s')
-    assert.equal(fmtElapsed(65_000), '1m 5s')
-    assert.equal(fmtElapsed(3_600_000), '1h 0m')
-    assert.equal(fmtElapsed(86_400_000), '1d 0h')
-    assert.equal(fmtElapsed(90_000_000), '1d 1h')
+    assert.equal(fmtElapsed(65_000), '1m')
+    assert.equal(fmtElapsed(3_600_000), '1h')
+    assert.equal(fmtElapsed(86_400_000), '1d')
+    assert.equal(fmtElapsed(90_000_000), '1d')
   })
 
   await testAsync(
@@ -1414,7 +1410,8 @@ async function main() {
       assert.ok(e)
       assert.equal(e.source, 'children-only', 'child without md is children-only')
       assert.equal(e.alias, 'native-task', 'internal label stays native-task')
-      assert.equal(delegationTag(e), 'nat:agent', 'row tag renders nat:<agent>')
+      assert.equal(delegationRowIdentity(e), 'agent', 'single identity: agent when no board alias')
+      assert.equal(formatDelegationAlias(delegationRowIdentity(e)), 'agent  ')
       assert.equal(e.agent, 'agent', 'agent falls back to "agent" without child.agent')
       assert.equal(e.state, 'running', 'busy → running')
       assert.equal(e.startedAt, 5000, 'startedAt from child time.created')
@@ -1473,7 +1470,7 @@ async function main() {
       assert.ok(e)
       assert.equal(e.source, 'md', 'board provenance wins')
       assert.equal(e.alias, 'apo-1', 'board alias (not native)')
-      assert.equal(delegationTag(e), 'pan:apo-1', 'row tag renders the board alias')
+      assert.equal(delegationRowIdentity(e), 'apo-1', 'single identity: board alias, no agent dup')
       assert.equal(e.state, 'completed', 'terminal md state wins over busy-derived')
     },
   )
@@ -1506,7 +1503,7 @@ async function main() {
       const board = byId.get(md.taskID ?? '')
       assert.ok(board)
       assert.equal(board.source, 'md')
-      assert.equal(delegationTag(board), 'pan:apo-1')
+      assert.equal(delegationRowIdentity(board), 'apo-1')
       assert.equal(
         board.state,
         'completed',
@@ -1648,7 +1645,7 @@ async function main() {
         assert.equal(e.alias, 'native-task')
         assert.equal(e.source, 'children-only')
         assert.equal(e.description, 'task nativa', 'row never renders empty')
-        assert.equal(delegationTag(e), 'nat:agent')
+        assert.equal(delegationRowIdentity(e), 'agent')
       }
     },
   )
@@ -1673,8 +1670,8 @@ async function main() {
       'running native stays active',
     )
     assert.ok(
-      !split.archived.some((e) => e.taskID === 'ses_nat_run'),
-      'running native never lands in the archived tail',
+      !split.recent.some((e) => e.taskID === 'ses_nat_run'),
+      'running native never lands in the terminal tail',
     )
   })
 
@@ -2111,53 +2108,79 @@ async function main() {
   const natEntry = (over: Partial<DelegationEntry> = {}): DelegationEntry =>
     panEntry({ alias: 'native-task', agent: 'hermes', source: 'children-only', ...over })
 
-  await testAsync('tag: short prefixes nat:<agent> / pan:<alias>, no brackets', async () => {
-    assert.equal(delegationTag(natEntry()), 'nat:hermes')
-    assert.equal(delegationTag(panEntry()), 'pan:apo-1')
-    assert.equal(delegationTag(natEntry()).includes('['), false)
-    assert.equal(delegationTag(panEntry()).includes('['), false)
-  })
+  await testAsync(
+    'identity: ONE identity per row \u2014 board alias, agent only without alias',
+    async () => {
+      assert.equal(delegationRowIdentity(panEntry()), 'apo-1')
+      assert.equal(delegationRowIdentity(natEntry()), 'hermes')
+      assert.equal(formatDelegationAlias('apo-1'), 'apo-1  ', 'alias padded to 7')
+      assert.equal(formatDelegationAlias('hermes'), 'hermes ', 'agent padded to 7')
+      assert.equal(
+        formatDelegationAlias('native-task-long'),
+        'native-',
+        'truncated to 7, never wraps',
+      )
+      assert.equal(formatDelegationAlias('apo-1').includes(':'), false, 'no nat:/pan: prefix')
+    },
+  )
 
-  await testAsync('glyph: hollow ◇ native vs filled ◆ pantheon (shape + color)', async () => {
-    assert.equal(delegationIcon(natEntry()), '\u25c7')
-    assert.equal(delegationIcon(panEntry()), '\u25c6')
-  })
+  await testAsync(
+    'row status: FSM states map to 4 row kinds (active/done/failed/retry)',
+    async () => {
+      assert.equal(delegationRowStatus('running'), 'active')
+      assert.equal(delegationRowStatus('stale-running'), 'active')
+      assert.equal(delegationRowStatus('completed'), 'done')
+      assert.equal(delegationRowStatus('cancelled'), 'done', 'cancelled reads as done')
+      assert.equal(delegationRowStatus('error'), 'failed')
+      assert.equal(delegationRowStatus('startup_failed'), 'failed')
+      assert.equal(delegationRowStatus('retry'), 'retry')
+      assert.equal(delegationRowStatus('startup_unknown'), 'retry')
+      assert.equal(DELEGATION_ROW_GLYPHS.active, '\u280b')
+      assert.equal(DELEGATION_ROW_GLYPHS.done, '\u2713')
+      assert.equal(DELEGATION_ROW_GLYPHS.failed, '\u2715')
+      assert.equal(DELEGATION_ROW_GLYPHS.retry, '\u27f3')
+      assert.equal(Object.keys(DELEGATION_ROW_GLYPHS).length, 4, 'exactly 4 row glyphs')
+    },
+  )
 
-  await testAsync('row: marker + glyph + identity (nat has no duplicate agent)', async () => {
-    assert.equal(formatDelegationRow(natEntry(), '\u280b '), '\u280b \u25c7 nat:hermes')
-    assert.equal(formatDelegationRow(panEntry(), '\u280b '), '\u280b \u25c6 pan:apo-1 apollo')
-  })
-
-  // ─── FASE 1: real FSM state glyphs (geometric Unicode, no Nerd Font) ──
-
-  await testAsync('state glyphs: every REAL job-board state maps to its glyph', async () => {
-    assert.equal(delegationStateGlyph('running'), '\u280b', 'running base spinner frame')
-    assert.equal(delegationStateGlyph('retry'), '\u27f3', 'retry ⟳')
-    assert.equal(delegationStateGlyph('stale-running'), '\u26a0', 'stale ⚠')
-    assert.equal(delegationStateGlyph('completed'), '\u2713', 'completed ✓')
-    assert.equal(delegationStateGlyph('error'), '\u2715', 'error ✕')
-    assert.equal(delegationStateGlyph('cancelled'), '\u2212', 'cancelled −')
-    assert.equal(delegationStateGlyph('startup_failed'), '\u26a0', 'startup_failed ⚠')
-    assert.equal(delegationStateGlyph('startup_unknown'), '\u26a0', 'startup_unknown ⚠')
-    // The map covers exactly the real FSM + display states — no speculative
-    // blocked/paused/scheduled/skipped (Fase 2) and no unused `pending`.
-    assert.equal(Object.keys(DELEGATION_STATE_GLYPHS).length, 8, 'no invented states')
-  })
-
-  await testAsync('state marker: glyph + space; running animates via 1s spinner', async () => {
-    assert.equal(delegationStateMarker('completed'), '\u2713 ')
-    assert.equal(delegationStateMarker('cancelled'), '\u2212 ')
+  await testAsync('row marker: active animates, terminal states are static glyphs', async () => {
+    assert.equal(delegationRowMarker('completed'), '\u2713 ')
+    assert.equal(delegationRowMarker('cancelled'), '\u2713 ', 'cancelled shares the done glyph')
+    assert.equal(delegationRowMarker('error'), '\u2715 ')
+    assert.equal(delegationRowMarker('startup_failed'), '\u2715 ')
+    assert.equal(delegationRowMarker('retry'), '\u27f3 ')
     assert.equal(
-      delegationStateMarker('running', 0),
+      delegationRowMarker('running', 0),
       `${delegationSpinnerFrame(0)} `,
-      'running uses the spinner frame for the given tick',
+      'active uses the spinner frame for the given tick',
     )
     assert.notEqual(
-      delegationStateMarker('running', 0),
-      delegationStateMarker('running', 1000),
-      'running marker advances once per second',
+      delegationRowMarker('running', 0),
+      delegationRowMarker('running', 1000),
+      'active marker advances once per second',
     )
   })
+
+  await testAsync(
+    'row: status-only line \u2014 glyph + alias:7 + elapsed:>5, no words/diamonds',
+    async () => {
+      // panEntry: completed, startedAt 1000, updatedAt 8000 \u2192 frozen elapsed 7s.
+      const lead = formatDelegationRowLead(panEntry(), '\u2713 ')
+      assert.equal(lead, '\u2713 apo-1   ', 'lead carries glyph + padded alias only')
+      assert.equal(formatDelegationElapsed(panEntry(), 50_000), '   7s')
+      const run = natEntry({ state: 'running', startedAt: 0 })
+      const runLead = formatDelegationRowLead(run, '\u280b ')
+      assert.equal(runLead, '\u280b hermes  ', 'native row uses agent identity, never nat:')
+      assert.equal(formatDelegationElapsed(run, 12_000), '  12s')
+      for (const r of [lead, runLead]) {
+        assert.equal(r.includes('nat:'), false)
+        assert.equal(r.includes('pan:'), false)
+        assert.equal(r.includes('\u25c7'), false, 'no hollow diamond')
+        assert.equal(r.includes('\u25c6'), false, 'no filled diamond')
+        assert.ok(!/RUNNING|WORKING|DONE|ERROR/i.test(r), 'no status words \u2014 glyph only')
+      }
+    },
+  )
 
   await testAsync('state tone: color is a separate channel from glyph', async () => {
     assert.equal(delegationStateTone('running'), 'warning')
@@ -2168,13 +2191,6 @@ async function main() {
     assert.equal(delegationStateTone('cancelled'), 'muted')
     assert.equal(delegationStateTone('startup_failed'), 'error')
     assert.equal(delegationStateTone('startup_unknown'), 'warning')
-  })
-
-  await testAsync('state legibility: terminal glyphs differ without color', async () => {
-    const glyphs = (['completed', 'error', 'cancelled'] as const).map((s) =>
-      delegationStateGlyph(s),
-    )
-    assert.equal(new Set(glyphs).size, glyphs.length, 'unique glyphs, not color-only')
   })
 
   await testAsync('desc: truncated at 44 with ellipsis, short text untouched', async () => {
@@ -2194,11 +2210,11 @@ async function main() {
     assert.equal(cut.includes('\uFFFD'), false, 'no replacement char / lone surrogate')
   })
 
-  await testAsync('elapsed: fixed 8-char right-aligned cell, never "ago"', async () => {
+  await testAsync('elapsed: fixed 5-char right-aligned cell, never "ago"', async () => {
     const running = natEntry({ state: 'running', startedAt: 0, updatedAt: null })
     const cell = formatDelegationElapsed(running, 12_000)
-    assert.equal(cell, '     12s')
-    assert.equal(cell.length, 8)
+    assert.equal(cell, '  12s')
+    assert.equal(cell.length, 5)
     assert.equal(cell.includes('ago'), false)
     assert.equal(formatDelegationElapsed(running, 12_000, 4), ' 12s')
     assert.equal(formatDelegationElapsed(running, 12_000, 2), '12s')
@@ -2210,22 +2226,65 @@ async function main() {
     const split = splitDelegationList([natRun, natStale], 8, 0)
     assert.equal(split.active.length, 2, 'both running rows stay active')
     assert.equal(split.recent.length, 0)
-    assert.equal(split.archived.length, 0, 'nothing running is ever archived')
+    assert.equal(
+      split.recent.some((e) => e.state === 'running' || e.state === 'stale-running'),
+      false,
+      'nothing running falls to the terminal tail',
+    )
   })
 
-  await testAsync('header: active/done + nat/pan breakdown', async () => {
+  await testAsync('header: active/done + failed only when >0, no nat/pan', async () => {
     const natRun = natEntry({ state: 'running' })
     const done1 = panEntry({ taskID: 'ses_done_1', state: 'completed' })
     const done2 = panEntry({ taskID: 'ses_done_2', state: 'completed' })
-    assert.equal(
-      formatDelegationHeader([natRun, done1, done2]),
-      '(1 active \u00b7 2 done \u00b7 nat:1 pan:2)',
-    )
-    assert.equal(formatDelegationHeader([]), '(0 active \u00b7 0 done \u00b7 nat:0 pan:0)')
+    assert.equal(formatDelegationHeader([natRun, done1, done2]), '(1 active \u00b7 2 done)')
+    assert.equal(formatDelegationHeader([]), '(0 active \u00b7 0 done)')
     assert.equal(
       formatDelegationHeader([natEntry({ state: 'stale-running' })]),
-      '(1 active \u00b7 0 done \u00b7 nat:1 pan:0)',
+      '(1 active \u00b7 0 done)',
+      'stale-running counts as active, never as done',
     )
+    const failed = panEntry({ taskID: 'ses_fail_1', state: 'error' })
+    assert.equal(
+      formatDelegationHeader([natRun, done1, failed]),
+      '(1 active \u00b7 1 done \u00b7 1 failed)',
+    )
+    assert.equal(
+      formatDelegationHeader([panEntry({ taskID: 'ses_c', state: 'cancelled' })]),
+      '(0 active \u00b7 1 done)',
+      'cancelled reads as done',
+    )
+    const retry = panEntry({ taskID: 'ses_r', state: 'retry' })
+    assert.equal(
+      formatDelegationHeader([retry, failed]),
+      '(1 active \u00b7 0 done \u00b7 1 failed)',
+      'retry counts as live (active)',
+    )
+  })
+
+  await testAsync('ceiling: live-first, max 8 visible + hidden count', async () => {
+    const mk = (id: string, state: 'running' | 'completed' | 'error', i: number) =>
+      panEntry({
+        taskID: `ses_${id}`,
+        alias: `t-${i}`,
+        state,
+        startedAt: 1000 + i,
+        updatedAt: 2000 + i,
+      })
+    const all = [
+      mk('run', 'running', 0),
+      ...Array.from({ length: 10 }, (_, i) =>
+        mk(`done${i}`, i % 3 === 0 ? 'error' : 'completed', i + 1),
+      ),
+    ]
+    const { visible, hidden } = ceilingDelegationList(all, 8, 50_000)
+    assert.equal(visible.length, 8)
+    assert.equal(hidden, 3, '11 jobs \u2192 8 visible + 3 more')
+    assert.equal(visible[0]?.state, 'running', 'live-first: the running job stays on top')
+    assert.equal(DELEGATION_VISIBLE_CEILING, 8)
+    const small = ceilingDelegationList(all.slice(0, 3), 8, 50_000)
+    assert.equal(small.visible.length, 3)
+    assert.equal(small.hidden, 0, 'no "+N more" when everything fits')
   })
 
   // ─── Board channel (4th source: .pantheon/board/state.json) ───────────
@@ -2432,48 +2491,139 @@ async function main() {
     assert.equal(merged.filter((e) => e.sessionID === 'ses_other').length, 2)
   })
 
-  await testAsync('scope: nextDelegationScope toggles session ↔ all', async () => {
-    assert.equal(nextDelegationScope('session'), 'all')
-    assert.equal(nextDelegationScope('all'), 'session')
-  })
+  await testAsync(
+    'panel: shows EVERY job \u2014 no scope filter, header counts the full list',
+    async () => {
+      const mine = panEntry({ sessionID: 'ses_root', taskID: 'ses_a', state: 'running' })
+      const mineNat = natEntry({ sessionID: 'ses_root', taskID: 'ses_nat', state: 'running' })
+      const theirs = panEntry({ sessionID: 'ses_other', taskID: 'ses_b', state: 'running' })
+      // No filter: the panel always renders all jobs ("aparecendo \u00e9 o que importa").
+      const { visible, hidden } = ceilingDelegationList([mine, mineNat, theirs], 8, 50_000)
+      assert.equal(visible.length, 3)
+      assert.equal(hidden, 0)
+      assert.equal(formatDelegationHeader([mine, mineNat, theirs]), '(3 active \u00b7 0 done)')
+    },
+  )
 
   await testAsync(
-    'scope: filter — session keeps current + children rows, all returns everything',
+    'children: report-less child keeps the focused session as its sessionID',
     async () => {
-      const cur = panEntry({ sessionID: 'ses_root', taskID: 'ses_a' })
-      const child = panEntry({ sessionID: '', taskID: 'ses_child', alias: 'native-task' })
-      const other = panEntry({ sessionID: 'ses_other', taskID: 'ses_b' })
-      assert.deepEqual(
-        filterDelegationsByScope([cur, child, other], 'session', 'ses_root').map((e) => e.taskID),
-        ['ses_a', 'ses_child'],
+      // A child WITHOUT an md report IS a child of the focused session
+      // (session.children is session-scoped) — the focused id stays attached
+      // and the panel shows it (no scope filter can drop it).
+      const entries = childrenToDelegationEntries(
+        [{ id: 'ses_nat_1', title: 'Nativa', status: 'busy', time: { created: 100 } }],
+        [],
+        10_000,
+        'ses_root',
       )
-      assert.equal(filterDelegationsByScope([cur, child, other], 'all', 'ses_root').length, 3)
-      // No resolved session → nothing to scope against; fail-open to the full list.
-      assert.equal(filterDelegationsByScope([cur, other], 'session', null).length, 2)
+      assert.equal(entries.length, 1)
+      assert.equal(entries[0]?.sessionID, 'ses_root')
+      assert.equal(entries[0]?.source, 'children-only')
+      assert.equal(delegationRowIdentity(entries[0] as DelegationEntry), 'agent')
+      const { visible } = ceilingDelegationList(entries, 8, 10_000)
+      assert.deepEqual(
+        visible.map((e) => e.taskID),
+        ['ses_nat_1'],
+      )
     },
   )
 
   await testAsync(
-    'scope: read/write — kv roundtrip, default session, garbage → session',
+    'children: without a focused session the report-less child stays unscoped but visible',
     async () => {
-      const store = new Map<string, unknown>()
-      const kv = {
-        get: (key: string, fallback?: unknown) => (store.has(key) ? store.get(key) : fallback),
-        set: (key: string, value: unknown) => void store.set(key, value),
-      }
-      assert.equal(readDelegationScope(kv), 'session', 'default scope is session')
-      writeDelegationScope(kv, 'all' satisfies DelegationScope)
-      assert.equal(store.get(DELEGATION_SCOPE_KV_KEY), 'all')
-      assert.equal(readDelegationScope(kv), 'all')
-      store.set(DELEGATION_SCOPE_KV_KEY, 'garbage')
-      assert.equal(readDelegationScope(kv), 'session')
-      assert.equal(readDelegationScope(undefined), 'session')
+      const entries = childrenToDelegationEntries(
+        [{ id: 'ses_nat_1', title: 'Nativa', status: 'busy', time: { created: 100 } }],
+        [],
+        10_000,
+      )
+      assert.equal(entries[0]?.sessionID, '')
+      // No scope filter exists anymore: an unscoped child is still shown.
+      assert.equal(ceilingDelegationList(entries, 8, 10_000).visible.length, 1)
     },
   )
 
-  await testAsync('header: counts the SCOPED list, not the global one', async () => {
-    const scoped = [panEntry({ sessionID: 'ses_root', taskID: 'ses_a', state: 'running' })]
-    assert.equal(formatDelegationHeader(scoped), '(1 active \u00b7 0 done \u00b7 nat:0 pan:1)')
+  await testAsync(
+    'board merge: an empty board parentSessionID never clobbers a known session',
+    async () => {
+      const base: DelegationEntry = {
+        alias: 'apo-1',
+        sessionID: 'ses_root',
+        taskID: 'ses_child_1',
+        agent: 'apollo',
+        state: 'running',
+        startedAt: 1000,
+        updatedAt: null,
+        timedOut: false,
+        description: 'Busca',
+        source: 'md',
+      }
+      const board = boardRecordsToDelegationEntries([
+        boardRecord({ taskID: 'ses_child_1', parentSessionID: '', alias: 'apo-1' }),
+      ])
+      assert.equal(board[0]?.sessionID, '', 'precondition: board row carries no session')
+      const merged = mergeBoardDelegationSources([base], board)
+      assert.equal(merged.length, 1)
+      assert.equal(
+        merged[0]?.sessionID,
+        'ses_root',
+        'board state wins, but a known session is preserved',
+      )
+      assert.deepEqual(
+        ceilingDelegationList(merged, 8, 10_000).visible.map((e) => e.taskID),
+        ['ses_child_1'],
+      )
+    },
+  )
+
+  await testAsync(
+    'live merge: native task() live without board alias keeps a single agent identity',
+    async () => {
+      const child: DelegationEntry = {
+        alias: 'native-task',
+        sessionID: 'ses_root',
+        taskID: 'ses_nat_1',
+        agent: 'hermes',
+        state: 'running',
+        startedAt: 1000,
+        updatedAt: null,
+        timedOut: false,
+        description: 'Nativa',
+        source: 'children-only',
+      }
+      const nativeLive: LiveDelegationEntry = {
+        callID: 'call_task_1',
+        partID: 'part_task_1',
+        sessionID: 'ses_root',
+        tool: 'task',
+        agent: 'hermes',
+        description: 'Nativa',
+        alias: null,
+        taskID: 'ses_nat_1',
+        state: 'running',
+        startedAt: 1000,
+        updatedAt: null,
+        read: false,
+      }
+      const merged = mergeChildDelegationSources([child], [nativeLive])
+      assert.equal(merged.length, 1)
+      assert.equal(merged[0]?.source, 'children-only')
+      assert.equal(delegationRowIdentity(merged[0] as DelegationEntry), 'hermes')
+      // A live-only native row (child not yet listed) also keeps one identity.
+      // startedAt is fresh so the 30s aliasless prune does not drop it.
+      const liveOnly = mergeChildDelegationSources(
+        [],
+        [{ ...nativeLive, taskID: null, startedAt: Date.now() }],
+      )
+      assert.equal(liveOnly.length, 1)
+      assert.equal(liveOnly[0]?.source, 'children-only')
+      assert.equal(delegationRowIdentity(liveOnly[0] as DelegationEntry), 'hermes')
+    },
+  )
+
+  await testAsync('header: counts the FULL list from every session', async () => {
+    const all = [panEntry({ sessionID: 'ses_root', taskID: 'ses_a', state: 'running' })]
+    assert.equal(formatDelegationHeader(all), '(1 active \u00b7 0 done)')
   })
 
   // ─── Report ────────────────────────────────────────────────────────────
@@ -2489,7 +2639,7 @@ async function main() {
   process.exit(failed.length > 0 ? 1 : 0)
 }
 
-await testAsync('beta.6: splitDelegationList — active, recent cap, archived tail', async () => {
+await testAsync('beta.6: splitDelegationList — active + recent cap', async () => {
   const mk = (id, state, i) => ({
     alias: `t-${id}`,
     sessionID: 'ses_p',
@@ -2511,10 +2661,7 @@ await testAsync('beta.6: splitDelegationList — active, recent cap, archived ta
   assert.equal(split.active.length, 1)
   assert.equal(split.active[0].taskID, 'ses_run')
   assert.equal(split.recent.length, 2)
-  assert.equal(split.archived.length, 1)
-  assert.equal(split.archived[0].taskID, 'ses_done-3')
   const small = splitDelegationList(all.slice(0, 3), 8, 2000)
-  assert.equal(small.archived.length, 0)
   assert.equal(small.recent.length, 2)
 })
 
