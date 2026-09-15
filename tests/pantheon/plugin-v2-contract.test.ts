@@ -357,7 +357,10 @@ async function main(): Promise<void> {
         },
       }) as never,
     )
-    assert.equal(added.length, 9)
+    // 6 tools survive the Fase 2 delegate removal: hashline_edit, the 3 goal
+    // tools, pantheon_cost and pantheon_model (the 3 delegation tools left
+    // src/plugin-v2.ts with the V1 delegation toolset).
+    assert.equal(added.length, 6)
     for (const tool of added) {
       const result = await tool.execute({}, {})
       assert.ok(
@@ -608,11 +611,9 @@ async function main(): Promise<void> {
   test('createV2Bridge returns a frozen PantheonV2Bridge', () => {
     const bridge = createV2Bridge({
       board: { list: () => [], get: () => undefined } as never,
-      delegationClient: { session: {} } as never,
     })
     assert.ok(bridge != null)
     assert.ok(bridge.board != null)
-    assert.ok(bridge.delegationClient != null)
     assert.equal(bridge.goalStore, undefined)
     assert.equal(bridge.todoEnforcer, undefined)
     assert.equal(bridge.visionHandler, undefined)
@@ -636,7 +637,6 @@ async function main(): Promise<void> {
     const ctx = { options: {} as Record<string, unknown> }
     const bridge = createV2Bridge({
       board: { list: () => [] } as never,
-      delegationClient: { session: {} } as never,
     })
     injectBridge(ctx, bridge)
     const retrieved = getV2BridgeFromContext(ctx)
@@ -681,7 +681,6 @@ async function main(): Promise<void> {
   test('bridge with all singletons', () => {
     const bridge = createV2Bridge({
       board: { list: () => [], get: () => undefined, updateStatus: async () => {} } as never,
-      delegationClient: { session: { create: async () => ({ id: 'test' }) } } as never,
       goalStore: { list: async () => [] } as never,
       todoEnforcer: { onIdle: async () => {}, noteUserActivity: () => {} } as never,
       visionHandler: {
@@ -691,7 +690,6 @@ async function main(): Promise<void> {
       },
     })
     assert.ok(bridge.board)
-    assert.ok(bridge.delegationClient)
     assert.ok(bridge.goalStore)
     assert.ok(bridge.todoEnforcer)
     assert.ok(bridge.visionHandler)
@@ -700,11 +698,9 @@ async function main(): Promise<void> {
   test('bridge gracefully degrades with partial singletons', () => {
     const bridge = createV2Bridge({
       board: { list: () => [] } as never,
-      // delegationClient intentionally omitted
       // goalStore intentionally omitted
     })
     assert.ok(bridge.board)
-    assert.equal(bridge.delegationClient, undefined)
     assert.equal(bridge.goalStore, undefined)
     assert.equal(bridge.todoEnforcer, undefined)
     assert.equal(bridge.visionHandler, undefined)

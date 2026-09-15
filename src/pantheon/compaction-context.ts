@@ -1,8 +1,8 @@
 /**
- * Compaction Context (Phase 4 + release-134 Phase 2) — build the context
- * blocks injected by the `experimental.session.compacting` hook so a
- * compacted session does not lose its working state: in-flight background
- * delegations, active goals and pending todos.
+ * Compaction Context (Phase 4 + release-134 Phase 2, slimmed in Fase 2 of the
+ * delegate removal) — build the context blocks injected by the
+ * `experimental.session.compacting` hook so a compacted session does not lose
+ * its working state: active goals and pending todos.
  *
  * Returns a Promise<string[]> (empty when there is nothing to preserve).
  * Section order is stable:
@@ -17,23 +17,10 @@
  *     `opts.todos`: "  [id] description — status". Omitted when the todo
  *     source is absent, disabled, unscoped (no sessionID), fails, or has
  *     no pending todos.
- *   - "Background Delegations (running):" — every running job launched by
- *     the session (active work is never capped): alias, agent, started ISO,
- *     truncated prompt.
- *   - "Background Delegations (finished, unread):" — terminal-unreconciled
- *     jobs, newest first, capped at `maxItems` (default 10, matching
- *     routing.yml background_delegation.max_compaction_items).
  *
- * Reconciled jobs are excluded — they have been read already.
- *
- * The block style mirrors board.formatForPrompt ("  [alias] description —
- * STATUS") so compaction context reads consistently with the system prompt,
- * but with the extra id/agent/started detail the compaction hook needs.
- *
- * @module delegation-compaction
+ * @module compaction-context
  */
 
-import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-board.ts'
 import type { Goal } from './goal-store.ts'
 import { createPantheonLogger } from './logger.ts'
 import type { TodoLike } from './todo-enforcer.ts'
@@ -72,54 +59,12 @@ export interface CompactionTodoSource {
 }
 
 export interface CompactionContextOptions {
-  /** Scope to jobs launched by this session; omit for all jobs. */
+  /** Scope to this session; omit to skip the per-session sections. */
   sessionID?: string
-  /** Cap on unread terminal jobs kept (default 10). */
-  maxItems?: number
   /** Goal source for <mission_context> (optional — omitted when absent). */
   goals?: CompactionGoalSource
   /** Todo source for <todo_context> (optional — omitted when absent). */
   todos?: CompactionTodoSource
-}
-
-/** Prompt truncation length for a context line. */
-const PROMPT_MAX_LEN = 100
-
-// ─── Formatting ────────────────────────────────────────────────────────
-
-/** Collapse whitespace and truncate a prompt to PROMPT_MAX_LEN chars. */
-function truncatePrompt(text: string): string {
-  const flat = text.trim().replace(/\s+/g, ' ')
-  if (flat.length <= PROMPT_MAX_LEN) return flat
-  return `${flat.slice(0, PROMPT_MAX_LEN)}…`
-}
-
-/** One-line terminal status label, mirroring formatForPrompt. */
-function terminalLabel(state: BackgroundJobRecord['state']): string {
-  switch (state) {
-    case 'completed':
-      return 'OK'
-    case 'error':
-      return 'ERR'
-    case 'cancelled':
-      return 'CAN'
-    default:
-      return state.toUpperCase()
-  }
-}
-
-function runningLine(job: BackgroundJobRecord): string {
-  return (
-    `  [${job.alias}] ${job.agent} — ${truncatePrompt(job.description)} — ` +
-    `RUNNING since ${new Date(job.launchedAt).toISOString()}`
-  )
-}
-
-function unreadTerminalLine(job: BackgroundJobRecord): string {
-  return (
-    `  [${job.alias}] ${job.agent} — ${truncatePrompt(job.description)} — ` +
-    `${terminalLabel(job.state)} ${new Date(job.updatedAt).toISOString()} [unread]`
-  )
 }
 
 // ─── Sections ──────────────────────────────────────────────────────────
@@ -180,58 +125,23 @@ async function todoContextBlock(opts: CompactionContextOptions): Promise<string 
   return `<todo_context>\n${lines.join('\n')}`
 }
 
-/**
- * `<delegation_context>` — the existing delegation blocks, byte-for-byte
- * unchanged from Phase 4 (running, then unread terminal ≤ maxItems).
- */
-function delegationBlocks(board: BackgroundJobBoard, opts: CompactionContextOptions): string[] {
-  const maxItems = opts.maxItems ?? 10
-  const jobs = opts.sessionID !== undefined ? board.list(opts.sessionID) : board.list()
-
-  const running = jobs
-    .filter((j) => j.state === 'running')
-    .sort((a, b) => a.launchedAt - b.launchedAt)
-  const unreadTerminal = jobs
-    .filter((j) => j.terminalUnreconciled)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, maxItems)
-
-  const blocks: string[] = []
-  if (running.length > 0) {
-    blocks.push(`Background Delegations (running):\n${running.map(runningLine).join('\n')}`)
-  }
-  if (unreadTerminal.length > 0) {
-    blocks.push(
-      `Background Delegations (finished, unread):\n${unreadTerminal
-        .map(unreadTerminalLine)
-        .join('\n')}`,
-    )
-  }
-  return blocks
-}
-
 // ─── Build ─────────────────────────────────────────────────────────────
 
 /**
  * Build the compaction context blocks for a session: preservation
- * directive, active goals, pending todos, and in-flight background
- * delegations. Returns an empty array when there is nothing to preserve
- * (caller skips the hook injection entirely).
+ * directive, active goals, and pending todos. Returns an empty array when
+ * there is nothing to preserve (caller skips the hook injection entirely).
  */
 export async function buildCompactionContext(
-  board: BackgroundJobBoard,
   opts: CompactionContextOptions = {},
 ): Promise<string[]> {
   const [mission, todo] = await Promise.all([missionContextBlock(opts), todoContextBlock(opts)])
-  const delegation = delegationBlocks(board, opts)
 
   // Totally-empty state → nothing to preserve; a lone directive is noise.
-  if (mission === undefined && todo === undefined && delegation.length === 0) return []
+  if (mission === undefined && todo === undefined) return []
 
-  const blocks: string[] = []
-  blocks.push(`<pantheon-context directive>\n${PANTHEON_COMPACTION_DIRECTIVE}`)
+  const blocks: string[] = [`<pantheon-context directive>\n${PANTHEON_COMPACTION_DIRECTIVE}`]
   if (mission !== undefined) blocks.push(mission)
   if (todo !== undefined) blocks.push(todo)
-  blocks.push(...delegation)
   return blocks
 }

@@ -2,31 +2,33 @@
  * Tests for Read-Only Enforcement (Phase 4) — delegation-enforce.ts.
  *
  * Throw matrix for the `tool.execute.before` guard:
- *   - read-only session (registered via delegate read_only / readOnlyAgents):
+ *   - read-only session (registered directly via `readOnlyRegistry`):
  *     edit | write | bash | task → guard THROWS with an actionable message
  *   - non-read-only session: same tools → allowed
  *   - unknown session: default policy ALLOWS (normal agent work must not break)
  *   - non-blocked tools (read/grep/glob) in read-only session → allowed
  *
- * Registry population: createDelegationTools registers the CHILD session as
- * read-only when `read_only: true` is passed or the agent ∈ readOnlyAgents.
+ * The legacy delegate toolset that populated `readOnlyRegistry` was removed in
+ * favour of native `task()`; the registry is now populated by the plugin's
+ * `chat.params` hook via `syncReadOnlySession` (apollo/gaia — the read-only
+ * agents from routing.yml) and pruned on `session.deleted`.
  *
  * Run with: npx tsx tests/pantheon/delegation-enforce.test.ts
  */
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 
-import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
-import { createDelegationTools } from '../../src/pantheon/delegation.ts'
+import yaml from 'js-yaml'
+
 import {
-  ALLOWED_PATHS,
   createEnforcementGuard,
   DEFAULT_BLOCKED_TOOLS,
+  isReadOnlyAgent,
+  READ_ONLY_AGENTS,
+  ReadOnlySessionRegistry,
   readOnlyRegistry,
+  syncReadOnlySession,
   type ToolExecuteBeforeHandler,
-  ZEUS_READ_DENY_PATTERNS,
   zeusReadGuard,
 } from '../../src/pantheon/delegation-enforce.ts'
 
@@ -42,13 +44,6 @@ async function testAsync(name: string, fn: () => Promise<void>) {
     const msg = e instanceof Error ? e.message : String(e)
     results.push({ name, passed: false, error: msg })
   }
-}
-
-const ROOT = 'ses_root'
-const CHILD = 'ses_child_1'
-
-function makeCtx(sessionID = ROOT) {
-  return { sessionID, directory: '/tmp', worktree: '/tmp', agent: 'zeus' }
 }
 
 function makeGuard(): ToolExecuteBeforeHandler {
@@ -69,16 +64,6 @@ async function runGuard(
   }
 }
 
-// ─── Fake client (minimal — delegate tool only needs create/promptAsync) ─
-
-class FakeClient {
-  readonly session = {
-    create: async (): Promise<{ id: string }> => ({ id: CHILD }),
-    promptAsync: async (): Promise<unknown> => ({ state: 'running' }),
-    messages: async (): Promise<unknown> => [],
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 
 async function main() {
@@ -95,7 +80,7 @@ async function main() {
         assert.match(err!.message, /read-only/i, `message must explain WHY (${tool})`)
         assert.match(
           err!.message,
-          /pantheon_delegate|delegate/i,
+          /task|dispatch|delegate/i,
           `message must say WHAT TO DO INSTEAD (${tool})`,
         )
       }
@@ -135,133 +120,9 @@ async function main() {
       readOnlyRegistry.clear()
       readOnlyRegistry.register('ses_ro', { agent: 'apollo' })
       const guard = makeGuard()
-      for (const tool of ['read', 'grep', 'glob', 'pantheon_delegation_read']) {
+      for (const tool of ['read', 'grep', 'glob', 'webfetch']) {
         const err = await runGuard(guard, tool, 'ses_ro')
         assert.equal(err, null, `read-only agent must still be able to call "${tool}"`)
-      }
-    },
-  )
-
-  await testAsync(
-    'registry: delegate with read_only=true registers the CHILD session as read-only → guard blocks it',
-    async () => {
-      const tmp = mkdtempSync(join(tmpdir(), 'enforce-readonly-flag-'))
-      try {
-        readOnlyRegistry.clear()
-        const board = new BackgroundJobBoard()
-        const tools = createDelegationTools({
-          board,
-          client: new FakeClient(),
-          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
-        })
-
-        await tools.pantheon_delegate.execute(
-          { prompt: 'Read-only investigation', agent: 'apollo', read_only: true },
-          makeCtx(),
-        )
-
-        assert.equal(
-          readOnlyRegistry.has(CHILD),
-          true,
-          'child session must be registered as read-only when read_only=true',
-        )
-        const guard = makeGuard()
-        const err = await runGuard(guard, 'edit', CHILD)
-        assert.ok(err, 'registered read-only child must be blocked from editing')
-      } finally {
-        rmSync(tmp, { recursive: true, force: true })
-        readOnlyRegistry.clear()
-      }
-    },
-  )
-
-  await testAsync(
-    'registry: delegate with agent ∈ readOnlyAgents registers the CHILD session as read-only',
-    async () => {
-      const tmp = mkdtempSync(join(tmpdir(), 'enforce-agentset-'))
-      try {
-        readOnlyRegistry.clear()
-        const board = new BackgroundJobBoard()
-        const tools = createDelegationTools({
-          board,
-          client: new FakeClient(),
-          options: {
-            rootSessions: new Set([ROOT]),
-            outputDir: tmp,
-            readOnlyAgents: new Set(['apollo', 'gaia']),
-          },
-        })
-
-        await tools.pantheon_delegate.execute(
-          { prompt: 'Scout the codebase', agent: 'apollo' },
-          makeCtx(),
-        )
-
-        assert.equal(
-          readOnlyRegistry.has(CHILD),
-          true,
-          'agent in readOnlyAgents must register the child as read-only',
-        )
-      } finally {
-        rmSync(tmp, { recursive: true, force: true })
-        readOnlyRegistry.clear()
-      }
-    },
-  )
-
-  await testAsync(
-    'registry: agent name matching is case-insensitive (Apollo === apollo)',
-    async () => {
-      const tmp = mkdtempSync(join(tmpdir(), 'enforce-case-'))
-      try {
-        readOnlyRegistry.clear()
-        const board = new BackgroundJobBoard()
-        const tools = createDelegationTools({
-          board,
-          client: new FakeClient(),
-          options: {
-            rootSessions: new Set([ROOT]),
-            outputDir: tmp,
-            readOnlyAgents: new Set(['apollo']),
-          },
-        })
-
-        await tools.pantheon_delegate.execute({ prompt: 'Scout', agent: 'Apollo' }, makeCtx())
-
-        assert.equal(readOnlyRegistry.has(CHILD), true, 'agent matching must be case-insensitive')
-      } finally {
-        rmSync(tmp, { recursive: true, force: true })
-        readOnlyRegistry.clear()
-      }
-    },
-  )
-
-  await testAsync(
-    'registry: write-capable delegate (no flag, not in readOnlyAgents) is NOT registered',
-    async () => {
-      const tmp = mkdtempSync(join(tmpdir(), 'enforce-write-'))
-      try {
-        readOnlyRegistry.clear()
-        const board = new BackgroundJobBoard()
-        const tools = createDelegationTools({
-          board,
-          client: new FakeClient(),
-          options: { rootSessions: new Set([ROOT]), outputDir: tmp },
-        })
-
-        await tools.pantheon_delegate.execute(
-          { prompt: 'Implement the endpoint', agent: 'hermes' },
-          makeCtx(),
-        )
-
-        assert.equal(
-          readOnlyRegistry.has(CHILD),
-          false,
-          'write-capable delegate must NOT be registered as read-only',
-        )
-      } finally {
-        rmSync(tmp, { recursive: true, force: true })
-        readOnlyRegistry.clear()
       }
     },
   )
@@ -347,6 +208,94 @@ async function main() {
     'zeus read guard: Zeus + non-read tool (edit) on src/ → allowed (guard only covers read/glob/grep)',
     async () => {
       zeusReadGuard('edit', { filePath: 'src/index.ts' }, 'zeus')
+    },
+  )
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Read-Only Registry Population (production path)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  await testAsync(
+    'production population: syncReadOnlySession(apollo|gaia) registers the session and every blocked tool is denied (incl. hashline_edit)',
+    async () => {
+      const registry = new ReadOnlySessionRegistry()
+      const guard = createEnforcementGuard({
+        getReadOnlySessions: () => registry.sessionIDs(),
+      })
+
+      assert.deepEqual(
+        [...DEFAULT_BLOCKED_TOOLS].sort(),
+        ['bash', 'edit', 'hashline_edit', 'task', 'write'],
+        'host covers edit/write/bash/task — hashline_edit is the plugin tool the guard must add',
+      )
+
+      for (const agent of ['apollo', 'gaia']) {
+        const sid = `ses_prod_${agent}`
+        assert.equal(syncReadOnlySession(registry, sid, agent), true, `${agent} must register`)
+        assert.equal(registry.has(sid), true)
+        for (const tool of DEFAULT_BLOCKED_TOOLS) {
+          const err = await runGuard(guard, tool, sid)
+          assert.ok(err, `tool "${tool}" must be denied for a plugin-populated read-only session`)
+          assert.match(err!.message, /read-only/i)
+        }
+      }
+    },
+  )
+
+  await testAsync(
+    'production population: non-read-only / absent agent never registers and unregisters on agent switch',
+    async () => {
+      const registry = new ReadOnlySessionRegistry()
+
+      assert.equal(syncReadOnlySession(registry, 'ses_switch', 'hermes'), false)
+      assert.equal(registry.has('ses_switch'), false)
+
+      assert.equal(syncReadOnlySession(registry, 'ses_switch', 'apollo'), true)
+      assert.equal(registry.has('ses_switch'), true)
+
+      // Agent switch inside the same session → registration is revoked.
+      assert.equal(syncReadOnlySession(registry, 'ses_switch', 'hermes'), false)
+      assert.equal(registry.has('ses_switch'), false)
+
+      assert.equal(syncReadOnlySession(registry, 'ses_absent', undefined), false)
+      assert.equal(syncReadOnlySession(registry, 'ses_absent', 'ZEUS'), false)
+      assert.equal(isReadOnlyAgent('APOLLO'), true, 'identity is normalized case-insensitively')
+      assert.equal(isReadOnlyAgent('hermes'), false)
+      assert.equal(isReadOnlyAgent(undefined), false)
+    },
+  )
+
+  await testAsync(
+    'READ_ONLY_AGENTS mirrors routing.yml background_delegation.read_only_agents (no drift)',
+    async () => {
+      const routing = yaml.load(
+        readFileSync(new URL('../../src/routing.yml', import.meta.url), 'utf8'),
+      ) as { background_delegation?: { read_only_agents?: string[] } }
+      const fromRouting = (routing.background_delegation?.read_only_agents ?? []).map((agent) =>
+        agent.toLowerCase(),
+      )
+      assert.deepEqual(
+        [...READ_ONLY_AGENTS].sort(),
+        fromRouting.sort(),
+        'READ_ONLY_AGENTS must match routing.yml read_only_agents',
+      )
+    },
+  )
+
+  await testAsync(
+    'plugin wiring: chat.params populates the registry and session.deleted unregisters it',
+    async () => {
+      const source = readFileSync(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
+      assert.match(
+        source,
+        /'chat\.params':[\s\S]*?syncReadOnlySession\(\s*readOnlyRegistry/,
+        'chat.params must call syncReadOnlySession(readOnlyRegistry, …) to populate the registry',
+      )
+      assert.match(
+        source,
+        /ev\.type === 'session\.deleted'[\s\S]{0,200}readOnlyRegistry\.unregister/,
+        'session.deleted must unregister the read-only session',
+      )
     },
   )
 

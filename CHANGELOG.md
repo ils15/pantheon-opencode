@@ -18,6 +18,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.17] - 2026-09-15
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Delegação nativa no host:** o motor `pantheon_delegate` foi removido
+  (~3,9k linhas) junto com as tools `pantheon_delegate`,
+  `pantheon_delegation_read` e `pantheon_delegation_list`; a delegação agora usa
+  o **`task()` nativo** do host (child sessions). 16 arquivos de teste obsoletos
+  removidos.
+- **TUI — painel Delegations lê a sessão nativa:** o painel passa a derivar de
+  `session.children` + `session.status` + md (o arquivo de board deixou de ser
+  fonte). Mantidas as cores de status, retenção, ceiling, filtro de sessão e
+  guards.
+- **Camada fina preservada:** `task-result-guard` (verified completion de child
+  vazio), `native-task-status` e guards de enforcement.
+
+## 🐞 Fixed
+
+- **Read-only enforcement re-apontado para sessões nativas:** aplicado no
+  público via hook `chat.params` e `hashline_edit` bloqueado para `apollo`/`gaia`,
+  fechando o bypass aberto após a remoção do motor de delegação.
+- **Docs/comentários limpos:** referências aos módulos removidos atualizadas,
+  incluindo nits de comentário em `tests/pantheon/tui-delegations.test.ts` e
+  `src/pantheon/session-id.ts`.
+
 ## [v1.5.0-beta.16] - 2026-09-15
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

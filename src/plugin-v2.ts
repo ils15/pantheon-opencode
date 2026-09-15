@@ -2,7 +2,7 @@
  * Pantheon V2 Plugin — full orchestration plugin for OpenCode V2.
  *
  * Registers:
- * - 9 orchestration tools via V2 tool.transform (with V1 bridge fallback)
+ * - 6 orchestration tools via V2 tool.transform (with V1 bridge fallback)
  * - 4 event subscriptions (session.created, idle, error, compacted)
  * - Session hooks (prompt, context) and tool hooks (execute.before/after)
  * - Permission hooks for custom authorization
@@ -408,11 +408,11 @@ async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
 }
 
 async function onSessionError(_event: V2SessionEvent): Promise<void> {
-  // Error handling — delegation finalize as error.
+  // Error handling — board transition to error.
   const bridge = resolveBridge()
   if (bridge?.board != null) {
-    // Bridge available: delegation error handling is done by V1 event hook.
-    // V2 only logs — V1 finalizeDelegation handles the board transition.
+    // Bridge available: error handling is done by the V1 event hook.
+    // V2 only logs — V1 owns the board transition.
   }
 }
 
@@ -640,9 +640,6 @@ function createV2ToolDefinitionsFromContext(_context: PluginContext): V2ToolDef[
     'infrastructure through the V2 bridge (src/pantheon/v2-bridge.ts).'
 
   const toolNames = [
-    'pantheon_delegate',
-    'pantheon_delegation_read',
-    'pantheon_delegation_list',
     'hashline_edit',
     'pantheon_goal_create',
     'pantheon_goal_get',
@@ -652,14 +649,6 @@ function createV2ToolDefinitionsFromContext(_context: PluginContext): V2ToolDef[
   ]
 
   const toolDescriptions: Record<string, string> = {
-    pantheon_delegate:
-      'Dispatch a background agent as a child session and register it on the job board. ' +
-      'Returns the readable alias (e.g. "apo-1"); read the result with pantheon_delegation_read.',
-    pantheon_delegation_read:
-      'Block until a background delegation finishes (completed/error/cancelled), then return ' +
-      'its report markdown (with a trailing agent-activity section) and mark the job reconciled.',
-    pantheon_delegation_list:
-      'List background delegations for the current session, with [unread] for finished jobs.',
     hashline_edit:
       'Edit a file anchored by hashline refs (LINE#TAG) instead of raw line numbers. ' +
       'Ops: replace, append, prepend, delete. ALL refs validated against ORIGINAL file first.',

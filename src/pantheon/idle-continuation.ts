@@ -5,9 +5,8 @@
  * Priority: an ACTIVE GOAL owns the idle — `GoalLoop.onIdle` continues the
  * goal. Without an active goal, the TODO enforcer gets the idle (it
  * self-guards on its own enabled flag + guards). Board-child sessions never
- * reach the dispatcher — the plugin's event hook routes those to the
- * delegation finalize path first (`handleDelegationEvent` returns true) and
- * only calls the dispatcher on the `!delegated` branch.
+ * reach the dispatcher — the plugin's event hook owns board transitions and
+ * only calls the dispatcher for non-board sessions.
  *
  * Independently testable — the loop and enforcer are structural interfaces;
  * the real GoalLoop/TodoEnforcer satisfy them.
@@ -34,9 +33,8 @@ export interface IdleDispatcher {
 }
 
 /**
- * Build the idle router. The plugin event hook calls this only on the
- * `!delegated` branch of `handleDelegationEvent`, so board children never
- * arrive here.
+ * Build the idle router. The plugin event hook calls this only for non-board
+ * sessions, so board children never arrive here.
  */
 export function createIdleDispatcher(deps: {
   goalLoop: GoalLoopLike

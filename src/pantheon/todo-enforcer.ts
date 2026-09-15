@@ -2,9 +2,9 @@
  * TODO Enforcer (Wave 1) — keeps root/non-board sessions working on their
  * todo list when the session goes idle.
  *
- * The plugin's `event` hook dispatches `session.idle`: board-child sessions go
- * to the delegation finalize path (`handleDelegationEvent`), everything else
- * (roots, non-board sessions) goes to `TodoEnforcer.onIdle`. The enforcer
+ * The plugin's `event` hook dispatches `session.idle`: board-child sessions
+ * are owned by the board transition path, everything else (roots, non-board
+ * sessions) goes to `TodoEnforcer.onIdle`. The enforcer
  * re-injects a continuation prompt when the session went idle with incomplete
  * todos, so the agent keeps working on its task list instead of stopping.
  *
