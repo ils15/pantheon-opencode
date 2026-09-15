@@ -58,14 +58,13 @@ export interface TaskResultGuardOptions {
 
 /**
  * The error message injected when a task() result is empty.
- * Matches the existing delegation-finalize.ts contract:
- * "Child session produced no assistant or tool output".
+ * Keeps the historical "no assistant or tool output" contract text.
  */
 export const EMPTY_TASK_ERROR =
   'ERROR: task() returned empty output — child session produced no assistant or tool output. ' +
   'This typically means the provider rejected the request (admission control / rate limit) ' +
   'or the child session crashed before producing any response. ' +
-  'Consider using pantheon_delegate (clean context) instead of task() for large payloads.'
+  'Consider splitting the work into a smaller task() or retrying the child session.'
 
 // ─── Implementation ────────────────────────────────────────────────────
 

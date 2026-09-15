@@ -1,7 +1,7 @@
 /**
  * Read-Only Enforcement (Phase 4) — deny mutating tools inside sessions that
- * were delegated as read-only (advisory `read_only: true` on
- * pantheon_delegate, or the agent ∈ `readOnlyAgents` from routing.yml).
+ * were delegated as read-only (an explicit read-only flag, or the agent ∈
+ * `readOnlyAgents` from routing.yml).
  *
  * OpenCode hook: `tool.execute.before`. The hook shape is
  * `(input, output) => Promise<void>`; THROWING from the hook denies the tool
@@ -22,8 +22,10 @@
  * fail-closed when the runtime matrix is wired: missing agent identity or
  * target metadata is denied rather than inferred.
  *
- * The registry is populated by delegation.ts at delegate time: the CHILD
- * session is registered when the delegate call is read-only.
+ * The registry is populated by the plugin's `chat.params` hook — the only
+ * place the SDK exposes the active agent: when the session's agent is
+ * read-only (apollo, gaia — routing.yml `background_delegation.read_only_agents`),
+ * the session is registered; `session.deleted` unregisters it.
  *
  * @module delegation-enforce
  */
@@ -147,7 +149,6 @@ export function isDelegationAllowed(
 function targetFromTool(tool: string, args: unknown): string | undefined {
   if (args === null || typeof args !== 'object') return undefined
   const record = args as Record<string, unknown>
-  if (tool === 'pantheon_delegate') return normalizeDelegationAgent(record.agent)
   if (tool === 'task') {
     return normalizeDelegationAgent(record.subagent_type ?? record.subagentType)
   }
@@ -236,9 +237,10 @@ export function zeusReadGuard(tool: string, args: unknown, agent: string | undef
 // ─── Registry ──────────────────────────────────────────────────────────
 
 /**
- * Read-only session registry. `createDelegationTools` registers child
- * sessions here; the plugin's `tool.execute.before` guard consults it.
- * Process-wide singleton for plugin wiring + factory for test isolation.
+ * Read-only session registry. The plugin's `chat.params` hook registers
+ * sessions whose active agent is read-only (see {@link syncReadOnlySession});
+ * the `tool.execute.before` guard consults it. Process-wide singleton for
+ * plugin wiring + factory for test isolation.
  */
 export class ReadOnlySessionRegistry {
   private readonly sessions = new Map<string, ReadOnlyEntry>()
@@ -279,6 +281,50 @@ export class ReadOnlySessionRegistry {
 /** Process-wide registry wired into the plugin. */
 export const readOnlyRegistry = new ReadOnlySessionRegistry()
 
+// ─── Read-Only Agent Policy ────────────────────────────────────────────
+
+/**
+ * Agents that must stay investigation-only. Mirrors
+ * `background_delegation.read_only_agents` in routing.yml — the parity is
+ * enforced by tests/pantheon/delegation-enforce.test.ts so the two cannot
+ * drift silently.
+ */
+export const READ_ONLY_AGENTS: ReadonlySet<string> = new Set(['apollo', 'gaia'])
+
+/**
+ * Whether an agent identity belongs to the read-only set. Identity is never
+ * inferred from prompts or tool names — only the normalized agent name counts.
+ */
+export function isReadOnlyAgent(
+  agent: unknown,
+  readOnlyAgents: ReadonlySet<string> = READ_ONLY_AGENTS,
+): boolean {
+  const normalized = normalizeDelegationAgent(agent)
+  return normalized !== undefined && readOnlyAgents.has(normalized)
+}
+
+/**
+ * Sync the read-only registry with a session's active agent. Called from the
+ * plugin's `chat.params` hook: a read-only agent registers the session;
+ * anything else (unknown/absent/non-read-only) unregisters it, which also
+ * covers an in-session agent switch. Returns whether the session is now
+ * registered.
+ */
+export function syncReadOnlySession(
+  registry: ReadOnlySessionRegistry,
+  sessionID: string,
+  agent: unknown,
+  readOnlyAgents: ReadonlySet<string> = READ_ONLY_AGENTS,
+): boolean {
+  const normalized = normalizeDelegationAgent(agent)
+  if (normalized === undefined || !readOnlyAgents.has(normalized)) {
+    registry.unregister(sessionID)
+    return false
+  }
+  registry.register(sessionID, { agent: normalized })
+  return true
+}
+
 // ─── Guard ─────────────────────────────────────────────────────────────
 
 /**
@@ -291,19 +337,18 @@ export function createEnforcementGuard(input: {
   options?: EnforcementGuardOptions
 }): ToolExecuteBeforeHandler {
   const blockedTools = input.options?.blockedTools ?? DEFAULT_BLOCKED_TOOLS
-  const prefix = input.options?.messagePrefix ?? 'pantheon_delegate guard'
+  const prefix = input.options?.messagePrefix ?? 'pantheon delegation guard'
 
   return async (hook: ToolExecuteBeforeInput, output?: ToolExecuteBeforeOutput): Promise<void> => {
-    const isDelegationTool = hook.tool === 'task' || hook.tool === 'pantheon_delegate'
+    const isDelegationTool = hook.tool === 'task'
     if (isDelegationTool && input.options?.isChildSession?.(hook.sessionID) === true) {
       throw new Error(
         `${prefix}: session ${hook.sessionID} is a child session — delegation tools are denied ` +
           'to prevent nested delegation',
       )
     }
-    // pantheon_delegate has the authoritative ToolContext.agent at execution
-    // time, so its matrix check lives in delegation.ts. The hook only has the
-    // session-scoped agent learned from chat.params for native task().
+    // The hook only has the session-scoped agent learned from chat.params,
+    // so the runtime matrix check for native task() lives here.
     if (
       hook.tool === 'task' &&
       input.options?.isRootSession !== undefined &&
@@ -336,7 +381,7 @@ export function createEnforcementGuard(input: {
         `This session was delegated for investigation only (read-only agent); it cannot ` +
         `modify files, run commands, or spawn subagents. ` +
         `If a write result is needed, dispatch a write-capable agent ` +
-        `(e.g. hermes, aphrodite) with pantheon_delegate instead.`,
+        `(e.g. hermes, aphrodite) with native task() instead.`,
     )
   }
 }

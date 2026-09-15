@@ -1,11 +1,12 @@
 /**
- * Tests for the TUI sidebar Delegations panel channel — the markdown reports
- * the job board persists under `.pantheon/delegations/<sessionID>/<alias>.md`
- * (written by src/pantheon/delegation-finalize.ts `renderDelegationMarkdown`).
+ * Tests for the TUI sidebar Delegations panel channel — native children +
+ * live state, enriched by the markdown reports persisted under
+ * `.pantheon/delegations/<sessionID>/<alias>.md` (legacy delegate output,
+ * read for backwards compatibility when the md file is present).
  *
  * Trimmed to the essential, behaviour-protecting surface: the parse contract
  * (running / terminal / timedOut / malformed / missing), the children/md/live/
- * board merge guards, active-session scoping, retention/ceiling and the
+ * merge guards, active-session scoping, retention/ceiling and the
  * orphan-navigation defence, plus the status→tone mapping that drives the
  * whole-row color channel (failed=error, terminal=success, in-flight=warning).
  * Other aesthetic formatting (glyphs, spinner, row lead, elapsed cells, alias
@@ -24,8 +25,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  boardRecordsToDelegationEntries,
-  boardRecordToDelegationEntry,
   type ChildDelegationLike,
   ceilingDelegationList,
   childrenToDelegationEntries,
@@ -43,14 +42,12 @@ import {
   isValidSessionId,
   type LiveDelegationEntry,
   markStaleIfRunning,
-  mergeBoardDelegationSources,
   mergeChildDelegationSources,
   mergeDelegationSources,
   navigateToDelegationSession,
   parseDelegationMarkdown,
   parseDelegationToolPart,
   readAllDelegationEntries,
-  readBoardState,
   readDelegationEntries,
   reduceDelegationToolPart,
   removeDelegationEntry,
@@ -336,7 +333,7 @@ async function main() {
   )
 
   await testAsync(
-    'board: resolvePantheonRoot — directory wins, worktree fallback, "/"→cwd',
+    'root: resolvePantheonRoot — directory wins, worktree fallback, "/"→cwd',
     async () => {
       assert.equal(resolvePantheonRoot({ directory: '/proj', worktree: '/wt' }, '/cwd'), '/proj')
       assert.equal(resolvePantheonRoot({ worktree: '/wt' }, '/cwd'), '/wt')
@@ -1022,7 +1019,7 @@ async function main() {
   )
 
   await testAsync(
-    'children-only: child WITH md → board entry (alias) wins, same child NOT duplicated',
+    'children-only: child WITH md → md entry (alias) wins, same child NOT duplicated',
     async () => {
       const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md')
       assert.ok(md)
@@ -1035,12 +1032,12 @@ async function main() {
         [md],
         10_000,
       )
-      assert.equal(entries.length, 1, 'board row only — no duplicate from children')
+      assert.equal(entries.length, 1, 'md row only — no duplicate from children')
       const e = entries[0]
       assert.ok(e)
-      assert.equal(e.source, 'md', 'board provenance wins')
-      assert.equal(e.alias, 'apo-1', 'board alias (not native)')
-      assert.equal(delegationRowIdentity(e), 'apo-1', 'single identity: board alias, no agent dup')
+      assert.equal(e.source, 'md', 'md provenance wins')
+      assert.equal(e.alias, 'apo-1', 'md alias (not native)')
+      assert.equal(delegationRowIdentity(e), 'apo-1', 'single identity: md alias, no agent dup')
       assert.equal(e.state, 'completed', 'terminal md state wins over busy-derived')
     },
   )
@@ -1066,14 +1063,14 @@ async function main() {
         },
       ]
       const entries = childrenToDelegationEntries(children, [md], 10_000)
-      assert.equal(entries.length, 3, '3 children → 3 rows (1 board + 2 task)')
+      assert.equal(entries.length, 3, '3 children → 3 rows (1 md + 2 task)')
       const byId = new Map(entries.map((e) => [e.taskID, e]))
-      const board = byId.get(md.taskID ?? '')
-      assert.ok(board)
-      assert.equal(board.source, 'md')
-      assert.equal(delegationRowIdentity(board), 'apo-1')
+      const mdEntry = byId.get(md.taskID ?? '')
+      assert.ok(mdEntry)
+      assert.equal(mdEntry.source, 'md')
+      assert.equal(delegationRowIdentity(mdEntry), 'apo-1')
       assert.equal(
-        board.state,
+        mdEntry.state,
         'completed',
         'terminal md state wins over the busy-derived child state',
       )
@@ -1081,7 +1078,7 @@ async function main() {
       assert.equal(byId.get('ses_task_b')?.source, 'children-only')
       assert.equal(entries[0]?.state, 'running', 'running first')
       assert.equal(entries[0]?.taskID, 'ses_task_a')
-      assert.equal(entries[1]?.taskID, md.taskID, 'terminal board row sorted by Finalized')
+      assert.equal(entries[1]?.taskID, md.taskID, 'terminal md row sorted by Finalized')
       assert.equal(entries[2]?.taskID, 'ses_task_b')
     },
   )
@@ -1158,7 +1155,7 @@ async function main() {
     assert.equal(p.tool, 'task')
     assert.equal(p.agent, 'Explore')
     assert.equal(p.description, 'find auth code')
-    assert.equal(p.alias, null, 'native task never carries a board alias')
+    assert.equal(p.alias, null, 'native task never carries an alias')
 
     const map = new Map<string, LiveDelegationEntry>()
     const changed = reduceDelegationToolPart(
@@ -1326,228 +1323,6 @@ async function main() {
     )
   })
 
-  // ─── Board channel (4th source: .pantheon/board/state.json) ───────────
-
-  const boardRecord = (over: Record<string, unknown> = {}) => ({
-    taskID: 'ses_board_1',
-    parentSessionID: 'ses_parent_a',
-    agent: 'hermes',
-    description: 'Implement board channel',
-    state: 'running',
-    timedOut: false,
-    alias: 'her-3',
-    launchedAt: 1_700_000_000_000,
-    updatedAt: 1_700_000_010_000,
-    totalErrors: 0,
-    timeoutCount: 0,
-    terminalUnreconciled: false,
-    contextFiles: [],
-    ...over,
-  })
-
-  await testAsync(
-    'board: readBoardState — ok / absent / corrupt / malformed records (never throws)',
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), 'pantheon-board-'))
-      try {
-        const dir = join(root, '.pantheon', 'board')
-        mkdirSync(dir, { recursive: true })
-        writeFileSync(
-          join(dir, 'state.json'),
-          JSON.stringify([
-            boardRecord(),
-            boardRecord({ taskID: 'ses_board_2', alias: 'her-4', state: 'completed' }),
-          ]),
-        )
-        const records = await readBoardState(root)
-        assert.equal(records.length, 2)
-        assert.equal(records[0]?.taskID, 'ses_board_1')
-        assert.equal(records[0]?.alias, 'her-3')
-        assert.equal(records[1]?.state, 'completed')
-
-        assert.deepEqual(await readBoardState(join(root, 'nope')), [])
-
-        writeFileSync(join(dir, 'state.json'), '{ not json ]')
-        assert.deepEqual(await readBoardState(root), [])
-        writeFileSync(join(dir, 'state.json'), JSON.stringify({ jobs: [] }))
-        assert.deepEqual(await readBoardState(root), [])
-
-        writeFileSync(
-          join(dir, 'state.json'),
-          JSON.stringify([
-            null,
-            42,
-            { alias: 'no-task' },
-            boardRecord({ taskID: 'ses_ok', alias: 'ok-1' }),
-          ]),
-        )
-        const cleaned = await readBoardState(root)
-        assert.equal(cleaned.length, 1)
-        assert.equal(cleaned[0]?.taskID, 'ses_ok')
-      } finally {
-        rmSync(root, { recursive: true, force: true })
-      }
-    },
-  )
-
-  await testAsync(
-    'board: mapping — every FSM state → DelegationEntry; reconciled skipped',
-    async () => {
-      const map = (state: string) => boardRecordToDelegationEntry(boardRecord({ state }))
-      assert.equal(map('running')?.state, 'running')
-      assert.equal(map('completed')?.state, 'completed')
-      assert.equal(map('error')?.state, 'error')
-      assert.equal(map('startup_failed')?.state, 'startup_failed')
-      assert.equal(map('startup_unknown')?.state, 'startup_unknown')
-      assert.equal(map('cancelled')?.state, 'cancelled')
-      assert.equal(map('reconciled'), null, 'reconciled is rejected by the TUI parser')
-      assert.equal(map('bogus'), null)
-
-      const running = boardRecordToDelegationEntry(boardRecord({ state: 'running' }))
-      assert.equal(running?.sessionID, 'ses_parent_a')
-      assert.equal(running?.agent, 'hermes')
-      assert.equal(running?.alias, 'her-3')
-      assert.equal(running?.timedOut, false)
-      assert.equal(running?.updatedAt, null, 'running has no terminal timestamp')
-      assert.equal(running?.description, 'Implement board channel')
-      assert.equal(running?.source, 'board')
-
-      const done = boardRecordToDelegationEntry(
-        boardRecord({ state: 'completed', completedAt: 1_700_000_020_000 }),
-      )
-      assert.equal(done?.updatedAt, 1_700_000_020_000)
-      assert.equal(
-        boardRecordsToDelegationEntries([boardRecord(), boardRecord({ state: 'reconciled' })])
-          .length,
-        1,
-      )
-    },
-  )
-
-  await testAsync(
-    'board merge: dedup by taskID / (session,alias); empty parentSession never clobbers',
-    async () => {
-      const md: DelegationEntry = {
-        alias: 'old-alias',
-        sessionID: 'ses_parent_a',
-        taskID: 'ses_board_1',
-        agent: 'agent',
-        state: 'running',
-        startedAt: 1000,
-        updatedAt: null,
-        timedOut: false,
-        description: 'from md',
-        source: 'md',
-      }
-      const board = boardRecordsToDelegationEntries([
-        boardRecord({ state: 'completed', alias: 'her-3', completedAt: 9000 }),
-      ])
-      const merged = mergeBoardDelegationSources([md], board)
-      assert.equal(merged.length, 1)
-      assert.equal(merged[0]?.state, 'completed', 'board state wins')
-      assert.equal(merged[0]?.alias, 'her-3', 'board alias wins')
-      assert.equal(merged[0]?.agent, 'hermes', 'board agent wins')
-      assert.equal(merged[0]?.source, 'board')
-
-      const base: DelegationEntry = {
-        alias: 'her-3',
-        sessionID: 'ses_parent_a',
-        agent: 'hermes',
-        state: 'running',
-        startedAt: 1000,
-        updatedAt: null,
-        timedOut: false,
-        description: 'no task id',
-        source: 'live',
-      }
-      const byAlias = boardRecordsToDelegationEntries([
-        boardRecord({ state: 'error', timedOut: true }),
-      ])
-      const mergedAlias = mergeBoardDelegationSources([base], byAlias)
-      assert.equal(mergedAlias.length, 1, '(sessionID, alias) dedup when taskID is absent')
-      assert.equal(mergedAlias[0]?.state, 'error')
-      assert.equal(mergedAlias[0]?.timedOut, true)
-      assert.equal(mergedAlias[0]?.taskID, 'ses_board_1', 'board taskID is absorbed')
-
-      const known: DelegationEntry = {
-        alias: 'apo-1',
-        sessionID: 'ses_root',
-        taskID: 'ses_child_1',
-        agent: 'apollo',
-        state: 'running',
-        startedAt: 1000,
-        updatedAt: null,
-        timedOut: false,
-        description: 'Busca',
-        source: 'md',
-      }
-      const emptyParent = boardRecordsToDelegationEntries([
-        boardRecord({ taskID: 'ses_child_1', parentSessionID: '', alias: 'apo-1' }),
-      ])
-      assert.equal(emptyParent[0]?.sessionID, '', 'precondition: board row carries no session')
-      const kept = mergeBoardDelegationSources([known], emptyParent)
-      assert.equal(kept.length, 1)
-      assert.equal(
-        kept[0]?.sessionID,
-        'ses_root',
-        'board state wins, but a known session is preserved',
-      )
-    },
-  )
-
-  await testAsync(
-    'board merge guard: stale terminal never downgrades running; fresh terminal wins',
-    async () => {
-      // BUG 1: board aliases recycle across jobs — apo-1 of a PREVIOUS job
-      // (different taskID, Finalized BEFORE the current job started) must not
-      // flip the current running entry to completed.
-      const base: DelegationEntry = {
-        alias: 'apo-1',
-        sessionID: 'ses_root',
-        taskID: 'ses_child_9',
-        agent: 'apollo',
-        state: 'running',
-        startedAt: 1_700_000_100_000,
-        updatedAt: null,
-        timedOut: false,
-        description: 'Busca nova',
-        source: 'md',
-      }
-      const staleBoard = boardRecordsToDelegationEntries([
-        boardRecord({
-          taskID: 'ses_child_1',
-          parentSessionID: 'ses_root',
-          alias: 'apo-1',
-          agent: 'apollo',
-          state: 'completed',
-          completedAt: 1_700_000_020_000,
-        }),
-      ])
-      const merged = mergeBoardDelegationSources([base], staleBoard)
-      assert.equal(merged.length, 1)
-      assert.equal(
-        merged[0]?.state,
-        'running',
-        'stale board terminal (Finalized < startedAt) must not downgrade running',
-      )
-      assert.equal(merged[0]?.taskID, 'ses_child_9', 'current incarnation is kept')
-
-      const freshBase: DelegationEntry = { ...base, startedAt: 1000 }
-      const freshBoard = boardRecordsToDelegationEntries([
-        boardRecord({
-          taskID: 'ses_child_9',
-          parentSessionID: 'ses_root',
-          alias: 'apo-1',
-          agent: 'apollo',
-          state: 'completed',
-          completedAt: 9000,
-        }),
-      ])
-      const fresh = mergeBoardDelegationSources([freshBase], freshBoard)
-      assert.equal(fresh[0]?.state, 'completed', 'fresh board terminal stays authoritative')
-    },
-  )
-
   // ─── Active-session scope (no cross-session history) ──────────────────
 
   await testAsync(
@@ -1601,13 +1376,6 @@ async function main() {
     },
   )
 
-  await testAsync('scope: board entry from ANOTHER session is never shown', async () => {
-    const board = boardRecordsToDelegationEntries([
-      boardRecord({ taskID: 'ses_other_1', parentSessionID: 'ses_other', alias: 'apo-1' }),
-    ])
-    assert.equal(filterDelegationsToSession(board, 'ses_root').length, 0)
-  })
-
   await testAsync('scope: md entry from ANOTHER session is never shown', async () => {
     const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
     try {
@@ -1624,19 +1392,6 @@ async function main() {
       rmSync(root, { recursive: true, force: true })
     }
   })
-
-  await testAsync(
-    'scope: board entry of the ACTIVE session appears (enrichment kept)',
-    async () => {
-      const board = boardRecordsToDelegationEntries([
-        boardRecord({ taskID: 'ses_mine', parentSessionID: 'ses_root', alias: 'her-3' }),
-      ])
-      const scoped = filterDelegationsToSession(board, 'ses_root')
-      assert.equal(scoped.length, 1)
-      assert.equal(scoped[0]?.taskID, 'ses_mine')
-      assert.equal(scoped[0]?.sessionID, 'ses_root')
-    },
-  )
 
   await testAsync('scope: entry without an attributable sessionID is discarded', async () => {
     const orphan = delegation({ sessionID: '', taskID: 'ses_orphan' })
@@ -1689,7 +1444,7 @@ async function main() {
   )
 
   await testAsync(
-    'scope: full pipeline (children+md+live+board) filtered to the active session',
+    'scope: full pipeline (children+md+live) filtered to the active session',
     async () => {
       const active = 'ses_root'
       const md = [
@@ -1732,14 +1487,7 @@ async function main() {
           read: false,
         },
       ]
-      const board = boardRecordsToDelegationEntries([
-        boardRecord({ taskID: 'ses_child_1', parentSessionID: active, alias: 'apo-1' }),
-        boardRecord({ taskID: 'ses_other_1', parentSessionID: 'ses_other', alias: 'apo-9' }),
-      ])
-      const final = filterDelegationsToSession(
-        mergeBoardDelegationSources(mergeChildDelegationSources(children, live), board),
-        active,
-      )
+      const final = filterDelegationsToSession(mergeChildDelegationSources(children, live), active)
       assert.ok(final.length > 0, 'active-session rows survive')
       assert.ok(
         final.every((e) => e.sessionID === active),

@@ -76,25 +76,14 @@ availability and configuration of OpenCode and any optional services you choose
 to use. Check the [releases](https://github.com/ils15/pantheon-opencode/releases)
 and [changelog](CHANGELOG.md) for the latest published changes.
 
-## Delegation engines (legacy default, native opt-in)
+## Delegation (native `task()`)
 
-Pantheon exposes two delegation engines behind one tool surface:
-
-- **Legacy (default)** — `pantheon_delegate`, the original engine registered by
-  the V1 plugin. No configuration is required.
-- **Native (opt-in, experimental)** — OpenCode's native `task()` child-session
-  engine, selected with `PANTHEON_DELEGATE_MODE=native`. Native is strict: it
-  does not use foreground fallback, model failover, or retry; it performs a
-  lazy capability probe on the first dispatch and includes the resulting
-  status in the delegation receipt.
-
-Legacy stays the default for v1.5.x; native is not promoted to default until
-v1.6. See [ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md)
-(Proposed) for the engine contract, rationale, and migration prerequisites.
-
-**Kill-switch:** set `PANTHEON_DELEGATION=off` (case-insensitive) to disable
-delegation entirely. The switch covers **both** engines — the legacy
-`pantheon_delegate`/read/list tools throw, and the native manager throws too.
+Pantheon delegates exclusively through OpenCode's native `task()` child-session
+engine. The former custom `pantheon_delegate` tool and the V1 delegation engine
+(`delegation.ts`, `delegate-manager.ts` and supporting modules) were removed;
+there is no Pantheon-specific delegation tool surface to configure. See
+[ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md) for the
+historical engine contract.
 
 ## Cost tool backend
 
@@ -185,23 +174,22 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
 | Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) |
-| Runtime contract | Legacy Pantheon plugin, including `pantheon_delegate`, read/list tools, event/tool hooks and V1 compaction handling | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
+| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 6 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
 | V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 
-The V2 plugin provides 9 orchestration tools (`pantheon_delegate`,
-`pantheon_delegation_read`, `pantheon_delegation_list`, `hashline_edit`,
+The V2 plugin provides 6 orchestration tools (`hashline_edit`,
 `pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`,
 `pantheon_cost`, `pantheon_model`), 4 event subscriptions (`session.created`,
 `session.idle`, `session.error`, `session.compacted`), session hooks (`prompt`,
 `context`), and tool hooks (`execute.before`, `execute.after`). The only
-unsupported V2 feature is `legacy-hooks` (the V1-specific delegate API surface).
+unsupported V2 feature is `legacy-hooks` (the V1-specific hook surface).
 
 The package exposes both contracts as importable exports: `pantheon-opencode/plugin`
 (V1), `pantheon-opencode/plugin-v2` (V2) and `pantheon-opencode/v2-bridge`
 (optional interop), so a host can load either contract explicitly.
 
 The V1→V2 bridge (`src/pantheon/v2-bridge.ts`) enables optional interop:
-V1 infrastructure singletons (BackgroundJobBoard, DelegationClient, GoalStore,
+V1 infrastructure singletons (BackgroundJobBoard, GoalStore,
 TodoEnforcer, VisionHandler) are passed through V2 `ctx.options`. The bridge is
 optional — V2 works standalone with graceful degradation.
 
@@ -339,8 +327,8 @@ child session returns an empty or missing result. Instead of surfacing a silent
 `completed` with no payload (which confuses the orchestrator), the guard now
 raises an explicit error. This catches the common free-tier failure mode where a
 child session exceeds the uncached-prefill token budget (`BackendAdmissionRejected`)
-and returns nothing. For large payloads, prefer `pantheon_delegate` over native
-`task()` — the delegation layer has better timeout and error handling.
+and returns nothing. Prefer `background=true` dispatches with an explicit
+`task_status(wait=true)` fan-in so large payloads are collected deterministically.
 
 
 ## Documentation

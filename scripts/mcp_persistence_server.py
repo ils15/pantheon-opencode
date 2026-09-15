@@ -1323,7 +1323,7 @@ def build_rehydration_blocks(checkpoint: dict) -> list[str] | None:
     """Build deterministic rehydration blocks from a checkpoint dict.
 
     Pure string templating — no LLM, no embeddings. Mirrors the
-    ``<mission_context>`` convention of delegation-compaction.ts: only a
+    ``<mission_context>`` convention of the compaction-context builder: only a
     non-done goal is re-emitted. Returns None when nothing critical remains.
     """
     if not isinstance(checkpoint, dict) or not checkpoint:

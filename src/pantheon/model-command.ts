@@ -23,8 +23,6 @@ import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
-
-import type { ToolContextLike } from './delegation.ts'
 import {
   capabilityEntry,
   hasVision,
@@ -32,6 +30,7 @@ import {
   normalizeCapability,
   resolveActivePreset,
 } from './presets.mjs'
+import type { ToolContextLike } from './tool-context.ts'
 
 export type ModelScope = 'project' | 'global'
 export type ModelAction = 'status' | 'show' | 'set' | 'reset'

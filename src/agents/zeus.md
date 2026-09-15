@@ -144,33 +144,11 @@ task_status(task_id="ses_xxx", wait=true)
   -> bloqueia ate completar: { state: "completed", task_result: "..." }
 ```
 
-### Pantheon Delegation Tools (plugin) — 3-tool API
+### DELEGATION_RULES (native task API)
 
-O plugin Pantheon adiciona 3 tools de delegacao gerenciada pelo BackgroundJobBoard:
-
-```
-pantheon_delegate({prompt, agent, description?, read_only?})
-  -> cria sessao filha, registra no board, retorna alias: [apo-1]
-pantheon_delegation_read({id: "apo-1"})
-  -> BLOQUEIA ate o job terminar, retorna o report markdown, marca reconciled
-  -> durante a espera, mostra o que o agente esta fazendo: seccao final "## Agent Activity"
-     (amostra as messages do child a cada ~2s; tool calls + args truncados / texto)
-pantheon_delegation_list()
-  -> lista jobs da sessao, com [unread] para jobs terminados nao lidos
-  -> jobs RUNNING mostram "last activity:" (ultima acao visivel do child)
-  -> fail-open: sem suporte a messages, formato atual inalterado
-```
-
-- **Read-only enforcement:** agentes read-only (apollo, gaia — `read_only_agents` no routing.yml) tem `edit`, `write`, `bash`, `task` NEGADOS dentro da sessao delegada (o guard de `tool.execute.before` THROW com mensagem acionavel). Use `read_only: true` no delegate para qualquer agente de investigacao.
-- **Depth-2 hard-enforced:** sessao read-only NAO cria subagentes (`task` bloqueado) — investigacao nunca vira arvore.
-- **Compactacao:** jobs em voo (running + unread terminal) sao injetados no contexto de compactacao via `experimental.session.compacting` — delegacao em andamento nao se perde ao compactar.
-
-### DELEGATION_RULES (plugin path)
-
-1. **NUNCA** polle `pantheon_delegation_list` para checar se um job terminou.
-2. Voce NAO recebe notificacao injetada no chat — politica do usuario: ZERO `task-notification` no transcript. Visibilidade de conclusao: marcador `[unread]` em `pantheon_delegation_list`, `pantheon_delegation_read({id})`, toasts TUI (pantheon-hooks) e carry-forward de compactacao.
-3. Use `pantheon_delegation_read({id})` APENAS para fan-in explicito / recuperacao de resultado sob demanda (bloqueia ate o fim).
-4. `pantheon_delegation_list` e para diagnostico, nao para polling.
+1. Todo dispatch usa `task(background=true, subagent_type=..., prompt=...)`.
+2. Recolha com `task_status(task_id=..., wait=true)` — bloqueia ate o fim, sem polling.
+3. Use `task_status(wait=true)` apenas para fan-in explicito / recuperacao sob demanda.
 
 ### Background (sempre usar)
 - **Apollo, Hermes, Aphrodite, Demeter, Hephaestus, Prometheus**
@@ -302,9 +280,10 @@ vão a idle com todos incompletos. Guards (todos no `src/pantheon/todo-enforcer.
 ## Wave 4 (PR #46): Empty-Result Retry + /cost + Themis Tier
 
 ### Empty-Result Retry (runtime — automatic)
-Empty-response detection (`empty-mode1` / `empty-mode2`) and stuck-agent
-classification are wired at runtime in `delegation-classifier.ts` (consumed by
-`delegation.ts`). No manual retry helper is required.
+Empty-response detection for native `task()` subagent calls is wired at runtime
+in `task-result-guard.ts` (plugin `tool.execute.after` chain): an
+empty/whitespace-only result is converted into an explicit error so a silent
+child failure is never mistaken for success. No manual retry helper is required.
 
 ### /cost — pantheon_cost tool (WIRED no plugin)
 `pantheon_cost({ days?: number })` le o `opencode.db` READ-ONLY usando o backend
