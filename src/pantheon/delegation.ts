@@ -35,6 +35,7 @@
  * @module delegation
  */
 
+import { join } from 'node:path'
 import { z } from 'zod'
 
 import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-board.ts'
@@ -49,6 +50,7 @@ import {
   readOnlyRegistry,
 } from './delegation-enforce.ts'
 import {
+  capReportOutput,
   DELEGATION_DEFAULTS,
   type DelegationClient,
   type DelegationDeps,
@@ -57,6 +59,7 @@ import {
   type FinalizeInput,
   finalizeDelegation as finalizeDelegationReport,
   readDelegationReport,
+  resolveReadMaxChars,
 } from './delegation-finalize.ts'
 import { finalizeIdleChildrenWithoutMd } from './delegation-notify.ts'
 import { createPantheonLogger } from './logger.ts'
@@ -814,6 +817,10 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
 
   const knownChildren = new Set<string>()
   const timers = new Map<string, NodeJS.Timeout>()
+  // Inline cap for report content returned by pantheon_delegation_read —
+  // oversized reports keep head+tail with an explicit marker pointing at the
+  // full report file (never a silent mid-content cut).
+  const inlineMaxChars = options.readMaxChars ?? resolveReadMaxChars()
   // Fase B3: per-parent-session delegation budget tracking, scoped to this
   // factory/process instance. Keyed by `${parentSessionID}:${parentAgent}->${targetAgent}`;
   // it is not restart-persistent because the factory has no reliable store.
@@ -1276,6 +1283,11 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
       if (md === undefined) {
         return `Delegation [${terminal.alias}] reached state ${terminal.state} but no report file was found.`
       }
+      // Classify on the FULL report (markers may sit at either end), but
+      // return the inline-capped markdown so a huge child output cannot
+      // flood the parent context — the marker points at the full file.
+      const reportPath = join(outputDir, terminal.parentSessionID, `${terminal.alias}.md`)
+      const cappedMd = capReportOutput(md, inlineMaxChars, reportPath)
 
       // Classify the result for stuck-agent detection
       const classification = classifyStuckAgent(md)
@@ -1284,15 +1296,15 @@ export function createDelegationTools(input: CreateDelegationToolsInput): Delega
 
       if (classification.status === 'success') {
         await board.markReconciled(job.taskID)
-        // Backward compatible: success reports returned as-is
-        if (!hasActivity) return md
-        return `${md.replace(/\n+$/, '')}${activitySuffix}`
+        // Backward compatible: success reports returned as-is (capped)
+        if (!hasActivity) return cappedMd
+        return `${cappedMd.replace(/\n+$/, '')}${activitySuffix}`
       }
 
       // Non-success: build structured DelegationResult and format
       const delegationResult: DelegationResult = {
         status: classification.status === 'empty' ? 'empty' : classification.status,
-        content: md,
+        content: cappedMd,
         retryCount: 0,
         partialResult: classification.partialResult,
         recommendation: classification.recommendation,

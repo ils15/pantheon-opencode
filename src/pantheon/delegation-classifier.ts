@@ -8,8 +8,7 @@
  *   - `timeout` (timeout-with-partial / timeout-empty / timeout-exhausted)
  *   - `error` — provider or infrastructure failure
  *
- * Integrates with the existing `dispatch-guard.ts` classification for
- * empty-response detection and provides a structured `DelegationResult`
+ * Provides empty-response detection and a structured `DelegationResult`
  * that replaces raw-text returns.
  *
  * @module delegation-classifier
@@ -17,7 +16,7 @@
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
-/** Empty-response mode classification (matches dispatch-guard). */
+/** Empty-response mode classification (empty-mode1 / empty-mode2). */
 export type EmptyMode = 'empty-mode1' | 'empty-mode2'
 
 /** Timeout sub-type based on partial output and retry history. */
@@ -82,7 +81,7 @@ const NO_OUTPUT_RE = /_No output captured\._/i
 
 /**
  * Classify whether a response is empty, empty-with-tokens, or has content.
- * Matches the dispatch-guard classification (empty-mode1, empty-mode2).
+ * Classifies empty-mode1 (no text/tokens) vs empty-mode2 (tokens, no text).
  *
  * @param text The response text (may be null/undefined).
  * @param tokens Optional token counts for mode2 detection.

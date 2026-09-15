@@ -681,12 +681,10 @@ function createV2ToolDefinitionsFromContext(_context: PluginContext): V2ToolDef[
     name,
     description: toolDescriptions[name] ?? `Pantheon tool: ${name}`,
     input: { type: 'object' as const, properties: {} },
-    // FOLLOW-UP: connect the real wrappers from
-    // src/pantheon/v2-tool-definitions.ts (createV2ToolDefinitions with
-    // costCommand/goalTools) once V1 infrastructure is resolvable in the V2
-    // standalone context. The before/after factories in v2-hooks.ts:216-282
-    // are likewise unwired. Until then, placeholders resolve to the object
-    // shape so the beta host never sees a bare string.
+    // FOLLOW-UP: wire the real tool wrappers (costCommand/goalTools) once V1
+    // infrastructure is resolvable in the V2 standalone context. Until then,
+    // placeholders resolve to the object shape so the beta host never sees a
+    // bare string.
     execute: async (_input: Record<string, unknown>, _context: unknown): Promise<V2ToolResult> => {
       return { output: `${name}: ${v2UnavailableMessage}` }
     },

@@ -4,6 +4,14 @@
  */
 import { strict as assert } from 'node:assert'
 
+import { useTmpProjectDir } from './helpers/tmp-dir.ts'
+
+// This test drives the REAL plugin factory and its pantheon_delegate tool,
+// whose shared BackgroundJobBoard persists `.pantheon/board/state.json`
+// relative to cwd. Isolate BEFORE the plugin import so no job can leak into
+// the repo's real board.
+useTmpProjectDir('pantheon-agent-model-wiring-')
+
 type CreateBody = { model?: { id: string; providerID: string } }
 
 function fakeClient(created: CreateBody[]): Record<string, unknown> {

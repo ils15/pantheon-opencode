@@ -23,13 +23,16 @@
  * @module delegate-manager
  */
 
+import { join } from 'node:path'
 import { z } from 'zod'
 import type { BackgroundJobBoard, BackgroundJobRecord } from './background-job-board.ts'
 import type { DelegationToolset } from './delegation.ts'
 import {
+  capReportOutput,
   DELEGATION_DEFAULTS,
   type DelegationClient,
   readDelegationReport,
+  resolveReadMaxChars,
 } from './delegation-finalize.ts'
 import { createNativeProbe, type NativeProbeFn, type ProbeClient } from './native-probe.ts'
 import { classifyNativeResult, type NativeTaskStatus } from './native-task-status.ts'
@@ -66,10 +69,14 @@ export type NativeTaskFn = (input: NativeTaskInput) => Promise<NativeTaskResult>
 /** Minimal launch receipt: id, agent, state, one short line. */
 export interface ManagerReceipt {
   id: string
+  /** Board alias of the job (e.g. `apo-1`) — report files are keyed by it. */
+  alias: string
   agent: string
   state: 'reconciled' | 'error'
   status: NativeTaskStatus
   line: string
+  /** Verified child output (when the task completed with content). */
+  output?: string
 }
 
 export interface LaunchArgs {
@@ -109,6 +116,15 @@ export interface DelegateManagerOptions {
   nativeProbe?: NativeProbeFn
   /** V1 client used by the lazy capability probe. */
   probeClient?: ProbeClient
+  /** Base directory for delegation reports (default `.pantheon/delegations`). */
+  outputDir?: string
+  /**
+   * Inline cap (chars) for report content returned to the caller. Oversized
+   * reports keep head+tail with an explicit `[TRUNCATED …]` marker pointing
+   * at the full report file. Default: PANTHEON_DELEGATION_READ_MAX_CHARS
+   * or 50_000.
+   */
+  readMaxChars?: number
 }
 
 export interface DelegateManager {
@@ -139,7 +155,9 @@ export function resolveDelegateMode(
 
 const LINE_MAX = 160
 
-/** Remove terminal escapes and control characters from untrusted child output. */
+/** Remove terminal escapes and control characters from untrusted child output.
+ *  UTF-8 text (accents, emoji) is PRESERVED — only ANSI sequences, C0/C1
+ *  controls and DEL are stripped; receipt/report lines stay human-readable. */
 export function sanitizeReceiptText(text: string): string {
   let clean = ''
   let skippingAnsi = false
@@ -154,7 +172,8 @@ export function sanitizeReceiptText(text: string): string {
       skippingAnsi = true
       continue
     }
-    if (char === '\n' || char === '\t' || (code >= 0x20 && code <= 0x7e)) clean += char
+    const isControl = code < 0x20 || (code >= 0x7f && code <= 0x9f)
+    if (!isControl || char === '\n' || char === '\t') clean += char
   }
   return clean
 }
@@ -219,7 +238,13 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
     stepCap,
     nativeProbe,
     probeClient,
+    outputDir = DELEGATION_DEFAULTS.outputDir,
+    readMaxChars,
   } = options
+  const inlineMaxChars = readMaxChars ?? resolveReadMaxChars(env)
+
+  /** Report file path for a job alias (the durable full report). */
+  const reportPathFor = (alias: string): string => join(outputDir, parentSessionID, `${alias}.md`)
 
   // Strict native mode: foregroundFallback and models are overridden.
   // The user-facing options are ignored when PANTHEON_DELEGATE_MODE=native.
@@ -310,7 +335,14 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
           LINE_MAX,
         )
       : boardLine(settled ?? job)
-    return { id: taskID, agent: job.agent, state: failed ? 'error' : 'reconciled', status, line }
+    return {
+      id: taskID,
+      alias,
+      agent: job.agent,
+      state: failed ? 'error' : 'reconciled',
+      status,
+      line,
+    }
   }
 
   /** Apply a terminal transition best-effort: a racing hook may have gotten there first. */
@@ -354,7 +386,11 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
       await applyTerminal(taskID, 'completed', {
         resultSummary: firstLine(outcome.result.content, 500),
       })
-      return await settle(taskID, record.alias)
+      const settled = await settle(taskID, record.alias)
+      // The task() call already blocked until completion — return the verified
+      // output in the receipt (the parent reads the full report via the alias
+      // when needed). The tool layer caps it inline.
+      return { ...settled, output: outcome.result.content }
     } finally {
       pendingByAgent.set(key, Math.max(0, pending(args.agent) - 1))
     }
@@ -403,7 +439,17 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
       },
       ok ? undefined : (outcome as { ok: false; error?: string }).error,
     )
-    return { id, agent: args.agent, state: ok ? 'reconciled' : 'error', status, line }
+    return {
+      id,
+      alias: id,
+      agent: args.agent,
+      state: ok ? 'reconciled' : 'error',
+      status,
+      line,
+      ...(ok
+        ? { output: (outcome as { ok: true; result: NativeTaskResult }).result.content ?? '' }
+        : {}),
+    }
   }
 
   return {
@@ -416,8 +462,10 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
         const maxSteps = stepCap.maxStepsFor(args.agent)
         if (stepCap.isCapped(args.agent)) {
           const line = cappedSummary(args.agent, maxSteps ?? DEFAULT_MAX_STEPS).slice(0, LINE_MAX)
+          const cappedId = `cap-${Date.now()}`
           return {
-            id: `cap-${Date.now()}`,
+            id: cappedId,
+            alias: cappedId,
             agent: args.agent,
             state: 'reconciled',
             status: 'ESCALATE',
@@ -432,8 +480,10 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
       if (isNativeMode) {
         const unavailableStatus = await ensureNativeAvailable()
         if (unavailableStatus !== undefined) {
+          const probeId = `probe-${parentSessionID}`
           return {
-            id: `probe-${parentSessionID}`,
+            id: probeId,
+            alias: probeId,
             agent: args.agent,
             state: 'error',
             status: unavailableStatus,
@@ -464,6 +514,13 @@ export function createDelegateManager(options: DelegateManagerOptions): Delegate
       )
       if (terminal.state !== 'reconciled') await board.markReconciled(terminal.taskID)
       await board.deleteSignal(terminal.alias)
+      // Full report first (same contract as the legacy engine): the md file
+      // written by finalizeDelegation carries the complete child output. The
+      // one-line resultSummary is only a fallback when no report was written.
+      const md = await readDelegationReport(outputDir, terminal)
+      if (md !== undefined) {
+        return capReportOutput(md, inlineMaxChars, reportPathFor(terminal.alias))
+      }
       if (terminal.state === 'error' && !terminal.resultSummary) {
         return `# Delegation Report — ${terminal.alias}\n\nERROR: ${sanitizeReceiptText(terminal.lastStatusError ?? 'failed')}\n`
       }
@@ -640,6 +697,7 @@ export function createNativeDelegateTools(wiring: NativeDelegateWiring): NativeD
       ? {}
       : { promptTimeoutMs: managerOptions.timeoutMs }),
   })
+  const inlineMaxChars = managerOptions.readMaxChars ?? resolveReadMaxChars(env)
   const managers = new Map<string, DelegateManager>()
   const managerFor = (parentSessionID: string): DelegateManager => {
     const existing = managers.get(parentSessionID)
@@ -652,6 +710,7 @@ export function createNativeDelegateTools(wiring: NativeDelegateWiring): NativeD
       parentSessionID,
       env,
       ...(stepCap === undefined ? {} : { stepCap }),
+      ...(wiring.outputDir === undefined ? {} : { outputDir: wiring.outputDir }),
       nativeProbe,
       probeClient: client,
     })
@@ -702,7 +761,21 @@ export function createNativeDelegateTools(wiring: NativeDelegateWiring): NativeD
           ...(args.model === undefined ? {} : { model: args.model }),
           taskID: childID,
         })
-        return `status: ${receipt.status}\n${receipt.line}`
+        // The launch blocked until the child finished — return the verified
+        // output inline (capped head+tail with a pointer to the full report),
+        // not just a status line. Foreground receipts carry no report file,
+        // so the marker points at pantheon_delegation_read instead.
+        const header = `status: ${receipt.status}\n${receipt.line}`
+        if (receipt.output === undefined || receipt.output.trim() === '') return header
+        const reportPath =
+          receipt.alias === receipt.id
+            ? undefined
+            : join(
+                wiring.outputDir ?? DELEGATION_DEFAULTS.outputDir,
+                ctx.sessionID,
+                `${receipt.alias}.md`,
+              )
+        return `${header}\n\n${capReportOutput(receipt.output, inlineMaxChars, reportPath)}`
       },
     },
     pantheon_delegation_read: {
@@ -739,6 +812,10 @@ export interface PluginNativeDelegationWiring {
   agentModels: Record<string, string | undefined>
   stepCap: StepCapTracker
   wallClockTimeoutMs?: number
+  /** Base directory for delegation reports (default `.pantheon/delegations`). */
+  outputDir?: string
+  /** Inline cap (chars) for delegation report content (default env or 50_000). */
+  readMaxChars?: number
   finalizeDelegation: DelegationToolset['finalizeDelegation']
 }
 export type PluginNativeDelegation = NativeDelegateToolset & {
@@ -751,15 +828,23 @@ export function buildPluginNativeDelegation(
     ...createNativeDelegateTools({
       board: wiring.board,
       client: wiring.client,
+      ...(wiring.outputDir === undefined ? {} : { outputDir: wiring.outputDir }),
       isRootSession: wiring.isRootSession,
       registerChildSession: wiring.registerChildSession,
       registerReadOnlySession: wiring.registerReadOnlySession,
       isReadOnlyAgent: (agent) => wiring.readOnlyAgents.has(agent.toLowerCase()),
       agentModel: (agent) => wiring.agentModels[agent.toLowerCase()],
       stepCap: wiring.stepCap,
-      ...(wiring.wallClockTimeoutMs === undefined
+      ...(wiring.wallClockTimeoutMs === undefined && wiring.readMaxChars === undefined
         ? {}
-        : { managerOptions: { timeoutMs: wiring.wallClockTimeoutMs } }),
+        : {
+            managerOptions: {
+              ...(wiring.wallClockTimeoutMs === undefined
+                ? {}
+                : { timeoutMs: wiring.wallClockTimeoutMs }),
+              ...(wiring.readMaxChars === undefined ? {} : { readMaxChars: wiring.readMaxChars }),
+            },
+          }),
     }),
     finalizeDelegation: wiring.finalizeDelegation,
   }

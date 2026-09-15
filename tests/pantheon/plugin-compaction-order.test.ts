@@ -1,6 +1,14 @@
 /** Verify compaction context is populated before the compacted event fires. */
 import { strict as assert } from 'node:assert'
 
+import { useTmpProjectDir } from './helpers/tmp-dir.ts'
+
+// This test drives the REAL plugin factory, whose shared BackgroundJobBoard
+// persists `.pantheon/board/state.json` relative to cwd. Isolate BEFORE the
+// plugin (and therefore getSharedBoard) is imported so the running delegation
+// never lands in the repo's real board.
+useTmpProjectDir('pantheon-compaction-order-')
+
 type HookOutput = { context: string[] }
 
 type PluginHooks = {

@@ -906,16 +906,17 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      with a board row for the same child (a child WITH a report keeps the
  *      md entry, source 'md').
  *
- *   2. ENRICHMENT + HISTORY — markdown reports the job board persists under
+ *   2. ENRICHMENT — markdown reports the job board persists under
  *      `.pantheon/delegations/<sessionID>/<alias>.md` (written by
  *      src/pantheon/delegation-finalize.ts at terminal state). Each child
  *      is matched to its report by the `Task ID` header (== child session
  *      id == board task id), which supplies the alias (apo-N), agent,
  *      description and terminal duration/timedOut. No report → the child
  *      itself still renders (title as description, derived state). The md
- *      channel is ALSO read from EVERY session (readAllDelegationEntries) —
- *      the panel shows the full delegation history even without a focused
- *      session.
+ *      channel is read from EVERY session (readAllDelegationEntries) as an
+ *      enrichment source, but the ACTIVE-SESSION FILTER
+ *      (filterDelegationsToSession) drops every non-focused report — the panel
+ *      lists only the focused session.
  *
  *   3. REFRESH — session.created/updated/deleted/status events and
  *      message.part.updated/removed (via liveStore.version bumps) re-fetch
@@ -930,8 +931,8 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      A children fetch
  *      failure logs "panel: error <msg>" (previously silenced), and a missing
  *      current session (null/placeholder sessionID) logs "panel: children=0
- *      md=N ... (no sessionID — history shown)" — the md HISTORY renders
- *      instead of erroring.
+ *      md=N ... (no sessionID — inactive panel)" — the panel stays EMPTY
+ *      instead of erroring (no cross-session history).
  *
  *   5. SESSIONID GUARD (placeholder regression) — the runtime may hand the
  *      sidebar the UNSUBSTITUTED template literal "{sessionID}" as its
@@ -941,8 +942,8 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      panel into "(0)". resolveCurrentSessionID (slot prop → api.state →
  *      route.current) never yields a placeholder (isValidSessionId rejects
  *      "{sessionID}" and "%7BsessionID%7D" via the startsWith("ses")
- *      contract); a null resolution SKIPS the children fetch entirely and
- *      renders the md history — zero errors.
+ *      contract); a null resolution SKIPS the children fetch entirely and the
+ *      panel renders EMPTY — zero rows, zero errors.
  *
  * The live tool-part lifecycle helpers below remain (tested, exported) but
  * are no longer the source of truth: they feed a version signal that merely
@@ -1161,11 +1162,12 @@ export async function readDelegationEntries(dir: string): Promise<DelegationEntr
 
 /** Read delegation reports from EVERY session under
  *  `<root>/.pantheon/delegations/<sessionID>/<alias>.md` — the panel's
- *  HISTORY channel. Unlike the children/live channels it does NOT depend on a
- *  resolved sessionID: with no focused session (null/placeholder), the panel
- *  still shows the reports from all past sessions (running first, Finalized
- *  desc — the sort applied by readDelegationEntries). Fail-open: a
- *  missing/unreadable directory yields []. */
+ *  ENRICHMENT source. The read is deliberately unfiltered (each entry carries
+ *  its directory's sessionID, so a taskID match can enrich any channel);
+ *  callers MUST scope the merged result with {@link filterDelegationsToSession}
+ *  before rendering — only the active session's reports are shown. Entries are
+ *  running first, Finalized desc (the sort applied by readDelegationEntries).
+ *  Fail-open: a missing/unreadable directory yields []. */
 export async function readAllDelegationEntries(root: string): Promise<DelegationEntry[]> {
   return readDelegationEntries(join(root, '.pantheon', 'delegations'))
 }
@@ -1368,6 +1370,12 @@ export const IDLE_SILENCE_MS = 60 * 1000
 export const DELEGATION_DONE_RETENTION_MS = 2 * 60 * 1000
 export const DELEGATION_FAILED_RETENTION_MS = 10 * 60 * 1000
 
+/** Alias-less NATIVE task() live entries never receive a board alias (the
+ *  task tool output carries none), so the 30s alias-less prune in
+ *  mergeChildDelegationSources must not apply to them — 5 minutes covers a
+ *  slow child listing while still bounding the live map. */
+export const NATIVE_LIVE_ALIASLESS_TTL_MS = 5 * 60 * 1000
+
 /**
  * Mark a running entry as `stale-running` if it has been running longer than
  * the threshold AND has no recent activity (no `updatedAt` change in the last
@@ -1472,27 +1480,26 @@ export type DelegationDisplayState = DelegationEntry['state']
 
 /** Semantic tone mapped to the TUI theme at the row ({@link DelegationRow}).
  *  Kept separate + pure so the color channel is testable without booting the
- *  renderer. */
-export type DelegationStateTone = 'warning' | 'error' | 'success' | 'muted'
+ *  renderer. Every display state resolves to one of the three status colors;
+ *  the row paints its whole content with it (see {@link DelegationRow}). */
+export type DelegationStateTone = 'warning' | 'error' | 'success'
 
-/** Color is the ONLY channel separating `stale-running` from a live `running`
- *  row — the 4-glyph row design has no dedicated stale shape. Display-only;
- *  no behavior change. */
+/** Status → color mapping for the whole-row tone. Red = failure, green =
+ *  terminal, yellow = in flight. The glyph remains a redundant channel so the
+ *  state stays legible in monochrome. Display-only; no behavior change. */
 export function delegationStateTone(state: DelegationDisplayState): DelegationStateTone {
   switch (state) {
     case 'running':
     case 'retry':
     case 'startup_unknown':
-      return 'warning'
     case 'stale-running':
       return 'warning'
     case 'error':
     case 'startup_failed':
       return 'error'
     case 'completed':
-      return 'success'
     case 'cancelled':
-      return 'muted'
+      return 'success'
   }
 }
 
@@ -1596,10 +1603,13 @@ export function mergeChildDelegationSources(
   })
 
   for (const liveEntry of live) {
+    // A native task() live part never carries a board alias or taskID, so it
+    // is exempt from the 30s alias-less prune and lives on its own longer TTL.
+    const aliaslessTTL = liveEntry.tool === 'task' ? NATIVE_LIVE_ALIASLESS_TTL_MS : 30_000
     if (
       liveEntry.alias === null &&
       liveEntry.taskID === null &&
-      Date.now() - liveEntry.startedAt > 30_000
+      Date.now() - liveEntry.startedAt > aliaslessTTL
     )
       continue
     const incoming = toDelegationEntry(liveEntry)
@@ -1609,10 +1619,12 @@ export function mergeChildDelegationSources(
     // children-only one. pantheon_delegate pending parts keep source 'live'.
     const isNativeLive = liveEntry.tool === 'task' && liveEntry.alias === null
     if (isNativeLive) {
-      // Native task() rows carry no board alias — reuse the synthetic
-      // 'native-task' marker so the single identity falls back to the agent.
+      // Native task() rows carry no board alias — keep the per-call
+      // `live-<callID>` identity from toDelegationEntry (one row per native
+      // call) with the children-only provenance; the row identity still falls
+      // back to the agent via delegationRowIdentity. A taskID-known native
+      // still merges into its child row through the byTask lookup below.
       incoming.source = 'children-only'
-      incoming.alias = 'native-task'
     }
     const index =
       (incoming.taskID !== undefined ? byTask.get(incoming.taskID) : undefined) ??
@@ -2113,10 +2125,35 @@ export function boardRecordsToDelegationEntries(
   return out
 }
 
+/** Active (non-terminal) display states — a job in one of these is still live. */
+function isActiveDelegationState(state: DelegationEntry['state']): boolean {
+  return state === 'running' || state === 'retry' || state === 'stale-running'
+}
+
+/** Temporal guard for the board merge (recycled-alias regression): board
+ *  aliases recycle across jobs (apo-1 of a previous job), so a board
+ *  terminal record only closes a running entry when its Finalized timestamp
+ *  is STRICTLY NEWER than the entry it would close. Older/equal/missing
+ *  keeps the live entry — when in doubt the live job wins. Pure. */
+function shouldKeepRunningOverBoardTerminal(
+  existing: DelegationEntry | undefined,
+  incoming: DelegationEntry,
+): boolean {
+  if (existing === undefined) return false
+  if (!isActiveDelegationState(existing.state)) return false
+  if (isActiveDelegationState(incoming.state)) return false
+  const incomingTs = incoming.updatedAt
+  if (incomingTs === null) return true
+  const existingTs = existing.updatedAt ?? existing.startedAt
+  return incomingTs <= existingTs
+}
+
 /** Merge the board over any other channel. The board is AUTHORITATIVE for
- *  state/alias/agent (it is the persisted FSM) and it is the only channel
- *  that carries jobs from OTHER sessions. Dedup by taskID first, then by
- *  (sessionID, alias) — aliases are per parent session. Pure. */
+ *  state/alias/agent (it is the persisted FSM). This merge is intentionally
+ *  UNSCOPED so the board can enrich an active-session row (dedup by taskID);
+ *  the caller scopes the merged list with {@link filterDelegationsToSession},
+ *  which is what keeps other-session board jobs out of the panel. Dedup by
+ *  taskID first, then by (sessionID, alias) — aliases are per parent session. Pure. */
 export function mergeBoardDelegationSources(
   base: readonly DelegationEntry[],
   board: readonly DelegationEntry[],
@@ -2141,6 +2178,10 @@ export function mergeBoardDelegationSources(
       bySessionAlias.set(key(incoming.sessionID, incoming.alias), next)
       continue
     }
+    // Temporal guard (recycled-alias regression): a STALE board terminal must
+    // never downgrade a live running entry — skip the board record entirely
+    // and keep the live row (same job alias, previous incarnation).
+    if (shouldKeepRunningOverBoardTerminal(out[index], incoming)) continue
     out[index] = {
       ...incoming,
       // Session preservation: the board is authoritative for state/alias/agent,
@@ -2153,6 +2194,30 @@ export function mergeBoardDelegationSources(
 
   out.sort(compareDelegationEntries)
   return out
+}
+
+/** Scope a fully-merged display list to the ACTIVE session only.
+ *
+ *  The panel is session-scoped: rows from other sessions (board snapshot, md
+ *  history under `.pantheon/delegations/<other-session>/`) and rows with no
+ *  attributable session (empty sessionID) are DROPPED. The previous
+ *  cross-session behavior rendered those rows and clicking them led to
+ *  "Session not found" — there is no cross-session channel anymore.
+ *
+ *  The board/md channels still feed the merge UNFILTERED so the board can
+ *  ENRICH an active-session row with state/alias/agent (dedup by taskID), but
+ *  they can never introduce a row for another session: this filter is applied
+ *  ONCE, after every merge (children + live + md + board).
+ *
+ *  Returns [] when no active session resolves (null/placeholder) — there is no
+ *  scope to show. Native children always carry the active session id (stamped
+ *  by `childrenToDelegationEntries`), so they survive the filter. Pure. */
+export function filterDelegationsToSession(
+  entries: readonly DelegationEntry[],
+  activeSessionID: string | null | undefined,
+): DelegationEntry[] {
+  if (!isValidSessionId(activeSessionID)) return []
+  return entries.filter((entry) => entry.sessionID === activeSessionID)
 }
 
 /* ─── Children channel (primary source, delegations-sidebar pattern) ────
@@ -2326,10 +2391,13 @@ export function delegationRowMarker(state: DelegationDisplayState, now = Date.no
 }
 
 /** ONE identity per row: the short board alias (`apo-1`); a row without a
- *  board alias (native task() child, alias `native-task`) shows the agent
- *  instead — never alias + agent stacked. Pure. */
+ *  board alias (native task() child `native-task` / `native-<id>`, or an
+ *  alias-less native live row `live-<callID>` kept as children-only) shows
+ *  the agent instead — never alias + agent stacked. Pure. */
 export function delegationRowIdentity(entry: DelegationEntry): string {
-  if (entry.alias === 'native-task' && entry.agent !== '') return entry.agent
+  if (entry.agent === '') return entry.alias
+  if (entry.alias === 'native-task' || entry.alias.startsWith('native-')) return entry.agent
+  if (entry.alias.startsWith('live-') && entry.source === 'children-only') return entry.agent
   return entry.alias
 }
 
@@ -2484,11 +2552,13 @@ export function formatPanelLogLine(
  *  itself (fallback 'agent'), state derived from its status, startedAt from
  *  time.created. A report-less child is a NATIVE task() child (every
  *  child of the current session — pantheon_delegate OR the native `task()`
- *  tool — carries parentID = caller), so it gets source 'children-only',
- *  the internal alias 'native-task' instead of a
- *  board alias. The 'task nativa' description fallback keeps the row
- *  non-empty when the child carries no title.
- *  Terminal md state wins over the derived state; a running md defers to
+ *  tool — carries parentID = caller), so it gets source 'children-only', a
+ *  per-child alias 'native-<last4 of the child id>' (one identity per native
+ *  row) instead of a board alias. The 'task nativa' description fallback
+ *  keeps the row non-empty when the child carries no title.
+ *  A FRESH terminal md state wins over the derived state (a stale md report
+ *  from a previous incarnation never flips a live child — see
+ *  mdTerminalCoversChild); a running md defers to
  *  the child's live status. A running child is NEVER archived — it always
  *  lands in the active split (splitDelegationList active = running/retry).
  *  `parentSessionID` (the focused session id) is stamped on report-less
@@ -2496,6 +2566,22 @@ export function formatPanelLogLine(
  *  unscoped ('').
  *  Sorted running-first (compareDelegationEntries).
  *  Pure — no I/O. */
+/** Temporal guard for the children channel (same recycled-alias class as the
+ *  board merge): an md terminal report matched by taskID may still belong to
+ *  a PREVIOUS job incarnation. Accept it only when its Finalized timestamp
+ *  covers the child's latest activity, when either side has no timestamp to
+ *  compare, or when both startedAt agree on a single job incarnation.
+ *  Pure — no I/O. */
+function mdTerminalCoversChild(md: DelegationEntry, child: ChildDelegationLike): boolean {
+  const childUpdated = child.time?.updated
+  if (md.updatedAt !== null && childUpdated !== undefined) {
+    if (md.updatedAt >= childUpdated) return true
+    // Stale Finalized — same incarnation only if both startedAt agree.
+    return md.startedAt === child.time?.created
+  }
+  return true
+}
+
 export function childrenToDelegationEntries(
   children: readonly ChildDelegationLike[] | undefined,
   md: readonly DelegationEntry[],
@@ -2513,11 +2599,11 @@ export function childrenToDelegationEntries(
     seen.add(child.id)
     const mdEntry = byTaskID.get(child.id)
     const state =
-      mdEntry !== undefined && mdEntry.state !== 'running'
+      mdEntry !== undefined && mdEntry.state !== 'running' && mdTerminalCoversChild(mdEntry, child)
         ? mdEntry.state
         : childStatusToState(child.status)
     out.push({
-      alias: mdEntry?.alias ?? 'native-task',
+      alias: mdEntry?.alias ?? `native-${child.id.slice(-4)}`,
       // A report-less child IS a child of the focused session
       // (session.children is session-scoped), so the caller-passed
       // parentSessionID is stamped on it as its origin session; an md
@@ -2700,9 +2786,10 @@ function DelegationRow(props: {
 }) {
   const theme = () => props.api.theme.current
 
-  // Color is a SEPARATE channel from the glyph: the lead (glyph + identity)
-  // carries the state tone, while elapsed + description stay muted so the
-  // state reads at a glance without shouting.
+  // Color is a status-wide channel: the WHOLE row (lead, elapsed, description,
+  // live activity) carries the state tone, so red=failed / green=done /
+  // yellow=in-flight reads at a glance. The glyph stays as a redundant,
+  // monochrome-legible signal — never the only one.
   const tone = createMemo(() => {
     const t = theme()
     switch (delegationStateTone(props.job.state)) {
@@ -2713,7 +2800,7 @@ function DelegationRow(props: {
       case 'success':
         return t.success
       default:
-        return t.textMuted // muted (cancelled)
+        return t.textMuted // defensive: unknown runtime state
     }
   })
 
@@ -2735,21 +2822,21 @@ function DelegationRow(props: {
 
   return (
     <box onMouseDown={open}>
-      {/* Line 1: colored lead (glyph + identity) + muted elapsed tail. */}
+      {/* Line 1: toned lead (glyph + identity) + toned elapsed tail. */}
       <box flexDirection="row">
         <text>
           <span fg={tone()}>{lead()}</span>
-          <span fg={theme().textMuted}>{elapsed()}</span>
+          <span fg={tone()}>{elapsed()}</span>
         </text>
       </box>
-      {/* Line 2: the description, indented under the identity and muted. */}
+      {/* Line 2: the description, indented under the identity and toned. */}
       <Show when={description() !== ''}>
-        <text fg={theme().textMuted}>{`  ${description()}`}</text>
+        <text fg={tone()}>{`  ${description()}`}</text>
       </Show>
       <Show when={activity()}>
         {(a) => (
           <text
-            fg={theme().textMuted}
+            fg={tone()}
           >{`  ↳ ${truncateDelegationDescription(`${a().tool}${a().summary !== '' ? ` ${a().summary}` : ''}`)}`}</text>
         )}
       </Show>
@@ -2865,9 +2952,10 @@ function View(props: {
   const projectRoot = createMemo(() => resolvePantheonRoot((props.api.state as any).path))
   // Silence-by-default panel logger → the REAL <root>/.pantheon/logs/hooks.log.
   const panelLog = createTuiLogger(projectRoot())
-  // Every job the board knows about is shown — no scope filter ("showing is
-  // what matters"). Live-first ordering keeps running rows on top; the
-  // ceiling collapses the rest into "… +N more".
+  // ONLY the active session renders: the final list is filtered by
+  // filterDelegationsToSession after every merge (children + live + md +
+  // board). Live-first ordering keeps running rows on top; the ceiling
+  // collapses the rest into "… +N more".
   // The rendered list is childDelegations (children enriched with md);
   // there is no separate md-only signal — the md channel only feeds
   // childrenToDelegationEntries below.
@@ -2894,19 +2982,20 @@ function View(props: {
       try {
         const state = props.api.state as any
         // 0. md reports from EVERY session under .pantheon/delegations — the
-        // HISTORY channel. Read BEFORE the sessionID guard so the panel shows
-        // past reports (running first, Finalized desc) even when no session
-        // is focused (null/placeholder sessionID): the "(0)" symptom becomes
-        // the full historical list. Fail-open: a missing dir yields [].
+        // ENRICHMENT channel. Read unfiltered (taskID match supplies alias/
+        // agent/description/terminal state); the active-session filter after
+        // the merge keeps only the focused session's reports. Fail-open: a
+        // missing dir yields [].
         let md: DelegationEntry[] = []
         try {
           md = await readAllDelegationEntries(projectRoot())
         } catch {
           md = [] // fail-open: never crash the sidebar on a read error
         }
-        // 0b. board snapshot — the 4th channel. Cross-session and AUTHORITATIVE
-        // for state/alias/agent (the persisted FSM). This is what makes a job
-        // running in ANOTHER session visible. Fail-open: absent/corrupt → [].
+        // 0b. board snapshot — the 4th channel. It is cross-session on disk but
+        // used here ONLY to ENRICH an active-session row (state/alias/agent,
+        // dedup by taskID) — the active-session filter applied after the merge
+        // drops its other-session records. Fail-open: absent/corrupt → [].
         let board: DelegationEntry[] = []
         try {
           board = boardRecordsToDelegationEntries(await readBoardState(projectRoot()))
@@ -2918,13 +3007,18 @@ function View(props: {
         // slot prop; forwarding it to session.children made the server reject
         // every poll (~1 err/s: "Expected a string starting with \"ses\", got
         // \"%7BsessionID%7D\"") and fail-open the panel into "(0)". A null
-        // resolution SKIPS the fetch entirely: the md history is shown alone
-        // (zero children, zero errors).
+        // resolution SKIPS the fetch entirely: the active-session filter yields
+        // an EMPTY panel (zero children, zero rows, zero errors).
         const sessionID = resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api })
         if (sessionID === null) {
-          setChildDelegations(mergeBoardDelegationSources(md, board))
+          // No focused session → no scope → nothing renders. The md/board reads
+          // still ran (enrichment sources) but the active-session filter drops
+          // every row: there is no cross-session panel.
+          setChildDelegations(
+            filterDelegationsToSession(mergeBoardDelegationSources(md, board), sessionID),
+          )
           panelLog.info(
-            `${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — history+board shown)`,
+            `${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — inactive panel)`,
           )
           return
         }
@@ -2969,11 +3063,17 @@ function View(props: {
           (entry) => entry.sessionID === sessionID,
         )
         // Board LAST so it is authoritative over children/md/live for the same
-        // job, and adds the rows from other sessions the children API cannot see.
+        // job and can ENRICH an active-session row (state/alias/agent). Then the
+        // active-session filter — applied ONCE after every merge — keeps ONLY
+        // rows whose sessionID === the focused session, so board/md entries from
+        // other sessions (and orphans with no sessionID) can never render.
         setChildDelegations(
-          mergeBoardDelegationSources(
-            mergeChildDelegationSources(childEntries, liveEntries),
-            board,
+          filterDelegationsToSession(
+            mergeBoardDelegationSources(
+              mergeChildDelegationSources(childEntries, liveEntries),
+              board,
+            ),
+            sessionID,
           ),
         )
         // 4. diagnostic line — every re-fetch (silence-by-default, hooks.log).
@@ -2994,8 +3094,9 @@ function View(props: {
     return delegationsInflight
   }
   // Live-first ceiling: at most DELEGATION_VISIBLE_CEILING rows render; the
-  // remainder collapses into a single "… +N more" line. The header counts the
-  // FULL board list — every session, no scope filter.
+  // remainder collapses into a single "… +N more" line. Both the ceiling and
+  // the header operate on the ALREADY-FILTERED active-session list
+  // (childDelegations), so other-session / hidden rows never inflate counts.
   const delegationCeiling = createMemo(() =>
     ceilingDelegationList(childDelegations(), DELEGATION_VISIBLE_CEILING, now()),
   )

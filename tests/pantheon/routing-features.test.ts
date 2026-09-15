@@ -1,5 +1,5 @@
 /**
- * Integration tests for the R1/R4/O5 wiring:
+ * Integration tests for the R4/O5 wiring:
  *
  *   - R4 via createDelegationTools: an agent at max_steps is forced to stop
  *     (delegation skipped with a capped summary, NO child session created);
@@ -7,8 +7,6 @@
  *   - O5 via createDelegationTools: denied agents are removed from the
  *     delegate tool description entirely; the runtime matrix honors the
  *     permission.task rules.
- *   - R1 via createZeusRetryHelper: error-type retries with exponential
- *     backoff and provider cooldown skip.
  *
  * Run with: npx tsx tests/pantheon/routing-features.test.ts
  */
@@ -19,9 +17,7 @@ import { join } from 'node:path'
 
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
 import { createDelegationTools } from '../../src/pantheon/delegation.ts'
-import { DEFAULT_RETRY_POLICY, ProviderCooldownTracker } from '../../src/pantheon/retry-policy.ts'
 import { StepCapTracker } from '../../src/pantheon/step-cap.ts'
-import { createZeusRetryHelper } from '../../src/pantheon/zeus-delegate-with-retry.ts'
 
 // ─── Harness ───────────────────────────────────────────────────────────
 
@@ -184,93 +180,6 @@ async function main() {
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }
-    },
-  )
-
-  // ── R1: retry helper with policy + cooldown ──────────────────────────
-  await testAsync(
-    'R1: rate_limit error → retries with backoff until the budget is exhausted, then escalates',
-    async () => {
-      const sleeps: number[] = []
-      const helper = createZeusRetryHelper({
-        retryPolicy: { ...DEFAULT_RETRY_POLICY, rate_limit: 2 },
-        provider: 'opencode',
-        sleep: async (ms) => {
-          sleeps.push(ms)
-        },
-        logger: { warn: () => {} },
-      })
-      let calls = 0
-      const out = await helper.executeWithRetry({ content: '' }, async () => {
-        calls += 1
-        throw new Error('429 rate limit')
-      })
-      assert.equal(out.retried, true, 'rate_limit triggers retries')
-      assert.equal(calls, 2, 'rate_limit: 2 → exactly 2 retries')
-      assert.equal(out.escalate, true, 'budget exhausted → escalate')
-      assert.deepEqual(sleeps, [1000, 2000], 'exponential backoff delays')
-    },
-  )
-
-  await testAsync('R1: auth error → 0 retries (escalate immediately)', async () => {
-    const helper = createZeusRetryHelper({
-      retryPolicy: DEFAULT_RETRY_POLICY,
-      provider: 'opencode',
-      sleep: async () => {},
-      logger: { warn: () => {} },
-    })
-    let calls = 0
-    const out = await helper.executeWithRetry(
-      { content: '', error: new Error('401 unauthorized') },
-      async () => {
-        calls += 1
-        throw new Error('401 unauthorized')
-      },
-    )
-    assert.equal(out.retried, false, 'auth never retries')
-    assert.equal(calls, 0, 'redispatch never invoked')
-    assert.equal(out.escalate, true)
-  })
-
-  await testAsync(
-    'R1: provider in cooldown → skipped (no retry, escalate immediately)',
-    async () => {
-      const cooldown = new ProviderCooldownTracker({ allowedFails: 1, cooldownTimeSeconds: 60 })
-      cooldown.recordFailure('opencode') // trip the cooldown
-      const helper = createZeusRetryHelper({
-        retryPolicy: DEFAULT_RETRY_POLICY,
-        cooldown,
-        provider: 'opencode',
-        sleep: async () => {},
-        logger: { warn: () => {} },
-      })
-      let calls = 0
-      const out = await helper.executeWithRetry({ content: '' }, async () => {
-        calls += 1
-        return { content: 'should not run' }
-      })
-      assert.equal(out.retried, false, 'cooldown overrides the retry policy')
-      assert.equal(calls, 0, 'no redispatch while the provider is in cooldown')
-      assert.equal(out.escalate, true)
-    },
-  )
-
-  await testAsync(
-    'R1: content result records success (resets the provider failure counter)',
-    async () => {
-      const cooldown = new ProviderCooldownTracker({ allowedFails: 2, cooldownTimeSeconds: 60 })
-      const helper = createZeusRetryHelper({
-        retryPolicy: DEFAULT_RETRY_POLICY,
-        cooldown,
-        provider: 'opencode',
-        sleep: async () => {},
-        logger: { warn: () => {} },
-      })
-      const out = await helper.executeWithRetry({ content: 'full report' }, async () => ({
-        content: 'x',
-      }))
-      assert.equal(out.escalate, false)
-      assert.equal(cooldown.failCount('opencode'), 0, 'success resets the counter')
     },
   )
 

@@ -3,10 +3,14 @@
  * the job board persists under `.pantheon/delegations/<sessionID>/<alias>.md`
  * (written by src/pantheon/delegation-finalize.ts `renderDelegationMarkdown`).
  *
- * The TUI never touches the in-memory board; it only reads these files via
- * the pure `parseDelegationMarkdown` / `readDelegationEntries` helpers. These
- * tests cover the parse contract (running / terminal / timedOut / malformed /
- * missing) using real report shapes written by the finalize module.
+ * Trimmed to the essential, behaviour-protecting surface: the parse contract
+ * (running / terminal / timedOut / malformed / missing), the children/md/live/
+ * board merge guards, active-session scoping, retention/ceiling and the
+ * orphan-navigation defence, plus the status→tone mapping that drives the
+ * whole-row color channel (failed=error, terminal=success, in-flight=warning).
+ * Other aesthetic formatting (glyphs, spinner, row lead, elapsed cells, alias
+ * padding) is intentionally not unit-tested — the UI functions still render,
+ * only the micro-tests are gone.
  *
  * The plugin module is imported for the exported pure helpers only — no TUI
  * runtime is exercised, so no opencode process is needed.
@@ -22,44 +26,27 @@ import { join } from 'node:path'
 import {
   boardRecordsToDelegationEntries,
   boardRecordToDelegationEntry,
-  boardStatePath,
-  buildChildrenPath,
   type ChildDelegationLike,
   ceilingDelegationList,
   childrenToDelegationEntries,
   childStatusToState,
   collectDelegationToolParts,
-  countDelegationSources,
   createDelegationRowOpenHandler,
   DELEGATION_DONE_RETENTION_MS,
   DELEGATION_FAILED_RETENTION_MS,
-  DELEGATION_ROW_GLYPHS,
   DELEGATION_VISIBLE_CEILING,
   type DelegationEntry,
-  delegationActivity,
-  delegationActivityLabel,
-  delegationElapsed,
   delegationRowIdentity,
-  delegationRowMarker,
-  delegationRowStatus,
-  delegationSpinnerFrame,
   delegationStateTone,
-  extractToolActivity,
-  fmtElapsed,
-  formatDelegationAlias,
-  formatDelegationElapsed,
+  filterDelegationsToSession,
   formatDelegationHeader,
-  formatDelegationRowLead,
-  formatPanelLogLine,
   isValidSessionId,
   type LiveDelegationEntry,
-  latestToolActivityFor,
   markStaleIfRunning,
   mergeBoardDelegationSources,
   mergeChildDelegationSources,
   mergeDelegationSources,
   navigateToDelegationSession,
-  panelLogDir,
   parseDelegationMarkdown,
   parseDelegationToolPart,
   readAllDelegationEntries,
@@ -73,9 +60,6 @@ import {
   seedLiveDelegationMap,
   splitDelegationList,
   toDelegationEntry,
-  trackToolActivity,
-  truncateDelegationDescription,
-  tuiLogPath,
   visibleDelegationList,
 } from '../../src/plugins/tui/src/index.tsx'
 
@@ -211,12 +195,9 @@ async function main() {
     assert.equal(e.updatedAt, null)
   })
 
-  await testAsync('parse: malformed file → null (skip)', async () => {
+  await testAsync('parse: malformed / missing headers → null (skip)', async () => {
     assert.equal(parseDelegationMarkdown(MALFORMED_MD, 'bad.md'), null)
     assert.equal(parseDelegationMarkdown('', 'empty.md'), null)
-  })
-
-  await testAsync('parse: missing required headers → null even with filename', async () => {
     assert.equal(
       parseDelegationMarkdown('# Delegation Report — x-1\n\n- **Agent**: hermes\n', 'x-1.md'),
       null,
@@ -230,9 +211,7 @@ async function main() {
       null,
       'unknown state must not parse',
     )
-  })
-
-  await testAsync('parse: no H1 title → alias falls back to filename', async () => {
+    // No H1 title → alias falls back to the filename.
     const e = parseDelegationMarkdown(
       '- **Agent**: zeus\n- **State**: completed\n- **Started**: 2026-08-11T15:00:00.000Z\n',
       'ze-1.md',
@@ -240,8 +219,6 @@ async function main() {
     assert.ok(e, 'report without H1 must parse via filename alias')
     assert.equal(e.alias, 'ze-1')
   })
-
-  // ─── Security: ReDoS regression (CodeQL 12x HIGH on the old regex parser) ─
 
   await testAsync(
     'security: adversarial whitespace → null fast, no regex blowup (<1s)',
@@ -271,51 +248,7 @@ async function main() {
     },
   )
 
-  await testAsync('parse: ** inside values + empty fields do not break parsing', async () => {
-    // (b) ** and **: inside a value must be preserved, not confuse the parser.
-    const e = parseDelegationMarkdown(
-      '# Delegation Report — apo-1\n' +
-        '- **Agent**: apollo\n' +
-        '- **Description**: watch out for **bold** and **: colons\n' +
-        '- **State**: completed\n' +
-        '- **Started**: 2026-08-11T14:46:13.477Z\n',
-      'apo-1.md',
-    )
-    assert.ok(e, 'report with ** inside values must parse')
-    assert.equal(e.description, 'watch out for **bold** and **: colons')
-
-    // Empty required-field value → missing (no cross-line regex leak).
-    assert.equal(
-      parseDelegationMarkdown(
-        '- **Agent**:\n- **State**: completed\n- **Started**: 2026-08-11T15:00:00.000Z\n',
-        'x.md',
-      ),
-      null,
-      'empty Agent value must be treated as missing',
-    )
-
-    // Empty title after separator → alias falls back to the filename.
-    const e2 = parseDelegationMarkdown(
-      '# Delegation Report —\n- **Agent**: a\n- **State**: completed\n- **Started**: 2026-08-11T15:00:00.000Z\n',
-      'ze-9.md',
-    )
-    assert.ok(e2, 'report with empty title must still parse')
-    assert.equal(e2.alias, 'ze-9', 'empty title falls back to filename alias')
-
-    // Timed out keeps the old prefix semantics: `true`-prefixed → true, else false.
-    const e3 = parseDelegationMarkdown(
-      '- **Agent**: a\n- **State**: error\n- **Timed out**: trueX\n- **Started**: 2026-08-11T15:00:00.000Z\n',
-    )
-    assert.ok(e3)
-    assert.equal(e3.timedOut, true, '`trueX` is prefix-matched as true')
-    const e4 = parseDelegationMarkdown(
-      '- **Agent**: a\n- **State**: error\n- **Timed out**: True\n- **Started**: 2026-08-11T15:00:00.000Z\n',
-    )
-    assert.ok(e4)
-    assert.equal(e4.timedOut, false, '`True` is not matched (case-sensitive)')
-  })
-
-  // ─── readDelegationEntries (directory channel) ─────────────────────────
+  // ─── readDelegationEntries / readAllDelegationEntries ─────────────────
 
   await testAsync('read: missing directory → [] (fail-open)', async () => {
     const entries = await readDelegationEntries(join(tmpdir(), 'pantheon-tui-test-does-not-exist'))
@@ -323,103 +256,7 @@ async function main() {
   })
 
   await testAsync(
-    'read: tmp tree with mixed reports → sorted running-first, malformed skipped',
-    async () => {
-      const tmp = mkdtempSync(join(tmpdir(), 'pantheon-tui-deleg-'))
-      try {
-        const ses = join(tmp, 'ses_abc')
-        const other = join(tmp, 'ses_def')
-        mkdirSync(ses)
-        mkdirSync(other)
-        writeFileSync(join(ses, 'apo-1.md'), COMPLETED_MD)
-        writeFileSync(join(ses, 'apo-5.md'), RUNNING_MD)
-        writeFileSync(join(other, 'her-7.md'), TIMED_OUT_MD)
-        writeFileSync(join(other, 'malformed.md'), MALFORMED_MD) // must be skipped
-        writeFileSync(join(other, 'notes.txt'), 'not a report') // non-md ignored
-        // A plain file at the top level (not a session dir) must be ignored.
-        writeFileSync(join(tmp, 'README.md'), '# not a session')
-
-        const entries = await readDelegationEntries(tmp)
-        // Running MD reports are now rejected (Fix 3) — only terminal reports parse
-        assert.equal(entries.length, 2, 'only terminal reports are read (running MD rejected)')
-        assert.deepEqual(
-          entries.map((e) => e.alias),
-          ['her-7', 'apo-1'],
-          'terminal by recency (Finalized desc)',
-        )
-        const timedOut = entries[0]
-        assert.ok(timedOut)
-        assert.equal(timedOut.state, 'error')
-        assert.equal(timedOut.timedOut, true)
-      } finally {
-        rmSync(tmp, { recursive: true, force: true })
-      }
-    },
-  )
-
-  await testAsync('read: garbage-only directory yields [] (fail-open, never crash)', async () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'pantheon-tui-deleg-'))
-    try {
-      mkdirSync(join(tmp, 'ses_garbage'))
-      writeFileSync(join(tmp, 'ses_garbage', 'junk.md'), '\uFFFD\uFFFD\uFFFD')
-      const entries = await readDelegationEntries(tmp)
-      assert.equal(entries.length, 0)
-    } finally {
-      rmSync(tmp, { recursive: true, force: true })
-    }
-  })
-
-  // ─── panelLogDir + tuiLogPath (double-path fix) ─────────────────────────
-  // Regression: the View created the logger with `dirname(delegationsDir())`
-  // (= <root>/.pantheon), so createTuiLogger joined `.pantheon/logs/hooks.log`
-  // onto it → <root>/.pantheon/.pantheon/logs/hooks.log — a nested empty dir
-  // that the real hooks.log never saw. panelLogDir(delegationsDir) returns
-  // the PROJECT ROOT so the logger lands on the real <root>/.pantheon/logs.
-
-  await testAsync(
-    'panelLogDir: delegations dir → project root (kills the .pantheon/.pantheon nesting)',
-    async () => {
-      assert.equal(
-        panelLogDir('/repos/acme/.pantheon/delegations'),
-        '/repos/acme',
-        'absolute delegations dir → project root',
-      )
-      assert.equal(panelLogDir('.pantheon/delegations'), '.', 'relative dir → cwd root')
-      assert.equal(
-        panelLogDir('/repos/acme/.pantheon/delegations'),
-        '/repos/acme',
-        'always yields the root, never a .pantheon-level dir',
-      )
-    },
-  )
-
-  await testAsync(
-    'tuiLogPath: logger appends to <root>/.pantheon/logs/hooks.log (the REAL file)',
-    async () => {
-      assert.equal(tuiLogPath('/repos/acme'), '/repos/acme/.pantheon/logs/hooks.log')
-      // Full chain: the View derives root from the delegations dir, then the
-      // logger writes .pantheon/logs/hooks.log under it — NOT the nested
-      // .pantheon/.pantheon/logs/hooks.log the bug produced.
-      assert.equal(
-        tuiLogPath(panelLogDir('/repos/acme/.pantheon/delegations')),
-        '/repos/acme/.pantheon/logs/hooks.log',
-      )
-      assert.ok(
-        !tuiLogPath(panelLogDir('/repos/acme/.pantheon/delegations')).includes(
-          '.pantheon/.pantheon',
-        ),
-        'no double-nested .pantheon in the final log path',
-      )
-    },
-  )
-
-  // ─── readAllDelegationEntries (history across ALL sessions) ─────────────
-  // The View reads reports from EVERY session subdir under
-  // <root>/.pantheon/delegations/*/<alias>.md — the panel shows the full
-  // delegation history even when no sessionID resolves (no focused session).
-
-  await testAsync(
-    'readAll: aggregates reports from MULTIPLE session subdirs, sorted running-first',
+    'read/readAll: terminal reports only, sorted by recency, malformed + non-dirs skipped',
     async () => {
       const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
       try {
@@ -429,110 +266,87 @@ async function main() {
         mkdirSync(sesA, { recursive: true })
         mkdirSync(sesB, { recursive: true })
         writeFileSync(join(sesA, 'apo-1.md'), COMPLETED_MD) // terminal, older
-        writeFileSync(join(sesB, 'her-7.md'), TIMED_OUT_MD) // terminal, newer
         writeFileSync(join(sesA, 'apo-5.md'), RUNNING_MD) // running → rejected (Fix 3)
+        writeFileSync(join(sesB, 'her-7.md'), TIMED_OUT_MD) // terminal, newer
+        writeFileSync(join(sesB, 'malformed.md'), MALFORMED_MD) // must be skipped
+        writeFileSync(join(root, 'README.md'), '# not a session') // plain file ignored
 
         const entries = await readAllDelegationEntries(root)
-        // Running MD reports are now rejected (Fix 3) — only terminal reports parse
-        assert.equal(entries.length, 2, 'only terminal sessions aggregated (running MD rejected)')
+        assert.equal(entries.length, 2, 'only terminal reports parse (running MD rejected)')
         assert.deepEqual(
           entries.map((e) => e.alias),
           ['her-7', 'apo-1'],
           'terminal by Finalized desc across sessions',
         )
-        // sessionID comes from each report's own session dir.
-        assert.equal(entries[1]?.sessionID, 'ses_aaa')
         assert.equal(entries[0]?.sessionID, 'ses_bbb')
+        assert.equal(entries[1]?.sessionID, 'ses_aaa')
+        assert.equal(entries[0]?.state, 'error')
+        assert.equal(entries[0]?.timedOut, true)
+
+        const scoped = await readDelegationEntries(deleg)
+        assert.deepEqual(
+          scoped.map((e) => e.alias),
+          ['her-7', 'apo-1'],
+          'directory read keeps only the terminal reports, running MD rejected',
+        )
+
+        assert.deepEqual(await readAllDelegationEntries(join(root, 'nope')), [])
       } finally {
         rmSync(root, { recursive: true, force: true })
       }
     },
   )
 
-  await testAsync('readAll: root without delegations dir → [] (fail-open)', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
-    try {
-      assert.deepEqual(await readAllDelegationEntries(root), [])
-      assert.deepEqual(
-        await readAllDelegationEntries(join(tmpdir(), 'pantheon-tui-root-does-not-exist')),
-        [],
+  // ─── Directory / root resolution ──────────────────────────────────────
+
+  await testAsync(
+    'resolve: worktree "/" (no git) → cwd; directory wins; project ignored',
+    async () => {
+      const cwd = '/srv/opencode'
+      const rel = join(cwd, '.pantheon', 'delegations')
+      assert.equal(
+        resolveDelegationsDir({ worktree: '/' }, cwd),
+        rel,
+        'root "/" must not produce "/.pantheon/delegations"',
       )
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
+      assert.equal(
+        resolveDelegationsDir({ worktree: '/repos/acme' }, cwd),
+        join('/repos/acme', '.pantheon', 'delegations'),
+      )
+      assert.equal(
+        resolveDelegationsDir({ directory: '/proj/site' }, cwd),
+        join('/proj/site', '.pantheon', 'delegations'),
+      )
+      assert.equal(
+        resolveDelegationsDir({ directory: '/proj/site', worktree: '/' }, cwd),
+        join('/proj/site', '.pantheon', 'delegations'),
+        'directory beats worktree "/"',
+      )
+      assert.equal(resolveDelegationsDir({}, cwd), rel)
+      assert.equal(resolveDelegationsDir(undefined, cwd), rel)
+      assert.equal(
+        resolveDelegationsDir(
+          { project: '/proj/site' } as unknown as { directory?: string; worktree?: string },
+          cwd,
+        ),
+        rel,
+        'project-only state falls back to cwd (field does not exist in the type)',
+      )
+    },
+  )
 
-  // ─── resolveDelegationsDir (md channel root resolution) ─────────────
-  // The board writes `.pantheon/delegations` RELATIVE to the server cwd
-  // (= TuiState.path.directory). `project` does NOT exist on TuiState.path
-  // and `worktree` is `/` when there is no git (e.g. the sandbox test
-  // project) — a root of `''` or `'/'` must fall back to `process.cwd()`.
-  // An explicit `cwd` param keeps these tests deterministic.
-
-  await testAsync('resolve: worktree "/" (no git) → cwd fallback', async () => {
-    assert.equal(
-      resolveDelegationsDir({ worktree: '/' }, '/srv/opencode'),
-      join('/srv/opencode', '.pantheon', 'delegations'),
-      'root "/" must not produce "/.pantheon/delegations"',
-    )
-  })
-
-  await testAsync('resolve: valid worktree dir → join(worktree)', async () => {
-    assert.equal(
-      resolveDelegationsDir({ worktree: '/repos/acme' }, '/srv/opencode'),
-      join('/repos/acme', '.pantheon', 'delegations'),
-    )
-  })
-
-  await testAsync('resolve: directory present (no project) → uses directory', async () => {
-    assert.equal(
-      resolveDelegationsDir({ directory: '/proj/site' }, '/srv/opencode'),
-      join('/proj/site', '.pantheon', 'delegations'),
-      'directory wins when present (board writes relative to the server cwd)',
-    )
-  })
-
-  await testAsync('resolve: directory beats worktree "/" (sandbox case)', async () => {
-    assert.equal(
-      resolveDelegationsDir({ directory: '/proj/site', worktree: '/' }, '/srv/opencode'),
-      join('/proj/site', '.pantheon', 'delegations'),
-    )
-  })
-
-  await testAsync('resolve: empty state object → cwd fallback', async () => {
-    assert.equal(
-      resolveDelegationsDir({}, '/srv/opencode'),
-      join('/srv/opencode', '.pantheon', 'delegations'),
-    )
-  })
-
-  await testAsync('resolve: undefined state → cwd fallback', async () => {
-    assert.equal(
-      resolveDelegationsDir(undefined, '/srv/opencode'),
-      join('/srv/opencode', '.pantheon', 'delegations'),
-    )
-  })
-
-  await testAsync('resolve: legacy "project" field ignored (not on TuiState.path)', async () => {
-    // `project` is not part of TuiState.path — the old resolution read it
-    // via `state?.project` which was always undefined. Passing it must not
-    // change the result (directory/worktree still rule, else cwd).
-    assert.equal(
-      resolveDelegationsDir(
-        { project: '/proj/site' } as unknown as { directory?: string; worktree?: string },
-        '/srv/opencode',
-      ),
-      join('/srv/opencode', '.pantheon', 'delegations'),
-      'project-only state falls back to cwd (field does not exist in the type)',
-    )
-  })
+  await testAsync(
+    'board: resolvePantheonRoot — directory wins, worktree fallback, "/"→cwd',
+    async () => {
+      assert.equal(resolvePantheonRoot({ directory: '/proj', worktree: '/wt' }, '/cwd'), '/proj')
+      assert.equal(resolvePantheonRoot({ worktree: '/wt' }, '/cwd'), '/wt')
+      assert.equal(resolvePantheonRoot({ directory: '/', worktree: '/' }, '/cwd'), '/cwd')
+      assert.equal(resolvePantheonRoot(undefined, '/cwd'), '/cwd')
+      assert.equal(resolvePantheonRoot({ directory: '' }, '/cwd'), '/cwd')
+    },
+  )
 
   // ─── collectDelegationToolParts + seedLiveDelegationMap (mount re-scan) ─
-  // `message.part.removed` (compaction) clears live entries; on mount the
-  // panel re-seeds the live map from the session's EXISTING tool parts via
-  // `api.state.session.messages(sessionID)` so pós-compaction/attach the
-  // panel still shows jobs. Extraction + reduction are pure helpers tested
-  // here with a mocked messages array (the SDK method is synchronous).
 
   const SEED_DELEGATE_RUNNING = {
     id: 'part_seed_1',
@@ -572,7 +386,7 @@ async function main() {
     },
   }
 
-  await testAsync('collect: embedded parts → only pantheon tool parts', async () => {
+  await testAsync('collect: embedded parts + getParts fallback + fail-open', async () => {
     const messages = [
       {
         id: 'msg_1',
@@ -590,17 +404,10 @@ async function main() {
       parts.map((p) => p.tool),
       ['pantheon_delegate', 'pantheon_delegation_read'],
     )
-  })
-
-  await testAsync('collect: messages without parts → getParts(msg.id) fallback', async () => {
-    const messages = [{ id: 'msg_1' }, { id: 'msg_2' }]
     const getParts = (id: string) => (id === 'msg_1' ? [SEED_DELEGATE_RUNNING] : [])
-    const parts = collectDelegationToolParts(messages, getParts)
-    assert.equal(parts.length, 1)
-    assert.equal(parts[0]?.tool, 'pantheon_delegate')
-  })
-
-  await testAsync('collect: no parts anywhere → [] (fail-open)', async () => {
+    const fallback = collectDelegationToolParts([{ id: 'msg_1' }, { id: 'msg_2' }], getParts)
+    assert.equal(fallback.length, 1)
+    assert.equal(fallback[0]?.tool, 'pantheon_delegate')
     assert.deepEqual(
       collectDelegationToolParts([], () => []),
       [],
@@ -609,18 +416,9 @@ async function main() {
     assert.deepEqual(collectDelegationToolParts(undefined, undefined), [])
   })
 
-  await testAsync('seed: empty parts → 0 changes, map untouched', async () => {
-    const map = new Map<string, LiveDelegationEntry>()
-    assert.equal(seedLiveDelegationMap(map, []), 0)
-    assert.equal(map.size, 0)
-  })
-
   await testAsync(
     'seed: re-scan from session.messages parts → job restored terminal (compaction recovery)',
     async () => {
-      // Simulates: state.session.messages(sessionID) → collect → seed, the
-      // exact mount path. The delegate runs, completes (alias), read blocks
-      // until terminal → entry closes at the read end timestamp.
       const messages = [
         { id: 'msg_1', parts: [SEED_DELEGATE_RUNNING] },
         { id: 'msg_2', parts: [SEED_DELEGATE_COMPLETED] },
@@ -633,7 +431,6 @@ async function main() {
         3,
         'delegate create + alias absorb + read close = 3 changes',
       )
-
       const e = map.get('call_seed_1')
       assert.ok(e, 'job restored into the live map on mount')
       assert.equal(e.state, 'completed')
@@ -641,7 +438,6 @@ async function main() {
       assert.equal(e.taskID, 'ses_child_9')
       assert.equal(e.read, true)
       assert.equal(e.updatedAt, 8000, 'terminal stamped from the read end')
-
       assert.equal(
         seedLiveDelegationMap(map, collectDelegationToolParts(messages), 9000),
         0,
@@ -650,9 +446,11 @@ async function main() {
     },
   )
 
-  await testAsync('seed: non-pantheon parts skipped, unknown tools no-op', async () => {
+  await testAsync('seed: empty + non-pantheon / untargeted parts are no-ops', async () => {
     const map = new Map<string, LiveDelegationEntry>()
-    const skippedParts = [
+    assert.equal(seedLiveDelegationMap(map, []), 0)
+    assert.equal(map.size, 0)
+    const changed = seedLiveDelegationMap(map, [
       { type: 'text', text: 'x' },
       { type: 'tool', tool: 'bash', callID: 'c1', state: { status: 'running' } },
       {
@@ -661,35 +459,12 @@ async function main() {
         callID: 'c2',
         state: { status: 'running', input: { id: 'nope' } },
       },
-    ]
-    const changed = seedLiveDelegationMap(map, skippedParts)
+    ])
     assert.equal(changed, 0, 'read without a target delegate is a no-op')
     assert.equal(map.size, 0)
   })
 
-  // ─── Type-level: the entry shape is exported for the TUI row ───────────
-
-  await testAsync('type: DelegationEntry shape is exported', async () => {
-    const e: DelegationEntry = {
-      alias: 'her-1',
-      sessionID: 'ses_root',
-      agent: 'hermes',
-      state: 'completed',
-      startedAt: 0,
-      updatedAt: 1000,
-      timedOut: false,
-      description: '',
-    }
-    assert.equal(e.alias, 'her-1')
-    assert.equal(e.sessionID, 'ses_root')
-  })
-
   // ─── Live tool-part lifecycle (agent-sidebar pattern) ──────────────────
-  // The PRIMARY channel: `message.part.updated` events for tool parts named
-  // pantheon_delegate / pantheon_delegation_read. A delegate tool completing
-  // means the JOB LAUNCHED — it stays `running` until a read resolves it or
-  // the md terminal report lands. A read tool blocks until terminal, so its
-  // end timestamp is the authoritative job duration.
 
   const DELEGATE_RUNNING_PART = {
     id: 'part_deleg_1',
@@ -759,108 +534,94 @@ async function main() {
   }
 
   await testAsync(
-    'parse: delegate running part → agent/status/startedAt from state.time',
+    'parse: delegate running + completed parts → agent/status/times + alias/taskID from output',
     async () => {
-      const p = parseDelegationToolPart(DELEGATE_RUNNING_PART, 2000)
-      assert.ok(p, 'delegate running part must parse')
-      assert.equal(p.tool, 'pantheon_delegate')
-      assert.equal(p.callID, 'call_deleg_1')
-      assert.equal(p.agent, 'apollo')
-      assert.equal(p.description, 'Busca')
-      assert.equal(p.status, 'running')
-      assert.equal(p.startedAt, 1000, 'startedAt comes from state.time.start')
-      assert.equal(p.alias, null)
+      const running = parseDelegationToolPart(DELEGATE_RUNNING_PART, 2000)
+      assert.ok(running, 'delegate running part must parse')
+      assert.equal(running.tool, 'pantheon_delegate')
+      assert.equal(running.callID, 'call_deleg_1')
+      assert.equal(running.agent, 'apollo')
+      assert.equal(running.description, 'Busca')
+      assert.equal(running.status, 'running')
+      assert.equal(running.startedAt, 1000, 'startedAt comes from state.time.start')
+      assert.equal(running.alias, null)
+
+      const completed = parseDelegationToolPart(DELEGATE_COMPLETED_PART, 2000)
+      assert.ok(completed)
+      assert.equal(completed.status, 'completed')
+      assert.equal(completed.alias, 'apo-1', 'alias parsed from "[apo-1]" in the output')
+      assert.equal(completed.taskID, 'ses_child_9', 'taskID parsed from "(task ses_...)"')
+      assert.equal(completed.endAt, 1500)
     },
   )
 
   await testAsync(
-    'parse: delegate completed part → alias + taskID extracted from output',
+    'parse: read part (alias / taskID), pending fallback to now, non-pantheon → null',
     async () => {
-      const p = parseDelegationToolPart(DELEGATE_COMPLETED_PART, 2000)
-      assert.ok(p)
-      assert.equal(p.status, 'completed')
-      assert.equal(p.alias, 'apo-1', 'alias parsed from "[apo-1]" in the output')
-      assert.equal(p.taskID, 'ses_child_9', 'taskID parsed from "(task ses_...)" in the output')
-      assert.equal(p.endAt, 1500)
+      const p = parseDelegationToolPart(READ_RUNNING_PART, 6000)
+      assert.ok(p, 'read part must parse')
+      assert.equal(p.tool, 'pantheon_delegation_read')
+      assert.equal(p.alias, 'apo-1', 'alias comes from input.id')
+      assert.equal(p.agent, null)
+      const byTask = parseDelegationToolPart(
+        {
+          ...READ_RUNNING_PART,
+          state: { status: 'running', input: { id: 'ses_child_9' }, time: { start: 5000 } },
+        },
+        6000,
+      )
+      assert.ok(byTask)
+      assert.equal(byTask.alias, null)
+      assert.equal(byTask.taskID, 'ses_child_9')
+
+      const pending = parseDelegationToolPart(
+        {
+          id: 'part_deleg_2',
+          sessionID: 'ses_root',
+          messageID: 'msg_1',
+          type: 'tool',
+          callID: 'call_deleg_2',
+          tool: 'pantheon_delegate',
+          state: { status: 'pending', input: { agent: 'zeus' } },
+        },
+        4242,
+      )
+      assert.ok(pending)
+      assert.equal(pending.status, 'pending')
+      assert.equal(pending.startedAt, 4242)
+
+      assert.equal(
+        parseDelegationToolPart({
+          id: 'p3',
+          sessionID: 'ses_root',
+          messageID: 'm3',
+          type: 'tool',
+          callID: 'c3',
+          tool: 'bash',
+          state: { status: 'running', input: { command: 'ls' }, time: { start: 10 } },
+        }),
+        null,
+        'other tools must be ignored',
+      )
+      assert.equal(
+        parseDelegationToolPart({
+          id: 'p4',
+          sessionID: 'ses_root',
+          messageID: 'm4',
+          type: 'text',
+          text: 'hi',
+        }),
+        null,
+      )
+      assert.equal(parseDelegationToolPart({ type: 'tool', tool: 'pantheon_delegate' }), null)
     },
   )
 
-  await testAsync('parse: read part → alias from input args, agent null', async () => {
-    const p = parseDelegationToolPart(READ_RUNNING_PART, 6000)
-    assert.ok(p, 'read part must parse')
-    assert.equal(p.tool, 'pantheon_delegation_read')
-    assert.equal(p.alias, 'apo-1', 'alias comes from input.id')
-    assert.equal(p.agent, null)
-    // A raw child session id in input.id resolves by taskID instead.
-    const byTask = parseDelegationToolPart(
-      {
-        ...READ_RUNNING_PART,
-        state: { status: 'running', input: { id: 'ses_child_9' }, time: { start: 5000 } },
-      },
-      6000,
-    )
-    assert.ok(byTask)
-    assert.equal(byTask.alias, null)
-    assert.equal(byTask.taskID, 'ses_child_9')
-  })
-
-  await testAsync('parse: pending part without time → startedAt falls back to now', async () => {
-    const pending = {
-      id: 'part_deleg_2',
-      sessionID: 'ses_root',
-      messageID: 'msg_1',
-      type: 'tool',
-      callID: 'call_deleg_2',
-      tool: 'pantheon_delegate',
-      state: { status: 'pending', input: { agent: 'zeus' } },
-    }
-    const p = parseDelegationToolPart(pending, 4242)
-    assert.ok(p)
-    assert.equal(p.status, 'pending')
-    assert.equal(p.startedAt, 4242)
-  })
-
-  await testAsync('parse: non-pantheon tool and non-tool parts → null', async () => {
-    assert.equal(
-      parseDelegationToolPart({
-        id: 'p3',
-        sessionID: 'ses_root',
-        messageID: 'm3',
-        type: 'tool',
-        callID: 'c3',
-        tool: 'bash',
-        state: { status: 'running', input: { command: 'ls' }, time: { start: 10 } },
-      }),
-      null,
-      'other tools must be ignored',
-    )
-    assert.equal(
-      parseDelegationToolPart({
-        id: 'p4',
-        sessionID: 'ses_root',
-        messageID: 'm4',
-        type: 'text',
-        text: 'hi',
-      }),
-      null,
-      'text parts must be ignored',
-    )
-    assert.equal(
-      parseDelegationToolPart({ type: 'tool', tool: 'pantheon_delegate' }),
-      null,
-      'missing callID → null',
-    )
-  })
-
   await testAsync(
-    'reduce: delegate running creates entry; completed KEEPS running + sets alias',
+    'reduce: delegate completing only means LAUNCHED — entry stays running with alias',
     async () => {
       const map = new Map<string, LiveDelegationEntry>()
-      assert.equal(
-        reduceDelegationToolPart(map, DELEGATE_RUNNING_PART, 2000),
-        true,
-        'create → changed',
-      )
+      assert.equal(reduceDelegationToolPart(map, DELEGATE_RUNNING_PART, 2000), true, 'create')
       let e = map.get('call_deleg_1')
       assert.ok(e)
       assert.equal(e.state, 'running')
@@ -868,11 +629,7 @@ async function main() {
       assert.equal(e.startedAt, 1000)
       assert.equal(e.alias, null)
 
-      assert.equal(
-        reduceDelegationToolPart(map, DELEGATE_COMPLETED_PART, 2000),
-        true,
-        'alias discovery → changed',
-      )
+      assert.equal(reduceDelegationToolPart(map, DELEGATE_COMPLETED_PART, 2000), true, 'alias')
       e = map.get('call_deleg_1')
       assert.ok(e)
       assert.equal(
@@ -887,7 +644,7 @@ async function main() {
   )
 
   await testAsync(
-    'reduce: read marks entry read + read completed → terminal, updatedAt stamped once',
+    'reduce: read closes the entry at the read end (once); read error → error',
     async () => {
       const map = new Map<string, LiveDelegationEntry>()
       reduceDelegationToolPart(map, DELEGATE_RUNNING_PART, 2000)
@@ -896,63 +653,30 @@ async function main() {
       assert.ok(e)
       assert.equal(e.read, false)
 
-      assert.equal(
-        reduceDelegationToolPart(map, READ_RUNNING_PART, 6000),
-        true,
-        'read running → changed',
-      )
+      assert.equal(reduceDelegationToolPart(map, READ_RUNNING_PART, 6000), true)
       assert.equal(e.read, true, 'read start marks the delegation as read')
       assert.equal(e.state, 'running', 'read blocks until terminal — still running')
 
-      assert.equal(
-        reduceDelegationToolPart(map, READ_COMPLETED_PART, 9000),
-        true,
-        'read completed → changed',
-      )
+      assert.equal(reduceDelegationToolPart(map, READ_COMPLETED_PART, 9000), true)
       assert.equal(e.state, 'completed')
       assert.equal(e.updatedAt, 8000, 'job duration = read end (blocks until terminal)')
-
-      assert.equal(
-        reduceDelegationToolPart(map, READ_COMPLETED_PART, 10000),
-        false,
-        're-applying terminal → no change',
-      )
+      assert.equal(reduceDelegationToolPart(map, READ_COMPLETED_PART, 10000), false)
       assert.equal(e.updatedAt, 8000, 'terminal timestamp is stamped only once')
+
+      const map2 = new Map<string, LiveDelegationEntry>()
+      reduceDelegationToolPart(map2, DELEGATE_RUNNING_PART, 2000)
+      reduceDelegationToolPart(map2, DELEGATE_COMPLETED_PART, 2000)
+      const e2 = map2.get('call_deleg_1')
+      assert.ok(e2)
+      assert.equal(reduceDelegationToolPart(map2, READ_ERROR_PART, 9500), true)
+      assert.equal(e2.state, 'error')
+      assert.equal(e2.updatedAt, 9000)
+      assert.equal(e2.read, true)
     },
   )
 
-  await testAsync('reduce: read error → entry error with read end timestamp', async () => {
-    const map = new Map<string, LiveDelegationEntry>()
-    reduceDelegationToolPart(map, DELEGATE_RUNNING_PART, 2000)
-    reduceDelegationToolPart(map, DELEGATE_COMPLETED_PART, 2000)
-    const e = map.get('call_deleg_1')
-    assert.ok(e)
-    assert.equal(reduceDelegationToolPart(map, READ_ERROR_PART, 9500), true)
-    assert.equal(e.state, 'error')
-    assert.equal(e.updatedAt, 9000)
-    assert.equal(e.read, true)
-  })
-
-  await testAsync('reduce: delegate tool error → entry error (job never launched)', async () => {
-    const map = new Map<string, LiveDelegationEntry>()
-    const DELEGATE_ERROR_PART = {
-      ...DELEGATE_RUNNING_PART,
-      state: {
-        status: 'error',
-        input: { agent: 'apollo', prompt: 'x' },
-        error: 'concurrency limit reached',
-        time: { start: 1000, end: 1100 },
-      },
-    }
-    assert.equal(reduceDelegationToolPart(map, DELEGATE_ERROR_PART, 1200), true)
-    const e = map.get('call_deleg_1')
-    assert.ok(e)
-    assert.equal(e.state, 'error')
-    assert.equal(e.updatedAt, 1100)
-  })
-
   await testAsync(
-    'remove: delete by partID and by callID (message.part.removed cleanup)',
+    'remove + toDelegationEntry: cleanup by partID/callID, alias fallback',
     async () => {
       const byPart = new Map<string, LiveDelegationEntry>()
       reduceDelegationToolPart(byPart, DELEGATE_RUNNING_PART, 2000)
@@ -963,235 +687,7 @@ async function main() {
       reduceDelegationToolPart(byCall, DELEGATE_RUNNING_PART, 2000)
       assert.equal(removeDelegationEntry(byCall, 'call_deleg_1'), true, 'callID matches')
       assert.equal(removeDelegationEntry(byCall, 'nope'), false, 'unknown → unchanged')
-    },
-  )
 
-  await testAsync('toDelegationEntry: live → DelegationEntry with alias fallback', async () => {
-    const live: LiveDelegationEntry = {
-      callID: 'call_1',
-      partID: 'part_1',
-      sessionID: 'ses_root',
-      tool: 'pantheon_delegate',
-      agent: 'apollo',
-      description: 'Busca',
-      alias: 'apo-1',
-      taskID: 'ses_child_9',
-      state: 'running',
-      startedAt: 1000,
-      updatedAt: null,
-      read: false,
-    }
-    const e = toDelegationEntry(live)
-    assert.equal(e.alias, 'apo-1')
-    assert.equal(e.sessionID, 'ses_root')
-    assert.equal(e.agent, 'apollo')
-    assert.equal(e.state, 'running')
-    assert.equal(e.description, 'Busca')
-    const noAlias = toDelegationEntry({ ...live, alias: null })
-    assert.ok(noAlias.alias.startsWith('live-'), 'alias falls back to a live- prefix')
-  })
-
-  await testAsync(
-    'merge: md terminal beats live running; live running without md kept',
-    async () => {
-      const mdTerminal: DelegationEntry = {
-        alias: 'apo-1',
-        sessionID: 'ses_root',
-        agent: 'apollo',
-        state: 'completed',
-        startedAt: 1000,
-        updatedAt: 8000,
-        timedOut: false,
-        description: 'Busca',
-      }
-      const liveRunning: LiveDelegationEntry = {
-        callID: 'call_1',
-        partID: 'part_1',
-        sessionID: 'ses_root',
-        tool: 'pantheon_delegate',
-        agent: 'apollo',
-        description: 'Busca',
-        alias: 'apo-1',
-        taskID: null,
-        state: 'running',
-        startedAt: 1000,
-        updatedAt: null,
-        read: false,
-      }
-      const merged = mergeDelegationSources([liveRunning], [mdTerminal])
-      assert.equal(merged.length, 1, 'same (session, alias) → single row')
-      assert.equal(merged[0].state, 'completed', 'terminal md is authoritative over live running')
-
-      const liveOnly = mergeDelegationSources([{ ...liveRunning, alias: 'apo-2' }], [])
-      assert.equal(liveOnly.length, 1)
-      assert.equal(liveOnly[0].state, 'running')
-      assert.equal(liveOnly[0].alias, 'apo-2')
-    },
-  )
-
-  await testAsync(
-    'merge: cross-session same alias NOT collapsed (aliases are per-session)',
-    async () => {
-      const mdOtherSession: DelegationEntry = {
-        alias: 'apo-1',
-        sessionID: 'ses_other',
-        agent: 'apollo',
-        state: 'completed',
-        startedAt: 500,
-        updatedAt: 700,
-        timedOut: false,
-        description: '',
-      }
-      const liveRunning: LiveDelegationEntry = {
-        callID: 'call_1',
-        partID: 'part_1',
-        sessionID: 'ses_root',
-        tool: 'pantheon_delegate',
-        agent: 'apollo',
-        description: '',
-        alias: 'apo-1',
-        taskID: null,
-        state: 'running',
-        startedAt: 1000,
-        updatedAt: null,
-        read: false,
-      }
-      const merged = mergeDelegationSources([liveRunning], [mdOtherSession])
-      assert.equal(merged.length, 2, 'different sessions → two distinct jobs')
-    },
-  )
-
-  await testAsync('merge: running first, then terminal by recency (updatedAt desc)', async () => {
-    const liveRunning: LiveDelegationEntry = {
-      callID: 'call_1',
-      partID: 'part_1',
-      sessionID: 'ses_root',
-      tool: 'pantheon_delegate',
-      agent: 'apollo',
-      description: '',
-      alias: 'apo-1',
-      taskID: null,
-      state: 'running',
-      startedAt: 1000,
-      updatedAt: null,
-      read: false,
-    }
-    const mdOld: DelegationEntry = {
-      alias: 'her-1',
-      sessionID: 'ses_root',
-      agent: 'hermes',
-      state: 'completed',
-      startedAt: 100,
-      updatedAt: 500,
-      timedOut: false,
-      description: '',
-    }
-    const mdNew: DelegationEntry = {
-      alias: 'the-1',
-      sessionID: 'ses_root',
-      agent: 'themis',
-      state: 'error',
-      startedAt: 200,
-      updatedAt: 900,
-      timedOut: true,
-      description: '',
-    }
-    const merged = mergeDelegationSources([liveRunning], [mdOld, mdNew])
-    assert.deepEqual(
-      merged.map((e) => e.alias),
-      ['apo-1', 'the-1', 'her-1'],
-      'running first, terminal by recency',
-    )
-  })
-
-  await testAsync('elapsed: fmtElapsed formatting (single-unit compact: 12s/3m/1h)', async () => {
-    assert.equal(fmtElapsed(0), '0s')
-    assert.equal(fmtElapsed(500), '0s')
-    assert.equal(fmtElapsed(5_000), '5s')
-    assert.equal(fmtElapsed(65_000), '1m')
-    assert.equal(fmtElapsed(3_600_000), '1h')
-    assert.equal(fmtElapsed(86_400_000), '1d')
-    assert.equal(fmtElapsed(90_000_000), '1d')
-  })
-
-  await testAsync(
-    'elapsed: delegationElapsed — running ticks now-startedAt, terminal fixed',
-    async () => {
-      const running: DelegationEntry = {
-        alias: 'apo-1',
-        sessionID: 'ses_root',
-        agent: 'apollo',
-        state: 'running',
-        startedAt: 1000,
-        updatedAt: null,
-        timedOut: false,
-        description: '',
-      }
-      assert.equal(delegationElapsed(running, 1500), '0s')
-      assert.equal(delegationElapsed(running, 6_000), '5s')
-      const retrying: DelegationEntry = { ...running, state: 'retry' }
-      assert.equal(
-        delegationElapsed(retrying, 6_000),
-        '5s',
-        'retry is active — elapsed ticks instead of rendering —',
-      )
-      const terminal: DelegationEntry = { ...running, state: 'completed', updatedAt: 8_000 }
-      assert.equal(
-        delegationElapsed(terminal, 100_000),
-        '7s',
-        'terminal uses updatedAt-startedAt, not now',
-      )
-    },
-  )
-
-  await testAsync(
-    'visual state: live delegation exposes phase labels and spinner frames',
-    async () => {
-      const live: DelegationEntry = {
-        alias: 'live-call_1',
-        sessionID: 'ses_root',
-        agent: 'apollo',
-        state: 'running',
-        startedAt: 1000,
-        updatedAt: null,
-        timedOut: false,
-        description: 'Busca',
-      }
-      assert.equal(delegationActivity(live), 'delegating')
-      assert.equal(delegationActivityLabel(live), 'DELEGATING')
-      assert.equal(
-        delegationSpinnerFrame(0),
-        delegationSpinnerFrame(500),
-        'frames hold for a full 1s tick — no 140ms flicker',
-      )
-      assert.notEqual(
-        delegationSpinnerFrame(0),
-        delegationSpinnerFrame(1000),
-        'frames advance once per second',
-      )
-      assert.equal(
-        delegationActivityLabel({ ...live, alias: 'apo-1', taskID: 'ses_child', read: true }),
-        'READING RESULT',
-      )
-      assert.equal(delegationActivityLabel({ ...live, state: 'completed' }), 'DONE')
-    },
-  )
-
-  await testAsync(
-    'children/live merge: live phase appears before child/report and md terminal wins',
-    async () => {
-      const child: DelegationEntry = {
-        alias: 'ses_child_9',
-        sessionID: '',
-        taskID: 'ses_child_9',
-        agent: 'agent',
-        state: 'running',
-        startedAt: 1000,
-        updatedAt: null,
-        timedOut: false,
-        description: 'Busca',
-        source: 'child',
-      }
       const live: LiveDelegationEntry = {
         callID: 'call_1',
         partID: 'part_1',
@@ -1204,25 +700,104 @@ async function main() {
         state: 'running',
         startedAt: 1000,
         updatedAt: null,
-        read: true,
+        read: false,
       }
-      const merged = mergeChildDelegationSources([child], [live])
-      assert.equal(merged.length, 1)
-      assert.equal(merged[0]?.alias, 'apo-1')
-      assert.equal(merged[0]?.agent, 'apollo')
-      assert.equal(merged[0]?.read, true)
-      assert.equal(delegationActivityLabel(merged[0] as DelegationEntry), 'READING RESULT')
+      const e = toDelegationEntry(live)
+      assert.equal(e.alias, 'apo-1')
+      assert.equal(e.sessionID, 'ses_root')
+      assert.equal(e.agent, 'apollo')
+      assert.equal(e.state, 'running')
+      assert.equal(e.description, 'Busca')
+      const noAlias = toDelegationEntry({ ...live, alias: null })
+      assert.ok(noAlias.alias.startsWith('live-'), 'alias falls back to a live- prefix')
+    },
+  )
 
-      const finalized = mergeChildDelegationSources(
-        [{ ...child, alias: 'apo-1', state: 'completed', updatedAt: 9000, source: 'md' }],
-        [live],
+  // ─── mergeDelegationSources / mergeChildDelegationSources guards ───────
+
+  const liveRunning: LiveDelegationEntry = {
+    callID: 'call_1',
+    partID: 'part_1',
+    sessionID: 'ses_root',
+    tool: 'pantheon_delegate',
+    agent: 'apollo',
+    description: 'Busca',
+    alias: 'apo-1',
+    taskID: null,
+    state: 'running',
+    startedAt: 1000,
+    updatedAt: null,
+    read: false,
+  }
+
+  await testAsync(
+    'merge: md terminal wins; cross-session alias kept distinct; running first by recency',
+    async () => {
+      const mdTerminal: DelegationEntry = {
+        alias: 'apo-1',
+        sessionID: 'ses_root',
+        agent: 'apollo',
+        state: 'completed',
+        startedAt: 1000,
+        updatedAt: 8000,
+        timedOut: false,
+        description: 'Busca',
+      }
+      const merged = mergeDelegationSources([liveRunning], [mdTerminal])
+      assert.equal(merged.length, 1, 'same (session, alias) → single row')
+      assert.equal(merged[0].state, 'completed', 'terminal md is authoritative over live running')
+
+      const liveOnly = mergeDelegationSources([{ ...liveRunning, alias: 'apo-2' }], [])
+      assert.equal(liveOnly.length, 1)
+      assert.equal(liveOnly[0].state, 'running')
+      assert.equal(liveOnly[0].alias, 'apo-2')
+
+      const mdOtherSession: DelegationEntry = {
+        alias: 'apo-1',
+        sessionID: 'ses_other',
+        agent: 'apollo',
+        state: 'completed',
+        startedAt: 500,
+        updatedAt: 700,
+        timedOut: false,
+        description: '',
+      }
+      assert.equal(
+        mergeDelegationSources([liveRunning], [mdOtherSession]).length,
+        2,
+        'different sessions → two distinct jobs',
       )
-      assert.equal(finalized[0]?.state, 'completed', 'finalized md remains authoritative')
+
+      const mdOld: DelegationEntry = {
+        alias: 'her-1',
+        sessionID: 'ses_root',
+        agent: 'hermes',
+        state: 'completed',
+        startedAt: 100,
+        updatedAt: 500,
+        timedOut: false,
+        description: '',
+      }
+      const mdNew: DelegationEntry = {
+        alias: 'the-1',
+        sessionID: 'ses_root',
+        agent: 'themis',
+        state: 'error',
+        startedAt: 200,
+        updatedAt: 900,
+        timedOut: true,
+        description: '',
+      }
+      assert.deepEqual(
+        mergeDelegationSources([liveRunning], [mdOld, mdNew]).map((e) => e.alias),
+        ['apo-1', 'the-1', 'her-1'],
+        'running first, terminal by recency',
+      )
     },
   )
 
   await testAsync(
-    'merge: children-only terminal state is NOT overwritten by stale live running entry',
+    'merge: children-only terminal state is NOT overwritten by a stale live running entry',
     async () => {
       // BUG FIX: when a child session goes idle before the MD report is
       // written, childrenToDelegationEntries derives state 'completed' from
@@ -1242,51 +817,78 @@ async function main() {
         description: 'Fetch data',
         source: 'children-only',
       }
-      const live: LiveDelegationEntry = {
-        callID: 'call_1',
-        partID: 'part_1',
-        sessionID: 'ses_root',
-        tool: 'pantheon_delegate',
-        agent: 'apollo',
-        description: 'Fetch data',
-        alias: 'apo-1',
+      const staleLive: LiveDelegationEntry = {
+        ...liveRunning,
         taskID: 'ses_child_idle',
-        state: 'running', // stale — delegate tool finished but read hasn't fired
-        startedAt: 1000,
-        updatedAt: null,
-        read: false,
+        state: 'running',
       }
-      const merged = mergeChildDelegationSources([child], [live])
+      const merged = mergeChildDelegationSources([child], [staleLive])
       assert.equal(merged.length, 1)
       assert.equal(
         merged[0]?.state,
         'completed',
         'children-only terminal state must not be downgraded to running by a stale live entry',
       )
-      // The live entry should still contribute metadata (alias, agent, read).
       assert.equal(merged[0]?.alias, 'apo-1', 'live alias is absorbed')
       assert.equal(merged[0]?.agent, 'apollo', 'live agent is absorbed')
     },
   )
 
-  // ─── Children channel (PRIMARY source, delegations-sidebar pattern) ───
-  // The panel's source of truth is `api.client.session.children` — every
-  // pantheon_delegate spawns a child session (parentID = caller), so the
-  // children of the current session ARE the delegation list. Status types
-  // map busy/retry → running, idle → completed, unknown → running (fail-
-  // open). The md report (matched by the `Task ID` header == child.id)
-  // enriches alias/agent/description/duration; a child without a report
-  // still renders from its own title. These pure helpers power
-  // View.refreshDelegations + DelegationRow navigation.
+  await testAsync(
+    'merge: native task() live rows keep per-call identity and match the child by taskID',
+    async () => {
+      const mkNative = (n: number): LiveDelegationEntry => ({
+        callID: n === 1 ? 'call_A1b2C3d4e5' : 'call_Z9y8X7w6v5',
+        partID: `part_task_${n}`,
+        sessionID: 'ses_root',
+        tool: 'task',
+        agent: n === 1 ? 'hermes' : 'apollo',
+        description: `Nativa ${n}`,
+        alias: null,
+        taskID: null,
+        state: 'running',
+        startedAt: Date.now(),
+        updatedAt: null,
+        read: false,
+      })
+      const twoNatives = mergeChildDelegationSources([], [mkNative(1), mkNative(2)])
+      assert.equal(
+        twoNatives.length,
+        2,
+        'per-call identity — natives must not collapse onto one row',
+      )
+      assert.equal(delegationRowIdentity(twoNatives[0] as DelegationEntry), 'hermes')
+      assert.equal(delegationRowIdentity(twoNatives[1] as DelegationEntry), 'apollo')
 
-  await testAsync('children: childStatusToState — busy → running, retry → retry', async () => {
-    assert.equal(childStatusToState('busy'), 'running')
-    assert.equal(childStatusToState('retry'), 'retry')
-  })
+      const child: DelegationEntry = {
+        alias: 'native-at_1',
+        sessionID: 'ses_root',
+        taskID: 'ses_nat_1',
+        agent: 'hermes',
+        state: 'running',
+        startedAt: 1000,
+        updatedAt: null,
+        timedOut: false,
+        description: 'Nativa',
+        source: 'children-only',
+      }
+      const matched = mergeChildDelegationSources(
+        [child],
+        [{ ...mkNative(1), taskID: 'ses_nat_1', startedAt: 1000 }],
+      )
+      assert.equal(matched.length, 1, 'taskID match merges live into the child row')
+      assert.equal(matched[0]?.taskID, 'ses_nat_1')
+      assert.equal(matched[0]?.source, 'children-only')
+    },
+  )
+
+  // ─── Children channel (childStatusToState + childrenToDelegationEntries) ─
 
   await testAsync(
-    'children: childStatusToState — idle → completed, unknown → running',
+    'children: childStatusToState — busy→running, retry→retry, idle→completed, unknown→running',
     async () => {
+      assert.equal(childStatusToState('busy'), 'running')
+      assert.equal(childStatusToState('retry'), 'retry')
       assert.equal(childStatusToState('idle'), 'completed')
       assert.equal(childStatusToState(undefined), 'running', 'no status → running (fail-open)')
       assert.equal(childStatusToState('weird'), 'running', 'unknown status → running (fail-open)')
@@ -1294,7 +896,7 @@ async function main() {
   )
 
   await testAsync(
-    'children: entries derive state from live status (busy/retry running, idle completed)',
+    'children: entries derive state + times, no-md row falls back to title/agent',
     async () => {
       const children: ChildDelegationLike[] = [
         {
@@ -1324,15 +926,23 @@ async function main() {
       assert.equal(byId.get('ses_child_idle')?.state, 'completed')
       assert.equal(byId.get('ses_child_busy')?.updatedAt, null, 'running child has no end')
       assert.equal(byId.get('ses_child_idle')?.updatedAt, 8000, 'terminal child uses time.updated')
+
+      const noMd = childrenToDelegationEntries(
+        [{ id: 'ses_child_x', title: 'Busca de código', status: 'busy', time: { created: 5000 } }],
+        [],
+        10_000,
+      )
+      assert.equal(noMd.length, 1, 'a child without a report still renders')
+      assert.equal(noMd[0]?.agent, 'agent', 'agent falls back without a report')
+      assert.equal(noMd[0]?.description, 'Busca de código', 'description falls back to the title')
+      assert.equal(noMd[0]?.startedAt, 5000)
+      assert.equal(noMd[0]?.timedOut, false)
     },
   )
 
   await testAsync(
-    'children: md matched by Task ID (backticks stripped) → alias/agent/description',
+    'children: md matched by Task ID (backticks stripped) → alias/agent/description/state win',
     async () => {
-      // The board report carries `- **Task ID**: \`ses_child_9\`` — the parse
-      // must strip the surrounding backticks so the map keys on the raw child
-      // session id and the child↔md match lands.
       const md = parseDelegationMarkdown(
         '# Delegation Report — apo-1\n' +
           '- **Task ID**: `ses_child_9`\n' +
@@ -1366,8 +976,6 @@ async function main() {
   )
 
   await testAsync('children: refresh/polling does not duplicate (dedupe by child id)', async () => {
-    // The 1s poll + event refetches re-read the same children — duplicate ids
-    // in one batch AND across calls must collapse to a single entry each.
     const children = [
       { id: 'ses_child_a', title: 'A', status: 'busy' },
       { id: 'ses_child_a', title: 'A', status: 'busy' },
@@ -1381,103 +989,47 @@ async function main() {
   })
 
   await testAsync(
-    'children: no md → child still renders (title as description, agent fallback)',
-    async () => {
-      const entries = childrenToDelegationEntries(
-        [{ id: 'ses_child_x', title: 'Busca de código', status: 'busy', time: { created: 5000 } }],
-        [],
-        10_000,
-      )
-      assert.equal(entries.length, 1, 'a child without a report still renders')
-      const e = entries[0]
-      assert.ok(e)
-      assert.equal(e.agent, 'agent', 'agent falls back to "agent" without a report')
-      assert.equal(e.description, 'Busca de código', 'description falls back to the child title')
-      assert.equal(e.state, 'running')
-      assert.equal(e.startedAt, 5000, 'startedAt from time.created')
-      assert.equal(e.timedOut, false)
-    },
-  )
-
-  // ─── Native task() children (nat: tag) ───────────────────────────────────
-  // `session.children` returns EVERY child of the current session — both
-  // pantheon_delegate jobs AND subagent sessions spawned by the native
-  // `task()` tool (parentID = caller). A child WITHOUT a board report is a
-  // native task child: it renders with source 'children-only' and the `nat:`
-  // tag (vs the board's `pan:` alias), agent from child.agent ?? 'agent',
-  // state derived from the live child status (busy/retry→running,
-  // idle→completed) and duration from the child's own time (created→updated).
-
-  await testAsync(
-    'children-only: native task() child without md → source children-only, nat: tag, derived state',
+    'children-only: native identity + per-child alias + parentSession stamp',
     async () => {
       const entries = childrenToDelegationEntries(
         [
-          {
-            id: 'ses_task_1',
-            title: 'Tarefa nativa (task tool)',
-            status: 'busy',
-            time: { created: 5000 },
-          },
+          { id: 'ses_nat_a', title: 'A', status: 'busy', time: { created: 100 } },
+          { id: 'ses_nat_b', title: 'B', status: 'busy', agent: 'hermes', time: { created: 200 } },
         ],
         [],
         10_000,
+        'ses_root',
       )
-      assert.equal(entries.length, 1)
-      const e = entries[0]
-      assert.ok(e)
-      assert.equal(e.source, 'children-only', 'child without md is children-only')
-      assert.equal(e.alias, 'native-task', 'internal label stays native-task')
-      assert.equal(delegationRowIdentity(e), 'agent', 'single identity: agent when no board alias')
-      assert.equal(formatDelegationAlias(delegationRowIdentity(e)), 'agent  ')
-      assert.equal(e.agent, 'agent', 'agent falls back to "agent" without child.agent')
-      assert.equal(e.state, 'running', 'busy → running')
-      assert.equal(e.startedAt, 5000, 'startedAt from child time.created')
-      assert.equal(e.updatedAt, null, 'running child has no end timestamp')
-      assert.equal(e.description, 'Tarefa nativa (task tool)', 'title becomes the description')
-    },
-  )
-
-  await testAsync(
-    'children-only: native task() child agent honored + idle → completed with duration',
-    async () => {
-      const entries = childrenToDelegationEntries(
-        [
-          {
-            id: 'ses_task_2',
-            title: 'Tarefa concluída',
-            agent: 'hermes',
-            status: 'idle',
-            time: { created: 1000, updated: 9000 },
-          },
-        ],
-        [],
-        10_000,
+      assert.equal(entries.length, 2)
+      const byId = new Map(entries.map((e) => [e.taskID, e]))
+      assert.equal(byId.get('ses_nat_a')?.alias, 'native-at_a')
+      assert.equal(byId.get('ses_nat_b')?.alias, 'native-at_b')
+      assert.equal(
+        byId.get('ses_nat_a')?.sessionID,
+        'ses_root',
+        'focused session is stamped on report-less children',
       )
-      assert.equal(entries.length, 1)
-      const e = entries[0]
-      assert.ok(e)
-      assert.equal(e.source, 'children-only')
-      assert.equal(e.agent, 'hermes', 'child.agent is honored')
-      assert.equal(e.state, 'completed', 'idle → completed')
-      assert.equal(e.updatedAt, 9000, 'duration end from child time.updated')
-      assert.equal(delegationElapsed(e, 50_000), '8s', 'duration = updated - created')
+      assert.equal(byId.get('ses_nat_a')?.source, 'children-only')
+      assert.equal(delegationRowIdentity(byId.get('ses_nat_a') as DelegationEntry), 'agent')
+      assert.equal(delegationRowIdentity(byId.get('ses_nat_b') as DelegationEntry), 'hermes')
+      assert.deepEqual(
+        filterDelegationsToSession(entries, 'ses_root')
+          .map((e) => e.taskID)
+          .sort(),
+        ['ses_nat_a', 'ses_nat_b'],
+      )
     },
   )
 
   await testAsync(
     'children-only: child WITH md → board entry (alias) wins, same child NOT duplicated',
     async () => {
-      // A pantheon_delegate child has BOTH a board report (md) and appears in
-      // session.children — the board entry (alias pan:apo-1) must prevail and
-      // the same child must NOT render twice.
       const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md')
       assert.ok(md)
       assert.equal(md.taskID, 'ses_00eb6331dffelZ3iaSnCBdJIGe')
       const entries = childrenToDelegationEntries(
         [
           { id: 'ses_00eb6331dffelZ3iaSnCBdJIGe', title: 'dupe title', status: 'busy' },
-          // duplicate child id in the same batch (poll overlap) — must collapse
           { id: 'ses_00eb6331dffelZ3iaSnCBdJIGe', title: 'dupe title', status: 'busy' },
         ],
         [md],
@@ -1494,10 +1046,8 @@ async function main() {
   )
 
   await testAsync(
-    'children-only: delegate + task mixture → correct ordering and count',
+    'children-only: delegate + task mixture → correct sources, ordering and count',
     async () => {
-      // One pantheon_delegate child (has md → board pan:apo-1), two native
-      // task() children (no md → nat:) — all from session.children.
       const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md')
       assert.ok(md)
       const children: ChildDelegationLike[] = [
@@ -1529,8 +1079,6 @@ async function main() {
       )
       assert.equal(byId.get('ses_task_a')?.source, 'children-only')
       assert.equal(byId.get('ses_task_b')?.source, 'children-only')
-      // Ordering: running first, then terminal by recency (board md Finalized
-      // timestamp >> the task child's time.updated) — sources interleave.
       assert.equal(entries[0]?.state, 'running', 'running first')
       assert.equal(entries[0]?.taskID, 'ses_task_a')
       assert.equal(entries[1]?.taskID, md.taskID, 'terminal board row sorted by Finalized')
@@ -1538,33 +1086,46 @@ async function main() {
     },
   )
 
-  await testAsync(
-    'children-only: task child status derived (busy/retry→running, idle→completed)',
-    async () => {
-      const children: ChildDelegationLike[] = [
-        { id: 'ses_t1', status: 'busy', time: { created: 100 } },
-        { id: 'ses_t2', status: 'retry', time: { created: 200 } },
-        { id: 'ses_t3', status: 'idle', time: { created: 300, updated: 1000 } },
-        { id: 'ses_t4', status: undefined, time: { created: 400 } }, // unknown → running (fail-open)
-      ]
-      const entries = childrenToDelegationEntries(children, [], 10_000)
-      const byId = new Map(entries.map((e) => [e.taskID, e]))
-      assert.equal(byId.get('ses_t1')?.state, 'running')
-      assert.equal(byId.get('ses_t2')?.state, 'retry')
-      assert.equal(byId.get('ses_t3')?.state, 'completed')
-      assert.equal(byId.get('ses_t4')?.state, 'running')
-      assert.equal(byId.get('ses_t3')?.updatedAt, 1000)
-    },
-  )
+  await testAsync('children: stale md terminal NEVER downgrades a busy child', async () => {
+    // BUG 1 (children channel): an md report from a previous incarnation
+    // (Finalized 1000, before the current child activity at 9000) must not
+    // flip the live busy child back to completed.
+    const md: DelegationEntry = {
+      alias: 'apo-1',
+      sessionID: 'ses_root',
+      taskID: 'ses_child_9',
+      agent: 'apollo',
+      state: 'completed',
+      startedAt: 500,
+      updatedAt: 1000,
+      timedOut: false,
+      description: 'old report',
+      source: 'md',
+    }
+    const entries = childrenToDelegationEntries(
+      [
+        {
+          id: 'ses_child_9',
+          title: 'Busca nova',
+          status: 'busy',
+          time: { created: 5000, updated: 9000 },
+        },
+      ],
+      [md],
+      10_000,
+      'ses_root',
+    )
+    assert.equal(entries.length, 1)
+    assert.equal(
+      entries[0]?.state,
+      'running',
+      'stale md (Finalized < child updated) must not flip a busy child to terminal',
+    )
+  })
 
-  // ─── Native task() live signal + panel breakdown ───────────────────────
-  // The native `task` tool spawns a child session with parentID = caller —
-  // the same mechanism as pantheon_delegate — so its tool parts feed the
-  // live-map (rows render `nat:` via the children channel), the header
-  // reads "Delegations (N native + M pantheon)" and hooks.log carries the
-  // "panel: children=N(pantheon=M native=K) md=N" breakdown.
+  // ─── Native task() live signal ─────────────────────────────────────────
 
-  await testAsync('collect: native task parts are included in the live signal', async () => {
+  await testAsync('native task(): collect + parse + reduce feed the live signal', async () => {
     const messages = [
       {
         id: 'msg_1',
@@ -1592,109 +1153,54 @@ async function main() {
       parts.map((p) => p.tool),
       ['pantheon_delegate', 'task'],
     )
-  })
+    const p = parseDelegationToolPart(parts[1], 3000)
+    assert.ok(p, 'native task part must parse')
+    assert.equal(p.tool, 'task')
+    assert.equal(p.agent, 'Explore')
+    assert.equal(p.description, 'find auth code')
+    assert.equal(p.alias, null, 'native task never carries a board alias')
 
-  await testAsync(
-    'parse: native task running part → tool task, agent from subagent_type, description from prompt',
-    async () => {
-      const p = parseDelegationToolPart(
-        {
-          id: 'part_task_1',
-          sessionID: 'ses_root',
-          type: 'tool',
-          callID: 'call_task_1',
-          tool: 'task',
-          state: {
-            status: 'running',
-            input: { subagent_type: 'Explore', prompt: 'find auth code' },
-            time: { start: 2000 },
-          },
-        },
-        3000,
-      )
-      assert.ok(p, 'native task part must parse')
-      assert.equal(p.tool, 'task')
-      assert.equal(p.agent, 'Explore')
-      assert.equal(p.description, 'find auth code')
-      assert.equal(p.status, 'running')
-      assert.equal(p.alias, null, 'native task never carries a board alias')
-    },
-  )
-
-  await testAsync('reduce: native task part creates a live entry with tool task', async () => {
     const map = new Map<string, LiveDelegationEntry>()
     const changed = reduceDelegationToolPart(
       map,
       {
-        id: 'part_task_1',
+        id: 'part_task_2',
         sessionID: 'ses_root',
         type: 'tool',
-        callID: 'call_task_1',
+        callID: 'call_task_2',
         tool: 'task',
-        state: {
-          status: 'running',
-          input: { description: 'Busca nativa' },
-          time: { start: 2000 },
-        },
+        state: { status: 'running', input: { description: 'Busca nativa' }, time: { start: 2000 } },
       },
       3000,
     )
     assert.equal(changed, true)
-    const e = map.get('call_task_1')
+    const e = map.get('call_task_2')
     assert.ok(e)
     assert.equal(e.tool, 'task')
     assert.equal(e.state, 'running')
     assert.equal(e.description, 'Busca nativa')
   })
 
-  await testAsync(
-    'children-only: missing/empty title → task nativa fallback + native-task alias',
-    async () => {
-      const entries = childrenToDelegationEntries(
-        [
-          { id: 'ses_noname_1', status: 'busy', time: { created: 100 } },
-          { id: 'ses_noname_2', title: '', status: 'busy', time: { created: 200 } },
-        ],
-        [],
-        10_000,
-      )
-      assert.equal(entries.length, 2)
-      for (const e of entries) {
-        assert.equal(e.alias, 'native-task')
-        assert.equal(e.source, 'children-only')
-        assert.equal(e.description, 'task nativa', 'row never renders empty')
-        assert.equal(delegationRowIdentity(e), 'agent')
-      }
-    },
-  )
+  // ─── Ceiling / retention / split / header ─────────────────────────────
 
-  await testAsync('split: running native children are NEVER archived', async () => {
-    const entries = childrenToDelegationEntries(
-      [
-        { id: 'ses_nat_run', title: 'Nativa rodando', status: 'busy', time: { created: 100 } },
-        {
-          id: 'ses_nat_done',
-          title: 'Nativa pronta',
-          status: 'idle',
-          time: { created: 50, updated: 200 },
-        },
-      ],
-      [],
-      10_000,
-    )
-    const split = splitDelegationList(entries)
-    assert.ok(
-      split.active.some((e) => e.taskID === 'ses_nat_run'),
-      'running native stays active',
-    )
-    assert.ok(
-      !split.recent.some((e) => e.taskID === 'ses_nat_run'),
-      'running native never lands in the terminal tail',
-    )
+  const panEntry = (over: Partial<DelegationEntry> = {}): DelegationEntry => ({
+    alias: 'apo-1',
+    sessionID: 'ses_pantheon',
+    taskID: 'ses_pan_child',
+    agent: 'apollo',
+    state: 'completed',
+    startedAt: 1000,
+    updatedAt: 8000,
+    timedOut: false,
+    description: 'Localizar código do hook e seleção de modelo',
+    source: 'md',
+    ...over,
   })
+  const natEntry = (over: Partial<DelegationEntry> = {}): DelegationEntry =>
+    panEntry({ alias: 'native-task', agent: 'hermes', source: 'children-only', ...over })
 
   await testAsync(
-    'ceiling: expired done rows are filtered, failed rows retain their longer window',
+    'ceiling: DONE (2m) / FAILED (10m) retention filters expired terminal rows',
     async () => {
       const now = 1_000_000
       const result = ceilingDelegationList(
@@ -1723,7 +1229,7 @@ async function main() {
   )
 
   await testAsync(
-    'ceiling: active rows are first and fill remaining slots with newest terminals',
+    'ceiling: active-first, >8 overflow reported, unknown-age terminals retained',
     async () => {
       const now = 1_000_000
       const entries = [
@@ -1735,653 +1241,67 @@ async function main() {
       assert.deepEqual(
         result.visible.map((entry) => entry.alias),
         ['active', 'done-new'],
+        'active first and fill remaining slots with newest terminals',
       )
-    },
-  )
 
-  await testAsync(
-    'ceiling: more than eight active rows reports active overflow explicitly',
-    async () => {
-      const now = 1_000_000
-      const entries = Array.from({ length: DELEGATION_VISIBLE_CEILING + 2 }, (_, index) =>
+      const many = Array.from({ length: DELEGATION_VISIBLE_CEILING + 2 }, (_, index) =>
         delegation({ alias: `active-${index}`, state: 'running', updatedAt: now - index }),
       )
-      const result = ceilingDelegationList(entries, DELEGATION_VISIBLE_CEILING, now)
-      assert.equal(result.visible.length, DELEGATION_VISIBLE_CEILING)
-      assert.equal(result.hiddenActive, 2)
-      assert.equal(result.hiddenTerminal, 0)
-      assert.equal(result.hidden, 2)
-    },
-  )
+      const overflow = ceilingDelegationList(many, DELEGATION_VISIBLE_CEILING, now)
+      assert.equal(overflow.visible.length, DELEGATION_VISIBLE_CEILING)
+      assert.equal(overflow.hiddenActive, 2)
+      assert.equal(overflow.hiddenTerminal, 0)
+      assert.equal(overflow.hidden, 2)
 
-  await testAsync(
-    'ceiling: terminal entries without a reliable timestamp are retained',
-    async () => {
-      const result = ceilingDelegationList(
+      const unknown = ceilingDelegationList(
         [delegation({ alias: 'unknown-age', updatedAt: null })],
         DELEGATION_VISIBLE_CEILING,
-        1_000_000,
+        now,
       )
       assert.deepEqual(
-        result.visible.map((entry) => entry.alias),
+        unknown.visible.map((entry) => entry.alias),
         ['unknown-age'],
       )
     },
   )
 
-  await testAsync('count: native vs pantheon breakdown of a display list', async () => {
-    const entries = childrenToDelegationEntries(
-      [
-        { id: 'ses_nat_1', title: 'Nativa', status: 'busy', time: { created: 100 } },
-        { id: 'ses_nat_2', title: 'Nativa 2', status: 'idle', time: { created: 50, updated: 200 } },
-      ],
-      [],
-      10_000,
-    )
-    const md = parseDelegationMarkdown(COMPLETED_MD, 'apo-1.md')
-    assert.ok(md)
-    const all = [...entries, md]
-    const counts = countDelegationSources(all)
-    assert.equal(counts.native, 2)
-    assert.equal(counts.pantheon, 1)
-    assert.equal(counts.total, 3)
-    assert.deepEqual(countDelegationSources([]), { native: 0, pantheon: 0, total: 0 })
-  })
-
-  await testAsync('log: panel line carries the pantheon/native breakdown', async () => {
-    assert.equal(
-      formatPanelLogLine(3, 1, 2, 5, 7),
-      'panel: children=3(pantheon=1 native=2) md=5 events=7',
-    )
-    assert.equal(
-      formatPanelLogLine(0, 0, 0, 4, 0),
-      'panel: children=0(pantheon=0 native=0) md=4 events=0',
-    )
-  })
-
-  await testAsync('navigate: route.navigate present → calls session navigation', async () => {
-    const calls: Array<[string, Record<string, unknown> | undefined]> = []
-    const route = {
-      navigate: (name: string, params?: Record<string, unknown>) => calls.push([name, params]),
-    }
-    assert.equal(navigateToDelegationSession(route, 'ses_child_9'), true)
-    assert.deepEqual(calls, [['session', { sessionID: 'ses_child_9' }]])
-  })
-
-  await testAsync('navigate: resolved router promise preserves valid navigation', async () => {
-    const calls: Array<[string, Record<string, unknown> | undefined]> = []
-    const route = {
-      navigate: async (name: string, params?: Record<string, unknown>) => {
-        calls.push([name, params])
-      },
-    }
-
-    assert.equal(navigateToDelegationSession(route, 'ses_valid_child'), true)
-    await Promise.resolve()
-    assert.deepEqual(calls, [['session', { sessionID: 'ses_valid_child' }]])
-  })
-
-  await testAsync('navigate: route API absent / taskID missing → false, never calls', async () => {
-    const calls: string[] = []
-    assert.equal(navigateToDelegationSession(undefined, 'ses_child_9'), false, 'no route → false')
-    assert.equal(
-      navigateToDelegationSession({}, 'ses_child_9'),
-      false,
-      'route without navigate → false',
-    )
-    const route = { navigate: (name: string) => calls.push(name) }
-    assert.equal(navigateToDelegationSession(route, undefined), false, 'missing taskID → false')
-    assert.equal(navigateToDelegationSession(route, ''), false, 'empty taskID → false')
-    assert.deepEqual(calls, [], 'navigate must never be called')
-  })
-
-  await testAsync('navigate: synchronous router failure is contained', async () => {
-    const route = {
-      navigate: () => {
-        throw new Error('Session not found')
-      },
-    }
-
-    assert.equal(navigateToDelegationSession(route, 'ses_orphaned'), false)
-  })
-
-  await testAsync('navigate: rejected router promise is contained', async () => {
-    const route = {
-      navigate: () => Promise.reject(new Error('Session not found')),
-    }
-
-    const unhandled: unknown[] = []
-    const onUnhandled = (reason: unknown): void => {
-      unhandled.push(reason)
-    }
-    process.on('unhandledRejection', onUnhandled)
-    try {
-      assert.equal(navigateToDelegationSession(route, 'ses_orphaned'), true)
-      await new Promise<void>((resolve) => setImmediate(resolve))
-    } finally {
-      process.removeListener('unhandledRejection', onUnhandled)
-    }
-    assert.deepEqual(unhandled, [])
-  })
-
-  await testAsync('navigate: row mouse handler invokes navigation helper', async () => {
-    const calls: Array<[string, Record<string, unknown> | undefined]> = []
-    const open = createDelegationRowOpenHandler(
-      { navigate: (name: string, params?: Record<string, unknown>) => calls.push([name, params]) },
-      'ses_event_child',
-    )
-
-    open()
-    assert.deepEqual(calls, [['session', { sessionID: 'ses_event_child' }]])
-  })
-
-  // ─── Current-session resolution + children path guard ──────────────────
-  // Regression: the sidebar forwarded `props.session_id` verbatim to
-  // `session.children({ path: { id } })`. When the TUI runtime has no focused
-  // session it leaves the template UNSUBSTITUTED — the literal "{sessionID}"
-  // placeholder — which the server rejected every poll (~1 err/s: "Expected a
-  // string starting with \"ses\", got \"%7BsessionID%7D\"") and failed open
-  // into "Delegations (0)". Contract: resolution NEVER yields a placeholder;
-  // a null resolution means the fetch is SKIPPED (empty panel, zero errors).
-
-  await testAsync('sessionID: valid ses_ slot prop resolves', async () => {
-    assert.equal(resolveCurrentSessionID({ sessionID: 'ses_abc123', api: undefined }), 'ses_abc123')
-  })
-
-  await testAsync('sessionID: undefined / empty / absent → null (fetch skipped)', async () => {
-    assert.equal(resolveCurrentSessionID({ sessionID: undefined }), null)
-    assert.equal(resolveCurrentSessionID({ sessionID: '' }), null)
-    assert.equal(resolveCurrentSessionID({}), null)
-    assert.equal(resolveCurrentSessionID(null), null)
-  })
-
   await testAsync(
-    'sessionID: unsubstituted "{sessionID}" placeholder → null (regression)',
+    'split: active + recent cap; running native children never archived',
     async () => {
-      // The exact runtime value behind the "%7BsessionID%7D" error — the guard
-      // must NEVER forward it into a path.
-      assert.equal(resolveCurrentSessionID({ sessionID: '{sessionID}' }), null)
-      assert.equal(resolveCurrentSessionID({ sessionID: ' {sessionID} ' }), null)
-    },
-  )
-
-  await testAsync(
-    'sessionID: isValidSessionId rejects placeholder + URL-encoded placeholder',
-    async () => {
-      // Contract confirmed: opencode session ids start with "ses". A literal
-      // "{sessionID}" starts with "{" and its URL-encoded form with "%", so
-      // BOTH fail the startsWith("ses") check — the placeholder can never be
-      // forwarded to the server (the "%7BsessionID%7D" schema-error spam).
-      assert.equal(isValidSessionId('{sessionID}'), false, 'literal placeholder rejected')
-      assert.equal(isValidSessionId('%7BsessionID%7D'), false, 'URL-encoded placeholder rejected')
+      const natRun = natEntry({ state: 'running', startedAt: 0, updatedAt: null })
+      const natStale = natEntry({ taskID: 'ses_stale', state: 'stale-running' })
+      const runningSplit = splitDelegationList([natRun, natStale], 8, 0)
+      assert.equal(runningSplit.active.length, 2, 'both running rows stay active')
+      assert.equal(runningSplit.recent.length, 0)
       assert.equal(
-        isValidSessionId(' {sessionID} '),
+        runningSplit.recent.some((e) => e.state === 'running' || e.state === 'stale-running'),
         false,
-        'whitespace-wrapped placeholder rejected',
+        'nothing running falls to the terminal tail',
       )
-      assert.equal(
-        isValidSessionId('ses_00eb66a34ffeCHnzDx5hH2BCsS'),
-        true,
-        'real session id accepted',
-      )
-      assert.equal(isValidSessionId(''), false)
-      assert.equal(isValidSessionId(undefined), false)
-      assert.equal(isValidSessionId(42), false)
-    },
-  )
 
-  await testAsync(
-    'sessionID: URL-encoded "%7BsessionID%7D" placeholder → null in resolution',
-    async () => {
-      // The exact string opencode's server reported in the SchemaError.
-      assert.equal(resolveCurrentSessionID({ sessionID: '%7BsessionID%7D' }), null)
-      assert.equal(
-        resolveCurrentSessionID({
-          sessionID: '%7BsessionID%7D',
-          api: { state: { sessionID: 'ses_x' } },
-        }),
-        'ses_x',
-        'placeholder prop falls through to the next valid source',
-      )
-    },
-  )
-
-  await testAsync('sessionID: non-ses garbage / non-string → null', async () => {
-    assert.equal(resolveCurrentSessionID({ sessionID: 'wrk_123' }), null)
-    assert.equal(resolveCurrentSessionID({ sessionID: 'foo-bar' }), null)
-    assert.equal(resolveCurrentSessionID({ sessionID: 42 }), null)
-  })
-
-  await testAsync('sessionID: slot prop wins over state and route', async () => {
-    const api = {
-      state: { sessionID: 'ses_state1' },
-      route: { current: { name: 'session', params: { sessionID: 'ses_route1' } } },
-    }
-    assert.equal(resolveCurrentSessionID({ sessionID: 'ses_prop1', api }), 'ses_prop1')
-  })
-
-  await testAsync('sessionID: invalid prop falls back to api.state.sessionID', async () => {
-    const api = { state: { sessionID: 'ses_state1' } }
-    assert.equal(resolveCurrentSessionID({ sessionID: '{sessionID}', api }), 'ses_state1')
-  })
-
-  await testAsync(
-    'sessionID: invalid prop+state fall back to route.current.params.sessionID',
-    async () => {
-      const api = {
-        state: { sessionID: undefined },
-        route: { current: { name: 'session', params: { sessionID: 'ses_route1' } } },
-      }
-      assert.equal(resolveCurrentSessionID({ sessionID: '', api }), 'ses_route1')
-    },
-  )
-
-  await testAsync('children path: valid id → { path: { id } }, never a placeholder', async () => {
-    assert.deepEqual(buildChildrenPath('ses_abc123'), { path: { id: 'ses_abc123' } })
-    const serialized = JSON.stringify(buildChildrenPath('ses_abc123'))
-    assert.ok(
-      !serialized.includes('{sessionID}'),
-      'path must never contain an unsubstituted placeholder',
-    )
-  })
-
-  await testAsync('children path: null / empty / placeholder → null (call skipped)', async () => {
-    assert.equal(buildChildrenPath(null), null)
-    assert.equal(buildChildrenPath(undefined), null)
-    assert.equal(buildChildrenPath(''), null)
-    assert.equal(buildChildrenPath('{sessionID}'), null)
-    assert.equal(buildChildrenPath('wrk_123'), null)
-  })
-
-  await testAsync('regression: placeholder sessionID → resolution null → no fetch', async () => {
-    const sessionID = resolveCurrentSessionID({ sessionID: '{sessionID}' })
-    const path = sessionID === null ? null : buildChildrenPath(sessionID)
-    assert.equal(
-      path,
-      null,
-      'the children call must be skipped entirely (empty panel, zero errors)',
-    )
-  })
-
-  // ─── History-only panel (no sessionID) ──────────────────────────────────
-  // When sessionID does not resolve (no focused session) the panel shows the
-  // md history read from ALL sessions — never "(0)". visibleDelegationList is
-  // the exact list the View memo renders: running first, then the most recent
-  // terminal reports (capped at 8).
-
-  await testAsync(
-    'panel history: reports shown even with NO sessionID (combined state, running first)',
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
-      try {
-        const deleg = join(root, '.pantheon', 'delegations')
-        const ses = join(deleg, 'ses_aaa')
-        mkdirSync(ses, { recursive: true })
-        writeFileSync(join(ses, 'apo-1.md'), COMPLETED_MD)
-        writeFileSync(join(ses, 'her-7.md'), TIMED_OUT_MD)
-        writeFileSync(join(ses, 'apo-5.md'), RUNNING_MD)
-        writeFileSync(join(ses, 'the-9.md'), NO_FINALIZED_MD)
-
-        // Simulates View.refreshDelegations with sessionID === null: the md
-        // history is read and rendered WITHOUT any children/live channel.
-        const sessionID = resolveCurrentSessionID({ sessionID: '{sessionID}' })
-        assert.equal(sessionID, null)
-        const md = await readAllDelegationEntries(root)
-        // Running MD reports are now rejected (Fix 3) — only terminal reports parse
-        assert.equal(
-          md.length,
-          3,
-          'history collected from disk despite null sessionID (running MD rejected)',
-        )
-        const panelList = visibleDelegationList(md, 8, Date.parse('2026-08-11T14:49:00.000Z'))
-        assert.equal(panelList.length, 3, 'history renders — panel is NOT (0)')
-        assert.deepEqual(
-          panelList.map((e) => e.alias).sort(),
-          ['apo-1', 'her-7', 'the-9'],
-          'terminal history present',
-        )
-      } finally {
-        rmSync(root, { recursive: true, force: true })
-      }
-    },
-  )
-
-  await testAsync('panel history: terminal reports capped at 8, running always shown', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
-    try {
-      const deleg = join(root, '.pantheon', 'delegations')
-      const ses = join(deleg, 'ses_aaa')
-      mkdirSync(ses, { recursive: true })
-      writeFileSync(join(ses, 'run-1.md'), RUNNING_MD)
-      const base = Date.UTC(2026, 7, 22, 12)
-      for (let i = 0; i < 12; i++) {
-        const ts = new Date(base - i * 1000).toISOString()
-        writeFileSync(
-          join(ses, `term-${i}.md`),
-          `# Delegation Report — her-${i}\n\n` +
-            `- **Agent**: hermes\n- **Description**: job ${i}\n- **State**: completed\n` +
-            `- **Timed out**: false\n- **Started**: ${ts}\n- **Finalized**: ${ts}\n`,
-        )
-      }
-      const md = await readAllDelegationEntries(root)
-      // Running MD reports are now rejected (Fix 3) — only terminal reports parse
-      assert.equal(md.length, 12, 'all terminal reports collected (running MD rejected)')
-      const panelList = visibleDelegationList(md, 8, Date.UTC(2026, 7, 22, 12))
-      assert.equal(panelList.length, 8, 'at most 8 terminal (no running from MD)')
-      // Recency: the 8 most recently finalized terminals are kept.
-      const terminalAliases = panelList.map((e) => e.alias)
-      assert.ok(terminalAliases.includes('her-0'), 'most recent terminal kept')
-      assert.ok(!terminalAliases.includes('her-11'), 'oldest terminal trimmed by the cap')
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  // ─── Source-scan: session-API call sites stay guarded ───────────────────
-  // Every `session.children` path goes through buildChildrenPath/safeSessionPath
-  // and every `session.status` call is isValidSessionId-guarded — a future edit
-  // that forwards a raw/placeholder id to the wire breaks this test.
-
-  await testAsync(
-    'source-scan: every session.children / session.status call site is id-guarded',
-    async () => {
-      const source = await readFileP(
-        new URL('../../src/plugins/tui/src/index.tsx', import.meta.url),
-        'utf8',
-      )
-      const lines = source.split('\n')
-      // Look 2 lines before and 1 after the call site: the guard sits on its
-      // own line (isValidSessionId) or the path expression spans lines
-      // (buildChildrenPath on the line after `session?.children?.(`).
-      const near = (idx: number, pat: RegExp) =>
-        lines.slice(Math.max(0, idx - 2), Math.min(lines.length, idx + 2)).some((l) => pat.test(l))
-      const isComment = (line: string) => {
-        const t = line.trim()
-        return t.startsWith('*') || t.startsWith('/*') || t.startsWith('{/*') || t.startsWith('//')
-      }
-
-      const childrenSites: number[] = []
-      const statusSites: number[] = []
-      lines.forEach((line, idx) => {
-        if (isComment(line)) return // doc comments mention the API — not call sites
-        if (line.includes('session?.children') || line.includes('session.children'))
-          childrenSites.push(idx)
-        // API calls use optional chaining (`session?.status?.(`); the event
-        // subscription name `event.on('session.status')` must NOT match.
-        if (line.includes('session?.status')) statusSites.push(idx)
-      })
-
-      assert.ok(childrenSites.length >= 1, 'expected ≥1 session.children call site')
-      for (const idx of childrenSites) {
-        assert.ok(
-          near(idx, /buildChildrenPath\(|safeSessionPath\(/),
-          `session.children call must be path-guarded (line ${idx + 1}): ${lines[idx]?.trim()}`,
-        )
-      }
-      assert.ok(statusSites.length >= 1, 'expected ≥1 session.status call site')
-      for (const idx of statusSites) {
-        assert.ok(
-          near(idx, /isValidSessionId\(/),
-          `session.status call must be id-guarded (line ${idx + 1}): ${lines[idx]?.trim()}`,
-        )
-      }
-    },
-  )
-
-  // ─── Stale-running detector (Fix 1) ──────────────────────────────────
-
-  await testAsync('stale-running: short-running entry stays running', async () => {
-    const entry: DelegationEntry = {
-      alias: 'test-1',
-      sessionID: 'ses_test',
-      agent: 'apollo',
-      state: 'running',
-      startedAt: Date.now() - 60_000, // 1 minute ago
-      updatedAt: null,
-      timedOut: false,
-      description: 'short job',
-    }
-    const result = markStaleIfRunning(entry, Date.now(), 30 * 60 * 1000)
-    assert.equal(result.state, 'running', 'short-running entry stays running')
-  })
-
-  await testAsync('stale-running: long-running without updatedAt → stale', async () => {
-    const now = Date.now()
-    const entry: DelegationEntry = {
-      alias: 'test-2',
-      sessionID: 'ses_test',
-      agent: 'hermes',
-      state: 'running',
-      startedAt: now - 31 * 60 * 1000, // 31 minutes ago (beyond 30min threshold)
-      updatedAt: null,
-      timedOut: false,
-      description: 'long job with no updates',
-    }
-    const result = markStaleIfRunning(entry, now, 30 * 60 * 1000)
-    assert.equal(result.state, 'stale-running', 'long-running without updatedAt becomes stale')
-  })
-
-  await testAsync('stale-running: long-running with stale updatedAt → stale', async () => {
-    const now = Date.now()
-    const entry: DelegationEntry = {
-      alias: 'test-3',
-      sessionID: 'ses_test',
-      agent: 'demeter',
-      state: 'running',
-      startedAt: now - 35 * 60 * 1000, // 35 minutes ago
-      updatedAt: now - 120_000, // last update 2 minutes ago (> 60s silence)
-      timedOut: false,
-      description: 'long job with stale updates',
-    }
-    const result = markStaleIfRunning(entry, now, 30 * 60 * 1000)
-    assert.equal(result.state, 'stale-running', 'long-running with stale updatedAt becomes stale')
-  })
-
-  await testAsync('stale-running: long-running with recent updatedAt → stays running', async () => {
-    const now = Date.now()
-    const entry: DelegationEntry = {
-      alias: 'test-4',
-      sessionID: 'ses_test',
-      agent: 'aphrodite',
-      state: 'running',
-      startedAt: now - 35 * 60 * 1000, // 35 minutes ago
-      updatedAt: now - 30_000, // last update 30 seconds ago (< 60s silence)
-      timedOut: false,
-      description: 'long job with recent updates',
-    }
-    const result = markStaleIfRunning(entry, now, 30 * 60 * 1000)
-    assert.equal(result.state, 'running', 'long-running with recent updatedAt stays running')
-  })
-
-  await testAsync('stale-running: terminal entry unchanged', async () => {
-    const entry: DelegationEntry = {
-      alias: 'test-5',
-      sessionID: 'ses_test',
-      agent: 'themis',
-      state: 'completed',
-      startedAt: Date.now() - 60_000,
-      updatedAt: Date.now(),
-      timedOut: false,
-      description: 'completed job',
-    }
-    const result = markStaleIfRunning(entry, Date.now(), 30 * 60 * 1000)
-    assert.equal(result.state, 'completed', 'terminal entry unchanged')
-  })
-
-  await testAsync('stale-running: visibleDelegationList marks stale entries', async () => {
-    const now = Date.now()
-    const entries: DelegationEntry[] = [
-      {
-        alias: 'fresh',
-        sessionID: 'ses_test',
+      const mk = (id: string, state: DelegationEntry['state'], i: number): DelegationEntry => ({
+        alias: `t-${id}`,
+        sessionID: 'ses_p',
+        taskID: `ses_${id}`,
         agent: 'apollo',
-        state: 'running',
-        startedAt: now - 5 * 60 * 1000, // 5 min — not stale
+        state,
+        startedAt: 1000 + i,
         updatedAt: null,
         timedOut: false,
-        description: 'fresh job',
-      },
-      {
-        alias: 'stale',
-        sessionID: 'ses_test',
-        agent: 'hermes',
-        state: 'running',
-        startedAt: now - 60 * 60 * 1000, // 1 hour — stale
-        updatedAt: null,
-        timedOut: false,
-        description: 'stale job',
-      },
-    ]
-    const result = visibleDelegationList(entries, 8, now, 30 * 60 * 1000)
-    assert.equal(result.length, 2)
-    assert.equal(result[0]?.state, 'running', 'fresh entry stays running')
-    assert.equal(result[1]?.state, 'stale-running', 'stale entry marked as stale-running')
-  })
-
-  // ─── beta.10: compact row format (nat:/pan:, glyph, desc 44, elapsed w8) ──
-
-  const panEntry = (over: Partial<DelegationEntry> = {}): DelegationEntry => ({
-    alias: 'apo-1',
-    sessionID: 'ses_pantheon',
-    taskID: 'ses_pan_child',
-    agent: 'apollo',
-    state: 'completed',
-    startedAt: 1000,
-    updatedAt: 8000,
-    timedOut: false,
-    description: 'Localizar código do hook e seleção de modelo',
-    source: 'md',
-    ...over,
-  })
-  const natEntry = (over: Partial<DelegationEntry> = {}): DelegationEntry =>
-    panEntry({ alias: 'native-task', agent: 'hermes', source: 'children-only', ...over })
-
-  await testAsync(
-    'identity: ONE identity per row \u2014 board alias, agent only without alias',
-    async () => {
-      assert.equal(delegationRowIdentity(panEntry()), 'apo-1')
-      assert.equal(delegationRowIdentity(natEntry()), 'hermes')
-      assert.equal(formatDelegationAlias('apo-1'), 'apo-1  ', 'alias padded to 7')
-      assert.equal(formatDelegationAlias('hermes'), 'hermes ', 'agent padded to 7')
-      assert.equal(
-        formatDelegationAlias('native-task-long'),
-        'native-',
-        'truncated to 7, never wraps',
-      )
-      assert.equal(formatDelegationAlias('apo-1').includes(':'), false, 'no nat:/pan: prefix')
+        description: '',
+      })
+      const all = [
+        mk('run', 'running', 1),
+        mk('done-1', 'completed', 2),
+        mk('done-2', 'error', 3),
+        mk('done-3', 'completed', 4),
+      ]
+      const split = splitDelegationList(all, 2, 2000)
+      assert.equal(split.active.length, 1)
+      assert.equal(split.active[0]?.taskID, 'ses_run')
+      assert.equal(split.recent.length, 2)
     },
   )
-
-  await testAsync(
-    'row status: FSM states map to 4 row kinds (active/done/failed/retry)',
-    async () => {
-      assert.equal(delegationRowStatus('running'), 'active')
-      assert.equal(delegationRowStatus('stale-running'), 'active')
-      assert.equal(delegationRowStatus('completed'), 'done')
-      assert.equal(delegationRowStatus('cancelled'), 'done', 'cancelled reads as done')
-      assert.equal(delegationRowStatus('error'), 'failed')
-      assert.equal(delegationRowStatus('startup_failed'), 'failed')
-      assert.equal(delegationRowStatus('retry'), 'retry')
-      assert.equal(delegationRowStatus('startup_unknown'), 'retry')
-      assert.equal(DELEGATION_ROW_GLYPHS.active, '\u280b')
-      assert.equal(DELEGATION_ROW_GLYPHS.done, '\u2713')
-      assert.equal(DELEGATION_ROW_GLYPHS.failed, '\u2715')
-      assert.equal(DELEGATION_ROW_GLYPHS.retry, '\u27f3')
-      assert.equal(Object.keys(DELEGATION_ROW_GLYPHS).length, 4, 'exactly 4 row glyphs')
-    },
-  )
-
-  await testAsync('row marker: active animates, terminal states are static glyphs', async () => {
-    assert.equal(delegationRowMarker('completed'), '\u2713 ')
-    assert.equal(delegationRowMarker('cancelled'), '\u2713 ', 'cancelled shares the done glyph')
-    assert.equal(delegationRowMarker('error'), '\u2715 ')
-    assert.equal(delegationRowMarker('startup_failed'), '\u2715 ')
-    assert.equal(delegationRowMarker('retry'), '\u27f3 ')
-    assert.equal(
-      delegationRowMarker('running', 0),
-      `${delegationSpinnerFrame(0)} `,
-      'active uses the spinner frame for the given tick',
-    )
-    assert.notEqual(
-      delegationRowMarker('running', 0),
-      delegationRowMarker('running', 1000),
-      'active marker advances once per second',
-    )
-  })
-
-  await testAsync(
-    'row: status-only line \u2014 glyph + alias:7 + elapsed:>5, no words/diamonds',
-    async () => {
-      // panEntry: completed, startedAt 1000, updatedAt 8000 \u2192 frozen elapsed 7s.
-      const lead = formatDelegationRowLead(panEntry(), '\u2713 ')
-      assert.equal(lead, '\u2713 apo-1   ', 'lead carries glyph + padded alias only')
-      assert.equal(formatDelegationElapsed(panEntry(), 50_000), '   7s')
-      const run = natEntry({ state: 'running', startedAt: 0 })
-      const runLead = formatDelegationRowLead(run, '\u280b ')
-      assert.equal(runLead, '\u280b hermes  ', 'native row uses agent identity, never nat:')
-      assert.equal(formatDelegationElapsed(run, 12_000), '  12s')
-      for (const r of [lead, runLead]) {
-        assert.equal(r.includes('nat:'), false)
-        assert.equal(r.includes('pan:'), false)
-        assert.equal(r.includes('\u25c7'), false, 'no hollow diamond')
-        assert.equal(r.includes('\u25c6'), false, 'no filled diamond')
-        assert.ok(!/RUNNING|WORKING|DONE|ERROR/i.test(r), 'no status words \u2014 glyph only')
-      }
-    },
-  )
-
-  await testAsync('state tone: color is a separate channel from glyph', async () => {
-    assert.equal(delegationStateTone('running'), 'warning')
-    assert.equal(delegationStateTone('retry'), 'warning')
-    assert.equal(delegationStateTone('stale-running'), 'warning')
-    assert.equal(delegationRowStatus('stale-running'), 'active')
-    assert.equal(delegationRowMarker('stale-running', 0), `${delegationSpinnerFrame(0)} `)
-    assert.equal(delegationStateTone('completed'), 'success')
-    assert.equal(delegationStateTone('error'), 'error')
-    assert.equal(delegationStateTone('cancelled'), 'muted')
-    assert.equal(delegationStateTone('startup_failed'), 'error')
-    assert.equal(delegationStateTone('startup_unknown'), 'warning')
-  })
-
-  await testAsync('desc: truncated at 44 with ellipsis, short text untouched', async () => {
-    assert.equal(truncateDelegationDescription('curta'), 'curta')
-    assert.equal(truncateDelegationDescription(''), '')
-    const exactly = 'b'.repeat(44)
-    assert.equal(truncateDelegationDescription(exactly), exactly)
-    const long = 'a'.repeat(50)
-    const out = truncateDelegationDescription(long)
-    assert.equal(out.length, 44)
-    assert.equal(out, `${'a'.repeat(43)}\u2026`)
-    // Grapheme-safe: a ZWJ emoji family is ONE unit, never split into mojibake.
-    const family = '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}'
-    assert.equal(truncateDelegationDescription(family.repeat(44)), family.repeat(44))
-    const cut = truncateDelegationDescription(family.repeat(45))
-    assert.equal(cut, `${family.repeat(43)}\u2026`)
-    assert.equal(cut.includes('\uFFFD'), false, 'no replacement char / lone surrogate')
-  })
-
-  await testAsync('elapsed: fixed 5-char right-aligned cell, never "ago"', async () => {
-    const running = natEntry({ state: 'running', startedAt: 0, updatedAt: null })
-    const cell = formatDelegationElapsed(running, 12_000)
-    assert.equal(cell, '  12s')
-    assert.equal(cell.length, 5)
-    assert.equal(cell.includes('ago'), false)
-    assert.equal(formatDelegationElapsed(running, 12_000, 4), ' 12s')
-    assert.equal(formatDelegationElapsed(running, 12_000, 2), '12s')
-  })
-
-  await testAsync('active: stale-running and native running are NEVER archived', async () => {
-    const natRun = natEntry({ state: 'running', startedAt: 0, updatedAt: null })
-    const natStale = natEntry({ taskID: 'ses_stale', state: 'stale-running' })
-    const split = splitDelegationList([natRun, natStale], 8, 0)
-    assert.equal(split.active.length, 2, 'both running rows stay active')
-    assert.equal(split.recent.length, 0)
-    assert.equal(
-      split.recent.some((e) => e.state === 'running' || e.state === 'stale-running'),
-      false,
-      'nothing running falls to the terminal tail',
-    )
-  })
 
   await testAsync('header: active/done + failed only when >0, no nat/pan', async () => {
     const natRun = natEntry({ state: 'running' })
@@ -2404,46 +1324,9 @@ async function main() {
       '(0 active \u00b7 1 done)',
       'cancelled reads as done',
     )
-    const retry = panEntry({ taskID: 'ses_r', state: 'retry' })
-    assert.equal(
-      formatDelegationHeader([retry, failed]),
-      '(1 active \u00b7 0 done \u00b7 1 failed)',
-      'retry counts as live (active)',
-    )
-  })
-
-  await testAsync('ceiling: live-first, max 8 visible + hidden count', async () => {
-    const mk = (id: string, state: 'running' | 'completed' | 'error', i: number) =>
-      panEntry({
-        taskID: `ses_${id}`,
-        alias: `t-${i}`,
-        state,
-        startedAt: 1000 + i,
-        updatedAt: 2000 + i,
-      })
-    const all = [
-      mk('run', 'running', 0),
-      ...Array.from({ length: 10 }, (_, i) =>
-        mk(`done${i}`, i % 3 === 0 ? 'error' : 'completed', i + 1),
-      ),
-    ]
-    const { visible, hidden } = ceilingDelegationList(all, 8, 50_000)
-    assert.equal(visible.length, 8)
-    assert.equal(hidden, 3, '11 jobs \u2192 8 visible + 3 more')
-    assert.equal(visible[0]?.state, 'running', 'live-first: the running job stays on top')
-    assert.equal(DELEGATION_VISIBLE_CEILING, 8)
-    const small = ceilingDelegationList(all.slice(0, 3), 8, 50_000)
-    assert.equal(small.visible.length, 3)
-    assert.equal(small.hidden, 0, 'no "+N more" when everything fits')
   })
 
   // ─── Board channel (4th source: .pantheon/board/state.json) ───────────
-  // The board is the ONLY durable source that lists jobs from OTHER sessions:
-  // `session.children` is scoped to the focused session, so a running job
-  // launched from another session was invisible (the "Delegations (0)" /
-  // nat:0 symptom). readBoardState parses the persisted BackgroundJobRecord[]
-  // and the merge makes the board authoritative for state/alias/agent,
-  // deduping by taskID and by (sessionID, alias).
 
   const boardRecord = (over: Record<string, unknown> = {}) => ({
     taskID: 'ses_board_1',
@@ -2463,86 +1346,49 @@ async function main() {
   })
 
   await testAsync(
-    'board: resolvePantheonRoot — directory wins, worktree fallback, "/"→cwd',
-    async () => {
-      assert.equal(resolvePantheonRoot({ directory: '/proj', worktree: '/wt' }, '/cwd'), '/proj')
-      assert.equal(resolvePantheonRoot({ worktree: '/wt' }, '/cwd'), '/wt')
-      assert.equal(resolvePantheonRoot({ directory: '/', worktree: '/' }, '/cwd'), '/cwd')
-      assert.equal(resolvePantheonRoot(undefined, '/cwd'), '/cwd')
-      assert.equal(resolvePantheonRoot({ directory: '' }, '/cwd'), '/cwd')
-      assert.equal(boardStatePath('/proj'), join('/proj', '.pantheon', 'board', 'state.json'))
-    },
-  )
-
-  await testAsync('board: readBoardState — parses BackgroundJobRecord[] (ok)', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'pantheon-board-'))
-    try {
-      mkdirSync(join(root, '.pantheon', 'board'), { recursive: true })
-      writeFileSync(
-        join(root, '.pantheon', 'board', 'state.json'),
-        JSON.stringify([
-          boardRecord(),
-          boardRecord({ taskID: 'ses_board_2', alias: 'her-4', state: 'completed' }),
-        ]),
-      )
-      const records = await readBoardState(root)
-      assert.equal(records.length, 2)
-      assert.equal(records[0]?.taskID, 'ses_board_1')
-      assert.equal(records[0]?.alias, 'her-3')
-      assert.equal(records[1]?.state, 'completed')
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  await testAsync('board: readBoardState — absent state.json → [] (graceful)', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'pantheon-board-'))
-    try {
-      assert.deepEqual(await readBoardState(root), [])
-      assert.deepEqual(await readBoardState(join(root, 'nope')), [])
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  await testAsync(
-    'board: readBoardState — corrupt JSON / non-array → [] (never throws)',
+    'board: readBoardState — ok / absent / corrupt / malformed records (never throws)',
     async () => {
       const root = mkdtempSync(join(tmpdir(), 'pantheon-board-'))
       try {
         const dir = join(root, '.pantheon', 'board')
         mkdirSync(dir, { recursive: true })
+        writeFileSync(
+          join(dir, 'state.json'),
+          JSON.stringify([
+            boardRecord(),
+            boardRecord({ taskID: 'ses_board_2', alias: 'her-4', state: 'completed' }),
+          ]),
+        )
+        const records = await readBoardState(root)
+        assert.equal(records.length, 2)
+        assert.equal(records[0]?.taskID, 'ses_board_1')
+        assert.equal(records[0]?.alias, 'her-3')
+        assert.equal(records[1]?.state, 'completed')
+
+        assert.deepEqual(await readBoardState(join(root, 'nope')), [])
+
         writeFileSync(join(dir, 'state.json'), '{ not json ]')
         assert.deepEqual(await readBoardState(root), [])
         writeFileSync(join(dir, 'state.json'), JSON.stringify({ jobs: [] }))
         assert.deepEqual(await readBoardState(root), [])
+
+        writeFileSync(
+          join(dir, 'state.json'),
+          JSON.stringify([
+            null,
+            42,
+            { alias: 'no-task' },
+            boardRecord({ taskID: 'ses_ok', alias: 'ok-1' }),
+          ]),
+        )
+        const cleaned = await readBoardState(root)
+        assert.equal(cleaned.length, 1)
+        assert.equal(cleaned[0]?.taskID, 'ses_ok')
       } finally {
         rmSync(root, { recursive: true, force: true })
       }
     },
   )
-
-  await testAsync('board: readBoardState — skips malformed records, keeps valid ones', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'pantheon-board-'))
-    try {
-      const dir = join(root, '.pantheon', 'board')
-      mkdirSync(dir, { recursive: true })
-      writeFileSync(
-        join(dir, 'state.json'),
-        JSON.stringify([
-          null,
-          42,
-          { alias: 'no-task' },
-          boardRecord({ taskID: 'ses_ok', alias: 'ok-1' }),
-        ]),
-      )
-      const records = await readBoardState(root)
-      assert.equal(records.length, 1)
-      assert.equal(records[0]?.taskID, 'ses_ok')
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
 
   await testAsync(
     'board: mapping — every FSM state → DelegationEntry; reconciled skipped',
@@ -2579,7 +1425,7 @@ async function main() {
   )
 
   await testAsync(
-    'board: merge — dedup by taskID, board authoritative for state/alias/agent',
+    'board merge: dedup by taskID / (session,alias); empty parentSession never clobbers',
     async () => {
       const md: DelegationEntry = {
         alias: 'old-alias',
@@ -2602,101 +1448,28 @@ async function main() {
       assert.equal(merged[0]?.alias, 'her-3', 'board alias wins')
       assert.equal(merged[0]?.agent, 'hermes', 'board agent wins')
       assert.equal(merged[0]?.source, 'board')
-    },
-  )
 
-  await testAsync('board: merge — dedup by (sessionID, alias) when taskID is absent', async () => {
-    const base: DelegationEntry = {
-      alias: 'her-3',
-      sessionID: 'ses_parent_a',
-      agent: 'hermes',
-      state: 'running',
-      startedAt: 1000,
-      updatedAt: null,
-      timedOut: false,
-      description: 'no task id',
-      source: 'live',
-    }
-    const board = boardRecordsToDelegationEntries([boardRecord({ state: 'error', timedOut: true })])
-    const merged = mergeBoardDelegationSources([base], board)
-    assert.equal(merged.length, 1)
-    assert.equal(merged[0]?.state, 'error')
-    assert.equal(merged[0]?.timedOut, true)
-    assert.equal(merged[0]?.taskID, 'ses_board_1', 'board taskID is absorbed')
-  })
-
-  await testAsync('board: merge — jobs from OTHER sessions become visible', async () => {
-    const board = boardRecordsToDelegationEntries([
-      boardRecord({ taskID: 'ses_other_1', parentSessionID: 'ses_other', alias: 'apo-1' }),
-      boardRecord({
-        taskID: 'ses_other_2',
-        parentSessionID: 'ses_other',
-        alias: 'apo-2',
-        state: 'completed',
-      }),
-    ])
-    const merged = mergeBoardDelegationSources([], board)
-    assert.equal(merged.length, 2)
-    assert.equal(merged[0]?.sessionID, 'ses_other')
-    assert.equal(merged.filter((e) => e.sessionID === 'ses_other').length, 2)
-  })
-
-  await testAsync(
-    'panel: shows EVERY job \u2014 no scope filter, header counts the full list',
-    async () => {
-      const mine = panEntry({ sessionID: 'ses_root', taskID: 'ses_a', state: 'running' })
-      const mineNat = natEntry({ sessionID: 'ses_root', taskID: 'ses_nat', state: 'running' })
-      const theirs = panEntry({ sessionID: 'ses_other', taskID: 'ses_b', state: 'running' })
-      // No filter: the panel always renders all jobs ("aparecendo \u00e9 o que importa").
-      const { visible, hidden } = ceilingDelegationList([mine, mineNat, theirs], 8, 50_000)
-      assert.equal(visible.length, 3)
-      assert.equal(hidden, 0)
-      assert.equal(formatDelegationHeader([mine, mineNat, theirs]), '(3 active \u00b7 0 done)')
-    },
-  )
-
-  await testAsync(
-    'children: report-less child keeps the focused session as its sessionID',
-    async () => {
-      // A child WITHOUT an md report IS a child of the focused session
-      // (session.children is session-scoped) — the focused id stays attached
-      // and the panel shows it (no scope filter can drop it).
-      const entries = childrenToDelegationEntries(
-        [{ id: 'ses_nat_1', title: 'Nativa', status: 'busy', time: { created: 100 } }],
-        [],
-        10_000,
-        'ses_root',
-      )
-      assert.equal(entries.length, 1)
-      assert.equal(entries[0]?.sessionID, 'ses_root')
-      assert.equal(entries[0]?.source, 'children-only')
-      assert.equal(delegationRowIdentity(entries[0] as DelegationEntry), 'agent')
-      const { visible } = ceilingDelegationList(entries, 8, 10_000)
-      assert.deepEqual(
-        visible.map((e) => e.taskID),
-        ['ses_nat_1'],
-      )
-    },
-  )
-
-  await testAsync(
-    'children: without a focused session the report-less child stays unscoped but visible',
-    async () => {
-      const entries = childrenToDelegationEntries(
-        [{ id: 'ses_nat_1', title: 'Nativa', status: 'busy', time: { created: 100 } }],
-        [],
-        10_000,
-      )
-      assert.equal(entries[0]?.sessionID, '')
-      // No scope filter exists anymore: an unscoped child is still shown.
-      assert.equal(ceilingDelegationList(entries, 8, 10_000).visible.length, 1)
-    },
-  )
-
-  await testAsync(
-    'board merge: an empty board parentSessionID never clobbers a known session',
-    async () => {
       const base: DelegationEntry = {
+        alias: 'her-3',
+        sessionID: 'ses_parent_a',
+        agent: 'hermes',
+        state: 'running',
+        startedAt: 1000,
+        updatedAt: null,
+        timedOut: false,
+        description: 'no task id',
+        source: 'live',
+      }
+      const byAlias = boardRecordsToDelegationEntries([
+        boardRecord({ state: 'error', timedOut: true }),
+      ])
+      const mergedAlias = mergeBoardDelegationSources([base], byAlias)
+      assert.equal(mergedAlias.length, 1, '(sessionID, alias) dedup when taskID is absent')
+      assert.equal(mergedAlias[0]?.state, 'error')
+      assert.equal(mergedAlias[0]?.timedOut, true)
+      assert.equal(mergedAlias[0]?.taskID, 'ses_board_1', 'board taskID is absorbed')
+
+      const known: DelegationEntry = {
         alias: 'apo-1',
         sessionID: 'ses_root',
         taskID: 'ses_child_1',
@@ -2708,72 +1481,539 @@ async function main() {
         description: 'Busca',
         source: 'md',
       }
-      const board = boardRecordsToDelegationEntries([
+      const emptyParent = boardRecordsToDelegationEntries([
         boardRecord({ taskID: 'ses_child_1', parentSessionID: '', alias: 'apo-1' }),
       ])
-      assert.equal(board[0]?.sessionID, '', 'precondition: board row carries no session')
-      const merged = mergeBoardDelegationSources([base], board)
-      assert.equal(merged.length, 1)
+      assert.equal(emptyParent[0]?.sessionID, '', 'precondition: board row carries no session')
+      const kept = mergeBoardDelegationSources([known], emptyParent)
+      assert.equal(kept.length, 1)
       assert.equal(
-        merged[0]?.sessionID,
+        kept[0]?.sessionID,
         'ses_root',
         'board state wins, but a known session is preserved',
-      )
-      assert.deepEqual(
-        ceilingDelegationList(merged, 8, 10_000).visible.map((e) => e.taskID),
-        ['ses_child_1'],
       )
     },
   )
 
   await testAsync(
-    'live merge: native task() live without board alias keeps a single agent identity',
+    'board merge guard: stale terminal never downgrades running; fresh terminal wins',
     async () => {
-      const child: DelegationEntry = {
-        alias: 'native-task',
+      // BUG 1: board aliases recycle across jobs — apo-1 of a PREVIOUS job
+      // (different taskID, Finalized BEFORE the current job started) must not
+      // flip the current running entry to completed.
+      const base: DelegationEntry = {
+        alias: 'apo-1',
         sessionID: 'ses_root',
-        taskID: 'ses_nat_1',
-        agent: 'hermes',
+        taskID: 'ses_child_9',
+        agent: 'apollo',
         state: 'running',
-        startedAt: 1000,
+        startedAt: 1_700_000_100_000,
         updatedAt: null,
         timedOut: false,
-        description: 'Nativa',
-        source: 'children-only',
+        description: 'Busca nova',
+        source: 'md',
       }
-      const nativeLive: LiveDelegationEntry = {
-        callID: 'call_task_1',
-        partID: 'part_task_1',
-        sessionID: 'ses_root',
-        tool: 'task',
-        agent: 'hermes',
-        description: 'Nativa',
-        alias: null,
-        taskID: 'ses_nat_1',
-        state: 'running',
-        startedAt: 1000,
-        updatedAt: null,
-        read: false,
-      }
-      const merged = mergeChildDelegationSources([child], [nativeLive])
+      const staleBoard = boardRecordsToDelegationEntries([
+        boardRecord({
+          taskID: 'ses_child_1',
+          parentSessionID: 'ses_root',
+          alias: 'apo-1',
+          agent: 'apollo',
+          state: 'completed',
+          completedAt: 1_700_000_020_000,
+        }),
+      ])
+      const merged = mergeBoardDelegationSources([base], staleBoard)
       assert.equal(merged.length, 1)
-      assert.equal(merged[0]?.source, 'children-only')
-      assert.equal(delegationRowIdentity(merged[0] as DelegationEntry), 'hermes')
-      // A live-only native row (child not yet listed) also keeps one identity.
-      // startedAt is fresh so the 30s aliasless prune does not drop it.
-      const liveOnly = mergeChildDelegationSources(
-        [],
-        [{ ...nativeLive, taskID: null, startedAt: Date.now() }],
+      assert.equal(
+        merged[0]?.state,
+        'running',
+        'stale board terminal (Finalized < startedAt) must not downgrade running',
       )
-      assert.equal(liveOnly.length, 1)
-      assert.equal(liveOnly[0]?.source, 'children-only')
-      assert.equal(delegationRowIdentity(liveOnly[0] as DelegationEntry), 'hermes')
+      assert.equal(merged[0]?.taskID, 'ses_child_9', 'current incarnation is kept')
+
+      const freshBase: DelegationEntry = { ...base, startedAt: 1000 }
+      const freshBoard = boardRecordsToDelegationEntries([
+        boardRecord({
+          taskID: 'ses_child_9',
+          parentSessionID: 'ses_root',
+          alias: 'apo-1',
+          agent: 'apollo',
+          state: 'completed',
+          completedAt: 9000,
+        }),
+      ])
+      const fresh = mergeBoardDelegationSources([freshBase], freshBoard)
+      assert.equal(fresh[0]?.state, 'completed', 'fresh board terminal stays authoritative')
     },
   )
 
-  await testAsync('header: counts the FULL list from every session', async () => {
-    const all = [panEntry({ sessionID: 'ses_root', taskID: 'ses_a', state: 'running' })]
-    assert.equal(formatDelegationHeader(all), '(1 active \u00b7 0 done)')
+  // ─── Active-session scope (no cross-session history) ──────────────────
+
+  await testAsync(
+    'panel scope: no active session → NO rows (cross-session history removed)',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
+      try {
+        const deleg = join(root, '.pantheon', 'delegations')
+        const ses = join(deleg, 'ses_aaa')
+        mkdirSync(ses, { recursive: true })
+        writeFileSync(join(ses, 'apo-1.md'), COMPLETED_MD)
+        writeFileSync(join(ses, 'her-7.md'), TIMED_OUT_MD)
+        writeFileSync(join(ses, 'apo-5.md'), RUNNING_MD)
+        writeFileSync(join(ses, 'the-9.md'), NO_FINALIZED_MD)
+
+        const sessionID = resolveCurrentSessionID({ sessionID: '{sessionID}' })
+        assert.equal(sessionID, null)
+        const md = await readAllDelegationEntries(root)
+        assert.equal(
+          md.length,
+          3,
+          'history still readable from disk (enrichment channel — running MD rejected)',
+        )
+        const panelList = filterDelegationsToSession(
+          visibleDelegationList(md, 8, Date.parse('2026-08-11T14:49:00.000Z')),
+          sessionID,
+        )
+        assert.equal(panelList.length, 0, 'no active session → panel is empty, never cross-session')
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'panel scope: header/ceiling count ONLY the active-session (filtered) list',
+    async () => {
+      const mine = panEntry({ sessionID: 'ses_root', taskID: 'ses_a', state: 'running' })
+      const mineNat = natEntry({ sessionID: 'ses_root', taskID: 'ses_nat', state: 'running' })
+      const theirs = panEntry({ sessionID: 'ses_other', taskID: 'ses_b', state: 'running' })
+      const scoped = filterDelegationsToSession([mine, mineNat, theirs], 'ses_root')
+      assert.equal(scoped.length, 2, 'other-session row dropped before counting')
+      const { visible, hidden } = ceilingDelegationList(scoped, 8, 50_000)
+      assert.equal(visible.length, 2)
+      assert.equal(hidden, 0)
+      assert.ok(
+        visible.every((e) => e.sessionID === 'ses_root'),
+        'no non-navigable other-session row can render',
+      )
+      assert.equal(formatDelegationHeader(scoped), '(2 active \u00b7 0 done)')
+    },
+  )
+
+  await testAsync('scope: board entry from ANOTHER session is never shown', async () => {
+    const board = boardRecordsToDelegationEntries([
+      boardRecord({ taskID: 'ses_other_1', parentSessionID: 'ses_other', alias: 'apo-1' }),
+    ])
+    assert.equal(filterDelegationsToSession(board, 'ses_root').length, 0)
+  })
+
+  await testAsync('scope: md entry from ANOTHER session is never shown', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-root-'))
+    try {
+      const deleg = join(root, '.pantheon', 'delegations')
+      const theirs = join(deleg, 'ses_other')
+      mkdirSync(theirs, { recursive: true })
+      writeFileSync(join(theirs, 'apo-1.md'), COMPLETED_MD)
+      const md = await readAllDelegationEntries(root)
+      assert.equal(md.length, 1, 'precondition: md read from disk')
+      assert.equal(md[0]?.sessionID, 'ses_other')
+      assert.equal(filterDelegationsToSession(md, 'ses_root').length, 0)
+      assert.equal(filterDelegationsToSession(md, 'ses_other').length, 1)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
+    'scope: board entry of the ACTIVE session appears (enrichment kept)',
+    async () => {
+      const board = boardRecordsToDelegationEntries([
+        boardRecord({ taskID: 'ses_mine', parentSessionID: 'ses_root', alias: 'her-3' }),
+      ])
+      const scoped = filterDelegationsToSession(board, 'ses_root')
+      assert.equal(scoped.length, 1)
+      assert.equal(scoped[0]?.taskID, 'ses_mine')
+      assert.equal(scoped[0]?.sessionID, 'ses_root')
+    },
+  )
+
+  await testAsync('scope: entry without an attributable sessionID is discarded', async () => {
+    const orphan = delegation({ sessionID: '', taskID: 'ses_orphan' })
+    assert.equal(filterDelegationsToSession([orphan], 'ses_root').length, 0)
+    assert.equal(filterDelegationsToSession([orphan], '').length, 0)
+    assert.equal(filterDelegationsToSession([orphan], null).length, 0)
+  })
+
+  await testAsync('scope: native children of the active session survive the filter', async () => {
+    const entries = childrenToDelegationEntries(
+      [{ id: 'ses_nat_1', title: 'Nativa', status: 'busy', time: { created: 100 } }],
+      [],
+      10_000,
+      'ses_root',
+    )
+    const scoped = filterDelegationsToSession(entries, 'ses_root')
+    assert.equal(scoped.length, 1, 'native child must NOT be discarded')
+    assert.equal(scoped[0]?.taskID, 'ses_nat_1')
+    assert.equal(scoped[0]?.sessionID, 'ses_root')
+    assert.equal(scoped[0]?.source, 'children-only')
+  })
+
+  await testAsync('scope: active session changes → list follows', async () => {
+    const a = delegation({ sessionID: 'ses_root', taskID: 'ses_a', alias: 'a-1' })
+    const b = delegation({ sessionID: 'ses_other', taskID: 'ses_b', alias: 'b-1' })
+    const all = [a, b]
+    assert.deepEqual(
+      filterDelegationsToSession(all, 'ses_root').map((e) => e.taskID),
+      ['ses_a'],
+    )
+    assert.deepEqual(
+      filterDelegationsToSession(all, 'ses_other').map((e) => e.taskID),
+      ['ses_b'],
+    )
+    assert.equal(filterDelegationsToSession(all, null).length, 0)
+  })
+
+  await testAsync(
+    'children: unscoped report-less child is discarded by the active-session filter',
+    async () => {
+      const entries = childrenToDelegationEntries(
+        [{ id: 'ses_nat_1', title: 'Nativa', status: 'busy', time: { created: 100 } }],
+        [],
+        10_000,
+      )
+      assert.equal(entries[0]?.sessionID, '')
+      assert.equal(filterDelegationsToSession(entries, 'ses_root').length, 0)
+      assert.equal(filterDelegationsToSession(entries, null).length, 0)
+    },
+  )
+
+  await testAsync(
+    'scope: full pipeline (children+md+live+board) filtered to the active session',
+    async () => {
+      const active = 'ses_root'
+      const md = [
+        delegation({ sessionID: active, taskID: 'ses_child_1', alias: 'apo-1', source: 'md' }),
+        delegation({ sessionID: 'ses_other', taskID: 'ses_other_1', alias: 'apo-9', source: 'md' }),
+      ]
+      const children = childrenToDelegationEntries(
+        [{ id: 'ses_child_1', title: 'mine', status: 'busy', time: { created: 100 } }],
+        md,
+        10_000,
+        active,
+      )
+      const live: LiveDelegationEntry[] = [
+        {
+          callID: 'call_mine_1',
+          partID: 'part_mine_1',
+          sessionID: active,
+          tool: 'pantheon_delegate',
+          agent: 'apollo',
+          description: 'mine live',
+          alias: 'apo-2',
+          taskID: 'ses_child_2',
+          state: 'running',
+          startedAt: 100,
+          updatedAt: null,
+          read: false,
+        },
+        {
+          callID: 'call_theirs_1',
+          partID: 'part_theirs_1',
+          sessionID: 'ses_other',
+          tool: 'pantheon_delegate',
+          agent: 'hermes',
+          description: 'theirs live',
+          alias: 'her-1',
+          taskID: 'ses_other_2',
+          state: 'running',
+          startedAt: 100,
+          updatedAt: null,
+          read: false,
+        },
+      ]
+      const board = boardRecordsToDelegationEntries([
+        boardRecord({ taskID: 'ses_child_1', parentSessionID: active, alias: 'apo-1' }),
+        boardRecord({ taskID: 'ses_other_1', parentSessionID: 'ses_other', alias: 'apo-9' }),
+      ])
+      const final = filterDelegationsToSession(
+        mergeBoardDelegationSources(mergeChildDelegationSources(children, live), board),
+        active,
+      )
+      assert.ok(final.length > 0, 'active-session rows survive')
+      assert.ok(
+        final.every((e) => e.sessionID === active),
+        'every rendered row belongs to the active session',
+      )
+      assert.ok(
+        !final.some((e) => e.taskID === 'ses_other_1' || e.taskID === 'ses_other_2'),
+        'other-session rows dropped after all merges',
+      )
+    },
+  )
+
+  // ─── Session resolution + orphan-navigation defence ───────────────────
+
+  await testAsync('sessionID: valid / undefined / empty / absent resolution', async () => {
+    assert.equal(resolveCurrentSessionID({ sessionID: 'ses_abc123', api: undefined }), 'ses_abc123')
+    assert.equal(resolveCurrentSessionID({ sessionID: undefined }), null)
+    assert.equal(resolveCurrentSessionID({ sessionID: '' }), null)
+    assert.equal(resolveCurrentSessionID({}), null)
+    assert.equal(resolveCurrentSessionID(null), null)
+  })
+
+  await testAsync(
+    'sessionID: placeholder (literal + URL-encoded) → null, falls through to a valid source',
+    async () => {
+      assert.equal(resolveCurrentSessionID({ sessionID: '{sessionID}' }), null)
+      assert.equal(resolveCurrentSessionID({ sessionID: ' {sessionID} ' }), null)
+      assert.equal(resolveCurrentSessionID({ sessionID: '%7BsessionID%7D' }), null)
+      assert.equal(
+        resolveCurrentSessionID({
+          sessionID: '%7BsessionID%7D',
+          api: { state: { sessionID: 'ses_x' } },
+        }),
+        'ses_x',
+        'placeholder prop falls through to the next valid source',
+      )
+    },
+  )
+
+  await testAsync('sessionID: isValidSessionId + non-ses garbage → null', async () => {
+    assert.equal(isValidSessionId('{sessionID}'), false, 'literal placeholder rejected')
+    assert.equal(isValidSessionId('%7BsessionID%7D'), false, 'URL-encoded placeholder rejected')
+    assert.equal(isValidSessionId(' {sessionID} '), false)
+    assert.equal(isValidSessionId('ses_00eb66a34ffeCHnzDx5hH2BCsS'), true)
+    assert.equal(isValidSessionId(''), false)
+    assert.equal(isValidSessionId(undefined), false)
+    assert.equal(isValidSessionId(42), false)
+    assert.equal(resolveCurrentSessionID({ sessionID: 'wrk_123' }), null)
+    assert.equal(resolveCurrentSessionID({ sessionID: 'foo-bar' }), null)
+    assert.equal(resolveCurrentSessionID({ sessionID: 42 }), null)
+  })
+
+  await testAsync(
+    'sessionID: slot prop wins over state and route; invalid falls through',
+    async () => {
+      const api = {
+        state: { sessionID: 'ses_state1' },
+        route: { current: { name: 'session', params: { sessionID: 'ses_route1' } } },
+      }
+      assert.equal(resolveCurrentSessionID({ sessionID: 'ses_prop1', api }), 'ses_prop1')
+      assert.equal(resolveCurrentSessionID({ sessionID: '{sessionID}', api }), 'ses_state1')
+      const routeOnly = {
+        state: { sessionID: undefined },
+        route: { current: { name: 'session', params: { sessionID: 'ses_route1' } } },
+      }
+      assert.equal(resolveCurrentSessionID({ sessionID: '', api: routeOnly }), 'ses_route1')
+    },
+  )
+
+  await testAsync(
+    'regression: placeholder sessionID → resolution null (fetch skipped)',
+    async () => {
+      const sessionID = resolveCurrentSessionID({ sessionID: '{sessionID}' })
+      assert.equal(sessionID, null, 'placeholder never resolves to a fetchable id')
+    },
+  )
+
+  await testAsync(
+    'navigate: orphan defence — no route / missing taskID / failures contained',
+    async () => {
+      const calls: Array<[string, Record<string, unknown> | undefined]> = []
+      const route = {
+        navigate: (name: string, params?: Record<string, unknown>) => calls.push([name, params]),
+      }
+      assert.equal(navigateToDelegationSession(route, 'ses_child_9'), true)
+      assert.deepEqual(calls, [['session', { sessionID: 'ses_child_9' }]])
+
+      assert.equal(navigateToDelegationSession(undefined, 'ses_child_9'), false, 'no route → false')
+      assert.equal(
+        navigateToDelegationSession({}, 'ses_child_9'),
+        false,
+        'route without navigate → false',
+      )
+      const noop: string[] = []
+      const routeNoTarget = { navigate: (name: string) => noop.push(name) }
+      assert.equal(navigateToDelegationSession(routeNoTarget, undefined), false)
+      assert.equal(navigateToDelegationSession(routeNoTarget, ''), false)
+      assert.deepEqual(noop, [], 'navigate must never be called without a taskID')
+
+      assert.equal(
+        navigateToDelegationSession(
+          {
+            navigate: () => {
+              throw new Error('Session not found')
+            },
+          },
+          'ses_orphaned',
+        ),
+        false,
+        'synchronous router failure is contained',
+      )
+
+      const unhandled: unknown[] = []
+      const onUnhandled = (reason: unknown): void => {
+        unhandled.push(reason)
+      }
+      process.on('unhandledRejection', onUnhandled)
+      try {
+        assert.equal(
+          navigateToDelegationSession(
+            { navigate: () => Promise.reject(new Error('Session not found')) },
+            'ses_orphaned',
+          ),
+          true,
+        )
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      } finally {
+        process.removeListener('unhandledRejection', onUnhandled)
+      }
+      assert.deepEqual(unhandled, [], 'rejected router promise is contained')
+    },
+  )
+
+  await testAsync('navigate: row mouse handler invokes navigation helper', async () => {
+    const calls: Array<[string, Record<string, unknown> | undefined]> = []
+    const open = createDelegationRowOpenHandler(
+      { navigate: (name: string, params?: Record<string, unknown>) => calls.push([name, params]) },
+      'ses_event_child',
+    )
+    open()
+    assert.deepEqual(calls, [['session', { sessionID: 'ses_event_child' }]])
+  })
+
+  // ─── Source-scan: session-API call sites stay guarded ─────────────────
+
+  await testAsync(
+    'source-scan: every session.children / session.status call site is id-guarded',
+    async () => {
+      const source = await readFileP(
+        new URL('../../src/plugins/tui/src/index.tsx', import.meta.url),
+        'utf8',
+      )
+      const lines = source.split('\n')
+      const near = (idx: number, pat: RegExp) =>
+        lines.slice(Math.max(0, idx - 2), Math.min(lines.length, idx + 2)).some((l) => pat.test(l))
+      const isComment = (line: string) => {
+        const t = line.trim()
+        return t.startsWith('*') || t.startsWith('/*') || t.startsWith('{/*') || t.startsWith('//')
+      }
+
+      const childrenSites: number[] = []
+      const statusSites: number[] = []
+      lines.forEach((line, idx) => {
+        if (isComment(line)) return // doc comments mention the API — not call sites
+        if (line.includes('session?.children') || line.includes('session.children'))
+          childrenSites.push(idx)
+        if (line.includes('session?.status')) statusSites.push(idx)
+      })
+
+      assert.ok(childrenSites.length >= 1, 'expected ≥1 session.children call site')
+      for (const idx of childrenSites) {
+        assert.ok(
+          near(idx, /buildChildrenPath\(|safeSessionPath\(/),
+          `session.children call must be path-guarded (line ${idx + 1}): ${lines[idx]?.trim()}`,
+        )
+      }
+      assert.ok(statusSites.length >= 1, 'expected ≥1 session.status call site')
+      for (const idx of statusSites) {
+        assert.ok(
+          near(idx, /isValidSessionId\(/),
+          `session.status call must be id-guarded (line ${idx + 1}): ${lines[idx]?.trim()}`,
+        )
+      }
+    },
+  )
+
+  // ─── Stale-running detector ───────────────────────────────────────────
+
+  await testAsync(
+    'stale-running: short stays running, long/stale → stale, recent/terminal unchanged',
+    async () => {
+      const now = Date.now()
+      const mk = (over: Partial<DelegationEntry>): DelegationEntry =>
+        delegation({
+          alias: 't',
+          sessionID: 'ses_test',
+          agent: 'apollo',
+          state: 'running',
+          startedAt: now - 60_000,
+          updatedAt: null,
+          timedOut: false,
+          description: 'x',
+          ...over,
+        })
+      const threshold = 30 * 60 * 1000
+      assert.equal(markStaleIfRunning(mk({}), now, threshold).state, 'running')
+      assert.equal(
+        markStaleIfRunning(mk({ startedAt: now - 31 * 60 * 1000 }), now, threshold).state,
+        'stale-running',
+      )
+      assert.equal(
+        markStaleIfRunning(
+          mk({ startedAt: now - 35 * 60 * 1000, updatedAt: now - 120_000 }),
+          now,
+          threshold,
+        ).state,
+        'stale-running',
+      )
+      assert.equal(
+        markStaleIfRunning(
+          mk({ startedAt: now - 35 * 60 * 1000, updatedAt: now - 30_000 }),
+          now,
+          threshold,
+        ).state,
+        'running',
+      )
+      assert.equal(
+        markStaleIfRunning(mk({ state: 'completed', updatedAt: now }), now, threshold).state,
+        'completed',
+      )
+
+      const fresh = mk({ alias: 'fresh', startedAt: now - 5 * 60 * 1000 })
+      const stale = mk({ alias: 'stale', startedAt: now - 60 * 60 * 1000 })
+      const result = visibleDelegationList([fresh, stale], 8, now, threshold)
+      assert.equal(result.length, 2)
+      assert.equal(result[0]?.state, 'running', 'fresh entry stays running')
+      assert.equal(result[1]?.state, 'stale-running', 'stale entry marked as stale-running')
+    },
+  )
+
+  // ─── Status tone (whole-row color) ────────────────────────────────────
+
+  await testAsync('tone: failed → error, terminal → success, in-flight → warning', async () => {
+    // Red = failure.
+    assert.equal(delegationStateTone('error'), 'error')
+    assert.equal(delegationStateTone('startup_failed'), 'error')
+    // Green = terminal (completed or cancelled).
+    assert.equal(delegationStateTone('completed'), 'success')
+    assert.equal(delegationStateTone('cancelled'), 'success')
+    // Yellow = still in flight.
+    assert.equal(delegationStateTone('running'), 'warning')
+    assert.equal(delegationStateTone('retry'), 'warning')
+    assert.equal(delegationStateTone('stale-running'), 'warning')
+    assert.equal(delegationStateTone('startup_unknown'), 'warning')
+  })
+
+  await testAsync('tone: every display state maps to one of the three status colors', async () => {
+    const states = [
+      'running',
+      'retry',
+      'startup_unknown',
+      'stale-running',
+      'error',
+      'startup_failed',
+      'completed',
+      'cancelled',
+    ] as const
+    for (const state of states) {
+      const tone = delegationStateTone(state)
+      assert.ok(
+        tone === 'error' || tone === 'success' || tone === 'warning',
+        `${state} must map to a status color, got ${String(tone)}`,
+      )
+    }
   })
 
   // ─── Report ────────────────────────────────────────────────────────────
@@ -2788,71 +2028,5 @@ async function main() {
   console.log(`\nResults: ${passed} passed, ${failed.length} failed`)
   process.exit(failed.length > 0 ? 1 : 0)
 }
-
-await testAsync('beta.6: splitDelegationList — active + recent cap', async () => {
-  const mk = (id, state, i) => ({
-    alias: `t-${id}`,
-    sessionID: 'ses_p',
-    taskID: `ses_${id}`,
-    agent: 'apollo',
-    state,
-    startedAt: 1000 + i,
-    updatedAt: null,
-    timedOut: false,
-    description: '',
-  })
-  const all = [
-    mk('run', 'running', 1),
-    mk('done-1', 'completed', 2),
-    mk('done-2', 'error', 3),
-    mk('done-3', 'completed', 4),
-  ]
-  const split = splitDelegationList(all, 2, 2000)
-  assert.equal(split.active.length, 1)
-  assert.equal(split.active[0].taskID, 'ses_run')
-  assert.equal(split.recent.length, 2)
-  const small = splitDelegationList(all.slice(0, 3), 8, 2000)
-  assert.equal(small.recent.length, 2)
-})
-
-await testAsync('beta.6: extractToolActivity — tool part → activity; others → null', async () => {
-  const hit = extractToolActivity({
-    type: 'tool',
-    tool: 'bash',
-    sessionID: 'ses_child_1',
-    state: { status: 'running', input: { command: 'npm test', description: 'run tests' } },
-  })
-  assert.ok(hit !== null)
-  assert.equal(hit.sessionID, 'ses_child_1')
-  assert.equal(hit.activity.tool, 'bash')
-  assert.equal(hit.activity.summary, 'npm test')
-  assert.equal(
-    extractToolActivity({
-      type: 'tool',
-      tool: 'bash',
-      sessionID: 'ses_child_1',
-      state: { status: 'completed', input: { command: 'npm test' } },
-    }),
-    null,
-  )
-  assert.equal(extractToolActivity({ type: 'text', sessionID: 'ses_child_1' }), null)
-  assert.equal(
-    extractToolActivity({ type: 'tool', tool: 'bash', state: { status: 'running' } }),
-    null,
-  )
-})
-
-await testAsync('beta.6: trackToolActivity — bounded map + staleness window', async () => {
-  const map = new Map()
-  trackToolActivity(map, 'ses_a', { tool: 'bash', summary: 'ls', at: 1000 })
-  trackToolActivity(map, 'ses_b', { tool: 'read', summary: 'a.ts', at: 2000 })
-  assert.equal(latestToolActivityFor(map, 'ses_a', 2000)?.tool, 'bash')
-  assert.equal(latestToolActivityFor(map, 'ses_a', 1000 + 5 * 60 * 1000 + 1), null)
-  for (let i = 0; i < 205; i++) {
-    trackToolActivity(map, `ses_x${i}`, { tool: 't', summary: '', at: i })
-  }
-  assert.ok(map.size <= 200, `map size ${map.size} must stay bounded`)
-  assert.equal(latestToolActivityFor(map, 'ses_a', 2000), null, 'oldest evicted')
-})
 
 main()

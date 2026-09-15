@@ -53,7 +53,7 @@ function looksNumeric(text: string): boolean {
   return INT_RE.test(text) || FLOAT_RE.test(text)
 }
 
-/** Nominal chars-per-token ratio (same fixed basis as token-opt metering). */
+/** Nominal chars-per-token ratio (same fixed basis as toon-codec metering). */
 export const CHARS_PER_TOKEN = 4
 
 function charsToTokens(chars: number): number {
