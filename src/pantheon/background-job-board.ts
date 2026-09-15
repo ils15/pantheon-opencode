@@ -2,7 +2,7 @@
  * Background Job Board — state machine for tracking background agent jobs.
  *
  * Tracks jobs through a state machine (running → completed/error/cancelled → reconciled),
- * supports alias generation per session, persistence via adapter, auto-wake signal files,
+ * supports alias generation per session, persistence via adapter, wake signal files,
  * and terminal state listeners (persist-before-notify write-ahead-log pattern).
  *
  * Pure TypeScript — zero external dependencies beyond Node.js builtins (fs/path).
@@ -123,7 +123,7 @@ export interface BoardOptions {
   /** Maximum completed jobs kept per agent for reuse (default: 3). */
   maxReusablePerAgent?: number
   /**
-   * Directory for auto-wake signal files.
+   * Directory for wake signal files.
    * When set, a `.signal.json` file is atomically written on every terminal transition.
    * When null or undefined, no signal files are written.
    */
@@ -175,7 +175,7 @@ function getAgentPrefix(agent: string): string {
  * - Strict state machine with validated transitions
  * - Per-session, per-agent alias generation (apo-1, her-2, …)
  * - Optional persistence via injected PersistenceAdapter
- * - Optional auto-wake signal files on terminal transitions
+ * - Optional wake signal files on terminal transitions
  * - Terminal state listeners with persist-before-notify guarantee
  * - expire/prune helpers for session lifecycle management
  */
@@ -652,7 +652,7 @@ export class BackgroundJobBoard {
   }
 
   /**
-   * Delete the auto-wake signal file for an alias (`<alias>.signal.json`).
+   * Delete the wake signal file for an alias (`<alias>.signal.json`).
    * No-op (false) when no signalDir is configured or the file is absent.
    * The delegate manager calls this on the spot right after auto-reconcile.
    */

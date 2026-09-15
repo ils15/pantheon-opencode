@@ -158,6 +158,13 @@ export interface DelegationOptions {
   now?: () => number
   sleep?: (ms: number) => Promise<void>
   /**
+   * Inline cap (chars) for report content returned by pantheon_delegation_read.
+   * Oversized reports keep head+tail with an explicit `[TRUNCATED …]` marker
+   * pointing at the full report file. Default: PANTHEON_DELEGATION_READ_MAX_CHARS
+   * or 50_000.
+   */
+  readMaxChars?: number
+  /**
    * Kill-switch: when false, all delegation tools (delegate/read/list) throw
    * immediately. Mirrors `PANTHEON_DELEGATION=off` from the native manager.
    * Defaults to true (delegation enabled) when not specified.
@@ -276,6 +283,62 @@ function summarizeOutput(output: string): string {
   return firstLine.length > 120 ? `${firstLine.slice(0, 120)}…` : firstLine
 }
 
+// ─── Report inline cap ─────────────────────────────────────────────────
+//
+// Delegation reports are returned INLINE to the orchestrator (tool result).
+// A very large child output must be capped BEFORE it floods the parent
+// context — but a hard mid-content cut loses the report header AND the
+// conclusion. The cap keeps head + tail with an explicit marker pointing at
+// the full report (the durable `.pantheon/delegations/<parent>/<alias>.md`
+// file or the read tool), mirroring how comparable agent hosts surface
+// oversized tool output.
+
+/** Default inline cap for delegation report content (chars). */
+export const DELEGATION_READ_MAX_CHARS = 50_000
+/** Lower bound for PANTHEON_DELEGATION_READ_MAX_CHARS. */
+export const DELEGATION_READ_MAX_CHARS_MIN = 1_000
+
+/** Resolve the inline report cap from the environment (default 50k, min 1k). */
+export function resolveReadMaxChars(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.PANTHEON_DELEGATION_READ_MAX_CHARS?.trim()
+  if (raw === undefined || raw === '') return DELEGATION_READ_MAX_CHARS
+  const value = Number(raw)
+  return Number.isSafeInteger(value) && value >= DELEGATION_READ_MAX_CHARS_MIN
+    ? value
+    : DELEGATION_READ_MAX_CHARS
+}
+
+/**
+ * Cap report markdown for inline return: ≤ `maxChars` passes through
+ * untouched; anything larger keeps the head (60% of the budget) + tail (25%)
+ * with an explicit `[TRUNCATED …]` marker between them. `reportPath` names
+ * the durable full-report file in the marker; without it the marker points
+ * at `pantheon_delegation_read`. Pure — no I/O.
+ */
+export function capReportOutput(md: string, maxChars: number, reportPath?: string): string {
+  if (md.length <= maxChars) return md
+  if (maxChars < 200) {
+    // Budget too small for a head+tail split — keep what fits after the marker.
+    const marker = capReportMarker(md.length, 0, reportPath)
+    return `${md.slice(0, Math.max(0, maxChars - marker.length - 1))}\n${marker}`
+  }
+  const headLen = Math.floor(maxChars * 0.6)
+  const tailLen = Math.floor(maxChars * 0.25)
+  return `${md.slice(0, headLen)}\n${capReportMarker(md.length, headLen + tailLen, reportPath)}\n${md.slice(md.length - tailLen)}`
+}
+
+function capReportMarker(
+  totalChars: number,
+  keptChars: number,
+  reportPath: string | undefined,
+): string {
+  const where =
+    reportPath !== undefined
+      ? `full report: ${reportPath}`
+      : 'read the full report with pantheon_delegation_read'
+  return `[TRUNCATED: ${totalChars - keptChars} of ${totalChars} chars hidden — ${where}]`
+}
+
 // ─── Report persistence ────────────────────────────────────────────────
 
 /**
@@ -387,13 +450,12 @@ export async function finalizeDelegation(
     // report above still captures this finalize; the board state stands.
   }
 
-  // P1-1: Delete the auto-wake signal file to prevent leaks. The board
-  // writes .signal.json on every terminal transition, but the legacy path
-  // never called deleteSignal — only the native delegate-manager did.
-  // The consumer (auto-wake.ts consumeWakeSignals) is intentionally NOT
-  // wired in the event hook: finalizeDelegation already handles the
-  // terminal transition, so consuming signals would be redundant and risks
-  // double-processing. deleteSignal on finalize is sufficient.
+  // P1-1: Delete the wake signal file to prevent leaks. The board writes
+  // .signal.json on every terminal transition, but the legacy path never
+  // called deleteSignal — only the native delegate-manager did.
+  // finalizeDelegation already handles the terminal transition, so
+  // consuming signals would be redundant; deleteSignal on finalize is
+  // sufficient.
   await deps.board.deleteSignal(job.alias)
 
   // P1-4: Prune old completed jobs and enforce the hard entry cap. The

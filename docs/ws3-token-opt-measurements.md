@@ -3,23 +3,12 @@
 Reproducible per-class comparison of compact JSON vs TOON encoding for the
 payloads the codec serves (board signals, checkpoints, KV payloads).
 Deterministic: no LLM, no external gateway, fixed `ceil(chars / 4)` token
-basis — the same metering used by `src/pantheon/token-opt.ts`.
+basis — the same metering used by `src/pantheon/toon-codec.ts`.
 
-## Safe C9 context contract
-
-`prepareC9Context({ query, candidates }, options)` is a pure boundary for
-already-retrieved `C9Chunk` values. It checks `options.env.PANTHEON_TOKEN_OPT`
-before filtering, passes the batch query explicitly to `c9Filter`, and applies
-the default cutoff `0.3` plus top-k `3` independently per category (or the
-explicit `perCategory` overrides). A low-score fallback is allowed only when
-candidate text overlaps the query; empty or nonsense queries produce no
-injected context. The original candidate score is retained in auditable
-context output.
-
-The discriminated result is `enabled: true | false`; the false branch is used
-only by the kill-switch and always has an empty context. `telemetry` contains
-only `signal`, `counts` (`candidates`, `selected`, `dropped`), `recall`,
-`injectedChars`, and `injectedTokens`—never candidate or context text.
+> **Historical note:** an earlier revision documented a C9 context contract
+> (`prepareC9Context` / `C9Chunk` / `c9Filter`, `PANTHEON_TOKEN_OPT`). That
+> module was removed in the 1.5.0-beta2 agent-economy cleanup; this document
+> now covers only the TOON payload measurements below.
 
 ## Per-class table
 
@@ -51,10 +40,7 @@ basis and the token columns show what metering debits.
 - **Fixtures:** `board-signal` (flat minimal record), `checkpoint` (WS2
   shape: phase + tail + 5 jobs + 4 todos + nesting), `kv-list` (3 uniform
   rows), `large-tabular-checkpoint` (50 jobs + 20 todos).
-- **Overhead:** TOON replaces bytes in place — `EMPTY_OVERHEAD` (zero).
-  Every other lever debits its TOTAL overhead via `measureLeverFull`
-  (retrieval + discovery + detail-on-demand + markers); a lever with
-  `net <= 0` is DISABLED by flag via `applyGate()` (never removed).
+- **Overhead:** TOON replaces bytes in place — zero added overhead.
 
 ## Regeneration
 
@@ -67,7 +53,6 @@ Output is the markdown table above. Python cross-check:
 ```bash
 python3 -m pytest tests/test_toon_codec.py -q
 npx tsx tests/pantheon/toon-codec.test.ts
-npx tsx tests/pantheon/token-opt.test.ts
 ```
 
 ## Beta2 agent economy policy

@@ -2,19 +2,17 @@
  * Tests for Context Window Optimization — Tool Output Sandboxing (v2 P0)
  *
  * Covers:
- *   - sandboxRead / sandboxGrep / sandboxGlob / sandboxWebfetch pure functions (dentro/fora limite)
- *   - sandboxOutput dispatch (4 tools x 2 sizes + unknown + edge)
+ *   - sandboxRead / sandboxGrep / sandboxGlob / sandboxWebfetch (dentro/fora/limite exato)
+ *   - sandboxOutput dispatch (routing + aliases + pass-through)
  *   - createContextSandbox handler (truncation + metadata + enabled gate + fail-open)
  *   - resolveSandboxConfig (defaults + overrides + fail-open)
  *   - integration: sandbox before hashline readEnhancer (tags remain on kept lines)
- *   - session memory auto-save already covered by delegation-compaction tests (P1 conectado)
  *
  * Run with: npx tsx tests/pantheon/context-sandbox.test.ts
  */
 import { strict as assert } from 'node:assert'
 import {
   createContextSandbox,
-  DEFAULT_CONFIG,
   DEFAULT_LIMITS,
   resolveSandboxConfig,
   sandboxGlob,
@@ -60,430 +58,283 @@ function makeChars(n: number): string {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function main() {
-  // ── sandboxRead: dentro do limite ──────────────────────────────────────
-  await testAsync('sandboxRead: within limit (200) — unchanged', async () => {
-    const input = makeLines(200)
-    assert.equal(sandboxRead(input), input)
-  })
-
-  await testAsync('sandboxRead: under limit (50) — unchanged', async () => {
-    const input = makeLines(50)
-    assert.equal(sandboxRead(input), input)
-  })
-
-  await testAsync('sandboxRead: empty — unchanged', async () => {
+  // ── sandboxRead ────────────────────────────────────────────────────────
+  await testAsync('sandboxRead: at/below limit untouched, empty untouched', async () => {
+    assert.equal(sandboxRead(makeLines(200)), makeLines(200)) // exact limit
+    assert.equal(sandboxRead(makeLines(50)), makeLines(50))
     assert.equal(sandboxRead(''), '')
   })
 
-  // ── sandboxRead: fora do limite ────────────────────────────────────────
-  await testAsync('sandboxRead: over limit (250) — truncated head+tail+marker', async () => {
-    const input = makeLines(250)
-    const out = sandboxRead(input)
-    assert.ok(out.includes('[TRUNCATED:'), 'must contain TRUNCATED marker')
-    assert.ok(out.includes('250 total'), 'must mention total')
-    assert.ok(out.includes('50 head'), 'must mention head count')
-    assert.ok(out.includes('10 tail'), 'must mention tail count')
-    // head: first 50 lines present
-    assert.ok(out.includes('1: line 1'))
-    assert.ok(out.includes('50: line 50'))
-    // tail: last 10 present
-    assert.ok(out.includes('241: line 241'))
-    assert.ok(out.includes('250: line 250'))
-    // hidden region not present
-    assert.ok(!out.includes('100: line 100'), 'hidden middle must not appear')
-    const lines = out.split('\n').filter((l) => l !== '')
-    // 50 head + 1 marker + 10 tail = 61 lines
-    assert.equal(lines.length, 61)
+  await testAsync(
+    'sandboxRead: over limit truncates head+tail+marker (exact+1, custom, newline)',
+    async () => {
+      const input = makeLines(250)
+      const out = sandboxRead(input)
+      assert.ok(out.includes('[TRUNCATED:'), 'must contain TRUNCATED marker')
+      assert.ok(out.includes('250 total') && out.includes('50 head') && out.includes('10 tail'))
+      assert.ok(out.includes('1: line 1') && out.includes('50: line 50'))
+      assert.ok(out.includes('241: line 241') && out.includes('250: line 250'))
+      assert.ok(!out.includes('100: line 100'), 'hidden middle must not appear')
+      assert.equal(out.split('\n').filter((l) => l !== '').length, 61) // 50 + marker + 10
+
+      assert.ok(sandboxRead(makeLines(201)).includes('[TRUNCATED:'), 'exact+1 must truncate')
+
+      const custom = sandboxRead(makeLines(10), { maxLines: 5, keepHead: 2, keepTail: 1 })
+      assert.ok(
+        custom.includes('[TRUNCATED:') && custom.includes('2 head') && custom.includes('1 tail'),
+      )
+
+      assert.ok(sandboxRead(`${makeLines(250)}\n`).endsWith('\n'), 'trailing newline preserved')
+    },
+  )
+
+  // ── sandboxGrep ────────────────────────────────────────────────────────
+  await testAsync('sandboxGrep: at/below limit untouched', async () => {
+    assert.equal(sandboxGrep(makeGrepLines(20)), makeGrepLines(20))
+    assert.equal(sandboxGrep(makeGrepLines(5)), makeGrepLines(5))
   })
 
-  await testAsync('sandboxRead: exactly 201 lines — truncated', async () => {
-    const input = makeLines(201)
-    const out = sandboxRead(input)
-    assert.ok(out.includes('[TRUNCATED:'))
-    assert.ok(!out.includes('100: line 100'))
-  })
-
-  await testAsync('sandboxRead: trailing newline preserved', async () => {
-    const input = makeLines(250) + '\n'
-    const out = sandboxRead(input)
-    assert.ok(out.endsWith('\n'), 'trailing newline must be preserved')
-    assert.ok(out.includes('[TRUNCATED:'))
-  })
-
-  await testAsync('sandboxRead: custom limits', async () => {
-    const input = makeLines(10)
-    const out = sandboxRead(input, { maxLines: 5, keepHead: 2, keepTail: 1 })
-    assert.ok(out.includes('[TRUNCATED:'))
-    assert.ok(out.includes('2 head'))
-    assert.ok(out.includes('1 tail'))
-    assert.ok(out.includes('1: line 1'))
-    assert.ok(out.includes('10: line 10'))
-  })
-
-  // ── sandboxGrep: dentro ────────────────────────────────────────────────
-  await testAsync('sandboxGrep: within limit (20) — unchanged', async () => {
-    const input = makeGrepLines(20)
-    assert.equal(sandboxGrep(input), input)
-  })
-
-  await testAsync('sandboxGrep: under limit (5) — unchanged', async () => {
-    const input = makeGrepLines(5)
-    assert.equal(sandboxGrep(input), input)
-  })
-
-  // ── sandboxGrep: fora ──────────────────────────────────────────────────
-  await testAsync('sandboxGrep: over limit (25) — truncated top 10 + marker', async () => {
-    const input = makeGrepLines(25)
-    const out = sandboxGrep(input)
-    assert.ok(out.includes('[TRUNCATED:'))
+  await testAsync('sandboxGrep: over limit keeps top-N + marker, newline preserved', async () => {
+    const out = sandboxGrep(makeGrepLines(25))
     assert.ok(out.includes('10 of 25 matches'))
-    assert.ok(out.includes('file0.ts:0: match 0'))
-    assert.ok(out.includes('file0.ts:9: match 9'))
+    assert.ok(out.includes('file0.ts:0: match 0') && out.includes('file0.ts:9: match 9'))
     assert.ok(!out.includes('file1.ts:15: match 15'), 'hidden must not appear')
-    const lines = out.split('\n').filter((l) => l !== '')
-    assert.equal(lines.length, 11) // 10 + marker
+    assert.equal(out.split('\n').filter((l) => l !== '').length, 11) // 10 + marker
+    assert.ok(sandboxGrep(makeGrepLines(100)).includes('90 more hidden'))
+    assert.ok(sandboxGrep(`${makeGrepLines(25)}\n`).endsWith('\n'))
   })
 
-  await testAsync('sandboxGrep: huge (100) — marker correct', async () => {
-    const input = makeGrepLines(100)
-    const out = sandboxGrep(input)
-    assert.ok(out.includes('10 of 100 matches'))
-    assert.ok(out.includes('90 more hidden'))
+  // ── sandboxGlob ────────────────────────────────────────────────────────
+  await testAsync('sandboxGlob: at/below limit untouched', async () => {
+    assert.equal(sandboxGlob(makeGlobLines(50)), makeGlobLines(50))
+    assert.equal(sandboxGlob(makeGlobLines(10)), makeGlobLines(10))
   })
 
-  await testAsync('sandboxGrep: trailing newline preserved', async () => {
-    const input = makeGrepLines(25) + '\n'
-    const out = sandboxGrep(input)
-    assert.ok(out.endsWith('\n'))
-  })
-
-  // ── sandboxGlob: dentro ────────────────────────────────────────────────
-  await testAsync('sandboxGlob: within limit (50) — unchanged', async () => {
-    const input = makeGlobLines(50)
-    assert.equal(sandboxGlob(input), input)
-  })
-
-  await testAsync('sandboxGlob: under limit (10) — unchanged', async () => {
-    const input = makeGlobLines(10)
-    assert.equal(sandboxGlob(input), input)
-  })
-
-  // ── sandboxGlob: fora ──────────────────────────────────────────────────
-  await testAsync('sandboxGlob: over limit (55) — truncated top 20 + marker', async () => {
-    const input = makeGlobLines(55)
-    const out = sandboxGlob(input)
-    assert.ok(out.includes('[TRUNCATED:'))
+  await testAsync('sandboxGlob: over limit keeps top-N + marker', async () => {
+    const out = sandboxGlob(makeGlobLines(55))
     assert.ok(out.includes('20 of 55 files'))
-    assert.ok(out.includes('src/file0.ts'))
-    assert.ok(out.includes('src/file19.ts'))
+    assert.ok(out.includes('src/file0.ts') && out.includes('src/file19.ts'))
     assert.ok(!out.includes('src/file30.ts'))
-    const lines = out.split('\n').filter((l) => l !== '')
-    assert.equal(lines.length, 21) // 20 + marker
+    assert.equal(out.split('\n').filter((l) => l !== '').length, 21) // 20 + marker
+    assert.ok(sandboxGlob(makeGlobLines(100)).includes('80 more hidden'))
   })
 
-  await testAsync('sandboxGlob: 100 files — marker correct', async () => {
-    const input = makeGlobLines(100)
-    const out = sandboxGlob(input)
-    assert.ok(out.includes('20 of 100 files'))
-    assert.ok(out.includes('80 more hidden'))
+  // ── sandboxWebfetch ────────────────────────────────────────────────────
+  await testAsync('sandboxWebfetch: at/below limit untouched', async () => {
+    assert.equal(sandboxWebfetch(makeChars(5000)), makeChars(5000))
+    assert.equal(sandboxWebfetch(makeChars(100)), makeChars(100))
   })
 
-  // ── sandboxWebfetch: dentro ────────────────────────────────────────────
-  await testAsync('sandboxWebfetch: within limit (5000) — unchanged', async () => {
-    const input = makeChars(5000)
-    assert.equal(sandboxWebfetch(input), input)
-  })
+  await testAsync(
+    'sandboxWebfetch: over limit truncates head + marker (exact+1, custom)',
+    async () => {
+      const input = makeChars(6000)
+      const out = sandboxWebfetch(input)
+      assert.ok(out.includes('[TRUNCATED: Content truncated'))
+      assert.ok(out.includes('first 2000 of 6000 chars') && out.includes('4000 chars hidden'))
+      assert.equal(out.slice(0, 2000), 'x'.repeat(2000))
+      assert.ok(out.length < input.length)
 
-  await testAsync('sandboxWebfetch: under limit (100) — unchanged', async () => {
-    const input = makeChars(100)
-    assert.equal(sandboxWebfetch(input), input)
-  })
+      assert.ok(sandboxWebfetch(makeChars(5001)).includes('[TRUNCATED:'), 'exact+1 must truncate')
 
-  // ── sandboxWebfetch: fora ───────────────────────────────────────────────
-  await testAsync('sandboxWebfetch: over limit (6000) — truncated head 2000 + marker', async () => {
-    const input = makeChars(6000)
-    const out = sandboxWebfetch(input)
-    assert.ok(out.includes('[TRUNCATED: Content truncated'))
-    assert.ok(out.includes('first 2000 of 6000 chars'))
-    assert.ok(out.includes('4000 chars hidden'))
-    assert.equal(out.slice(0, 2000), 'x'.repeat(2000))
-    assert.ok(
-      out.length < input.length,
-      'output must be shorter than input? actually head+marker vs 6000: 2000+~80 <6000 true',
-    )
-  })
-
-  await testAsync('sandboxWebfetch: exactly 5001 — truncated', async () => {
-    const input = makeChars(5001)
-    const out = sandboxWebfetch(input)
-    assert.ok(out.includes('[TRUNCATED:'))
-  })
-
-  await testAsync('sandboxWebfetch: custom limits', async () => {
-    const input = makeChars(100)
-    const out = sandboxWebfetch(input, { maxChars: 10, keepHead: 5 })
-    assert.ok(out.includes('first 5 of 100 chars'))
-    assert.equal(out.slice(0, 5), 'xxxxx')
-  })
+      const custom = sandboxWebfetch(makeChars(100), { maxChars: 10, keepHead: 5 })
+      assert.ok(custom.includes('first 5 of 100 chars'))
+      assert.equal(custom.slice(0, 5), 'xxxxx')
+    },
+  )
 
   // ── sandboxOutput dispatch ─────────────────────────────────────────────
-  await testAsync('sandboxOutput: dispatch read → truncated', async () => {
-    const input = makeLines(250)
-    const out = sandboxOutput('read', input)
-    assert.ok(out.includes('[TRUNCATED:'))
-  })
+  await testAsync(
+    'sandboxOutput: routes each tool (over limit, aliases, case-insensitive)',
+    async () => {
+      assert.ok(sandboxOutput('read', makeLines(250)).includes('[TRUNCATED:'))
+      assert.ok(sandboxOutput('grep', makeGrepLines(25)).includes('matches'))
+      assert.ok(sandboxOutput('glob', makeGlobLines(55)).includes('files'))
+      assert.ok(sandboxOutput('webfetch', makeChars(6000)).includes('Content truncated'))
+      assert.ok(sandboxOutput('fetch', makeChars(6000)).includes('[TRUNCATED:'))
+      assert.ok(sandboxOutput('web_fetch', makeChars(6000)).includes('[TRUNCATED:'))
+      assert.ok(sandboxOutput('READ', makeLines(250)).includes('[TRUNCATED:'))
+      assert.ok(sandboxOutput('Grep', makeGrepLines(25)).includes('[TRUNCATED:'))
+    },
+  )
 
-  await testAsync('sandboxOutput: dispatch grep → truncated', async () => {
-    const input = makeGrepLines(25)
-    const out = sandboxOutput('grep', input)
-    assert.ok(out.includes('matches'))
-  })
+  await testAsync(
+    'sandboxOutput: pass-through — unknown, empty, within limits, custom limits',
+    async () => {
+      const input = makeLines(1000)
+      assert.equal(sandboxOutput('bash', input), input)
+      assert.equal(sandboxOutput('edit', input), input)
+      assert.equal(sandboxOutput('unknown', input), input)
+      assert.equal(sandboxOutput('read', ''), '')
+      assert.equal(sandboxOutput('grep', ''), '')
+      assert.equal(sandboxOutput('read', makeLines(10)), makeLines(10))
+      assert.equal(sandboxOutput('grep', makeGrepLines(10)), makeGrepLines(10))
+      assert.equal(sandboxOutput('glob', makeGlobLines(10)), makeGlobLines(10))
+      assert.equal(sandboxOutput('webfetch', makeChars(100)), makeChars(100))
 
-  await testAsync('sandboxOutput: dispatch glob → truncated', async () => {
-    const input = makeGlobLines(55)
-    const out = sandboxOutput('glob', input)
-    assert.ok(out.includes('files'))
-  })
-
-  await testAsync('sandboxOutput: dispatch webfetch → truncated', async () => {
-    const input = makeChars(6000)
-    const out = sandboxOutput('webfetch', input)
-    assert.ok(out.includes('Content truncated'))
-  })
-
-  await testAsync('sandboxOutput: alias fetch/web_fetch also truncated', async () => {
-    assert.ok(sandboxOutput('fetch', makeChars(6000)).includes('[TRUNCATED:'))
-    assert.ok(sandboxOutput('web_fetch', makeChars(6000)).includes('[TRUNCATED:'))
-  })
-
-  await testAsync('sandboxOutput: unknown tool — unchanged', async () => {
-    const input = makeLines(1000)
-    assert.equal(sandboxOutput('bash', input), input)
-    assert.equal(sandboxOutput('edit', input), input)
-    assert.equal(sandboxOutput('unknown', input), input)
-  })
-
-  await testAsync('sandboxOutput: case insensitive', async () => {
-    const input = makeLines(250)
-    assert.ok(sandboxOutput('READ', input).includes('[TRUNCATED:'))
-    assert.ok(sandboxOutput('Grep', makeGrepLines(25)).includes('[TRUNCATED:'))
-  })
-
-  await testAsync('sandboxOutput: empty string — unchanged', async () => {
-    assert.equal(sandboxOutput('read', ''), '')
-    assert.equal(sandboxOutput('grep', ''), '')
-  })
-
-  await testAsync('sandboxOutput: within limits — unchanged for all tools', async () => {
-    assert.equal(sandboxOutput('read', makeLines(10)), makeLines(10))
-    assert.equal(sandboxOutput('grep', makeGrepLines(10)), makeGrepLines(10))
-    assert.equal(sandboxOutput('glob', makeGlobLines(10)), makeGlobLines(10))
-    assert.equal(sandboxOutput('webfetch', makeChars(100)), makeChars(100))
-  })
-
-  await testAsync('sandboxOutput: custom limits override', async () => {
-    const input = makeLines(10)
-    const limits = { ...DEFAULT_LIMITS, read: { maxLines: 5, keepHead: 2, keepTail: 1 } }
-    const out = sandboxOutput('read', input, limits)
-    assert.ok(out.includes('[TRUNCATED:'))
-  })
+      const limits = { ...DEFAULT_LIMITS, read: { maxLines: 5, keepHead: 2, keepTail: 1 } }
+      assert.ok(sandboxOutput('read', makeLines(10), limits).includes('[TRUNCATED:'))
+    },
+  )
 
   // ── resolveSandboxConfig ───────────────────────────────────────────────
-  await testAsync('resolveSandboxConfig: undefined → defaults', async () => {
-    const cfg = resolveSandboxConfig(undefined)
-    assert.equal(cfg.enabled, true)
-    assert.deepEqual(cfg.limits, DEFAULT_LIMITS)
-  })
+  await testAsync(
+    'resolveSandboxConfig: undefined/null/empty/non-object/invalid → defaults (fail-open)',
+    async () => {
+      const def = resolveSandboxConfig(undefined)
+      assert.equal(def.enabled, true)
+      assert.deepEqual(def.limits, DEFAULT_LIMITS)
+      assert.equal(resolveSandboxConfig(null).enabled, true)
+      assert.deepEqual(resolveSandboxConfig({}).limits.read, DEFAULT_LIMITS.read)
+      assert.deepEqual(resolveSandboxConfig('bad'), def)
+      assert.deepEqual(resolveSandboxConfig(42), def)
 
-  await testAsync('resolveSandboxConfig: null → defaults', async () => {
-    const cfg = resolveSandboxConfig(null)
-    assert.equal(cfg.enabled, true)
-  })
+      const invalid = resolveSandboxConfig({
+        limits: { read: { maxLines: 'bad' } },
+      } as unknown as Record<string, unknown>)
+      assert.equal(invalid.limits.read.maxLines, DEFAULT_LIMITS.read.maxLines)
+    },
+  )
 
-  await testAsync('resolveSandboxConfig: empty object → defaults', async () => {
-    const cfg = resolveSandboxConfig({})
-    assert.equal(cfg.enabled, true)
-    assert.deepEqual(cfg.limits.read, DEFAULT_LIMITS.read)
-  })
+  await testAsync(
+    'resolveSandboxConfig: disabled flag + partial override keeps other defaults',
+    async () => {
+      assert.equal(resolveSandboxConfig({ enabled: false }).enabled, false)
 
-  await testAsync('resolveSandboxConfig: disabled flag', async () => {
-    const cfg = resolveSandboxConfig({ enabled: false })
-    assert.equal(cfg.enabled, false)
-  })
-
-  await testAsync('resolveSandboxConfig: partial limits override', async () => {
-    const cfg = resolveSandboxConfig({
-      limits: { read: { maxLines: 10, keepHead: 3, keepTail: 1 } },
-    })
-    assert.equal(cfg.limits.read.maxLines, 10)
-    assert.equal(cfg.limits.read.keepHead, 3)
-    // other tools keep defaults
-    assert.deepEqual(cfg.limits.grep, DEFAULT_LIMITS.grep)
-    assert.deepEqual(cfg.limits.glob, DEFAULT_LIMITS.glob)
-  })
-
-  await testAsync('resolveSandboxConfig: invalid limits → fall back', async () => {
-    const cfg = resolveSandboxConfig({ limits: { read: { maxLines: 'bad' } } } as unknown as Record<
-      string,
-      unknown
-    >)
-    assert.equal(cfg.limits.read.maxLines, DEFAULT_LIMITS.read.maxLines)
-  })
-
-  await testAsync('resolveSandboxConfig: non-object → defaults', async () => {
-    assert.deepEqual(resolveSandboxConfig('bad'), resolveSandboxConfig(undefined))
-    assert.deepEqual(resolveSandboxConfig(42), resolveSandboxConfig(undefined))
-  })
+      const cfg = resolveSandboxConfig({
+        limits: { read: { maxLines: 10, keepHead: 3, keepTail: 1 } },
+      })
+      assert.equal(cfg.limits.read.maxLines, 10)
+      assert.equal(cfg.limits.read.keepHead, 3)
+      assert.deepEqual(cfg.limits.grep, DEFAULT_LIMITS.grep)
+      assert.deepEqual(cfg.limits.glob, DEFAULT_LIMITS.glob)
+    },
+  )
 
   // ── createContextSandbox handler ───────────────────────────────────────
-  await testAsync('handler: read over limit → truncates + metadata.truncated', async () => {
-    const handler = createContextSandbox()
-    const input = { tool: 'read', sessionID: 'ses1', callID: 'c1' }
-    const output = { title: 'read', output: makeLines(250), metadata: {} }
-    await handler(input, output)
-    assert.ok(output.output.includes('[TRUNCATED:'))
-    assert.equal((output.metadata as Record<string, unknown>).truncated, true)
-    assert.equal((output.metadata as Record<string, unknown>).sandbox, 'read')
+  await testAsync('handler: over limit truncates each tool + sets metadata.truncated', async () => {
+    const cases = [
+      ['read', makeLines(250), '[TRUNCATED:'],
+      ['grep', makeGrepLines(30), 'matches'],
+      ['glob', makeGlobLines(60), 'files'],
+      ['webfetch', makeChars(6000), 'Content truncated'],
+    ] as const
+    for (const [tool, raw, marker] of cases) {
+      const handler = createContextSandbox()
+      const output = { title: tool, output: raw, metadata: {} as Record<string, unknown> }
+      await handler({ tool, sessionID: 'ses1', callID: 'c1' }, output)
+      assert.ok(output.output.includes(marker), `${tool} must truncate`)
+      assert.equal(output.metadata.truncated, true)
+      assert.equal(output.metadata.sandbox, tool)
+    }
   })
 
-  await testAsync('handler: read within limit — no mutation, no metadata', async () => {
-    const handler = createContextSandbox()
-    const input = { tool: 'read', sessionID: 'ses1', callID: 'c1' }
-    const original = makeLines(10)
-    const output = { title: 'read', output: original, metadata: { foo: 'bar' } }
-    await handler(input, output)
-    assert.equal(output.output, original)
-    assert.deepEqual(output.metadata, { foo: 'bar' })
-  })
+  await testAsync(
+    'handler: within limit untouched, existing metadata preserved + merged',
+    async () => {
+      const handler = createContextSandbox()
+      const original = makeLines(10)
+      const within = {
+        title: 'read',
+        output: original,
+        metadata: { foo: 'bar' } as Record<string, unknown>,
+      }
+      await handler({ tool: 'read', sessionID: 'ses1', callID: 'c1' }, within)
+      assert.equal(within.output, original)
+      assert.deepEqual(within.metadata, { foo: 'bar' })
 
-  await testAsync('handler: grep over limit → truncates', async () => {
-    const handler = createContextSandbox()
-    const input = { tool: 'grep', sessionID: 'ses1', callID: 'c1' }
-    const output = { title: 'grep', output: makeGrepLines(30), metadata: {} }
-    await handler(input, output)
-    assert.ok(output.output.includes('matches'))
-    assert.equal((output.metadata as Record<string, unknown>).truncated, true)
-  })
+      const over = {
+        title: 'read',
+        output: makeLines(250),
+        metadata: { foo: 'bar' } as Record<string, unknown>,
+      }
+      await handler({ tool: 'read', sessionID: 'ses1', callID: 'c1' }, over)
+      assert.equal(over.metadata.foo, 'bar')
+      assert.equal(over.metadata.truncated, true)
+    },
+  )
 
-  await testAsync('handler: glob over limit → truncates', async () => {
-    const handler = createContextSandbox()
-    const input = { tool: 'glob', sessionID: 'ses1', callID: 'c1' }
-    const output = { title: 'glob', output: makeGlobLines(60), metadata: {} }
-    await handler(input, output)
-    assert.ok(output.output.includes('files'))
-  })
+  await testAsync(
+    'handler guards: disabled gate, live config, unknown tool, non-string, never throws',
+    async () => {
+      const original = makeLines(250)
+      const input = { tool: 'read', sessionID: 'ses1', callID: 'c1' }
 
-  await testAsync('handler: webfetch over limit → truncates', async () => {
-    const handler = createContextSandbox()
-    const input = { tool: 'webfetch', sessionID: 'ses1', callID: 'c1' }
-    const output = { title: 'webfetch', output: makeChars(6000), metadata: {} }
-    await handler(input, output)
-    assert.ok(output.output.includes('Content truncated'))
-  })
+      const disabled = createContextSandbox({ enabled: false, limits: DEFAULT_LIMITS })
+      const disabledOut = {
+        title: 'read',
+        output: original,
+        metadata: {} as Record<string, unknown>,
+      }
+      await disabled(input, disabledOut)
+      assert.equal(disabledOut.output, original)
+      assert.equal(disabledOut.metadata.truncated, undefined)
 
-  await testAsync('handler: unknown tool — passes through', async () => {
-    const handler = createContextSandbox()
-    const input = { tool: 'bash', sessionID: 'ses1', callID: 'c1' }
-    const original = makeLines(1000)
-    const output = { title: 'bash', output: original, metadata: {} }
-    await handler(input, output)
-    assert.equal(output.output, original)
-    assert.equal((output.metadata as Record<string, unknown>).truncated, undefined)
-  })
+      const live = { enabled: true, limits: DEFAULT_LIMITS }
+      const liveHandler = createContextSandbox(live)
+      live.enabled = false
+      const liveOut = { title: 'read', output: original, metadata: {} as Record<string, unknown> }
+      await liveHandler(input, liveOut)
+      assert.equal(liveOut.output, original, 'live config update must be respected')
 
-  await testAsync('handler: disabled → no truncation', async () => {
-    const handler = createContextSandbox({ enabled: false, limits: DEFAULT_LIMITS })
-    const input = { tool: 'read', sessionID: 'ses1', callID: 'c1' }
-    const original = makeLines(250)
-    const output = { title: 'read', output: original, metadata: {} }
-    await handler(input, output)
-    assert.equal(output.output, original)
-    assert.equal((output.metadata as Record<string, unknown>).truncated, undefined)
-  })
+      const passthrough = createContextSandbox()
+      const bash = makeLines(1000)
+      const bashOut = { title: 'bash', output: bash, metadata: {} as Record<string, unknown> }
+      await passthrough({ tool: 'bash', sessionID: 'ses1', callID: 'c1' }, bashOut)
+      assert.equal(bashOut.output, bash)
+      assert.equal(bashOut.metadata.truncated, undefined)
 
-  await testAsync('handler: mutable config ref — live update', async () => {
-    const cfg = { enabled: true, limits: DEFAULT_LIMITS }
-    const handler = createContextSandbox(cfg)
-    // disable live
-    cfg.enabled = false
-    const input = { tool: 'read', sessionID: 'ses1', callID: 'c1' }
-    const original = makeLines(250)
-    const output = { title: 'read', output: original, metadata: {} }
-    await handler(input, output)
-    assert.equal(output.output, original, 'live config update must be respected')
-  })
+      const nullOut = {
+        title: 'read',
+        output: null as unknown as string,
+        metadata: {} as Record<string, unknown>,
+      }
+      await passthrough(input, nullOut as unknown as { output: string })
+      assert.equal(nullOut.output, null)
 
-  await testAsync('handler: non-string output — no throw, pass through', async () => {
-    const handler = createContextSandbox()
-    const input = { tool: 'read', sessionID: 'ses1', callID: 'c1' }
-    const output = { title: 'read', output: null as unknown as string, metadata: {} }
-    await handler(input, output as unknown as { output: string })
-    assert.equal(output.output, null)
-  })
-
-  await testAsync('handler: existing metadata preserved + truncated merged', async () => {
-    const handler = createContextSandbox()
-    const input = { tool: 'read', sessionID: 'ses1', callID: 'c1' }
-    const output = { title: 'read', output: makeLines(250), metadata: { foo: 'bar' } }
-    await handler(input, output)
-    assert.equal((output.metadata as Record<string, unknown>).foo, 'bar')
-    assert.equal((output.metadata as Record<string, unknown>).truncated, true)
-  })
-
-  await testAsync('handler: never throws on malformed input', async () => {
-    const handler = createContextSandbox()
-    // @ts-expect-error intentional malformed
-    await handler(null, null)
-    // @ts-expect-error
-    await handler({ tool: 'read' }, { output: 123 })
-  })
+      // @ts-expect-error intentional malformed input
+      await passthrough(null, null)
+      // @ts-expect-error intentional malformed input
+      await passthrough({ tool: 'read' }, { output: 123 })
+    },
+  )
 
   // ── integration: sandbox before hashline enhancer ──────────────────────
   await testAsync('integration: sandbox then readEnhancer — tags on kept lines only', async () => {
     const sandbox = createContextSandbox()
     const enhancer = createReadEnhancer()
     const input = { tool: 'read', sessionID: 'ses1', callID: 'c1' }
-    // Simulate read output with line numbers: "1: a\n2: b\n..."
-    const raw = makeLines(250)
     const output: { title: string; output: string; metadata?: Record<string, unknown> } = {
       title: 'read',
-      output: raw,
+      output: makeLines(250),
       metadata: {},
     }
     await sandbox(input, output)
     assert.ok(output.output.includes('[TRUNCATED:'), 'sandbox must truncate first')
-    const afterSandboxLineCount = output.output.split('\n').filter((l) => l !== '').length
-    assert.equal(afterSandboxLineCount, 61, 'after sandbox: 50 head + marker + 10 tail')
+    assert.equal(output.output.split('\n').filter((l) => l !== '').length, 61)
 
     await enhancer(input, output)
-    // Enhancer tags lines matching "N: content" → "N#TAG|content"
-    // Marker line "[TRUNCATED: ..." does not match prefix, so left untouched
     assert.ok(output.output.includes('[TRUNCATED:'), 'marker must survive enhancer')
-    // Kept lines must be tagged: e.g. "1#??|line 1"
     assert.ok(output.output.includes('1#'), 'kept head lines must be tagged')
     assert.ok(output.output.includes('250#'), 'kept tail lines must be tagged')
-    // Hidden lines not present, hence not tagged
     assert.ok(!output.output.includes('100#'), 'hidden lines must not be tagged')
   })
 
-  await testAsync('integration: sandbox + enhancer order independence for non-read', async () => {
+  await testAsync('integration: enhancer is a no-op for non-read (grep)', async () => {
     const sandbox = createContextSandbox()
     const enhancer = createReadEnhancer()
     const input = { tool: 'grep', sessionID: 'ses1', callID: 'c1' }
-    const raw = makeGrepLines(30)
-    const output = { title: 'grep', output: raw, metadata: {} }
+    const output = { title: 'grep', output: makeGrepLines(30), metadata: {} }
     await sandbox(input, output)
     await enhancer(input, output)
-    // enhancer is no-op for grep
     assert.ok(output.output.includes('[TRUNCATED:'))
     assert.ok(!output.output.includes('#'), 'grep output should not be hashline-tagged')
   })
 
-  // ── performance: large input <5ms overhead ─────────────────────────────
+  // ── performance ────────────────────────────────────────────────────────
   await testAsync('performance: sandbox 10k lines < 50ms', async () => {
-    const input = makeLines(10_000)
     const start = Date.now()
-    const out = sandboxRead(input)
+    const out = sandboxRead(makeLines(10_000))
     const elapsed = Date.now() - start
     assert.ok(out.includes('[TRUNCATED:'))
     assert.ok(elapsed < 50, `sandbox 10k lines took ${elapsed}ms, expected <50ms`)

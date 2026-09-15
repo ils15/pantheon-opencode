@@ -535,22 +535,6 @@ background_delegation:
   read_only_agents: [apollo, gaia]
   session_max: 3
   retry_count: 1
-# ── R1: Per-error-type retry + provider cooldown (LiteLLM pattern) ──────
-# retry_policy: max retries per error class before escalating. Exponential
-# backoff (base 1s, doubling, capped 30s) applies between retries. auth
-# errors are NEVER retried (0) — a credential problem will not fix itself.
-# Enforcement: zeus-delegate-with-retry (manual waves) + RetryPolicyEngine.
-retry_policy:
-  auth: 0
-  rate_limit: 3
-  timeout: 2
-  other: 1
-# cooldown: after `allowed_fails` consecutive failures for a provider, skip
-# that provider for `cooldown_time_seconds`. A success resets the counter.
-# In-memory tracker (no Redis) — process-wide, shared across retry helpers.
-cooldown:
-  allowed_fails: 3
-  cooldown_time_seconds: 60
 # ── O5: permission.task — glob rules for which subagents an agent may
 # invoke (last matching rule wins; deny removes the agent from the delegate
 # tool description entirely — prevents circular delegation at the

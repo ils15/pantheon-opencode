@@ -165,7 +165,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.5.0-beta.14";
+	return "1.5.0-beta.15";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.
@@ -832,11 +832,12 @@ async function readDelegationEntries(dir) {
 }
 /** Read delegation reports from EVERY session under
 *  `<root>/.pantheon/delegations/<sessionID>/<alias>.md` — the panel's
-*  HISTORY channel. Unlike the children/live channels it does NOT depend on a
-*  resolved sessionID: with no focused session (null/placeholder), the panel
-*  still shows the reports from all past sessions (running first, Finalized
-*  desc — the sort applied by readDelegationEntries). Fail-open: a
-*  missing/unreadable directory yields []. */
+*  ENRICHMENT source. The read is deliberately unfiltered (each entry carries
+*  its directory's sessionID, so a taskID match can enrich any channel);
+*  callers MUST scope the merged result with {@link filterDelegationsToSession}
+*  before rendering — only the active session's reports are shown. Entries are
+*  running first, Finalized desc (the sort applied by readDelegationEntries).
+*  Fail-open: a missing/unreadable directory yields []. */
 async function readAllDelegationEntries(root) {
 	return readDelegationEntries(join(root, ".pantheon", "delegations"));
 }
@@ -965,6 +966,11 @@ const IDLE_SILENCE_MS = 60 * 1e3;
 * board; these constants only control which rows enter the TUI window. */
 const DELEGATION_DONE_RETENTION_MS = 120 * 1e3;
 const DELEGATION_FAILED_RETENTION_MS = 600 * 1e3;
+/** Alias-less NATIVE task() live entries never receive a board alias (the
+*  task tool output carries none), so the 30s alias-less prune in
+*  mergeChildDelegationSources must not apply to them — 5 minutes covers a
+*  slow child listing while still bounding the live map. */
+const NATIVE_LIVE_ALIASLESS_TTL_MS = 300 * 1e3;
 /**
 * Mark a running entry as `stale-running` if it has been running longer than
 * the threshold AND has no recent activity (no `updatedAt` change in the last
@@ -1048,20 +1054,21 @@ function delegationSpinnerFrame(now) {
 *  pre-dispatch tool part maps to `running` in {@link reduceDelegationToolPart}. */
 /** Semantic tone mapped to the TUI theme at the row ({@link DelegationRow}).
 *  Kept separate + pure so the color channel is testable without booting the
-*  renderer. */
-/** Color is the ONLY channel separating `stale-running` from a live `running`
-*  row — the 4-glyph row design has no dedicated stale shape. Display-only;
-*  no behavior change. */
+*  renderer. Every display state resolves to one of the three status colors;
+*  the row paints its whole content with it (see {@link DelegationRow}). */
+/** Status → color mapping for the whole-row tone. Red = failure, green =
+*  terminal, yellow = in flight. The glyph remains a redundant channel so the
+*  state stays legible in monochrome. Display-only; no behavior change. */
 function delegationStateTone(state) {
 	switch (state) {
 		case "running":
 		case "retry":
-		case "startup_unknown": return "warning";
+		case "startup_unknown":
 		case "stale-running": return "warning";
 		case "error":
 		case "startup_failed": return "error";
-		case "completed": return "success";
-		case "cancelled": return "muted";
+		case "completed":
+		case "cancelled": return "success";
 	}
 }
 /** Bounded tracker: child session id → latest running tool call. */
@@ -1136,13 +1143,11 @@ function mergeChildDelegationSources(children, live) {
 		bySessionAlias.set(key(entry.sessionID, entry.alias), index);
 	});
 	for (const liveEntry of live) {
-		if (liveEntry.alias === null && liveEntry.taskID === null && Date.now() - liveEntry.startedAt > 3e4) continue;
+		const aliaslessTTL = liveEntry.tool === "task" ? NATIVE_LIVE_ALIASLESS_TTL_MS : 3e4;
+		if (liveEntry.alias === null && liveEntry.taskID === null && Date.now() - liveEntry.startedAt > aliaslessTTL) continue;
 		const incoming = toDelegationEntry(liveEntry);
 		const isNativeLive = liveEntry.tool === "task" && liveEntry.alias === null;
-		if (isNativeLive) {
-			incoming.source = "children-only";
-			incoming.alias = "native-task";
-		}
+		if (isNativeLive) incoming.source = "children-only";
 		const index = (incoming.taskID !== void 0 ? byTask.get(incoming.taskID) : void 0) ?? (incoming.alias !== "" ? bySessionAlias.get(key(incoming.sessionID, incoming.alias)) : void 0);
 		if (index === void 0) {
 			result.push(incoming);
@@ -1465,10 +1470,29 @@ function boardRecordsToDelegationEntries(records) {
 	out.sort(compareDelegationEntries);
 	return out;
 }
+/** Active (non-terminal) display states — a job in one of these is still live. */
+function isActiveDelegationState(state) {
+	return state === "running" || state === "retry" || state === "stale-running";
+}
+/** Temporal guard for the board merge (recycled-alias regression): board
+*  aliases recycle across jobs (apo-1 of a previous job), so a board
+*  terminal record only closes a running entry when its Finalized timestamp
+*  is STRICTLY NEWER than the entry it would close. Older/equal/missing
+*  keeps the live entry — when in doubt the live job wins. Pure. */
+function shouldKeepRunningOverBoardTerminal(existing, incoming) {
+	if (existing === void 0) return false;
+	if (!isActiveDelegationState(existing.state)) return false;
+	if (isActiveDelegationState(incoming.state)) return false;
+	const incomingTs = incoming.updatedAt;
+	if (incomingTs === null) return true;
+	return incomingTs <= (existing.updatedAt ?? existing.startedAt);
+}
 /** Merge the board over any other channel. The board is AUTHORITATIVE for
-*  state/alias/agent (it is the persisted FSM) and it is the only channel
-*  that carries jobs from OTHER sessions. Dedup by taskID first, then by
-*  (sessionID, alias) — aliases are per parent session. Pure. */
+*  state/alias/agent (it is the persisted FSM). This merge is intentionally
+*  UNSCOPED so the board can enrich an active-session row (dedup by taskID);
+*  the caller scopes the merged list with {@link filterDelegationsToSession},
+*  which is what keeps other-session board jobs out of the panel. Dedup by
+*  taskID first, then by (sessionID, alias) — aliases are per parent session. Pure. */
 function mergeBoardDelegationSources(base, board) {
 	const key = (sessionID, alias) => `${sessionID}\u0000${alias}`;
 	const byTaskID = /* @__PURE__ */ new Map();
@@ -1487,6 +1511,7 @@ function mergeBoardDelegationSources(base, board) {
 			bySessionAlias.set(key(incoming.sessionID, incoming.alias), next);
 			continue;
 		}
+		if (shouldKeepRunningOverBoardTerminal(out[index], incoming)) continue;
 		out[index] = {
 			...incoming,
 			sessionID: incoming.sessionID !== "" ? incoming.sessionID : out[index]?.sessionID ?? ""
@@ -1494,6 +1519,26 @@ function mergeBoardDelegationSources(base, board) {
 	}
 	out.sort(compareDelegationEntries);
 	return out;
+}
+/** Scope a fully-merged display list to the ACTIVE session only.
+*
+*  The panel is session-scoped: rows from other sessions (board snapshot, md
+*  history under `.pantheon/delegations/<other-session>/`) and rows with no
+*  attributable session (empty sessionID) are DROPPED. The previous
+*  cross-session behavior rendered those rows and clicking them led to
+*  "Session not found" — there is no cross-session channel anymore.
+*
+*  The board/md channels still feed the merge UNFILTERED so the board can
+*  ENRICH an active-session row with state/alias/agent (dedup by taskID), but
+*  they can never introduce a row for another session: this filter is applied
+*  ONCE, after every merge (children + live + md + board).
+*
+*  Returns [] when no active session resolves (null/placeholder) — there is no
+*  scope to show. Native children always carry the active session id (stamped
+*  by `childrenToDelegationEntries`), so they survive the filter. Pure. */
+function filterDelegationsToSession(entries, activeSessionID) {
+	if (!isValidSessionId(activeSessionID)) return [];
+	return entries.filter((entry) => entry.sessionID === activeSessionID);
 }
 /** Server-aligned session id validity: opencode rejects anything not starting
 *  with "ses" (SchemaError). This deliberately mirrors that exact contract —
@@ -1592,10 +1637,13 @@ function delegationRowMarker(state, now = Date.now()) {
 	return `${status === "active" ? delegationSpinnerFrame(now) : delegationRowGlyph(status)} `;
 }
 /** ONE identity per row: the short board alias (`apo-1`); a row without a
-*  board alias (native task() child, alias `native-task`) shows the agent
-*  instead — never alias + agent stacked. Pure. */
+*  board alias (native task() child `native-task` / `native-<id>`, or an
+*  alias-less native live row `live-<callID>` kept as children-only) shows
+*  the agent instead — never alias + agent stacked. Pure. */
 function delegationRowIdentity(entry) {
-	if (entry.alias === "native-task" && entry.agent !== "") return entry.agent;
+	if (entry.agent === "") return entry.alias;
+	if (entry.alias === "native-task" || entry.alias.startsWith("native-")) return entry.agent;
+	if (entry.alias.startsWith("live-") && entry.source === "children-only") return entry.agent;
 	return entry.alias;
 }
 /** Fixed alias cell, pad-right + hard-truncate to `width` (default 7) so
@@ -1713,11 +1761,13 @@ function formatPanelLogLine(children, pantheon, native, md, events) {
 *  itself (fallback 'agent'), state derived from its status, startedAt from
 *  time.created. A report-less child is a NATIVE task() child (every
 *  child of the current session — pantheon_delegate OR the native `task()`
-*  tool — carries parentID = caller), so it gets source 'children-only',
-*  the internal alias 'native-task' instead of a
-*  board alias. The 'task nativa' description fallback keeps the row
-*  non-empty when the child carries no title.
-*  Terminal md state wins over the derived state; a running md defers to
+*  tool — carries parentID = caller), so it gets source 'children-only', a
+*  per-child alias 'native-<last4 of the child id>' (one identity per native
+*  row) instead of a board alias. The 'task nativa' description fallback
+*  keeps the row non-empty when the child carries no title.
+*  A FRESH terminal md state wins over the derived state (a stale md report
+*  from a previous incarnation never flips a live child — see
+*  mdTerminalCoversChild); a running md defers to
 *  the child's live status. A running child is NEVER archived — it always
 *  lands in the active split (splitDelegationList active = running/retry).
 *  `parentSessionID` (the focused session id) is stamped on report-less
@@ -1725,6 +1775,20 @@ function formatPanelLogLine(children, pantheon, native, md, events) {
 *  unscoped ('').
 *  Sorted running-first (compareDelegationEntries).
 *  Pure — no I/O. */
+/** Temporal guard for the children channel (same recycled-alias class as the
+*  board merge): an md terminal report matched by taskID may still belong to
+*  a PREVIOUS job incarnation. Accept it only when its Finalized timestamp
+*  covers the child's latest activity, when either side has no timestamp to
+*  compare, or when both startedAt agree on a single job incarnation.
+*  Pure — no I/O. */
+function mdTerminalCoversChild(md, child) {
+	const childUpdated = child.time?.updated;
+	if (md.updatedAt !== null && childUpdated !== void 0) {
+		if (md.updatedAt >= childUpdated) return true;
+		return md.startedAt === child.time?.created;
+	}
+	return true;
+}
 function childrenToDelegationEntries(children, md, now = Date.now(), parentSessionID = "") {
 	const byTaskID = /* @__PURE__ */ new Map();
 	for (const m of md) if (m.taskID !== void 0 && !byTaskID.has(m.taskID)) byTaskID.set(m.taskID, m);
@@ -1734,9 +1798,9 @@ function childrenToDelegationEntries(children, md, now = Date.now(), parentSessi
 		if (child.id === "" || seen.has(child.id)) continue;
 		seen.add(child.id);
 		const mdEntry = byTaskID.get(child.id);
-		const state = mdEntry !== void 0 && mdEntry.state !== "running" ? mdEntry.state : childStatusToState(child.status);
+		const state = mdEntry !== void 0 && mdEntry.state !== "running" && mdTerminalCoversChild(mdEntry, child) ? mdEntry.state : childStatusToState(child.status);
 		out.push({
-			alias: mdEntry?.alias ?? "native-task",
+			alias: mdEntry?.alias ?? `native-${child.id.slice(-4)}`,
 			sessionID: mdEntry?.sessionID ?? parentSessionID,
 			taskID: child.id,
 			agent: mdEntry?.agent ?? child.agent ?? "agent",
@@ -1866,7 +1930,7 @@ function DelegationRow(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				insert(_el$18, () => `  ${description()}`);
-				effect((_$p) => setProp(_el$18, "fg", theme().textMuted, _$p));
+				effect((_$p) => setProp(_el$18, "fg", tone(), _$p));
 				return _el$18;
 			}
 		}), null);
@@ -1877,12 +1941,12 @@ function DelegationRow(props) {
 			children: (a) => (() => {
 				var _el$19 = createElement("text");
 				insert(_el$19, () => `  ↳ ${truncateDelegationDescription(`${a().tool}${a().summary !== "" ? ` ${a().summary}` : ""}`)}`);
-				effect((_$p) => setProp(_el$19, "fg", theme().textMuted, _$p));
+				effect((_$p) => setProp(_el$19, "fg", tone(), _$p));
 				return _el$19;
 			})()
 		}), null);
 		effect((_p$) => {
-			var _v$5 = tone(), _v$6 = theme().textMuted;
+			var _v$5 = tone(), _v$6 = tone();
 			_v$5 !== _p$.e && (_p$.e = setProp(_el$16, "fg", _v$5, _p$.e));
 			_v$6 !== _p$.t && (_p$.t = setProp(_el$17, "fg", _v$6, _p$.t));
 			return _p$;
@@ -1975,8 +2039,8 @@ function View(props) {
 					api: props.api
 				});
 				if (sessionID === null) {
-					setChildDelegations(mergeBoardDelegationSources(md, board));
-					panelLog.info(`${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — history+board shown)`);
+					setChildDelegations(filterDelegationsToSession(mergeBoardDelegationSources(md, board), sessionID));
+					panelLog.info(`${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — inactive panel)`);
 					return;
 				}
 				let children = [];
@@ -2002,7 +2066,7 @@ function View(props) {
 				})), md, now(), sessionID);
 				for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 3e4) props.liveStore.map.delete(k);
 				const liveEntries = [...props.liveStore.map.values()].filter((entry) => entry.sessionID === sessionID);
-				setChildDelegations(mergeBoardDelegationSources(mergeChildDelegationSources(childEntries, liveEntries), board));
+				setChildDelegations(filterDelegationsToSession(mergeBoardDelegationSources(mergeChildDelegationSources(childEntries, liveEntries), board), sessionID));
 				const counts = countDelegationSources(childEntries);
 				panelLog.info(formatPanelLogLine(children.length, counts.pantheon, counts.native, md.length, eventRefreshCount));
 			} finally {
@@ -2314,6 +2378,6 @@ const plugin = {
 	setup: async () => {}
 };
 //#endregion
-export { DELEGATION_ALIAS_WIDTH, DELEGATION_DESCRIPTION_MAX, DELEGATION_DONE_RETENTION_MS, DELEGATION_ELAPSED_WIDTH, DELEGATION_FAILED_RETENTION_MS, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, IDLE_SILENCE_MS, STALE_RUNNING_THRESHOLD_MS, boardRecordToDelegationEntry, boardRecordsToDelegationEntries, boardStatePath, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, createDelegationRowOpenHandler, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeBoardDelegationSources, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readBoardState, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { DELEGATION_ALIAS_WIDTH, DELEGATION_DESCRIPTION_MAX, DELEGATION_DONE_RETENTION_MS, DELEGATION_ELAPSED_WIDTH, DELEGATION_FAILED_RETENTION_MS, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, IDLE_SILENCE_MS, NATIVE_LIVE_ALIASLESS_TTL_MS, STALE_RUNNING_THRESHOLD_MS, boardRecordToDelegationEntry, boardRecordsToDelegationEntries, boardStatePath, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, createDelegationRowOpenHandler, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, filterDelegationsToSession, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeBoardDelegationSources, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readBoardState, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 
 //# sourceMappingURL=tui.js.map

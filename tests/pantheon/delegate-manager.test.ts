@@ -26,6 +26,7 @@ import {
   type NativeTaskFn,
 } from '../../src/pantheon/delegate-manager.ts'
 import { StepCapTracker } from '../../src/pantheon/step-cap.ts'
+import { tmpDelegationDir } from './helpers/tmp-dir.ts'
 
 // ─── Harness ───────────────────────────────────────────────────────────
 
@@ -76,11 +77,15 @@ function makeManager(
   taskFn: NativeTaskFn = okTask,
   extra?: Partial<DelegateManagerOptions>,
 ): ReturnType<typeof createDelegateManager> {
+  // Isolate reports in a throwaway dir: read() now serves the on-disk report,
+  // and the fixed `ses_root` parent ID would otherwise pick up real user
+  // reports from `.pantheon/delegations/ses_root/` (disk leakage).
   return createDelegateManager({
     board,
     task: taskFn,
     parentSessionID: 'ses_root',
     env: {},
+    outputDir: tmpDelegationDir('delegate-manager-'),
     ...extra,
   })
 }
@@ -171,6 +176,7 @@ async function main(): Promise<void> {
       task: okTask,
       parentSessionID: 'ses_root',
       env: {},
+      outputDir: tmpDelegationDir('delegate-crash-'),
     })
     const report = await mgr.read('child-crash')
     assert.match(report, /error/i)
@@ -213,6 +219,7 @@ async function main(): Promise<void> {
       parentSessionID: 'ses_root',
       env: {},
       foregroundFallback: true,
+      outputDir: tmpDelegationDir('delegate-foreground-'),
     })
     const receipt = await mgrFg.launch({ agent: 'apollo', prompt: 'c' })
     assert.equal(receipt.state, 'reconciled')
@@ -327,7 +334,17 @@ async function main(): Promise<void> {
     const board = makeBoard()
     const mgr = makeManager(board)
     const receipt = await mgr.launch({ agent: 'demeter', prompt: 'migrate' })
-    assert.deepEqual(Object.keys(receipt).sort(), ['agent', 'id', 'line', 'state', 'status'])
+    // Receipts carry `alias` (report-file key) and the verified `output` on top
+    // of the original short fields — the line itself stays a single line.
+    assert.deepEqual(Object.keys(receipt).sort(), [
+      'agent',
+      'alias',
+      'id',
+      'line',
+      'output',
+      'state',
+      'status',
+    ])
     assert.ok(!receipt.line.includes('\n'), 'single line')
   })
 

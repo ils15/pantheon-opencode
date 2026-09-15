@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "pantheon"
-version = "1.5.0-beta.14"
+version = "1.5.0-beta.15"
 description = "Multi-agent orchestration framework"
 requires-python = ">=3.11"
 dependencies = []
@@ -37,10 +37,8 @@ ignore = ["E501"]
 "scripts/scrub-secrets.py" = ["N999"]
 # These modules defer optional/heavy imports until the corresponding command is used.
 "scripts/vector_memory/*.py" = ["PLC0415"]
-"tests/test_code_mode_args.py" = ["PLC0415"]
 "tests/test_code_mode_sandbox.py" = ["PLC0415", "N806"]
 "tests/test_code_mode_server.py" = ["PLC0415"]
-"tests/test_eval_store.py" = ["PLC0415", "PLR2004"]
 "tests/test_memory_mcp_server.py" = ["PLC0415", "PLR2004"]
 # Existing public APIs and test fixtures are intentionally broad/simple; refactoring
 # them would be behavior-affecting rather than a mechanical lint correction.
@@ -54,8 +52,7 @@ ignore = ["E501"]
 "scripts/vector_memory/query.py" = ["PLR0913"]
 "src/mcp/eval_store.py" = ["PLR2004"]
 "tests/test_code_mode_frontmatter.py" = ["PLR2004"]
-"tests/test_eval_judge.py" = ["PLR2004"]
-"tests/test_eval_static.py" = ["PLR2004"]
+"tests/test_eval.py" = ["PLR2004"]
 "tests/test_mcp_persistence_server.py" = ["PLR2004"]
 
 [tool.mypy]

@@ -122,6 +122,7 @@ async function main(): Promise<void> {
     const delegation = buildPluginNativeDelegation({
       board,
       client,
+      outputDir,
       isRootSession: (id) => id === 'ses_root',
       registerChildSession: (id, parent) => children.push(`${parent}>${id}`),
       registerReadOnlySession: (id, info) =>
@@ -162,6 +163,7 @@ async function main(): Promise<void> {
     const delegation = buildPluginNativeDelegation({
       board,
       client,
+      outputDir,
       isRootSession: () => true,
       registerChildSession: () => {},
       registerReadOnlySession: () => {},
@@ -186,6 +188,7 @@ async function main(): Promise<void> {
     const delegation = buildPluginNativeDelegation({
       board,
       client,
+      outputDir,
       isRootSession: () => true,
       registerChildSession: () => {},
       registerReadOnlySession: (id, info) =>
@@ -213,6 +216,7 @@ async function main(): Promise<void> {
       const delegation = buildPluginNativeDelegation({
         board,
         client,
+        outputDir,
         isRootSession: () => true,
         registerChildSession: () => {},
         registerReadOnlySession: () => {},

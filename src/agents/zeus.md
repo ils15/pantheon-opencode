@@ -301,32 +301,10 @@ vão a idle com todos incompletos. Guards (todos no `src/pantheon/todo-enforcer.
 
 ## Wave 4 (PR #46): Empty-Result Retry + /cost + Themis Tier
 
-### Empty-Result Retry (dispatch-guard — MANUAL orchestration)
-OpenCode 1.18.x NAO permite interceptar a conclusao de `task()` via hooks,
-entao o `src/pantheon/dispatch-guard.ts` e uma lib pura usada POR VOCE na
-orquestracao (NAO esta wired no plugin):
-
-```
-import { createDispatchGuard } from '.../src/pantheon/dispatch-guard.ts'  # via code-mode ou subagente
-
-guard = createDispatchGuard({ retryOnEmpty: true, logger: { warn: console.warn } })
-
-# classificar resultado de task_status/wait:
-#   'content'      → tem texto, pronto
-#   'empty-mode1'  → SEM texto E SEM tokens (nada voltou)      → RETRY 1x
-#   'empty-mode2'  → SEM texto, MAS tokens (raciocinou, perdeu a parte de texto;
-#                    assinatura da falha themis Wave-2)         → RETRY 1x
-
-out = await guard.maybeRetry(result, async () => { ...task() de novo... })
-# out.retried=true se redisparou; CAP DURO de 1 retry — nunca 2x.
-# Se o retry voltar vazio, `out.retried=false` — NAO tente de novo: escale.
-```
-Regra: retry 1x APENAS em `empty-mode1`/`empty-mode2`. Resultado com conteudo
-nunca redispara. Apos 1 retry vazio → escalate (mesma regra do TODO Enforcer).
-
-> **Waves DEVEM usar `zeusDelegateWithRetry`** (`src/pantheon/zeus-delegate-with-retry.ts`) — encapsula `delegate → waitForTerminal → classify → retry 1x → escalate` com cap duro 1; se ainda vazio throw `ZeusEscalationError` (escale: tente outro agente, simplifique, manual).
-> Uso alto-nível: `import { zeusDelegateWithRetry } from './pantheon/zeus-delegate-with-retry.ts'` → `await zeusDelegateWithRetry({ board, client, sessionID, agent, prompt })`.
-> Uso baixo-nível: `createZeusRetryHelper().executeWithRetry(first, () => secondRead())` — classifica empty e decide retry/escalate (mesmo cap 1).
+### Empty-Result Retry (runtime — automatic)
+Empty-response detection (`empty-mode1` / `empty-mode2`) and stuck-agent
+classification are wired at runtime in `delegation-classifier.ts` (consumed by
+`delegation.ts`). No manual retry helper is required.
 
 ### /cost — pantheon_cost tool (WIRED no plugin)
 `pantheon_cost({ days?: number })` le o `opencode.db` READ-ONLY usando o backend

@@ -783,7 +783,7 @@ function delegationAgent(tool: string, args?: unknown): string {
  * panel tracks the child end-to-end. Fire-and-forget and silent: a mirror
  * failure must never surface into the tool call or the transcript.
  * registerLaunchIfAbsent keeps it idempotent against any other dispatcher
- * (v2-events, plugin double-load, repeated after-hook firings).
+ * (plugin double-load, repeated after-hook firings).
  */
 function mirrorNativeBackgroundDispatch(
   input: { tool: string; sessionID: string },

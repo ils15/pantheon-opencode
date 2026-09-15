@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
 import { createDelegationTools } from '../../src/pantheon/delegation.ts'
+import { tmpDelegationDir } from './helpers/tmp-dir.ts'
 
 type ProbeClient = {
   session: {
@@ -46,7 +47,12 @@ function client(
 
 async function run(): Promise<void> {
   const root = 'root'
-  const opts = { rootSessions: new Set([root]), bootstrapTimeoutMs: 10, bootstrapPollIntervalMs: 1 }
+  const opts = {
+    rootSessions: new Set([root]),
+    bootstrapTimeoutMs: 10,
+    bootstrapPollIntervalMs: 1,
+    outputDir: tmpDelegationDir('bootstrap-'),
+  }
 
   {
     const c = client({ messages: () => [{ info: { role: 'user' } }] })

@@ -27,6 +27,7 @@ import {
 import { createDelegationTools } from '../../src/pantheon/delegation.ts'
 import { readOnlyRegistry } from '../../src/pantheon/delegation-enforce.ts'
 import { finalizeDelegation } from '../../src/pantheon/delegation-finalize.ts'
+import { tmpDelegationDir } from './helpers/tmp-dir.ts'
 
 // ─── Harness ───────────────────────────────────────────────────────────
 
@@ -159,6 +160,7 @@ async function testP0_1() {
       client: client as never,
       options: {
         rootSessions: new Set(['ses_root']),
+        outputDir: tmpDelegationDir('bugs-'),
         readOnlyAgents: new Set(['apollo']),
         enforceRuntimeMatrix: false,
         bootstrapTimeoutMs: 50,
@@ -204,6 +206,7 @@ async function testP0_1() {
       client: client as never,
       options: {
         rootSessions: new Set(['ses_root']),
+        outputDir: tmpDelegationDir('bugs-'),
         readOnlyAgents: new Set(['apollo']),
         enforceRuntimeMatrix: false,
         bootstrapTimeoutMs: 50,
@@ -245,6 +248,7 @@ async function testP0_2() {
       client: client as never,
       options: {
         rootSessions: new Set(['ses_root']),
+        outputDir: tmpDelegationDir('bugs-'),
         enforceRuntimeMatrix: false,
         delegationEnabled: false,
       },
@@ -275,6 +279,7 @@ async function testP0_2() {
       client: client as never,
       options: {
         rootSessions: new Set(['ses_root']),
+        outputDir: tmpDelegationDir('bugs-'),
         enforceRuntimeMatrix: false,
         delegationEnabled: false,
       },
@@ -302,6 +307,7 @@ async function testP0_2() {
       client: client as never,
       options: {
         rootSessions: new Set(['ses_root']),
+        outputDir: tmpDelegationDir('bugs-'),
         enforceRuntimeMatrix: false,
         delegationEnabled: false,
       },
@@ -329,6 +335,7 @@ async function testP0_2() {
       client: client as never,
       options: {
         rootSessions: new Set(['ses_root']),
+        outputDir: tmpDelegationDir('bugs-'),
         enforceRuntimeMatrix: false,
         // delegationEnabled defaults to true
       },
@@ -608,6 +615,7 @@ async function testP1_3() {
       client: client as never,
       options: {
         rootSessions: new Set(['ses_root']),
+        outputDir: tmpDelegationDir('bugs-'),
         readOnlyAgents: new Set(['apollo']),
         enforceRuntimeMatrix: false,
         bootstrapTimeoutMs: 50,
@@ -659,6 +667,7 @@ async function testP1_3() {
       client: client as never,
       options: {
         rootSessions: new Set(['ses_root']),
+        outputDir: tmpDelegationDir('bugs-'),
         readOnlyAgents: new Set(['apollo']),
         enforceRuntimeMatrix: false,
         bootstrapTimeoutMs: 50,

@@ -66,10 +66,10 @@ import { activePresetCandidates, createVisionHandler } from './pantheon/vision.t
 const log = createPantheonLogger({ module: 'pantheon-plugin' })
 
 // R4: per-agent step caps from routing.yml `agents.<name>.max_steps`
-// (fail-open → {} = no agent capped). R1 retry_policy/cooldown are NOT
-// wired here — the plugin has no retry path (opencode cannot intercept task
-// completion); zeus waves load them via presets.mjs loaders and pass them
-// to zeusDelegateWithRetry explicitly.
+// (fail-open → {} = no agent capped). The R1 retry_policy/cooldown block and
+// its presets.mjs loaders were removed together with their only consumer
+// (zeus-delegate-with-retry.ts); the plugin has no retry path (opencode cannot
+// intercept task completion).
 const stepCapTracker = new StepCapTracker(loadRoutingMaxSteps({ logger: log }))
 
 // O5: permission.task glob rules from routing.yml `permission.task`
@@ -517,8 +517,8 @@ const plugin: Plugin = async (input: PluginInput) => {
 
   // Wave 4 (PR #46): /cost — delegation cost + token visibility. Reads
   // opencode.db read-only via the single node:sqlite backend.
-  // Fully wired (unlike dispatch-guard, which is manual-orchestration-only
-  // because opencode 1.18.x cannot intercept task completion via hooks).
+  // Fully wired. (opencode 1.18.x cannot intercept task completion via hooks,
+  // so empty-result handling lives in delegation-classifier.ts.)
   const costCommand = createCostCommand()
   const modelCommand = createModelCommand()
 

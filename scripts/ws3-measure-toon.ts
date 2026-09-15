@@ -4,7 +4,7 @@
  * Compares compact JSON vs TOON (chars AND tokens) on the four payload
  * classes the codec serves (board signals, checkpoints, KV payloads,
  * large tabular checkpoints). Deterministic: no LLM, no I/O, fixed
- * chars/4 ceiling — the same basis as `token-opt` metering.
+ * chars/4 ceiling — the same basis as `toon-codec` metering.
  *
  * Regeneration: npx tsx scripts/ws3-measure-toon.ts
  * The output markdown table is mirrored in docs/ws3-token-opt-measurements.md.

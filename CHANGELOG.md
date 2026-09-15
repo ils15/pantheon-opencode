@@ -18,6 +18,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.15] - 2026-09-15
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Delegation `read` devolve o relatório completo:** o retorno de `read` passa a
+  ler o relatório integral do disco (com cap configurável e marker explícito de
+  truncamento) em vez do recibo resumido — o conteúdo é o mesmo tanto no caminho
+  nativo quanto no legado, com paridade garantida entre eles.
+- **`sanitizeReceiptText` UTF-8-safe:** a sanitização de recibos deixou de corromper
+  caracteres multibyte; acentuação e demais codepoints UTF-8 são preservados no
+  caminho nativo e no legado.
+- **TUI — cor de status na row inteira:** cada linha do painel Delegations passa a
+  ser pintada pelo estado — vermelho = falha, verde = concluído, amarelo = em
+  andamento — com o glyph mantido como canal redundante para acessibilidade.
+
+## 🐞 Fixed
+
+- **TUI — painel Delegations só da sessão ativa:** o painel deixa de renderizar
+  rows cross-session/órfãs que causavam "Session not found" ao clicar; a lista
+  agora cobre apenas a sessão ativa, mantendo a retenção de concluídas (2 min)
+  e falhas (10 min).
+- **Guards de estado e navegação órfã:** transições prematuras para `done` são
+  bloqueadas e a navegação defensiva ignora alvos órfãos, evitando seleção
+  inválida no painel.
+- **Isolamento do board nos testes:** testes que importam o plugin real agora
+  isolam o BackgroundJobBoard, eliminando o fantasma "preserve this running
+  delegation"; o board real foi limpo.
+- **Lean no core:** 17 módulos mortos de `src/pantheon/` removidos, ~38% dos
+  arquivos de teste removidos/consolidados e docs/scripts órfãos limpos, com
+  testes mínimos readicionados para os módulos vivos (tool-ceiling, native-probe).
+- **Flake de TTL determinístico:** `test_ttl_expiry_real_time` deixou de competir
+  com a truncagem de microssegundos do SQLite — o teste agora espera o início de
+  um segundo limpo antes do store e usa margem sobre o TTL, eliminando o flake
+  dependente de carga (test-only).
+
 ## [v1.5.0-beta.14] - 2026-09-14
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

@@ -23,10 +23,14 @@ import {
   sanitizeReceiptText,
 } from '../../src/pantheon/delegate-manager.ts'
 import {
+  capReportOutput,
+  DELEGATION_READ_MAX_CHARS,
   type DelegationClient,
   type DelegationMessageBundle,
   finalizeDelegation,
+  resolveReadMaxChars,
 } from '../../src/pantheon/delegation-finalize.ts'
+import { tmpDelegationDir } from './helpers/tmp-dir.ts'
 
 // ─── Harness ───────────────────────────────────────────────────────────
 
@@ -99,6 +103,7 @@ async function main(): Promise<void> {
       task: async () => ({ content: 'verified output' }),
       parentSessionID: 'ses_status',
       env: {},
+      outputDir: tmpDelegationDir('status-ok-'),
     })
 
     const receipt = await manager.launch({ agent: 'hermes', prompt: 'work' })
@@ -112,6 +117,7 @@ async function main(): Promise<void> {
       task: async () => ({ content: '' }),
       parentSessionID: 'ses_status',
       env: {},
+      outputDir: tmpDelegationDir('status-empty-'),
     })
 
     const receipt = await manager.launch({ agent: 'hermes', prompt: 'work' })
@@ -144,7 +150,13 @@ async function main(): Promise<void> {
     const board = new BackgroundJobBoard({ signalDir })
     const client = fakeClient(board, outputDir)
     const task = createSessionTaskFn({ client, board, outputDir, settleTimeoutMs: 5_000 })
-    const mgr = createDelegateManager({ board, task, parentSessionID: 'ses_root', env: {} })
+    const mgr = createDelegateManager({
+      board,
+      task,
+      parentSessionID: 'ses_root',
+      env: {},
+      outputDir,
+    })
     const created = await client.session.create({ body: { parentID: 'ses_root' } })
     const receipt = await mgr.launch({ agent: 'apollo', prompt: 'scout', taskID: created.id })
     assert.equal(receipt.state, 'reconciled')
@@ -168,7 +180,13 @@ async function main(): Promise<void> {
       },
     })
     const task = createSessionTaskFn({ client, board, outputDir, settleTimeoutMs: 2_000 })
-    const mgr = createDelegateManager({ board, task, parentSessionID: 'ses_root', env: {} })
+    const mgr = createDelegateManager({
+      board,
+      task,
+      parentSessionID: 'ses_root',
+      env: {},
+      outputDir,
+    })
     const receipt = await mgr.launch({ agent: 'hermes', prompt: 'x', taskID: 'child-9' })
     assert.equal(receipt.state, 'error')
     assert.match(receipt.line, /host quota exceeded/)
@@ -191,7 +209,13 @@ async function main(): Promise<void> {
       },
     })
     const task = createSessionTaskFn({ client, board, outputDir, settleTimeoutMs: 2_000 })
-    const mgr = createDelegateManager({ board, task, parentSessionID: 'ses_root', env: {} })
+    const mgr = createDelegateManager({
+      board,
+      task,
+      parentSessionID: 'ses_root',
+      env: {},
+      outputDir,
+    })
     const receipt = await mgr.launch({ agent: 'nyx', prompt: 'x', taskID: 'child-7' })
     assert.equal(receipt.state, 'reconciled')
     const report = await mgr.read('child-7')
@@ -211,7 +235,13 @@ async function main(): Promise<void> {
       },
     })
     const task = createSessionTaskFn({ client, board, outputDir, settleTimeoutMs: 2_000 })
-    const mgr = createDelegateManager({ board, task, parentSessionID: 'ses_root', env: {} })
+    const mgr = createDelegateManager({
+      board,
+      task,
+      parentSessionID: 'ses_root',
+      env: {},
+      outputDir,
+    })
     const receipt = await mgr.launch({ agent: 'talos', prompt: 'x', taskID: 'child-3' })
     assert.equal(receipt.state, 'error')
     assert.match(receipt.line, /not verified/i)
@@ -231,10 +261,12 @@ async function main(): Promise<void> {
 
   await testAsync('native tools: kill-switch blocks delegate/read/list', async () => {
     const board = new BackgroundJobBoard()
-    const client = fakeClient(board, mkdtempSync(join(tmpdir(), 'adapter-kill-')))
+    const outputDir = tmpDelegationDir('adapter-kill-')
+    const client = fakeClient(board, outputDir)
     const tools = createNativeDelegateTools({
       board,
       client,
+      outputDir,
       env: { PANTHEON_DELEGATION: 'off' },
       isRootSession: () => true,
     })
@@ -254,10 +286,12 @@ async function main(): Promise<void> {
 
   await testAsync('native tools: sub-session delegate rejected', async () => {
     const board = new BackgroundJobBoard()
-    const client = fakeClient(board, mkdtempSync(join(tmpdir(), 'adapter-depth-')))
+    const outputDir = tmpDelegationDir('adapter-depth-')
+    const client = fakeClient(board, outputDir)
     const tools = createNativeDelegateTools({
       board,
       client,
+      outputDir,
       env: {},
       isRootSession: (id) => id === 'ses_root',
     })
@@ -271,12 +305,19 @@ async function main(): Promise<void> {
 
   await testAsync('native tools: create failure returns TEXT error', async () => {
     const board = new BackgroundJobBoard()
-    const client = fakeClient(board, mkdtempSync(join(tmpdir(), 'adapter-create-')), {
+    const outputDir = tmpDelegationDir('adapter-create-')
+    const client = fakeClient(board, outputDir, {
       createImpl: async () => {
         throw new Error('sdk down')
       },
     })
-    const tools = createNativeDelegateTools({ board, client, env: {}, isRootSession: () => true })
+    const tools = createNativeDelegateTools({
+      board,
+      client,
+      outputDir,
+      env: {},
+      isRootSession: () => true,
+    })
     const out = await tools.pantheon_delegate.execute(
       { prompt: 'x', agent: 'apollo' },
       { sessionID: 's' },
@@ -314,6 +355,7 @@ async function main(): Promise<void> {
     const empty = createNativeDelegateTools({
       board: new BackgroundJobBoard(),
       client,
+      outputDir: tmpDelegationDir('adapter-empty-list-'),
       env: {},
       isRootSession: () => true,
     })
@@ -339,15 +381,154 @@ async function main(): Promise<void> {
     assert.equal(sanitizeReceiptText('keep\x7f\x85\tthis'), 'keep\tthis')
   })
 
+  await testAsync('receipt sanitization keeps UTF-8 text intact (accents, emoji)', async () => {
+    assert.equal(sanitizeReceiptText('configuração não concluída'), 'configuração não concluída')
+    assert.equal(sanitizeReceiptText('ação crítica 🚀'), 'ação crítica 🚀')
+    assert.equal(sanitizeReceiptText('\x1b[31mação\x1b[0m\nfim'), 'ação\nfim')
+  })
+
+  await testAsync(
+    'adapter read(): report WITH md file returns the FULL markdown (not the one-line summary)',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'adapter-read-md-'))
+      const outputDir = join(dir, 'delegations')
+      const board = new BackgroundJobBoard()
+      // Body well past the legacy 500-char resultSummary cap + accents + a
+      // marker only reachable from the END of the report.
+      const longBody = `ação não concluída ${'x'.repeat(700)}`
+      const client = fakeClient(board, outputDir, {
+        messages: [
+          {
+            info: { role: 'assistant' },
+            parts: [
+              {
+                type: 'text',
+                text: `linha um\n${longBody}\nlinha três com acentuação FIM-RELATORIO-COMPLETO`,
+              },
+            ],
+          },
+        ],
+      })
+      const task = createSessionTaskFn({ client, board, outputDir, settleTimeoutMs: 5_000 })
+      const mgr = createDelegateManager({
+        board,
+        task,
+        parentSessionID: 'ses_root',
+        env: {},
+        outputDir,
+      })
+      const created = await client.session.create({ body: { parentID: 'ses_root' } })
+      await mgr.launch({ agent: 'apollo', prompt: 'scout', taskID: created.id })
+      const report = await mgr.read(created.id)
+      assert.match(report, /## Output/, 'full report markdown, like the legacy engine')
+      assert.ok(report.length > 800, `full body, not the ~500-char summary (got ${report.length})`)
+      assert.match(
+        report,
+        /FIM-RELATORIO-COMPLETO/,
+        'multi-line output past 500 chars survives — no summary/first-line truncation',
+      )
+      assert.match(report, /ação não concluída/, 'accents intact in the full report')
+    },
+  )
+
+  await testAsync(
+    'read(): oversized report is capped head+tail with marker + report path',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'adapter-read-cap-'))
+      const outputDir = join(dir, 'delegations')
+      const board = new BackgroundJobBoard()
+      const headText = 'HEAD '.repeat(60).trim()
+      const tailText = 'TAIL'.repeat(80)
+      const client = fakeClient(board, outputDir, {
+        messages: [
+          {
+            info: { role: 'assistant' },
+            parts: [{ type: 'text', text: `${headText}\n${'MID'.repeat(400)}\n${tailText}` }],
+          },
+        ],
+      })
+      const task = createSessionTaskFn({ client, board, outputDir, settleTimeoutMs: 5_000 })
+      const mgr = createDelegateManager({
+        board,
+        task,
+        parentSessionID: 'ses_root',
+        env: {},
+        outputDir,
+        readMaxChars: 900,
+      })
+      const created = await client.session.create({ body: { parentID: 'ses_root' } })
+      await mgr.launch({ agent: 'apollo', prompt: 'scout', taskID: created.id })
+      const report = await mgr.read(created.id)
+      assert.ok(report.length < 1600, `capped report stays small, got ${report.length}`)
+      assert.match(report, /HEAD HEAD/, 'head kept')
+      assert.match(report, /TAILTAILTAIL/, 'tail kept — the conclusion survives')
+      assert.doesNotMatch(report, /MIDMIDMID/, 'middle dropped')
+      assert.match(report, /\[TRUNCATED: \d+ of \d+ chars hidden/, 'explicit marker')
+      assert.match(report, /apo-1\.md/, 'marker points at the full report file')
+    },
+  )
+
+  await testAsync(
+    'native delegate receipt carries the verified output after the status line',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'receipt-output-'))
+      const outputDir = join(dir, 'delegations')
+      const board = new BackgroundJobBoard()
+      const client = fakeClient(board, outputDir)
+      const tools = createNativeDelegateTools({
+        board,
+        client,
+        outputDir,
+        env: {},
+        isRootSession: () => true,
+      })
+      const out = await tools.pantheon_delegate.execute(
+        { prompt: 'do work', agent: 'demeter' },
+        { sessionID: 'ses_root' },
+      )
+      assert.match(out, /status: OK/)
+      assert.match(out, /adapter verified output/, 'receipt includes the verified child output')
+    },
+  )
+
+  await testAsync('capReportOutput units + resolveReadMaxChars', async () => {
+    assert.equal(capReportOutput('short', 400), 'short')
+    assert.equal(capReportOutput('x', 400, undefined), 'x')
+    const big = `${'A'.repeat(600)}${'B'.repeat(600)}`
+    const capped = capReportOutput(big, 400, '/tmp/x/apo-1.md')
+    assert.match(capped, /^A{50,}/, 'head kept')
+    assert.match(capped, /B{50,}$/, 'tail kept')
+    assert.match(
+      capped,
+      /\[TRUNCATED: \d+ of 1200 chars hidden — full report: \/tmp\/x\/apo-1\.md\]/,
+      'explicit marker with the report path',
+    )
+    const noPath = capReportOutput(big, 400, undefined)
+    assert.match(noPath, /pantheon_delegation_read/, 'pointer to the read tool when no path')
+    assert.equal(resolveReadMaxChars({}), DELEGATION_READ_MAX_CHARS)
+    assert.equal(resolveReadMaxChars({ PANTHEON_DELEGATION_READ_MAX_CHARS: '5000' }), 5000)
+    assert.equal(
+      resolveReadMaxChars({ PANTHEON_DELEGATION_READ_MAX_CHARS: '5' }),
+      DELEGATION_READ_MAX_CHARS,
+      'below minimum → default',
+    )
+    assert.equal(
+      resolveReadMaxChars({ PANTHEON_DELEGATION_READ_MAX_CHARS: 'garbage' }),
+      DELEGATION_READ_MAX_CHARS,
+    )
+  })
+
   await testAsync(
     'native tools: read-only agent registers session with agent identity',
     async () => {
       const board = new BackgroundJobBoard()
-      const client = fakeClient(board, mkdtempSync(join(tmpdir(), 'adapter-ro-')))
+      const outputDir = tmpDelegationDir('adapter-ro-')
+      const client = fakeClient(board, outputDir)
       const seen: { id: string; agent: string; flag?: boolean }[] = []
       const tools = createNativeDelegateTools({
         board,
         client,
+        outputDir,
         env: {},
         isRootSession: () => true,
         isReadOnlyAgent: (agent) => agent.toLowerCase() === 'apollo',

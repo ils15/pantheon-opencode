@@ -14,6 +14,7 @@ import { strict as assert } from 'node:assert'
 
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
 import { createDelegateManager, resolveDelegateMode } from '../../src/pantheon/delegate-manager.ts'
+import { tmpDelegationDir } from './helpers/tmp-dir.ts'
 
 // ─── Harness ──────────────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ async function main() {
       parentSessionID: 'p',
       env: { PANTHEON_DELEGATE_MODE: 'native', PANTHEON_DELEGATION: 'on' },
       foregroundFallback: true, // should be IGNORED in native mode
+      outputDir: tmpDelegationDir('strict-native-fg-'),
     })
 
     // apollo is at max — should throw, NOT foreground fallback.
@@ -101,6 +103,7 @@ async function main() {
       parentSessionID: 'p',
       env: { PANTHEON_DELEGATION: 'on' },
       foregroundFallback: true,
+      outputDir: tmpDelegationDir('strict-legacy-fg-'),
     })
 
     // Should NOT throw — uses foreground fallback.
@@ -127,6 +130,7 @@ async function main() {
       parentSessionID: 'p',
       env: { PANTHEON_DELEGATE_MODE: 'native', PANTHEON_DELEGATION: 'on' },
       models: ['provider/model-a', 'provider/model-b', 'provider/model-c'],
+      outputDir: tmpDelegationDir('strict-models-'),
     })
 
     await manager.launch({ agent: 'hermes', prompt: 'test' })
