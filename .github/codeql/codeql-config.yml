@@ -1,0 +1,38 @@
+# CodeQL configuration for .github/workflows/codeql.yml.
+#
+# Referenced from the `init` step via `config-file:`. This replaces the former
+# repository-root `.codeqlignore`, which was inert: the CodeQL Action never read
+# it, and modern CodeQL only honours `paths` / `paths-ignore` declared here.
+#
+# Deliberately NOT ignored:
+#   - `**/*.yml` / `**/*.yaml` / `.github/**` — the `actions` language analyzes
+#     exactly those workflow files, so ignoring them would silently empty that
+#     analysis (the old `.codeqlignore` did this).
+name: "Pantheon CodeQL config"
+
+paths-ignore:
+  # Docs / prose
+  - "**/*.md"
+  - "docs/**"
+  # Agent scratch space and generated reports
+  - ".pantheon/**"
+  # Dependencies and virtualenvs (also excluded by CodeQL by default)
+  - "node_modules/**"
+  - ".venv/**"
+  - "venv/**"
+  - "__pycache__/**"
+  - "**/*.pyc"
+  # Build output
+  - "dist/**"
+  - "**/dist/**"
+  - "build/**"
+  - "**/*.egg-info/**"
+  # Editor / tooling caches
+  - ".idea/**"
+  - ".history/**"
+  - ".ruff_cache/**"
+  - ".mypy_cache/**"
+  - ".pytest_cache/**"
+  # Test data and benchmarks
+  - "tests/fixtures/**"
+  - "benchmarks/**"

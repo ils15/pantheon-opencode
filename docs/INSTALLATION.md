@@ -1,6 +1,27 @@
 # Pantheon Installation Guide — v1.5.0-beta.2 (OpenCode)
 
-Pantheon v1.5.0-beta.2 is **OpenCode-only**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. Geração de tabelas via `node scripts/generate-preset-docs.mjs` a partir de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
+Pantheon v1.5.0-beta.2 is **OpenCode-only**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. As tabelas de preset são derivadas de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
+
+## TL;DR (Quick Start)
+
+```bash
+# Instalar agentes Pantheon globalmente (wizard interativo)
+npx pantheon-opencode init
+
+# Headless (CI/scripts, usa defaults)
+npx pantheon-opencode init --headless
+
+# (Opcional) Servidores MCP + skills + plugin TUI
+npm run setup
+
+# Verificar instalação
+npm run doctor
+```
+
+- Requisitos: **Node.js 22+**, **OpenCode v1.18.4+**, **Python 3.11+** (opcional, MCP servers).
+- Habilite subagentes paralelos antes de abrir o OpenCode:
+  `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`.
+- Passo a passo de 5 minutos: [QUICKSTART.md](QUICKSTART.md).
 
 ## Prerequisites
 
@@ -155,7 +176,7 @@ npx pantheon-opencode init --headless
 npx pantheon-opencode init --headless --no-mcp  # sem Python/MCPs
 ```
 
-> Tabelas acima são geradas via `node scripts/generate-preset-docs.mjs` (lê `src/routing.yml` + `PRESET_PRICE` + `CAPABILITY_TABLE`).
+> Tabelas acima refletem `src/routing.yml` + `PRESET_PRICE` + `CAPABILITY_TABLE`.
 
 ## Quick Install
 
@@ -374,21 +395,24 @@ the host loads the separate `tui.json` registration.
 
 ### TUI dev build (local development)
 
-To iterate on the TUI from a git checkout without publishing, run:
+To iterate on the TUI from a git checkout without publishing, build the bundle
+and register the **absolute repo path** (`<repo>/src/plugins/tui`) in the
+project-local `.opencode/tui.json`:
 
 ```bash
-scripts/dev-tui.sh          # install deps, build, register the repo path
-scripts/dev-tui.sh --test   # same, plus `npm run test:all`
+# 1. Install pinned deps + build the bundle
+npm ci --prefix src/plugins/tui --ignore-scripts --no-audit --no-fund
+npm run build --prefix src/plugins/tui
+
+# 2. Register the repo path (merged into the array, not clobbered)
+node --input-type=module -e "import { registerPlugin } from './scripts/install/plugin.mjs'; registerPlugin('.opencode/tui.json', process.cwd() + '/src/plugins/tui')"
 ```
 
-The script builds `src/plugins/tui`, then registers the **absolute repo path**
-(`<repo>/src/plugins/tui`) in the project-local `.opencode/tui.json` and prints
-a restart hint — TUI plugins are loaded at process start, so restart OpenCode
-after each build.
+TUI plugins are loaded at process start, so restart OpenCode after each build.
 
 | Context | `tui.json` target | Written by |
 |---------|-------------------|------------|
-| Development (this repo) | `<repo>/src/plugins/tui` | `scripts/dev-tui.sh` (gitignored) |
+| Development (this repo) | `<repo>/src/plugins/tui` | manual `registerPlugin` (gitignored) |
 | Installed (user) | `<configDir>/plugins/pantheon-tui` | `npm run setup` / installer |
 
 Notes:
@@ -399,8 +423,7 @@ Notes:
   merged into user configs by the installer, so a repo-relative path would leak
   into third-party installs and fail the CI package gates.
 - While in dev mode, do **not** run `init` inside this repo: the installer treats
-  the repo path as a stale Pantheon TUI reference and removes it. If that
-  happens, re-run `scripts/dev-tui.sh`.
+  the repo path as a stale Pantheon TUI reference and removes it.
 
 ## Commands
 
@@ -436,9 +459,6 @@ cat ~/.config/opencode/opencode.json | grep -A2 '"model"' || echo "sem model top
 node scripts/validate-routing.mjs
 # ou
 node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePresetDefs(m.loadPresetDefs())))"
-
-# gerar tabelas atuais de routing.yml
-node scripts/generate-preset-docs.mjs
 ```
 
 ### Chaves por preset

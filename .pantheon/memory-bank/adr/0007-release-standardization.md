@@ -76,7 +76,7 @@ Aprovadas as decisões do deepwork release-standardization (2026-08-05):
 
 ## Risks & Rollback
 
-- **Snapshots pré-mutação** em `.pantheon/release-audit-2026-08-05/`: changelog-before.md, npm-githead-1.2.1.txt, npm-versions-before.json, releases-before.txt, tags-before.txt.
+- **Snapshots pré-mutação** (diretório `release-audit-2026-08-05/`, já consumido e removido do repositório após a conclusão da padronização): changelog-before.md, npm-githead-1.2.1.txt, npm-versions-before.json, releases-before.txt, tags-before.txt.
 - **Dry-run obrigatório** para operações destrutivas da Fase 3 (deleção de tags/releases).
 - **Aprovação humana por cluster de deleção** (clusters A–E).
 - **Proibições:** NUNCA unpublish; NUNCA reescrever histórico.
@@ -101,5 +101,5 @@ Aprovadas as decisões do deepwork release-standardization (2026-08-05):
 
 - Apollo report (memória): `release-infra-apollo-report-2026-08-05`
 - Plano deepwork (memória): `deepwork-release-standardization-plan-2026-08-05`
-- Snapshots: `.pantheon/release-audit-2026-08-05/`
+- Snapshots pré-mutação: consumidos e removidos do repositório após a conclusão da padronização (2026-08-05)
 - Fase de origem: Phase 0 (baseline + ADR + reparo do changelog)

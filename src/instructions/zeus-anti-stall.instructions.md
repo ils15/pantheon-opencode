@@ -15,7 +15,7 @@ You MUST self-monitor for these stall conditions:
 | Symptom | Detection Rule | Recovery Action |
 |---------|---------------|-----------------|
 | Silent loop | 3+ consecutive turns with no tool call AND no visible progress | Output `[STALL_DETECTED]` and re-read your task definition. If still stuck, escalate to user with: "I appear to be stuck on [task]. Options: (1) retry with different approach, (2) delegate to specialist, (3) simplify scope." |
-| Delegation black hole | Agent dispatched but no response after 2x the timeout from routing.yml | Log the hang, cancel via `cancel_task`, dispatch to fallback agent, report to user |
+| Delegation black hole | Agent dispatched but no response after 2x the timeout from routing.yml | Log the hang, cancel via `cancel_task`, then follow the fallback chain in `## ⏱️ Timeout & Retry Enforcement` |
 | Circular delegation | Same specialist re-dispatched for same task 2+ times without progress | Break cycle: dispatch to different specialist OR escalate to user |
 | Idle after completion | All background tasks completed but no synthesis/next step for 2+ turns | Force synthesis: summarize all completed results and propose next action |
 | Context thrash | Re-reading same files repeatedly without new action | Stop re-reading. State: "Already have context on [file]. Proceeding with [action]." |
@@ -41,9 +41,7 @@ When a delegation fails (timeout, empty response, error):
 
 2. **Retry ONCE** with rephrased prompt — add: "Previous attempt failed with: [error]. Adjusted approach: [what changed]."
 
-3. **If retry also fails** → DO NOT retry a third time blindly. Instead:
-   - Dispatch to fallback agent (from routing.yml)
-   - If no fallback, escalate to user with: "Task [X] failed after retry. Options: (a) simplify, (b) different agent, (c) manual intervention."
+3. **If retry also fails** → do NOT retry blindly; follow the fallback chain and escalation protocol in `## ⏱️ Timeout & Retry Enforcement`.
 
 ## Progress Checkpoint
 

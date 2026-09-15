@@ -18,6 +18,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.16] - 2026-09-15
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Modernização CI/supply-chain:** 22 actions SHA-pinadas; `gitleaks-action` v3
+  (fix crítico — a v2 morria com Node 20 em 2026-09-16) com CLI 8.30.1; cache
+  npm/pip; Dependabot; CodeQL `+python` e `codeql-config`; permissões reduzidas
+  no `docs.yml`; job `version-check` fundido no `validate`; `upload-artifact` v7
+  e `download-artifact` v8.
+- **Lean:** ~17 módulos mortos removidos de `src/pantheon/`, docs/scripts
+  obsoletos, `teste/`/`testes/`, `Dockerfile`/`docker-compose` (de outro projeto)
+  e caches; ~38% dos arquivos de teste removidos/consolidados; testes mínimos
+  readicionados para os módulos vivos (tool-ceiling, native-probe).
+- **Instructions:** deduplicação das instruções compartilhadas — contexto menor
+  sem perder nenhuma regra.
+
+## 🐞 Fixed
+
+- **2 flakes determinísticos eliminados:** TTL do MCP persistence
+  (`test_ttl_expiry_real_time`) e `logger.test.mjs` deixaram de depender de
+  timing/carga do host.
+- **Refs stale corrigidas:** referências de versão/ambiente atualizadas para
+  Node 22+.
+
 ## [v1.5.0-beta.15] - 2026-09-15
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

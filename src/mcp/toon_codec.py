@@ -9,7 +9,7 @@ absent/fails.
 Only the standard library (``json`` + ``re``) — prohibited: external
 gateway, generative embedding.
 
-Encoding rules (mirrored byte-for-byte by ``src/pantheon/toon-codec.ts``):
+Encoding rules:
 
 - Scalars: ``None``/``True``/``False`` → ``null``/``true``/``false``;
   numbers → shortest form; strings bare when unambiguous, else
@@ -20,8 +20,7 @@ Encoding rules (mirrored byte-for-byte by ``src/pantheon/toon-codec.ts``):
 - Lists of scalars: ``- item`` lines; empty list → ``[]``.
 - Lists of dicts with uniform keys: ``@table k1|k2`` header + ``v1|v2``
   rows (savings are per payload class — ~11% on content-dominated board
-  records up to ~47% on large tabular checkpoints — see
-  ``docs/ws3-token-opt-measurements.md`` for the reproducible table).
+  records up to ~47% on large tabular checkpoints).
 - Dict values never need quoting for ``:`` (split is on the FIRST colon);
   list items / top-level scalars that look like ``key: ...`` are quoted.
 """
@@ -471,7 +470,6 @@ def toon_size_report(value: Any) -> dict[str, Any]:
     Reports BOTH chars and tokens: token ratios on tiny payloads suffer
     ceiling bias (``ceil`` rounds 161→41 vs 143→36), so the char columns are
     the honest basis and the token columns show what metering will debit.
-    Per-class numbers: see ``docs/ws3-token-opt-measurements.md``.
     """
     compact_json = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     toon = toon_encode(value)

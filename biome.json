@@ -12,9 +12,7 @@
       "!.venv/**",
       "!.opencode/**",
       "!logs/**",
-      "!benchmarks/**",
-      "!teste/**",
-      "!testes/**"
+      "!benchmarks/**"
     ]
   },
   "linter": {

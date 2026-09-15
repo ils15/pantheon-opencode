@@ -82,7 +82,19 @@ test('default (env unset): writes hooks.log, never touches console', async () =>
     log.info('hello info')
     log.error('boom', new Error('kaboom'))
     const hooksLog = join(tmp, '.pantheon', 'logs', 'hooks.log')
-    await waitFor(() => existsSync(hooksLog))
+    // Wait for BOTH async appends (info + error), not just the file's
+    // existence: the logger is fire-and-forget, so polling `existsSync` alone
+    // can read the file after `hello info` but before `boom` lands (random
+    // failure under load). Require the expected lines themselves.
+    await waitFor(() => {
+      if (!existsSync(hooksLog)) return false
+      const content = readFileSync(hooksLog, 'utf8')
+      return (
+        content.includes('[pantheon-test] hello info') &&
+        content.includes('[pantheon-test] boom') &&
+        content.includes('kaboom')
+      )
+    })
 
     const mine = loggerCalls(spy, '[pantheon-test]')
     assert.equal(

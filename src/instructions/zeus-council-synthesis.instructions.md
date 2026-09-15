@@ -85,10 +85,7 @@ sequenceDiagram
 ## Dispatch Sequence (9-Step Protocol)
 
 ### Step 0 — Precedent Fast-Path (Fase 1)
-Before any dispatch: `memory_search(query, top_k=2, namespace="council_decisions")`
-- Score > 0.85 AND age < 30 days → return precedent verbatim with note "⚠️ Decisão de [data] — reavaliar se contexto mudou". SKIP entire dispatch.
-- Score > 0.85 AND age > 30 days → return precedent with ⚠️ "Reavaliar se contexto mudou — decisão tem mais de 30 dias"
-- Else → proceed to Step 0b
+Run the precedent read path defined in `## Memory Protocol > Council Decisions Namespace` (`memory_search(query, top_k=2, namespace="council_decisions")`). If no precedent applies, proceed to Step 0b.
 
 ### Step 0b — Apollo Pre-Scan (Fase 2, --research flag)
 If `/pantheon --research <question>`: dispatch @apollo with 30s timeout. Inject findings as `shared_context` into ALL specialist prompts. Skip if flag absent.
@@ -190,33 +187,11 @@ task(subagent_type: "themis", prompt: "Audit this council synthesis for fidelity
 - If issues → fix each issue before delivering to user
 
 ### Step 9 — Persist & Reconcile (Fase 1)
-```
-memory_store({
-  namespace: "council_decisions",
-  key: "council:<yyyy-mm-dd>:<slug>",
-  value: JSON.stringify({
-    question, specialists, recommendation, confidence,
-    agreements, divergences, precedent_used, timestamp
-  }),
-  metadata: {type: "council_decision", specialist_count: N}
-})
-board.markReconciled("<task-id>")
-```
+Persist the decision using the write path in `## Memory Protocol > Council Decisions Namespace`, then `board.markReconciled("<task-id>")`.
 
 ## Specialist Output Format (Fase 1 — machine-parseable structured fields)
 
-Specialists MUST return these structured fields in their response:
-
-```
-## specialist_response
-**position:** <clear one-sentence position>
-**reasoning:** <2-4 sentences>
-**trade_offs:** <what's gained vs lost>
-**risks:** <what could go wrong>
-**confidence:** High | Medium | Low
-**agreement_signals:** agree: @agent1, @agent2 on [issue] | disagree: @agent3 on [issue]
-**specific_claims:** <count of specific factual claims in response>
-```
+Specialists MUST return the structured `## specialist_response` format (position, reasoning, trade_offs, risks, confidence, agreement_signals, specific_claims) defined in `## Agent Return Format > Council Specialist Response Format`.
 
 ## Domain-to-Specialist Mapping
 

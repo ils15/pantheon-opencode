@@ -1,0 +1,98 @@
+version: 2
+
+# Weekly, grouped dependency updates.
+# - minor/patch bumps are grouped per ecosystem into a single PR to keep noise low
+# - major bumps stay as individual PRs (they need human review)
+# - github-actions is grouped wholesale: every action is SHA-pinned and each
+#   individual bump would otherwise open its own PR.
+updates:
+  # ---------------------------------------------------------------- npm (root)
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      npm-root-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # --------------------------------------------------- npm (TUI plugin)
+  - package-ecosystem: npm
+    directory: "/src/plugins/tui"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      npm-tui-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ------------------------------------------------------- pip (MCP servers)
+  - package-ecosystem: pip
+    directory: "/src/mcp"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      pip-mcp-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ------------------------------------------------- pip (vector memory tool)
+  - package-ecosystem: pip
+    directory: "/scripts/vector_memory"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      pip-vector-memory-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ------------------------------------------------------------- pip (docs)
+  - package-ecosystem: pip
+    directory: "/docs"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      pip-docs-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ------------------------------------------------------- GitHub Actions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      github-actions:
+        patterns: ["*"]

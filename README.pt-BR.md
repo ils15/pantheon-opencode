@@ -31,7 +31,7 @@ de planejar o trabalho, avançar, conferir resultados e preservar o contexto
 
 ## Comece em 2 minutos
 
-Requisitos: [OpenCode 1.18.4+](https://opencode.ai/docs/) e Node.js 18+.
+Requisitos: [OpenCode 1.18.4+](https://opencode.ai/docs/) e Node.js 22+.
 
 No projeto em que você quer usar o Pantheon:
 

@@ -301,7 +301,9 @@ memory_store({
     agreements: ["point1", "point2"],
     divergences: [{"issue": "...", "resolution": "..."}],
     response_rate: "X of Y",
-    themis_audit: "approved|issues"
+    themis_audit: "approved|issues",
+    precedent_used: false,
+    timestamp: "<ISO-8601>"
   },
   metadata: {
     type: "council_decision",
@@ -310,6 +312,7 @@ memory_store({
   }
 })
 ```
+`value` is JSON-serialized before storing (the MCP `memory_store.value` argument is a string).
 
 ### Read Path (Precedent Fast-Path)
 Before dispatching a new council, Zeus runs:
@@ -320,8 +323,8 @@ memory_search(question, top_k=2, namespace="council_decisions")
 Result interpretation:
 | Score | Age | Action |
 |-------|-----|--------|
-| > 0.85 | < 30 days | Return precedent as fast-path answer. Skip council dispatch entirely. |
-| > 0.85 | >= 30 days | Return with warning "Reavaliar se contexto mudou" + proceed with council |
+| > 0.85 | < 30 days | Return precedent verbatim (note "⚠️ Decisão de [data] — reavaliar se contexto mudou") as fast-path answer. Skip council dispatch entirely. |
+| > 0.85 | >= 30 days | Return with warning "Reavaliar se contexto mudou — decisão tem mais de 30 dias" + proceed with council |
 | 0.5 - 0.85 | Any | Include as context for specialists but still dispatch council |
 | < 0.5 | Any | Ignore, proceed with fresh council |
 
@@ -371,7 +374,7 @@ You MUST self-monitor for these stall conditions:
 | Symptom | Detection Rule | Recovery Action |
 |---------|---------------|-----------------|
 | Silent loop | 3+ consecutive turns with no tool call AND no visible progress | Output `[STALL_DETECTED]` and re-read your task definition. If still stuck, escalate to user with: "I appear to be stuck on [task]. Options: (1) retry with different approach, (2) delegate to specialist, (3) simplify scope." |
-| Delegation black hole | Agent dispatched but no response after 2x the timeout from routing.yml | Log the hang, cancel via `cancel_task`, dispatch to fallback agent, report to user |
+| Delegation black hole | Agent dispatched but no response after 2x the timeout from routing.yml | Log the hang, cancel via `cancel_task`, then follow the fallback chain in `## ⏱️ Timeout & Retry Enforcement` |
 | Circular delegation | Same specialist re-dispatched for same task 2+ times without progress | Break cycle: dispatch to different specialist OR escalate to user |
 | Idle after completion | All background tasks completed but no synthesis/next step for 2+ turns | Force synthesis: summarize all completed results and propose next action |
 | Context thrash | Re-reading same files repeatedly without new action | Stop re-reading. State: "Already have context on [file]. Proceeding with [action]." |
@@ -397,9 +400,7 @@ When a delegation fails (timeout, empty response, error):
 
 2. **Retry ONCE** with rephrased prompt — add: "Previous attempt failed with: [error]. Adjusted approach: [what changed]."
 
-3. **If retry also fails** → DO NOT retry a third time blindly. Instead:
-   - Dispatch to fallback agent (from routing.yml)
-   - If no fallback, escalate to user with: "Task [X] failed after retry. Options: (a) simplify, (b) different agent, (c) manual intervention."
+3. **If retry also fails** → do NOT retry blindly; follow the fallback chain and escalation protocol in `## ⏱️ Timeout & Retry Enforcement`.
 
 ## Progress Checkpoint
 
@@ -564,10 +565,7 @@ sequenceDiagram
 ## Dispatch Sequence (9-Step Protocol)
 
 ### Step 0 — Precedent Fast-Path (Fase 1)
-Before any dispatch: `memory_search(query, top_k=2, namespace="council_decisions")`
-- Score > 0.85 AND age < 30 days → return precedent verbatim with note "⚠️ Decisão de [data] — reavaliar se contexto mudou". SKIP entire dispatch.
-- Score > 0.85 AND age > 30 days → return precedent with ⚠️ "Reavaliar se contexto mudou — decisão tem mais de 30 dias"
-- Else → proceed to Step 0b
+Run the precedent read path defined in `## Memory Protocol > Council Decisions Namespace` (`memory_search(query, top_k=2, namespace="council_decisions")`). If no precedent applies, proceed to Step 0b.
 
 ### Step 0b — Apollo Pre-Scan (Fase 2, --research flag)
 If `/pantheon --research <question>`: dispatch @apollo with 30s timeout. Inject findings as `shared_context` into ALL specialist prompts. Skip if flag absent.
@@ -669,33 +667,11 @@ task(subagent_type: "themis", prompt: "Audit this council synthesis for fidelity
 - If issues → fix each issue before delivering to user
 
 ### Step 9 — Persist & Reconcile (Fase 1)
-```
-memory_store({
-  namespace: "council_decisions",
-  key: "council:<yyyy-mm-dd>:<slug>",
-  value: JSON.stringify({
-    question, specialists, recommendation, confidence,
-    agreements, divergences, precedent_used, timestamp
-  }),
-  metadata: {type: "council_decision", specialist_count: N}
-})
-board.markReconciled("<task-id>")
-```
+Persist the decision using the write path in `## Memory Protocol > Council Decisions Namespace`, then `board.markReconciled("<task-id>")`.
 
 ## Specialist Output Format (Fase 1 — machine-parseable structured fields)
 
-Specialists MUST return these structured fields in their response:
-
-```
-## specialist_response
-**position:** <clear one-sentence position>
-**reasoning:** <2-4 sentences>
-**trade_offs:** <what's gained vs lost>
-**risks:** <what could go wrong>
-**confidence:** High | Medium | Low
-**agreement_signals:** agree: @agent1, @agent2 on [issue] | disagree: @agent3 on [issue]
-**specific_claims:** <count of specific factual claims in response>
-```
+Specialists MUST return the structured `## specialist_response` format (position, reasoning, trade_offs, risks, confidence, agreement_signals, specific_claims) defined in `## Agent Return Format > Council Specialist Response Format`.
 
 ## Domain-to-Specialist Mapping
 
@@ -928,39 +904,14 @@ ANY NO  → full task (IMPL artifact + Themis review mandatory)
 3. **No Themis dependency** — output doesn't feed into a phase that requires review
 
 ## Subtask Return Format
-Expect a `subtask_summary` response with:
-```
-## subtask_summary
-**files_changed:** [paths]
-**summary:** What was done
-**tests:** ✅ or N/A
-**status:** complete | partial | escalated
-```
+Return the standard `## subtask_summary` defined in `## Agent Return Format` (files_changed, summary, tests, coverage, tokens, status, blockers).
 
 ## Timeout Parcial (Partial Results)
 
-Timeout parcial is ONLY for read-only, independent agents:
-- ✅ @apollo — can return partial file list ("found 7 of 12 files before timeout")
-- ✅ @gaia — can return partial literature findings
-
-- ✅ @talos — can confirm progress if hotfix times out
-- ❌ Never for implementers or reviewers — must complete or fail
-
-When dispatching with partial-OK, set expectation:
-```
-@apollo Search for auth files. Timeout parcial OK — return whatever you have.
-```
+Only agents marked ✅ in the Timeout Behavior table above may return partial results: @apollo (partial file list, e.g. "found 7 of 12 files before timeout"), @gaia (partial literature findings) and @talos (confirm progress if a hotfix times out). Never for implementers or reviewers — they must complete or fail. When dispatching with partial-OK, set the expectation: `@apollo Search for auth files. Timeout parcial OK — return whatever you have.`
 
 ---
 
 # 📊 TIMEOUT TRACKING
 
-Maintain awareness of in-flight delegations:
-
-| Agent | Timeout | Status | Partial OK? |
-|-------|---------|--------|-------------|
-| @apollo | 60s | ✅ complete | ✅ |
-| @hermes | 180s | ⏳ in progress | ❌ |
-| @themis | 120s | ⏳ in progress | ❌ |
-
-Log timeouts to `/memories/session/timeout-log.md` for later analysis.
+Track in-flight delegations against the Timeout Behavior table above. Log timeouts to `/memories/session/timeout-log.md` for later analysis.

@@ -1,6 +1,6 @@
 # Pantheon OpenCode — gitleaks configuration (fail-closed secret scan)
 #
-# Used by .github/workflows/security.yml (job: security-scan).
+# Used by .github/workflows/security-scan.yml (job: security-scan).
 # Auto-discovered by the gitleaks-action from the repo root and by the
 # gitleaks CLI full-history scan.
 #
@@ -84,8 +84,6 @@ paths = [
   '''\.gitleaks\.toml''',
   '''\.gitleaksignore''',
   '''SECURITY\.md''',
-  # Docs example with the AWS-documented dummy key (e.g. AKIAIOSFODNN7EXAMPLE)
-  '''\.github/hooks/README\.md''',
   # Playwright MCP snapshot fixtures (contain a JWT screenshot URL)
   '''\.playwright-mcp/page-.*\.yml''',
   # Committed environment template (no real values)
