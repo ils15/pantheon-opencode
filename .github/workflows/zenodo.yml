@@ -35,7 +35,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
@@ -44,7 +44,7 @@ jobs:
       # against the tagged tree, but load the validator from this workflow's
       # versioned commit instead of assuming it exists in the tag.
       - name: Checkout workflow tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           path: .zenodo-workflow
@@ -73,7 +73,9 @@ jobs:
           case "$RELEASE_TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo '::error::Invalid release tag.'; exit 1 ;; esac
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft --jq 'select(.isDraft == false) | .tagName' | grep -Fxq "$RELEASE_TAG"
 
-      - uses: actions/setup-node@v4
+      # No `cache: npm`: this job runs no `npm ci`/`npm install`, so there is
+      # nothing to cache — setup-node is used only for the Node runtime.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
 

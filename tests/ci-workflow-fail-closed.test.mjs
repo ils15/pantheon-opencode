@@ -33,8 +33,16 @@ test('CI package evidence verification preserves failures and remains blocking',
   const match = workflow.match(/- name: Verify package\n\s+run: ([^\n]+)/)
   assert.ok(match, 'CI must define a package verification step')
   const command = match[1].trim()
-  const packageStep = workflow.match(/- name: Verify package\n[\s\S]*?(?=\n\s{2}version-check:)/)
+  // The former standalone `version-check` job was folded into `validate`, so
+  // the step is now bounded by the next job key or by end of file.
+  const packageStep = workflow.match(
+    /- name: Verify package\n[\s\S]*?(?=\n {2}[a-z][a-z0-9-]*:|\n*$)/,
+  )
   assert.ok(packageStep, 'CI package verification step must be present in the validate job')
+  assert.ok(
+    workflow.indexOf('- name: Verify package') > workflow.indexOf('validate:'),
+    'CI package verification step must live inside the validate job',
+  )
 
   assert.match(command, /^npm run package:evidence -- /)
   assert.match(command, /--target-sha="\$\(git rev-parse HEAD\)"/)

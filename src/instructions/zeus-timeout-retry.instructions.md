@@ -126,39 +126,14 @@ ANY NO  → full task (IMPL artifact + Themis review mandatory)
 3. **No Themis dependency** — output doesn't feed into a phase that requires review
 
 ## Subtask Return Format
-Expect a `subtask_summary` response with:
-```
-## subtask_summary
-**files_changed:** [paths]
-**summary:** What was done
-**tests:** ✅ or N/A
-**status:** complete | partial | escalated
-```
+Return the standard `## subtask_summary` defined in `## Agent Return Format` (files_changed, summary, tests, coverage, tokens, status, blockers).
 
 ## Timeout Parcial (Partial Results)
 
-Timeout parcial is ONLY for read-only, independent agents:
-- ✅ @apollo — can return partial file list ("found 7 of 12 files before timeout")
-- ✅ @gaia — can return partial literature findings
-
-- ✅ @talos — can confirm progress if hotfix times out
-- ❌ Never for implementers or reviewers — must complete or fail
-
-When dispatching with partial-OK, set expectation:
-```
-@apollo Search for auth files. Timeout parcial OK — return whatever you have.
-```
+Only agents marked ✅ in the Timeout Behavior table above may return partial results: @apollo (partial file list, e.g. "found 7 of 12 files before timeout"), @gaia (partial literature findings) and @talos (confirm progress if a hotfix times out). Never for implementers or reviewers — they must complete or fail. When dispatching with partial-OK, set the expectation: `@apollo Search for auth files. Timeout parcial OK — return whatever you have.`
 
 ---
 
 # 📊 TIMEOUT TRACKING
 
-Maintain awareness of in-flight delegations:
-
-| Agent | Timeout | Status | Partial OK? |
-|-------|---------|--------|-------------|
-| @apollo | 60s | ✅ complete | ✅ |
-| @hermes | 180s | ⏳ in progress | ❌ |
-| @themis | 120s | ⏳ in progress | ❌ |
-
-Log timeouts to `/memories/session/timeout-log.md` for later analysis.
+Track in-flight delegations against the Timeout Behavior table above. Log timeouts to `/memories/session/timeout-log.md` for later analysis.

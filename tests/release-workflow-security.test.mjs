@@ -20,7 +20,10 @@ test('release is workflow_dispatch-only and validates its event inputs first', (
 })
 
 test('validation checks out and confirms the exact TARGET_SHA before release credentials', () => {
-  const checkout = validate.indexOf('actions/checkout@v4')
+  // The action must be pinned by commit SHA, not a movable tag.
+  assert.match(workflow, /actions\/checkout@[0-9a-f]{40}/)
+  const checkoutMatch = /actions\/checkout@[0-9a-f]{40}/.exec(validate)
+  const checkout = checkoutMatch ? checkoutMatch.index : -1
   const confirmation = validate.indexOf('Confirm checkout matches TARGET_SHA')
   const evidence = validate.indexOf('npm run package:evidence')
 
@@ -36,6 +39,8 @@ test('validation checks out and confirms the exact TARGET_SHA before release cre
 })
 
 test('validate creates package evidence and enforces one immutable tarball plus metadata checksum', () => {
+  // The handoff artifact upload must also be pinned by commit SHA.
+  assert.match(validate, /actions\/upload-artifact@[0-9a-f]{40}/)
   assert.match(validate, /npm run package:evidence -- --output-dir=.*--target-sha="\$TARGET_SHA"/)
   assert.match(validate, /TARBALLS=\("\$RUNNER_TEMP\/release-artifact"\/\*\.tgz\)/)
   assert.match(validate, /\[ "\$\{#TARBALLS\[@\]\}" -eq 1 \]/)
@@ -48,7 +53,10 @@ test('validate creates package evidence and enforces one immutable tarball plus 
 })
 
 test('release consumes exactly one downloaded tarball and validates all evidence before credentials', () => {
-  const download = release.indexOf('actions/download-artifact@v4')
+  // The artifact download must be pinned by commit SHA, not a movable tag.
+  assert.match(release, /actions\/download-artifact@[0-9a-f]{40}/)
+  const downloadMatch = /actions\/download-artifact@[0-9a-f]{40}/.exec(release)
+  const download = downloadMatch ? downloadMatch.index : -1
   const metadata = release.indexOf('Validate immutable artifact metadata')
   const firstCredential = Math.min(
     release.indexOf(githubTokenMarker),
@@ -72,7 +80,7 @@ test('release consumes exactly one downloaded tarball and validates all evidence
 })
 
 test('release never checks out, packs, repacks, or installs after artifact handoff', () => {
-  assert.doesNotMatch(release, /actions\/checkout@v4/)
+  assert.doesNotMatch(release, /actions\/checkout@/)
   assert.doesNotMatch(release, /\bnpm pack\b/)
   assert.doesNotMatch(release, /\brepack\b/)
   assert.doesNotMatch(release, /\bnpm install\b/)

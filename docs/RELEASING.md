@@ -305,10 +305,8 @@ The pipeline is designed so **reruns are safe**:
   and rerun. Both non-recovery channels extract the release body from the
   committed `CHANGELOG.md`; recovery uses a static note.
 
-State snapshots from the standardization audit live in
-`.pantheon/release-audit-2026-08-05/` (`tags-before.txt`,
-`releases-before.txt`, `npm-versions-before.json`, `changelog-before.md`) —
-use them to verify the expected pre-run state before a manual rerun.
+Before a manual rerun, verify the expected pre-run state (`git tag`, GitHub
+releases, and the npm version) directly against the live registries.
 
 ---
 

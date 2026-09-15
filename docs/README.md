@@ -10,7 +10,6 @@ Reference documentation for the Pantheon multi-agent framework.
 |-------|-------------|
 | [INSTALLATION.md](INSTALLATION.md) | Full installation guide |
 | [QUICKSTART.md](QUICKSTART.md) | 5-minute quick start |
-| [SETUP.md](SETUP.md) | Setup overview (redirects to INSTALLATION) |
 
 ## Core Concepts
 
@@ -27,7 +26,6 @@ Reference documentation for the Pantheon multi-agent framework.
 | [MCP.md](MCP.md) | MCP server overview |
 | [mcp-tools.md](mcp-tools.md) | Canonical MCP tool registry |
 | [mcp-user-guide.md](mcp-user-guide.md) | Adding custom MCP servers |
-| [mcp-recommendations.md](mcp-recommendations.md) | Recommended MCPs per project type |
 | [AGENT-MCP.md](AGENT-MCP.md) | MCP integration for agents |
 | [persistence-mcp.md](persistence-mcp.md) | Persistence MCP server |
 
@@ -36,7 +34,6 @@ Reference documentation for the Pantheon multi-agent framework.
 | Guide | Description |
 |-------|-------------|
 | [MEMORY.md](MEMORY.md) | Memory system overview |
-| [MIGRATION-MEMORY-BANK.md](MIGRATION-MEMORY-BANK.md) | Memory bank migration guide |
 
 ## Operations
 

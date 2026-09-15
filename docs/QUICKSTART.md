@@ -4,7 +4,7 @@
 
 A multi-agent framework for **OpenCode**. It provides 14 specialized agents,
 TDD enforcement, Themis quality gates, and persistent memory MCP. The current
-release is **v1.4.3**.
+release is **v1.5.0-beta.15**.
 
 ## Installation
 
@@ -38,7 +38,7 @@ npm run doctor
 
 ### Prerequisites
 
-- **Node.js 18+**
+- **Node.js 22+**
 - **OpenCode v1.18.4+**
 - **Python 3.11+** (optional, for MCP servers)
 
@@ -63,7 +63,7 @@ echo 'export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true' >> ~/.zshrc
 - **OpenCode-only** — unified, simplified, no multi-platform fragmentation
 - **Global install** — `npx pantheon-opencode init` works from any directory
 - **Background subagents** — up to 5 agents in parallel
-- **7 commands** — all start with `/pantheon-`
+- **14 commands** — all start with `/pantheon-`
 - **Themis 3-layer review** — heuristic scanner + deep review + verification planning
 - **Persistent MCP memory** — sqlite-vec + fastembed
 

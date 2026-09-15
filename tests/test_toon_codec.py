@@ -6,7 +6,7 @@ FAILS (collection error) before the implementation and PASSES after.
 TOON (Token-Oriented Object Notation): minimal deterministic encoding for
 board signals, checkpoints and KV payloads. Semantics identical to JSON;
 per-class savings ~11% board-signal up to ~49% large-tabular (28%
-checkpoint, 33% kv-list — see docs/ws3-token-opt-measurements.md);
+checkpoint, 33% kv-list);
 JSON fallback when the parser is absent/fails.
 
 Prohibited: external gateway, generative embedding — this module uses only
