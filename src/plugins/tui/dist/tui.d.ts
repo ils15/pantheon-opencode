@@ -104,6 +104,24 @@ declare const IDLE_SILENCE_MS: number;
  *  constants only control which rows enter the TUI window. */
 declare const DELEGATION_DONE_RETENTION_MS: number;
 declare const DELEGATION_FAILED_RETENTION_MS: number;
+/** Grace window for an ABSENT child status. `api.state.session.status()` only
+ *  carries the sessions that are currently ALIVE; every finished child of a
+ *  long-lived session is missing from that map. A child with no status is
+ *  therefore treated as terminal (done) — treating it as running made every
+ *  historical child of the session show up as "active" (the "197 children,
+ *  all active" regression). The one exception is a freshly-spawned child that
+ *  has not been registered by the status API yet: within this window of its
+ *  last activity (`time.updated`, falling back to `time.created`) it still
+ *  reads as running. */
+declare const DELEGATION_CHILD_STATUS_GRACE_MS: number;
+/** Recency window for the children channel. `session.children` returns EVERY
+ *  child the focused session ever spawned, so a long session accumulates
+ *  hundreds of historical rows that would inflate the panel. A child whose
+ *  last activity (its own time, or its matched report's Finalized timestamp)
+ *  is older than this window is dropped BEFORE it can enter the list. 24h
+ *  keeps the sidebar scoped to current work while still covering long
+ *  delegations. A child with no timestamp at all is kept (fail-open). */
+declare const DELEGATION_CHILDREN_RECENCY_MS: number;
 /** Alias-less NATIVE task() live entries never receive a report alias (the
  *  task tool output carries none), so the 30s alias-less prune in
  *  mergeChildDelegationSources must not apply to them — 5 minutes covers a
@@ -130,9 +148,10 @@ declare function delegationElapsed(entry: DelegationEntry, now: number): string;
 type DelegationActivity = 'delegating' | 'working' | 'reading' | 'completed' | 'error' | 'cancelled';
 declare function delegationActivity(entry: DelegationEntry): DelegationActivity;
 declare function delegationActivityLabel(entry: DelegationEntry): string;
-/** Return a deterministic spinner frame. The View ticks this every 1000ms
- *  (not 140ms — the fast tick flickered without adding information). */
-declare function delegationSpinnerFrame(now: number): string;
+/** Return the spinner glyph for the given frame counter. The frame counter
+ *  is incremented every ~80ms by a dedicated animation timer, decoupled from
+ *  the data poll cycle. Pure — no side effects. */
+declare function delegationSpinnerFrame(frame: number): string;
 /** Every state the row knows how to draw: the delegation lifecycle states
  *  derived from the children status + md reports (`completed`, `error`,
  *  `cancelled`, `startup_failed`, `startup_unknown`) plus the TUI-only
@@ -364,11 +383,27 @@ type ChildDelegationLike = {
     updated?: number;
   };
 };
-/** Map a child status type to a display state. busy/retry → running
- *  (the child is actively working), idle → completed, unknown → running
- *  (fail-open: a freshly-seen child is assumed active; the 1s poll + md
- *  correct it as soon as terminal data exists). */
-declare function childStatusToState(status: string | undefined): 'running' | 'completed' | 'retry';
+/** Map a child status type to a display state.
+ *
+ *  Only `busy`/`retry` are EXPLICIT live states. `idle` is terminal and so is
+ *  any other/unknown status — a status the panel does not recognise is not
+ *  evidence of activity. An ABSENT status is the historical case: the status
+ *  map (`api.state.session.status`) contains only currently-alive sessions, so
+ *  every finished child of a long session is missing from it. Defaulting that
+ *  to running made the whole session history render as "active" (the
+ *  "197 children, all active" regression), so an absent status is terminal
+ *  (done) UNLESS the child was active within `graceMs` — a just-spawned child
+ *  that the status API has not registered yet must still render as running.
+ *
+ *  @param status  the `api.state.session.status(id)?.type`, or undefined
+ *  @param time    the child session time fields (`created`/`updated`)
+ *  @param now     current wall-clock ms (injectable for tests)
+ *  @param graceMs recency window for the absent-status running assumption
+ *  Pure — no I/O. */
+declare function childStatusToState(status: string | undefined, time?: {
+  created?: number;
+  updated?: number;
+}, now?: number, graceMs?: number): 'running' | 'completed' | 'retry';
 /** Status-only row model: ONE glyph + ONE identity per row.
  *
  *  A row is
@@ -386,9 +421,9 @@ declare function delegationRowStatus(state: DelegationDisplayState): DelegationR
 declare const DELEGATION_ROW_GLYPHS: Readonly<Record<DelegationRowStatus, string>>;
 declare function delegationRowGlyph(status: DelegationRowStatus): string;
 /** Row marker (`<glyph> `) — the single state channel. `active` animates
- *  through the 1s spinner for the given tick; every other kind is static.
- *  Pure. */
-declare function delegationRowMarker(state: DelegationDisplayState, now?: number): string;
+ *  through the spinner for the given frame counter (incremented every ~80ms);
+ *  every other kind is static. Pure. */
+declare function delegationRowMarker(state: DelegationDisplayState, frame?: number): string;
 /** ONE identity per row: the short report alias (`apo-1`); a row without a
  *  report alias (native task() child `native-task` / `native-<id>`, or an
  *  alias-less native live row `live-<callID>` kept as children-only) shows
@@ -473,5 +508,5 @@ declare const plugin: TuiPluginModule & {
   setup: () => Promise<void>;
 };
 //#endregion
-export { ChildDelegationLike, DELEGATION_ALIAS_WIDTH, DELEGATION_DESCRIPTION_MAX, DELEGATION_DONE_RETENTION_MS, DELEGATION_ELAPSED_WIDTH, DELEGATION_FAILED_RETENTION_MS, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, DelegationActivity, DelegationDisplayState, DelegationEntry, DelegationRowStatus, DelegationStateTone, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, NATIVE_LIVE_ALIASLESS_TTL_MS, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, createDelegationRowOpenHandler, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, filterDelegationsToSession, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { ChildDelegationLike, DELEGATION_ALIAS_WIDTH, DELEGATION_CHILDREN_RECENCY_MS, DELEGATION_CHILD_STATUS_GRACE_MS, DELEGATION_DESCRIPTION_MAX, DELEGATION_DONE_RETENTION_MS, DELEGATION_ELAPSED_WIDTH, DELEGATION_FAILED_RETENTION_MS, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, DelegationActivity, DelegationDisplayState, DelegationEntry, DelegationRowStatus, DelegationStateTone, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, NATIVE_LIVE_ALIASLESS_TTL_MS, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, createDelegationRowOpenHandler, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, filterDelegationsToSession, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 //# sourceMappingURL=tui.d.ts.map
