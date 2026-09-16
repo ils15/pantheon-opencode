@@ -207,14 +207,14 @@ async function main() {
       const loaded = await adapter.loadAllJobs()
       assert.equal(loaded.length, 2)
 
-      const jobA = loaded.find((r) => r.taskID === 'job-a')!
+      const jobA = loaded.find((r) => r.taskID === 'job-a')
       assert.ok(jobA)
-      assert.equal(jobA.state, 'completed')
-      assert.equal(jobA.resultSummary, 'Done A')
+      assert.equal(jobA?.state, 'completed')
+      assert.equal(jobA?.resultSummary, 'Done A')
 
-      const jobB = loaded.find((r) => r.taskID === 'job-b')!
+      const jobB = loaded.find((r) => r.taskID === 'job-b')
       assert.ok(jobB)
-      assert.equal(jobB.state, 'running')
+      assert.equal(jobB?.state, 'running')
     } finally {
       rmSync(tmpDir, { recursive: true, force: true })
     }
@@ -262,7 +262,7 @@ async function main() {
 
       const loaded = await adapter.loadAllJobs()
       assert.equal(loaded.length, 1) // only real-job from state.json
-      assert.equal(loaded[0]!.taskID, 'real-job')
+      assert.equal(loaded[0]?.taskID, 'real-job')
     } finally {
       rmSync(tmpDir, { recursive: true, force: true })
     }
