@@ -26,8 +26,8 @@ import { join } from 'node:path'
 
 import {
   buildChildrenPath,
-  ceilingDelegationList,
   type ChildDelegationLike,
+  ceilingDelegationList,
   childrenToDelegationEntries,
   childStatusToState,
   collectDelegationToolParts,
@@ -63,7 +63,7 @@ import {
   seedLiveDelegationMap,
   splitDelegationList,
   toDelegationEntry,
-  visibleDelegationList
+  visibleDelegationList,
 } from '../../src/plugins/tui/src/index.tsx'
 
 // ─── Fixtures (real header shapes from renderDelegationMarkdown) ────────
