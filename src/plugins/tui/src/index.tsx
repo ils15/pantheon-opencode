@@ -2034,7 +2034,7 @@ export function filterDelegationsToSession(
 
 /* ─── Current-session resolution + path guard (placeholder regression) ──
  * The sidebar forwarded `props.session_id` verbatim into
- * `session.children({ path: { id } })`. When the TUI runtime renders the
+ * `session.children({ sessionID })`. When the TUI runtime renders the
  * sidebar without a focused session it leaves the route template
  * UNSUBSTITUTED — the literal "{sessionID}" string — which opencode's server
  * rejected every poll (SchemaError: Expected a string starting with "ses",
@@ -2098,22 +2098,27 @@ export function resolveCurrentSessionID(sources: TuiSessionSources): string | nu
 }
 
 /** THE single choke point for every `session.children` / session-API path.
- *  Returns `{ path: { id } }` ONLY for a server-valid session id; returns
- *  null for anything else (placeholder, empty, foreign id) so the caller
- *  skips the call entirely instead of sending an unsubstituted placeholder
- *  (the "%7BsessionID%7D" regression). Every session-API call site MUST go
- *  through this function (enforced by the source-scan test in
- *  tests/pantheon/tui-delegations.test.ts). */
-export function safeSessionPath(id: unknown): { path: { id: string } } | null {
+ *  Returns the v2 SDK parameter shape `{ sessionID }` ONLY for a
+ *  server-valid session id; returns null for anything else (placeholder,
+ *  empty, foreign id) so the caller skips the call entirely instead of
+ *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression).
+ *  The TUI client is `@opencode-ai/sdk/v2`, whose session methods take a
+ *  FLAT parameter object (`{ sessionID }`), NOT the v1 `{ path: { id } }`
+ *  envelope — passing the v1 shape left the v2 `{sessionID}` URL template
+ *  unsubstituted (`/session/%7BsessionID%7D/children`). Every session-API
+ *  call site MUST go through this function (enforced by the source-scan
+ *  test in tests/pantheon/tui-delegations.test.ts). */
+export function safeSessionPath(id: unknown): { sessionID: string } | null {
   if (!isValidSessionId(id)) return null
-  return { path: { id } }
+  return { sessionID: id }
 }
 
-/** Build the `session.children` path ONLY from a validated session id.
+/** Build the `session.children` parameters ONLY from a validated session id.
  *  Delegates to {@link safeSessionPath} — the single choke point. Returns
- *  null for null/invalid ids so the caller skips the fetch instead of
- *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression). */
-export function buildChildrenPath(id: string | null | undefined): { path: { id: string } } | null {
+ *  the v2 SDK shape `{ sessionID }`; null for null/invalid ids so the caller
+ *  skips the fetch instead of sending an unsubstituted placeholder (the
+ *  "%7BsessionID%7D" regression). */
+export function buildChildrenPath(id: string | null | undefined): { sessionID: string } | null {
   return safeSessionPath(id)
 }
 
@@ -2786,7 +2791,9 @@ function View(props: {
     if (delegationsInflight !== null) return delegationsInflight
     delegationsInflight = (async () => {
       try {
-        const state = props.api.state as any
+        // Typed (no `as any`): TuiState.session.status is a v2 sync accessor
+        // taking the session id directly — same shape as the client call.
+        const state = props.api.state
         // 0. md reports from EVERY session under .pantheon/delegations — the
         // ENRICHMENT channel. Read unfiltered (taskID match supplies alias/
         // agent/description/terminal state); the active-session filter after
@@ -2817,13 +2824,18 @@ function View(props: {
           return
         }
         // 2. children — PRIMARY source (SDK: api.client.session.children).
+        // v2 SDK: `children` takes a FLAT `{ sessionID }` parameter object.
+        // The v1 `{ path: { id } }` envelope is NOT understood by the v2
+        // client — it left the URL template unsubstituted and the server
+        // rejected every poll ("%7BsessionID%7D" regression).
         let children: ChildDelegationLike[] = []
         try {
           // buildChildrenPath re-validates: with sessionID !== null it is
           // never null, so no placeholder can reach the wire.
-          const result = await (props.api.client as any)?.session?.children?.(
-            buildChildrenPath(sessionID),
-          )
+          const childrenPath = buildChildrenPath(sessionID)
+          const result = childrenPath
+            ? await props.api.client.session.children(childrenPath)
+            : undefined
           const data = (result?.data ?? result) as unknown
           children = Array.isArray(data) ? (data as ChildDelegationLike[]) : []
         } catch (err) {
@@ -2837,7 +2849,7 @@ function View(props: {
           // path — "%7BsessionID%7D").
           if (!isValidSessionId(childID)) return undefined
           try {
-            return state?.session?.status?.(childID)?.type as string | undefined
+            return state.session.status(childID)?.type
           } catch {
             return undefined // status API unavailable — child state fallback
           }

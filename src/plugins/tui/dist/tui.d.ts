@@ -326,25 +326,26 @@ type TuiSessionSources = {
  *  fetch (empty panel, zero errors). Pure — no I/O, no runtime required. */
 declare function resolveCurrentSessionID(sources: TuiSessionSources): string | null;
 /** THE single choke point for every `session.children` / session-API path.
- *  Returns `{ path: { id } }` ONLY for a server-valid session id; returns
- *  null for anything else (placeholder, empty, foreign id) so the caller
- *  skips the call entirely instead of sending an unsubstituted placeholder
- *  (the "%7BsessionID%7D" regression). Every session-API call site MUST go
- *  through this function (enforced by the source-scan test in
- *  tests/pantheon/tui-delegations.test.ts). */
+ *  Returns the v2 SDK parameter shape `{ sessionID }` ONLY for a
+ *  server-valid session id; returns null for anything else (placeholder,
+ *  empty, foreign id) so the caller skips the call entirely instead of
+ *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression).
+ *  The TUI client is `@opencode-ai/sdk/v2`, whose session methods take a
+ *  FLAT parameter object (`{ sessionID }`), NOT the v1 `{ path: { id } }`
+ *  envelope — passing the v1 shape left the v2 `{sessionID}` URL template
+ *  unsubstituted (`/session/%7BsessionID%7D/children`). Every session-API
+ *  call site MUST go through this function (enforced by the source-scan
+ *  test in tests/pantheon/tui-delegations.test.ts). */
 declare function safeSessionPath(id: unknown): {
-  path: {
-    id: string;
-  };
+  sessionID: string;
 } | null;
-/** Build the `session.children` path ONLY from a validated session id.
+/** Build the `session.children` parameters ONLY from a validated session id.
  *  Delegates to {@link safeSessionPath} — the single choke point. Returns
- *  null for null/invalid ids so the caller skips the fetch instead of
- *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression). */
+ *  the v2 SDK shape `{ sessionID }`; null for null/invalid ids so the caller
+ *  skips the fetch instead of sending an unsubstituted placeholder (the
+ *  "%7BsessionID%7D" regression). */
 declare function buildChildrenPath(id: string | null | undefined): {
-  path: {
-    id: string;
-  };
+  sessionID: string;
 } | null;
 /** Duck-typed subset of a child Session (+ its live status type). */
 type ChildDelegationLike = {
