@@ -1293,6 +1293,26 @@ export const IDLE_SILENCE_MS = 60 * 1000
 export const DELEGATION_DONE_RETENTION_MS = 2 * 60 * 1000
 export const DELEGATION_FAILED_RETENTION_MS = 10 * 60 * 1000
 
+/** Grace window for an ABSENT child status. `api.state.session.status()` only
+ *  carries the sessions that are currently ALIVE; every finished child of a
+ *  long-lived session is missing from that map. A child with no status is
+ *  therefore treated as terminal (done) — treating it as running made every
+ *  historical child of the session show up as "active" (the "197 children,
+ *  all active" regression). The one exception is a freshly-spawned child that
+ *  has not been registered by the status API yet: within this window of its
+ *  last activity (`time.updated`, falling back to `time.created`) it still
+ *  reads as running. */
+export const DELEGATION_CHILD_STATUS_GRACE_MS = 60 * 1000
+
+/** Recency window for the children channel. `session.children` returns EVERY
+ *  child the focused session ever spawned, so a long session accumulates
+ *  hundreds of historical rows that would inflate the panel. A child whose
+ *  last activity (its own time, or its matched report's Finalized timestamp)
+ *  is older than this window is dropped BEFORE it can enter the list. 24h
+ *  keeps the sidebar scoped to current work while still covering long
+ *  delegations. A child with no timestamp at all is kept (fail-open). */
+export const DELEGATION_CHILDREN_RECENCY_MS = 24 * 60 * 60 * 1000
+
 /** Alias-less NATIVE task() live entries never receive a report alias (the
  *  task tool output carries none), so the 30s alias-less prune in
  *  mergeChildDelegationSources must not apply to them — 5 minutes covers a
@@ -1387,10 +1407,11 @@ export function delegationActivityLabel(entry: DelegationEntry): string {
 
 const DELEGATION_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
-/** Return a deterministic spinner frame. The View ticks this every 1000ms
- *  (not 140ms — the fast tick flickered without adding information). */
-export function delegationSpinnerFrame(now: number): string {
-  const index = Math.floor(Math.max(0, now) / 1_000) % DELEGATION_SPINNER_FRAMES.length
+/** Return the spinner glyph for the given frame counter. The frame counter
+ *  is incremented every ~80ms by a dedicated animation timer, decoupled from
+ *  the data poll cycle. Pure — no side effects. */
+export function delegationSpinnerFrame(frame: number): string {
+  const index = Math.abs(Math.floor(frame)) % DELEGATION_SPINNER_FRAMES.length
   return DELEGATION_SPINNER_FRAMES[index] ?? DELEGATION_SPINNER_FRAMES[0]
 }
 
@@ -2140,14 +2161,36 @@ export type ChildDelegationLike = {
   }
 }
 
-/** Map a child status type to a display state. busy/retry → running
- *  (the child is actively working), idle → completed, unknown → running
- *  (fail-open: a freshly-seen child is assumed active; the 1s poll + md
- *  correct it as soon as terminal data exists). */
-export function childStatusToState(status: string | undefined): 'running' | 'completed' | 'retry' {
-  if (status === 'idle') return 'completed'
+/** Map a child status type to a display state.
+ *
+ *  Only `busy`/`retry` are EXPLICIT live states. `idle` is terminal and so is
+ *  any other/unknown status — a status the panel does not recognise is not
+ *  evidence of activity. An ABSENT status is the historical case: the status
+ *  map (`api.state.session.status`) contains only currently-alive sessions, so
+ *  every finished child of a long session is missing from it. Defaulting that
+ *  to running made the whole session history render as "active" (the
+ *  "197 children, all active" regression), so an absent status is terminal
+ *  (done) UNLESS the child was active within `graceMs` — a just-spawned child
+ *  that the status API has not registered yet must still render as running.
+ *
+ *  @param status  the `api.state.session.status(id)?.type`, or undefined
+ *  @param time    the child session time fields (`created`/`updated`)
+ *  @param now     current wall-clock ms (injectable for tests)
+ *  @param graceMs recency window for the absent-status running assumption
+ *  Pure — no I/O. */
+export function childStatusToState(
+  status: string | undefined,
+  time?: { created?: number; updated?: number },
+  now = Date.now(),
+  graceMs = DELEGATION_CHILD_STATUS_GRACE_MS,
+): 'running' | 'completed' | 'retry' {
   if (status === 'retry') return 'retry'
-  return 'running' // busy or unknown
+  if (status === 'busy') return 'running'
+  if (status !== undefined) return 'completed' // idle + any other explicit terminal
+  // Absent status: running only while the child's last activity is fresh.
+  const lastActivity = Math.max(time?.updated ?? 0, time?.created ?? 0)
+  if (lastActivity > 0 && now - lastActivity < graceMs) return 'running'
+  return 'completed'
 }
 
 /** Status-only row model: ONE glyph + ONE identity per row.
@@ -2193,11 +2236,11 @@ export function delegationRowGlyph(status: DelegationRowStatus): string {
 }
 
 /** Row marker (`<glyph> `) — the single state channel. `active` animates
- *  through the 1s spinner for the given tick; every other kind is static.
- *  Pure. */
-export function delegationRowMarker(state: DelegationDisplayState, now = Date.now()): string {
+ *  through the spinner for the given frame counter (incremented every ~80ms);
+ *  every other kind is static. Pure. */
+export function delegationRowMarker(state: DelegationDisplayState, frame = 0): string {
   const status = delegationRowStatus(state)
-  const glyph = status === 'active' ? delegationSpinnerFrame(now) : delegationRowGlyph(status)
+  const glyph = status === 'active' ? delegationSpinnerFrame(frame) : delegationRowGlyph(status)
   return `${glyph} `
 }
 
@@ -2375,7 +2418,10 @@ export function formatPanelLogLine(
  *  `parentSessionID` (the focused session id) is stamped on report-less
  *  children so the row carries its origin session; omit it and they stay
  *  unscoped ('').
- *  Sorted running-first (compareDelegationEntries).
+ *  Children outside {@link DELEGATION_CHILDREN_RECENCY_MS} are dropped before
+ *  they can enter the list (the per-session child list grows for the whole
+ *  session lifetime); the survivors are sorted running-first, most recent
+ *  first (compareDelegationEntries), so a ceiling hides the OLDEST rows.
  *  Pure — no I/O. */
 /** Temporal guard for the children channel (same recycled-alias class as the
  *  md merge): an md terminal report matched by taskID may still belong to
@@ -2409,10 +2455,22 @@ export function childrenToDelegationEntries(
     if (child.id === '' || seen.has(child.id)) continue
     seen.add(child.id)
     const mdEntry = byTaskID.get(child.id)
+    // Recency window (source-level): the children API returns EVERY child the
+    // session ever spawned, so without this the whole session history enters
+    // the list (the "197 children" panel). Effective recency = the latest of
+    // the child's own activity and its matched report's Finalized timestamp;
+    // a child with NO timestamp at all is kept (fail-open — it cannot be
+    // judged). Oldest rows are the ones dropped.
+    const lastActivity = Math.max(
+      child.time?.updated ?? 0,
+      child.time?.created ?? 0,
+      mdEntry?.updatedAt ?? 0,
+    )
+    if (lastActivity > 0 && now - lastActivity > DELEGATION_CHILDREN_RECENCY_MS) continue
     const state =
       mdEntry !== undefined && mdEntry.state !== 'running' && mdTerminalCoversChild(mdEntry, child)
         ? mdEntry.state
-        : childStatusToState(child.status)
+        : childStatusToState(child.status, child.time, now)
     out.push({
       alias: mdEntry?.alias ?? `native-${child.id.slice(-4)}`,
       // A report-less child IS a child of the focused session
@@ -2593,7 +2651,7 @@ function DelegationRow(props: {
   api: TuiPluginApi
   job: DelegationEntry
   now: number
-  animationNow: number
+  frame: number
 }) {
   const theme = () => props.api.theme.current
 
@@ -2615,7 +2673,7 @@ function DelegationRow(props: {
     }
   })
 
-  const marker = createMemo(() => delegationRowMarker(props.job.state, props.animationNow))
+  const marker = createMemo(() => delegationRowMarker(props.job.state, props.frame))
   const lead = createMemo(() => formatDelegationRowLead(props.job, marker()))
   const elapsed = createMemo(() => formatDelegationElapsed(props.job, props.now))
   const description = createMemo(() => truncateDelegationDescription(props.job.description))
@@ -2775,9 +2833,9 @@ function View(props: {
   // (oh-my-opencode-slim pattern): re-fetch children + re-read the md every
   // second so the panel updates even when NO event ever fires.
   const [now, setNow] = createSignal(Date.now())
-  // Separate fast ticker for the spinner. The elapsed label intentionally
-  // remains on the 1s ticker to avoid unnecessary work.
-  const [animationNow, setAnimationNow] = createSignal(Date.now())
+  // Frame counter for the spinner animation — incremented every ~80ms by a
+  // dedicated fast timer, completely decoupled from the data poll cycle.
+  const [frame, setFrame] = createSignal(0)
   // Cumulative count of event-triggered refreshes — logged with every fetch
   // ("panel: children=N(pantheon=M native=K) md=N events=N") so the (0)
   // symptom is diagnosable: children>0 means the source works; events=0
@@ -2952,7 +3010,9 @@ function View(props: {
       void refreshDelegations()
     }, 1_000)
     cleanup.push(() => clearInterval(poll))
-    const animation = setInterval(() => setAnimationNow(Date.now()), 1_000)
+    // Fast spinner animation: 80ms frame counter, decoupled from data poll.
+    // Only the spinner glyph depends on this; elapsed + data use the 1s timer.
+    const animation = setInterval(() => setFrame((f) => f + 1), 80)
     cleanup.push(() => clearInterval(animation))
 
     // Compaction recovery: `message.part.removed` clears live entries while
@@ -3064,14 +3124,7 @@ function View(props: {
         >
           <box marginLeft={1} flexDirection="column">
             <For each={delegationCeiling().visible}>
-              {(job) => (
-                <DelegationRow
-                  api={props.api}
-                  job={job}
-                  now={now()}
-                  animationNow={animationNow()}
-                />
-              )}
+              {(job) => <DelegationRow api={props.api} job={job} now={now()} frame={frame()} />}
             </For>
             <Show when={delegationCeiling().hidden > 0}>
               <text fg={theme().textMuted}>

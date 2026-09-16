@@ -18,6 +18,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.19] - 2026-09-16
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Improved — painel Delegations**: status ausente de children antigas agora é
+  `done` (não `running`); grace 60s para sessões recém-criadas; janela de
+  recência 24h (filtra histórico); ordenação newest-first; ceiling esconde
+  antigos.
+- **Improved — animação**: spinner ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ agora tem timer
+  independente (80ms/frame), separado do poll de dados — fluido, não mais
+  "travado".
 ## [v1.5.0-beta.18] - 2026-09-16
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

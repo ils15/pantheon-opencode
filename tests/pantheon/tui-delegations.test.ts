@@ -32,11 +32,15 @@ import {
   childStatusToState,
   collectDelegationToolParts,
   createDelegationRowOpenHandler,
+  DELEGATION_CHILD_STATUS_GRACE_MS,
+  DELEGATION_CHILDREN_RECENCY_MS,
   DELEGATION_DONE_RETENTION_MS,
   DELEGATION_FAILED_RETENTION_MS,
   DELEGATION_VISIBLE_CEILING,
   type DelegationEntry,
   delegationRowIdentity,
+  delegationRowMarker,
+  delegationSpinnerFrame,
   delegationStateTone,
   filterDelegationsToSession,
   formatDelegationHeader,
@@ -884,13 +888,50 @@ async function main() {
   // ─── Children channel (childStatusToState + childrenToDelegationEntries) ─
 
   await testAsync(
-    'children: childStatusToState — busy→running, retry→retry, idle→completed, unknown→running',
+    'children: childStatusToState — busy/retry→running, idle/absent→done (fresh absent child → running)',
     async () => {
       assert.equal(childStatusToState('busy'), 'running')
       assert.equal(childStatusToState('retry'), 'retry')
       assert.equal(childStatusToState('idle'), 'completed')
-      assert.equal(childStatusToState(undefined), 'running', 'no status → running (fail-open)')
-      assert.equal(childStatusToState('weird'), 'running', 'unknown status → running (fail-open)')
+      assert.equal(
+        childStatusToState(undefined),
+        'completed',
+        'absent status → done (historical child, NOT running)',
+      )
+      assert.equal(
+        childStatusToState('weird'),
+        'completed',
+        'unknown status → done (not evidence of life)',
+      )
+
+      // Grace window: an absent status is running ONLY while the child is
+      // fresh — a just-spawned child the status API has not registered yet.
+      const now = 1_000_000
+      assert.equal(
+        childStatusToState(undefined, { created: now - 10_000 }, now),
+        'running',
+        'absent status within the grace window (time.created) → running',
+      )
+      assert.equal(
+        childStatusToState(undefined, { updated: now - 10_000 }, now),
+        'running',
+        'recent time.updated counts as fresh activity',
+      )
+      assert.equal(
+        childStatusToState(undefined, { created: now - DELEGATION_CHILD_STATUS_GRACE_MS - 1 }, now),
+        'completed',
+        'absent status past the grace window → done',
+      )
+      assert.equal(
+        childStatusToState(undefined, { created: 1000, updated: 2000 }, now),
+        'completed',
+        'absent status with an old timestamp → done',
+      )
+      assert.equal(
+        childStatusToState(undefined, { created: now - 10_000 }, now, 0),
+        'completed',
+        'grace window is injectable (0 = always terminal)',
+      )
     },
   )
 
@@ -986,6 +1027,89 @@ async function main() {
     assert.equal(second.length, 2, 're-fetch does not accumulate entries')
     assert.deepEqual(first.map((e) => e.taskID).sort(), ['ses_child_a', 'ses_child_b'])
   })
+
+  await testAsync(
+    'children: recency window drops historical rows, survivors are newest-first',
+    async () => {
+      const now = 1_000_000_000_000
+      const children: ChildDelegationLike[] = [
+        {
+          id: 'ses_historical',
+          title: 'historical',
+          status: 'idle',
+          time: {
+            created: now - DELEGATION_CHILDREN_RECENCY_MS - 1,
+            updated: now - DELEGATION_CHILDREN_RECENCY_MS - 1,
+          },
+        },
+        {
+          id: 'ses_recent_new',
+          title: 'recent new',
+          status: 'idle',
+          time: { created: now - 60_000, updated: now - 30_000 },
+        },
+        {
+          id: 'ses_recent_old',
+          title: 'recent old',
+          status: 'idle',
+          time: { created: now - 120_000, updated: now - 90_000 },
+        },
+      ]
+      const entries = childrenToDelegationEntries(children, [], now)
+      assert.deepEqual(
+        entries.map((e) => e.taskID),
+        ['ses_recent_new', 'ses_recent_old'],
+        'historical child is dropped; the rest are ordered newest-first',
+      )
+      // Exactly at the window boundary the child is still kept (age == window).
+      assert.equal(
+        childrenToDelegationEntries(
+          [
+            {
+              id: 'ses_boundary',
+              status: 'idle',
+              time: {
+                created: now - DELEGATION_CHILDREN_RECENCY_MS,
+                updated: now - DELEGATION_CHILDREN_RECENCY_MS,
+              },
+            },
+          ],
+          [],
+          now,
+        ).length,
+        1,
+        'a child exactly at the window boundary survives',
+      )
+      // Fail-open: a child with no timestamp at all is never dropped.
+      assert.equal(
+        childrenToDelegationEntries([{ id: 'ses_untimed', status: 'idle' }], [], now).length,
+        1,
+        'untimed child kept (cannot be judged)',
+      )
+      // A fresh report (Finalized) keeps a child whose own times are old.
+      const md = delegation({
+        taskID: 'ses_reported',
+        state: 'completed',
+        startedAt: now - DELEGATION_CHILDREN_RECENCY_MS - 10_000,
+        updatedAt: now - 1_000,
+      })
+      assert.equal(
+        childrenToDelegationEntries(
+          [
+            {
+              id: 'ses_reported',
+              status: 'idle',
+              time: { created: now - DELEGATION_CHILDREN_RECENCY_MS - 5_000 },
+            },
+          ],
+          [md],
+          now,
+        ).length,
+        1,
+        'recent report keeps the child inside the window',
+      )
+    },
+  )
 
   await testAsync(
     'children-only: native identity + per-child alias + parentSession stamp',
@@ -1263,6 +1387,24 @@ async function main() {
       )
     },
   )
+
+  await testAsync('ceiling: newest-first ordering makes "… +N" hide the OLDEST rows', async () => {
+    const now = 1_000_000
+    const entries = [
+      delegation({ alias: 'oldest', updatedAt: now - 100_000 }),
+      delegation({ alias: 'newer', updatedAt: now - 30_000 }),
+      delegation({ alias: 'newest', updatedAt: now - 5_000 }),
+    ]
+    const { visible, hidden, hiddenActive, hiddenTerminal } = ceilingDelegationList(entries, 2, now)
+    assert.deepEqual(
+      visible.map((entry) => entry.alias),
+      ['newest', 'newer'],
+      'the two most recent rows render',
+    )
+    assert.equal(hidden, 1, 'the oldest row is the one collapsed')
+    assert.equal(hiddenActive, 0)
+    assert.equal(hiddenTerminal, 1)
+  })
 
   await testAsync(
     'split: active + recent cap; running native children never archived',
@@ -1792,6 +1934,43 @@ async function main() {
         `${state} must map to a status color, got ${String(tone)}`,
       )
     }
+  })
+
+  // ─── Spinner frame (decoupled animation) ─────────────────────────────────
+
+  await testAsync('spinner: frame=0 and frame=1 produce different glyphs', async () => {
+    const glyph0 = delegationSpinnerFrame(0)
+    const glyph1 = delegationSpinnerFrame(1)
+    assert.ok(glyph0.length > 0, 'frame 0 must produce a glyph')
+    assert.ok(glyph1.length > 0, 'frame 1 must produce a glyph')
+    assert.notEqual(glyph0, glyph1, 'consecutive frames must differ')
+  })
+
+  await testAsync('spinner: frame counter wraps around the frame array', async () => {
+    const frames = 10 // DELEGATION_SPINNER_FRAMES.length
+    const glyph0 = delegationSpinnerFrame(0)
+    const glyphWrap = delegationSpinnerFrame(frames)
+    assert.equal(glyph0, glyphWrap, 'frame N must equal frame 0 after full cycle')
+  })
+
+  await testAsync('spinner: negative frame handled via abs()', async () => {
+    const glyph = delegationSpinnerFrame(-3)
+    assert.ok(glyph.length > 0, 'negative frame must produce a glyph')
+    assert.equal(glyph, delegationSpinnerFrame(3), 'abs(-3) must equal 3')
+  })
+
+  await testAsync('rowMarker: running state uses spinner frame, not static glyph', async () => {
+    const marker0 = delegationRowMarker('running', 0)
+    const marker1 = delegationRowMarker('running', 1)
+    assert.notEqual(marker0, marker1, 'running markers at different frames must differ')
+    assert.ok(marker0.endsWith(' '), 'marker must have trailing space')
+  })
+
+  await testAsync('rowMarker: completed state uses static glyph regardless of frame', async () => {
+    const marker0 = delegationRowMarker('completed', 0)
+    const marker99 = delegationRowMarker('completed', 99)
+    assert.equal(marker0, marker99, 'terminal markers are frame-independent')
+    assert.ok(marker0.startsWith('✓'), 'completed marker must be ✓')
   })
 
   // ─── Report ────────────────────────────────────────────────────────────
