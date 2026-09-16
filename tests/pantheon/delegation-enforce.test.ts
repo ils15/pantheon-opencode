@@ -77,9 +77,9 @@ async function main() {
       for (const tool of DEFAULT_BLOCKED_TOOLS) {
         const err = await runGuard(guard, tool, 'ses_ro')
         assert.ok(err, `tool "${tool}" must be denied in a read-only session`)
-        assert.match(err!.message, /read-only/i, `message must explain WHY (${tool})`)
+        assert.match(err?.message, /read-only/i, `message must explain WHY (${tool})`)
         assert.match(
-          err!.message,
+          err?.message,
           /task|dispatch|delegate/i,
           `message must say WHAT TO DO INSTEAD (${tool})`,
         )
@@ -236,7 +236,7 @@ async function main() {
         for (const tool of DEFAULT_BLOCKED_TOOLS) {
           const err = await runGuard(guard, tool, sid)
           assert.ok(err, `tool "${tool}" must be denied for a plugin-populated read-only session`)
-          assert.match(err!.message, /read-only/i)
+          assert.match(err?.message, /read-only/i)
         }
       }
     },

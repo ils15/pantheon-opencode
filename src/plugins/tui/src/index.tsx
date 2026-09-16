@@ -3124,14 +3124,7 @@ function View(props: {
         >
           <box marginLeft={1} flexDirection="column">
             <For each={delegationCeiling().visible}>
-              {(job) => (
-                <DelegationRow
-                  api={props.api}
-                  job={job}
-                  now={now()}
-                  frame={frame()}
-                />
-              )}
+              {(job) => <DelegationRow api={props.api} job={job} now={now()} frame={frame()} />}
             </For>
             <Show when={delegationCeiling().hidden > 0}>
               <text fg={theme().textMuted}>
