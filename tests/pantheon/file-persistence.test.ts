@@ -429,8 +429,8 @@ async function main() {
 
       const recovered = board.get('orphan')
       assert.ok(recovered)
-      assert.equal(recovered!.state, 'error')
-      assert.ok(recovered!.lastStatusError?.includes('Process restarted'))
+      assert.equal(recovered?.state, 'error')
+      assert.ok(recovered?.lastStatusError?.includes('Process restarted'))
     } finally {
       rmSync(tmpDir, { recursive: true, force: true })
     }
