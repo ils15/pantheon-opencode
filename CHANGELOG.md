@@ -18,6 +18,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.20] - 2026-09-16
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🐞 Fixed
+
+- **Fixed — painel Delegations**: children com status `busy` stale (>30min sem
+  atualização) agora são classificadas como `completed` (não `running`). O
+  opencode mantém entradas `busy` no mapa de status para sessões já concluídas;
+  o TUI agora detecta e marca como done.
 ## [v1.5.0-beta.19] - 2026-09-16
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

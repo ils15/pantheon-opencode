@@ -165,7 +165,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.5.0-beta.19";
+	return "1.5.0-beta.20";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.
@@ -1489,7 +1489,13 @@ function buildChildrenPath(id) {
 *  Pure — no I/O. */
 function childStatusToState(status, time, now = Date.now(), graceMs = DELEGATION_CHILD_STATUS_GRACE_MS) {
 	if (status === "retry") return "retry";
-	if (status === "busy") return "running";
+	if (status === "busy") {
+		if (time) {
+			const lastActivity = Math.max(time.updated ?? 0, time.created ?? 0);
+			if (lastActivity > 0 && now - lastActivity > 18e5) return "completed";
+		}
+		return "running";
+	}
 	if (status !== void 0) return "completed";
 	const lastActivity = Math.max(time?.updated ?? 0, time?.created ?? 0);
 	if (lastActivity > 0 && now - lastActivity < graceMs) return "running";

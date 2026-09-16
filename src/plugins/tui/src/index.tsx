@@ -2185,7 +2185,19 @@ export function childStatusToState(
   graceMs = DELEGATION_CHILD_STATUS_GRACE_MS,
 ): 'running' | 'completed' | 'retry' {
   if (status === 'retry') return 'retry'
-  if (status === 'busy') return 'running'
+  if (status === 'busy') {
+    // A stale "busy" in the status map means the child is likely dead, not
+    // running. The opencode status map may retain entries for sessions that
+    // have already terminated. Cross-check against the child's own activity
+    // timestamps: if the last activity is older than the stale-running
+    // threshold, treat the child as completed rather than propagating the
+    // stale busy status as "running" (the "213 children, all active" bug).
+    if (time) {
+      const lastActivity = Math.max(time.updated ?? 0, time.created ?? 0)
+      if (lastActivity > 0 && now - lastActivity > STALE_RUNNING_THRESHOLD_MS) return 'completed'
+    }
+    return 'running'
+  }
   if (status !== undefined) return 'completed' // idle + any other explicit terminal
   // Absent status: running only while the child's last activity is fresh.
   const lastActivity = Math.max(time?.updated ?? 0, time?.created ?? 0)

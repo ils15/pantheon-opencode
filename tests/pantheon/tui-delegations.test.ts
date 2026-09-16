@@ -932,6 +932,48 @@ async function main() {
         'completed',
         'grace window is injectable (0 = always terminal)',
       )
+
+      // Stale "busy" in the status map: a "busy" child whose last activity is
+      // older than STALE_RUNNING_THRESHOLD_MS is likely dead — the status map
+      // retained a stale entry. Treat as completed, not running.
+      const STALE = 30 * 60 * 1000
+      const tNow = STALE + 60_000 // enough headroom so (tNow - STALE - 1) is positive
+      assert.equal(
+        childStatusToState('busy', { created: tNow - STALE - 1 }, tNow),
+        'completed',
+        'stale "busy" (created past threshold) → completed',
+      )
+      assert.equal(
+        childStatusToState('busy', { updated: tNow - STALE - 1 }, tNow),
+        'completed',
+        'stale "busy" (updated past threshold) → completed',
+      )
+      assert.equal(
+        childStatusToState('busy', { created: tNow - 10_000 }, tNow),
+        'running',
+        'recent "busy" (within threshold) → running',
+      )
+      assert.equal(
+        childStatusToState('busy', { created: tNow - 10_000, updated: tNow - STALE - 1 }, tNow),
+        'running',
+        '"busy" with recent created + stale updated → running (max picks most recent)',
+      )
+      assert.equal(
+        childStatusToState('busy', { created: tNow - STALE - 1, updated: tNow - 10_000 }, tNow),
+        'running',
+        '"busy" with stale created + recent updated → running (max picks most recent)',
+      )
+      assert.equal(
+        childStatusToState('busy', { created: tNow - STALE - 1, updated: tNow - STALE - 1 }, tNow),
+        'completed',
+        '"busy" with both stale → completed',
+      )
+      // Without time info, trust the status map (can't determine staleness).
+      assert.equal(
+        childStatusToState('busy'),
+        'running',
+        '"busy" without time → running (trust status map)',
+      )
     },
   )
 
