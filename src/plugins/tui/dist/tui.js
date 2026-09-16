@@ -165,7 +165,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.5.0-beta.17";
+	return "1.5.0-beta.18";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.
@@ -1428,20 +1428,25 @@ function resolveCurrentSessionID(sources) {
 	return null;
 }
 /** THE single choke point for every `session.children` / session-API path.
-*  Returns `{ path: { id } }` ONLY for a server-valid session id; returns
-*  null for anything else (placeholder, empty, foreign id) so the caller
-*  skips the call entirely instead of sending an unsubstituted placeholder
-*  (the "%7BsessionID%7D" regression). Every session-API call site MUST go
-*  through this function (enforced by the source-scan test in
-*  tests/pantheon/tui-delegations.test.ts). */
+*  Returns the v2 SDK parameter shape `{ sessionID }` ONLY for a
+*  server-valid session id; returns null for anything else (placeholder,
+*  empty, foreign id) so the caller skips the call entirely instead of
+*  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression).
+*  The TUI client is `@opencode-ai/sdk/v2`, whose session methods take a
+*  FLAT parameter object (`{ sessionID }`), NOT the v1 `{ path: { id } }`
+*  envelope — passing the v1 shape left the v2 `{sessionID}` URL template
+*  unsubstituted (`/session/%7BsessionID%7D/children`). Every session-API
+*  call site MUST go through this function (enforced by the source-scan
+*  test in tests/pantheon/tui-delegations.test.ts). */
 function safeSessionPath(id) {
 	if (!isValidSessionId(id)) return null;
-	return { path: { id } };
+	return { sessionID: id };
 }
-/** Build the `session.children` path ONLY from a validated session id.
+/** Build the `session.children` parameters ONLY from a validated session id.
 *  Delegates to {@link safeSessionPath} — the single choke point. Returns
-*  null for null/invalid ids so the caller skips the fetch instead of
-*  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression). */
+*  the v2 SDK shape `{ sessionID }`; null for null/invalid ids so the caller
+*  skips the fetch instead of sending an unsubstituted placeholder (the
+*  "%7BsessionID%7D" regression). */
 function buildChildrenPath(id) {
 	return safeSessionPath(id);
 }
@@ -1898,7 +1903,8 @@ function View(props) {
 				}
 				let children = [];
 				try {
-					const result = await props.api.client?.session?.children?.(buildChildrenPath(sessionID));
+					const childrenPath = buildChildrenPath(sessionID);
+					const result = childrenPath ? await props.api.client.session.children(childrenPath) : void 0;
 					const data = result?.data ?? result;
 					children = Array.isArray(data) ? data : [];
 				} catch (err) {
@@ -1908,7 +1914,7 @@ function View(props) {
 				const resolveStatus = (childID) => {
 					if (!isValidSessionId(childID)) return void 0;
 					try {
-						return state?.session?.status?.(childID)?.type;
+						return state.session.status(childID)?.type;
 					} catch {
 						return;
 					}

@@ -23,6 +23,8 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
+import { useTmpProjectDir } from './pantheon/helpers/tmp-dir.ts'
+
 const file = new URL(import.meta.url)
 if (!process.execArgv.includes('--experimental-strip-types')) {
   const child = spawnSync(process.execPath, ['--experimental-strip-types', file.pathname], {
@@ -66,7 +68,12 @@ import {
   tempFileLRU,
   touchTempFile,
 } from '../src/pantheon/vision.ts'
-import plugin from '../src/plugin.ts'
+
+// Isolation: importing src/plugin.ts runs getSharedBoard().recoverRunningJobs(),
+// which persists to the RELATIVE .pantheon/board/state.json. chdir into a
+// throwaway project dir BEFORE the (dynamic) import — ESM hoists static imports.
+const isolatedProjectDir = useTmpProjectDir('pantheon-vision-project-')
+const plugin = (await import('../src/plugin.ts')).default
 
 // Escape hatch: the runtime double-registration guard (plugin-once.ts) is
 // process-global — this suite invokes the plugin factory ~20 times in the
@@ -2221,6 +2228,7 @@ rmSync(VISION_DIR, { recursive: true, force: true })
 tempFileLRU.clear()
 for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
 rmSync(homeDir, { recursive: true, force: true })
+rmSync(isolatedProjectDir, { recursive: true, force: true })
 if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME
 else process.env.XDG_CONFIG_HOME = previousXdg
 if (previousHome === undefined) delete process.env.HOME

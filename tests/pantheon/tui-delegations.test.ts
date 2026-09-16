@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  buildChildrenPath,
   type ChildDelegationLike,
   ceilingDelegationList,
   childrenToDelegationEntries,
@@ -54,6 +55,7 @@ import {
   resolveCurrentSessionID,
   resolveDelegationsDir,
   resolvePantheonRoot,
+  safeSessionPath,
   seedLiveDelegationMap,
   splitDelegationList,
   toDelegationEntry,
@@ -1539,6 +1541,34 @@ async function main() {
     assert.equal(resolveCurrentSessionID({ sessionID: 'foo-bar' }), null)
     assert.equal(resolveCurrentSessionID({ sessionID: 42 }), null)
   })
+
+  await testAsync(
+    'path: safeSessionPath/buildChildrenPath emit the v2 { sessionID } shape',
+    async () => {
+      // REGRESSION: the TUI client is @opencode-ai/sdk/v2, whose session
+      // methods take a FLAT { sessionID } object. The old v1
+      // { path: { id } } envelope left the v2 URL template unsubstituted
+      // ("/session/%7BsessionID%7D/children") and the panel stayed empty.
+      assert.deepEqual(safeSessionPath('ses_x'), { sessionID: 'ses_x' })
+      assert.deepEqual(buildChildrenPath('ses_x'), { sessionID: 'ses_x' })
+      assert.deepEqual(buildChildrenPath('ses_00eb66a34ffeCHnzDx5hH2BCsS'), {
+        sessionID: 'ses_00eb66a34ffeCHnzDx5hH2BCsS',
+      })
+      // exact shape: no v1 `path` envelope, no extra keys
+      assert.deepEqual(Object.keys(safeSessionPath('ses_x') ?? {}), ['sessionID'])
+
+      assert.equal(safeSessionPath(null), null)
+      assert.equal(safeSessionPath(undefined), null)
+      assert.equal(safeSessionPath(''), null)
+      assert.equal(safeSessionPath(42), null)
+      assert.equal(safeSessionPath('{sessionID}'), null)
+      assert.equal(safeSessionPath('%7BsessionID%7D'), null)
+      assert.equal(safeSessionPath('wrk_123'), null)
+      assert.equal(buildChildrenPath(null), null)
+      assert.equal(buildChildrenPath(undefined), null)
+      assert.equal(buildChildrenPath('{sessionID}'), null)
+    },
+  )
 
   await testAsync(
     'sessionID: slot prop wins over state and route; invalid falls through',

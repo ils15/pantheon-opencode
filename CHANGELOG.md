@@ -18,6 +18,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0-beta.18] - 2026-09-16
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🐞 Fixed
+
+- **Painel Delegations voltou a funcionar (crítico):** o canal
+  `session.children` da TUI chamava a API com a shape v1 (`{ path: { id } }`)
+  num cliente **v2** que espera `{ sessionID }`; o placeholder não era
+  substituído (`/session/%7BsessionID%7D/children`), o host rejeitava cada
+  poll (~181k erros/s) e o painel ficava vazio ("No delegations"). Corrigido
+  `safeSessionPath`/`buildChildrenPath` para `{ sessionID }`, removidos os
+  `as any` que escondiam o mismatch, + teste de regressão exato. Auditoria
+  confirmou que só a TUI (v2) estava errada (o `plugin.ts` usa SDK v1 de
+  propósito).
+- **Higiene de testes:** testes que importam o plugin sem isolamento agora
+  fazem `chdir` para um projeto temporário antes do import — não criam mais
+  entradas no board real (fim dos estados fantasma em desenvolvimento).
+
 ## [v1.5.0-beta.17] - 2026-09-15
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
