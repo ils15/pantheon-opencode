@@ -18,6 +18,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.0] - 2026-09-16
+
+### 🆕 What's New
+
+- **Delegação nativa**: `task()` é agora o único canal de delegação — motor legado
+  de dispatch removido por completo, simplificando o fluxo de subagents.
+- **Painel Delegations (TUI)**: painel funcional com status em tempo real, cores
+  por estado (running/completed/failed), janela de recência 24h, ordenação
+  newest-first e spinner fluido com timer independente (80ms/frame).
+- **Read-only enforcement**: sessões read-only bloqueiam `write`, `edit`,
+  `pantheon_delegate` e qualquer mutação — garantindo sandboxing efetivo.
+- **CI/CD**: Dependabot alerts, CodeQL analysis, SHA pins em actions, gitleaks
+  v3 para detecção de secrets, e workflow de release dispatch-only.
+
+### 🐞 Fixed
+
+- **Painel Delegations vazio (crítico)**: canal `session.children` da TUI
+  chamava API com shape v1 num cliente v2 — placeholder `{sessionID}` não era
+  substituído, causando ~181k erros/s e painel vazio. Corrigido
+  `safeSessionPath`/`buildChildrenPath`.
+- **Stale busy**: children com status `busy` stale (>30min sem atualização)
+  agora são classificadas como `completed` (não `running`).
+- **Board corruption**: testes que importam o plugin sem isolamento agora fazem
+  `chdir` para projeto temporário — sem mais entradas fantasma no board real.
+- **Signal leak**: timer independente do spinner separado do poll de dados,
+  evitando bloqueio visual durante operações longas.
+
+### ✅ Closed Issues
+
+- 38% dos testes consolidados (de ~1200 para ~744) com cobertura mantida.
+- 17 módulos mortos removidos, reduzindo superfície de manutenção.
+- OWASP Top 10 audit e input validation em todos os endpoints.
+
 ## [v1.5.0-beta.20] - 2026-09-16
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
