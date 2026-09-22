@@ -1,0 +1,211 @@
+name: Zenodo orphan draft cleanup (one-off)
+
+# TEMPORARY workflow. It exists only to delete the orphan, never-published
+# Zenodo drafts left behind by the custom Zenodo workflow retired in #176.
+# Delete this file once the cleanup has been executed and verified.
+#
+# Marker: the retired workflow wrote `pantheon-opencode-release:<tag>` into the
+# deposition `metadata.description` (see `zenodoReleaseMarker` at
+# scripts/recover-zenodo-deposition.mjs:4-8 and the metadata writes at
+# .github/workflows/zenodo.yml:160,197 in commit 9dbee7e). Only non-published
+# depositions carrying that exact marker are eligible for deletion.
+#
+# Safety model:
+#   * Dry-run by default (`confirm_delete: false`).
+#   * A deposition is eligible only when it is NOT published AND its description
+#     carries the retired marker.
+#   * Every candidate is re-fetched and re-validated immediately before the
+#     DELETE, so a draft published in the meantime can never be removed.
+#   * Any ambiguity (invalid id, published-looking match, missing marker on
+#     re-check) is reported and skipped, never deleted.
+#   * Environment values are validated before the first request; failures abort.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_delete:
+        description: 'Delete the matching drafts; leave false for a dry-run'
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: zenodo-cleanup-drafts
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    environment: zenodo-production
+    permissions:
+      contents: read
+    env:
+      ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+      ZENODO_DEPOSITIONS_URL: ${{ vars.ZENODO_DEPOSITIONS_URL }}
+      CONFIRM_DELETE: ${{ inputs.confirm_delete }}
+      CANDIDATES_FILE: ${{ runner.temp }}/zenodo-orphans.tsv
+      REPORT_FILE: ${{ runner.temp }}/zenodo-orphans-report.txt
+      ALL_FILE: ${{ runner.temp }}/zenodo-depositions.json
+    steps:
+      - name: Validate environment inputs
+        run: |
+          set -euo pipefail
+          ZENODO_TOKEN="${ZENODO_TOKEN:-}"
+          ZENODO_DEPOSITIONS_URL="${ZENODO_DEPOSITIONS_URL:-}"
+          [ -n "$ZENODO_TOKEN" ] || { echo '::error::ZENODO_TOKEN is required.'; exit 1; }
+          case "$ZENODO_TOKEN" in
+            *[[:space:]]*) echo '::error::ZENODO_TOKEN must not contain whitespace.'; exit 1 ;;
+          esac
+          [ -n "$ZENODO_DEPOSITIONS_URL" ] || { echo '::error::ZENODO_DEPOSITIONS_URL is required.'; exit 1; }
+          base=$(URL="$ZENODO_DEPOSITIONS_URL" node -e '
+            const raw = process.env.URL;
+            let url;
+            try { url = new URL(raw); } catch { console.error("::error::ZENODO_DEPOSITIONS_URL must be an absolute URL."); process.exit(1); }
+            if (url.protocol !== "https:") { console.error("::error::ZENODO_DEPOSITIONS_URL must use HTTPS."); process.exit(1); }
+            if (!url.hostname || url.username || url.password || url.search || url.hash) {
+              console.error("::error::ZENODO_DEPOSITIONS_URL must not carry credentials, a query, or a fragment.");
+              process.exit(1);
+            }
+            if (/%$|%[^0-9A-Fa-f]/.test(raw) || /[\s{}\\|^`]/.test(raw)) { console.error("::error::ZENODO_DEPOSITIONS_URL contains unsafe characters."); process.exit(1); }
+            url.pathname = url.pathname.replace(/\/+$/, "");
+            if (!/\/depositions$/.test(url.pathname)) { console.error("::error::ZENODO_DEPOSITIONS_URL must point at the depositions endpoint."); process.exit(1); }
+            process.stdout.write(url.origin + url.pathname);
+          ') || { echo '::error::ZENODO_DEPOSITIONS_URL failed validation.'; exit 1; }
+          printf 'ZENODO_API_BASE=%s\n' "$base" >> "$GITHUB_ENV"
+          echo "Environment validated for $base"
+
+      - name: Scan for orphan drafts
+        run: |
+          set -euo pipefail
+          [ -n "${ZENODO_API_BASE:-}" ] || { echo '::error::Normalized Zenodo base URL is missing.'; exit 1; }
+          : > "$CANDIDATES_FILE"
+          printf '[]' > "$ALL_FILE"
+          page=1
+          max_pages=100
+          while :; do
+            page_file="$(mktemp)"
+            curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors \
+              --get "$ZENODO_API_BASE" \
+              --data-urlencode 'size=100' \
+              --data-urlencode "page=$page" \
+              -H "Authorization: Bearer $ZENODO_TOKEN" \
+              -H 'Accept: application/json' \
+              -o "$page_file"
+            summary=$(PAGE_FILE="$page_file" ALL_FILE="$ALL_FILE" node -e '
+              const fs = require("node:fs");
+              const exactTotal = (value) => {
+                if (Number.isSafeInteger(value) && value >= 0) return value;
+                if (value && typeof value === "object" && Number.isSafeInteger(value.value) && value.value >= 0 && (value.relation === undefined || value.relation === "eq")) return value.value;
+                return null;
+              };
+              const payload = JSON.parse(fs.readFileSync(process.env.PAGE_FILE, "utf8"));
+              const hits = payload?.hits?.hits;
+              const total = exactTotal(payload?.hits?.total);
+              if (!Array.isArray(hits) || total === null) { console.error("::error::Ambiguous Zenodo list response; refusing to continue."); process.exit(1); }
+              const all = JSON.parse(fs.readFileSync(process.env.ALL_FILE, "utf8"));
+              all.push(...hits);
+              fs.writeFileSync(process.env.ALL_FILE, JSON.stringify(all));
+              process.stdout.write(total + " " + hits.length + " " + all.length);
+            ') || { echo '::error::Zenodo list response was ambiguous.'; exit 1; }
+            rm -f "$page_file"
+            set -- $summary
+            total="$1"
+            page_hits="$2"
+            collected="$3"
+            echo "Fetched page $page: ${page_hits} deposition(s), ${collected}/${total} collected."
+            if [ "$page_hits" -eq 0 ] || [ "$collected" -ge "$total" ]; then break; fi
+            page=$((page + 1))
+            [ "$page" -le "$max_pages" ] || { echo '::error::Zenodo pagination exceeded the safety cap.'; exit 1; }
+          done
+          count=$(REPORT_FILE="$REPORT_FILE" CANDIDATES_FILE="$CANDIDATES_FILE" ALL_FILE="$ALL_FILE" node -e '
+            const fs = require("node:fs");
+            const all = JSON.parse(fs.readFileSync(process.env.ALL_FILE, "utf8"));
+            const MARKER = /pantheon-opencode-release:v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/;
+            const rows = [];
+            const skipped = [];
+            for (const dep of all) {
+              const description = [dep?.metadata?.description, dep?.description].filter((value) => typeof value === "string").join("\n");
+              const match = description.match(MARKER);
+              if (!match) continue;
+              const id = dep?.id;
+              const doi = typeof dep?.doi === "string" && dep.doi.trim() ? dep.doi.trim() : "";
+              if (!Number.isSafeInteger(id) || id <= 0) { skipped.push("a deposition matching " + match[0] + " has no valid id"); continue; }
+              if (dep?.submitted === true || doi) { skipped.push("deposition " + id + " (" + match[0] + ") looks published; refusing to delete"); continue; }
+              rows.push({
+                id,
+                marker: match[0],
+                title: String(dep?.title ?? dep?.metadata?.title ?? ""),
+                version: String(dep?.metadata?.version ?? dep?.version ?? ""),
+                created: String(dep?.created ?? ""),
+              });
+            }
+            const lines = ["id | title | version | created | submitted", "--- | --- | --- | --- | ---"];
+            for (const row of rows) lines.push(row.id + " | " + row.title + " | " + row.version + " | " + row.created + " | false");
+            if (rows.length === 0) lines.push("(no matching orphan drafts)");
+            for (const note of skipped) lines.push("SKIPPED: " + note);
+            fs.writeFileSync(process.env.REPORT_FILE, lines.join("\n") + "\n");
+            fs.writeFileSync(process.env.CANDIDATES_FILE, rows.map((row) => row.id + "\t" + row.marker).join("\n") + (rows.length ? "\n" : ""));
+            process.stdout.write(String(rows.length));
+          ') || { echo '::error::Could not build the orphan draft report.'; exit 1; }
+          cat "$REPORT_FILE"
+          {
+            echo "### Zenodo orphan draft scan"
+            echo "Matching non-published drafts: $count"
+            echo
+            cat "$REPORT_FILE"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${CONFIRM_DELETE:-false}" = "true" ]; then
+            echo "DELETE MODE — the next step will remove the ${count} draft(s) above."
+          else
+            echo "DRY-RUN — nothing deleted. Re-run with confirm_delete=true to delete the ${count} draft(s) above."
+          fi
+
+      - name: Delete matching drafts
+        if: ${{ inputs.confirm_delete == true }}
+        run: |
+          set -euo pipefail
+          [ -n "${ZENODO_API_BASE:-}" ] || { echo '::error::Normalized Zenodo base URL is missing.'; exit 1; }
+          if [ ! -s "$CANDIDATES_FILE" ]; then
+            echo 'No orphan drafts matched; nothing to delete.'
+            echo 'No orphan drafts matched; nothing to delete.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          deleted=0
+          while IFS=$'\t' read -r id marker; do
+            [ -n "$id" ] || continue
+            case "$id" in
+              *[!0-9]*) echo "::error::Refusing to delete non-numeric deposition id '$id'."; exit 1 ;;
+            esac
+            record_file="$(mktemp)"
+            curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors \
+              "$ZENODO_API_BASE/$id" \
+              -H "Authorization: Bearer $ZENODO_TOKEN" \
+              -H 'Accept: application/json' \
+              -o "$record_file"
+            confirmed=$(RECORD_FILE="$record_file" node -e '
+              const fs = require("node:fs");
+              const dep = JSON.parse(fs.readFileSync(process.env.RECORD_FILE, "utf8"));
+              const description = [dep?.metadata?.description, dep?.description].filter((value) => typeof value === "string").join("\n");
+              const MARKER = /pantheon-opencode-release:v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/;
+              const match = description.match(MARKER);
+              const doi = typeof dep?.doi === "string" && dep.doi.trim() ? dep.doi.trim() : "";
+              if (dep?.submitted === true || doi) { console.error("::error::Refusing to delete published deposition " + dep?.id + "."); process.exit(1); }
+              if (!match) { console.error("::error::Refusing to delete deposition " + dep?.id + ": retired marker missing."); process.exit(1); }
+              process.stdout.write(match[0]);
+            ') || { echo "::error::Refusing to delete draft $id; re-validation failed."; exit 1; }
+            rm -f "$record_file"
+            echo "Deleting draft $id ($confirmed) ..."
+            status=$(curl --silent --show-error --retry 3 --retry-all-errors \
+              --request DELETE "$ZENODO_API_BASE/$id" \
+              -H "Authorization: Bearer $ZENODO_TOKEN" \
+              -o /dev/null -w '%{http_code}')
+            case "$status" in
+              200|204) echo "Deleted draft $id (HTTP $status)."; deleted=$((deleted + 1)) ;;
+              *) echo "::error::Unexpected HTTP $status deleting draft $id; aborting."; exit 1 ;;
+            esac
+          done < "$CANDIDATES_FILE"
+          echo "Deleted $deleted orphan draft(s)."
+          echo "Deleted $deleted orphan draft(s)." >> "$GITHUB_STEP_SUMMARY"
