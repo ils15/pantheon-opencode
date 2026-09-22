@@ -99,8 +99,11 @@ jobs:
           test "$(git rev-parse HEAD)" = "$tag_commit" || { echo '::error::Checked out commit is not the release tag.'; exit 1; }
           git archive --format=tar.gz --prefix="pantheon-opencode-${{ steps.metadata.outputs.version }}/" "${RELEASE_TAG}^{commit}" > "$RUNNER_TEMP/zenodo/pantheon-opencode-${{ steps.metadata.outputs.version }}.tar.gz"
           archive="$RUNNER_TEMP/zenodo/pantheon-opencode-${{ steps.metadata.outputs.version }}.tar.gz"
-          checksum=$(ARCHIVE="$archive" node --input-type=module -e 'import { sha256File } from "./.zenodo-workflow/scripts/zenodo-artifact.mjs"; process.stdout.write(sha256File(process.env.ARCHIVE))')
-          printf 'ZENODO_ARCHIVE_SHA256=%s\n' "$checksum" >> "$GITHUB_ENV"
+          # Zenodo's deposition files API reports an MD5 for the uploaded file
+          # (with or without the legacy `md5:` prefix). Record the local MD5 for
+          # the integrity comparison and keep the stronger SHA-256 in case the
+          # API ever upgrades its algorithm.
+          ARCHIVE="$archive" node --input-type=module -e 'import { sha256File, md5File } from "./.zenodo-workflow/scripts/zenodo-artifact.mjs"; const archive = process.env.ARCHIVE; process.stdout.write(`ZENODO_ARCHIVE_SHA256=${sha256File(archive)}\nZENODO_ARCHIVE_MD5=${md5File(archive)}\n`)' >> "$GITHUB_ENV"
 
       - name: Create or resume idempotent Zenodo deposition
         id: deposition
@@ -200,7 +203,7 @@ jobs:
           fi
           archive="$RUNNER_TEMP/zenodo/pantheon-opencode-${{ steps.metadata.outputs.version }}.tar.gz"
           if [ "$submitted" != true ]; then
-            existing_file=$(RECORD="$record" CHECKSUM="$ZENODO_ARCHIVE_SHA256" NAME="$(basename "$archive")" node --input-type=module -e 'import { readFileSync } from "node:fs"; import { findZenodoFile } from "./.zenodo-workflow/scripts/zenodo-artifact.mjs"; const record=JSON.parse(readFileSync(process.env.RECORD,"utf8")); process.stdout.write(findZenodoFile(record,process.env.NAME,process.env.CHECKSUM)?"present":"missing")')
+            existing_file=$(RECORD="$record" EXPECTED_SHA256="$ZENODO_ARCHIVE_SHA256" EXPECTED_MD5="$ZENODO_ARCHIVE_MD5" NAME="$(basename "$archive")" node --input-type=module -e 'import { readFileSync } from "node:fs"; import { findZenodoFile } from "./.zenodo-workflow/scripts/zenodo-artifact.mjs"; const record=JSON.parse(readFileSync(process.env.RECORD,"utf8")); process.stdout.write(findZenodoFile(record,process.env.NAME,{sha256:process.env.EXPECTED_SHA256,md5:process.env.EXPECTED_MD5})?"present":"missing")')
           else
             existing_file=present
           fi
@@ -209,7 +212,7 @@ jobs:
           fi
           curl --fail-with-body --silent --show-error --retry 2 --retry-all-errors "$record_url" -H "Authorization: Bearer $ZENODO_TOKEN" > "$record"
           if [ "$submitted" != true ]; then
-            RECORD="$record" CHECKSUM="$ZENODO_ARCHIVE_SHA256" NAME="$(basename "$archive")" node --input-type=module -e 'import { readFileSync } from "node:fs"; import { findZenodoFile } from "./.zenodo-workflow/scripts/zenodo-artifact.mjs"; findZenodoFile(JSON.parse(readFileSync(process.env.RECORD,"utf8")),process.env.NAME,process.env.CHECKSUM) || (()=>{throw new Error("Zenodo upload did not produce the expected file.")})()'
+            RECORD="$record" EXPECTED_SHA256="$ZENODO_ARCHIVE_SHA256" EXPECTED_MD5="$ZENODO_ARCHIVE_MD5" NAME="$(basename "$archive")" node --input-type=module -e 'import { readFileSync } from "node:fs"; import { findZenodoFile } from "./.zenodo-workflow/scripts/zenodo-artifact.mjs"; findZenodoFile(JSON.parse(readFileSync(process.env.RECORD,"utf8")),process.env.NAME,{sha256:process.env.EXPECTED_SHA256,md5:process.env.EXPECTED_MD5}) || (()=>{throw new Error("Zenodo upload did not produce the expected file.")})()'
           fi
           if [ "$submitted" != true ] && [ "$PUBLISH_DEPOSITION" = true ]; then
             curl --fail-with-body --silent --show-error --request POST "$publish_url" -H "Authorization: Bearer $ZENODO_TOKEN" > "$RUNNER_TEMP/zenodo-publish.json"
