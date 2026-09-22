@@ -78,6 +78,10 @@ def module(temp_memory_dir: str):
     """Import and return the server module with patched memory dir."""
     import importlib
 
+    # memory_mcp_server imports fastembed (~180MB wheel) at module top level.
+    # Skip the whole memory suite when the embedding backend is absent so the
+    # rest of the suite still runs instead of erroring at import (issue #94).
+    pytest.importorskip("fastembed")
     # Patch MEMORY_DIR in the module before import
     with patch.object(Path, "home", return_value=Path(temp_memory_dir)):
         mod = importlib.import_module(MODULE_PATH)

@@ -39,6 +39,7 @@ ignore = ["E501"]
 "scripts/vector_memory/*.py" = ["PLC0415"]
 "tests/test_code_mode_sandbox.py" = ["PLC0415", "N806"]
 "tests/test_code_mode_server.py" = ["PLC0415"]
+"tests/test_codemap_mcp.py" = ["PLC0415"]
 "tests/test_memory_mcp_server.py" = ["PLC0415", "PLR2004"]
 # Existing public APIs and test fixtures are intentionally broad/simple; refactoring
 # them would be behavior-affecting rather than a mechanical lint correction.
