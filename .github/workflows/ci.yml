@@ -22,6 +22,28 @@ jobs:
           # which a shallow depth-1 clone (default) cannot satisfy — it only
           # brings the merge commit and would emit an empty draft.
           fetch-depth: 0
+
+      # Fail the PR if any workflow is malformed. A `${{ runner.temp }}` at
+      # job-env scope once made zenodo-cleanup-drafts.yml an unparseable
+      # workflow (HTTP 422 on push, every run a startup failure) because the
+      # `runner` context is only available inside steps. actionlint validates
+      # YAML, expressions and context availability, so that class of error can
+      # no longer be merged. The binary is pinned by version + SHA256; no
+      # third-party action needs to be trusted for this gate.
+      - name: Validate GitHub Actions workflows
+        env:
+          ACTIONLINT_VERSION: '1.7.12'
+          ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail-with-body --silent --show-error --location \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            -o "$tarball"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$tarball" | sha256sum --check --strict
+          tar --extract --gzip --file "$tarball" --directory "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
