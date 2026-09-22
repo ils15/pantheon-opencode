@@ -441,9 +441,9 @@ Each release includes:
 
 ## Preserved Releases: Zenodo
 
-[Zenodo](https://zenodo.org/) preserves releases for citation and long-term access. A published GitHub release automatically triggers **Publish release to Zenodo**; the workflow checks out the exact commit identified by the tag, creates or resumes the deposition idempotently, and does not create duplicates.
+[Zenodo](https://zenodo.org/) preserves releases for citation and long-term access. GitHub does not deliver `release` events for releases created with the workflow `GITHUB_TOKEN`, so the **Release** workflow explicitly dispatches **Publish release to Zenodo** (`workflow_dispatch`) after a **stable** release is published and its npm artifact is uploaded. That run creates or resumes a **draft** deposition idempotently (`publish_deposition=false`) and never creates duplicates; publication remains a separate, human-approved action. Beta and recovery publishes are not archived automatically.
 
-For a manual run, open **Actions → Publish release to Zenodo** and set `release_tag=v1.4.3`, `confirm_production=true`, and `publish_deposition=false` to create or resume a draft. Review the draft before running again with `publish_deposition=true`; use that value only after human approval.
+For a manual run, open **Actions → Publish release to Zenodo** and set `release_tag=v1.4.3`, `confirm_production=true`, and `publish_deposition=false` to create or resume a draft. Review the draft before running again with `publish_deposition=true`; use that value only after human approval. If the automatic dispatch fails, the Release job stays green and emits a non-fatal notice — start the manual run with the same `release_tag`.
 
 The protected `zenodo-production` environment must contain secret `ZENODO_TOKEN` and vars `ZENODO_DEPOSITIONS_URL`, `ZENODO_FILES_URL_TEMPLATE`, `ZENODO_PUBLISH_URL_TEMPLATE`, and `ZENODO_CREATOR_NAME`. Never put token values in logs or code. Use sandbox configuration for rehearsal and production only for the reviewed deposition.
 

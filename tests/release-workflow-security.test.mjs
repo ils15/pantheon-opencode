@@ -190,3 +190,27 @@ test('validation job has no release credential injection', () => {
   assert.match(validate, /RELEASE_TOKEN:-\}/)
   assert.doesNotMatch(validate, /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\./)
 })
+
+test('stable release dispatches the Zenodo draft after npm without new credentials', () => {
+  // `release: published` never fires for GITHUB_TOKEN-created releases, so the
+  // release job must be allowed to dispatch the Zenodo workflow explicitly.
+  assert.match(release, /\n\s{4}permissions:\n(?:.*\n)*?\s{6}actions: write/)
+  // The dispatch must follow the npm publish, the last credential-exposing step.
+  const publish = release.indexOf('npm publish')
+  const dispatch = release.indexOf('gh workflow run zenodo.yml')
+  assert.ok(publish > 0, 'expected the npm publish step')
+  assert.ok(dispatch > publish, 'Zenodo dispatch must follow the npm publish step')
+  // Stable-only, draft-only: publication stays gated and manual.
+  assert.match(release, /if: env\.RELEASE_TAG == 'latest'/)
+  assert.match(release, /-f release_tag="\$VERSION"/)
+  assert.match(release, /-f confirm_production=true/)
+  assert.match(release, /-f publish_deposition=false/)
+  // The dispatch exposes no new credential and runs no repository code.
+  const dispatchStep = release.indexOf('Dispatch Zenodo draft for the stable release')
+  assert.ok(dispatchStep > publish, 'expected the Zenodo dispatch step')
+  const dispatchBlock = release.slice(dispatchStep)
+  assert.doesNotMatch(dispatchBlock, /actions\/checkout|NODE_AUTH_TOKEN|secrets\./)
+  // A failed dispatch is non-fatal without a silent fallback.
+  assert.match(dispatchBlock, /if ! gh workflow run/)
+  assert.doesNotMatch(dispatchBlock, /\|\|\s*(?:true|:)/)
+})
