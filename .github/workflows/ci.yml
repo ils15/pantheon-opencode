@@ -42,8 +42,15 @@ jobs:
         run: |
           python3 -m pip install --quiet pytest pyyaml yamllint pip-audit
           python3 -m pip install --quiet pytest-asyncio==1.3.0
-          python3 -m pip install --quiet -r src/mcp/requirements-mcp.txt
+          # Import-time deps of the MCP servers collected by pytest
+          # (mcp_resources_server / pantheon_vision_server / code_mode_server /
+          # mcp_persistence_server need mcp + httpx; memory_mcp_server also
+          # imports sqlite_vec). fastembed (~180MB wheel) is deliberately NOT
+          # installed here — only memory_mcp_server needs it, at runtime, and
+          # its tests skip explicitly via pytest.importorskip (issue #94).
+          # Removing the top-level fastembed import is tracked by issue #159.
           python3 -m pip install --quiet -r src/mcp/requirements-vision.txt
+          python3 -m pip install --quiet sqlite-vec==0.1.9
           npm ci --ignore-scripts
           npm ci --prefix src/plugins/tui --ignore-scripts
 
