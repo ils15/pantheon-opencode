@@ -331,6 +331,18 @@ and returns nothing. Prefer `background=true` dispatches with an explicit
 `task_status(wait=true)` fan-in so large payloads are collected deterministically.
 
 
+## Configuration (environment variables)
+
+| Variable | Default | Description |
+|---|---|---|
+| `PANTHEON_MEMORY_EMBED` | `on` | `off` (also `0`, `false`, `no`) disables the `pantheon-memory` embedding/vector pipeline — search runs in FTS5-only mode with no model download and no `sqlite-vec` writes. Also forced `off` automatically when `fastembed` fails to import, so a broken embedding install never takes the server down (issue #159). |
+
+The memory MCP degrades gracefully: when `fastembed` or `sqlite-vec` are
+unavailable (network failure, incompatible wheel), the server still starts,
+answers the MCP `initialize` handshake, and serves keyword search — only the
+semantic vector ranking is unavailable.
+
+
 ## Documentation
 
 - [Installation](docs/INSTALLATION.md) · [Quick start](docs/QUICKSTART.md)
