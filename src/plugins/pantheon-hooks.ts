@@ -181,7 +181,7 @@ import { getSharedBoard } from '../pantheon/shared-board.ts'
 import { type HookPayload, type HookResult, runHook } from './hook-runner.ts'
 
 /** Tools that represent a subagent delegation (opencode `task` tool etc.). */
-const DELEGATION_TOOL_RE = /^(task|.*delegate.*|.*subagent.*)$/i
+const DELEGATION_TOOL_RE = /^(task|.*subagent.*)$/i
 
 /**
  * When set to a truthy value ("1" or "debug"), zero-exit audit-hook output is

@@ -980,7 +980,6 @@ function delegationActivity(entry) {
 	if (entry.state === "completed") return "completed";
 	if (entry.state === "error" || entry.state === "startup_failed" || entry.state === "startup_unknown") return "error";
 	if (entry.state === "cancelled") return "cancelled";
-	if (entry.read) return "reading";
 	if (entry.alias.startsWith("live-") && entry.taskID === void 0) return "delegating";
 	return "working";
 }
@@ -989,7 +988,6 @@ function delegationActivityLabel(entry) {
 	switch (delegationActivity(entry)) {
 		case "delegating": return "DELEGATING";
 		case "working": return "WORKING";
-		case "reading": return "READING RESULT";
 		case "completed": return entry.timedOut ? "DONE (TIMED OUT)" : "DONE";
 		case "error": return "ERROR";
 		default: return "CANCELLED";
@@ -1129,7 +1127,6 @@ function mergeChildDelegationSources(children, live) {
 		if (existing.state !== "running") {
 			if (liveEntry.alias !== null && existing.alias !== incoming.alias) existing.alias = incoming.alias;
 			if (incoming.agent !== "agent" && existing.agent !== incoming.agent) existing.agent = incoming.agent;
-			if (incoming.read && !existing.read) existing.read = true;
 			continue;
 		}
 		result[index] = {
@@ -1142,7 +1139,6 @@ function mergeChildDelegationSources(children, live) {
 			state: incoming.state,
 			startedAt: Math.min(existing.startedAt, incoming.startedAt),
 			updatedAt: incoming.updatedAt,
-			read: incoming.read,
 			source: isNativeLive ? existing.source : "live"
 		};
 	}
@@ -1150,22 +1146,19 @@ function mergeChildDelegationSources(children, live) {
 	return result;
 }
 /** Duck-typed subset of a tool part (SDK v2 `ToolPart` / `ToolState`). */
-/** One live delegation tracked in-memory, keyed by the delegate callID. */
+/** One live delegation tracked in-memory, keyed by the task callID. */
 /** Result of parsing one tool part into lifecycle-relevant fields. */
-/** Alias in the delegate output: "Delegated to apollo: [apo-1] (task …)". */
+/** Alias in the task output: "Delegated to apollo: [apo-1] (task …)". */
 const DELEGATE_ALIAS_PATTERN = /\[([a-z]{2,8}-\d+)\]/i;
-/** Child task id in the delegate output: "(task ses_child_9)". */
+/** Child task id in the task output: "(task ses_child_9)". */
 const DELEGATE_TASKID_PATTERN = /\(task\s+([a-z0-9_]+)\)/i;
-/** Plain alias, as passed to pantheon_delegation_read input.id: "apo-1". */
-const READ_ALIAS_PATTERN = /^[a-z]{2,8}-\d+$/i;
 /** Extract the tool name + args from a `message.part.updated` part and
 *  reduce it to what the panel needs. Returns null for anything that is
-*  not a pantheon delegation tool part, the native `task` subagent tool
-*  (same parentID === caller mechanism — its children render `nat:`),
-*  or is missing its callID. */
+*  not the native `task` subagent tool (parentID === caller mechanism —
+*  its children render `nat:`), or is missing its callID. */
 function parseDelegationToolPart(part, now = Date.now()) {
 	if (part.type !== "tool") return null;
-	if (part.tool !== "pantheon_delegate" && part.tool !== "pantheon_delegation_read" && part.tool !== "task") return null;
+	if (part.tool !== "task") return null;
 	const callID = part.callID;
 	if (callID === void 0 || callID === "") return null;
 	const sessionID = part.sessionID ?? "";
@@ -1175,28 +1168,6 @@ function parseDelegationToolPart(part, now = Date.now()) {
 	const input = state.input ?? {};
 	const startedAt = state.time?.start ?? now;
 	const endAt = state.time?.end ?? null;
-	if (part.tool === "pantheon_delegation_read") {
-		const target = typeof input.id === "string" ? input.id : null;
-		let alias = null;
-		let taskID = null;
-		if (target !== null) {
-			if (READ_ALIAS_PATTERN.test(target)) alias = target;
-			else if (target.startsWith("ses_")) taskID = target;
-		}
-		return {
-			callID,
-			partID: part.id ?? "",
-			sessionID,
-			tool: "pantheon_delegation_read",
-			agent: null,
-			description: "",
-			status,
-			alias,
-			taskID,
-			startedAt,
-			endAt
-		};
-	}
 	const agent = typeof input.agent === "string" ? input.agent : typeof input.subagent_type === "string" ? input.subagent_type : "agent";
 	const description = typeof input.description === "string" ? input.description : typeof input.prompt === "string" ? input.prompt.slice(0, 120) : "";
 	let alias = null;
@@ -1210,7 +1181,7 @@ function parseDelegationToolPart(part, now = Date.now()) {
 		callID,
 		partID: part.id ?? "",
 		sessionID,
-		tool: part.tool === "task" ? "task" : "pantheon_delegate",
+		tool: "task",
 		agent,
 		description,
 		status,
@@ -1220,38 +1191,11 @@ function parseDelegationToolPart(part, now = Date.now()) {
 		endAt
 	};
 }
-/** Find a live entry by alias or taskID (read parts resolve by id). */
-function findLiveByTarget(map, alias, taskID) {
-	if (alias === null && taskID === null) return void 0;
-	for (const entry of map.values()) {
-		if (alias !== null && entry.alias === alias) return entry;
-		if (taskID !== null && entry.taskID === taskID) return entry;
-	}
-}
 /** Apply one tool part to the live map. Returns true when the map changed.
 *  Pure w.r.t. I/O — only mutates `map`. */
 function reduceDelegationToolPart(map, part, now = Date.now()) {
 	const parsed = parseDelegationToolPart(part, now);
 	if (parsed === null) return false;
-	if (parsed.tool === "pantheon_delegation_read") {
-		const target = findLiveByTarget(map, parsed.alias, parsed.taskID);
-		if (target === void 0) return false;
-		let changed = false;
-		if (!target.read) {
-			target.read = true;
-			changed = true;
-		}
-		if (parsed.status === "completed" && target.state === "running") {
-			target.state = "completed";
-			target.updatedAt = parsed.endAt ?? now;
-			changed = true;
-		} else if (parsed.status === "error" && target.state === "running") {
-			target.state = "error";
-			target.updatedAt = parsed.endAt ?? now;
-			changed = true;
-		}
-		return changed;
-	}
 	const existing = map.get(parsed.callID);
 	if (parsed.status === "error") {
 		if (existing !== void 0 && existing.state === "error" && existing.updatedAt === parsed.endAt) return false;
@@ -1260,14 +1204,13 @@ function reduceDelegationToolPart(map, part, now = Date.now()) {
 			partID: parsed.partID,
 			sessionID: parsed.sessionID,
 			tool: parsed.tool,
-			agent: parsed.agent ?? "agent",
+			agent: parsed.agent,
 			description: parsed.description,
 			alias: existing?.alias ?? null,
 			taskID: existing?.taskID ?? null,
 			state: "error",
 			startedAt: existing?.startedAt ?? parsed.startedAt,
-			updatedAt: parsed.endAt ?? now,
-			read: existing?.read ?? false
+			updatedAt: parsed.endAt ?? now
 		});
 		return true;
 	}
@@ -1277,14 +1220,13 @@ function reduceDelegationToolPart(map, part, now = Date.now()) {
 			partID: parsed.partID,
 			sessionID: parsed.sessionID,
 			tool: parsed.tool,
-			agent: parsed.agent ?? "agent",
+			agent: parsed.agent,
 			description: parsed.description,
 			alias: parsed.alias,
 			taskID: parsed.taskID,
 			state: "running",
 			startedAt: parsed.startedAt,
-			updatedAt: null,
-			read: false
+			updatedAt: null
 		});
 		return true;
 	}
@@ -1321,14 +1263,14 @@ function removeDelegationEntry(map, partIDOrCallID) {
 	}
 	return false;
 }
-/** Collect pantheon delegation + native task tool parts from a session's messages.
+/** Collect native task tool parts from a session's messages.
 *  Messages may carry their parts inline (duck-typed `msg.parts`); when
 *  they don't, the optional `getParts(messageID)` callback is used (the TUI
 *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
-*  child session with parentID = caller — the same mechanism as
-*  pantheon_delegate — so its parts feed the live-map as the native signal
-*  (rows come from the children channel). Pure w.r.t. I/O — used
-*  by the mount re-scan to re-seed the live map after compaction/attach. */
+*  child session with parentID = caller, so its parts feed the live-map as
+*  the refresh signal (rows come from the children channel). Pure w.r.t.
+*  I/O — used by the mount re-scan to re-seed the live map after
+*  compaction/attach. */
 function collectDelegationToolParts(messages, getParts) {
 	const out = [];
 	for (const msg of messages ?? []) {
@@ -1338,7 +1280,7 @@ function collectDelegationToolParts(messages, getParts) {
 		if (!parts) continue;
 		for (const raw of parts) {
 			const part = raw;
-			if (part?.type === "tool" && (part.tool === "pantheon_delegate" || part.tool === "pantheon_delegation_read" || part.tool === "task")) out.push(part);
+			if (part?.type === "tool" && part.tool === "task") out.push(part);
 		}
 	}
 	return out;
@@ -1353,7 +1295,7 @@ function seedLiveDelegationMap(map, parts, now = Date.now()) {
 	return changed;
 }
 /** Convert a live entry into the shared display shape. Alias falls back to
-*  a `live-<callID>` prefix while the delegate tool has not completed yet. */
+*  a `live-<callID>` prefix while the task call has not completed yet. */
 function toDelegationEntry(live) {
 	return {
 		alias: live.alias ?? `live-${live.callID.slice(0, 8)}`,
@@ -1365,7 +1307,6 @@ function toDelegationEntry(live) {
 		updatedAt: live.updatedAt,
 		timedOut: false,
 		description: live.description,
-		read: live.read,
 		source: "live"
 	};
 }
@@ -1640,7 +1581,7 @@ function ceilingDelegationList(all, maxVisible = 8, now = Date.now()) {
 		hiddenTerminal
 	};
 }
-/** Split a display list into native task() rows vs pantheon_delegate rows.
+/** Split a display list into native task() rows vs pantheon report rows.
 *  Native = source 'children-only' (no delegate report); everything else counts
 *  as pantheon. Pure — powers the hooks.log line. */
 function countDelegationSources(entries) {
@@ -1665,8 +1606,8 @@ function formatPanelLogLine(children, pantheon, native, md, events) {
 *  report still renders: description from its title, agent from the child
 *  itself (fallback 'agent'), state derived from its status, startedAt from
 *  time.created. A report-less child is a NATIVE task() child (every
-*  child of the current session — pantheon_delegate OR the native `task()`
-*  tool — carries parentID = caller), so it gets source 'children-only', a
+*  child of the current session — the native `task()` tool — carries
+*  parentID = caller), so it gets source 'children-only', a
 *  per-child alias 'native-<last4 of the child id>' (one identity per native
 *  row) instead of a report alias. The 'task nativa' description fallback
 *  keeps the row non-empty when the child carries no title.

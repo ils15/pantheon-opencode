@@ -19,10 +19,11 @@
  * Run with: npx tsx tests/pantheon/tui-delegations.test.ts
  */
 import { strict as assert } from 'node:assert'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile as readFileP } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   buildChildrenPath,
@@ -351,41 +352,26 @@ async function main() {
 
   // ─── collectDelegationToolParts + seedLiveDelegationMap (mount re-scan) ─
 
-  const SEED_DELEGATE_RUNNING = {
+  const SEED_TASK_RUNNING = {
     id: 'part_seed_1',
     sessionID: 'ses_root',
     messageID: 'msg_1',
     type: 'tool',
     callID: 'call_seed_1',
-    tool: 'pantheon_delegate',
+    tool: 'task',
     state: {
       status: 'running',
-      input: { agent: 'apollo', prompt: 'find x' },
+      input: { subagent_type: 'apollo', prompt: 'find x' },
       time: { start: 1000 },
     },
   }
-  const SEED_DELEGATE_COMPLETED = {
-    ...SEED_DELEGATE_RUNNING,
+  const SEED_TASK_COMPLETED = {
+    ...SEED_TASK_RUNNING,
     state: {
       status: 'completed',
-      input: { agent: 'apollo', prompt: 'find x' },
-      output:
-        'Delegated to apollo: [apo-1] (task ses_child_9).\nRead with pantheon_delegation_read({ id: "apo-1" }).',
+      input: { subagent_type: 'apollo', prompt: 'find x' },
+      output: 'Delegated to apollo: [apo-1] (task ses_child_9).',
       time: { start: 1000, end: 1500 },
-    },
-  }
-  const SEED_READ_COMPLETED = {
-    id: 'part_seed_2',
-    sessionID: 'ses_root',
-    messageID: 'msg_2',
-    type: 'tool',
-    callID: 'call_seed_2',
-    tool: 'pantheon_delegation_read',
-    state: {
-      status: 'completed',
-      input: { id: 'apo-1' },
-      output: '# Delegation Report — apo-1\n\n- **Agent**: apollo\n',
-      time: { start: 5000, end: 8000 },
     },
   }
 
@@ -394,23 +380,25 @@ async function main() {
       {
         id: 'msg_1',
         parts: [
-          SEED_DELEGATE_RUNNING,
+          SEED_TASK_RUNNING,
           { type: 'text', text: 'hi' },
           { type: 'tool', tool: 'bash', state: {} },
+          // Removed V1 delegation tools must be collected by NOTHING now.
+          { type: 'tool', tool: 'pantheon_delegate', callID: 'c_old_1', state: {} },
+          { type: 'tool', tool: 'pantheon_delegation_read', callID: 'c_old_2', state: {} },
         ],
       },
-      { id: 'msg_2', parts: [SEED_READ_COMPLETED] },
     ]
     const parts = collectDelegationToolParts(messages)
-    assert.equal(parts.length, 2, 'text + bash parts are skipped')
+    assert.equal(parts.length, 1, 'text + bash + removed-tool parts are skipped')
     assert.deepEqual(
       parts.map((p) => p.tool),
-      ['pantheon_delegate', 'pantheon_delegation_read'],
+      ['task'],
     )
-    const getParts = (id: string) => (id === 'msg_1' ? [SEED_DELEGATE_RUNNING] : [])
+    const getParts = (id: string) => (id === 'msg_1' ? [SEED_TASK_RUNNING] : [])
     const fallback = collectDelegationToolParts([{ id: 'msg_1' }, { id: 'msg_2' }], getParts)
     assert.equal(fallback.length, 1)
-    assert.equal(fallback[0]?.tool, 'pantheon_delegate')
+    assert.equal(fallback[0]?.tool, 'task')
     assert.deepEqual(
       collectDelegationToolParts([], () => []),
       [],
@@ -420,27 +408,29 @@ async function main() {
   })
 
   await testAsync(
-    'seed: re-scan from session.messages parts → job restored terminal (compaction recovery)',
+    'seed: re-scan from session.messages parts → job restored running, taskID absorbed (compaction recovery)',
     async () => {
       const messages = [
-        { id: 'msg_1', parts: [SEED_DELEGATE_RUNNING] },
-        { id: 'msg_2', parts: [SEED_DELEGATE_COMPLETED] },
-        { id: 'msg_3', parts: [SEED_READ_COMPLETED] },
+        { id: 'msg_1', parts: [SEED_TASK_RUNNING] },
+        { id: 'msg_2', parts: [SEED_TASK_COMPLETED] },
       ]
       const map = new Map<string, LiveDelegationEntry>()
       const parts = collectDelegationToolParts(messages)
       assert.equal(
         seedLiveDelegationMap(map, parts, 9000),
-        3,
-        'delegate create + alias absorb + read close = 3 changes',
+        2,
+        'task create + taskID absorb = 2 changes',
       )
       const e = map.get('call_seed_1')
       assert.ok(e, 'job restored into the live map on mount')
-      assert.equal(e.state, 'completed')
-      assert.equal(e.alias, 'apo-1')
-      assert.equal(e.taskID, 'ses_child_9')
-      assert.equal(e.read, true)
-      assert.equal(e.updatedAt, 8000, 'terminal stamped from the read end')
+      assert.equal(
+        e.state,
+        'running',
+        'no read tool exists — terminal state comes from the children channel',
+      )
+      assert.equal(e.agent, 'apollo')
+      assert.equal(e.taskID, 'ses_child_9', 'taskID parsed from the completed output marker')
+      assert.equal(e.updatedAt, null, 'the live channel never stamps terminal by itself')
       assert.equal(
         seedLiveDelegationMap(map, collectDelegationToolParts(messages), 9000),
         0,
@@ -449,7 +439,7 @@ async function main() {
     },
   )
 
-  await testAsync('seed: empty + non-pantheon / untargeted parts are no-ops', async () => {
+  await testAsync('seed: empty + non-task / untargeted parts are no-ops', async () => {
     const map = new Map<string, LiveDelegationEntry>()
     assert.equal(seedLiveDelegationMap(map, []), 0)
     assert.equal(map.size, 0)
@@ -458,140 +448,93 @@ async function main() {
       { type: 'tool', tool: 'bash', callID: 'c1', state: { status: 'running' } },
       {
         type: 'tool',
-        tool: 'pantheon_delegation_read',
+        tool: 'task',
         callID: 'c2',
-        state: { status: 'running', input: { id: 'nope' } },
+        state: { status: 'weird', input: { subagent_type: 'apollo' } },
+      },
+      // Removed V1 delegation tools are unknown now — no row, no mutation.
+      {
+        type: 'tool',
+        tool: 'pantheon_delegate',
+        callID: 'c3',
+        state: { status: 'running', input: { agent: 'apollo' } },
+      },
+      {
+        type: 'tool',
+        tool: 'pantheon_delegation_read',
+        callID: 'c4',
+        state: { status: 'running', input: { id: 'apo-1' } },
       },
     ])
-    assert.equal(changed, 0, 'read without a target delegate is a no-op')
+    assert.equal(changed, 0, 'unknown/removed tools and invalid statuses are no-ops')
     assert.equal(map.size, 0)
   })
 
   // ─── Live tool-part lifecycle (agent-sidebar pattern) ──────────────────
 
-  const DELEGATE_RUNNING_PART = {
-    id: 'part_deleg_1',
+  const TASK_RUNNING_PART = {
+    id: 'part_task_1',
     sessionID: 'ses_root',
     messageID: 'msg_1',
     type: 'tool',
-    callID: 'call_deleg_1',
-    tool: 'pantheon_delegate',
+    callID: 'call_task_1',
+    tool: 'task',
     state: {
       status: 'running',
-      input: { agent: 'apollo', prompt: 'find x', description: 'Busca' },
+      input: { subagent_type: 'apollo', prompt: 'find x', description: 'Busca' },
       time: { start: 1000 },
     },
   }
-  const DELEGATE_COMPLETED_PART = {
-    id: 'part_deleg_1',
+  const TASK_COMPLETED_PART = {
+    id: 'part_task_1',
     sessionID: 'ses_root',
     messageID: 'msg_1',
     type: 'tool',
-    callID: 'call_deleg_1',
-    tool: 'pantheon_delegate',
+    callID: 'call_task_1',
+    tool: 'task',
     state: {
       status: 'completed',
-      input: { agent: 'apollo', prompt: 'find x' },
-      output:
-        'Delegated to apollo: [apo-1] (task ses_child_9).\n' +
-        'Read the result with pantheon_delegation_read({ id: "apo-1" }).',
+      input: { subagent_type: 'apollo', prompt: 'find x' },
+      output: 'Delegated to apollo: [apo-1] (task ses_child_9).',
       time: { start: 1000, end: 1500 },
-    },
-  }
-  const READ_RUNNING_PART = {
-    id: 'part_read_1',
-    sessionID: 'ses_root',
-    messageID: 'msg_2',
-    type: 'tool',
-    callID: 'call_read_1',
-    tool: 'pantheon_delegation_read',
-    state: { status: 'running', input: { id: 'apo-1' }, time: { start: 5000 } },
-  }
-  const READ_COMPLETED_PART = {
-    id: 'part_read_1',
-    sessionID: 'ses_root',
-    messageID: 'msg_2',
-    type: 'tool',
-    callID: 'call_read_1',
-    tool: 'pantheon_delegation_read',
-    state: {
-      status: 'completed',
-      input: { id: 'apo-1' },
-      output: '# Delegation Report — apo-1\n\n- **Agent**: apollo\n',
-      time: { start: 5000, end: 8000 },
-    },
-  }
-  const READ_ERROR_PART = {
-    id: 'part_read_1',
-    sessionID: 'ses_root',
-    messageID: 'msg_2',
-    type: 'tool',
-    callID: 'call_read_1',
-    tool: 'pantheon_delegation_read',
-    state: {
-      status: 'error',
-      input: { id: 'apo-1' },
-      error: 'read timed out',
-      time: { start: 5000, end: 9000 },
     },
   }
 
   await testAsync(
-    'parse: delegate running + completed parts → agent/status/times + alias/taskID from output',
+    'parse: task running + completed parts → agent/status/times + alias/taskID from output',
     async () => {
-      const running = parseDelegationToolPart(DELEGATE_RUNNING_PART, 2000)
-      assert.ok(running, 'delegate running part must parse')
-      assert.equal(running.tool, 'pantheon_delegate')
-      assert.equal(running.callID, 'call_deleg_1')
+      const running = parseDelegationToolPart(TASK_RUNNING_PART, 2000)
+      assert.ok(running, 'task running part must parse')
+      assert.equal(running.tool, 'task')
+      assert.equal(running.callID, 'call_task_1')
       assert.equal(running.agent, 'apollo')
       assert.equal(running.description, 'Busca')
       assert.equal(running.status, 'running')
       assert.equal(running.startedAt, 1000, 'startedAt comes from state.time.start')
-      assert.equal(running.alias, null)
+      assert.equal(running.alias, null, 'a running part has no alias yet')
 
-      const completed = parseDelegationToolPart(DELEGATE_COMPLETED_PART, 2000)
+      const completed = parseDelegationToolPart(TASK_COMPLETED_PART, 2000)
       assert.ok(completed)
       assert.equal(completed.status, 'completed')
       assert.equal(completed.alias, 'apo-1', 'alias parsed from "[apo-1]" in the output')
       assert.equal(completed.taskID, 'ses_child_9', 'taskID parsed from "(task ses_...)"')
       assert.equal(completed.endAt, 1500)
-    },
-  )
-
-  await testAsync(
-    'parse: read part (alias / taskID), pending fallback to now, non-pantheon → null',
-    async () => {
-      const p = parseDelegationToolPart(READ_RUNNING_PART, 6000)
-      assert.ok(p, 'read part must parse')
-      assert.equal(p.tool, 'pantheon_delegation_read')
-      assert.equal(p.alias, 'apo-1', 'alias comes from input.id')
-      assert.equal(p.agent, null)
-      const byTask = parseDelegationToolPart(
-        {
-          ...READ_RUNNING_PART,
-          state: { status: 'running', input: { id: 'ses_child_9' }, time: { start: 5000 } },
-        },
-        6000,
-      )
-      assert.ok(byTask)
-      assert.equal(byTask.alias, null)
-      assert.equal(byTask.taskID, 'ses_child_9')
 
       const pending = parseDelegationToolPart(
         {
-          id: 'part_deleg_2',
+          id: 'part_task_2',
           sessionID: 'ses_root',
           messageID: 'msg_1',
           type: 'tool',
-          callID: 'call_deleg_2',
-          tool: 'pantheon_delegate',
-          state: { status: 'pending', input: { agent: 'zeus' } },
+          callID: 'call_task_2',
+          tool: 'task',
+          state: { status: 'pending', input: { subagent_type: 'zeus' } },
         },
         4242,
       )
       assert.ok(pending)
       assert.equal(pending.status, 'pending')
-      assert.equal(pending.startedAt, 4242)
+      assert.equal(pending.startedAt, 4242, 'pending part without time falls back to now')
 
       assert.equal(
         parseDelegationToolPart({
@@ -616,65 +559,106 @@ async function main() {
         }),
         null,
       )
-      assert.equal(parseDelegationToolPart({ type: 'tool', tool: 'pantheon_delegate' }), null)
+      assert.equal(
+        parseDelegationToolPart({ type: 'tool', tool: 'task' }),
+        null,
+        'no callID → null',
+      )
+      // REGRESSION (issue #161): the V1 delegation tools were removed in
+      // v1.5.0 — they must parse to null like any other unknown tool.
+      assert.equal(
+        parseDelegationToolPart({
+          type: 'tool',
+          tool: 'pantheon_delegate',
+          callID: 'c_old',
+          state: { status: 'running', input: { agent: 'apollo' } },
+        }),
+        null,
+        'removed pantheon_delegate must not parse',
+      )
+      assert.equal(
+        parseDelegationToolPart({
+          type: 'tool',
+          tool: 'pantheon_delegation_read',
+          callID: 'c_old2',
+          state: { status: 'completed', input: { id: 'apo-1' } },
+        }),
+        null,
+        'removed pantheon_delegation_read must not parse',
+      )
     },
   )
 
   await testAsync(
-    'reduce: delegate completing only means LAUNCHED — entry stays running with alias',
+    'reduce: task completing only means LAUNCHED — entry stays running with taskID',
     async () => {
       const map = new Map<string, LiveDelegationEntry>()
-      assert.equal(reduceDelegationToolPart(map, DELEGATE_RUNNING_PART, 2000), true, 'create')
-      let e = map.get('call_deleg_1')
+      assert.equal(reduceDelegationToolPart(map, TASK_RUNNING_PART, 2000), true, 'create')
+      let e = map.get('call_task_1')
       assert.ok(e)
       assert.equal(e.state, 'running')
       assert.equal(e.agent, 'apollo')
       assert.equal(e.startedAt, 1000)
       assert.equal(e.alias, null)
 
-      assert.equal(reduceDelegationToolPart(map, DELEGATE_COMPLETED_PART, 2000), true, 'alias')
-      e = map.get('call_deleg_1')
+      assert.equal(reduceDelegationToolPart(map, TASK_COMPLETED_PART, 2000), true, 'taskID absorb')
+      e = map.get('call_task_1')
       assert.ok(e)
       assert.equal(
         e.state,
         'running',
-        'delegate tool completing only means the job LAUNCHED — still running',
+        'task completing only means the call returned — the child keeps running',
       )
-      assert.equal(e.alias, 'apo-1')
       assert.equal(e.taskID, 'ses_child_9')
       assert.equal(e.updatedAt, null)
     },
   )
 
   await testAsync(
-    'reduce: read closes the entry at the read end (once); read error → error',
+    'reduce: removed V1 delegation tools never touch the live map (regression, issue #161)',
     async () => {
       const map = new Map<string, LiveDelegationEntry>()
-      reduceDelegationToolPart(map, DELEGATE_RUNNING_PART, 2000)
-      reduceDelegationToolPart(map, DELEGATE_COMPLETED_PART, 2000)
-      const e = map.get('call_deleg_1')
-      assert.ok(e)
-      assert.equal(e.read, false)
+      reduceDelegationToolPart(map, TASK_RUNNING_PART, 2000)
+      const before = map.get('call_task_1')
+      assert.ok(before)
 
-      assert.equal(reduceDelegationToolPart(map, READ_RUNNING_PART, 6000), true)
-      assert.equal(e.read, true, 'read start marks the delegation as read')
-      assert.equal(e.state, 'running', 'read blocks until terminal — still running')
-
-      assert.equal(reduceDelegationToolPart(map, READ_COMPLETED_PART, 9000), true)
-      assert.equal(e.state, 'completed')
-      assert.equal(e.updatedAt, 8000, 'job duration = read end (blocks until terminal)')
-      assert.equal(reduceDelegationToolPart(map, READ_COMPLETED_PART, 10000), false)
-      assert.equal(e.updatedAt, 8000, 'terminal timestamp is stamped only once')
-
-      const map2 = new Map<string, LiveDelegationEntry>()
-      reduceDelegationToolPart(map2, DELEGATE_RUNNING_PART, 2000)
-      reduceDelegationToolPart(map2, DELEGATE_COMPLETED_PART, 2000)
-      const e2 = map2.get('call_deleg_1')
-      assert.ok(e2)
-      assert.equal(reduceDelegationToolPart(map2, READ_ERROR_PART, 9500), true)
-      assert.equal(e2.state, 'error')
-      assert.equal(e2.updatedAt, 9000)
-      assert.equal(e2.read, true)
+      // Neither the removed delegate tool nor the removed read tool may
+      // create rows or mutate an existing one.
+      assert.equal(
+        reduceDelegationToolPart(
+          map,
+          {
+            id: 'part_old_1',
+            sessionID: 'ses_root',
+            type: 'tool',
+            callID: 'call_old_1',
+            tool: 'pantheon_delegate',
+            state: { status: 'completed', input: { agent: 'hermes' }, time: { start: 1, end: 2 } },
+          },
+          3000,
+        ),
+        false,
+        'pantheon_delegate is a no-op',
+      )
+      assert.equal(
+        reduceDelegationToolPart(
+          map,
+          {
+            id: 'part_old_2',
+            sessionID: 'ses_root',
+            type: 'tool',
+            callID: 'call_old_2',
+            tool: 'pantheon_delegation_read',
+            state: { status: 'completed', input: { id: 'apo-1' }, time: { start: 1, end: 2 } },
+          },
+          3000,
+        ),
+        false,
+        'pantheon_delegation_read is a no-op (it used to close the entry)',
+      )
+      assert.equal(map.size, 1, 'no row was created for the removed tools')
+      const after = map.get('call_task_1')
+      assert.equal(after, before, 'the existing entry is untouched (reference unchanged)')
     },
   )
 
@@ -682,20 +666,20 @@ async function main() {
     'remove + toDelegationEntry: cleanup by partID/callID, alias fallback',
     async () => {
       const byPart = new Map<string, LiveDelegationEntry>()
-      reduceDelegationToolPart(byPart, DELEGATE_RUNNING_PART, 2000)
-      assert.equal(removeDelegationEntry(byPart, 'part_deleg_1'), true, 'partID matches')
+      reduceDelegationToolPart(byPart, TASK_RUNNING_PART, 2000)
+      assert.equal(removeDelegationEntry(byPart, 'part_task_1'), true, 'partID matches')
       assert.equal(byPart.size, 0)
 
       const byCall = new Map<string, LiveDelegationEntry>()
-      reduceDelegationToolPart(byCall, DELEGATE_RUNNING_PART, 2000)
-      assert.equal(removeDelegationEntry(byCall, 'call_deleg_1'), true, 'callID matches')
+      reduceDelegationToolPart(byCall, TASK_RUNNING_PART, 2000)
+      assert.equal(removeDelegationEntry(byCall, 'call_task_1'), true, 'callID matches')
       assert.equal(removeDelegationEntry(byCall, 'nope'), false, 'unknown → unchanged')
 
       const live: LiveDelegationEntry = {
         callID: 'call_1',
         partID: 'part_1',
         sessionID: 'ses_root',
-        tool: 'pantheon_delegate',
+        tool: 'task',
         agent: 'apollo',
         description: 'Busca',
         alias: 'apo-1',
@@ -703,7 +687,6 @@ async function main() {
         state: 'running',
         startedAt: 1000,
         updatedAt: null,
-        read: false,
       }
       const e = toDelegationEntry(live)
       assert.equal(e.alias, 'apo-1')
@@ -722,7 +705,7 @@ async function main() {
     callID: 'call_1',
     partID: 'part_1',
     sessionID: 'ses_root',
-    tool: 'pantheon_delegate',
+    tool: 'task',
     agent: 'apollo',
     description: 'Busca',
     alias: 'apo-1',
@@ -730,7 +713,6 @@ async function main() {
     state: 'running',
     startedAt: 1000,
     updatedAt: null,
-    read: false,
   }
 
   await testAsync(
@@ -805,9 +787,9 @@ async function main() {
       // BUG FIX: when a child session goes idle before the MD report is
       // written, childrenToDelegationEntries derives state 'completed' from
       // childStatusToState('idle') with source 'children-only'. The live
-      // entry from the delegate tool part is still 'running' (it only
-      // transitions on pantheon_delegation_read). The merge must NOT
-      // overwrite the terminal children-only state with the stale live state.
+      // entry from the task tool part is still 'running' (the live channel
+      // never marks terminal by itself). The merge must NOT overwrite the
+      // terminal children-only state with the stale live state.
       const child: DelegationEntry = {
         alias: 'native-task',
         sessionID: 'ses_root',
@@ -852,7 +834,6 @@ async function main() {
         state: 'running',
         startedAt: Date.now(),
         updatedAt: null,
-        read: false,
       })
       const twoNatives = mergeChildDelegationSources([], [mkNative(1), mkNative(2)])
       assert.equal(
@@ -1295,7 +1276,7 @@ async function main() {
       {
         id: 'msg_1',
         parts: [
-          SEED_DELEGATE_RUNNING,
+          SEED_TASK_RUNNING,
           {
             id: 'part_task_1',
             sessionID: 'ses_root',
@@ -1313,10 +1294,10 @@ async function main() {
       },
     ]
     const parts = collectDelegationToolParts(messages)
-    assert.equal(parts.length, 2, 'delegate + task parts collected, text skipped')
+    assert.equal(parts.length, 2, 'two task parts collected, text skipped')
     assert.deepEqual(
       parts.map((p) => p.tool),
-      ['pantheon_delegate', 'task'],
+      ['task', 'task'],
     )
     const p = parseDelegationToolPart(parts[1], 3000)
     assert.ok(p, 'native task part must parse')
@@ -1648,7 +1629,7 @@ async function main() {
           callID: 'call_mine_1',
           partID: 'part_mine_1',
           sessionID: active,
-          tool: 'pantheon_delegate',
+          tool: 'task',
           agent: 'apollo',
           description: 'mine live',
           alias: 'apo-2',
@@ -1656,13 +1637,12 @@ async function main() {
           state: 'running',
           startedAt: 100,
           updatedAt: null,
-          read: false,
         },
         {
           callID: 'call_theirs_1',
           partID: 'part_theirs_1',
           sessionID: 'ses_other',
-          tool: 'pantheon_delegate',
+          tool: 'task',
           agent: 'hermes',
           description: 'theirs live',
           alias: 'her-1',
@@ -1670,7 +1650,6 @@ async function main() {
           state: 'running',
           startedAt: 100,
           updatedAt: null,
-          read: false,
         },
       ]
       const final = filterDelegationsToSession(mergeChildDelegationSources(children, live), active)
@@ -1885,6 +1864,41 @@ async function main() {
           `session.status call must be id-guarded (line ${idx + 1}): ${lines[idx]?.trim()}`,
         )
       }
+    },
+  )
+
+  // ─── Removed-tool regression (issue #161) ─────────────────────────────
+
+  await testAsync(
+    'regression: removed V1 delegation tool names must not reappear anywhere in src/',
+    async () => {
+      // pantheon_delegate + pantheon_delegation_read and the V1 delegation
+      // motor were removed in v1.5.0. Any surviving reference (source OR the
+      // committed dist bundle) is dead weight shipped to users — fail loudly
+      // instead of silently rotting. See issue #161.
+      const REMOVED = ['pantheon_delegate', 'pantheon_delegation_read']
+      const root = fileURLToPath(new URL('../../src/', import.meta.url))
+      const bad: string[] = []
+      const walk = (dir: string): void => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (entry.name === 'node_modules') continue
+          const next = join(dir, entry.name)
+          if (entry.isDirectory()) {
+            walk(next)
+            continue
+          }
+          const text = readFileSync(next, 'utf8')
+          for (const name of REMOVED) {
+            if (text.includes(name)) bad.push(`${next.slice(root.length)} mentions "${name}"`)
+          }
+        }
+      }
+      walk(root)
+      assert.deepEqual(
+        bad,
+        [],
+        `removed V1 tool names reappeared in src/ (dead code): ${bad.join(' | ')}`,
+      )
     },
   )
 
