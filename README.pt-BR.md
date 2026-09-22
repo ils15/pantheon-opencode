@@ -10,7 +10,7 @@ e equipes que querem mais estrutura sem perder o controle do próprio código.
 
 [![Versão](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=versão)](https://github.com/ils15/pantheon-opencode/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg)](https://doi.org/10.5281/zenodo.22306637)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22305176.svg)](https://doi.org/10.5281/zenodo.22305176)
 
 ## O que é?
 
@@ -295,10 +295,10 @@ uma issue ou pull request.
 
 ## Citação e DOI
 
-O Pantheon é distribuído sob a [Licença MIT](LICENSE). Para o registro histórico
-publicado da v1.4.3 apenas, use o [DOI do Zenodo](https://doi.org/10.5281/zenodo.22306637);
-essa não é a versão operacional atual. Os metadados de citação também estão em
-[CITATION.cff](CITATION.cff).
+O Pantheon é distribuído sob a [Licença MIT](LICENSE). Cite o
+[DOI conceitual do Zenodo](https://doi.org/10.5281/zenodo.22305176), que sempre
+resolve para a última release arquivada; cada release também tem seu próprio
+version DOI. Os metadados de citação também estão em [CITATION.cff](CITATION.cff).
 
 Repositório canônico: <https://github.com/ils15/pantheon-opencode>
 

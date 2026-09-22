@@ -191,41 +191,20 @@ test('validation job has no release credential injection', () => {
   assert.doesNotMatch(validate, /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\./)
 })
 
-test('stable release dispatches the Zenodo draft after npm without new credentials', () => {
-  // `release: published` never fires for GITHUB_TOKEN-created releases, so the
-  // release job must be allowed to dispatch the Zenodo workflow explicitly.
-  // Scope the assertion to the release job's own `permissions:` block so an
-  // unrelated `actions: write` elsewhere in the job cannot satisfy it.
+test('release job permissions stay minimal and never re-grant actions: write', () => {
+  // The Zenodo dispatch was retired, so the release job must not request
+  // `actions: write` again. Scope the assertion to the release job's own
+  // `permissions:` block so an unrelated grant elsewhere cannot satisfy it.
   const permissions = release.slice(
     release.indexOf('\n    permissions:\n'),
     release.indexOf('\n    env:'),
   )
   assert.ok(permissions.length > 0, 'expected the release job permissions block')
-  assert.match(permissions, /\n\s{6}actions: write\b/)
-  // The dispatch must follow the npm publish, the last credential-exposing step.
-  const publish = release.indexOf('npm publish')
-  const dispatch = release.indexOf('gh workflow run zenodo.yml')
-  assert.ok(publish > 0, 'expected the npm publish step')
-  assert.ok(dispatch > publish, 'Zenodo dispatch must follow the npm publish step')
-  // Stable-only, draft-only: publication stays gated and manual.
-  assert.match(release, /if: env\.RELEASE_TAG == 'latest'/)
-  // The gate reads the job-level env, so assert RELEASE_TAG is actually defined
-  // there (the ternary) — not only in the publish step's step-level env. If the
-  // job-env ternary is removed, the dispatch step never runs and the gate
-  // assertion above would pass vacuously.
-  const jobEnv = release.slice(release.indexOf('\n    env:\n'), release.indexOf('\n    steps:'))
-  assert.ok(jobEnv.length > 0, 'expected the release job env block')
-  assert.match(jobEnv, /\n\s{6}RELEASE_TAG: \$\{\{/)
-  assert.match(jobEnv, /inputs\.release_channel == 'beta'.*'latest'/)
-  assert.match(release, /-f release_tag="\$VERSION"/)
-  assert.match(release, /-f confirm_production=true/)
-  assert.match(release, /-f publish_deposition=false/)
-  // The dispatch exposes no new credential and runs no repository code.
-  const dispatchStep = release.indexOf('Dispatch Zenodo draft for the stable release')
-  assert.ok(dispatchStep > publish, 'expected the Zenodo dispatch step')
-  const dispatchBlock = release.slice(dispatchStep)
-  assert.doesNotMatch(dispatchBlock, /actions\/checkout|NODE_AUTH_TOKEN|secrets\./)
-  // A failed dispatch is non-fatal without a silent fallback.
-  assert.match(dispatchBlock, /if ! gh workflow run/)
-  assert.doesNotMatch(dispatchBlock, /\|\|\s*(?:true|:)/)
+  assert.doesNotMatch(permissions, /\bactions: write\b/)
+  // Only the two scopes the publish path actually needs remain.
+  const scopes = permissions
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  assert.deepEqual(scopes, ['permissions:', 'contents: write', 'id-token: write'])
 })
