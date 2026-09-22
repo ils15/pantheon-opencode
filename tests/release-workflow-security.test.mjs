@@ -190,3 +190,21 @@ test('validation job has no release credential injection', () => {
   assert.match(validate, /RELEASE_TOKEN:-\}/)
   assert.doesNotMatch(validate, /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\./)
 })
+
+test('release job permissions stay minimal and never re-grant actions: write', () => {
+  // The Zenodo dispatch was retired, so the release job must not request
+  // `actions: write` again. Scope the assertion to the release job's own
+  // `permissions:` block so an unrelated grant elsewhere cannot satisfy it.
+  const permissions = release.slice(
+    release.indexOf('\n    permissions:\n'),
+    release.indexOf('\n    env:'),
+  )
+  assert.ok(permissions.length > 0, 'expected the release job permissions block')
+  assert.doesNotMatch(permissions, /\bactions: write\b/)
+  // Only the two scopes the publish path actually needs remain.
+  const scopes = permissions
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  assert.deepEqual(scopes, ['permissions:', 'contents: write', 'id-token: write'])
+})
