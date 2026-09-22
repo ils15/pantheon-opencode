@@ -206,10 +206,17 @@ without recovery inputs runs the stable release path:
    repository-scoped GitHub API **on the exact dispatch target SHA**.
 7. **GitHub Release** —
    `gh release create vX.Y.Z --target <dispatch-sha> --verify-tag --title "Pantheon vX.Y.Z" --notes-file release-artifact/release-notes.md`.
-8. **npm publish (LAST)** — gated by the idempotency lookup, then that same
-   tarball (without repacking) is published with `--tag latest --access public
-   --provenance`. The SHA-256 validated in the validation job is therefore the
-   SHA-256 of the file published to npm.
+8. **npm publish (last step exposing `NPM_TOKEN`)** — gated by the idempotency
+   lookup, then that same tarball (without repacking) is published with
+   `--tag latest --access public --provenance`. The SHA-256 validated in the
+   validation job is therefore the SHA-256 of the file published to npm. This is
+   the last step that consumes the `NPM_TOKEN` credential; it is **not** the
+   last step of the job.
+9. **Zenodo dispatch (final step)** — after the npm publish, a stable-only,
+   non-fatal `gh workflow run zenodo.yml` starts the draft deposition. It adds
+   no new credential and runs no repository code, and a failed dispatch never
+   fails an already-published release. See
+   [Preserved Releases: Zenodo](#preserved-releases-zenodo).
 
 A global concurrency group (`release`, no cancel-in-progress) serializes
 runs so beta and stable paths can never double-publish.
@@ -441,9 +448,9 @@ Each release includes:
 
 ## Preserved Releases: Zenodo
 
-[Zenodo](https://zenodo.org/) preserves releases for citation and long-term access. A published GitHub release automatically triggers **Publish release to Zenodo**; the workflow checks out the exact commit identified by the tag, creates or resumes the deposition idempotently, and does not create duplicates.
+[Zenodo](https://zenodo.org/) preserves releases for citation and long-term access. GitHub does not deliver `release` events for releases created with the workflow `GITHUB_TOKEN`, so the **Release** workflow explicitly dispatches **Publish release to Zenodo** (`workflow_dispatch`) after a **stable** release is published and its npm artifact is uploaded. That run creates or resumes a **draft** deposition idempotently (`publish_deposition=false`) and never creates duplicates; publication remains a separate, human-approved action. Beta and recovery publishes are not archived automatically.
 
-For a manual run, open **Actions → Publish release to Zenodo** and set `release_tag=v1.4.3`, `confirm_production=true`, and `publish_deposition=false` to create or resume a draft. Review the draft before running again with `publish_deposition=true`; use that value only after human approval.
+For a manual run, open **Actions → Publish release to Zenodo** and set `release_tag=v1.4.3`, `confirm_production=true`, and `publish_deposition=false` to create or resume a draft. Review the draft before running again with `publish_deposition=true`; use that value only after human approval. If the automatic dispatch fails, the Release job stays green and emits a non-fatal notice — start the manual run with the same `release_tag`.
 
 The protected `zenodo-production` environment must contain secret `ZENODO_TOKEN` and vars `ZENODO_DEPOSITIONS_URL`, `ZENODO_FILES_URL_TEMPLATE`, `ZENODO_PUBLISH_URL_TEMPLATE`, and `ZENODO_CREATOR_NAME`. Never put token values in logs or code. Use sandbox configuration for rehearsal and production only for the reviewed deposition.
 

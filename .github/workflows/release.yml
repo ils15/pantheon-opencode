@@ -243,6 +243,9 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      # Required only to dispatch the Zenodo workflow (workflow_dispatch) after
+      # a stable release is published; see the final step in this job.
+      actions: write
     env:
       EVENT_NAME: ${{ github.event_name }}
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.sha }}
@@ -505,9 +508,11 @@ jobs:
             gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --notes-file release-artifact/release-notes.md
           fi
 
-      # This is intentionally the final step. The artifact was produced with
-      # --ignore-scripts; npm also receives --ignore-scripts as a second guard.
-      # No PR checkout or PR-controlled code runs after this token is exposed.
+      # This is the final step that exposes a release credential. The artifact
+      # was produced with --ignore-scripts; npm also receives --ignore-scripts
+      # as a second guard. No PR checkout or PR-controlled code runs after this
+      # token is exposed: the Zenodo dispatch below uses only the already-present
+      # GITHUB_TOKEN and runs no repository code (this job never checks out).
       - name: Publish immutable artifact to npm
         if: steps.idem.outputs.npm_exists != 'true'
         env:
@@ -516,3 +521,27 @@ jobs:
           PACKAGE: ${{ steps.metadata.outputs.package }}
           RELEASE_TAG: ${{ inputs.recovery_version != '' && 'beta' || inputs.release_channel == 'beta' && 'beta' || 'latest' }}
         run: npm publish "$PACKAGE" --ignore-scripts --tag "$RELEASE_TAG" --access public --provenance --registry https://registry.npmjs.org
+
+      # GitHub suppresses workflow events (including `release: published`) for
+      # releases created with the workflow GITHUB_TOKEN, so the Zenodo `on:
+      # release` trigger never fires for this pipeline. `workflow_dispatch` is
+      # one of the two documented exceptions, so an explicit dispatch reaches
+      # Zenodo with the same token. This step adds no new credential (the
+      # GITHUB_TOKEN is already used earlier in this job) and runs no repository
+      # code. Only the stable channel is archived here; the draft is created
+      # with publish_deposition=false so publication stays gated and manual.
+      # A failed dispatch must not fail an already-published release: it is
+      # reported as a non-fatal annotation and the job stays green.
+      - name: Dispatch Zenodo draft for the stable release
+        if: env.RELEASE_TAG == 'latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! gh workflow run zenodo.yml --repo "$RELEASE_REPO" \
+            -f release_tag="$VERSION" \
+            -f confirm_production=true \
+            -f publish_deposition=false; then
+            echo "::notice::Zenodo dispatch failed; start 'Publish release to Zenodo' manually with release_tag=$VERSION."
+          fi
