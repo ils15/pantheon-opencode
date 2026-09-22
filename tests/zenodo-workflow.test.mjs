@@ -17,19 +17,84 @@ import {
   findUniqueZenodoDeposition,
   zenodoReleaseMarker,
 } from '../scripts/recover-zenodo-deposition.mjs'
-import { findZenodoFile, sha256File } from '../scripts/zenodo-artifact.mjs'
+import {
+  findZenodoFile,
+  md5File,
+  parseZenodoChecksum,
+  sha256File,
+} from '../scripts/zenodo-artifact.mjs'
 import { parseZenodoMarker, zenodoMarker } from '../scripts/zenodo-release-state.mjs'
 
 const workflow = readFileSync(join(process.cwd(), '.github/workflows/zenodo.yml'), 'utf8')
 
-test('validates the exact archive checksum and rejects a different upload', () => {
+test('parses the bare and prefixed checksum formats the Zenodo API emits', () => {
+  // Regression for run 35776858439: the deposition API returned a bare MD5.
+  assert.deepEqual(parseZenodoChecksum('d3359dca2f998da8461abb3b84a32b6c'), {
+    algorithm: 'md5',
+    digest: 'd3359dca2f998da8461abb3b84a32b6c',
+  })
+  assert.deepEqual(parseZenodoChecksum(`md5:${'a'.repeat(32)}`), {
+    algorithm: 'md5',
+    digest: 'a'.repeat(32),
+  })
+  assert.deepEqual(parseZenodoChecksum(`sha256:${'b'.repeat(64)}`.toUpperCase()), {
+    algorithm: 'sha256',
+    digest: 'b'.repeat(64),
+  })
+  assert.throws(() => parseZenodoChecksum('not-a-checksum'), /Unrecognized Zenodo checksum/)
+  assert.throws(() => parseZenodoChecksum(`md5:${'a'.repeat(40)}`), /length does not match md5/)
+  assert.throws(() => parseZenodoChecksum(undefined), /checksum is missing/)
+})
+
+test('verifies the archive checksum in the format the Zenodo API returns', () => {
   const root = mkdtempSync(join(tmpdir(), 'zenodo-artifact-'))
   const archive = join(root, 'release.tar.gz')
   writeFileSync(archive, 'tagged release bytes')
-  const checksum = sha256File(archive)
-  const record = { files: [{ filename: 'release.tar.gz', checksum: `sha256:${checksum}` }] }
-  assert.equal(findZenodoFile(record, 'release.tar.gz', checksum).filename, 'release.tar.gz')
-  assert.throws(() => findZenodoFile(record, 'release.tar.gz', '0'.repeat(64)), /checksum mismatch/)
+  const sha256 = sha256File(archive)
+  const md5 = md5File(archive)
+  const expected = { sha256, md5 }
+
+  // Production regression: bare MD5 (no `md5:` prefix) must verify.
+  const bareMd5 = { files: [{ filename: 'release.tar.gz', checksum: md5 }] }
+  assert.equal(findZenodoFile(bareMd5, 'release.tar.gz', expected).filename, 'release.tar.gz')
+
+  // The legacy `md5:` prefixed form is accepted too.
+  const prefixedMd5 = { files: [{ filename: 'release.tar.gz', checksum: `md5:${md5}` }] }
+  assert.equal(findZenodoFile(prefixedMd5, 'release.tar.gz', expected).filename, 'release.tar.gz')
+
+  // If Zenodo ever upgrades to SHA-256, the stronger digest is used.
+  const sha256Record = { files: [{ filename: 'release.tar.gz', checksum: `sha256:${sha256}` }] }
+  assert.equal(findZenodoFile(sha256Record, 'release.tar.gz', expected).filename, 'release.tar.gz')
+  assert.equal(findZenodoFile(sha256Record, 'release.tar.gz', sha256).filename, 'release.tar.gz')
+
+  // A wrong digest on either algorithm still fails loudly.
+  assert.throws(
+    () => findZenodoFile(bareMd5, 'release.tar.gz', { md5: '0'.repeat(32) }),
+    /checksum mismatch/,
+  )
+  assert.throws(
+    () => findZenodoFile(sha256Record, 'release.tar.gz', { sha256: '0'.repeat(64) }),
+    /checksum mismatch/,
+  )
+  // A returned algorithm with no local digest of that kind fails closed.
+  assert.throws(
+    () => findZenodoFile(sha256Record, 'release.tar.gz', { md5 }),
+    /no local sha256 checksum/,
+  )
+  // Unknown algorithms and missing API checksums fail closed.
+  assert.throws(
+    () =>
+      findZenodoFile(
+        { files: [{ filename: 'release.tar.gz', checksum: `sha512:${'a'.repeat(128)}` }] },
+        'release.tar.gz',
+        expected,
+      ),
+    /Unrecognized Zenodo checksum/,
+  )
+  assert.throws(
+    () => findZenodoFile({ files: [{ filename: 'release.tar.gz' }] }, 'release.tar.gz', expected),
+    /checksum is missing/,
+  )
 })
 
 test('fails closed when a deposition contains duplicate archive names', () => {
@@ -229,7 +294,10 @@ test('created marker rerun reuses its id and reaches upload/publication without 
     workflow,
     /\[ -n "\$existing" \] \|\| \{ echo '::error::Created Zenodo marker has no deposition id.'/,
   )
-  assert.match(workflow, /findZenodoFile\(record,process\.env\.NAME,process\.env\.CHECKSUM\)/)
+  assert.match(
+    workflow,
+    /findZenodoFile\(record,process\.env\.NAME,\{sha256:process\.env\.EXPECTED_SHA256,md5:process\.env\.EXPECTED_MD5\}\)/,
+  )
   assert.match(workflow, /if \[ "\$submitted" != true \] && \[ "\$existing_file" = missing \]/)
   assert.match(workflow, /marker_state=published/)
 })
