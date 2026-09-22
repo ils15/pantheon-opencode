@@ -18,6 +18,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.1] - 2026-09-22
+
+## 🐞 Fixed
+- **ci** — drop fastembed from CI, keep pytest collection green (#163)
+- **plugin** — detect registered-plugin version drift after pantheon_delegate removal (#169)
+- **config** — correct node floor and warn on unsupported runtime (#168)
+- **mcp** — degrade gracefully when fastembed import fails (#165)
+- **mcp** — drop dead toon_codec module from published package (#167)
+- **tui** — remove dead pantheon_delegate refs after v1.5.0 V1 removal (#166)
+- **mnemosyne** — grant scoped write to memory-bank and deepwork paths (#164)
+
+## ✅ Closed Issues
+- #94 - drop fastembed from CI, keep pytest collection green (#163)
+- #158 - detect registered-plugin version drift after pantheon_delegate removal (#169)
+- #114 - correct node floor and warn on unsupported runtime (#168)
+- #160 - correct node floor and warn on unsupported runtime (#168)
+- #159 - degrade gracefully when fastembed import fails (#165)
+- #162 - drop dead toon_codec module from published package (#167)
 ## [v1.5.0] - 2026-09-16
 
 ### 🆕 What's New
