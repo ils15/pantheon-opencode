@@ -30,7 +30,15 @@ way to plan work, make progress, check results, and keep useful project context.
 
 ## Start in 2 minutes
 
-Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js 22+.
+Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js
+22.22.2+ (or 24.15.0+ / 26+).
+
+Pantheon declares `engines.node` as `^22.22.2 || ^24.15.0 || >=26.0.0`. The
+floor reflects what the dependency tree actually needs — the transitive
+`ini@7` rejects earlier 22.x/24.x builds with `EBADENGINE` — and odd-numbered
+Node releases (23, 25) are out of range. The `pantheon_cost` tool also needs
+`node:sqlite`, which requires Node >= 22.5; `doctor` warns when the running
+runtime cannot load it.
 
 From the project where you want to use Pantheon:
 
@@ -370,6 +378,18 @@ raises an explicit error. This catches the common free-tier failure mode where a
 child session exceeds the uncached-prefill token budget (`BackendAdmissionRejected`)
 and returns nothing. Prefer `background=true` dispatches with an explicit
 `task_status(wait=true)` fan-in so large payloads are collected deterministically.
+
+
+## Configuration (environment variables)
+
+| Variable | Default | Description |
+|---|---|---|
+| `PANTHEON_MEMORY_EMBED` | `on` | `off` (also `0`, `false`, `no`) disables the `pantheon-memory` embedding/vector pipeline — search runs in FTS5-only mode with no model download and no `sqlite-vec` writes. Also forced `off` automatically when `fastembed` fails to import, so a broken embedding install never takes the server down (issue #159). |
+
+The memory MCP degrades gracefully: when `fastembed` or `sqlite-vec` are
+unavailable (network failure, incompatible wheel), the server still starts,
+answers the MCP `initialize` handshake, and serves keyword search — only the
+semantic vector ranking is unavailable.
 
 
 ## Documentation

@@ -6,6 +6,10 @@ for semantic memory with hybrid search (vector cosine + FTS5 BM25).
 
 Total footprint: ~50MB (sqlite-vec + fastembed) vs ~1.4GB (old chromadb).
 
+Both embedding backends are optional: if either fails to import the server
+still starts and serves FTS5-only search (``PANTHEON_MEMORY_EMBED=off``
+disables the vector pipeline explicitly).
+
 Tools:
     memory_store   — Store with automatic embedding
     memory_search  — Hybrid vector + FTS5 keyword search
@@ -30,9 +34,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import sqlite_vec
+# Embedding backends are optional (issue #159): a failed fastembed/sqlite_vec
+# install (network error, incompatible wheel) must not kill the server — it
+# degrades to FTS-only search instead of crashing before the MCP handshake.
+try:
+    import sqlite_vec
+except ImportError:  # pragma: no cover - degraded mode
+    sqlite_vec = None  # type: ignore[assignment]
+
 from _pantheon_paths import pantheon_home
-from fastembed import TextEmbedding
+
+try:
+    from fastembed import TextEmbedding
+except ImportError:  # pragma: no cover - degraded mode
+    TextEmbedding = None  # type: ignore[assignment]
+
 from mcp.server.fastmcp import FastMCP
 
 try:
@@ -51,6 +67,12 @@ except ImportError:  # pragma: no cover - deployed runtime may need path fix
 
 DB_PATH = pantheon_home() / "memory" / "memory.db"
 EMBED_CACHE = Path.home() / ".cache" / "fastembed"
+
+# PANTHEON_MEMORY_EMBED=off disables the embedding/vector pipeline so the
+# server serves FTS-only search (issue #159). Default "on" keeps the current
+# hybrid vector + FTS behavior. The flag is also forced off automatically
+# when fastembed failed to import.
+_EMBED_DISABLED = frozenset({"off", "0", "false", "no"})
 
 
 _BYTE_UNIT = 1024
@@ -81,11 +103,6 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_ns_key
     ON memories(namespace, key);
 
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
-    id INTEGER PRIMARY KEY,
-    embedding float[384]
-);
-
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     namespace, key, value, metadata,
     content='memories', content_rowid='id',
@@ -113,6 +130,14 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 """
 
+# Vector store requires the sqlite-vec extension; created only when available.
+VEC_SCHEMA_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
+    id INTEGER PRIMARY KEY,
+    embedding float[384]
+);
+"""
+
 # ── FastMCP App ───────────────────────────────────────────────────────────────
 
 mcp = FastMCP(
@@ -129,7 +154,8 @@ def _get_db() -> sqlite3.Connection:
     """Get or create the SQLite connection singleton.
 
     Creates DB directory, applies WAL/performance pragmas, registers
-    the sqlite-vec extension, and runs schema init.
+    the sqlite-vec extension, and runs schema init. When sqlite-vec is
+    unavailable the vector table is skipped — search degrades to FTS-only.
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
@@ -137,9 +163,10 @@ def _get_db() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
-    # Register sqlite-vec extension
-
-    sqlite_vec.load(conn)
+    # Register sqlite-vec extension (optional; enables vector search)
+    if sqlite_vec is not None:
+        sqlite_vec.load(conn)
+        conn.executescript(VEC_SCHEMA_SQL)
     conn.executescript(SCHEMA_SQL)
     if _codemap is not None:
         with contextlib.suppress(Exception):
@@ -155,13 +182,30 @@ def _get_conn() -> sqlite3.Connection:
 # ── Embedding ─────────────────────────────────────────────────────────────────
 
 
+def _embeddings_enabled() -> bool:
+    """Whether the embedding/vector pipeline is active.
+
+    Controlled by ``PANTHEON_MEMORY_EMBED`` (``on`` by default; ``off``,
+    ``0``, ``false`` or ``no`` disable it). Automatically disabled when
+    ``fastembed`` failed to import, so the server degrades to FTS-only
+    search instead of crashing at startup (issue #159).
+    """
+    if TextEmbedding is None:
+        return False
+    flag = os.environ.get("PANTHEON_MEMORY_EMBED", "on").strip().lower()
+    return flag not in _EMBED_DISABLED
+
+
 @functools.cache
-def _get_embedder() -> TextEmbedding:
+def _get_embedder() -> TextEmbedding | None:
     """Lazy-load fastembed model (auto-downloads on first call, ~30MB).
 
     Uses BAAI/bge-small-en-v1.5 (384-dim, CPU, ONNX) — no PyTorch needed.
-    Model is cached in ~/.cache/fastembed/.
+    Model is cached in ~/.cache/fastembed/. Returns None when fastembed is
+    unavailable.
     """
+    if TextEmbedding is None:
+        return None
     os.environ.setdefault("TQDM_DISABLE", "1")
     return TextEmbedding(
         model_name="BAAI/bge-small-en-v1.5",
@@ -169,9 +213,18 @@ def _get_embedder() -> TextEmbedding:
     )
 
 
-def _embed(text: str) -> list[float]:
-    """Generate a 384-dim embedding vector for the given text."""
-    return next(iter(_get_embedder().embed(text))).tolist()
+def _embed(text: str) -> list[float] | None:
+    """Generate a 384-dim embedding vector for the given text.
+
+    Returns None when embeddings are disabled (``PANTHEON_MEMORY_EMBED=off``
+    or fastembed missing) — callers fall back to FTS-only search.
+    """
+    if not _embeddings_enabled():
+        return None
+    embedder = _get_embedder()
+    if embedder is None:
+        return None
+    return next(iter(embedder.embed(text))).tolist()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -341,14 +394,14 @@ def memory_store(
         )
         entry_id = cur.lastrowid
 
-        # Generate embedding
+        # Generate embedding (None when disabled → FTS-only mode)
         embedding = _embed(value)
-        embedding_json = json.dumps(embedding)
-
-        db.execute(
-            "INSERT INTO vec_memories(id, embedding) VALUES (?, ?)",
-            [entry_id, embedding_json],
-        )
+        if embedding is not None and sqlite_vec is not None:
+            embedding_json = json.dumps(embedding)
+            db.execute(
+                "INSERT INTO vec_memories(id, embedding) VALUES (?, ?)",
+                [entry_id, embedding_json],
+            )
         db.commit()
     except sqlite3.IntegrityError as e:
         db.rollback()
@@ -406,8 +459,8 @@ def memory_search(  # noqa: C901, PLR0912
     vec_ids: list[int] = []
     fts_ids: list[int] = []
 
-    # 2. Vector search
-    if query_vec is not None:
+    # 2. Vector search (skipped when embeddings or sqlite-vec are unavailable)
+    if query_vec is not None and sqlite_vec is not None:
         nvec = top_k * 2
         try:
             if namespace:
@@ -564,8 +617,9 @@ def memory_forget(
     db = _get_conn()
     try:
         if col == "id":
-            # Vec table cascade
-            db.execute("DELETE FROM vec_memories WHERE id = ?", [id])
+            # Vec table cascade (absent when sqlite-vec is unavailable)
+            if sqlite_vec is not None:
+                db.execute("DELETE FROM vec_memories WHERE id = ?", [id])
             cur = db.execute("DELETE FROM memories WHERE id = ?", [id])
         else:
             cur = db.execute(sql, params)

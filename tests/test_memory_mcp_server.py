@@ -8,13 +8,18 @@ Tests cover:
 - memory_forget: delete by ID or key
 - memory_list: chronological listing
 - memory_stats: database statistics
+- Degraded mode: missing fastembed/sqlite_vec, PANTHEON_MEMORY_EMBED flag
 - Error handling: empty inputs, non-existent entries
 """
 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
+import textwrap
 import time
 from pathlib import Path
 from typing import Any
@@ -671,3 +676,159 @@ class TestErrorHandling:
         )
         data = json.loads(_text_from_tool(result))
         assert isinstance(data, list)
+
+
+# =============================================================================
+# Degraded Mode (issue #159)
+# =============================================================================
+
+
+class TestDegradedMode:
+    """Server must survive missing fastembed/sqlite_vec (FTS-only mode).
+
+    The embedding backends are imported defensively; when they are
+    unavailable the server still builds, answers the MCP initialize
+    handshake and serves FTS5 keyword search.
+    """
+
+    def test_optional_backends_have_module_attributes(self, module) -> None:
+        """sqlite_vec/fastembed resolve to the module or None, never crash."""
+        assert hasattr(module, "sqlite_vec")
+        assert hasattr(module, "TextEmbedding")
+
+    def test_flag_defaults_on(self, module) -> None:
+        """Embeddings are enabled by default (unchanged behavior)."""
+        assert module._embeddings_enabled() is True
+
+    @pytest.mark.parametrize("off", ["off", "0", "false", "no", "OFF", " off "])
+    def test_flag_off_disables_pipeline(self, module, monkeypatch, off) -> None:
+        """Any spelling of PANTHEON_MEMORY_EMBED=off disables embeddings."""
+        monkeypatch.setenv("PANTHEON_MEMORY_EMBED", off)
+        assert module._embeddings_enabled() is False
+        assert module._embed("any text") is None
+
+    def test_flag_on_reenables_pipeline(self, module, monkeypatch) -> None:
+        """PANTHEON_MEMORY_EMBED=on keeps the embedding pipeline active."""
+        monkeypatch.setenv("PANTHEON_MEMORY_EMBED", "on")
+        assert module._embeddings_enabled() is True
+
+    async def test_fts_only_when_flag_off(self, module, server: FastMCP, monkeypatch) -> None:
+        """With embeddings off, store + search still serve FTS results."""
+        monkeypatch.setenv("PANTHEON_MEMORY_EMBED", "off")
+        ns = f"fts_off_{time.time_ns()}"
+        stored_ids = []
+        for value, key in (
+            ("Python is a programming language.", "py"),
+            ("FastAPI is a web framework for Python.", "fastapi"),
+            ("The Eiffel Tower is in Paris.", "eiffel"),
+        ):
+            result = await server.call_tool(
+                "memory_store", {"value": value, "key": key, "namespace": ns}
+            )
+            stored_ids.append(json.loads(_text_from_tool(result))["id"])
+
+        result = await server.call_tool(
+            "memory_search",
+            {"query": "Python programming", "top_k": 3, "namespace": ns},
+        )
+        data = json.loads(_text_from_tool(result))
+        if isinstance(data, dict):
+            data = [data]
+        assert isinstance(data, list)
+        assert len(data) > 0
+        assert any("Python" in r["value"] for r in data)
+        # No embedding was computed or stored for the new entries.
+        assert module._embed("Python is a programming language.") is None
+        placeholders = ",".join("?" * len(stored_ids))
+        vec_rows = module._get_conn().execute(
+            f"SELECT COUNT(*) AS c FROM vec_memories WHERE id IN ({placeholders})",
+            stored_ids,
+        ).fetchone()["c"]
+        assert vec_rows == 0
+
+    def test_server_starts_when_backends_missing(self, tmp_path) -> None:
+        """Import with fastembed + sqlite_vec blocked still yields a server.
+
+        Simulates a broken embedding install (network failure, incompatible
+        wheel): the process must import, build the FastMCP app, register
+        tools and serve FTS-only search instead of crashing at startup.
+        """
+        repo_root = Path(__file__).resolve().parent.parent
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            str(p) for p in (repo_root, repo_root / "src" / "mcp", repo_root / "scripts")
+        )
+        # Default is "on" — the import failure itself must trigger degradation.
+        env.pop("PANTHEON_MEMORY_EMBED", None)
+        script = textwrap.dedent(
+            """\
+            import asyncio
+            import json
+            import sys
+            import tempfile
+
+            # Simulate failed installs of both embedding backends.
+            sys.modules["fastembed"] = None
+            sys.modules["sqlite_vec"] = None
+
+            import src.mcp.memory_mcp_server as m
+
+            m._set_memory_dir(tempfile.mkdtemp())
+
+            assert m.TextEmbedding is None, "fastembed import must be optional"
+            assert m.sqlite_vec is None, "sqlite_vec import must be optional"
+            assert m._embeddings_enabled() is False
+            assert m._embed("hello") is None
+
+            def parsed(result):
+                return json.loads(result[0][0].text)
+
+            def as_list(data):
+                # FastMCP collapses a single-element list result into an object
+                return [data] if isinstance(data, dict) else data
+
+            async def main() -> None:
+                tools = await m.mcp.list_tools()
+                names = [t.name for t in tools]
+                assert "memory_search" in names, f"tools missing: {names}"
+
+                store = await m.mcp.call_tool(
+                    "memory_store",
+                    {"value": "Python is a programming language.", "key": "py"},
+                )
+                data = parsed(store)
+                assert data["status"] == "stored", data
+                entry_id = data["id"]
+
+                await m.mcp.call_tool(
+                    "memory_store",
+                    {"value": "FastAPI is a web framework for Python.", "key": "fastapi"},
+                )
+
+                hits = await m.mcp.call_tool(
+                    "memory_search", {"query": "Python programming", "top_k": 3}
+                )
+                results = as_list(parsed(hits))
+                assert results, "FTS search must work without embeddings"
+                assert any("Python" in r["value"] for r in results)
+
+                stats = await m.mcp.call_tool("memory_stats", {})
+                assert parsed(stats)["vector_entries"] == 0
+
+                forget = await m.mcp.call_tool("memory_forget", {"id": entry_id})
+                assert parsed(forget)["deleted"] is True
+
+            asyncio.run(main())
+            print("DEGRADED_OK")
+            """
+        )
+        run = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=300,
+            check=False,
+        )
+        assert run.returncode == 0, run.stderr
+        assert "DEGRADED_OK" in run.stdout

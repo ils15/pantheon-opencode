@@ -18,7 +18,7 @@ npm run setup
 npm run doctor
 ```
 
-- Requisitos: **Node.js 22+**, **OpenCode v1.18.4+**, **Python 3.11+** (opcional, MCP servers).
+- Requisitos: **Node.js 22.22.2+** (ou 24.15.0+ / 26+), **OpenCode v1.18.4+**, **Python 3.11+** (opcional, MCP servers).
 - Habilite subagentes paralelos antes de abrir o OpenCode:
   `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`.
 - Passo a passo de 5 minutos: [QUICKSTART.md](QUICKSTART.md).
@@ -26,7 +26,7 @@ npm run doctor
 ## Prerequisites
 
 - **OpenCode v1.18.4+** — [Install OpenCode](https://opencode.ai/docs/)
-- **Node.js 22+** — for `npx pantheon-opencode init`
+- **Node.js 22.22.2+** (ou 24.15.0+ / 26+) — for `npx pantheon-opencode init` (`engines.node` = `^22.22.2 || ^24.15.0 || >=26.0.0`; `pantheon_cost` needs `node:sqlite`, Node >= 22.5)
 - **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
 
@@ -199,7 +199,7 @@ opencode
 
 | Mode | Command | Installs | Time | Dependencies |
 |------|---------|----------|------|-------------|
-| **Interactive** 🎯 | `npx pantheon-opencode init` (default TTY) | seletor visual de componentes | ~variavel | Node.js 22+ |
+| **Interactive** 🎯 | `npx pantheon-opencode init` (default TTY) | seletor visual de componentes | ~variavel | Node.js 22.22.2+ |
 | **Minimal** 🟢 | `npx pantheon-opencode init --headless --no-mcp` | agents + commands | ~2s | None |
 | **Full** 🔵 | `npx pantheon-opencode init --headless` | agents + MCPs + skills + TUI | ~60s | Python 3.11+ |
 | **Runtime** 🟡 | `npm run setup` | MCP servers + venv | ~30s | Python 3.11+ |

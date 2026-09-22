@@ -9,6 +9,7 @@
  *   - Permission/frontmatter mismatches
  *   - OpenCode artifact freshness
  *   - Git status
+ *   - Node runtime (node:sqlite availability for pantheon_cost)
  *
  * Usage:
  *   node scripts/doctor.mjs                          # auto-detect, cwd
@@ -160,6 +161,7 @@ function showHelp() {
    E. Git Status           — uncommitted changes
    F. Runtime Layer        — venv python + pinned pip dependencies
    H3. Plugin Drift        — registered plugin version vs this package
+   K. Node Runtime         — node:sqlite availability for pantheon_cost
 
  Exit codes:
    0  — no blocking errors (warnings are advisory)
@@ -1581,6 +1583,71 @@ export function classifyPermissionTaskCheck(profile, installedCount, missingCoun
   return missingCount === 0 ? 'pass' : 'error'
 }
 
+// ---------------------------------------------------------------------------
+// Check K: Node Runtime — node:sqlite availability (issue #114)
+// ---------------------------------------------------------------------------
+
+// pantheon_cost uses node:sqlite as its read-only backend; below this Node
+// version the tool reports UNSUPPORTED (see the "Cost tool backend" README
+// section). Matches the floor documented for the PANTHEON_NODE fallback.
+const NODE_SQLITE_MIN = '22.5'
+
+/**
+ * Probe whether the running Node.js can load `node:sqlite` — the read-only
+ * backend used by the `pantheon_cost` tool (issue #114). Runs the import in a
+ * `--no-warnings` child so the experimental-feature notice never pollutes the
+ * doctor output, and so a probe crash can never take down the doctor itself.
+ *
+ * @param {{ execPath?: string; module?: string }} [options]
+ * @returns {{ available: boolean; version: string; reason?: string }}
+ */
+export function probeNodeSqlite(options = {}) {
+  const execPath = options.execPath ?? process.execPath
+  const target = options.module ?? 'node:sqlite'
+  const result = spawn(execPath, [
+    '--no-warnings',
+    '--input-type=module',
+    '-e',
+    `import '${target}'`,
+  ])
+  if (result.status === 0) return { available: true, version: process.version }
+  const reason = (result.stderr || result.stdout || 'import failed').split('\n')[0]
+  return { available: false, version: process.version, reason }
+}
+
+/**
+ * Classify a node:sqlite probe result for the doctor. Kept free of I/O so the
+ * contract is exercised deterministically (see tests/test_doctor_layers.mjs).
+ *
+ * @param {{ available: boolean; version: string }} probe
+ * @returns {{ status: 'ok' | 'unsupported'; message: string }}
+ */
+export function classifyNodeSqliteProbe(probe) {
+  if (probe.available) {
+    return {
+      status: 'ok',
+      message: `node:sqlite available on ${probe.version} — pantheon_cost read-only backend supported`,
+    }
+  }
+  return {
+    status: 'unsupported',
+    message: `pantheon_cost will report UNSUPPORTED on Node ${probe.version} — node:sqlite requires Node >= ${NODE_SQLITE_MIN}`,
+  }
+}
+
+function checkNodeRuntime() {
+  section('K. Node Runtime')
+  const outcome = classifyNodeSqliteProbe(probeNodeSqlite())
+  if (outcome.status === 'ok') {
+    pass(outcome.message)
+  } else {
+    warn(outcome.message)
+    info(
+      `Upgrade to Node >= ${NODE_SQLITE_MIN} (or a runtime with node:sqlite) to enable pantheon_cost`,
+    )
+  }
+}
+
 /**
  * Return the final doctor status message without masking blocking errors.
  * @param {{ error: number; warn: number }} summaryCounts
@@ -1663,6 +1730,7 @@ async function main() {
     existsSync(join(args.target, 'scripts', 'doctor.mjs')) === false
 
   // Run checks (layer order: Config → Venv → spawn paths → runtime smoke)
+  checkNodeRuntime(args)
   checkAgentFiles(args)
   checkMcpConfig(args)
   checkVenvLayer(args)
