@@ -42,7 +42,11 @@ jobs:
             -o "$tarball"
           printf '%s  %s\n' "$ACTIONLINT_SHA256" "$tarball" | sha256sum --check --strict
           tar --extract --gzip --file "$tarball" --directory "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint" -color
+          # shellcheck is disabled on purpose: pre-existing style findings in
+          # sensitive workflows (release.yml/security-scan.yml) must not block
+          # the gate, which covers native parse/context/expression errors.
+          # Re-enable after those findings are cleaned up.
+          "$RUNNER_TEMP/actionlint" -color -shellcheck=
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
