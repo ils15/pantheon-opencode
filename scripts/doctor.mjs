@@ -26,7 +26,7 @@ import { spawn as spawnAsync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // ---------------------------------------------------------------------------
@@ -160,6 +160,7 @@ function showHelp() {
    D. OpenCode Status      — OpenCode artifact layout
    E. Git Status           — uncommitted changes
    F. Runtime Layer        — venv python + pinned pip dependencies
+   H3. Plugin Drift        — registered plugin version vs this package
    K. Node Runtime         — node:sqlite availability for pantheon_cost
 
  Exit codes:
@@ -1163,7 +1164,10 @@ function comparePantheonVersions(a, b) {
   for (let i = 0; i < 3; i++) {
     if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i]
   }
-  return pa.beta - pb.beta
+  // Infinity - Infinity is NaN, which would make equal stable versions compare
+  // as drift for any caller using a strict === 0 check.
+  if (pa.beta === pb.beta) return 0
+  return pa.beta < pb.beta ? -1 : 1
 }
 
 /**
@@ -1213,6 +1217,159 @@ export function checkInstallVersionDrift(args) {
     return 'install-newer'
   }
   pass(`Installation in sync with package v${pkgVersion}`)
+  return 'sync'
+}
+
+// ---------------------------------------------------------------------------
+// Check H3: Plugin version drift (issue #158)
+// ---------------------------------------------------------------------------
+// npm installs are lockfile-authoritative: a package-lock.json pinned to an
+// older pantheon-opencode (e.g. 1.4.1 satisfying ^1.4.1) is never re-resolved,
+// so an installed copy under node_modules/pantheon-opencode can lag several
+// releases behind the running package. The opencode.json keeps registering
+// that stale copy's plugin path and the user silently runs an obsolete tool
+// surface — 1.5.0 removed the pantheon_delegate tool, so a drifted install
+// still exposes it. This layer compares the version of the package a
+// registered plugin points into against this package's own version. Without
+// network access the "latest" version IS the running package's version.
+
+/** Locates an installed copy of this package inside a dependency tree. */
+const INSTALLED_PACKAGE_MARKER = '/node_modules/pantheon-opencode/'
+
+/**
+ * Return the installed-package root containing a plugin path, or null when the
+ * path is not inside a `node_modules/pantheon-opencode` tree.
+ *
+ * Only installed copies are compared: a dev checkout (e.g. <dev>/pantheon)
+ * and unrelated directories named pantheon-opencode are deliberately not
+ * flagged — the drift signal must never fire on a path the installer does not
+ * own (see the third-party guards in scripts/install/opencode.mjs).
+ *
+ * @param {string|null|undefined} pluginPath
+ * @returns {string|null}
+ */
+export function resolveInstalledPackageRoot(pluginPath) {
+  if (typeof pluginPath !== 'string') return null
+  const normalized = pluginPath.replaceAll('\\', '/')
+  const index = normalized.toLowerCase().lastIndexOf(INSTALLED_PACKAGE_MARKER.toLowerCase())
+  if (index === -1) return null
+  return normalized.slice(0, index + INSTALLED_PACKAGE_MARKER.length - 1)
+}
+
+/**
+ * Read the version of the installed pantheon-opencode package a registered
+ * plugin path points into.
+ * @param {string} pluginPath - absolute or config-relative plugin ref
+ * @returns {{root: string, version: string}|null} null when not an installed copy
+ */
+function readInstalledPluginVersion(pluginPath) {
+  const root = resolveInstalledPackageRoot(pluginPath)
+  if (!root) return null
+  const pkg = readJson(join(root, 'package.json'))
+  if (!pkg || typeof pkg.version !== 'string') return null
+  return { root, version: pkg.version }
+}
+
+/**
+ * Classify plugin version drift between the package a registered plugin points
+ * into and the running doctor's own package. Uses the prerelease-aware
+ * comparator so a stable release outranks its own betas (1.5.0 > 1.5.0-beta.9).
+ * Unreadable versions classify as "unknown" rather than drift, so a broken
+ * package.json never produces a false warning.
+ * @param {string|null} registeredVersion
+ * @param {string|null} packageVersion
+ * @returns {'sync'|'drift'|'unknown'}
+ */
+export function classifyPluginVersionDrift(registeredVersion, packageVersion) {
+  if (!registeredVersion || !packageVersion) return 'unknown'
+  return comparePantheonVersions(registeredVersion, packageVersion) === 0 ? 'sync' : 'drift'
+}
+
+/**
+ * Collect the plugin refs registered across opencode.json configs, from both
+ * the V1 `plugin` and V2 `plugins` lists. Each entry keeps the config it came
+ * from so relative refs resolve against the config directory (as the loader
+ * does), never against the doctor's cwd.
+ * @param {{path: string, data: object}[]} configs
+ * @returns {{path: string, configPath: string, configLabel: string}[]}
+ */
+export function collectRegisteredPluginRefs(configs) {
+  const refs = []
+  for (const cfg of configs) {
+    for (const key of ['plugin', 'plugins']) {
+      const list = cfg.data?.[key]
+      if (!Array.isArray(list)) continue
+      for (const ref of list) {
+        if (typeof ref === 'string') {
+          refs.push({ path: ref, configPath: cfg.path, configLabel: cfg.label })
+        } else if (ref && typeof ref === 'object') {
+          // Object-shaped entries carry their path under `path`/`source`.
+          const objectPath = ['path', 'source', 'id', 'name'].find(
+            (k) => typeof ref[k] === 'string',
+          )
+          if (objectPath) {
+            refs.push({ path: ref[objectPath], configPath: cfg.path, configLabel: cfg.label })
+          }
+        }
+      }
+    }
+  }
+  return refs
+}
+
+/**
+ * Compare the version of the package each registered plugin points into (when
+ * it is an installed copy under node_modules/pantheon-opencode) against this
+ * package's own version, and warn on divergence. Advisory only — a drift
+ * warning never changes the exit code, and a healthy install stays silent.
+ * @param {object} args
+ * @returns {'drift'|'sync'|'skip'|'no-plugin'|'no-version'}
+ */
+export function checkPluginVersionDrift(args) {
+  section('H3. Plugin Version Drift')
+
+  const pkg = readJson(join(ROOT, 'package.json'))
+  const packageVersion = pkg?.version
+  if (!packageVersion) {
+    info('Plugin version drift skipped — this package has no readable version')
+    return 'no-version'
+  }
+
+  const refs = collectRegisteredPluginRefs(collectMcpConfigs(args))
+  if (refs.length === 0) {
+    info('No plugin registrations found in opencode.json — version drift skipped')
+    return 'no-plugin'
+  }
+
+  const seen = new Set()
+  let compared = 0
+  let driftReported = false
+  for (const ref of refs) {
+    const absolute = isAbsolute(ref.path) ? ref.path : resolve(dirname(ref.configPath), ref.path)
+    const installed = readInstalledPluginVersion(absolute)
+    if (!installed) continue
+    // The doctor running from the very tree the plugin points at is the
+    // healthy global-install case — trivially in sync, never flagged.
+    if (resolve(installed.root) === resolve(ROOT)) continue
+    if (seen.has(installed.root)) continue
+    seen.add(installed.root)
+    compared++
+
+    if (classifyPluginVersionDrift(installed.version, packageVersion) !== 'drift') continue
+    driftReported = true
+    warn(
+      `${ref.configLabel}: plugin is registered inside pantheon-opencode v${installed.version}, but this package is v${packageVersion} — the registered tool surface is stale (pantheon_delegate was removed in 1.5.0). Run \`npx pantheon-opencode init\`, or update the package, to realign the registered plugin path`,
+    )
+  }
+
+  if (driftReported) return 'drift'
+  if (compared === 0) {
+    info(
+      'No registered plugin points into an installed pantheon-opencode copy — version drift skipped',
+    )
+    return 'skip'
+  }
+  pass(`All registered plugins point at package v${packageVersion}`)
   return 'sync'
 }
 
@@ -1580,6 +1737,7 @@ async function main() {
   checkCodeModeDir(args)
   checkCodeModeManifest(args)
   checkInstallVersionDrift(args)
+  checkPluginVersionDrift(args)
   await checkMcpRuntimeSmoke(args)
   checkPermissionMismatches(args)
   checkSyncStatus(args)
