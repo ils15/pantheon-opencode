@@ -206,10 +206,17 @@ without recovery inputs runs the stable release path:
    repository-scoped GitHub API **on the exact dispatch target SHA**.
 7. **GitHub Release** —
    `gh release create vX.Y.Z --target <dispatch-sha> --verify-tag --title "Pantheon vX.Y.Z" --notes-file release-artifact/release-notes.md`.
-8. **npm publish (LAST)** — gated by the idempotency lookup, then that same
-   tarball (without repacking) is published with `--tag latest --access public
-   --provenance`. The SHA-256 validated in the validation job is therefore the
-   SHA-256 of the file published to npm.
+8. **npm publish (last step exposing `NPM_TOKEN`)** — gated by the idempotency
+   lookup, then that same tarball (without repacking) is published with
+   `--tag latest --access public --provenance`. The SHA-256 validated in the
+   validation job is therefore the SHA-256 of the file published to npm. This is
+   the last step that consumes the `NPM_TOKEN` credential; it is **not** the
+   last step of the job.
+9. **Zenodo dispatch (final step)** — after the npm publish, a stable-only,
+   non-fatal `gh workflow run zenodo.yml` starts the draft deposition. It adds
+   no new credential and runs no repository code, and a failed dispatch never
+   fails an already-published release. See
+   [Preserved Releases: Zenodo](#preserved-releases-zenodo).
 
 A global concurrency group (`release`, no cancel-in-progress) serializes
 runs so beta and stable paths can never double-publish.
