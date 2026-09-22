@@ -978,8 +978,6 @@ export type DelegationEntry = {
   updatedAt: number | null
   timedOut: boolean
   description: string
-  /** True while the panel is waiting for pantheon_delegation_read. */
-  read?: boolean
   // NOTE: the nested/tree view is BACKLOG. `session.children` returns direct
   // children only, so no real grandchild rows exist yet; the parentTaskID /
   // childCount fields + tree-connector helpers were removed as dead code.
@@ -1365,13 +1363,7 @@ export function delegationElapsed(entry: DelegationEntry, now: number): string {
 
 /** The activity labels shown by the animated row. Keeping this pure makes the
  * state machine testable without booting OpenCode's renderer. */
-export type DelegationActivity =
-  | 'delegating'
-  | 'working'
-  | 'reading'
-  | 'completed'
-  | 'error'
-  | 'cancelled'
+export type DelegationActivity = 'delegating' | 'working' | 'completed' | 'error' | 'cancelled'
 
 export function delegationActivity(entry: DelegationEntry): DelegationActivity {
   if (entry.state === 'completed') return 'completed'
@@ -1382,7 +1374,6 @@ export function delegationActivity(entry: DelegationEntry): DelegationActivity {
   )
     return 'error'
   if (entry.state === 'cancelled') return 'cancelled'
-  if (entry.read) return 'reading'
   if (entry.alias.startsWith('live-') && entry.taskID === undefined) return 'delegating'
   return 'working'
 }
@@ -1394,8 +1385,6 @@ export function delegationActivityLabel(entry: DelegationEntry): string {
       return 'DELEGATING'
     case 'working':
       return 'WORKING'
-    case 'reading':
-      return 'READING RESULT'
     case 'completed':
       return entry.timedOut ? 'DONE (TIMED OUT)' : 'DONE'
     case 'error':
@@ -1560,8 +1549,7 @@ export function mergeChildDelegationSources(
     const incoming = toDelegationEntry(liveEntry)
     // A native task() live part never carries a report alias — it is a
     // children-only row by definition whether it lands on a new row or
-    // upgrades an existing
-    // children-only one. pantheon_delegate pending parts keep source 'live'.
+    // upgrades an existing children-only one.
     const isNativeLive = liveEntry.tool === 'task' && liveEntry.alias === null
     if (isNativeLive) {
       // Native task() rows carry no report alias — keep the per-call
@@ -1589,21 +1577,18 @@ export function mergeChildDelegationSources(
     if (existing === undefined) continue
     // Any terminal state is authoritative — a child session that went idle
     // correctly derives 'completed' via childStatusToState before the MD
-    // report is written. The live tool-part channel stays 'running' until
-    // pantheon_delegation_read fires, so allowing it to overwrite a
-    // terminal state would flip completed → running (the bug this fixes).
+    // report is written. The live tool-part channel stays 'running' for the
+    // whole call, so allowing it to overwrite a terminal state would flip
+    // completed → running (the bug this fixes).
     //
     // When the existing entry IS terminal, we still absorb live metadata
-    // (alias, agent, read) but preserve the terminal state.
+    // (alias, agent) but preserve the terminal state.
     if (existing.state !== 'running') {
       if (liveEntry.alias !== null && existing.alias !== incoming.alias) {
         existing.alias = incoming.alias
       }
       if (incoming.agent !== 'agent' && existing.agent !== incoming.agent) {
         existing.agent = incoming.agent
-      }
-      if (incoming.read && !existing.read) {
-        existing.read = true
       }
       continue
     }
@@ -1617,10 +1602,8 @@ export function mergeChildDelegationSources(
       state: incoming.state,
       startedAt: Math.min(existing.startedAt, incoming.startedAt),
       updatedAt: incoming.updatedAt,
-      read: incoming.read,
       // A native task() live upgrade must not flip a children-only row to
-      // 'live' (that would drop the children-only provenance); pantheon_delegate
-      // upgrades still take source 'live'.
+      // 'live' (that would drop the children-only provenance).
       source: isNativeLive ? existing.source : 'live',
     }
   }
@@ -1630,12 +1613,11 @@ export function mergeChildDelegationSources(
 }
 
 /* ─── Live tool-call lifecycle (agent-sidebar pattern) ─────
- * Source of truth for jobs born while opencode is open. The TUI event bus
+ * Refresh trigger for jobs born while opencode is open. The TUI event bus
  * (api.event.on) delivers `message.part.updated` for every part change;
- * we only care about tool parts whose `tool` is pantheon_delegate (job
- * launch), the native `task` subagent tool (same parentID === caller
- * mechanism — its rows render `nat:`), or pantheon_delegation_read
- * (blocking until terminal → closes the entry). Shape-adapted from the
+ * we only care about tool parts whose `tool` is the native `task` subagent
+ * tool (parentID === caller mechanism — its rows render `nat:`); the panel
+ * rows themselves come from the children channel. Shape-adapted from the
  * SDK v2 ToolPart but duck-typed so the pure helpers are testable without
  * the SDK. */
 
@@ -1655,27 +1637,25 @@ export type DelegationToolPart = {
   }
 }
 
-/** One live delegation tracked in-memory, keyed by the delegate callID. */
+/** One live delegation tracked in-memory, keyed by the task callID. */
 export type LiveDelegationEntry = {
-  /** Tool call id of the pantheon_delegate part (stable across events). */
+  /** Tool call id of the task part (stable across events). */
   callID: string
   /** Part id (for message.part.removed cleanup). */
   partID: string
   /** Parent session the delegation was launched from. */
   sessionID: string
-  tool: 'pantheon_delegate' | 'pantheon_delegation_read' | 'task'
-  /** Agent name (from the delegate input args). */
+  tool: 'task'
+  /** Agent name (from the task input args). */
   agent: string
   description: string
-  /** Known after the delegate tool completes (parsed from its output). */
+  /** Known once the task completes and its output carries a marker. */
   alias: string | null
-  /** Child session id (parsed from the delegate output). */
+  /** Child session id (parsed from the task output, when present). */
   taskID: string | null
   state: 'running' | 'completed' | 'error' | 'cancelled'
   startedAt: number
   updatedAt: number | null
-  /** True once a pantheon_delegation_read for this job has been observed. */
-  read: boolean
 }
 
 /** Result of parsing one tool part into lifecycle-relevant fields. */
@@ -1683,9 +1663,9 @@ export type ParsedDelegationToolPart = {
   callID: string
   partID: string
   sessionID: string
-  tool: 'pantheon_delegate' | 'pantheon_delegation_read' | 'task'
-  /** null for read parts (no agent arg — the id targets an existing job). */
-  agent: string | null
+  tool: 'task'
+  /** Agent name from the task input args ('agent' fallback when absent). */
+  agent: string
   description: string
   status: 'pending' | 'running' | 'completed' | 'error'
   alias: string | null
@@ -1694,29 +1674,21 @@ export type ParsedDelegationToolPart = {
   endAt: number | null
 }
 
-/** Alias in the delegate output: "Delegated to apollo: [apo-1] (task …)". */
+/** Alias in the task output: "Delegated to apollo: [apo-1] (task …)". */
 const DELEGATE_ALIAS_PATTERN = /\[([a-z]{2,8}-\d+)\]/i
-/** Child task id in the delegate output: "(task ses_child_9)". */
+/** Child task id in the task output: "(task ses_child_9)". */
 const DELEGATE_TASKID_PATTERN = /\(task\s+([a-z0-9_]+)\)/i
-/** Plain alias, as passed to pantheon_delegation_read input.id: "apo-1". */
-const READ_ALIAS_PATTERN = /^[a-z]{2,8}-\d+$/i
 
 /** Extract the tool name + args from a `message.part.updated` part and
  *  reduce it to what the panel needs. Returns null for anything that is
- *  not a pantheon delegation tool part, the native `task` subagent tool
- *  (same parentID === caller mechanism — its children render `nat:`),
- *  or is missing its callID. */
+ *  not the native `task` subagent tool (parentID === caller mechanism —
+ *  its children render `nat:`), or is missing its callID. */
 export function parseDelegationToolPart(
   part: DelegationToolPart,
   now = Date.now(),
 ): ParsedDelegationToolPart | null {
   if (part.type !== 'tool') return null
-  if (
-    part.tool !== 'pantheon_delegate' &&
-    part.tool !== 'pantheon_delegation_read' &&
-    part.tool !== 'task'
-  )
-    return null
+  if (part.tool !== 'task') return null
   const callID = part.callID
   if (callID === undefined || callID === '') return null
   const sessionID = part.sessionID ?? ''
@@ -1727,29 +1699,6 @@ export function parseDelegationToolPart(
   const input = state.input ?? {}
   const startedAt = state.time?.start ?? now
   const endAt = state.time?.end ?? null
-
-  if (part.tool === 'pantheon_delegation_read') {
-    const target = typeof input.id === 'string' ? input.id : null
-    let alias: string | null = null
-    let taskID: string | null = null
-    if (target !== null) {
-      if (READ_ALIAS_PATTERN.test(target)) alias = target
-      else if (target.startsWith('ses_')) taskID = target // raw child session id
-    }
-    return {
-      callID,
-      partID: part.id ?? '',
-      sessionID,
-      tool: 'pantheon_delegation_read',
-      agent: null,
-      description: '',
-      status,
-      alias,
-      taskID,
-      startedAt,
-      endAt,
-    }
-  }
 
   const agent =
     typeof input.agent === 'string'
@@ -1763,9 +1712,9 @@ export function parseDelegationToolPart(
       : typeof input.prompt === 'string'
         ? (input.prompt as string).slice(0, 120)
         : ''
-  // The alias/taskID only exist once the delegate tool COMPLETES (they are
-  // returned in its output); a running/pending part has neither. Native
-  // `task` parts never carry a report alias — the children channel supplies
+  // The alias/taskID only exist once the task COMPLETES (they are
+  // returned in its output); a running/pending part has neither. A native
+  // `task` part never carries a report alias — the children channel supplies
   // the child session id and the row's identity.
   let alias: string | null = null
   let taskID: string | null = null
@@ -1778,7 +1727,7 @@ export function parseDelegationToolPart(
     callID,
     partID: part.id ?? '',
     sessionID,
-    tool: part.tool === 'task' ? 'task' : 'pantheon_delegate',
+    tool: 'task',
     agent,
     description,
     status,
@@ -1787,20 +1736,6 @@ export function parseDelegationToolPart(
     startedAt,
     endAt,
   }
-}
-
-/** Find a live entry by alias or taskID (read parts resolve by id). */
-function findLiveByTarget(
-  map: Map<string, LiveDelegationEntry>,
-  alias: string | null,
-  taskID: string | null,
-): LiveDelegationEntry | undefined {
-  if (alias === null && taskID === null) return undefined
-  for (const entry of map.values()) {
-    if (alias !== null && entry.alias === alias) return entry
-    if (taskID !== null && entry.taskID === taskID) return entry
-  }
-  return undefined
 }
 
 /** Apply one tool part to the live map. Returns true when the map changed.
@@ -1813,34 +1748,11 @@ export function reduceDelegationToolPart(
   const parsed = parseDelegationToolPart(part, now)
   if (parsed === null) return false
 
-  // Read tool: never creates a row — it resolves a delegation by id. It
-  // marks the target `read` and (because it blocks until terminal) closes
-  // the entry on completed/error with its end timestamp.
-  if (parsed.tool === 'pantheon_delegation_read') {
-    const target = findLiveByTarget(map, parsed.alias, parsed.taskID)
-    if (target === undefined) return false
-    let changed = false
-    if (!target.read) {
-      target.read = true
-      changed = true
-    }
-    if (parsed.status === 'completed' && target.state === 'running') {
-      target.state = 'completed'
-      target.updatedAt = parsed.endAt ?? now
-      changed = true
-    } else if (parsed.status === 'error' && target.state === 'running') {
-      target.state = 'error'
-      target.updatedAt = parsed.endAt ?? now
-      changed = true
-    }
-    return changed
-  }
-
-  // Delegate tool (pantheon_delegate AND native task): pending/running →
-  // job launched (running). A COMPLETED delegate tool only means the job was
-  // registered — it stays running and we pick up alias + taskID from the
-  // output. Native `task` parts never yield a report alias, so their rows
-  // stay identity-less until the children channel resolves them.
+  // Task tool: pending/running → job launched (running). A COMPLETED task
+  // only means the call returned — the child session keeps running, and we
+  // pick up alias + taskID from the output when present. Native `task` parts
+  // never yield a report alias, so their rows stay identity-less until the
+  // children channel resolves them.
   const existing = map.get(parsed.callID)
   if (parsed.status === 'error') {
     if (existing !== undefined && existing.state === 'error' && existing.updatedAt === parsed.endAt)
@@ -1850,14 +1762,13 @@ export function reduceDelegationToolPart(
       partID: parsed.partID,
       sessionID: parsed.sessionID,
       tool: parsed.tool,
-      agent: parsed.agent ?? 'agent',
+      agent: parsed.agent,
       description: parsed.description,
       alias: existing?.alias ?? null,
       taskID: existing?.taskID ?? null,
       state: 'error',
       startedAt: existing?.startedAt ?? parsed.startedAt,
       updatedAt: parsed.endAt ?? now,
-      read: existing?.read ?? false,
     })
     return true
   }
@@ -1867,14 +1778,13 @@ export function reduceDelegationToolPart(
       partID: parsed.partID,
       sessionID: parsed.sessionID,
       tool: parsed.tool,
-      agent: parsed.agent ?? 'agent',
+      agent: parsed.agent,
       description: parsed.description,
       alias: parsed.alias,
       taskID: parsed.taskID,
       state: 'running',
       startedAt: parsed.startedAt,
       updatedAt: null,
-      read: false,
     })
     return true
   }
@@ -1919,14 +1829,14 @@ export function removeDelegationEntry(
   return false
 }
 
-/** Collect pantheon delegation + native task tool parts from a session's messages.
+/** Collect native task tool parts from a session's messages.
  *  Messages may carry their parts inline (duck-typed `msg.parts`); when
  *  they don't, the optional `getParts(messageID)` callback is used (the TUI
  *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
- *  child session with parentID = caller — the same mechanism as
- *  pantheon_delegate — so its parts feed the live-map as the native signal
- *  (rows come from the children channel). Pure w.r.t. I/O — used
- *  by the mount re-scan to re-seed the live map after compaction/attach. */
+ *  child session with parentID = caller, so its parts feed the live-map as
+ *  the refresh signal (rows come from the children channel). Pure w.r.t.
+ *  I/O — used by the mount re-scan to re-seed the live map after
+ *  compaction/attach. */
 export function collectDelegationToolParts(
   messages: readonly { id?: string; parts?: unknown[] }[] | undefined,
   getParts?: (messageID: string) => readonly unknown[] | undefined,
@@ -1942,12 +1852,7 @@ export function collectDelegationToolParts(
     if (!parts) continue
     for (const raw of parts) {
       const part = raw as DelegationToolPart
-      if (
-        part?.type === 'tool' &&
-        (part.tool === 'pantheon_delegate' ||
-          part.tool === 'pantheon_delegation_read' ||
-          part.tool === 'task')
-      ) {
+      if (part?.type === 'tool' && part.tool === 'task') {
         out.push(part)
       }
     }
@@ -1972,7 +1877,7 @@ export function seedLiveDelegationMap(
 }
 
 /** Convert a live entry into the shared display shape. Alias falls back to
- *  a `live-<callID>` prefix while the delegate tool has not completed yet. */
+ *  a `live-<callID>` prefix while the task call has not completed yet. */
 export function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry {
   return {
     alias: live.alias ?? `live-${live.callID.slice(0, 8)}`,
@@ -1984,7 +1889,6 @@ export function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry {
     updatedAt: live.updatedAt,
     timedOut: false,
     description: live.description,
-    read: live.read,
     source: 'live',
   }
 }
@@ -2049,7 +1953,7 @@ export function filterDelegationsToSession(
 
 /* ─── Children channel (primary source, delegations-sidebar pattern) ────
  * `api.client.session.children` returns the child sessions of the current
- * session — every pantheon_delegate spawns one (parentID = caller). The
+ * session — every native task() call spawns one (parentID = caller). The
  * pure helpers here turn those children + the md reports into the display
  * list, and navigate to a child session on click. */
 
@@ -2384,7 +2288,7 @@ export function ceilingDelegationList(
   return { visible, hidden: hiddenActive + hiddenTerminal, hiddenActive, hiddenTerminal }
 }
 
-/** Split a display list into native task() rows vs pantheon_delegate rows.
+/** Split a display list into native task() rows vs pantheon report rows.
  *  Native = source 'children-only' (no delegate report); everything else counts
  *  as pantheon. Pure — powers the hooks.log line. */
 export function countDelegationSources(entries: readonly DelegationEntry[]): {
@@ -2417,8 +2321,8 @@ export function formatPanelLogLine(
  *  report still renders: description from its title, agent from the child
  *  itself (fallback 'agent'), state derived from its status, startedAt from
  *  time.created. A report-less child is a NATIVE task() child (every
- *  child of the current session — pantheon_delegate OR the native `task()`
- *  tool — carries parentID = caller), so it gets source 'children-only', a
+ *  child of the current session — the native `task()` tool — carries
+ *  parentID = caller), so it gets source 'children-only', a
  *  per-child alias 'native-<last4 of the child id>' (one identity per native
  *  row) instead of a report alias. The 'task nativa' description fallback
  *  keeps the row non-empty when the child carries no title.
@@ -2821,7 +2725,7 @@ function View(props: {
 
   // ── Delegations: session.children (PRIMARY) + md reports (enrichment) ──
   // The panel's source of truth is the SDK child-session API
-  // (`api.client.session.children`) — every pantheon_delegate spawns a child
+  // (`api.client.session.children`) — every native task() call spawns a child
   // session with parentID = this session, so children ARE the delegation
   // list (delegations-sidebar pattern). The md channel
   // (.pantheon/delegations) enriches each child with alias/agent/description
@@ -3168,16 +3072,15 @@ const tui: TuiPlugin = (api, _options, _meta) => {
   // Vendored feature (MIT): AI subscription usage gauges.
   void setupUsageBar(api) // async init — never blocks sidebar registration
 
-  // ── Live delegation store (legacy tool-part tracker, kept as a REFRESH
+  // ── Live delegation store (tool-part tracker, kept as a REFRESH
   // TRIGGER) ──
   // The Delegations panel's PRIMARY source is `api.client.session.children`
   // (delegations-sidebar pattern) — `message.part.updated` may not fire for
-  // pantheon_delegate on runtime 1.18.13 (the "(0)" symptom). The tool-part
-  // lifecycle below still tracks pantheon_delegate / pantheon_delegation_read
-  // parts and bumps a version signal the View subscribes to: when part
-  // events DO arrive, the panel re-fetches children. Fail-open: if the
-  // events API is unavailable nothing subscribes and the 1s safety poll
-  // keeps the panel working (never crash).
+  // the native task tool on runtime 1.18.13 (the "(0)" symptom). The
+  // tool-part lifecycle below still tracks `task` parts and bumps a version
+  // signal the View subscribes to: when part events DO arrive, the panel
+  // re-fetches children. Fail-open: if the events API is unavailable nothing
+  // subscribes and the 1s safety poll keeps the panel working (never crash).
   const [liveVersion, setLiveVersion] = createSignal(0)
   const liveStore: LiveDelegationStore = {
     map: new Map<string, LiveDelegationEntry>(),

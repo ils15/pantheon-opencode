@@ -30,7 +30,15 @@ way to plan work, make progress, check results, and keep useful project context.
 
 ## Start in 2 minutes
 
-Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js 22+.
+Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js
+22.22.2+ (or 24.15.0+ / 26+).
+
+Pantheon declares `engines.node` as `^22.22.2 || ^24.15.0 || >=26.0.0`. The
+floor reflects what the dependency tree actually needs — the transitive
+`ini@7` rejects earlier 22.x/24.x builds with `EBADENGINE` — and odd-numbered
+Node releases (23, 25) are out of range. The `pantheon_cost` tool also needs
+`node:sqlite`, which requires Node >= 22.5; `doctor` warns when the running
+runtime cannot load it.
 
 From the project where you want to use Pantheon:
 
@@ -246,7 +254,12 @@ Two freshness guarantees back it up:
   re-run `init` just for file copies.
 - **Drift detection** — the installer stamps the installed version in
   `.pantheon/install-state.json` and `doctor` warns when the package is newer
-  than the last sync, pointing at `update`.
+  than the last sync, pointing at `update`. `doctor` also detects **plugin
+  version drift** (issue #158): when `opencode.json` registers a plugin path
+  inside a `node_modules/pantheon-opencode` copy whose `package.json` version
+  differs from the running package, it warns that the registered tool surface
+  is stale. Re-running `init`/`update` realigns the registration onto the
+  current package.
 
 `init` also gained `--components agents,skills,...` (narrow install),
 `--clean` (alias of `--force`), `--opencode-version auto`, atomic config
@@ -255,6 +268,42 @@ before any file is written, and a non-fatal Python runtime: if the venv fails,
 the install completes but MCP entries are omitted (with a warning) instead of
 pointing at a broken interpreter. Installer messages auto-detect pt-BR via
 `LANG`/`LC_ALL`.
+
+## Migrating to 1.5.x (from 1.4.x)
+
+1.5.0 removed the custom `pantheon_delegate` tool (and the V1 delegation
+engine) in favor of OpenCode's native `task()`; see
+[Delegation (native `task()`)](#delegation-native-task). Two things change on
+an existing install:
+
+1. **The tool disappears from the plugin surface.** `pantheon_delegate` is no
+   longer registered by `src/plugin.ts` or `src/plugin-v2.ts`. Agents now
+   delegate through `task()` only — no configuration is needed.
+2. **A lockfile-pinned copy can keep the old tool alive.** `npm install` is
+   lockfile-authoritative: a `package-lock.json` pinned to `1.4.1` (which
+   satisfies `^1.4.1`) is never re-resolved, so a project's
+   `node_modules/pantheon-opencode` can stay on 1.4.x while the published
+   package moved on. The plugin path your `opencode.json` registers keeps
+   pointing at that stale copy, and you keep running the obsolete tool surface
+   — including `pantheon_delegate` — with no warning.
+
+The fix is a realignment + a detector:
+
+```bash
+# Realign the registered plugin path onto the current package (rewrites any
+# node_modules/pantheon-opencode reference in opencode.json):
+npx pantheon-opencode@latest init --yes --headless
+# or, with a global install:
+pantheon-opencode update
+
+# Then verify no drift remains:
+npx pantheon-opencode@latest doctor
+```
+
+`doctor` now reports a **Plugin Version Drift** warning (section H3) when the
+registered plugin points into an installed copy whose version differs from the
+running package, naming both versions and the removal (`pantheon_delegate` in
+1.5.0). A healthy install reports no warning.
 
 ## Releases
 
@@ -329,6 +378,18 @@ raises an explicit error. This catches the common free-tier failure mode where a
 child session exceeds the uncached-prefill token budget (`BackendAdmissionRejected`)
 and returns nothing. Prefer `background=true` dispatches with an explicit
 `task_status(wait=true)` fan-in so large payloads are collected deterministically.
+
+
+## Configuration (environment variables)
+
+| Variable | Default | Description |
+|---|---|---|
+| `PANTHEON_MEMORY_EMBED` | `on` | `off` (also `0`, `false`, `no`) disables the `pantheon-memory` embedding/vector pipeline — search runs in FTS5-only mode with no model download and no `sqlite-vec` writes. Also forced `off` automatically when `fastembed` fails to import, so a broken embedding install never takes the server down (issue #159). |
+
+The memory MCP degrades gracefully: when `fastembed` or `sqlite-vec` are
+unavailable (network failure, incompatible wheel), the server still starts,
+answers the MCP `initialize` handshake, and serves keyword search — only the
+semantic vector ranking is unavailable.
 
 
 ## Documentation
