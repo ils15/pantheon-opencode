@@ -18,8 +18,6 @@ type DelegationEntry = {
   updatedAt: number | null;
   timedOut: boolean;
   description: string;
-  /** True while the panel is waiting for pantheon_delegation_read. */
-  read?: boolean;
   /** Internal provenance used to keep a finalized md report authoritative.
    *  'children-only' = a native task() child session with NO delegate report
    *  (a native child row); 'md' = the child has a matching report;
@@ -145,7 +143,7 @@ declare function fmtElapsed(ms: number): string;
 declare function delegationElapsed(entry: DelegationEntry, now: number): string;
 /** The activity labels shown by the animated row. Keeping this pure makes the
  * state machine testable without booting OpenCode's renderer. */
-type DelegationActivity = 'delegating' | 'working' | 'reading' | 'completed' | 'error' | 'cancelled';
+type DelegationActivity = 'delegating' | 'working' | 'completed' | 'error' | 'cancelled';
 declare function delegationActivity(entry: DelegationEntry): DelegationActivity;
 declare function delegationActivityLabel(entry: DelegationEntry): string;
 /** Return the spinner glyph for the given frame counter. The frame counter
@@ -217,36 +215,34 @@ type DelegationToolPart = {
     };
   };
 };
-/** One live delegation tracked in-memory, keyed by the delegate callID. */
+/** One live delegation tracked in-memory, keyed by the task callID. */
 type LiveDelegationEntry = {
-  /** Tool call id of the pantheon_delegate part (stable across events). */
+  /** Tool call id of the task part (stable across events). */
   callID: string;
   /** Part id (for message.part.removed cleanup). */
   partID: string;
   /** Parent session the delegation was launched from. */
   sessionID: string;
-  tool: 'pantheon_delegate' | 'pantheon_delegation_read' | 'task';
-  /** Agent name (from the delegate input args). */
+  tool: 'task';
+  /** Agent name (from the task input args). */
   agent: string;
   description: string;
-  /** Known after the delegate tool completes (parsed from its output). */
+  /** Known once the task completes and its output carries a marker. */
   alias: string | null;
-  /** Child session id (parsed from the delegate output). */
+  /** Child session id (parsed from the task output, when present). */
   taskID: string | null;
   state: 'running' | 'completed' | 'error' | 'cancelled';
   startedAt: number;
   updatedAt: number | null;
-  /** True once a pantheon_delegation_read for this job has been observed. */
-  read: boolean;
 };
 /** Result of parsing one tool part into lifecycle-relevant fields. */
 type ParsedDelegationToolPart = {
   callID: string;
   partID: string;
   sessionID: string;
-  tool: 'pantheon_delegate' | 'pantheon_delegation_read' | 'task';
-  /** null for read parts (no agent arg — the id targets an existing job). */
-  agent: string | null;
+  tool: 'task';
+  /** Agent name from the task input args ('agent' fallback when absent). */
+  agent: string;
   description: string;
   status: 'pending' | 'running' | 'completed' | 'error';
   alias: string | null;
@@ -256,9 +252,8 @@ type ParsedDelegationToolPart = {
 };
 /** Extract the tool name + args from a `message.part.updated` part and
  *  reduce it to what the panel needs. Returns null for anything that is
- *  not a pantheon delegation tool part, the native `task` subagent tool
- *  (same parentID === caller mechanism — its children render `nat:`),
- *  or is missing its callID. */
+ *  not the native `task` subagent tool (parentID === caller mechanism —
+ *  its children render `nat:`), or is missing its callID. */
 declare function parseDelegationToolPart(part: DelegationToolPart, now?: number): ParsedDelegationToolPart | null;
 /** Apply one tool part to the live map. Returns true when the map changed.
  *  Pure w.r.t. I/O — only mutates `map`. */
@@ -266,14 +261,14 @@ declare function reduceDelegationToolPart(map: Map<string, LiveDelegationEntry>,
 /** Remove a live entry by part id (message.part.removed) or call id.
  *  Returns true when something was removed. */
 declare function removeDelegationEntry(map: Map<string, LiveDelegationEntry>, partIDOrCallID: string): boolean;
-/** Collect pantheon delegation + native task tool parts from a session's messages.
+/** Collect native task tool parts from a session's messages.
  *  Messages may carry their parts inline (duck-typed `msg.parts`); when
  *  they don't, the optional `getParts(messageID)` callback is used (the TUI
  *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
- *  child session with parentID = caller — the same mechanism as
- *  pantheon_delegate — so its parts feed the live-map as the native signal
- *  (rows come from the children channel). Pure w.r.t. I/O — used
- *  by the mount re-scan to re-seed the live map after compaction/attach. */
+ *  child session with parentID = caller, so its parts feed the live-map as
+ *  the refresh signal (rows come from the children channel). Pure w.r.t.
+ *  I/O — used by the mount re-scan to re-seed the live map after
+ *  compaction/attach. */
 declare function collectDelegationToolParts(messages: readonly {
   id?: string;
   parts?: unknown[];
@@ -284,7 +279,7 @@ declare function collectDelegationToolParts(messages: readonly {
  *  the map (0 on the second identical seed — idempotent, no extra bumps). */
 declare function seedLiveDelegationMap(map: Map<string, LiveDelegationEntry>, parts: readonly DelegationToolPart[], now?: number): number;
 /** Convert a live entry into the shared display shape. Alias falls back to
- *  a `live-<callID>` prefix while the delegate tool has not completed yet. */
+ *  a `live-<callID>` prefix while the task call has not completed yet. */
 declare function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry;
 /** Combine the live channel with the md (historical) channel into one
  *  display list. Dedupes by (sessionID, alias) — aliases are per-parent-
@@ -467,7 +462,7 @@ declare function ceilingDelegationList(all: readonly DelegationEntry[], maxVisib
   hiddenActive: number;
   hiddenTerminal: number;
 };
-/** Split a display list into native task() rows vs pantheon_delegate rows.
+/** Split a display list into native task() rows vs pantheon report rows.
  *  Native = source 'children-only' (no delegate report); everything else counts
  *  as pantheon. Pure — powers the hooks.log line. */
 declare function countDelegationSources(entries: readonly DelegationEntry[]): {
