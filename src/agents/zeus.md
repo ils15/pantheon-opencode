@@ -3,6 +3,7 @@ description: "Orquestrador central — NUNCA implementa. Roteia para especialist
 mode: primary
 reasoning_effort: medium
 permission:
+  read: allow
   edit: deny
   bash: deny
   task:
