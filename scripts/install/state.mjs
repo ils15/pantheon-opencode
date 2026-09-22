@@ -108,7 +108,32 @@ export function upgradeStateV1toV2(state) {
 }
 
 /**
- * Normalize any state to v2 (handles v1 → v2 upgrade).
+ * Guarantee the required v2 collections exist on a state object.
+ *
+ * A schema-v2 entry may be written by a partial writer — e.g. the postinstall
+ * version marker in sync-tui.mjs persisted only `pantheon_version` /
+ * `previous_version`, and writeState() then stamped it `schema_version: 2`.
+ * Such an entry has no `applied_migrations`, so the next `init` crashed in
+ * runMigrations() with
+ * "Cannot read properties of undefined (reading 'push')".
+ * Backfill the collections on read instead of trusting every writer.
+ * @param {object} state
+ * @returns {object} the same state object with required collections present
+ */
+function ensureV2Shape(state) {
+  if (!Array.isArray(state.applied_migrations)) state.applied_migrations = []
+  if (
+    !state.components ||
+    typeof state.components !== 'object' ||
+    Array.isArray(state.components)
+  ) {
+    state.components = upgradeStateV1toV2(state).components
+  }
+  return state
+}
+
+/**
+ * Normalize any state to v2 (handles v1 → v2 upgrade and partial v2 markers).
  * @param {object} state
  * @returns {object|null}
  */
@@ -116,7 +141,7 @@ function normalizeState(state) {
   if (!state || typeof state !== 'object') return null
   if (isV1State(state)) return upgradeStateV1toV2(state)
   if (!state.schema_version || state.schema_version < 2) return upgradeStateV1toV2(state)
-  return state
+  return ensureV2Shape(state)
 }
 
 /**
