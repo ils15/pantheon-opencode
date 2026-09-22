@@ -89,13 +89,23 @@ test('CI validates YAML and installs locked dependencies only', () => {
   )
   assert.match(
     workflow,
-    /pip install[^\n]*-r src\/mcp\/requirements-mcp\.txt/,
-    'CI must install locked MCP runtime deps before pytest so mcp/sqlite-vec imports resolve',
+    /pip install[^\n]*-r src\/mcp\/requirements-vision\.txt/,
+    'CI must install locked vision deps before pytest so httpx imports resolve',
   )
   assert.match(
     workflow,
-    /pip install[^\n]*-r src\/mcp\/requirements-vision\.txt/,
-    'CI must install locked vision deps before pytest so httpx imports resolve',
+    /pip install[^\n]*sqlite-vec==[\d.]+/,
+    'CI must install the locked sqlite-vec wheel before pytest so memory_mcp_server imports resolve',
+  )
+  // fastembed (~180MB wheel) is deliberately NOT installed in CI: only
+  // memory_mcp_server needs it, at runtime, and its tests skip gracefully via
+  // pytest.importorskip (issue #94). Removing the top-level import is tracked
+  // by issue #159. This guard keeps that intent fail-closed — if fastembed
+  // ever creeps back into the install step, CI wall-clock and disk regress.
+  assert.doesNotMatch(
+    workflow,
+    /pip install[^\n]*fastembed/,
+    'CI must not install fastembed; tests needing it skip via pytest.importorskip (issue #94)',
   )
   assert.doesNotMatch(workflow, /pip install[^\n]*\|\|/)
   const testGate = workflow.indexOf('npm test')
@@ -105,8 +115,8 @@ test('CI validates YAML and installs locked dependencies only', () => {
     'Locked pytest-asyncio pip install must run BEFORE the pytest gate',
   )
   assert.ok(
-    workflow.indexOf('requirements-mcp.txt') < testGate,
-    'Locked MCP pip install must run BEFORE the pytest gate',
+    workflow.indexOf('sqlite-vec==') < testGate,
+    'Locked sqlite-vec pip install must run BEFORE the pytest gate',
   )
   assert.ok(
     workflow.indexOf('requirements-vision.txt') < testGate,
