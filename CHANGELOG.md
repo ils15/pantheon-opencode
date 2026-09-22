@@ -18,6 +18,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.2] - 2026-09-22
+
+## 🐞 Fixed
+- **install** — guard undefined collection in init (#174)
+- **release** — compare Zenodo file checksum in the format the API returns (#173)
 ## [v1.5.1] - 2026-09-22
 
 ## 🐞 Fixed
