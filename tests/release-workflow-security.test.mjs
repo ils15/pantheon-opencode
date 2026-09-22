@@ -175,6 +175,24 @@ test('tag and release provenance remains bound to TARGET_SHA', () => {
   assert.match(release, /npm publish .*--provenance/)
 })
 
+test('only the stable channel creates a GitHub Release', () => {
+  // The official Zenodo GitHub integration archives every Release, including
+  // pre-releases, so the beta channel must not create one.
+  const start = release.indexOf('name: Create GitHub release')
+  const end = release.indexOf('name: Publish immutable artifact to npm')
+  assert.ok(start >= 0 && end > start, 'expected the Create GitHub release step before publish')
+  const step = release.slice(start, end)
+  assert.match(step, /inputs\.release_channel != 'beta'/)
+  assert.match(step, /inputs\.recovery_version == ''/)
+  // The beta branch and the --prerelease flag are gone from the step.
+  assert.doesNotMatch(step, /--prerelease/)
+  assert.doesNotMatch(step, /RELEASE_CHANNEL/)
+  // The git tag is still created for both channels and backs beta recovery.
+  assert.match(release, /Create and push immutable tag/)
+  assert.match(release, /Recovery requires an existing git tag/)
+  assert.doesNotMatch(release, /Recovery requires the existing GitHub Release/)
+})
+
 test('recovery inputs, hostile refs, and tag objects are rejected', () => {
   // The workflow itself must reject recovery_pr_number for the modern format
   // (guard is present in both the pre-checkout and pre-mutation validators).

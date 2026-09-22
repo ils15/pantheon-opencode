@@ -11,7 +11,10 @@ anterior** (pré-1.5.x): seu registro é a **version** DOI
 atuais (**1.5.x**) usam a família **ativa**, cujo **concept** DOI é
 [10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136)
 (`conceptrecid 22650136`), que sempre resolve para a última versão arquivada.
-O v1.4.3 não é a versão operacional atual nem um alvo de release.
+A integração Zenodo↔GitHub arquiva **toda** GitHub Release (sem filtro de
+pre-release); como apenas o canal stable cria Release, apenas versões stable
+entram na família Zenodo. O v1.4.3 não é a versão operacional atual nem um
+alvo de release.
 
 | Release | Formato | Exemplo |
 |---------|---------|---------|
@@ -48,7 +51,10 @@ Labels de PR, push, merge e tag **não** disparam nenhum fluxo de release.
 3. No GitHub Actions, execute manualmente `Release` (`workflow_dispatch`) com
    `release_channel=beta` na revisão desejada. O workflow lê a versão
    commitada, exige `X.Y.Z-beta.N`, extrai as notas da seção do `CHANGELOG.md`,
-   cria a tag `vX.Y.Z-beta.N` e publica no npm com tag `beta`.
+   cria a tag `vX.Y.Z-beta.N` e publica no npm com tag `beta`. O canal beta
+   **não cria GitHub Release** — a integração oficial Zenodo↔GitHub arquiva
+   *toda* Release (inclusive pre-release), então a tag sozinha é usada para
+   recuperação e a beta não aparece na família Zenodo.
 4. Instalar: `npm install pantheon-opencode@beta`
 
 ### Stable Release (dispatch explícito)
@@ -65,16 +71,17 @@ Labels de PR, push, merge e tag **não** disparam nenhum fluxo de release.
 
 ### Recuperação de beta já criado
 
-Quando a tag e o GitHub Release já existem, mas o `npm publish` falhou, execute
-`Release` manualmente informando `recovery_version` (sem `v`) e
-`recovery_target_sha` (SHA completo de 40 hex). Para a versão commitada
-`X.Y.Z-beta.N` basta esse par; o `recovery_pr_number` é aceito apenas para
-recuperar o formato legado `X.Y.Z-beta.<pr>.<7-char-sha>`, no qual os três
-campos são obrigatórios. O modo valida os campos antes do checkout, exige a tag
-e o Release existentes exatos, não cria nem move recursos no GitHub e publica
-somente se a versão exata ainda não estiver no npm. Versões parciais, inválidas,
-releases ausentes ou erros de API abortam sem mutação; se a versão já existir, a
-execução é idempotente.
+Quando a tag já existe, mas o `npm publish` falhou, execute `Release`
+manualmente informando `recovery_version` (sem `v`) e `recovery_target_sha`
+(SHA completo de 40 hex). Para a versão commitada `X.Y.Z-beta.N` basta esse par;
+o `recovery_pr_number` é aceito apenas para recuperar o formato legado
+`X.Y.Z-beta.<pr>.<7-char-sha>`, no qual os três campos são obrigatórios. Como a
+beta não cria GitHub Release, a recuperação se apoia **apenas na tag**: o modo
+valida os campos antes do checkout, exige a tag existente apontando para o
+`TARGET_SHA` (sem exigir Release), não cria nem move recursos no GitHub e
+publica somente se a versão exata ainda não estiver no npm. Versões parciais,
+inválidas, tags ausentes ou erros de API abortam sem mutação; se a versão já
+existir, a execução é idempotente.
 
 ## Notas de release por canal
 
@@ -86,7 +93,7 @@ a seção não existir.
 |-------|-----------------|
 | Stable | Seção curada `## [X.Y.Z]` do `CHANGELOG.md`. Falha se ausente. |
 | Beta | Seção curada `## [X.Y.Z-beta.N]` do `CHANGELOG.md`. Falha se ausente. |
-| Recuperação | Nota estática (`Recovery publish for existing GitHub Release ...`); as notas originais não são re-geradas. |
+| Recuperação | Nota estática (`Recovery publish for existing tag ...`); as notas originais não são re-geradas. |
 
 Adicionar a seção do `CHANGELOG.md` é obrigatório para os dois canais, inclusive
 beta — assim o mesmo artefato commitado é a única fonte de verdade.
@@ -127,8 +134,8 @@ não foram exercitadas.
 
 | Tag npm | Versão | Git Tag | GitHub Release |
 |---------|--------|---------|----------------|
-| `latest` | `<stable-version>` | `<vX.Y.Z>` | `<GitHub Release>` |
-| `beta` | `<beta-version>` | `vX.Y.Z-beta.N` | `<GitHub Pre-release>` |
+| `latest` | `<stable-version>` | `<vX.Y.Z>` | `<GitHub Release>` (arquivada no Zenodo) |
+| `beta` | `<beta-version>` | `vX.Y.Z-beta.N` | — (beta não cria Release; não arquivada no Zenodo) |
 
 ## Histórico
 
