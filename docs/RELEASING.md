@@ -146,13 +146,14 @@ paste into the `[Unreleased]` CHANGELOG section (diagnostics go to stderr).
 
 ### Release body by channel
 
-`release.yml` selects the GitHub Release body by channel:
+`release.yml` extracts the release body from the committed `CHANGELOG.md` for
+both dispatch channels; only the stable channel attaches it to a GitHub Release:
 
 | Channel | Notes source |
 |---------|--------------|
-| stable | `node scripts/changelog-extract.mjs X.Y.Z` reads the curated `## [X.Y.Z]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. |
-| beta | `node scripts/changelog-extract.mjs X.Y.Z-beta.N` reads the curated `## [X.Y.Z-beta.N]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. |
-| recovery | Static note (`Recovery publish for existing GitHub Release ...`); the original notes are not regenerated. |
+| stable | `node scripts/changelog-extract.mjs X.Y.Z` reads the curated `## [X.Y.Z]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Used as the GitHub Release body. |
+| beta | `node scripts/changelog-extract.mjs X.Y.Z-beta.N` reads the curated `## [X.Y.Z-beta.N]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Carried in the release artifact only — beta creates no GitHub Release. |
+| recovery | Static note (`Recovery publish for existing tag ...`); the original notes are not regenerated. |
 
 The version is committed, so a `CHANGELOG.md` section is authorable before the
 dispatch and is required for **both** channels. Beta does not use generated
@@ -262,9 +263,11 @@ the stable path.
 3. **CHANGELOG** — the bump PR must contain a `## [X.Y.Z-beta.N] - date` section;
    the release body is extracted from it and the dispatch fails if it is
    missing. Beta does not use generated conventional-commit notes.
-4. **Tag and release** — the tag is created on the **dispatch target SHA**, and
-   the GitHub Release is created with `--prerelease` and title
-   `Pantheon <ver>`.
+4. **Tag** — the immutable tag `vX.Y.Z-beta.N` is created on the **dispatch
+   target SHA**. Beta creates **no** GitHub Release: the official Zenodo ↔
+   GitHub integration archives every Release (pre-releases included), so a beta
+   Release would add an unwanted version to the Zenodo family. The git tag alone
+   backs by-tag recovery.
 5. `npm publish --tag beta` publishes the immutable artifact. The workflow does
    not create a PR comment.
 
@@ -274,18 +277,19 @@ the stable path.
 
 ### Beta npm-publish recovery (explicit dispatch)
 
-If a beta's GitHub tag and Release already exist but npm publishing failed,
-rerun `Release` with `recovery_version` (the committed `X.Y.Z-beta.N`, without
-`v`) and `recovery_target_sha` (the full 40-hex commit SHA). The legacy
+If a beta's git tag already exists but npm publishing failed, rerun `Release`
+with `recovery_version` (the committed `X.Y.Z-beta.N`, without `v`) and
+`recovery_target_sha` (the full 40-hex commit SHA). The legacy
 `X.Y.Z-beta.<pr>.<sha7>` format is still accepted but additionally requires
 `recovery_pr_number` matching the version and the seven-character SHA suffix.
 For the current `X.Y.Z-beta.N` format only the version and SHA are needed. The
-workflow checks these values before checkout, checks that the remote
-`v<version>` tag and existing GitHub Release match exactly, and never creates or
-moves a tag/release in this mode. It packs the immutable checkout and publishes
-only when that exact npm version is absent; an existing npm version is a
-successful no-op. Partial or invalid inputs, missing releases, API errors, and
-tag mismatches fail closed.
+workflow checks these values before checkout, requires the remote `v<version>`
+tag to exist on the recovery target SHA, and never creates or moves a tag or
+release in this mode (beta creates no GitHub Release, so recovery is bound to
+the tag alone). It packs the immutable checkout and publishes only when that
+exact npm version is absent; an existing npm version is a successful no-op.
+Partial or invalid inputs, a missing tag, API errors, and tag mismatches fail
+closed.
 
 The recovery path is beta-only and does not calculate a new version or change
 the normal stable dispatch and beta-channel dispatch paths.
@@ -294,8 +298,9 @@ The pipeline is designed so **reruns are safe**:
 
 - **Already fully released** → the idempotent guard exits 0; nothing is
   re-tagged, re-released, or re-published.
-- **Crash between tag push and release create** → tag exists but release is
-  missing; a rerun skips tag creation and completes the release.
+- **Crash between tag push and release create (stable)** → tag exists but
+  release is missing; a rerun skips tag creation and completes the release.
+  Beta creates no Release, so its reruns proceed to the npm step.
 - **Crash after npm publish** → a rerun hits the idempotent guard (exit 0),
   and the npm existence check prevents publishing the same version again.
 - **changelog-extract fails on a stable or beta dispatch** → the `[X.Y.Z]` /
@@ -447,11 +452,18 @@ release a **version DOI**; all versions share the stable **concept DOI**
 [10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136)
 (`conceptrecid 22650136`), which always resolves to the latest archived release.
 
+The integration has **no pre-release filter**: it archives *every* GitHub
+Release. Only the stable channel creates a GitHub Release, so only stable
+versions are archived. Beta releases create a git tag and publish to npm but no
+Release, and are therefore intentionally absent from the Zenodo family.
+
 [`.zenodo.json`](../.zenodo.json) is the source of the deposited metadata
 (title, creators/ORCID, description, license, keywords, and related
 identifiers). `scripts/versioning.mjs` bumps its `version`, `publication_date`,
 and `url` alongside the other manifests on every release, so the file must stay
-in sync for the next archive.
+in sync for the next archive. The deposited `title` is read from `.zenodo.json`
+at the tagged commit and is **not** applied retroactively to versions already
+archived.
 
 The integration is configured in Zenodo and runs on Zenodo's side — no
 workflow, token, or protected environment is stored in this repository. If a

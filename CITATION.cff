@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use Pantheon, please cite this software."
-title: "Pantheon"
+title: "Pantheon Opencode"
 abstract: >-
   Pantheon v1.5.2 is an OpenCode plugin and installer for coordinating
   14 specialized agents. The repository includes reusable skills,
