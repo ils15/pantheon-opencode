@@ -10,7 +10,7 @@ e equipes que querem mais estrutura sem perder o controle do próprio código.
 
 [![Versão](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=versão)](https://github.com/ils15/pantheon-opencode/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22305176.svg)](https://doi.org/10.5281/zenodo.22305176)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22650136.svg)](https://doi.org/10.5281/zenodo.22650136)
 
 ## O que é?
 
@@ -296,7 +296,7 @@ uma issue ou pull request.
 ## Citação e DOI
 
 O Pantheon é distribuído sob a [Licença MIT](LICENSE). Cite o
-[DOI conceitual do Zenodo](https://doi.org/10.5281/zenodo.22305176), que sempre
+[DOI conceitual do Zenodo](https://doi.org/10.5281/zenodo.22650136), que sempre
 resolve para a última release arquivada; cada release também tem seu próprio
 version DOI. Os metadados de citação também estão em [CITATION.cff](CITATION.cff).
 

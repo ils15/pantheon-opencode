@@ -5,11 +5,13 @@
 Este checkout usa **v1.5.0-beta.2** como versão operacional local. Este texto
 não afirma que uma beta futura foi publicada; use os placeholders
 `vX.Y.Z` e `vX.Y.Z-beta.N` ao descrever releases futuras. A referência
-publicada **v1.4.3** é somente histórica: seu registro é a **version** DOI
-[10.5281/zenodo.22306637](https://doi.org/10.5281/zenodo.22306637), enquanto o
-**concept** DOI [10.5281/zenodo.22305176](https://doi.org/10.5281/zenodo.22305176)
-resolve para a última versão arquivada. Ela não é a versão operacional atual
-nem um alvo de release.
+publicada **v1.4.3** é somente histórica e pertence a uma **família Zenodo
+anterior** (pré-1.5.x): seu registro é a **version** DOI
+[10.5281/zenodo.22306637](https://doi.org/10.5281/zenodo.22306637). As versões
+atuais (**1.5.x**) usam a família **ativa**, cujo **concept** DOI é
+[10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136)
+(`conceptrecid 22650136`), que sempre resolve para a última versão arquivada.
+O v1.4.3 não é a versão operacional atual nem um alvo de release.
 
 | Release | Formato | Exemplo |
 |---------|---------|---------|
