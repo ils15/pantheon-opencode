@@ -14,9 +14,7 @@ Pantheon follows **Semantic Versioning** based on [Conventional Commits](https:/
 | `feat:` | **MINOR** (x.y.0) |
 | `fix:`, `chore:`, `docs:`, `refactor:`, etc. | **PATCH** (x.y.z) |
 
-Operational version in this checkout: **v1.5.0-beta.2**. The published
-**v1.4.3** reference below is historical Zenodo material only; it is not the
-current release version or a release target.
+Operational version in this checkout: **v1.5.0-beta.2**.
 
 ---
 
@@ -206,17 +204,10 @@ without recovery inputs runs the stable release path:
    repository-scoped GitHub API **on the exact dispatch target SHA**.
 7. **GitHub Release** —
    `gh release create vX.Y.Z --target <dispatch-sha> --verify-tag --title "Pantheon vX.Y.Z" --notes-file release-artifact/release-notes.md`.
-8. **npm publish (last step exposing `NPM_TOKEN`)** — gated by the idempotency
+8. **npm publish (final step)** — gated by the idempotency
    lookup, then that same tarball (without repacking) is published with
    `--tag latest --access public --provenance`. The SHA-256 validated in the
-   validation job is therefore the SHA-256 of the file published to npm. This is
-   the last step that consumes the `NPM_TOKEN` credential; it is **not** the
-   last step of the job.
-9. **Zenodo dispatch (final step)** — after the npm publish, a stable-only,
-   non-fatal `gh workflow run zenodo.yml` starts the draft deposition. It adds
-   no new credential and runs no repository code, and a failed dispatch never
-   fails an already-published release. See
-   [Preserved Releases: Zenodo](#preserved-releases-zenodo).
+   validation job is therefore the SHA-256 of the file published to npm.
 
 A global concurrency group (`release`, no cancel-in-progress) serializes
 runs so beta and stable paths can never double-publish.
@@ -448,12 +439,22 @@ Each release includes:
 
 ## Preserved Releases: Zenodo
 
-[Zenodo](https://zenodo.org/) preserves releases for citation and long-term access. GitHub does not deliver `release` events for releases created with the workflow `GITHUB_TOKEN`, so the **Release** workflow explicitly dispatches **Publish release to Zenodo** (`workflow_dispatch`) after a **stable** release is published and its npm artifact is uploaded. That run creates or resumes a **draft** deposition idempotently (`publish_deposition=false`) and never creates duplicates; publication remains a separate, human-approved action. Beta and recovery publishes are not archived automatically.
+[Zenodo](https://zenodo.org/) preserves releases for citation and long-term
+access through the **official Zenodo ↔ GitHub integration** on
+[`ils15/pantheon-opencode`](https://github.com/ils15/pantheon-opencode). Each
+published GitHub Release is archived automatically as a new version, giving that
+release a **version DOI**; all versions share the stable **concept DOI**
+[10.5281/zenodo.22305176](https://doi.org/10.5281/zenodo.22305176)
+(`conceptrecid 22305176`), which always resolves to the latest archived release.
 
-For a manual run, open **Actions → Publish release to Zenodo** and set `release_tag=v1.4.3`, `confirm_production=true`, and `publish_deposition=false` to create or resume a draft. Review the draft before running again with `publish_deposition=true`; use that value only after human approval. If the automatic dispatch fails, the Release job stays green and emits a non-fatal notice — start the manual run with the same `release_tag`.
+[`.zenodo.json`](../.zenodo.json) is the source of the deposited metadata
+(title, creators/ORCID, description, license, keywords, and related
+identifiers). `scripts/versioning.mjs` bumps its `version`, `publication_date`,
+and `url` alongside the other manifests on every release, so the file must stay
+in sync for the next archive.
 
-The protected `zenodo-production` environment must contain secret `ZENODO_TOKEN` and vars `ZENODO_DEPOSITIONS_URL`, `ZENODO_FILES_URL_TEMPLATE`, `ZENODO_PUBLISH_URL_TEMPLATE`, and `ZENODO_CREATOR_NAME`. Never put token values in logs or code. Use sandbox configuration for rehearsal and production only for the reviewed deposition.
-
-The workflow validates metadata, the release archive, and the integrity of the upload. Zenodo's deposition files API reports an **MD5** for each uploaded file — either as `md5:<hex>` or, for backward compatibility, as a bare 32-character hex string without any algorithm prefix — so the workflow records the local archive's MD5 and SHA-256 and verifies the upload against whichever algorithm Zenodo reports (an unrecognized or missing checksum fails the run). After publication it persists the DOI in the GitHub release notes. Post-execution checklist: metadata correct; version **1.4.3**; license **MIT**; `pantheon-opencode-1.4.3.zip`/archive present; archive checksum matches (MD5 as reported by Zenodo); state **Published**; DOI present in the Zenodo record and release notes.
-
-Verify the record and DOI on Zenodo and via the DOI link; **v1.4.3** DOI: [10.5281/zenodo.22306637](https://doi.org/10.5281/zenodo.22306637).
+The integration is configured in Zenodo and runs on Zenodo's side — no
+workflow, token, or protected environment is stored in this repository. If a
+Release is not archived automatically, trigger a sync from the repository's
+Zenodo GitHub settings, then verify the concept DOI, the per-release version
+DOI, and the record metadata on Zenodo.

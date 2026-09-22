@@ -6,7 +6,7 @@ Este checkout usa **v1.5.0-beta.2** como versão operacional local. Este texto
 não afirma que uma beta futura foi publicada; use os placeholders
 `vX.Y.Z` e `vX.Y.Z-beta.N` ao descrever releases futuras. A referência
 publicada **v1.4.3** é somente histórica e corresponde ao registro no
-[Zenodo](https://doi.org/10.5281/zenodo.22306637); ela não é a versão
+[Zenodo](https://doi.org/10.5281/zenodo.22305176); ela não é a versão
 operacional atual nem um alvo de release.
 
 | Release | Formato | Exemplo |
