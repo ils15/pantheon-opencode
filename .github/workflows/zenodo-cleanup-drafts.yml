@@ -46,9 +46,12 @@ jobs:
       ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
       ZENODO_DEPOSITIONS_URL: ${{ vars.ZENODO_DEPOSITIONS_URL }}
       CONFIRM_DELETE: ${{ inputs.confirm_delete }}
-      CANDIDATES_FILE: ${{ runner.temp }}/zenodo-orphans.tsv
-      REPORT_FILE: ${{ runner.temp }}/zenodo-orphans-report.txt
-      ALL_FILE: ${{ runner.temp }}/zenodo-depositions.json
+      # NOTE: the scratch-file paths (CANDIDATES_FILE / REPORT_FILE / ALL_FILE)
+      # must NOT live here. `jobs.<id>.env` only exposes the `github`, `needs`,
+      # `strategy`, `matrix`, `vars`, `secrets` and `inputs` contexts — `runner`
+      # is a step-scope context, so `${{ runner.temp }}` here is a workflow
+      # parse error (HTTP 422, every run a startup failure). They are exported
+      # from the first step via `$GITHUB_ENV` instead.
     steps:
       - name: Validate environment inputs
         run: |
@@ -75,6 +78,14 @@ jobs:
             process.stdout.write(url.origin + url.pathname);
           ') || { echo '::error::ZENODO_DEPOSITIONS_URL failed validation.'; exit 1; }
           printf 'ZENODO_API_BASE=%s\n' "$base" >> "$GITHUB_ENV"
+          # Scratch paths are exported here, not at job scope: `${{ runner.temp }}`
+          # is only valid inside a step. `$RUNNER_TEMP` is the runner-provided
+          # env var carrying the same directory, and `$GITHUB_ENV` persists these
+          # values to every later step, so downstream `$CANDIDATES_FILE` /
+          # `$REPORT_FILE` / `$ALL_FILE` usages stay unchanged.
+          printf 'CANDIDATES_FILE=%s\n' "$RUNNER_TEMP/zenodo-orphans.tsv" >> "$GITHUB_ENV"
+          printf 'REPORT_FILE=%s\n' "$RUNNER_TEMP/zenodo-orphans-report.txt" >> "$GITHUB_ENV"
+          printf 'ALL_FILE=%s\n' "$RUNNER_TEMP/zenodo-depositions.json" >> "$GITHUB_ENV"
           echo "Environment validated for $base"
 
       - name: Scan for orphan drafts
