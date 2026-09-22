@@ -444,8 +444,8 @@ access through the **official Zenodo ↔ GitHub integration** on
 [`ils15/pantheon-opencode`](https://github.com/ils15/pantheon-opencode). Each
 published GitHub Release is archived automatically as a new version, giving that
 release a **version DOI**; all versions share the stable **concept DOI**
-[10.5281/zenodo.22305176](https://doi.org/10.5281/zenodo.22305176)
-(`conceptrecid 22305176`), which always resolves to the latest archived release.
+[10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136)
+(`conceptrecid 22650136`), which always resolves to the latest archived release.
 
 [`.zenodo.json`](../.zenodo.json) is the source of the deposited metadata
 (title, creators/ORCID, description, license, keywords, and related

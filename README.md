@@ -10,7 +10,7 @@ want useful structure without giving up control of their code.
 
 [![Version](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=version)](https://github.com/ils15/pantheon-opencode/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22305176.svg)](https://doi.org/10.5281/zenodo.22305176)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22650136.svg)](https://doi.org/10.5281/zenodo.22650136)
 
 ## What is it?
 
@@ -410,7 +410,7 @@ or pull request.
 ## Citation and DOI
 
 Pantheon is released under the [MIT License](LICENSE). Cite the
-[Zenodo concept DOI](https://doi.org/10.5281/zenodo.22305176), which always
+[Zenodo concept DOI](https://doi.org/10.5281/zenodo.22650136), which always
 resolves to the latest archived release; each release also has its own version
 DOI. Citation metadata is also available in [CITATION.cff](CITATION.cff).
 
