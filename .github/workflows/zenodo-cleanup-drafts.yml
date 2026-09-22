@@ -94,40 +94,37 @@ jobs:
           [ -n "${ZENODO_API_BASE:-}" ] || { echo '::error::Normalized Zenodo base URL is missing.'; exit 1; }
           : > "$CANDIDATES_FILE"
           printf '[]' > "$ALL_FILE"
+          # Invenio Depositions REST `GET /api/deposit/depositions` responds with a
+          # BARE JSON ARRAY of deposition resources (no `hits` envelope, no
+          # `total`). Paginate by `page`, accumulate, and stop on the first
+          # short/empty page; a non-array body aborts fail-closed.
           page=1
-          max_pages=100
+          max_pages=50
+          size=100
           while :; do
             page_file="$(mktemp)"
             curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors \
               --get "$ZENODO_API_BASE" \
-              --data-urlencode 'size=100' \
+              --data-urlencode "size=$size" \
               --data-urlencode "page=$page" \
               -H "Authorization: Bearer $ZENODO_TOKEN" \
               -H 'Accept: application/json' \
               -o "$page_file"
             summary=$(PAGE_FILE="$page_file" ALL_FILE="$ALL_FILE" node -e '
               const fs = require("node:fs");
-              const exactTotal = (value) => {
-                if (Number.isSafeInteger(value) && value >= 0) return value;
-                if (value && typeof value === "object" && Number.isSafeInteger(value.value) && value.value >= 0 && (value.relation === undefined || value.relation === "eq")) return value.value;
-                return null;
-              };
-              const payload = JSON.parse(fs.readFileSync(process.env.PAGE_FILE, "utf8"));
-              const hits = payload?.hits?.hits;
-              const total = exactTotal(payload?.hits?.total);
-              if (!Array.isArray(hits) || total === null) { console.error("::error::Ambiguous Zenodo list response; refusing to continue."); process.exit(1); }
+              const page = JSON.parse(fs.readFileSync(process.env.PAGE_FILE, "utf8"));
+              if (!Array.isArray(page)) { console.error("::error::Zenodo list response must be a JSON array; refusing to continue."); process.exit(1); }
               const all = JSON.parse(fs.readFileSync(process.env.ALL_FILE, "utf8"));
-              all.push(...hits);
+              all.push(...page);
               fs.writeFileSync(process.env.ALL_FILE, JSON.stringify(all));
-              process.stdout.write(total + " " + hits.length + " " + all.length);
+              process.stdout.write(page.length + " " + all.length);
             ') || { echo '::error::Zenodo list response was ambiguous.'; exit 1; }
             rm -f "$page_file"
             set -- $summary
-            total="$1"
-            page_hits="$2"
-            collected="$3"
-            echo "Fetched page $page: ${page_hits} deposition(s), ${collected}/${total} collected."
-            if [ "$page_hits" -eq 0 ] || [ "$collected" -ge "$total" ]; then break; fi
+            page_items="$1"
+            collected="$2"
+            echo "Fetched page $page: ${page_items} deposition(s), ${collected} collected."
+            if [ "$page_items" -lt "$size" ]; then break; fi
             page=$((page + 1))
             [ "$page" -le "$max_pages" ] || { echo '::error::Zenodo pagination exceeded the safety cap.'; exit 1; }
           done
