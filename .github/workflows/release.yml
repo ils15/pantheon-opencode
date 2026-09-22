@@ -205,7 +205,7 @@ jobs:
           # Recovery keeps a static note because the original body is not
           # regenerated.
           if [ -n "$RECOVERY_VERSION" ]; then
-            printf '%s\n' "Recovery publish for existing GitHub Release $RECOVERY_VERSION." > "$RUNNER_TEMP/release-notes.md"
+            printf '%s\n' "Recovery publish for existing tag $RECOVERY_VERSION." > "$RUNNER_TEMP/release-notes.md"
           elif ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-notes.md"; then
             echo "::error::CHANGELOG.md has no [$BASE_VERSION] section."; exit 1
           fi
@@ -423,7 +423,7 @@ jobs:
             if [ "$STATUS" = 404 ]; then
               tag_exists=false
               if [ -n "$RECOVERY_VERSION" ]; then
-                echo '::error::Recovery requires an existing GitHub Release tag.'
+                echo '::error::Recovery requires an existing git tag.'
                 exit 1
               fi
               echo 'tag_exists=false' >> "$GITHUB_OUTPUT"
@@ -463,10 +463,9 @@ jobs:
             fi
           fi
 
-          if [ -n "$RECOVERY_VERSION" ] && [ "$released" != "true" ]; then
-            echo '::error::Recovery requires the existing GitHub Release; it will not create one.'
-            exit 1
-          fi
+          # Beta creates no GitHub Release, so recovery is bound to the git tag
+          # only (already required above). A 404 release lookup above is the
+          # expected state for a beta and must not block the npm republish.
 
           NPM_RESPONSE="$RUNNER_TEMP/npm-response"
           NPM_ERROR="$RUNNER_TEMP/npm-error"
@@ -491,19 +490,18 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: gh api --method POST "repos/$RELEASE_REPO/git/refs" -f "ref=refs/tags/$VERSION" -f "sha=$TARGET_SHA"
 
+      # Only the stable channel creates a GitHub Release. The official Zenodo
+      # GitHub integration archives every Release (pre-releases included), so a
+      # beta Release would add an unwanted version to the Zenodo family. Beta
+      # keeps its git tag for by-tag recovery and publishes npm only.
       - name: Create GitHub release
-        if: steps.idem.outputs.released != 'true' && inputs.recovery_version == ''
+        if: steps.idem.outputs.released != 'true' && inputs.recovery_version == '' && inputs.release_channel != 'beta'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.metadata.outputs.version }}
-          RELEASE_CHANNEL: ${{ inputs.release_channel }}
         run: |
           set -euo pipefail
-          if [ "$RELEASE_CHANNEL" = "beta" ]; then
-            gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --prerelease --notes-file release-artifact/release-notes.md
-          else
-            gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --notes-file release-artifact/release-notes.md
-          fi
+          gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --notes-file release-artifact/release-notes.md
 
       # This is intentionally the final step. The artifact was produced with
       # --ignore-scripts; npm also receives --ignore-scripts as a second guard.
