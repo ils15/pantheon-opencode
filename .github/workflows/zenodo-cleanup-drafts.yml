@@ -128,6 +128,27 @@ jobs:
             page=$((page + 1))
             [ "$page" -le "$max_pages" ] || { echo '::error::Zenodo pagination exceeded the safety cap.'; exit 1; }
           done
+          # Diagnostic dump — visibility only. Runs before the marker filter so
+          # the workflow log shows every fetched deposition even when the
+          # `pantheon-opencode-release:` marker matches none of them. All field
+          # lookups are optional-chained and default to safe placeholders; `desc`
+          # is `metadata.description ?? description`, sanitized to a single line
+          # and truncated to 140 chars so it can never break log parsing.
+          ALL_FILE="$ALL_FILE" node -e '
+            const fs = require("node:fs");
+            const all = JSON.parse(fs.readFileSync(process.env.ALL_FILE, "utf8"));
+            const sanitize = (value) => String(value ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+            for (const dep of all) {
+              const id = dep?.id ?? "";
+              const submitted = dep?.submitted === true ? "true" : "false";
+              const doi = typeof dep?.doi === "string" && dep.doi.trim() ? dep.doi.trim() : "-";
+              const title = sanitize(dep?.title ?? dep?.metadata?.title);
+              const version = sanitize(dep?.metadata?.version ?? dep?.version);
+              const desc = sanitize(dep?.metadata?.description ?? dep?.description).slice(0, 140);
+              console.log("DEPOSITION id=" + id + " submitted=" + submitted + " doi=" + doi + " title=" + title + " version=" + version + " desc=" + desc);
+            }
+            console.log("Diagnostic dump: " + all.length + " deposition(s) fetched.");
+          '
           count=$(REPORT_FILE="$REPORT_FILE" CANDIDATES_FILE="$CANDIDATES_FILE" ALL_FILE="$ALL_FILE" node -e '
             const fs = require("node:fs");
             const all = JSON.parse(fs.readFileSync(process.env.ALL_FILE, "utf8"));
