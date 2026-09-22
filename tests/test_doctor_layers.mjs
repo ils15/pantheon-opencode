@@ -7,12 +7,14 @@ import { join } from 'node:path'
 import {
   checkCodeModeDir,
   classifyAgentsMdFreshness,
+  classifyNodeSqliteProbe,
   classifyPermissionTaskCheck,
   collectMcpConfigs,
   deriveInstalledAgentFiles,
   findMissingPermissionTask,
   hasPermissionTask,
   isValidAgentFile,
+  probeNodeSqlite,
   resolveCodeModeDir,
   resolveOpenCodeConfigDir,
   summaryMessage,
@@ -246,5 +248,31 @@ try {
 } finally {
   rmSync(overlayFixture, { recursive: true, force: true })
 }
+
+// ---------------------------------------------------------------------------
+// K. Node Runtime — node:sqlite availability probe (issue #114)
+// ---------------------------------------------------------------------------
+
+// Classification is a pure function of the probe result, so the unsupported
+// path is asserted without depending on the host Node version.
+const supported = classifyNodeSqliteProbe({ available: true, version: 'v22.22.2' })
+assert.equal(supported.status, 'ok', 'available node:sqlite classifies as ok')
+assert.match(supported.message, /node:sqlite available/, 'ok message names node:sqlite')
+
+const unsupported = classifyNodeSqliteProbe({ available: false, version: 'v18.20.0' })
+assert.equal(unsupported.status, 'unsupported', 'missing node:sqlite classifies as unsupported')
+assert.match(
+  unsupported.message,
+  /pantheon_cost will report UNSUPPORTED on Node v18\.20\.0 — node:sqlite requires Node >= 22\.5/,
+  'unsupported message names the tool, the runtime version and the floor',
+)
+
+// The probe itself is exercised end-to-end: a builtin that cannot exist fails
+// the real spawn+exit-status path, proving UNSUPPORTED is detected without
+// mocking process.version.
+const missing = probeNodeSqlite({ module: 'node:sqlite-pantheon-nonexistent' })
+assert.equal(missing.available, false, 'probe reports unavailable for a missing builtin')
+assert.ok(missing.reason, 'probe surfaces a reason string on failure')
+assert.ok(missing.version, 'probe always reports the running Node version')
 
 console.log('✅ Doctor layered healthcheck contract passed')

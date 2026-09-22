@@ -30,7 +30,15 @@ way to plan work, make progress, check results, and keep useful project context.
 
 ## Start in 2 minutes
 
-Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js 22+.
+Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js
+22.22.2+ (or 24.15.0+ / 26+).
+
+Pantheon declares `engines.node` as `^22.22.2 || ^24.15.0 || >=26.0.0`. The
+floor reflects what the dependency tree actually needs — the transitive
+`ini@7` rejects earlier 22.x/24.x builds with `EBADENGINE` — and odd-numbered
+Node releases (23, 25) are out of range. The `pantheon_cost` tool also needs
+`node:sqlite`, which requires Node >= 22.5; `doctor` warns when the running
+runtime cannot load it.
 
 From the project where you want to use Pantheon:
 
