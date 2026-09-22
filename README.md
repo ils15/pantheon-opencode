@@ -246,7 +246,12 @@ Two freshness guarantees back it up:
   re-run `init` just for file copies.
 - **Drift detection** — the installer stamps the installed version in
   `.pantheon/install-state.json` and `doctor` warns when the package is newer
-  than the last sync, pointing at `update`.
+  than the last sync, pointing at `update`. `doctor` also detects **plugin
+  version drift** (issue #158): when `opencode.json` registers a plugin path
+  inside a `node_modules/pantheon-opencode` copy whose `package.json` version
+  differs from the running package, it warns that the registered tool surface
+  is stale. Re-running `init`/`update` realigns the registration onto the
+  current package.
 
 `init` also gained `--components agents,skills,...` (narrow install),
 `--clean` (alias of `--force`), `--opencode-version auto`, atomic config
@@ -255,6 +260,42 @@ before any file is written, and a non-fatal Python runtime: if the venv fails,
 the install completes but MCP entries are omitted (with a warning) instead of
 pointing at a broken interpreter. Installer messages auto-detect pt-BR via
 `LANG`/`LC_ALL`.
+
+## Migrating to 1.5.x (from 1.4.x)
+
+1.5.0 removed the custom `pantheon_delegate` tool (and the V1 delegation
+engine) in favor of OpenCode's native `task()`; see
+[Delegation (native `task()`)](#delegation-native-task). Two things change on
+an existing install:
+
+1. **The tool disappears from the plugin surface.** `pantheon_delegate` is no
+   longer registered by `src/plugin.ts` or `src/plugin-v2.ts`. Agents now
+   delegate through `task()` only — no configuration is needed.
+2. **A lockfile-pinned copy can keep the old tool alive.** `npm install` is
+   lockfile-authoritative: a `package-lock.json` pinned to `1.4.1` (which
+   satisfies `^1.4.1`) is never re-resolved, so a project's
+   `node_modules/pantheon-opencode` can stay on 1.4.x while the published
+   package moved on. The plugin path your `opencode.json` registers keeps
+   pointing at that stale copy, and you keep running the obsolete tool surface
+   — including `pantheon_delegate` — with no warning.
+
+The fix is a realignment + a detector:
+
+```bash
+# Realign the registered plugin path onto the current package (rewrites any
+# node_modules/pantheon-opencode reference in opencode.json):
+npx pantheon-opencode@latest init --yes --headless
+# or, with a global install:
+pantheon-opencode update
+
+# Then verify no drift remains:
+npx pantheon-opencode@latest doctor
+```
+
+`doctor` now reports a **Plugin Version Drift** warning (section H3) when the
+registered plugin points into an installed copy whose version differs from the
+running package, naming both versions and the removal (`pantheon_delegate` in
+1.5.0). A healthy install reports no warning.
 
 ## Releases
 
