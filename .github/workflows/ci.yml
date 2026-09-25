@@ -55,7 +55,6 @@ jobs:
           cache-dependency-path: |
             src/mcp/requirements-mcp.txt
             src/mcp/requirements-vision.txt
-            scripts/vector_memory/requirements.txt
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
@@ -137,7 +136,6 @@ jobs:
           npm run audit
           python3 -m pip_audit -r src/mcp/requirements-mcp.txt
           python3 -m pip_audit -r src/mcp/requirements-vision.txt
-          python3 -m pip_audit -r scripts/vector_memory/requirements.txt
 
       - name: Scan versionable files for credentials
         run: npm run test:security

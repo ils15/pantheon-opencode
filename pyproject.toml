@@ -10,13 +10,11 @@ requires-python = ">=3.11"
 dependencies = []
 
 [tool.pytest.ini_options]
-# `tests/` holds the main suite; the two entries below are orphaned test
-# modules that live next to the code they cover and are collected here so
-# pytest (and therefore `npm test`) exercises them instead of letting them
-# rot as dead code.
+# `tests/` holds the main suite; the entry below is an orphaned test module
+# that lives next to the code it covers and is collected here so pytest (and
+# therefore `npm test`) exercises it instead of letting it rot as dead code.
 testpaths = [
     "tests",
-    "scripts/vector_memory/test_memory.py",
     "benchmarks/beta2/test_beta2.py",
 ]
 asyncio_mode = "auto"
@@ -36,7 +34,6 @@ ignore = ["E501"]
 "scripts/ci-validate-yaml.py" = ["N999"]
 "scripts/scrub-secrets.py" = ["N999"]
 # These modules defer optional/heavy imports until the corresponding command is used.
-"scripts/vector_memory/*.py" = ["PLC0415"]
 "tests/test_code_mode_sandbox.py" = ["PLC0415", "N806"]
 "tests/test_code_mode_server.py" = ["PLC0415"]
 "tests/test_codemap_mcp.py" = ["PLC0415"]
@@ -48,9 +45,6 @@ ignore = ["E501"]
 "scripts/mcp_persistence_server.py" = ["PLR0913"]
 "src/mcp/mcp_persistence_server.py" = ["PLR0913"]
 "scripts/memory_mcp_server.py" = ["C901"]
-"scripts/vector_memory/index.py" = ["C901", "PLR0913", "PLR2004", "PLW0603", "PLW2901"]
-"scripts/vector_memory/cli.py" = ["PLR2004"]
-"scripts/vector_memory/query.py" = ["PLR0913"]
 "src/mcp/eval_store.py" = ["PLR2004"]
 "tests/test_code_mode_frontmatter.py" = ["PLR2004"]
 "tests/test_eval.py" = ["PLR2004"]

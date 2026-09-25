@@ -69,7 +69,6 @@ def try_export_memory() -> list[dict] | None:
     # Strategy 1: Try direct module import
     sys.path.insert(0, str(pantheon_home() / "scripts"))
     try:
-        import vector_memory.index as vmi
         # Use memory_sessions-like approach via ChromaDB
         import chromadb
         db_path = pantheon_home() / "memory" / "chroma_db"
