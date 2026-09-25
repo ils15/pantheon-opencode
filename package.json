@@ -12,6 +12,9 @@
     "./plugin-v2": "./src/plugin-v2.ts",
     "./v2-bridge": "./src/pantheon/v2-bridge.ts"
   },
+  "workspaces": [
+    "src/plugins/tui"
+  ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs && node scripts/sync-tui.mjs",
     "prepare": "husky",
@@ -99,6 +102,9 @@
     "husky": "^9.1.7",
     "tsx": "4.23.13",
     "typescript": "6.0.3"
+  },
+  "overrides": {
+    "rolldown": "1.2.0"
   },
   "repository": {
     "type": "git",

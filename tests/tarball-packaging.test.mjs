@@ -118,8 +118,21 @@ test('installed package resolves hooks to its installed absolute path', () => {
   const project = join(work, 'project')
   mkdirSync(project)
   try {
+    // Install the tarball with a redirected OpenCode config dir. Installing our
+    // own tarball runs its `postinstall` (`postinstall.mjs && sync-tui.mjs`), and
+    // sync-tui resolves the developer's REAL config dir: $XDG_CONFIG_HOME/
+    // opencode if it exists, else ~/.opencode. Left unredirected it copies the
+    // repo's src/plugins/tui over the live ~/.config/opencode/plugins/pantheon-tui
+    // and then runs `npm ci --omit=dev` *there* — silently rewriting the user's
+    // environment (and dropping dev deps) while this suite still reports green.
+    //
+    // The sandbox dir must CONTAIN an `opencode` entry: resolveConfigDir() only
+    // falls through to the real ~/.opencode when the XDG path is absent.
+    const sandboxConfig = join(work, 'sandbox-config')
+    mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true })
     execFileSync('npm', ['install', '--prefix', work, join(ROOT, tarball)], {
       encoding: 'utf8',
+      env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
     })
     const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
     const result = spawnSync(

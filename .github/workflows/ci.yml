@@ -60,6 +60,15 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+          # src/plugins/tui/package-lock.json is NOT an install input for this
+          # job any more — the install below is root-only and resolves the TUI
+          # through the `workspaces` entry in the root package-lock.json. It
+          # stays listed because that nested lock is still a PUBLISHED,
+          # load-bearing artifact: sync-tui.mjs copies it into the user's plugin
+          # dir and runs an install there against it, so a change to it must
+          # invalidate the npm cache. Dropping this line would hide TUI lock
+          # edits from the cache key. tests/tui-workspace-lock.test.mjs is what
+          # keeps that lock in sync with the TUI manifest.
           cache-dependency-path: |
             package-lock.json
             src/plugins/tui/package-lock.json
@@ -78,7 +87,6 @@ jobs:
           python3 -m pip install --quiet -r src/mcp/requirements-vision.txt
           python3 -m pip install --quiet sqlite-vec==0.1.9
           npm ci --ignore-scripts
-          npm ci --prefix src/plugins/tui --ignore-scripts
 
       - name: Validate agent YAML
         run: python3 scripts/ci-validate-yaml.py
