@@ -125,20 +125,22 @@ test('CI validates YAML and installs locked dependencies only', () => {
     /pip install[^\n]*-r src\/mcp\/requirements-vision\.txt/,
     'CI must install locked vision deps before pytest so httpx imports resolve',
   )
-  assert.match(
+  // The memory server's vector pipeline (sqlite-vec + fastembed) was removed
+  // outright — no flag, no fallback. memory_mcp_server is stdlib + FTS5 now,
+  // so CI must install NEITHER backend. These guards are inverted from the
+  // original pair, which asserted sqlite-vec was installed and fastembed was
+  // not: they now keep the removal fail-closed, so reintroducing either wheel
+  // into the install step fails here instead of silently restoring ~50MB of
+  // deps and the RSS the deletion was meant to reclaim.
+  assert.doesNotMatch(
     workflow,
-    /pip install[^\n]*sqlite-vec==[\d.]+/,
-    'CI must install the locked sqlite-vec wheel before pytest so memory_mcp_server imports resolve',
+    /pip install[^\n]*sqlite-vec/,
+    'CI must not install sqlite-vec: the memory vector pipeline was removed and the server is FTS5-only',
   )
-  // fastembed (~180MB wheel) is deliberately NOT installed in CI: only
-  // memory_mcp_server needs it, at runtime, and its tests skip gracefully via
-  // pytest.importorskip (issue #94). Removing the top-level import is tracked
-  // by issue #159. This guard keeps that intent fail-closed — if fastembed
-  // ever creeps back into the install step, CI wall-clock and disk regress.
   assert.doesNotMatch(
     workflow,
     /pip install[^\n]*fastembed/,
-    'CI must not install fastembed; tests needing it skip via pytest.importorskip (issue #94)',
+    'CI must not install fastembed: the memory vector pipeline was removed and the server is FTS5-only',
   )
   assert.doesNotMatch(workflow, /pip install[^\n]*\|\|/)
   const testGate = workflow.indexOf('npm test')
@@ -146,10 +148,6 @@ test('CI validates YAML and installs locked dependencies only', () => {
   assert.ok(
     workflow.indexOf('pytest-asyncio==') < testGate,
     'Locked pytest-asyncio pip install must run BEFORE the pytest gate',
-  )
-  assert.ok(
-    workflow.indexOf('sqlite-vec==') < testGate,
-    'Locked sqlite-vec pip install must run BEFORE the pytest gate',
   )
   assert.ok(
     workflow.indexOf('requirements-vision.txt') < testGate,
