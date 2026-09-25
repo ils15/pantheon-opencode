@@ -233,5 +233,5 @@ purge_expired(scope="project")
 | TTL | ✅ Por entrada | ❌ Nenhum |
 | Namespace | ✅ Coluna + scope | ✅ Coluna `namespace` |
 | Dependencies | FastMCP + stdlib SQLite/FTS5 | FastMCP + stdlib SQLite/FTS5 |
-| Tools | 14 | 6 |
-| Source lines | 1,514 (`src/mcp`) | 769 (`src/mcp`) |
+| Tools | 14 | 9 |
+| Source lines | 1,843 (`src/mcp`) | 836 (`src/mcp`) |

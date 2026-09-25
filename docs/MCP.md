@@ -183,9 +183,9 @@ execute_code_script("deploy.sh")
 Persistent, lightweight memory server using **SQLite FTS5 (BM25)** for lexical
 keyword search. No embedding model and no vector index: recall is purely
 lexical, so a query must share a token with the stored text to match it.
-Provides 6 tools and 2 resources.
+Provides 9 tools (6 `memory_*` plus 3 `code_*`) and 2 resources.
 
-### Tools (6)
+### Tools (9)
 
 | Tool | Description |
 |------|-------------|
@@ -195,6 +195,9 @@ Provides 6 tools and 2 resources.
 | `memory_forget` | Delete an entry by ID or key (FTS index cleaned via trigger) |
 | `memory_list` | List entries chronologically with namespace and key-prefix filters |
 | `memory_stats` | Database statistics: totals, namespaces, disk usage |
+| `code_index` | Index codebase files into a knowledge graph (hash-based skip) |
+| `code_query` | Search code entities via FTS5 |
+| `code_neighbors` | Graph neighbors of a code entity (BFS depth 1-3) |
 
 ### Resources
 
@@ -214,7 +217,7 @@ Provides 6 tools and 2 resources.
 
 ### Full Documentation
 
-See `docs/MEMORY.md` for complete usage guide with examples for all 6 tools.
+See `docs/MEMORY.md` for complete usage guide with examples for all 9 tools.
 
 ---
 

@@ -1733,11 +1733,12 @@ def _refresh_heartbeat_ttl(conn: sqlite3.Connection, namespace: str) -> None:
         return
     revision = _next_context_revision(conn, namespace, "heartbeat")
     cursor = conn.execute(
-        "UPDATE kv_store SET expires_at = ?, updated_at = ? "
+        "UPDATE kv_store SET expires_at = ?, updated_at = datetime('now'), "
+        "revision = ? "
         "WHERE namespace = ? AND key = 'heartbeat' AND expires_at = ? "
         "AND (expires_at IS NULL OR julianday(expires_at) > julianday('now')) "
         "AND deleted_at IS NULL",
-        (fresh_exp.isoformat(), str(revision), namespace, row[0]),
+        (fresh_exp.isoformat(), revision, namespace, row[0]),
     )
     if cursor.rowcount:
         conn.commit()

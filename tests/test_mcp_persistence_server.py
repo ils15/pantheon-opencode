@@ -2017,3 +2017,49 @@ class TestRevisionColumn:
         assert "ALTER TABLE kv_store ADD COLUMN" in module._ADD_REVISION_SQL
         # No UPDATE against existing rows anywhere in the migration.
         assert "UPDATE" not in module._ADD_REVISION_SQL.upper()
+
+    async def test_heartbeat_refresh_advances_dedicated_revision(
+        self, server: FastMCP, module
+    ) -> None:
+        """The heartbeat TTL refresh must advance the dedicated revision column.
+
+        ``_refresh_heartbeat_ttl`` historically wrote ``str(revision)`` into
+        ``updated_at``. Once readers preferred the dedicated ``revision``
+        column, that bump became invisible: the column stayed put and
+        ``updated_at`` stopped being a datetime.
+        """
+        sid = "hb-rev-session"
+        ns = f"checkpoint:hb-rev:{sid}"
+        await server.call_tool(
+            "context_save",
+            {
+                "slug": "hb-rev",
+                "key": "heartbeat",
+                "content": '{"status": "alive"}',
+                "session_id": sid,
+            },
+        )
+        conn = module._db("project")
+        before = conn.execute(
+            "SELECT revision FROM kv_store WHERE namespace = ? AND key = 'heartbeat'",
+            (ns,),
+        ).fetchone()[0]
+
+        # Shrink the stored expiry below a fresh 300s TTL so the refresh fires.
+        near = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
+        conn.execute(
+            "UPDATE kv_store SET expires_at = ? "
+            "WHERE namespace = ? AND key = 'heartbeat'",
+            (near, ns),
+        )
+        conn.commit()
+
+        module._refresh_heartbeat_ttl(conn, ns)
+
+        revision, updated_at = conn.execute(
+            "SELECT revision, updated_at FROM kv_store "
+            "WHERE namespace = ? AND key = 'heartbeat'",
+            (ns,),
+        ).fetchone()
+        assert revision > before, "refresh must advance the dedicated revision column"
+        assert isinstance(updated_at, str) and not updated_at.isdigit()

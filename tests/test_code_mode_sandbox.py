@@ -7,6 +7,7 @@ Covers:
 from __future__ import annotations
 
 import importlib
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -157,6 +158,20 @@ class TestPrlimitPrefix:
         assert not any(a.startswith("--nproc=") for a in result)
         assert "--as=1073741824" in result
         assert any(a.startswith("--cpu=") for a in result)
+
+    def test_nproc_omission_is_logged(
+        self, module, monkeypatch, caplog
+    ) -> None:
+        """Omitting --nproc is fail-open and must be observable, not silent."""
+        monkeypatch.setattr(module, "_uid_task_count", lambda: None)
+        with caplog.at_level(logging.WARNING):
+            result = module._prlimit_prefix("/usr/bin/prlimit")
+        assert result is not None
+        assert any(
+            "--nproc" in record.getMessage()
+            and "unbounded" in record.getMessage()
+            for record in caplog.records
+        )
 
     def test_cpu_limit_includes_timeout_plus_5(self, module) -> None:
         """CPU timeout should be timeout_s + 5."""

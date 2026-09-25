@@ -141,6 +141,11 @@ def _uid_task_count() -> int | None:
     cannot be established (no readable ``/proc``), which makes the caller
     fail open on ``--nproc`` rather than pin a value that may be too low and
     break every script.
+
+    The tally is one too high per process: ``/proc/<pid>/task`` already lists
+    the thread-group leader, so the extra ``1`` counts it twice. That bias
+    only widens the derived limit (the fail-open direction), so it is left in
+    place deliberately.
     """
     uid = os.getuid()
     count = 0
@@ -155,7 +160,8 @@ def _uid_task_count() -> int | None:
         try:
             if os.stat(proc_dir).st_uid != uid:
                 continue
-            # 1 for the process itself, plus one per thread.
+            # ``/proc/<pid>/task`` already includes the thread-group leader,
+            # so the extra 1 counts it twice (over-count by one per process).
             count += 1 + len(os.listdir(f"{proc_dir}/task"))
         except OSError:
             # Process exited between listdir and stat, or is not ours to read.
@@ -177,12 +183,20 @@ def _sandbox_nproc() -> str | None:
     """
     current = _uid_task_count()
     if current is None:
+        _log.warning(
+            "code-mode: cannot count this UID's tasks; omitting --nproc, so "
+            "the sandboxed script's fork budget is unbounded"
+        )
         return None
     try:
         import resource
 
         _soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)
     except (ImportError, OSError, ValueError):
+        _log.warning(
+            "code-mode: cannot read RLIMIT_NPROC; omitting --nproc, so the "
+            "sandboxed script's fork budget is unbounded"
+        )
         return None
     if hard == getattr(resource, "RLIM_INFINITY", -1):
         return str(current + NPROC_HEADROOM)

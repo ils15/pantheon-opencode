@@ -14,8 +14,9 @@
 > [mcp-tools.md](mcp-tools.md).
 
 Pantheon's memory system provides persistent, multi-strategy memory for AI
-agents using **SQLite FTS5 (BM25)** — lexical keyword retrieval only. Six
-tools are accessible via the `pantheon-memory` MCP server.
+agents using **SQLite FTS5 (BM25)** — lexical keyword retrieval only. Nine
+tools are accessible via the `pantheon-memory` MCP server (six `memory_*` plus
+three `code_*`).
 
 The vector pipeline (`sqlite-vec` + `fastembed`, ~50MB of wheels and ~185MB
 RSS) was removed outright. There is **no semantic/vector retrieval**: a query
