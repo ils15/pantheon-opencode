@@ -58,7 +58,10 @@ npm install --prefix src/plugins/tui && npm run build --prefix src/plugins/tui
 edit `CHANGELOG.md` by hand. Release validation also
 keeps the root pair (`package.json` + `package-lock.json`) and the TUI pair
 (`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`) in the
-same versioned inventory. **It no longer creates git tags** — tags are
+same versioned inventory. The TUI is a root **workspace**, so CI installs both
+with a single `npm ci --ignore-scripts` at the root; the nested TUI lock is
+still versioned and still shipped because the user-facing postinstall syncs
+against it. **It no longer creates git tags** — tags are
 workflow-owned (see below).
 
 ---
@@ -71,6 +74,10 @@ workflow-owned (see below).
    node scripts/versioning.mjs apply minor   # or patch/major
    ```
    or edit `package.json` directly — the version is the release signal.
+   The TUI manifest (`src/plugins/tui/package.json`) carries the same version;
+   `npm run version:check` fails when the two drift. `node_modules/` state is
+   irrelevant here: the TUI is a root workspace, so one root `npm ci
+   --ignore-scripts` installs it.
 3. Fill in the promoted changelog section with the release notes for the
    upcoming version. The release body is **extracted from this section**, so
    it must exist and be accurate.

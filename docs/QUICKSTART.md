@@ -65,7 +65,7 @@ echo 'export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true' >> ~/.zshrc
 - **Background subagents** — up to 5 agents in parallel
 - **14 commands** — all start with `/pantheon-`
 - **Themis 3-layer review** — heuristic scanner + deep review + verification planning
-- **Persistent MCP memory** — sqlite-vec + fastembed
+- **Persistent MCP memory** — SQLite FTS5 (BM25) keyword search, no embeddings
 
 ## Usage
 

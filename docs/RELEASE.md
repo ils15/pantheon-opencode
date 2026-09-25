@@ -64,8 +64,9 @@ Labels de PR, push, merge e tag **não** disparam nenhum fluxo de release.
    revisão desejada. Um push comum na `main` não inicia uma release.
 3. O workflow valida os manifests e locks do root (`package.json` +
    `package-lock.json`) e do TUI (`src/plugins/tui/package.json` +
-   `src/plugins/tui/package-lock.json`) com `npm ci --ignore-scripts`, sem
-   fallback para `npm install`, e valida o SHA exato antes de:
+   `src/plugins/tui/package-lock.json`) com um único `npm ci --ignore-scripts`
+   na raiz — o TUI é um *workspace* do root, então não há segunda etapa de
+   instalação — sem fallback para `npm install`, e valida o SHA exato antes de:
    - Publicar no npm com tag `latest`
    - Criar GitHub Release
 

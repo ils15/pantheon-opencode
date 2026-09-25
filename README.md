@@ -165,9 +165,9 @@ script's SHA-256 without regenerating it.
 - OpenCode V2 compatibility: `plugins` / `mcp.servers.enabled` config merge
   and PWD-correct stdio MCP launch.
 - Expanded `doctor` and install health checks.
-- Sandbox validator for global installs (`scripts/test-opencode-v1-v2-sandbox.sh`)
-  covering OpenCode V1/V2 side by side — see
-  [Sandbox validation](#sandbox-validation-v1v2).
+- Sandbox validator for global installs (`scripts/test-opencode-v2-sandbox.sh`)
+  covering the OpenCode V2 leg — see
+  [Sandbox validation](#sandbox-validation-v2).
 - Beta2 agent-economy policy: direct native delegation, bounded compaction
   carry-forward, compact context encoding, and quality floors.
 - A `--prompts` installer flag is planned for a future release.
@@ -321,28 +321,35 @@ Release validation keeps each manifest with its lockfile: the root
 SHA-256 of that same artifact, and binds the tarball and GitHub release to the
 full `TARGET_SHA`; a second pack is not interchangeable.
 
-## Sandbox validation (V1/V2)
+## Sandbox validation (V2)
 
-`scripts/test-opencode-v1-v2-sandbox.sh` validates the globally installed
+`scripts/test-opencode-v2-sandbox.sh` validates the globally installed
 package as a real user inside an isolated sandbox (own `HOME`, npm prefix and
-venv) — never the dev environment. It checks OpenCode V1 (`opencode`) and V2
-(`opencode2`) side by side: binaries, MCP connectivity, `doctor`, and — with
-`--prompts` — a prompt battery covering the `pantheon://agents` resource,
-memory store/recall, filesystem writes and agent delegation. The gate is
-fail-closed: every required check must return an explicit PASS; timeouts,
-auth/network/provider failures and missing prerequisites block the run.
+venv) — never the dev environment. It checks the OpenCode V2 leg: the binary,
+MCP connectivity, `doctor`, and — with `--prompts` — a prompt battery covering
+the `pantheon://agents` resource, memory store/recall, filesystem writes and
+agent delegation. The gate is fail-closed: every required check must return an
+explicit PASS; timeouts, auth/network/provider failures and missing
+prerequisites block the run.
+
+"V2" here means this plugin exercised against the `@opencode/plugin@2.x`
+contract — not a different binary. On hosts where both `opencode` and
+`opencode2` exist, `opencode2` is typically a shim that execs the same binary,
+so an older side-by-side comparison proved nothing about the binary itself.
+The project is V2-exclusive, so there is a single leg.
 
 ```bash
-scripts/test-opencode-v1-v2-sandbox.sh --prepare          # tarball + install + init in the sandbox
-scripts/test-opencode-v1-v2-sandbox.sh --run v1 --prompts # base validation + prompt battery (V1)
-scripts/test-opencode-v1-v2-sandbox.sh --run v2           # base validation only (V2)
-scripts/test-opencode-v1-v2-sandbox.sh --prompts          # prompt battery for both versions
-scripts/test-opencode-v1-v2-sandbox.sh --reset            # wipe the sandbox root
+scripts/test-opencode-v2-sandbox.sh --prepare     # tarball + install + init in the sandbox
+scripts/test-opencode-v2-sandbox.sh --run v2      # base validation only
+scripts/test-opencode-v2-sandbox.sh --prompts     # base validation + prompt battery
+scripts/test-opencode-v2-sandbox.sh --reset       # wipe the sandbox root
 ```
 
-Modes are combinable (e.g. `--prepare --run v1 --prompts`). Binaries are
+Modes are combinable (e.g. `--prepare --run v2 --prompts`). Binaries are
 resolved strictly inside the sandbox npm prefix — a non-prepared sandbox fails
-fast instead of silently testing the host installation.
+fast instead of silently testing the host installation. The sandbox is always
+built from the checkout this script lives in; it never infers a repository from
+a sibling directory.
 
 This validates the prepared isolated sandbox only. A PASS is not proof of
 support for every real host or for host configurations that were not exercised.

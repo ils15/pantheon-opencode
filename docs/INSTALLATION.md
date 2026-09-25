@@ -32,18 +32,85 @@ npm run doctor
 
 ## Package and dependency contract
 
-The checkout contains two lockfile-backed Node projects. Keep each manifest and
-lockfile together:
+The TUI plugin is a **root workspace**. `package.json` declares
+`"workspaces": ["src/plugins/tui"]`, and the root `package-lock.json` carries a
+`link: true` entry for `node_modules/pantheon-tui` resolving to
+`src/plugins/tui`. A single `npm ci --ignore-scripts` at the root installs the
+root project **and** the TUI subpackage; there is no second install step, and
+`npm ci --prefix src/plugins/tui` is no longer part of any workflow.
 
-- root: `package.json` + `package-lock.json`;
-- TUI: `src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`.
+For a checkout validation:
 
-For a checkout validation, install dependencies with `npm ci --ignore-scripts`
-at the root and `npm ci --prefix src/plugins/tui --ignore-scripts` for the TUI.
+```bash
+npm ci --ignore-scripts
+```
+
 `npm ci` is the only accepted path: there is no fallback to `npm install`, and
 `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` is not a supported escape hatch. The
 post-install TUI sync likewise propagates a failing `npm ci`; it does not
 silently repair or rewrite a lockfile.
+
+### The nested TUI lockfile is still shipped, and still load-bearing
+
+Two lockfiles exist and both are committed, but they now serve **different**
+consumers, which is worth being explicit about:
+
+- **root `package-lock.json`** — what the workspace install and CI use.
+- **`src/plugins/tui/package-lock.json`** — a *published artifact*. It is
+  copied by `scripts/sync-tui.mjs` into the user's live plugin dir, where
+  `npm ci --omit=dev` runs against **it**, not the root one. A manifest/lock
+  divergence there makes every end user's `npm install pantheon-opencode`
+  hard-fail inside `postinstall`.
+
+That second lock can no longer be regenerated in place: under a `workspaces`
+parent, `npm install --package-lock-only` in the member directory reports "up
+to date" and folds the change into the root lock instead, and neither
+`--workspaces=false` nor `--ignore-workspace-root-check` changes that. Hand
+applying the same version to both files is valid **only for a version change on
+a dependency already present in the lock's tree**; adding or removing one
+requires generating the lock in an isolated directory (no workspace parent)
+and copying it back — and that regeneration re-resolves the entire transitive
+tree, so its diff must be reviewed. `tests/tui-workspace-lock.test.mjs` is the
+gate that catches a drift in either direction.
+
+### Why `overrides: { "rolldown": "1.2.0" }` exists
+
+`tsdown@0.22.14` declares `rolldown: "~1.2.0"`, and `~1.2.0` legitimately
+admits 1.2.11, whose minifier constant-folds differently (`1800*1e3` becomes
+`18e5`). Pinning `tsdown` does not pin the bundler, and a direct
+`devDependency` would not hold either: Node resolution prefers the nearest
+`node_modules`, so a future `tsdown` requiring `^1.3.0` would nest and resolve
+its own copy while the manifest still read `1.2.0`. `overrides` is global and is
+the only mechanism that actually holds.
+
+Two consequences a maintainer must know before touching it:
+
+- `overrides` **bypasses** range validation rather than erroring, so it can
+  silently contradict a dependent's declared range. `tests/tui-workspace-lock.test.mjs`
+  asserts the override against `tsdown`'s declared range and that the root lock
+  resolves exactly one `rolldown`; CI additionally asserts the installed
+  version is exactly `1.2.0`.
+- Bumping it "helpfully" will break the `TUI dist freshness` gate with a
+  ~35-line constant-folding diff in the committed bundle that reads like a port
+  regression. Bump the override and regenerate `dist` deliberately, in the same
+  change.
+
+## Coverage reporting
+
+`npm run coverage` runs `test:node` under Node's built-in
+`--experimental-test-coverage` and prints line/branch/function coverage for the
+`.mjs`/`.js` modules under `scripts/`, `src/` and `bin/`. It adds **no**
+dependencies and enforces **no** threshold — the repository has no established
+coverage floor, so a percentage gate would fail immediately on pre-existing
+untested code and block unrelated work. The number is a baseline to improve
+against, not a gate.
+
+What it does **not** cover: `test:ts` is a hand-rolled `tsx` loop with no
+`node --test` runner, so the 41 TypeScript files under `src/` and `bin/` are
+entirely unmeasured by this command; `test:ci` is pytest and reports no
+JavaScript coverage at all. Python coverage additionally requires
+`pytest-cov`, which is not declared in any requirements file — see
+`src/mcp/requirements-mcp.txt`.
 
 ## OpenCode V1/V2 — contrato de plugin
 
