@@ -12,13 +12,13 @@
 
 | Área | Contrato verificável |
 |---|---|
-| OpenCode V1 | `src/plugin.ts` preserva o plugin legado: `pantheon_delegate`, APIs V1 de leitura/listagem, BackgroundJobBoard, eventos/tool hooks e compaction hook quando registrados no caminho V1. |
+| OpenCode V1 | `src/plugin.ts` preserva o plugin V1: `hashline_edit`, as 3 goal tools, `pantheon_cost`, `pantheon_model`, BackgroundJobBoard, eventos/tool hooks e compaction hook quando registrados no caminho V1. |
 | OpenCode V2 | `pantheon-opencode/plugin-v2` (`src/plugin-v2.ts`) é um adapter de configuração separado; transforma drafts de agents/catalog/commands/references/skills e não registra APIs, hooks, Board ou compaction V1. |
 | Installer | `v1`, `v2` e `auto` selecionam uma única geração de plugin Pantheon. A seleção remove referências Pantheon da outra configuração e não mistura `plugin` V1 com `plugins` V2. |
 | TUI | `pantheon-tui` é componente separado, registrado em `tui.json` somente quando `plugins` é instalado. Native tasks exigem origem, relação parent/child e status fornecidos explicitamente pelo host; ausência de Markdown não é autodetecção. |
-| Histórico e recuperação | `.pantheon/delegations/` é o canal histórico de relatórios V1. A compaction carry-forward existe no caminho V1 comprovado; jobs V1 antigos/running não são auto-retomados após restart e são marcados como erro. |
+| Histórico e recuperação | `.pantheon/delegations/` guarda relatórios históricos do antigo engine V1 de delegação (removido em favor do `task()` nativo). Jobs antigos/running não são auto-retomados após restart. |
 | Code-mode | Execução de scripts é opt-in via `manifest.json` com SHA-256 por script; resolução project-first (`PANTHEON_PROJECT` → cwd) com fail-closed após seleção; `doctor` valida o manifest sem regenerá-lo. |
-| Native tasks no painel | Children de `task(background=true)` são espelhados no board compartilhado (singleton globalThis, à prova do double-load npm+repo); o painel de Delegations os acompanha enquanto rodam e o finalize existente escreve o relatório terminal. |
+| Native tasks no painel | Children de `task(background=true)` são espelhados no board compartilhado (singleton globalThis, à prova do double-load npm+repo); o painel de Delegations os acompanha enquanto rodam. |
 | Painel de Delegations v2 | Atividade ao vivo por delegação (`↳ <tool> <resumo>` via message.part), estado `retry` distinto (⟳) e seção `Archived (n)` paginada para relatórios terminais antigos. |
 | Update e freshness | `pantheon-opencode update` instala o novo pacote pelo dist-tag e re-roda init; o postinstall sincroniza todos os artefatos de cópia; marker `install-state.json` + `doctor` detectam drift de versão; CI falha se o `dist/` da TUI commitada estiver stale. |
 | Installer resiliente | Pré-checagens de python3/npm antes de escrever; `opencode.json` atômico com `.bak`; venv falha → instalação completa sem entradas MCP (aviso); refs Pantheon de instalações antigas (node_modules de outros prefixes/caches npx) são podadas a cada init. |
@@ -26,7 +26,7 @@
 ### Limites que não são promessa de roadmap
 
 - `plugin-v2` não é um adapter de paridade do runtime V1 e não adiciona hooks
-  Pantheon, delegate tools, Board ou auto-resume.
+  Pantheon, Board ou auto-resume.
 - `auto` não é autodetecção geral de plataforma/runtime; só usa os hints
   explícitos documentados em [UPGRADING.md](docs/UPGRADING.md).
 - A classificação de um native task e qualquer continuidade após restart só

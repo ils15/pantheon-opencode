@@ -20,7 +20,10 @@ test('release is workflow_dispatch-only and validates its event inputs first', (
 })
 
 test('validation checks out and confirms the exact TARGET_SHA before release credentials', () => {
-  const checkout = validate.indexOf('actions/checkout@v4')
+  // The action must be pinned by commit SHA, not a movable tag.
+  assert.match(workflow, /actions\/checkout@[0-9a-f]{40}/)
+  const checkoutMatch = /actions\/checkout@[0-9a-f]{40}/.exec(validate)
+  const checkout = checkoutMatch ? checkoutMatch.index : -1
   const confirmation = validate.indexOf('Confirm checkout matches TARGET_SHA')
   const evidence = validate.indexOf('npm run package:evidence')
 
@@ -36,6 +39,8 @@ test('validation checks out and confirms the exact TARGET_SHA before release cre
 })
 
 test('validate creates package evidence and enforces one immutable tarball plus metadata checksum', () => {
+  // The handoff artifact upload must also be pinned by commit SHA.
+  assert.match(validate, /actions\/upload-artifact@[0-9a-f]{40}/)
   assert.match(validate, /npm run package:evidence -- --output-dir=.*--target-sha="\$TARGET_SHA"/)
   assert.match(validate, /TARBALLS=\("\$RUNNER_TEMP\/release-artifact"\/\*\.tgz\)/)
   assert.match(validate, /\[ "\$\{#TARBALLS\[@\]\}" -eq 1 \]/)
@@ -48,7 +53,10 @@ test('validate creates package evidence and enforces one immutable tarball plus 
 })
 
 test('release consumes exactly one downloaded tarball and validates all evidence before credentials', () => {
-  const download = release.indexOf('actions/download-artifact@v4')
+  // The artifact download must be pinned by commit SHA, not a movable tag.
+  assert.match(release, /actions\/download-artifact@[0-9a-f]{40}/)
+  const downloadMatch = /actions\/download-artifact@[0-9a-f]{40}/.exec(release)
+  const download = downloadMatch ? downloadMatch.index : -1
   const metadata = release.indexOf('Validate immutable artifact metadata')
   const firstCredential = Math.min(
     release.indexOf(githubTokenMarker),
@@ -72,7 +80,7 @@ test('release consumes exactly one downloaded tarball and validates all evidence
 })
 
 test('release never checks out, packs, repacks, or installs after artifact handoff', () => {
-  assert.doesNotMatch(release, /actions\/checkout@v4/)
+  assert.doesNotMatch(release, /actions\/checkout@/)
   assert.doesNotMatch(release, /\bnpm pack\b/)
   assert.doesNotMatch(release, /\brepack\b/)
   assert.doesNotMatch(release, /\bnpm install\b/)
@@ -167,6 +175,24 @@ test('tag and release provenance remains bound to TARGET_SHA', () => {
   assert.match(release, /npm publish .*--provenance/)
 })
 
+test('only the stable channel creates a GitHub Release', () => {
+  // The official Zenodo GitHub integration archives every Release, including
+  // pre-releases, so the beta channel must not create one.
+  const start = release.indexOf('name: Create GitHub release')
+  const end = release.indexOf('name: Publish immutable artifact to npm')
+  assert.ok(start >= 0 && end > start, 'expected the Create GitHub release step before publish')
+  const step = release.slice(start, end)
+  assert.match(step, /inputs\.release_channel != 'beta'/)
+  assert.match(step, /inputs\.recovery_version == ''/)
+  // The beta branch and the --prerelease flag are gone from the step.
+  assert.doesNotMatch(step, /--prerelease/)
+  assert.doesNotMatch(step, /RELEASE_CHANNEL/)
+  // The git tag is still created for both channels and backs beta recovery.
+  assert.match(release, /Create and push immutable tag/)
+  assert.match(release, /Recovery requires an existing git tag/)
+  assert.doesNotMatch(release, /Recovery requires the existing GitHub Release/)
+})
+
 test('recovery inputs, hostile refs, and tag objects are rejected', () => {
   // The workflow itself must reject recovery_pr_number for the modern format
   // (guard is present in both the pre-checkout and pre-mutation validators).
@@ -181,4 +207,22 @@ test('validation job has no release credential injection', () => {
   assert.match(validate, /NPM_TOKEN:-\}/)
   assert.match(validate, /RELEASE_TOKEN:-\}/)
   assert.doesNotMatch(validate, /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\./)
+})
+
+test('release job permissions stay minimal and never re-grant actions: write', () => {
+  // The Zenodo dispatch was retired, so the release job must not request
+  // `actions: write` again. Scope the assertion to the release job's own
+  // `permissions:` block so an unrelated grant elsewhere cannot satisfy it.
+  const permissions = release.slice(
+    release.indexOf('\n    permissions:\n'),
+    release.indexOf('\n    env:'),
+  )
+  assert.ok(permissions.length > 0, 'expected the release job permissions block')
+  assert.doesNotMatch(permissions, /\bactions: write\b/)
+  // Only the two scopes the publish path actually needs remain.
+  const scopes = permissions
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  assert.deepEqual(scopes, ['permissions:', 'contents: write', 'id-token: write'])
 })

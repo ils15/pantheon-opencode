@@ -9,7 +9,7 @@ Complete setup and usage guide for running Pantheon **v1.5.0** in [OpenCode](htt
 | Requirement | Notes |
 |---|---|
 | **OpenCode** installed | Follow the [OpenCode installation guide](https://opencode.ai/docs/) or use `npm install -g opencode-ai` |
-| **Node.js 18+** | Required by the installer and Node-based tooling |
+| **Node.js 22+** | Required by the installer and Node-based tooling |
 | **Git** | Any recent version |
 
 ---
@@ -71,9 +71,10 @@ explicitly registered V1 hooks are loaded:
 }
 ```
 
-Use this V1 registration when you need `pantheon_delegate`, the V1
-BackgroundJobBoard and its event/tool hooks, or the implemented V1 compaction
-path. The hooks are not auto-discovered from `.opencode/plugins/`.
+Use this V1 registration when you need the V1 BackgroundJobBoard and its
+event/tool hooks, or the implemented V1 compaction path. Delegation itself uses
+OpenCode's native `task()`. The hooks are not auto-discovered from
+`.opencode/plugins/`.
 
 For the V2 adapter, and only when V1 delegate APIs are not expected, copy the
 repository's root config as a V2 starting point:
@@ -282,7 +283,7 @@ contracts are different:
 | Concern | V1 | V2 |
 |---|---|---|
 | Agent runtime | Legacy Pantheon plugin plus OpenCode agent config | `plugin-v2` transforms agent drafts and sets Zeus to `primary` |
-| Delegation | Pantheon `pantheon_delegate` tools and V1 board | No Pantheon delegate tools; use native OpenCode behavior only where supported |
+| Delegation | Native OpenCode `task()`; V1 board lifecycle retained | Native OpenCode `task()`; no Pantheon delegate tool surface |
 | Hooks/events | V1 plugin and separately registered V1 hooks | Not registered by `plugin-v2` |
 | Compaction/restart | Only the V1 paths documented below | No Pantheon compaction or auto-resume contract |
 
@@ -337,9 +338,9 @@ Built into every agent's workflow, the **YAGNI Ladder** prevents overengineering
 
 ### Model Configuration — 4 Presets (gerado de `src/routing.yml`)
 
-> **Default = herdar do chat (sem `active-preset.json`) no caminho V1** — sem preset ativo, os delegates V1 herdam nativamente o modelo do chat pai. O plugin V1 (`src/plugin.ts` → `resolveActivePreset`) lê `PANTHEON_MODEL_PRESET` env > primeiro `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) > **`null` (herança nativa)**. `loadRoutingAgentModels` vazio quando `null`; `delegation.ts` omite `model` em `session.create`/`promptAsync` para herança nativa. `small_model` nunca usado. O V2 adapter não registra `pantheon_delegate` nem aplica esta cadeia de delegate.
+> **Default = herdar do chat (sem `active-preset.json`) no caminho V1** — sem preset ativo, os filhos herdam nativamente o modelo do chat pai. O plugin V1 (`src/plugin.ts` → `resolveActivePreset`) lê `PANTHEON_MODEL_PRESET` env > primeiro `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) > **`null` (herança nativa)**. `loadRoutingAgentModels` vazio quando `null`; nenhum modelo é imposto aos filhos, então o `task()` nativo herda o modelo do chat pai. `small_model` nunca usado. O V2 adapter não aplica esta cadeia de modelo.
 
-Tabelas abaixo são **geradas a partir de [`src/routing.yml`](../../src/routing.yml)** via `node scripts/generate-preset-docs.mjs` (sem hardcodar segredos — só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` nomes + `baseURL`s). Pricing 2026 verificado via `scripts/install/model-picker.mjs` (`PRESET_PRICE`).
+Tabelas abaixo derivam de [`src/routing.yml`](../../src/routing.yml) (sem hardcodar segredos — só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` nomes + `baseURL`s). Pricing 2026 verificado via `scripts/install/model-picker.mjs` (`PRESET_PRICE`).
 
 #### Presets — resumo (provider / BaseURL / key / pricing / vision)
 
@@ -472,22 +473,21 @@ Apollo agora segue o override (se houver) ou preset agente; se nenhum, herda do 
 #### Model Priority Chain (V1, 1.5.0)
 
 ```
-1. explicit model em pantheon_delegate({model: "provider/model-id"})
-2. overrides.agents[agent].model em active-preset.json (/pantheon-model set --agent)
-3. presets.<active>.agents[agent].model  (loadRoutingAgentModels)
-4. (ausência) → herança nativa — OpenCode herda modelo da sessão pai (chat)
-   — small_model nunca usado para delegates
+1. overrides.agents[agent].model em active-preset.json (/pantheon-model set --agent)
+2. presets.<active>.agents[agent].model  (loadRoutingAgentModels)
+3. (ausência) → herança nativa — OpenCode herda modelo da sessão pai (chat)
+   — small_model nunca usado
    — top-level opencode.json model ignorado (removido no install)
 ```
 
-This priority chain is V1 `pantheon_delegate` behavior. It is not a V2
-`plugin-v2` API or a promise about native OpenCode `task()` model selection.
+This priority chain is V1 model resolution for native `task()` children. It is
+not a V2 `plugin-v2` API or a promise about OpenCode `task()` model selection.
 
 ---
 
 ### Model Tiers (legado → 1.5.0 presets)
 
-> **Legado superseded**: tiers `fast`/`default`/`premium` eram abstrações manuais em `opencode.json` (ex.: `gpt-4o-mini`, `gpt-4o`, `o3`). **Em 1.5.0**, tiers são **pinados via 4 presets** (`go-free`/`go-fast`/`go-premium`/`openai`) em [`src/routing.yml`](../../src/routing.yml) — cada agente recebe `model` + `reasoning_effort` concretos no caminho V1. Veja seção **Model Configuration — 4 Presets** acima para tabelas geradas (`node scripts/generate-preset-docs.mjs`). Sem preset, a herança nativa documentada aplica-se à delegação V1; o V2 adapter não registra essa API.
+> **Legado superseded**: tiers `fast`/`default`/`premium` eram abstrações manuais em `opencode.json` (ex.: `gpt-4o-mini`, `gpt-4o`, `o3`). **Em 1.5.0**, tiers são **pinados via 4 presets** (`go-free`/`go-fast`/`go-premium`/`openai`) em [`src/routing.yml`](../../src/routing.yml) — cada agente recebe `model` + `reasoning_effort` concretos no caminho V1. Veja seção **Model Configuration — 4 Presets** acima para as tabelas derivadas de `src/routing.yml`. Sem preset, a herança nativa documentada aplica-se à delegação V1; o V2 adapter não registra essa API.
 
 ### ACP (Agent Client Protocol)
 
@@ -748,7 +748,7 @@ Reference in `opencode.json`:
 
 ### Generation Script
 
-Add to `scripts/generate-prompts.sh`:
+Example generation script:
 ```bash
 #!/bin/bash
 # Generate dynamic prompts

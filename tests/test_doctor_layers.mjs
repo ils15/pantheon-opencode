@@ -3,19 +3,29 @@
 import { strict as assert } from 'node:assert'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   checkCodeModeDir,
+  checkPluginVersionDrift,
   classifyAgentsMdFreshness,
+  classifyNodeSqliteProbe,
   classifyPermissionTaskCheck,
+  classifyPluginVersionDrift,
   collectMcpConfigs,
+  collectRegisteredPluginRefs,
   deriveInstalledAgentFiles,
   findMissingPermissionTask,
   hasPermissionTask,
   isValidAgentFile,
+  probeNodeSqlite,
+  resolveCodeModeDir,
+  resolveInstalledPackageRoot,
   resolveOpenCodeConfigDir,
   summaryMessage,
 } from '../scripts/doctor.mjs'
+
+const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), '..'))
 
 // A blocking error must never be presented as a positive/advisory-only result,
 // even when warnings are also present.
@@ -219,5 +229,200 @@ try {
 } finally {
   rmSync(codeModeFixture, { recursive: true, force: true })
 }
+
+// F.2 parity with the MCP resolver (_has_usable_scripts): an EMPTY project
+// overlay must NOT mask a lower-priority `.pantheon/code-mode` that actually
+// ships scripts. Before the fix, existsSync let the empty overlay win and the
+// manifest check reported a false missing-manifest error.
+const overlayFixture = mkdtempSync(join(tmpdir(), 'pantheon-doctor-codemode-overlay-'))
+try {
+  const emptyOverlay = join(overlayFixture, '.opencode', '.pantheon', 'code-mode')
+  mkdirSync(emptyOverlay, { recursive: true })
+  const seeded = join(overlayFixture, '.pantheon', 'code-mode')
+  mkdirSync(seeded, { recursive: true })
+  writeFileSync(join(seeded, 'seed.sh'), '#!/usr/bin/env bash\necho seed\n')
+
+  assert.equal(
+    resolveCodeModeDir({ target: overlayFixture }),
+    seeded,
+    'F.2 skips an empty overlay and resolves the seeded project dir',
+  )
+  assert.equal(
+    checkCodeModeDir({ target: overlayFixture }),
+    seeded,
+    'F.2 check uses the same usability rule as the MCP resolver',
+  )
+} finally {
+  rmSync(overlayFixture, { recursive: true, force: true })
+}
+
+// ---------------------------------------------------------------------------
+// H3. Plugin version drift (issue #158)
+// ---------------------------------------------------------------------------
+// A lockfile-pinned npm install can keep an installed pantheon-opencode copy
+// on an older version while the running package moved on (e.g. 1.5.0 removed
+// the pantheon_delegate tool). The opencode.json keeps pointing at that stale
+// copy, so the user silently runs an obsolete tool surface. The doctor must
+// detect the drift and warn; a healthy install must stay quiet.
+
+// Only paths INSIDE a node_modules/pantheon-opencode tree count as an
+// installed copy — dev checkouts and third-party dirs are never flagged.
+assert.equal(
+  resolveInstalledPackageRoot('/home/admin/node_modules/pantheon-opencode/src/plugin.ts'),
+  '/home/admin/node_modules/pantheon-opencode',
+  'absolute node_modules V1 path resolves to its package root',
+)
+assert.equal(
+  resolveInstalledPackageRoot(
+    '/home/admin/node_modules/pantheon-opencode/src/plugins/pantheon-hooks.ts',
+  ),
+  '/home/admin/node_modules/pantheon-opencode',
+  'hooks plugin resolves to the same package root',
+)
+assert.equal(
+  resolveInstalledPackageRoot(
+    '/home/admin/.npm/_npx/abc/node_modules/pantheon-opencode/src/plugin-v2',
+  ),
+  '/home/admin/.npm/_npx/abc/node_modules/pantheon-opencode',
+  'npx-cache copy resolves to its package root',
+)
+assert.equal(
+  resolveInstalledPackageRoot('src/plugin.ts'),
+  null,
+  'relative V1 ref is not an installed copy',
+)
+assert.equal(
+  resolveInstalledPackageRoot('src/plugin-v2'),
+  null,
+  'relative V2 ref is not an installed copy',
+)
+assert.equal(
+  resolveInstalledPackageRoot('/home/dev/pantheon/src/plugin.ts'),
+  null,
+  'dev checkout outside node_modules is not an installed copy',
+)
+assert.equal(resolveInstalledPackageRoot(null), null, 'non-string ref is ignored')
+
+// Classification: a stable release outranks any beta of the same core version.
+assert.equal(classifyPluginVersionDrift('1.4.1', '1.5.0'), 'drift', 'older installed copy is drift')
+assert.equal(classifyPluginVersionDrift('1.5.0', '1.5.0'), 'sync', 'same version is sync')
+assert.equal(classifyPluginVersionDrift('1.5.0', '1.4.1'), 'drift', 'newer installed copy is drift')
+assert.equal(
+  classifyPluginVersionDrift('1.5.0-beta.9', '1.5.0'),
+  'drift',
+  'beta installed vs stable package is drift',
+)
+assert.equal(
+  classifyPluginVersionDrift('1.5.0', '1.5.0-beta.9'),
+  'drift',
+  'stable installed vs beta package is drift',
+)
+assert.equal(
+  classifyPluginVersionDrift('1.5.0-beta.9', '1.5.0-beta.9'),
+  'sync',
+  'same beta is sync',
+)
+assert.equal(
+  classifyPluginVersionDrift(null, '1.5.0'),
+  'unknown',
+  'missing registered version is unknown',
+)
+assert.equal(
+  classifyPluginVersionDrift('1.5.0', null),
+  'unknown',
+  'missing package version is unknown',
+)
+
+// Registered refs are collected from BOTH the V1 `plugin` and V2 `plugins`
+// lists, preserving the config they came from (relative refs resolve against
+// the config directory, never against cwd).
+assert.deepEqual(
+  collectRegisteredPluginRefs([
+    {
+      path: '/c1/opencode.json',
+      data: { plugin: ['/abs/node_modules/pantheon-opencode/src/plugin.ts', 'third-party'] },
+    },
+    { path: '/c2/opencode.json', data: { plugins: ['src/plugin-v2'] } },
+  ]).map((r) => r.path),
+  ['/abs/node_modules/pantheon-opencode/src/plugin.ts', 'third-party', 'src/plugin-v2'],
+  'both plugin lists are collected in order',
+)
+assert.deepEqual(
+  collectRegisteredPluginRefs([{ path: '/c/opencode.json', data: {} }]),
+  [],
+  'no plugin keys → no refs',
+)
+
+// End-to-end: a project whose opencode.json registers a plugin inside a
+// node_modules copy pinned to an older version must be flagged as drift.
+const driftFixture = mkdtempSync(join(tmpdir(), 'pantheon-doctor-drift-'))
+try {
+  const packageVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+  const staleCopy = join(driftFixture, 'node_modules', 'pantheon-opencode')
+  mkdirSync(join(staleCopy, 'src'), { recursive: true })
+  writeFileSync(join(staleCopy, 'src', 'plugin.ts'), '// stale pinned copy\n')
+  writeFileSync(
+    join(staleCopy, 'package.json'),
+    JSON.stringify({ name: 'pantheon-opencode', version: '1.4.1' }),
+  )
+  mkdirSync(join(driftFixture, '.config', 'opencode'), { recursive: true })
+  writeFileSync(
+    join(driftFixture, 'opencode.json'),
+    JSON.stringify({ plugin: [join(staleCopy, 'src', 'plugin.ts')] }),
+  )
+
+  assert.equal(
+    checkPluginVersionDrift({ target: driftFixture, env: { HOME: driftFixture } }),
+    'drift',
+    'doctor flags a plugin registered inside an older installed copy',
+  )
+
+  // Healthy state: the installed copy carries the SAME version as the running
+  // package — no warning, no false positive.
+  writeFileSync(
+    join(staleCopy, 'package.json'),
+    JSON.stringify({ name: 'pantheon-opencode', version: packageVersion }),
+  )
+  assert.equal(
+    checkPluginVersionDrift({ target: driftFixture, env: { HOME: driftFixture } }),
+    'sync',
+    'same-version installed copy reports sync (no false positive)',
+  )
+
+  // A project that registers the plugin by relative/ROOT path (dev checkout)
+  // has no node_modules copy to compare and is skipped, never flagged.
+  writeFileSync(join(driftFixture, 'opencode.json'), JSON.stringify({ plugins: ['src/plugin-v2'] }))
+  assert.equal(
+    checkPluginVersionDrift({ target: driftFixture, env: { HOME: driftFixture } }),
+    'skip',
+    'non-node_modules registration is skipped, not flagged',
+  )
+} finally {
+  rmSync(driftFixture, { recursive: true, force: true })
+}
+// K. Node Runtime — node:sqlite availability probe (issue #114)
+// ---------------------------------------------------------------------------
+
+// Classification is a pure function of the probe result, so the unsupported
+// path is asserted without depending on the host Node version.
+const supported = classifyNodeSqliteProbe({ available: true, version: 'v22.22.2' })
+assert.equal(supported.status, 'ok', 'available node:sqlite classifies as ok')
+assert.match(supported.message, /node:sqlite available/, 'ok message names node:sqlite')
+
+const unsupported = classifyNodeSqliteProbe({ available: false, version: 'v18.20.0' })
+assert.equal(unsupported.status, 'unsupported', 'missing node:sqlite classifies as unsupported')
+assert.match(
+  unsupported.message,
+  /pantheon_cost will report UNSUPPORTED on Node v18\.20\.0 — node:sqlite requires Node >= 22\.5/,
+  'unsupported message names the tool, the runtime version and the floor',
+)
+
+// The probe itself is exercised end-to-end: a builtin that cannot exist fails
+// the real spawn+exit-status path, proving UNSUPPORTED is detected without
+// mocking process.version.
+const missing = probeNodeSqlite({ module: 'node:sqlite-pantheon-nonexistent' })
+assert.equal(missing.available, false, 'probe reports unavailable for a missing builtin')
+assert.ok(missing.reason, 'probe surfaces a reason string on failure')
+assert.ok(missing.version, 'probe always reports the running Node version')
 
 console.log('✅ Doctor layered healthcheck contract passed')

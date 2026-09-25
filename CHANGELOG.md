@@ -18,6 +18,300 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.5.2] - 2026-09-22
+
+## 🐞 Fixed
+- **install** — guard undefined collection in init (#174)
+- **release** — compare Zenodo file checksum in the format the API returns (#173)
+## [v1.5.1] - 2026-09-22
+
+## 🐞 Fixed
+- **agents** — declare explicit read: allow for zeus
+- **ci** — drop fastembed from CI, keep pytest collection green (#163)
+- **plugin** — detect registered-plugin version drift after pantheon_delegate removal (#169)
+- **config** — correct node floor and warn on unsupported runtime (#168)
+- **mcp** — degrade gracefully when fastembed import fails (#165)
+- **mcp** — drop dead toon_codec module from published package (#167)
+- **tui** — remove dead pantheon_delegate refs after v1.5.0 V1 removal (#166)
+- **mnemosyne** — grant scoped write to memory-bank and deepwork paths (#164)
+
+## ✅ Closed Issues
+- #94 - drop fastembed from CI, keep pytest collection green (#163)
+- #158 - detect registered-plugin version drift after pantheon_delegate removal (#169)
+- #114 - correct node floor and warn on unsupported runtime (#168)
+- #160 - correct node floor and warn on unsupported runtime (#168)
+- #159 - degrade gracefully when fastembed import fails (#165)
+- #162 - drop dead toon_codec module from published package (#167)
+- #161 - remove dead pantheon_delegate refs after v1.5.0 V1 removal (#166)
+- #111 - grant scoped write to memory-bank and deepwork paths (#164)
+
+## [v1.5.0] - 2026-09-16
+
+### 🆕 What's New
+
+- **Delegação nativa**: `task()` é agora o único canal de delegação — motor legado
+  de dispatch removido por completo, simplificando o fluxo de subagents.
+- **Painel Delegations (TUI)**: painel funcional com status em tempo real, cores
+  por estado (running/completed/failed), janela de recência 24h, ordenação
+  newest-first e spinner fluido com timer independente (80ms/frame).
+- **Read-only enforcement**: sessões read-only bloqueiam `write`, `edit`,
+  `pantheon_delegate` e qualquer mutação — garantindo sandboxing efetivo.
+- **CI/CD**: Dependabot alerts, CodeQL analysis, SHA pins em actions, gitleaks
+  v3 para detecção de secrets, e workflow de release dispatch-only.
+
+### 🐞 Fixed
+
+- **Painel Delegations vazio (crítico)**: canal `session.children` da TUI
+  chamava API com shape v1 num cliente v2 — placeholder `{sessionID}` não era
+  substituído, causando ~181k erros/s e painel vazio. Corrigido
+  `safeSessionPath`/`buildChildrenPath`.
+- **Stale busy**: children com status `busy` stale (>30min sem atualização)
+  agora são classificadas como `completed` (não `running`).
+- **Board corruption**: testes que importam o plugin sem isolamento agora fazem
+  `chdir` para projeto temporário — sem mais entradas fantasma no board real.
+- **Signal leak**: timer independente do spinner separado do poll de dados,
+  evitando bloqueio visual durante operações longas.
+
+### ✅ Closed Issues
+
+- 38% dos testes consolidados (de ~1200 para ~744) com cobertura mantida.
+- 17 módulos mortos removidos, reduzindo superfície de manutenção.
+- OWASP Top 10 audit e input validation em todos os endpoints.
+
+## [v1.5.0-beta.20] - 2026-09-16
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🐞 Fixed
+
+- **Fixed — painel Delegations**: children com status `busy` stale (>30min sem
+  atualização) agora são classificadas como `completed` (não `running`). O
+  opencode mantém entradas `busy` no mapa de status para sessões já concluídas;
+  o TUI agora detecta e marca como done.
+## [v1.5.0-beta.19] - 2026-09-16
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Improved — painel Delegations**: status ausente de children antigas agora é
+  `done` (não `running`); grace 60s para sessões recém-criadas; janela de
+  recência 24h (filtra histórico); ordenação newest-first; ceiling esconde
+  antigos.
+- **Improved — animação**: spinner ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ agora tem timer
+  independente (80ms/frame), separado do poll de dados — fluido, não mais
+  "travado".
+## [v1.5.0-beta.18] - 2026-09-16
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🐞 Fixed
+
+- **Painel Delegations voltou a funcionar (crítico):** o canal
+  `session.children` da TUI chamava a API com a shape v1 (`{ path: { id } }`)
+  num cliente **v2** que espera `{ sessionID }`; o placeholder não era
+  substituído (`/session/%7BsessionID%7D/children`), o host rejeitava cada
+  poll (~181k erros/s) e o painel ficava vazio ("No delegations"). Corrigido
+  `safeSessionPath`/`buildChildrenPath` para `{ sessionID }`, removidos os
+  `as any` que escondiam o mismatch, + teste de regressão exato. Auditoria
+  confirmou que só a TUI (v2) estava errada (o `plugin.ts` usa SDK v1 de
+  propósito).
+- **Higiene de testes:** testes que importam o plugin sem isolamento agora
+  fazem `chdir` para um projeto temporário antes do import — não criam mais
+  entradas no board real (fim dos estados fantasma em desenvolvimento).
+
+## [v1.5.0-beta.17] - 2026-09-15
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Delegação nativa no host:** o motor `pantheon_delegate` foi removido
+  (~3,9k linhas) junto com as tools `pantheon_delegate`,
+  `pantheon_delegation_read` e `pantheon_delegation_list`; a delegação agora usa
+  o **`task()` nativo** do host (child sessions). 16 arquivos de teste obsoletos
+  removidos.
+- **TUI — painel Delegations lê a sessão nativa:** o painel passa a derivar de
+  `session.children` + `session.status` + md (o arquivo de board deixou de ser
+  fonte). Mantidas as cores de status, retenção, ceiling, filtro de sessão e
+  guards.
+- **Camada fina preservada:** `task-result-guard` (verified completion de child
+  vazio), `native-task-status` e guards de enforcement.
+
+## 🐞 Fixed
+
+- **Read-only enforcement re-apontado para sessões nativas:** aplicado no
+  público via hook `chat.params` e `hashline_edit` bloqueado para `apollo`/`gaia`,
+  fechando o bypass aberto após a remoção do motor de delegação.
+- **Docs/comentários limpos:** referências aos módulos removidos atualizadas,
+  incluindo nits de comentário em `tests/pantheon/tui-delegations.test.ts` e
+  `src/pantheon/session-id.ts`.
+
+## [v1.5.0-beta.16] - 2026-09-15
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Modernização CI/supply-chain:** 22 actions SHA-pinadas; `gitleaks-action` v3
+  (fix crítico — a v2 morria com Node 20 em 2026-09-16) com CLI 8.30.1; cache
+  npm/pip; Dependabot; CodeQL `+python` e `codeql-config`; permissões reduzidas
+  no `docs.yml`; job `version-check` fundido no `validate`; `upload-artifact` v7
+  e `download-artifact` v8.
+- **Lean:** ~17 módulos mortos removidos de `src/pantheon/`, docs/scripts
+  obsoletos, `teste/`/`testes/`, `Dockerfile`/`docker-compose` (de outro projeto)
+  e caches; ~38% dos arquivos de teste removidos/consolidados; testes mínimos
+  readicionados para os módulos vivos (tool-ceiling, native-probe).
+- **Instructions:** deduplicação das instruções compartilhadas — contexto menor
+  sem perder nenhuma regra.
+
+## 🐞 Fixed
+
+- **2 flakes determinísticos eliminados:** TTL do MCP persistence
+  (`test_ttl_expiry_real_time`) e `logger.test.mjs` deixaram de depender de
+  timing/carga do host.
+- **Refs stale corrigidas:** referências de versão/ambiente atualizadas para
+  Node 22+.
+
+## [v1.5.0-beta.15] - 2026-09-15
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Delegation `read` devolve o relatório completo:** o retorno de `read` passa a
+  ler o relatório integral do disco (com cap configurável e marker explícito de
+  truncamento) em vez do recibo resumido — o conteúdo é o mesmo tanto no caminho
+  nativo quanto no legado, com paridade garantida entre eles.
+- **`sanitizeReceiptText` UTF-8-safe:** a sanitização de recibos deixou de corromper
+  caracteres multibyte; acentuação e demais codepoints UTF-8 são preservados no
+  caminho nativo e no legado.
+- **TUI — cor de status na row inteira:** cada linha do painel Delegations passa a
+  ser pintada pelo estado — vermelho = falha, verde = concluído, amarelo = em
+  andamento — com o glyph mantido como canal redundante para acessibilidade.
+
+## 🐞 Fixed
+
+- **TUI — painel Delegations só da sessão ativa:** o painel deixa de renderizar
+  rows cross-session/órfãs que causavam "Session not found" ao clicar; a lista
+  agora cobre apenas a sessão ativa, mantendo a retenção de concluídas (2 min)
+  e falhas (10 min).
+- **Guards de estado e navegação órfã:** transições prematuras para `done` são
+  bloqueadas e a navegação defensiva ignora alvos órfãos, evitando seleção
+  inválida no painel.
+- **Isolamento do board nos testes:** testes que importam o plugin real agora
+  isolam o BackgroundJobBoard, eliminando o fantasma "preserve this running
+  delegation"; o board real foi limpo.
+- **Lean no core:** 17 módulos mortos de `src/pantheon/` removidos, ~38% dos
+  arquivos de teste removidos/consolidados e docs/scripts órfãos limpos, com
+  testes mínimos readicionados para os módulos vivos (tool-ceiling, native-probe).
+- **Flake de TTL determinístico:** `test_ttl_expiry_real_time` deixou de competir
+  com a truncagem de microssegundos do SQLite — o teste agora espera o início de
+  um segundo limpo antes do store e usa margem sobre o TTL, eliminando o flake
+  dependente de carga (test-only).
+
+## [v1.5.0-beta.14] - 2026-09-14
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Ordenação active-first:** delegações ativas aparecem antes das concluídas,
+  falhas e canceladas no painel TUI.
+- **Overflow active:** quando há mais delegações ativas que o teto visível, o
+  excedente ativo permanece representado na linha de overflow.
+
+## 🐞 Fixed
+
+- **Retenção visual:** concluídas permanecem visíveis por 2 min e falhas por
+  10 min antes de saírem do painel; canceladas seguem a retenção configurada.
+
+## ⚠️ Known Issues
+
+- **Stale running warning:** jobs em estado `running` além do limite esperado
+  recebem um aviso visual de stale no painel.
+## [v1.5.0-beta.13] - 2026-09-14
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **TUI status-only — rows simplificadas:** cada linha do painel Delegations passa
+  a ser `{glyph} {alias} {elapsed}` + `desc` muted — um glyph de status, uma única
+  identidade e o tempo decorrido, com a descrição em tom muted. São 4 glyphs
+  (running animado, completed, error, cancelled/retry), sem toggle
+  `[Sessão]`/`[Tudo]`, sem prefixos `nat:`/`pan:` e sem losango ◇/◆.
+- **Header `active`/`done`/`failed`:** o cabeçalho do painel resume apenas esses
+  três contadores sobre a lista completa (todas as sessões), sem `nat:`/`pan:`.
+- **Ceiling 8:** no máximo 8 linhas visíveis (live-first); o excedente colapsa em
+  uma única linha `… +N more`.
+- **Board read (jobs de todas as sessões):** o painel lê o BackgroundJobBoard
+  (`.pantheon/board/state.json`), então jobs `pantheon_delegate` de qualquer
+  sessão aparecem — não só os filhos nativos da sessão focada.
+- **118 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com
+  118/118 passando, cobrindo rows status-only, header active/done/failed, ceiling
+  e board read cross-session.
+
+## 🐞 Fixed
+
+- **Sanitização de dead code:** removidos helpers, tipos e estado órfãos do
+  painel Delegations (toggle de escopo `[Sessão]`/`[Tudo]`, prefixos curtos
+  `nat:`/`pan:`, glyphs por estado e paginação de arquivo morto) que sobraram do
+  refactor status-only.
+- **Board merge preserva sessão conhecida:** um record do board com
+  `parentSessionID` vazio não sobrescreve mais a sessão já atribuída à linha.
+## [v1.5.0-beta.12] - 2026-09-14
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **TUI lê o board (4º canal):** o painel Delegations passa a ler o
+  BackgroundJobBoard via `readBoardState()` — jobs `pantheon_delegate` de todas
+  as sessões aparecem, não só os filhos nativos da sessão focada.
+- **Toggle [Sessão]/[Tudo] + chips:** `[Sessão]` (default) mostra só a sessão
+  focada, `[Tudo]` mostra jobs de todas as sessões; chips clicáveis no header.
+- **Raw `dist/tui.tsx` removido (bundle-only):** o dist passa a carregar só o
+  bundle compilado (`tui.js`); o fonte raw sai do pacote publicado.
+- **117 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com
+  117/117 passando, cobrindo board-read, split ativo/recente e toggle de escopo.
+## [v1.5.0-beta.11] - 2026-09-14
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Glyphs da FSM real no painel Delegations:** cada estado do BackgroundJobBoard
+  tem agora um glifo Unicode geométrico próprio — `⠋` running (spinner 1s),
+  `⟳` retry, `⚠` stale/startup, `✓` completed, `✕` error, `−` cancelled. Forma e
+  cor são canais independentes: as linhas seguem legíveis sem cor e sem Nerd Font.
+- **Prefixo `nat:` / `pan:` documentado:** `docs/INSTALLATION.md` passa a
+  descrever os prefixos curtos das linhas nativas (`nat:<agent>`) e do board
+  (`pan:<alias>`) e o par de glyphs ◇/◆.
+- **`scripts/dev-tui.sh` (dev local sem publish):** instala, builda e registra o
+  caminho absoluto do repo em `.opencode/tui.json` (gitignored) com hint de
+  restart — sem tocar `opencode.json` e sem publicar.
+- **104 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com
+  104/104 passando, cobrindo glifos/marker/tone dos estados reais da FSM.
+
+## 🐞 Fixed
+
+- **Doctor F.2 (`hasUsableScripts`):** a resolução do diretório code-mode agora
+  exige um `.py`/`.sh` regular (paridade com `_has_usable_scripts` do MCP), então
+  um overlay de projeto vazio não mascara mais uma instalação que traz scripts.
+- **`publish:next` órfão removido:** nenhum workflow usava o script (o release
+  publica via `--tag beta`); removido do `package.json` para eliminar o dist-tag
+  `next` obsoleto da linha de publicação.
 ## [v1.5.0-beta.10] - 2026-09-14
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

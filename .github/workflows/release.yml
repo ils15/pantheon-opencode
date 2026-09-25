@@ -92,7 +92,7 @@ jobs:
           test -z "${NPM_TOKEN:-}" || { echo "::error::Validation received NPM_TOKEN."; exit 1; }
           test -z "${RELEASE_TOKEN:-}" || { echo "::error::Validation received RELEASE_TOKEN."; exit 1; }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TARGET_SHA }}
           fetch-depth: 0
@@ -108,9 +108,11 @@ jobs:
             exit 1
           }
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       # Dispatched ref code is untrusted. No lifecycle script is allowed to run
       # in this job.
@@ -203,7 +205,7 @@ jobs:
           # Recovery keeps a static note because the original body is not
           # regenerated.
           if [ -n "$RECOVERY_VERSION" ]; then
-            printf '%s\n' "Recovery publish for existing GitHub Release $RECOVERY_VERSION." > "$RUNNER_TEMP/release-notes.md"
+            printf '%s\n' "Recovery publish for existing tag $RECOVERY_VERSION." > "$RUNNER_TEMP/release-notes.md"
           elif ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-notes.md"; then
             echo "::error::CHANGELOG.md has no [$BASE_VERSION] section."; exit 1
           fi
@@ -228,7 +230,7 @@ jobs:
           NODE
           cp "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/release-artifact/release-notes.md"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-inputs-${{ github.run_id }}
           path: ${{ runner.temp }}/release-artifact
@@ -291,7 +293,10 @@ jobs:
           [ "${#TARGET_SHA}" -eq 40 ] || { echo "::error::Target SHA must be 40 characters."; exit 1; }
           printf 'TARGET_SHA=%s\n' "$TARGET_SHA" >> "$GITHUB_ENV"
 
-      - uses: actions/download-artifact@v4
+      # v8 keeps the single-named-artifact layout (extract directly into
+      # `path`); `digest-mismatch` now defaults to `error`, which strengthens
+      # the integrity check on the release tarball.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-inputs-${{ github.run_id }}
           path: release-artifact
@@ -342,7 +347,10 @@ jobs:
           echo "version=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      # NOTE: no `cache: npm` here on purpose — this job never checks out the
+      # repository (it consumes only the validated artifact), so there is no
+      # package-lock.json for setup-node to hash and the cache would fail.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
@@ -415,7 +423,7 @@ jobs:
             if [ "$STATUS" = 404 ]; then
               tag_exists=false
               if [ -n "$RECOVERY_VERSION" ]; then
-                echo '::error::Recovery requires an existing GitHub Release tag.'
+                echo '::error::Recovery requires an existing git tag.'
                 exit 1
               fi
               echo 'tag_exists=false' >> "$GITHUB_OUTPUT"
@@ -455,10 +463,9 @@ jobs:
             fi
           fi
 
-          if [ -n "$RECOVERY_VERSION" ] && [ "$released" != "true" ]; then
-            echo '::error::Recovery requires the existing GitHub Release; it will not create one.'
-            exit 1
-          fi
+          # Beta creates no GitHub Release, so recovery is bound to the git tag
+          # only (already required above). A 404 release lookup above is the
+          # expected state for a beta and must not block the npm republish.
 
           NPM_RESPONSE="$RUNNER_TEMP/npm-response"
           NPM_ERROR="$RUNNER_TEMP/npm-error"
@@ -483,19 +490,18 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: gh api --method POST "repos/$RELEASE_REPO/git/refs" -f "ref=refs/tags/$VERSION" -f "sha=$TARGET_SHA"
 
+      # Only the stable channel creates a GitHub Release. The official Zenodo
+      # GitHub integration archives every Release (pre-releases included), so a
+      # beta Release would add an unwanted version to the Zenodo family. Beta
+      # keeps its git tag for by-tag recovery and publishes npm only.
       - name: Create GitHub release
-        if: steps.idem.outputs.released != 'true' && inputs.recovery_version == ''
+        if: steps.idem.outputs.released != 'true' && inputs.recovery_version == '' && inputs.release_channel != 'beta'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.metadata.outputs.version }}
-          RELEASE_CHANNEL: ${{ inputs.release_channel }}
         run: |
           set -euo pipefail
-          if [ "$RELEASE_CHANNEL" = "beta" ]; then
-            gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --prerelease --notes-file release-artifact/release-notes.md
-          else
-            gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --notes-file release-artifact/release-notes.md
-          fi
+          gh release create "$VERSION" --repo "$RELEASE_REPO" --target "$TARGET_SHA" --verify-tag --title "Pantheon $VERSION" --notes-file release-artifact/release-notes.md
 
       # This is intentionally the final step. The artifact was produced with
       # --ignore-scripts; npm also receives --ignore-scripts as a second guard.

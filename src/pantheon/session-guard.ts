@@ -10,8 +10,8 @@
  * never throw, never send the placeholder).
  *
  * Mirrors the TUI's `src/plugins/tui/src/index.tsx` contract verbatim so both
- * sides agree on what "valid" means. The TUI file remains self-contained
- * (dist/tui.tsx is a raw copy, no relative imports), so its local copy is kept
+ * sides agree on what "valid" means. The TUI plugin ships as a bundle
+ * (dist/tui.js) without the src/pantheon tree, so its local copy is kept
  * in sync — this module is the shared source for `src/pantheon/*` and
  * `src/plugin.ts`.
  *

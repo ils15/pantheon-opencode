@@ -84,7 +84,9 @@ memory_store({
     agreements: ["point1", "point2"],
     divergences: [{"issue": "...", "resolution": "..."}],
     response_rate: "X of Y",
-    themis_audit: "approved|issues"
+    themis_audit: "approved|issues",
+    precedent_used: false,
+    timestamp: "<ISO-8601>"
   },
   metadata: {
     type: "council_decision",
@@ -93,6 +95,7 @@ memory_store({
   }
 })
 ```
+`value` is JSON-serialized before storing (the MCP `memory_store.value` argument is a string).
 
 ### Read Path (Precedent Fast-Path)
 Before dispatching a new council, Zeus runs:
@@ -103,8 +106,8 @@ memory_search(question, top_k=2, namespace="council_decisions")
 Result interpretation:
 | Score | Age | Action |
 |-------|-----|--------|
-| > 0.85 | < 30 days | Return precedent as fast-path answer. Skip council dispatch entirely. |
-| > 0.85 | >= 30 days | Return with warning "Reavaliar se contexto mudou" + proceed with council |
+| > 0.85 | < 30 days | Return precedent verbatim (note "⚠️ Decisão de [data] — reavaliar se contexto mudou") as fast-path answer. Skip council dispatch entirely. |
+| > 0.85 | >= 30 days | Return with warning "Reavaliar se contexto mudou — decisão tem mais de 30 dias" + proceed with council |
 | 0.5 - 0.85 | Any | Include as context for specialists but still dispatch council |
 | < 0.5 | Any | Ignore, proceed with fresh council |
 

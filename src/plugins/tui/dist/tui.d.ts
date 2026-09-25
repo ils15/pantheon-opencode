@@ -5,7 +5,7 @@ type DelegationEntry = {
   alias: string;
   /** Parent session the job was launched from (dir name under .pantheon/delegations). */
   sessionID: string;
-  /** Child session id (= board task id, from the `Task ID` header). The
+  /** Child session id (= task id, from the `Task ID` header). The
    *  children channel always sets it from the child session itself; the md
    *  channel parses it so child↔md matching works by taskID. */
   taskID?: string;
@@ -18,11 +18,11 @@ type DelegationEntry = {
   updatedAt: number | null;
   timedOut: boolean;
   description: string;
-  /** True while the panel is waiting for pantheon_delegation_read. */
-  read?: boolean;
   /** Internal provenance used to keep a finalized md report authoritative.
-   *  'children-only' = a native task() child session with NO board report
-   *  (rendered with the distinct `nat:` prefix); 'md' = board report wins. */
+   *  'children-only' = a native task() child session with NO delegate report
+   *  (a native child row); 'md' = the child has a matching report;
+   *  'child' = the plain children channel; 'live' = the optimistic tool-event
+   *  channel. */
   source?: 'child' | 'live' | 'md' | 'children-only';
 };
 /** Parse one delegation report md header into a structured entry.
@@ -43,19 +43,26 @@ declare function parseDelegationMarkdown(raw: string, fileAlias?: string, sessio
 declare function readDelegationEntries(dir: string): Promise<DelegationEntry[]>;
 /** Read delegation reports from EVERY session under
  *  `<root>/.pantheon/delegations/<sessionID>/<alias>.md` — the panel's
- *  HISTORY channel. Unlike the children/live channels it does NOT depend on a
- *  resolved sessionID: with no focused session (null/placeholder), the panel
- *  still shows the reports from all past sessions (running first, Finalized
- *  desc — the sort applied by readDelegationEntries). Fail-open: a
- *  missing/unreadable directory yields []. */
+ *  ENRICHMENT source. The read is deliberately unfiltered (each entry carries
+ *  its directory's sessionID, so a taskID match can enrich any channel);
+ *  callers MUST scope the merged result with {@link filterDelegationsToSession}
+ *  before rendering — only the active session's reports are shown. Entries are
+ *  running first, Finalized desc (the sort applied by readDelegationEntries).
+ *  Fail-open: a missing/unreadable directory yields []. */
 declare function readAllDelegationEntries(root: string): Promise<DelegationEntry[]>;
-/** Resolve the directory where the job board writes delegation md reports.
- *  The board writes `.pantheon/delegations` RELATIVE to the server cwd,
- *  which the TUI exposes as `TuiState.path.directory`. `project` does NOT
- *  exist on `TuiState.path` (the old `state?.project ?? state?.worktree`
- *  resolution was always undefined for the first term) and `worktree` is
- *  `/` when there is no git (e.g. the sandbox test project) — a root of
- *  `''` or `'/'` must fall back to `process.cwd()`. */
+/** Resolve the PROJECT ROOT used by every pantheon file channel. `directory`
+ *  wins over `worktree` (the old `resolveDelegationsDir` already did this);
+ *  an absent/empty root or `/` (no git — e.g. the sandbox test project) falls
+ *  back to cwd. Standardised here so the delegations md and the panel logger
+ *  all read the SAME root (audit finding: the channels
+ *  resolved the root independently). Pure — no I/O. */
+declare function resolvePantheonRoot(state: {
+  directory?: string;
+  worktree?: string;
+} | undefined, cwd?: string): string;
+/** Resolve the directory where delegation md reports are written.
+ *  The finalizer writes `.pantheon/delegations` RELATIVE to the server cwd,
+ *  which the TUI exposes as `TuiState.path.directory`. */
 declare function resolveDelegationsDir(state: {
   directory?: string;
   worktree?: string;
@@ -74,17 +81,16 @@ declare function tuiLogPath(projectRoot: string): string;
  *  mergeDelegationSources. */
 declare function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry): number;
 /** Split the panel list: active jobs (running/retry, stale-marked) first,
- *  then the most recent terminal reports, then the archived tail (paginated
- *  in the View). Pure — so the history-only panel (no sessionID) is testable
+ *  then the most recent terminal reports; the remaining tail is collapsed
+ *  by the View into a single "… +N more" line. Pure — so the history-only panel (no sessionID) is testable
  *  without the TUI runtime. */
 declare function splitDelegationList(all: readonly DelegationEntry[], maxRecent?: number, now?: number, staleThresholdMs?: number): {
   active: DelegationEntry[];
   recent: DelegationEntry[];
-  archived: DelegationEntry[];
 };
-/** The list the panel actually renders (kept for the header count and
- *  existing tests): active jobs first, then the most recent terminal
- *  reports (capped) — the archived tail is rendered separately. Pure. */
+/** Live-first window used by {@link ceilingDelegationList} (kept for the
+ *  ceiling helper and existing tests): active jobs first, then the most
+ *  recent terminal reports (capped). Pure. */
 declare function visibleDelegationList(all: readonly DelegationEntry[], maxTerminal?: number, now?: number, staleThresholdMs?: number): DelegationEntry[];
 /** Default stale-running threshold: 30 minutes. */
 declare const STALE_RUNNING_THRESHOLD_MS: number;
@@ -92,16 +98,43 @@ declare const STALE_RUNNING_THRESHOLD_MS: number;
  *  considered stale. Combined with the stale-running threshold to produce the
  *  display-only `stale-running` state. */
 declare const IDLE_SILENCE_MS: number;
+/** Visual-only terminal retention windows. Reports remain on disk; these
+ *  constants only control which rows enter the TUI window. */
+declare const DELEGATION_DONE_RETENTION_MS: number;
+declare const DELEGATION_FAILED_RETENTION_MS: number;
+/** Grace window for an ABSENT child status. `api.state.session.status()` only
+ *  carries the sessions that are currently ALIVE; every finished child of a
+ *  long-lived session is missing from that map. A child with no status is
+ *  therefore treated as terminal (done) — treating it as running made every
+ *  historical child of the session show up as "active" (the "197 children,
+ *  all active" regression). The one exception is a freshly-spawned child that
+ *  has not been registered by the status API yet: within this window of its
+ *  last activity (`time.updated`, falling back to `time.created`) it still
+ *  reads as running. */
+declare const DELEGATION_CHILD_STATUS_GRACE_MS: number;
+/** Recency window for the children channel. `session.children` returns EVERY
+ *  child the focused session ever spawned, so a long session accumulates
+ *  hundreds of historical rows that would inflate the panel. A child whose
+ *  last activity (its own time, or its matched report's Finalized timestamp)
+ *  is older than this window is dropped BEFORE it can enter the list. 24h
+ *  keeps the sidebar scoped to current work while still covering long
+ *  delegations. A child with no timestamp at all is kept (fail-open). */
+declare const DELEGATION_CHILDREN_RECENCY_MS: number;
+/** Alias-less NATIVE task() live entries never receive a report alias (the
+ *  task tool output carries none), so the 30s alias-less prune in
+ *  mergeChildDelegationSources must not apply to them — 5 minutes covers a
+ *  slow child listing while still bounding the live map. */
+declare const NATIVE_LIVE_ALIASLESS_TTL_MS: number;
 /**
  * Mark a running entry as `stale-running` if it has been running longer than
  * the threshold AND has no recent activity (no `updatedAt` change in the last
- * `IDLE_SILENCE_MS`). This is DISPLAY-ONLY — the board state is unchanged.
+ * `IDLE_SILENCE_MS`). This is DISPLAY-ONLY — the persisted state is unchanged.
  *
  * A `stale-running` entry renders with a warning indicator but the underlying
  * delegation is still treated as running by the backend.
  */
 declare function markStaleIfRunning(entry: DelegationEntry, now: number, thresholdMs?: number): DelegationEntry;
-/** Compact elapsed-time label: "5m 12s", "1h 30m", "2d 4h" — ticks every
+/** Compact elapsed-time label, single unit only: "12s"/"3m"/"1h"/"2d" — ticks every
  *  second for running jobs. */
 declare function fmtElapsed(ms: number): string;
 /** Elapsed label for one entry: an ACTIVE entry (running/retry/stale-running)
@@ -110,12 +143,29 @@ declare function fmtElapsed(ms: number): string;
 declare function delegationElapsed(entry: DelegationEntry, now: number): string;
 /** The activity labels shown by the animated row. Keeping this pure makes the
  * state machine testable without booting OpenCode's renderer. */
-type DelegationActivity = 'delegating' | 'working' | 'reading' | 'completed' | 'error' | 'cancelled';
+type DelegationActivity = 'delegating' | 'working' | 'completed' | 'error' | 'cancelled';
 declare function delegationActivity(entry: DelegationEntry): DelegationActivity;
 declare function delegationActivityLabel(entry: DelegationEntry): string;
-/** Return a deterministic spinner frame. The View ticks this every 1000ms
- *  (not 140ms — the fast tick flickered without adding information). */
-declare function delegationSpinnerFrame(now: number): string;
+/** Return the spinner glyph for the given frame counter. The frame counter
+ *  is incremented every ~80ms by a dedicated animation timer, decoupled from
+ *  the data poll cycle. Pure — no side effects. */
+declare function delegationSpinnerFrame(frame: number): string;
+/** Every state the row knows how to draw: the delegation lifecycle states
+ *  derived from the children status + md reports (`completed`, `error`,
+ *  `cancelled`, `startup_failed`, `startup_unknown`) plus the TUI-only
+ *  states (`retry`, `stale-running`). Fase 1 deliberately omits speculative
+ *  blocked/paused/scheduled/skipped. There is no `pending` display state: a
+ *  pre-dispatch tool part maps to `running` in {@link reduceDelegationToolPart}. */
+type DelegationDisplayState = DelegationEntry['state'];
+/** Semantic tone mapped to the TUI theme at the row ({@link DelegationRow}).
+ *  Kept separate + pure so the color channel is testable without booting the
+ *  renderer. Every display state resolves to one of the three status colors;
+ *  the row paints its whole content with it (see {@link DelegationRow}). */
+type DelegationStateTone = 'warning' | 'error' | 'success';
+/** Status → color mapping for the whole-row tone. Red = failure, green =
+ *  terminal, yellow = in flight. The glyph remains a redundant channel so the
+ *  state stays legible in monochrome. Display-only; no behavior change. */
+declare function delegationStateTone(state: DelegationDisplayState): DelegationStateTone;
 type ToolActivity = {
   tool: string;
   summary: string;
@@ -165,36 +215,34 @@ type DelegationToolPart = {
     };
   };
 };
-/** One live delegation tracked in-memory, keyed by the delegate callID. */
+/** One live delegation tracked in-memory, keyed by the task callID. */
 type LiveDelegationEntry = {
-  /** Tool call id of the pantheon_delegate part (stable across events). */
+  /** Tool call id of the task part (stable across events). */
   callID: string;
   /** Part id (for message.part.removed cleanup). */
   partID: string;
   /** Parent session the delegation was launched from. */
   sessionID: string;
-  tool: 'pantheon_delegate' | 'pantheon_delegation_read' | 'task';
-  /** Agent name (from the delegate input args). */
+  tool: 'task';
+  /** Agent name (from the task input args). */
   agent: string;
   description: string;
-  /** Known after the delegate tool completes (parsed from its output). */
+  /** Known once the task completes and its output carries a marker. */
   alias: string | null;
-  /** Child session id (parsed from the delegate output). */
+  /** Child session id (parsed from the task output, when present). */
   taskID: string | null;
   state: 'running' | 'completed' | 'error' | 'cancelled';
   startedAt: number;
   updatedAt: number | null;
-  /** True once a pantheon_delegation_read for this job has been observed. */
-  read: boolean;
 };
 /** Result of parsing one tool part into lifecycle-relevant fields. */
 type ParsedDelegationToolPart = {
   callID: string;
   partID: string;
   sessionID: string;
-  tool: 'pantheon_delegate' | 'pantheon_delegation_read' | 'task';
-  /** null for read parts (no agent arg — the id targets an existing job). */
-  agent: string | null;
+  tool: 'task';
+  /** Agent name from the task input args ('agent' fallback when absent). */
+  agent: string;
   description: string;
   status: 'pending' | 'running' | 'completed' | 'error';
   alias: string | null;
@@ -204,9 +252,8 @@ type ParsedDelegationToolPart = {
 };
 /** Extract the tool name + args from a `message.part.updated` part and
  *  reduce it to what the panel needs. Returns null for anything that is
- *  not a pantheon delegation tool part, the native `task` subagent tool
- *  (same parentID === caller mechanism — its children render `nat:`),
- *  or is missing its callID. */
+ *  not the native `task` subagent tool (parentID === caller mechanism —
+ *  its children render `nat:`), or is missing its callID. */
 declare function parseDelegationToolPart(part: DelegationToolPart, now?: number): ParsedDelegationToolPart | null;
 /** Apply one tool part to the live map. Returns true when the map changed.
  *  Pure w.r.t. I/O — only mutates `map`. */
@@ -214,14 +261,14 @@ declare function reduceDelegationToolPart(map: Map<string, LiveDelegationEntry>,
 /** Remove a live entry by part id (message.part.removed) or call id.
  *  Returns true when something was removed. */
 declare function removeDelegationEntry(map: Map<string, LiveDelegationEntry>, partIDOrCallID: string): boolean;
-/** Collect pantheon delegation + native task tool parts from a session's messages.
+/** Collect native task tool parts from a session's messages.
  *  Messages may carry their parts inline (duck-typed `msg.parts`); when
  *  they don't, the optional `getParts(messageID)` callback is used (the TUI
  *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
- *  child session with parentID = caller — the same mechanism as
- *  pantheon_delegate — so its parts feed the live-map as the native signal
- *  (rows render `nat:` via the children channel). Pure w.r.t. I/O — used
- *  by the mount re-scan to re-seed the live map after compaction/attach. */
+ *  child session with parentID = caller, so its parts feed the live-map as
+ *  the refresh signal (rows come from the children channel). Pure w.r.t.
+ *  I/O — used by the mount re-scan to re-seed the live map after
+ *  compaction/attach. */
 declare function collectDelegationToolParts(messages: readonly {
   id?: string;
   parts?: unknown[];
@@ -232,7 +279,7 @@ declare function collectDelegationToolParts(messages: readonly {
  *  the map (0 on the second identical seed — idempotent, no extra bumps). */
 declare function seedLiveDelegationMap(map: Map<string, LiveDelegationEntry>, parts: readonly DelegationToolPart[], now?: number): number;
 /** Convert a live entry into the shared display shape. Alias falls back to
- *  a `live-<callID>` prefix while the delegate tool has not completed yet. */
+ *  a `live-<callID>` prefix while the task call has not completed yet. */
 declare function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry;
 /** Combine the live channel with the md (historical) channel into one
  *  display list. Dedupes by (sessionID, alias) — aliases are per-parent-
@@ -240,6 +287,23 @@ declare function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry;
  *  terminal md entry is authoritative over a live running entry for the
  *  same job (it carries Finalized/timedOut/cancelled from finalize). */
 declare function mergeDelegationSources(live: readonly LiveDelegationEntry[], md: readonly DelegationEntry[]): DelegationEntry[];
+/** Scope a fully-merged display list to the ACTIVE session only.
+ *
+ *  The panel is session-scoped: rows from other sessions (md history under
+ *  `.pantheon/delegations/<other-session>/`) and rows with no
+ *  attributable session (empty sessionID) are DROPPED. The previous
+ *  cross-session behavior rendered those rows and clicking them led to
+ *  "Session not found" — there is no cross-session channel anymore.
+ *
+ *  The md channel still feeds the merge UNFILTERED so it can ENRICH an
+ *  active-session row with state/alias/agent (dedup by taskID), but it can
+ *  never introduce a row for another session: this filter is applied
+ *  ONCE, after every merge (children + live + md).
+ *
+ *  Returns [] when no active session resolves (null/placeholder) — there is no
+ *  scope to show. Native children always carry the active session id (stamped
+ *  by `childrenToDelegationEntries`), so they survive the filter. Pure. */
+declare function filterDelegationsToSession(entries: readonly DelegationEntry[], activeSessionID: string | null | undefined): DelegationEntry[];
 /** Server-aligned session id validity: opencode rejects anything not starting
  *  with "ses" (SchemaError). This deliberately mirrors that exact contract —
  *  nothing stricter, nothing looser — so a template placeholder ("{sessionID}"),
@@ -276,34 +340,35 @@ type TuiSessionSources = {
  *  fetch (empty panel, zero errors). Pure — no I/O, no runtime required. */
 declare function resolveCurrentSessionID(sources: TuiSessionSources): string | null;
 /** THE single choke point for every `session.children` / session-API path.
- *  Returns `{ path: { id } }` ONLY for a server-valid session id; returns
- *  null for anything else (placeholder, empty, foreign id) so the caller
- *  skips the call entirely instead of sending an unsubstituted placeholder
- *  (the "%7BsessionID%7D" regression). Every session-API call site MUST go
- *  through this function (enforced by the source-scan test in
- *  tests/pantheon/tui-delegations.test.ts). */
+ *  Returns the v2 SDK parameter shape `{ sessionID }` ONLY for a
+ *  server-valid session id; returns null for anything else (placeholder,
+ *  empty, foreign id) so the caller skips the call entirely instead of
+ *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression).
+ *  The TUI client is `@opencode-ai/sdk/v2`, whose session methods take a
+ *  FLAT parameter object (`{ sessionID }`), NOT the v1 `{ path: { id } }`
+ *  envelope — passing the v1 shape left the v2 `{sessionID}` URL template
+ *  unsubstituted (`/session/%7BsessionID%7D/children`). Every session-API
+ *  call site MUST go through this function (enforced by the source-scan
+ *  test in tests/pantheon/tui-delegations.test.ts). */
 declare function safeSessionPath(id: unknown): {
-  path: {
-    id: string;
-  };
+  sessionID: string;
 } | null;
-/** Build the `session.children` path ONLY from a validated session id.
+/** Build the `session.children` parameters ONLY from a validated session id.
  *  Delegates to {@link safeSessionPath} — the single choke point. Returns
- *  null for null/invalid ids so the caller skips the fetch instead of
- *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression). */
+ *  the v2 SDK shape `{ sessionID }`; null for null/invalid ids so the caller
+ *  skips the fetch instead of sending an unsubstituted placeholder (the
+ *  "%7BsessionID%7D" regression). */
 declare function buildChildrenPath(id: string | null | undefined): {
-  path: {
-    id: string;
-  };
+  sessionID: string;
 } | null;
 /** Duck-typed subset of a child Session (+ its live status type). */
 type ChildDelegationLike = {
-  /** Child session id (= board task id). */
+  /** Child session id (= task id). */
   id: string;
   /** Session title — the delegate's description or prompt prefix. */
   title?: string;
   /** Agent name when the child session carries one (duck-typed; native
-   *  task() children may expose it, board reports always do). */
+   *  task() children may expose it, md reports always do). */
   agent?: string;
   /** Status type from api.state.session.status: 'busy' | 'retry' | 'idle',
    *  or undefined when the status API is unavailable. */
@@ -313,33 +378,56 @@ type ChildDelegationLike = {
     updated?: number;
   };
 };
-/** Map a child status type to a display state. busy/retry → running
- *  (the child is actively working), idle → completed, unknown → running
- *  (fail-open: a freshly-seen child is assumed active; the 1s poll + md
- *  correct it as soon as terminal data exists). */
-declare function childStatusToState(status: string | undefined): 'running' | 'completed' | 'retry';
-/** Short row prefix for a delegation entry (one of the two visual channels
- *  that split native task() work from pantheon_delegate jobs — the other is
- *  {@link delegationIcon}):
+/** Map a child status type to a display state.
  *
- *  - `nat:<agent>` — a native task() child (source 'children-only', no board
- *    report). The child session carries no board alias, so the agent IS the
- *    identity.
- *  - `pan:<alias>` — a pantheon_delegate board row (`pan:apo-1`), the same
- *    alias the manager prints in pantheon_delegation_list.
+ *  Only `busy`/`retry` are EXPLICIT live states. `idle` is terminal and so is
+ *  any other/unknown status — a status the panel does not recognise is not
+ *  evidence of activity. An ABSENT status is the historical case: the status
+ *  map (`api.state.session.status`) contains only currently-alive sessions, so
+ *  every finished child of a long session is missing from it. Defaulting that
+ *  to running made the whole session history render as "active" (the
+ *  "197 children, all active" regression), so an absent status is terminal
+ *  (done) UNLESS the child was active within `graceMs` — a just-spawned child
+ *  that the status API has not registered yet must still render as running.
  *
- *  Short prefixes keep the narrow sidebar readable (the old
- *  `pan:apo-1`/`nat:` tags ate the row width). */
-declare function delegationTag(entry: DelegationEntry): string;
-/** Row glyph: hollow diamond `◇` for native task() children (info color,
- *  outline) vs filled diamond `◆` for pantheon_delegate rows (state color).
- *  Shape + color are independent channels, so the split stays legible even
- *  without color. */
-declare function delegationIcon(entry: DelegationEntry): string;
-/** Row identity after the status marker + glyph. Pantheon rows append the
- *  agent (`pan:apo-1 apollo`); native rows already carry it inside the tag
- *  (`nat:apollo`) and must not duplicate it. */
-declare function formatDelegationIdentity(entry: DelegationEntry): string;
+ *  @param status  the `api.state.session.status(id)?.type`, or undefined
+ *  @param time    the child session time fields (`created`/`updated`)
+ *  @param now     current wall-clock ms (injectable for tests)
+ *  @param graceMs recency window for the absent-status running assumption
+ *  Pure — no I/O. */
+declare function childStatusToState(status: string | undefined, time?: {
+  created?: number;
+  updated?: number;
+}, now?: number, graceMs?: number): 'running' | 'completed' | 'retry';
+/** Status-only row model: ONE glyph + ONE identity per row.
+ *
+ *  A row is
+ *  `{glyph} {alias:7} {elapsed:>5}` plus a muted description line. The short
+ *  alias (`apo-1`) is the single identity; rows without a report alias show
+ *  the agent instead (never both). */
+type DelegationRowStatus = 'active' | 'done' | 'failed' | 'retry';
+/** Map every FSM/display state to one of the 4 row kinds. reconciled never
+ *  reaches the panel (the md parser drops it) but reads as done;
+ *  cancelled reads as done; startup_failed reads as failed while
+ *  startup_unknown (no error known) reads as retry. Pure. */
+declare function delegationRowStatus(state: DelegationDisplayState): DelegationRowStatus;
+/** The only 4 glyphs a row may show: animated active, done, failed, retry.
+ *  Shape is redundant with color (never the only signal). Pure. */
+declare const DELEGATION_ROW_GLYPHS: Readonly<Record<DelegationRowStatus, string>>;
+declare function delegationRowGlyph(status: DelegationRowStatus): string;
+/** Row marker (`<glyph> `) — the single state channel. `active` animates
+ *  through the spinner for the given frame counter (incremented every ~80ms);
+ *  every other kind is static. Pure. */
+declare function delegationRowMarker(state: DelegationDisplayState, frame?: number): string;
+/** ONE identity per row: the short report alias (`apo-1`); a row without a
+ *  report alias (native task() child `native-task` / `native-<id>`, or an
+ *  alias-less native live row `live-<callID>` kept as children-only) shows
+ *  the agent instead — never alias + agent stacked. Pure. */
+declare function delegationRowIdentity(entry: DelegationEntry): string;
+/** Fixed alias cell, pad-right + hard-truncate to `width` (default 7) so
+ *  identities line up across rows. Pure. */
+declare const DELEGATION_ALIAS_WIDTH = 7;
+declare function formatDelegationAlias(identity: string, width?: number): string;
 /** Max description width on the row detail line — the old 180-char slice
  *  wrapped the sidebar; 44 keeps one readable line. */
 declare const DELEGATION_DESCRIPTION_MAX = 44;
@@ -347,56 +435,58 @@ declare const DELEGATION_DESCRIPTION_MAX = 44;
  *  `max`-length text is left untouched. Grapheme-granular, so an emoji made of
  *  several code points is never split into mojibake at the boundary. Pure. */
 declare function truncateDelegationDescription(text: string, max?: number): string;
-/** Fixed elapsed-time box: right-aligned to `width` (default 8) so elapsed
- *  values line up across rows, e.g. `     12s`. A label that already fills
+/** Fixed elapsed-time box: right-aligned to `width` (default 5) so elapsed
+ *  values line up across rows, e.g. `  12s`. A label that already fills
  *  the box is returned untouched. Pure. */
-declare const DELEGATION_ELAPSED_WIDTH = 8;
+declare const DELEGATION_ELAPSED_WIDTH = 5;
 declare function formatDelegationElapsed(entry: DelegationEntry, now: number, width?: number): string;
-/** First row line: `<marker><glyph> <identity>`. The marker already carries
- *  its trailing space. Pure — the row renders the returned string verbatim. */
-declare function formatDelegationRow(entry: DelegationEntry, marker: string): string;
-/** Header summary: `(N active · M done · nat:K pan:M)`. Active counts
- *  running/retry AND display-only stale-running (a stale row is still a live
- *  job — it must never read as done). Pure. */
+/** Colored left half of a row line: `<marker><alias:7> ` — the state glyph
+ *  plus the single identity, padded so the muted elapsed column aligns. The
+ *  row renders this colored lead separately from the muted elapsed tail. Pure. */
+declare function formatDelegationRowLead(entry: DelegationEntry, marker: string): string;
+/** Visible-row ceiling for the panel: the remainder collapses into a single
+ *  "… +N more" line. Live rows render first, so a running job is never hidden
+ *  by the cap. */
+declare const DELEGATION_VISIBLE_CEILING = 8;
+/** Header summary: `(N active · M done)` plus `· K failed` only when K > 0.
+ *  Active counts running/retry AND display-only stale-running (a stale row is
+ *  still a live job — it must never read as done); failed counts
+ *  error/startup_failed; cancelled reads as done. Pure. */
 declare function formatDelegationHeader(entries: readonly DelegationEntry[]): string;
-/** Split a display list into native task() rows vs pantheon_delegate rows.
- *  Native = source 'children-only' (no board report); everything else counts
- *  as pantheon. Pure — powers the header breakdown + the hooks.log line. */
+/** Cap the panel: live rows first, then most-recent retained terminal rows, at
+ *  most `maxVisible` total. Hidden counts describe the retained render list,
+ *  not expired history. */
+declare function ceilingDelegationList(all: readonly DelegationEntry[], maxVisible?: number, now?: number): {
+  visible: DelegationEntry[];
+  hidden: number;
+  hiddenActive: number;
+  hiddenTerminal: number;
+};
+/** Split a display list into native task() rows vs pantheon report rows.
+ *  Native = source 'children-only' (no delegate report); everything else counts
+ *  as pantheon. Pure — powers the hooks.log line. */
 declare function countDelegationSources(entries: readonly DelegationEntry[]): {
   native: number;
   pantheon: number;
   total: number;
 };
 /** Diagnostic hooks.log line for a panel re-fetch, with the children
- *  breakdown (pantheon = children WITH a board report, native = children
+ *  breakdown (pantheon = children WITH a delegate report, native = children
  *  WITHOUT one). Pure — the View logs the returned string verbatim. */
 declare function formatPanelLogLine(children: number, pantheon: number, native: number, md: number, events: number): string;
-/** Turn child sessions (PRIMARY) enriched with md reports into the display
- *  list. One entry per child id (duplicates across re-fetches collapse).
- *  The md report is matched by `Task ID` (== child.id) and supplies alias,
- *  agent, description, terminal state and duration. A child without a
- *  report still renders: description from its title, agent from the child
- *  itself (fallback 'agent'), state derived from its status, startedAt from
- *  time.created. A report-less child is a NATIVE task() child (every
- *  child of the current session — pantheon_delegate OR the native `task()`
- *  tool — carries parentID = caller), so it gets source 'children-only',
- *  the internal alias 'native-task' and the `nat:` tag instead of a
- *  board alias. The 'task nativa' description fallback keeps the row
- *  non-empty when the child carries no title.
- *  Terminal md state wins over the derived state; a running md defers to
- *  the child's live status. A running child is NEVER archived — it always
- *  lands in the active split (splitDelegationList active = running/retry).
- *  Sorted running-first (compareDelegationEntries).
- *  Pure — no I/O. */
-declare function childrenToDelegationEntries(children: readonly ChildDelegationLike[] | undefined, md: readonly DelegationEntry[], now?: number): DelegationEntry[];
+declare function childrenToDelegationEntries(children: readonly ChildDelegationLike[] | undefined, md: readonly DelegationEntry[], now?: number, parentSessionID?: string): DelegationEntry[];
 /** Navigate the TUI to a child session (click/Enter on a delegation row).
  *  Returns false when the route API is unavailable or the target id is
  *  missing/placeholder — the row stays inert instead of crashing. Only a
  *  server-valid session id ("ses...") ever reaches the router, so an
  *  unsubstituted "{sessionID}" placeholder can never be routed. */
 declare function navigateToDelegationSession(route: {
-  navigate?: (name: string, params?: Record<string, unknown>) => void;
+  navigate?: (name: string, params?: Record<string, unknown>) => void | PromiseLike<void>;
 } | undefined, taskID: string | undefined): boolean;
+/** Build the mouse handler used by each delegation row. */
+declare function createDelegationRowOpenHandler(route: {
+  navigate?: (name: string, params?: Record<string, unknown>) => void | PromiseLike<void>;
+} | undefined, taskID: string | undefined): () => void;
 /** Plugin-level live delegation store shared with the event subscriptions
  *  in `tui()`: the map of live entries + a version signal bumped on every
  *  mutation. The View subscribes to the version (in an effect) to refresh the
@@ -413,5 +503,5 @@ declare const plugin: TuiPluginModule & {
   setup: () => Promise<void>;
 };
 //#endregion
-export { ChildDelegationLike, DELEGATION_DESCRIPTION_MAX, DELEGATION_ELAPSED_WIDTH, DelegationActivity, DelegationEntry, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationIcon, delegationSpinnerFrame, delegationTag, extractToolActivity, fmtElapsed, formatDelegationElapsed, formatDelegationHeader, formatDelegationIdentity, formatDelegationRow, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { ChildDelegationLike, DELEGATION_ALIAS_WIDTH, DELEGATION_CHILDREN_RECENCY_MS, DELEGATION_CHILD_STATUS_GRACE_MS, DELEGATION_DESCRIPTION_MAX, DELEGATION_DONE_RETENTION_MS, DELEGATION_ELAPSED_WIDTH, DELEGATION_FAILED_RETENTION_MS, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, DelegationActivity, DelegationDisplayState, DelegationEntry, DelegationRowStatus, DelegationStateTone, DelegationToolPart, IDLE_SILENCE_MS, LiveDelegationEntry, LiveDelegationStore, NATIVE_LIVE_ALIASLESS_TTL_MS, ParsedDelegationToolPart, STALE_RUNNING_THRESHOLD_MS, ToolActivity, TuiSessionSources, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, createDelegationRowOpenHandler, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, filterDelegationsToSession, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 //# sourceMappingURL=tui.d.ts.map

@@ -10,7 +10,7 @@ e equipes que querem mais estrutura sem perder o controle do próprio código.
 
 [![Versão](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=versão)](https://github.com/ils15/pantheon-opencode/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg)](https://doi.org/10.5281/zenodo.22306637)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22650136.svg)](https://doi.org/10.5281/zenodo.22650136)
 
 ## O que é?
 
@@ -31,7 +31,7 @@ de planejar o trabalho, avançar, conferir resultados e preservar o contexto
 
 ## Comece em 2 minutos
 
-Requisitos: [OpenCode 1.18.4+](https://opencode.ai/docs/) e Node.js 18+.
+Requisitos: [OpenCode 1.18.4+](https://opencode.ai/docs/) e Node.js 22+.
 
 No projeto em que você quer usar o Pantheon:
 
@@ -130,16 +130,15 @@ registrados juntos.
 |---|---|---|
 | Chave de config do OpenCode | `plugin` singular | `plugins` plural |
 | Registro Pantheon | `src/plugin.ts` mais `src/plugins/pantheon-hooks.ts` | `pantheon-opencode/plugin-v2` (`src/plugin-v2.ts`) |
-| Contrato de runtime | Plugin Pantheon legado, incluindo `pantheon_delegate`, ferramentas read/list, hooks de evento/ferramenta e tratamento de compactação V1 | Plugin V2 completo: 9 ferramentas de orquestração, 4 assinaturas de eventos, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), além de transforms de configuração |
+| Contrato de runtime | Plugin Pantheon V1: 6 ferramentas (`hashline_edit`, as 3 ferramentas de goal, `pantheon_cost`, `pantheon_model`), hooks de evento/ferramenta e tratamento de compactação V1 | Plugin V2 completo: 6 ferramentas de orquestração, 4 assinaturas de eventos, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), além de transforms de configuração |
 | APIs V1 | Registradas | Definições próprias de ferramentas via `ctx.tool.transform()` — não pelo caminho do plugin V1 |
 
-O plugin V2 fornece 9 ferramentas de orquestração (`pantheon_delegate`,
-`pantheon_delegation_read`, `pantheon_delegation_list`, `hashline_edit`,
+O plugin V2 fornece 6 ferramentas de orquestração (`hashline_edit`,
 `pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`,
 `pantheon_cost`, `pantheon_model`), 4 assinaturas de eventos (`session.created`,
 `session.idle`, `session.error`, `session.compacted`), session hooks (`prompt`,
 `context`) e tool hooks (`execute.before`, `execute.after`). O único recurso V2
-sem suporte é `legacy-hooks` (a superfície de API de delegate específica do V1).
+sem suporte é `legacy-hooks` (a superfície de hooks específica do V1).
 
 O pacote expõe os dois contratos como exports importáveis:
 `pantheon-opencode/plugin` (V1), `pantheon-opencode/plugin-v2` (V2) e
@@ -147,7 +146,7 @@ O pacote expõe os dois contratos como exports importáveis:
 explicitamente o contrato desejado.
 
 A ponte V1→V2 (`src/pantheon/v2-bridge.ts`) habilita interop opcional:
-singletons de infraestrutura V1 (BackgroundJobBoard, DelegationClient,
+singletons de infraestrutura V1 (BackgroundJobBoard,
 GoalStore, TodoEnforcer, VisionHandler) são repassados via `ctx.options` do V2.
 A ponte é opcional — o V2 funciona standalone com degradação graciosa.
 
@@ -296,10 +295,10 @@ uma issue ou pull request.
 
 ## Citação e DOI
 
-O Pantheon é distribuído sob a [Licença MIT](LICENSE). Para o registro histórico
-publicado da v1.4.3 apenas, use o [DOI do Zenodo](https://doi.org/10.5281/zenodo.22306637);
-essa não é a versão operacional atual. Os metadados de citação também estão em
-[CITATION.cff](CITATION.cff).
+O Pantheon é distribuído sob a [Licença MIT](LICENSE). Cite o
+[DOI conceitual do Zenodo](https://doi.org/10.5281/zenodo.22650136), que sempre
+resolve para a última release arquivada; cada release também tem seu próprio
+version DOI. Os metadados de citação também estão em [CITATION.cff](CITATION.cff).
 
 Repositório canônico: <https://github.com/ils15/pantheon-opencode>
 

@@ -67,6 +67,20 @@ def _force_expiry(module, namespace: str, key: str) -> None:
     conn.commit()
 
 
+def _wait_for_early_second(max_fraction: float = 0.2) -> None:
+    """Block until the wall clock is early in a fresh second.
+
+    ``kv_get`` evaluates ``datetime(expires_at) > datetime('now')`` in SQLite,
+    which truncates ``expires_at``'s microseconds to whole seconds. A store
+    that lands in the last few milliseconds of a second can therefore be
+    judged already expired by the *immediate* read that crosses the second
+    boundary. Starting real-time TTL tests in the first 20% of a second leaves
+    >0.8s of headroom, keeping the assertion deterministic regardless of load.
+    """
+    while time.time() % 1.0 > max_fraction:
+        time.sleep(0.005)
+
+
 def _force_old_created(module, namespace: str, key: str) -> None:
     """Backdate created_at so older_than_days filters match."""
     conn = module._db("project")
@@ -178,16 +192,24 @@ class TestKVStoreGet:
         assert _json(result) == "v"
 
     async def test_ttl_expiry_real_time(self, server: FastMCP) -> None:
-        """A 1s TTL entry must be gone after ~1.2s (crash-recovery path)."""
+        """A 1s TTL entry must be gone after ~1.5s (crash-recovery path).
+
+        ``kv_get`` compares ``datetime(expires_at)`` against ``datetime('now')``
+        in SQLite, which truncates microseconds to whole seconds. Store early in
+        a fresh second (deterministic; see ``_wait_for_early_second``) so the
+        immediate read cannot race the truncated expiry boundary, then sleep
+        past the TTL with margin.
+        """
+        _wait_for_early_second()
         await server.call_tool(
             "kv_store", {"namespace": "ns", "key": "k", "value": "v", "ttl": 1}
         )
-        # Immediately readable
+        # Immediately readable (same truncated second as the store)
         assert (
             _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k"}))
             == "v"
         )
-        time.sleep(1.2)
+        time.sleep(1.5)
         result = await server.call_tool("kv_get", {"namespace": "ns", "key": "k"})
         assert _json(result) is None, "TTL entry must expire after the TTL elapses"
 

@@ -9,41 +9,7 @@ agent: zeus
 **When:** Architecture trade-offs, technology selection, security assessments, multi-stakeholder concerns
 **Returns:** Structured synthesis with recommendation, confidence level, resolved divergences
 
-## Dispatch Selection
-
-Choose 2-3 agents based on domain:
-
-| Domain | Specialists |
-|--------|-------------|
-| Architecture | hermes, demeter, themis, athena |
-| Security | themis, hermes, prometheus, nyx |
-| Database | demeter, hermes, prometheus |
-| AI/RAG | hephaestus, nyx |
-| Infrastructure | prometheus, hermes, themis |
-| Frontend/UX | aphrodite, themis, hermes |
-| Observability | nyx, hermes |
-| General | athena, themis, hermes |
-
-Send ALL `task()` calls in a single message. Each must return: Recommendation · Reasoning · Trade-offs · Risks · Confidence.
-
-## Synthesis Structure
-
-After ALL responses arrive, produce EXACTLY this structure:
-
-### 📋 Individual Assessments
-For each specialist: Recommendation, Reasoning, Trade-offs, Risks, Confidence
-
-### ✅ Agreements
-Where 2+ specialists converge
-
-### ⚡ Divergences
-Where they disagree — resolve each one with reasoning
-
-### 🔥 Total Divergence
-If ALL specialists disagree on a point, call this out explicitly
-
-### 🏆 Recommendation
-Decisive conclusion with confidence level
+Dispatch, specialist selection, and synthesis follow the canonical `## Zeus Council Synthesis` protocol (Steps 0–9: precedent fast-path, dispatch, confidence cross-validation, rebuttal, tie-break, Themis audit, persist). Send ALL `task()` calls in a single message; each specialist returns the `## specialist_response` structure from `## Agent Return Format`.
 
 ## Question:
 $ARGUMENTS

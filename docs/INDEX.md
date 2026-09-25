@@ -53,7 +53,6 @@ Pantheon v1.0 is **OpenCode-only**. See [PLATFORMS.md](PLATFORMS.md) for details
 | MCP tool registry (canonical) | [docs/mcp-tools.md](mcp-tools.md) |
 | MCP user guide (adding custom MCPs) | [docs/mcp-user-guide.md](mcp-user-guide.md) |
 | MCP tiers (none/essential/recommended/full) | `.pantheon/tiers.json` |
-| MCP recommendations per project type | [docs/mcp-recommendations.md](mcp-recommendations.md) |
 | Project memory (sprints, decisions) | `.pantheon/memory-bank/` |
 | Plugin manifests | `plugin.json`, `.github/plugin/plugin.json` |
 

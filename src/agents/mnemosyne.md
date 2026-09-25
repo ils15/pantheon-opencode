@@ -34,7 +34,17 @@ permission:
   bash: deny
   read: allow
   grep: allow
-  edit: allow
+  # Scoped write/edit: mnemosyne may create and modify files ONLY inside the
+  # memory-bank and deepwork directories. Everything else stays denied, keeping
+  # the SCOPE BOUNDARY below enforceable at the permission layer (issue #111).
+  write:
+    "*": deny
+    ".pantheon/memory-bank/**": allow
+    ".pantheon/deepwork/**": allow
+  edit:
+    "*": deny
+    ".pantheon/memory-bank/**": allow
+    ".pantheon/deepwork/**": allow
   task:
     "*": deny
 ---

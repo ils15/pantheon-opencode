@@ -21,7 +21,7 @@ the report is closed.
 ## Secret Handling
 
 - Secrets must **never** be committed to this repository.
-- CI enforces this with **fail-closed** gates (`.github/workflows/security.yml`):
+- CI enforces this with **fail-closed** gates (`.github/workflows/security-scan.yml`):
   - **gitleaks** — full history on push to `main`, PR diff on `pull_request`,
     full repo scan on `workflow_dispatch` (config: `.gitleaks.toml`);
   - **custom scan** — Bifrost MCP credentials (`x-bf-vk` header, `sk-bf-*`
@@ -43,5 +43,5 @@ the report is closed.
   into the public commit history and an npm package artifact.
 - **Keys have been revoked and rotated.**
 - The affected history was **purged on 2026-08-03**.
-- Follow-up: fail-closed secret scan gates (`security.yml` + `.gitleaks.toml`)
+- Follow-up: fail-closed secret scan gates (`security-scan.yml` + `.gitleaks.toml`)
   were added to this repository to prevent recurrence.

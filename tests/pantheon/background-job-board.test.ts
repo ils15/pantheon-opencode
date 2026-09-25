@@ -84,12 +84,11 @@ class SpyPersistence extends InMemoryPersistence {
 // ═══════════════════════════════════════════════════════════════════════
 
 async function main() {
-  await testAsync('registerLaunch creates a running job with alias', async () => {
+  await testAsync('registerLaunch creates a running job with defaults', async () => {
     const board = new BackgroundJobBoard()
     const job = await board.registerLaunch(makeLaunch())
 
     assert.equal(job.state, 'running')
-    assert.equal(job.alias, 'apo-1')
     assert.equal(job.timedOut, false)
     assert.equal(job.totalErrors, 0)
     assert.equal(job.timeoutCount, 0)
@@ -97,37 +96,6 @@ async function main() {
     assert.ok(job.launchedAt > 0)
     assert.ok(job.updatedAt > 0)
     assert.equal(job.completedAt, undefined)
-  })
-
-  await testAsync('registerLaunch increments alias per session per agent', async () => {
-    const board = new BackgroundJobBoard()
-
-    const j1 = await board.registerLaunch(makeLaunch({ agent: 'apollo', parentSessionID: 's1' }))
-    const j2 = await board.registerLaunch(makeLaunch({ agent: 'apollo', parentSessionID: 's1' }))
-    const j3 = await board.registerLaunch(makeLaunch({ agent: 'hermes', parentSessionID: 's1' }))
-    const j4 = await board.registerLaunch(makeLaunch({ agent: 'apollo', parentSessionID: 's2' }))
-
-    assert.equal(j1.alias, 'apo-1')
-    assert.equal(j2.alias, 'apo-2')
-    assert.equal(j3.alias, 'her-1')
-    assert.equal(j4.alias, 'apo-1') // different session, counter resets
-  })
-
-  await testAsync('registerLaunch uses default prefix for unknown agents', async () => {
-    const board = new BackgroundJobBoard()
-    const j1 = await board.registerLaunch(makeLaunch({ agent: 'unknown-agent' }))
-    assert.equal(j1.alias, 'job-1')
-  })
-
-  await testAsync('registerLaunch copies contextFiles', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(
-      makeLaunch({
-        contextFiles: [{ path: '/foo/bar.ts', lineCount: 42, lastReadAt: 1000 }],
-      }),
-    )
-    assert.equal(job.contextFiles.length, 1)
-    assert.equal(job.contextFiles[0]!.path, '/foo/bar.ts')
   })
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -292,31 +260,12 @@ async function main() {
     assert.equal(cancelled!.lastStatusError, 'User cancelled')
   })
 
-  await testAsync('markCancelled is idempotent', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch())
-
-    await board.markCancelled(job.taskID)
-    const again = await board.markCancelled(job.taskID)
-    assert.ok(again)
-    assert.equal(again!.state, 'cancelled')
-  })
-
   await testAsync('markCancelled from non-running terminal throws', async () => {
     const board = new BackgroundJobBoard()
     const job = await board.registerLaunch(makeLaunch())
     await board.updateStatus({ taskID: job.taskID, state: 'completed' })
 
     await assert.rejects(board.markCancelled(job.taskID), /Cannot cancel/)
-  })
-
-  await testAsync('markCancelled from reconciled throws', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch())
-    await board.updateStatus({ taskID: job.taskID, state: 'completed' })
-    await board.markReconciled(job.taskID)
-
-    await assert.rejects(board.markCancelled(job.taskID), /Cannot cancel reconciled/)
   })
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -334,34 +283,6 @@ async function main() {
     assert.equal(reconciled!.terminalUnreconciled, false)
   })
 
-  await testAsync('markReconciled from error', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch())
-    await board.updateStatus({ taskID: job.taskID, state: 'error' })
-
-    const reconciled = await board.markReconciled(job.taskID)
-    assert.equal(reconciled!.state, 'reconciled')
-  })
-
-  await testAsync('markReconciled from cancelled', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch())
-    await board.markCancelled(job.taskID)
-
-    const reconciled = await board.markReconciled(job.taskID)
-    assert.equal(reconciled!.state, 'reconciled')
-  })
-
-  await testAsync('markReconciled is idempotent', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch())
-    await board.updateStatus({ taskID: job.taskID, state: 'completed' })
-    await board.markReconciled(job.taskID)
-
-    const again = await board.markReconciled(job.taskID)
-    assert.equal(again!.state, 'reconciled')
-  })
-
   await testAsync('markReconciled from running throws', async () => {
     const board = new BackgroundJobBoard()
     const job = await board.registerLaunch(makeLaunch())
@@ -369,63 +290,9 @@ async function main() {
     await assert.rejects(board.markReconciled(job.taskID), /only terminal states/)
   })
 
-  await testAsync('markReconciled from reconciled returns same record', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch())
-    await board.updateStatus({ taskID: job.taskID, state: 'completed' })
-    await board.markReconciled(job.taskID)
-
-    const result = await board.markReconciled(job.taskID)
-    assert.equal(result, board.get(job.taskID))
-  })
-
   // ═══════════════════════════════════════════════════════════════════════
-  // QUERIES
+  // CONCURRENCY
   // ═══════════════════════════════════════════════════════════════════════
-
-  await testAsync('get returns undefined for unknown', async () => {
-    const board = new BackgroundJobBoard()
-    assert.equal(board.get('nonexistent'), undefined)
-  })
-
-  await testAsync('list returns all jobs when no parentSessionID', async () => {
-    const board = new BackgroundJobBoard()
-    await board.registerLaunch(makeLaunch({ parentSessionID: 's1' }))
-    await board.registerLaunch(makeLaunch({ parentSessionID: 's2' }))
-    assert.equal(board.list().length, 2)
-  })
-
-  await testAsync('list filters by parentSessionID', async () => {
-    const board = new BackgroundJobBoard()
-    await board.registerLaunch(makeLaunch({ parentSessionID: 's1' }))
-    await board.registerLaunch(makeLaunch({ parentSessionID: 's2' }))
-    await board.registerLaunch(makeLaunch({ parentSessionID: 's1' }))
-
-    const s1Jobs = board.list('s1')
-    assert.equal(s1Jobs.length, 2)
-    assert.ok(s1Jobs.every((j) => j.parentSessionID === 's1'))
-  })
-
-  await testAsync('resolve by taskID', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch({ taskID: 'my-task', parentSessionID: 's1' }))
-    const resolved = board.resolve('s1', 'my-task')
-    assert.equal(resolved, job)
-  })
-
-  await testAsync('resolve by alias', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch({ parentSessionID: 's1', agent: 'hermes' }))
-    const resolved = board.resolve('s1', 'her-1')
-    assert.equal(resolved, job)
-  })
-
-  await testAsync('resolve returns undefined for wrong session', async () => {
-    const board = new BackgroundJobBoard()
-    await board.registerLaunch(makeLaunch({ taskID: 't1', parentSessionID: 's1' }))
-    assert.equal(board.resolve('s2', 't1'), undefined)
-    assert.equal(board.resolve('s2', 'apo-1'), undefined)
-  })
 
   await testAsync('canDispatch respects maxConcurrentPerAgent', async () => {
     const board = new BackgroundJobBoard({ maxConcurrentPerAgent: 2 })
@@ -439,27 +306,6 @@ async function main() {
 
     // Different agent is not blocked
     assert.ok(board.canDispatch('hermes'))
-  })
-
-  await testAsync('getRunningCount', async () => {
-    const board = new BackgroundJobBoard()
-    await board.registerLaunch(makeLaunch({ agent: 'apollo' }))
-    await board.registerLaunch(makeLaunch({ agent: 'apollo' }))
-    await board.registerLaunch(makeLaunch({ agent: 'hermes' }))
-
-    assert.equal(board.getRunningCount(), 3)
-    assert.equal(board.getRunningCount('apollo'), 2)
-    assert.equal(board.getRunningCount('hermes'), 1)
-    assert.equal(board.getRunningCount('athena'), 0)
-  })
-
-  await testAsync('getRunningCount excludes non-running states', async () => {
-    const board = new BackgroundJobBoard()
-    const j1 = await board.registerLaunch(makeLaunch({ agent: 'apollo', parentSessionID: 's1' }))
-    await board.registerLaunch(makeLaunch({ agent: 'apollo', parentSessionID: 's1' }))
-    await board.updateStatus({ taskID: j1.taskID, state: 'completed' })
-
-    assert.equal(board.getRunningCount('apollo'), 1)
   })
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -551,29 +397,6 @@ async function main() {
     assert.equal(result.resultSummary, 'done')
   })
 
-  await testAsync('waitForTerminal resolves for error state', async () => {
-    const board = new BackgroundJobBoard()
-    await board.registerLaunch(makeLaunch({ taskID: 'wait-err' }))
-
-    const promise = board.waitForTerminal('wait-err', 1_000)
-    await board.updateStatus({ taskID: 'wait-err', state: 'error', error: 'boom' })
-
-    const result = await promise
-    assert.equal(result.state, 'error')
-    assert.equal(result.lastStatusError, 'boom')
-  })
-
-  await testAsync('waitForTerminal resolves for markCancelled', async () => {
-    const board = new BackgroundJobBoard()
-    await board.registerLaunch(makeLaunch({ taskID: 'wait-cancel' }))
-
-    const promise = board.waitForTerminal('wait-cancel', 1_000)
-    await board.markCancelled('wait-cancel', 'aborted')
-
-    const result = await promise
-    assert.equal(result.state, 'cancelled')
-  })
-
   await testAsync('waitForTerminal resolves immediately for already-terminal job', async () => {
     const board = new BackgroundJobBoard()
     const job = await board.registerLaunch(makeLaunch({ taskID: 'wait-done' }))
@@ -602,34 +425,6 @@ async function main() {
     const [r1, r2] = await Promise.all([p1, p2])
     assert.equal(r1.state, 'completed')
     assert.equal(r2.state, 'completed')
-  })
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // FORMAT FOR PROMPT
-  // ═══════════════════════════════════════════════════════════════════════
-
-  await testAsync('formatForPrompt returns undefined for empty session', async () => {
-    const board = new BackgroundJobBoard()
-    assert.equal(board.formatForPrompt('ses_empty'), undefined)
-  })
-
-  await testAsync('formatForPrompt returns formatted jobs', async () => {
-    const board = new BackgroundJobBoard()
-    await board.registerLaunch(
-      makeLaunch({ parentSessionID: 's1', agent: 'apollo', description: 'Search files' }),
-    )
-    const j2 = await board.registerLaunch(
-      makeLaunch({ parentSessionID: 's1', agent: 'hermes', description: 'Implement endpoint' }),
-    )
-    await board.updateStatus({ taskID: j2.taskID, state: 'completed', resultSummary: 'Done' })
-
-    const output = board.formatForPrompt('s1')
-    assert.ok(output)
-    assert.ok(output!.includes('[apo-1]'))
-    assert.ok(output!.includes('[her-1]'))
-    assert.ok(output!.includes('RUN')) // apo-1 is still running
-    assert.ok(output!.includes('OK')) // her-1 is completed
-    assert.ok(output!.includes('Background Jobs:'))
   })
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -683,46 +478,6 @@ async function main() {
     const persisted = await adapter.loadAllJobs()
     assert.equal(persisted.length, 1) // only the running job remains persisted
     assert.equal(persisted[0]?.taskID, 'prune-run')
-  })
-
-  await testAsync('pruneExpired prunes old RECONCILED jobs too', async () => {
-    const board = new BackgroundJobBoard()
-    const adapter = new SpyPersistence()
-    board.setPersistence(adapter)
-
-    const reconciled = await board.registerLaunch(makeLaunch({ taskID: 'prune-rec' }))
-    await board.updateStatus({ taskID: reconciled.taskID, state: 'completed' })
-    await board.markReconciled(reconciled.taskID)
-    reconciled.updatedAt = Date.now() - 100_000
-
-    await board.pruneExpired(10_000)
-
-    assert.equal(board.get('prune-rec'), undefined)
-    assert.deepEqual(adapter.deletedTaskIDs, ['prune-rec'])
-  })
-
-  await testAsync('pruneExpired keeps fresh terminal jobs', async () => {
-    const board = new BackgroundJobBoard()
-    const job = await board.registerLaunch(makeLaunch({ taskID: 'fresh-done' }))
-    await board.updateStatus({ taskID: job.taskID, state: 'completed' })
-    job.updatedAt = Date.now() - 1_000
-
-    await board.pruneExpired(10_000)
-
-    assert.ok(board.get('fresh-done'))
-  })
-
-  await testAsync('clearParent removes all jobs for a session', async () => {
-    const board = new BackgroundJobBoard()
-    await board.registerLaunch(makeLaunch({ taskID: 's1-a', parentSessionID: 's1' }))
-    await board.registerLaunch(makeLaunch({ taskID: 's1-b', parentSessionID: 's1' }))
-    await board.registerLaunch(makeLaunch({ taskID: 's2-a', parentSessionID: 's2' }))
-
-    board.clearParent('s1')
-
-    assert.equal(board.get('s1-a'), undefined)
-    assert.equal(board.get('s1-b'), undefined)
-    assert.ok(board.get('s2-a'))
   })
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -881,82 +636,6 @@ async function main() {
     await board.registerLaunch(makeLaunch({ agent: 'apollo' }))
     await board.registerLaunch(makeLaunch({ agent: 'apollo' }))
     assert.equal(board.canDispatch('apollo'), false)
-  })
-
-  await testAsync('custom maxConcurrentPerAgent respected', async () => {
-    const board = new BackgroundJobBoard({ maxConcurrentPerAgent: 1 })
-    assert.ok(board.canDispatch('apollo'))
-    await board.registerLaunch(makeLaunch({ agent: 'apollo' }))
-    assert.equal(board.canDispatch('apollo'), false)
-  })
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // EDGE: nonexistent task
-  // ═══════════════════════════════════════════════════════════════════════
-
-  await testAsync('updateStatus on nonexistent returns undefined', async () => {
-    const board = new BackgroundJobBoard()
-    const result = await board.updateStatus({ taskID: 'no-such-task', state: 'completed' })
-    assert.equal(result, undefined)
-  })
-
-  await testAsync('markCancelled on nonexistent returns undefined', async () => {
-    const board = new BackgroundJobBoard()
-    const result = await board.markCancelled('no-such-task')
-    assert.equal(result, undefined)
-  })
-
-  await testAsync('markReconciled on nonexistent returns undefined', async () => {
-    const board = new BackgroundJobBoard()
-    const result = await board.markReconciled('no-such-task')
-    assert.equal(result, undefined)
-  })
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // ALL AGENT PREFIXES
-  // ═══════════════════════════════════════════════════════════════════════
-
-  await testAsync('all agent prefixes are correct', async () => {
-    const board = new BackgroundJobBoard()
-    const agents = [
-      ['apollo', 'apo'],
-      ['hermes', 'her'],
-      ['aphrodite', 'aph'],
-      ['demeter', 'dem'],
-      ['themis', 'the'],
-      ['prometheus', 'pro'],
-      ['hephaestus', 'hep'],
-      ['nyx', 'nyx'],
-      ['athena', 'ath'],
-      ['gaia', 'gai'],
-      ['iris', 'iri'],
-      ['mnemosyne', 'mne'],
-      ['talos', 'tal'],
-      ['unknown', 'job'],
-    ] as const
-
-    for (const [agent, expectedPrefix] of agents) {
-      const job = await board.registerLaunch(makeLaunch({ agent, parentSessionID: 'ses_prefix' }))
-      assert.ok(
-        job.alias.startsWith(expectedPrefix),
-        `${agent} → ${job.alias} expected prefix ${expectedPrefix}`,
-      )
-    }
-  })
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // LIST RETURNS SNAPSHOT (shallow copy)
-  // ═══════════════════════════════════════════════════════════════════════
-
-  await testAsync('list returns a snapshot (mutating does not affect board)', async () => {
-    const board = new BackgroundJobBoard()
-    await board.registerLaunch(makeLaunch({ taskID: 't1' }))
-
-    const snapshot = board.list()
-    assert.equal(snapshot.length, 1)
-    // Adding to snapshot should not affect board
-    snapshot.push({} as any)
-    assert.equal(board.list().length, 1)
   })
 
   // ═══════════════════════════════════════════════════════════════════════

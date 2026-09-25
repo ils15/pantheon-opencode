@@ -181,7 +181,7 @@ import { getSharedBoard } from '../pantheon/shared-board.ts'
 import { type HookPayload, type HookResult, runHook } from './hook-runner.ts'
 
 /** Tools that represent a subagent delegation (opencode `task` tool etc.). */
-const DELEGATION_TOOL_RE = /^(task|.*delegate.*|.*subagent.*)$/i
+const DELEGATION_TOOL_RE = /^(task|.*subagent.*)$/i
 
 /**
  * When set to a truthy value ("1" or "debug"), zero-exit audit-hook output is
@@ -783,7 +783,7 @@ function delegationAgent(tool: string, args?: unknown): string {
  * panel tracks the child end-to-end. Fire-and-forget and silent: a mirror
  * failure must never surface into the tool call or the transcript.
  * registerLaunchIfAbsent keeps it idempotent against any other dispatcher
- * (v2-events, plugin double-load, repeated after-hook firings).
+ * (plugin double-load, repeated after-hook firings).
  */
 function mirrorNativeBackgroundDispatch(
   input: { tool: string; sessionID: string },

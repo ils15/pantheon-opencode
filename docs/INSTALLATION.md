@@ -1,11 +1,32 @@
 # Pantheon Installation Guide — v1.5.0-beta.2 (OpenCode)
 
-Pantheon v1.5.0-beta.2 is **OpenCode-only**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. Geração de tabelas via `node scripts/generate-preset-docs.mjs` a partir de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
+Pantheon v1.5.0-beta.2 is **OpenCode-only**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. As tabelas de preset são derivadas de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
+
+## TL;DR (Quick Start)
+
+```bash
+# Instalar agentes Pantheon globalmente (wizard interativo)
+npx pantheon-opencode init
+
+# Headless (CI/scripts, usa defaults)
+npx pantheon-opencode init --headless
+
+# (Opcional) Servidores MCP + skills + plugin TUI
+npm run setup
+
+# Verificar instalação
+npm run doctor
+```
+
+- Requisitos: **Node.js 22.22.2+** (ou 24.15.0+ / 26+), **OpenCode v1.18.4+**, **Python 3.11+** (opcional, MCP servers).
+- Habilite subagentes paralelos antes de abrir o OpenCode:
+  `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`.
+- Passo a passo de 5 minutos: [QUICKSTART.md](QUICKSTART.md).
 
 ## Prerequisites
 
 - **OpenCode v1.18.4+** — [Install OpenCode](https://opencode.ai/docs/)
-- **Node.js 22+** — for `npx pantheon-opencode init`
+- **Node.js 22.22.2+** (ou 24.15.0+ / 26+) — for `npx pantheon-opencode init` (`engines.node` = `^22.22.2 || ^24.15.0 || >=26.0.0`; `pantheon_cost` needs `node:sqlite`, Node >= 22.5)
 - **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
 
@@ -33,13 +54,13 @@ selected generation:
 
 | Selection | OpenCode key | Pantheon registration | Contract |
 |---|---|---|---|
-| `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Legacy `pantheon_delegate`, read/list tools, V1 events/tool hooks and V1 compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks, tool hooks, plus configuration transforms |
+| `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: `hashline_edit` + goal/cost/model tools, board lifecycle, V1 events/tool hooks and V1 compaction path |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 6 orchestration tools, 4 event subscriptions, session hooks, tool hooks, plus configuration transforms |
 
 The V2 plugin is now a **full orchestration plugin** — not just a configuration
-adapter. It registers 9 tools via `ctx.tool.transform()`, subscribes to 4
+adapter. It registers 6 tools via `ctx.tool.transform()`, subscribes to 4
 session lifecycle events, and wires session/tool hooks. The only unsupported
-V2 feature is `legacy-hooks` (V1-specific delegate API surface). Native OpenCode
+V2 feature is `legacy-hooks` (the V1-specific hook surface). Native OpenCode
 `task()` is an OpenCode capability, not a V2 Pantheon delegate API. Do not add
 the V1 plugin beside `plugin-v2` to try to restore V1-specific features: that
 is an unsupported mixed registration.
@@ -81,7 +102,7 @@ Exemplo de `opencode.json` V2:
   },
   "permissions": [
     {
-      "tool": "pantheon_delegate",
+      "tool": "task",
       "allow": ["zeus", "athena"]
     }
   ],
@@ -155,7 +176,7 @@ npx pantheon-opencode init --headless
 npx pantheon-opencode init --headless --no-mcp  # sem Python/MCPs
 ```
 
-> Tabelas acima são geradas via `node scripts/generate-preset-docs.mjs` (lê `src/routing.yml` + `PRESET_PRICE` + `CAPABILITY_TABLE`).
+> Tabelas acima refletem `src/routing.yml` + `PRESET_PRICE` + `CAPABILITY_TABLE`.
 
 ## Quick Install
 
@@ -178,7 +199,7 @@ opencode
 
 | Mode | Command | Installs | Time | Dependencies |
 |------|---------|----------|------|-------------|
-| **Interactive** 🎯 | `npx pantheon-opencode init` (default TTY) | seletor visual de componentes | ~variavel | Node.js 22+ |
+| **Interactive** 🎯 | `npx pantheon-opencode init` (default TTY) | seletor visual de componentes | ~variavel | Node.js 22.22.2+ |
 | **Minimal** 🟢 | `npx pantheon-opencode init --headless --no-mcp` | agents + commands | ~2s | None |
 | **Full** 🔵 | `npx pantheon-opencode init --headless` | agents + MCPs + skills + TUI | ~60s | Python 3.11+ |
 | **Runtime** 🟡 | `npm run setup` | MCP servers + venv | ~30s | Python 3.11+ |
@@ -210,12 +231,11 @@ This installs to `.opencode/agents/` in the current project directory.
 
 Desde **v1.5.0** o instalador **não cria** `model`/`small_model` top-level em `opencode.json` e o plugin/wizard **não grava** `active-preset.json` quando o usuário escolhe `0`/`inherit` (default da Q1). Comportamento:
 
-- **Sem preset = herança nativa**: `resolveActivePreset()` retorna `null`; `loadRoutingAgentModels()` retorna `{}`; `delegation.ts` (`resolveChildModel` → `resolveUsableChildModel`) omite `model` em `session.create`/`promptAsync` para que OpenCode herde o modelo do chat pai. `small_model` nunca é usado para delegates.
+- **Sem preset = herança nativa**: `resolveActivePreset()` retorna `null`; `loadRoutingAgentModels()` retorna `{}`; nenhum modelo é imposto aos filhos — o `task()` nativo herda o modelo do chat pai. `small_model` nunca é usado.
 - **Ordem de resolução do modelo filho** (fontes sem hardcode de segredos, só nomes):
-  1. `explicit model` em `pantheon_delegate({model: "provider/model-id"})`
-  2. `overrides.agents[agent].model` em `.pantheon/active-preset.json` (via `/pantheon-model set --agent`)
-  3. `presets.<active>.agents[agent].model` (via `loadRoutingAgentModels`)
-  4. omitir → herança nativa (herda modelo atual da sessão pai)
+  1. `overrides.agents[agent].model` em `.pantheon/active-preset.json` (via `/pantheon-model set --agent`)
+  2. `presets.<active>.agents[agent].model` (via `loadRoutingAgentModels`)
+  3. omitir → herança nativa (herda modelo atual da sessão pai)
 - O instalador **remove** `model`/`small_model` antigos de `config.agent[agentName]` durante `installOpencode()` (limpeza de legado), preservando apenas campos gerenciados (`MANAGED_FIELDS`). Flags `--model`/`--small-model` ainda existem para override explícito, mas **não são necessárias** para o fluxo padrão; se usadas, validam `provider/model-id` via `MODEL_REF_PATTERN` e nunca tocam o outro campo.
 - Provider/model disponibilidade **não** é inferida da string: deve existir no OpenCode e via conta/assinatura/endpoint configurado (`PANTHEON_OPENCODE_API_KEY` para `opencode`/`opencode-go`, `OPENAI_API_KEY` para `openai`).
 
@@ -233,7 +253,7 @@ npx pantheon-opencode init --preset go-fast
 # via comando Pantheon (ver próxima seção) — nunca via top-level opencode.json
 ```
 
-> **Nota:** Em `src/pantheon/delegation.ts` a validação usa `MODEL_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/` com hint sem expor segredos. Model inválido → erro `pantheon_delegate rejected: invalid explicit/agentModels model override. Expected provider/model-id...`.
+> **Nota:** A validação de `provider/model-id` usa `MODEL_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/` (em `src/pantheon/model-command.ts`, hint sem expor segredos). Model inválido → erro `model must use provider/model-id format`.
 
 ## `/pantheon-model` — Per-agent Overrides em `active-preset.json`
 
@@ -279,15 +299,15 @@ O comando é determinístico (`src/pantheon/model-command.ts`) — leitura/escri
 
 **Histórico superseded (≤1.4.1):** antes manipulava `model`/`small_model` top-level em `opencode.json`; em 1.5.0 manipula apenas `overrides.agents`. Instrução em `commands/pantheon-model.md` usa `agent: zeus` + per-agent semantics.
 
-## Background Delegation (V1 plugin only)
+## Background Delegation (native `task()`)
 
-Only the V1 Pantheon plugin provides **background delegation** via three tools
-(`pantheon_delegate`, `pantheon_delegation_read`, `pantheon_delegation_list`),
-tracked on a persistent job board with completion notifications injected into
-the board and exposed through list/read, TUI toasts, and compaction
-carry-forward; no completion text is injected into the chat transcript.
+Pantheon delegates through OpenCode's native `task()` child-session engine —
+there is no Pantheon-specific delegation tool surface. In background mode the
+call returns immediately and the child keeps running; the TUI Delegations panel
+follows it through `api.client.session.children` and OpenCode session events. No
+completion text is injected into the chat transcript.
 
-**Requirement for V1:** Set the environment variable before launching OpenCode:
+**Requirement:** Set the environment variable before launching OpenCode:
 
 ```bash
 export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
@@ -303,17 +323,12 @@ npm run start
 **How it works:**
 
 ```javascript
-// Dispatch a background agent — returns immediately with a readable alias
-pantheon_delegate({ prompt: "search the codebase", agent: "apollo", description: "Find X", model: "opencode/deepseek-v4-flash-free" })
-// → Delegated to apollo: [apo-1] (task ses_xxx). Read with pantheon_delegation_read.
+// Dispatch a background child — returns immediately in background mode
+task({ subagent_type: "apollo", description: "Find X", prompt: "search the codebase" })
+// → child session ses_xxx; visible in the TUI Delegations panel
 
-// Collect results later (blocks until finished, then returns the report)
-pantheon_delegation_read({ id: "apo-1" })
-// → report markdown (job marked reconciled)
-
-// See what's running / finished-unread
-pantheon_delegation_list({})
-// → [apo-1] apollo — Find X — OK [unread]
+// Foreground dispatch blocks until the child finishes and returns its report
+task({ subagent_type: "hermes", description: "Implement Y", prompt: "..." })
 ```
 
 **Which agents run in background:**
@@ -324,9 +339,8 @@ pantheon_delegation_list({})
 | Athena, Themis | ❌ No | Need full session context |
 | Talos, Iris, Nyx, Mnemosyne, Gaia | ❌ No | Quick operations |
 
-See the **Background Delegation** section in the [README](../README.md) for the
-notification model, model-resolution order, timeout, read-only enforcement,
-and `background_delegation` routing.yml configuration.
+See the **Delegation (native `task()`)** section in the [README](../README.md)
+for the engine contract and historical notes.
 
 V1 compaction carry-forward is implemented by
 `experimental.session.compacting`. It is not available through `plugin-v2`.
@@ -356,10 +370,10 @@ Pantheon v1.5.0
   preset (`⚡ Preset: <name> (source)`, or `Preset: default`).
 - **Sessions** — collapsible recent-sessions list (click a row to open).
 - **Delegations (real-time)** — the panel can follow children sourced from
-  `api.client.session.children`. V1 `pantheon_delegate` children use the
-  board alias/report contract. Native `task()` children require explicit
+  `api.client.session.children`. Native `task()` children require explicit
   origin, parent and status metadata from OpenCode; the panel must not infer a
-  native task from a missing Markdown report. Animated states
+  native task from a missing Markdown report. Historical V1 board reports still
+  render from `.pantheon/delegations/`. Animated states
   (DELEGATING / WORKING / READING RESULT / DONE / DONE (TIMED OUT) / ERROR /
   CANCELLED) with a 140ms spinner; clicking a row navigates to the child
   session. Also reads `.pantheon/delegations/` reports from all sessions, so
@@ -371,6 +385,38 @@ The TUI plugin is installed by `npm run setup` or a selected install that
 includes the `plugins` component. Without that component, no Pantheon TUI
 registration is written. It appears in the right sidebar of OpenCode TUI when
 the host loads the separate `tui.json` registration.
+
+### TUI dev build (local development)
+
+To iterate on the TUI from a git checkout without publishing, build the bundle
+and register the **absolute repo path** (`<repo>/src/plugins/tui`) in the
+project-local `.opencode/tui.json`:
+
+```bash
+# 1. Install pinned deps + build the bundle
+npm ci --prefix src/plugins/tui --ignore-scripts --no-audit --no-fund
+npm run build --prefix src/plugins/tui
+
+# 2. Register the repo path (merged into the array, not clobbered)
+node --input-type=module -e "import { registerPlugin } from './scripts/install/plugin.mjs'; registerPlugin('.opencode/tui.json', process.cwd() + '/src/plugins/tui')"
+```
+
+TUI plugins are loaded at process start, so restart OpenCode after each build.
+
+| Context | `tui.json` target | Written by |
+|---------|-------------------|------------|
+| Development (this repo) | `<repo>/src/plugins/tui` | manual `registerPlugin` (gitignored) |
+| Installed (user) | `<configDir>/plugins/pantheon-tui` | `npm run setup` / installer |
+
+Notes:
+
+- `.opencode/tui.json` is gitignored; it is machine-specific and must not be
+  committed.
+- **Never** add `src/plugins/tui` to `opencode.json`. That file is packaged and
+  merged into user configs by the installer, so a repo-relative path would leak
+  into third-party installs and fail the CI package gates.
+- While in dev mode, do **not** run `init` inside this repo: the installer treats
+  the repo path as a stale Pantheon TUI reference and removes it.
 
 ## Commands
 
@@ -406,9 +452,6 @@ cat ~/.config/opencode/opencode.json | grep -A2 '"model"' || echo "sem model top
 node scripts/validate-routing.mjs
 # ou
 node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePresetDefs(m.loadPresetDefs())))"
-
-# gerar tabelas atuais de routing.yml
-node scripts/generate-preset-docs.mjs
 ```
 
 ### Chaves por preset
@@ -497,8 +540,8 @@ em `~/pantheon-sandbox/README.md`.
 ### TUI runtime versus development build
 
 The installer treats `src/plugins/tui` as the single source of truth and always
-copies it into the target config as `plugins/pantheon-tui` (dist/ + package.json
-+ index.tsx). OpenCode's TUI loader reads the copied `package.json` `exports`
+copies it into the target config as `plugins/pantheon-tui` (the bundled `dist/`
++ `package.json`). OpenCode's TUI loader reads the copied `package.json` `exports`
 map (`./tui` → `dist/tui.js`, `./server` → `dist/server.js`), so users do not
 need `tsconfig.json`, `tsdown`, or development dependencies after installation.
 The TUI `build` and `typecheck` scripts are maintainer/development tasks for the
@@ -609,24 +652,22 @@ flowchart LR
     H --> I["🚀 Pantheon v1.5.0 ready"]
 ```
 
-## V1 Background Delegation Flow
+## Native `task()` Delegation Flow
 
 ```mermaid
 sequenceDiagram
     participant Z as Zeus
     participant A as Apollo (child)
     participant D as Demeter (child)
-    participant B as V1 Board
+    participant H as OpenCode host
 
-    Z->>+A: pantheon_delegate(prompt, agent)
-    Z->>+D: pantheon_delegate(prompt, agent)
-    A-->>B: terminal state + V1 report
-    D-->>B: terminal state + V1 report
+    Z->>+A: task({ subagent_type: "apollo", ... })
+    Z->>+D: task({ subagent_type: "demeter", ... })
+    A-->>H: child session terminal state
+    D-->>H: child session terminal state
+    H-->>Z: task() result returned to the caller
 
-    Z->>B: pantheon_delegation_list()
-    Z->>B: pantheon_delegation_read(id)
-
-    Note over Z: V1 APIs only; V2 uses no Pantheon delegate API
+    Note over Z: Native OpenCode task(); no Pantheon delegate API
 ```
 
 ## TUI Sidebar Layout

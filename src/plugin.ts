@@ -1,8 +1,7 @@
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { PluginConfig } from 'opencode'
 import { createCommandNormalizer } from './pantheon/command-normalizer.ts'
+import { buildCompactionContext } from './pantheon/compaction-context.ts'
 import {
   type ContextSandboxConfig,
   createContextSandbox,
@@ -11,24 +10,13 @@ import {
   DEFAULT_LIMITS as SANDBOX_DEFAULT_LIMITS,
 } from './pantheon/context-sandbox.ts'
 import { createCostCommand } from './pantheon/cost-command.ts'
-import { buildPluginNativeDelegation, resolveDelegateMode } from './pantheon/delegate-manager.ts'
-import {
-  collectRootSessionIDs,
-  createDelegationTools,
-  type DelegationClient,
-  resolveDelegationBudgets,
-  resolveDelegationTimeoutMs,
-  startIdleChildScan,
-} from './pantheon/delegation.ts'
-import { buildCompactionContext } from './pantheon/delegation-compaction.ts'
 import {
   createEnforcementGuard,
   readOnlyRegistry,
   SessionHierarchyRegistry,
+  syncReadOnlySession,
   zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
-import { handleDelegationEvent } from './pantheon/delegation-notify.ts'
-import { showDelegationTerminalToast, type ToastClient } from './pantheon/delegation-toast.ts'
 import { GOAL_LOOP_DEFAULTS, GoalLoop, GoalStore } from './pantheon/goal-loop.ts'
 import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
@@ -36,15 +24,9 @@ import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
 import { createPantheonLogger } from './pantheon/logger.ts'
 import { createModelCommand } from './pantheon/model-command.ts'
 import { pantheonPluginOnce } from './pantheon/plugin-once.ts'
-import {
-  applyActivePresetToConfig,
-  loadRoutingAgentModels,
-  loadRoutingMaxSteps,
-  loadRoutingPermissionTask,
-} from './pantheon/presets.mjs'
+import { applyActivePresetToConfig } from './pantheon/presets.mjs'
 import { safeSessionPath } from './pantheon/session-guard.ts'
 import { getSharedBoard } from './pantheon/shared-board.ts'
-import { StepCapTracker } from './pantheon/step-cap.ts'
 import { createTaskResultGuard } from './pantheon/task-result-guard.ts'
 import {
   TODO_ENFORCER_DEFAULTS,
@@ -65,23 +47,10 @@ import { activePresetCandidates, createVisionHandler } from './pantheon/vision.t
 // .pantheon/logs/hooks.log; the console echo is opt-in via PANTHEON_HOOKS_LOG=1.
 const log = createPantheonLogger({ module: 'pantheon-plugin' })
 
-// R4: per-agent step caps from routing.yml `agents.<name>.max_steps`
-// (fail-open → {} = no agent capped). R1 retry_policy/cooldown are NOT
-// wired here — the plugin has no retry path (opencode cannot intercept task
-// completion); zeus waves load them via presets.mjs loaders and pass them
-// to zeusDelegateWithRetry explicitly.
-const stepCapTracker = new StepCapTracker(loadRoutingMaxSteps({ logger: log }))
-
-// O5: permission.task glob rules from routing.yml `permission.task`
-// (fail-open → undefined = existing runtime matrix only).
-const routingPermissionTask = loadRoutingPermissionTask({ logger: log })
-
 // beta.5: the board is a PROCESS-wide singleton (getSharedBoard) shared with
 // src/plugins/pantheon-hooks.ts, whose native-task mirror registers children
-// here; the finalize path below (session.idle + idle scan) must observe the
-// SAME instance. globalThis anchoring dedupes the npm+repo double load.
+// here. globalThis anchoring dedupes the npm+repo double load.
 const board = getSharedBoard()
-let terminalToastClient: ToastClient = {}
 board
   .recoverRunningJobs()
   .catch((err) => log.error('[Pantheon Plugin] Failed to recover running jobs:', err))
@@ -91,17 +60,14 @@ board
 // file-only log line (console echo opt-in via PANTHEON_HOOKS_LOG). There is
 // deliberately NO chat delivery — the user policy is zero delegation
 // notifications in the transcript. Completion visibility lives in the board
-// `[unread]` marker (pantheon_delegation_list), pantheon_delegation_read,
-// TUI toasts (pantheon-hooks, PANTHEON_TOASTS gate) and compaction
-// carry-forward.
+// `[unread]` marker and the TUI toasts owned by pantheon-hooks
+// (PANTHEON_TOASTS gate).
 board.onTerminal((taskID: string) => {
   const job = board.get(taskID)
   if (!job) return
   log.info(
     `[Pantheon Plugin] Board terminal: [${job.alias}] ${job.description} → ${job.state}${job.resultSummary ? ` — ${job.resultSummary}` : ''}`,
   )
-  // Deliberately direct-to-TUI: onTerminal must not inject chat/transcript text.
-  void showDelegationTerminalToast(terminalToastClient, job)
 })
 
 // Periodically prune terminal/reconciled jobs (24h TTL, every 30 min).
@@ -127,10 +93,11 @@ function isRootSession(sessionID: string): boolean {
   return rootSessions.has(sessionID) || sessionHierarchy.isRoot(sessionID)
 }
 
-// The read-only registry is populated by createDelegationTools (delegation.ts)
-// when a delegate is read-only (explicit flag or agent ∈ readOnlyAgents).
-// The guard denies edit/write/bash/task inside those sessions by throwing
-// from tool.execute.before; unknown sessions are allowed (safe default).
+// The read-only registry is populated by the chat.params hook below, when a
+// session's active agent is read-only (apollo/gaia — READ_ONLY_AGENTS /
+// syncReadOnlySession). The guard denies edit/write/bash/task/hashline_edit
+// inside those sessions by throwing from tool.execute.before; unknown sessions
+// are allowed (safe default).
 const enforcementGuard = createEnforcementGuard({
   getReadOnlySessions: () => readOnlyRegistry.sessionIDs(),
   options: {
@@ -148,10 +115,7 @@ const enforcementGuard = createEnforcementGuard({
 // to the shared hooks.log for @nyx frequency measurement.
 const commandNormalizer = createCommandNormalizer({ logger: log })
 
-// Mirrors routing.yml background_delegation.max_compaction_items.
-const COMPACTION_MAX_ITEMS = 10
-
-// Root-session registry for the delegation depth guard: sessions created
+// Root-session registry for the read-only enforcement guard: sessions created
 // without a parentID are roots. Populated from TWO sources:
 //   1. the `session.created` event hook (live roots — fires for sessions
 //      created while the plugin runs);
@@ -159,20 +123,30 @@ const COMPACTION_MAX_ITEMS = 10
 //      hook (compaction-134) — opencode does NOT replay session.created
 //      events for sessions that exist before plugin load, so without the
 //      seed a resumed root would never enter this set after a restart.
-// delegation.ts additionally falls back to knownChildren ("any session WE
-// created is a sub-session; unknown sessions are roots") so the depth guard
-// works even when this set is incomplete.
+// The guard treats unknown sessions as roots, so this set is an enrichment
+// that improves accuracy but is never required for correctness.
 const rootSessions = new Set<string>()
 const sessionHierarchy = new SessionHierarchyRegistry()
 const sessionAgents = new Map<string, string>()
 const sessionToolCeilings = new Map<string, ToolCeilingResult>()
 
+/** Pure helper: collect the IDs of root sessions (parentID === undefined). */
+function collectRootSessionIDs(
+  sessions: ReadonlyArray<{ id: string; parentID?: string }>,
+): Set<string> {
+  const roots = new Set<string>()
+  for (const session of sessions) {
+    if (session.parentID === undefined) roots.add(session.id)
+  }
+  return roots
+}
+
 /**
  * Seed resumed root sessions without making OpenCode startup depend on the
  * session API responding. Some OpenCode environments do not have the API
  * ready while plugin config hooks run; awaiting session.list() there leaves
- * the TUI stuck before it can open. The delegation layer already treats an
- * unknown session as a root, so this enrichment is deliberately best-effort.
+ * the TUI stuck before it can open. The enforcement guard treats an unknown
+ * session as a root, so this enrichment is deliberately best-effort.
  */
 function seedRootSessionsInBackground(input: PluginInput): void {
   // Fail-open: environments without the session API (client.session absent or
@@ -207,62 +181,6 @@ function seedRootSessionsInBackground(input: PluginInput): void {
 function sdkErrorMessage(error: { data?: { message?: string } } | null | undefined): string {
   const message = error?.data?.message
   return typeof message === 'string' && message.trim() !== '' ? message : 'request failed'
-}
-
-/**
- * Adapt the opencode SDK client to the structural DelegationClient the
- * delegation toolset expects: the SDK wraps every call in a
- * `{data, error, request, response}` result while delegation.ts uses direct
- * returns. Errors surface as throws so the toolset's own error handling
- * (tool errors returned as TEXT) keeps working.
- */
-function adaptDelegationClient(client: PluginInput['client']): DelegationClient {
-  return {
-    session: {
-      create: async (input) => {
-        const body: {
-          parentID?: string
-          title?: string
-          model?: { id: string; providerID: string }
-        } = { parentID: input.body.parentID }
-        if (input.body.title !== undefined) body.title = input.body.title
-        // Forward a model only when the active routing profile supplied one.
-        if (input.body.model !== undefined) body.model = input.body.model
-        const result = await client.session.create({ body })
-        if (result.error) throw new Error(sdkErrorMessage(result.error))
-        return { id: result.data.id }
-      },
-      promptAsync: async (input) => {
-        const path = safeSessionPath(input.path.id)
-        if (!path) {
-          log.warn(`[Pantheon Plugin] promptAsync skipped: invalid sessionID "${input.path.id}"`)
-          throw new Error(`invalid sessionID: ${input.path.id}`)
-        }
-        const result = await client.session.promptAsync({
-          path: path.path,
-          body: {
-            agent: input.body.agent,
-            ...(input.body.model !== undefined
-              ? { model: { providerID: input.body.model.providerID, modelID: input.body.model.id } }
-              : {}),
-            parts: input.body.parts,
-          },
-        })
-        if (result.error) throw new Error(sdkErrorMessage(result.error))
-        return result.data
-      },
-      messages: async (input) => {
-        const path = safeSessionPath(input.path.id)
-        if (!path) {
-          log.warn(`[Pantheon Plugin] messages skipped: invalid sessionID "${input.path.id}"`)
-          return []
-        }
-        const result = await client.session.messages({ path: path.path })
-        if (result.error) throw new Error(sdkErrorMessage(result.error))
-        return result.data
-      },
-    },
-  }
 }
 
 /**
@@ -345,7 +263,6 @@ function adaptTodoEnforcerClient(client: PluginInput['client']): TodoEnforcerCli
  * Helpers live in src/pantheon/vision.ts and are imported from there directly.
  */
 const plugin: Plugin = async (input: PluginInput) => {
-  terminalToastClient = input.client as unknown as ToastClient
   // release-134: runtime guard against DOUBLE registration (duplicate toasts +
   // duplicate task_ids in one process — 2026-08-12 live logs). opencode
   // merges the global config (npm-package plugin paths) with the project
@@ -360,100 +277,11 @@ const plugin: Plugin = async (input: PluginInput) => {
   // is older than the installed package. Runs once, fail-open, no auto-sync.
   checkTuiVersionStaleness((msg) => log.warn(msg))
   const vision = createVisionHandler(input)
-  // Phase 2/3: background delegation toolset + the bound finalize lifecycle
-  // hook. Completion is observed through the event hook below
-  // (session.idle / session.error on a child) → finalizeDelegation.
-  // Fase B3: runtime controls for the two read-only exceptions and the real
-  // per-child wall-clock timer. No task_budget field is injected into the
-  // plugin/frontmatter; these are enforced by delegation.ts itself.
-  const delegationBudgets = resolveDelegationBudgets()
-  const wallClockTimeoutMs = resolveDelegationTimeoutMs()
-
-  // WS1 (PR #94): delegation backend gate. Default = legacy (the V1
-  // fire-and-forget toolset, intact); PANTHEON_DELEGATE_MODE=native selects
-  // the thin manager over native task() semantics. Kill-switch
-  // PANTHEON_DELEGATION=off covers the native manager; finalizeDelegation stays on
-  // the legacy observer: it works on the shared board in both modes and must
-  // never be kill-switched, so children never orphan. The idle hook below is
-  // untouched.
-  const delegationClient = adaptDelegationClient(input.client)
-  // Only an explicitly active routing profile may provide child models.
-  // An empty map deliberately lets OpenCode inherit the parent model.
-  const routingAgentModels = loadRoutingAgentModels({
-    candidates: activePresetCandidates(),
-    logger: log,
-  })
-  const readOnlyAgents = new Set(['apollo', 'gaia'])
-  const legacyDelegation = createDelegationTools({
-    board,
-    client: delegationClient,
-    options: {
-      rootSessions,
-      isChildSession: (sessionID) => sessionHierarchy.isChild(sessionID),
-      registerChildSession: (sessionID, parentID) => {
-        sessionHierarchy.register({ id: sessionID, parentID })
-      },
-      enforceRuntimeMatrix: true,
-      readOnlyAgents,
-      agentModels: routingAgentModels,
-      delegationBudgets,
-      stepCapTracker,
-      ...(routingPermissionTask != null ? { permissionTask: routingPermissionTask } : {}),
-      ...(wallClockTimeoutMs !== undefined ? { wallClockTimeoutMs } : {}),
-    },
-  })
-  const delegateMode = resolveDelegateMode()
-  if (delegateMode === 'native') {
-    log.info('[Pantheon Plugin] Delegation mode: native (PANTHEON_DELEGATE_MODE=native)')
-  }
-  const delegation =
-    delegateMode === 'native'
-      ? buildPluginNativeDelegation({
-          board,
-          client: delegationClient,
-          isRootSession,
-          registerChildSession: (sessionID, parentID) => {
-            sessionHierarchy.register({ id: sessionID, parentID })
-          },
-          registerReadOnlySession: (sessionID, info) => {
-            readOnlyRegistry.register(sessionID, info)
-          },
-          readOnlyAgents,
-          agentModels: routingAgentModels,
-          stepCap: stepCapTracker,
-          ...(wallClockTimeoutMs !== undefined ? { wallClockTimeoutMs } : {}),
-          finalizeDelegation: legacyDelegation.finalizeDelegation,
-        })
-      : legacyDelegation
-
-  // Proactive idle-child scan (Fix 2): finalize children that are idle on the
-  // board but have no MD report on disk — eliminates the phantom "running"
-  // window. Runs every 30s (configurable via PANTHEON_IDLE_SCAN_INTERVAL_MS),
-  // unref'd so it never holds the process open. Fail-open by design.
-  const idleScanIntervalMs = Number(process.env.PANTHEON_IDLE_SCAN_INTERVAL_MS) || undefined
-  startIdleChildScan(
-    {
-      board,
-      finalize: (childSessionID, opts) => delegation.finalizeDelegation(childSessionID, opts),
-      hasReport: (job) => {
-        try {
-          const filePath = join('.pantheon/delegations', job.parentSessionID, `${job.alias}.md`)
-          return existsSync(filePath)
-        } catch {
-          return false
-        }
-      },
-      logger: log,
-    },
-    idleScanIntervalMs,
-  )
-
-  // Wave 1 (PR #46): TODO continuation enforcer for root/non-board sessions.
-  // Mirrors routing.yml `todo_enforcer` (plugin scope has no routing.yml
-  // access — COMPACTION_MAX_ITEMS pattern). The event hook routes non-board
-  // session.idle events here; board-child idles go to finalizeDelegation.
-  // Runtime kill-switch: PANTHEON_TODO_ENFORCER=off (routing.yml is a doc
-  // mirror only — the env var is the real switch, PANTHEON_TOASTS pattern).
+  // Wave 1 (PR #46): TODO continuation enforcer for root sessions. The event
+  // hook routes `session.idle` events here; an active goal owns the idle
+  // (goal loop), otherwise the todo enforcer re-injects. Runtime kill-switch:
+  // PANTHEON_TODO_ENFORCER=off (routing.yml is a doc mirror only — the env var
+  // is the real switch, PANTHEON_TOASTS pattern).
   const todoEnforcer = new TodoEnforcer({
     client: adaptTodoEnforcerClient(input.client),
     board,
@@ -516,9 +344,7 @@ const plugin: Plugin = async (input: PluginInput) => {
   }
 
   // Wave 4 (PR #46): /cost — delegation cost + token visibility. Reads
-  // opencode.db read-only via the single node:sqlite backend.
-  // Fully wired (unlike dispatch-guard, which is manual-orchestration-only
-  // because opencode 1.18.x cannot intercept task completion via hooks).
+  // opencode.db read-only via the single node:sqlite backend. Fully wired.
   const costCommand = createCostCommand()
   const modelCommand = createModelCommand()
 
@@ -527,11 +353,11 @@ const plugin: Plugin = async (input: PluginInput) => {
       // compaction-134 seed: opencode does NOT replay `session.created`
       // events for sessions that exist before plugin load, so after a
       // restart the resumed ROOT session never enters rootSessions and the
-      // depth guard would reject its pantheon_delegate calls. Seed the
-      // registry from session.list() in the background — every session
-      // WITHOUT a parentID is a root. Fail-open: a failed/throttled list
-      // leaves the set untouched (delegation.ts treats unknown sessions as
-      // roots), and config setup must never wait for the session API.
+      // read-only enforcement guard would misclassify it. Seed the registry
+      // from session.list() in the background — every session WITHOUT a
+      // parentID is a root. Fail-open: a failed/throttled list leaves the set
+      // untouched (the guard treats unknown sessions as roots), and config
+      // setup must never wait for the session API.
       // Context sandbox config — opencode.json → context_sandbox: {enabled, limits}
       try {
         const raw = (config as unknown as Record<string, unknown>).context_sandbox
@@ -576,12 +402,9 @@ const plugin: Plugin = async (input: PluginInput) => {
         log.warn('[plugin] preset application failed (see logs for details)')
       }
     },
-    // Phase 2: background delegation tools (structural — matches the `tool`
-    // hook field shape; read_only sessions feed the Phase 4 registry).
+    // Plugin tool surface: tag-anchored edits (hashline_edit), the full-auto
+    // goal loop, /cost and /pantheon-model management.
     tool: {
-      pantheon_delegate: delegation.pantheon_delegate,
-      pantheon_delegation_read: delegation.pantheon_delegation_read,
-      pantheon_delegation_list: delegation.pantheon_delegation_list,
       hashline_edit: hashlineEdit,
       // Wave 3 (PR #46): full-auto goal tools (single active goal/session).
       pantheon_goal_create: goalTools.pantheon_goal_create,
@@ -604,6 +427,10 @@ const plugin: Plugin = async (input: PluginInput) => {
       // The SDK exposes the active agent here; tool.execute.before has no
       // agent field. Never infer identity from a prompt or tool name.
       sessionAgents.set(hookInput.sessionID, hookInput.agent)
+      // Phase 4: chat.params is the ONLY hook with the active agent, so this
+      // is where the read-only registry is populated — apollo/gaia sessions
+      // must be denied edit/write/bash/task/hashline_edit by the guard.
+      syncReadOnlySession(readOnlyRegistry, hookInput.sessionID, hookInput.agent)
     },
     'experimental.chat.messages.transform': vision.messagesTransform,
     event: async ({ event: ev }) => {
@@ -615,6 +442,12 @@ const plugin: Plugin = async (input: PluginInput) => {
           if (info.parentID === undefined) rootSessions.add(info.id)
         }
       }
+      // Phase 4: a deleted session must not leave a read-only registration
+      // (or cached agent identity) behind.
+      if (ev.type === 'session.deleted') {
+        readOnlyRegistry.unregister(ev.properties.info.id)
+        sessionAgents.delete(ev.properties.info.id)
+      }
       // release-134 Phase 3: activate the todo snapshot captured at
       // compacting time — the first todowrite within the restore window is
       // rewritten with the exact list (see todo-preserve.ts). Fail-open.
@@ -624,27 +457,12 @@ const plugin: Plugin = async (input: PluginInput) => {
       if (ev.type === 'message.updated') {
         await handleToolCeilingEvent(input.client, ev, sessionToolCeilings)
       }
-      // Phase 3: observe completion on child sessions → finalizeDelegation.
-      // The board transition fires onTerminal → the file-only audit log (no
-      // chat delivery — see the onTerminal listener above). Unknown sessions
-      // are a no-op.
-      try {
-        const delegated = await handleDelegationEvent(ev, {
-          board,
-          finalize: (childSessionID, opts) => delegation.finalizeDelegation(childSessionID, opts),
-        })
-        // Wave 1/3: non-board idle → idle dispatcher. Board children are
-        // handled by handleDelegationEvent above; everything else (roots,
-        // non-board sessions) is routed by priority: an active goal owns the
-        // idle (goal loop), otherwise the todo enforcer re-injects. Neither
-        // onIdle ever throws (internal failures are logged + swallowed), so
-        // the session is safe.
-        if (!delegated && ev.type === 'session.idle') {
-          await idleDispatcher.onIdle(ev.properties.sessionID)
-        }
-      } catch (err) {
-        // The event hook must never break the session.
-        log.error('[Pantheon Plugin] Delegation event handling failed:', err)
+      // Wave 1/3: `session.idle` → idle dispatcher. An active goal owns the
+      // idle (goal loop); otherwise the todo enforcer re-injects. onIdle never
+      // throws (internal failures are logged + swallowed), so the session is
+      // safe.
+      if (ev.type === 'session.idle') {
+        await idleDispatcher.onIdle(ev.properties.sessionID)
       }
       await vision.event({ event: ev })
     },
@@ -670,16 +488,14 @@ const plugin: Plugin = async (input: PluginInput) => {
     // through untouched.
     'tool.execute.after': combinedAfter,
     // Phase 4 + release-134 Phase 2: keep the session's working state across
-    // compaction — preservation directive, active goals (<mission_context>),
-    // pending todos (<todo_context>), and in-flight background delegations
-    // (running + unread terminal ≤ max_compaction_items). Guarded: only
-    // pushes when there is something to preserve; a build failure must never
-    // break the experimental compaction hook.
+    // compaction — preservation directive, active goals (<mission_context>)
+    // and pending todos (<todo_context>). Guarded: only pushes when there is
+    // something to preserve; a build failure must never break the experimental
+    // compaction hook.
     'experimental.session.compacting': async (_input, output) => {
       try {
-        const blocks = await buildCompactionContext(board, {
+        const blocks = await buildCompactionContext({
           sessionID: _input.sessionID,
-          maxItems: COMPACTION_MAX_ITEMS,
           goals: {
             enabled: GOAL_LOOP_DEFAULTS.enabled,
             list: (sessionID: string) => goalStore.list(sessionID),

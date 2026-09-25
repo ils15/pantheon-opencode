@@ -1,7 +1,7 @@
 node_modules/
 dist/
 # The TUI plugin dist is a build artifact that MUST ship in the npm package
-# (the opencode tui loader loads dist/tui.tsx directly — relative refs break).
+# (the opencode tui loader loads the bundled dist/tui.js via package exports).
 !src/plugins/tui/
 !src/plugins/tui/dist/
 !src/plugins/tui/dist/**
@@ -35,10 +35,10 @@ opencode.json.backup
 .github/release-notes.md
 # Local validation logs are generated diagnostics and must not be versioned.
 logs/
-# Local plastic-example lab — never version
-teste/
-# Local scratch/test playgrounds — never version
-testes/
+# Python tooling caches — generated diagnostics, never versioned.
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 
 # ZCode session artifacts
 .zcode/

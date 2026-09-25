@@ -10,7 +10,7 @@ want useful structure without giving up control of their code.
 
 [![Version](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=version)](https://github.com/ils15/pantheon-opencode/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg)](https://doi.org/10.5281/zenodo.22306637)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22650136.svg)](https://doi.org/10.5281/zenodo.22650136)
 
 ## What is it?
 
@@ -30,7 +30,15 @@ way to plan work, make progress, check results, and keep useful project context.
 
 ## Start in 2 minutes
 
-Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js 22+.
+Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js
+22.22.2+ (or 24.15.0+ / 26+).
+
+Pantheon declares `engines.node` as `^22.22.2 || ^24.15.0 || >=26.0.0`. The
+floor reflects what the dependency tree actually needs — the transitive
+`ini@7` rejects earlier 22.x/24.x builds with `EBADENGINE` — and odd-numbered
+Node releases (23, 25) are out of range. The `pantheon_cost` tool also needs
+`node:sqlite`, which requires Node >= 22.5; `doctor` warns when the running
+runtime cannot load it.
 
 From the project where you want to use Pantheon:
 
@@ -76,25 +84,14 @@ availability and configuration of OpenCode and any optional services you choose
 to use. Check the [releases](https://github.com/ils15/pantheon-opencode/releases)
 and [changelog](CHANGELOG.md) for the latest published changes.
 
-## Delegation engines (legacy default, native opt-in)
+## Delegation (native `task()`)
 
-Pantheon exposes two delegation engines behind one tool surface:
-
-- **Legacy (default)** — `pantheon_delegate`, the original engine registered by
-  the V1 plugin. No configuration is required.
-- **Native (opt-in, experimental)** — OpenCode's native `task()` child-session
-  engine, selected with `PANTHEON_DELEGATE_MODE=native`. Native is strict: it
-  does not use foreground fallback, model failover, or retry; it performs a
-  lazy capability probe on the first dispatch and includes the resulting
-  status in the delegation receipt.
-
-Legacy stays the default for v1.5.x; native is not promoted to default until
-v1.6. See [ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md)
-(Proposed) for the engine contract, rationale, and migration prerequisites.
-
-**Kill-switch:** set `PANTHEON_DELEGATION=off` (case-insensitive) to disable
-delegation entirely. The switch covers **both** engines — the legacy
-`pantheon_delegate`/read/list tools throw, and the native manager throws too.
+Pantheon delegates exclusively through OpenCode's native `task()` child-session
+engine. The former custom `pantheon_delegate` tool and the V1 delegation engine
+(`delegation.ts`, `delegate-manager.ts` and supporting modules) were removed;
+there is no Pantheon-specific delegation tool surface to configure. See
+[ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md) for the
+historical engine contract.
 
 ## Cost tool backend
 
@@ -172,8 +169,7 @@ script's SHA-256 without regenerating it.
   covering OpenCode V1/V2 side by side — see
   [Sandbox validation](#sandbox-validation-v1v2).
 - Beta2 agent-economy policy: direct native delegation, bounded compaction
-  carry-forward, compact context encoding, and quality floors — see
-  [Beta2 agent economy policy](docs/ws3-token-opt-measurements.md#beta2-agent-economy-policy).
+  carry-forward, compact context encoding, and quality floors.
 - A `--prompts` installer flag is planned for a future release.
 
 ## OpenCode V1/V2 — Dual Version (1.5.0-beta.2)
@@ -186,23 +182,22 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
 | Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) |
-| Runtime contract | Legacy Pantheon plugin, including `pantheon_delegate`, read/list tools, event/tool hooks and V1 compaction handling | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
+| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 6 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
 | V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 
-The V2 plugin provides 9 orchestration tools (`pantheon_delegate`,
-`pantheon_delegation_read`, `pantheon_delegation_list`, `hashline_edit`,
+The V2 plugin provides 6 orchestration tools (`hashline_edit`,
 `pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`,
 `pantheon_cost`, `pantheon_model`), 4 event subscriptions (`session.created`,
 `session.idle`, `session.error`, `session.compacted`), session hooks (`prompt`,
 `context`), and tool hooks (`execute.before`, `execute.after`). The only
-unsupported V2 feature is `legacy-hooks` (the V1-specific delegate API surface).
+unsupported V2 feature is `legacy-hooks` (the V1-specific hook surface).
 
 The package exposes both contracts as importable exports: `pantheon-opencode/plugin`
 (V1), `pantheon-opencode/plugin-v2` (V2) and `pantheon-opencode/v2-bridge`
 (optional interop), so a host can load either contract explicitly.
 
 The V1→V2 bridge (`src/pantheon/v2-bridge.ts`) enables optional interop:
-V1 infrastructure singletons (BackgroundJobBoard, DelegationClient, GoalStore,
+V1 infrastructure singletons (BackgroundJobBoard, GoalStore,
 TodoEnforcer, VisionHandler) are passed through V2 `ctx.options`. The bridge is
 optional — V2 works standalone with graceful degradation.
 
@@ -259,7 +254,12 @@ Two freshness guarantees back it up:
   re-run `init` just for file copies.
 - **Drift detection** — the installer stamps the installed version in
   `.pantheon/install-state.json` and `doctor` warns when the package is newer
-  than the last sync, pointing at `update`.
+  than the last sync, pointing at `update`. `doctor` also detects **plugin
+  version drift** (issue #158): when `opencode.json` registers a plugin path
+  inside a `node_modules/pantheon-opencode` copy whose `package.json` version
+  differs from the running package, it warns that the registered tool surface
+  is stale. Re-running `init`/`update` realigns the registration onto the
+  current package.
 
 `init` also gained `--components agents,skills,...` (narrow install),
 `--clean` (alias of `--force`), `--opencode-version auto`, atomic config
@@ -268,6 +268,42 @@ before any file is written, and a non-fatal Python runtime: if the venv fails,
 the install completes but MCP entries are omitted (with a warning) instead of
 pointing at a broken interpreter. Installer messages auto-detect pt-BR via
 `LANG`/`LC_ALL`.
+
+## Migrating to 1.5.x (from 1.4.x)
+
+1.5.0 removed the custom `pantheon_delegate` tool (and the V1 delegation
+engine) in favor of OpenCode's native `task()`; see
+[Delegation (native `task()`)](#delegation-native-task). Two things change on
+an existing install:
+
+1. **The tool disappears from the plugin surface.** `pantheon_delegate` is no
+   longer registered by `src/plugin.ts` or `src/plugin-v2.ts`. Agents now
+   delegate through `task()` only — no configuration is needed.
+2. **A lockfile-pinned copy can keep the old tool alive.** `npm install` is
+   lockfile-authoritative: a `package-lock.json` pinned to `1.4.1` (which
+   satisfies `^1.4.1`) is never re-resolved, so a project's
+   `node_modules/pantheon-opencode` can stay on 1.4.x while the published
+   package moved on. The plugin path your `opencode.json` registers keeps
+   pointing at that stale copy, and you keep running the obsolete tool surface
+   — including `pantheon_delegate` — with no warning.
+
+The fix is a realignment + a detector:
+
+```bash
+# Realign the registered plugin path onto the current package (rewrites any
+# node_modules/pantheon-opencode reference in opencode.json):
+npx pantheon-opencode@latest init --yes --headless
+# or, with a global install:
+pantheon-opencode update
+
+# Then verify no drift remains:
+npx pantheon-opencode@latest doctor
+```
+
+`doctor` now reports a **Plugin Version Drift** warning (section H3) when the
+registered plugin points into an installed copy whose version differs from the
+running package, naming both versions and the removal (`pantheon_delegate` in
+1.5.0). A healthy install reports no warning.
 
 ## Releases
 
@@ -340,8 +376,20 @@ child session returns an empty or missing result. Instead of surfacing a silent
 `completed` with no payload (which confuses the orchestrator), the guard now
 raises an explicit error. This catches the common free-tier failure mode where a
 child session exceeds the uncached-prefill token budget (`BackendAdmissionRejected`)
-and returns nothing. For large payloads, prefer `pantheon_delegate` over native
-`task()` — the delegation layer has better timeout and error handling.
+and returns nothing. Prefer `background=true` dispatches with an explicit
+`task_status(wait=true)` fan-in so large payloads are collected deterministically.
+
+
+## Configuration (environment variables)
+
+| Variable | Default | Description |
+|---|---|---|
+| `PANTHEON_MEMORY_EMBED` | `on` | `off` (also `0`, `false`, `no`) disables the `pantheon-memory` embedding/vector pipeline — search runs in FTS5-only mode with no model download and no `sqlite-vec` writes. Also forced `off` automatically when `fastembed` fails to import, so a broken embedding install never takes the server down (issue #159). |
+
+The memory MCP degrades gracefully: when `fastembed` or `sqlite-vec` are
+unavailable (network failure, incompatible wheel), the server still starts,
+answers the MCP `initialize` handshake, and serves keyword search — only the
+semantic vector ranking is unavailable.
 
 
 ## Documentation
@@ -361,10 +409,10 @@ or pull request.
 
 ## Citation and DOI
 
-Pantheon is released under the [MIT License](LICENSE). For the historical
-published v1.4.3 record only, use the [Zenodo DOI](https://doi.org/10.5281/zenodo.22306637);
-it is not the current operational version. Citation metadata is also available
-in [CITATION.cff](CITATION.cff).
+Pantheon is released under the [MIT License](LICENSE). Cite the
+[Zenodo concept DOI](https://doi.org/10.5281/zenodo.22650136), which always
+resolves to the latest archived release; each release also has its own version
+DOI. Citation metadata is also available in [CITATION.cff](CITATION.cff).
 
 Canonical repository: <https://github.com/ils15/pantheon-opencode>
 

@@ -105,26 +105,6 @@ export interface RoutingRetryPolicyOptions {
 }
 
 /**
- * R1: per-error-type retry policy from routing.yml `retry_policy`
- * (auth/rate_limit/timeout/other → max retries). Fail-open → null.
- */
-export declare function loadRoutingRetryPolicy(
-  options?: RoutingRetryPolicyOptions,
-): Record<string, number> | null
-
-export interface RoutingCooldownResult {
-  allowed_fails: number
-  cooldown_time_seconds: number
-}
-
-/**
- * R1: provider cooldown config from routing.yml `cooldown`. Fail-open → null.
- */
-export declare function loadRoutingCooldown(
-  options?: RoutingRetryPolicyOptions,
-): RoutingCooldownResult | null
-
-/**
  * R4: per-agent step caps from routing.yml `agents.<name>.max_steps`.
  * Fail-open → {} (no agent capped).
  */

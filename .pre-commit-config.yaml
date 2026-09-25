@@ -1,7 +1,7 @@
 # Pantheon OpenCode — pre-commit hooks (fail-closed local secret gate)
 #
 # Local enforcement layer, one step BEFORE the CI gate
-# (.github/workflows/security.yml -> gitleaks + scripts/secret-scan.mjs).
+# (.github/workflows/security-scan.yml -> gitleaks + scripts/secret-scan.mjs).
 #
 # Policy: ANY secret finding blocks the commit. There is no exception
 # configured here; bypassing hooks with --no-verify is a security violation.
@@ -17,7 +17,7 @@ repos:
   # Fails with exit code 2 on ANY finding in the staged diff. Values are
   # redacted in output (--redact). --config pins the repo policy.
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.24.3
+    rev: v8.30.1
     hooks:
       - id: gitleaks
         name: gitleaks — block hardcoded secrets (staged)

@@ -10,7 +10,7 @@
  * If the user hasn't initialized yet → do nothing (silent exit).
  */
 import { execSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -58,9 +58,9 @@ function resolveConfigDir() {
 }
 
 /**
- * Copy plugin runtime files (dist/*, package.json, package-lock.json,
- * src/index.tsx) from srcDir
- * to dstDir. Skips files that are byte-identical.
+ * Copy plugin runtime files (the bundled dist/*, package.json,
+ * package-lock.json) from srcDir to dstDir. Skips files that are byte-identical.
+ * The raw TSX source is never copied — the loader consumes only the bundle.
  * @returns {{ created: number, skipped: number }}
  */
 function copyPluginFiles(srcDir, dstDir) {
@@ -69,13 +69,10 @@ function copyPluginFiles(srcDir, dstDir) {
   mkdirSync(dstDir, { recursive: true })
   mkdirSync(join(dstDir, 'dist'), { recursive: true })
 
-  // src/index.tsx → index.tsx
-  const srcIdx = join(srcDir, 'src', 'index.tsx')
-  if (existsSync(srcIdx)) {
-    const content = readFileSync(srcIdx, 'utf8')
-    if (writeIfChanged(join(dstDir, 'index.tsx'), content)) result.created++
-    else result.skipped++
-  }
+  // Drop legacy raw copies from previous installs (root index.tsx + dist/tui.tsx).
+  // The loader consumes only the bundle, so stale raws must not linger.
+  rmSync(join(dstDir, 'index.tsx'), { force: true })
+  rmSync(join(dstDir, 'dist', 'tui.tsx'), { force: true })
 
   // dist/*
   const distSrc = join(srcDir, 'dist')
@@ -196,7 +193,7 @@ async function main() {
     // The plugin references in opencode.json already point INTO this package,
     // so only the copies would go stale after a package update.
     const { syncCopyArtifacts } = await import('./sync-artifacts.mjs')
-    const { readState, writeState } = await import('./install/state.mjs')
+    const { createInitialState, readState, writeState } = await import('./install/state.mjs')
     const pkgVersion = readVersion(join(ROOT, 'package.json')) ?? 'unknown'
     const synced = syncCopyArtifacts(configDir)
     if (synced.errors.length > 0) {
@@ -209,10 +206,16 @@ async function main() {
     // venv, MCP entries).
     try {
       const previous = readState(configDir)
-      writeState(configDir, {
-        pantheon_version: pkgVersion,
-        previous_version: previous?.pantheon_version ?? null,
-      })
+      // Preserve the existing v2 manifest (applied_migrations, components, …).
+      // Writing a bare { pantheon_version, previous_version } object stamped
+      // it `schema_version: 2` while dropping `applied_migrations`, and the
+      // next `init` crashed in runMigrations() reading `.push` on undefined.
+      const state = previous ?? createInitialState(pkgVersion)
+      if (previous?.pantheon_version && previous.pantheon_version !== pkgVersion) {
+        state.previous_version = previous.pantheon_version
+      }
+      state.pantheon_version = pkgVersion
+      writeState(configDir, state)
       if (previous?.pantheon_version && previous.pantheon_version !== pkgVersion) {
         console.log(
           `  ⚠️  Installation moved ${previous.pantheon_version} → ${pkgVersion}. ` +

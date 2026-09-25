@@ -33,8 +33,16 @@ test('CI package evidence verification preserves failures and remains blocking',
   const match = workflow.match(/- name: Verify package\n\s+run: ([^\n]+)/)
   assert.ok(match, 'CI must define a package verification step')
   const command = match[1].trim()
-  const packageStep = workflow.match(/- name: Verify package\n[\s\S]*?(?=\n\s{2}version-check:)/)
+  // The former standalone `version-check` job was folded into `validate`, so
+  // the step is now bounded by the next job key or by end of file.
+  const packageStep = workflow.match(
+    /- name: Verify package\n[\s\S]*?(?=\n {2}[a-z][a-z0-9-]*:|\n*$)/,
+  )
   assert.ok(packageStep, 'CI package verification step must be present in the validate job')
+  assert.ok(
+    workflow.indexOf('- name: Verify package') > workflow.indexOf('validate:'),
+    'CI package verification step must live inside the validate job',
+  )
 
   assert.match(command, /^npm run package:evidence -- /)
   assert.match(command, /--target-sha="\$\(git rev-parse HEAD\)"/)
@@ -81,13 +89,23 @@ test('CI validates YAML and installs locked dependencies only', () => {
   )
   assert.match(
     workflow,
-    /pip install[^\n]*-r src\/mcp\/requirements-mcp\.txt/,
-    'CI must install locked MCP runtime deps before pytest so mcp/sqlite-vec imports resolve',
+    /pip install[^\n]*-r src\/mcp\/requirements-vision\.txt/,
+    'CI must install locked vision deps before pytest so httpx imports resolve',
   )
   assert.match(
     workflow,
-    /pip install[^\n]*-r src\/mcp\/requirements-vision\.txt/,
-    'CI must install locked vision deps before pytest so httpx imports resolve',
+    /pip install[^\n]*sqlite-vec==[\d.]+/,
+    'CI must install the locked sqlite-vec wheel before pytest so memory_mcp_server imports resolve',
+  )
+  // fastembed (~180MB wheel) is deliberately NOT installed in CI: only
+  // memory_mcp_server needs it, at runtime, and its tests skip gracefully via
+  // pytest.importorskip (issue #94). Removing the top-level import is tracked
+  // by issue #159. This guard keeps that intent fail-closed — if fastembed
+  // ever creeps back into the install step, CI wall-clock and disk regress.
+  assert.doesNotMatch(
+    workflow,
+    /pip install[^\n]*fastembed/,
+    'CI must not install fastembed; tests needing it skip via pytest.importorskip (issue #94)',
   )
   assert.doesNotMatch(workflow, /pip install[^\n]*\|\|/)
   const testGate = workflow.indexOf('npm test')
@@ -97,8 +115,8 @@ test('CI validates YAML and installs locked dependencies only', () => {
     'Locked pytest-asyncio pip install must run BEFORE the pytest gate',
   )
   assert.ok(
-    workflow.indexOf('requirements-mcp.txt') < testGate,
-    'Locked MCP pip install must run BEFORE the pytest gate',
+    workflow.indexOf('sqlite-vec==') < testGate,
+    'Locked sqlite-vec pip install must run BEFORE the pytest gate',
   )
   assert.ok(
     workflow.indexOf('requirements-vision.txt') < testGate,

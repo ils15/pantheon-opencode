@@ -220,13 +220,16 @@ withGlobalDirs(({ home, xdg }) => {
 })
 
 // (d) the copied <config>/plugins/pantheon-tui is byte-identical to the
-// source of truth (dist/* + package.json + index.tsx).
+// source of truth (the bundled dist/* + package.json). No raw TSX is shipped,
+// so index.tsx and the legacy dist/tui.tsx must be absent — their absence is
+// what unblocks splitting the entry into relative-imported modules.
 withGlobalDirs(({ home }) => {
   const target = join(home, '.opencode')
   mkdirSync(target, { recursive: true })
   syncTuiRegistration(target, { isGlobal: true, dryRun: false })
   const copyDir = resolveTuiCopyTarget(target)
   for (const f of readdirSync(join(PACKAGE_TUI_SRC, 'dist'))) {
+    if (f === 'tui.tsx') continue // legacy raw copy is never shipped, even if present in source
     assert.equal(
       readFileSync(join(copyDir, 'dist', f), 'utf8'),
       readFileSync(join(PACKAGE_TUI_SRC, 'dist', f), 'utf8'),
@@ -239,9 +242,14 @@ withGlobalDirs(({ home }) => {
     'package.json is byte-identical to the source of truth',
   )
   assert.equal(
-    readFileSync(join(copyDir, 'index.tsx'), 'utf8'),
-    readFileSync(join(PACKAGE_TUI_SRC, 'src', 'index.tsx'), 'utf8'),
-    'index.tsx is byte-identical to src/index.tsx',
+    existsSync(join(copyDir, 'index.tsx')),
+    false,
+    'raw index.tsx is not shipped to the copied plugin',
+  )
+  assert.equal(
+    existsSync(join(copyDir, 'dist', 'tui.tsx')),
+    false,
+    'legacy dist/tui.tsx is not shipped to the copied plugin',
   )
 })
 
