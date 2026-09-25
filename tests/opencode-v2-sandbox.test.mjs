@@ -46,7 +46,11 @@ function generate(repoDir, sandboxRoot, defsFile) {
       },
     },
   )
-  assert.equal(res.status, 0, `write_run_test_sh failed for ${JSON.stringify(repoDir)}:\n${res.stderr}`)
+  assert.equal(
+    res.status,
+    0,
+    `write_run_test_sh failed for ${JSON.stringify(repoDir)}:\n${res.stderr}`,
+  )
   return join(sandboxRoot, 'run-test.sh')
 }
 
@@ -136,7 +140,11 @@ test('the generated run-test.sh echoes the repo dir byte-for-byte (adversarial p
 
     const generated = generate(repoDir, sandboxRoot, defsFile)
     const syntax = spawnSync('bash', ['-n', generated], { encoding: 'utf8' })
-    assert.equal(syntax.status, 0, `[${label}] generated script is not valid bash:\n${syntax.stderr}`)
+    assert.equal(
+      syntax.status,
+      0,
+      `[${label}] generated script is not valid bash:\n${syntax.stderr}`,
+    )
 
     // The value travels in its own generated file, so the shell source contains
     // no copy of it that could be re-read, expanded or executed.
