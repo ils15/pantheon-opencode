@@ -104,27 +104,18 @@ Only expand to full cooldown when hitting a mandatory gate.
 
 ## Timeout & Retry Enforcement
 
-When a delegated agent does not respond in time, enforce the timeout policy from routing.yml.
+When a delegated agent does not respond in time, enforce the timeout policy defined in
+`src/instructions/zeus-timeout-retry.instructions.md`.
 
-### Behavior by Agent Role
-
-| Agent Role | Timeout | Retry Policy | Fallback | Timeout Parcial? |
-|------------|---------|-------------|----------|------------------|
-| Explorer (apollo) | 60s | 2 retries, exponential backoff | athena | ✅ Yes — partial results OK |
-| Implementer (hermes, aphrodite) | 180s | 3 retries, exponential backoff | talos | ❌ No — must produce artifact |
-| Reviewer (themis) | 120s | 2 retries, exponential backoff | zeus | ❌ No — must produce verdict |
-| Infrastructure (prometheus) | 300s | 2 retries, exponential backoff | hermes | ❌ No |
-| Hotfix (talos) | 30s | 1 retry, no backoff | hermes | ✅ Yes — one-liner fix OK |
-
+**That file is the single authority** for per-role timeouts, retry counts, fallback chains, and
+whether partial results are acceptable. It is force-fed into every session via `AGENTS.md`; this
+skill is opt-in. Do not restate those values here — a copy in this skill is precisely what drifted
+out of sync with them. If a dispatch times out, read the role's row from the instruction file.
 
 ### Timeout Parcial (Partial Results)
 
-Timeout parcial is **only** allowed for read-only, independent agents:
-- ✅ @apollo (codebase search) — can return partial file list
-- ✅ @gaia (literature review) — can return partial findings
-- ✅ @talos (hotfix confirmation) — can return without fix if timeout
-- ❌ Never for implementers (@hermes, @aphrodite, @demeter) — must complete or fail
-- ❌ Never for reviewers (@themis) — must produce a verdict
+Whether an agent may return partial results is the **Partial Results OK?** column in that table.
+Only agents marked ✅ there may return partial — never implementers, never reviewers.
 
 **How to signal timeout parcial:**
 When dispatching, set the expectation explicitly:
@@ -167,69 +158,28 @@ Ready for Phase 2? Waiting for go-ahead.
 Should I now run the migration tests? [waiting]
 ```
 
-## Session Heartbeat
+## Session Heartbeat & Checkpoints
 
-Auto-save checkpoint every N turns (configurable, default 5).
+Session state is **not** file-based. It lives in **pantheon-persistence** under the
+`checkpoint:<slug>` namespace and is cleaned up automatically by a 4h TTL.
 
-### Heartbeat File
+Write state with `context_save(slug, key, value, session_id=...)` and read it back with
+`context_get(slug, "latest", session_id=...)`. Capture `session_id` from the first `context_save`
+of the session and reuse it for the rest of the session, so the `latest` pointer survives
+compaction.
 
-`.pantheon/deepwork/<slug>/heartbeat.json`
-
-### Heartbeat JSON Format
-
-```json
-{
-  "slug": "task-identifier",
-  "last_action": "2026-07-16T20:00:00Z",
-  "turn_count": 10,
-  "current_phase": 2,
-  "status": "alive | warning | stalled | paused | completed",
-  "next_action": "brief description of next planned action"
-}
-```
-
-### Heartbeat Rules
-1. Update every 5 turns minimum (by default)
-2. Contains NO context — only timestamps and counters
-3. Single file, always overwritten (not versioned)
-4. Used for quick "is this session alive?" checks
-
----
-
-## Checkpoint Persistence
-
-### Checkpoint File Structure
-
-Each deepwork task maintains:
-
-```
-.pantheon/deepwork/<slug>/
-├── PLAN.md                 # Immutable plan (created at start)
-├── STATUS.md               # Human-readable current state (updated every phase)
-├── heartbeat.json          # Lightweight ping (updated every N turns)
-├── checkpoint-<N>.json     # Full state snapshot (created at phase boundaries)
-├── session.json            # Session metadata (created at start, updated on stop)
-└── REVIEW.md               # Final Themis review (created at end)
-```
-
-### Checkpoint JSON Schema
-
-```json
-{
-  "slug": "string — unique task identifier",
-  "phase": "integer — current phase number",
-  "turn_count": "integer — total turns elapsed",
-  "timestamp": "string — ISO 8601 timestamp",
-  "context_hash": "string — first 8 hex chars of SHA-256 of STATUS.md",
-  "version": "integer — schema version (current: 2)"
-}
-```
+### Heartbeat Check
+- If `context_get(slug, "heartbeat")` returns a checkin older than 300s, log a stall warning and resume
+- Write a heartbeat after every anti-stall recovery action
 
 ### Checkpoint Rules
-1. Save at every phase boundary AND before any delegate dispatch
-2. Numbered sequentially (`checkpoint-1.json`, `checkpoint-2.json`, …)
-3. Keep last 10 checkpoints; archive older ones
-4. On resume: read the highest-numbered checkpoint for full state
+1. Save a checkpoint before **every** delegate dispatch and after every agent returns
+2. Include current phase, turn count, and remaining tasks
+3. On resume: `context_get(slug, "latest")` restores the most recent checkpoint
+
+> Do not create `heartbeat.json`, `checkpoint-<N>.json`, or `session.json` under
+> `.pantheon/deepwork/`. That file-based mechanism is retired — TTL handles cleanup, and reading
+> a file that nothing writes back returns stale state.
 
 ---
 

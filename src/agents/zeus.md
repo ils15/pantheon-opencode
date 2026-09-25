@@ -26,7 +26,6 @@ skills:
   - artifact-management
   - context-compression
   - auto-continue
-  - orchestration-workflow
   - incremental-implementation
 
 ---
