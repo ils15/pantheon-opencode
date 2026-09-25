@@ -154,6 +154,142 @@ async def test_auth_store_fallback_and_gateway_request(
     assert body["messages"][0]["content"][1]["image_url"]["url"].startswith("https://")
 
 
+def _seed_credential_db(
+    data_dir: Path, integration_id: str, key: str, active: int = 1
+) -> None:
+    """Create an OpenCode V2 credential store with one plaintext JSON value."""
+    import sqlite3
+
+    conn = sqlite3.connect(str(data_dir / "opencode.db"))
+    conn.execute(
+        "CREATE TABLE credential ("
+        "id text PRIMARY KEY, integration_id text, label text NOT NULL, "
+        "value text NOT NULL, connector_id text, method_id text, "
+        "active integer, time_created integer NOT NULL, time_updated integer NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO credential "
+        "(id, integration_id, label, value, active, time_created, time_updated) "
+        "VALUES (?, ?, ?, ?, ?, 0, 0)",
+        (
+            "cred_test",
+            integration_id,
+            integration_id,
+            json.dumps({"type": "key", "key": key}),
+            active,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+@pytest.mark.asyncio
+async def test_env_auth_precedes_credential_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Env wins over the store, and the store must not be touched to prove it."""
+    data_dir = tmp_path / ".local" / "share" / "opencode"
+    data_dir.mkdir(parents=True)
+    _seed_credential_db(data_dir, "opencode-go", "store-key")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", "env-key")
+    assert vision._resolve_auth() == ("env-key", vision.GO_ENDPOINT)
+
+
+@pytest.mark.asyncio
+async def test_credential_store_supplies_key_on_v2_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A V2 host with no auth.json resolves from the credential table.
+
+    This is the bug: V2 moved credentials into opencode.db, so the old
+    auth.json-only read silently resolved nothing on every V2 host.
+    """
+    data_dir = tmp_path / ".local" / "share" / "opencode"
+    data_dir.mkdir(parents=True)
+    _seed_credential_db(data_dir, "opencode-go", "v2-store-key")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert not (data_dir / "auth.json").exists(), "precondition: no V1 auth.json"
+    assert vision._resolve_auth() == ("v2-store-key", vision.GO_ENDPOINT)
+
+
+@pytest.mark.asyncio
+async def test_credential_store_inactive_row_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deactivated credential must not authenticate anything."""
+    data_dir = tmp_path / ".local" / "share" / "opencode"
+    data_dir.mkdir(parents=True)
+    _seed_credential_db(data_dir, "opencode-go", "stale-key", active=0)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert vision._resolve_auth() == (None, vision._endpoint_for_model(vision._model()))
+
+
+@pytest.mark.asyncio
+async def test_credential_store_falls_back_to_legacy_auth_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A V1 host with only auth.json still resolves, at the legacy endpoint."""
+    data_dir = tmp_path / ".local" / "share" / "opencode"
+    data_dir.mkdir(parents=True)
+    (data_dir / "auth.json").write_text(json.dumps({"opencode": {"key": "v1-key"}}))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert vision._resolve_auth() == ("v1-key", vision.OPENCODE_ENDPOINT)
+
+
+@pytest.mark.asyncio
+async def test_missing_credential_store_returns_none_and_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """No source at all is an explicit None plus an error log, not a silent 401.
+
+    The module sets ``propagate = False`` with its own stderr handler, so the
+    log is observed through capsys rather than caplog.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert vision._resolve_auth() == (
+        None,
+        vision._endpoint_for_model(vision._model()),
+    )
+    stderr = capsys.readouterr().err
+    assert "No OpenCode credential found" in stderr
+    assert "PANTHEON_OPENCODE_API_KEY" in stderr
+    assert "opencode.db" in stderr
+
+
+@pytest.mark.asyncio
+async def test_corrupt_credential_db_is_logged_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A corrupt store degrades to None with a warning; it must not crash."""
+    data_dir = tmp_path / ".local" / "share" / "opencode"
+    data_dir.mkdir(parents=True)
+    (data_dir / "opencode.db").write_bytes(b"not a sqlite database at all")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert vision._resolve_auth() == (
+        None,
+        vision._endpoint_for_model(vision._model()),
+    )
+    stderr = capsys.readouterr().err
+    assert "Could not read the OpenCode credential store" in stderr
+
+
+@pytest.mark.asyncio
+async def test_missing_key_error_names_every_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tool error tells the operator which sources were tried."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = await vision.mcp.call_tool(
+        "vision_describe", {"path": "https://example.test/photo.jpg"}
+    )
+    message = _tool_text(result)
+    assert "PANTHEON_OPENCODE_API_KEY" in message
+    assert "OPENCODE_API_KEY" in message
+    assert "opencode.db" in message
+
+
 @pytest.mark.asyncio
 async def test_ocr_uses_ocr_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", "test-key")

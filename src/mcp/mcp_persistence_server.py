@@ -18,11 +18,14 @@ import sqlite3
 import sys
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Annotated
 
 from _pantheon_paths import pantheon_home, pantheon_project
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 # ── Schema ──────────────────────────────────────────────────────────────────────
 
@@ -36,6 +39,7 @@ CREATE TABLE IF NOT EXISTS kv_store (
     deleted_at TEXT,        -- NULL = active, set on TTL purge
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    revision INTEGER,        -- context monotonic revision; NULL = legacy row
     UNIQUE(namespace, key)
 );
 
@@ -115,9 +119,36 @@ def _init_db(db_path: Path) -> sqlite3.Connection:
         conn.executescript(_no_fts)
     else:
         conn.executescript(CREATE_SQL)
+    _ensure_revision_column(conn)
     conn.commit()
 
     return conn
+
+
+# `revision` was added after `kv_store` shipped, so an existing database has the
+# column only if it is added here. ADD COLUMN is additive and non-destructive:
+# pre-existing rows get NULL, which every reader treats as "no revision yet"
+# and resolves through the legacy `updated_at` path. No backfill is performed
+# on purpose — the live store holds both formats and rewriting them in place
+# would be unrecoverable if the mapping were ever wrong.
+_ADD_REVISION_SQL: str = (
+    "ALTER TABLE kv_store ADD COLUMN revision INTEGER"
+)
+
+
+def _ensure_revision_column(conn: sqlite3.Connection) -> None:
+    """Add the dedicated ``revision`` column if this database predates it."""
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(kv_store)")}
+    except sqlite3.Error:
+        return
+    if "revision" in columns:
+        return
+    try:
+        conn.execute(_ADD_REVISION_SQL)
+    except sqlite3.OperationalError:
+        # Raced with another process applying the same additive migration.
+        pass
 
 
 def _db(scope: str) -> sqlite3.Connection:
@@ -199,7 +230,9 @@ _project_db = _project_db_instance
 @mcp.tool(
     name="kv_store",
     description="Store a key-value pair in a namespace with optional TTL (seconds). "
-    "INSERT OR REPLACE on duplicate (namespace, key).",
+    "INSERT OR REPLACE on duplicate (namespace, key). "
+    "ttl must be an integer between 1 and 31536000, or null/omitted. "
+    "All invalid arguments are reported together in one message.",
 )
 async def kv_store(
     namespace: str,
@@ -209,6 +242,9 @@ async def kv_store(
     scope: str = "project",
 ) -> dict:
     """Store a value under namespace+key with optional TTL.
+
+    Validates every argument before writing so a caller with both a bad ttl
+    and a bad scope sees both violations in one message.
 
     Args:
         namespace: Logical grouping for keys.
@@ -220,7 +256,16 @@ async def kv_store(
     Returns:
         Status dict with namespace and key.
     """
-    validated_ttl = _validate_ttl(ttl)
+    errors = _ArgErrors("kv_store")
+    try:
+        validated_ttl = _validate_ttl(ttl)
+    except ValueError as exc:
+        errors.report(str(exc), repr(ttl))
+        errors.example(TTL_EXAMPLE)
+        validated_ttl = None
+    _collect_scope_error(errors, scope)
+    errors.raise_if_any()
+
     conn = _db(scope)
     expires_at: str | None = None
     if validated_ttl is not None:
@@ -267,7 +312,7 @@ async def kv_get(
     row = conn.execute(
         "SELECT value FROM kv_store "
         "WHERE namespace = ? AND key = ? "
-        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND (expires_at IS NULL OR julianday(expires_at) > julianday('now')) "
         "AND deleted_at IS NULL",
         (namespace, key),
     ).fetchone()
@@ -296,13 +341,13 @@ async def kv_stats(
     ).fetchone()[0]
     expired = conn.execute(
         "SELECT COUNT(*) FROM kv_store "
-        "WHERE expires_at IS NOT NULL AND datetime(expires_at) < datetime('now') "
+        "WHERE expires_at IS NOT NULL AND julianday(expires_at) < julianday('now') "
         "AND deleted_at IS NULL"
     ).fetchone()[0]
 
     ns_rows = conn.execute(
         "SELECT namespace, COUNT(*) as cnt, "
-        "SUM(CASE WHEN expires_at IS NOT NULL AND datetime(expires_at) < datetime('now') THEN 1 ELSE 0 END) as expired_count "
+        "SUM(CASE WHEN expires_at IS NOT NULL AND julianday(expires_at) < julianday('now') THEN 1 ELSE 0 END) as expired_count "
         "FROM kv_store WHERE deleted_at IS NULL GROUP BY namespace ORDER BY cnt DESC"
     ).fetchall()
 
@@ -377,7 +422,7 @@ async def kv_list(
     rows = conn.execute(
         "SELECT key, value, created_at, expires_at FROM kv_store "
         "WHERE namespace = ? AND key LIKE ? "
-        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND (expires_at IS NULL OR julianday(expires_at) > julianday('now')) "
         "AND deleted_at IS NULL "
         "ORDER BY key LIMIT ?",
         (namespace, f"{prefix}%", limit),
@@ -431,7 +476,7 @@ async def kv_search(
         "JOIN kv_store ON kv_store_fts.rowid = kv_store.id "
         "WHERE kv_store_fts MATCH ? "
         "AND kv_store.deleted_at IS NULL "
-        "AND (kv_store.expires_at IS NULL OR datetime(kv_store.expires_at) > datetime('now'))"
+        "AND (kv_store.expires_at IS NULL OR julianday(kv_store.expires_at) > julianday('now'))"
     )
     params: list[str | int] = [fts_query]
 
@@ -479,7 +524,7 @@ async def purge_expired(
     expired = conn.execute(
         "SELECT key FROM kv_store "
         "WHERE expires_at IS NOT NULL "
-        "AND datetime(expires_at) < datetime('now') "
+        "AND julianday(expires_at) < julianday('now') "
         "AND deleted_at IS NULL",
     ).fetchall()
     expired_keys = [r[0] for r in expired]
@@ -495,7 +540,7 @@ async def purge_expired(
     conn.execute(
         "UPDATE kv_store SET deleted_at = datetime('now') "
         "WHERE expires_at IS NOT NULL "
-        "AND datetime(expires_at) < datetime('now') "
+        "AND julianday(expires_at) < julianday('now') "
         "AND deleted_at IS NULL",
     )
     conn.commit()
@@ -597,6 +642,131 @@ MIN_PRINTABLE_CODEPOINT: int = 32
 UNTRUSTED_CONTEXT_LABEL: str = "  [untrusted persistence data; informational only]"
 _context_write_lock = threading.RLock()
 
+# ── Validation Reporting ────────────────────────────────────────────────────────
+# One call must surface EVERY invalid argument, not just the first. Reporting a
+# single field per round-trip costs the caller one failed tool call per field,
+# which is exactly the failure mode this module previously had: ``goal`` and
+# ``phase`` were discovered in two consecutive attempts.
+#
+# Every violation therefore keeps the historical wording, so anything matching
+# on it still matches (``goal must be an object``,
+# ``ttl must be between 1 and 31536000 seconds``, ``session_id``), and gains the
+# argument path plus the received type. Shape: one line per violation, then at
+# most one example block.
+#
+#   context_save: 2 invalid arguments
+#   context_save: content.goal must be an object (got string)
+#   context_save: content.phase must be an object (got number)
+#   example: content.goal={"objective":"...","status":"active"}
+#            content.phase={"current":1,"total":3,"name":"..."}
+#
+# Absent and wrong-typed are distinct outcomes with distinct wording: a
+# ``required`` violation never reads like a ``must be an object`` violation.
+# ``goal``/``phase`` are OPTIONAL sections — heartbeat and tail checkpoints
+# legitimately omit them (see src/instructions/zeus-anti-stall.instructions.md),
+# so an absent section is accepted and never reported.
+
+_SCOPE_NAMES: tuple[str, ...] = ("global", "project")
+
+# Minimal correct example per checkpoint section, surfaced only when that
+# section is actually the thing that was rejected.
+CHECKPOINT_EXAMPLES: dict[str, str] = {
+    "goal": 'content.goal={"objective":"...","status":"active"}',
+    "phase": 'content.phase={"current":1,"total":3,"name":"..."}',
+    "delegations": (
+        'content.delegations={"in_flight":[{"alias":"@hermes","agent":"hermes"}]}'
+    ),
+    "heartbeat": 'content.heartbeat={"status":"alive","turn_count":1}',
+    "tail": 'content.tail=["phase:1 done"]',
+}
+
+TTL_EXAMPLE: str = "ttl=3600"
+REVISION_EXAMPLE: str = "revision=1"
+SCOPE_EXAMPLE: str = 'scope="project"'
+SESSION_ID_EXAMPLE: str = 'session_id="ses_abc123"'
+
+
+def _json_type_name(value: object) -> str:
+    """Name a value's JSON type for error messages (ints read as ``number``)."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+
+class _ArgErrors:
+    """Accumulate argument violations so a single call reports all of them."""
+
+    def __init__(self, tool: str) -> None:
+        self._tool = tool
+        self._violations: list[str] = []
+        self._examples: list[str] = []
+
+    def __bool__(self) -> bool:
+        return bool(self._violations)
+
+    def add(self, path: str, message: str, got: str | None = None) -> None:
+        """Record one violation, optionally suffixing the received type/value."""
+        suffix = f" (got {got})" if got is not None else ""
+        self._violations.append(f"{path} {message}{suffix}")
+
+    def report(self, message: str, got: str | None = None) -> None:
+        """Record a validator message that already names its own argument.
+
+        ``_validate_ttl`` raises ``ttl must be between 1 and 31536000 seconds``,
+        so the field name is part of the message and must not be prepended
+        again.
+        """
+        suffix = f" (got {got})" if got is not None else ""
+        self._violations.append(f"{message}{suffix}")
+
+    def reroot(self, prefix: str, message: str) -> None:
+        """Re-root a self-qualified message under a container path.
+
+        ``goal.objective exceeds its size limit`` becomes
+        ``content.goal.objective exceeds its size limit``.
+        """
+        field, _, rest = message.partition(" ")
+        self._violations.append(f"{prefix}.{field} {rest}".rstrip())
+
+    def shape(
+        self, path: str, expected: str, value: object, example: str | None = None
+    ) -> None:
+        """Record a type violation: ``<path> must be <expected> (got <type>)``."""
+        self.add(path, f"must be {expected}", _json_type_name(value))
+        self.example(example)
+
+    def example(self, example: str | None) -> None:
+        """Attach a minimal correct example for the field just recorded."""
+        if example:
+            self._examples.append(example)
+
+    def message(self) -> str:
+        """Render one line per violation plus at most one example block."""
+        lines = [f"{self._tool}: {violation}" for violation in self._violations]
+        examples = list(dict.fromkeys(self._examples))
+        if examples:
+            lines.append("example: " + "  ".join(examples))
+        if len(self._violations) == 1:
+            return "\n".join(lines)
+        return f"{self._tool}: {len(self._violations)} invalid arguments\n" + "\n".join(
+            lines
+        )
+
+    def raise_if_any(self) -> None:
+        """Raise once, with every collected violation, if anything was invalid."""
+        if self._violations:
+            raise ValueError(self.message())
+
 
 def _normalize_session_id(session_id: str | None) -> str | None:
     """Return a non-empty session ID, or ``None`` for an absent ID."""
@@ -674,17 +844,6 @@ def _validate_revision(revision: int | None) -> int | None:
     if revision < 1 or revision > MAX_REVISION:
         raise ValueError(f"revision must be between 1 and {MAX_REVISION}")
     return revision
-
-
-def _current_context_revision(
-    conn: sqlite3.Connection, namespace: str, key: str
-) -> int:
-    """Read the persisted revision for one context entry."""
-    row = conn.execute(
-        "SELECT updated_at FROM kv_store WHERE namespace = ? AND key = ?",
-        (namespace, key),
-    ).fetchone()
-    return _stored_revision(row[0]) if row else 0
 
 
 def _should_update_latest(key: str) -> bool:
@@ -800,28 +959,64 @@ def _validate_version_metadata(version: object) -> None:
         raise ValueError("version must be a positive integer or version label")
 
 
+# (field, validator, python type, wording) in report order. ``tail`` is the one
+# array section; the rest are objects. ``None`` sections are OPTIONAL and are
+# never reported — heartbeat checkpoints omit goal/phase by design.
+CHECKPOINT_SECTIONS: tuple[tuple[str, Callable[[object], object], type, str], ...] = (
+    ("goal", _validate_goal, dict, "an object"),
+    ("phase", _validate_phase, dict, "an object"),
+    ("delegations", _validate_delegations, dict, "an object"),
+    ("tail", _validate_tail, list, "an array"),
+    ("heartbeat", _validate_heartbeat, dict, "an object"),
+)
+
+
 def _validate_checkpoint_shape(checkpoint: dict) -> None:
-    """Validate bounded structured checkpoint fields without sanitizing them."""
+    """Validate bounded structured checkpoint fields without sanitizing them.
+
+    Fail-fast on purpose: the read path needs only a yes/no verdict.
+    ``context_save`` uses ``_collect_checkpoint_errors`` so a single call
+    reports every invalid section instead of only the first.
+    """
     _validate_version_metadata(checkpoint.get("version"))
-    validators = (
-        ("goal", _validate_goal),
-        ("phase", _validate_phase),
-        ("delegations", _validate_delegations),
-        ("tail", _validate_tail),
-        ("heartbeat", _validate_heartbeat),
-    )
-    for field, validator in validators:
+    for field, validator, _expected_type, _wording in CHECKPOINT_SECTIONS:
         value = checkpoint.get(field)
         if value is not None:
             validator(value)
 
 
-def _validate_context_content(content: str, key: str) -> None:
-    """Bound context content and validate structured JSON when supplied."""
+def _collect_checkpoint_errors(errors: _ArgErrors, parsed: dict, prefix: str) -> None:
+    """Accumulate every invalid section of one parsed checkpoint object."""
+    try:
+        _validate_version_metadata(parsed.get("version"))
+    except ValueError as exc:
+        errors.reroot(prefix, str(exc))
+
+    for field, validator, expected_type, wording in CHECKPOINT_SECTIONS:
+        value = parsed.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, expected_type):
+            errors.shape(
+                f"{prefix}.{field}", wording, value, CHECKPOINT_EXAMPLES.get(field)
+            )
+            continue
+        try:
+            validator(value)
+        except ValueError as exc:
+            errors.reroot(prefix, str(exc))
+
+
+def _collect_context_content_errors(
+    errors: _ArgErrors, content: str, key: str, prefix: str = "content"
+) -> None:
+    """Bound context content and accumulate every structured-field violation."""
     if not isinstance(content, str):
-        raise ValueError("content must be a string")
+        errors.shape(prefix, "a string", content)
+        return
     if len(content.encode()) > MAX_CONTEXT_CONTENT_BYTES:
-        raise ValueError(f"content exceeds the {MAX_CONTEXT_CONTENT_BYTES}-byte limit")
+        errors.add(prefix, f"exceeds the {MAX_CONTEXT_CONTENT_BYTES}-byte limit")
+        return
     try:
         parsed = json.loads(content)
     except (json.JSONDecodeError, TypeError, ValueError):
@@ -833,11 +1028,38 @@ def _validate_context_content(content: str, key: str) -> None:
             not isinstance(line, str) or len(line.encode()) > MAX_TAIL_LINE_LENGTH
             for line in parsed
         ):
-            raise ValueError("tail exceeds its size limit")
+            errors.add(f"{prefix}.tail", "exceeds its size limit")
         return
     if not isinstance(parsed, dict):
-        raise ValueError("structured context content must be a JSON object")
-    _validate_checkpoint_shape(parsed)
+        # The message already names 'content': do not prepend the path again.
+        errors.report(
+            "structured context content must be a JSON object",
+            _json_type_name(parsed),
+        )
+        return
+    _collect_checkpoint_errors(errors, parsed, prefix)
+
+
+def _collect_identifier(
+    errors: _ArgErrors, value: str, name: str, limit: int
+) -> str | None:
+    """Validate one namespace component, recording the violation and continuing."""
+    try:
+        return _validate_identifier(value, name, limit)
+    except ValueError as exc:
+        errors.report(str(exc))
+        return None
+
+
+def _collect_scope_error(errors: _ArgErrors, scope: str) -> None:
+    """Record an unknown scope name; DB resolution stays ``_db``'s job."""
+    if scope not in _SCOPE_NAMES:
+        errors.add(
+            "scope",
+            "must be 'global' or 'project'",
+            repr(scope),
+        )
+        errors.example(SCOPE_EXAMPLE)
 
 
 def _safe_untrusted_text(value: object) -> str:
@@ -861,21 +1083,54 @@ def _stored_revision(raw: object) -> int:
     return revision if 0 <= revision <= MAX_REVISION else 0
 
 
+def _row_revision(row: object) -> int:
+    """Resolve a row's context revision, tolerating the legacy layout.
+
+    Rows written before the dedicated ``revision`` column existed carry the
+    revision in ``updated_at`` and have ``revision IS NULL``. Reading the new
+    column first and falling back keeps monotonicity intact across the
+    transition: a writer that only looked at the new column would restart the
+    counter at 1 and could hand out a revision an older row already used.
+    """
+    if row is None:
+        return 0
+    try:
+        dedicated, legacy = row[0], row[1]
+    except (IndexError, TypeError):
+        return 0
+    if dedicated is not None:
+        return _stored_revision(dedicated)
+    return _stored_revision(legacy)
+
+
+_REVISION_SELECT = "SELECT revision, updated_at FROM kv_store WHERE namespace = ?"
+
+
+def _current_context_revision(
+    conn: sqlite3.Connection, namespace: str, key: str
+) -> int:
+    """Read the persisted revision for one context entry."""
+    row = conn.execute(
+        f"{_REVISION_SELECT} AND key = ?", (namespace, key)
+    ).fetchone()
+    return _row_revision(row) if row else 0
+
+
 def _next_context_revision(
     conn: sqlite3.Connection, namespace: str, key: str, latest_key: str | None = None
 ) -> int:
     """Choose a persisted monotonic revision while the write lock is held."""
     if latest_key is None:
         rows = conn.execute(
-            "SELECT updated_at FROM kv_store WHERE namespace = ? AND key = ?",
+            f"{_REVISION_SELECT} AND key = ?",
             (namespace, key),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT updated_at FROM kv_store WHERE namespace = ? AND key IN (?, ?)",
+            f"{_REVISION_SELECT} AND key IN (?, ?)",
             (namespace, key, latest_key),
         ).fetchall()
-    current = max((_stored_revision(row[0]) for row in rows), default=0)
+    current = max((_row_revision(row) for row in rows), default=0)
     return min(MAX_REVISION, max(time.time_ns(), current + 1))
 
 
@@ -890,24 +1145,45 @@ def _upsert_context_entry(
     """Upsert one context row inside the caller's transaction."""
     conn.execute(
         "INSERT INTO kv_store (namespace, key, value, expires_at, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), ?)"
+        "created_at, updated_at, revision) "
+        "VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), ?)"
         "ON CONFLICT(namespace, key) DO UPDATE SET "
         "  value = excluded.value, "
         "  expires_at = excluded.expires_at, "
-        "  updated_at = excluded.updated_at",
-        (namespace, key, content, expires_at, str(revision)),
+        "  updated_at = excluded.updated_at, "
+        "  revision = excluded.revision",
+        (namespace, key, content, expires_at, revision),
     )
 
 
 @mcp.tool(
     name="context_save",
     description="Save a context checkpoint for a session/phase. "
-    "Stores structured JSON in persistence KV with a key-specific TTL.",
+    "Stores structured JSON in persistence KV with a key-specific TTL. "
+    "content is a JSON STRING; when it parses to an object, 'goal', 'phase', "
+    "'delegations' and 'heartbeat' must each be JSON OBJECTS and 'tail' must "
+    "be a JSON ARRAY. 'phase' is an object {current,total,name} — NOT a phase "
+    "counter (pass phase.number for that). All sections are optional, so a "
+    "heartbeat checkpoint may omit goal/phase. "
+    "Example: content='{\"goal\": {\"objective\": \"...\"}, \"phase\": "
+    "{\"current\": 1, \"total\": 3, \"name\": \"...\"}}'. "
+    "All invalid arguments are reported together in one message.",
 )
 async def context_save(
     slug: str,
     key: str,
-    content: str,
+    content: Annotated[
+        str,
+        Field(
+            description=(
+                "JSON checkpoint string. When it parses to an object, 'goal', "
+                "'phase', 'delegations' and 'heartbeat' must be objects and "
+                "'tail' must be an array; all are optional. 'phase' is an "
+                "object {current,total,name}, not a counter. Example: "
+                '\'{"goal": {"objective": "..."}, "phase": {"current": 1}}\''
+            )
+        ),
+    ],
     session_id: str,
     ttl: int | None = None,
     scope: str = "project",
@@ -918,6 +1194,9 @@ async def context_save(
     Namespace is always "checkpoint:{slug}:{session_id}", preventing
     cross-session reads. The session_id must be supplied by the autonomy
     caller; this function never generates one.
+
+    Every argument is validated before any write, and all violations are
+    reported in a single error so the caller fixes them in one round-trip.
 
     Args:
         slug: Session identifier (e.g. "auth-refactor").
@@ -931,18 +1210,36 @@ async def context_save(
     Returns:
         Status dict with namespace, key, and session_id for subsequent calls.
     """
-    valid_slug = _validate_identifier(slug, "slug", MAX_CONTEXT_SLUG_LENGTH)
-    valid_key = _validate_identifier(key, "key", MAX_CONTEXT_KEY_LENGTH)
+    errors = _ArgErrors("context_save")
+    valid_slug = _collect_identifier(errors, slug, "slug", MAX_CONTEXT_SLUG_LENGTH)
+    valid_key = _collect_identifier(errors, key, "key", MAX_CONTEXT_KEY_LENGTH)
     actual_session = _normalize_session_id(session_id)
     if actual_session is None:
-        raise ValueError("session_id is required and must be non-empty")
-    valid_session = _validate_identifier(
-        actual_session, "session_id", MAX_CONTEXT_SESSION_ID_LENGTH
-    )
-    _validate_context_content(content, valid_key)
-    requested_revision = _validate_revision(revision)
+        errors.add("session_id", "is required and must be non-empty")
+        errors.example(SESSION_ID_EXAMPLE)
+        valid_session = None
+    else:
+        valid_session = _collect_identifier(
+            errors, actual_session, "session_id", MAX_CONTEXT_SESSION_ID_LENGTH
+        )
+    _collect_context_content_errors(errors, content, valid_key or key)
+    try:
+        requested_revision = _validate_revision(revision)
+    except ValueError as exc:
+        errors.report(str(exc), repr(revision))
+        errors.example(REVISION_EXAMPLE)
+        requested_revision = None
+    _collect_scope_error(errors, scope)
+    try:
+        requested_ttl = _validate_ttl(ttl)
+    except ValueError as exc:
+        errors.report(str(exc), repr(ttl))
+        errors.example(TTL_EXAMPLE)
+        requested_ttl = None
+    errors.raise_if_any()
+
     ns = f"checkpoint:{valid_slug}:{valid_session}"
-    actual_ttl = _context_ttl(valid_key, ttl)
+    actual_ttl = _context_ttl(valid_key, requested_ttl)
 
     conn = _db(scope)
     expires_at = (datetime.now(UTC) + timedelta(seconds=actual_ttl)).isoformat()
@@ -1028,7 +1325,7 @@ async def context_get(
     row = conn.execute(
         "SELECT value FROM kv_store "
         "WHERE namespace = ? AND key = ? "
-        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND (expires_at IS NULL OR julianday(expires_at) > julianday('now')) "
         "AND deleted_at IS NULL",
         (ns, key),
     ).fetchone()
@@ -1065,7 +1362,7 @@ async def context_list(
     rows = conn.execute(
         "SELECT key, created_at, expires_at FROM kv_store "
         "WHERE namespace = ? "
-        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND (expires_at IS NULL OR julianday(expires_at) > julianday('now')) "
         "AND deleted_at IS NULL "
         "ORDER BY created_at DESC LIMIT 50",
         (ns,),
@@ -1118,14 +1415,14 @@ async def context_stats(
     count = conn.execute(
         "SELECT COUNT(*) FROM kv_store "
         "WHERE namespace = ? AND deleted_at IS NULL "
-        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))",
+        "AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'))",
         (ns,),
     ).fetchone()[0]
 
     expired = conn.execute(
         "SELECT COUNT(*) FROM kv_store "
         "WHERE namespace = ? AND expires_at IS NOT NULL "
-        "AND datetime(expires_at) <= datetime('now') "
+        "AND julianday(expires_at) <= julianday('now') "
         "AND deleted_at IS NULL",
         (ns,),
     ).fetchone()[0]
@@ -1133,7 +1430,7 @@ async def context_stats(
     size = conn.execute(
         "SELECT COALESCE(SUM(LENGTH(value)), 0) FROM kv_store "
         "WHERE namespace = ? AND deleted_at IS NULL "
-        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))",
+        "AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'))",
         (ns,),
     ).fetchone()[0]
 
@@ -1200,7 +1497,7 @@ def _read_checkpoint_value(
     row = conn.execute(
         "SELECT value FROM kv_store "
         "WHERE namespace = ? AND key = ? "
-        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND (expires_at IS NULL OR julianday(expires_at) > julianday('now')) "
         "AND deleted_at IS NULL",
         (namespace, key),
     ).fetchone()
@@ -1418,7 +1715,7 @@ def _refresh_heartbeat_ttl(conn: sqlite3.Connection, namespace: str) -> None:
     row = conn.execute(
         "SELECT expires_at FROM kv_store "
         "WHERE namespace = ? AND key = 'heartbeat' "
-        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND (expires_at IS NULL OR julianday(expires_at) > julianday('now')) "
         "AND deleted_at IS NULL",
         (namespace,),
     ).fetchone()
@@ -1438,7 +1735,7 @@ def _refresh_heartbeat_ttl(conn: sqlite3.Connection, namespace: str) -> None:
     cursor = conn.execute(
         "UPDATE kv_store SET expires_at = ?, updated_at = ? "
         "WHERE namespace = ? AND key = 'heartbeat' AND expires_at = ? "
-        "AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) "
+        "AND (expires_at IS NULL OR julianday(expires_at) > julianday('now')) "
         "AND deleted_at IS NULL",
         (fresh_exp.isoformat(), str(revision), namespace, row[0]),
     )
@@ -1463,12 +1760,20 @@ async def context_rehydrate(
     if _compaction_disabled():
         return None
     normalized_session = _normalize_session_id(session_id)
-    if normalized_session is None:
-        raise ValueError("session_id is required and must be non-empty")
-    valid_slug = _validate_identifier(slug, "slug", MAX_CONTEXT_SLUG_LENGTH)
-    valid_session = _validate_identifier(
-        normalized_session, "session_id", MAX_CONTEXT_SESSION_ID_LENGTH
+    errors = _ArgErrors("context_rehydrate")
+    valid_slug = _collect_identifier(
+        errors, slug, "slug", MAX_CONTEXT_SLUG_LENGTH
     )
+    if normalized_session is None:
+        errors.add("session_id", "is required and must be non-empty")
+        errors.example(SESSION_ID_EXAMPLE)
+        valid_session = None
+    else:
+        valid_session = _collect_identifier(
+            errors, normalized_session, "session_id", MAX_CONTEXT_SESSION_ID_LENGTH
+        )
+    _collect_scope_error(errors, scope)
+    errors.raise_if_any()
     conn = _db(scope)
     namespace = f"checkpoint:{valid_slug}:{valid_session}"
     checkpoint = _load_checkpoint_for_rehydrate(conn, namespace)
@@ -1497,12 +1802,20 @@ async def context_session_summary(
     if os.environ.get(SESSION_END_SUMMARY_ENV, "").lower() == "off":
         return None
     normalized_session = _normalize_session_id(session_id)
-    if normalized_session is None:
-        raise ValueError("session_id is required and must be non-empty")
-    valid_slug = _validate_identifier(slug, "slug", MAX_CONTEXT_SLUG_LENGTH)
-    valid_session = _validate_identifier(
-        normalized_session, "session_id", MAX_CONTEXT_SESSION_ID_LENGTH
+    errors = _ArgErrors("context_session_summary")
+    valid_slug = _collect_identifier(
+        errors, slug, "slug", MAX_CONTEXT_SLUG_LENGTH
     )
+    if normalized_session is None:
+        errors.add("session_id", "is required and must be non-empty")
+        errors.example(SESSION_ID_EXAMPLE)
+        valid_session = None
+    else:
+        valid_session = _collect_identifier(
+            errors, normalized_session, "session_id", MAX_CONTEXT_SESSION_ID_LENGTH
+        )
+    _collect_scope_error(errors, scope)
+    errors.raise_if_any()
     conn = _db(scope)
     namespace = f"checkpoint:{valid_slug}:{valid_session}"
     checkpoint = _load_checkpoint_for_rehydrate(conn, namespace)
