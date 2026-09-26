@@ -346,15 +346,31 @@ test('real plugin regression guards: no dead transform domains, correct compacti
   const source = readPluginSource()
   // The four mismatches this canary was built to catch. A regression to the
   // shipped 2.0.16-mismatched API would reappear as one of these.
-  assert.doesNotMatch(source, /hook\('compacting'/, 'real plugin registers the dead "compacting" name')
+  assert.doesNotMatch(
+    source,
+    /hook\('compacting'/,
+    'real plugin registers the dead "compacting" name',
+  )
   assert.match(
     source,
     /hook\('compaction'/,
     'real plugin no longer registers session.hook("compaction")',
   )
-  assert.doesNotMatch(source, /context\.catalog\b/, 'real plugin calls the removed ctx.catalog domain')
-  assert.doesNotMatch(source, /context\.skill\.transform/, 'real plugin calls the removed skill transform')
-  assert.doesNotMatch(source, /draft\.source\(/, 'real plugin calls the removed SkillEditor.source()')
+  assert.doesNotMatch(
+    source,
+    /context\.catalog\b/,
+    'real plugin calls the removed ctx.catalog domain',
+  )
+  assert.doesNotMatch(
+    source,
+    /context\.skill\.transform/,
+    'real plugin calls the removed skill transform',
+  )
+  assert.doesNotMatch(
+    source,
+    /draft\.source\(/,
+    'real plugin calls the removed SkillEditor.source()',
+  )
   assert.doesNotMatch(source, /hook\('compacting'/, 'real plugin registers "compacting"')
   // The context handler must emit canonical SystemParts, not raw pushes.
   assert.doesNotMatch(
