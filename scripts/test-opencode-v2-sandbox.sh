@@ -23,6 +23,8 @@
 #   --prompts        Prompt battery via `opencode run --format json`.
 #   --cost           Offline pantheon_cost probe.
 #   --rehydrate      Offline context_rehydrate + context_session_summary probe.
+#   --hooks          V2 hook canary: proves hook callbacks FIRE through the
+#                    sandbox's V2 binary (not merely that a plugin loaded).
 #   --reset          Wipe the sandbox root.
 #   --help           Usage.
 #
@@ -78,10 +80,11 @@ MODE_RESET=0
 MODE_PROMPTS=0
 MODE_COST=0
 MODE_REHYDRATE=0
+MODE_HOOKS=0
 RUN_VERSION=""
 
 usage() {
-  sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 2
 }
 
@@ -769,6 +772,28 @@ run_rehydrate() { # versions...
   log "Context probe: PASS."
 }
 
+# ── Hook canary (proves callbacks FIRE, not just that a plugin loaded) ────────
+
+run_hooks() {
+  local bin agent
+  if ! bin="$(sandbox_bin)"; then
+    printf 'ERROR: sandbox not prepared for hooks (binary '\''%s'\'' missing) — run %s --prepare first\n' \
+      "$V2_BIN" "$0" >&2
+    exit 3
+  fi
+  agent="${PANTHEON_HOOK_CANARY_AGENT:-canary}"
+  log "[hooks] V2 hook canary against $bin (model $PANTHEON_SANDBOX_MODEL, agent $agent) ..."
+  if PANTHEON_HOOK_CANARY_BIN="$bin" \
+    PANTHEON_HOOK_CANARY_MODEL="$PANTHEON_SANDBOX_MODEL" \
+    PANTHEON_HOOK_CANARY_AGENT="$agent" \
+    node --test "$REPO_DIR/tests/pantheon/plugin-v2-hook-canary.test.mjs"; then
+    log "Hook canary: PASS."
+  else
+    log "Hook canary: FAIL."
+    exit 1
+  fi
+}
+
 run_battery() { # versions...
   local versions=("$@")
   mkdir -p "$SANDBOX_ROOT"
@@ -827,6 +852,7 @@ while [ $# -gt 0 ]; do
     --prompts) MODE_PROMPTS=1 ;;
     --cost) MODE_COST=1 ;;
     --rehydrate) MODE_REHYDRATE=1 ;;
+    --hooks) MODE_HOOKS=1 ;;
     --run)
       shift
       case "${1:-}" in
@@ -851,7 +877,7 @@ fi
 
 if [ "$MODE_PREPARE" -eq 0 ] && [ -z "$RUN_VERSION" ] \
   && [ "$MODE_PROMPTS" -eq 0 ] && [ "$MODE_COST" -eq 0 ] \
-  && [ "$MODE_REHYDRATE" -eq 0 ]; then
+  && [ "$MODE_REHYDRATE" -eq 0 ] && [ "$MODE_HOOKS" -eq 0 ]; then
   usage
 fi
 
@@ -875,6 +901,10 @@ if [ -n "$RUN_VERSION" ]; then
     sandbox_env
     run_rehydrate "$RUN_VERSION"
   fi
+  if [ "$MODE_HOOKS" -eq 1 ]; then
+    sandbox_env
+    run_hooks
+  fi
 elif [ "$MODE_PROMPTS" -eq 1 ]; then
   sandbox_env
   run_battery "$TARGET_VERSION"
@@ -884,13 +914,22 @@ elif [ "$MODE_PROMPTS" -eq 1 ]; then
   if [ "$MODE_REHYDRATE" -eq 1 ]; then
     run_rehydrate "$TARGET_VERSION"
   fi
+  if [ "$MODE_HOOKS" -eq 1 ]; then
+    run_hooks
+  fi
 elif [ "$MODE_COST" -eq 1 ]; then
   sandbox_env
   run_cost "$TARGET_VERSION"
   if [ "$MODE_REHYDRATE" -eq 1 ]; then
     run_rehydrate "$TARGET_VERSION"
   fi
+  if [ "$MODE_HOOKS" -eq 1 ]; then
+    run_hooks
+  fi
 elif [ "$MODE_REHYDRATE" -eq 1 ]; then
   sandbox_env
   run_rehydrate "$TARGET_VERSION"
+elif [ "$MODE_HOOKS" -eq 1 ]; then
+  sandbox_env
+  run_hooks
 fi
