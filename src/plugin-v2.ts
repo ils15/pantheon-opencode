@@ -4,27 +4,35 @@
  * Registers:
  * - 6 orchestration tools via V2 tool.transform (with V1 bridge fallback)
  * - 4 event subscriptions (session.created, idle, error, compacted)
- * - Session hooks (prompt, context) and tool hooks (execute.before/after)
+ * - Session hooks (prompt, context, compaction) and tool hooks (execute.before/after)
  * - Permission hooks for custom authorization
  *
- * V2 Plugin API surface (confirmed by investigation):
- *   ctx.tool.transform / ctx.event.subscribe / ctx.session.hook /
- *   ctx.tool.hook / ctx.permission.hook
+ * V2 Plugin API surface (verified against @opencode/plugin@2.0.16 — the
+ * installed `opencode` binary reports v2.0.16, and that package's
+ * `dist/promise/plugin.d.ts` exposes exactly these domains):
+ *   ctx.agent / ctx.command / ctx.model / ctx.reference / ctx.skill /
+ *   ctx.tool / ctx.event / ctx.permission / ctx.session
  *
- * When a V2 API domain is unavailable, the feature is gracefully skipped
- * and documented in V2_UNSUPPORTED_FEATURES. The plugin never breaks.
+ * Confirmed ABSENT from 2.0.16 (do not call them):
+ *   - `ctx.catalog`     — replaced by `ctx.model` (ModelDomain/ModelEditor)
+ *   - `ctx.integration` — no longer a context domain
+ *   - `SkillEditor.source()` / `.transform`-less shape — SkillEditor is
+ *     `list | get | add | update | remove` and skills now carry their own
+ *     source, so the old "add a directory source" transform has no equivalent.
+ *
+ * When a V2 API domain is unavailable, the feature is gracefully skipped and
+ * documented in V2_UNSUPPORTED_FEATURES. The plugin never breaks.
  *
  * @module plugin-v2
  */
 
+import { appendFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type {
   AgentDraft,
-  CatalogDraft,
   CommandDraft,
   PluginContext,
   ReferenceDraft,
-  SkillDraft,
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
 import {
@@ -41,29 +49,47 @@ import {
  * Initialized with features known to be absent from the V2 promise API;
  * additional features are appended during setup if their API is missing.
  */
-export const V2_UNSUPPORTED_FEATURES: string[] = ['legacy-hooks']
+export const V2_UNSUPPORTED_FEATURES: string[] = [
+  'legacy-hooks',
+  // Domains that 2.0.16 has no context entry point for. Verified against
+  // @opencode/plugin@2.0.16 `dist/promise/plugin.d.ts` (no `catalog`, no
+  // `integration`). Recorded synchronously because there is nothing to attempt.
+  'catalog-transform',
+  'integration-transform',
+  // 2.0.16 SkillEditor has no `source()`; skills now carry their own source,
+  // so the old "add a directory source" transform is genuinely gone.
+  'skill-transform',
+]
 
 // ─── Constants ───────────────────────────────────────────────────────────
 
 const POLICY_MARKER = '<!-- pantheon-v2-policy -->'
 const POLICY = `${POLICY_MARKER}\nFollow Pantheon routing policy: delegate implementation work to the named specialist and do not claim work was performed without verification.`
 
+/** 2.0.16 `system` on a session hook payload is `Array<SystemPart>`. */
+interface SystemPart {
+  type: 'text'
+  text: string
+}
+
+function isTextPart(entry: unknown): entry is SystemPart {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    typeof (entry as { text?: unknown }).text === 'string'
+  )
+}
+
 /**
- * SystemPart shape sniffing (beta 19192 `Schema validation failed` in
- * system[N]): host sends SystemPart objects ({type,text}) but pinned SDK
- * (@opencode-ai/plugin 1.18.18) only knows string/string[]. Detect at runtime.
- * Never throws (fail-open).
+ * Extract text from a `system` entry. The host's own coercion accepts a bare
+ * string, but the canonical 2.0.16 shape is `{ type: 'text', text }`; the
+ * string branch is retained so the handler still works against a host that
+ * sends primitives. Never throws.
  */
 function systemEntryText(entry: unknown): string | null {
   try {
     if (typeof entry === 'string') return entry
-    if (
-      typeof entry === 'object' &&
-      entry !== null &&
-      typeof (entry as { text?: unknown }).text === 'string'
-    ) {
-      return (entry as { text: string }).text
-    }
+    if (isTextPart(entry)) return entry.text
     return null
   } catch {
     return null
@@ -81,19 +107,30 @@ function hasPolicyMarker(arr: unknown[]): boolean {
   }
 }
 
-function usesObjectShape(arr: unknown[]): boolean {
-  try {
-    return arr.some(
-      (s) =>
-        typeof s === 'object' && s !== null && typeof (s as { text?: unknown }).text === 'string',
-    )
-  } catch {
-    return false
+/**
+ * Normalize a `system` value to the 2.0.16 `Array<SystemPart>` shape.
+ *
+ * `SessionContext.system` is `Array<SystemPart>` where a part is
+ * `{ type: 'text', text }`. A raw string (the whole value, or an element) is
+ * not that shape, so it is upgraded: element strings become parts, and a bare
+ * string value becomes a one-element part array. Non-array, non-string values
+ * are returned unchanged.
+ *
+ * Returns the normalized array, or `null` when `system` is neither a string
+ * nor an array (nothing to normalize).
+ */
+function normalizeSystemToParts(system: unknown): unknown[] | null {
+  if (typeof system === 'string') {
+    return [{ type: 'text', text: system } satisfies SystemPart]
   }
-}
-
-function toSystemEntry(text: string, useObject: boolean): string | { type: 'text'; text: string } {
-  return useObject ? { type: 'text', text } : text
+  if (!Array.isArray(system)) return null
+  for (let i = 0; i < system.length; i++) {
+    const entry = system[i]
+    if (typeof entry === 'string') {
+      system[i] = { type: 'text', text: entry } satisfies SystemPart
+    }
+  }
+  return system
 }
 
 /**
@@ -191,16 +228,6 @@ function transformAgents(draft: AgentDraft): void {
   }
 }
 
-function transformCatalog(draft: CatalogDraft, options: PluginContext['options']): void {
-  const configured = options.default_model
-  if (typeof configured !== 'string') return
-  const separator = configured.indexOf('/')
-  if (separator <= 0 || separator === configured.length - 1) return
-  const providerID = configured.slice(0, separator)
-  const modelID = configured.slice(separator + 1)
-  if (draft.model.get(providerID, modelID)) draft.model.default.set(providerID, modelID)
-}
-
 function transformCommands(draft: CommandDraft): void {
   // Beta 19192 guard (issue #92): draft may not have `list`, or list()
   // may return a non-iterable. Never throw — mark unsupported and return.
@@ -234,41 +261,6 @@ function transformCommands(draft: CommandDraft): void {
     }
   } catch {
     markUnsupported('command-transform')
-  }
-}
-
-function transformSkills(draft: SkillDraft): void {
-  // Beta 19192 guard (issue #92): draft may not have `list`, or list()
-  // may return a non-iterable. Never throw — mark unsupported and return.
-  let sources: Array<{ type: string; path: string }>
-  try {
-    const maybeList = (draft as unknown as { list?: unknown }).list
-    if (typeof maybeList !== 'function') {
-      markUnsupported('skill-transform-list')
-      return
-    }
-    const result = (maybeList as (this: unknown) => unknown).call(draft)
-    if (
-      result == null ||
-      typeof (result as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== 'function'
-    ) {
-      markUnsupported('skill-transform-list')
-      return
-    }
-    sources = Array.isArray(result)
-      ? (result as Array<{ type: string; path: string }>)
-      : Array.from(result as Iterable<{ type: string; path: string }>)
-  } catch {
-    markUnsupported('skill-transform-list')
-    return
-  }
-  try {
-    const path = fileURLToPath(new URL('./skills', import.meta.url))
-    if (!sources.some((source) => source.type === 'directory' && source.path === path)) {
-      draft.source({ type: 'directory', path })
-    }
-  } catch {
-    markUnsupported('skill-transform')
   }
 }
 
@@ -453,21 +445,32 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
     // "context" hook — inject routing policy + compaction state
     await sessionCtx.hook('context', (event: unknown) => {
       try {
-        // Beta 19192 hardening + SystemPart sniffing: host may send string[],
-        // SystemPart objects ({type,text}), mixed arrays, a single string, or
-        // a non-array system. Preserve string-path behavior; inject object
-        // shape when the array contains objects (else `Schema validation
-        // failed` in system[N]). Never throw to the host (fail-open).
-        const ctx = event as { system?: unknown } | null | undefined
-        const rawSystem: unknown = ctx?.system
-        if (typeof rawSystem === 'string' && ctx != null) {
-          ctx.system = rawSystem.includes(POLICY_MARKER) ? [rawSystem] : [rawSystem, POLICY]
-        } else if (Array.isArray(rawSystem)) {
-          if (!hasPolicyMarker(rawSystem)) {
-            rawSystem.push(toSystemEntry(POLICY, usesObjectShape(rawSystem)))
+        // Opt-in lifetime proof for the host-backed hook canary (MODE=real).
+        // Inert unless PANTHEON_HOOK_CANARY_LIFETIME_PROOF is set.
+        if (process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF) {
+          try {
+            appendFileSync(
+              process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF,
+              'plugin-v2:session.hook:context\n',
+            )
+          } catch {
+            // Best-effort instrumentation.
           }
         }
-        // Non-string, non-array system (or null event): ignore silently.
+        // 2.0.16 payload is `{ system: Array<SystemPart> }`. Normalize any
+        // string entries to `{ type: 'text', text }` parts and append the
+        // policy as a part. Junk entries are ignored; a non-array,
+        // non-string system is left untouched. Never throws (fail-open).
+        const ctx = event as { system?: unknown } | null | undefined
+        if (ctx == null) return
+        const normalized = normalizeSystemToParts(ctx.system)
+        if (normalized == null) return
+        // A bare string is replaced by its part array; an array is mutated in
+        // place (the host may read the original reference).
+        if (typeof ctx.system === 'string') ctx.system = normalized
+        if (!hasPolicyMarker(normalized)) {
+          normalized.push({ type: 'text', text: POLICY } satisfies SystemPart)
+        }
       } catch {
         // Fail-open: never throw to the host.
       }
@@ -703,13 +706,15 @@ export const plugin = define({
     // (e.g. draft.list missing on beta 19192 → TypeError) must never
     // reject setup() nor prevent the other domains from registering.
     // See issue #92.
+    //
+    // Only domains that exist in 2.0.16 are attempted. `catalog` and
+    // `integration` were removed from the context; `skill` transform has no
+    // source() equivalent. Calling a missing domain throws synchronously
+    // inside the callback, which — proven by the canary — would reject
+    // setup() and silently kill every hook registered later. They are recorded
+    // as unsupported instead. See V2_UNSUPPORTED_FEATURES.
     const phase1Transforms: Array<{ feature: string; register: () => Promise<unknown> }> = [
       { feature: 'agent-transform', register: () => context.agent.transform(transformAgents) },
-      {
-        feature: 'catalog-transform',
-        register: () =>
-          context.catalog.transform((draft) => transformCatalog(draft, context.options)),
-      },
       {
         feature: 'command-transform',
         register: () => context.command.transform(transformCommands),
@@ -718,7 +723,6 @@ export const plugin = define({
         feature: 'reference-transform',
         register: () => context.reference.transform(transformReferences),
       },
-      { feature: 'skill-transform', register: () => context.skill.transform(transformSkills) },
     ]
     const phase1Results = await Promise.allSettled(
       phase1Transforms.map((t) => Promise.resolve().then(() => t.register())),
@@ -771,9 +775,31 @@ export const plugin = define({
       | undefined
     if (compactionCtx?.hook) {
       try {
-        await compactionCtx.hook('compacting', (_event: unknown) => {
+        // 2.0.16 `SessionHooks` key is `compaction` (the migration doc maps
+        // `experimental.session.compacting` → `ctx.session.hook("compaction")`).
+        // `compacting` is not a valid key: the registry accepts any string and
+        // silently drops unknown names, so the old name was a permanent no-op.
+        // Proven by the canary's negative control.
+        await compactionCtx.hook('compaction', (_event: unknown) => {
           // Compaction context build — injects active goals, pending todos,
           // and in-flight delegations. Wired through V1 infrastructure.
+          //
+          // Opt-in lifetime proof for the host-backed hook canary
+          // (tests/pantheon/plugin-v2-hook-canary.test.mjs, MODE=real). It is
+          // inert unless PANTHEON_HOOK_CANARY_LIFETIME_PROOF is set, so
+          // production behaviour is unchanged. This exists because a rename to
+          // `compacting` was a silent no-op for an unknown length of time: the
+          // canary can now observe that THIS registration fired.
+          if (process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF) {
+            try {
+              appendFileSync(
+                process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF,
+                'plugin-v2:session.hook:compaction\n',
+              )
+            } catch {
+              // Proof is best-effort: never let instrumentation break the host.
+            }
+          }
         })
       } catch {
         markUnsupported('compaction-hook')
