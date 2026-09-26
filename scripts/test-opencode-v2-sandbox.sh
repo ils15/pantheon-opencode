@@ -1,32 +1,43 @@
 #!/usr/bin/env bash
-# test-opencode-v1-v2-sandbox.sh — Pantheon global-install sandbox validator
-# for OpenCode V1 (`opencode`) and V2 (`opencode2`) side-by-side.
+# test-opencode-v2-sandbox.sh — Pantheon global-install sandbox validator for
+# OpenCode V2.
 #
 # Validates the installed pantheon-opencode package AS A REAL USER inside an
 # isolated sandbox (own HOME, npm prefix and venv), never the dev environment.
 #
+# WHAT "V2" MEANS HERE
+# --------------------
+# It does not mean a different binary. On hosts where both `opencode` and
+# `opencode2` exist, `opencode2` is typically a two-line shim that execs the very
+# same `opencode` binary, so a "V1 vs V2 side-by-side" comparison proved nothing
+# about the binary. "V2" here means: this plugin, exercised against the
+# `@opencode/plugin@2.x` contract. This project is V2-exclusive, so there is a
+# single leg to validate.
+#
 # Modes (combinable):
-#   --prepare        Build tarball, install pantheon-opencode + OpenCode V1/V2
-#                    binaries in the sandbox prefix, headless init, and generate
-#                    the per-version project configs and sandbox run-test.sh.
-#   --run v1|v2      Base validation for one version: opencode mcp list + doctor
-#                    (config is regenerated for that version first).
-#   --prompts        Prompt battery via `opencode run --format json` for every
-#                    requested version (with --run vX) or both versions alone.
-#   --cost           Offline pantheon_cost probe for the requested
-#                    version (with --run vX) or both versions alone.
-#                    The probe's synthetic checks run in explicit --fixture mode.
-#   --rehydrate      Offline context_rehydrate + context_session_summary
-#                    probe for the requested version (with --run vX) or both.
+#   --prepare        Build tarball, install pantheon-opencode + the OpenCode V2
+#                    binary in the sandbox prefix, headless init, and generate
+#                    the project config and sandbox run-test.sh.
+#   --run v2         Base validation: opencode mcp list + doctor (config is
+#                    regenerated first).
+#   --prompts        Prompt battery via `opencode run --format json`.
+#   --cost           Offline pantheon_cost probe.
+#   --rehydrate      Offline context_rehydrate + context_session_summary probe.
 #   --reset          Wipe the sandbox root.
 #   --help           Usage.
 #
 # Env overrides:
 #   PANTHEON_SANDBOX_ROOT    Sandbox root (default: ~/pantheon-sandbox)
-#   OPENCODE_V1_SPEC         npm spec providing the `opencode` binary
-#                            (default: opencode-ai@1.18.18)
-#   OPENCODE_V2_SPEC         npm spec providing the `opencode2` binary
-#                            (default: @opencode-ai/cli@beta)
+#   OPENCODE_V2_SPEC         npm spec providing the V2 binary
+#                            (default: @opencode-ai/cli@beta). NOTE: this is an
+#                            install spec only — it is not a dependency of this
+#                            package, and no code imports it.
+#   PANTHEON_REPO            Repository the sandbox is built from (default: the
+#                            checkout this script lives in). Only read by the
+#                            GENERATED run-test.sh, which cannot derive it from
+#                            its own location and reads the .repo-dir file this
+#                            script generates beside it. --reset refuses to run
+#                            when it points inside the repo.
 #   PANTHEON_SANDBOX_MODEL   Model used by init/prompts
 #                            (default: opencode-go/mimo-v2.5)
 #   PANTHEON_PROMPT_TIMEOUT  Per-prompt timeout in seconds (default: 300)
@@ -36,19 +47,26 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Derived from this script's own location so the sandbox is always built from
+# the checkout that CONTAINS this harness. It must never be inferred from a
+# sibling directory: a sibling may be a different checkout (or a different
+# branch) with unrelated uncommitted work, and --prepare runs `npm pack` inside
+# it, writing a tarball into that tree.
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 SANDBOX_ROOT="${PANTHEON_SANDBOX_ROOT:-$HOME/pantheon-sandbox}"
 SANDBOX_HOME="$SANDBOX_ROOT/home"
 NPM_PREFIX="$SANDBOX_HOME/.npm-global"
 
-OPENCODE_V1_SPEC="${OPENCODE_V1_SPEC:-opencode-ai@1.18.18}"
 OPENCODE_V2_SPEC="${OPENCODE_V2_SPEC:-@opencode-ai/cli@beta}"
 PANTHEON_SANDBOX_MODEL="${PANTHEON_SANDBOX_MODEL:-opencode-go/mimo-v2.5}"
 PANTHEON_PROMPT_TIMEOUT="${PANTHEON_PROMPT_TIMEOUT:-300}"
 
-V1_BIN="${OPENCODE_V1_BIN:-opencode}"
 V2_BIN="${OPENCODE_V2_BIN:-opencode2}"
+
+# The single target version. Kept as a name so reports and prompts keep their
+# per-version labels without reintroducing a second leg.
+TARGET_VERSION="v2"
 
 REPORT_FILE="$SANDBOX_ROOT/prompts-report.md"
 COST_REPORT_FILE="$SANDBOX_ROOT/pantheon-cost-report.md"
@@ -63,7 +81,7 @@ MODE_REHYDRATE=0
 RUN_VERSION=""
 
 usage() {
-  sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 2
 }
 
@@ -71,15 +89,7 @@ log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-bin_for() {
-  case "$1" in
-    v1) printf '%s' "$V1_BIN" ;;
-    v2) printf '%s' "$V2_BIN" ;;
-    *) return 1 ;;
-  esac
-}
-
-project_for() { printf '%s/project-%s' "$SANDBOX_ROOT" "$1"; }
+project_dir() { printf '%s/project-%s' "$SANDBOX_ROOT" "$TARGET_VERSION"; }
 
 # Resolve a binary STRICTLY inside the sandbox npm prefix — never fall back to
 # the dev PATH, otherwise a non-prepared sandbox would silently test the host
@@ -93,8 +103,8 @@ sandbox_bin_for() { # name → prints path; rc 1 if not inside sandbox prefix
   esac
 }
 
-sandbox_bin_v() { # v → echoes path; rc 1 if missing
-  sandbox_bin_for "$(bin_for "$1")"
+sandbox_bin() { # echoes the V2 binary path; rc 1 if missing
+  sandbox_bin_for "$V2_BIN"
 }
 
 # ── Sandbox environment isolation ─────────────────────────────────────────────
@@ -108,11 +118,19 @@ sandbox_env() {
 # ── Gate (b): sandbox run-test.sh with pantheon://agents content validation ──
 
 write_run_test_sh() {
+  # Quoted heredoc: the body is emitted verbatim, so nothing inside is expanded
+  # at generation time. REPO_DIR is the one value the body needs, and it is
+  # handed over as its own generated file instead of a placeholder baked into
+  # the shell source: interpolating it meant escaping for TWO languages (sed
+  # replacement text AND the double-quoted shell context it lands in), and only
+  # the first set was escaped — a path containing `$`, a backtick, a backslash
+  # or a quote was silently rewritten or executed by the generated script.
+  printf '%s\n' "$REPO_DIR" > "$SANDBOX_ROOT/.repo-dir"
   cat > "$SANDBOX_ROOT/run-test.sh" <<'RUNTEST'
 #!/usr/bin/env bash
-# Generated by pantheon-opencode scripts/test-opencode-v1-v2-sandbox.sh --prepare
-# Validates the global install: binaries, exactly 5 connected MCPs per version,
-# doctor 0 errors, AND the CONTENT of pantheon://agents (zeus/hermes present).
+# Generated by pantheon-opencode scripts/test-opencode-v2-sandbox.sh --prepare
+# Validates the global install: the V2 binary, exactly 5 connected MCPs, doctor
+# 0 errors, AND the CONTENT of pantheon://agents (zeus/hermes present).
 set -euo pipefail
 
 SANDBOX_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -120,9 +138,17 @@ SANDBOX_HOME="$SANDBOX_DIR/home"
 NPM_PREFIX="$SANDBOX_HOME/.npm-global"
 PANTHEON_GLOBAL="$SANDBOX_HOME/.config/opencode"
 SANDBOX_VENV="$PANTHEON_GLOBAL/.venv"
-REPO_DIR="${PANTHEON_REPO:-$(cd "$SANDBOX_DIR/../pantheon" && pwd)}"
+# The checkout this harness ran from, written by the generator into the
+# .repo-dir file next to this script. It used to be a placeholder baked into
+# this line and substituted with sed afterwards, but the sandbox lives outside
+# any repo so the value cannot be derived from this file's own location either.
+# Reading a file the generator wrote keeps the path out of the shell source, so
+# no escaping can be wrong. PANTHEON_REPO may still override it; the generator's
+# --reset guard refuses to run when that points inside a repo, so an override
+# can never turn this into a repo-wiping target.
+REPO_DIR="${PANTHEON_REPO:-$(cat "$SANDBOX_DIR/.repo-dir")}"
 
-echo "=== Pantheon Sandbox Test ==="
+echo "=== Pantheon Sandbox Test (OpenCode V2) ==="
 echo "Sandbox: $SANDBOX_DIR"
 echo "Repo:    $REPO_DIR"
 
@@ -190,7 +216,6 @@ check_mcp() { # label binary project
 }
 
 echo "--- Binaries ---"
-check_binary "V1 binary" opencode
 check_binary "V2 binary" opencode2
 
 echo "--- Building tarball ---"
@@ -205,7 +230,6 @@ echo "--- Init (headless) ---"
 pantheon-opencode init --headless -y
 
 echo "--- MCP Validation ---"
-check_mcp "V1" opencode "$SANDBOX_DIR/project-v1"
 check_mcp "V2" opencode2 "$SANDBOX_DIR/project-v2"
 
 echo "--- Doctor ---"
@@ -271,10 +295,19 @@ RUNTEST
 # ── Reset / Prepare ───────────────────────────────────────────────────────────
 
 cmd_reset() {
-  case "$SANDBOX_ROOT" in
-    "/" | "$HOME" | "$REPO_DIR" | "$REPO_DIR"/*)
-      die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT" ;;
-  esac
+  # Guard BOTH repos this harness can act on. REPO_DIR is where `--prepare`
+  # runs `npm pack`; PANTHEON_REPO is the documented override the GENERATED
+  # run-test.sh honours, and it may point somewhere else entirely. Refusing
+  # only the default left an override able to name a checkout and have the
+  # generated script pack a tarball into it.
+  local protected
+  for protected in "$REPO_DIR" "${PANTHEON_REPO:-}"; do
+    [ -n "$protected" ] || continue
+    case "$SANDBOX_ROOT" in
+      "/" | "$HOME" | "$protected" | "$protected"/*)
+        die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is inside the repo $protected)" ;;
+    esac
+  done
   log "Resetting sandbox: $SANDBOX_ROOT"
   rm -rf "$SANDBOX_ROOT"
   log "Sandbox removed."
@@ -289,21 +322,19 @@ install_binaries() {
   npm rm -g pantheon-opencode 2>/dev/null || true
   npm install -g "$REPO_DIR/$tgz" || die "install of $tgz failed"
   if ! git -C "$REPO_DIR" ls-files --error-unmatch -- "$tgz" >/dev/null 2>&1; then rm -f -- "$tgz"; fi
-  log "--- Installing OpenCode V1 ($OPENCODE_V1_SPEC) ---"
-  npm install -g "$OPENCODE_V1_SPEC" || die "install of $OPENCODE_V1_SPEC failed"
   log "--- Installing OpenCode V2 ($OPENCODE_V2_SPEC) ---"
   npm install -g "$OPENCODE_V2_SPEC" || die "install of $OPENCODE_V2_SPEC failed"
 }
 
 prepare_project() {
-  local v="$1" dir pan
-  dir="$(project_for "$v")"
+  local dir pan
+  dir="$(project_dir)"
   mkdir -p "$dir"
   pan="$(sandbox_bin_for "pantheon-opencode")" \
     || die "pantheon-opencode not installed in sandbox prefix — run $0 --prepare first"
-  log "--- Regenerating config for $v in $dir ---"
-  (cd "$dir" && "$pan" init --project --version "$v" --model "$PANTHEON_SANDBOX_MODEL" -y) \
-    || die "init --project --version $v failed in $dir"
+  log "--- Regenerating config in $dir ---"
+  (cd "$dir" && "$pan" init --project --version "$TARGET_VERSION" --model "$PANTHEON_SANDBOX_MODEL" -y) \
+    || die "init --project --version $TARGET_VERSION failed in $dir"
 }
 
 cmd_prepare() {
@@ -317,11 +348,10 @@ cmd_prepare() {
   log "--- Headless init (global venv + runtime) ---"
   "$pan" init --headless -y --model "$PANTHEON_SANDBOX_MODEL" \
     || die "pantheon-opencode init --headless failed"
-  prepare_project v1
-  prepare_project v2
+  prepare_project
   write_extract_py
   log "Prepare complete. Sandbox: $SANDBOX_ROOT"
-  log "Next: $0 --run v1 --prompts  |  $0 --run v2 --prompts"
+  log "Next: $0 --run v2 --prompts"
 }
 
 # ── JSON text extraction (schema-agnostic) ────────────────────────────────────
@@ -424,7 +454,7 @@ run_prompt_attempt() { # v idx current_bin — sets ATTEMPT_RESULT / ATTEMPT_DET
   err_file="$(mktemp)"
 
   set +e
-  (cd "$(project_for "$v")" \
+  (cd "$(project_dir)" \
     && timeout "$PANTHEON_PROMPT_TIMEOUT" "$bin" run --auto --format json "$text") \
     > "$out_file" 2> "$err_file"
   rc=$?
@@ -464,12 +494,12 @@ run_prompt() { # v idx current_bin — exactly one attempt
 
 check_mcp_list() { # v
   local v="$1" bin out connected_count rc=0
-  if ! bin="$(sandbox_bin_v "$v")"; then
+  if ! bin="$(sandbox_bin)"; then
     record "$v" "mcp-list" "FAIL" "binary not installed in sandbox prefix"
     return 0
   fi
   set +e
-  out="$(cd "$(project_for "$v")" && "$bin" mcp list 2>&1)"
+  out="$(cd "$(project_dir)" && "$bin" mcp list 2>&1)"
   rc=$?
   set -e
   out="$(printf '%s' "$out" | sed -E $'s/\x1B\\[[0-?]*[ -/]*[@-~]//g')"
@@ -493,7 +523,7 @@ check_doctor() { # v
     return 0
   fi
   set +e
-  (cd "$(project_for "$v")" && "$pan" doctor --target "$(project_for "$v")") > /dev/null 2>&1
+  (cd "$(project_dir)" && "$pan" doctor --target "$(project_dir)") > /dev/null 2>&1
   rc=$?
   set -e
   if [ "$rc" -eq 0 ]; then
@@ -589,15 +619,15 @@ run_rehydrate_probe() { # v
 
 run_version_prompts() { # v
   local v="$1" bin
-  if ! bin="$(sandbox_bin_v "$v")"; then
-    log "Binary '$(bin_for "$v")' not in sandbox prefix — failing all $v checks."
+  if ! bin="$(sandbox_bin)"; then
+    log "Binary '$V2_BIN' not in sandbox prefix — failing all $v checks."
     build_battery "$v"
     local i
     for i in "${!PROMPT_IDS[@]}"; do
-      record "$v" "${PROMPT_IDS[$i]}" "FAIL" "binary $(bin_for "$v") not installed in sandbox"
+      record "$v" "${PROMPT_IDS[$i]}" "FAIL" "binary $V2_BIN not installed in sandbox"
     done
-    record "$v" "mcp-list" "FAIL" "binary $(bin_for "$v") not installed in sandbox"
-    record "$v" "doctor" "FAIL" "binary $(bin_for "$v") not installed in sandbox"
+    record "$v" "mcp-list" "FAIL" "binary $V2_BIN not installed in sandbox"
+    record "$v" "doctor" "FAIL" "binary $V2_BIN not installed in sandbox"
     return 0
   fi
   prepare_project "$v"
@@ -628,11 +658,11 @@ write_report() { # versions...
     printf -- '- **Date:** %s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')"
     printf -- '- **Model:** %s\n' "$PANTHEON_SANDBOX_MODEL"
     printf -- '- **Sandbox:** %s\n' "$SANDBOX_ROOT"
-    printf -- '- **V1 binary:** %s (%s) | **V2 binary:** %s (%s)\n\n' \
-      "$V1_BIN" "$OPENCODE_V1_SPEC" "$V2_BIN" "$OPENCODE_V2_SPEC"
+    printf -- '- **V2 binary:** %s (%s)\n\n' \
+      "$V2_BIN" "$OPENCODE_V2_SPEC"
     local v id res
     for v in "${versions[@]}"; do
-      printf '## Version %s (`%s`)\n\n' "$v" "$(bin_for "$v")"
+      printf '## Version %s (`%s`)\n\n' "$v" "$V2_BIN"
       printf '| Prompt | Result | Detail |\n|---|---|---|\n'
       for id in "${PROMPT_IDS[@]}" mcp-list doctor; do
         res="${RESULTS["$v:$id"]:-SKIP}"
@@ -765,9 +795,9 @@ run_battery() { # versions...
 
 run_base() { # v
   local v="$1" bin
-  if ! bin="$(sandbox_bin_v "$v")"; then
+  if ! bin="$(sandbox_bin)"; then
     printf 'ERROR: sandbox not prepared for %s (binary '\''%s'\'' missing from sandbox prefix) — run %s --prepare first\n' \
-      "$v" "$(bin_for "$v")" "$0" >&2
+      "$v" "$V2_BIN" "$0" >&2
     exit 3
   fi
   prepare_project "$v"
@@ -800,7 +830,11 @@ while [ $# -gt 0 ]; do
     --run)
       shift
       case "${1:-}" in
-        v1 | v2) RUN_VERSION="$1" ;;
+        v2) RUN_VERSION="$1" ;;
+        v1)
+          printf 'ERROR: the V1 leg was removed — this project is OpenCode V2-exclusive.\n' >&2
+          exit 2
+          ;;
         *) usage ;;
       esac
       ;;
@@ -843,20 +877,20 @@ if [ -n "$RUN_VERSION" ]; then
   fi
 elif [ "$MODE_PROMPTS" -eq 1 ]; then
   sandbox_env
-  run_battery v1 v2
+  run_battery "$TARGET_VERSION"
   if [ "$MODE_COST" -eq 1 ]; then
-    run_cost v1 v2
+    run_cost "$TARGET_VERSION"
   fi
   if [ "$MODE_REHYDRATE" -eq 1 ]; then
-    run_rehydrate v1 v2
+    run_rehydrate "$TARGET_VERSION"
   fi
 elif [ "$MODE_COST" -eq 1 ]; then
   sandbox_env
-  run_cost v1 v2
+  run_cost "$TARGET_VERSION"
   if [ "$MODE_REHYDRATE" -eq 1 ]; then
-    run_rehydrate v1 v2
+    run_rehydrate "$TARGET_VERSION"
   fi
 elif [ "$MODE_REHYDRATE" -eq 1 ]; then
   sandbox_env
-  run_rehydrate v1 v2
+  run_rehydrate "$TARGET_VERSION"
 fi

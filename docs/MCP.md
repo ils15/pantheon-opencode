@@ -13,8 +13,8 @@ auto-start with OpenCode.
 |--------|-------|-----------|---------|
 | **pantheon-resources** | — | 3 static + 5 templates | Agent discovery, skills, routing, deepwork plans, memory-bank |
 | **pantheon-code-mode** | 1 | 1 static + 1 template | Confined script execution from `.pantheon/code-mode/` |
-| **pantheon-memory** | 14 | 2 static | Persistent memory with semantic search, recall, knowledge graph |
-| **pantheon-persistence** | 6 | — | Namespaced key-value storage with FTS5 search and TTL |
+| **pantheon-memory** | 9 | 2 static | Persistent memory with FTS5 keyword search, recall, knowledge graph (6 `memory_*` + 3 `code_*`) |
+| **pantheon-persistence** | 14 | — | Namespaced key-value storage with FTS5 search and TTL (8 `kv_*`/`purge_*` + 6 `context_*`) |
 | **pantheon-vision** | 3 | — | Image description, OCR, and structured analysis through OpenCode |
 
 ---
@@ -180,19 +180,24 @@ execute_code_script("deploy.sh")
 
 **Script:** `scripts/memory_mcp_server.py`
 
-Persistent, lightweight memory server using sqlite-vec + fastembed
-(BAAI/bge-small-en-v1.5) for local embeddings (~30MB, ONNX, no PyTorch). Provides 6 tools and 2 resources.
+Persistent, lightweight memory server using **SQLite FTS5 (BM25)** for lexical
+keyword search. No embedding model and no vector index: recall is purely
+lexical, so a query must share a token with the stored text to match it.
+Provides 9 tools (6 `memory_*` plus 3 `code_*`) and 2 resources.
 
-### Tools (6)
+### Tools (9)
 
 | Tool | Description |
 |------|-------------|
-| `memory_store` | Store a memory entry with automatic embedding generation |
-| `memory_search` | Hybrid vector + FTS5 keyword search via RRF; optional `decay_days` freshness half-life (default off) |
+| `memory_store` | Store a memory entry (FTS5 index updated by trigger) |
+| `memory_search` | FTS5 BM25 keyword search; stopwords dropped, terms of 4+ chars prefix-matched; optional `decay_days` freshness half-life (default off) |
 | `memory_recall` | Exact recall of an entry by key within a namespace |
-| `memory_forget` | Delete an entry by ID or key (vector + FTS cleaned via cascade/triggers) |
+| `memory_forget` | Delete an entry by ID or key (FTS index cleaned via trigger) |
 | `memory_list` | List entries chronologically with namespace and key-prefix filters |
-| `memory_stats` | Database statistics: totals, namespaces, FTS/vector counts, disk usage |
+| `memory_stats` | Database statistics: totals, namespaces, disk usage |
+| `code_index` | Index codebase files into a knowledge graph (hash-based skip) |
+| `code_query` | Search code entities via FTS5 |
+| `code_neighbors` | Graph neighbors of a code entity (BFS depth 1-3) |
 
 ### Resources
 
@@ -205,15 +210,14 @@ Persistent, lightweight memory server using sqlite-vec + fastembed
 
 | Component | Implementation |
 |-----------|---------------|
-| Vector DB | sqlite-vec (SQLite vector extension) → `~/.pantheon/memory/memory.db` |
-| Embeddings | `fastembed` (ONNX, BAAI/bge-small-en-v1.5, ~30MB, auto-download) |
+| Database | SQLite (stdlib) + FTS5 → `~/.pantheon/memory/memory.db` |
+| Search | FTS5 BM25 ranking, no external dependency |
 | Freshness decay | Opt-in via `decay_days` on `memory_search` (30-day half-life, default off) |
-| Compression | DCP-style range compression (deterministic, not LLM-based) |
-| Fusion scoring | Dense similarity + freshness boost + importance boost |
+| Ranking | BM25 relevance, optionally multiplied by the freshness factor |
 
 ### Full Documentation
 
-See `docs/MEMORY.md` for complete usage guide with examples for all 6 tools.
+See `docs/MEMORY.md` for complete usage guide with examples for all 9 tools.
 
 ---
 
@@ -269,7 +273,7 @@ injects this MCP when native vision is unavailable. Bifrost is opt-in only via
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | Server not found | Not in MCP config | Add to `opencode.json` → `mcp` or `.mcp.json` |
-| Connection refused | Python env issue | Verify `python3` has required deps (`fastembed`, `fastmcp`) |
+| Connection refused | Python env issue | Verify `python3` has required deps (`fastmcp`); memory search needs no extra package beyond the stdlib |
 | `memory_recall` returns empty | No entries stored yet | First call `memory_store` with some content |
 | Code-mode script not found | Wrong path | Script must be in `.pantheon/code-mode/` |
 | Vision server not connecting | Runtime script or Python dependency issue | Run `npm run setup`, then `npm run doctor` |

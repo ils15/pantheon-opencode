@@ -125,6 +125,84 @@ def _build_script_env(
     return env
 
 
+# Additional tasks a sandboxed script may create beyond the UID's current
+# count. RLIMIT_NPROC is a per-real-UID limit on the *total* number of
+# processes AND threads, so the sandbox floor must clear everything the host
+# already owns before a script can fork at all. This headroom is the actual
+# anti-fork-bomb budget: the script still cannot exceed current + headroom.
+NPROC_HEADROOM: int = 64
+
+
+def _uid_task_count() -> int | None:
+    """Count the tasks (processes + threads) this real UID already owns.
+
+    The kernel compares the post-fork total against RLIMIT_NPROC, so this is
+    the number the sandbox limit has to exceed. Returns *None* when the count
+    cannot be established (no readable ``/proc``), which makes the caller
+    fail open on ``--nproc`` rather than pin a value that may be too low and
+    break every script.
+
+    The tally is one too high per process: ``/proc/<pid>/task`` already lists
+    the thread-group leader, so the extra ``1`` counts it twice. That bias
+    only widens the derived limit (the fail-open direction), so it is left in
+    place deliberately.
+    """
+    uid = os.getuid()
+    count = 0
+    try:
+        pids = os.listdir("/proc")
+    except OSError:
+        return None
+    for pid in pids:
+        if not pid.isdigit():
+            continue
+        proc_dir = f"/proc/{pid}"
+        try:
+            if os.stat(proc_dir).st_uid != uid:
+                continue
+            # ``/proc/<pid>/task`` already includes the thread-group leader,
+            # so the extra 1 counts it twice (over-count by one per process).
+            count += 1 + len(os.listdir(f"{proc_dir}/task"))
+        except OSError:
+            # Process exited between listdir and stat, or is not ours to read.
+            continue
+    return count
+
+
+def _sandbox_nproc() -> str | None:
+    """Return the ``--nproc`` value for a sandboxed script, or *None*.
+
+    Derived from the host rather than hardcoded: the value is the UID's
+    current task count plus ``NPROC_HEADROOM``, clamped to the hard limit
+    (``prlimit`` fails with EPERM above it, and an unprivileged process cannot
+    raise its soft limit past the hard one).
+
+    Returns *None* when the count or the limit cannot be read, in which case
+    the caller omits ``--nproc``. ``--as`` and ``--cpu`` still apply, so the
+    sandbox keeps its memory and CPU boundaries.
+    """
+    current = _uid_task_count()
+    if current is None:
+        _log.warning(
+            "code-mode: cannot count this UID's tasks; omitting --nproc, so "
+            "the sandboxed script's fork budget is unbounded"
+        )
+        return None
+    try:
+        import resource
+
+        _soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)
+    except (ImportError, OSError, ValueError):
+        _log.warning(
+            "code-mode: cannot read RLIMIT_NPROC; omitting --nproc, so the "
+            "sandboxed script's fork budget is unbounded"
+        )
+        return None
+    if hard == getattr(resource, "RLIM_INFINITY", -1):
+        return str(current + NPROC_HEADROOM)
+    return str(max(1, min(current + NPROC_HEADROOM, hard)))
+
+
 def _prlimit_prefix(
     prlimit_path: str | None,
     timeout_s: int = SCRIPT_TIMEOUT,
@@ -132,21 +210,34 @@ def _prlimit_prefix(
     """Return a ``prlimit`` command prefix to wrap a subprocess, or *None*.
 
     On Linux with ``prlimit`` available the prefix adds:
-      --nproc=512  --as=1073741824  --cpu=<timeout_s + 5>
+      --nproc=<uid task count + NPROC_HEADROOM>  --as=1073741824
+      --cpu=<timeout_s + 5>
 
-    On non-Linux or when *prlimit_path* is falsy, returns *None* (fail-open).
+    ``--nproc`` is derived per invocation by :func:`_sandbox_nproc` rather
+    than hardcoded. RLIMIT_NPROC is a per-real-UID total across processes AND
+    threads, so a fixed value below the host's current usage makes the very
+    first ``fork()`` inside the sandbox fail with EAGAIN — which is exactly
+    what a hardcoded ``--nproc=512`` did on a host already running more than
+    512 tasks. The isolation property is unchanged: a script still cannot
+    create more than ``NPROC_HEADROOM`` additional tasks.
+
+    On non-Linux, when *prlimit_path* is falsy, or when the nproc limit cannot
+    be derived, the flag is omitted (fail-open); ``--as``/``--cpu`` remain.
     """
     if not prlimit_path:
         return None
 
     cpu_limit = timeout_s + 5
-    return [
-        prlimit_path,
-        "--nproc=512",
+    prefix = [prlimit_path]
+    nproc = _sandbox_nproc()
+    if nproc is not None:
+        prefix.append(f"--nproc={nproc}")
+    prefix += [
         "--as=1073741824",  # 1 GiB in bytes
         f"--cpu={cpu_limit}",
         "--",
     ]
+    return prefix
 
 
 def _detect_prlimit() -> str | None:

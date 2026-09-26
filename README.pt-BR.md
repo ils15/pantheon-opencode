@@ -115,8 +115,8 @@ SHA-256 de cada script sem regenerá-lo.
   `mcp.servers.enabled` e launch stdio MCP com PWD correto.
 - `doctor` e health checks de instalação expandidos.
 - Validador de sandbox para instalações globais
-  (`scripts/test-opencode-v1-v2-sandbox.sh`) cobrindo OpenCode V1/V2 lado a
-  lado — veja [Validação em sandbox](#validação-em-sandbox-v1v2).
+  (`scripts/test-opencode-v2-sandbox.sh`) cobrindo a perna OpenCode V2 —
+  veja [Validação em sandbox](#validação-em-sandbox-v2).
 - A flag `--prompts` do instalador está planejada para uma release futura.
 
 ## OpenCode V1/V2 — Versão dupla (1.5.0-beta.2)
@@ -228,27 +228,32 @@ fallback para `npm install`. Uma release carrega um único tarball `.tgz`, calcu
 o SHA-256 desse mesmo artefato e vincula o tarball e o GitHub Release ao
 `TARGET_SHA` completo; um segundo pack não é intercambiável.
 
-## Validação em sandbox (V1/V2)
+## Validação em sandbox (V2)
 
-O `scripts/test-opencode-v1-v2-sandbox.sh` valida o pacote instalado
+O `scripts/test-opencode-v2-sandbox.sh` valida o pacote instalado
 globalmente como um usuário real dentro de um sandbox isolado (com `HOME`,
 prefix npm e venv próprios) — nunca o ambiente de desenvolvimento. Ele verifica
-OpenCode V1 (`opencode`) e V2 (`opencode2`) lado a lado: binários, conectividade
-MCP, `doctor` e — com `--prompts` — uma bateria de prompts cobrindo o recurso
-`pantheon://agents`, memory store/recall, escrita no filesystem e delegação de
-agente. O gate é fail-closed: todo check obrigatório precisa terminar em PASS
-explícito; timeout, falha de auth/rede/provider e pré-requisitos ausentes
-bloqueiam a execução.
+a perna OpenCode V2: o binário, conectividade MCP, `doctor` e — com
+`--prompts` — uma bateria de prompts cobrindo o recurso `pantheon://agents`,
+memory store/recall, escrita no filesystem e delegação de agente. O gate é
+fail-closed: todo check obrigatório precisa terminar em PASS explícito;
+timeout, falha de auth/rede/provider e pré-requisitos ausentes bloqueiam a
+execução.
+
+"V2" aqui significa este plugin exercido contra o contrato
+`@opencode/plugin@2.x` — não um binário diferente. Em hosts onde `opencode` e
+`opencode2` existem, `opencode2` costuma ser um shim que executa o mesmo
+binário, então a comparação lado a lado anterior não provava nada sobre o
+binário em si. O projeto é exclusivo V2, portanto há uma única perna.
 
 ```bash
-scripts/test-opencode-v1-v2-sandbox.sh --prepare          # tarball + install + init no sandbox
-scripts/test-opencode-v1-v2-sandbox.sh --run v1 --prompts # validação base + bateria de prompts (V1)
-scripts/test-opencode-v1-v2-sandbox.sh --run v2           # apenas validação base (V2)
-scripts/test-opencode-v1-v2-sandbox.sh --prompts          # bateria de prompts para as duas versões
-scripts/test-opencode-v1-v2-sandbox.sh --reset            # limpa a raiz do sandbox
+scripts/test-opencode-v2-sandbox.sh --prepare     # tarball + install + init no sandbox
+scripts/test-opencode-v2-sandbox.sh --run v2      # apenas validação base
+scripts/test-opencode-v2-sandbox.sh --prompts     # validação base + bateria de prompts
+scripts/test-opencode-v2-sandbox.sh --reset       # limpa a raiz do sandbox
 ```
 
-Os modos são combináveis (ex.: `--prepare --run v1 --prompts`). Os binários são
+Os modos são combináveis (ex.: `--prepare --run v2 --prompts`). Os binários são
 resolvidos estritamente dentro do prefix npm do sandbox — um sandbox não
 preparado falha rápido em vez de testar silenciosamente a instalação do host.
 

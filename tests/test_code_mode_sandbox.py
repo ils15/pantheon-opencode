@@ -7,6 +7,7 @@ Covers:
 from __future__ import annotations
 
 import importlib
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -110,11 +111,67 @@ class TestPrlimitPrefix:
         result = module._prlimit_prefix("/usr/bin/prlimit")
         assert result is not None
         assert result[0] == "/usr/bin/prlimit"
-        assert "--nproc=512" in result
         assert "--as=1073741824" in result  # 1 GiB in bytes
         # CPU limit should be present (timeout+5)
         cpu_args = [a for a in result if a.startswith("--cpu=")]
         assert len(cpu_args) == 1
+
+    def test_nproc_is_derived_not_hardcoded(self, module) -> None:
+        """--nproc must clear the UID's current task count, whatever it is.
+
+        RLIMIT_NPROC is a per-real-UID total across processes AND threads. A
+        hardcoded value below the host's current usage makes the first fork()
+        inside the sandbox fail with EAGAIN, which is what --nproc=512 did on
+        a host already running more than 512 tasks. Pin the BEHAVIOUR — the
+        limit must exceed the live count — not the number.
+        """
+        result = module._prlimit_prefix("/usr/bin/prlimit")
+        assert result is not None
+        nproc_args = [a for a in result if a.startswith("--nproc=")]
+        assert len(nproc_args) == 1, result
+        limit = int(nproc_args[0].split("=", 1)[1])
+        current = module._uid_task_count()
+        assert current is not None
+        assert limit > current, (
+            f"nproc={limit} does not exceed the UID's current task count "
+            f"{current}; the sandbox would fail its first fork with EAGAIN"
+        )
+
+    def test_nproc_headroom_bounds_fork_bomb(self, module) -> None:
+        """The derived limit still caps how much a script can add."""
+        result = module._prlimit_prefix("/usr/bin/prlimit")
+        assert result is not None
+        limit = int(
+            next(a for a in result if a.startswith("--nproc=")).split("=", 1)[1]
+        )
+        current = module._uid_task_count()
+        assert limit <= current + module.NPROC_HEADROOM
+        assert limit - current <= module.NPROC_HEADROOM
+
+    def test_nproc_omitted_when_limit_cannot_be_derived(
+        self, module, monkeypatch
+    ) -> None:
+        """No readable /proc means no --nproc, but --as/--cpu must survive."""
+        monkeypatch.setattr(module, "_uid_task_count", lambda: None)
+        result = module._prlimit_prefix("/usr/bin/prlimit")
+        assert result is not None
+        assert not any(a.startswith("--nproc=") for a in result)
+        assert "--as=1073741824" in result
+        assert any(a.startswith("--cpu=") for a in result)
+
+    def test_nproc_omission_is_logged(
+        self, module, monkeypatch, caplog
+    ) -> None:
+        """Omitting --nproc is fail-open and must be observable, not silent."""
+        monkeypatch.setattr(module, "_uid_task_count", lambda: None)
+        with caplog.at_level(logging.WARNING):
+            result = module._prlimit_prefix("/usr/bin/prlimit")
+        assert result is not None
+        assert any(
+            "--nproc" in record.getMessage()
+            and "unbounded" in record.getMessage()
+            for record in caplog.records
+        )
 
     def test_cpu_limit_includes_timeout_plus_5(self, module) -> None:
         """CPU timeout should be timeout_s + 5."""

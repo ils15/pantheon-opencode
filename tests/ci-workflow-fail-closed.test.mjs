@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+
+const WORKFLOWS_DIR = fileURLToPath(new URL('../.github/workflows/', import.meta.url))
 
 const workflow = readFileSync(
   fileURLToPath(new URL('../.github/workflows/ci.yml', import.meta.url)),
@@ -14,6 +16,12 @@ const workflow = readFileSync(
 const packageJson = JSON.parse(
   readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
 )
+
+const packageLock = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../package-lock.json', import.meta.url)), 'utf8'),
+)
+
+const TUI_WORKSPACE = 'src/plugins/tui'
 
 test('CI dependency installation and required gates are fail-closed', () => {
   assert.doesNotMatch(workflow, /npm ci[^\n]*\|\|[^\n]*npm install/)
@@ -77,10 +85,35 @@ test('CI package evidence verification preserves failures and remains blocking',
 test('CI validates YAML and installs locked dependencies only', () => {
   assert.match(workflow, /python3 scripts\/ci-validate-yaml\.py/)
   assert.match(workflow, /npm ci --ignore-scripts/)
-  assert.match(
-    workflow,
-    /npm ci --prefix src\/plugins\/tui --ignore-scripts/,
-    'CI must install isolated TUI plugin deps from its committed lockfile so test:ts resolves solid-js',
+  // The TUI plugin used to need its own `npm ci --prefix src/plugins/tui`
+  // step. It is removed because it is now REDUNDANT, not because `--prefix`
+  // is invalid — that step does operate in the given directory. Under
+  // `workspaces` the single root `npm ci` above already installs the TUI from
+  // the committed root lockfile.
+  //
+  // That step was, however, an accidental validator: `npm ci` refuses to run
+  // when a manifest and lock disagree, so it would have caught drift in the
+  // nested TUI lock. That role is now filled explicitly by
+  // tests/tui-workspace-lock.test.mjs, which compares
+  // src/plugins/tui/package.json against
+  // src/plugins/tui/package-lock.json's packages[""] — the lock users
+  // actually install from, which no npm command validates under a workspace
+  // parent. What must stay locked is that the root lock actually resolves the
+  // workspace; otherwise a root-only install would silently leave solid-js
+  // unresolvable and test:ts would fail late.
+  assert.ok(
+    packageJson.workspaces?.includes(TUI_WORKSPACE),
+    `package.json must declare the TUI plugin as a workspace (${TUI_WORKSPACE}) so a single root npm ci installs it`,
+  )
+  assert.equal(
+    packageLock.packages?.['node_modules/pantheon-tui']?.link,
+    true,
+    'root package-lock.json must link node_modules/pantheon-tui to the TUI workspace',
+  )
+  assert.equal(
+    packageLock.packages?.[TUI_WORKSPACE]?.name,
+    'pantheon-tui',
+    'root package-lock.json must carry a package entry for the TUI workspace itself',
   )
   assert.match(
     workflow,
@@ -92,20 +125,22 @@ test('CI validates YAML and installs locked dependencies only', () => {
     /pip install[^\n]*-r src\/mcp\/requirements-vision\.txt/,
     'CI must install locked vision deps before pytest so httpx imports resolve',
   )
-  assert.match(
+  // The memory server's vector pipeline (sqlite-vec + fastembed) was removed
+  // outright — no flag, no fallback. memory_mcp_server is stdlib + FTS5 now,
+  // so CI must install NEITHER backend. These guards are inverted from the
+  // original pair, which asserted sqlite-vec was installed and fastembed was
+  // not: they now keep the removal fail-closed, so reintroducing either wheel
+  // into the install step fails here instead of silently restoring ~50MB of
+  // deps and the RSS the deletion was meant to reclaim.
+  assert.doesNotMatch(
     workflow,
-    /pip install[^\n]*sqlite-vec==[\d.]+/,
-    'CI must install the locked sqlite-vec wheel before pytest so memory_mcp_server imports resolve',
+    /pip install[^\n]*sqlite-vec/,
+    'CI must not install sqlite-vec: the memory vector pipeline was removed and the server is FTS5-only',
   )
-  // fastembed (~180MB wheel) is deliberately NOT installed in CI: only
-  // memory_mcp_server needs it, at runtime, and its tests skip gracefully via
-  // pytest.importorskip (issue #94). Removing the top-level import is tracked
-  // by issue #159. This guard keeps that intent fail-closed — if fastembed
-  // ever creeps back into the install step, CI wall-clock and disk regress.
   assert.doesNotMatch(
     workflow,
     /pip install[^\n]*fastembed/,
-    'CI must not install fastembed; tests needing it skip via pytest.importorskip (issue #94)',
+    'CI must not install fastembed: the memory vector pipeline was removed and the server is FTS5-only',
   )
   assert.doesNotMatch(workflow, /pip install[^\n]*\|\|/)
   const testGate = workflow.indexOf('npm test')
@@ -115,14 +150,47 @@ test('CI validates YAML and installs locked dependencies only', () => {
     'Locked pytest-asyncio pip install must run BEFORE the pytest gate',
   )
   assert.ok(
-    workflow.indexOf('sqlite-vec==') < testGate,
-    'Locked sqlite-vec pip install must run BEFORE the pytest gate',
-  )
-  assert.ok(
     workflow.indexOf('requirements-vision.txt') < testGate,
     'Locked vision pip install must run BEFORE the pytest gate',
   )
   assert.doesNotMatch(workflow, /npm install(?!.*--dry-run)/)
   assert.doesNotMatch(workflow, /\|\| true/)
   assert.doesNotMatch(workflow, /echo ["']?(?:test|audit) warnings/i)
+})
+
+test('no workflow installs the TUI plugin separately from the root lockfile', () => {
+  const files = readdirSync(WORKFLOWS_DIR).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))
+  assert.ok(files.length > 0, 'expected at least one workflow to scan')
+
+  const offenders = []
+  for (const f of files) {
+    const src = readFileSync(join(WORKFLOWS_DIR, f), 'utf8')
+    for (const [i, line] of src.split('\n').entries()) {
+      // Install verbs only. `npm run build --prefix src/plugins/tui` is the
+      // TUI dist-freshness gate and legitimately stays prefix-scoped — a
+      // blanket "no --prefix" rule would be wrong and would delete that gate.
+      if (!/\bnpm\s+(?:ci|install)\b/.test(line)) continue
+      if (!line.includes(TUI_WORKSPACE)) continue
+      offenders.push(`${f}:${i + 1}: ${line.trim()}`)
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    'The TUI plugin is a root workspace (package.json "workspaces" + a linked\n' +
+      'entry in the root lockfile), so the root `npm ci` already installs its\n' +
+      'dependencies from the committed root lock. A second, prefix-scoped\n' +
+      'install would bypass that single source of truth and re-introduce the\n' +
+      'dual-lock drift the workspace move removed. Offending lines:\n  - ' +
+      offenders.join('\n  - '),
+  )
+
+  // Guard the other direction: the dist-freshness build is NOT an install and
+  // must survive, or the "stale TUI bundle" check would silently disappear.
+  assert.match(
+    workflow,
+    /npm run build --prefix src\/plugins\/tui/,
+    'the TUI dist-freshness build step must remain; it is a build, not an install',
+  )
 })
