@@ -90,7 +90,6 @@ async function main(): Promise<void> {
   const transforms: string[] = []
   const agents = [{ id: 'zeus', mode: 'subagent', system: 'existing' }]
   const commands = [{ name: 'pantheon-run' }]
-  const skills: unknown[] = []
   const references: string[] = []
   const context = {
     options: {},
@@ -106,13 +105,6 @@ async function main(): Promise<void> {
       },
     },
     aisdk: {},
-    catalog: {
-      transform: async (callback: (draft: never) => void) => {
-        transforms.push('catalog')
-        callback({ model: { get: () => undefined, default: { set: () => {} } } } as never)
-        return registration(disposed, 'catalog')
-      },
-    },
     command: {
       transform: async (callback: (draft: never) => void) => {
         transforms.push('command')
@@ -133,19 +125,14 @@ async function main(): Promise<void> {
         return registration(disposed, 'reference')
       },
     },
-    skill: {
-      transform: async (callback: (draft: never) => void) => {
-        transforms.push('skill')
-        callback({ list: () => skills, source: (source: unknown) => skills.push(source) } as never)
-        return registration(disposed, 'skill')
-      },
-    },
   }
 
   await plugin.setup(context as never)
 
-  test('all 5 transforms are registered', () => {
-    assert.deepEqual(transforms, ['agent', 'catalog', 'command', 'reference', 'skill'])
+  test('all 3 available transforms are registered', () => {
+    // 2.0.16 has no ctx.catalog and no usable skill transform; only agent,
+    // command and reference are attempted.
+    assert.deepEqual(transforms, ['agent', 'command', 'reference'])
   })
 
   test('zeus agent mode is set to primary', () => {
@@ -164,8 +151,12 @@ async function main(): Promise<void> {
     assert.deepEqual(references, ['pantheon-agents'])
   })
 
-  test('skills directory source is added', () => {
-    assert.equal(skills.length, 1)
+  test('removed 2.0.16 domains are recorded as unsupported, not called', () => {
+    // A plugin that called ctx.catalog.transform would throw on 2.0.16 (no
+    // such domain) and, as the host-backed canary proved, that rejection also
+    // kills every later hook registration. The domains are recorded instead.
+    assert.ok(V2_UNSUPPORTED_FEATURES.includes('catalog-transform'))
+    assert.ok(V2_UNSUPPORTED_FEATURES.includes('skill-transform'))
   })
 
   test('no registrations disposed yet', () => {
@@ -241,32 +232,6 @@ async function main(): Promise<void> {
     assert.ok(V2_UNSUPPORTED_FEATURES.includes('command-transform-list'))
   })
 
-  // Case 3: skill list() returns undefined — setup must resolve.
-  let case3Resolved = false
-  try {
-    await plugin.setup(
-      makeBaseContext({
-        skill: {
-          transform: async (callback: (draft: never) => void) => {
-            callback({ list: () => undefined, source: () => {} } as never)
-            return { dispose: async () => {} }
-          },
-        },
-      }) as never,
-    )
-    case3Resolved = true
-  } catch {
-    case3Resolved = false
-  }
-
-  test('setup resolves when skill list() returns undefined', () => {
-    assert.equal(case3Resolved, true)
-  })
-
-  test('skill-transform-list marked unsupported when list() is non-iterable', () => {
-    assert.ok(V2_UNSUPPORTED_FEATURES.includes('skill-transform-list'))
-  })
-
   // Case 4: one domain transform rejects — setup resolves, others still register.
   const case4Registered: string[] = []
   let case4Resolved = false
@@ -280,13 +245,6 @@ async function main(): Promise<void> {
             return { dispose: async () => {} }
           },
         },
-        catalog: {
-          transform: async (callback: (draft: never) => void) => {
-            case4Registered.push('catalog')
-            callback({ model: { get: () => undefined, default: { set: () => {} } } } as never)
-            return { dispose: async () => {} }
-          },
-        },
         command: {
           transform: async () => {
             throw new Error('boom-command-transform')
@@ -296,13 +254,6 @@ async function main(): Promise<void> {
           transform: async (callback: (draft: never) => void) => {
             case4Registered.push('reference')
             callback({ add: () => {} } as never)
-            return { dispose: async () => {} }
-          },
-        },
-        skill: {
-          transform: async (callback: (draft: never) => void) => {
-            case4Registered.push('skill')
-            callback({ list: () => [], source: () => {} } as never)
             return { dispose: async () => {} }
           },
         },
@@ -319,7 +270,7 @@ async function main(): Promise<void> {
 
   test('failing domain marked unsupported without blocking others', () => {
     assert.ok(V2_UNSUPPORTED_FEATURES.includes('command-transform'))
-    assert.deepEqual(case4Registered, ['agent', 'catalog', 'reference', 'skill'])
+    assert.deepEqual(case4Registered, ['agent', 'reference'])
   })
 
   // ─── Tool Registration Tests ────────────────────────────────────────
@@ -442,15 +393,20 @@ async function main(): Promise<void> {
     assert.equal(system.length, 6)
   })
 
-  test('Fase 4 context handler accepts a single string system', async () => {
+  test('Fase 4 context handler normalizes a single string system to SystemParts', async () => {
     const handler = fase4Handlers.context
     assert.ok(handler != null)
     const event = { system: 'solo system', generation: {} }
     await handler(event) // must not throw
     const system: unknown = (event as { system?: unknown }).system
     assert.ok(Array.isArray(system), 'single string should normalize to an array')
-    assert.ok(system.some((s) => typeof s === 'string' && s.includes('solo system')))
-    assert.ok(system.some((s) => typeof s === 'string' && s.includes('Pantheon routing policy')))
+    const parts = system as Array<{ type?: unknown; text?: unknown }>
+    assert.ok(
+      parts.every((s) => s.type === 'text' && typeof s.text === 'string'),
+      'every entry must be a canonical SystemPart',
+    )
+    assert.ok(parts.some((s) => String(s.text).includes('solo system')))
+    assert.ok(parts.some((s) => String(s.text).includes('Pantheon routing policy')))
   })
 
   test('Fase 4 context handler ignores non-array system', async () => {
@@ -469,8 +425,8 @@ async function main(): Promise<void> {
       generation: {},
     }
     await handler(event) // must not throw
-    const count = event.system.filter(
-      (s) => typeof s === 'string' && s.includes('Pantheon routing policy'),
+    const count = (event.system as Array<{ text?: unknown }>).filter(
+      (s) => typeof s?.text === 'string' && s.text.includes('Pantheon routing policy'),
     ).length
     assert.equal(count, 1)
   })
@@ -513,26 +469,33 @@ async function main(): Promise<void> {
       generation: {},
     }
     await handler(event) // must not throw
-    const system = event.system as unknown[]
+    const system = event.system as Array<{ type?: unknown; text?: unknown }>
     assert.equal(system.length, 3)
-    const last = system[2] as { type?: unknown; text?: unknown }
+    assert.ok(
+      system.every((s) => s.type === 'text' && typeof s.text === 'string'),
+      'all entries normalized to SystemParts',
+    )
+    const last = system[2]
     assert.equal(last.type, 'text')
     assert.ok(typeof last.text === 'string' && last.text.includes('Pantheon routing policy'))
   })
 
-  test('Fase 4 context handler preserves single-string behavior', async () => {
+  test('Fase 4 context handler normalizes legacy string arrays to SystemParts', async () => {
     const handler = fase4Handlers.context
     assert.ok(handler != null)
-    const event = { system: 'solo happy', generation: {} }
+    const event = { system: ['solo happy'], generation: {} }
     await handler(event) // happy path preserved
-    const system = (event as { system?: unknown }).system as unknown[]
+    const system = (event as { system?: unknown }).system as Array<{
+      type?: unknown
+      text?: unknown
+    }>
     assert.ok(Array.isArray(system))
-    assert.ok(system.some((s) => typeof s === 'string' && (s as string).includes('solo happy')))
     assert.ok(
-      system.some(
-        (s) => typeof s === 'string' && (s as string).includes('Pantheon routing policy'),
-      ),
+      system.every((s) => s.type === 'text' && typeof s.text === 'string'),
+      'raw strings upgraded to canonical SystemParts (2.0.16 system is Array<SystemPart>)',
     )
+    assert.ok(system.some((s) => String(s.text).includes('solo happy')))
+    assert.ok(system.some((s) => String(s.text).includes('Pantheon routing policy')))
   })
 
   test('agent transform degrades non-string system without throwing', async () => {
