@@ -133,12 +133,18 @@ jobs:
 
       # V2 hook canary. `npm test` above already runs this file through
       # test:node's `tests/pantheon/*.mjs` glob; this step names the gate
-      # explicitly and is where a model credential would be injected. It SKIPS
-      # cleanly when no `opencode` V2 binary is on PATH, so CI stays green
-      # without a host — but a run with a host present FAILS if any covered
-      # hook is silently dead. With a host: `npm run test:hooks`, or
-      # `scripts/test-opencode-v2-sandbox.sh --hooks` in the prepared sandbox.
-      - name: V2 hook canary (proves hook callbacks fire)
+      # explicitly. NOTE WHAT THIS STEP ACTUALLY COVERS: the runner has no
+      # `opencode` V2 binary on PATH, so every host-gated case SKIPS here. The
+      # one case that really runs is the static real-plugin regression guard
+      # (pure readFileSync + regex, deliberately not host-gated).
+      #
+      # To exercise the shipped plugin against a live host, MODE must be `real`:
+      #   PANTHEON_HOOK_CANARY_MODE=real npm run test:hooks
+      # or, against the prepared sandbox's V2 binary (sets MODE=real itself):
+      #   scripts/test-opencode-v2-sandbox.sh --hooks
+      # Plain `npm run test:hooks` is `fixture` mode, which only proves the
+      # hook NAMES are real, not that src/plugin-v2.ts registers them.
+      - name: V2 hook canary (static guards; host-gated cases skip without a V2 binary)
         run: npm run test:hooks
 
       - name: Security audit

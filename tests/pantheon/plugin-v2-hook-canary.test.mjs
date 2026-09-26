@@ -19,11 +19,25 @@
  *     This is the regression gate: the real plugin's lifetime proof is written
  *     by an opt-in host env var (`PANTHEON_HOOK_CANARY_LIFETIME_PROOF`) that
  *     `plugin-v2.ts` only writes when the var is set, so a rename in the real
- *     file changes what the host fires and the assertions below fail. CI runs
- *     this mode on the prepared sandbox (`test-opencode-v2-sandbox.sh --hooks`).
+ *     file changes what the host fires and the assertions below fail. Set it
+ *     with `PANTHEON_HOOK_CANARY_MODE=real npm run test:hooks`, or run
+ *     `scripts/test-opencode-v2-sandbox.sh --hooks`, which sets it for you
+ *     against the prepared sandbox's V2 binary.
+ *
+ * COVERAGE — what runs where, stated exactly:
+ *   - CI runs NEITHER behavioural mode usefully. The `npm run test:hooks` step
+ *     in ci.yml sets no MODE (so it would be `fixture`) and the runner has no
+ *     `opencode` V2 binary on PATH, so every host-gated test SKIPS. CI has no
+ *     real-plugin coverage.
+ *   - The static half — the `real plugin regression guards` test — is pure
+ *     readFileSync + regex and is NOT host-gated, so it does run in CI and in
+ *     `npm run test:hooks` on any machine. That is the only `real`-mode
+ *     protection CI actually gets.
+ *   - Full `real` mode (the real plugin loaded by a live host, its hooks
+ *     observably firing) needs a prepared sandbox: `--hooks`.
  *
  * Requirements (skipped when unavailable, so `npm test` stays green on a
- * machine without a host):
+ * machine without a host — the static guard above is exempt):
  *   - an `opencode` binary (V2) on PATH, or PANTHEON_HOOK_CANARY_BIN
  *   - a usable model, via PANTHEON_HOOK_CANARY_MODEL (provider/model)
  *
@@ -238,7 +252,10 @@ async function messagesText() {
   return JSON.stringify(listed)
 }
 
-/** Read the real plugin source for static guards (real mode only). */
+/**
+ * Read the real plugin source for static guards. Pure file I/O — no host
+ * required, which is why the guard test that uses it is not host-gated.
+ */
 function readPluginSource() {
   return readFileSync(REAL_PLUGIN_SRC, 'utf8')
 }
@@ -340,9 +357,13 @@ test('negative control: session.hook("compacting") NEVER fires', { skip: skipped
   )
 })
 
-test('real plugin regression guards: no dead transform domains, correct compaction name', {
-  skip: skipped || !IS_REAL,
-}, () => {
+// Deliberately NOT gated on `skipped || !IS_REAL`: every assertion below is a
+// pure readFileSync + regex against src/plugin-v2.ts. It needs no host, no
+// model, and no port, so gating it on a live V2 host threw away hostless
+// regression protection for nothing. This is the one test in this file that
+// runs everywhere — plain `npm run test:hooks` on any machine, in either mode.
+// The behavioural half (a callback actually firing) stays host-gated above.
+test('real plugin regression guards: no dead transform domains, correct compaction name', () => {
   const source = readPluginSource()
   // The four mismatches this canary was built to catch. A regression to the
   // shipped 2.0.16-mismatched API would reappear as one of these.
