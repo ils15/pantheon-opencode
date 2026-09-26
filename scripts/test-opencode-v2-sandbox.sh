@@ -783,9 +783,14 @@ run_hooks() {
   fi
   agent="${PANTHEON_HOOK_CANARY_AGENT:-canary}"
   log "[hooks] V2 hook canary against $bin (model $PANTHEON_SANDBOX_MODEL, agent $agent) ..."
+  # PANTHEON_HOOK_CANARY_MODE=real is the point of this path: it makes the host
+  # load src/plugin-v2.ts itself, so a hook that registers under a dead name
+  # fails here. Default `fixture` mode only proves the hook NAMES are real, so
+  # without this the sandbox would never exercise the shipped plugin.
   if PANTHEON_HOOK_CANARY_BIN="$bin" \
     PANTHEON_HOOK_CANARY_MODEL="$PANTHEON_SANDBOX_MODEL" \
     PANTHEON_HOOK_CANARY_AGENT="$agent" \
+    PANTHEON_HOOK_CANARY_MODE=real \
     node --test "$REPO_DIR/tests/pantheon/plugin-v2-hook-canary.test.mjs"; then
     log "Hook canary: PASS."
   else
