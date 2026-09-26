@@ -3,6 +3,6 @@
 # Update deliberately via: pip install -U <pkg> && pip freeze | grep -iE '^(mcp|fastmcp|pyyaml)'
 # Memory search is FTS5 (SQLite stdlib): sqlite-vec and fastembed were removed
 # with the vector pipeline — the server no longer imports either.
-mcp==1.29.0
+mcp==2.2.0
 fastmcp==3.4.6
 pyyaml==6.0.3
