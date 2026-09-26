@@ -24,12 +24,12 @@ jobs:
           fetch-depth: 0
 
       # Fail the PR if any workflow is malformed. A `${{ runner.temp }}` at
-      # job-env scope once made zenodo-cleanup-drafts.yml an unparseable
-      # workflow (HTTP 422 on push, every run a startup failure) because the
-      # `runner` context is only available inside steps. actionlint validates
-      # YAML, expressions and context availability, so that class of error can
-      # no longer be merged. The binary is pinned by version + SHA256; no
-      # third-party action needs to be trusted for this gate.
+      # job-env scope once made a workflow unparseable (HTTP 422 on push, every
+      # run a startup failure) because the `runner` context is only available
+      # inside steps. actionlint validates YAML, expressions and context
+      # availability, so that class of native parse/context error can no longer
+      # be merged. The binary is pinned by version + SHA256; no third-party
+      # action needs to be trusted for this gate.
       - name: Validate GitHub Actions workflows
         env:
           ACTIONLINT_VERSION: '1.7.12'
