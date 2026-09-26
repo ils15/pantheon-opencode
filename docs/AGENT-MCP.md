@@ -87,7 +87,7 @@ need script execution for their core workflows.
 | **nyx** | `memory_sessions` | Monitoring | List sessions for observability analysis |
 | **gaia** | `memory_recall` | Session start | Recall analysis context from previous sessions |
 | **iris** | `memory_recall` | Session start | Recall PR/release context |
-| **mnemosyne** | All 14 tools | Documentation | Full memory management — store, recall, export, consolidate |
+| **mnemosyne** | All 9 pantheon-memory tools | Documentation | Memory management — store, recall, list, inspect (plus 3 `code_*` codemap tools) |
 | **talos** | `memory_recall` | Session start | Recall hotfix context for rapid fixes |
 
 ### Recommended Tool Sequences by Agent

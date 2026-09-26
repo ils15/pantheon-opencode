@@ -15,6 +15,7 @@ import json
 import logging
 import mimetypes
 import os
+import sqlite3
 import struct
 import sys
 from dataclasses import dataclass
@@ -281,23 +282,109 @@ def _strip_provider_prefix(model: str) -> str:
     return model_name if separator else model
 
 
+def _opencode_data_dir() -> Path:
+    """Locate the OpenCode data directory on either V1 or V2 hosts."""
+    return Path.home() / ".local" / "share" / "opencode"
+
+
+def _key_from_credential_db(provider: str) -> str | None:
+    """Read a provider key from the V2 SQLite credential store.
+
+    OpenCode V2 moved credentials out of ``<data dir>/auth.json`` and into a
+    ``credential`` table in ``<data dir>/opencode.db``; the V1 JSON file no
+    longer exists on a V2 host, so reading it alone left auth silently
+    unresolvable. The value is plaintext JSON of the form
+    ``{"type": "key", "key": "..."}``, so the stdlib is sufficient — no new
+    dependency.
+
+    The database is opened read-only via a URI so a missing or locked file
+    cannot be created or mutated by a health check.
+
+    Args:
+        provider: Integration id to look up, e.g. ``"opencode-go"``.
+
+    Returns:
+        The stored key, or None when the store, table, row, or key is absent.
+    """
+    db_path = _opencode_data_dir() / "opencode.db"
+    if not db_path.is_file():
+        return None
+    uri = f"file:{db_path}?mode=ro"
+    conn = None
+    try:
+        conn = sqlite3.connect(uri, uri=True, timeout=5.0)
+        row = conn.execute(
+            "SELECT value FROM credential "
+            "WHERE integration_id = ? AND active = 1 LIMIT 1",
+            (provider,),
+        ).fetchone()
+    except (sqlite3.Error, ValueError):
+        _logger.warning(
+            "Could not read the OpenCode credential store at %s", db_path
+        )
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+    if row is None:
+        return None
+    try:
+        return _extract_key(json.loads(row[0]))
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
 def _resolve_auth() -> tuple[str | None, str]:
-    """Resolve auth in env-first, then OpenCode auth-store order."""
+    """Resolve auth in env-first, then OpenCode credential-store order.
+
+    Precedence, highest first:
+
+    1. ``PANTHEON_OPENCODE_API_KEY``
+    2. ``OPENCODE_API_KEY``
+    3. the V2 SQLite ``credential`` table (``opencode-go``, then ``opencode``)
+    4. a legacy V1 ``<data dir>/auth.json`` file, for hosts that still have one
+
+    The V1 file is checked last and only when it exists; it is absent on a V2
+    host. When no source yields a key this returns None and the caller raises,
+    so the failure names the paths and env vars that were tried rather than
+    surfacing as a confusing 401 from the gateway.
+    """
     model = os.getenv("PANTHEON_VISION_MODEL") or DEFAULT_MODEL
     env_key = os.getenv("PANTHEON_OPENCODE_API_KEY") or os.getenv("OPENCODE_API_KEY")
     if env_key:
         return env_key, _endpoint_for_model(model)
 
-    auth_path = Path.home() / ".local" / "share" / "opencode" / "auth.json"
-    try:
-        auth = json.loads(auth_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        auth = {}
-    if isinstance(auth, dict):
-        for provider, endpoint in (("opencode-go", GO_ENDPOINT), ("opencode", OPENCODE_ENDPOINT)):
-            key = _extract_key(auth.get(provider))
-            if key:
-                return key, endpoint
+    for provider, endpoint in (
+        ("opencode-go", GO_ENDPOINT),
+        ("opencode", OPENCODE_ENDPOINT),
+    ):
+        key = _key_from_credential_db(provider)
+        if key:
+            return key, endpoint
+
+    auth_path = _opencode_data_dir() / "auth.json"
+    if auth_path.is_file():
+        try:
+            auth = json.loads(auth_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            auth = {}
+        if isinstance(auth, dict):
+            for provider, endpoint in (
+                ("opencode-go", GO_ENDPOINT),
+                ("opencode", OPENCODE_ENDPOINT),
+            ):
+                key = _extract_key(auth.get(provider))
+                if key:
+                    return key, endpoint
+
+    _logger.error(
+        "No OpenCode credential found. Set PANTHEON_OPENCODE_API_KEY (or "
+        "OPENCODE_API_KEY), or store a key for 'opencode-go' in %s "
+        "(tried: env, the credential table in %s, and the legacy %s).",
+        _opencode_data_dir() / "opencode.db",
+        _opencode_data_dir() / "opencode.db",
+        auth_path,
+    )
     return None, _endpoint_for_model(model)
 
 
@@ -380,7 +467,12 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
     """Send one multimodal request to the selected OpenCode gateway."""
     key, endpoint = _resolve_auth()
     if not key:
-        raise VisionError("OpenCode API key not configured.")
+        raise VisionError(
+            "OpenCode API key not configured. Set PANTHEON_OPENCODE_API_KEY or "
+            "OPENCODE_API_KEY, or store a key for 'opencode-go' in the OpenCode "
+            "credential database (~/.local/share/opencode/opencode.db). "
+            "See the pantheon.vision error log for the paths tried."
+        )
     safe_prompt = prompt.replace(key, "[redacted]")
     content: list[dict[str, Any]] = [
         {"type": "text", "text": safe_prompt},

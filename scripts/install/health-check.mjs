@@ -182,25 +182,12 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
       results.failed.push({ check: 'mcp-sdk', detail: 'NOT INSTALLED — all MCP servers will fail' })
     }
   }
-  // Check 4: chromadb importable
-  if (python) {
-    const result = spawnSync(
-      python,
-      ['-c', 'from fastembed import TextEmbedding; print(TextEmbedding.__module__)'],
-      { stdio: 'pipe' },
-    )
-    if (result.status === 0) {
-      results.passed.push({
-        check: 'chromadb',
-        detail: result.stdout.toString().trim(),
-      })
-    } else {
-      results.warnings.push({
-        check: 'chromadb',
-        detail: 'NOT INSTALLED — semantic search will fail',
-      })
-    }
-  }
+  // Check 4: the memory server's only search backend is the stdlib's own
+  // SQLite FTS5 (check 5 below). The former "chromadb importable" probe
+  // imported fastembed, which the vector pipeline removal deleted, so it
+  // warned "semantic search will fail" on every install. Removed rather than
+  // repointed: check 5 already asserts the capability that matters, and a
+  // second sqlite3 import probe would tell us nothing new.
 
   // Check 5: SQLite FTS5 available
   if (python) {

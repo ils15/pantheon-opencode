@@ -12,6 +12,9 @@
     "./plugin-v2": "./src/plugin-v2.ts",
     "./v2-bridge": "./src/pantheon/v2-bridge.ts"
   },
+  "workspaces": [
+    "src/plugins/tui"
+  ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs && node scripts/sync-tui.mjs",
     "prepare": "husky",
@@ -39,6 +42,7 @@
     "hooks:update": "pre-commit autoupdate",
     "test:security": "npm run secret-scan",
     "test:node": "node --test tests/*.mjs tests/pantheon/*.mjs",
+    "coverage": "echo 'Node coverage (report-only, NO threshold is enforced).' && echo 'Covers: the .mjs/.js modules under scripts/, src/ and bin/ that test:node exercises.' && echo 'Does NOT cover: test:ts (hand-rolled tsx loop, no node --test runner) and test:ci (pytest).' && echo '             TypeScript under src/ (41 files) is therefore entirely unmeasured here.' && echo '' && node --test --experimental-test-coverage --test-coverage-include='scripts/**/*.mjs' --test-coverage-include='src/**/*.mjs' --test-coverage-include='src/**/*.js' --test-coverage-include='bin/**/*.mjs' tests/*.mjs tests/pantheon/*.mjs",
     "test:ts": "for f in tests/pantheon/*.test.ts; do if [ \"$f\" = tests/pantheon/plugin-v2-contract.test.ts ]; then NODE_OPTIONS=--conditions=import tsx \"$f\"; else tsx \"$f\"; fi || exit 1; done",
     "test:all": "npm run test:ci && npm run test:node && npm run test:ts",
     "test": "npm run test:all",
@@ -99,6 +103,9 @@
     "husky": "^9.1.7",
     "tsx": "4.23.13",
     "typescript": "6.0.3"
+  },
+  "overrides": {
+    "rolldown": "1.2.0"
   },
   "repository": {
     "type": "git",

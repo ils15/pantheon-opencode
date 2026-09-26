@@ -114,7 +114,7 @@ Mnemosyne executes the expanded compression pipeline. When Zeus delegates compre
    - Append new entries to `_xref/index.md`
    - Increment `_xref/_next_id.json`
 
-7. **Auto-index vector memory**: Run `scripts/vector_memory/index.index_all()` to index new entries into the Level 3 Vector Memory system. If sentence-transformers is not installed, indexes FTS5 only.
+7. **Auto-index memory**: Store the new entries with the `memory_store` MCP tool (namespace `memory-bank`) so `memory_search` can find them. Search is FTS5 (BM25) keyword retrieval — there is no embedding step to run or report on.
 
 8. **Report**: Return summary: "Compressed. 2 CRITICAL, 1 HIGH, 3 STANDARD. Budget: 15/20 lines. Cross-refs: +2 entities, +1 decision. Indexed X new, skipped Y duplicates."
 
@@ -127,16 +127,16 @@ Mnemosyne executes the expanded compression pipeline. When Zeus delegates compre
 - NEVER write over existing entries (idempotency by date+phase+agent hash)
 - NEVER delete _xref/ entries (append-only)
 
-##  Semantic Recall Handler (Level 3)
+##  Recall Handler (Level 3)
 
-Mnemosyne provides semantic recall via the Level 3 Vector Memory system:
+Mnemosyne recalls stored entries with the `memory_search` MCP tool:
 
 **Command:** `@mnemosyne Recall "<query>" [--top-k 5] [--type adr|subtask|wisdom|impl|decision] [--agent hermes] [--since 2026-01-01] [--tags auth,jwt]`
 
 **How it works:**
-1. Calls `scripts/vector_memory/query.recall()` with the provided parameters
-2. Returns ranked, structured results with scores and source paths
-3. Uses fallback chain: vector KNN → FTS5 BM25 → flat grep
+1. Calls `memory_search` with the query, namespace, and `top_k`
+2. Returns ranked, structured results with BM25 scores and source keys
+3. Retrieval is lexical: stopwords are dropped and terms of 4+ characters are prefix-matched, so queries should use words that actually appear in the stored text. Filter by type/agent/tags in the caller — `memory_search` filters on `namespace` only.
 
 **Usage examples:**
 ```
@@ -146,14 +146,13 @@ Mnemosyne provides semantic recall via the Level 3 Vector Memory system:
 ```
 
 **Integration with compress_context:**
-After each `compress_context` run, automatically index new entries:
-1. Run `scripts/vector_memory/index.index_all()`
+After each `compress_context` run, store the new entries with `memory_store`:
+1. Store each new entry with namespace `memory-bank` and a `memory-bank/<id>` key
 2. Report: "Indexed X new memories, skipped Y duplicates"
-3. If sentence-transformers is not installed, skip vector indexing but still index FTS5
 
 **Integration with Close sprint:**
 When `Close sprint` is called, before wiping .tmp/:
-1. Run final batch: `index_all()`
+1. Store the final batch of entries
 2. Report final index stats
 
 ## Invocation Rules
@@ -164,8 +163,8 @@ When `Close sprint` is called, before wiping .tmp/:
 ##  Quick-Index Handler (Tier 1 — Background Agent Results)
 
 Called automatically by Zeus when any agent returns a subtask_summary
-(background or foreground). Persists results into Vector Memory immediately,
-no Themis needed.
+(background or foreground). Persists results via the `memory_store` MCP tool
+immediately, no Themis needed.
 
 **Trigger patterns:**
 - Background agent completes → Zeus calls Mnemosyne Quick-index
@@ -175,9 +174,9 @@ no Themis needed.
 **Command:** `@mnemosyne Quick-index <subtask_summary_json>`
 
 **What it does:**
-1. Calls `scripts/vector_memory/index.quick_index()` with the summary dict
-2. Auto-generates tags from keywords (no manual specification needed)
-3. Reports: "Indexed: {type} from @{agent} ({memory_id})"
+1. Calls `memory_store` with the summary fields
+2. Stores under a `type/agent` namespace and a `<type>:<agent>:<date>` key
+3. Reports: "Indexed: {type} from @{agent} (namespace {namespace})"
 
 **Parameters (from subtask_summary):**
 | Field | Source | Required |
@@ -194,7 +193,7 @@ no Themis needed.
 **Safety:**
 - [OK] Safe to call on partial results (indexes what's available)
 - [OK] Safe to call multiple times (idempotent)
-- [OK] Works without sentence-transformers (FTS5 only)
+- [OK] Works with no embedding backend (FTS5 keyword search only)
 - [FAIL] Does NOT generate ZZ artifact (that's Tier 2)
 - [FAIL] Does NOT update 01-active-context.md (that's Tier 2)
 

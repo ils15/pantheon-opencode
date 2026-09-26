@@ -67,20 +67,6 @@ def _force_expiry(module, namespace: str, key: str) -> None:
     conn.commit()
 
 
-def _wait_for_early_second(max_fraction: float = 0.2) -> None:
-    """Block until the wall clock is early in a fresh second.
-
-    ``kv_get`` evaluates ``datetime(expires_at) > datetime('now')`` in SQLite,
-    which truncates ``expires_at``'s microseconds to whole seconds. A store
-    that lands in the last few milliseconds of a second can therefore be
-    judged already expired by the *immediate* read that crosses the second
-    boundary. Starting real-time TTL tests in the first 20% of a second leaves
-    >0.8s of headroom, keeping the assertion deterministic regardless of load.
-    """
-    while time.time() % 1.0 > max_fraction:
-        time.sleep(0.005)
-
-
 def _force_old_created(module, namespace: str, key: str) -> None:
     """Backdate created_at so older_than_days filters match."""
     conn = module._db("project")
@@ -191,27 +177,86 @@ class TestKVStoreGet:
         result = await server.call_tool("kv_get", {"namespace": "ns", "key": "k"})
         assert _json(result) == "v"
 
-    async def test_ttl_expiry_real_time(self, server: FastMCP) -> None:
-        """A 1s TTL entry must be gone after ~1.5s (crash-recovery path).
+    async def test_ttl_expiry_real_time(self, server: FastMCP, module: Any) -> None:
+        """A 1s TTL entry is readable immediately and gone once its deadline passes.
 
-        ``kv_get`` compares ``datetime(expires_at)`` against ``datetime('now')``
-        in SQLite, which truncates microseconds to whole seconds. Store early in
-        a fresh second (deterministic; see ``_wait_for_early_second``) so the
-        immediate read cannot race the truncated expiry boundary, then sleep
-        past the TTL with margin.
+        The store writes ``expires_at`` with microsecond precision and the read
+        compares ``julianday(expires_at) > julianday('now')``, so both sides
+        resolve sub-second time and the boundary is exact rather than truncated
+        to the whole second (the old ``datetime()`` comparison).
+
+        The post-expiry check waits on the *stored deadline itself* — polling
+        the same wall clock the server compares against — instead of a fixed
+        ``sleep``. A fixed sleep is not deterministic on hosts that step the
+        clock (a backward adjustment can leave less than the TTL elapsed), while
+        the poll simply keeps waiting until the deadline has genuinely passed.
         """
-        _wait_for_early_second()
         await server.call_tool(
             "kv_store", {"namespace": "ns", "key": "k", "value": "v", "ttl": 1}
         )
-        # Immediately readable (same truncated second as the store)
+        # expires_at == store_time + 1s, so an immediate read is always < expiry.
         assert (
             _json(await server.call_tool("kv_get", {"namespace": "ns", "key": "k"}))
             == "v"
         )
-        time.sleep(1.5)
+
+        stored = module._db("project").execute(
+            "SELECT expires_at FROM kv_store WHERE namespace = ? AND key = ?",
+            ("ns", "k"),
+        ).fetchone()[0]
+        deadline = datetime.fromisoformat(stored)
+        # Small margin so the read that follows sees ``now`` strictly past the
+        # deadline regardless of sub-millisecond scheduling jitter.
+        while datetime.now(UTC) <= deadline + timedelta(milliseconds=50):
+            time.sleep(0.02)
+
         result = await server.call_tool("kv_get", {"namespace": "ns", "key": "k"})
         assert _json(result) is None, "TTL entry must expire after the TTL elapses"
+
+    async def test_ttl_boundary_uses_sub_second_precision(
+        self, server: FastMCP, module: Any
+    ) -> None:
+        """Expiry must be decided at sub-second precision, not whole seconds.
+
+        Under the old ``datetime(expires_at) > datetime('now')`` comparison both
+        operands were truncated to whole seconds, so a row that expires later in
+        the *same* wall-clock second as ``now`` was misread as expired. With
+        ``julianday()`` the write's microseconds are honoured: a row expiring a
+        fraction of a second in the past is gone, one a fraction in the future
+        survives.
+        """
+        now = datetime.now(UTC)
+        conn = module._db("project")
+        for key, offset_seconds in (("past", -0.5), ("future", 0.5)):
+            conn.execute(
+                "INSERT INTO kv_store (namespace, key, value, expires_at, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
+                (
+                    "ttl-boundary",
+                    key,
+                    f"v-{key}",
+                    (now + timedelta(seconds=offset_seconds)).isoformat(),
+                ),
+            )
+        conn.commit()
+
+        assert (
+            _json(
+                await server.call_tool(
+                    "kv_get", {"namespace": "ttl-boundary", "key": "past"}
+                )
+            )
+            is None
+        ), "a row expired a fraction of a second ago must not be returned"
+        assert (
+            _json(
+                await server.call_tool(
+                    "kv_get", {"namespace": "ttl-boundary", "key": "future"}
+                )
+            )
+            == "v-future"
+        ), "a row expiring a fraction of a second from now must still be returned"
 
     async def test_ttl_expiry_forced(self, server: FastMCP, module) -> None:
         """Backdating expires_at must make kv_get return None."""
@@ -1537,6 +1582,282 @@ class TestContextCheckpoints:
 
 
 # =============================================================================
+# Validation Reporting
+# =============================================================================
+# Regression cover for the fail-fast defect: validation stopped at the FIRST
+# invalid field, so a caller discovered ``goal`` and ``phase`` in two
+# consecutive failed calls. One call must now name every invalid field, with
+# the argument path, the received type, and a minimal example.
+
+
+# The two payloads from the reproduced session, verbatim.
+REPRO_ATTEMPT_1 = json.dumps(
+    {
+        "goal": "Complete proposed frontend contrast/accessibility waves, ...",
+        "phase": "finish-contrast-wave",
+        "pending": ["a", "b"],
+        "branch": "fix/remaining-contrast-failures",
+        "agent": "aphrodite",
+    }
+)
+REPRO_ATTEMPT_2 = json.dumps(
+    {
+        "goal": {"title": "...", "scope": "..."},
+        "phase": 1,
+        "turn_count": 1,
+        "agent": "aphrodite",
+        "summary": "...",
+        "pending": ["a"],
+        "branch": "fix/remaining-contrast-failures",
+    }
+)
+REPRO_VALID = json.dumps(
+    {
+        "goal": {"objective": "ship contrast waves", "status": "active"},
+        "phase": {"current": 1, "total": 3, "name": "contrast"},
+        "turn_count": 1,
+        "agent": "aphrodite",
+    }
+)
+
+
+class TestValidationReporting:
+    """Every invalid argument is reported in one call, with path and type."""
+
+    async def _save(self, server: FastMCP, content: str, **overrides) -> str:
+        """Call context_save expecting failure; return the error text."""
+        args = {
+            "slug": "validation",
+            "key": "phase:1",
+            "content": content,
+            "session_id": "validation-session",
+            **overrides,
+        }
+        with pytest.raises(ToolError) as excinfo:
+            await server.call_tool("context_save", args)
+        return str(excinfo.value)
+
+    async def test_repro_attempt_1_reports_goal_and_phase_together(
+        self, server: FastMCP
+    ) -> None:
+        """Attempt 1 (both sections as strings) must name both in one message."""
+        message = await self._save(server, REPRO_ATTEMPT_1)
+
+        assert "content.goal must be an object (got string)" in message
+        assert "content.phase must be an object (got string)" in message
+        # Both violations counted, not just the first.
+        assert "2 invalid arguments" in message
+        # One example block, minimal and correct for each reported field.
+        assert "example:" in message
+        assert message.count("example:") == 1
+        assert 'content.goal={"objective"' in message
+        assert 'content.phase={"current":1' in message
+
+    async def test_repro_attempt_2_reports_only_phase_with_number(
+        self, server: FastMCP
+    ) -> None:
+        """Attempt 2 (phase as the number 1) names phase only, got number."""
+        message = await self._save(server, REPRO_ATTEMPT_2)
+
+        assert "content.phase must be an object (got number)" in message
+        # goal was a valid object: it must NOT be reported.
+        assert "content.goal" not in message
+        # No count header for a single violation, but the example still ships.
+        assert "invalid arguments" not in message
+        assert 'content.phase={"current":1' in message
+
+    async def test_historical_message_substrings_survive(
+        self, server: FastMCP
+    ) -> None:
+        """Existing consumers matching the old wording must still match."""
+        assert "goal must be an object" in await self._save(server, REPRO_ATTEMPT_1)
+        assert "phase must be an object" in await self._save(server, REPRO_ATTEMPT_1)
+        assert (
+            "ttl must be between 1 and 31536000 seconds"
+            in await self._save(server, REPRO_ATTEMPT_1, ttl=0)
+        )
+
+    async def test_repro_valid_payload_saves_and_reads_back(
+        self, server: FastMCP
+    ) -> None:
+        """Proper objects save, and context_get returns the stored content."""
+        result = await server.call_tool(
+            "context_save",
+            {
+                "slug": "validation",
+                "key": "phase:1",
+                "content": REPRO_VALID,
+                "session_id": "validation-session",
+            },
+        )
+        assert _json(result)["status"] == "stored"
+
+        stored = _json(
+            await server.call_tool(
+                "context_get",
+                {
+                    "slug": "validation",
+                    "key": "phase:1",
+                    "session_id": "validation-session",
+                },
+            )
+        )
+        assert json.loads(stored) == json.loads(REPRO_VALID)
+
+    async def test_absent_goal_and_phase_are_accepted_not_reported(
+        self, server: FastMCP
+    ) -> None:
+        """Absent sections are legal, not errors.
+
+        ``goal``/``phase`` are OPTIONAL: the documented heartbeat checkpoint is
+        ``{"status": "alive", "last_action": ..., "turn_count": N}`` with
+        neither section (src/instructions/zeus-anti-stall.instructions.md).
+        Requiring them would break that pattern and would make the read path
+        fail closed on already-stored checkpoints, so absence is accepted and
+        the wording stays reserved for present-but-wrongly-typed values.
+        """
+        without_goal = json.dumps(
+            {"phase": {"current": 1}, "turn_count": 1, "summary": "..."}
+        )
+        without_phase = json.dumps(
+            {"goal": {"objective": "..."}, "turn_count": 1, "summary": "..."}
+        )
+        for index, content in enumerate((without_goal, without_phase)):
+            result = await server.call_tool(
+                "context_save",
+                {
+                    "slug": "validation",
+                    "key": f"optional:{index}",
+                    "content": content,
+                    "session_id": "validation-session",
+                },
+            )
+            assert _json(result)["status"] == "stored", content
+
+    async def test_required_wording_differs_from_object_wording(
+        self, server: FastMCP
+    ) -> None:
+        """An absent required argument never reads like a wrong-typed section."""
+        message = await self._save(server, REPRO_VALID, session_id="   ")
+        assert "session_id is required and must be non-empty" in message
+        # 'required' is distinct vocabulary from the object-shape complaint.
+        assert "session_id must be an object" not in message
+
+    async def test_all_argument_families_accumulate_in_one_call(
+        self, server: FastMCP
+    ) -> None:
+        """content, ttl, revision, and scope violations all surface together."""
+        message = await self._save(
+            server,
+            REPRO_ATTEMPT_1,
+            ttl=0,
+            revision=0,
+            scope="bogus",
+        )
+
+        assert "content.goal must be an object (got string)" in message
+        assert "content.phase must be an object (got string)" in message
+        assert "ttl must be between 1 and 31536000 seconds (got 0)" in message
+        assert "revision must be between 1 and" in message
+        assert "scope must be 'global' or 'project'" in message
+        # goal, phase, ttl, revision, scope.
+        assert "5 invalid arguments" in message
+
+    async def test_nested_violation_reports_the_full_path(
+        self, server: FastMCP
+    ) -> None:
+        """A bad value inside a valid object is reported with its full path."""
+        # 'x' * 5000 exceeds MAX_GOAL_OBJECTIVE_LENGTH (4096 bytes).
+        content = json.dumps(
+            {
+                "goal": {"objective": "x" * 5000},
+                "phase": {"current": -1},
+            }
+        )
+        message = await self._save(server, content)
+
+        assert "content.goal.objective exceeds its size limit" in message
+        assert "content.phase.current must be a non-negative integer" in message
+        assert "2 invalid arguments" in message
+
+    async def test_kv_store_reports_ttl_and_scope_together(
+        self, server: FastMCP
+    ) -> None:
+        """kv_store accumulates a bad TTL and a bad scope in one message."""
+        with pytest.raises(ToolError) as excinfo:
+            await server.call_tool(
+                "kv_store",
+                {
+                    "namespace": "validation",
+                    "key": "k",
+                    "value": "v",
+                    "ttl": 0,
+                    "scope": "bogus",
+                },
+            )
+        message = str(excinfo.value)
+
+        assert "ttl must be between 1 and 31536000 seconds (got 0)" in message
+        assert "scope must be 'global' or 'project' (got 'bogus')" in message
+        assert "2 invalid arguments" in message
+
+    async def test_tail_must_be_an_array(self, server: FastMCP) -> None:
+        """A non-array tail is reported as an array violation, not a size one."""
+        message = await self._save(server, json.dumps({"tail": "not-a-list"}))
+        assert "content.tail must be an array (got string)" in message
+
+    async def test_non_object_content_reports_received_type(
+        self, server: FastMCP
+    ) -> None:
+        """A JSON array payload names the received type."""
+        message = await self._save(server, json.dumps([1, 2, 3]))
+        assert "structured context content must be a JSON object" in message
+        assert "(got array)" in message
+        # The path must not stutter against the message's own wording.
+        assert "content structured content" not in message
+
+    async def test_context_save_description_documents_section_shapes(
+        self, server: FastMCP
+    ) -> None:
+        """The tool's own description teaches the required shapes up front."""
+        tools = {t.name: t for t in await server.list_tools()}
+        description = tools["context_save"].description or ""
+        assert "must each be JSON OBJECTS" in description
+        assert "'tail' must be a JSON ARRAY" in description
+        # 'phase' is disambiguated in one clause without renaming the field.
+        assert "NOT a phase counter" in description
+        assert "All sections are optional" in description
+
+    async def test_context_content_schema_carries_shapes(
+        self, server: FastMCP
+    ) -> None:
+        """The declared input schema states goal/phase must be objects."""
+        tools = {t.name: t for t in await server.list_tools()}
+        content_schema = tools["context_save"].inputSchema["properties"]["content"]
+        description = content_schema.get("description", "")
+
+        assert "'phase', 'delegations' and 'heartbeat' must be objects" in description
+        assert "'tail' must be an array" in description
+        assert "not a counter" in description
+        # The declared JSON type stays a string: content is a JSON string.
+        assert content_schema["type"] == "string"
+
+    async def test_rehydrate_reports_slug_and_session_together(
+        self, server: FastMCP
+    ) -> None:
+        """context_rehydrate accumulates both identifier violations."""
+        with pytest.raises(ToolError) as excinfo:
+            await server.call_tool(
+                "context_rehydrate", {"slug": "", "session_id": ""}
+            )
+        message = str(excinfo.value)
+
+        assert "slug must be a non-empty string" in message
+        assert "session_id is required and must be non-empty" in message
+        assert "2 invalid arguments" in message
+
+
+# =============================================================================
 # Isolation
 # =============================================================================
 
@@ -1596,3 +1917,149 @@ class TestIsolation:
         assert data["total_entries"] == 2
         assert data["namespaces"]["ns"]["count"] == 2
         assert data["db_size_bytes"] > 0
+
+
+# =============================================================================
+# Revision column (Wave 1b)
+# =============================================================================
+# `updated_at` used to double as the context monotonic revision: the write
+# stored str(revision) into a column whose declared default is
+# datetime('now'), so one column carried two incompatible formats. The
+# revision now lives in a dedicated nullable `revision` column and
+# `updated_at` is always a datetime. Readers still resolve the legacy layout
+# so existing rows keep their monotonicity — there is deliberately NO backfill.
+
+
+class TestRevisionColumn:
+    """Revision is stored in its own column; legacy rows still resolve."""
+
+    def test_schema_declares_a_dedicated_revision_column(self, module) -> None:
+        """CREATE_SQL must declare `revision` separately from `updated_at`."""
+        assert "revision INTEGER" in module.CREATE_SQL
+        assert "updated_at TEXT NOT NULL DEFAULT (datetime('now'))" in (
+            module.CREATE_SQL
+        )
+
+    async def test_write_stores_revision_and_datetime_updated_at(
+        self, server: FastMCP, module
+    ) -> None:
+        """A context write must not put a bare integer in updated_at."""
+        await server.call_tool(
+            "context_save",
+            {
+                "slug": "revcol",
+                "key": "phase:1",
+                "content": '{"a": 1}',
+                "session_id": "revcol-session",
+            },
+        )
+        conn = module._db("project")
+        row = conn.execute(
+            "SELECT revision, updated_at FROM kv_store WHERE key = 'phase:1'"
+        ).fetchone()
+        assert row is not None
+        # updated_at is a datetime again, never a revision integer.
+        assert isinstance(row[1], str) and not row[1].isdigit()
+        assert row[1][:4].isdigit() and "-" in row[1]
+        # The revision is an integer in its own column.
+        assert isinstance(row[0], int) and row[0] > 0
+
+    def test_legacy_row_with_revision_in_updated_at_still_resolves(
+        self, module
+    ) -> None:
+        """A pre-migration row keeps its revision via the legacy fallback.
+
+        This is the reason there is no backfill: an old row has revision IS
+        NULL and the revision in updated_at. If a reader only consulted the
+        new column it would restart the counter and could reissue a revision
+        an existing row already used.
+        """
+        legacy_revision = 1755787200000000000
+        assert module._row_revision((None, str(legacy_revision))) == legacy_revision
+        # New layout: dedicated column wins.
+        assert module._row_revision((42, "2026-08-21 12:00:00")) == 42
+        # Neither column usable.
+        assert module._row_revision((None, "2026-08-21 12:00:00")) == 0
+        assert module._row_revision(None) == 0
+
+    async def test_monotonic_across_a_legacy_row(
+        self, server: FastMCP, module
+    ) -> None:
+        """A save after a legacy row must exceed that row's revision."""
+        await server.call_tool(
+            "context_save",
+            {
+                "slug": "mono",
+                "key": "phase:1",
+                "content": '{"a": 1}',
+                "session_id": "mono-session",
+            },
+        )
+        conn = module._db("project")
+        # Back-date the row into the legacy layout: revision NULL, revision
+        # living in updated_at.
+        legacy_revision = 1755787200000000000
+        conn.execute(
+            "UPDATE kv_store SET updated_at = ?, revision = NULL WHERE key = 'phase:1'",
+            (str(legacy_revision),),
+        )
+        conn.commit()
+        assert module._current_context_revision(
+            conn, "checkpoint:mono:mono-session", "phase:1"
+        ) == legacy_revision
+        nxt = module._next_context_revision(
+            conn, "checkpoint:mono:mono-session", "phase:1"
+        )
+        assert nxt > legacy_revision
+
+    def test_migration_is_additive_and_not_destructive(self, module) -> None:
+        """The column is added with ALTER TABLE; no row is rewritten."""
+        assert "ALTER TABLE kv_store ADD COLUMN" in module._ADD_REVISION_SQL
+        # No UPDATE against existing rows anywhere in the migration.
+        assert "UPDATE" not in module._ADD_REVISION_SQL.upper()
+
+    async def test_heartbeat_refresh_advances_dedicated_revision(
+        self, server: FastMCP, module
+    ) -> None:
+        """The heartbeat TTL refresh must advance the dedicated revision column.
+
+        ``_refresh_heartbeat_ttl`` historically wrote ``str(revision)`` into
+        ``updated_at``. Once readers preferred the dedicated ``revision``
+        column, that bump became invisible: the column stayed put and
+        ``updated_at`` stopped being a datetime.
+        """
+        sid = "hb-rev-session"
+        ns = f"checkpoint:hb-rev:{sid}"
+        await server.call_tool(
+            "context_save",
+            {
+                "slug": "hb-rev",
+                "key": "heartbeat",
+                "content": '{"status": "alive"}',
+                "session_id": sid,
+            },
+        )
+        conn = module._db("project")
+        before = conn.execute(
+            "SELECT revision FROM kv_store WHERE namespace = ? AND key = 'heartbeat'",
+            (ns,),
+        ).fetchone()[0]
+
+        # Shrink the stored expiry below a fresh 300s TTL so the refresh fires.
+        near = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
+        conn.execute(
+            "UPDATE kv_store SET expires_at = ? "
+            "WHERE namespace = ? AND key = 'heartbeat'",
+            (near, ns),
+        )
+        conn.commit()
+
+        module._refresh_heartbeat_ttl(conn, ns)
+
+        revision, updated_at = conn.execute(
+            "SELECT revision, updated_at FROM kv_store "
+            "WHERE namespace = ? AND key = 'heartbeat'",
+            (ns,),
+        ).fetchone()
+        assert revision > before, "refresh must advance the dedicated revision column"
+        assert isinstance(updated_at, str) and not updated_at.isdigit()

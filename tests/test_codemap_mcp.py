@@ -236,10 +236,10 @@ class TestMcpIntegration:
     """Integration via memory_mcp_server wrappers — isolated DB via _set_memory_dir."""
 
     def test_mcp_code_index_and_query_isolated(self, tmp_path: Path) -> None:
-        # memory_mcp_server imports fastembed (~180MB) at module top level;
-        # skip when the embedding backend is absent so the rest of the
-        # codemap suite still runs (issue #94).
-        pytest.importorskip("fastembed")
+        # No importorskip: memory_mcp_server is stdlib + FTS5 only since the
+        # vector pipeline was removed, so importing it no longer pulls a heavy
+        # optional wheel. Gating on a backend the server does not use would
+        # silently drop this integration coverage.
         import src.mcp.memory_mcp_server as mem
 
         mem._set_memory_dir(tmp_path / "memdb")
@@ -251,7 +251,6 @@ class TestMcpIntegration:
         assert any(x["name"] == "IsolatedXYZ" for x in res)
 
     def test_mcp_code_neighbors_isolated(self, tmp_path: Path) -> None:
-        pytest.importorskip("fastembed")
         import src.mcp.memory_mcp_server as mem
 
         mem._set_memory_dir(tmp_path / "memdb2")

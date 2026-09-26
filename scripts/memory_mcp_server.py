@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Pantheon Memory MCP Server — lightweight, zero heavy deps.
 
-Uses sqlite-vec (vector extension) + fastembed (ONNX, no PyTorch)
-for semantic memory with hybrid search (vector cosine + FTS5 BM25).
+Search is FTS5 (BM25) only. The vector pipeline (sqlite-vec + fastembed,
+~50MB of wheels and ~185MB RSS) was removed outright: the prefix-matched OR
+query it fused against returned a candidate pool so polluted that the vector
+half was compensating for a query bug rather than adding recall. See
+``_build_fts_query`` for the query form that replaced it.
 
-Total footprint: ~50MB (sqlite-vec + fastembed) vs ~1.4GB (old chromadb).
+Recall is therefore purely lexical. A query that shares no token with a
+stored document will not retrieve it; there is no embedding to fall back on.
 
 Tools:
-    memory_store   — Store with automatic embedding
-    memory_search  — Hybrid vector + FTS5 keyword search
+    memory_store   — Store a value (auto-indexed into FTS5 by trigger)
+    memory_search  — FTS5 BM25 keyword search with optional freshness decay
     memory_recall  — Exact recall by key
     memory_forget  — Delete by ID or key
     memory_list    — Chronological listing
@@ -22,22 +26,19 @@ from __future__ import annotations
 
 import functools
 import json
-import os
 import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-import sqlite_vec
 from _pantheon_paths import pantheon_home
-from fastembed import TextEmbedding
 from mcp.server.fastmcp import FastMCP
+from pydantic import BeforeValidator, Field
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 DB_PATH = pantheon_home() / "memory" / "memory.db"
-EMBED_CACHE = Path.home() / ".cache" / "fastembed"
 
 
 _BYTE_UNIT = 1024
@@ -67,11 +68,6 @@ CREATE TABLE IF NOT EXISTS memories (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_ns_key
     ON memories(namespace, key);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
-    id INTEGER PRIMARY KEY,
-    embedding float[384]
-);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     namespace, key, value, metadata,
@@ -104,7 +100,11 @@ END;
 
 mcp = FastMCP(
     "pantheon-memory",
-    instructions="Lightweight semantic memory with sqlite-vec + fastembed",
+    instructions=(
+        "Lightweight memory with FTS5 (SQLite BM25) keyword search across "
+        "namespaces. Lexical retrieval only — there is no embedding or vector "
+        "index, so a query must share a token with the stored text to match."
+    ),
 )
 
 
@@ -115,8 +115,7 @@ mcp = FastMCP(
 def _get_db() -> sqlite3.Connection:
     """Get or create the SQLite connection singleton.
 
-    Creates DB directory, applies WAL/performance pragmas, registers
-    the sqlite-vec extension, and runs schema init.
+    Creates DB directory, applies WAL/performance pragmas and runs schema init.
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
@@ -124,9 +123,6 @@ def _get_db() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
-    # Register sqlite-vec extension
-
-    sqlite_vec.load(conn)
     conn.executescript(SCHEMA_SQL)
     return conn
 
@@ -136,26 +132,66 @@ def _get_conn() -> sqlite3.Connection:
     return _get_db()
 
 
-# ── Embedding ─────────────────────────────────────────────────────────────────
+# ── FTS Query Building ────────────────────────────────────────────────────────
 
-
-@functools.cache
-def _get_embedder() -> TextEmbedding:
-    """Lazy-load fastembed model (auto-downloads on first call, ~30MB).
-
-    Uses BAAI/bge-small-en-v1.5 (384-dim, CPU, ONNX) — no PyTorch needed.
-    Model is cached in ~/.cache/fastembed/.
+# Function words carry no retrieval signal but prefix-match a large slice of
+# the corpus, so OR-ing them in dilutes BM25 ranking with noise instead of
+# narrowing the candidate pool. The list is deliberately limited to English
+# function words and auxiliaries — no domain vocabulary.
+_STOPWORDS = frozenset(
     """
-    os.environ.setdefault("TQDM_DISABLE", "1")
-    return TextEmbedding(
-        model_name="BAAI/bge-small-en-v1.5",
-        cache_dir=str(EMBED_CACHE),
+    a about above after again against all am an and any are as at be because
+    been before being below between both but by can cannot could did do does
+    doing done down during each few for from further had has have having he her
+    here hers him his how i if in into is it its itself just me more most my no
+    nor not now of off on once only or other our ours out over own same she
+    should so some such than that the their theirs them then there these they
+    this those through to too under until up very was we were what when where
+    which while who whom why will with would you your yours
+    """.split()
+)
+
+# A prefix query on a token this short is broader than the token itself
+# ("in*" matches ingest/input/install/...), so short terms match exactly.
+_MIN_PREFIX_LEN = 4
+
+
+def _build_fts_query(query: str) -> str:
+    """Build an FTS5 ``MATCH`` expression from free-text search input.
+
+    Replaces the previous ``" OR ".join(f'"{w}"*' for w in query.split())``
+    form, which prefix-matched *every* token, stopwords included. Measured on
+    the live store (1,553 memories) that form OR-ed in terms like ``the``,
+    ``is`` and ``how`` whose prefixes match most of the corpus, so a query for
+    ``purge threshold checkpoint`` pulled 1,001 documents as candidates and
+    1,524 of them were noise. Two corrections:
+
+    - Stopwords are dropped rather than OR-ed in.
+    - Tokens shorter than ``_MIN_PREFIX_LEN`` characters match exactly instead
+      of by prefix, which removes the 3-character prefix blowups (``"com"*``
+      alone matched 1,235 of 1,550 documents).
+
+    Tokens surviving both filters are still prefix-matched, so a query term
+    retrieves documents containing a longer word that starts with it. If every
+    token is a stopword the unfiltered tokens are matched exactly, so an
+    all-stopword query degrades to a literal lookup rather than to no results.
+
+    Args:
+        query: Raw, user-supplied search text.
+
+    Returns:
+        An FTS5 expression (terms joined with ``OR``), or ``""`` for an empty
+        query.
+    """
+    words = [word for word in query.split() if word]
+    if not words:
+        return ""
+    content = [word for word in words if word.lower() not in _STOPWORDS]
+    if not content:
+        content = words
+    return " OR ".join(
+        f'"{word}"*' if len(word) >= _MIN_PREFIX_LEN else f'"{word}"' for word in content
     )
-
-
-def _embed(text: str) -> list[float]:
-    """Generate a 384-dim embedding vector for the given text."""
-    return next(iter(_get_embedder().embed(text))).tolist()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -182,9 +218,7 @@ def _parse_metadata(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-# ── RRF Fusion ────────────────────────────────────────────────────────────────
-
-_RRF_CONST = 60
+# ── Ranking ───────────────────────────────────────────────────────────────────
 
 
 def _parse_iso_ts(value: str) -> float:
@@ -230,34 +264,33 @@ def _fetch_created_at_map(
     return created_at_map
 
 
-def _rrf_fuse(
-    vec_ids: list[int],
-    fts_ids: list[int],
+def _score_hits(
+    hits: list[tuple[int, float]],
     top_k: int,
     created_at_map: dict[int, str] | None = None,
     decay_days: float | None = None,
 ) -> list[tuple[int, float]]:
-    """Reciprocal Rank Fusion of vector and FTS5 result ID lists.
+    """Rank FTS5 hits by BM25 relevance, optionally freshness-decayed.
+
+    This replaces the vector+BM25 Reciprocal Rank Fusion: with a single ranked
+    list there is nothing left to fuse, so each hit keeps its own BM25 score
+    instead of a rank-derived one.
 
     Args:
-        vec_ids: Ordered list of IDs from vector search (most relevant first).
-        fts_ids: Ordered list of IDs from FTS5 search (most relevant first).
-        top_k: Maximum number of fused results to return.
+        hits: ``(id, bm25)`` pairs from FTS5, most relevant first. ``bm25`` is
+            ``-rank`` (FTS5 reports ``rank`` negated, lower = better).
+        top_k: Maximum number of results to return.
         created_at_map: Optional mapping of doc_id -> created_at ISO string,
             used to compute freshness when ``decay_days`` is set.
-        decay_days: Optional freshness half-life in days. When set, each fused
-            score is multiplied by ``freshness = 2^(-days/decay_days)`` so
-            older entries rank lower. Default None = no decay (backward
-            compatible).
+        decay_days: Optional freshness half-life in days. When set, each score
+            is multiplied by ``2^(-days_since_created/decay_days)`` so older
+            entries rank lower. Default None = no decay.
 
     Returns:
-        List of (id, rrf_score) tuples sorted by descending score.
+        List of ``(id, score)`` tuples sorted by descending score, ties broken
+        by ascending id so ranking is deterministic.
     """
-    scores: dict[int, float] = {}
-    for rank, doc_id in enumerate(vec_ids, start=1):
-        scores[doc_id] = 1.0 / (_RRF_CONST + rank)
-    for rank, doc_id in enumerate(fts_ids, start=1):
-        scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (_RRF_CONST + rank)
+    scores: dict[int, float] = {doc_id: bm25 for doc_id, bm25 in hits}
 
     if decay_days is not None and decay_days > 0 and created_at_map:
         now = time.time()
@@ -277,46 +310,127 @@ def _rrf_fuse(
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
+# ── Argument Validation ─────────────────────────────────────────────────────────
+# One call must surface EVERY invalid argument. ``metadata`` is a JSON object
+# encoded as a STRING, and the natural mistake is to pass the object itself,
+# which used to surface as pydantic's bare "Input should be a valid string" —
+# no path, no received type, no example. The validator below names all three,
+# and pydantic still accumulates it alongside every other invalid argument in
+# the same call.
+
+METADATA_EXAMPLE: str = """metadata='{"type": "decision", "score": 0.9}'"""
+
+
+def _json_type_name(value: object) -> str:
+    """Name a value's JSON type for error messages (ints read as ``number``)."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+
+def _metadata_must_be_json_string(value: Any) -> Any:
+    """Accept only a JSON object encoded as a string, with an actionable error.
+
+    Runs before pydantic's own ``str`` check so the failure names the received
+    type and a correct example instead of leaking a raw type error.
+    """
+    if isinstance(value, str):
+        return value
+    raise ValueError(
+        "metadata must be a JSON object encoded as a string "
+        f"(got {_json_type_name(value)}). json.dumps it first. "
+        f"Example: {METADATA_EXAMPLE}"
+    )
+
+
+def _collect_store_violations(value: str, metadata: str) -> tuple[list[str], list[str]]:
+    """Collect every in-body ``memory_store`` violation, plus any examples.
+
+    Returns ``(violations, examples)`` so the caller reports all of them in one
+    message instead of returning on the first problem it happens to notice.
+    """
+    violations: list[str] = []
+    examples: list[str] = []
+    if not value or not value.strip():
+        violations.append("value is required and must be a non-empty string")
+    if metadata and metadata != "{}":
+        try:
+            json.loads(metadata)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            violations.append(
+                "metadata must be a JSON object encoded as a valid JSON string "
+                f"(got invalid JSON: {exc})"
+            )
+            examples.append(METADATA_EXAMPLE)
+    return violations, examples
+
+
+def _format_store_violations(violations: list[str], examples: list[str]) -> str:
+    """Render stored-error text: one line per violation, then one example block."""
+    lines = [f"memory_store: {violation}" for violation in violations]
+    if len(violations) > 1:
+        lines.insert(0, f"memory_store: {len(violations)} invalid arguments")
+    deduped = list(dict.fromkeys(examples))
+    if deduped:
+        lines.append("example: " + "  ".join(deduped))
+    return "\n".join(lines)
+
+
+
 
 @mcp.tool(
-    description="Store a memory entry with automatic embedding generation. "
-    "Returns the entry ID and status.",
+    description="Store a memory entry. The FTS5 index is updated automatically "
+    "by database trigger. Returns the entry ID and status. "
+    "metadata is a JSON object encoded as a STRING (not an object) and value "
+    "must be non-empty; every invalid argument is reported together in one "
+    f"message. Example: {METADATA_EXAMPLE}",
 )
 def memory_store(
     value: str = "",
     namespace: str = "default",
     key: str | None = None,
-    metadata: str = "{}",
+    metadata: Annotated[
+        str,
+        BeforeValidator(_metadata_must_be_json_string),
+        Field(
+            default="{}",
+            description="JSON object encoded as a STRING, not an object. "
+            "Example: '{\"type\": \"decision\", \"score\": 0.9}'.",
+        ),
+    ] = "{}",
 ) -> dict[str, Any]:
-    """Store a value with its embedding vector for semantic search.
-
-    Generates a 384-dim embedding via fastembed (BAAI/bge-small-en-v1.5)
-    and stores it in the vec_memories virtual table alongside the text
-    content in the memories table.
+    """Store a value and index it for FTS5 keyword search.
 
     Args:
-        value: Text content to store.
+        value: Text content to store (required, non-empty).
         namespace: Namespace for isolation (default: "default").
         key: Optional unique key within namespace.
-        metadata: Optional JSON metadata string.
+        metadata: Optional JSON object encoded as a string.
 
     Returns:
         Dict with id, namespace, key, status.
     """
-    if not value or not value.strip():
-        return {"error": "value cannot be empty"}
+    violations, examples = _collect_store_violations(value, metadata)
+    if violations:
+        return {"error": _format_store_violations(violations, examples)}
 
     value = value.strip()
     db = _get_conn()
     now = _now_iso()
 
-    try:
-        # Validate metadata is valid JSON
-        md_obj: dict[str, Any] = (
-            json.loads(metadata) if metadata and metadata != "{}" else {}
-        )
-        metadata_str = json.dumps(md_obj)
+    metadata_str = metadata if metadata else "{}"
 
+    try:
         cur = db.execute(
             """INSERT INTO memories (namespace, key, value, metadata,
              created_at, updated_at)
@@ -324,15 +438,6 @@ def memory_store(
             [namespace, key, value, metadata_str, now, now],
         )
         entry_id = cur.lastrowid
-
-        # Generate embedding
-        embedding = _embed(value)
-        embedding_json = json.dumps(embedding)
-
-        db.execute(
-            "INSERT INTO vec_memories(id, embedding) VALUES (?, ?)",
-            [entry_id, embedding_json],
-        )
         db.commit()
     except sqlite3.IntegrityError as e:
         db.rollback()
@@ -345,111 +450,81 @@ def memory_store(
 
 
 @mcp.tool(
-    description="Hybrid semantic search across memories. "
-    "Combines vector cosine similarity and FTS5 BM25 keyword search "
-    "via Reciprocal Rank Fusion (RRF). Optional decay_days applies a "
+    description="Lexical keyword search across memories using SQLite FTS5 "
+    "BM25 ranking. Stopwords are ignored and terms of 4+ characters are "
+    "prefix-matched, so a query must share a token with the stored text — "
+    "there is no semantic/vector retrieval. Optional decay_days applies a "
     "freshness half-life (2^(-days/decay_days)) so recent entries rank "
-    "higher; default None keeps the original rank-only behavior.",
+    "higher; default None keeps the raw BM25 order.",
 )
-def memory_search(  # noqa: PLR0912
+def memory_search(
     query: str,
     namespace: str | None = None,
     top_k: int = 5,
     decay_days: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Hybrid search: vector + keyword fused via RRF.
-
-    For short or keyword-heavy queries, FTS5 BM25 dominates.
-    For conceptual or long queries, vector cosine dominates.
-    RRF combines both into a single ranked list.
+    """Search memories with FTS5 BM25.
 
     Args:
         query: Search query text.
         namespace: Optional namespace filter.
         top_k: Maximum results (default 5, max 50).
-        decay_days: Optional freshness half-life in days. When set, fused
+        decay_days: Optional freshness half-life in days. When set, BM25
             scores are multiplied by ``2^(-days_since_created/decay_days)``
             so older entries rank lower. Default None = no decay.
 
     Returns:
-        List of memory entries with score and metadata.
+        List of memory entries with a ``score`` (BM25, higher is better,
+        freshness-decayed when ``decay_days`` is set) and parsed metadata.
     """
     if not query or not query.strip():
         return []
 
     top_k = max(1, min(50, int(top_k)))
     db = _get_conn()
-    query_stripped = query.strip()
+    fts_query = _build_fts_query(query)
+    if not fts_query:
+        return []
 
-    # 1. Generate query embedding
     try:
-        query_vec = json.dumps(_embed(query_stripped))
-    except Exception:
-        query_vec = None
-
-    vec_ids: list[int] = []
-    fts_ids: list[int] = []
-
-    # 2. Vector search
-    if query_vec is not None:
-        nvec = top_k * 2
-        try:
-            if namespace:
-                vec_rows = db.execute(
-                    """SELECT v.id FROM vec_memories v
-                       JOIN memories m ON m.id = v.id
-                       WHERE m.namespace = ?
-                       ORDER BY v.embedding MATCH ? LIMIT ?""",
-                    [namespace, query_vec, nvec],
-                ).fetchall()
-            else:
-                vec_rows = db.execute(
-                    """SELECT v.id FROM vec_memories v
-                       ORDER BY v.embedding MATCH ? LIMIT ?""",
-                    [query_vec, nvec],
-                ).fetchall()
-            vec_ids = [r["id"] for r in vec_rows]
-        except Exception:
-            vec_ids = []
-
-    # 3. FTS5 keyword search
-    try:
-        # Build FTS query: escape special chars, use prefix matching
-        fts_query = " OR ".join(f'"{word}"*' for word in query_stripped.split() if word)
+        params: list[Any] = [fts_query]
+        namespace_clause = ""
         if namespace:
-            fts_rows = db.execute(
-                """SELECT rowid FROM memories_fts
-                   WHERE memories_fts MATCH ?
-                   AND namespace = ?
-                   ORDER BY rank LIMIT ?""",
-                [fts_query, namespace, top_k * 2],
-            ).fetchall()
-        else:
-            fts_rows = db.execute(
-                """SELECT rowid FROM memories_fts
-                   WHERE memories_fts MATCH ?
-                   ORDER BY rank LIMIT ?""",
-                [fts_query, top_k * 2],
-            ).fetchall()
-        fts_ids = [r["rowid"] for r in fts_rows]
+            namespace_clause = " AND namespace = ?"
+            params.append(namespace)
+        # Over-fetch 2x: freshness decay can promote a candidate that BM25
+        # ranked outside top_k, and ranking happens after the fetch.
+        params.append(top_k * 2)
+        # ``rank`` is BM25 negated by FTS5 (lower = better), so -rank is the
+        # relevance score. It is selected explicitly so the value is available
+        # for scoring rather than only for ordering.
+        rows = db.execute(
+            f"""SELECT rowid, -rank AS bm25 FROM memories_fts
+                WHERE memories_fts MATCH ?{namespace_clause}
+                ORDER BY rank LIMIT ?""",
+            params,
+        ).fetchall()
+        hits = [(r["rowid"], r["bm25"]) for r in rows]
     except Exception:
-        fts_ids = []
+        return []
 
-    # 4. RRF fusion (optionally freshness-decayed)
-    candidate_ids = list(dict.fromkeys([*vec_ids, *fts_ids]))
+    if not hits:
+        return []
+
+    candidate_ids = [doc_id for doc_id, _ in hits]
     created_at_map = (
         _fetch_created_at_map(db, candidate_ids)
         if decay_days is not None and decay_days > 0
         else {}
     )
-    fused = _rrf_fuse(vec_ids, fts_ids, top_k, created_at_map, decay_days)
+    ranked = _score_hits(hits, top_k, created_at_map, decay_days)
 
-    if not fused:
+    if not ranked:
         return []
 
     # 5. Fetch full entries
-    id_list = [doc_id for doc_id, _ in fused]
-    score_map = {doc_id: score for doc_id, score in fused}
+    id_list = [doc_id for doc_id, _ in ranked]
+    score_map = {doc_id: score for doc_id, score in ranked}
 
     try:
         placeholders = ",".join("?" * len(id_list))
@@ -461,7 +536,7 @@ def memory_search(  # noqa: PLR0912
     except Exception:
         return []
 
-    # Preserve RRF ranking order
+    # Preserve ranking order
     row_map = {r["id"]: r for r in rows}
     results: list[dict[str, Any]] = []
     for doc_id in id_list:
@@ -512,18 +587,17 @@ def memory_recall(
 
 @mcp.tool(
     description="Delete a memory entry by ID or by key. "
-    "Vector embedding and FTS index entries are removed automatically "
-    "via CASCADE / triggers.",
+    "The FTS5 index entry is removed automatically by trigger.",
 )
 def memory_forget(
     id: int | None = None,
     key: str | None = None,
     namespace: str = "default",
 ) -> dict[str, Any]:
-    """Delete a memory entry and its associated vector embedding.
+    """Delete a memory entry and its FTS5 index entry.
 
     Provide either ``id`` (exact rowid) or ``key`` (within namespace)
-    to identify the entry. Foreign key + FTS triggers handle cleanup.
+    to identify the entry. The FTS sync trigger handles index cleanup.
 
     Args:
         id: Exact row ID of the entry to delete.
@@ -548,8 +622,6 @@ def memory_forget(
     db = _get_conn()
     try:
         if col == "id":
-            # Vec table cascade
-            db.execute("DELETE FROM vec_memories WHERE id = ?", [id])
             cur = db.execute("DELETE FROM memories WHERE id = ?", [id])
         else:
             cur = db.execute(sql, params)
@@ -618,13 +690,12 @@ def memory_list(
 
 @mcp.tool(
     description="Memory database statistics: total entries, per-namespace "
-    "breakdown, DB file size, and FTS/vector table sizes.",
+    "breakdown, and file size on disk.",
 )
 def memory_stats() -> dict[str, Any]:
     """Return aggregate statistics about the memory database.
 
-    Includes total count, namespace breakdown, FTS entry count,
-    vector entry count, and file size on disk.
+    Includes total count, namespace breakdown, and file size on disk.
 
     Returns:
         Dict with count, namespaces, and storage info.
@@ -650,13 +721,6 @@ def memory_stats() -> dict[str, Any]:
         ]
     except Exception:
         stats["namespaces"] = []
-
-    try:
-        stats["vector_entries"] = db.execute(
-            "SELECT COUNT(*) AS c FROM vec_memories"
-        ).fetchone()["c"]
-    except Exception:
-        stats["vector_entries"] = 0
 
     try:
         db_size = DB_PATH.stat().st_size if DB_PATH.exists() else 0

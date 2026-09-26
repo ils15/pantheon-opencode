@@ -2,13 +2,14 @@
 
 Tests cover:
 - Server name and instructions
+- FTS5 query construction: stopword drop, no prefix star under 4 chars
 - memory_store: store values, verify responses
-- memory_search: semantic search with namespace filter
+- memory_search: FTS5 BM25 search with namespace filter
 - memory_recall: exact recall by key
 - memory_forget: delete by ID or key
 - memory_list: chronological listing
 - memory_stats: database statistics
-- Degraded mode: missing fastembed/sqlite_vec, PANTHEON_MEMORY_EMBED flag
+- Vector removal: no vector path, no embedding deps, FTS5 still serves search
 - Error handling: empty inputs, non-existent entries
 """
 
@@ -78,10 +79,9 @@ def module(temp_memory_dir: str):
     """Import and return the server module with patched memory dir."""
     import importlib
 
-    # memory_mcp_server imports fastembed (~180MB wheel) at module top level.
-    # Skip the whole memory suite when the embedding backend is absent so the
-    # rest of the suite still runs instead of erroring at import (issue #94).
-    pytest.importorskip("fastembed")
+    # No importorskip here: the server is stdlib+FTS5 only. A skip guard keyed
+    # on an optional embedding backend would silently skip the whole suite if
+    # that backend were ever removed from the environment again.
     # Patch MEMORY_DIR in the module before import
     with patch.object(Path, "home", return_value=Path(temp_memory_dir)):
         mod = importlib.import_module(MODULE_PATH)
@@ -112,6 +112,122 @@ def reset_state(module, temp_memory_dir):
 
 
 # =============================================================================
+# Validation Reporting
+# =============================================================================
+# Regression cover for memory_store's ``metadata`` contract: it is a JSON object
+# encoded as a STRING, and passing the object itself used to surface as
+# pydantic's bare "Input should be a valid string" — no path, no received type,
+# no example.
+
+
+class TestMemoryStoreValidationReporting:
+    """metadata's shape is documented, actionable, and accumulated."""
+
+    async def test_metadata_object_reports_type_and_example(
+        self, server: FastMCP
+    ) -> None:
+        """A metadata object names the received type and shows a correct example."""
+        with pytest.raises(Exception) as excinfo:
+            await server.call_tool(
+                "memory_store",
+                {
+                    "value": "remember this",
+                    "namespace": "validation",
+                    "metadata": {"type": "decision", "score": 0.9},
+                },
+            )
+        message = str(excinfo.value)
+
+        assert "metadata must be a JSON object encoded as a string" in message
+        assert "(got object)" in message
+        assert "json.dumps it first" in message
+        assert """metadata='{"type": "decision", "score": 0.9}'""" in message
+
+    async def test_metadata_object_and_another_bad_argument_report_both(
+        self, server: FastMCP
+    ) -> None:
+        """metadata-as-object plus a second invalid argument reports both."""
+        with pytest.raises(Exception) as excinfo:
+            await server.call_tool(
+                "memory_store",
+                {
+                    "value": "remember this",
+                    "namespace": "validation",
+                    "key": {"not": "a string"},
+                    "metadata": {"type": "decision"},
+                },
+            )
+        message = str(excinfo.value)
+
+        assert "2 validation errors" in message
+        assert "key" in message
+        assert "metadata must be a JSON object encoded as a string" in message
+
+    async def test_empty_value_and_invalid_metadata_report_both(
+        self, server: FastMCP
+    ) -> None:
+        """Two in-body violations surface together instead of one per call."""
+        result = await server.call_tool(
+            "memory_store",
+            {"value": "", "namespace": "validation", "metadata": "{not json"},
+        )
+        data = json.loads(_text_from_tool(result))
+        message = data["error"]
+
+        assert "2 invalid arguments" in message
+        assert "value is required and must be a non-empty string" in message
+        assert "metadata must be a JSON object encoded as a valid JSON string" in message
+        assert "got invalid JSON" in message
+        assert message.count("example:") == 1
+
+    async def test_invalid_metadata_is_not_labelled_a_store_failure(
+        self, server: FastMCP
+    ) -> None:
+        """A metadata parse error is a validation error, not 'Failed to store'."""
+        result = await server.call_tool(
+            "memory_store",
+            {
+                "value": "remember this",
+                "namespace": "validation",
+                "metadata": "{not json",
+            },
+        )
+        data = json.loads(_text_from_tool(result))
+
+        assert "metadata must be a JSON object encoded as a valid JSON string" in (
+            data["error"]
+        )
+        assert "Failed to store memory" not in data["error"]
+
+    async def test_metadata_string_still_stores(self, server: FastMCP) -> None:
+        """The documented string form is unaffected by the stricter message."""
+        result = await server.call_tool(
+            "memory_store",
+            {
+                "value": "remember this",
+                "namespace": "validation",
+                "key": "as-string",
+                "metadata": '{"importance": 0.9}',
+            },
+        )
+        data = json.loads(_text_from_tool(result))
+        assert data["status"] == "stored"
+        assert "error" not in data
+
+    async def test_metadata_schema_and_description_document_the_string_shape(
+        self, server: FastMCP
+    ) -> None:
+        """The declared input schema teaches the string-encoded shape."""
+        tools = {t.name: t for t in await server.list_tools()}
+        store = tools["memory_store"]
+
+        schema_description = store.inputSchema["properties"]["metadata"]["description"]
+        assert "encoded as a STRING" in schema_description
+        assert "not an object" in schema_description
+        assert "JSON object encoded as a STRING" in (store.description or "")
+
+
+# =============================================================================
 # Server Lifecycle
 # =============================================================================
 
@@ -129,6 +245,24 @@ class TestServerLifecycle:
         assert server.instructions is not None
         assert len(server.instructions) > 0
         assert "memory" in server.instructions.lower()
+
+    async def test_instructions_do_not_advertise_removed_vector_stack(
+        self, server: FastMCP
+    ) -> None:
+        """The instruction string is the model's only signal on retrieval mode.
+
+        It previously read "Lightweight semantic memory with sqlite-vec +
+        fastembed" — wrong while the vector path existed under a degraded
+        default, and left wrong by the removal. It must now state lexical-only
+        retrieval and name no embedding backend.
+        """
+        instructions = (server.instructions or "").lower()
+        assert "fts5" in instructions
+        assert "lexical" in instructions
+        for banned in ("sqlite-vec", "sqlite_vec", "fastembed", "semantic"):
+            assert banned not in instructions, (
+                f"instructions still advertise {banned!r} after vector removal"
+            )
 
 
 # =============================================================================
@@ -376,30 +510,43 @@ class TestMemorySearchDecay:
         assert d1["py_old"] != d2["py_old"]
         assert d1["py_new"] == pytest.approx(d2["py_new"], rel=1e-6)
 
-    async def test_rrf_fuse_freshness_multiplier(self, module) -> None:
-        """_rrf_fuse applies the freshness multiplier when decay_days is set."""
+    async def test_score_hits_freshness_multiplier(self, module) -> None:
+        """_score_hits applies the freshness multiplier when decay_days is set."""
         now = time.time()
         new_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
         old_iso = time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 90 * 86400)
         )
-        fused = module._rrf_fuse([1, 2], [1, 2], 10)
-        fused_decayed = module._rrf_fuse(
-            [1, 2],
-            [1, 2],
+        hits = [(1, 2.0), (2, 1.5)]
+        ranked = module._score_hits(hits, 10)
+        ranked_decayed = module._score_hits(
+            hits,
             10,
             created_at_map={1: new_iso, 2: old_iso},
             decay_days=30,
         )
-        # Without decay: pure RRF — rank 1 (id 1) beats rank 2 (id 2)
-        assert fused[0][0] == 1
-        assert fused[1][0] == fused[0][0] + 1
-        assert fused[0][1] > fused[1][1]
-        # With decay: the 90-day-old entry (id 2) is penalized, the fresh
-        # one (id 1, age 0 → freshness 1.0) is not.
-        assert fused_decayed[0][0] == 1
-        assert fused_decayed[1][1] < fused[1][1]
-        assert fused_decayed[0][1] == pytest.approx(fused[0][1], rel=1e-6)
+        # Without decay: BM25 order is preserved, scores untouched.
+        assert [doc_id for doc_id, _ in ranked] == [1, 2]
+        assert ranked[0][1] == pytest.approx(2.0)
+        assert ranked[1][1] == pytest.approx(1.5)
+        # With decay: the 90-day-old entry is penalized, the fresh one
+        # (age 0 → freshness 1.0) is not — and it now outranks the old one.
+        assert ranked_decayed[0][0] == 1
+        assert ranked_decayed[1][0] == 2
+        assert ranked_decayed[0][1] == pytest.approx(ranked[0][1], rel=1e-6)
+        assert ranked_decayed[1][1] < ranked[1][1]
+
+    async def test_score_hits_breaks_ties_deterministically(self, module) -> None:
+        """Equal BM25 scores rank by ascending id, not by input order."""
+        assert module._score_hits([(7, 1.0), (3, 1.0)], 10) == [
+            (3, 1.0),
+            (7, 1.0),
+        ]
+
+    async def test_score_hits_truncates_to_top_k(self, module) -> None:
+        """Only top_k results survive scoring."""
+        hits = [(i, float(10 - i)) for i in range(1, 6)]
+        assert len(module._score_hits(hits, 2)) == 2
 
     async def test_parse_iso_ts_legacy_naive_format(self, module) -> None:
         """Legacy naive timestamps (space separator, no TZ) parse as UTC.
@@ -632,8 +779,9 @@ class TestMemoryStats:
         data = json.loads(text) if text else []
         assert "total_entries" in data
         assert isinstance(data.get("namespaces", []), list)
-        assert data.get("vector_entries", 0) >= 0
         assert data["db_size_bytes"] > 0
+        # The vector table is gone, so its count must not be reported.
+        assert "vector_entries" not in data
 
 
 # =============================================================================
@@ -681,89 +829,199 @@ class TestErrorHandling:
         data = json.loads(_text_from_tool(result))
         assert isinstance(data, list)
 
-
 # =============================================================================
-# Degraded Mode (issue #159)
+# FTS Query Construction (Step A — prefix-pollution fix)
 # =============================================================================
+# The production query used to be
+#     " OR ".join(f'"{word}"*' for word in query.split())
+# i.e. prefix-match every token, stopwords included. Measured on the live store
+# (1,553 memories) that OR-ed in terms like "the"/"is"/"how" whose prefixes
+# match most of the corpus: a query for purge/threshold/checkpoint pulled 1,001
+# candidate documents. These tests pin both corrections.
 
 
-class TestDegradedMode:
-    """Server must survive missing fastembed/sqlite_vec (FTS-only mode).
+class TestBuildFtsQuery:
+    """_build_fts_query drops stopwords and stops prefixing short terms."""
 
-    The embedding backends are imported defensively; when they are
-    unavailable the server still builds, answers the MCP initialize
-    handshake and serves FTS5 keyword search.
-    """
+    def test_stopwords_are_not_or_joined(self, module) -> None:
+        """Function words are removed instead of widening the candidate pool."""
+        expr = module._build_fts_query("what is the purge threshold for the namespace")
+        for stopword in ('"what"', '"is"', '"the"', '"for"'):
+            assert stopword not in expr, f"{stopword} still OR-ed in: {expr}"
+        assert expr == '"purge"* OR "threshold"* OR "namespace"*'
 
-    def test_optional_backends_have_module_attributes(self, module) -> None:
-        """sqlite_vec/fastembed resolve to the module or None, never crash."""
-        assert hasattr(module, "sqlite_vec")
-        assert hasattr(module, "TextEmbedding")
+    def test_short_terms_match_exactly_without_a_star(self, module) -> None:
+        """A prefix on a 3-character token matches a large slice of the corpus.
 
-    def test_flag_defaults_on(self, module) -> None:
-        """Embeddings are enabled by default (unchanged behavior)."""
-        assert module._embeddings_enabled() is True
+        "com"* alone matched 1,235 of 1,550 documents, so no term under
+        _MIN_PREFIX_LEN may be prefix-matched. "in" is a stopword and is
+        dropped outright, so the non-stopword short terms are used here.
+        """
+        expr = module._build_fts_query("TS config Py db")
+        assert expr == '"TS" OR "config"* OR "Py" OR "db"'
+        for term in ('"TS"', '"Py"', '"db"'):
+            assert f"{term}*" not in expr
 
-    @pytest.mark.parametrize("off", ["off", "0", "false", "no", "OFF", " off "])
-    def test_flag_off_disables_pipeline(self, module, monkeypatch, off) -> None:
-        """Any spelling of PANTHEON_MEMORY_EMBED=off disables embeddings."""
-        monkeypatch.setenv("PANTHEON_MEMORY_EMBED", off)
-        assert module._embeddings_enabled() is False
-        assert module._embed("any text") is None
+    def test_four_character_boundary_is_inclusive_for_prefixing(
+        self, module
+    ) -> None:
+        """Four characters is the shortest prefix-matched length."""
+        assert module._MIN_PREFIX_LEN == 4
+        assert module._build_fts_query("config") == '"config"*'
+        assert module._build_fts_query("conf") == '"conf"*'
+        assert module._build_fts_query("con") == '"con"'
 
-    def test_flag_on_reenables_pipeline(self, module, monkeypatch) -> None:
-        """PANTHEON_MEMORY_EMBED=on keeps the embedding pipeline active."""
-        monkeypatch.setenv("PANTHEON_MEMORY_EMBED", "on")
-        assert module._embeddings_enabled() is True
+    def test_all_stopword_query_falls_back_to_exact_match(self, module) -> None:
+        """A stopword-only query degrades to a literal lookup, not to nothing.
 
-    async def test_fts_only_when_flag_off(self, module, server: FastMCP, monkeypatch) -> None:
-        """With embeddings off, store + search still serve FTS results."""
-        monkeypatch.setenv("PANTHEON_MEMORY_EMBED", "off")
-        ns = f"fts_off_{time.time_ns()}"
-        stored_ids = []
-        for value, key in (
-            ("Python is a programming language.", "py"),
-            ("FastAPI is a web framework for Python.", "fastapi"),
-            ("The Eiffel Tower is in Paris.", "eiffel"),
-        ):
-            result = await server.call_tool(
-                "memory_store", {"value": value, "key": key, "namespace": ns}
-            )
-            stored_ids.append(json.loads(_text_from_tool(result))["id"])
+        Returning "" would silently produce zero results for a query the old
+        implementation answered.
+        """
+        expr = module._build_fts_query("the and of")
+        assert expr == '"the" OR "and" OR "of"'
+        assert all("*" not in term for term in expr.split(" OR "))
 
-        result = await server.call_tool(
-            "memory_search",
-            {"query": "Python programming", "top_k": 3, "namespace": ns},
+    def test_empty_and_whitespace_only_input(self, module) -> None:
+        """No tokens means no expression; memory_search returns [] before use."""
+        assert module._build_fts_query("") == ""
+        assert module._build_fts_query("   \t\n ") == ""
+
+    def test_stopword_filter_is_case_insensitive(self, module) -> None:
+        """Query casing must not smuggle a stopword back into the OR-join."""
+        expr = module._build_fts_query("The purge THE threshold")
+        assert '"The"' not in expr and '"THE"' not in expr
+        assert expr == '"purge"* OR "threshold"*'
+
+    def test_content_terms_are_preserved_in_order(self, module) -> None:
+        """Filtering must not drop or reorder real terms."""
+        assert (
+            module._build_fts_query("remove vector store from memory server")
+            == '"remove"* OR "vector"* OR "store"* OR "memory"* OR "server"*'
         )
+
+
+# =============================================================================
+# Vector Removal
+# =============================================================================
+# The vector path (sqlite-vec + fastembed + RRF fusion) was deleted outright —
+# no feature flag, no fallback. These tests exist so the deletion cannot be
+# silently reverted: a reintroduced symbol fails here, not in production.
+
+
+class TestVectorRemoval:
+    """The module exposes exactly one code path: FTS5."""
+
+    REMOVED_SYMBOLS = (
+        "sqlite_vec",
+        "TextEmbedding",
+        "_embed",
+        "_embeddings_enabled",
+        "_get_embedder",
+        "_rrf_fuse",
+        "_RRF_CONST",
+        "_EMBED_DISABLED",
+        "VEC_SCHEMA_SQL",
+        "EMBED_CACHE",
+    )
+
+    @pytest.mark.parametrize("symbol", REMOVED_SYMBOLS)
+    def test_removed_symbol_is_absent(self, module, symbol) -> None:
+        """None of the deleted vector symbols survive on the module."""
+        assert not hasattr(module, symbol), (
+            f"{symbol} still present: the vector path was removed, not flagged"
+        )
+
+    def test_schema_has_no_vector_table(self, module) -> None:
+        """The vec0 virtual table is neither defined nor created."""
+        assert "vec_memories" not in module.SCHEMA_SQL
+        assert "vec0" not in module.SCHEMA_SQL
+        conn = module._get_conn()
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE name LIKE 'vec_%'"
+            )
+        }
+        assert tables == set(), f"vector tables present in a fresh DB: {tables}"
+
+    def test_flag_is_gone_from_the_environment_surface(
+        self, module, monkeypatch
+    ) -> None:
+        """PANTHEON_MEMORY_EMBED no longer has any code path that reads it.
+
+        The flag only ever appeared in this test file — never in a config or
+        script — which is why removing it is the correct disposition. Setting
+        it to a hostile value must change nothing.
+        """
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        assert "PANTHEON_MEMORY_EMBED" not in source
+        for hostile in ("off", "0", "false", "no", "on"):
+            monkeypatch.setenv("PANTHEON_MEMORY_EMBED", hostile)
+            assert module._build_fts_query("purge threshold") == (
+                '"purge"* OR "threshold"*'
+            )
+
+    def test_requirements_pin_no_embedding_backend(self) -> None:
+        """The MCP requirements must not pull the removed stack back in.
+
+        Only the requirement lines are checked — the file's comment records
+        that the removal happened, and naming the packages there is the point.
+        """
+        reqs = (
+            Path(__file__).resolve().parent.parent
+            / "src"
+            / "mcp"
+            / "requirements-mcp.txt"
+        ).read_text(encoding="utf-8")
+        pins = [
+            line.strip()
+            for line in reqs.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        assert pins, "requirements file is empty"
+        for banned in ("sqlite-vec", "sqlite_vec", "fastembed"):
+            assert not any(
+                banned in pin for pin in pins
+            ), f"{banned} is still pinned: {pins}"
+
+    def test_shipped_scripts_copy_also_has_no_vector_path(self) -> None:
+        """The scripts/ copy ships standalone and must agree on the removal."""
+        copy = (
+            Path(__file__).resolve().parent.parent / "scripts" / "memory_mcp_server.py"
+        ).read_text(encoding="utf-8")
+        for banned in (
+            "import sqlite_vec",
+            "from fastembed",
+            "vec_memories",
+            "_rrf_fuse",
+            "PANTHEON_MEMORY_EMBED",
+            "VEC_SCHEMA_SQL",
+        ):
+            assert banned not in copy, f"scripts/ copy still references {banned!r}"
+
+    async def test_stats_omits_vector_count(self, server: FastMCP) -> None:
+        """memory_stats must not report a table that no longer exists."""
+        result = await server.call_tool("memory_stats", {})
         data = json.loads(_text_from_tool(result))
-        if isinstance(data, dict):
-            data = [data]
-        assert isinstance(data, list)
-        assert len(data) > 0
-        assert any("Python" in r["value"] for r in data)
-        # No embedding was computed or stored for the new entries.
-        assert module._embed("Python is a programming language.") is None
-        placeholders = ",".join("?" * len(stored_ids))
-        vec_rows = module._get_conn().execute(
-            f"SELECT COUNT(*) AS c FROM vec_memories WHERE id IN ({placeholders})",
-            stored_ids,
-        ).fetchone()["c"]
-        assert vec_rows == 0
+        assert "vector_entries" not in data
+        assert data["total_entries"] >= 0
 
-    def test_server_starts_when_backends_missing(self, tmp_path) -> None:
-        """Import with fastembed + sqlite_vec blocked still yields a server.
+    def test_server_serves_store_search_forget_without_embedding_backends(
+        self, tmp_path
+    ) -> None:
+        """A full store -> search -> forget cycle works with fastembed blocked.
 
-        Simulates a broken embedding install (network failure, incompatible
-        wheel): the process must import, build the FastMCP app, register
-        tools and serve FTS-only search instead of crashing at startup.
+        Blocks the backend outright and sets the retired flag to a hostile
+        value, so the subprocess proves both that the import is gone and that
+        no environment variable can reintroduce a second code path.
         """
         repo_root = Path(__file__).resolve().parent.parent
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(
-            str(p) for p in (repo_root, repo_root / "src" / "mcp", repo_root / "scripts")
+            str(p)
+            for p in (repo_root, repo_root / "src" / "mcp", repo_root / "scripts")
         )
-        # Default is "on" — the import failure itself must trigger degradation.
-        env.pop("PANTHEON_MEMORY_EMBED", None)
+        env["PANTHEON_MEMORY_EMBED"] = "on"
         script = textwrap.dedent(
             """\
             import asyncio
@@ -771,7 +1029,8 @@ class TestDegradedMode:
             import sys
             import tempfile
 
-            # Simulate failed installs of both embedding backends.
+            # The retired backend is still installed in this environment, so
+            # block it to prove the server never reaches for it.
             sys.modules["fastembed"] = None
             sys.modules["sqlite_vec"] = None
 
@@ -779,10 +1038,15 @@ class TestDegradedMode:
 
             m._set_memory_dir(tempfile.mkdtemp())
 
-            assert m.TextEmbedding is None, "fastembed import must be optional"
-            assert m.sqlite_vec is None, "sqlite_vec import must be optional"
-            assert m._embeddings_enabled() is False
-            assert m._embed("hello") is None
+            for gone in (
+                "sqlite_vec",
+                "TextEmbedding",
+                "_embed",
+                "_embeddings_enabled",
+                "_rrf_fuse",
+                "VEC_SCHEMA_SQL",
+            ):
+                assert not hasattr(m, gone), f"{gone} still present"
 
             def parsed(result):
                 return json.loads(result[0][0].text)
@@ -813,17 +1077,21 @@ class TestDegradedMode:
                     "memory_search", {"query": "Python programming", "top_k": 3}
                 )
                 results = as_list(parsed(hits))
-                assert results, "FTS search must work without embeddings"
+                assert results, "FTS search must work with no embedding backend"
                 assert any("Python" in r["value"] for r in results)
+                assert all("score" in r for r in results)
+                # BM25 scores come back ranked, highest first.
+                scores = [r["score"] for r in results]
+                assert scores == sorted(scores, reverse=True), scores
 
-                stats = await m.mcp.call_tool("memory_stats", {})
-                assert parsed(stats)["vector_entries"] == 0
+                stats = parsed(await m.mcp.call_tool("memory_stats", {}))
+                assert "vector_entries" not in stats
 
                 forget = await m.mcp.call_tool("memory_forget", {"id": entry_id})
                 assert parsed(forget)["deleted"] is True
 
             asyncio.run(main())
-            print("DEGRADED_OK")
+            print("VECTOR_REMOVED_OK")
             """
         )
         run = subprocess.run(
@@ -835,4 +1103,4 @@ class TestDegradedMode:
             check=False,
         )
         assert run.returncode == 0, run.stderr
-        assert "DEGRADED_OK" in run.stdout
+        assert "VECTOR_REMOVED_OK" in run.stdout
