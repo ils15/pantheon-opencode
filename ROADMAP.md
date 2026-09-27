@@ -13,7 +13,7 @@
 | Área | Contrato verificável |
 |---|---|
 | OpenCode V1 | `src/plugin.ts` preserva o plugin V1: `hashline_edit`, as 3 goal tools, `pantheon_cost`, `pantheon_model`, BackgroundJobBoard, eventos/tool hooks e compaction hook quando registrados no caminho V1. |
-| OpenCode V2 | `pantheon-opencode/plugin-v2` (`src/plugin-v2.ts`) é um adapter de configuração separado; transforma drafts de agents/catalog/commands/references/skills e não registra APIs, hooks, Board ou compaction V1. |
+| OpenCode V2 | `pantheon-opencode/plugin-v2` (`src/plugin-v2.ts`) é um adapter separado e atualmente usa transforms de agents/commands/references. Um probe de runtime no host 2.0.18 encontrou `ctx.integration` e `ctx.skill` com `.transform` callable e `ctx.catalog` ausente; registrations resolveram, mas nenhum efeito de callback foi observado. Integration/skill não são implementados pelo adapter; a observação não certifica compatibilidade do SDK. Não registra Board ou compaction V1. |
 | Installer | `v1`, `v2` e `auto` selecionam uma única geração de plugin Pantheon. A seleção remove referências Pantheon da outra configuração e não mistura `plugin` V1 com `plugins` V2. |
 | TUI | `pantheon-tui` é componente separado, registrado em `tui.json` somente quando `plugins` é instalado. Native tasks exigem origem, relação parent/child e status fornecidos explicitamente pelo host; ausência de Markdown não é autodetecção. |
 | Histórico e recuperação | `.pantheon/delegations/` guarda relatórios históricos do antigo engine V1 de delegação (removido em favor do `task()` nativo). Jobs antigos/running não são auto-retomados após restart. |

@@ -7,21 +7,24 @@
  * - Session hooks (prompt, context, compaction) and tool hooks (execute.before/after)
  * - Permission hooks for custom authorization
  *
- * V2 Plugin API surface (verified against @opencode/plugin@2.0.16 — the
- * installed `opencode` binary reports v2.0.16, and that package's
- * `dist/promise/plugin.d.ts` exposes exactly these domains):
+ * The transitional SDK types used here expose these domains:
  *   ctx.agent / ctx.command / ctx.model / ctx.reference / ctx.skill /
  *   ctx.tool / ctx.event / ctx.permission / ctx.session
  *
- * Confirmed ABSENT from 2.0.16 (do not call them):
- *   - `ctx.catalog`     — replaced by `ctx.model` (ModelDomain/ModelEditor)
- *   - `ctx.integration` — no longer a context domain
- *   - `SkillEditor.source()` / `.transform`-less shape — SkillEditor is
- *     `list | get | add | update | remove` and skills now carry their own
- *     source, so the old "add a directory source" transform has no equivalent.
+ * A separate OpenCode 2.0.18 host runtime probe confirmed ctx.integration and
+ * ctx.skill have callable `.transform` methods; only ctx.catalog was absent.
+ * The probe's callback effects were
+ * not observed for any domain. This runtime probe is not an SDK compatibility
+ * claim. Pantheon's Phase 1/config transform
+ * registrations cover agent, command, and reference; `ctx.tool.transform` is
+ * attempted separately in Phase 2. Integration and skill transform callbacks
+ * are not registered by Pantheon, so their effects remain unproven. The
+ * narrower `SkillEditor.source()` helper is absent from the inspected SDK
+ * editor shape, so directory-source registration remains unsupported; that
+ * does not imply that `ctx.skill` or its transform is absent.
  *
- * When a V2 API domain is unavailable, the feature is gracefully skipped and
- * documented in V2_UNSUPPORTED_FEATURES. The plugin never breaks.
+ * V2_UNSUPPORTED_FEATURES distinguishes adapter limitations from observed
+ * host-absent APIs; setup handles optional registrations on a best-effort basis.
  *
  * @module plugin-v2
  */
@@ -44,20 +47,21 @@ import {
 // ─── Unsupported Features Registry ───────────────────────────────────────
 
 /**
- * Features not yet supported by the installed V2 plugin API.
- * Updated dynamically at setup time based on actual API availability.
- * Initialized with features known to be absent from the V2 promise API;
- * additional features are appended during setup if their API is missing.
+ * Features not implemented by the current Pantheon V2 adapter or absent from
+ * the observed host. A listed feature is not necessarily a host-absent API.
+ * Additional features are appended during setup when a required API is missing.
  */
 export const V2_UNSUPPORTED_FEATURES: string[] = [
   'legacy-hooks',
-  // Domains that 2.0.16 has no context entry point for. Verified against
-  // @opencode/plugin@2.0.16 `dist/promise/plugin.d.ts` (no `catalog`, no
-  // `integration`). Recorded synchronously because there is nothing to attempt.
+  // `catalog` alone was absent in the OpenCode 2.0.18 runtime probe.
   'catalog-transform',
+  // The host exposes callable transforms for integration and skill, but
+  // Pantheon does not register/use them and no host callback effects were
+  // observed. These entries describe adapter support, not host availability.
   'integration-transform',
-  // 2.0.16 SkillEditor has no `source()`; skills now carry their own source,
-  // so the old "add a directory source" transform is genuinely gone.
+  // The inspected SkillEditor shape has no `source()` helper for adding a
+  // directory source. This is narrower than (and distinct from) ctx.skill's
+  // host availability or callable transform.
   'skill-transform',
 ]
 
@@ -702,17 +706,17 @@ export const plugin = define({
 
   async setup(context: PluginContext): Promise<void> {
     // ─── Phase 1: V2 Transforms (isolated per-domain, best-effort) ────
-    // Each domain registers independently: a failure in one transform
-    // (e.g. draft.list missing on beta 19192 → TypeError) must never
-    // reject setup() nor prevent the other domains from registering.
+    // Each transform registration is individually wrapped and settled via Promise.allSettled:
+    // a rejection marks only that transform unsupported
+    // and does not reject setup() or prevent later hook registrations.
     // See issue #92.
     //
-    // Only domains that exist in 2.0.16 are attempted. `catalog` and
-    // `integration` were removed from the context; `skill` transform has no
-    // source() equivalent. Calling a missing domain throws synchronously
-    // inside the callback, which — proven by the canary — would reject
-    // setup() and silently kill every hook registered later. They are recorded
-    // as unsupported instead. See V2_UNSUPPORTED_FEATURES.
+    // Pantheon's Phase 1/config transform registrations cover agent, command,
+    // and reference; ctx.tool.transform is attempted separately in Phase 2.
+    // The 2.0.18 runtime probe found ctx.integration and ctx.skill with
+    // callable transforms, but no callback effects were observed; neither is
+    // registered here. Only ctx.catalog was absent in that probe.
+    // The hook canary tests hook firing only, not transform callback effects.
     const phase1Transforms: Array<{ feature: string; register: () => Promise<unknown> }> = [
       { feature: 'agent-transform', register: () => context.agent.transform(transformAgents) },
       {

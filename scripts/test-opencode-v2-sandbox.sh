@@ -10,9 +10,10 @@
 # It does not mean a different binary. On hosts where both `opencode` and
 # `opencode2` exist, `opencode2` is typically a two-line shim that execs the very
 # same `opencode` binary, so a "V1 vs V2 side-by-side" comparison proved nothing
-# about the binary. "V2" here means: this plugin, exercised against the
-# `@opencode/plugin@2.x` contract. This project is V2-exclusive, so there is a
-# single leg to validate.
+# about the binary. "V2" here means this script observes a specific hook canary
+# against an OpenCode v2.0.18 host. It does not establish a stable
+# `@opencode/plugin@2.0.18` SDK contract or compatibility across the full 2.x
+# line. This project is V2-exclusive, so there is a single host leg to validate.
 #
 # Modes (combinable):
 #   --prepare        Build tarball, install pantheon-opencode + the OpenCode V2
@@ -25,6 +26,8 @@
 #   --rehydrate      Offline context_rehydrate + context_session_summary probe.
 #   --hooks          V2 hook canary: proves hook callbacks FIRE through the
 #                    sandbox's V2 binary (not merely that a plugin loaded).
+#                    This does not test transform callback effects or Pantheon
+#                    execute.before security enforcement (deferred to S6).
 #   --reset          Wipe the sandbox root.
 #   --help           Usage.
 #
@@ -38,8 +41,8 @@
 #                            checkout this script lives in). Only read by the
 #                            GENERATED run-test.sh, which cannot derive it from
 #                            its own location and reads the .repo-dir file this
-#                            script generates beside it. --reset refuses to run
-#                            when it points inside the repo.
+#                            script generates beside it. --reset refuses a
+#                            sandbox root that overlaps either protected repo.
 #   PANTHEON_SANDBOX_MODEL   Model used by init/prompts
 #                            (default: opencode-go/mimo-v2.5)
 #   PANTHEON_PROMPT_TIMEOUT  Per-prompt timeout in seconds (default: 300)
@@ -297,19 +300,92 @@ RUNTEST
 
 # ── Reset / Prepare ───────────────────────────────────────────────────────────
 
+# Resolve existing symlinked directory components and normalize missing path
+# components without requiring the sandbox root to exist yet. If an existing
+# non-directory appears before the final component, resolution fails closed.
+canonicalize_path() {
+  local path="$1" resolved="/" component candidate
+  [ -n "$path" ] || return 1
+  case "$path" in
+    /*) ;;
+    *) path="$PWD/$path" ;;
+  esac
+
+  while [ -n "$path" ]; do
+    case "$path" in
+      */*) component="${path%%/*}"; path="${path#*/}" ;;
+      *) component="$path"; path="" ;;
+    esac
+    case "$component" in
+      "" | .) continue ;;
+      ..)
+        if [ "$resolved" != "/" ]; then
+          resolved="${resolved%/*}"
+          [ -n "$resolved" ] || resolved="/"
+        fi
+        ;;
+      *)
+        if [ "$resolved" = "/" ]; then
+          candidate="/$component"
+        else
+          candidate="$resolved/$component"
+        fi
+        if [ -d "$candidate" ]; then
+          resolved="$(cd -P -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+        elif [ -e "$candidate" ] || [ -L "$candidate" ]; then
+          [ -z "$path" ] || return 1
+          resolved="$candidate"
+        else
+          resolved="$candidate"
+        fi
+        ;;
+    esac
+  done
+
+  printf '%s\n' "$resolved"
+}
+
+# Compare complete path components; a sibling such as project-extra is not
+# inside project. The root directory is a parent of every absolute path.
+path_is_same_or_descendant() {
+  local candidate="$1" parent="$2"
+  [ "$candidate" = "$parent" ] && return 0
+  if [ "$parent" = "/" ]; then
+    case "$candidate" in /*) return 0 ;; esac
+  fi
+  case "$candidate" in "$parent"/*) return 0 ;; esac
+  return 1
+}
+
 cmd_reset() {
   # Guard BOTH repos this harness can act on. REPO_DIR is where `--prepare`
   # runs `npm pack`; PANTHEON_REPO is the documented override the GENERATED
   # run-test.sh honours, and it may point somewhere else entirely. Refusing
   # only the default left an override able to name a checkout and have the
   # generated script pack a tarball into it.
-  local protected
+  local protected canonical_root canonical_home canonical_protected
+  canonical_root="$(canonicalize_path "$SANDBOX_ROOT")" \
+    || die "refusing to reset sandbox root that cannot be canonicalized: $SANDBOX_ROOT"
+  canonical_home="$(canonicalize_path "$HOME")" \
+    || die "refusing to reset because HOME cannot be canonicalized: $HOME"
+  [ "$canonical_root" != "/" ] \
+    || die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (filesystem root)"
+  [ "$canonical_root" != "$canonical_home" ] \
+    || die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (HOME)"
+  if path_is_same_or_descendant "$canonical_home" "$canonical_root"; then
+    die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of HOME $HOME)"
+  fi
+
   for protected in "$REPO_DIR" "${PANTHEON_REPO:-}"; do
     [ -n "$protected" ] || continue
-    case "$SANDBOX_ROOT" in
-      "/" | "$HOME" | "$protected" | "$protected"/*)
-        die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is inside the repo $protected)" ;;
-    esac
+    canonical_protected="$(canonicalize_path "$protected")" \
+      || die "refusing to reset because protected repo path cannot be canonicalized: $protected"
+    if path_is_same_or_descendant "$canonical_root" "$canonical_protected"; then
+      die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is equal to or inside the repo $protected)"
+    fi
+    if path_is_same_or_descendant "$canonical_protected" "$canonical_root"; then
+      die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of the repo $protected)"
+    fi
   done
   log "Resetting sandbox: $SANDBOX_ROOT"
   rm -rf "$SANDBOX_ROOT"
@@ -933,7 +1009,20 @@ elif [ "$MODE_COST" -eq 1 ]; then
   fi
 elif [ "$MODE_REHYDRATE" -eq 1 ]; then
   sandbox_env
-  run_rehydrate "$TARGET_VERSION"
+  rehydrate_status=0
+  # run_rehydrate exits when its check fails; isolate it so the separately
+  # requested hook canary still runs, then return a failing status afterward.
+  (run_rehydrate "$TARGET_VERSION") || rehydrate_status=$?
+  hooks_status=0
+  if [ "$MODE_HOOKS" -eq 1 ]; then
+    (run_hooks) || hooks_status=$?
+  fi
+  if [ "$rehydrate_status" -ne 0 ]; then
+    exit "$rehydrate_status"
+  fi
+  if [ "$hooks_status" -ne 0 ]; then
+    exit "$hooks_status"
+  fi
 elif [ "$MODE_HOOKS" -eq 1 ]; then
   sandbox_env
   run_hooks

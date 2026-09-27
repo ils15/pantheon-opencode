@@ -51,13 +51,14 @@ import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const CANARY_SRC = join(here, '..', 'fixtures', 'opencode-v2-hook-canary', 'index.ts')
 const REAL_PLUGIN_SRC = join(here, '..', '..', 'src', 'plugin-v2.ts')
+const TEST_SRC = fileURLToPath(import.meta.url)
 
 const BIN = process.env.PANTHEON_HOOK_CANARY_BIN ?? 'opencode'
 const MODEL = process.env.PANTHEON_HOOK_CANARY_MODEL ?? 'opencode-go/mimo-v2.5'
@@ -83,9 +84,14 @@ let projectDir = ''
 let proofFile = ''
 let request = null
 let sessionID = ''
-let secretNonce = ''
-let bashNonce = ''
+let blockedReadPath = ''
+let allowedReadPath = ''
+let allowedReadNonce = ''
 const skipped = BINARY_AVAILABLE ? false : `opencode binary not found on PATH (${BIN})`
+
+function fixtureOnlySkip(reason) {
+  return skipped || (IS_REAL ? reason : false)
+}
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -122,8 +128,12 @@ before(async () => {
 
   projectDir = mkdtempSync(join(tmpdir(), 'pantheon-hook-canary-'))
   proofFile = join(projectDir, 'canary-proof.log')
-  secretNonce = `CANARY-SECRET-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-  bashNonce = `CANARY-BASH-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  blockedReadPath = join(projectDir, `canary-blocked-read-${uniqueSuffix}.txt`)
+  allowedReadPath = join(projectDir, `canary-allowed-read-${uniqueSuffix}.txt`)
+  allowedReadNonce = `CANARY-READ-ALLOWED-${uniqueSuffix}`
+  writeFileSync(blockedReadPath, `CANARY-BLOCKED-READ-FILE-${uniqueSuffix}\n`)
+  writeFileSync(allowedReadPath, `${allowedReadNonce}\n`)
 
   const pluginDir = join(projectDir, '.opencode', 'plugins', 'canary')
   mkdirSync(pluginDir, { recursive: true })
@@ -138,8 +148,8 @@ before(async () => {
     writeFileSync(join(pluginDir, 'index.ts'), readFileSync(CANARY_SRC, 'utf8'))
   }
 
-  // A self-contained permissive agent so the test does not depend on which
-  // host agents happen to allow `bash`/`read`.
+  // A self-contained read-enabled agent so this canary does not depend on
+  // which host agents happen to allow the exact file-read action.
   writeFileSync(
     join(projectDir, 'opencode.json'),
     JSON.stringify(
@@ -148,11 +158,8 @@ before(async () => {
         agent: {
           [AGENT]: {
             mode: 'primary',
-            permissions: [
-              { action: 'bash', resource: '*', effect: 'allow' },
-              { action: 'read', resource: '*', effect: 'allow' },
-              { action: 'glob', resource: '*', effect: 'allow' },
-            ],
+            tools: { bash: false, read: true, shell: false, execute: false },
+            permission: { read: 'allow' },
           },
         },
       },
@@ -170,6 +177,7 @@ before(async () => {
       env: {
         ...process.env,
         PANTHEON_HOOK_CANARY_PROOF: proofFile,
+        PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH: blockedReadPath,
         // Only the real plugin reads this; it opts the shipped handler into
         // writing an observable lifetime proof to the same file.
         PANTHEON_HOOK_CANARY_LIFETIME_PROOF: proofFile,
@@ -252,6 +260,343 @@ async function messagesText() {
   return JSON.stringify(listed)
 }
 
+function parseProofRecords(proof) {
+  return proof
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const separator = line.indexOf(' ')
+      if (separator < 0) return { label: line }
+
+      const label = line.slice(0, separator)
+      const detail = line.slice(separator + 1)
+      try {
+        return { label, ...JSON.parse(detail) }
+      } catch {
+        return { label, detail }
+      }
+    })
+}
+
+function messageToolParts(messages) {
+  const entries = Array.isArray(messages)
+    ? messages
+    : Array.isArray(messages?.data)
+      ? messages.data
+      : []
+  return entries.flatMap((message) => {
+    if (Array.isArray(message?.parts)) return message.parts
+    if (Array.isArray(message?.content)) return message.content
+    return []
+  })
+}
+
+function messageTextParts(messages) {
+  const entries = Array.isArray(messages)
+    ? messages
+    : Array.isArray(messages?.data)
+      ? messages.data
+      : []
+  return entries.flatMap((message) => {
+    const parts = Array.isArray(message?.parts)
+      ? message.parts
+      : Array.isArray(message?.content)
+        ? message.content
+        : []
+    return parts.filter((part) => part?.type === 'text' && typeof part.text === 'string')
+  })
+}
+
+function partCallID(part) {
+  return part.callID ?? part.toolCallID ?? part.id
+}
+
+function toolInput(part) {
+  return part.state?.input ?? part.input ?? {}
+}
+
+function toolInputPath(part) {
+  const input = toolInput(part)
+  return input.filePath ?? input.filepath ?? input.path ?? input.file
+}
+
+function samePath(actualPath, expectedPath) {
+  return (
+    typeof actualPath === 'string' &&
+    resolve(projectDir || '.', actualPath) === resolve(expectedPath)
+  )
+}
+
+function completedToolOutput(state) {
+  const output = state?.output ?? state?.result?.output ?? state?.content ?? state?.result?.content
+  if (typeof output === 'string') return output
+  if (Array.isArray(output)) {
+    return output
+      .map((item) =>
+        typeof item === 'string' ? item : typeof item?.text === 'string' ? item.text : '',
+      )
+      .join('\n')
+  }
+  return ''
+}
+
+function toolPartsNamed(messages, toolName) {
+  const allToolCalls = messageToolParts(messages).filter((part) => part?.type === 'tool')
+  return allToolCalls.filter((part) => part.tool === toolName || part.name === toolName)
+}
+
+function findToolCallForPath(messages, toolName, expectedPath) {
+  const matchingTool = toolPartsNamed(messages, toolName)
+  const target = matchingTool.find((part) => samePath(toolInputPath(part), expectedPath))
+  const observedText = messageTextParts(messages)
+    .map((part) => part.text)
+    .join(' ')
+    .slice(-400)
+  assert.ok(
+    target,
+    `no ${toolName} tool-call part targeted the exact path ${expectedPath}; recorded ${toolName} paths: ${matchingTool.map((part) => String(toolInputPath(part) ?? '<missing>')).join(', ') || 'none'}; response text is not tool evidence: ${observedText || 'none'}`,
+  )
+  return target
+}
+
+function findCompletedReadCall(messages, expectedPath, nonce) {
+  const target = findToolCallForPath(messages, 'read', expectedPath)
+  const callID = partCallID(target)
+  const state = target.state
+  assert.equal(
+    state?.status,
+    'completed',
+    `read tool call ${callID ?? '<no call ID>'} for ${expectedPath} did not complete (state=${state?.status ?? 'missing'}); no completed read result is available`,
+  )
+
+  const output = completedToolOutput(state)
+  assert.ok(
+    output.includes(nonce),
+    `completed read tool result/output did not contain the unique file nonce (callID=${callID ?? '<no call ID>'}; result=${JSON.stringify(output).slice(0, 400)})`,
+  )
+  return target
+}
+
+function appendedProofRecords(beforeProof, afterProof) {
+  assert.ok(
+    afterProof.startsWith(beforeProof),
+    'proof file changed instead of only appending records',
+  )
+  return parseProofRecords(afterProof.slice(beforeProof.length))
+}
+
+function assertExecuteBeforeForCall(beforeProof, afterProof, toolCall) {
+  const toolName = toolCall.tool ?? toolCall.name
+  const newBeforeEvents = appendedProofRecords(beforeProof, afterProof).filter(
+    (record) => record.label === 'tool.hook:execute.before' && record.tool === toolName,
+  )
+  const callID = partCallID(toolCall)
+  const matchingEvent = callID
+    ? newBeforeEvents.find((record) => record.callID === callID)
+    : newBeforeEvents[0]
+
+  assert.ok(
+    matchingEvent,
+    `${toolName} tool call ${callID ?? '<no call ID>'} had no matching new execute.before event`,
+  )
+  return matchingEvent
+}
+
+function assertExecuteAfterForCall(beforeProof, afterProof, toolCall) {
+  const toolName = toolCall.tool ?? toolCall.name
+  assert.equal(
+    toolCall?.state?.status,
+    'completed',
+    `cannot check execute.after because the intended ${toolName} call did not complete`,
+  )
+
+  const newToolAfterEvents = appendedProofRecords(beforeProof, afterProof).filter(
+    (record) => record.label === 'tool.hook:execute.after' && record.tool === toolName,
+  )
+  const callID = partCallID(toolCall)
+  const matchingEvent = callID
+    ? newToolAfterEvents.find((record) => record.callID === callID)
+    : newToolAfterEvents.find((record) => record.status === 'completed')
+
+  assert.ok(
+    matchingEvent,
+    `completed ${toolName} call ${callID ?? '<no call ID>'} had no matching new execute.after event${callID ? ` (new ${toolName} after call IDs: ${newToolAfterEvents.map((record) => record.callID ?? '<missing>').join(', ') || 'none'})` : ''}`,
+  )
+  assert.equal(
+    matchingEvent.status,
+    'completed',
+    'matching execute.after did not report completed status',
+  )
+  return matchingEvent
+}
+
+function assertReadPermissionObserved(beforeProof, afterProof, expectedSessionID) {
+  const readPermissionEvent = appendedProofRecords(beforeProof, afterProof).find(
+    (record) =>
+      record.label === 'permission.hook:evaluate' &&
+      record.action === 'read' &&
+      record.sessionID === expectedSessionID,
+  )
+  assert.ok(
+    readPermissionEvent,
+    'permission.evaluate did not record action=read in this prompt window; this is callback observation only, not a security-enforcement assertion',
+  )
+}
+
+test('read-result assertion rejects a nonce present only in prompt text', () => {
+  const nonce = 'CANARY-READ-prompt-only'
+  const filePath = '/tmp/canary-allowed-read.txt'
+  const messages = {
+    data: [{ content: [{ type: 'text', text: `Read ${filePath}; it contains ${nonce}` }] }],
+  }
+
+  assert.throws(() => findCompletedReadCall(messages, filePath, nonce), /no read tool-call part/i)
+})
+
+test('execute.after assertion ignores stale execute.before from the blocked read', () => {
+  const blockedRead = `tool.hook:execute.before ${JSON.stringify({
+    tool: 'read',
+    callID: 'read-call-1',
+    sessionID: 'ses-canary',
+  })}\n`
+  const successfulRead = {
+    tool: 'read',
+    callID: 'read-call-2',
+    state: {
+      status: 'completed',
+      input: { filePath: '/tmp/canary-allowed-read.txt' },
+      output: 'CANARY-READ-allowed\n',
+    },
+  }
+
+  assert.throws(
+    () => assertExecuteAfterForCall(blockedRead, blockedRead, successfulRead),
+    /no matching new execute\.after/i,
+  )
+})
+
+test('execute.after assertion rejects a completed read with no after event', () => {
+  const beforeProof = 'setup\n'
+  const afterProof =
+    beforeProof +
+    `tool.hook:execute.before ${JSON.stringify({ tool: 'read', callID: 'read-call-2' })}\n`
+  const completedRead = {
+    tool: 'read',
+    callID: 'read-call-2',
+    state: {
+      status: 'completed',
+      input: { filePath: '/tmp/canary-allowed-read.txt' },
+      output: 'CANARY-READ-allowed\n',
+    },
+  }
+
+  assert.throws(
+    () => assertExecuteAfterForCall(beforeProof, afterProof, completedRead),
+    /no matching new execute\.after/i,
+  )
+})
+
+test('execute.before assertion correlates the blocked read by call ID', () => {
+  const beforeProof = 'setup\n'
+  const blockedRead = {
+    tool: 'read',
+    callID: 'read-call-blocked',
+    state: { status: 'error', input: { filePath: '/tmp/canary-blocked-read.txt' } },
+  }
+  const afterProof =
+    beforeProof +
+    `tool.hook:execute.before ${JSON.stringify({
+      tool: 'read',
+      callID: 'read-call-blocked',
+      sessionID: 'ses-canary',
+    })}\n`
+
+  assert.equal(
+    assertExecuteBeforeForCall(beforeProof, afterProof, blockedRead).callID,
+    'read-call-blocked',
+  )
+})
+
+test('read-result assertion requires nonce in completed tool output, not only arguments', () => {
+  const nonce = 'CANARY-READ-args-only'
+  const filePath = '/tmp/canary-allowed-read.txt'
+  const messages = {
+    data: [
+      {
+        content: [
+          {
+            type: 'tool',
+            tool: 'read',
+            callID: 'read-call-3',
+            state: {
+              status: 'completed',
+              input: { filePath },
+              output: 'command completed without expected output',
+            },
+          },
+        ],
+      },
+    ],
+  }
+
+  assert.throws(() => findCompletedReadCall(messages, filePath, nonce), /tool result\/output/i)
+})
+
+test('read-result assertion accepts the nonce only from a completed read result', () => {
+  const nonce = 'CANARY-READ-output-proof'
+  const filePath = '/tmp/canary-allowed-read-output-proof.txt'
+  const call = {
+    type: 'tool',
+    tool: 'read',
+    callID: 'read-call-output-proof',
+    state: {
+      status: 'completed',
+      input: { filePath },
+      content: [{ type: 'text', text: `Read file ${filePath}\n${nonce}\n` }],
+    },
+  }
+
+  assert.equal(findCompletedReadCall({ data: [{ parts: [call] }] }, filePath, nonce), call)
+})
+
+test('read-result assertion rejects a read call that did not complete', () => {
+  const nonce = 'CANARY-READ-running-only'
+  const filePath = '/tmp/canary-allowed-read-running.txt'
+  const messages = {
+    data: [
+      {
+        parts: [
+          {
+            type: 'tool',
+            tool: 'read',
+            callID: 'read-call-running',
+            state: { status: 'running', input: { filePath } },
+          },
+        ],
+      },
+    ],
+  }
+
+  assert.throws(() => findCompletedReadCall(messages, filePath, nonce), /no completed read result/i)
+})
+
+test('permission.evaluate assertion requires a new read action for this session', () => {
+  const beforeProof = `permission.hook:evaluate ${JSON.stringify({ action: 'read', sessionID: 'ses-canary' })}\n`
+  const unrelatedAfterProof =
+    beforeProof +
+    `permission.hook:evaluate ${JSON.stringify({ action: 'read', sessionID: 'ses-other' })}\n`
+
+  assert.throws(
+    () => assertReadPermissionObserved(beforeProof, unrelatedAfterProof, 'ses-canary'),
+    /permission\.evaluate did not record action=read/i,
+  )
+
+  const readAfterProof =
+    beforeProof +
+    `permission.hook:evaluate ${JSON.stringify({ action: 'read', sessionID: 'ses-canary' })}\n`
+  assert.doesNotThrow(() => assertReadPermissionObserved(beforeProof, readAfterProof, 'ses-canary'))
+})
+
 /**
  * Read the real plugin source for static guards. Pure file I/O — no host
  * required, which is why the guard test that uses it is not host-gated.
@@ -260,15 +605,10 @@ function readPluginSource() {
   return readFileSync(REAL_PLUGIN_SRC, 'utf8')
 }
 
-test('plugin loads, setup runs, and session.hook("prompt"/"context") fire', {
+test('real plugin context hook exposes context marker', {
   skip: skipped,
 }, async () => {
-  const secretFile = join(projectDir, 'canary-secret.txt')
-  writeFileSync(secretFile, `SECRET-${secretNonce}\n`)
-
-  await prompt(
-    `Use the read tool to read the file ${secretFile}. Then reply with exactly: CANARY-READ-DONE`,
-  )
+  await prompt('Do not use any tools. Reply with exactly: CANARY-SESSION-HOOK-DONE')
 
   const proof = readProof()
   if (IS_REAL) {
@@ -286,18 +626,16 @@ test('plugin loads, setup runs, and session.hook("prompt"/"context") fire', {
   }
 })
 
-test('execute.before throws and blocks a read (mutation with visible effect)', {
-  skip: skipped,
+test('fixture canary execute.before blocks its synthetic read', {
+  skip: fixtureOnlySkip(
+    'S5b real-plugin execute.before enforcement is not implemented; this synthetic fixture guard is not Pantheon security coverage (deferred to S6)',
+  ),
 }, async () => {
-  // Only the canary fixture installs the throwing execute.before guard; the
-  // real plugin registers execute.before as a no-op delegation point.
-  if (IS_REAL) return
-
-  const proof = readProof()
-  assert.match(
-    proof,
-    /^tool\.hook:execute\.before read$/m,
-    'execute.before did not fire for the read tool',
+  // This is deliberately fixture-only: its synthetic blocker does not prove
+  // that Pantheon enforces execute.before security.
+  const proofBefore = readProof()
+  await prompt(
+    `Use only the read tool to read this exact file path: ${blockedReadPath}. Do not use other tools. Then reply with exactly: CANARY-BLOCKED-READ-DONE`,
   )
 
   // The visible consequence: the `read` tool call itself is recorded as an
@@ -305,33 +643,42 @@ test('execute.before throws and blocks a read (mutation with visible effect)', {
   // completed. (Asserting on the read call, not on reachability of the file:
   // an agent may route around a blocked tool with another tool.)
   const messages = JSON.parse(await messagesText()).data ?? []
-  const readError = messages
-    .flatMap((message) => message.content ?? [])
-    .find((part) => part?.type === 'tool' && part?.name === 'read')
-  assert.ok(readError, 'no read tool call was recorded at all')
-  assert.equal(readError.state?.status, 'error', 'the read tool call did not fail')
+  const readError = findToolCallForPath(messages, 'read', blockedReadPath)
+  assert.equal(readError.state?.status, 'error', 'the blocked read tool call did not fail')
   assert.match(
     JSON.stringify(readError.state?.error),
     /CANARY_BLOCKED_READ/,
     'the read failed for a different reason than the canary guard',
   )
+  const proofAfter = readProof()
+  const blockedBefore = assertExecuteBeforeForCall(proofBefore, proofAfter, readError)
+  assert.equal(
+    blockedBefore.filePath,
+    blockedReadPath,
+    'execute.before was not for the blocked path',
+  )
 })
 
-test('execute.after and permission.evaluate fire on a successful tool call', {
-  skip: skipped,
+test('fixture canary allows a read and correlates execute.after to its completed result', {
+  skip: fixtureOnlySkip(
+    'S5b real-plugin execute/permission callback effects are unproven; this fixture-only read lifecycle is not Pantheon behavior coverage',
+  ),
 }, async () => {
-  if (IS_REAL) return
-
+  const proofBefore = readProof()
   await prompt(
-    `Using the bash tool, run the command: echo ${bashNonce}. Then reply with exactly: CANARY-BASH-DONE`,
+    `Use only the read tool to read this exact file path: ${allowedReadPath}. Do not use any other tool. Wait for the read result, then reply with exactly: CANARY-ALLOWED-READ-DONE`,
   )
 
-  const messages = await messagesText()
-  assert.match(messages, new RegExp(bashNonce), 'the bash command did not actually run')
-
-  const proof = readProof()
-  assert.match(proof, /^tool\.hook:execute\.after /m, 'execute.after never fired')
-  assert.match(proof, /^permission\.hook:evaluate /m, 'permission.evaluate never fired')
+  const messages = JSON.parse(await messagesText())
+  const readCall = findCompletedReadCall(messages, allowedReadPath, allowedReadNonce)
+  const proofAfter = readProof()
+  const readAfter = assertExecuteAfterForCall(proofBefore, proofAfter, readCall)
+  assert.equal(
+    readAfter.filePath,
+    allowedReadPath,
+    'execute.after was not for the allowed read path',
+  )
+  assertReadPermissionObserved(proofBefore, proofAfter, sessionID)
 })
 
 test('session.hook("compaction") fires on compaction', { skip: skipped }, async () => {
@@ -363,7 +710,7 @@ test('negative control: session.hook("compacting") NEVER fires', { skip: skipped
 // regression protection for nothing. This is the one test in this file that
 // runs everywhere — plain `npm run test:hooks` on any machine, in either mode.
 // The behavioural half (a callback actually firing) stays host-gated above.
-test('real plugin regression guards: no dead transform domains, correct compaction name', () => {
+test('real plugin regression guards: honest transform support claims and correct compaction name', () => {
   const source = readPluginSource()
   // The four mismatches this canary was built to catch. A regression to the
   // shipped 2.0.16-mismatched API would reappear as one of these.
@@ -382,10 +729,31 @@ test('real plugin regression guards: no dead transform domains, correct compacti
     /context\.catalog\b/,
     'real plugin calls the removed ctx.catalog domain',
   )
+  assert.match(source, /ctx\.integration and/, 'integration domain probe is not documented')
+  assert.match(
+    source,
+    /ctx\.skill have callable `\.transform` methods/,
+    'host-supported skill transform domain is not documented',
+  )
+  assert.match(
+    source,
+    /only ctx\.catalog was absent/i,
+    'the runtime probe must distinguish catalog absence from supported domains',
+  )
+  assert.match(
+    source,
+    /callback effects were\s+\*\s+not observed for any domain/,
+    'unproven transform callback effects are not disclosed',
+  )
   assert.doesNotMatch(
     source,
-    /context\.skill\.transform/,
-    'real plugin calls the removed skill transform',
+    /ctx\.integration.*no longer a context domain|ctx\.skill.*no longer a context domain/s,
+    'plugin must not describe integration or skill as host-absent',
+  )
+  assert.doesNotMatch(
+    source,
+    /context\.(?:integration|skill)\.transform/,
+    'this S5b fix must not implement integration or skill transforms',
   )
   assert.doesNotMatch(
     source,
@@ -393,10 +761,30 @@ test('real plugin regression guards: no dead transform domains, correct compacti
     'real plugin calls the removed SkillEditor.source()',
   )
   assert.doesNotMatch(source, /hook\('compacting'/, 'real plugin registers "compacting"')
+  assert.match(source, /Promise\.allSettled/, 'transform setup must remain individually settled')
+  assert.doesNotMatch(
+    source,
+    /would reject\s+setup\(\).*kill every hook|rejection also\s+kills every later hook/is,
+    'setup comments must not claim a rejected transform kills later hook registrations',
+  )
   // The context handler must emit canonical SystemParts, not raw pushes.
   assert.doesNotMatch(
     source,
     /rawSystem\.push\(toSystemEntry/,
     'real plugin pushes non-normalized system entries',
+  )
+})
+
+test('real mode explicitly skips fixture-only execute/permission behavior', () => {
+  const source = readFileSync(TEST_SRC, 'utf8')
+  assert.equal(
+    (source.match(/skip: fixtureOnlySkip\(/g) ?? []).length,
+    2,
+    'both fixture-only read lifecycle tests must use explicit mode-aware skips',
+  )
+  assert.doesNotMatch(
+    source,
+    /if \(IS_REAL\) return/,
+    'real mode must not silently pass by returning',
   )
 })
