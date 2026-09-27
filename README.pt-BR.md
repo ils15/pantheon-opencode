@@ -31,7 +31,7 @@ de planejar o trabalho, avançar, conferir resultados e preservar o contexto
 
 ## Comece em 2 minutos
 
-Requisitos: [OpenCode 1.18.4+](https://opencode.ai/docs/) e Node.js 22+.
+Requisitos: [OpenCode 1.18.4+](https://opencode.ai/docs/) e Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`.
 
 No projeto em que você quer usar o Pantheon:
 
@@ -137,8 +137,9 @@ O plugin V2 fornece 6 ferramentas de orquestração (`hashline_edit`,
 `pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`,
 `pantheon_cost`, `pantheon_model`), 4 assinaturas de eventos (`session.created`,
 `session.idle`, `session.error`, `session.compacted`), session hooks (`prompt`,
-`context`) e tool hooks (`execute.before`, `execute.after`). O único recurso V2
-sem suporte é `legacy-hooks` (a superfície de hooks específica do V1).
+`context`) e tool hooks (`execute.before`, `execute.after`). Os recursos V2 sem
+suporte são `legacy-hooks` (a superfície de hooks específica do V1),
+`catalog-transform`, `integration-transform` e `skill-transform`.
 
 O pacote expõe os dois contratos como exports importáveis:
 `pantheon-opencode/plugin` (V1), `pantheon-opencode/plugin-v2` (V2) e
@@ -240,32 +241,54 @@ fail-closed: todo check obrigatório precisa terminar em PASS explícito;
 timeout, falha de auth/rede/provider e pré-requisitos ausentes bloqueiam a
 execução.
 
-"V2" aqui significa este plugin exercido contra o contrato
-`@opencode/plugin@2.x` — não um binário diferente. Em hosts onde `opencode` e
-`opencode2` existem, `opencode2` costuma ser um shim que executa o mesmo
-binário, então a comparação lado a lado anterior não provava nada sobre o
-binário em si. O projeto é exclusivo V2, portanto há uma única perna.
+"V2" aqui se refere somente ao canário de hooks observado em um host OpenCode
+v2.0.18, no qual ao menos um callback testado foi disparado; isso não
+estabelece compatibilidade com o SDK estável `@opencode/plugin@2.0.18` nem com
+o contrato 2.x completo. Esta branch ainda fixa a dependência transitória
+`@opencode-ai/plugin@1.18.30`. Em hosts com `opencode` e `opencode2`, este
+último costuma ser um shim que executa o mesmo binário; a comparação lado a
+lado anterior, portanto, não provava nada sobre o binário em si. O projeto é
+exclusivo V2, portanto há uma única perna.
 
 ```bash
 scripts/test-opencode-v2-sandbox.sh --prepare     # tarball + install + init no sandbox
 scripts/test-opencode-v2-sandbox.sh --run v2      # apenas validação base
 scripts/test-opencode-v2-sandbox.sh --prompts     # validação base + bateria de prompts
+scripts/test-opencode-v2-sandbox.sh --rehydrate   # sondas offline de rehydration/summary de sessão
+scripts/test-opencode-v2-sandbox.sh --hooks       # canário de callbacks de hooks V2
+scripts/test-opencode-v2-sandbox.sh --rehydrate --hooks # executa os dois canários
 scripts/test-opencode-v2-sandbox.sh --reset       # limpa a raiz do sandbox
 ```
 
-Os modos são combináveis (ex.: `--prepare --run v2 --prompts`). Os binários são
-resolvidos estritamente dentro do prefix npm do sandbox — um sandbox não
-preparado falha rápido em vez de testar silenciosamente a instalação do host.
+Os modos são combináveis (ex.: `--prepare --run v2 --prompts`). `--rehydrate`
+executa sondas offline de `context_rehydrate` e `context_session_summary`.
+`--hooks` executa um canário de hooks V2 com o binário do sandbox para verificar
+se os callbacks de hooks são disparados; ele não testa os efeitos dos callbacks
+de transform nem comprova o enforcement de segurança `execute.before` do
+Pantheon. Com o par de sondas `--rehydrate --hooks` (sem `--run`, `--prompts` ou
+`--cost`), o canário de hooks ainda é executado se a rehydration falhar, e o
+comando retorna falha em seguida. Esses canários de teste/sandbox não são prova
+de enforcement de segurança do Pantheon. Os binários são resolvidos estritamente
+dentro do prefix npm do sandbox — um sandbox não preparado falha rápido em vez
+de testar silenciosamente a instalação do host.
 
 Isso valida somente o sandbox isolado e preparado. Um PASS não prova suporte
 para todo host real nem para configurações de host que não foram exercitadas.
+
+## Cobertura TypeScript do Plugin V2
+
+`npm run coverage:plugin-v2` executa a suíte `tests/pantheon/*.test.ts` com a
+cobertura nativa do Node habilitada para source maps e exige pelo menos 80% de
+cobertura de linhas somente para `src/plugin-v2.ts`. Requer Node `v24.15.0`;
+coberturas de branches e funções são informativas, não gates. Isso não é uma
+alegação de cobertura do repositório inteiro.
 
 Variáveis de ambiente:
 
 | Variável | Padrão | Finalidade |
 |----------|---------|---------|
 | `PANTHEON_SANDBOX_ROOT` | `~/pantheon-sandbox` | Raiz do sandbox (recusada se insegura para `--reset`) |
-| `OPENCODE_V1_SPEC` | `opencode-ai@1.18.18` | Spec npm que fornece o binário `opencode` |
+| `OPENCODE_V1_SPEC` | `opencode-ai@1.18.18` | Configura somente o plugin V1; o runner de sandbox exclusivo V2 não consome nem oferece suporte a essa variável |
 | `OPENCODE_V2_SPEC` | `@opencode-ai/cli@beta` | Spec npm que fornece o binário `opencode2` |
 | `PANTHEON_SANDBOX_MODEL` | `opencode-go/mimo-v2.5` | Modelo usado pelo init e pelos prompts |
 | `PANTHEON_PROMPT_TIMEOUT` | `300` | Timeout por prompt em segundos |
