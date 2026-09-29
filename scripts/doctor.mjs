@@ -88,13 +88,23 @@ function parseArgs(argv) {
     args.target = process.cwd()
   }
 
-  if (args.profile === 'auto') {
-    args.profile = args.target.includes('pantheon-sandbox') ? 'sandbox' : 'global'
-  }
-
   // Resolve to absolute
   if (!args.target.startsWith('/')) {
     args.target = join(process.cwd(), args.target)
+  }
+
+  if (args.profile === 'auto') {
+    const target = resolve(args.target)
+    // A checkout is not a managed OpenCode installation: its repository
+    // config intentionally contains only development MCPs. Use the lite
+    // policy for `npm run doctor` so a fresh checkout does not require a
+    // user's global MCP registry or pre-existing venv.
+    args.profile =
+      target === resolve(ROOT)
+        ? 'lite'
+        : args.target.includes('pantheon-sandbox')
+          ? 'sandbox'
+          : 'global'
   }
 
   return args
@@ -159,7 +169,7 @@ function showHelp() {
    C. Permission Checks    — frontmatter validation
    D. OpenCode Status      — OpenCode artifact layout
    E. Git Status           — uncommitted changes
-   F. Runtime Layer        — venv python + pinned pip dependencies
+    F. Runtime Layer        — runtime Python + pinned pip dependencies
    H3. Plugin Drift        — registered plugin version vs this package
    K. Node Runtime         — node:sqlite availability for pantheon_cost
 
@@ -818,12 +828,14 @@ function checkGitStatus(args) {
 }
 
 // ---------------------------------------------------------------------------
-// Check F: Runtime Layer — Venv, Python & pinned dependencies
+// Check F: Runtime Layer — Runtime Python & pinned dependencies
 // ---------------------------------------------------------------------------
 // The MCP servers run on the venv Python under ~/.config/opencode/.venv
-// (same resolution as scripts/install-mcp.mjs). This layer verifies the venv
-// exists, the interpreter responds, and the installed packages satisfy the
-// EXACT pins in src/mcp/requirements-mcp.txt and requirements-vision.txt
+// (same resolution as scripts/install-mcp.mjs) after installation. A
+// repository checkout/CI job is not an installed target, however, so it may
+// intentionally have no venv. In that case the doctor uses PANTHEON_PYTHON or
+// python3 and still validates the exact pins. Missing or mismatched packages
+// remain blocking errors; the fallback never makes the runtime check advisory
 // (issue #18 / #21).
 
 /** Parse `pip freeze` output into a normalized name → version map. */
@@ -906,31 +918,53 @@ function checkRequirementLine(line, installed) {
   }
 }
 
+/** Classify whether a required runtime file is available to the doctor. */
+export function classifyRequiredRuntimeFile(exists) {
+  return exists ? 'present' : 'error'
+}
+
+/** Validate a required runtime requirements file without downgrading absence. */
+export function validateRequiredRuntimeFile(filePath) {
+  const present = classifyRequiredRuntimeFile(existsSync(filePath)) === 'present'
+  return {
+    ok: present,
+    message: present
+      ? `requirements file present: ${filePath}`
+      : `requirements file not found: ${filePath}`,
+  }
+}
+
 function checkVenvLayer(args) {
-  section('F. Runtime Layer — Venv, Python & Dependencies')
+  section('F. Runtime Layer — Runtime Python & Dependencies')
 
-  const venvPython = resolveRuntimePython(args)
+  const runtimePython = resolveRuntimePython(args)
 
-  if (!existsSync(venvPython)) {
-    if (args.profile === 'lite') {
-      info(`Venv python not found — runtime layer skipped for lite profile`)
+  if (!isAbsolute(runtimePython) || !existsSync(runtimePython)) {
+    if (runtimePython === 'python3') {
+      info('No dedicated .venv found — validating the Python interpreter on PATH')
     } else {
-      error(`Venv python not found: ${venvPython} (run \`pantheon-opencode init\` to create it)`)
+      error(
+        `Runtime Python not found: ${runtimePython} (set PANTHEON_PYTHON or run \`pantheon-opencode init\` to create a .venv)`,
+      )
+      return
     }
-    return
   }
-  pass(`Venv python exists: ${venvPython}`)
+  if (isAbsolute(runtimePython) && existsSync(runtimePython)) {
+    pass(`Runtime Python exists: ${runtimePython}`)
+  }
 
-  const probe = spawn(venvPython, ['-c', 'import sys; print(sys.version.split()[0])'])
+  const probe = spawn(runtimePython, ['-c', 'import sys; print(sys.version.split()[0])'])
   if (probe.status !== 0) {
-    error(`Venv python does not respond (exit ${probe.status}): ${probe.stderr}`)
+    error(
+      `Runtime Python does not respond (exit ${probe.status}): ${probe.stderr || 'interpreter is unavailable'}`,
+    )
     return
   }
-  pass(`Venv python responds (Python ${probe.stdout})`)
+  pass(`Runtime Python responds (Python ${probe.stdout})`)
 
-  const freeze = spawn(venvPython, ['-m', 'pip', 'freeze'])
+  const freeze = spawn(runtimePython, ['-m', 'pip', 'freeze'])
   if (freeze.status !== 0) {
-    warn(`pip freeze failed (exit ${freeze.status}) — cannot verify pinned versions`)
+    error(`pip freeze failed (exit ${freeze.status}) — cannot verify pinned versions`)
     return
   }
   const installed = parsePipFreeze(freeze.stdout)
@@ -940,8 +974,9 @@ function checkVenvLayer(args) {
     join(ROOT, 'src', 'mcp', 'requirements-vision.txt'),
   ]
   for (const reqFile of reqFiles) {
-    if (!existsSync(reqFile)) {
-      warn(`requirements file not found: ${reqFile}`)
+    const requirement = validateRequiredRuntimeFile(reqFile)
+    if (!requirement.ok) {
+      error(requirement.message)
       continue
     }
     const base = basename(reqFile)
@@ -1104,12 +1139,32 @@ export function checkCodeModeManifest(args) {
   pass(`✅ Code-mode manifest valid: ${result.count}/${result.total} scripts verified`)
 }
 
-/** Resolve the venv created by init for either a project or global install. */
+/**
+ * Resolve the Python used by the runtime checks.
+ *
+ * Installed targets use the venv created by init. A checkout in CI does not
+ * have that installation state, however, so the explicit PANTHEON_PYTHON
+ * override and the PATH fallback make the contract reproducible without
+ * silently skipping dependency validation.
+ */
 export function resolveRuntimePython(args) {
+  const env = args.env ?? process.env
+  if (typeof env.PANTHEON_PYTHON === 'string' && env.PANTHEON_PYTHON.trim() !== '') {
+    return env.PANTHEON_PYTHON.trim()
+  }
+
   const target = resolve(args.target)
   const isProject = existsSync(join(target, '.opencode'))
-  const runtimeRoot = isProject ? target : resolveOpenCodeConfigDir(args.env ?? process.env)
-  return join(runtimeRoot, '.venv', 'bin', 'python3')
+  const runtimeRoot = isProject ? target : resolveOpenCodeConfigDir(env)
+  const venvCandidates =
+    process.platform === 'win32'
+      ? [
+          join(runtimeRoot, '.venv', 'Scripts', 'python.exe'),
+          join(runtimeRoot, '.venv', 'Scripts', 'python'),
+        ]
+      : [join(runtimeRoot, '.venv', 'bin', 'python3'), join(runtimeRoot, '.venv', 'bin', 'python')]
+  const existing = venvCandidates.find((candidate) => existsSync(candidate))
+  return existing ?? 'python3'
 }
 
 /** Return relative script arguments as absolute paths using an MCP entry cwd. */

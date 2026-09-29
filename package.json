@@ -3,6 +3,9 @@
   "version": "1.5.2",
   "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
+  "workspaces": [
+    "src/plugins/tui"
+  ],
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
@@ -12,9 +15,6 @@
     "./plugin-v2": "./src/plugin-v2.ts",
     "./v2-bridge": "./src/pantheon/v2-bridge.ts"
   },
-  "workspaces": [
-    "src/plugins/tui"
-  ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs && node scripts/sync-tui.mjs",
     "prepare": "husky",
@@ -84,6 +84,8 @@
     "src/routing.yml",
     "src/pantheon/**",
     ".pantheon/code-mode/**",
+    "!.pantheon/code-mode/session-end-save.py",
+    "!.pantheon/code-mode/session-end-save.sh",
     "src/plugins/**",
     "scripts/hooks/**",
     "src/mcp/requirements*",

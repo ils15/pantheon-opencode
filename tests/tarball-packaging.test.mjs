@@ -97,6 +97,11 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     // The code-mode payload must ship inside the tarball so fresh installs
     // can seed the runtime scripts directory.
     assert.match(listing, /^package\/\.pantheon\/code-mode\/compress-inline\.py$/m)
+    assert.doesNotMatch(
+      listing,
+      /package\/\.pantheon\/code-mode\/session-end-save\.(?:py|sh)/,
+      'retired session-save scripts must not be packaged',
+    )
 
     const redaction = spawnSync(
       process.execPath,

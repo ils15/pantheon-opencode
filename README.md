@@ -132,6 +132,10 @@ only when they are explicitly approved. Approval is recorded in
 - **Hash mismatch → `CORRUPT_DATA`.** The SHA-256 of the file on disk must
   match the manifest entry, so edits after approval are detected.
 
+Session persistence is provided by the persistence MCP server. The bundled
+code-mode payload contains execution helpers only and does not export or back
+up a database.
+
 Approve or re-approve a script with the `approve_code_script` MCP tool:
 
 ```
@@ -418,6 +422,14 @@ in the sections above.
 
 
 ## Documentation
+
+### Local evaluations
+
+Promptfoo/evaluation experiments are local-only: place them under
+`evals/promptfoo/`, which is gitignored and excluded from npm packaging,
+package evidence, CI tests, coverage, and release gates. Publish reviewed
+findings as documentation, not the local harness, datasets, outputs, or
+credentials.
 
 - [Installation](docs/INSTALLATION.md) · [Quick start](docs/QUICKSTART.md)
 - [Architecture](docs/ARCHITECTURE.md) · [MCP tools](docs/mcp-tools.md)

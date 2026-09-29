@@ -16,7 +16,6 @@ const workflow = readFileSync(
 const packageJson = JSON.parse(
   readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
 )
-
 const packageLock = JSON.parse(
   readFileSync(fileURLToPath(new URL('../package-lock.json', import.meta.url)), 'utf8'),
 )
@@ -26,7 +25,16 @@ const TUI_WORKSPACE = 'src/plugins/tui'
 test('CI dependency installation and required gates are fail-closed', () => {
   assert.doesNotMatch(workflow, /npm ci[^\n]*\|\|[^\n]*npm install/)
   assert.doesNotMatch(workflow, /(?:pytest|npm audit)[^\n]*\|\|/)
-  for (const command of ['npm run lint', 'npm run typecheck', 'npm test', 'npm run audit']) {
+  for (const command of [
+    'npm run lint',
+    'npm run typecheck',
+    'npm test',
+    'npm run doctor',
+    'npm run audit',
+    'npm run package:validate',
+    'npm run package:evidence -- ',
+    'python3 -m coverage report --fail-under=80',
+  ]) {
     assert.ok(workflow.includes(command), `CI must run ${command}`)
   }
   // `npm test` delegates to `test:all`; the unified runner must still cover
@@ -37,19 +45,21 @@ test('CI dependency installation and required gates are fail-closed', () => {
   }
 })
 
-test('CI package evidence verification preserves failures and remains blocking', () => {
-  const match = workflow.match(/- name: Verify package\n\s+run: ([^\n]+)/)
-  assert.ok(match, 'CI must define a package verification step')
+test('CI package validation and evidence preserve failures and remain blocking', () => {
+  const validationMatch = workflow.match(/- name: Validate publishable package\n\s+run: ([^\n]+)/)
+  assert.ok(validationMatch, 'CI must define a package validation step')
+  assert.equal(validationMatch[1].trim(), 'npm run package:validate')
+
+  const match = workflow.match(/- name: Verify tarball\/package evidence\n\s+run: ([^\n]+)/)
+  assert.ok(match, 'CI must define a tarball/package evidence step')
   const command = match[1].trim()
-  // The former standalone `version-check` job was folded into `validate`, so
-  // the step is now bounded by the next job key or by end of file.
   const packageStep = workflow.match(
-    /- name: Verify package\n[\s\S]*?(?=\n {2}[a-z][a-z0-9-]*:|\n*$)/,
+    /- name: Verify tarball\/package evidence\n[\s\S]*?(?=\n {2}[a-z][a-z0-9-]*:|\n*$)/,
   )
-  assert.ok(packageStep, 'CI package verification step must be present in the validate job')
+  assert.ok(packageStep, 'CI package evidence step must be present in the validate job')
   assert.ok(
-    workflow.indexOf('- name: Verify package') > workflow.indexOf('validate:'),
-    'CI package verification step must live inside the validate job',
+    workflow.indexOf('- name: Verify tarball/package evidence') > workflow.indexOf('validate:'),
+    'CI package evidence step must live inside the validate job',
   )
 
   assert.match(command, /^npm run package:evidence -- /)
@@ -122,8 +132,8 @@ test('CI validates YAML and installs locked dependencies only', () => {
   )
   assert.match(
     workflow,
-    /pip install[^\n]*-r src\/mcp\/requirements-vision\.txt/,
-    'CI must install locked vision deps before pytest so httpx imports resolve',
+    /pip install[^\n]*-r src\/mcp\/requirements-mcp\.txt/,
+    'CI must install the locked MCP deps before pytest',
   )
   // The memory server's vector pipeline (sqlite-vec + fastembed) was removed
   // outright — no flag, no fallback. memory_mcp_server is stdlib + FTS5 now,
@@ -156,6 +166,44 @@ test('CI validates YAML and installs locked dependencies only', () => {
   assert.doesNotMatch(workflow, /npm install(?!.*--dry-run)/)
   assert.doesNotMatch(workflow, /\|\| true/)
   assert.doesNotMatch(workflow, /echo ["']?(?:test|audit) warnings/i)
+  assert.match(workflow, /PANTHEON_PYTHON: python3/)
+})
+
+test('root workspace lock provides TUI test dependencies without vector packages', () => {
+  assert.deepEqual(packageJson.workspaces, ['src/plugins/tui'])
+  assert.ok(packageLock.packages['src/plugins/tui'], 'TUI must be represented in the root lockfile')
+  assert.ok(
+    packageLock.packages['node_modules/solid-js'],
+    'root npm ci must make solid-js available to test:ts',
+  )
+  const lockedNames = Object.keys(packageLock.packages).join('\n').toLowerCase()
+  assert.doesNotMatch(lockedNames, /sqlite[-_]vec|fastembed|vector_memory/)
+})
+
+test('CI wires explicit coverage and V2 isolation gates', () => {
+  assert.match(
+    workflow,
+    /python3 -m coverage run --branch --source=src\/mcp -m pytest/,
+    'CI coverage must execute the Python suite rather than inspect a stale artifact',
+  )
+  assert.match(workflow, /python3 -m coverage report --fail-under=80/)
+
+  const sandboxStep = workflow.match(
+    /- name: V2 sandbox \(isolated database and dedicated port\)\n[\s\S]*?(?=\n {2}[a-z][a-z0-9-]*:|\n*$)/,
+  )
+  assert.ok(sandboxStep, 'CI must define an explicit V2 sandbox gate')
+  assert.match(
+    sandboxStep[0],
+    /PANTHEON_SANDBOX_ROOT:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2/,
+  )
+  assert.match(
+    sandboxStep[0],
+    /OPENCODE_DB:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2\/opencode-v2\.db/,
+  )
+  assert.match(sandboxStep[0], /PANTHEON_V2_PORT:\s+'49376'/)
+  assert.match(sandboxStep[0], /bash scripts\/test-opencode-v2-sandbox\.sh --prepare --run v2/)
+  assert.match(sandboxStep[0], /serve --hostname 127\.0\.0\.1 --port "\$PANTHEON_V2_PORT"/)
+  assert.doesNotMatch(sandboxStep[0], /continue-on-error:\s*true/)
 })
 
 test('no workflow installs the TUI plugin separately from the root lockfile', () => {

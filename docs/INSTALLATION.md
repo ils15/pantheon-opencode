@@ -460,8 +460,8 @@ and register the **absolute repo path** (`<repo>/src/plugins/tui`) in the
 project-local `.opencode/tui.json`:
 
 ```bash
-# 1. Install pinned deps + build the bundle
-npm ci --prefix src/plugins/tui --ignore-scripts --no-audit --no-fund
+# 1. Install the root workspace (including the TUI) + build the bundle
+npm ci --ignore-scripts --no-audit --no-fund
 npm run build --prefix src/plugins/tui
 
 # 2. Register the repo path (merged into the array, not clobbered)
@@ -496,7 +496,7 @@ Type these in the OpenCode chat:
 | `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints and Themis review gates |
 | `/pantheon-model` (wizard) / `status\|show\|set --agent\|reset --agent` | Per-agent overrides em `active-preset.json` (`overrides.agents[agent]`); `status` lista 14 agentes (model/effort/origem `preset\|override\|env\|none`); `set --agent X --model provider/model-id [--effort low\|medium\|high] [--scope project\|global]` validado via `CAPABILITY_TABLE`+`hasVision`+clamp; `reset --agent X`; default `project`; `global` exige `confirm`+`authorize_global`; atômico `.bak`+lock; nunca escreve `.env` nem top-level `model` |
 | `/pantheon-optimize` | Project optimization: bloat scan, deepwork archive, cache migration, token report |
-| `/pantheon-consolidate` | Merge and deduplicate memory entries in the vector database |
+| `/pantheon-consolidate` | Merge and deduplicate memory entries through the persistence MCP server |
 
 ## Troubleshooting — Chaves e Presets
 

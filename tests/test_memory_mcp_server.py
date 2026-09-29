@@ -434,9 +434,7 @@ class TestMemorySearch:
 class TestMemorySearchDecay:
     """Tests for the decay_days freshness parameter on memory_search."""
 
-    async def _store_pair(
-        self, server: FastMCP, module, namespace: str
-    ) -> None:
+    async def _store_pair(self, server: FastMCP, module, namespace: str) -> None:
         """Store an old (90d) and a fresh entry with identical content."""
         for key, age_days in (("py_old", 90), ("py_new", 0)):
             result = await server.call_tool(
@@ -464,7 +462,8 @@ class TestMemorySearchDecay:
         ns = f"decay_{time.time_ns()}"
         await self._store_pair(server, module, ns)
         result = await server.call_tool(
-            "memory_search", {"query": "Python programming", "top_k": 5, "namespace": ns}
+            "memory_search",
+            {"query": "Python programming", "top_k": 5, "namespace": ns},
         )
         data = json.loads(_text_from_tool(result))
         scores = {r["key"]: r["score"] for r in data}
@@ -474,7 +473,12 @@ class TestMemorySearchDecay:
         # for age > 0), while the fresh entry is unaffected.
         decayed = await server.call_tool(
             "memory_search",
-            {"query": "Python programming", "top_k": 5, "namespace": ns, "decay_days": 30},
+            {
+                "query": "Python programming",
+                "top_k": 5,
+                "namespace": ns,
+                "decay_days": 30,
+            },
         )
         d2 = {r["key"]: r["score"] for r in json.loads(_text_from_tool(decayed))}
         assert scores["py_old"] > d2["py_old"]
@@ -486,7 +490,12 @@ class TestMemorySearchDecay:
         await self._store_pair(server, module, ns)
         result = await server.call_tool(
             "memory_search",
-            {"query": "Python programming", "top_k": 5, "namespace": ns, "decay_days": 30},
+            {
+                "query": "Python programming",
+                "top_k": 5,
+                "namespace": ns,
+                "decay_days": 30,
+            },
         )
         data = json.loads(_text_from_tool(result))
         keys = [r["key"] for r in data]
@@ -498,11 +507,17 @@ class TestMemorySearchDecay:
         ns = f"decay_{time.time_ns()}"
         await self._store_pair(server, module, ns)
         r1 = await server.call_tool(
-            "memory_search", {"query": "Python programming", "top_k": 5, "namespace": ns}
+            "memory_search",
+            {"query": "Python programming", "top_k": 5, "namespace": ns},
         )
         r2 = await server.call_tool(
             "memory_search",
-            {"query": "Python programming", "top_k": 5, "namespace": ns, "decay_days": 30},
+            {
+                "query": "Python programming",
+                "top_k": 5,
+                "namespace": ns,
+                "decay_days": 30,
+            },
         )
         d1 = {r["key"]: r["score"] for r in json.loads(_text_from_tool(r1))}
         d2 = {r["key"]: r["score"] for r in json.loads(_text_from_tool(r2))}

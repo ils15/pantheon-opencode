@@ -11,8 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      move this section to a versioned entry and reset the template below. -->
 
 ## 🆕 What's New
+- **memory** — simplify `pantheon-memory` to SQLite FTS5 BM25 keyword search;
+  prefix matching now drops stopwords and only prefixes terms with four or more
+  characters.
 
 ## 🐞 Fixed
+- **memory** — remove the legacy vector-memory scripts, embedding/KNN/RRF path,
+  stale environment flag, and obsolete Python dependencies while preserving the
+  six memory tools and three `code_*` codemap tools.
 
 ## ⚠️ Known Issues
 

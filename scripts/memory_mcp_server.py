@@ -43,6 +43,7 @@ DB_PATH = pantheon_home() / "memory" / "memory.db"
 
 _BYTE_UNIT = 1024
 
+
 def _set_memory_dir(path: str | Path) -> None:
     """Override the memory db path for testing."""
     global DB_PATH  # noqa: PLW0603
@@ -236,9 +237,7 @@ def _parse_iso_ts(value: str) -> float:
     return dt.timestamp()
 
 
-def _fetch_created_at_map(
-    db: sqlite3.Connection, ids: list[int]
-) -> dict[int, str]:
+def _fetch_created_at_map(db: sqlite3.Connection, ids: list[int]) -> dict[int, str]:
     """Fetch created_at timestamps for the given memory IDs.
 
     Args:
@@ -254,8 +253,7 @@ def _fetch_created_at_map(
     try:
         placeholders = ",".join("?" * len(ids))
         rows = db.execute(
-            f"SELECT id, created_at FROM memories "
-            f"WHERE id IN ({placeholders})",
+            f"SELECT id, created_at FROM memories WHERE id IN ({placeholders})",
             ids,
         ).fetchall()
         created_at_map = {r["id"]: r["created_at"] for r in rows}
