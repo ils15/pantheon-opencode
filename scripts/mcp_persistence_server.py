@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -131,9 +132,7 @@ def _init_db(db_path: Path) -> sqlite3.Connection:
 # and resolves through the legacy `updated_at` path. No backfill is performed
 # on purpose — the live store holds both formats and rewriting them in place
 # would be unrecoverable if the mapping were ever wrong.
-_ADD_REVISION_SQL: str = (
-    "ALTER TABLE kv_store ADD COLUMN revision INTEGER"
-)
+_ADD_REVISION_SQL: str = "ALTER TABLE kv_store ADD COLUMN revision INTEGER"
 
 
 def _ensure_revision_column(conn: sqlite3.Connection) -> None:
@@ -144,11 +143,8 @@ def _ensure_revision_column(conn: sqlite3.Connection) -> None:
         return
     if "revision" in columns:
         return
-    try:
+    with suppress(sqlite3.OperationalError):
         conn.execute(_ADD_REVISION_SQL)
-    except sqlite3.OperationalError:
-        # Raced with another process applying the same additive migration.
-        pass
 
 
 def _db(scope: str) -> sqlite3.Connection:
@@ -689,18 +685,20 @@ SESSION_ID_EXAMPLE: str = 'session_id="ses_abc123"'
 def _json_type_name(value: object) -> str:
     """Name a value's JSON type for error messages (ints read as ``number``)."""
     if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, int | float):
-        return "number"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, dict):
-        return "object"
-    return type(value).__name__
+        type_name = "null"
+    elif isinstance(value, bool):
+        type_name = "boolean"
+    elif isinstance(value, str):
+        type_name = "string"
+    elif isinstance(value, int | float):
+        type_name = "number"
+    elif isinstance(value, list):
+        type_name = "array"
+    elif isinstance(value, dict):
+        type_name = "object"
+    else:
+        type_name = type(value).__name__
+    return type_name
 
 
 class _ArgErrors:
@@ -1110,9 +1108,7 @@ def _current_context_revision(
     conn: sqlite3.Connection, namespace: str, key: str
 ) -> int:
     """Read the persisted revision for one context entry."""
-    row = conn.execute(
-        f"{_REVISION_SELECT} AND key = ?", (namespace, key)
-    ).fetchone()
+    row = conn.execute(f"{_REVISION_SELECT} AND key = ?", (namespace, key)).fetchone()
     return _row_revision(row) if row else 0
 
 
@@ -1165,8 +1161,8 @@ def _upsert_context_entry(
     "be a JSON ARRAY. 'phase' is an object {current,total,name} — NOT a phase "
     "counter (pass phase.number for that). All sections are optional, so a "
     "heartbeat checkpoint may omit goal/phase. "
-    "Example: content='{\"goal\": {\"objective\": \"...\"}, \"phase\": "
-    "{\"current\": 1, \"total\": 3, \"name\": \"...\"}}'. "
+    'Example: content=\'{"goal": {"objective": "..."}, "phase": '
+    '{"current": 1, "total": 3, "name": "..."}}\'. '
     "All invalid arguments are reported together in one message.",
 )
 async def context_save(
@@ -1762,9 +1758,7 @@ async def context_rehydrate(
         return None
     normalized_session = _normalize_session_id(session_id)
     errors = _ArgErrors("context_rehydrate")
-    valid_slug = _collect_identifier(
-        errors, slug, "slug", MAX_CONTEXT_SLUG_LENGTH
-    )
+    valid_slug = _collect_identifier(errors, slug, "slug", MAX_CONTEXT_SLUG_LENGTH)
     if normalized_session is None:
         errors.add("session_id", "is required and must be non-empty")
         errors.example(SESSION_ID_EXAMPLE)
@@ -1804,9 +1798,7 @@ async def context_session_summary(
         return None
     normalized_session = _normalize_session_id(session_id)
     errors = _ArgErrors("context_session_summary")
-    valid_slug = _collect_identifier(
-        errors, slug, "slug", MAX_CONTEXT_SLUG_LENGTH
-    )
+    valid_slug = _collect_identifier(errors, slug, "slug", MAX_CONTEXT_SLUG_LENGTH)
     if normalized_session is None:
         errors.add("session_id", "is required and must be non-empty")
         errors.example(SESSION_ID_EXAMPLE)

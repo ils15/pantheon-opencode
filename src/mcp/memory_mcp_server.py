@@ -157,16 +157,129 @@ def _get_conn() -> sqlite3.Connection:
 # narrowing the candidate pool. The list is deliberately limited to English
 # function words and auxiliaries — no domain vocabulary.
 _STOPWORDS = frozenset(
-    """
-    a about above after again against all am an and any are as at be because
-    been before being below between both but by can cannot could did do does
-    doing done down during each few for from further had has have having he her
-    here hers him his how i if in into is it its itself just me more most my no
-    nor not now of off on once only or other our ours out over own same she
-    should so some such than that the their theirs them then there these they
-    this those through to too under until up very was we were what when where
-    which while who whom why will with would you your yours
-    """.split()
+    [
+        "a",
+        "about",
+        "above",
+        "after",
+        "again",
+        "against",
+        "all",
+        "am",
+        "an",
+        "and",
+        "any",
+        "are",
+        "as",
+        "at",
+        "be",
+        "because",
+        "been",
+        "before",
+        "being",
+        "below",
+        "between",
+        "both",
+        "but",
+        "by",
+        "can",
+        "cannot",
+        "could",
+        "did",
+        "do",
+        "does",
+        "doing",
+        "done",
+        "down",
+        "during",
+        "each",
+        "few",
+        "for",
+        "from",
+        "further",
+        "had",
+        "has",
+        "have",
+        "having",
+        "he",
+        "her",
+        "here",
+        "hers",
+        "him",
+        "his",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "itself",
+        "just",
+        "me",
+        "more",
+        "most",
+        "my",
+        "no",
+        "nor",
+        "not",
+        "now",
+        "of",
+        "off",
+        "on",
+        "once",
+        "only",
+        "or",
+        "other",
+        "our",
+        "ours",
+        "out",
+        "over",
+        "own",
+        "same",
+        "she",
+        "should",
+        "so",
+        "some",
+        "such",
+        "than",
+        "that",
+        "the",
+        "their",
+        "theirs",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "through",
+        "to",
+        "too",
+        "under",
+        "until",
+        "up",
+        "very",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "who",
+        "whom",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+        "yours",
+    ]
 )
 
 # A prefix query on a token this short is broader than the token itself
@@ -208,7 +321,8 @@ def _build_fts_query(query: str) -> str:
     if not content:
         content = words
     return " OR ".join(
-        f'"{word}"*' if len(word) >= _MIN_PREFIX_LEN else f'"{word}"' for word in content
+        f'"{word}"*' if len(word) >= _MIN_PREFIX_LEN else f'"{word}"'
+        for word in content
     )
 
 
@@ -339,18 +453,20 @@ METADATA_EXAMPLE: str = """metadata='{"type": "decision", "score": 0.9}'"""
 def _json_type_name(value: object) -> str:
     """Name a value's JSON type for error messages (ints read as ``number``)."""
     if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, int | float):
-        return "number"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, dict):
-        return "object"
-    return type(value).__name__
+        type_name = "null"
+    elif isinstance(value, bool):
+        type_name = "boolean"
+    elif isinstance(value, str):
+        type_name = "string"
+    elif isinstance(value, int | float):
+        type_name = "number"
+    elif isinstance(value, list):
+        type_name = "array"
+    elif isinstance(value, dict):
+        type_name = "object"
+    else:
+        type_name = type(value).__name__
+    return type_name
 
 
 def _metadata_must_be_json_string(value: Any) -> Any:
@@ -401,8 +517,6 @@ def _format_store_violations(violations: list[str], examples: list[str]) -> str:
     return "\n".join(lines)
 
 
-
-
 @mcp.tool(
     description="Store a memory entry. The FTS5 index is updated automatically "
     "by database trigger. Returns the entry ID and status. "
@@ -420,7 +534,7 @@ def memory_store(
         Field(
             default="{}",
             description="JSON object encoded as a STRING, not an object. "
-            "Example: '{\"type\": \"decision\", \"score\": 0.9}'.",
+            'Example: \'{"type": "decision", "score": 0.9}\'.',
         ),
     ] = "{}",
 ) -> dict[str, Any]:
@@ -534,34 +648,32 @@ def memory_search(
     )
     ranked = _score_hits(hits, top_k, created_at_map, decay_days)
 
-    if not ranked:
-        return []
-
-    # 5. Fetch full entries
-    id_list = [doc_id for doc_id, _ in ranked]
-    score_map = {doc_id: score for doc_id, score in ranked}
-
-    try:
-        placeholders = ",".join("?" * len(id_list))
-        rows = db.execute(
-            f"""SELECT id, namespace, key, value, metadata, created_at
-                FROM memories WHERE id IN ({placeholders})""",
-            id_list,
-        ).fetchall()
-    except Exception:
-        return []
-
-    # Preserve ranking order
-    row_map = {r["id"]: r for r in rows}
     results: list[dict[str, Any]] = []
-    for doc_id in id_list:
-        row = row_map.get(doc_id)
-        if row is None:
-            continue
-        entry = dict(row)
-        entry = _parse_metadata(entry)
-        entry["score"] = round(score_map.get(doc_id, 0.0), 4)
-        results.append(entry)
+    if ranked:
+        # 5. Fetch full entries
+        id_list = [doc_id for doc_id, _ in ranked]
+        score_map = {doc_id: score for doc_id, score in ranked}
+
+        try:
+            placeholders = ",".join("?" * len(id_list))
+            rows = db.execute(
+                f"""SELECT id, namespace, key, value, metadata, created_at
+                    FROM memories WHERE id IN ({placeholders})""",
+                id_list,
+            ).fetchall()
+        except Exception:
+            return []
+
+        # Preserve ranking order
+        row_map = {r["id"]: r for r in rows}
+        for doc_id in id_list:
+            row = row_map.get(doc_id)
+            if row is None:
+                continue
+            entry = dict(row)
+            entry = _parse_metadata(entry)
+            entry["score"] = round(score_map.get(doc_id, 0.0), 4)
+            results.append(entry)
 
     return results
 
