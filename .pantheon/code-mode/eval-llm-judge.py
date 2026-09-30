@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ---
-# description: LLM judge for skill/agent quality — scores 4 dimensions (0-100) via an OpenAI-compatible endpoint
+# description: LLM judge for skill/agent quality — scores 4 dimensions
+# (0-100) via an OpenAI-compatible endpoint
 # timeout: 120
 # ---
 """LLM judge layer of the plugin-eval certification pipeline.
@@ -45,18 +46,31 @@ MAX_SUPPORTING_FILES = 6
 MAX_SCORE = 100
 DIMENSIONS = ("correctness", "maintainability", "security", "practicality")
 
-JUDGE_PROMPT = """You are a rigorous quality auditor for AI agent skills and agent definitions used in an agentic coding framework. You decide whether a skill or agent definition is production-quality or AI slop.
+JUDGE_PROMPT = """You are a rigorous quality auditor for AI agent skills and agent
+definitions
+used in an agentic coding framework. You decide whether a skill or agent definition
+is production-quality or AI slop.
 
-Apply an explicit ANTI-SLOP bias: flag overengineering, unnecessary abstractions, persona proliferation (multiple fake personas/characters), unverifiable claims, hype language, and instructions that sound impressive but are not actionable.
+Apply an explicit ANTI-SLOP bias: flag overengineering, unnecessary abstractions,
+persona proliferation (multiple fake personas/characters), unverifiable claims,
+hype language, and instructions that sound impressive but are not actionable.
 
 Score the content on 4 dimensions, each 0-100:
-1. correctness — instructions are accurate and internally consistent; no contradictions; no broken references (files, commands, or agents that do not exist or are misnamed).
-2. maintainability — clear structure, single responsibility, no overengineering, YAGNI-respecting, easy to update.
-3. security — no secrets or credentials; no prompt-injection vectors; no dangerous instructions (e.g. rm -rf, curl | bash, disabling safety checks).
-4. practicality — solves a real problem, actionable, not AI slop or hype; a human would actually use it.
+1. correctness — instructions are accurate and internally consistent; no
+   contradictions; no broken references (files, commands, or agents that do not
+   exist or are misnamed).
+2. maintainability — clear structure, single responsibility, no overengineering,
+   YAGNI-respecting, easy to update.
+3. security — no secrets or credentials; no prompt-injection vectors; no dangerous
+   instructions (e.g. rm -rf, curl | bash, disabling safety checks).
+4. practicality — solves a real problem, actionable, not AI slop or hype; a human
+   would actually use it.
 
 Return ONLY a JSON object with this exact shape:
-{"correctness": <int 0-100>, "maintainability": <int 0-100>, "security": <int 0-100>, "practicality": <int 0-100>, "notes": {"correctness": "<1-2 sentences>", "maintainability": "<1-2 sentences>", "security": "<1-2 sentences>", "practicality": "<1-2 sentences>"}}
+{"correctness": <int 0-100>, "maintainability": <int 0-100>,
+ "security": <int 0-100>, "practicality": <int 0-100>, "notes": {
+ "correctness": "<1-2 sentences>", "maintainability": "<1-2 sentences>",
+ "security": "<1-2 sentences>", "practicality": "<1-2 sentences>"}}
 
 Content to evaluate:
 --- BEGIN CONTENT ---
@@ -146,7 +160,8 @@ def _call_llm(prompt: str, allow_external_llm: bool = False) -> str:
     """Send one chat completion request via urllib; return the assistant text."""
     if not allow_external_llm:
         raise JudgeError(
-            "External LLM calls require --allow-external-llm or PANTHEON_ALLOW_EXTERNAL_LLM=1"
+            "External LLM calls require --allow-external-llm or "
+            "PANTHEON_ALLOW_EXTERNAL_LLM=1"
         )
     key = os.getenv("OPENAI_API_KEY")
     if not key:

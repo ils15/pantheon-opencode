@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ---
-# description: Monte Carlo reliability scoring for skills/agents — simulates N runs of the core workflow (plugin-eval layer 3)
+# description: Monte Carlo reliability scoring for skills/agents — simulates N
+# runs of the core workflow (plugin-eval layer 3)
 # timeout: 120
 # ---
 """Monte Carlo reliability layer of the plugin-eval certification pipeline (PR 3).

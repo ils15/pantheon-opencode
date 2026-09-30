@@ -893,7 +893,9 @@ def code_index(
 
 
 @mcp.tool(
-    description="Search code entities via FTS5 (with LIKE fallback) and optional type filter.",
+    description=(
+        "Search code entities via FTS5 (with LIKE fallback) and optional type filter."
+    ),
 )
 def code_query(
     query: str,

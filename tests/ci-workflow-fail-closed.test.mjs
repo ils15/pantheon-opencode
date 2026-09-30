@@ -305,7 +305,7 @@ test('V2 loader order starts mcp list before waiting for handshakes', () => {
     /connected_count.*-eq 5/s,
     'the output gate must remain fail-closed at exactly five connected MCPs',
   )
-  assert.match(harness, /V2_LOOPBACK_HOST=\"\$\{PANTHEON_V2_HOST:-127\.0\.0\.1\}\"/)
+  assert.match(harness, /V2_LOOPBACK_HOST="\$\{PANTHEON_V2_HOST:-127\.0\.0\.1\}"/)
   assert.match(harness, /registration_url.*http:\/\/\$V2_LOOPBACK_HOST:\$V2_PORT/)
   assert.match(harness, /registration_pid.*\$V2_SERVER_PID/)
 })

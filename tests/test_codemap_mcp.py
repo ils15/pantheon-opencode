@@ -59,7 +59,11 @@ class TestSchema:
 
 class TestParsePython:
     def test_parse_python_class_with_methods_and_docstring(self) -> None:
-        content = 'class MyClass:\n    """My class doc"""\n    def method_one(self, x):\n        """method doc"""\n        pass\n    async def method_two(self):\n        pass\n'
+        content = (
+            'class MyClass:\n    """My class doc"""\n'
+            '    def method_one(self, x):\n        """method doc"""\n'
+            "        pass\n    async def method_two(self):\n        pass\n"
+        )
         ents, _ = codemap._parse_python_entities("src/foo.py", content)
         by_name = {e["name"]: e for e in ents}
         assert "MyClass" in by_name
@@ -75,7 +79,10 @@ class TestParsePython:
         assert "MyClass.method_two" in by_name
 
     def test_parse_python_function_and_inherits(self) -> None:
-        content = 'class Child(Parent):\n    pass\n\ndef my_func(a, b):\n    """func doc"""\n    pass\n'
+        content = (
+            "class Child(Parent):\n    pass\n\n"
+            'def my_func(a, b):\n    """func doc"""\n    pass\n'
+        )
         ents, rels = codemap._parse_python_entities("src/bar.py", content)
         by_name = {e["name"]: e for e in ents}
         assert "my_func" in by_name
@@ -115,7 +122,10 @@ class TestParsePython:
 
 class TestParseTS:
     def test_parse_typescript_class_interface_function(self) -> None:
-        content = "export class MyClass extends Base {}\ninterface MyIface {}\nexport async function myFunc() {}\nconst myConst = 42\n"
+        content = (
+            "export class MyClass extends Base {}\ninterface MyIface {}\n"
+            "export async function myFunc() {}\nconst myConst = 42\n"
+        )
         ents, rels = codemap._parse_typescript_entities("src/app.ts", content)
         by_name = {e["name"]: e for e in ents}
         assert "MyClass" in by_name and by_name["MyClass"]["type"] == "class"
@@ -132,7 +142,10 @@ class TestParseTS:
         )
 
     def test_parse_typescript_imports(self) -> None:
-        content = "import { foo } from 'lodash'\nimport x from \"./utils.ts\"\nimport y from 'react'\n"
+        content = (
+            "import { foo } from 'lodash'\nimport x from \"./utils.ts\"\n"
+            "import y from 'react'\n"
+        )
         ents, rels = codemap._parse_typescript_entities("src/app.ts", content)
         imports = [r for r in rels if r["type"] == "imports"]
         assert len(imports) == 3
@@ -241,7 +254,9 @@ class TestNeighbors:
         e1, e2, e3 = "e1id1234567890ab", "e2id1234567890ab", "e3id1234567890ab"
         for eid, name in [(e1, "E1"), (e2, "E2"), (e3, "E3")]:
             conn.execute(
-                "INSERT OR REPLACE INTO code_entities (id,file_path,name,type,language,start_line,end_line,signature,docstring) VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO code_entities "
+                "(id,file_path,name,type,language,start_line,end_line,"
+                "signature,docstring) VALUES (?,?,?,?,?,?,?,?,?)",
                 [
                     eid,
                     f"/tmp/{name}.py",

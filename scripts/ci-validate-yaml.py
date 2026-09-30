@@ -21,7 +21,6 @@ for f in sorted(os.listdir("src/agents")):
             print(f"FAIL: {f}: {e}")
             errors += 1
 
-print(
-    f"{sum(1 for _ in os.listdir('src/agents') if _.endswith('.md')) - errors}/{sum(1 for _ in os.listdir('src/agents') if _.endswith('.md'))} agents valid"
-)
+agent_count = sum(1 for _ in os.listdir("src/agents") if _.endswith(".md"))
+print(f"{agent_count - errors}/{agent_count} agents valid")
 sys.exit(errors)

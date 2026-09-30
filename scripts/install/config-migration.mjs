@@ -116,7 +116,7 @@ const PROVIDER_RENAME_REVERSE = Object.fromEntries(
  * V2 shape:
  *   { package: "aisdk:ai-sdk-openai", settings: { baseURL: "...", apiKey: "..." }, models: { ... } }
  */
-function convertProviderV1toV2(name, config) {
+function convertProviderV1toV2(_name, config) {
   const result = { ...config }
 
   // npm → package (with aisdk: prefix)
@@ -171,7 +171,7 @@ function convertProviderV1toV2(name, config) {
 /**
  * Convert a single V2 provider config back to V1.
  */
-function convertProviderV2toV1(name, config) {
+function convertProviderV2toV1(_name, config) {
   const result = { ...config }
 
   // package → npm (strip aisdk: prefix)

@@ -367,21 +367,10 @@ test('offline context probe fixture runs without OpenCode or LLM and stays fail-
       encoding: 'utf8',
       timeout: 35000,
     })
-    // Fail-closed contract: the probe may report honest FAIL (blocking) for
-    // environmental or persistence issues, but never silently degrades.
-    assert.ok(result.status === 0 || result.status === 1, `probe process failed: ${result.stderr}`)
+    assert.equal(result.status, 0, `probe process failed: ${result.stderr}`)
     const payload = JSON.parse(result.stdout)
-    assert.ok(
-      ['PASS', 'FAIL'].includes(payload.status),
-      `unexpected probe status: ${result.stdout}`,
-    )
-    if (payload.status === 'PASS') {
-      assert.ok(payload.checks.length >= 6, 'PASS requires all offline fixture checks')
-      assert.equal(result.status, 0, 'PASS must exit 0')
-    } else {
-      assert.notEqual(result.status, 0, 'FAIL must exit non-zero (blocking)')
-      assert.ok(payload.detail && payload.detail.length > 0, 'FAIL must carry a detail')
-    }
+    assert.equal(payload.status, 'PASS', `unexpected probe status: ${result.stdout}`)
+    assert.ok(payload.checks.length >= 6, 'PASS requires all offline fixture checks')
   }
 })
 

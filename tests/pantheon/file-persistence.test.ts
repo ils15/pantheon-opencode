@@ -155,7 +155,7 @@ async function main() {
       await adapter.saveJob(record)
 
       // The .tmp file should be gone (renamed to state.json)
-      const tmpFile = statePath + '.tmp'
+      const tmpFile = `${statePath}.tmp`
       assert.equal(existsSync(tmpFile), false, '.tmp file should be gone after rename')
       assert.ok(existsSync(statePath), 'state.json should exist')
     } finally {
@@ -258,7 +258,7 @@ async function main() {
       })
 
       // Write a stale .tmp file (simulating interrupted atomic write)
-      writeFileSync(statePath + '.tmp', '["garbage"]', 'utf-8')
+      writeFileSync(`${statePath}.tmp`, '["garbage"]', 'utf-8')
 
       const loaded = await adapter.loadAllJobs()
       assert.equal(loaded.length, 1) // only real-job from state.json
@@ -615,7 +615,7 @@ async function main() {
 
   console.log('')
   for (const r of results) {
-    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? ': ' + r.error : ''}`)
+    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? `: ${r.error}` : ''}`)
   }
   console.log(`
 Results: ${passed} passed, ${failed.length} failed`)

@@ -290,7 +290,10 @@ def _comparison(results: list[dict[str, object]]) -> dict[str, object]:
                 6,
             ),
         },
-        "net_delta_definition": "candidate net tokens minus baseline net tokens; retrieval and measurement are excluded",
+        "net_delta_definition": (
+            "candidate net tokens minus baseline net tokens; retrieval and "
+            "measurement are excluded"
+        ),
     }
 
 
@@ -403,18 +406,25 @@ def render_markdown(report: dict[str, object]) -> str:
             "",
             "| Variant | Accepted | Quality accepted | Net tokens | Accepted/kTokens |",
             "|---|---:|---:|---:|---:|",
-            f"| baseline | {baseline['accepted_tasks']} | {baseline['quality_accepted_tasks']} | {baseline['net_total_tokens']} | {baseline['efficiency_accepted_per_k_tokens']} |",
-            f"| candidate | {candidate['accepted_tasks']} | {candidate['quality_accepted_tasks']} | {candidate['net_total_tokens']} | {candidate['efficiency_accepted_per_k_tokens']} |",
+            f"| baseline | {baseline['accepted_tasks']} | "
+            f"{baseline['quality_accepted_tasks']} | {baseline['net_total_tokens']} | "
+            f"{baseline['efficiency_accepted_per_k_tokens']} |",
+            f"| candidate | {candidate['accepted_tasks']} | "
+            f"{candidate['quality_accepted_tasks']} | "
+            f"{candidate['net_total_tokens']} | "
+            f"{candidate['efficiency_accepted_per_k_tokens']} |",
             "",
             f"Winner (quality first): **{comparison['winner']}**",
-            f"Net token delta: `{comparison['delta']['net_tokens']}` (candidate - baseline)",
+            f"Net token delta: `{comparison['delta']['net_tokens']}` "
+            "(candidate - baseline)",
             "",
         ]
     if report.get("dry_run") is True:
         lines += [
             "## Planned tasks",
             "",
-            "| Task | Agent | Skill | Variants | Split | Budget (tokens / latency ms / retries) |",
+            "| Task | Agent | Skill | Variants | Split | Budget (tokens / "
+            "latency ms / retries) |",
             "|---|---|---|---|---|---|",
         ]
         for row in report.get("tasks", []):
@@ -438,14 +448,18 @@ def render_markdown(report: dict[str, object]) -> str:
     lines += [
         "## Task results",
         "",
-        "| Task | Agent | Variant | Status | Quality | Net tokens | Latency ms | Retries |",
+        "| Task | Agent | Variant | Status | Quality | Net tokens | Latency ms | "
+        "Retries |",
         "|---|---|---|---|---:|---:|---:|---:|",
     ]
     for row in report.get("tasks", []):
         if isinstance(row, dict):
             tokens = row.get("tokens", {})
             lines.append(
-                f"| {row['task_id']} | {row['agent']} | {_display_variants(row)} | {row['status']} | {row['quality_score']} | {tokens.get('net_total', 0)} | {row['latency_ms']} | {row['retries']} |"
+                f"| {row['task_id']} | {row['agent']} | {_display_variants(row)} | "
+                f"{row['status']} | {row['quality_score']} | "
+                f"{tokens.get('net_total', 0)} | {row['latency_ms']} | "
+                f"{row['retries']} |"
             )
     return "\n".join(lines) + "\n"
 

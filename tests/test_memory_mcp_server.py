@@ -1085,7 +1085,10 @@ class TestVectorRemoval:
 
                 await m.mcp.call_tool(
                     "memory_store",
-                    {"value": "FastAPI is a web framework for Python.", "key": "fastapi"},
+                    {
+                        "value": "FastAPI is a web framework for Python.",
+                        "key": "fastapi",
+                    },
                 )
 
                 hits = await m.mcp.call_tool(
