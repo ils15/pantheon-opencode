@@ -164,6 +164,62 @@ BLOCKER_KEYWORDS: list[re.Pattern] = [
     re.compile(r"depend", re.IGNORECASE),
     re.compile(r"dependency", re.IGNORECASE),
 ]
+FILE_NOVELTY_HIGH = 10
+FILE_NOVELTY_MEDIUM = 5
+PRIORITY_CRITICAL = 0.75
+PRIORITY_HIGH = 0.50
+PRIORITY_MEDIUM = 0.25
+SUMMARY_MAX_CHARS = 80
+
+
+def _keyword_scores(
+    text: str,
+) -> tuple[list[float], list[float], list[float], list[str]]:
+    """Return impact, risk, novelty, and matching keyword scores."""
+    impact_scores: list[float] = []
+    risk_scores: list[float] = []
+    novelty_scores: list[float] = []
+    keywords_found: list[str] = []
+    for name, pattern, impact, risk, novelty in KEYWORD_MAP:
+        if pattern.search(text):
+            impact_scores.append(impact)
+            risk_scores.append(risk)
+            novelty_scores.append(novelty)
+            keywords_found.append(name)
+    return impact_scores, risk_scores, novelty_scores, keywords_found
+
+
+def _blocker_score(text: str, blocker_hint: bool) -> float:
+    """Return the blocker score detected in text or supplied explicitly."""
+    blockers = 0.0
+    for pattern in BLOCKER_KEYWORDS:
+        if pattern.search(text):
+            # unblocked/unblocks = positive blocker resolution
+            blockers = max(
+                blockers, 0.8 if re.search(r"unblock", text, re.IGNORECASE) else 0.5
+            )
+    if blocker_hint:
+        blockers = max(blockers, 0.8)
+    return blockers
+
+
+def _downstream_score(from_agent: str | None, to_agent: str | None) -> float:
+    """Return downstream relevance for an agent pair."""
+    if not from_agent or not to_agent:
+        return 0.5
+    key = (from_agent.lower().strip(), to_agent.lower().strip())
+    return AGENT_PAIR_TABLE.get(key, 0.5)
+
+
+def _priority_band(score: float) -> str:
+    """Map a score to the documented priority band."""
+    if score >= PRIORITY_CRITICAL:
+        return "CRITICAL"
+    if score >= PRIORITY_HIGH:
+        return "HIGH"
+    if score >= PRIORITY_MEDIUM:
+        return "MEDIUM"
+    return "LOW"
 
 
 def compute_score(
@@ -178,45 +234,20 @@ def compute_score(
     Returns dict with:
         score, band, impact, risk, novelty, blockers, downstream, keywords_found
     """
-    impact_scores: list[float] = []
-    risk_scores: list[float] = []
-    novelty_scores: list[float] = []
-    keywords_found: list[str] = []
-
-    for name, pattern, imp, rsk, nov in KEYWORD_MAP:
-        if pattern.search(text):
-            impact_scores.append(imp)
-            risk_scores.append(rsk)
-            novelty_scores.append(nov)
-            keywords_found.append(name)
+    impact_scores, risk_scores, novelty_scores, keywords_found = _keyword_scores(text)
 
     impact = max(impact_scores) if impact_scores else 0.0
     risk = max(risk_scores) if risk_scores else 0.0
     novelty = max(novelty_scores) if novelty_scores else 0.0
 
     # Novelty bonus for file count (overrides keyword score)
-    if files_changed >= 10:
+    if files_changed >= FILE_NOVELTY_HIGH:
         novelty = max(novelty, 1.0)
-    elif files_changed >= 5:
+    elif files_changed >= FILE_NOVELTY_MEDIUM:
         novelty = max(novelty, 0.8)
 
-    # Blockers dimension — detect in text or use explicit hint
-    blockers: float = 0.0
-    for bp in BLOCKER_KEYWORDS:
-        if bp.search(text):
-            # unblocked/unblocks = positive blocker resolution
-            if re.search(r"unblock", text, re.IGNORECASE):
-                blockers = max(blockers, 0.8)
-            else:
-                blockers = max(blockers, 0.5)
-    if blocker_hint:
-        blockers = max(blockers, 0.8)
-
-    # Downstream relevance
-    downstream: float = 0.5  # default when agent pair unknown
-    if from_agent and to_agent:
-        key = (from_agent.lower().strip(), to_agent.lower().strip())
-        downstream = AGENT_PAIR_TABLE.get(key, 0.5)
+    blockers = _blocker_score(text, blocker_hint)
+    downstream = _downstream_score(from_agent, to_agent)
 
     score = (
         impact * WEIGHTS["impact"]
@@ -226,19 +257,9 @@ def compute_score(
         + downstream * WEIGHTS["downstream"]
     )
 
-    # Priority band (from SKILL.md line 125-131)
-    if score >= 0.75:
-        band = "CRITICAL"
-    elif score >= 0.50:
-        band = "HIGH"
-    elif score >= 0.25:
-        band = "MEDIUM"
-    else:
-        band = "LOW"
-
     return {
         "score": round(score, 2),
-        "band": band,
+        "band": _priority_band(score),
         "impact": impact,
         "risk": risk,
         "novelty": novelty,
@@ -285,14 +306,17 @@ def compress(
     )
 
     # Summary = first meaningful line of scrubbed text, ≤80 chars
-    lines = [l.strip() for l in scrubbed.splitlines() if l.strip()]
+    lines = [line.strip() for line in scrubbed.splitlines() if line.strip()]
     summary: str = ""
     if lines:
-        summary = lines[0][:80]
-        if len(lines[0]) > 80:
+        summary = lines[0][:SUMMARY_MAX_CHARS]
+        if len(lines[0]) > SUMMARY_MAX_CHARS:
             summary += "…"
 
-    output_parts = [f"- What changed: {summary}", f"- Priority: {result['band']} (score: {result['score']:.2f})"]
+    output_parts = [
+        f"- What changed: {summary}",
+        f"- Priority: {result['band']} (score: {result['score']:.2f})",
+    ]
     if files:
         output_parts.append(f"- Files: {files}")
 
@@ -311,14 +335,14 @@ def process_batch(
 ) -> str:
     """Read multiple files, scrub + score + compress each."""
     parts: list[str] = []
-    for fpath in file_paths:
-        fpath = fpath.strip()
+    for raw_path in file_paths:
+        fpath = raw_path.strip()
         if not fpath:
             continue
         try:
             with open(fpath, encoding="utf-8") as fh:
                 content = fh.read()
-        except (OSError, IOError) as exc:
+        except OSError as exc:
             parts.append(f"- {fpath}: ERROR — {exc}")
             continue
 
@@ -331,11 +355,11 @@ def process_batch(
         )
 
         # Summary: first meaningful line
-        content_lines = [l.strip() for l in scrubbed.splitlines() if l.strip()]
+        content_lines = [line.strip() for line in scrubbed.splitlines() if line.strip()]
         summary = "(empty)"
         if content_lines:
-            summary = content_lines[0][:80]
-            if len(content_lines[0]) > 80:
+            summary = content_lines[0][:SUMMARY_MAX_CHARS]
+            if len(content_lines[0]) > SUMMARY_MAX_CHARS:
                 summary += "…"
 
         base = os.path.basename(fpath)
@@ -356,7 +380,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Pantheon inline compression — score, compress, or stat text.",
     )
-    parser.add_argument("mode", choices=["score", "compress", "stats", "batch"], help="Operation mode")
+    parser.add_argument(
+        "mode", choices=["score", "compress", "stats", "batch"], help="Operation mode"
+    )
     parser.add_argument("--text", type=str, default="", help="Input text to process")
     parser.add_argument(
         "--files",
@@ -364,9 +390,24 @@ def main() -> None:
         default="",
         help="Comma-separated file paths (batch mode, or for file count in scoring)",
     )
-    parser.add_argument("--from-agent", type=str, default=None, help="Source agent for downstream relevance")
-    parser.add_argument("--to-agent", type=str, default=None, help="Target agent for downstream relevance")
-    parser.add_argument("--blocker", action="store_true", default=False, help="Hint that entry was a blocker")
+    parser.add_argument(
+        "--from-agent",
+        type=str,
+        default=None,
+        help="Source agent for downstream relevance",
+    )
+    parser.add_argument(
+        "--to-agent",
+        type=str,
+        default=None,
+        help="Target agent for downstream relevance",
+    )
+    parser.add_argument(
+        "--blocker",
+        action="store_true",
+        default=False,
+        help="Hint that entry was a blocker",
+    )
 
     args = parser.parse_args()
 
@@ -378,7 +419,9 @@ def main() -> None:
             print("Error: --files is required for batch mode", file=sys.stderr)
             sys.exit(1)
         file_list = [f.strip() for f in args.files.split(",") if f.strip()]
-        output = process_batch(file_list, from_agent=args.from_agent, to_agent=args.to_agent)
+        output = process_batch(
+            file_list, from_agent=args.from_agent, to_agent=args.to_agent
+        )
         print(output)
         return
 
@@ -413,7 +456,9 @@ def main() -> None:
     # score mode
     # -----------------------------------------------------------------------
     if args.mode == "score":
-        file_count = len([f for f in args.files.split(",") if f.strip()]) if args.files else 0
+        file_count = (
+            len([f for f in args.files.split(",") if f.strip()]) if args.files else 0
+        )
         result = compute_score(
             text,
             from_agent=args.from_agent,

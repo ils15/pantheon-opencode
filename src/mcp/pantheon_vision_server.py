@@ -221,7 +221,9 @@ async def _prepare_input(value: str) -> ImageInput:
             raise VisionError("Invalid image URL.")
         mime = _mime_from_path(Path(parsed.path))
         if mime is None and Path(parsed.path).suffix:
-            raise VisionError("Unsupported image MIME type. Use PNG, JPEG, WebP, or GIF.")
+            raise VisionError(
+                "Unsupported image MIME type. Use PNG, JPEG, WebP, or GIF."
+            )
         # The remote server owns the bytes.  The gateway receives the URL and
         # enforces its own fetch limits; unknown extensions remain possible.
         return ImageInput(value, mime or "image/jpeg", None, None, None)
@@ -239,9 +241,7 @@ async def _prepare_input(value: str) -> ImageInput:
         raise VisionError("Unsupported image MIME type. Use PNG, JPEG, WebP, or GIF.")
     encoded = base64.b64encode(data).decode("ascii")
     width, height = _dimensions(data, mime)
-    return ImageInput(
-        f"data:{mime};base64,{encoded}", mime, len(data), width, height
-    )
+    return ImageInput(f"data:{mime};base64,{encoded}", mime, len(data), width, height)
 
 
 def _extract_key(value: Any) -> str | None:
@@ -319,9 +319,7 @@ def _key_from_credential_db(provider: str) -> str | None:
             (provider,),
         ).fetchone()
     except (sqlite3.Error, ValueError):
-        _logger.warning(
-            "Could not read the OpenCode credential store at %s", db_path
-        )
+        _logger.warning("Could not read the OpenCode credential store at %s", db_path)
         return None
     finally:
         if conn is not None:
@@ -430,7 +428,9 @@ def _scrub(value: str, key: str | None) -> str:
 def _sanitized_gateway_body(body: dict[str, Any]) -> dict[str, Any]:
     """Non-sensitive summary of a gateway request body (no keys, no image bytes)."""
     messages = body.get("messages")
-    content = messages[0].get("content") if isinstance(messages, list) and messages else None
+    content = (
+        messages[0].get("content") if isinstance(messages, list) and messages else None
+    )
     chunks = content if isinstance(content, list) else [content]
     parts: list[dict[str, Any]] = []
     for chunk in chunks:
@@ -440,7 +440,9 @@ def _sanitized_gateway_body(body: dict[str, Any]) -> dict[str, Any]:
             parts.append({"type": "image_url"})
         else:
             text = chunk.get("text")
-            parts.append({"type": "text", "chars": len(text) if isinstance(text, str) else 0})
+            parts.append(
+                {"type": "text", "chars": len(text) if isinstance(text, str) else 0}
+            )
     return {
         "model": body.get("model"),
         "response_format": body.get("response_format"),
@@ -488,7 +490,10 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
             response = await client.post(
                 endpoint,
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
                 json=body,
             )
         if response.status_code >= HTTP_ERROR_STATUS:
@@ -509,7 +514,9 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
         payload = response.json()
         choices = payload.get("choices") if isinstance(payload, dict) else None
         message = choices[0].get("message") if choices else None
-        text = _content_text(message.get("content") if isinstance(message, dict) else "")
+        text = _content_text(
+            message.get("content") if isinstance(message, dict) else ""
+        )
         if not text:
             raise VisionError("Vision gateway returned an empty response.")
         return _scrub(text, key)
@@ -517,7 +524,13 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
         raise
     except (httpx.TimeoutException, TimeoutError) as exc:
         raise VisionError("Vision gateway request timed out.") from exc
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+    except (
+        httpx.HTTPError,
+        json.JSONDecodeError,
+        KeyError,
+        IndexError,
+        TypeError,
+    ) as exc:
         raise VisionError("Could not read the vision gateway response.") from exc
     except Exception as exc:
         raise VisionError("Vision gateway request failed.") from exc
@@ -525,7 +538,11 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
 
 def _error_message(exc: Exception) -> str:
     """Return a stable, non-sensitive tool error."""
-    return f"Error: {exc}" if isinstance(exc, VisionError) else "Error: Vision request failed."
+    return (
+        f"Error: {exc}"
+        if isinstance(exc, VisionError)
+        else "Error: Vision request failed."
+    )
 
 
 _DESCRIBE_PROMPT = (
@@ -564,7 +581,9 @@ async def vision_ocr(path: str) -> str:
         return _error_message(exc)
 
 
-@mcp.tool(description="Analyze an image and return metadata, description, and OCR as JSON.")
+@mcp.tool(
+    description="Analyze an image and return metadata, description, and OCR as JSON."
+)
 async def vision_analyze(path: str) -> str:
     """Return local metadata plus one structured description/OCR gateway call."""
     try:

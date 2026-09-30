@@ -69,6 +69,19 @@ PANTHEON_PROMPT_TIMEOUT="${PANTHEON_PROMPT_TIMEOUT:-300}"
 
 V2_BIN="${OPENCODE_V2_BIN:-opencode2}"
 
+# OpenCode V2's CLI talks to its background service for `mcp list`. Keep the
+# probe hermetic: an inherited config, database, or PORT can otherwise make
+# the command query a different service and report a false result.
+V2_CONFIG="${PANTHEON_V2_CONFIG:-$SANDBOX_ROOT/project-v2/opencode.json}"
+V2_DB="${PANTHEON_V2_DB:-$SANDBOX_ROOT/opencode-v2.db}"
+V2_PORT="${PANTHEON_V2_PORT:-49376}"
+V2_LOOPBACK_HOST="${PANTHEON_V2_HOST:-127.0.0.1}"
+V2_HANDSHAKE_TIMEOUT="${PANTHEON_V2_HANDSHAKE_TIMEOUT:-60}"
+V2_MCP_LIST_TIMEOUT="${PANTHEON_V2_MCP_LIST_TIMEOUT:-15}"
+V2_SERVER_PID=""
+V2_SERVER_LOG="$SANDBOX_ROOT/v2-server.log"
+V2_SERVICE_STATE="$SANDBOX_HOME/.local/state/opencode/service.json"
+
 # The single target version. Kept as a name so reports and prompts keep their
 # per-version labels without reintroducing a second leg.
 TARGET_VERSION="v2"
@@ -119,7 +132,243 @@ sandbox_env() {
   export HOME="$SANDBOX_HOME"
   export PATH="$NPM_PREFIX/bin:$HOME/.config/opencode/.venv/bin:$PATH"
   export npm_config_prefix="$NPM_PREFIX"
+  export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
+  # Do not inherit an OpenChamber/developer-machine config selector. The V2
+  # project config is created by prepare_project and is the only config this
+  # gate is allowed to inspect.
+  export OPENCODE_CONFIG_DIR="$(dirname "$V2_CONFIG")"
+  export OPENCODE_DB="$V2_DB"
+  export PANTHEON_V2_PORT="$V2_PORT"
+  export PORT="$V2_PORT"
+  unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE
+  mkdir -p "$SANDBOX_ROOT" "$(dirname "$V2_DB")" "$(dirname "$V2_SERVICE_STATE")"
 }
+
+stop_v2_service() {
+  if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+    kill "$V2_SERVER_PID" 2>/dev/null || true
+    wait "$V2_SERVER_PID" 2>/dev/null || true
+  fi
+  rm -f "$V2_SERVICE_STATE"
+  V2_SERVER_PID=""
+}
+
+print_v2_diagnostics() {
+  printf '%s\n' '--- V2 service registration ---' >&2
+  if [ -f "$V2_SERVICE_STATE" ]; then
+    cat "$V2_SERVICE_STATE" >&2 || true
+    printf '\n' >&2
+  else
+    printf 'missing service registration: %s\n' "$V2_SERVICE_STATE" >&2
+  fi
+  printf '%s\n' '--- V2 service log ---' >&2
+  if [ -f "$V2_SERVER_LOG" ]; then
+    tail -200 "$V2_SERVER_LOG" >&2 || true
+  else
+    printf 'missing service log: %s\n' "$V2_SERVER_LOG" >&2
+  fi
+  local runtime_log="$HOME/.local/share/opencode/log/opencode.log"
+  printf '%s\n' '--- OpenCode runtime log ---' >&2
+  if [ -f "$runtime_log" ]; then
+    tail -200 "$runtime_log" >&2 || true
+  else
+    printf 'missing runtime log: %s\n' "$runtime_log" >&2
+  fi
+}
+
+wait_for_v2_service_registration() {
+  local registration_url="http://$V2_LOOPBACK_HOST:$V2_PORT"
+  local registration_pid="$V2_SERVER_PID"
+  local attempt
+
+  for attempt in $(seq 1 "$V2_HANDSHAKE_TIMEOUT"); do
+    if ! kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+      printf 'V2 service exited before registration was written.\n' >&2
+      print_v2_diagnostics
+      return 1
+    fi
+    if [ -f "$V2_SERVICE_STATE" ] \
+      && SERVICE_STATE="$V2_SERVICE_STATE" \
+        REGISTRATION_URL="$registration_url" \
+        REGISTRATION_PID="$registration_pid" \
+        python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["SERVICE_STATE"])
+try:
+    state = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+expected_url = os.environ["REGISTRATION_URL"]
+expected_pid = int(os.environ["REGISTRATION_PID"])
+if not isinstance(state, dict):
+    raise SystemExit(1)
+if state.get("url") != expected_url or state.get("pid") != expected_pid:
+    raise SystemExit(1)
+if not all(isinstance(state.get(key), str) and state[key] for key in ("id", "version", "password")):
+    raise SystemExit(1)
+PY
+    then
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'Timed out after %ss waiting for V2 service registration matching url=%s pid=%s.\n' \
+    "$V2_HANDSHAKE_TIMEOUT" "$registration_url" "$registration_pid" >&2
+  print_v2_diagnostics
+  return 1
+}
+
+wait_for_v2_mcp_registrations() {
+  local runtime_dir="$1" python_bin="$2" attempt
+  for attempt in $(seq 1 "$V2_HANDSHAKE_TIMEOUT"); do
+    if ! kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+      echo 'ERROR: V2 service exited before all five MCP registrations completed' >&2
+      print_v2_diagnostics
+      return 1
+    fi
+    if SERVICE_LOG="$V2_SERVER_LOG" RUNTIME_DIR="$runtime_dir" MCP_PYTHON="$python_bin" \
+      python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+try:
+    log = Path(os.environ["SERVICE_LOG"]).read_text(encoding="utf-8")
+except OSError:
+    raise SystemExit(1)
+expected = {
+    "code_mode_server.py",
+    "memory_mcp_server.py",
+    "mcp_persistence_server.py",
+    "mcp_resources_server.py",
+    "pantheon_vision_server.py",
+}
+pattern = re.compile(
+    r"spawning process \{\s*"
+    r"command:\s*\"(?P<command>[^\"]+)\".*?"
+    r"args:\s*\[\s*\"(?P<script>[^\"]+)\"\s*\].*?"
+    r"cwd:\s*\"(?P<cwd>[^\"]+)\"",
+    re.DOTALL,
+)
+records = list(pattern.finditer(log))
+runtime_dir = os.environ["RUNTIME_DIR"]
+python_bin = os.environ["MCP_PYTHON"]
+registered = set()
+for record in records:
+    command = record.group("command")
+    script = Path(record.group("script")).name
+    cwd = record.group("cwd")
+    if command != python_bin or cwd != runtime_dir or script not in expected:
+        raise SystemExit(1)
+    registered.add(script)
+if len(records) != len(expected) or registered != expected:
+    raise SystemExit(1)
+PY
+    then
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'ERROR: timed out after %ss waiting for exactly five MCP registrations in the active sandbox\n' \
+    "$V2_HANDSHAKE_TIMEOUT" >&2
+  print_v2_diagnostics
+  return 1
+}
+
+wait_for_v2_handshakes() {
+  local runtime_log="$HOME/.local/share/opencode/log/opencode.log"
+  local names=(
+    pantheon-code-mode
+    pantheon-memory
+    pantheon-persistence
+    pantheon-resources
+    pantheon-vision
+  )
+  local attempt name ready connected_names connected_count
+  for attempt in $(seq 1 "$V2_HANDSHAKE_TIMEOUT"); do
+    if ! kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+      printf 'V2 service exited before all MCP handshakes completed.\n' >&2
+      print_v2_diagnostics
+      return 1
+    fi
+    ready=1
+    for name in "${names[@]}"; do
+      if [ ! -f "$runtime_log" ] || ! grep -Fq "message=\"mcp connected\" server=$name" "$runtime_log"; then
+        ready=0
+        break
+      fi
+    done
+    if [ "$ready" -eq 1 ]; then
+      # A stale or inherited MCP must not turn five expected handshakes into a
+      # false PASS. The service log is dedicated to this run and must contain
+      # exactly the five managed server names.
+      connected_names="$({ grep -oE 'message="mcp connected" server=[^ ]+' "$runtime_log" || true; } \
+        | sed 's/.*server=//' | sort -u)"
+      connected_count="$(printf '%s\n' "$connected_names" | sed '/^$/d' | wc -l)"
+      if [ "$connected_count" -eq 5 ] \
+        && ! printf '%s\n' "$connected_names" | grep -Evx \
+          'pantheon-code-mode|pantheon-memory|pantheon-persistence|pantheon-resources|pantheon-vision' \
+          >/dev/null; then
+        return 0
+      fi
+      ready=0
+    fi
+    sleep 1
+  done
+  printf 'Timed out after %ss waiting for exactly five MCP handshakes.\n' \
+    "$V2_HANDSHAKE_TIMEOUT" >&2
+  print_v2_diagnostics
+  return 1
+}
+
+start_v2_service() { # binary project
+  local bin="$1" project="$2" ready=0 attempt
+  if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+    return 0
+  fi
+
+  # Never attach to an unrelated service on the dedicated port. A successful
+  # health probe before our process starts is an environmental collision, not
+  # a reason to silently reuse that service.
+  if curl --fail --silent --show-error --max-time 1 \
+    "http://$V2_LOOPBACK_HOST:${V2_PORT}/global/health" >/dev/null 2>&1; then
+    die "dedicated V2 port ${V2_PORT} is already in use; refusing to reuse an unrelated service"
+  fi
+
+  rm -f "$V2_SERVER_LOG" "$V2_SERVICE_STATE" "$HOME/.local/share/opencode/log/opencode.log"
+  (cd "$project" && "$bin" serve --hostname "$V2_LOOPBACK_HOST" --port "$V2_PORT" --service) \
+    >"$V2_SERVER_LOG" 2>&1 &
+  V2_SERVER_PID=$!
+
+  for attempt in $(seq 1 "$V2_HANDSHAKE_TIMEOUT"); do
+    if ! kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+      printf 'V2 service exited before becoming healthy.\n' >&2
+      print_v2_diagnostics
+      return 1
+    fi
+    if curl --fail --silent --show-error --max-time 2 \
+      "http://$V2_LOOPBACK_HOST:${V2_PORT}/global/health" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$ready" -ne 1 ]; then
+    printf 'Timed out after %ss waiting for V2 service health on port %s.\n' \
+      "$V2_HANDSHAKE_TIMEOUT" "$V2_PORT" >&2
+    print_v2_diagnostics
+    return 1
+  fi
+  if ! wait_for_v2_service_registration; then
+    return 1
+  fi
+}
+
+trap stop_v2_service EXIT
 
 # ── Gate (b): sandbox run-test.sh with pantheon://agents content validation ──
 
@@ -161,6 +410,273 @@ echo "Repo:    $REPO_DIR"
 export HOME="$SANDBOX_HOME"
 export PATH="$NPM_PREFIX/bin:$SANDBOX_VENV/bin:$PATH"
 export npm_config_prefix="$NPM_PREFIX"
+export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
+# The V2 CLI resolves `mcp list` through its service. Keep generated sandbox
+# runs isolated from any config/database/port inherited from the host.
+V2_CONFIG="$SANDBOX_DIR/project-v2/opencode.json"
+V2_DB="${PANTHEON_V2_DB:-$SANDBOX_DIR/opencode-v2.db}"
+V2_PORT="${PANTHEON_V2_PORT:-49376}"
+V2_LOOPBACK_HOST="${PANTHEON_V2_HOST:-127.0.0.1}"
+V2_HANDSHAKE_TIMEOUT="${PANTHEON_V2_HANDSHAKE_TIMEOUT:-60}"
+V2_SERVER_LOG="$SANDBOX_DIR/v2-server.log"
+V2_SERVICE_STATE="$SANDBOX_HOME/.local/state/opencode/service.json"
+V2_SERVER_PID=""
+export OPENCODE_CONFIG_DIR="$(dirname "$V2_CONFIG")"
+export OPENCODE_DB="$V2_DB"
+export PANTHEON_V2_PORT="$V2_PORT"
+export PORT="$V2_PORT"
+unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE
+mkdir -p "$(dirname "$V2_SERVICE_STATE")"
+
+stop_v2_service() {
+  if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+    kill "$V2_SERVER_PID" 2>/dev/null || true
+    wait "$V2_SERVER_PID" 2>/dev/null || true
+  fi
+  rm -f "$V2_SERVICE_STATE"
+  V2_SERVER_PID=""
+}
+
+print_v2_diagnostics() {
+  printf '%s\n' '--- V2 service registration ---' >&2
+  if [ -f "$V2_SERVICE_STATE" ]; then
+    cat "$V2_SERVICE_STATE" >&2 || true
+    printf '\n' >&2
+  else
+    printf 'missing service registration: %s\n' "$V2_SERVICE_STATE" >&2
+  fi
+  printf '%s\n' '--- V2 service log ---' >&2
+  [ -f "$V2_SERVER_LOG" ] && tail -200 "$V2_SERVER_LOG" >&2 || true
+  local runtime_log="$HOME/.local/share/opencode/log/opencode.log"
+  printf '%s\n' '--- OpenCode runtime log ---' >&2
+  [ -f "$runtime_log" ] && tail -200 "$runtime_log" >&2 || true
+}
+
+wait_for_v2_service_registration() {
+  local registration_url="http://$V2_LOOPBACK_HOST:$V2_PORT"
+  local registration_pid="$V2_SERVER_PID"
+  local attempt
+  for attempt in $(seq 1 "$V2_HANDSHAKE_TIMEOUT"); do
+    if ! kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+      echo 'ERROR: V2 service exited before registration was written' >&2
+      print_v2_diagnostics
+      return 1
+    fi
+    if [ -f "$V2_SERVICE_STATE" ] \
+      && SERVICE_STATE="$V2_SERVICE_STATE" \
+        REGISTRATION_URL="$registration_url" \
+        REGISTRATION_PID="$registration_pid" \
+        python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["SERVICE_STATE"])
+try:
+    state = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+expected_url = os.environ["REGISTRATION_URL"]
+expected_pid = int(os.environ["REGISTRATION_PID"])
+if not isinstance(state, dict):
+    raise SystemExit(1)
+if state.get("url") != expected_url or state.get("pid") != expected_pid:
+    raise SystemExit(1)
+if not all(isinstance(state.get(key), str) and state[key] for key in ("id", "version", "password")):
+    raise SystemExit(1)
+PY
+    then
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'ERROR: timed out after %ss waiting for V2 service registration matching url=%s pid=%s\n' \
+    "$V2_HANDSHAKE_TIMEOUT" "$registration_url" "$registration_pid" >&2
+  print_v2_diagnostics
+  return 1
+}
+
+wait_for_v2_mcp_registrations() {
+  local runtime_dir="$1" python_bin="$2" attempt
+  for attempt in $(seq 1 "$V2_HANDSHAKE_TIMEOUT"); do
+    if ! kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+      echo 'ERROR: V2 service exited before all five MCP registrations completed' >&2
+      print_v2_diagnostics
+      return 1
+    fi
+    if SERVICE_LOG="$V2_SERVER_LOG" RUNTIME_DIR="$runtime_dir" MCP_PYTHON="$python_bin" \
+      python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+try:
+    log = Path(os.environ["SERVICE_LOG"]).read_text(encoding="utf-8")
+except OSError:
+    raise SystemExit(1)
+expected = {
+    "code_mode_server.py",
+    "memory_mcp_server.py",
+    "mcp_persistence_server.py",
+    "mcp_resources_server.py",
+    "pantheon_vision_server.py",
+}
+pattern = re.compile(
+    r"spawning process \{\s*"
+    r"command:\s*\"(?P<command>[^\"]+)\".*?"
+    r"args:\s*\[\s*\"(?P<script>[^\"]+)\"\s*\].*?"
+    r"cwd:\s*\"(?P<cwd>[^\"]+)\"",
+    re.DOTALL,
+)
+records = list(pattern.finditer(log))
+runtime_dir = os.environ["RUNTIME_DIR"]
+python_bin = os.environ["MCP_PYTHON"]
+registered = set()
+for record in records:
+    command = record.group("command")
+    script = Path(record.group("script")).name
+    cwd = record.group("cwd")
+    if command != python_bin or cwd != runtime_dir or script not in expected:
+        raise SystemExit(1)
+    registered.add(script)
+if len(records) != len(expected) or registered != expected:
+    raise SystemExit(1)
+PY
+    then
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'ERROR: timed out after %ss waiting for exactly five MCP registrations in the active sandbox\n' \
+    "$V2_HANDSHAKE_TIMEOUT" >&2
+  print_v2_diagnostics
+  return 1
+}
+
+start_v2_service() {
+  local bin="$1" project="$2" attempt ready=0
+  if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+    return 0
+  fi
+  if curl --fail --silent --show-error --max-time 1 \
+    "http://$V2_LOOPBACK_HOST:${V2_PORT}/global/health" >/dev/null 2>&1; then
+    echo "ERROR: dedicated V2 port $V2_PORT is already in use" >&2
+    return 1
+  fi
+  rm -f "$V2_SERVER_LOG" "$V2_SERVICE_STATE" "$HOME/.local/share/opencode/log/opencode.log"
+  (cd "$project" && "$bin" serve --hostname "$V2_LOOPBACK_HOST" --port "$V2_PORT" --service) \
+    >"$V2_SERVER_LOG" 2>&1 &
+  V2_SERVER_PID=$!
+  for attempt in $(seq 1 "$V2_HANDSHAKE_TIMEOUT"); do
+    if ! kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+      echo 'ERROR: V2 service exited before becoming healthy' >&2
+      print_v2_diagnostics
+      return 1
+    fi
+    if curl --fail --silent --show-error --max-time 2 \
+      "http://$V2_LOOPBACK_HOST:${V2_PORT}/global/health" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo "ERROR: timed out waiting for V2 service on port $V2_PORT" >&2
+    print_v2_diagnostics
+    return 1
+  fi
+  if ! wait_for_v2_service_registration; then
+    return 1
+  fi
+}
+
+wait_for_v2_handshakes() {
+  local runtime_log="$HOME/.local/share/opencode/log/opencode.log"
+  local names=(pantheon-code-mode pantheon-memory pantheon-persistence pantheon-resources pantheon-vision)
+  local attempt name ready connected_names connected_count
+  for attempt in $(seq 1 "$V2_HANDSHAKE_TIMEOUT"); do
+    if ! kill -0 "$V2_SERVER_PID" 2>/dev/null; then
+      echo 'ERROR: V2 service exited before all MCP handshakes completed' >&2
+      print_v2_diagnostics
+      return 1
+    fi
+    ready=1
+    for name in "${names[@]}"; do
+      if [ ! -f "$runtime_log" ] || ! grep -Fq "message=\"mcp connected\" server=$name" "$runtime_log"; then
+        ready=0
+        break
+      fi
+    done
+    if [ "$ready" -eq 1 ]; then
+      connected_names="$({ grep -oE 'message=\"mcp connected\" server=[^ ]+' "$runtime_log" || true; } \
+        | sed 's/.*server=//' | sort -u)"
+      connected_count="$(printf '%s\n' "$connected_names" | sed '/^$/d' | wc -l)"
+      if [ "$connected_count" -eq 5 ] \
+        && ! printf '%s\n' "$connected_names" | grep -Evx \
+          'pantheon-code-mode|pantheon-memory|pantheon-persistence|pantheon-resources|pantheon-vision' \
+          >/dev/null; then
+        return 0
+      fi
+      ready=0
+    fi
+    sleep 1
+  done
+  echo "ERROR: timed out waiting for exactly five MCP handshakes" >&2
+  print_v2_diagnostics
+  return 1
+}
+
+rewrite_v2_mcp_config() {
+  local config_path="$V2_CONFIG"
+  local runtime_dir="$SANDBOX_DIR/project-v2/.opencode"
+  local python_bin="$SANDBOX_DIR/project-v2/.venv/bin/python3"
+  [ -f "$config_path" ] || { echo "ERROR: V2 config was not generated: $config_path" >&2; return 1; }
+  [ -x "$python_bin" ] || { echo "ERROR: V2 MCP Python is missing: $python_bin" >&2; return 1; }
+  CONFIG_PATH="$config_path" RUNTIME_DIR="$runtime_dir" MCP_PYTHON="$python_bin" \
+    python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+config_path = Path(os.environ["CONFIG_PATH"])
+runtime_dir = os.environ["RUNTIME_DIR"]
+python_bin = os.environ["MCP_PYTHON"]
+managed = {
+    "pantheon-code-mode": "code_mode_server.py",
+    "pantheon-memory": "memory_mcp_server.py",
+    "pantheon-persistence": "mcp_persistence_server.py",
+    "pantheon-resources": "mcp_resources_server.py",
+    "pantheon-vision": "pantheon_vision_server.py",
+}
+try:
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"cannot read V2 config {config_path}: {exc}")
+if not isinstance(config, dict):
+    raise SystemExit(f"V2 config must be an object: {config_path}")
+mcp = config.setdefault("mcp", {})
+if not isinstance(mcp, dict):
+    raise SystemExit("V2 config mcp section must be an object")
+for name, script in managed.items():
+    entry = mcp.get(name) if isinstance(mcp.get(name), dict) else {}
+    entry.pop("disabled", None)
+    entry.update(type="local", cwd=runtime_dir, command=[python_bin, f"scripts/{script}"], enabled=True)
+    mcp[name] = entry
+tmp_path = config_path.with_name(config_path.name + ".sandbox-tmp")
+tmp_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+os.replace(tmp_path, config_path)
+validated = json.loads(config_path.read_text(encoding="utf-8"))
+for name, script in managed.items():
+    entry = validated.get("mcp", {}).get(name)
+    expected = {"type": "local", "cwd": runtime_dir, "command": [python_bin, f"scripts/{script}"], "enabled": True}
+    if not isinstance(entry, dict) or any(entry.get(key) != value for key, value in expected.items()):
+        raise SystemExit(f"stale or invalid paths remain for {name} in {config_path}")
+    if not Path(entry["cwd"]).is_dir() or not Path(entry["command"][0]).is_file() or not (Path(entry["cwd"]) / entry["command"][1]).is_file():
+        raise SystemExit(f"active sandbox path is missing for {name}: {entry}")
+PY
+}
+
+trap stop_v2_service EXIT
 
 STATUS_FAIL=0
 STATUS_PASS=0
@@ -193,7 +709,8 @@ check_binary() { # label binary
 }
 
 check_mcp() { # label binary project
-  local label="$1" bin="$2" project="$3" out connected_count rc=0
+  local label="$1" bin="$2" project="$3" out connected_count rc=0 list_file list_pid
+  local final_file final_pid final_rc final_count
   if ! command -v "$bin" >/dev/null 2>&1; then
     record_status "$label MCP" "FAIL" "binary '$bin' is not installed in the sandbox prefix"
     return 0
@@ -202,19 +719,76 @@ check_mcp() { # label binary project
     record_status "$label MCP" "FAIL" "project directory is missing: $project"
     return 0
   fi
-  set +e
-  out="$(cd "$project" && "$bin" mcp list 2>&1)"
-  rc=$?
-  set -e
+  if ! start_v2_service "$bin" "$project"; then
+    record_status "$label MCP" "FAIL" "V2 service did not become healthy"
+    return 0
+  fi
+
+  # `mcp list` is the operation that causes OpenCode V2 to launch the MCP
+  # subprocesses. Start it immediately after health, before waiting for the
+  # handshakes; waiting first deadlocks forever because those subprocesses are
+  # otherwise never loaded.
+  list_file="$(mktemp "$SANDBOX_DIR/v2-mcp-list.XXXXXX")"
+  (cd "$project" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list) \
+    >"$list_file" 2>&1 &
+  list_pid=$!
+  if ! wait_for_v2_mcp_registrations "$project/.opencode" "$project/.venv/bin/python3"; then
+    kill "$list_pid" 2>/dev/null || true
+    wait "$list_pid" 2>/dev/null || true
+    rm -f "$list_file"
+    record_status "$label MCP" "FAIL" "MCP registrations did not match the active sandbox"
+    return 0
+  fi
+  if wait_for_v2_handshakes; then
+    :
+  else
+    kill "$list_pid" 2>/dev/null || true
+    wait "$list_pid" 2>/dev/null || true
+    rm -f "$list_file"
+    record_status "$label MCP" "FAIL" "MCP handshakes did not become ready after mcp list started"
+    return 0
+  fi
+  if wait "$list_pid"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  out="$(cat "$list_file")"
+  rm -f "$list_file"
+  connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)' || true)"
+  if [ "$rc" -eq 0 ] && [ "$connected_count" -ne 5 ]; then
+    # The first V2 beta `mcp list` call is the loader trigger and may return
+    # before the service has populated its MCP catalog. Re-query only after
+    # the registration and handshake gates above have proved the active five.
+    final_file="$(mktemp "$SANDBOX_DIR/v2-mcp-list.XXXXXX")"
+    (cd "$project" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list) \
+      >"$final_file" 2>&1 &
+    final_pid=$!
+    if wait "$final_pid"; then
+      final_rc=0
+    else
+      final_rc=$?
+    fi
+    out="$(cat "$final_file")"
+    rm -f "$final_file"
+    if [ "$final_rc" -ne 0 ]; then
+      rc="$final_rc"
+    fi
+  fi
   out="$(printf '%s' "$out" | sed -E $'s/\x1B\\[[0-?]*[ -/]*[@-~]//g')"
   printf '%s\n' "$out"
   if [ "$rc" -ne 0 ]; then
-    record_status "$label MCP" "FAIL" "mcp list exited $rc"
+    record_status "$label MCP" "FAIL" "mcp list exited $rc (see output above)"
     return 0
   fi
   connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)')" || connected_count=0
   if [ "$connected_count" -eq 5 ] \
-    && ! printf '%s' "$out" | grep -Eiq 'failed|✘'; then
+    && ! printf '%s' "$out" | grep -Eiq 'failed|✘' \
+    && printf '%s' "$out" | grep -Fq 'pantheon-code-mode' \
+    && printf '%s' "$out" | grep -Fq 'pantheon-memory' \
+    && printf '%s' "$out" | grep -Fq 'pantheon-persistence' \
+    && printf '%s' "$out" | grep -Fq 'pantheon-resources' \
+    && printf '%s' "$out" | grep -Fq 'pantheon-vision'; then
     record_status "$label MCP" "PASS" "exactly 5 connected MCPs"
   else
     record_status "$label MCP" "FAIL" "expected exactly 5 connected MCPs; found $connected_count or failures reported"
@@ -226,7 +800,7 @@ check_binary "V2 binary" opencode2
 
 echo "--- Building tarball ---"
 cd "$REPO_DIR"
-npm pack 2>/dev/null || { echo "ERROR: npm pack failed"; exit 1; }
+npm pack --ignore-scripts 2>/dev/null || { echo "ERROR: npm pack failed"; exit 1; }
 TGZ=$(ls -t pantheon-opencode-*.tgz | head -1)
 npm rm -g pantheon-opencode 2>/dev/null || true
 npm install -g "$TGZ"
@@ -234,6 +808,7 @@ if ! git -C "$REPO_DIR" ls-files --error-unmatch -- "$TGZ" >/dev/null 2>&1; then
 
 echo "--- Init (headless) ---"
 pantheon-opencode init --headless -y
+rewrite_v2_mcp_config
 
 echo "--- MCP Validation ---"
 check_mcp "V2" opencode2 "$SANDBOX_DIR/project-v2"
@@ -395,7 +970,7 @@ cmd_reset() {
 install_binaries() {
   log "--- Installing pantheon-opencode (from repo tarball) ---"
   cd "$REPO_DIR"
-  npm pack 2>/dev/null || die "npm pack failed"
+  npm pack --ignore-scripts 2>/dev/null || die "npm pack failed"
   local tgz
   tgz=$(ls -t pantheon-opencode-*.tgz | head -1)
   npm rm -g pantheon-opencode 2>/dev/null || true
@@ -414,6 +989,92 @@ prepare_project() {
   log "--- Regenerating config in $dir ---"
   (cd "$dir" && "$pan" init --project --version "$TARGET_VERSION" --model "$PANTHEON_SANDBOX_MODEL" -y) \
     || die "init --project --version $TARGET_VERSION failed in $dir"
+  rewrite_v2_mcp_config
+}
+
+# The installer merges an existing project config. A reused sandbox can
+# therefore contain five otherwise-valid MCP entries whose absolute paths
+# point at a different sandbox or host. Rewrite the managed entries after the
+# merge and validate the complete shape before any OpenCode process starts.
+rewrite_v2_mcp_config() {
+  local runtime_dir="$(project_dir)/.opencode"
+  local python_bin="$(project_dir)/.venv/bin/python3"
+  [ -f "$V2_CONFIG" ] || die "V2 config was not generated: $V2_CONFIG"
+  [ -x "$python_bin" ] || die "V2 MCP Python is missing: $python_bin"
+
+  CONFIG_PATH="$V2_CONFIG" RUNTIME_DIR="$runtime_dir" MCP_PYTHON="$python_bin" \
+    python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+config_path = Path(os.environ["CONFIG_PATH"])
+runtime_dir = os.environ["RUNTIME_DIR"]
+python_bin = os.environ["MCP_PYTHON"]
+managed = {
+    "pantheon-code-mode": "code_mode_server.py",
+    "pantheon-memory": "memory_mcp_server.py",
+    "pantheon-persistence": "mcp_persistence_server.py",
+    "pantheon-resources": "mcp_resources_server.py",
+    "pantheon-vision": "pantheon_vision_server.py",
+}
+
+try:
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"cannot read V2 config {config_path}: {exc}")
+if not isinstance(config, dict):
+    raise SystemExit(f"V2 config must be an object: {config_path}")
+mcp = config.setdefault("mcp", {})
+if not isinstance(mcp, dict):
+    raise SystemExit("V2 config mcp section must be an object")
+
+for name, script in managed.items():
+    entry = mcp.get(name)
+    if not isinstance(entry, dict):
+        entry = {}
+    # Do not retain command/cwd values from the merged config. These are the
+    # only paths the active project is allowed to use in this sandbox.
+    entry.pop("disabled", None)
+    entry.update(
+        type="local",
+        cwd=runtime_dir,
+        command=[python_bin, f"scripts/{script}"],
+        enabled=True,
+    )
+    mcp[name] = entry
+
+tmp_path = config_path.with_name(config_path.name + ".sandbox-tmp")
+try:
+    tmp_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp_path, config_path)
+except OSError as exc:
+    try:
+        tmp_path.unlink()
+    except OSError:
+        pass
+    raise SystemExit(f"cannot rewrite V2 config {config_path}: {exc}")
+
+try:
+    validated = json.loads(config_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"cannot validate rewritten V2 config {config_path}: {exc}")
+for name, script in managed.items():
+    entry = validated.get("mcp", {}).get(name)
+    expected = {
+        "type": "local",
+        "cwd": runtime_dir,
+        "command": [python_bin, f"scripts/{script}"],
+        "enabled": True,
+    }
+    if not isinstance(entry, dict) or any(entry.get(key) != value for key, value in expected.items()):
+        raise SystemExit(f"stale or invalid paths remain for {name} in {config_path}")
+    if not Path(entry["cwd"]).is_dir() or not Path(entry["command"][0]).is_file():
+        raise SystemExit(f"active sandbox path is missing for {name}: {entry}")
+    if not (Path(entry["cwd"]) / entry["command"][1]).is_file():
+        raise SystemExit(f"active sandbox MCP script is missing for {name}: {entry}")
+PY
 }
 
 cmd_prepare() {
@@ -572,42 +1233,108 @@ run_prompt() { # v idx current_bin — exactly one attempt
 }
 
 check_mcp_list() { # v
-  local v="$1" bin out connected_count rc=0
+  local v="$1" bin out connected_count rc=0 last_out='' last_rc=0
+  local list_file list_pid final_file final_pid final_rc
   if ! bin="$(sandbox_bin)"; then
     record "$v" "mcp-list" "FAIL" "binary not installed in sandbox prefix"
     return 0
   fi
-  set +e
-  out="$(cd "$(project_dir)" && "$bin" mcp list 2>&1)"
-  rc=$?
-  set -e
-  out="$(printf '%s' "$out" | sed -E $'s/\x1B\\[[0-?]*[ -/]*[@-~]//g')"
-  if [ "$rc" -ne 0 ]; then
-    record "$v" "mcp-list" "FAIL" "opencode mcp list exited $rc"
+  if ! start_v2_service "$bin" "$(project_dir)"; then
+    record "$v" "mcp-list" "FAIL" "V2 service did not become healthy"
     return 0
   fi
-  connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)')" || connected_count=0
-  if [ "$connected_count" -eq 5 ] \
-    && ! printf '%s' "$out" | grep -Eiq "failed|✘"; then
-    record "$v" "mcp-list" "PASS" "$connected_count connected (expected exactly 5)"
-  else
-    record "$v" "mcp-list" "FAIL" "expected exactly 5 connected MCPs; found $connected_count or failures reported"
+
+  # Start the loader-triggering command before waiting for handshakes. The
+  # previous order waited on log lines that `mcp list` itself had to create.
+  list_file="$(mktemp "$SANDBOX_ROOT/v2-mcp-list.XXXXXX")"
+  (cd "$(project_dir)" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list) \
+    >"$list_file" 2>&1 &
+  list_pid=$!
+  if ! wait_for_v2_mcp_registrations "$(project_dir)/.opencode" "$(project_dir)/.venv/bin/python3"; then
+    kill "$list_pid" 2>/dev/null || true
+    wait "$list_pid" 2>/dev/null || true
+    rm -f "$list_file"
+    record "$v" "mcp-list" "FAIL" "MCP registrations did not match the active sandbox"
+    return 0
   fi
+  if wait_for_v2_handshakes; then
+    :
+  else
+    kill "$list_pid" 2>/dev/null || true
+    wait "$list_pid" 2>/dev/null || true
+    rm -f "$list_file"
+    record "$v" "mcp-list" "FAIL" "MCP handshakes did not become ready after mcp list started"
+    return 0
+  fi
+  if wait "$list_pid"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  out="$(cat "$list_file")"
+  rm -f "$list_file"
+  connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)' || true)"
+  if [ "$rc" -eq 0 ] && [ "$connected_count" -ne 5 ]; then
+    # The first beta `mcp list` call triggers loading and can return before the
+    # service catalog is populated. Re-query only after registrations and
+    # handshakes have proved the active five servers.
+    final_file="$(mktemp "$SANDBOX_ROOT/v2-mcp-list.XXXXXX")"
+    (cd "$(project_dir)" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list) \
+      >"$final_file" 2>&1 &
+    final_pid=$!
+    if wait "$final_pid"; then
+      final_rc=0
+    else
+      final_rc=$?
+    fi
+    out="$(cat "$final_file")"
+    rm -f "$final_file"
+    if [ "$final_rc" -ne 0 ]; then
+      rc="$final_rc"
+    fi
+  fi
+  out="$(printf '%s' "$out" | sed -E $'s/\x1B\\[[0-?]*[ -/]*[@-~]//g')"
+  last_out="$out"
+  last_rc="$rc"
+  connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)' || true)"
+  if [ "$rc" -eq 0 ] \
+    && [ "$connected_count" -eq 5 ] \
+    && ! printf '%s' "$out" | grep -Eiq 'failed|✘' \
+    && printf '%s' "$out" | grep -Fq 'pantheon-code-mode' \
+    && printf '%s' "$out" | grep -Fq 'pantheon-memory' \
+    && printf '%s' "$out" | grep -Fq 'pantheon-persistence' \
+    && printf '%s' "$out" | grep -Fq 'pantheon-resources' \
+    && printf '%s' "$out" | grep -Fq 'pantheon-vision'; then
+    printf '%s\n' "$out"
+    record "$v" "mcp-list" "PASS" "exactly 5 connected MCPs"
+    return 0
+  fi
+
+  printf '%s\n' '--- mcp list output (last attempt) ---' >&2
+  printf '%s\n' "$last_out" >&2
+  printf 'mcp list exit=%s; connected=%s; expected exactly 5\n' \
+    "$last_rc" "$connected_count" >&2
+  print_v2_diagnostics
+  record "$v" "mcp-list" "FAIL" \
+    "expected exactly 5 connected MCPs; last exit $last_rc found $connected_count"
 }
 
 check_doctor() { # v
-  local v="$1" pan rc=0
+  local v="$1" pan rc=0 doctor_output=''
   if ! pan="$(sandbox_bin_for "pantheon-opencode")"; then
     record "$v" "doctor" "FAIL" "pantheon-opencode not installed in sandbox prefix"
     return 0
   fi
-  set +e
-  (cd "$(project_dir)" && "$pan" doctor --target "$(project_dir)") > /dev/null 2>&1
-  rc=$?
-  set -e
+  if doctor_output="$(cd "$(project_dir)" && "$pan" doctor --target "$(project_dir)" 2>&1)"; then
+    rc=0
+  else
+    rc=$?
+  fi
   if [ "$rc" -eq 0 ]; then
     record "$v" "doctor" "PASS" "exit 0"
   else
+    printf '%s\n' '--- doctor output ---' >&2
+    printf '%s\n' "$doctor_output" >&2
     record "$v" "doctor" "FAIL" "doctor exited $rc (blocking errors)"
   fi
 }
@@ -711,13 +1438,16 @@ run_version_prompts() { # v
   fi
   prepare_project "$v"
   build_battery "$v"
+  # check_mcp_list owns service startup and must launch `mcp list` before it
+  # waits for the five MCP handshakes. Starting a service and waiting here
+  # would recreate the V2 loader deadlock before the battery even begins.
+  check_mcp_list "$v"
   local i
   for i in "${!PROMPT_IDS[@]}"; do
     log "[$v] prompt ${PROMPT_IDS[$i]} ..."
     run_prompt "$v" "$i" "$bin"
     log "[$v] prompt ${PROMPT_IDS[$i]} → ${RESULTS["$v:${PROMPT_IDS[$i]}"]}"
   done
-  check_mcp_list "$v"
   check_doctor "$v"
 }
 

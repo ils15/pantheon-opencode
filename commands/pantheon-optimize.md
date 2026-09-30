@@ -4,7 +4,7 @@ agent: "zeus"
 ---
 # /pantheon-optimize — Pantheon Project Optimizer
 
-**What:** Multi-mode optimization: scans for documentation bloat, archives completed deepwork, migrates memory-bank flat files to MCP memory (ChromaDB), and reports token savings.
+**What:** Multi-mode optimization: scans for documentation bloat, archives completed deepwork, migrates memory-bank flat files to the FTS5-backed MCP memory server, and reports token savings.
 
 ## Usage
 
@@ -33,7 +33,7 @@ Archives completed deepwork sessions from `.pantheon/deepwork/<slug>/` to `.pant
 ```
 
 ### `--cache` — Memory Bank Migration
-Scans `.pantheon/memory-bank/` for flat `.md` files and migrates them to the MCP memory server (ChromaDB).
+Scans `.pantheon/memory-bank/` for flat `.md` files and migrates them to the FTS5-backed MCP memory server.
 
 **What it does:**
 1. Reads all `.md` files in `.pantheon/memory-bank/`

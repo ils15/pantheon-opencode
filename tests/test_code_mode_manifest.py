@@ -29,6 +29,8 @@ import pytest
 MODULE_PATH = "src.mcp.code_mode_server"
 
 ECHO_BODY = "#!/usr/bin/env python3\nprint('MANIFEST_MARKER')\n"
+EXPECTED_GENERATED_SCRIPT_COUNT = 2
+SHA256_DIGEST_HEX_LENGTH = 64
 
 
 def _write_script(scripts_dir: Path, name: str, content: str = ECHO_BODY) -> Path:
@@ -171,7 +173,9 @@ class TestManifestFailClosed:
         self, module, scripts_env: Path
     ) -> None:
         _write_script(scripts_env, "hello.py")
-        digest = hashlib.sha256(scripts_env.joinpath("hello.py").read_bytes()).hexdigest()
+        digest = hashlib.sha256(
+            scripts_env.joinpath("hello.py").read_bytes()
+        ).hexdigest()
         (scripts_env / "manifest.json").write_text(
             json.dumps({"version": 2, "scripts": {"hello.py": digest}}),
             encoding="utf-8",
@@ -199,9 +203,7 @@ class TestManifestFailClosed:
 class TestApprovalGate:
     """Only manifest-listed scripts with a matching hash may run."""
 
-    async def test_approved_script_executes_ok(
-        self, module, scripts_env: Path
-    ) -> None:
+    async def test_approved_script_executes_ok(self, module, scripts_env: Path) -> None:
         _write_script(scripts_env, "hello.py")
         status, _ = module._approve_script("hello.py")
         assert status == "OK"
@@ -215,7 +217,9 @@ class TestApprovalGate:
         self, module, scripts_env: Path
     ) -> None:
         _write_script(scripts_env, "approved.py")
-        _write_script(scripts_env, "rogue.py", "#!/usr/bin/env python3\nprint('ROGUE')\n")
+        _write_script(
+            scripts_env, "rogue.py", "#!/usr/bin/env python3\nprint('ROGUE')\n"
+        )
         module._approve_script("approved.py")
 
         result = await _exec(module, "rogue.py", json_output=True)
@@ -308,7 +312,7 @@ class TestApproveAndGenerate:
         _write_script(scripts_env, "a.py")
         _write_script(scripts_env, "b.sh", "#!/usr/bin/env bash\necho hi\n")
         count = module._generate_manifest(scripts_env)
-        assert count == 2
+        assert count == EXPECTED_GENERATED_SCRIPT_COUNT
         manifest = json.loads((scripts_env / "manifest.json").read_text("utf-8"))
         assert set(manifest["scripts"]) == {"a.py", "b.sh"}
 
@@ -378,7 +382,7 @@ class TestShippedManifest:
         assert data["version"] == 1
         assert "example-sync.sh" in data["scripts"]
         digest = data["scripts"]["example-sync.sh"]
-        assert len(digest) == 64
+        assert len(digest) == SHA256_DIGEST_HEX_LENGTH
 
     async def test_shipped_script_executes(self, module) -> None:
         result = await module.execute_code_script("example-sync.sh", json_output=True)

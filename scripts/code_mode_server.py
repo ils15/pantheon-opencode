@@ -20,6 +20,11 @@ import hashlib
 import json
 import logging
 import os
+
+try:
+    import resource
+except (ImportError, OSError, ValueError):  # pragma: no cover - platform-specific
+    resource = None  # type: ignore[assignment]
 import shutil
 import signal
 import stat
@@ -188,11 +193,15 @@ def _sandbox_nproc() -> str | None:
             "the sandboxed script's fork budget is unbounded"
         )
         return None
+    if resource is None:
+        _log.warning(
+            "code-mode: cannot read RLIMIT_NPROC; omitting --nproc, so the "
+            "sandboxed script's fork budget is unbounded"
+        )
+        return None
     try:
-        import resource
-
         _soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)
-    except (ImportError, OSError, ValueError):
+    except (OSError, ValueError):
         _log.warning(
             "code-mode: cannot read RLIMIT_NPROC; omitting --nproc, so the "
             "sandboxed script's fork budget is unbounded"
@@ -317,7 +326,9 @@ def _packaged_scripts_dir() -> Path | None:
     return None
 
 
-def _resolve_scripts_dir(candidates: list[Path], *, allow_packaged: bool = True) -> Path | None:
+def _resolve_scripts_dir(
+    candidates: list[Path], *, allow_packaged: bool = True
+) -> Path | None:
     """Select the first usable candidate, optionally trying the package copy."""
     for candidate in candidates:
         if _has_usable_scripts(candidate):
@@ -468,9 +479,7 @@ def _load_manifest(scripts_dir: Path | None = None) -> dict[str, str]:
         ) from None
 
     if not isinstance(data, dict):
-        raise ManifestError(
-            "CORRUPT_DATA", "Code-mode manifest must be a JSON object."
-        )
+        raise ManifestError("CORRUPT_DATA", "Code-mode manifest must be a JSON object.")
 
     if data.get("version") != 1:
         raise ManifestError(
@@ -616,7 +625,6 @@ def _contract_result(
     if json_output:
         return {"status": status, "error": message}
     return f"[{status}] {message}"
-
 
 
 def _format_output(
@@ -909,22 +917,15 @@ async def execute_code_script(
                 timeout_s=timeout_s,
                 status="TIMEOUT",
             )
-    except FileNotFoundError:
-        return _build_result(
-            "",
-            f"Script '{script_name}' not found or interpreter missing.",
-            -1,
-            timed_out=False,
-            duration_ms=0,
-            metadata=metadata,
-            json_output=json_output,
-            timeout_s=timeout_s,
-            status="UNAVAILABLE",
-        )
     except OSError as e:
+        error = (
+            f"Script '{script_name}' not found or interpreter missing."
+            if isinstance(e, FileNotFoundError)
+            else f"Failed to execute script: {e}"
+        )
         return _build_result(
             "",
-            f"Failed to execute script: {e}",
+            error,
             -1,
             timed_out=False,
             duration_ms=0,

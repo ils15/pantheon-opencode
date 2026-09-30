@@ -226,11 +226,10 @@ runs so beta and stable paths can never double-publish.
 
 The release evidence is fail-closed and has one artifact identity:
 
-- root dependencies use `npm ci --ignore-scripts` with `package.json` and
-  `package-lock.json`;
-- the TUI is checked independently with
-  `npm ci --prefix src/plugins/tui --ignore-scripts` and its own manifest and
-  lockfile;
+- root dependencies and the TUI workspace use one `npm ci --ignore-scripts`
+  with `package.json` and `package-lock.json`;
+- the TUI manifest and lockfile remain independently validated as package and
+  publish evidence;
 - a release creates one npm `.tgz` tarball, computes one SHA-256, and carries
   that exact file and digest from validation to publication; a second `npm
   pack` is not a valid replacement;
