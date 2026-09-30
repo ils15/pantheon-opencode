@@ -42,7 +42,8 @@ logs/
 
 # Local Promptfoo/evaluation runs are exploratory evidence, not release input.
 # Keep credentials, datasets, outputs and generated reports out of Git and npm.
-evals/promptfoo/
+/evals/
+/evals/promptfoo/
 
 # ZCode session artifacts
 .zcode/
