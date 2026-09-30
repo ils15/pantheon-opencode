@@ -241,8 +241,11 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
     'the legacy file-valued OPENCODE_CONFIG selector must not be used',
   )
   assert.equal(
-    (harness.match(/unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE/g) ?? [])
-      .length,
+    (
+      harness.match(
+        /unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE/g,
+      ) ?? []
+    ).length,
     2,
     'both environments must clear inherited OPENCODE_CONFIG contamination',
   )
@@ -254,7 +257,10 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
   assert.match(harness, /export OPENCODE_DB="\$V2_DB"/)
   assert.match(harness, /export PORT="\$V2_PORT"/)
   assert.match(harness, /export XDG_STATE_HOME="\$SANDBOX_HOME\/\.local\/state"/)
-  assert.match(harness, /V2_SERVICE_STATE="\$SANDBOX_HOME\/\.local\/state\/opencode\/service\.json"/)
+  assert.match(
+    harness,
+    /V2_SERVICE_STATE="\$SANDBOX_HOME\/\.local\/state\/opencode\/service\.json"/,
+  )
   assert.match(harness, /message=\\"mcp connected\\"/)
   assert.match(harness, /expected exactly 5 connected MCPs/)
   assert.match(harness, /refusing to reuse an unrelated service/)
@@ -280,8 +286,14 @@ test('V2 loader order starts mcp list before waiting for handshakes', () => {
   )
 
   for (const [name, launch] of [
-    ['generated runner', '(cd "$project" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list)'],
-    ['main runner', '(cd "$(project_dir)" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list)'],
+    [
+      'generated runner',
+      '(cd "$project" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list)',
+    ],
+    [
+      'main runner',
+      '(cd "$(project_dir)" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list)',
+    ],
   ]) {
     const launchIndex = harness.indexOf(`${launch} \\`)
     const waitIndex = harness.indexOf('if wait_for_v2_handshakes; then', launchIndex)
@@ -344,15 +356,22 @@ test('V2 config merge rewrites stale MCP paths to the active sandbox', (t) => {
   const cliMarker = harness.indexOf('# ── CLI ─')
   assert.ok(cliMarker > 0, 'runner CLI marker must be present')
   writeFileSync(defsFile, harness.slice(0, cliMarker))
-  const result = spawnSync('bash', ['-c', 'set -euo pipefail; source "$DEFS"; SANDBOX_ROOT="$ROOT"; TARGET_VERSION=v2; V2_CONFIG="$CONFIG"; rewrite_v2_mcp_config'], {
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      DEFS: defsFile,
-      ROOT: sandboxRoot,
-      CONFIG: config,
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      'set -euo pipefail; source "$DEFS"; SANDBOX_ROOT="$ROOT"; TARGET_VERSION=v2; V2_CONFIG="$CONFIG"; rewrite_v2_mcp_config',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        DEFS: defsFile,
+        ROOT: sandboxRoot,
+        CONFIG: config,
+      },
     },
-  })
+  )
   assert.equal(result.status, 0, `config rewrite failed:\n${result.stdout}\n${result.stderr}`)
 
   const rewritten = JSON.parse(readFileSync(config, 'utf8'))
