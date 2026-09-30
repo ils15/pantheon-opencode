@@ -78,8 +78,8 @@ clear handoff between stages of work.
 
 ## Status
 
-Operational checkout version: **v1.5.0-beta.2** (candidate; publication is not
-asserted here). Pantheon is designed for OpenCode and depends on the
+Operational checkout version: **v1.6.0-beta.1** (first beta compatible with
+OpenCode 2; publication is not asserted here). Pantheon is designed for OpenCode and depends on the
 availability and configuration of OpenCode and any optional services you choose
 to use. Check the [releases](https://github.com/ils15/pantheon-opencode/releases)
 and [changelog](CHANGELOG.md) for the latest published changes.
@@ -157,28 +157,25 @@ once a project directory is selected, a missing or corrupt manifest fails
 closed instead of falling back. `doctor` validates the manifest and every
 script's SHA-256 without regenerating it.
 
+The local `.pantheon/code-mode/eval-*.py` helpers and any Promptfoo/evaluation
+assets are development-only inputs and are excluded from the npm tarball and
+from the runtime manifest. `src/mcp/eval_store.py` is different: it is a
+shipped runtime dependency of the MCP resources server, not an evaluation
+asset, so it remains packaged.
 
-## What's new in 1.5.0-beta.2
 
-- OpenCode-only installer: platform guides consolidated into a single
-  [OpenCode guide](docs/platforms/opencode.md).
-- New `uninstall` CLI with project and global scopes and ownership checks:
-  `node scripts/uninstall.mjs --project|--global [--dry-run] [--force]`.
-- Hardened MCP resources: fixed `pantheon://agents` listing and added
-  symlink/traversal protection for resource paths.
-- OpenCode V2 compatibility: `plugins` / `mcp.servers.enabled` config merge
-  and PWD-correct stdio MCP launch.
-- Expanded `doctor` and install health checks.
-- Sandbox validator for global installs (`scripts/test-opencode-v2-sandbox.sh`)
-  covering the OpenCode V2 leg — see
-  [Sandbox validation](#sandbox-validation-v2).
-- Beta2 agent-economy policy: direct native delegation, bounded compaction
-  carry-forward, compact context encoding, and quality floors.
-- A `--prompts` installer flag is planned for a future release.
+## What's new in 1.6.0-beta.1
 
-## OpenCode V1/V2 — Dual Version (1.5.0-beta.2)
+- First beta compatible with the OpenCode 2 plugin contract.
+- Removed the legacy vector-memory pipeline while preserving SQLite FTS5/BM25
+  keyword search and the `code_*` codemap tools.
+- CI and release validation are fail-closed; `doctor` checks and the V2-only
+  sandbox validator cover the OpenCode 2 installation path.
 
-Pantheon has two **exclusive** OpenCode plugin contracts. Ordinary OpenCode
+## OpenCode V1/V2 — Dual Version (1.6.0-beta.1)
+
+This is the first beta compatible with OpenCode 2. Pantheon has two **exclusive** OpenCode
+plugin contracts. Ordinary OpenCode
 configuration may be shared, but the Pantheon plugin registration is selected
 per installation; V1 and V2 Pantheon plugins must never be registered together.
 

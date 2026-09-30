@@ -68,7 +68,7 @@ assert.deepEqual(
     .split(/\r?\n/)
     .map((line) => line.trim().split(/[<>=!~]/, 1)[0])
     .filter(Boolean),
-  ['mcp', 'fastmcp', 'httpx'],
+  ['mcp', 'fastmcp', 'pydantic', 'pydantic-settings', 'httpx'],
 )
 for (const dependency of ['pillow', 'paddle', 'gemini', 'torch']) {
   assert.equal(new RegExp(`^${dependency}(?:[<>=!~]|$)`, 'mi').test(visionRequirements), false)

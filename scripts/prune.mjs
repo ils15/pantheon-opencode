@@ -164,7 +164,7 @@ export function configHasDeadPaths(configPath) {
     return true // unparseable config in a legacy dir counts as dead
   }
 
-  const check = (value, where) => {
+  const check = (value, _where) => {
     if (typeof value !== 'string' || value === '') return
     if (value.startsWith('file://')) return
     if (!value.startsWith('/')) return true // relative path in a config
@@ -202,7 +202,7 @@ export function findLegacyDirs(configDir) {
       add(
         'legacy-dir',
         dir,
-        `dead config(s): ${deadConfigs.map((c) => c.replace(dir + '/', '')).join(', ')}`,
+        `dead config(s): ${deadConfigs.map((c) => c.replace(`${dir}/`, '')).join(', ')}`,
         'list',
       )
     }

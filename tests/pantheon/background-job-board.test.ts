@@ -649,7 +649,7 @@ async function main() {
 
   console.log('')
   for (const r of results) {
-    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? ': ' + r.error : ''}`)
+    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? `: ${r.error}` : ''}`)
   }
   console.log(`\nResults: ${passed} passed, ${failed.length} failed`)
   process.exit(failed.length > 0 ? 1 : 0)

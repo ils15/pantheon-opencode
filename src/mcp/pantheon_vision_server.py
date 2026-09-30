@@ -551,7 +551,8 @@ _DESCRIBE_PROMPT = (
 )
 _OCR_PROMPT = (
     "Perform OCR on this image. Transcribe all visible text exactly, preserving "
-    "lines, spacing, punctuation, and formatting (formatação) where possible. If there is no "
+    "lines, spacing, punctuation, and formatting (formatação) where possible. "
+    "If there is no "
     "text, say clearly that no text was found. Do not describe the image."
 )
 _ANALYZE_PROMPT = (

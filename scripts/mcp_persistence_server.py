@@ -317,7 +317,10 @@ async def kv_get(
 
 @mcp.tool(
     name="kv_stats",
-    description="Return storage statistics: total entries, expired count, per-namespace breakdown, DB file size.",
+    description=(
+        "Return storage statistics: total entries, expired count, per-namespace "
+        "breakdown, DB file size."
+    ),
 )
 async def kv_stats(
     scope: str = "project",
@@ -343,7 +346,8 @@ async def kv_stats(
 
     ns_rows = conn.execute(
         "SELECT namespace, COUNT(*) as cnt, "
-        "SUM(CASE WHEN expires_at IS NOT NULL AND julianday(expires_at) < julianday('now') THEN 1 ELSE 0 END) as expired_count "
+        "SUM(CASE WHEN expires_at IS NOT NULL AND julianday(expires_at) "
+        "< julianday('now') THEN 1 ELSE 0 END) as expired_count "
         "FROM kv_store WHERE deleted_at IS NULL GROUP BY namespace ORDER BY cnt DESC"
     ).fetchall()
 
@@ -472,7 +476,8 @@ async def kv_search(
         "JOIN kv_store ON kv_store_fts.rowid = kv_store.id "
         "WHERE kv_store_fts MATCH ? "
         "AND kv_store.deleted_at IS NULL "
-        "AND (kv_store.expires_at IS NULL OR julianday(kv_store.expires_at) > julianday('now'))"
+        "AND (kv_store.expires_at IS NULL OR "
+        "julianday(kv_store.expires_at) > julianday('now'))"
     )
     params: list[str | int] = [fts_query]
 
@@ -552,7 +557,7 @@ async def purge_expired(
 def _opportunistic_auto_purge(
     conn: sqlite3.Connection, namespace: str, threshold: int = 500
 ) -> None:
-    """Lightweight auto-purge: if namespace exceeds threshold, soft-delete expired entries."""
+    """Lightweight auto-purge when a namespace exceeds its threshold."""
     count = conn.execute(
         "SELECT COUNT(*) FROM kv_store WHERE namespace = ? AND deleted_at IS NULL",
         (namespace,),
@@ -571,7 +576,10 @@ def _opportunistic_auto_purge(
 
 @mcp.tool(
     name="kv_delete_namespace",
-    description="Delete all entries in a namespace. Optionally limit to entries older than N days.",
+    description=(
+        "Delete all entries in a namespace. Optionally limit to entries older "
+        "than N days."
+    ),
 )
 async def kv_delete_namespace(
     namespace: str,

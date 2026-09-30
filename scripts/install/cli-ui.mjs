@@ -159,7 +159,7 @@ export function spinner(message) {
   }
 }
 
-export function printSummary(target, platforms, stats) {
+export function printSummary(target, _platforms, stats) {
   if (_quiet) return
 
   const S = strings()

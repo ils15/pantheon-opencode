@@ -11,18 +11,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      move this section to a versioned entry and reset the template below. -->
 
 ## 🆕 What's New
-- **memory** — simplify `pantheon-memory` to SQLite FTS5 BM25 keyword search;
-  prefix matching now drops stopwords and only prefixes terms with four or more
-  characters.
 
 ## 🐞 Fixed
-- **memory** — remove the legacy vector-memory scripts, embedding/KNN/RRF path,
-  stale environment flag, and obsolete Python dependencies while preserving the
-  six memory tools and three `code_*` codemap tools.
 
 ## ⚠️ Known Issues
 
 ## ✅ Closed Issues
+
+## [v1.6.0-beta.1] - 2026-09-30
+
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## 🆕 What's New
+- **OpenCode 2** — first Pantheon beta compatible with the OpenCode 2 plugin
+  contract.
+- **memory** — preserve SQLite FTS5/BM25 keyword search and the `code_*` codemap
+  tools.
+
+## 🐞 Fixed
+- **memory** — remove the legacy vector-memory scripts and embedding/KNN/RRF
+  path.
+- **CI/release** — keep validation fail-closed; expand `doctor` checks and add
+  the OpenCode 2 V2-only sandbox validator.
 
 ## [v1.5.2] - 2026-09-22
 

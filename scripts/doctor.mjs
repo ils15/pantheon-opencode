@@ -1108,7 +1108,9 @@ export function validateCodeModeManifest(codeModeDir) {
 
   const actualScripts = readdirSync(codeModeDir).filter(
     (name) =>
-      (name.endsWith('.py') || name.endsWith('.sh')) && statSync(join(codeModeDir, name)).isFile(),
+      !name.startsWith('eval-') &&
+      (name.endsWith('.py') || name.endsWith('.sh')) &&
+      statSync(join(codeModeDir, name)).isFile(),
   )
   const missing = listed.filter((name) => !existsSync(join(codeModeDir, name)))
   const extra = actualScripts.filter((name) => !Object.hasOwn(data.scripts, name))

@@ -2,17 +2,17 @@
   "files": {
     "includes": [
       "**",
-      "!src/plugins/tui/dist/**",
-      "!.pantheon/**",
-      "!tests/integration/**",
-      "!tests/fixtures/**",
-      "!.mypy_cache/**",
-      "!.pytest_cache/**",
-      "!.ruff_cache/**",
-      "!.venv/**",
-      "!.opencode/**",
-      "!logs/**",
-      "!benchmarks/**"
+      "!src/plugins/tui/dist",
+      "!.pantheon",
+      "!tests/integration",
+      "!tests/fixtures",
+      "!.mypy_cache",
+      "!.pytest_cache",
+      "!.ruff_cache",
+      "!.venv",
+      "!.opencode",
+      "!logs",
+      "!benchmarks"
     ]
   },
   "linter": {

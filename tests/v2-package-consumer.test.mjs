@@ -19,7 +19,7 @@ test('V2 export loads from a clean production-only consumer', () => {
   mkdirSync(consumer)
   writeFileSync(
     join(consumer, 'package.json'),
-    JSON.stringify({ name: 'v2-pack-check', private: true }) + '\n',
+    `${JSON.stringify({ name: 'v2-pack-check', private: true })}\n`,
   )
 
   try {

@@ -71,8 +71,8 @@ verificações repetíveis e passagens claras entre etapas do trabalho.
 
 ## Status
 
-Versão operacional neste checkout: **v1.5.0-beta.2** (candidata; esta página
-não afirma publicação). O Pantheon foi feito para OpenCode e depende da
+Versão operacional neste checkout: **v1.6.0-beta.1** (primeira beta compatível
+com OpenCode 2; esta página não afirma publicação). O Pantheon foi feito para OpenCode e depende da
 disponibilidade e da configuração do OpenCode e dos serviços opcionais que você
 escolher. Veja as [releases](https://github.com/ils15/pantheon-opencode/releases)
 e o [changelog](CHANGELOG.md) para acompanhar as mudanças publicadas.
@@ -103,25 +103,17 @@ falha fechado, sem fallback silencioso. O `doctor` valida o manifest e o
 SHA-256 de cada script sem regenerá-lo.
 
 
-## Novidades da 1.5.0-beta.2
+## Novidades da 1.6.0-beta.1
 
-- Instalador exclusivo para OpenCode: guias de plataformas consolidados em um
-  único [guia OpenCode](docs/platforms/opencode.md).
-- Novo CLI `uninstall` com escopos project/global e checagem de ownership:
-  `node scripts/uninstall.mjs --project|--global [--dry-run] [--force]`.
-- Recursos MCP endurecidos: correção do `pantheon://agents` e proteção contra
-  symlink/traversal nos caminhos de recursos.
-- Compatibilidade com OpenCode V2: merge de configuração `plugins` /
-  `mcp.servers.enabled` e launch stdio MCP com PWD correto.
-- `doctor` e health checks de instalação expandidos.
-- Validador de sandbox para instalações globais
-  (`scripts/test-opencode-v2-sandbox.sh`) cobrindo a perna OpenCode V2 —
-  veja [Validação em sandbox](#validação-em-sandbox-v2).
-- A flag `--prompts` do instalador está planejada para uma release futura.
+- Primeira beta compatível com o contrato de plugin do OpenCode 2.
+- Remoção do pipeline legado de vector-memory, preservando a busca por palavras-
+  chave SQLite FTS5/BM25 e as ferramentas de codemap `code_*`.
+- Validações de CI e release fail-closed; `doctor` e o sandbox exclusivo V2
+  cobrem o caminho de instalação do OpenCode 2.
 
-## OpenCode V1/V2 — Versão dupla (1.5.0-beta.2)
+## OpenCode V1/V2 — Versão dupla (1.6.0-beta.1)
 
-O Pantheon tem dois contratos de plugin OpenCode **exclusivos**. A configuração
+Esta é a primeira beta compatível com o OpenCode 2. O Pantheon tem dois contratos de plugin OpenCode **exclusivos**. A configuração
 comum do OpenCode pode ser compartilhada, mas o registro do plugin Pantheon é
 selecionado por instalação; os plugins Pantheon V1 e V2 nunca devem ser
 registrados juntos.

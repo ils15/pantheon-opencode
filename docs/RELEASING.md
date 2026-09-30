@@ -14,7 +14,8 @@ Pantheon follows **Semantic Versioning** based on [Conventional Commits](https:/
 | `feat:` | **MINOR** (x.y.0) |
 | `fix:`, `chore:`, `docs:`, `refactor:`, etc. | **PATCH** (x.y.z) |
 
-Operational version in this checkout: **v1.5.0-beta.2**.
+Operational version in this checkout: **v1.6.0-beta.1** (first beta compatible
+with OpenCode 2).
 
 ---
 

@@ -17,18 +17,49 @@ SUPPORTED_EXTS: dict[str, str] = {
     ".cts": "typescript",
 }
 CODEMAP_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS code_entities (id TEXT PRIMARY KEY,file_path TEXT NOT NULL,name TEXT NOT NULL,type TEXT NOT NULL,language TEXT NOT NULL,start_line INTEGER,end_line INTEGER,signature TEXT,docstring TEXT);
+CREATE TABLE IF NOT EXISTS code_entities (
+    id TEXT PRIMARY KEY, file_path TEXT NOT NULL, name TEXT NOT NULL,
+    type TEXT NOT NULL, language TEXT NOT NULL, start_line INTEGER,
+    end_line INTEGER, signature TEXT, docstring TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_code_entities_type ON code_entities(type);
 CREATE INDEX IF NOT EXISTS idx_code_entities_name ON code_entities(name);
 CREATE INDEX IF NOT EXISTS idx_code_entities_path ON code_entities(file_path);
-CREATE TABLE IF NOT EXISTS code_relations (id INTEGER PRIMARY KEY AUTOINCREMENT,source_id TEXT NOT NULL,target_id TEXT NOT NULL,type TEXT NOT NULL,FOREIGN KEY(source_id) REFERENCES code_entities(id),FOREIGN KEY(target_id) REFERENCES code_entities(id));
+CREATE TABLE IF NOT EXISTS code_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL,
+    target_id TEXT NOT NULL, type TEXT NOT NULL,
+    FOREIGN KEY(source_id) REFERENCES code_entities(id),
+    FOREIGN KEY(target_id) REFERENCES code_entities(id)
+);
 CREATE INDEX IF NOT EXISTS idx_code_relations_source ON code_relations(source_id);
 CREATE INDEX IF NOT EXISTS idx_code_relations_target ON code_relations(target_id);
-CREATE TABLE IF NOT EXISTS code_files (path TEXT PRIMARY KEY,hash TEXT NOT NULL,language TEXT NOT NULL,indexed_at TEXT NOT NULL DEFAULT (datetime('now')));
-CREATE VIRTUAL TABLE IF NOT EXISTS code_entities_fts USING fts5(name,signature,docstring,content='code_entities',content_rowid='rowid',tokenize='porter unicode61');
-CREATE TRIGGER IF NOT EXISTS code_entities_ai AFTER INSERT ON code_entities BEGIN INSERT INTO code_entities_fts(rowid,name,signature,docstring) VALUES (new.rowid,new.name,new.signature,new.docstring); END;
-CREATE TRIGGER IF NOT EXISTS code_entities_ad AFTER DELETE ON code_entities BEGIN INSERT INTO code_entities_fts(code_entities_fts,rowid,name,signature,docstring) VALUES ('delete',old.rowid,old.name,old.signature,old.docstring); END;
-CREATE TRIGGER IF NOT EXISTS code_entities_au AFTER UPDATE ON code_entities BEGIN INSERT INTO code_entities_fts(code_entities_fts,rowid,name,signature,docstring) VALUES ('delete',old.rowid,old.name,old.signature,old.docstring); INSERT INTO code_entities_fts(rowid,name,signature,docstring) VALUES (new.rowid,new.name,new.signature,new.docstring); END;
+CREATE TABLE IF NOT EXISTS code_files (
+    path TEXT PRIMARY KEY, hash TEXT NOT NULL, language TEXT NOT NULL,
+    indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS code_entities_fts USING fts5(
+    name, signature, docstring, content='code_entities', content_rowid='rowid',
+    tokenize='porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS code_entities_ai AFTER INSERT ON code_entities
+BEGIN
+    INSERT INTO code_entities_fts(rowid, name, signature, docstring)
+    VALUES (new.rowid, new.name, new.signature, new.docstring);
+END;
+CREATE TRIGGER IF NOT EXISTS code_entities_ad AFTER DELETE ON code_entities
+BEGIN
+    INSERT INTO code_entities_fts(
+        code_entities_fts, rowid, name, signature, docstring
+    ) VALUES ('delete', old.rowid, old.name, old.signature, old.docstring);
+END;
+CREATE TRIGGER IF NOT EXISTS code_entities_au AFTER UPDATE ON code_entities
+BEGIN
+    INSERT INTO code_entities_fts(
+        code_entities_fts, rowid, name, signature, docstring
+    ) VALUES ('delete', old.rowid, old.name, old.signature, old.docstring);
+    INSERT INTO code_entities_fts(rowid, name, signature, docstring)
+    VALUES (new.rowid, new.name, new.signature, new.docstring);
+END;
 """
 
 
@@ -39,7 +70,13 @@ def ensure_codemap_schema(conn: sqlite3.Connection) -> None:
 
 def drop_codemap_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
-        "DROP TRIGGER IF EXISTS code_entities_ai;DROP TRIGGER IF EXISTS code_entities_ad;DROP TRIGGER IF EXISTS code_entities_au;DROP TABLE IF EXISTS code_entities_fts;DROP TABLE IF EXISTS code_relations;DROP TABLE IF EXISTS code_entities;DROP TABLE IF EXISTS code_files;"
+        "DROP TRIGGER IF EXISTS code_entities_ai; "
+        "DROP TRIGGER IF EXISTS code_entities_ad; "
+        "DROP TRIGGER IF EXISTS code_entities_au; "
+        "DROP TABLE IF EXISTS code_entities_fts; "
+        "DROP TABLE IF EXISTS code_relations; "
+        "DROP TABLE IF EXISTS code_entities; "
+        "DROP TABLE IF EXISTS code_files;"
     )
     conn.commit()
 
@@ -352,7 +389,9 @@ def _insert_entities_and_relations(
 ) -> None:
     for e in ents:
         conn.execute(
-            "INSERT OR REPLACE INTO code_entities (id,file_path,name,type,language,start_line,end_line,signature,docstring) VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO code_entities "
+            "(id, file_path, name, type, language, start_line, end_line, "
+            "signature, docstring) VALUES (?,?,?,?,?,?,?,?,?)",
             [
                 e["id"],
                 e["file_path"],
@@ -411,7 +450,8 @@ def code_index(  # noqa: C901, PLR0912, PLR0915
             if not content.strip():
                 h = _hash_content(content)
                 conn.execute(
-                    "INSERT OR REPLACE INTO code_files (path,hash,language) VALUES (?,?,?)",
+                    "INSERT OR REPLACE INTO code_files "
+                    "(path, hash, language) VALUES (?,?,?)",
                     [str(f), h, lang],
                 )
                 conn.commit()
@@ -431,7 +471,8 @@ def code_index(  # noqa: C901, PLR0912, PLR0915
             )
             if not ents and not rels:
                 conn.execute(
-                    "INSERT OR REPLACE INTO code_files (path,hash,language) VALUES (?,?,?)",
+                    "INSERT OR REPLACE INTO code_files "
+                    "(path, hash, language) VALUES (?,?,?)",
                     [str(f), h, lang],
                 )
                 conn.commit()
@@ -478,12 +519,18 @@ def code_query(
             raise ValueError
         if type_filter:
             rows = conn.execute(
-                "SELECT e.id,e.file_path,e.name,e.type,e.language,e.start_line,e.end_line,e.signature,e.docstring FROM code_entities_fts f JOIN code_entities e ON e.rowid=f.rowid WHERE code_entities_fts MATCH ? AND e.type=? ORDER BY rank LIMIT ?",
+                "SELECT e.id, e.file_path, e.name, e.type, e.language, "
+                "e.start_line, e.end_line, e.signature, e.docstring "
+                "FROM code_entities_fts f JOIN code_entities e ON e.rowid=f.rowid "
+                "WHERE code_entities_fts MATCH ? AND e.type=? ORDER BY rank LIMIT ?",
                 [fts_q, type_filter, limit],
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT e.id,e.file_path,e.name,e.type,e.language,e.start_line,e.end_line,e.signature,e.docstring FROM code_entities_fts f JOIN code_entities e ON e.rowid=f.rowid WHERE code_entities_fts MATCH ? ORDER BY rank LIMIT ?",
+                "SELECT e.id, e.file_path, e.name, e.type, e.language, "
+                "e.start_line, e.end_line, e.signature, e.docstring "
+                "FROM code_entities_fts f JOIN code_entities e ON e.rowid=f.rowid "
+                "WHERE code_entities_fts MATCH ? ORDER BY rank LIMIT ?",
                 [fts_q, limit],
             ).fetchall()
         if rows:
@@ -494,12 +541,17 @@ def code_query(
         like = f"%{q}%"
         if type_filter:
             rows = conn.execute(
-                "SELECT id,file_path,name,type,language,start_line,end_line,signature,docstring FROM code_entities WHERE (name LIKE ? OR signature LIKE ? OR docstring LIKE ?) AND type=? LIMIT ?",
+                "SELECT id, file_path, name, type, language, start_line, end_line, "
+                "signature, docstring FROM code_entities "
+                "WHERE (name LIKE ? OR signature LIKE ? OR docstring LIKE ?) "
+                "AND type=? LIMIT ?",
                 [like, like, like, type_filter, limit],
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id,file_path,name,type,language,start_line,end_line,signature,docstring FROM code_entities WHERE name LIKE ? OR signature LIKE ? OR docstring LIKE ? LIMIT ?",
+                "SELECT id, file_path, name, type, language, start_line, end_line, "
+                "signature, docstring FROM code_entities "
+                "WHERE name LIKE ? OR signature LIKE ? OR docstring LIKE ? LIMIT ?",
                 [like, like, like, limit],
             ).fetchall()
         return [dict(r) for r in rows]

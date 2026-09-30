@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ---
-# description: plugin-eval orchestrator — runs static + LLM judge + Monte Carlo layers and emits one report JSON
+# description: plugin-eval orchestrator — runs static + LLM judge + Monte Carlo
+# layers and emits one report JSON
 # timeout: 300
 # ---
 """Orchestrator for the plugin-eval certification pipeline (PR 3).

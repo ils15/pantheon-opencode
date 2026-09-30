@@ -301,7 +301,8 @@ def _stale_activity_issue(
             last_time = datetime.fromisoformat(last_action)
             if datetime.now(UTC) - last_time > STALE_THRESHOLD:
                 return [
-                    f"No activity for > {STALE_THRESHOLD.total_seconds() / 3600:.0f}h (stale)"
+                    f"No activity for > {STALE_THRESHOLD.total_seconds() / 3600:.0f}h "
+                    "(stale)"
                 ]
     except (ValueError, TypeError):
         return ["Could not parse last_activity timestamp"]
@@ -326,7 +327,8 @@ def cmd_health(slug: str) -> None:
     if not issues:
         print(f"✅ Session '{slug}' is healthy")
         print(
-            f"   Checkpoints: {len(checkpoints)}, Status: {session.get('status', 'unknown')}"
+            f"   Checkpoints: {len(checkpoints)}, "
+            f"Status: {session.get('status', 'unknown')}"
         )
     else:
         print(f"⚠️  Session '{slug}' has {len(issues)} issue(s):")
@@ -344,7 +346,8 @@ def cmd_archive(slug: str) -> None:
     archive_dir = ARCHIVEDIR / slug
     if archive_dir.exists():
         print(
-            f"Session '{slug}' already exists in archive. Remove it first or use a different slug."
+            f"Session '{slug}' already exists in archive. Remove it first "
+            "or use a different slug."
         )
         return
 
@@ -364,7 +367,8 @@ def _cleanup_stale_session(item: Path, now: datetime, dry_run: bool) -> None:
         if last_action and now - datetime.fromisoformat(last_action) > STALE_THRESHOLD:
             if dry_run:
                 print(
-                    f"  [dry-run] Would flag stale session: {item.name}/ (last action: {last_action})"
+                    f"  [dry-run] Would flag stale session: {item.name}/ "
+                    f"(last action: {last_action})"
                 )
             else:
                 print(f"  ⏸️  Session '{item.name}' stale since {last_action}")

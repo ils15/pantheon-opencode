@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.5.2",
+  "version": "1.6.0-beta.1",
   "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
@@ -86,6 +86,7 @@
     ".pantheon/code-mode/**",
     "!.pantheon/code-mode/session-end-save.py",
     "!.pantheon/code-mode/session-end-save.sh",
+    "!.pantheon/code-mode/eval-*.py",
     "src/plugins/**",
     "scripts/hooks/**",
     "src/mcp/requirements*",

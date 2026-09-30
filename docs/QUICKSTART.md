@@ -4,7 +4,7 @@
 
 A multi-agent framework for **OpenCode**. It provides 14 specialized agents,
 TDD enforcement, Themis quality gates, and persistent memory MCP. The current
-release is **v1.5.0-beta.16**.
+release is **v1.6.0-beta.1**, the first beta compatible with OpenCode 2.
 
 ## Installation
 
