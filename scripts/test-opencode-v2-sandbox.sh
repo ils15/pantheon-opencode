@@ -226,7 +226,7 @@ check_binary "V2 binary" opencode2
 
 echo "--- Building tarball ---"
 cd "$REPO_DIR"
-npm pack 2>/dev/null || { echo "ERROR: npm pack failed"; exit 1; }
+npm pack --ignore-scripts 2>/dev/null || { echo "ERROR: npm pack failed"; exit 1; }
 TGZ=$(ls -t pantheon-opencode-*.tgz | head -1)
 npm rm -g pantheon-opencode 2>/dev/null || true
 npm install -g "$TGZ"
@@ -395,7 +395,7 @@ cmd_reset() {
 install_binaries() {
   log "--- Installing pantheon-opencode (from repo tarball) ---"
   cd "$REPO_DIR"
-  npm pack 2>/dev/null || die "npm pack failed"
+  npm pack --ignore-scripts 2>/dev/null || die "npm pack failed"
   local tgz
   tgz=$(ls -t pantheon-opencode-*.tgz | head -1)
   npm rm -g pantheon-opencode 2>/dev/null || true
