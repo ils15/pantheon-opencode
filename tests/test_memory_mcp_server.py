@@ -176,7 +176,9 @@ class TestMemoryStoreValidationReporting:
 
         assert "2 invalid arguments" in message
         assert "value is required and must be a non-empty string" in message
-        assert "metadata must be a JSON object encoded as a valid JSON string" in message
+        assert (
+            "metadata must be a JSON object encoded as a valid JSON string" in message
+        )
         assert "got invalid JSON" in message
         assert message.count("example:") == 1
 
@@ -194,8 +196,9 @@ class TestMemoryStoreValidationReporting:
         )
         data = json.loads(_text_from_tool(result))
 
-        assert "metadata must be a JSON object encoded as a valid JSON string" in (
-            data["error"]
+        assert (
+            "metadata must be a JSON object encoded as a valid JSON string"
+            in (data["error"])
         )
         assert "Failed to store memory" not in data["error"]
 
@@ -529,9 +532,7 @@ class TestMemorySearchDecay:
         """_score_hits applies the freshness multiplier when decay_days is set."""
         now = time.time()
         new_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
-        old_iso = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 90 * 86400)
-        )
+        old_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 90 * 86400))
         hits = [(1, 2.0), (2, 1.5)]
         ranked = module._score_hits(hits, 10)
         ranked_decayed = module._score_hits(
@@ -844,6 +845,7 @@ class TestErrorHandling:
         data = json.loads(_text_from_tool(result))
         assert isinstance(data, list)
 
+
 # =============================================================================
 # FTS Query Construction (Step A — prefix-pollution fix)
 # =============================================================================
@@ -877,9 +879,7 @@ class TestBuildFtsQuery:
         for term in ('"TS"', '"Py"', '"db"'):
             assert f"{term}*" not in expr
 
-    def test_four_character_boundary_is_inclusive_for_prefixing(
-        self, module
-    ) -> None:
+    def test_four_character_boundary_is_inclusive_for_prefixing(self, module) -> None:
         """Four characters is the shortest prefix-matched length."""
         assert module._MIN_PREFIX_LEN == 4
         assert module._build_fts_query("config") == '"config"*'
@@ -995,9 +995,9 @@ class TestVectorRemoval:
         ]
         assert pins, "requirements file is empty"
         for banned in ("sqlite-vec", "sqlite_vec", "fastembed"):
-            assert not any(
-                banned in pin for pin in pins
-            ), f"{banned} is still pinned: {pins}"
+            assert not any(banned in pin for pin in pins), (
+                f"{banned} is still pinned: {pins}"
+            )
 
     def test_shipped_scripts_copy_also_has_no_vector_path(self) -> None:
         """The scripts/ copy ships standalone and must agree on the removal."""

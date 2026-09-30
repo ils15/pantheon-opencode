@@ -4,6 +4,7 @@ Covers:
 - _build_script_env: allowlist-only env, unknown vars excluded, empty env safe default
 - _prlimit_prefix: None when prlimit_path is None, correct prefix otherwise
 """
+
 from __future__ import annotations
 
 import importlib
@@ -159,17 +160,14 @@ class TestPrlimitPrefix:
         assert "--as=1073741824" in result
         assert any(a.startswith("--cpu=") for a in result)
 
-    def test_nproc_omission_is_logged(
-        self, module, monkeypatch, caplog
-    ) -> None:
+    def test_nproc_omission_is_logged(self, module, monkeypatch, caplog) -> None:
         """Omitting --nproc is fail-open and must be observable, not silent."""
         monkeypatch.setattr(module, "_uid_task_count", lambda: None)
         with caplog.at_level(logging.WARNING):
             result = module._prlimit_prefix("/usr/bin/prlimit")
         assert result is not None
         assert any(
-            "--nproc" in record.getMessage()
-            and "unbounded" in record.getMessage()
+            "--nproc" in record.getMessage() and "unbounded" in record.getMessage()
             for record in caplog.records
         )
 
@@ -192,8 +190,8 @@ class TestSubprocessEnvIntegration:
         """A script should NOT see env vars outside the allowlist."""
         # Write a script that dumps a secret env var
         secret_script = (
-            '#!/usr/bin/env python3\n'
-            'import os\n'
+            "#!/usr/bin/env python3\n"
+            "import os\n"
             'secret = os.environ.get("CODE_MODE_TEST_SECRET", "NOT_SET")\n'
             'print(f"SECRET:{secret}")\n'
         )
@@ -210,7 +208,9 @@ class TestSubprocessEnvIntegration:
 
             os.environ["CODE_MODE_TEST_SECRET"] = "SHOULD_NOT_LEAK"
             try:
-                result = await module.execute_code_script("env_leak_test.py", json_output=True)
+                result = await module.execute_code_script(
+                    "env_leak_test.py", json_output=True
+                )
                 # The script should NOT see the secret
                 assert "SHOULD_NOT_LEAK" not in result["stdout"]
                 assert "SECRET:NOT_SET" in result["stdout"]
@@ -222,8 +222,8 @@ class TestSubprocessEnvIntegration:
     async def test_script_sees_allowlisted_vars(self, module) -> None:
         """A script should see PATH and HOME from the sanitized env."""
         check_script = (
-            '#!/usr/bin/env python3\n'
-            'import os\n'
+            "#!/usr/bin/env python3\n"
+            "import os\n"
             'print(f"PATH_SET:{bool(os.environ.get(' + "'PATH'" + '))}")\n'
             'print(f"HOME_SET:{bool(os.environ.get(' + "'HOME'" + '))}")\n'
         )
@@ -235,7 +235,9 @@ class TestSubprocessEnvIntegration:
         path.chmod(0o755)
         module._approve_script(path.name)
         try:
-            result = await module.execute_code_script("env_allow_test.py", json_output=True)
+            result = await module.execute_code_script(
+                "env_allow_test.py", json_output=True
+            )
             assert "PATH_SET:True" in result["stdout"]
             assert "HOME_SET:True" in result["stdout"]
         finally:

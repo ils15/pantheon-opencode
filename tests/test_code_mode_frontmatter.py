@@ -10,6 +10,7 @@ Covers:
 - timeout override: a script with `timeout: 2` is killed at ~2s
 - metadata exposed via the pantheon://code-mode/scripts/{name} resource
 """
+
 from __future__ import annotations
 
 import importlib
@@ -260,7 +261,10 @@ class TestJsonOutput:
             assert data["exit_code"] == 0
             assert data["timed_out"] is False
             assert data["duration_ms"] >= 0
-            assert data["metadata"]["description"] == "Echoes its argv for frontmatter tests"
+            assert (
+                data["metadata"]["description"]
+                == "Echoes its argv for frontmatter tests"
+            )
             assert data["metadata"]["timeout"] == 5
         finally:
             path.unlink(missing_ok=True)
@@ -342,9 +346,15 @@ class TestResourceMetadata:
         """Reading a script with frontmatter returns metadata + source."""
         path = _write_script("fm_resource.py", VALID_FM)
         try:
-            result = await server.read_resource("pantheon://code-mode/scripts/fm_resource.py")
+            result = await server.read_resource(
+                "pantheon://code-mode/scripts/fm_resource.py"
+            )
             contents = result[0] if isinstance(result, tuple) else result
-            text = contents[0].content if hasattr(contents[0], "content") else str(contents[0])
+            text = (
+                contents[0].content
+                if hasattr(contents[0], "content")
+                else str(contents[0])
+            )
             assert "# metadata" in text
             assert "timeout: 5" in text
             assert "description: Echoes its argv for frontmatter tests" in text
@@ -360,7 +370,11 @@ class TestResourceMetadata:
                 "pantheon://code-mode/scripts/fm_resource_plain.py"
             )
             contents = result[0] if isinstance(result, tuple) else result
-            text = contents[0].content if hasattr(contents[0], "content") else str(contents[0])
+            text = (
+                contents[0].content
+                if hasattr(contents[0], "content")
+                else str(contents[0])
+            )
             assert text == NO_FM
         finally:
             path.unlink(missing_ok=True)
