@@ -57,13 +57,13 @@ class TestBuildScriptEnv:
         fake_env = {
             "PATH": "/usr/bin",
             "HOME": "/home/test",
-            "MY_SECRET_TOKEN": "secret123",
+            "MY_UNTRUSTED_VALUE": "sample-value",
             "AWS_ACCESS_KEY_ID": "AKIA",
             "DATABASE_URL": "postgres://localhost/db",
             "RANDOM_VAR": "nope",
         }
         result = module._build_script_env(fake_env)
-        assert "MY_SECRET_TOKEN" not in result
+        assert "MY_UNTRUSTED_VALUE" not in result
         assert "AWS_ACCESS_KEY_ID" not in result
         assert "DATABASE_URL" not in result
         assert "RANDOM_VAR" not in result
@@ -188,34 +188,34 @@ class TestSubprocessEnvIntegration:
 
     async def test_script_does_not_inherit_full_env(self, module) -> None:
         """A script should NOT see env vars outside the allowlist."""
-        # Write a script that dumps a secret env var
-        secret_script = (
+        # Write a script that dumps a non-allowlisted env var
+        marker_script = (
             "#!/usr/bin/env python3\n"
             "import os\n"
-            'secret = os.environ.get("CODE_MODE_TEST_SECRET", "NOT_SET")\n'
-            'print(f"SECRET:{secret}")\n'
+            'marker = os.environ.get("CODE_MODE_TEST_MARKER", "NOT_SET")\n'
+            'print(f"MARKER:{marker}")\n'
         )
         from pathlib import Path
 
         scripts_dir = Path(__file__).resolve().parent.parent / ".pantheon" / "code-mode"
         path = scripts_dir / "env_leak_test.py"
-        path.write_text(secret_script, encoding="utf-8")
+        path.write_text(marker_script, encoding="utf-8")
         path.chmod(0o755)
         module._approve_script(path.name)
         try:
-            # Inject a secret into the current process env
+            # Inject a non-allowlisted marker into the current process env
             import os
 
-            os.environ["CODE_MODE_TEST_SECRET"] = "SHOULD_NOT_LEAK"
+            os.environ["CODE_MODE_TEST_MARKER"] = "UNEXPECTED_VALUE"
             try:
                 result = await module.execute_code_script(
                     "env_leak_test.py", json_output=True
                 )
-                # The script should NOT see the secret
-                assert "SHOULD_NOT_LEAK" not in result["stdout"]
-                assert "SECRET:NOT_SET" in result["stdout"]
+                # The script should NOT see the marker
+                assert "UNEXPECTED_VALUE" not in result["stdout"]
+                assert "MARKER:NOT_SET" in result["stdout"]
             finally:
-                del os.environ["CODE_MODE_TEST_SECRET"]
+                del os.environ["CODE_MODE_TEST_MARKER"]
         finally:
             path.unlink(missing_ok=True)
 

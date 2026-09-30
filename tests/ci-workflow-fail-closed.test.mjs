@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -200,10 +208,161 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
     sandboxStep[0],
     /OPENCODE_DB:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2\/opencode-v2\.db/,
   )
+  assert.doesNotMatch(
+    sandboxStep[0],
+    /OPENCODE_CONFIG:\s+/,
+    'the workflow must not select a V2 config file through the legacy variable',
+  )
   assert.match(sandboxStep[0], /PANTHEON_V2_PORT:\s+'49376'/)
+  assert.match(sandboxStep[0], /PORT:\s+'49376'/)
   assert.match(sandboxStep[0], /bash scripts\/test-opencode-v2-sandbox\.sh --prepare --run v2/)
-  assert.match(sandboxStep[0], /serve --hostname 127\.0\.0\.1 --port "\$PANTHEON_V2_PORT"/)
+  assert.doesNotMatch(
+    sandboxStep[0],
+    /serve --hostname 127\.0\.0\.1/,
+    'the harness owns the dedicated service lifecycle and handshake wait',
+  )
   assert.doesNotMatch(sandboxStep[0], /continue-on-error:\s*true/)
+})
+
+test('V2 harness isolates config, database, port, and waits for five MCP handshakes', () => {
+  const harness = readFileSync(
+    fileURLToPath(new URL('../scripts/test-opencode-v2-sandbox.sh', import.meta.url)),
+    'utf8',
+  )
+  const configDirExport = 'export OPENCODE_CONFIG_DIR="$(dirname "$V2_CONFIG")"'
+  assert.equal(
+    harness.split(configDirExport).length - 1,
+    2,
+    'sandbox_env and the generated runner must both use OpenCode 2 config-directory selection',
+  )
+  assert.doesNotMatch(
+    harness,
+    /export OPENCODE_CONFIG="\$V2_CONFIG"/,
+    'the legacy file-valued OPENCODE_CONFIG selector must not be used',
+  )
+  assert.equal(
+    (harness.match(/unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE/g) ?? [])
+      .length,
+    2,
+    'both environments must clear inherited OPENCODE_CONFIG contamination',
+  )
+  assert.doesNotMatch(
+    harness,
+    /unset OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_DIR OPENCODE_CONFIG_PROJECT_DISABLE/,
+    'the selected config directory must not be unset after it is established',
+  )
+  assert.match(harness, /export OPENCODE_DB="\$V2_DB"/)
+  assert.match(harness, /export PORT="\$V2_PORT"/)
+  assert.match(harness, /export XDG_STATE_HOME="\$SANDBOX_HOME\/\.local\/state"/)
+  assert.match(harness, /V2_SERVICE_STATE="\$SANDBOX_HOME\/\.local\/state\/opencode\/service\.json"/)
+  assert.match(harness, /message=\\"mcp connected\\"/)
+  assert.match(harness, /expected exactly 5 connected MCPs/)
+  assert.match(harness, /refusing to reuse an unrelated service/)
+})
+
+test('V2 loader order starts mcp list before waiting for handshakes', () => {
+  const harness = readFileSync(
+    fileURLToPath(new URL('../scripts/test-opencode-v2-sandbox.sh', import.meta.url)),
+    'utf8',
+  )
+  const serviceBody = harness.match(/start_v2_service\(\) \{[\s\S]*?\n\}/)?.[0]
+  assert.ok(serviceBody, 'V2 service helper must be present')
+  assert.match(serviceBody, /global\/health/)
+  assert.match(
+    serviceBody,
+    /wait_for_v2_service_registration/,
+    'healthcheck helper must wait for the dedicated service registration before mcp list',
+  )
+  assert.doesNotMatch(
+    serviceBody,
+    /wait_for_v2_handshakes/,
+    'healthcheck helper must not wait for MCPs before mcp list triggers loading',
+  )
+
+  for (const [name, launch] of [
+    ['generated runner', '(cd "$project" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list)'],
+    ['main runner', '(cd "$(project_dir)" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list)'],
+  ]) {
+    const launchIndex = harness.indexOf(`${launch} \\`)
+    const waitIndex = harness.indexOf('if wait_for_v2_handshakes; then', launchIndex)
+    assert.ok(launchIndex >= 0, `${name} must launch mcp list asynchronously`)
+    assert.ok(waitIndex > launchIndex, `${name} must wait for handshakes after mcp list starts`)
+  }
+  assert.match(
+    harness,
+    /connected_count.*-eq 5/s,
+    'the output gate must remain fail-closed at exactly five connected MCPs',
+  )
+  assert.match(harness, /V2_LOOPBACK_HOST=\"\$\{PANTHEON_V2_HOST:-127\.0\.0\.1\}\"/)
+  assert.match(harness, /registration_url.*http:\/\/\$V2_LOOPBACK_HOST:\$V2_PORT/)
+  assert.match(harness, /registration_pid.*\$V2_SERVER_PID/)
+})
+
+test('V2 config merge rewrites stale MCP paths to the active sandbox', (t) => {
+  const harness = readFileSync(
+    fileURLToPath(new URL('../scripts/test-opencode-v2-sandbox.sh', import.meta.url)),
+    'utf8',
+  )
+  const sandboxRoot = mkdtempSync(join(tmpdir(), 'pantheon-v2-config-contract-'))
+  t.after(() => rmSync(sandboxRoot, { recursive: true, force: true }))
+  const project = join(sandboxRoot, 'project-v2')
+  const runtime = join(project, '.opencode')
+  const managed = [
+    ['pantheon-code-mode', 'code_mode_server.py'],
+    ['pantheon-memory', 'memory_mcp_server.py'],
+    ['pantheon-persistence', 'mcp_persistence_server.py'],
+    ['pantheon-resources', 'mcp_resources_server.py'],
+    ['pantheon-vision', 'pantheon_vision_server.py'],
+  ]
+  const scripts = managed.map(([, script]) => script)
+  mkdirSync(join(runtime, 'scripts'), { recursive: true })
+  mkdirSync(join(project, '.venv', 'bin'), { recursive: true })
+  const python = join(project, '.venv', 'bin', 'python3')
+  writeFileSync(python, '#!/bin/sh\n', { mode: 0o755 })
+  for (const script of scripts) writeFileSync(join(runtime, 'scripts', script), '')
+
+  const config = join(project, 'opencode.json')
+  const names = managed.map(([name]) => name)
+  writeFileSync(
+    config,
+    JSON.stringify({
+      mcp: Object.fromEntries(
+        names.map((name) => [
+          name,
+          {
+            type: 'local',
+            cwd: '/old-sandbox/project-v2/.opencode',
+            command: ['/old-sandbox/project-v2/.venv/bin/python3', 'scripts/stale.py'],
+            enabled: true,
+          },
+        ]),
+      ),
+    }),
+  )
+
+  const defsFile = join(sandboxRoot, 'runner-definitions.sh')
+  const cliMarker = harness.indexOf('# ── CLI ─')
+  assert.ok(cliMarker > 0, 'runner CLI marker must be present')
+  writeFileSync(defsFile, harness.slice(0, cliMarker))
+  const result = spawnSync('bash', ['-c', 'set -euo pipefail; source "$DEFS"; SANDBOX_ROOT="$ROOT"; TARGET_VERSION=v2; V2_CONFIG="$CONFIG"; rewrite_v2_mcp_config'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      DEFS: defsFile,
+      ROOT: sandboxRoot,
+      CONFIG: config,
+    },
+  })
+  assert.equal(result.status, 0, `config rewrite failed:\n${result.stdout}\n${result.stderr}`)
+
+  const rewritten = JSON.parse(readFileSync(config, 'utf8'))
+  for (const [name, script] of managed) {
+    const entry = rewritten.mcp[name]
+    assert.equal(entry.cwd, runtime)
+    assert.deepEqual(entry.command, [python, `scripts/${script}`])
+    assert.equal(entry.enabled, true)
+    assert.doesNotMatch(JSON.stringify(entry), /old-sandbox/)
+  }
 })
 
 test('no workflow installs the TUI plugin separately from the root lockfile', () => {

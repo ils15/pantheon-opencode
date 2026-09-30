@@ -187,40 +187,11 @@ jobs:
           PANTHEON_SANDBOX_ROOT: ${{ runner.temp }}/pantheon-sandbox-v2
           OPENCODE_DB: ${{ runner.temp }}/pantheon-sandbox-v2/opencode-v2.db
           PANTHEON_V2_PORT: '49376'
+          PORT: '49376'
         run: |
           set -euo pipefail
           mkdir -p "$PANTHEON_SANDBOX_ROOT"
           bash scripts/test-opencode-v2-sandbox.sh --prepare --run v2
-
-          export HOME="$PANTHEON_SANDBOX_ROOT/home"
-          export PATH="$HOME/.npm-global/bin:$PATH"
-          v2_bin="$HOME/.npm-global/bin/opencode2"
-          v2_project="$PANTHEON_SANDBOX_ROOT/project-v2"
-          server_log="$PANTHEON_SANDBOX_ROOT/v2-server.log"
-          test -x "$v2_bin"
-          test -d "$v2_project"
-
-          (cd "$v2_project" && "$v2_bin" serve --hostname 127.0.0.1 --port "$PANTHEON_V2_PORT" >"$server_log" 2>&1) &
-          server_pid=$!
-          cleanup() {
-            if kill "$server_pid" 2>/dev/null; then
-              :
-            fi
-          }
-          trap cleanup EXIT
-
-          ready=0
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error "http://127.0.0.1:${PANTHEON_V2_PORT}/global/health" >/dev/null; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [ "$ready" -ne 1 ]; then
-            cat "$server_log"
-            exit 1
-          fi
 
   plugin-v2-ts-coverage:
     name: TypeScript plugin coverage
