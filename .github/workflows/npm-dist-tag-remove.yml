@@ -1,0 +1,55 @@
+name: npm dist-tag remove (operator)
+
+# Explicit operator action. Removes a NON-protected dist-tag from npm using
+# the same credential the Release workflow uses (secrets.NPM_TOKEN).
+# Refuses to touch `latest` or `beta` (use the rollback workflow for beta).
+on:
+  workflow_dispatch:
+    inputs:
+      dist_tag:
+        description: 'dist-tag to remove (e.g. next)'
+        required: true
+        default: 'next'
+      confirm:
+        description: 'Type REMOVE to confirm'
+        required: true
+
+concurrency:
+  group: npm-dist-tag-remove
+  cancel-in-progress: false
+
+jobs:
+  remove-dist-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Guard inputs
+        env:
+          DIST_TAG: ${{ inputs.dist_tag }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          [ "$CONFIRM" = "REMOVE" ] || { echo "::error::confirm must be exactly REMOVE"; exit 1; }
+          [ -n "$DIST_TAG" ] || { echo "::error::dist_tag is required"; exit 1; }
+          case "$DIST_TAG" in
+            latest) echo "::error::refusing to remove protected tag 'latest'"; exit 1 ;;
+            beta)   echo "::error::refusing to remove 'beta'; use the beta rollback workflow"; exit 1 ;;
+          esac
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Show dist-tags before
+        run: npm view pantheon-opencode dist-tags --json
+
+      - name: Remove dist-tag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ inputs.dist_tag }}
+        run: npm dist-tag rm pantheon-opencode "$DIST_TAG" --registry https://registry.npmjs.org
+
+      - name: Show dist-tags after
+        run: npm view pantheon-opencode dist-tags --json
