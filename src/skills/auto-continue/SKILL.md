@@ -43,7 +43,7 @@ Disciplined automatic continuation through multi-step tasks. Eliminates unnecess
 - A todo requires a decision not covered by the plan
 - An unexpected error changes the approach
 - A dependency is missing or broken
-- A task would exceed remaining `steps` budget
+- Remaining context is too thin to carry the task through — write an explicit handoff instead
 
 ---
 
@@ -70,7 +70,7 @@ Disciplined automatic continuation through multi-step tasks. Eliminates unnecess
 - [ ] Previous step completed successfully (tests pass, no errors)
 - [ ] Next step is within approved plan scope
 - [ ] No new blocking issues emerged
-- [ ] `steps` counter has sufficient budget remaining
+- [ ] Remaining context can carry the next step, or an explicit handoff will be written
 
 ---
 

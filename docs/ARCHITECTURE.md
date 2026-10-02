@@ -98,7 +98,7 @@ A three-layer architecture:
 │  Rich YAML frontmatter + full body text              │
 │  Fields: name, description, tools, model, skills,     │
 │          handoffs, permission, hooks, mcpServers,      │
-│          temperature, steps, globs                    │
+│          temperature, globs                           │
 └──────────────────────┬──────────────────────────────┘
                        │ read by
                        ▼
@@ -286,7 +286,7 @@ format:
   "frontmatter": {
     "include": ["name", "description", "tools", "skills", "instructions"],
     "exclude": ["handoffs", "disable-model-invocation", "permission",
-                "hooks", "mcpServers", "temperature", "steps", "globs"],
+                "hooks", "mcpServers", "temperature", "globs"],
     "transform": {
       "tools": { "strategy": "identity" },
       "model": { "strategy": "omit" }
