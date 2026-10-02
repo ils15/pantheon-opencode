@@ -99,7 +99,6 @@ presets:
 agents:
   zeus:
     role: Central orchestrator
-    max_steps: 40   # R4: step budget — at max_steps the agent is forced to summarize-and-stop. Tracker is permanent-per-process (no reset wiring).
     reasoning_effort: medium
     user_invocable: true
     can_delegate: true
@@ -137,7 +136,6 @@ agents:
     - incremental-implementation
   athena:
     role: Strategic planner
-    max_steps: 15   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: high
     user_invocable: true
     can_delegate: true
@@ -157,7 +155,6 @@ agents:
     - memory-bank
   apollo:
     role: Investigation scout
-    max_steps: 25   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: false
     can_delegate: false
@@ -175,7 +172,6 @@ agents:
     - auto-continue
   hermes:
     role: Backend specialist
-    max_steps: 60   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: medium
     user_invocable: true
     can_delegate: true
@@ -198,7 +194,6 @@ agents:
     - incremental-implementation
   aphrodite:
     role: Frontend specialist
-    max_steps: 60   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -219,7 +214,6 @@ agents:
     - file-prompts
   demeter:
     role: Database specialist
-    max_steps: 50   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -239,7 +233,6 @@ agents:
     - incremental-implementation
   themis:
     role: Quality gate
-    max_steps: 25   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: high
     user_invocable: true
     can_delegate: false
@@ -261,7 +254,6 @@ agents:
     - context-compression
   prometheus:
     role: Infrastructure specialist
-    max_steps: 30   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -280,7 +272,6 @@ agents:
     - incremental-implementation
   hephaestus:
     role: AI pipelines
-    max_steps: 50   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: medium
     user_invocable: true
     can_delegate: false
@@ -299,7 +290,6 @@ agents:
     - auto-continue
   nyx:
     role: Observability
-    max_steps: 25   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -318,7 +308,6 @@ agents:
     - auto-continue
   gaia:
     role: Remote sensing domain specialist
-    max_steps: 25   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: false
     can_delegate: false
@@ -333,7 +322,6 @@ agents:
     - auto-continue
   iris:
     role: GitHub operations
-    max_steps: 20   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -351,7 +339,6 @@ agents:
     - artifact-management
   mnemosyne:
     role: Memory bank
-    max_steps: 20   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -375,7 +362,6 @@ agents:
     - session-goal
   talos:
     role: Hotfix agent
-    max_steps: 15   # R4: step budget — at max_steps the agent is forced to summarize-and-stop
     reasoning_effort: low
     user_invocable: true
     can_delegate: false
@@ -529,7 +515,6 @@ background_job_board:
 background_delegation:
   timeout_ms: 900000        # 15 min
   poll_ms: 250
-  max_compaction_items: 10
   prune_ttl_ms: 86400000    # 24h
   read_only_agents: [apollo, gaia]
   session_max: 3

@@ -105,14 +105,6 @@ export interface RoutingRetryPolicyOptions {
 }
 
 /**
- * R4: per-agent step caps from routing.yml `agents.<name>.max_steps`.
- * Fail-open → {} (no agent capped).
- */
-export declare function loadRoutingMaxSteps(
-  options?: RoutingRetryPolicyOptions,
-): Record<string, number>
-
-/**
  * O5: permission.task glob rules from routing.yml `permission.task`
  * (glob pattern → 'allow' | 'deny'). Fail-open → null.
  */

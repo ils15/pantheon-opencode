@@ -214,35 +214,6 @@ function loadRoutingYaml(routingPath) {
 }
 
 /**
- * Load the R4 per-agent step caps from routing.yml
- * (`agents.<name>.max_steps`). Fail-open: missing config yields {}.
- *
- * @param {object} [opts]
- * @param {string} [opts.routingPath]
- * @param {{warn?: Function}} [opts.logger]
- * @returns {Record<string, number>} lowercase agent → max_steps
- */
-export function loadRoutingMaxSteps({ routingPath, logger = console } = {}) {
-  try {
-    const routing = loadRoutingYaml(routingPath)
-    const agents = routing?.agents
-    if (!agents || typeof agents !== 'object') return {}
-    const out = {}
-    for (const [agent, spec] of Object.entries(agents)) {
-      const maxSteps = spec && typeof spec === 'object' ? spec.max_steps : undefined
-      if (Number.isSafeInteger(maxSteps) && maxSteps > 0) {
-        out[agent.toLowerCase()] = maxSteps
-      }
-    }
-    return out
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
-    logger.warn?.(`presets: routing.yml max_steps unavailable (${reason})`)
-    return {}
-  }
-}
-
-/**
  * Load the O5 permission.task glob rules from routing.yml
  * (`permission.task:`). Fail-open: missing config yields null (caller keeps
  * the existing runtime matrix, everything allowed).
