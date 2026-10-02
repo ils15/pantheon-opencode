@@ -657,6 +657,31 @@ test('v2 install strips a stale steps ceiling from a managed agent', async () =>
   }
 })
 
+test('v2 install strips a stale steps ceiling from a config that is already V2-only', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-v2only-'))
+  try {
+    const config = await runInstall(
+      target,
+      // No singular `agent` block. This is the steady state: what every install
+      // sees from the second run onward, once a v2 install has written a V2-only
+      // config. Every other test in this group seeded the V1 shape, so the path
+      // real users actually live on was unexercised.
+      { agents: { zeus: { mode: 'primary', steps: 45, model: 'x' } } },
+      'v2',
+    )
+    // The installer still rebuilt the singular block from the canonical agents
+    // and merged it in, so this went through the coexistence path — and the
+    // stale ceiling the migration carried across still has to go.
+    assert.equal(config.agent, undefined, 'the singular block is gone after a v2 install')
+    assert.equal(config.agents.zeus.steps, undefined, 'stale ceiling dropped in steady state too')
+    // The cleanup is a delete of one key, not a replace: the user's own model
+    // rides through untouched.
+    assert.equal(config.agents.zeus.model, 'x', "the user's model survives the cleanup")
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
 test('v1 install leaves the singular agent block steps value alone', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-v1-'))
   try {

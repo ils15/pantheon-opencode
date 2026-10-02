@@ -22,6 +22,20 @@ import { ROOT } from '../scripts/install/shared.mjs'
 
 const MIGRATION_MODULE = join(ROOT, 'scripts', 'install', 'config-migration.mjs')
 
+/**
+ * Agent fields that belong to the user: the merge must carry them across when
+ * only the V1 block has them, and must never overwrite them with the V1 value
+ * when both do. Used by the gap-fill tests; kept out of MANAGED_AGENT_FIELDS
+ * on purpose, which those tests assert rather than assume.
+ */
+const USER_FIELDS = ['description', 'model', 'provider', 'mcp']
+for (const field of USER_FIELDS) {
+  assert.ok(
+    !MANAGED_AGENT_FIELDS.includes(field),
+    `USER_FIELDS must stay non-managed, or the gap-fill tests assert the wrong thing: ${field}`,
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -391,6 +405,72 @@ describe('config-migration', () => {
         agents: { zeus: { description: 'from V2' } },
       })
       assert.equal(migrated.agents.zeus.description, 'from V2', 'user field from V2 preserved')
+    })
+
+    it('carries over any field the base lacks, not just description', () => {
+      // The gap fill is not description-specific. Any key living only in the V1
+      // block used to vanish here — `model`, `provider` and `mcp` included,
+      // which are exactly the values the installer's own merge calls
+      // user-customized ("Preserve user-customized fields (model, provider,
+      // mcp, etc.)"). Once dropped, no later install writes them back.
+      for (const field of USER_FIELDS) {
+        const migrated = migrateV1toV2({
+          agent: { zeus: { [field]: 'from V1' } },
+          agents: { zeus: { mode: 'subagent' } },
+        })
+        assert.equal(
+          migrated.agents.zeus[field],
+          'from V1',
+          `a key present only in the V1 block must survive the merge: ${field}`,
+        )
+      }
+    })
+
+    it('never lets the gap fill overwrite a value the base already has', () => {
+      // Counterpart of the test above: carrying over fills a hole, it is not a
+      // takeover. Only MANAGED_AGENT_FIELDS is framework-owned; every other key
+      // is the user's, so the V2 base keeps its value. Asserting the fields are
+      // non-managed keeps a future list change from failing here for a reason
+      // this test never claimed.
+      for (const field of USER_FIELDS) {
+        const migrated = migrateV1toV2({
+          agent: { zeus: { [field]: 'from V1' } },
+          agents: { zeus: { [field]: 'from V2' } },
+        })
+        assert.equal(
+          migrated.agents.zeus[field],
+          'from V2',
+          `a non-managed key present in both blocks must keep the base value: ${field}`,
+        )
+      }
+    })
+
+    it('produces the same result whichever order agent and agents appear in', () => {
+      // The bug these tests guard was order-dependent: whichever key came second
+      // replaced the other block wholesale, so a config carrying both in the
+      // `agents`-first order silently lost the managed merge, and the
+      // `agent`-first order silently lost the user's fields. Order independence
+      // is the invariant the fix actually delivers, and the one a refactor is
+      // most likely to break without anyone noticing — the two blocks are read
+      // in whatever order the JSON happens to have. Asserted as an equality
+      // between the two constructions rather than by restating the merge rules
+      // twice, which would only re-derive whatever the current code does.
+      const v1Block = { zeus: { mode: 'primary', source: 'agents/zeus.md' } }
+      const v2Block = { zeus: { mode: 'subagent', steps: 53 }, onlyV2: { mode: 'subagent' } }
+      // Literal insertion order in the literals below is the order the
+      // migration iterates (`Object.entries` of the seed), so these two seeds
+      // really do exercise the two orders.
+      const agentFirst = migrateV1toV2({ agent: v1Block, agents: v2Block })
+      const agentsFirst = migrateV1toV2({ agents: v2Block, agent: v1Block })
+      assert.deepEqual(agentFirst, agentsFirst, 'key order must not change the result')
+      // Pin the content as well: "equal" on its own would also hold if both
+      // orders dropped everything on the way through.
+      assert.deepEqual(agentFirst.agents.zeus, {
+        mode: 'primary',
+        source: 'agents/zeus.md',
+        steps: 53,
+      })
+      assert.deepEqual(Object.keys(agentsFirst.agents).sort(), ['onlyV2', 'zeus'])
     })
 
     it('every field the migration declares managed overwrites the V2 base', () => {
