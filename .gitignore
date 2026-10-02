@@ -40,5 +40,10 @@ logs/
 .pytest_cache/
 .ruff_cache/
 
+# Local Promptfoo/evaluation runs are exploratory evidence, not release input.
+# Keep credentials, datasets, outputs and generated reports out of Git and npm.
+/evals/
+/evals/promptfoo/
+
 # ZCode session artifacts
 .zcode/

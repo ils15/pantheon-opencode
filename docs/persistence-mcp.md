@@ -6,11 +6,11 @@
 storage uses the Python standard library.
 
 A lightweight key-value store with SQLite + FTS5, TTL, and namespaces.
-Separate from `pantheon-memory` (vector/ChromaDB).
+Separate from `pantheon-memory` (which is also FTS5-backed, without TTL).
 
 ## Purpose
 
-- **Cache entre agentes** — compartilhar descobertas rápidas sem ir pro ChromaDB
+- **Cache entre agentes** — compartilhar descobertas rápidas sem ir pro memory
 - **Estado de execução** — steps de jobs, progresso, checkpoints
 - **Dados efêmeros com TTL** — cache que expira sozinho
 - **Dados locais** — tokens temporários, debug info (evita ir pro GitHub)
@@ -228,10 +228,10 @@ purge_expired(scope="project")
 
 | Aspect | persistence (this) | memory |
 |--------|-------------------|--------|
-| Storage | SQLite KV | ChromaDB vector |
-| Search | FTS5 (exato/keyword) | Cosine similarity (semântico) |
+| Storage | SQLite KV | SQLite + FTS5 |
+| Search | FTS5 (exato/keyword) | FTS5 BM25 (keyword, sem stopwords) |
 | TTL | ✅ Por entrada | ❌ Nenhum |
-| Namespace | ✅ Coluna + scope | ✅ Session + category |
-| Dependencies | FastMCP + stdlib SQLite/FTS5 | sqlite-vec + fastembed |
-| Tools | 14 | 6 |
-| Source lines | 1,514 (`src/mcp`) | 769 (`src/mcp`) |
+| Namespace | ✅ Coluna + scope | ✅ Coluna `namespace` |
+| Dependencies | FastMCP + stdlib SQLite/FTS5 | FastMCP + stdlib SQLite/FTS5 |
+| Tools | 14 | 9 |
+| Source lines | 1,843 (`src/mcp`) | 836 (`src/mcp`) |

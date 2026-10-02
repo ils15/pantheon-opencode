@@ -70,10 +70,14 @@ def generate_prompt_candidates(seed_prompt: str, count: int = 3) -> list[str]:
     if count < 1:
         raise ValueError("count must be at least 1")
     variants = [
-        f"{seed_prompt}\nReturn only the requested result and keep the response concise.",
-        f"{seed_prompt}\nFirst satisfy every acceptance criterion, then report verification evidence.",
-        f"{seed_prompt}\nUse a deterministic, structured response with explicit assumptions and checks.",
-        f"{seed_prompt}\nDo not expose secrets. Prefer the smallest correct change or answer.",
+        f"{seed_prompt}\nReturn only the requested result and keep the "
+        "response concise.",
+        f"{seed_prompt}\nFirst satisfy every acceptance criterion, then "
+        "report verification evidence.",
+        f"{seed_prompt}\nUse a deterministic, structured response with explicit "
+        "assumptions and checks.",
+        f"{seed_prompt}\nDo not expose secrets. Prefer the smallest correct "
+        "change or answer.",
     ]
     return variants[:count]
 

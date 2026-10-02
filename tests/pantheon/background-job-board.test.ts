@@ -113,10 +113,10 @@ async function main() {
     })
 
     assert.ok(updated)
-    assert.equal(updated!.state, 'completed')
-    assert.equal(updated!.resultSummary, 'All good')
-    assert.equal(updated!.terminalUnreconciled, true)
-    assert.ok(updated!.completedAt)
+    assert.equal(updated.state, 'completed')
+    assert.equal(updated.resultSummary, 'All good')
+    assert.equal(updated.terminalUnreconciled, true)
+    assert.ok(updated.completedAt)
   })
 
   await testAsync('updateStatus running → error', async () => {
@@ -131,10 +131,10 @@ async function main() {
     })
 
     assert.ok(updated)
-    assert.equal(updated!.state, 'error')
-    assert.equal(updated!.lastStatusError, 'Something broke')
-    assert.equal(updated!.totalErrors, 1)
-    assert.equal(updated!.timedOut, false)
+    assert.equal(updated.state, 'error')
+    assert.equal(updated.lastStatusError, 'Something broke')
+    assert.equal(updated.totalErrors, 1)
+    assert.equal(updated.timedOut, false)
   })
 
   await testAsync('updateStatus running → cancelled', async () => {
@@ -147,7 +147,7 @@ async function main() {
     })
 
     assert.ok(updated)
-    assert.equal(updated!.state, 'cancelled')
+    assert.equal(updated.state, 'cancelled')
   })
 
   await testAsync('updateStatus with timedOut flag', async () => {
@@ -162,8 +162,8 @@ async function main() {
     })
 
     assert.ok(updated)
-    assert.equal(updated!.timedOut, true)
-    assert.equal(updated!.timeoutCount, 1)
+    assert.equal(updated.timedOut, true)
+    assert.equal(updated.timeoutCount, 1)
   })
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -231,8 +231,8 @@ async function main() {
     })
 
     assert.ok(updated)
-    assert.equal(updated!.state, 'completed')
-    assert.equal(updated!.resultSummary, 'v2') // last write wins
+    assert.equal(updated.state, 'completed')
+    assert.equal(updated.resultSummary, 'v2') // last write wins
   })
 
   await testAsync('updateStatus error → error is idempotent (accumulates errors)', async () => {
@@ -256,8 +256,8 @@ async function main() {
 
     const cancelled = await board.markCancelled(job.taskID, 'User cancelled')
     assert.ok(cancelled)
-    assert.equal(cancelled!.state, 'cancelled')
-    assert.equal(cancelled!.lastStatusError, 'User cancelled')
+    assert.equal(cancelled.state, 'cancelled')
+    assert.equal(cancelled.lastStatusError, 'User cancelled')
   })
 
   await testAsync('markCancelled from non-running terminal throws', async () => {
@@ -279,8 +279,8 @@ async function main() {
 
     const reconciled = await board.markReconciled(job.taskID)
     assert.ok(reconciled)
-    assert.equal(reconciled!.state, 'reconciled')
-    assert.equal(reconciled!.terminalUnreconciled, false)
+    assert.equal(reconciled.state, 'reconciled')
+    assert.equal(reconciled.terminalUnreconciled, false)
   })
 
   await testAsync('markReconciled from running throws', async () => {
@@ -495,7 +495,9 @@ async function main() {
 
     const loaded = await adapter.loadAllJobs()
     assert.equal(loaded.length, 1)
-    assert.equal(loaded[0]!.taskID, 'persist-1')
+    const [firstLoaded] = loaded
+    assert.ok(firstLoaded)
+    assert.equal(firstLoaded.taskID, 'persist-1')
   })
 
   await testAsync('setPersistence saves job on updateStatus', async () => {
@@ -509,8 +511,8 @@ async function main() {
     const loaded = await adapter.loadAllJobs()
     const persisted = loaded.find((r) => r.taskID === 'persist-2')
     assert.ok(persisted)
-    assert.equal(persisted!.state, 'completed')
-    assert.equal(persisted!.resultSummary, 'persisted')
+    assert.equal(persisted.state, 'completed')
+    assert.equal(persisted.resultSummary, 'persisted')
   })
 
   await testAsync('recoverRunningJobs marks orphaned running jobs as error', async () => {
@@ -539,9 +541,9 @@ async function main() {
 
     const recovered = board.get('orphan-1')
     assert.ok(recovered)
-    assert.equal(recovered!.state, 'error')
-    assert.ok(recovered!.lastStatusError?.includes('Process restarted'))
-    assert.equal(recovered!.totalErrors, 1)
+    assert.equal(recovered.state, 'error')
+    assert.ok(recovered.lastStatusError?.includes('Process restarted'))
+    assert.equal(recovered.totalErrors, 1)
   })
 
   await testAsync('recoverRunningJobs preserves terminal jobs', async () => {
@@ -571,8 +573,8 @@ async function main() {
 
     const recovered = board.get('completed-1')
     assert.ok(recovered)
-    assert.equal(recovered!.state, 'completed')
-    assert.equal(recovered!.resultSummary, 'Done before crash')
+    assert.equal(recovered.state, 'completed')
+    assert.equal(recovered.resultSummary, 'Done before crash')
   })
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -647,7 +649,7 @@ async function main() {
 
   console.log('')
   for (const r of results) {
-    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? ': ' + r.error : ''}`)
+    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? `: ${r.error}` : ''}`)
   }
   console.log(`\nResults: ${passed} passed, ${failed.length} failed`)
   process.exit(failed.length > 0 ? 1 : 0)

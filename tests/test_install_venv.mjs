@@ -24,7 +24,7 @@ function test(name, fn) {
 }
 
 test('dry-run does not create .venv', async () => {
-  const tmpDir = join(tmpdir(), 'pantheon-dryrun-' + Date.now())
+  const tmpDir = join(tmpdir(), `pantheon-dryrun-${Date.now()}`)
   try {
     await setupVenv(tmpDir, { dryRun: true, skipInstall: true })
   } catch {
@@ -54,7 +54,7 @@ const failed = results.filter((r) => !r.passed)
 
 console.log('')
 for (const r of results) {
-  console.log(`  ${r.passed ? '✅' : '❌'} ${r.name}${r.error ? ': ' + r.error : ''}`)
+  console.log(`  ${r.passed ? '✅' : '❌'} ${r.name}${r.error ? `: ${r.error}` : ''}`)
 }
 console.log(`\n📊 Results: ${passed} passed, ${failed.length} failed`)
 process.exit(failed.length > 0 ? 1 : 0)

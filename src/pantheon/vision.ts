@@ -1251,7 +1251,7 @@ export function createVisionHandler(input: PluginInput) {
   const chatMessage: NonNullable<Hooks['chat.message']> = async (hookInput, output) => {
     try {
       const message: UserMessage | undefined = output?.message
-      if (!message || message.role !== 'user') return
+      if (message?.role !== 'user') return
       const model = hookInput?.model ?? message.model
       if (modelAcceptsImages(model, model?.providerID)) {
         nativeVisionSessions.add(hookInput.sessionID)

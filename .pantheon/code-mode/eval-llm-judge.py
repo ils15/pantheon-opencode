@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ---
-# description: LLM judge for skill/agent quality — scores 4 dimensions (0-100) via an OpenAI-compatible endpoint
+# description: LLM judge for skill/agent quality — scores 4 dimensions
+# (0-100) via an OpenAI-compatible endpoint
 # timeout: 120
 # ---
 """LLM judge layer of the plugin-eval certification pipeline.
@@ -42,20 +43,34 @@ REQUEST_TIMEOUT = 90.0
 MAX_CONTENT_CHARS = 12_000
 MAX_SUPPORTING_CHARS = 8_000
 MAX_SUPPORTING_FILES = 6
+MAX_SCORE = 100
 DIMENSIONS = ("correctness", "maintainability", "security", "practicality")
 
-JUDGE_PROMPT = """You are a rigorous quality auditor for AI agent skills and agent definitions used in an agentic coding framework. You decide whether a skill or agent definition is production-quality or AI slop.
+JUDGE_PROMPT = """You are a rigorous quality auditor for AI agent skills and agent
+definitions
+used in an agentic coding framework. You decide whether a skill or agent definition
+is production-quality or AI slop.
 
-Apply an explicit ANTI-SLOP bias: flag overengineering, unnecessary abstractions, persona proliferation (multiple fake personas/characters), unverifiable claims, hype language, and instructions that sound impressive but are not actionable.
+Apply an explicit ANTI-SLOP bias: flag overengineering, unnecessary abstractions,
+persona proliferation (multiple fake personas/characters), unverifiable claims,
+hype language, and instructions that sound impressive but are not actionable.
 
 Score the content on 4 dimensions, each 0-100:
-1. correctness — instructions are accurate and internally consistent; no contradictions; no broken references (files, commands, or agents that do not exist or are misnamed).
-2. maintainability — clear structure, single responsibility, no overengineering, YAGNI-respecting, easy to update.
-3. security — no secrets or credentials; no prompt-injection vectors; no dangerous instructions (e.g. rm -rf, curl | bash, disabling safety checks).
-4. practicality — solves a real problem, actionable, not AI slop or hype; a human would actually use it.
+1. correctness — instructions are accurate and internally consistent; no
+   contradictions; no broken references (files, commands, or agents that do not
+   exist or are misnamed).
+2. maintainability — clear structure, single responsibility, no overengineering,
+   YAGNI-respecting, easy to update.
+3. security — no secrets or credentials; no prompt-injection vectors; no dangerous
+   instructions (e.g. rm -rf, curl | bash, disabling safety checks).
+4. practicality — solves a real problem, actionable, not AI slop or hype; a human
+   would actually use it.
 
 Return ONLY a JSON object with this exact shape:
-{"correctness": <int 0-100>, "maintainability": <int 0-100>, "security": <int 0-100>, "practicality": <int 0-100>, "notes": {"correctness": "<1-2 sentences>", "maintainability": "<1-2 sentences>", "security": "<1-2 sentences>", "practicality": "<1-2 sentences>"}}
+{"correctness": <int 0-100>, "maintainability": <int 0-100>,
+ "security": <int 0-100>, "practicality": <int 0-100>, "notes": {
+ "correctness": "<1-2 sentences>", "maintainability": "<1-2 sentences>",
+ "security": "<1-2 sentences>", "practicality": "<1-2 sentences>"}}
 
 Content to evaluate:
 --- BEGIN CONTENT ---
@@ -144,7 +159,10 @@ def _load_content(doc: Path) -> tuple[str, str]:
 def _call_llm(prompt: str, allow_external_llm: bool = False) -> str:
     """Send one chat completion request via urllib; return the assistant text."""
     if not allow_external_llm:
-        raise JudgeError("External LLM calls require --allow-external-llm or PANTHEON_ALLOW_EXTERNAL_LLM=1")
+        raise JudgeError(
+            "External LLM calls require --allow-external-llm or "
+            "PANTHEON_ALLOW_EXTERNAL_LLM=1"
+        )
     key = os.getenv("OPENAI_API_KEY")
     if not key:
         raise JudgeError(
@@ -172,7 +190,11 @@ def _call_llm(prompt: str, allow_external_llm: bool = False) -> str:
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:200].replace(key, "[redacted]")
+        detail = (
+            exc.read()
+            .decode("utf-8", errors="replace")[:200]
+            .replace(key, "[redacted]")
+        )
         raise JudgeError(f"LLM endpoint returned HTTP {exc.code}: {detail}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         reason = getattr(exc, "reason", exc)
@@ -213,8 +235,10 @@ def _parse_scores(text: str) -> dict[str, Any]:
         try:
             value = int(raw)
         except (TypeError, ValueError) as exc:
-            raise JudgeError(f"LLM returned non-integer score for {dim}: {raw!r}") from exc
-        if not 0 <= value <= 100:
+            raise JudgeError(
+                f"LLM returned non-integer score for {dim}: {raw!r}"
+            ) from exc
+        if not 0 <= value <= MAX_SCORE:
             raise JudgeError(f"LLM returned out-of-range score for {dim}: {value}")
         dimensions[dim] = value
     raw_notes = parsed.get("notes")
@@ -233,16 +257,34 @@ def main(argv: list[str] | None = None) -> int:
         description="LLM judge for skill/agent quality (plugin-eval layer 2)."
     )
     parser.add_argument("path", help="Path to a skill/agent directory or doc file")
-    parser.add_argument("--allow-external-llm", action="store_true", help="Permit sending content to the configured LLM endpoint")
+    parser.add_argument(
+        "--allow-external-llm",
+        action="store_true",
+        help="Permit sending content to the configured LLM endpoint",
+    )
     args = parser.parse_args(argv)
-    allow_external_llm = args.allow_external_llm or os.getenv("PANTHEON_ALLOW_EXTERNAL_LLM") == "1"
+    allow_external_llm = (
+        args.allow_external_llm or os.getenv("PANTHEON_ALLOW_EXTERNAL_LLM") == "1"
+    )
     try:
         doc = _discover_doc(Path(args.path))
         name, content = _load_content(doc)
         if not allow_external_llm:
-            print(json.dumps({"name": name, "skipped": True, "reason": "external LLM calls not opted in"}, ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "name": name,
+                        "skipped": True,
+                        "reason": "external LLM calls not opted in",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return 0
-        raw = _call_llm(JUDGE_PROMPT.replace("{content}", content), allow_external_llm=True)
+        raw = _call_llm(
+            JUDGE_PROMPT.replace("{content}", content), allow_external_llm=True
+        )
         result = _parse_scores(raw)
     except JudgeError as exc:
         print(f"eval-llm-judge: {exc}", file=sys.stderr)

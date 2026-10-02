@@ -10,9 +10,11 @@ Orchestration scripts executed via the `pantheon-code-mode` MCP server
 | `checkpoint_session.py` | Python | Full checkpoint management: init, save, status, resume, list, health, archive, cleanup |
 | `checkpoint-session.sh` | Bash | Shell wrapper for `checkpoint_session.py` |
 | `compress-inline.py` | Python | Inline context compression — score, compress, stats, batch modes |
-| `session-end-save.py` | Python | Session-end Vector DB backup scaffold |
-| `session-end-save.sh` | Bash | Shell wrapper for `session-end-save.py` |
 | `example-sync.sh` | Bash | Minimal demo script for testing `execute_code_script` |
+
+Session persistence is handled by the persistence MCP server. The code-mode
+payload contains orchestration, checkpoint, compression, and evaluation
+helpers only; it does not export or back up a database.
 
 ## checkpoint_session.py Commands
 

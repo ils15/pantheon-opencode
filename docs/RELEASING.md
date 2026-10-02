@@ -14,9 +14,8 @@ Pantheon follows **Semantic Versioning** based on [Conventional Commits](https:/
 | `feat:` | **MINOR** (x.y.0) |
 | `fix:`, `chore:`, `docs:`, `refactor:`, etc. | **PATCH** (x.y.z) |
 
-Operational version in this checkout: **v1.5.0-beta.2**. The published
-**v1.4.3** reference below is historical Zenodo material only; it is not the
-current release version or a release target.
+Operational version in this checkout: **v1.6.0-beta.1** (first beta compatible
+with OpenCode 2).
 
 ---
 
@@ -60,7 +59,10 @@ npm install --prefix src/plugins/tui && npm run build --prefix src/plugins/tui
 edit `CHANGELOG.md` by hand. Release validation also
 keeps the root pair (`package.json` + `package-lock.json`) and the TUI pair
 (`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`) in the
-same versioned inventory. **It no longer creates git tags** — tags are
+same versioned inventory. The TUI is a root **workspace**, so CI installs both
+with a single `npm ci --ignore-scripts` at the root; the nested TUI lock is
+still versioned and still shipped because the user-facing postinstall syncs
+against it. **It no longer creates git tags** — tags are
 workflow-owned (see below).
 
 ---
@@ -73,6 +75,10 @@ workflow-owned (see below).
    node scripts/versioning.mjs apply minor   # or patch/major
    ```
    or edit `package.json` directly — the version is the release signal.
+   The TUI manifest (`src/plugins/tui/package.json`) carries the same version;
+   `npm run version:check` fails when the two drift. `node_modules/` state is
+   irrelevant here: the TUI is a root workspace, so one root `npm ci
+   --ignore-scripts` installs it.
 3. Fill in the promoted changelog section with the release notes for the
    upcoming version. The release body is **extracted from this section**, so
    it must exist and be accurate.
@@ -148,13 +154,14 @@ paste into the `[Unreleased]` CHANGELOG section (diagnostics go to stderr).
 
 ### Release body by channel
 
-`release.yml` selects the GitHub Release body by channel:
+`release.yml` extracts the release body from the committed `CHANGELOG.md` for
+both dispatch channels; only the stable channel attaches it to a GitHub Release:
 
 | Channel | Notes source |
 |---------|--------------|
-| stable | `node scripts/changelog-extract.mjs X.Y.Z` reads the curated `## [X.Y.Z]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. |
-| beta | `node scripts/changelog-extract.mjs X.Y.Z-beta.N` reads the curated `## [X.Y.Z-beta.N]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. |
-| recovery | Static note (`Recovery publish for existing GitHub Release ...`); the original notes are not regenerated. |
+| stable | `node scripts/changelog-extract.mjs X.Y.Z` reads the curated `## [X.Y.Z]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Used as the GitHub Release body. |
+| beta | `node scripts/changelog-extract.mjs X.Y.Z-beta.N` reads the curated `## [X.Y.Z-beta.N]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Carried in the release artifact only — beta creates no GitHub Release. |
+| recovery | Static note (`Recovery publish for existing tag ...`); the original notes are not regenerated. |
 
 The version is committed, so a `CHANGELOG.md` section is authorable before the
 dispatch and is required for **both** channels. Beta does not use generated
@@ -206,10 +213,10 @@ without recovery inputs runs the stable release path:
    repository-scoped GitHub API **on the exact dispatch target SHA**.
 7. **GitHub Release** —
    `gh release create vX.Y.Z --target <dispatch-sha> --verify-tag --title "Pantheon vX.Y.Z" --notes-file release-artifact/release-notes.md`.
-8. **npm publish (LAST)** — gated by the idempotency lookup, then that same
-   tarball (without repacking) is published with `--tag latest --access public
-   --provenance`. The SHA-256 validated in the validation job is therefore the
-   SHA-256 of the file published to npm.
+8. **npm publish (final step)** — gated by the idempotency
+   lookup, then that same tarball (without repacking) is published with
+   `--tag latest --access public --provenance`. The SHA-256 validated in the
+   validation job is therefore the SHA-256 of the file published to npm.
 
 A global concurrency group (`release`, no cancel-in-progress) serializes
 runs so beta and stable paths can never double-publish.
@@ -220,11 +227,10 @@ runs so beta and stable paths can never double-publish.
 
 The release evidence is fail-closed and has one artifact identity:
 
-- root dependencies use `npm ci --ignore-scripts` with `package.json` and
-  `package-lock.json`;
-- the TUI is checked independently with
-  `npm ci --prefix src/plugins/tui --ignore-scripts` and its own manifest and
-  lockfile;
+- root dependencies and the TUI workspace use one `npm ci --ignore-scripts`
+  with `package.json` and `package-lock.json`;
+- the TUI manifest and lockfile remain independently validated as package and
+  publish evidence;
 - a release creates one npm `.tgz` tarball, computes one SHA-256, and carries
   that exact file and digest from validation to publication; a second `npm
   pack` is not a valid replacement;
@@ -264,9 +270,11 @@ the stable path.
 3. **CHANGELOG** — the bump PR must contain a `## [X.Y.Z-beta.N] - date` section;
    the release body is extracted from it and the dispatch fails if it is
    missing. Beta does not use generated conventional-commit notes.
-4. **Tag and release** — the tag is created on the **dispatch target SHA**, and
-   the GitHub Release is created with `--prerelease` and title
-   `Pantheon <ver>`.
+4. **Tag** — the immutable tag `vX.Y.Z-beta.N` is created on the **dispatch
+   target SHA**. Beta creates **no** GitHub Release: the official Zenodo ↔
+   GitHub integration archives every Release (pre-releases included), so a beta
+   Release would add an unwanted version to the Zenodo family. The git tag alone
+   backs by-tag recovery.
 5. `npm publish --tag beta` publishes the immutable artifact. The workflow does
    not create a PR comment.
 
@@ -276,18 +284,19 @@ the stable path.
 
 ### Beta npm-publish recovery (explicit dispatch)
 
-If a beta's GitHub tag and Release already exist but npm publishing failed,
-rerun `Release` with `recovery_version` (the committed `X.Y.Z-beta.N`, without
-`v`) and `recovery_target_sha` (the full 40-hex commit SHA). The legacy
+If a beta's git tag already exists but npm publishing failed, rerun `Release`
+with `recovery_version` (the committed `X.Y.Z-beta.N`, without `v`) and
+`recovery_target_sha` (the full 40-hex commit SHA). The legacy
 `X.Y.Z-beta.<pr>.<sha7>` format is still accepted but additionally requires
 `recovery_pr_number` matching the version and the seven-character SHA suffix.
 For the current `X.Y.Z-beta.N` format only the version and SHA are needed. The
-workflow checks these values before checkout, checks that the remote
-`v<version>` tag and existing GitHub Release match exactly, and never creates or
-moves a tag/release in this mode. It packs the immutable checkout and publishes
-only when that exact npm version is absent; an existing npm version is a
-successful no-op. Partial or invalid inputs, missing releases, API errors, and
-tag mismatches fail closed.
+workflow checks these values before checkout, requires the remote `v<version>`
+tag to exist on the recovery target SHA, and never creates or moves a tag or
+release in this mode (beta creates no GitHub Release, so recovery is bound to
+the tag alone). It packs the immutable checkout and publishes only when that
+exact npm version is absent; an existing npm version is a successful no-op.
+Partial or invalid inputs, a missing tag, API errors, and tag mismatches fail
+closed.
 
 The recovery path is beta-only and does not calculate a new version or change
 the normal stable dispatch and beta-channel dispatch paths.
@@ -296,8 +305,9 @@ The pipeline is designed so **reruns are safe**:
 
 - **Already fully released** → the idempotent guard exits 0; nothing is
   re-tagged, re-released, or re-published.
-- **Crash between tag push and release create** → tag exists but release is
-  missing; a rerun skips tag creation and completes the release.
+- **Crash between tag push and release create (stable)** → tag exists but
+  release is missing; a rerun skips tag creation and completes the release.
+  Beta creates no Release, so its reruns proceed to the npm step.
 - **Crash after npm publish** → a rerun hits the idempotent guard (exit 0),
   and the npm existence check prevents publishing the same version again.
 - **changelog-extract fails on a stable or beta dispatch** → the `[X.Y.Z]` /
@@ -441,12 +451,29 @@ Each release includes:
 
 ## Preserved Releases: Zenodo
 
-[Zenodo](https://zenodo.org/) preserves releases for citation and long-term access. A published GitHub release automatically triggers **Publish release to Zenodo**; the workflow checks out the exact commit identified by the tag, creates or resumes the deposition idempotently, and does not create duplicates.
+[Zenodo](https://zenodo.org/) preserves releases for citation and long-term
+access through the **official Zenodo ↔ GitHub integration** on
+[`ils15/pantheon-opencode`](https://github.com/ils15/pantheon-opencode). Each
+published GitHub Release is archived automatically as a new version, giving that
+release a **version DOI**; all versions share the stable **concept DOI**
+[10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136)
+(`conceptrecid 22650136`), which always resolves to the latest archived release.
 
-For a manual run, open **Actions → Publish release to Zenodo** and set `release_tag=v1.4.3`, `confirm_production=true`, and `publish_deposition=false` to create or resume a draft. Review the draft before running again with `publish_deposition=true`; use that value only after human approval.
+The integration has **no pre-release filter**: it archives *every* GitHub
+Release. Only the stable channel creates a GitHub Release, so only stable
+versions are archived. Beta releases create a git tag and publish to npm but no
+Release, and are therefore intentionally absent from the Zenodo family.
 
-The protected `zenodo-production` environment must contain secret `ZENODO_TOKEN` and vars `ZENODO_DEPOSITIONS_URL`, `ZENODO_FILES_URL_TEMPLATE`, `ZENODO_PUBLISH_URL_TEMPLATE`, and `ZENODO_CREATOR_NAME`. Never put token values in logs or code. Use sandbox configuration for rehearsal and production only for the reviewed deposition.
+[`.zenodo.json`](../.zenodo.json) is the source of the deposited metadata
+(title, creators/ORCID, description, license, keywords, and related
+identifiers). `scripts/versioning.mjs` bumps its `version`, `publication_date`,
+and `url` alongside the other manifests on every release, so the file must stay
+in sync for the next archive. The deposited `title` is read from `.zenodo.json`
+at the tagged commit and is **not** applied retroactively to versions already
+archived.
 
-The workflow validates metadata, the release archive, and its SHA-256 checksum; after publication it persists the DOI in the GitHub release notes. Post-execution checklist: metadata correct; version **1.4.3**; license **MIT**; `pantheon-opencode-1.4.3.zip`/archive present; SHA-256 matches; state **Published**; DOI present in the Zenodo record and release notes.
-
-Verify the record and DOI on Zenodo and via the DOI link; **v1.4.3** DOI: [10.5281/zenodo.22306637](https://doi.org/10.5281/zenodo.22306637).
+The integration is configured in Zenodo and runs on Zenodo's side — no
+workflow, token, or protected environment is stored in this repository. If a
+Release is not archived automatically, trigger a sync from the repository's
+Zenodo GitHub settings, then verify the concept DOI, the per-release version
+DOI, and the record metadata on Zenodo.

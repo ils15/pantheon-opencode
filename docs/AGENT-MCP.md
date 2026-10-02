@@ -17,11 +17,11 @@ pantheon-persistence and pantheon-vision) plus the optional third-party servers.
 | **demeter** | ✅ agents, routing | ✅ — | ✅ store, recall | ✅ | — |
 | **themis** | ✅ agents | ✅ lint checks | ✅ search | ✅ | ✅ |
 | **prometheus** | ✅ agents, routing | ✅ deploy scripts | ✅ store, recall | ✅ | — |
-| **hephaestus** | ✅ agents, skills | ✅ — | ✅ search, link | ✅ | — |
-| **nyx** | ✅ routing | ✅ — | ✅ sessions | ✅ | — |
+| **hephaestus** | ✅ agents, skills | ✅ — | ✅ search | ✅ | — |
+| **nyx** | ✅ routing | ✅ — | ✅ stats | ✅ | — |
 | **gaia** | ✅ agents | — | minimal | ✅ | — |
 | **iris** | ✅ agents | — | minimal | — | — |
-| **mnemosyne** | ✅ memory-bank | ✅ — | ✅ full (store, recall, export) | — | — |
+| **mnemosyne** | ✅ memory-bank | ✅ — | ✅ store, recall, search, forget | — | — |
 | **talos** | ✅ agents, skills | ✅ hotfix scripts | ✅ recall | ✅ | — |
 
 `pantheon-vision` is installed for the runtime, but is not automatically bound
@@ -83,34 +83,33 @@ need script execution for their core workflows.
 | **demeter** | `memory_store`, `memory_recall` | Throughout | Store schema decisions, recall migration patterns |
 | **themis** | `memory_search` | Review | Search for past review findings |
 | **prometheus** | `memory_store`, `memory_recall` | Throughout | Store infra decisions, recall deployment patterns |
-| **hephaestus** | `memory_search`, `memory_link` | Throughout | Search for relevant RAG patterns, link AI pipeline decisions |
-| **nyx** | `memory_sessions` | Monitoring | List sessions for observability analysis |
+| **hephaestus** | `memory_search` | Throughout | Search for relevant RAG patterns and AI pipeline decisions |
+| **nyx** | `memory_stats` | Monitoring | Inspect memory totals and disk usage |
 | **gaia** | `memory_recall` | Session start | Recall analysis context from previous sessions |
 | **iris** | `memory_recall` | Session start | Recall PR/release context |
-| **mnemosyne** | All 14 tools | Documentation | Full memory management — store, recall, export, consolidate |
+| **mnemosyne** | All 9 pantheon-memory tools | Documentation | Memory management — store, recall, list, inspect (plus 3 `code_*` codemap tools) |
 | **talos** | `memory_recall` | Session start | Recall hotfix context for rapid fixes |
 
 ### Recommended Tool Sequences by Agent
 
 **Zeus** (orchestration):
 ```
-memory_recall(context="current sprint context") → start orchestration
-memory_recall(context="planning user auth feature") → delegate to Athena
+memory_recall(key="current-sprint") → start orchestration
+memory_search(query="planning user auth feature") → delegate to Athena
 ```
 
 **Hermes** (backend implementation):
 ```
-memory_recall(context="implementing JWT authentication") → recall prior decisions
+memory_search(query="implementing JWT authentication") → recall prior decisions
 ...implement...
-memory_store(content="JWT uses refresh token rotation", category="decision", importance=0.9)
+memory_store(value="JWT uses refresh token rotation", key="jwt-refresh")
 ```
 
-**Mnemosyne** (memory steward — deepest integration):
+**Mnemosyne** (memory steward):
 ```
-memory_recall(context="documenting sprint close") → check active context
-memory_export(session_id="sprint-17") → export for archival
-memory_consolidate() → deduplicate before close
-memory_compress(session_id="sprint-17") → compress old entries
+memory_recall(key="sprint-close") → check active context
+memory_search(query="sprint close decisions") → find related entries
+memory_store(value="Sprint close decision", key="sprint-close") → preserve the result
 ```
 
 ---

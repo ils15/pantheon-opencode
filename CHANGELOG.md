@@ -18,6 +18,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.1] - 2026-09-30
+
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## 🆕 What's New
+- **OpenCode 2** — first Pantheon beta compatible with the OpenCode 2 plugin
+  contract.
+- **memory** — preserve SQLite FTS5/BM25 keyword search and the `code_*` codemap
+  tools.
+
+## 🐞 Fixed
+- **memory** — remove the legacy vector-memory scripts and embedding/KNN/RRF
+  path.
+- **CI/release** — keep validation fail-closed; expand `doctor` checks and add
+  the OpenCode 2 V2-only sandbox validator.
+
+## [v1.5.2] - 2026-09-22
+
+## 🐞 Fixed
+- **install** — guard undefined collection in init (#174)
+- **release** — compare Zenodo file checksum in the format the API returns (#173)
+## [v1.5.1] - 2026-09-22
+
+## 🐞 Fixed
+- **agents** — declare explicit read: allow for zeus
+- **ci** — drop fastembed from CI, keep pytest collection green (#163)
+- **plugin** — detect registered-plugin version drift after pantheon_delegate removal (#169)
+- **config** — correct node floor and warn on unsupported runtime (#168)
+- **mcp** — degrade gracefully when fastembed import fails (#165)
+- **mcp** — drop dead toon_codec module from published package (#167)
+- **tui** — remove dead pantheon_delegate refs after v1.5.0 V1 removal (#166)
+- **mnemosyne** — grant scoped write to memory-bank and deepwork paths (#164)
+
+## ✅ Closed Issues
+- #94 - drop fastembed from CI, keep pytest collection green (#163)
+- #158 - detect registered-plugin version drift after pantheon_delegate removal (#169)
+- #114 - correct node floor and warn on unsupported runtime (#168)
+- #160 - correct node floor and warn on unsupported runtime (#168)
+- #159 - degrade gracefully when fastembed import fails (#165)
+- #162 - drop dead toon_codec module from published package (#167)
+- #161 - remove dead pantheon_delegate refs after v1.5.0 V1 removal (#166)
+- #111 - grant scoped write to memory-bank and deepwork paths (#164)
+
 ## [v1.5.0] - 2026-09-16
 
 ### 🆕 What's New

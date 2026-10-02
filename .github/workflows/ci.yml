@@ -22,6 +22,32 @@ jobs:
           # which a shallow depth-1 clone (default) cannot satisfy — it only
           # brings the merge commit and would emit an empty draft.
           fetch-depth: 0
+
+      # Fail the PR if any workflow is malformed. A `${{ runner.temp }}` at
+      # job-env scope once made a workflow unparseable (HTTP 422 on push, every
+      # run a startup failure) because the `runner` context is only available
+      # inside steps. actionlint validates YAML, expressions and context
+      # availability, so that class of native parse/context error can no longer
+      # be merged. The binary is pinned by version + SHA256; no third-party
+      # action needs to be trusted for this gate.
+      - name: Validate GitHub Actions workflows
+        env:
+          ACTIONLINT_VERSION: '1.7.12'
+          ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail-with-body --silent --show-error --location \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            -o "$tarball"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$tarball" | sha256sum --check --strict
+          tar --extract --gzip --file "$tarball" --directory "$RUNNER_TEMP" actionlint
+          # shellcheck is disabled on purpose: pre-existing style findings in
+          # sensitive workflows (release.yml/security-scan.yml) must not block
+          # the gate, which covers native parse/context/expression errors.
+          # Re-enable after those findings are cleaned up.
+          "$RUNNER_TEMP/actionlint" -color -shellcheck=
+
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
@@ -29,23 +55,36 @@ jobs:
           cache-dependency-path: |
             src/mcp/requirements-mcp.txt
             src/mcp/requirements-vision.txt
-            scripts/vector_memory/requirements.txt
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
           cache: npm
+          # src/plugins/tui/package-lock.json is NOT an install input for this
+          # job any more — the install below is root-only and resolves the TUI
+          # through the `workspaces` entry in the root package-lock.json. It
+          # stays listed because that nested lock is still a PUBLISHED,
+          # load-bearing artifact: sync-tui.mjs copies it into the user's plugin
+          # dir and runs an install there against it, so a change to it must
+          # invalidate the npm cache. Dropping this line would hide TUI lock
+          # edits from the cache key. tests/tui-workspace-lock.test.mjs is what
+          # keeps that lock in sync with the TUI manifest.
           cache-dependency-path: |
             package-lock.json
             src/plugins/tui/package-lock.json
 
       - name: Install dependencies
         run: |
-          python3 -m pip install --quiet pytest pyyaml yamllint pip-audit
+          python3 -m pip install --quiet coverage pytest pyyaml yamllint pip-audit
           python3 -m pip install --quiet pytest-asyncio==1.3.0
+          # Import-time deps of the MCP servers collected by pytest
+          # (mcp_resources_server / pantheon_vision_server / code_mode_server /
+          # mcp_persistence_server need mcp + httpx). memory_mcp_server needs
+          # none of it beyond the stdlib: its search is FTS5, and the vector
+          # pipeline (sqlite-vec + fastembed) was removed, so neither is
+          # installed here.
           python3 -m pip install --quiet -r src/mcp/requirements-mcp.txt
           python3 -m pip install --quiet -r src/mcp/requirements-vision.txt
           npm ci --ignore-scripts
-          npm ci --prefix src/plugins/tui --ignore-scripts
 
       - name: Validate agent YAML
         run: python3 scripts/ci-validate-yaml.py
@@ -53,11 +92,41 @@ jobs:
       - name: Validate routing.yml
         run: node scripts/validate-routing.mjs
 
+      - name: Doctor checkout runtime
+        env:
+          # CI deliberately has no repository .venv. Doctor's checkout/lite
+          # contract validates the locked dependencies in the prepared Python
+          # interpreter instead of skipping the runtime layer.
+          PANTHEON_PYTHON: python3
+        run: npm run doctor
+
       - name: Lint
         run: npm run lint
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Assert rolldown override resolved to the pinned version
+        run: |
+          # `overrides` BYPASSES range validation instead of erroring, so a
+          # future tsdown bump that requires rolldown@^1.3 would silently
+          # receive 1.2.0 from package.json overrides. The dist-freshness gate
+          # would then fail with a ~35-line constant-folding diff in the bundle
+          # (`1800*1e3` -> `18e5`) that reads like a port regression. One line
+          # of diagnosis here is cheaper than 35 lines of symptom.
+          # This reads the INSTALLED tree, so it also proves the override
+          # actually applied rather than merely being declared.
+          node -e "
+            const want='1.2.0';
+            const got=require('./node_modules/rolldown/package.json').version;
+            if(got!==want){
+              console.error('rolldown resolved to '+got+', expected '+want);
+              console.error('package.json overrides.rolldown and the bundler output must be bumped together;');
+              console.error('check whether the new rolldown constant-folds differently before accepting a dist diff.');
+              process.exit(1);
+            }
+            console.log('rolldown '+got+' as pinned');
+          "
 
       - name: TUI dist freshness (rebuild must be a no-op)
         run: |
@@ -65,18 +134,38 @@ jobs:
           # Normalize final newlines to match the pre-commit end-of-file-fixer
           # convention, then fail if the committed dist differs from a fresh
           # build (guards against shipping a stale TUI bundle).
-          node -e "const fs=require('fs');for(const f of fs.readdirSync('src/plugins/tui/dist')){const p='src/plugins/tui/dist/'+f;const s=fs.readFileSync(p);if(s.length&&s[s.length-1]!==10)fs.appendFileSync(p,String.fromCharCode(10))}"
+          node -e "const f=require('fs'),d='src/plugins/tui/dist/';for(const n of f.readdirSync(d)){const p=d+n,s=f.readFileSync(p);if(s.length&&s.at(-1)!==10)f.appendFileSync(p,'\n')}"
           git diff --exit-code src/plugins/tui/dist
 
       - name: Run unified test suite (pytest + node + ts)
         run: npm test
+
+      - name: Enforce Python coverage threshold (>=80%)
+        run: |
+          python3 -m coverage run --branch --source=src/mcp -m pytest -q --tb=short
+          python3 -m coverage report --fail-under=80
+
+      # V2 hook canary. `npm test` above already runs this file through
+      # test:node's `tests/pantheon/*.mjs` glob; this step names the gate
+      # explicitly. NOTE WHAT THIS STEP ACTUALLY COVERS: the runner has no
+      # `opencode` V2 binary on PATH, so every host-gated case SKIPS here. The
+      # one case that really runs is the static real-plugin regression guard
+      # (pure readFileSync + regex, deliberately not host-gated).
+      #
+      # To exercise the shipped plugin against a live host, MODE must be `real`:
+      #   PANTHEON_HOOK_CANARY_MODE=real npm run test:hooks
+      # or, against the prepared sandbox's V2 binary (sets MODE=real itself):
+      #   scripts/test-opencode-v2-sandbox.sh --hooks
+      # Plain `npm run test:hooks` is `fixture` mode, which only proves the
+      # hook NAMES are real, not that src/plugin-v2.ts registers them.
+      - name: V2 hook canary (static guards; host-gated cases skip without a V2 binary)
+        run: npm run test:hooks
 
       - name: Security audit
         run: |
           npm run audit
           python3 -m pip_audit -r src/mcp/requirements-mcp.txt
           python3 -m pip_audit -r src/mcp/requirements-vision.txt
-          python3 -m pip_audit -r scripts/vector_memory/requirements.txt
 
       - name: Scan versionable files for credentials
         run: npm run test:security
@@ -87,5 +176,34 @@ jobs:
       - name: Verify version manifests are in sync
         run: npm run version:check
 
-      - name: Verify package
+      - name: Validate publishable package
+        run: npm run package:validate
+
+      - name: Verify tarball/package evidence
         run: npm run package:evidence -- --output-dir="$RUNNER_TEMP/package-evidence" --target-sha="$(git rev-parse HEAD)"
+
+      - name: V2 sandbox (isolated database and dedicated port)
+        env:
+          PANTHEON_SANDBOX_ROOT: ${{ runner.temp }}/pantheon-sandbox-v2
+          OPENCODE_DB: ${{ runner.temp }}/pantheon-sandbox-v2/opencode-v2.db
+          PANTHEON_V2_PORT: '49376'
+          PORT: '49376'
+        run: |
+          set -euo pipefail
+          mkdir -p "$PANTHEON_SANDBOX_ROOT"
+          bash scripts/test-opencode-v2-sandbox.sh --prepare --run v2
+
+  plugin-v2-ts-coverage:
+    name: TypeScript plugin coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.15.0'
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: TypeScript plugin coverage
+        run: npm run coverage:plugin-v2

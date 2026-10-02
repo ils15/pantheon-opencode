@@ -40,16 +40,19 @@ read_mcp_resource(server="pantheon-resources", uri="pantheon://routing")
 
 ### pantheon-memory (persistent storage)
 
-Vector memory with sqlite-vec + fastembed. 6 tools for storing, searching, recalling, forgetting, listing, and inspecting memories across namespaces.
+Lexical memory with SQLite FTS5 (BM25). **9 tools**: 6 `memory_*` for storing, searching, recalling, forgetting, listing, and inspecting memories across namespaces, plus 3 `code_*` codemap tools. Keyword retrieval only — no embedding or vector index.
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
-| `memory_store` | `(value, namespace?: "default", key?, metadata?: "{}")` | Store a memory entry with automatic embedding generation | Implementers: hermes, aphrodite, demeter, prometheus, hephaestus, nyx, mnemosyne, zeus |
-| `memory_search` | `(query, namespace?, top_k?: 5, decay_days?)` | Hybrid vector + FTS5 keyword search via RRF; optional freshness decay via `decay_days` (default off) | apollo, themis, mnemosyne |
+| `memory_store` | `(value, namespace?: "default", key?, metadata?: "{}")` | Store a memory entry (FTS5 index updated by trigger) | Implementers: hermes, aphrodite, demeter, prometheus, hephaestus, nyx, mnemosyne, zeus |
+| `memory_search` | `(query, namespace?, top_k?: 5, decay_days?)` | FTS5 BM25 keyword search (stopwords dropped, 4+ char terms prefix-matched); optional freshness decay via `decay_days` (default off) | apollo, themis, mnemosyne |
 | `memory_recall` | `(key, namespace?: "default")` | Exact recall of an entry by key within a namespace | ALL agents — session continuity |
-| `memory_forget` | `(id?, key?, namespace?: "default")` | Delete an entry by ID or key (vector + FTS cleaned via cascade/triggers) | mnemosyne only |
+| `memory_forget` | `(id?, key?, namespace?: "default")` | Delete an entry by ID or key (FTS index cleaned via trigger) | mnemosyne only |
 | `memory_list` | `(namespace?, prefix?, limit?: 50)` | List entries chronologically with namespace and key-prefix filters | apollo, zeus — discovery |
-| `memory_stats` | `()` | Database statistics: totals, namespaces, FTS/vector counts, disk usage | nyx, zeus — maintenance |
+| `memory_stats` | `()` | Database statistics: totals, namespaces, disk usage | nyx, zeus — maintenance |
+| `code_index` | `(path?, force?)` | Index codebase files into a knowledge graph (hash-based skip) | apollo, athena, zeus |
+| `code_query` | `(query, type?, limit?: 10)` | Search code entities via FTS5 | apollo, athena |
+| `code_neighbors` | `(entity_id, depth?: 1)` | Graph neighbors of a code entity (BFS depth 1-3) | apollo, athena |
 
 **Call pattern:**
 ```
@@ -62,7 +65,7 @@ memory_recall(key="decision-42")
 
 ### pantheon-persistence (KV store + FTS5 search)
 
-Lightweight key-value store with SQLite FTS5, TTL-based expiration, and namespace isolation. Zero external dependencies (stdlib only).
+Lightweight key-value store with SQLite FTS5, TTL-based expiration, and namespace isolation. Zero external dependencies (stdlib only). **14 tools**: 8 `kv_*`/`purge_*` key-value tools plus 6 `context_*` checkpoint tools (`context_save`, `context_get`, `context_list`, `context_stats`, `context_rehydrate`, `context_session_summary`). The table below lists the `kv_*` subset; see [persistence-mcp.md](persistence-mcp.md) for the `context_*` reference.
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
@@ -163,7 +166,7 @@ Each platform exposes MCP tools with different naming. The same tool `memory_rec
 
 - **pantheon-resources** — path traversal protection on `memory-bank/{path}`
 - **pantheon-code-mode** — only `.sh`/`.py` in `.pantheon/code-mode/`, 30s timeout, no `../` escape
-- **pantheon-memory** — all data in `~/.pantheon/memory/chroma.sqlite3`, no system-level access
+- **pantheon-memory** — all data in `~/.pantheon/memory/memory.db`, no system-level access
 - **pantheon-persistence** — SQLite KV in `~/.pantheon/persistence/`, TTL auto-purge, namespace isolation
 - **pantheon-vision** — 25 MB image cap, supported-format validation, safe errors, and API-key redaction
 

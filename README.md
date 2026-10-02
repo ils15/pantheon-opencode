@@ -10,7 +10,7 @@ want useful structure without giving up control of their code.
 
 [![Version](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=version)](https://github.com/ils15/pantheon-opencode/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22306637.svg)](https://doi.org/10.5281/zenodo.22306637)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22650136.svg)](https://doi.org/10.5281/zenodo.22650136)
 
 ## What is it?
 
@@ -30,7 +30,15 @@ way to plan work, make progress, check results, and keep useful project context.
 
 ## Start in 2 minutes
 
-Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js 22+.
+Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js
+22.22.2+ (or 24.15.0+ / 26+).
+
+Pantheon declares `engines.node` as `^22.22.2 || ^24.15.0 || >=26.0.0`. The
+floor reflects what the dependency tree actually needs — the transitive
+`ini@7` rejects earlier 22.x/24.x builds with `EBADENGINE` — and odd-numbered
+Node releases (23, 25) are out of range. The `pantheon_cost` tool also needs
+`node:sqlite`, which requires Node >= 22.5; `doctor` warns when the running
+runtime cannot load it.
 
 From the project where you want to use Pantheon:
 
@@ -70,8 +78,8 @@ clear handoff between stages of work.
 
 ## Status
 
-Operational checkout version: **v1.5.0-beta.2** (candidate; publication is not
-asserted here). Pantheon is designed for OpenCode and depends on the
+Operational checkout version: **v1.6.0-beta.1** (first beta compatible with
+OpenCode 2; publication is not asserted here). Pantheon is designed for OpenCode and depends on the
 availability and configuration of OpenCode and any optional services you choose
 to use. Check the [releases](https://github.com/ils15/pantheon-opencode/releases)
 and [changelog](CHANGELOG.md) for the latest published changes.
@@ -124,6 +132,10 @@ only when they are explicitly approved. Approval is recorded in
 - **Hash mismatch → `CORRUPT_DATA`.** The SHA-256 of the file on disk must
   match the manifest entry, so edits after approval are detected.
 
+Session persistence is provided by the persistence MCP server. The bundled
+code-mode payload contains execution helpers only and does not export or back
+up a database.
+
 Approve or re-approve a script with the `approve_code_script` MCP tool:
 
 ```
@@ -145,28 +157,25 @@ once a project directory is selected, a missing or corrupt manifest fails
 closed instead of falling back. `doctor` validates the manifest and every
 script's SHA-256 without regenerating it.
 
+The local `.pantheon/code-mode/eval-*.py` helpers and any Promptfoo/evaluation
+assets are development-only inputs and are excluded from the npm tarball and
+from the runtime manifest. `src/mcp/eval_store.py` is different: it is a
+shipped runtime dependency of the MCP resources server, not an evaluation
+asset, so it remains packaged.
 
-## What's new in 1.5.0-beta.2
 
-- OpenCode-only installer: platform guides consolidated into a single
-  [OpenCode guide](docs/platforms/opencode.md).
-- New `uninstall` CLI with project and global scopes and ownership checks:
-  `node scripts/uninstall.mjs --project|--global [--dry-run] [--force]`.
-- Hardened MCP resources: fixed `pantheon://agents` listing and added
-  symlink/traversal protection for resource paths.
-- OpenCode V2 compatibility: `plugins` / `mcp.servers.enabled` config merge
-  and PWD-correct stdio MCP launch.
-- Expanded `doctor` and install health checks.
-- Sandbox validator for global installs (`scripts/test-opencode-v1-v2-sandbox.sh`)
-  covering OpenCode V1/V2 side by side — see
-  [Sandbox validation](#sandbox-validation-v1v2).
-- Beta2 agent-economy policy: direct native delegation, bounded compaction
-  carry-forward, compact context encoding, and quality floors.
-- A `--prompts` installer flag is planned for a future release.
+## What's new in 1.6.0-beta.1
 
-## OpenCode V1/V2 — Dual Version (1.5.0-beta.2)
+- First beta compatible with the OpenCode 2 plugin contract.
+- Removed the legacy vector-memory pipeline while preserving SQLite FTS5/BM25
+  keyword search and the `code_*` codemap tools.
+- CI and release validation are fail-closed; `doctor` checks and the V2-only
+  sandbox validator cover the OpenCode 2 installation path.
 
-Pantheon has two **exclusive** OpenCode plugin contracts. Ordinary OpenCode
+## OpenCode V1/V2 — Dual Version (1.6.0-beta.1)
+
+This is the first beta compatible with OpenCode 2. Pantheon has two **exclusive** OpenCode
+plugin contracts. Ordinary OpenCode
 configuration may be shared, but the Pantheon plugin registration is selected
 per installation; V1 and V2 Pantheon plugins must never be registered together.
 
@@ -181,8 +190,9 @@ The V2 plugin provides 6 orchestration tools (`hashline_edit`,
 `pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`,
 `pantheon_cost`, `pantheon_model`), 4 event subscriptions (`session.created`,
 `session.idle`, `session.error`, `session.compacted`), session hooks (`prompt`,
-`context`), and tool hooks (`execute.before`, `execute.after`). The only
-unsupported V2 feature is `legacy-hooks` (the V1-specific hook surface).
+`context`), and tool hooks (`execute.before`, `execute.after`). Unsupported V2
+features are `legacy-hooks` (the V1-specific hook surface), `catalog-transform`,
+`integration-transform`, and `skill-transform`.
 
 The package exposes both contracts as importable exports: `pantheon-opencode/plugin`
 (V1), `pantheon-opencode/plugin-v2` (V2) and `pantheon-opencode/v2-bridge`
@@ -246,7 +256,12 @@ Two freshness guarantees back it up:
   re-run `init` just for file copies.
 - **Drift detection** — the installer stamps the installed version in
   `.pantheon/install-state.json` and `doctor` warns when the package is newer
-  than the last sync, pointing at `update`.
+  than the last sync, pointing at `update`. `doctor` also detects **plugin
+  version drift** (issue #158): when `opencode.json` registers a plugin path
+  inside a `node_modules/pantheon-opencode` copy whose `package.json` version
+  differs from the running package, it warns that the registered tool surface
+  is stale. Re-running `init`/`update` realigns the registration onto the
+  current package.
 
 `init` also gained `--components agents,skills,...` (narrow install),
 `--clean` (alias of `--force`), `--opencode-version auto`, atomic config
@@ -255,6 +270,42 @@ before any file is written, and a non-fatal Python runtime: if the venv fails,
 the install completes but MCP entries are omitted (with a warning) instead of
 pointing at a broken interpreter. Installer messages auto-detect pt-BR via
 `LANG`/`LC_ALL`.
+
+## Migrating to 1.5.x (from 1.4.x)
+
+1.5.0 removed the custom `pantheon_delegate` tool (and the V1 delegation
+engine) in favor of OpenCode's native `task()`; see
+[Delegation (native `task()`)](#delegation-native-task). Two things change on
+an existing install:
+
+1. **The tool disappears from the plugin surface.** `pantheon_delegate` is no
+   longer registered by `src/plugin.ts` or `src/plugin-v2.ts`. Agents now
+   delegate through `task()` only — no configuration is needed.
+2. **A lockfile-pinned copy can keep the old tool alive.** `npm install` is
+   lockfile-authoritative: a `package-lock.json` pinned to `1.4.1` (which
+   satisfies `^1.4.1`) is never re-resolved, so a project's
+   `node_modules/pantheon-opencode` can stay on 1.4.x while the published
+   package moved on. The plugin path your `opencode.json` registers keeps
+   pointing at that stale copy, and you keep running the obsolete tool surface
+   — including `pantheon_delegate` — with no warning.
+
+The fix is a realignment + a detector:
+
+```bash
+# Realign the registered plugin path onto the current package (rewrites any
+# node_modules/pantheon-opencode reference in opencode.json):
+npx pantheon-opencode@latest init --yes --headless
+# or, with a global install:
+pantheon-opencode update
+
+# Then verify no drift remains:
+npx pantheon-opencode@latest doctor
+```
+
+`doctor` now reports a **Plugin Version Drift** warning (section H3) when the
+registered plugin points into an installed copy whose version differs from the
+running package, naming both versions and the removal (`pantheon_delegate` in
+1.5.0). A healthy install reports no warning.
 
 ## Releases
 
@@ -272,38 +323,66 @@ Release validation keeps each manifest with its lockfile: the root
 SHA-256 of that same artifact, and binds the tarball and GitHub release to the
 full `TARGET_SHA`; a second pack is not interchangeable.
 
-## Sandbox validation (V1/V2)
+## Sandbox validation (V2)
 
-`scripts/test-opencode-v1-v2-sandbox.sh` validates the globally installed
+`scripts/test-opencode-v2-sandbox.sh` validates the globally installed
 package as a real user inside an isolated sandbox (own `HOME`, npm prefix and
-venv) — never the dev environment. It checks OpenCode V1 (`opencode`) and V2
-(`opencode2`) side by side: binaries, MCP connectivity, `doctor`, and — with
-`--prompts` — a prompt battery covering the `pantheon://agents` resource,
-memory store/recall, filesystem writes and agent delegation. The gate is
-fail-closed: every required check must return an explicit PASS; timeouts,
-auth/network/provider failures and missing prerequisites block the run.
+venv) — never the dev environment. It checks the OpenCode V2 leg: the binary,
+MCP connectivity, `doctor`, and — with `--prompts` — a prompt battery covering
+the `pantheon://agents` resource, memory store/recall, filesystem writes and
+agent delegation. The gate is fail-closed: every required check must return an
+explicit PASS; timeouts, auth/network/provider failures and missing
+prerequisites block the run.
+
+"V2" here refers only to the hook canary observed against an OpenCode v2.0.18
+host, where at least one tested hook callback fired; it does not establish
+compatibility with the stable `@opencode/plugin@2.0.18` SDK or full 2.x
+contract. This branch still pins transitional `@opencode-ai/plugin@1.18.30`.
+On hosts where both `opencode` and `opencode2` exist, the latter is typically
+a shim that execs the same binary, so an older side-by-side comparison proved
+nothing about the binary itself. The project is V2-exclusive, so there is a
+single leg.
 
 ```bash
-scripts/test-opencode-v1-v2-sandbox.sh --prepare          # tarball + install + init in the sandbox
-scripts/test-opencode-v1-v2-sandbox.sh --run v1 --prompts # base validation + prompt battery (V1)
-scripts/test-opencode-v1-v2-sandbox.sh --run v2           # base validation only (V2)
-scripts/test-opencode-v1-v2-sandbox.sh --prompts          # prompt battery for both versions
-scripts/test-opencode-v1-v2-sandbox.sh --reset            # wipe the sandbox root
+scripts/test-opencode-v2-sandbox.sh --prepare     # tarball + install + init in the sandbox
+scripts/test-opencode-v2-sandbox.sh --run v2      # base validation only
+scripts/test-opencode-v2-sandbox.sh --prompts     # base validation + prompt battery
+scripts/test-opencode-v2-sandbox.sh --rehydrate   # offline context rehydration/session-summary probe
+scripts/test-opencode-v2-sandbox.sh --hooks       # V2 hook callback canary
+scripts/test-opencode-v2-sandbox.sh --rehydrate --hooks # run both canaries
+scripts/test-opencode-v2-sandbox.sh --reset       # wipe the sandbox root
 ```
 
-Modes are combinable (e.g. `--prepare --run v1 --prompts`). Binaries are
-resolved strictly inside the sandbox npm prefix — a non-prepared sandbox fails
-fast instead of silently testing the host installation.
+Modes are combinable (e.g. `--prepare --run v2 --prompts`). `--rehydrate` runs
+offline `context_rehydrate` and `context_session_summary` probes. `--hooks` runs
+a V2 hook canary against the sandbox binary to check that hook callbacks fire;
+it does not test transform callback effects or prove Pantheon's
+`execute.before` security enforcement. With the probe-only `--rehydrate --hooks`
+pair (without `--run`, `--prompts`, or `--cost`), the hooks canary still runs if
+rehydration fails, and the command returns a failing status afterward. These
+are test/sandbox canaries, not proof of Pantheon security enforcement. Binaries
+are resolved strictly inside the sandbox npm prefix — a non-prepared sandbox
+fails fast instead of silently testing the host installation. The sandbox is
+always built from the checkout this script lives in; it never infers a
+repository from a sibling directory.
 
 This validates the prepared isolated sandbox only. A PASS is not proof of
 support for every real host or for host configurations that were not exercised.
+
+## Plugin V2 TypeScript coverage
+
+`npm run coverage:plugin-v2` runs the `tests/pantheon/*.test.ts` suite with
+Node's source-mapped native coverage and enforces an 80% line-coverage minimum
+for `src/plugin-v2.ts` only. It requires Node `v24.15.0`; branch and function
+coverage are reported but are not gates. This is not a repository-wide coverage
+claim.
 
 Env overrides:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PANTHEON_SANDBOX_ROOT` | `~/pantheon-sandbox` | Sandbox root (refused if unsafe for `--reset`) |
-| `OPENCODE_V1_SPEC` | `opencode-ai@1.18.18` | npm spec providing the `opencode` binary |
+| `OPENCODE_V1_SPEC` | `opencode-ai@1.18.18` | Configures the V1 plugin only; the V2-only sandbox runner does not consume or support it |
 | `OPENCODE_V2_SPEC` | `@opencode-ai/cli@beta` | npm spec providing the `opencode2` binary |
 | `PANTHEON_SANDBOX_MODEL` | `opencode-go/mimo-v2.5` | Model used by init and prompts |
 | `PANTHEON_PROMPT_TIMEOUT` | `300` | Per-prompt timeout in seconds |
@@ -331,7 +410,23 @@ and returns nothing. Prefer `background=true` dispatches with an explicit
 `task_status(wait=true)` fan-in so large payloads are collected deterministically.
 
 
+## Configuration (environment variables)
+
+The `pantheon-memory` MCP server needs no configuration: search is SQLite FTS5
+(BM25) only, all stdlib, with no embedding model, no vector index, and no
+`sqlite-vec`/`fastembed` dependency. Other environment variables are documented
+in the sections above.
+
+
 ## Documentation
+
+### Local evaluations
+
+Promptfoo/evaluation experiments are local-only: place them under
+`evals/promptfoo/`, which is gitignored and excluded from npm packaging,
+package evidence, CI tests, coverage, and release gates. Publish reviewed
+findings as documentation, not the local harness, datasets, outputs, or
+credentials.
 
 - [Installation](docs/INSTALLATION.md) · [Quick start](docs/QUICKSTART.md)
 - [Architecture](docs/ARCHITECTURE.md) · [MCP tools](docs/mcp-tools.md)
@@ -348,10 +443,10 @@ or pull request.
 
 ## Citation and DOI
 
-Pantheon is released under the [MIT License](LICENSE). For the historical
-published v1.4.3 record only, use the [Zenodo DOI](https://doi.org/10.5281/zenodo.22306637);
-it is not the current operational version. Citation metadata is also available
-in [CITATION.cff](CITATION.cff).
+Pantheon is released under the [MIT License](LICENSE). Cite the
+[Zenodo concept DOI](https://doi.org/10.5281/zenodo.22650136), which always
+resolves to the latest archived release; each release also has its own version
+DOI. Citation metadata is also available in [CITATION.cff](CITATION.cff).
 
 Canonical repository: <https://github.com/ils15/pantheon-opencode>
 

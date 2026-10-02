@@ -49,7 +49,7 @@
 
 import type { BackgroundJobBoard } from './background-job-board.ts'
 import { createPantheonLogger } from './logger.ts'
-import { buildChildrenPath, safeSessionPath } from './session-guard.ts'
+import { safeSessionPath } from './session-guard.ts'
 
 // Silence-by-default TUI policy (pantheon-hooks L42-58): the default warn
 // fallback logs to .pantheon/logs/hooks.log; console echo is opt-in via

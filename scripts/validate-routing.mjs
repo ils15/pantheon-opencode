@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * validate-routing.mjs — Validate routing.yml consistency
  *
@@ -14,6 +15,7 @@
  *   node scripts/validate-routing.mjs --verbose   # show all entries checked
  */
 
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -103,6 +105,44 @@ for (const [name, info] of Object.entries(routing.agents || {})) {
     if (!existingSkills.includes(skill)) {
       warn(`Agent "${name}" references skill "${skill}" but skills/${skill}/SKILL.md not found`)
     }
+  }
+}
+
+// B2. skills-lock.json must match src/skills/*/SKILL.md exactly — content
+// digests stay in sync, and the set of locked paths equals the set on disk
+// (so adding/removing a skill without updating the lock fails the gate).
+console.log('\n  skills-lock.json integrity:')
+const lockPath = join(ROOT, 'skills-lock.json')
+let skillLock = null
+try {
+  skillLock = JSON.parse(readFileSync(lockPath, 'utf8'))
+} catch (err) {
+  check(false, `skills-lock.json missing or malformed: ${err.message}`)
+}
+if (skillLock && typeof skillLock === 'object' && !Array.isArray(skillLock)) {
+  const lockedFiles = Object.keys(skillLock).sort()
+  const skillFiles = existsSync(srcSkillsDir)
+    ? readdirSync(srcSkillsDir)
+        .filter((d) => existsSync(join(srcSkillsDir, d, 'SKILL.md')))
+        .map((d) => `src/skills/${d}/SKILL.md`)
+        .sort()
+    : []
+  console.log(`  Locked skills: ${lockedFiles.length} (on disk: ${skillFiles.length})`)
+
+  for (const rel of skillFiles) {
+    const actual = createHash('sha256')
+      .update(readFileSync(join(ROOT, rel)))
+      .digest('hex')
+    check(
+      skillLock[rel] === actual,
+      `skills-lock.json stale for "${rel}": expected ${actual}, got ${skillLock[rel] ?? 'no entry'}`,
+    )
+  }
+  for (const rel of lockedFiles) {
+    check(
+      skillFiles.includes(rel),
+      `skills-lock.json lists "${rel}" but that SKILL.md does not exist`,
+    )
   }
 }
 
