@@ -162,9 +162,10 @@ def scripts_resources_copy(
 def test_runtime_copy_resolves_to_scripts_dir(
     scripts_resources_copy: types.ModuleType,
 ) -> None:
-    assert Path(scripts_resources_copy.__file__).resolve() == (
-        REPO_ROOT / "scripts" / "mcp_resources_server.py"
-    ).resolve()
+    assert (
+        Path(scripts_resources_copy.__file__).resolve()
+        == (REPO_ROOT / "scripts" / "mcp_resources_server.py").resolve()
+    )
 
 
 def test_runtime_copy_globals_come_from_hermetic_env(
@@ -187,7 +188,9 @@ def test_runtime_copy_imports_standalone(tmp_path: Path) -> None:
     }
     env["PANTHEON_HOME"] = str(home)
     env["PANTHEON_PROJECT"] = str(project)
-    env["PYTHONPATH"] = os.pathsep.join([str(REPO_ROOT / "scripts"), str(REPO_ROOT / "src" / "mcp")])
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(REPO_ROOT / "scripts"), str(REPO_ROOT / "src" / "mcp")]
+    )
     proc = subprocess.run(
         [
             sys.executable,

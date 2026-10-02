@@ -113,8 +113,10 @@ async def main():
 
     os.environ.pop("PANTHEON_COMPACTION", None)
     os.environ.pop("PANTHEON_SESSION_END_SUMMARY", None)
-    blocks = await call("context_rehydrate", {"slug": slug})
-    summary = await call("context_session_summary", {"slug": slug})
+    blocks = await call("context_rehydrate", {"slug": slug,
+                                               "session_id": session_id})
+    summary = await call("context_session_summary", {"slug": slug,
+                                                     "session_id": session_id})
     if not isinstance(blocks, list) or not blocks:
         raise AssertionError("context_rehydrate returned a null/empty payload")
     if not isinstance(summary, str) or not summary:
@@ -126,18 +128,25 @@ async def main():
     checks.append("context_rehydrate non-null payload: PASS")
     checks.append("context_session_summary non-null payload: PASS")
 
-    missing_blocks = await call("context_rehydrate", {"slug": "probe-absent"})
-    missing_summary = await call("context_session_summary", {"slug": "probe-absent"})
+    missing_blocks = await call("context_rehydrate", {"slug": "probe-absent",
+                                                      "session_id": session_id})
+    missing_summary = await call("context_session_summary", {"slug": "probe-absent",
+                                                              "session_id": session_id})
     if missing_blocks is not None or missing_summary is not None:
         raise AssertionError("absent checkpoint must return null payloads")
     checks.append("absence returns null: PASS")
 
     expired_slug = "context-expired-probe"
     await call("context_save", {"slug": expired_slug, "key": "phase:1",
-                                 "content": json.dumps(checkpoint), "ttl": -1,
+                                 "content": json.dumps(checkpoint), "ttl": 1,
                                  "session_id": session_id})
-    expired_blocks = await call("context_rehydrate", {"slug": expired_slug})
-    expired_summary = await call("context_session_summary", {"slug": expired_slug})
+    # Use the public TTL contract (positive seconds) and let the entry expire;
+    # negative TTLs are rejected by validation and must not be special-cased.
+    await asyncio.sleep(1.2)
+    expired_blocks = await call("context_rehydrate", {"slug": expired_slug,
+                                                       "session_id": session_id})
+    expired_summary = await call("context_session_summary", {"slug": expired_slug,
+                                                               "session_id": session_id})
     if expired_blocks is not None or expired_summary is not None:
         raise AssertionError("expired checkpoint must return null payloads")
     checks.append("expiration returns null: PASS")
@@ -145,19 +154,23 @@ async def main():
     invalid_slug = "context-invalid-probe"
     await call("context_save", {"slug": invalid_slug, "key": "phase:1",
                                  "content": "not-json", "session_id": session_id})
-    invalid_blocks = await call("context_rehydrate", {"slug": invalid_slug})
-    invalid_summary = await call("context_session_summary", {"slug": invalid_slug})
+    invalid_blocks = await call("context_rehydrate", {"slug": invalid_slug,
+                                                       "session_id": session_id})
+    invalid_summary = await call("context_session_summary", {"slug": invalid_slug,
+                                                               "session_id": session_id})
     if invalid_blocks is not None or invalid_summary is not None:
         raise AssertionError("invalid checkpoint must return null payloads")
     checks.append("invalid payload returns null: PASS")
 
     os.environ["PANTHEON_COMPACTION"] = "off"
-    switched_blocks = await call("context_rehydrate", {"slug": slug})
+    switched_blocks = await call("context_rehydrate", {"slug": slug,
+                                                       "session_id": session_id})
     if switched_blocks is not None:
         raise AssertionError("PANTHEON_COMPACTION=off must return null")
     os.environ.pop("PANTHEON_COMPACTION", None)
     os.environ["PANTHEON_SESSION_END_SUMMARY"] = "off"
-    switched_summary = await call("context_session_summary", {"slug": slug})
+    switched_summary = await call("context_session_summary", {"slug": slug,
+                                                               "session_id": session_id})
     if switched_summary is not None:
         raise AssertionError("PANTHEON_SESSION_END_SUMMARY=off must return null")
     checks.append("kill-switches return null: PASS")
@@ -205,6 +218,10 @@ async function main() {
     }
     if (child.signal === 'SIGTERM') {
       emit('AMBIENTAL', 'persistence probe timed out after 30s')
+      return
+    }
+    if (/IncompleteFieldDefinitionWarning|pydantic_settings/i.test(child.stderr)) {
+      emit('FAIL', 'persistence probe emitted an incomplete pydantic_settings field warning')
       return
     }
     if (child.status !== 0) {

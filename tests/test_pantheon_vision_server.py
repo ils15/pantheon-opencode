@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -158,8 +159,6 @@ def _seed_credential_db(
     data_dir: Path, integration_id: str, key: str, active: int = 1
 ) -> None:
     """Create an OpenCode V2 credential store with one plaintext JSON value."""
-    import sqlite3
-
     conn = sqlite3.connect(str(data_dir / "opencode.db"))
     conn.execute(
         "CREATE TABLE credential ("

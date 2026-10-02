@@ -78,8 +78,8 @@ clear handoff between stages of work.
 
 ## Status
 
-Operational checkout version: **v1.5.0-beta.2** (candidate; publication is not
-asserted here). Pantheon is designed for OpenCode and depends on the
+Operational checkout version: **v1.6.0-beta.1** (first beta compatible with
+OpenCode 2; publication is not asserted here). Pantheon is designed for OpenCode and depends on the
 availability and configuration of OpenCode and any optional services you choose
 to use. Check the [releases](https://github.com/ils15/pantheon-opencode/releases)
 and [changelog](CHANGELOG.md) for the latest published changes.
@@ -132,6 +132,10 @@ only when they are explicitly approved. Approval is recorded in
 - **Hash mismatch → `CORRUPT_DATA`.** The SHA-256 of the file on disk must
   match the manifest entry, so edits after approval are detected.
 
+Session persistence is provided by the persistence MCP server. The bundled
+code-mode payload contains execution helpers only and does not export or back
+up a database.
+
 Approve or re-approve a script with the `approve_code_script` MCP tool:
 
 ```
@@ -153,28 +157,25 @@ once a project directory is selected, a missing or corrupt manifest fails
 closed instead of falling back. `doctor` validates the manifest and every
 script's SHA-256 without regenerating it.
 
+The local `.pantheon/code-mode/eval-*.py` helpers and any Promptfoo/evaluation
+assets are development-only inputs and are excluded from the npm tarball and
+from the runtime manifest. `src/mcp/eval_store.py` is different: it is a
+shipped runtime dependency of the MCP resources server, not an evaluation
+asset, so it remains packaged.
 
-## What's new in 1.5.0-beta.2
 
-- OpenCode-only installer: platform guides consolidated into a single
-  [OpenCode guide](docs/platforms/opencode.md).
-- New `uninstall` CLI with project and global scopes and ownership checks:
-  `node scripts/uninstall.mjs --project|--global [--dry-run] [--force]`.
-- Hardened MCP resources: fixed `pantheon://agents` listing and added
-  symlink/traversal protection for resource paths.
-- OpenCode V2 compatibility: `plugins` / `mcp.servers.enabled` config merge
-  and PWD-correct stdio MCP launch.
-- Expanded `doctor` and install health checks.
-- Sandbox validator for global installs (`scripts/test-opencode-v2-sandbox.sh`)
-  covering the OpenCode V2 leg — see
-  [Sandbox validation](#sandbox-validation-v2).
-- Beta2 agent-economy policy: direct native delegation, bounded compaction
-  carry-forward, compact context encoding, and quality floors.
-- A `--prompts` installer flag is planned for a future release.
+## What's new in 1.6.0-beta.1
 
-## OpenCode V1/V2 — Dual Version (1.5.0-beta.2)
+- First beta compatible with the OpenCode 2 plugin contract.
+- Removed the legacy vector-memory pipeline while preserving SQLite FTS5/BM25
+  keyword search and the `code_*` codemap tools.
+- CI and release validation are fail-closed; `doctor` checks and the V2-only
+  sandbox validator cover the OpenCode 2 installation path.
 
-Pantheon has two **exclusive** OpenCode plugin contracts. Ordinary OpenCode
+## OpenCode V1/V2 — Dual Version (1.6.0-beta.1)
+
+This is the first beta compatible with OpenCode 2. Pantheon has two **exclusive** OpenCode
+plugin contracts. Ordinary OpenCode
 configuration may be shared, but the Pantheon plugin registration is selected
 per installation; V1 and V2 Pantheon plugins must never be registered together.
 
@@ -189,8 +190,9 @@ The V2 plugin provides 6 orchestration tools (`hashline_edit`,
 `pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`,
 `pantheon_cost`, `pantheon_model`), 4 event subscriptions (`session.created`,
 `session.idle`, `session.error`, `session.compacted`), session hooks (`prompt`,
-`context`), and tool hooks (`execute.before`, `execute.after`). The only
-unsupported V2 feature is `legacy-hooks` (the V1-specific hook surface).
+`context`), and tool hooks (`execute.before`, `execute.after`). Unsupported V2
+features are `legacy-hooks` (the V1-specific hook surface), `catalog-transform`,
+`integration-transform`, and `skill-transform`.
 
 The package exposes both contracts as importable exports: `pantheon-opencode/plugin`
 (V1), `pantheon-opencode/plugin-v2` (V2) and `pantheon-opencode/v2-bridge`
@@ -332,34 +334,55 @@ agent delegation. The gate is fail-closed: every required check must return an
 explicit PASS; timeouts, auth/network/provider failures and missing
 prerequisites block the run.
 
-"V2" here means this plugin exercised against the `@opencode/plugin@2.x`
-contract — not a different binary. On hosts where both `opencode` and
-`opencode2` exist, `opencode2` is typically a shim that execs the same binary,
-so an older side-by-side comparison proved nothing about the binary itself.
-The project is V2-exclusive, so there is a single leg.
+"V2" here refers only to the hook canary observed against an OpenCode v2.0.18
+host, where at least one tested hook callback fired; it does not establish
+compatibility with the stable `@opencode/plugin@2.0.18` SDK or full 2.x
+contract. This branch still pins transitional `@opencode-ai/plugin@1.18.30`.
+On hosts where both `opencode` and `opencode2` exist, the latter is typically
+a shim that execs the same binary, so an older side-by-side comparison proved
+nothing about the binary itself. The project is V2-exclusive, so there is a
+single leg.
 
 ```bash
 scripts/test-opencode-v2-sandbox.sh --prepare     # tarball + install + init in the sandbox
 scripts/test-opencode-v2-sandbox.sh --run v2      # base validation only
 scripts/test-opencode-v2-sandbox.sh --prompts     # base validation + prompt battery
+scripts/test-opencode-v2-sandbox.sh --rehydrate   # offline context rehydration/session-summary probe
+scripts/test-opencode-v2-sandbox.sh --hooks       # V2 hook callback canary
+scripts/test-opencode-v2-sandbox.sh --rehydrate --hooks # run both canaries
 scripts/test-opencode-v2-sandbox.sh --reset       # wipe the sandbox root
 ```
 
-Modes are combinable (e.g. `--prepare --run v2 --prompts`). Binaries are
-resolved strictly inside the sandbox npm prefix — a non-prepared sandbox fails
-fast instead of silently testing the host installation. The sandbox is always
-built from the checkout this script lives in; it never infers a repository from
-a sibling directory.
+Modes are combinable (e.g. `--prepare --run v2 --prompts`). `--rehydrate` runs
+offline `context_rehydrate` and `context_session_summary` probes. `--hooks` runs
+a V2 hook canary against the sandbox binary to check that hook callbacks fire;
+it does not test transform callback effects or prove Pantheon's
+`execute.before` security enforcement. With the probe-only `--rehydrate --hooks`
+pair (without `--run`, `--prompts`, or `--cost`), the hooks canary still runs if
+rehydration fails, and the command returns a failing status afterward. These
+are test/sandbox canaries, not proof of Pantheon security enforcement. Binaries
+are resolved strictly inside the sandbox npm prefix — a non-prepared sandbox
+fails fast instead of silently testing the host installation. The sandbox is
+always built from the checkout this script lives in; it never infers a
+repository from a sibling directory.
 
 This validates the prepared isolated sandbox only. A PASS is not proof of
 support for every real host or for host configurations that were not exercised.
+
+## Plugin V2 TypeScript coverage
+
+`npm run coverage:plugin-v2` runs the `tests/pantheon/*.test.ts` suite with
+Node's source-mapped native coverage and enforces an 80% line-coverage minimum
+for `src/plugin-v2.ts` only. It requires Node `v24.15.0`; branch and function
+coverage are reported but are not gates. This is not a repository-wide coverage
+claim.
 
 Env overrides:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PANTHEON_SANDBOX_ROOT` | `~/pantheon-sandbox` | Sandbox root (refused if unsafe for `--reset`) |
-| `OPENCODE_V1_SPEC` | `opencode-ai@1.18.18` | npm spec providing the `opencode` binary |
+| `OPENCODE_V1_SPEC` | `opencode-ai@1.18.18` | Configures the V1 plugin only; the V2-only sandbox runner does not consume or support it |
 | `OPENCODE_V2_SPEC` | `@opencode-ai/cli@beta` | npm spec providing the `opencode2` binary |
 | `PANTHEON_SANDBOX_MODEL` | `opencode-go/mimo-v2.5` | Model used by init and prompts |
 | `PANTHEON_PROMPT_TIMEOUT` | `300` | Per-prompt timeout in seconds |
@@ -396,6 +419,14 @@ in the sections above.
 
 
 ## Documentation
+
+### Local evaluations
+
+Promptfoo/evaluation experiments are local-only: place them under
+`evals/promptfoo/`, which is gitignored and excluded from npm packaging,
+package evidence, CI tests, coverage, and release gates. Publish reviewed
+findings as documentation, not the local harness, datasets, outputs, or
+credentials.
 
 - [Installation](docs/INSTALLATION.md) · [Quick start](docs/QUICKSTART.md)
 - [Architecture](docs/ARCHITECTURE.md) · [MCP tools](docs/mcp-tools.md)

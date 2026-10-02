@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 import shutil
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -236,79 +236,100 @@ def cmd_list(slug: str) -> None:
         print(f"  [{n}] phase={phase} turns={turns} @ {ts}")
 
 
-def cmd_health(slug: str) -> None:
-    """Validate session consistency."""
-    sdir = get_slug_dir(slug)
-    issues = []
+def _validate_session_file(path: Path) -> tuple[dict, list[str]]:
+    """Read session metadata and return any consistency issues."""
+    if not path.exists():
+        return {}, ["Missing session.json"]
+    try:
+        session = _read_json(path)
+    except (json.JSONDecodeError, ValueError):
+        return {}, ["session.json is corrupted (invalid JSON)"]
+    required = ["task_id", "status", "start_time", "last_activity"]
+    issues = [
+        f"session.json missing field: {field}"
+        for field in required
+        if field not in session
+    ]
+    return session, issues
 
-    if not sdir.exists():
-        print(f"❌ Session not found: {slug}")
-        return
 
-    session: dict = {}
-    hb: dict = {}
+def _validate_heartbeat_file(path: Path) -> list[str]:
+    """Read heartbeat metadata and return any consistency issues."""
+    if not path.exists():
+        return ["Missing heartbeat.json"]
+    try:
+        heartbeat = _read_json(path)
+    except (json.JSONDecodeError, ValueError):
+        return ["heartbeat.json is corrupted (invalid JSON)"]
+    if heartbeat.get("status") == "stalled":
+        return ["Session is marked as STALLED"]
+    return []
 
-    # Check session.json
-    session_file = sdir / "session.json"
-    if not session_file.exists():
-        issues.append("Missing session.json")
-    else:
-        try:
-            session = _read_json(session_file)
-            required = ["task_id", "status", "start_time", "last_activity"]
-            for field in required:
-                if field not in session:
-                    issues.append(f"session.json missing field: {field}")
-        except (json.JSONDecodeError, ValueError):
-            issues.append("session.json is corrupted (invalid JSON)")
 
-    # Check heartbeat.json
-    hb_file = sdir / "heartbeat.json"
-    if not hb_file.exists():
-        issues.append("Missing heartbeat.json")
-    else:
-        try:
-            hb = _read_json(hb_file)
-            if hb.get("status") == "stalled":
-                issues.append("Session is marked as STALLED")
-        except (json.JSONDecodeError, ValueError):
-            issues.append("heartbeat.json is corrupted (invalid JSON)")
-
-    # Check checkpoint integrity
+def _validate_checkpoints(sdir: Path) -> tuple[list[tuple[int, Path]], list[str]]:
+    """Validate checkpoint contents and sequential numbering."""
     checkpoints = get_checkpoints(sdir)
-    if checkpoints:
-        for n, path in checkpoints:
-            try:
-                cp = _read_json(path)
-                if cp.get("version", 1) > SCHEMA_VERSION:
-                    issues.append(f"checkpoint-{n}.json has newer schema version")
-                if "slug" not in cp or "timestamp" not in cp:
-                    issues.append(f"checkpoint-{n}.json missing required fields")
-            except (json.JSONDecodeError, ValueError):
-                issues.append(f"checkpoint-{n}.json is corrupted")
+    issues: list[str] = []
+    for number, path in checkpoints:
+        try:
+            checkpoint = _read_json(path)
+            if checkpoint.get("version", 1) > SCHEMA_VERSION:
+                issues.append(f"checkpoint-{number}.json has newer schema version")
+            if "slug" not in checkpoint or "timestamp" not in checkpoint:
+                issues.append(f"checkpoint-{number}.json missing required fields")
+        except (json.JSONDecodeError, ValueError):
+            issues.append(f"checkpoint-{number}.json is corrupted")
 
-        # Check sequential numbering
-        numbers = [n for n, _ in checkpoints]
+    if checkpoints:
+        numbers = [number for number, _ in checkpoints]
         expected = list(range(numbers[0], numbers[-1] + 1))
         if numbers != expected:
             missing = set(expected) - set(numbers)
             issues.append(f"Missing checkpoints: {sorted(missing)}")
+    return checkpoints, issues
 
-    # Check for stale activity
-    if session_file.exists() and hb_file.exists() and session:
-        try:
-            last_action = session.get("last_activity", "")
-            if last_action:
-                last_time = datetime.fromisoformat(last_action)
-                if datetime.now(UTC) - last_time > STALE_THRESHOLD:
-                    issues.append(f"No activity for > {STALE_THRESHOLD.total_seconds() / 3600:.0f}h (stale)")
-        except (ValueError, TypeError):
-            issues.append("Could not parse last_activity timestamp")
 
-    # Report
+def _stale_activity_issue(
+    session_file: Path, heartbeat_file: Path, session: dict
+) -> list[str]:
+    """Return a stale-activity issue when both metadata files are present."""
+    if not session_file.exists() or not heartbeat_file.exists() or not session:
+        return []
+    try:
+        last_action = session.get("last_activity", "")
+        if last_action:
+            last_time = datetime.fromisoformat(last_action)
+            if datetime.now(UTC) - last_time > STALE_THRESHOLD:
+                return [
+                    f"No activity for > {STALE_THRESHOLD.total_seconds() / 3600:.0f}h "
+                    "(stale)"
+                ]
+    except (ValueError, TypeError):
+        return ["Could not parse last_activity timestamp"]
+    return []
+
+
+def cmd_health(slug: str) -> None:
+    """Validate session consistency."""
+    sdir = get_slug_dir(slug)
+    if not sdir.exists():
+        print(f"❌ Session not found: {slug}")
+        return
+
+    session_file = sdir / "session.json"
+    heartbeat_file = sdir / "heartbeat.json"
+    session, issues = _validate_session_file(session_file)
+    issues.extend(_validate_heartbeat_file(heartbeat_file))
+    checkpoints, checkpoint_issues = _validate_checkpoints(sdir)
+    issues.extend(checkpoint_issues)
+    issues.extend(_stale_activity_issue(session_file, heartbeat_file, session))
+
     if not issues:
         print(f"✅ Session '{slug}' is healthy")
-        print(f"   Checkpoints: {len(checkpoints)}, Status: {session.get('status', 'unknown')}")
+        print(
+            f"   Checkpoints: {len(checkpoints)}, "
+            f"Status: {session.get('status', 'unknown')}"
+        )
     else:
         print(f"⚠️  Session '{slug}' has {len(issues)} issue(s):")
         for issue in issues:
@@ -324,12 +345,62 @@ def cmd_archive(slug: str) -> None:
 
     archive_dir = ARCHIVEDIR / slug
     if archive_dir.exists():
-        print(f"Session '{slug}' already exists in archive. Remove it first or use a different slug.")
+        print(
+            f"Session '{slug}' already exists in archive. Remove it first "
+            "or use a different slug."
+        )
         return
 
     archive_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(sdir), str(archive_dir))
     print(f"📦 Session '{slug}' archived to .pantheon/deepwork/archive/{slug}/")
+
+
+def _cleanup_stale_session(item: Path, now: datetime, dry_run: bool) -> None:
+    """Report a stale heartbeat for one session, if it can be read."""
+    heartbeat_file = item / "heartbeat.json"
+    if not heartbeat_file.exists():
+        return
+    try:
+        heartbeat = _read_json(heartbeat_file)
+        last_action = heartbeat.get("last_action", "")
+        if last_action and now - datetime.fromisoformat(last_action) > STALE_THRESHOLD:
+            if dry_run:
+                print(
+                    f"  [dry-run] Would flag stale session: {item.name}/ "
+                    f"(last action: {last_action})"
+                )
+            else:
+                print(f"  ⏸️  Session '{item.name}' stale since {last_action}")
+    except (ValueError, json.JSONDecodeError):
+        pass
+
+
+def _cleanup_temp_files(item: Path, dry_run: bool) -> int:
+    """Remove temporary files from one session and return the count."""
+    removed_files = 0
+    for tmp_file in item.glob("*.tmp"):
+        if dry_run:
+            print(f"  [dry-run] Would remove temp file: {tmp_file.name}")
+        else:
+            tmp_file.unlink()
+            removed_files += 1
+            print(f"  Removed temp file: {item.name}/{tmp_file.name}")
+    return removed_files
+
+
+def _cleanup_item(item: Path, now: datetime, dry_run: bool) -> tuple[int, int]:
+    """Clean one session directory and return (directories, files) removed."""
+    session_file = item / "session.json"
+    if not session_file.exists():
+        if dry_run:
+            print(f"  [dry-run] Would remove orphan directory: {item.name}/")
+            return 0, 0
+        shutil.rmtree(item)
+        print(f"  Removed orphan directory: {item.name}/")
+        return 1, 0
+    _cleanup_stale_session(item, now, dry_run)
+    return 0, _cleanup_temp_files(item, dry_run)
 
 
 def cmd_cleanup(dry_run: bool = False) -> None:
@@ -347,47 +418,12 @@ def cmd_cleanup(dry_run: bool = False) -> None:
     now = datetime.now(UTC)
     removed_dirs = 0
     removed_files = 0
-
     for item in sorted(DEEPDIR.iterdir()):
         if not item.is_dir() or item.name == "archive" or item.name.startswith("."):
             continue
-
-        session_file = item / "session.json"
-        hb_file = item / "heartbeat.json"
-
-        # Check if it's an orphan (no session.json)
-        if not session_file.exists():
-            if dry_run:
-                print(f"  [dry-run] Would remove orphan directory: {item.name}/")
-            else:
-                shutil.rmtree(item)
-                removed_dirs += 1
-                print(f"  Removed orphan directory: {item.name}/")
-            continue
-
-        # Check for stale sessions
-        if hb_file.exists():
-            try:
-                hb = _read_json(hb_file)
-                last_action = hb.get("last_action", "")
-                if last_action:
-                    last_time = datetime.fromisoformat(last_action)
-                    if now - last_time > STALE_THRESHOLD:
-                        if dry_run:
-                            print(f"  [dry-run] Would flag stale session: {item.name}/ (last action: {last_action})")
-                        else:
-                            print(f"  ⏸️  Session '{item.name}' stale since {last_action}")
-            except (ValueError, json.JSONDecodeError):
-                pass
-
-        # Clean temp files
-        for tmp_file in item.glob("*.tmp"):
-            if dry_run:
-                print(f"  [dry-run] Would remove temp file: {tmp_file.name}")
-            else:
-                tmp_file.unlink()
-                removed_files += 1
-                print(f"  Removed temp file: {item.name}/{tmp_file.name}")
+        dirs, files = _cleanup_item(item, now, dry_run)
+        removed_dirs += dirs
+        removed_files += files
 
     if not dry_run:
         total = removed_dirs + removed_files

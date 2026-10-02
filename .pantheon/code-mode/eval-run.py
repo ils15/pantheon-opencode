@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ---
-# description: plugin-eval orchestrator — runs static + LLM judge + Monte Carlo layers and emits one report JSON
+# description: plugin-eval orchestrator — runs static + LLM judge + Monte Carlo
+# layers and emits one report JSON
 # timeout: 300
 # ---
 """Orchestrator for the plugin-eval certification pipeline (PR 3).
@@ -36,9 +37,13 @@ JUDGE_SCRIPT = SCRIPT_DIR / "eval-llm-judge.py"
 MONTE_SCRIPT = SCRIPT_DIR / "eval-monte-carlo.py"
 LAYER_TIMEOUT = 240.0
 SCORE_KEYS = ("score", "overall", "overall_score", "reliability", "total")
+CERTIFIED_THRESHOLD = 75
+NEEDS_WORK_THRESHOLD = 50
 
 
-def _run_layer(script: Path, target: str, extra: list[str] | None = None) -> dict[str, Any]:
+def _run_layer(
+    script: Path, target: str, extra: list[str] | None = None
+) -> dict[str, Any]:
     """Run one layer script; return parsed JSON or an error dict.
 
     A non-zero exit is not fatal by itself: layer scripts print their report
@@ -50,18 +55,26 @@ def _run_layer(script: Path, target: str, extra: list[str] | None = None) -> dic
     """
     cmd = [sys.executable, str(script), target, *(extra or [])]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=LAYER_TIMEOUT, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=LAYER_TIMEOUT, check=False
+        )
     except subprocess.TimeoutExpired:
         return {"error": f"{script.name} timed out"}
     try:
         data = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
         if proc.returncode != 0:
-            return {"error": proc.stderr.strip() or f"{script.name} exited {proc.returncode}"}
+            return {
+                "error": proc.stderr.strip()
+                or f"{script.name} exited {proc.returncode}"
+            }
         return {"error": f"{script.name} returned invalid JSON: {exc}"}
     if not isinstance(data, dict):
         if proc.returncode != 0:
-            return {"error": proc.stderr.strip() or f"{script.name} exited {proc.returncode}"}
+            return {
+                "error": proc.stderr.strip()
+                or f"{script.name} exited {proc.returncode}"
+            }
         return {"error": f"{script.name} returned non-object JSON"}
     if proc.returncode != 0:
         data["below_threshold"] = True
@@ -83,9 +96,9 @@ def _extract_score(data: dict[str, Any], keys: tuple[str, ...]) -> float | None:
 
 
 def _verdict(score: float) -> str:
-    if score >= 75:
+    if score >= CERTIFIED_THRESHOLD:
         return "certified"
-    if score >= 50:
+    if score >= NEEDS_WORK_THRESHOLD:
         return "needs_work"
     return "failed"
 
@@ -132,9 +145,11 @@ def _persist_report(report: dict[str, Any]) -> None:
         )
         if "error" in result:
             print(f"eval_store: {result['error']}", file=sys.stderr)
-    except Exception:  # noqa: BLE001
-        print("To publish: use eval_store.store_eval() or the pantheon-memory MCP",
-              file=sys.stderr)
+    except Exception:
+        print(
+            "To publish: use eval_store.store_eval() or the pantheon-memory MCP",
+            file=sys.stderr,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -143,9 +158,17 @@ def main(argv: list[str] | None = None) -> int:
         description="plugin-eval orchestrator (static + LLM judge + Monte Carlo)."
     )
     parser.add_argument("path", help="Path to a skill/agent directory or doc file")
-    parser.add_argument("--runs", type=int, default=20, help="Monte Carlo runs (default 20)")
-    parser.add_argument("--skip-llm", action="store_true", help="Skip the LLM judge layer")
-    parser.add_argument("--allow-external-llm", action="store_true", help="Permit the LLM judge to send skill content externally")
+    parser.add_argument(
+        "--runs", type=int, default=20, help="Monte Carlo runs (default 20)"
+    )
+    parser.add_argument(
+        "--skip-llm", action="store_true", help="Skip the LLM judge layer"
+    )
+    parser.add_argument(
+        "--allow-external-llm",
+        action="store_true",
+        help="Permit the LLM judge to send skill content externally",
+    )
     args = parser.parse_args(argv)
 
     report: dict[str, Any] = {

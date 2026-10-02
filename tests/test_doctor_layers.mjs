@@ -12,6 +12,7 @@ import {
   classifyNodeSqliteProbe,
   classifyPermissionTaskCheck,
   classifyPluginVersionDrift,
+  classifyRequiredRuntimeFile,
   collectMcpConfigs,
   collectRegisteredPluginRefs,
   deriveInstalledAgentFiles,
@@ -22,7 +23,9 @@ import {
   resolveCodeModeDir,
   resolveInstalledPackageRoot,
   resolveOpenCodeConfigDir,
+  resolveRuntimePython,
   summaryMessage,
+  validateRequiredRuntimeFile,
 } from '../scripts/doctor.mjs'
 
 const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), '..'))
@@ -66,6 +69,14 @@ assert.equal(
 assert.equal(classifyPermissionTaskCheck('global', 1, 1), 'error')
 assert.equal(classifyPermissionTaskCheck('sandbox', 1, 1), 'error')
 assert.equal(classifyPermissionTaskCheck('lite', 1, 1), 'skip')
+assert.equal(classifyRequiredRuntimeFile(true), 'present')
+assert.equal(
+  classifyRequiredRuntimeFile(false),
+  'error',
+  'missing runtime requirements are blocking rather than advisory',
+)
+const missingRequirements = join(tmpdir(), 'pantheon-doctor-requirements-does-not-exist.txt')
+assert.equal(validateRequiredRuntimeFile(missingRequirements).ok, false)
 
 // User config resolution must follow the same isolated HOME/XDG/PANTHEON_HOME
 // roots used by init/OpenCode, rather than the doctor's current working dir.
@@ -98,6 +109,19 @@ try {
     resolveOpenCodeConfigDir({ HOME: sandboxHome, PANTHEON_HOME: sandboxConfigDir }),
     sandboxConfigDir,
     'PANTHEON_HOME takes precedence and is already the config root',
+  )
+
+  const checkout = join(sandboxHome, 'checkout')
+  mkdirSync(join(checkout, '.opencode'), { recursive: true })
+  assert.equal(
+    resolveRuntimePython({ target: checkout, env: {} }),
+    'python3',
+    'a checkout without a pre-existing venv falls back to PATH python3',
+  )
+  assert.equal(
+    resolveRuntimePython({ target: checkout, env: { PANTHEON_PYTHON: '/opt/ci/python' } }),
+    '/opt/ci/python',
+    'PANTHEON_PYTHON explicitly selects the CI interpreter',
   )
 } finally {
   rmSync(sandboxHome, { recursive: true, force: true })

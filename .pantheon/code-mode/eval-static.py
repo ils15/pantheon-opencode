@@ -53,7 +53,8 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "credential_assignment",
         re.compile(
-            r"\b(?:api[_-]?key|secret|pass" + r"word|token)\s*[:=]\s*['\"]?[A-Za-z0-9_\-./+]{12,}",
+            r"\b(?:api[_-]?key|secret|pass"
+            + r"word|token)\s*[:=]\s*['\"]?[A-Za-z0-9_\-./+]{12,}",
             re.IGNORECASE,
         ),
     ),
@@ -68,6 +69,7 @@ _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "#", "data:")
 _FM_RE = re.compile(r"\A---\s*\n(.*?)\n---", re.DOTALL)
 _KEY_RE = re.compile(r"^([A-Za-z_][\w-]*):\s*(.*)$")
 _CLOSERS = {"[": "]", "{": "}"}
+MIN_QUOTED_SCALAR_LENGTH = 2
 
 
 # ── Minimal YAML-subset frontmatter parser (stdlib) ──────────────────────────
@@ -76,7 +78,7 @@ _CLOSERS = {"[": "]", "{": "}"}
 def _scalar(raw: str) -> str:
     """Return a scalar value with optional surrounding quotes stripped."""
     raw = raw.strip()
-    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
+    if len(raw) >= MIN_QUOTED_SCALAR_LENGTH and raw[0] == raw[-1] and raw[0] in "'\"":
         return raw[1:-1]
     return raw
 
@@ -112,7 +114,9 @@ def parse_yaml_subset(text: str) -> dict[str, Any]:
         if raw_value[0] in _CLOSERS:
             closer = _CLOSERS[raw_value[0]]
             if not raw_value.endswith(closer):
-                raise ValueError(f"line {lineno}: unbalanced {raw_value[0]!r} in {key!r}")
+                raise ValueError(
+                    f"line {lineno}: unbalanced {raw_value[0]!r} in {key!r}"
+                )
             inner = raw_value[1:-1].strip()
             data[key] = [_scalar(v) for v in inner.split(",")] if inner else []
             continue
@@ -191,8 +195,8 @@ def _markdown_references(manifest: Path) -> list[str]:
     """Collect relative markdown link targets from the manifest body."""
     content = manifest.read_text(encoding="utf-8", errors="replace")
     refs: list[str] = []
-    for target in re.findall(r"\]\(([^)]+)\)", content):
-        target = target.strip()
+    for raw_target in re.findall(r"\]\(([^)]+)\)", content):
+        target = raw_target.strip()
         if not target or target.startswith(_EXTERNAL_PREFIXES):
             continue
         # Strip optional anchor suffix (path#section)
@@ -271,8 +275,7 @@ def run_eval(dir_path: Path) -> dict[str, Any]:
     """Run all checks and build the certification report dict."""
     results = [(name, fn(dir_path)) for name, fn in _CHECK_FUNCS]
     checks = [
-        {"check": name, "pass": ok, "detail": detail}
-        for name, (ok, detail) in results
+        {"check": name, "pass": ok, "detail": detail} for name, (ok, detail) in results
     ]
     passed = sum(1 for _, (ok, _) in results if ok)
     total = len(results)

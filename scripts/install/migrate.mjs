@@ -332,7 +332,7 @@ function main() {
   if (list) {
     const history = listAppliedMigrations(target)
     if (!history.currentVersion) {
-      console.log('  \u2139\uFE0F  No install state found in: ' + target)
+      console.log(`  \u2139\uFE0F  No install state found in: ${target}`)
       return
     }
     console.log(`  Current version: ${history.currentVersion}`)

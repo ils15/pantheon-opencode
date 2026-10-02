@@ -1,4 +1,5 @@
-"""Plugin-eval pipeline tests: store, static checks, LLM judge, orchestrator, Monte Carlo.
+"""Plugin-eval pipeline tests: store, static checks, LLM judge, orchestrator,
+Monte Carlo.
 
 Consolidated from the former ``test_eval_{store,static,judge,run,monte_carlo}.py``
 modules. Only real behavioural contracts are asserted here:
@@ -634,7 +635,8 @@ def test_run_layer_nonzero_exit_with_invalid_json_is_error(
     """A non-zero exit with unparsable stdout is an error carrying stderr."""
     script = _write_layer(
         tmp_path / "layer.py",
-        "print('not json')\nimport sys\nsys.stderr.write('boom')\nraise SystemExit(1)\n",
+        "print('not json')\nimport sys\nsys.stderr.write('boom')\n"
+        "raise SystemExit(1)\n",
     )
     result = run_mod._run_layer(script, "target")
     assert "error" in result
@@ -707,8 +709,10 @@ def test_run_below_threshold_scores_counted(
         "---\nname: my-skill\ndescription: d\n---\n# t\n", encoding="utf-8"
     )
     wired_layers(
-        static_body="import json\nprint(json.dumps({'score': 70}))\nraise SystemExit(1)\n",
-        monte_body="import json\nprint(json.dumps({'reliability': 65.0}))\nraise SystemExit(1)\n",
+        static_body="import json\nprint(json.dumps({'score': 70}))\n"
+        "raise SystemExit(1)\n",
+        monte_body="import json\nprint(json.dumps({'reliability': 65.0}))\n"
+        "raise SystemExit(1)\n",
     )
     assert run_mod.main([str(target), "--skip-llm"]) == 0
     report = json.loads(capsys.readouterr().out)

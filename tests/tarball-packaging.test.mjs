@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -70,6 +71,25 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     // negations because .npmignore is overridden by a files whitelist.
     assert.doesNotMatch(listing, /(?:^|\/)__pycache__(?:\/|$)|\.pyc$/)
     execFileSync('tar', ['-xzf', join(ROOT, tarball), '-C', work])
+    const packageRoot = join(work, 'package')
+    const codeModeRoot = join(packageRoot, '.pantheon', 'code-mode')
+    const codeModeManifest = JSON.parse(readFileSync(join(codeModeRoot, 'manifest.json'), 'utf8'))
+    const manifestEntries = Object.entries(codeModeManifest.scripts ?? {})
+    const shippedScripts = textFiles(codeModeRoot)
+      .filter((file) => /\.(?:py|sh)$/.test(file))
+      .map((file) => file.slice(codeModeRoot.length + 1))
+      .sort()
+    assert.deepEqual(
+      manifestEntries.map(([script]) => script).sort(),
+      shippedScripts,
+      'code-mode manifest must contain exactly the scripts shipped in the tarball',
+    )
+    for (const [script, expectedHash] of manifestEntries) {
+      const scriptPath = join(codeModeRoot, script)
+      assert.equal(existsSync(scriptPath), true, `manifest script is missing: ${script}`)
+      const actualHash = createHash('sha256').update(readFileSync(scriptPath)).digest('hex')
+      assert.equal(actualHash, expectedHash, `manifest hash mismatch: ${script}`)
+    }
     const contents = readFileSync(join(work, 'package', 'opencode.json'), 'utf8')
     assertExecutableConfigIsPathFree(join(work, 'package'))
     assert.doesNotMatch(contents, forbidden)
@@ -97,6 +117,21 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     // The code-mode payload must ship inside the tarball so fresh installs
     // can seed the runtime scripts directory.
     assert.match(listing, /^package\/\.pantheon\/code-mode\/compress-inline\.py$/m)
+    assert.doesNotMatch(
+      listing,
+      /package\/\.pantheon\/code-mode\/session-end-save\.(?:py|sh)/,
+      'retired session-save scripts must not be packaged',
+    )
+    assert.doesNotMatch(
+      listing,
+      /package\/\.pantheon\/code-mode\/eval-[^/]+\.py/,
+      'evaluation helpers must remain local-only',
+    )
+    assert.doesNotMatch(
+      listing,
+      /(?:^|\/)evals?(?:\/|$)|(?:^|\/)promptfoo(?:\/|$)/i,
+      'local evals and Promptfoo assets must remain excluded',
+    )
 
     const redaction = spawnSync(
       process.execPath,

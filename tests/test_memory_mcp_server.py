@@ -176,7 +176,9 @@ class TestMemoryStoreValidationReporting:
 
         assert "2 invalid arguments" in message
         assert "value is required and must be a non-empty string" in message
-        assert "metadata must be a JSON object encoded as a valid JSON string" in message
+        assert (
+            "metadata must be a JSON object encoded as a valid JSON string" in message
+        )
         assert "got invalid JSON" in message
         assert message.count("example:") == 1
 
@@ -194,8 +196,9 @@ class TestMemoryStoreValidationReporting:
         )
         data = json.loads(_text_from_tool(result))
 
-        assert "metadata must be a JSON object encoded as a valid JSON string" in (
-            data["error"]
+        assert (
+            "metadata must be a JSON object encoded as a valid JSON string"
+            in (data["error"])
         )
         assert "Failed to store memory" not in data["error"]
 
@@ -434,9 +437,7 @@ class TestMemorySearch:
 class TestMemorySearchDecay:
     """Tests for the decay_days freshness parameter on memory_search."""
 
-    async def _store_pair(
-        self, server: FastMCP, module, namespace: str
-    ) -> None:
+    async def _store_pair(self, server: FastMCP, module, namespace: str) -> None:
         """Store an old (90d) and a fresh entry with identical content."""
         for key, age_days in (("py_old", 90), ("py_new", 0)):
             result = await server.call_tool(
@@ -464,7 +465,8 @@ class TestMemorySearchDecay:
         ns = f"decay_{time.time_ns()}"
         await self._store_pair(server, module, ns)
         result = await server.call_tool(
-            "memory_search", {"query": "Python programming", "top_k": 5, "namespace": ns}
+            "memory_search",
+            {"query": "Python programming", "top_k": 5, "namespace": ns},
         )
         data = json.loads(_text_from_tool(result))
         scores = {r["key"]: r["score"] for r in data}
@@ -474,7 +476,12 @@ class TestMemorySearchDecay:
         # for age > 0), while the fresh entry is unaffected.
         decayed = await server.call_tool(
             "memory_search",
-            {"query": "Python programming", "top_k": 5, "namespace": ns, "decay_days": 30},
+            {
+                "query": "Python programming",
+                "top_k": 5,
+                "namespace": ns,
+                "decay_days": 30,
+            },
         )
         d2 = {r["key"]: r["score"] for r in json.loads(_text_from_tool(decayed))}
         assert scores["py_old"] > d2["py_old"]
@@ -486,7 +493,12 @@ class TestMemorySearchDecay:
         await self._store_pair(server, module, ns)
         result = await server.call_tool(
             "memory_search",
-            {"query": "Python programming", "top_k": 5, "namespace": ns, "decay_days": 30},
+            {
+                "query": "Python programming",
+                "top_k": 5,
+                "namespace": ns,
+                "decay_days": 30,
+            },
         )
         data = json.loads(_text_from_tool(result))
         keys = [r["key"] for r in data]
@@ -498,11 +510,17 @@ class TestMemorySearchDecay:
         ns = f"decay_{time.time_ns()}"
         await self._store_pair(server, module, ns)
         r1 = await server.call_tool(
-            "memory_search", {"query": "Python programming", "top_k": 5, "namespace": ns}
+            "memory_search",
+            {"query": "Python programming", "top_k": 5, "namespace": ns},
         )
         r2 = await server.call_tool(
             "memory_search",
-            {"query": "Python programming", "top_k": 5, "namespace": ns, "decay_days": 30},
+            {
+                "query": "Python programming",
+                "top_k": 5,
+                "namespace": ns,
+                "decay_days": 30,
+            },
         )
         d1 = {r["key"]: r["score"] for r in json.loads(_text_from_tool(r1))}
         d2 = {r["key"]: r["score"] for r in json.loads(_text_from_tool(r2))}
@@ -514,9 +532,7 @@ class TestMemorySearchDecay:
         """_score_hits applies the freshness multiplier when decay_days is set."""
         now = time.time()
         new_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
-        old_iso = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 90 * 86400)
-        )
+        old_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 90 * 86400))
         hits = [(1, 2.0), (2, 1.5)]
         ranked = module._score_hits(hits, 10)
         ranked_decayed = module._score_hits(
@@ -829,6 +845,7 @@ class TestErrorHandling:
         data = json.loads(_text_from_tool(result))
         assert isinstance(data, list)
 
+
 # =============================================================================
 # FTS Query Construction (Step A — prefix-pollution fix)
 # =============================================================================
@@ -862,9 +879,7 @@ class TestBuildFtsQuery:
         for term in ('"TS"', '"Py"', '"db"'):
             assert f"{term}*" not in expr
 
-    def test_four_character_boundary_is_inclusive_for_prefixing(
-        self, module
-    ) -> None:
+    def test_four_character_boundary_is_inclusive_for_prefixing(self, module) -> None:
         """Four characters is the shortest prefix-matched length."""
         assert module._MIN_PREFIX_LEN == 4
         assert module._build_fts_query("config") == '"config"*'
@@ -980,9 +995,9 @@ class TestVectorRemoval:
         ]
         assert pins, "requirements file is empty"
         for banned in ("sqlite-vec", "sqlite_vec", "fastembed"):
-            assert not any(
-                banned in pin for pin in pins
-            ), f"{banned} is still pinned: {pins}"
+            assert not any(banned in pin for pin in pins), (
+                f"{banned} is still pinned: {pins}"
+            )
 
     def test_shipped_scripts_copy_also_has_no_vector_path(self) -> None:
         """The scripts/ copy ships standalone and must agree on the removal."""
@@ -1070,7 +1085,10 @@ class TestVectorRemoval:
 
                 await m.mcp.call_tool(
                     "memory_store",
-                    {"value": "FastAPI is a web framework for Python.", "key": "fastapi"},
+                    {
+                        "value": "FastAPI is a web framework for Python.",
+                        "key": "fastapi",
+                    },
                 )
 
                 hits = await m.mcp.call_tool(

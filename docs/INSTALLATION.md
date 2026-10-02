@@ -1,6 +1,6 @@
-# Pantheon Installation Guide — v1.5.0-beta.2 (OpenCode)
+# Pantheon Installation Guide — v1.6.0-beta.1 (OpenCode 2)
 
-Pantheon v1.5.0-beta.2 is **OpenCode-only**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. As tabelas de preset são derivadas de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
+Pantheon v1.6.0-beta.1 is **OpenCode 2-compatible**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. As tabelas de preset são derivadas de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
 
 ## TL;DR (Quick Start)
 
@@ -114,7 +114,7 @@ JavaScript coverage at all. Python coverage additionally requires
 
 ## OpenCode V1/V2 — contrato de plugin
 
-Pantheon 1.5.0-beta.2 does not load both Pantheon plugin generations in one
+Pantheon 1.6.0-beta.1 does not load both Pantheon plugin generations in one
 installation. The ordinary OpenCode settings may be merged, but the installer
 removes Pantheon references from both config shapes before registering only the
 selected generation:
@@ -460,8 +460,8 @@ and register the **absolute repo path** (`<repo>/src/plugins/tui`) in the
 project-local `.opencode/tui.json`:
 
 ```bash
-# 1. Install pinned deps + build the bundle
-npm ci --prefix src/plugins/tui --ignore-scripts --no-audit --no-fund
+# 1. Install the root workspace (including the TUI) + build the bundle
+npm ci --ignore-scripts --no-audit --no-fund
 npm run build --prefix src/plugins/tui
 
 # 2. Register the repo path (merged into the array, not clobbered)
@@ -496,7 +496,7 @@ Type these in the OpenCode chat:
 | `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints and Themis review gates |
 | `/pantheon-model` (wizard) / `status\|show\|set --agent\|reset --agent` | Per-agent overrides em `active-preset.json` (`overrides.agents[agent]`); `status` lista 14 agentes (model/effort/origem `preset\|override\|env\|none`); `set --agent X --model provider/model-id [--effort low\|medium\|high] [--scope project\|global]` validado via `CAPABILITY_TABLE`+`hasVision`+clamp; `reset --agent X`; default `project`; `global` exige `confirm`+`authorize_global`; atômico `.bak`+lock; nunca escreve `.env` nem top-level `model` |
 | `/pantheon-optimize` | Project optimization: bloat scan, deepwork archive, cache migration, token report |
-| `/pantheon-consolidate` | Merge and deduplicate memory entries in the vector database |
+| `/pantheon-consolidate` | Merge and deduplicate memory entries through the persistence MCP server |
 
 ## Troubleshooting — Chaves e Presets
 
