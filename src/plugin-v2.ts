@@ -2,29 +2,40 @@
  * Pantheon V2 Plugin — full orchestration plugin for OpenCode V2.
  *
  * Registers:
- * - 9 orchestration tools via V2 tool.transform (with V1 bridge fallback)
+ * - 6 orchestration tools via V2 tool.transform (with V1 bridge fallback)
  * - 4 event subscriptions (session.created, idle, error, compacted)
- * - Session hooks (prompt, context) and tool hooks (execute.before/after)
+ * - Session hooks (prompt, context, compaction) and tool hooks (execute.before/after)
  * - Permission hooks for custom authorization
  *
- * V2 Plugin API surface (confirmed by investigation):
- *   ctx.tool.transform / ctx.event.subscribe / ctx.session.hook /
- *   ctx.tool.hook / ctx.permission.hook
+ * The transitional SDK types used here expose these domains:
+ *   ctx.agent / ctx.command / ctx.model / ctx.reference / ctx.skill /
+ *   ctx.tool / ctx.event / ctx.permission / ctx.session
  *
- * When a V2 API domain is unavailable, the feature is gracefully skipped
- * and documented in V2_UNSUPPORTED_FEATURES. The plugin never breaks.
+ * A separate OpenCode 2.0.18 host runtime probe confirmed ctx.integration and
+ * ctx.skill have callable `.transform` methods; only ctx.catalog was absent.
+ * The probe's callback effects were
+ * not observed for any domain. This runtime probe is not an SDK compatibility
+ * claim. Pantheon's Phase 1/config transform
+ * registrations cover agent, command, and reference; `ctx.tool.transform` is
+ * attempted separately in Phase 2. Integration and skill transform callbacks
+ * are not registered by Pantheon, so their effects remain unproven. The
+ * narrower `SkillEditor.source()` helper is absent from the inspected SDK
+ * editor shape, so directory-source registration remains unsupported; that
+ * does not imply that `ctx.skill` or its transform is absent.
+ *
+ * V2_UNSUPPORTED_FEATURES distinguishes adapter limitations from observed
+ * host-absent APIs; setup handles optional registrations on a best-effort basis.
  *
  * @module plugin-v2
  */
 
+import { appendFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type {
   AgentDraft,
-  CatalogDraft,
   CommandDraft,
   PluginContext,
   ReferenceDraft,
-  SkillDraft,
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
 import {
@@ -36,34 +47,53 @@ import {
 // ─── Unsupported Features Registry ───────────────────────────────────────
 
 /**
- * Features not yet supported by the installed V2 plugin API.
- * Updated dynamically at setup time based on actual API availability.
- * Initialized with features known to be absent from the V2 promise API;
- * additional features are appended during setup if their API is missing.
+ * Features not implemented by the current Pantheon V2 adapter or absent from
+ * the observed host. A listed feature is not necessarily a host-absent API.
+ * Additional features are appended during setup when a required API is missing.
  */
-export const V2_UNSUPPORTED_FEATURES: string[] = ['legacy-hooks']
+export const V2_UNSUPPORTED_FEATURES: string[] = [
+  'legacy-hooks',
+  // `catalog` alone was absent in the OpenCode 2.0.18 runtime probe.
+  'catalog-transform',
+  // The host exposes callable transforms for integration and skill, but
+  // Pantheon does not register/use them and no host callback effects were
+  // observed. These entries describe adapter support, not host availability.
+  'integration-transform',
+  // The inspected SkillEditor shape has no `source()` helper for adding a
+  // directory source. This is narrower than (and distinct from) ctx.skill's
+  // host availability or callable transform.
+  'skill-transform',
+]
 
 // ─── Constants ───────────────────────────────────────────────────────────
 
 const POLICY_MARKER = '<!-- pantheon-v2-policy -->'
 const POLICY = `${POLICY_MARKER}\nFollow Pantheon routing policy: delegate implementation work to the named specialist and do not claim work was performed without verification.`
 
+/** 2.0.16 `system` on a session hook payload is `Array<SystemPart>`. */
+interface SystemPart {
+  type: 'text'
+  text: string
+}
+
+function isTextPart(entry: unknown): entry is SystemPart {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    typeof (entry as { text?: unknown }).text === 'string'
+  )
+}
+
 /**
- * SystemPart shape sniffing (beta 19192 `Schema validation failed` in
- * system[N]): host sends SystemPart objects ({type,text}) but pinned SDK
- * (@opencode-ai/plugin 1.18.18) only knows string/string[]. Detect at runtime.
- * Never throws (fail-open).
+ * Extract text from a `system` entry. The host's own coercion accepts a bare
+ * string, but the canonical 2.0.16 shape is `{ type: 'text', text }`; the
+ * string branch is retained so the handler still works against a host that
+ * sends primitives. Never throws.
  */
 function systemEntryText(entry: unknown): string | null {
   try {
     if (typeof entry === 'string') return entry
-    if (
-      typeof entry === 'object' &&
-      entry !== null &&
-      typeof (entry as { text?: unknown }).text === 'string'
-    ) {
-      return (entry as { text: string }).text
-    }
+    if (isTextPart(entry)) return entry.text
     return null
   } catch {
     return null
@@ -81,19 +111,30 @@ function hasPolicyMarker(arr: unknown[]): boolean {
   }
 }
 
-function usesObjectShape(arr: unknown[]): boolean {
-  try {
-    return arr.some(
-      (s) =>
-        typeof s === 'object' && s !== null && typeof (s as { text?: unknown }).text === 'string',
-    )
-  } catch {
-    return false
+/**
+ * Normalize a `system` value to the 2.0.16 `Array<SystemPart>` shape.
+ *
+ * `SessionContext.system` is `Array<SystemPart>` where a part is
+ * `{ type: 'text', text }`. A raw string (the whole value, or an element) is
+ * not that shape, so it is upgraded: element strings become parts, and a bare
+ * string value becomes a one-element part array. Non-array, non-string values
+ * are returned unchanged.
+ *
+ * Returns the normalized array, or `null` when `system` is neither a string
+ * nor an array (nothing to normalize).
+ */
+function normalizeSystemToParts(system: unknown): unknown[] | null {
+  if (typeof system === 'string') {
+    return [{ type: 'text', text: system } satisfies SystemPart]
   }
-}
-
-function toSystemEntry(text: string, useObject: boolean): string | { type: 'text'; text: string } {
-  return useObject ? { type: 'text', text } : text
+  if (!Array.isArray(system)) return null
+  for (let i = 0; i < system.length; i++) {
+    const entry = system[i]
+    if (typeof entry === 'string') {
+      system[i] = { type: 'text', text: entry } satisfies SystemPart
+    }
+  }
+  return system
 }
 
 /**
@@ -191,16 +232,6 @@ function transformAgents(draft: AgentDraft): void {
   }
 }
 
-function transformCatalog(draft: CatalogDraft, options: PluginContext['options']): void {
-  const configured = options.default_model
-  if (typeof configured !== 'string') return
-  const separator = configured.indexOf('/')
-  if (separator <= 0 || separator === configured.length - 1) return
-  const providerID = configured.slice(0, separator)
-  const modelID = configured.slice(separator + 1)
-  if (draft.model.get(providerID, modelID)) draft.model.default.set(providerID, modelID)
-}
-
 function transformCommands(draft: CommandDraft): void {
   // Beta 19192 guard (issue #92): draft may not have `list`, or list()
   // may return a non-iterable. Never throw — mark unsupported and return.
@@ -234,41 +265,6 @@ function transformCommands(draft: CommandDraft): void {
     }
   } catch {
     markUnsupported('command-transform')
-  }
-}
-
-function transformSkills(draft: SkillDraft): void {
-  // Beta 19192 guard (issue #92): draft may not have `list`, or list()
-  // may return a non-iterable. Never throw — mark unsupported and return.
-  let sources: Array<{ type: string; path: string }>
-  try {
-    const maybeList = (draft as unknown as { list?: unknown }).list
-    if (typeof maybeList !== 'function') {
-      markUnsupported('skill-transform-list')
-      return
-    }
-    const result = (maybeList as (this: unknown) => unknown).call(draft)
-    if (
-      result == null ||
-      typeof (result as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== 'function'
-    ) {
-      markUnsupported('skill-transform-list')
-      return
-    }
-    sources = Array.isArray(result)
-      ? (result as Array<{ type: string; path: string }>)
-      : Array.from(result as Iterable<{ type: string; path: string }>)
-  } catch {
-    markUnsupported('skill-transform-list')
-    return
-  }
-  try {
-    const path = fileURLToPath(new URL('./skills', import.meta.url))
-    if (!sources.some((source) => source.type === 'directory' && source.path === path)) {
-      draft.source({ type: 'directory', path })
-    }
-  } catch {
-    markUnsupported('skill-transform')
   }
 }
 
@@ -408,11 +404,11 @@ async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
 }
 
 async function onSessionError(_event: V2SessionEvent): Promise<void> {
-  // Error handling — delegation finalize as error.
+  // Error handling — board transition to error.
   const bridge = resolveBridge()
   if (bridge?.board != null) {
-    // Bridge available: delegation error handling is done by V1 event hook.
-    // V2 only logs — V1 finalizeDelegation handles the board transition.
+    // Bridge available: error handling is done by the V1 event hook.
+    // V2 only logs — V1 owns the board transition.
   }
 }
 
@@ -453,21 +449,32 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
     // "context" hook — inject routing policy + compaction state
     await sessionCtx.hook('context', (event: unknown) => {
       try {
-        // Beta 19192 hardening + SystemPart sniffing: host may send string[],
-        // SystemPart objects ({type,text}), mixed arrays, a single string, or
-        // a non-array system. Preserve string-path behavior; inject object
-        // shape when the array contains objects (else `Schema validation
-        // failed` in system[N]). Never throw to the host (fail-open).
-        const ctx = event as { system?: unknown } | null | undefined
-        const rawSystem: unknown = ctx?.system
-        if (typeof rawSystem === 'string' && ctx != null) {
-          ctx.system = rawSystem.includes(POLICY_MARKER) ? [rawSystem] : [rawSystem, POLICY]
-        } else if (Array.isArray(rawSystem)) {
-          if (!hasPolicyMarker(rawSystem)) {
-            rawSystem.push(toSystemEntry(POLICY, usesObjectShape(rawSystem)))
+        // Opt-in lifetime proof for the host-backed hook canary (MODE=real).
+        // Inert unless PANTHEON_HOOK_CANARY_LIFETIME_PROOF is set.
+        if (process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF) {
+          try {
+            appendFileSync(
+              process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF,
+              'plugin-v2:session.hook:context\n',
+            )
+          } catch {
+            // Best-effort instrumentation.
           }
         }
-        // Non-string, non-array system (or null event): ignore silently.
+        // 2.0.16 payload is `{ system: Array<SystemPart> }`. Normalize any
+        // string entries to `{ type: 'text', text }` parts and append the
+        // policy as a part. Junk entries are ignored; a non-array,
+        // non-string system is left untouched. Never throws (fail-open).
+        const ctx = event as { system?: unknown } | null | undefined
+        if (ctx == null) return
+        const normalized = normalizeSystemToParts(ctx.system)
+        if (normalized == null) return
+        // A bare string is replaced by its part array; an array is mutated in
+        // place (the host may read the original reference).
+        if (typeof ctx.system === 'string') ctx.system = normalized
+        if (!hasPolicyMarker(normalized)) {
+          normalized.push({ type: 'text', text: POLICY } satisfies SystemPart)
+        }
       } catch {
         // Fail-open: never throw to the host.
       }
@@ -640,9 +647,6 @@ function createV2ToolDefinitionsFromContext(_context: PluginContext): V2ToolDef[
     'infrastructure through the V2 bridge (src/pantheon/v2-bridge.ts).'
 
   const toolNames = [
-    'pantheon_delegate',
-    'pantheon_delegation_read',
-    'pantheon_delegation_list',
     'hashline_edit',
     'pantheon_goal_create',
     'pantheon_goal_get',
@@ -652,14 +656,6 @@ function createV2ToolDefinitionsFromContext(_context: PluginContext): V2ToolDef[
   ]
 
   const toolDescriptions: Record<string, string> = {
-    pantheon_delegate:
-      'Dispatch a background agent as a child session and register it on the job board. ' +
-      'Returns the readable alias (e.g. "apo-1"); read the result with pantheon_delegation_read.',
-    pantheon_delegation_read:
-      'Block until a background delegation finishes (completed/error/cancelled), then return ' +
-      'its report markdown (with a trailing agent-activity section) and mark the job reconciled.',
-    pantheon_delegation_list:
-      'List background delegations for the current session, with [unread] for finished jobs.',
     hashline_edit:
       'Edit a file anchored by hashline refs (LINE#TAG) instead of raw line numbers. ' +
       'Ops: replace, append, prepend, delete. ALL refs validated against ORIGINAL file first.',
@@ -710,17 +706,19 @@ export const plugin = define({
 
   async setup(context: PluginContext): Promise<void> {
     // ─── Phase 1: V2 Transforms (isolated per-domain, best-effort) ────
-    // Each domain registers independently: a failure in one transform
-    // (e.g. draft.list missing on beta 19192 → TypeError) must never
-    // reject setup() nor prevent the other domains from registering.
+    // Each transform registration is individually wrapped and settled via Promise.allSettled:
+    // a rejection marks only that transform unsupported
+    // and does not reject setup() or prevent later hook registrations.
     // See issue #92.
+    //
+    // Pantheon's Phase 1/config transform registrations cover agent, command,
+    // and reference; ctx.tool.transform is attempted separately in Phase 2.
+    // The 2.0.18 runtime probe found ctx.integration and ctx.skill with
+    // callable transforms, but no callback effects were observed; neither is
+    // registered here. Only ctx.catalog was absent in that probe.
+    // The hook canary tests hook firing only, not transform callback effects.
     const phase1Transforms: Array<{ feature: string; register: () => Promise<unknown> }> = [
       { feature: 'agent-transform', register: () => context.agent.transform(transformAgents) },
-      {
-        feature: 'catalog-transform',
-        register: () =>
-          context.catalog.transform((draft) => transformCatalog(draft, context.options)),
-      },
       {
         feature: 'command-transform',
         register: () => context.command.transform(transformCommands),
@@ -729,7 +727,6 @@ export const plugin = define({
         feature: 'reference-transform',
         register: () => context.reference.transform(transformReferences),
       },
-      { feature: 'skill-transform', register: () => context.skill.transform(transformSkills) },
     ]
     const phase1Results = await Promise.allSettled(
       phase1Transforms.map((t) => Promise.resolve().then(() => t.register())),
@@ -782,9 +779,31 @@ export const plugin = define({
       | undefined
     if (compactionCtx?.hook) {
       try {
-        await compactionCtx.hook('compacting', (_event: unknown) => {
+        // 2.0.16 `SessionHooks` key is `compaction` (the migration doc maps
+        // `experimental.session.compacting` → `ctx.session.hook("compaction")`).
+        // `compacting` is not a valid key: the registry accepts any string and
+        // silently drops unknown names, so the old name was a permanent no-op.
+        // Proven by the canary's negative control.
+        await compactionCtx.hook('compaction', (_event: unknown) => {
           // Compaction context build — injects active goals, pending todos,
           // and in-flight delegations. Wired through V1 infrastructure.
+          //
+          // Opt-in lifetime proof for the host-backed hook canary
+          // (tests/pantheon/plugin-v2-hook-canary.test.mjs, MODE=real). It is
+          // inert unless PANTHEON_HOOK_CANARY_LIFETIME_PROOF is set, so
+          // production behaviour is unchanged. This exists because a rename to
+          // `compacting` was a silent no-op for an unknown length of time: the
+          // canary can now observe that THIS registration fired.
+          if (process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF) {
+            try {
+              appendFileSync(
+                process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF,
+                'plugin-v2:session.hook:compaction\n',
+              )
+            } catch {
+              // Proof is best-effort: never let instrumentation break the host.
+            }
+          }
         })
       } catch {
         markUnsupported('compaction-hook')

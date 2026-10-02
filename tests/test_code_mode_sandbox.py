@@ -4,9 +4,11 @@ Covers:
 - _build_script_env: allowlist-only env, unknown vars excluded, empty env safe default
 - _prlimit_prefix: None when prlimit_path is None, correct prefix otherwise
 """
+
 from __future__ import annotations
 
 import importlib
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -55,13 +57,13 @@ class TestBuildScriptEnv:
         fake_env = {
             "PATH": "/usr/bin",
             "HOME": "/home/test",
-            "MY_SECRET_TOKEN": "secret123",
+            "MY_UNTRUSTED_VALUE": "sample-value",
             "AWS_ACCESS_KEY_ID": "AKIA",
             "DATABASE_URL": "postgres://localhost/db",
             "RANDOM_VAR": "nope",
         }
         result = module._build_script_env(fake_env)
-        assert "MY_SECRET_TOKEN" not in result
+        assert "MY_UNTRUSTED_VALUE" not in result
         assert "AWS_ACCESS_KEY_ID" not in result
         assert "DATABASE_URL" not in result
         assert "RANDOM_VAR" not in result
@@ -110,11 +112,64 @@ class TestPrlimitPrefix:
         result = module._prlimit_prefix("/usr/bin/prlimit")
         assert result is not None
         assert result[0] == "/usr/bin/prlimit"
-        assert "--nproc=512" in result
         assert "--as=1073741824" in result  # 1 GiB in bytes
         # CPU limit should be present (timeout+5)
         cpu_args = [a for a in result if a.startswith("--cpu=")]
         assert len(cpu_args) == 1
+
+    def test_nproc_is_derived_not_hardcoded(self, module) -> None:
+        """--nproc must clear the UID's current task count, whatever it is.
+
+        RLIMIT_NPROC is a per-real-UID total across processes AND threads. A
+        hardcoded value below the host's current usage makes the first fork()
+        inside the sandbox fail with EAGAIN, which is what --nproc=512 did on
+        a host already running more than 512 tasks. Pin the BEHAVIOUR — the
+        limit must exceed the live count — not the number.
+        """
+        result = module._prlimit_prefix("/usr/bin/prlimit")
+        assert result is not None
+        nproc_args = [a for a in result if a.startswith("--nproc=")]
+        assert len(nproc_args) == 1, result
+        limit = int(nproc_args[0].split("=", 1)[1])
+        current = module._uid_task_count()
+        assert current is not None
+        assert limit > current, (
+            f"nproc={limit} does not exceed the UID's current task count "
+            f"{current}; the sandbox would fail its first fork with EAGAIN"
+        )
+
+    def test_nproc_headroom_bounds_fork_bomb(self, module) -> None:
+        """The derived limit still caps how much a script can add."""
+        result = module._prlimit_prefix("/usr/bin/prlimit")
+        assert result is not None
+        limit = int(
+            next(a for a in result if a.startswith("--nproc=")).split("=", 1)[1]
+        )
+        current = module._uid_task_count()
+        assert limit <= current + module.NPROC_HEADROOM
+        assert limit - current <= module.NPROC_HEADROOM
+
+    def test_nproc_omitted_when_limit_cannot_be_derived(
+        self, module, monkeypatch
+    ) -> None:
+        """No readable /proc means no --nproc, but --as/--cpu must survive."""
+        monkeypatch.setattr(module, "_uid_task_count", lambda: None)
+        result = module._prlimit_prefix("/usr/bin/prlimit")
+        assert result is not None
+        assert not any(a.startswith("--nproc=") for a in result)
+        assert "--as=1073741824" in result
+        assert any(a.startswith("--cpu=") for a in result)
+
+    def test_nproc_omission_is_logged(self, module, monkeypatch, caplog) -> None:
+        """Omitting --nproc is fail-open and must be observable, not silent."""
+        monkeypatch.setattr(module, "_uid_task_count", lambda: None)
+        with caplog.at_level(logging.WARNING):
+            result = module._prlimit_prefix("/usr/bin/prlimit")
+        assert result is not None
+        assert any(
+            "--nproc" in record.getMessage() and "unbounded" in record.getMessage()
+            for record in caplog.records
+        )
 
     def test_cpu_limit_includes_timeout_plus_5(self, module) -> None:
         """CPU timeout should be timeout_s + 5."""
@@ -133,40 +188,42 @@ class TestSubprocessEnvIntegration:
 
     async def test_script_does_not_inherit_full_env(self, module) -> None:
         """A script should NOT see env vars outside the allowlist."""
-        # Write a script that dumps a secret env var
-        secret_script = (
-            '#!/usr/bin/env python3\n'
-            'import os\n'
-            'secret = os.environ.get("CODE_MODE_TEST_SECRET", "NOT_SET")\n'
-            'print(f"SECRET:{secret}")\n'
+        # Write a script that dumps a non-allowlisted env var
+        marker_script = (
+            "#!/usr/bin/env python3\n"
+            "import os\n"
+            'marker = os.environ.get("CODE_MODE_TEST_MARKER", "NOT_SET")\n'
+            'print(f"MARKER:{marker}")\n'
         )
         from pathlib import Path
 
         scripts_dir = Path(__file__).resolve().parent.parent / ".pantheon" / "code-mode"
         path = scripts_dir / "env_leak_test.py"
-        path.write_text(secret_script, encoding="utf-8")
+        path.write_text(marker_script, encoding="utf-8")
         path.chmod(0o755)
         module._approve_script(path.name)
         try:
-            # Inject a secret into the current process env
+            # Inject a non-allowlisted marker into the current process env
             import os
 
-            os.environ["CODE_MODE_TEST_SECRET"] = "SHOULD_NOT_LEAK"
+            os.environ["CODE_MODE_TEST_MARKER"] = "UNEXPECTED_VALUE"
             try:
-                result = await module.execute_code_script("env_leak_test.py", json_output=True)
-                # The script should NOT see the secret
-                assert "SHOULD_NOT_LEAK" not in result["stdout"]
-                assert "SECRET:NOT_SET" in result["stdout"]
+                result = await module.execute_code_script(
+                    "env_leak_test.py", json_output=True
+                )
+                # The script should NOT see the marker
+                assert "UNEXPECTED_VALUE" not in result["stdout"]
+                assert "MARKER:NOT_SET" in result["stdout"]
             finally:
-                del os.environ["CODE_MODE_TEST_SECRET"]
+                del os.environ["CODE_MODE_TEST_MARKER"]
         finally:
             path.unlink(missing_ok=True)
 
     async def test_script_sees_allowlisted_vars(self, module) -> None:
         """A script should see PATH and HOME from the sanitized env."""
         check_script = (
-            '#!/usr/bin/env python3\n'
-            'import os\n'
+            "#!/usr/bin/env python3\n"
+            "import os\n"
             'print(f"PATH_SET:{bool(os.environ.get(' + "'PATH'" + '))}")\n'
             'print(f"HOME_SET:{bool(os.environ.get(' + "'HOME'" + '))}")\n'
         )
@@ -178,7 +235,9 @@ class TestSubprocessEnvIntegration:
         path.chmod(0o755)
         module._approve_script(path.name)
         try:
-            result = await module.execute_code_script("env_allow_test.py", json_output=True)
+            result = await module.execute_code_script(
+                "env_allow_test.py", json_output=True
+            )
             assert "PATH_SET:True" in result["stdout"]
             assert "HOME_SET:True" in result["stdout"]
         finally:

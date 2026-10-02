@@ -155,7 +155,7 @@ async function main() {
       await adapter.saveJob(record)
 
       // The .tmp file should be gone (renamed to state.json)
-      const tmpFile = statePath + '.tmp'
+      const tmpFile = `${statePath}.tmp`
       assert.equal(existsSync(tmpFile), false, '.tmp file should be gone after rename')
       assert.ok(existsSync(statePath), 'state.json should exist')
     } finally {
@@ -207,14 +207,14 @@ async function main() {
       const loaded = await adapter.loadAllJobs()
       assert.equal(loaded.length, 2)
 
-      const jobA = loaded.find((r) => r.taskID === 'job-a')!
+      const jobA = loaded.find((r) => r.taskID === 'job-a')
       assert.ok(jobA)
-      assert.equal(jobA.state, 'completed')
-      assert.equal(jobA.resultSummary, 'Done A')
+      assert.equal(jobA?.state, 'completed')
+      assert.equal(jobA?.resultSummary, 'Done A')
 
-      const jobB = loaded.find((r) => r.taskID === 'job-b')!
+      const jobB = loaded.find((r) => r.taskID === 'job-b')
       assert.ok(jobB)
-      assert.equal(jobB.state, 'running')
+      assert.equal(jobB?.state, 'running')
     } finally {
       rmSync(tmpDir, { recursive: true, force: true })
     }
@@ -258,11 +258,11 @@ async function main() {
       })
 
       // Write a stale .tmp file (simulating interrupted atomic write)
-      writeFileSync(statePath + '.tmp', '["garbage"]', 'utf-8')
+      writeFileSync(`${statePath}.tmp`, '["garbage"]', 'utf-8')
 
       const loaded = await adapter.loadAllJobs()
       assert.equal(loaded.length, 1) // only real-job from state.json
-      assert.equal(loaded[0]!.taskID, 'real-job')
+      assert.equal(loaded[0]?.taskID, 'real-job')
     } finally {
       rmSync(tmpDir, { recursive: true, force: true })
     }
@@ -429,8 +429,8 @@ async function main() {
 
       const recovered = board.get('orphan')
       assert.ok(recovered)
-      assert.equal(recovered!.state, 'error')
-      assert.ok(recovered!.lastStatusError?.includes('Process restarted'))
+      assert.equal(recovered?.state, 'error')
+      assert.ok(recovered?.lastStatusError?.includes('Process restarted'))
     } finally {
       rmSync(tmpDir, { recursive: true, force: true })
     }
@@ -615,7 +615,7 @@ async function main() {
 
   console.log('')
   for (const r of results) {
-    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? ': ' + r.error : ''}`)
+    console.log(`  ${r.passed ? 'PASS' : 'FAIL'} ${r.name}${r.error ? `: ${r.error}` : ''}`)
   }
   console.log(`
 Results: ${passed} passed, ${failed.length} failed`)

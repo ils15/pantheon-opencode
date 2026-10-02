@@ -8,8 +8,8 @@ upgrading, choose the contract that matches the OpenCode host you will run:
 
 | Selector | Config key | Pantheon entry | Scope |
 |---|---|---|---|
-| `v1` | singular `plugin` | `src/plugin.ts` and the V1 `src/plugins/pantheon-hooks.ts` | Legacy Pantheon delegate tools, board lifecycle, V1 hooks and implemented compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 9 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
+| `v1` | singular `plugin` | `src/plugin.ts` and the V1 `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), board lifecycle, V1 hooks and implemented compaction path |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 6 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
 
 The installer removes Pantheon entries from both config shapes and writes only
 the selected generation. It does not mix `src/plugin.ts` or
@@ -69,12 +69,15 @@ venv and MCP entries.
 
 ### Runtime differences after the upgrade
 
-- **V1:** `pantheon_delegate`, `pantheon_delegation_read` and
-  `pantheon_delegation_list` remain available, together with the V1 board and
-  the hooks explicitly registered for V1.
-- **V2:** `plugin-v2` does not register those tools, the BackgroundJobBoard,
-  V1 event/tool hooks, or a Pantheon compaction hook. Native OpenCode `task()`
-  is a host capability, not a V2 Pantheon delegate API.
+- **Delegation:** neither generation registers a Pantheon delegation tool —
+  both use OpenCode's native `task()`. The former `pantheon_delegate`,
+  `pantheon_delegation_read` and `pantheon_delegation_list` tools were removed
+  from the V1 plugin.
+- **V1:** additionally ships `hashline_edit`, the goal/cost/model tools, the
+  BackgroundJobBoard lifecycle, and the hooks explicitly registered for V1.
+- **V2:** `plugin-v2` does not register the BackgroundJobBoard, V1 event/tool
+  hooks, or a Pantheon compaction hook. Native OpenCode `task()` is a host
+  capability, not a V2 Pantheon API.
 - **TUI:** native tasks may be followed only when OpenCode exposes explicit
   origin, parent/child and status metadata. A missing Markdown report is not
   enough to classify a child as native.

@@ -53,21 +53,6 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
-  # ------------------------------------------------- pip (vector memory tool)
-  - package-ecosystem: pip
-    directory: "/scripts/vector_memory"
-    schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: "chore(deps)"
-    groups:
-      pip-vector-memory-minor-patch:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-
   # ------------------------------------------------------------- pip (docs)
   - package-ecosystem: pip
     directory: "/docs"

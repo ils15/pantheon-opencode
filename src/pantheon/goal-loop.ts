@@ -17,11 +17,11 @@
 import { z } from 'zod'
 
 import type { BackgroundJobBoard } from './background-job-board.ts'
-import type { ToolContextLike } from './delegation.ts'
 import { GoalStore } from './goal-store.ts'
 import { createPantheonLogger } from './logger.ts'
 import { safeSessionPath } from './session-guard.ts'
 import type { TodoEnforcerMessage } from './todo-enforcer.ts'
+import type { ToolContextLike } from './tool-context.ts'
 
 // Silence-by-default TUI policy (pantheon-hooks L42-58): warn → hooks.log,
 // console echo opt-in via PANTHEON_HOOKS_LOG=1. `deps.logger` stays for tests.

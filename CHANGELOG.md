@@ -18,6 +18,156 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.1] - 2026-09-30
+
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## 🆕 What's New
+- **OpenCode 2** — first Pantheon beta compatible with the OpenCode 2 plugin
+  contract.
+- **memory** — preserve SQLite FTS5/BM25 keyword search and the `code_*` codemap
+  tools.
+
+## 🐞 Fixed
+- **memory** — remove the legacy vector-memory scripts and embedding/KNN/RRF
+  path.
+- **CI/release** — keep validation fail-closed; expand `doctor` checks and add
+  the OpenCode 2 V2-only sandbox validator.
+
+## [v1.5.2] - 2026-09-22
+
+## 🐞 Fixed
+- **install** — guard undefined collection in init (#174)
+- **release** — compare Zenodo file checksum in the format the API returns (#173)
+## [v1.5.1] - 2026-09-22
+
+## 🐞 Fixed
+- **agents** — declare explicit read: allow for zeus
+- **ci** — drop fastembed from CI, keep pytest collection green (#163)
+- **plugin** — detect registered-plugin version drift after pantheon_delegate removal (#169)
+- **config** — correct node floor and warn on unsupported runtime (#168)
+- **mcp** — degrade gracefully when fastembed import fails (#165)
+- **mcp** — drop dead toon_codec module from published package (#167)
+- **tui** — remove dead pantheon_delegate refs after v1.5.0 V1 removal (#166)
+- **mnemosyne** — grant scoped write to memory-bank and deepwork paths (#164)
+
+## ✅ Closed Issues
+- #94 - drop fastembed from CI, keep pytest collection green (#163)
+- #158 - detect registered-plugin version drift after pantheon_delegate removal (#169)
+- #114 - correct node floor and warn on unsupported runtime (#168)
+- #160 - correct node floor and warn on unsupported runtime (#168)
+- #159 - degrade gracefully when fastembed import fails (#165)
+- #162 - drop dead toon_codec module from published package (#167)
+- #161 - remove dead pantheon_delegate refs after v1.5.0 V1 removal (#166)
+- #111 - grant scoped write to memory-bank and deepwork paths (#164)
+
+## [v1.5.0] - 2026-09-16
+
+### 🆕 What's New
+
+- **Delegação nativa**: `task()` é agora o único canal de delegação — motor legado
+  de dispatch removido por completo, simplificando o fluxo de subagents.
+- **Painel Delegations (TUI)**: painel funcional com status em tempo real, cores
+  por estado (running/completed/failed), janela de recência 24h, ordenação
+  newest-first e spinner fluido com timer independente (80ms/frame).
+- **Read-only enforcement**: sessões read-only bloqueiam `write`, `edit`,
+  `pantheon_delegate` e qualquer mutação — garantindo sandboxing efetivo.
+- **CI/CD**: Dependabot alerts, CodeQL analysis, SHA pins em actions, gitleaks
+  v3 para detecção de secrets, e workflow de release dispatch-only.
+
+### 🐞 Fixed
+
+- **Painel Delegations vazio (crítico)**: canal `session.children` da TUI
+  chamava API com shape v1 num cliente v2 — placeholder `{sessionID}` não era
+  substituído, causando ~181k erros/s e painel vazio. Corrigido
+  `safeSessionPath`/`buildChildrenPath`.
+- **Stale busy**: children com status `busy` stale (>30min sem atualização)
+  agora são classificadas como `completed` (não `running`).
+- **Board corruption**: testes que importam o plugin sem isolamento agora fazem
+  `chdir` para projeto temporário — sem mais entradas fantasma no board real.
+- **Signal leak**: timer independente do spinner separado do poll de dados,
+  evitando bloqueio visual durante operações longas.
+
+### ✅ Closed Issues
+
+- 38% dos testes consolidados (de ~1200 para ~744) com cobertura mantida.
+- 17 módulos mortos removidos, reduzindo superfície de manutenção.
+- OWASP Top 10 audit e input validation em todos os endpoints.
+
+## [v1.5.0-beta.20] - 2026-09-16
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🐞 Fixed
+
+- **Fixed — painel Delegations**: children com status `busy` stale (>30min sem
+  atualização) agora são classificadas como `completed` (não `running`). O
+  opencode mantém entradas `busy` no mapa de status para sessões já concluídas;
+  o TUI agora detecta e marca como done.
+## [v1.5.0-beta.19] - 2026-09-16
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Improved — painel Delegations**: status ausente de children antigas agora é
+  `done` (não `running`); grace 60s para sessões recém-criadas; janela de
+  recência 24h (filtra histórico); ordenação newest-first; ceiling esconde
+  antigos.
+- **Improved — animação**: spinner ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ agora tem timer
+  independente (80ms/frame), separado do poll de dados — fluido, não mais
+  "travado".
+## [v1.5.0-beta.18] - 2026-09-16
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🐞 Fixed
+
+- **Painel Delegations voltou a funcionar (crítico):** o canal
+  `session.children` da TUI chamava a API com a shape v1 (`{ path: { id } }`)
+  num cliente **v2** que espera `{ sessionID }`; o placeholder não era
+  substituído (`/session/%7BsessionID%7D/children`), o host rejeitava cada
+  poll (~181k erros/s) e o painel ficava vazio ("No delegations"). Corrigido
+  `safeSessionPath`/`buildChildrenPath` para `{ sessionID }`, removidos os
+  `as any` que escondiam o mismatch, + teste de regressão exato. Auditoria
+  confirmou que só a TUI (v2) estava errada (o `plugin.ts` usa SDK v1 de
+  propósito).
+- **Higiene de testes:** testes que importam o plugin sem isolamento agora
+  fazem `chdir` para um projeto temporário antes do import — não criam mais
+  entradas no board real (fim dos estados fantasma em desenvolvimento).
+
+## [v1.5.0-beta.17] - 2026-09-15
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Delegação nativa no host:** o motor `pantheon_delegate` foi removido
+  (~3,9k linhas) junto com as tools `pantheon_delegate`,
+  `pantheon_delegation_read` e `pantheon_delegation_list`; a delegação agora usa
+  o **`task()` nativo** do host (child sessions). 16 arquivos de teste obsoletos
+  removidos.
+- **TUI — painel Delegations lê a sessão nativa:** o painel passa a derivar de
+  `session.children` + `session.status` + md (o arquivo de board deixou de ser
+  fonte). Mantidas as cores de status, retenção, ceiling, filtro de sessão e
+  guards.
+- **Camada fina preservada:** `task-result-guard` (verified completion de child
+  vazio), `native-task-status` e guards de enforcement.
+
+## 🐞 Fixed
+
+- **Read-only enforcement re-apontado para sessões nativas:** aplicado no
+  público via hook `chat.params` e `hashline_edit` bloqueado para `apollo`/`gaia`,
+  fechando o bypass aberto após a remoção do motor de delegação.
+- **Docs/comentários limpos:** referências aos módulos removidos atualizadas,
+  incluindo nits de comentário em `tests/pantheon/tui-delegations.test.ts` e
+  `src/pantheon/session-id.ts`.
+
 ## [v1.5.0-beta.16] - 2026-09-15
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

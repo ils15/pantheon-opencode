@@ -17,7 +17,6 @@
  */
 
 import type { BackgroundJobBoard } from './background-job-board.ts'
-import type { DelegationClient } from './delegation-finalize.ts'
 import type { GoalStore } from './goal-store.ts'
 import type { TodoEnforcer } from './todo-enforcer.ts'
 
@@ -57,8 +56,6 @@ export interface VisionHandler {
 export interface PantheonV2Bridge {
   /** Background job board — tracks running/completed/cancelled delegated jobs. */
   board?: BackgroundJobBoard
-  /** Structural delegation client — creates child sessions and sends prompts. */
-  delegationClient?: DelegationClient
   /** Goal store — file-based persistence for full-auto goal loop. */
   goalStore?: GoalStore
   /** Todo enforcer — idle continuation when todos are incomplete. */
@@ -85,7 +82,7 @@ export const BRIDGE_OPTIONS_KEY = '__pantheonV1Bridge' as const
  * @example
  * ```ts
  * // In V1 plugin setup (plugin.ts):
- * const bridge = createV2Bridge({ board, delegationClient, goalStore, ... })
+ * const bridge = createV2Bridge({ board, goalStore, ... })
  * // Then pass bridge to V2 context via options
  * ```
  */

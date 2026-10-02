@@ -106,7 +106,7 @@ function parseInstruction(content) {
   if (!nameMatch) return null
   return {
     name: nameMatch[1].trim(),
-    body: content.slice(match[0].length).trimEnd() + '\n',
+    body: `${content.slice(match[0].length).trimEnd()}\n`,
   }
 }
 
@@ -165,7 +165,7 @@ export function generateAgentsMd(instructions) {
       '',
     )
   }
-  return sections.join('\n').trimEnd() + '\n'
+  return `${sections.join('\n').trimEnd()}\n`
 }
 
 // ---------------------------------------------------------------------------

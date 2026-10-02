@@ -1,5 +1,6 @@
 # ruff: noqa: PLR2004, F401
 """Tests for Deepwork Codemap Knowledge Graph — TDD >80% coverage."""
+
 from __future__ import annotations
 
 import hashlib
@@ -10,7 +11,6 @@ import mcp_codemap_module as codemap
 import pytest
 
 import src.mcp.mcp_codemap_module as _codemap_src
-import src.mcp.memory_mcp_server as mem
 
 
 @pytest.fixture
@@ -28,7 +28,9 @@ def _entity_id(fp: str, name: str, tp: str) -> str:
 
 class TestSchema:
     def test_schema_forward_creates_tables(self, conn: sqlite3.Connection) -> None:
-        rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
         names = {r[0] for r in rows}
         assert "code_entities" in names
         assert "code_relations" in names
@@ -37,7 +39,9 @@ class TestSchema:
 
     def test_schema_rollback_drops_tables(self, conn: sqlite3.Connection) -> None:
         codemap.drop_codemap_schema(conn)
-        rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
         names = {r[0] for r in rows}
         assert "code_entities" not in names
         assert "code_relations" not in names
@@ -55,7 +59,11 @@ class TestSchema:
 
 class TestParsePython:
     def test_parse_python_class_with_methods_and_docstring(self) -> None:
-        content = 'class MyClass:\n    """My class doc"""\n    def method_one(self, x):\n        """method doc"""\n        pass\n    async def method_two(self):\n        pass\n'
+        content = (
+            'class MyClass:\n    """My class doc"""\n'
+            '    def method_one(self, x):\n        """method doc"""\n'
+            "        pass\n    async def method_two(self):\n        pass\n"
+        )
         ents, _ = codemap._parse_python_entities("src/foo.py", content)
         by_name = {e["name"]: e for e in ents}
         assert "MyClass" in by_name
@@ -71,7 +79,10 @@ class TestParsePython:
         assert "MyClass.method_two" in by_name
 
     def test_parse_python_function_and_inherits(self) -> None:
-        content = "class Child(Parent):\n    pass\n\ndef my_func(a, b):\n    \"\"\"func doc\"\"\"\n    pass\n"
+        content = (
+            "class Child(Parent):\n    pass\n\n"
+            'def my_func(a, b):\n    """func doc"""\n    pass\n'
+        )
         ents, rels = codemap._parse_python_entities("src/bar.py", content)
         by_name = {e["name"]: e for e in ents}
         assert "my_func" in by_name
@@ -82,7 +93,12 @@ class TestParsePython:
         assert "Child" in by_name
         child_id = _entity_id("src/bar.py", "Child", "class")
         parent_id = _entity_id("external:Parent", "Parent", "class")
-        assert any(r["source_id"] == child_id and r["target_id"] == parent_id and r["type"] == "inherits" for r in rels)
+        assert any(
+            r["source_id"] == child_id
+            and r["target_id"] == parent_id
+            and r["type"] == "inherits"
+            for r in rels
+        )
 
     def test_parse_python_imports_populates_relations(self) -> None:
         content = "import os\nimport numpy as np\nfrom pathlib import Path\n"
@@ -91,7 +107,9 @@ class TestParsePython:
         assert any(e["id"] == mod_id for e in ents)
         imports = [r for r in rels if r["type"] == "imports"]
         assert len(imports) == 3
-        target_names = {e["name"] for e in ents if e["file_path"].startswith("external:")}
+        target_names = {
+            e["name"] for e in ents if e["file_path"].startswith("external:")
+        }
         assert "os" in target_names
         assert "numpy" in target_names
         assert "pathlib" in target_names
@@ -104,7 +122,10 @@ class TestParsePython:
 
 class TestParseTS:
     def test_parse_typescript_class_interface_function(self) -> None:
-        content = "export class MyClass extends Base {}\ninterface MyIface {}\nexport async function myFunc() {}\nconst myConst = 42\n"
+        content = (
+            "export class MyClass extends Base {}\ninterface MyIface {}\n"
+            "export async function myFunc() {}\nconst myConst = 42\n"
+        )
         ents, rels = codemap._parse_typescript_entities("src/app.ts", content)
         by_name = {e["name"]: e for e in ents}
         assert "MyClass" in by_name and by_name["MyClass"]["type"] == "class"
@@ -113,10 +134,18 @@ class TestParseTS:
         assert "myConst" in by_name
         child_id = _entity_id("src/app.ts", "MyClass", "class")
         base_id = _entity_id("external:Base", "Base", "class")
-        assert any(r["source_id"] == child_id and r["target_id"] == base_id and r["type"] == "inherits" for r in rels)
+        assert any(
+            r["source_id"] == child_id
+            and r["target_id"] == base_id
+            and r["type"] == "inherits"
+            for r in rels
+        )
 
     def test_parse_typescript_imports(self) -> None:
-        content = "import { foo } from 'lodash'\nimport x from \"./utils.ts\"\nimport y from 'react'\n"
+        content = (
+            "import { foo } from 'lodash'\nimport x from \"./utils.ts\"\n"
+            "import y from 'react'\n"
+        )
         ents, rels = codemap._parse_typescript_entities("src/app.ts", content)
         imports = [r for r in rels if r["type"] == "imports"]
         assert len(imports) == 3
@@ -127,7 +156,9 @@ class TestParseTS:
 
 
 class TestIncremental:
-    def test_code_index_skips_unchanged_via_hash(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+    def test_code_index_skips_unchanged_via_hash(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
         p = tmp_path / "hello.py"
         p.write_text("def foo():\n    pass\n")
         r1 = codemap.code_index(conn, path=p)
@@ -135,7 +166,9 @@ class TestIncremental:
         r2 = codemap.code_index(conn, path=p)
         assert r2["skipped"] == 1 and r2["indexed"] == 0
 
-    def test_code_index_force_reparses(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+    def test_code_index_force_reparses(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
         p = tmp_path / "hello.py"
         p.write_text("def foo():\n    pass\n")
         codemap.code_index(conn, path=p)
@@ -150,15 +183,21 @@ class TestIncremental:
 
 
 class TestEdge:
-    def test_empty_file_no_entities(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+    def test_empty_file_no_entities(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
         p = tmp_path / "empty.py"
         p.write_text("   \n")
         r = codemap.code_index(conn, path=p)
         assert r["skipped"] == 1
-        rows = conn.execute("SELECT COUNT(*) FROM code_entities WHERE file_path=?", [str(p)]).fetchone()[0]
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM code_entities WHERE file_path=?", [str(p)]
+        ).fetchone()[0]
         assert rows == 0
 
-    def test_unsupported_extension_skipped(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+    def test_unsupported_extension_skipped(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
         p = tmp_path / "notes.txt"
         p.write_text("hello")
         r = codemap.code_index(conn, path=p)
@@ -170,21 +209,27 @@ class TestEdge:
 
 
 class TestQuery:
-    def test_code_query_fts5_finds_entity(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+    def test_code_query_fts5_finds_entity(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
         p = tmp_path / "mod.py"
         p.write_text("class UniqueXYZ123:\n    pass\n")
         codemap.code_index(conn, path=p)
         res = codemap.code_query(conn, "UniqueXYZ123")
         assert any(r["name"] == "UniqueXYZ123" for r in res)
 
-    def test_code_query_filter_by_type(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+    def test_code_query_filter_by_type(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
         p = tmp_path / "mix.py"
         p.write_text("class MyClass:\n    pass\ndef my_func():\n    pass\n")
         codemap.code_index(conn, path=p)
         res = codemap.code_query(conn, "My", type_filter="class")
         assert len(res) > 0 and all(r["type"] == "class" for r in res)
 
-    def test_code_query_fallback_like_when_fts_empty(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+    def test_code_query_fallback_like_when_fts_empty(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
         p = tmp_path / "fallback.py"
         p.write_text("class MySpecialClass:\n    pass\n")
         codemap.code_index(conn, path=p)
@@ -193,7 +238,9 @@ class TestQuery:
 
 
 class TestNeighbors:
-    def test_code_neighbors_depth1_imports(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+    def test_code_neighbors_depth1_imports(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
         p = tmp_path / "app.py"
         p.write_text("import os\n")
         codemap.code_index(conn, path=p)
@@ -207,11 +254,29 @@ class TestNeighbors:
         e1, e2, e3 = "e1id1234567890ab", "e2id1234567890ab", "e3id1234567890ab"
         for eid, name in [(e1, "E1"), (e2, "E2"), (e3, "E3")]:
             conn.execute(
-                "INSERT OR REPLACE INTO code_entities (id,file_path,name,type,language,start_line,end_line,signature,docstring) VALUES (?,?,?,?,?,?,?,?,?)",
-                [eid, f"/tmp/{name}.py", name, "class", "python", 1, 1, f"class {name}", ""],
+                "INSERT OR REPLACE INTO code_entities "
+                "(id,file_path,name,type,language,start_line,end_line,"
+                "signature,docstring) VALUES (?,?,?,?,?,?,?,?,?)",
+                [
+                    eid,
+                    f"/tmp/{name}.py",
+                    name,
+                    "class",
+                    "python",
+                    1,
+                    1,
+                    f"class {name}",
+                    "",
+                ],
             )
-        conn.execute("INSERT INTO code_relations (source_id,target_id,type) VALUES (?,?,?)", [e1, e2, "imports"])
-        conn.execute("INSERT INTO code_relations (source_id,target_id,type) VALUES (?,?,?)", [e2, e3, "imports"])
+        conn.execute(
+            "INSERT INTO code_relations (source_id,target_id,type) VALUES (?,?,?)",
+            [e1, e2, "imports"],
+        )
+        conn.execute(
+            "INSERT INTO code_relations (source_id,target_id,type) VALUES (?,?,?)",
+            [e2, e3, "imports"],
+        )
         conn.commit()
         r1 = codemap.code_neighbors(conn, e1, depth=1)
         assert len(r1["neighbors"]) == 1 and r1["neighbors"][0]["name"] == "E2"
@@ -219,17 +284,23 @@ class TestNeighbors:
         names = {n["name"] for n in r2["neighbors"]}
         assert "E2" in names and "E3" in names
 
-    def test_code_neighbors_not_found_returns_empty(self, conn: sqlite3.Connection) -> None:
+    def test_code_neighbors_not_found_returns_empty(
+        self, conn: sqlite3.Connection
+    ) -> None:
         res = codemap.code_neighbors(conn, "nonexistent123", depth=1)
         assert "error" in res and res["entity_id"] == "nonexistent123"
 
-    def test_code_neighbors_import_placeholder(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+    def test_code_neighbors_import_placeholder(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
         p = tmp_path / "app2.py"
         p.write_text("import os\n")
         codemap.code_index(conn, path=p)
         mod_id = _entity_id(str(p), "app2", "module")
         res = codemap.code_neighbors(conn, mod_id, depth=1)
-        placeholders = [n for n in res["neighbors"] if n["file_path"].startswith("external:")]
+        placeholders = [
+            n for n in res["neighbors"] if n["file_path"].startswith("external:")
+        ]
         assert len(placeholders) > 0 and any(ph["name"] == "os" for ph in placeholders)
 
 
@@ -237,6 +308,12 @@ class TestMcpIntegration:
     """Integration via memory_mcp_server wrappers — isolated DB via _set_memory_dir."""
 
     def test_mcp_code_index_and_query_isolated(self, tmp_path: Path) -> None:
+        # No importorskip: memory_mcp_server is stdlib + FTS5 only since the
+        # vector pipeline was removed, so importing it no longer pulls a heavy
+        # optional wheel. Gating on a backend the server does not use would
+        # silently drop this integration coverage.
+        import src.mcp.memory_mcp_server as mem
+
         mem._set_memory_dir(tmp_path / "memdb")
         p = tmp_path / "isolated.py"
         p.write_text("class IsolatedXYZ:\n    pass\n")
@@ -246,6 +323,8 @@ class TestMcpIntegration:
         assert any(x["name"] == "IsolatedXYZ" for x in res)
 
     def test_mcp_code_neighbors_isolated(self, tmp_path: Path) -> None:
+        import src.mcp.memory_mcp_server as mem
+
         mem._set_memory_dir(tmp_path / "memdb2")
         p = tmp_path / "app_iso.py"
         p.write_text("import os\n")

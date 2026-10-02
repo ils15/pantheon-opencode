@@ -164,6 +164,38 @@ test('fresh install registers BOTH pantheon plugins (plugin.ts + pantheon-hooks.
   }
 })
 
+// issue #158: an opencode.json left pointing at a lockfile-pinned older
+// install (e.g. node_modules/pantheon-opencode@1.4.1, which still ships the
+// removed pantheon_delegate tool) must be realigned onto the current package
+// by init/sync, so the registered tool surface stops drifting.
+test('sync realigns a stale node_modules plugin path onto the current package (issue #158)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-drift-'))
+  try {
+    const staleRoot = '/home/admin/node_modules/pantheon-opencode'
+    const config = await runInstall(target, {
+      plugin: [join(staleRoot, 'src', 'plugin.ts'), THIRD_PARTY_PLUGIN],
+      plugins: [join(staleRoot, 'src', 'plugin-v2')],
+    })
+    // The stale V1 and V2 refs are rewritten into THIS package; the
+    // third-party plugin survives untouched.
+    assert.ok(
+      config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
+      `stale V1 ref not realigned: ${JSON.stringify(config.plugin)}`,
+    )
+    assert.ok(
+      config.plugin.every((ref) => !String(ref).includes(staleRoot)),
+      `stale node_modules copy still registered: ${JSON.stringify(config.plugin)}`,
+    )
+    assert.ok(
+      config.plugins.every((ref) => !String(ref).includes(staleRoot)),
+      `stale V2 node_modules copy still registered: ${JSON.stringify(config.plugins)}`,
+    )
+    assert.ok(config.plugin.includes(THIRD_PARTY_PLUGIN), 'third-party plugin must be preserved')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
 test('V1 downgrade keeps the legacy plugins key with third-party plugins, preserving user provider and compaction values', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-v1-legacy-'))
   try {

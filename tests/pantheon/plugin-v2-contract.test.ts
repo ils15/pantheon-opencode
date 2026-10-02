@@ -16,6 +16,7 @@ async function main(): Promise<void> {
     default: plugin,
     V2_UNSUPPORTED_FEATURES,
     getUnsupportedFeatures,
+    setV2Bridge,
     v2Dispose,
   } = await import('../../src/plugin-v2.ts')
   const pluginSource = await readFile(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
@@ -23,28 +24,10 @@ async function main(): Promise<void> {
 
   let passed = 0
   let failed = 0
+  const queuedTests: Array<{ name: string; fn: () => void | Promise<void> }> = []
 
   function test(name: string, fn: () => void | Promise<void>): void {
-    try {
-      const result = fn()
-      if (result instanceof Promise) {
-        result
-          .then(() => {
-            passed++
-            console.log(`  ✅ ${name}`)
-          })
-          .catch((err) => {
-            failed++
-            console.error(`  ❌ ${name}:`, err)
-          })
-      } else {
-        passed++
-        console.log(`  ✅ ${name}`)
-      }
-    } catch (err) {
-      failed++
-      console.error(`  ❌ ${name}:`, err)
-    }
+    queuedTests.push({ name, fn })
   }
 
   // ─── Structural Contract Tests ──────────────────────────────────────
@@ -90,7 +73,6 @@ async function main(): Promise<void> {
   const transforms: string[] = []
   const agents = [{ id: 'zeus', mode: 'subagent', system: 'existing' }]
   const commands = [{ name: 'pantheon-run' }]
-  const skills: unknown[] = []
   const references: string[] = []
   const context = {
     options: {},
@@ -106,13 +88,6 @@ async function main(): Promise<void> {
       },
     },
     aisdk: {},
-    catalog: {
-      transform: async (callback: (draft: never) => void) => {
-        transforms.push('catalog')
-        callback({ model: { get: () => undefined, default: { set: () => {} } } } as never)
-        return registration(disposed, 'catalog')
-      },
-    },
     command: {
       transform: async (callback: (draft: never) => void) => {
         transforms.push('command')
@@ -124,7 +99,18 @@ async function main(): Promise<void> {
         return registration(disposed, 'command')
       },
     },
-    integration: { transform: async () => registration(disposed, 'integration') },
+    integration: {
+      transform: async () => {
+        transforms.push('integration')
+        return registration(disposed, 'integration')
+      },
+    },
+    skill: {
+      transform: async () => {
+        transforms.push('skill')
+        return registration(disposed, 'skill')
+      },
+    },
     plugin: { add: async () => {}, remove: async () => {} },
     reference: {
       transform: async (callback: (draft: never) => void) => {
@@ -133,19 +119,29 @@ async function main(): Promise<void> {
         return registration(disposed, 'reference')
       },
     },
-    skill: {
-      transform: async (callback: (draft: never) => void) => {
-        transforms.push('skill')
-        callback({ list: () => skills, source: (source: unknown) => skills.push(source) } as never)
-        return registration(disposed, 'skill')
-      },
-    },
   }
 
   await plugin.setup(context as never)
 
-  test('all 5 transforms are registered', () => {
-    assert.deepEqual(transforms, ['agent', 'catalog', 'command', 'reference', 'skill'])
+  test('mock records Phase 1/config transform registrations for agent, command, and reference', () => {
+    // This mock proves only the adapter's current registration choices. Its
+    // callbacks are synthetic and do not prove callback effects on a host.
+    assert.deepEqual(transforms, ['agent', 'command', 'reference'])
+  })
+
+  test('transform support notes distinguish host domains from Pantheon behavior', () => {
+    assert.match(pluginSource, /2\.0\.18 host runtime probe/)
+    assert.match(pluginSource, /ctx\.integration and/)
+    assert.match(pluginSource, /ctx\.skill have callable `\.transform` methods/)
+    assert.match(pluginSource, /callback effects were\s+\*\s+not observed for any domain/)
+    assert.match(pluginSource, /only ctx\.catalog was absent/i)
+    assert.match(pluginSource, /SkillEditor\.source\(\)/)
+    assert.doesNotMatch(
+      pluginSource,
+      /ctx\.integration.*no longer a context domain|ctx\.skill.*no longer a context domain/s,
+    )
+    assert.equal(typeof context.integration.transform, 'function')
+    assert.equal(typeof context.skill.transform, 'function')
   })
 
   test('zeus agent mode is set to primary', () => {
@@ -164,8 +160,79 @@ async function main(): Promise<void> {
     assert.deepEqual(references, ['pantheon-agents'])
   })
 
-  test('skills directory source is added', () => {
-    assert.equal(skills.length, 1)
+  test('agent and command transforms preserve custom values and only default Pantheon commands', async () => {
+    const policyMarker = '<!-- pantheon-v2-policy -->'
+    const markedSystem = `Keep this text unchanged.\n${policyMarker}\nExisting policy.`
+    const transformAgents = [
+      { id: 'marked', mode: 'subagent', system: markedSystem },
+      { id: 'null-system', mode: 'subagent', system: null as unknown as string },
+      { id: 'empty-system', mode: 'subagent', system: '' },
+    ]
+    const commandsToTransform = [
+      { name: 'custom-build', description: 'Keep the custom description.' },
+      { name: 'pantheon-custom', description: undefined as string | undefined },
+    ]
+    const updatedCommandNames: string[] = []
+
+    await plugin.setup(
+      makeBaseContext({
+        agent: {
+          transform: async (callback: (draft: never) => void) => {
+            callback({
+              list: () => transformAgents,
+              update: (id: string, update: (agent: (typeof transformAgents)[number]) => void) => {
+                const agent = transformAgents.find((candidate) => candidate.id === id)
+                assert.ok(agent, `unknown agent ${id}`)
+                update(agent)
+              },
+            } as never)
+            return { dispose: async () => {} }
+          },
+        },
+        command: {
+          transform: async (callback: (draft: never) => void) => {
+            callback({
+              list: () => commandsToTransform,
+              update: (
+                name: string,
+                update: (command: (typeof commandsToTransform)[number]) => void,
+              ) => {
+                updatedCommandNames.push(name)
+                const command = commandsToTransform.find((candidate) => candidate.name === name)
+                assert.ok(command, `unknown command ${name}`)
+                update(command)
+              },
+            } as never)
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+
+    assert.equal(transformAgents[0].system, markedSystem, 'an existing policy marker is preserved')
+    assert.match(transformAgents[1].system, /Pantheon routing policy/, 'null system gets policy')
+    assert.match(transformAgents[2].system, /Pantheon routing policy/, 'empty system gets policy')
+    assert.deepEqual(updatedCommandNames, ['pantheon-custom'])
+    assert.equal(commandsToTransform[0].description, 'Keep the custom description.')
+    assert.equal(commandsToTransform[1].description, 'Pantheon orchestration command')
+  })
+
+  test('catalog is host-absent while integration and skill transforms remain unimplemented here', () => {
+    // These registry entries describe adapter support, not whether every
+    // corresponding host context domain exists.
+    assert.ok(V2_UNSUPPORTED_FEATURES.includes('catalog-transform'))
+    assert.ok(V2_UNSUPPORTED_FEATURES.includes('skill-transform'))
+    assert.ok(V2_UNSUPPORTED_FEATURES.includes('integration-transform'))
+    assert.deepEqual(transforms, ['agent', 'command', 'reference'])
+  })
+
+  test('transform registration rejection does not abort setup or later hook registration', () => {
+    assert.match(pluginSource, /Promise\.allSettled/)
+    assert.doesNotMatch(
+      pluginSource,
+      /would reject\s+setup\(\).*kill every hook|rejection also\s+kills every later hook/is,
+    )
+    assert.match(pluginSource, /individually wrapped and settled via\s+Promise\.allSettled/)
   })
 
   test('no registrations disposed yet', () => {
@@ -241,34 +308,9 @@ async function main(): Promise<void> {
     assert.ok(V2_UNSUPPORTED_FEATURES.includes('command-transform-list'))
   })
 
-  // Case 3: skill list() returns undefined — setup must resolve.
-  let case3Resolved = false
-  try {
-    await plugin.setup(
-      makeBaseContext({
-        skill: {
-          transform: async (callback: (draft: never) => void) => {
-            callback({ list: () => undefined, source: () => {} } as never)
-            return { dispose: async () => {} }
-          },
-        },
-      }) as never,
-    )
-    case3Resolved = true
-  } catch {
-    case3Resolved = false
-  }
-
-  test('setup resolves when skill list() returns undefined', () => {
-    assert.equal(case3Resolved, true)
-  })
-
-  test('skill-transform-list marked unsupported when list() is non-iterable', () => {
-    assert.ok(V2_UNSUPPORTED_FEATURES.includes('skill-transform-list'))
-  })
-
   // Case 4: one domain transform rejects — setup resolves, others still register.
   const case4Registered: string[] = []
+  const case4Hooks: string[] = []
   let case4Resolved = false
   try {
     await plugin.setup(
@@ -277,13 +319,6 @@ async function main(): Promise<void> {
           transform: async (callback: (draft: never) => void) => {
             case4Registered.push('agent')
             callback({ list: () => [], update: () => {} } as never)
-            return { dispose: async () => {} }
-          },
-        },
-        catalog: {
-          transform: async (callback: (draft: never) => void) => {
-            case4Registered.push('catalog')
-            callback({ model: { get: () => undefined, default: { set: () => {} } } } as never)
             return { dispose: async () => {} }
           },
         },
@@ -299,10 +334,9 @@ async function main(): Promise<void> {
             return { dispose: async () => {} }
           },
         },
-        skill: {
-          transform: async (callback: (draft: never) => void) => {
-            case4Registered.push('skill')
-            callback({ list: () => [], source: () => {} } as never)
+        session: {
+          hook: async (name: string) => {
+            case4Hooks.push(name)
             return { dispose: async () => {} }
           },
         },
@@ -319,7 +353,118 @@ async function main(): Promise<void> {
 
   test('failing domain marked unsupported without blocking others', () => {
     assert.ok(V2_UNSUPPORTED_FEATURES.includes('command-transform'))
-    assert.deepEqual(case4Registered, ['agent', 'catalog', 'reference', 'skill'])
+    assert.deepEqual(case4Registered, ['agent', 'reference'])
+  })
+
+  test('rejected transform does not prevent later session hook registrations', () => {
+    assert.deepEqual(case4Hooks, ['context', 'prompt', 'compaction'])
+  })
+
+  test('one rejected hook registration leaves later hooks and permission setup active', async () => {
+    const hookAttempts: string[] = []
+    let setupResolved = false
+    try {
+      await plugin.setup(
+        makeBaseContext({
+          session: {
+            hook: async (name: string) => {
+              hookAttempts.push(`session:${name}`)
+              if (name === 'context') throw new Error('context hook unavailable')
+              return registration(disposed, `session:${name}`)
+            },
+          },
+          tool: {
+            hook: async (name: string) => {
+              hookAttempts.push(`tool:${name}`)
+              if (name === 'execute.before') throw new Error('before hook unavailable')
+              return registration(disposed, `tool:${name}`)
+            },
+          },
+          permission: {
+            hook: async (name: string) => {
+              hookAttempts.push(`permission:${name}`)
+              return registration(disposed, `permission:${name}`)
+            },
+          },
+        }) as never,
+      )
+      setupResolved = true
+    } catch {
+      setupResolved = false
+    }
+
+    assert.equal(setupResolved, true)
+    assert.deepEqual(hookAttempts, [
+      'session:context',
+      'session:prompt',
+      'tool:execute.before',
+      'tool:execute.after',
+      'permission:evaluate',
+      'session:compaction',
+    ])
+  })
+
+  test('event subscription delivers session idle and v2Dispose aborts its stream', async () => {
+    const deliveredSessionIDs: string[] = []
+    const expectedSessionID = 'ses-contract-event'
+    let signal: AbortSignal | undefined
+    let streamClosed = false
+    let streamFinished!: () => void
+    const finished = new Promise<void>((resolve) => {
+      streamFinished = resolve
+    })
+    let idleDelivered!: () => void
+    const delivered = new Promise<void>((resolve) => {
+      idleDelivered = resolve
+    })
+
+    setV2Bridge({
+      todoEnforcer: {
+        onIdle: async (sessionID: string) => {
+          deliveredSessionIDs.push(sessionID)
+          idleDelivered()
+        },
+      },
+    } as never)
+
+    await plugin.setup(
+      makeBaseContext({
+        event: {
+          subscribe: ({ signal: subscribedSignal }: { signal: AbortSignal }) => {
+            signal = subscribedSignal
+            return {
+              async *[Symbol.asyncIterator]() {
+                try {
+                  yield {
+                    type: 'session.idle',
+                    properties: { sessionID: expectedSessionID },
+                  }
+                  await new Promise<void>((resolve) => {
+                    if (subscribedSignal.aborted) {
+                      resolve()
+                      return
+                    }
+                    subscribedSignal.addEventListener('abort', () => resolve(), { once: true })
+                  })
+                } finally {
+                  streamClosed = true
+                  streamFinished()
+                }
+              },
+            }
+          },
+        },
+      }) as never,
+    )
+    await delivered
+
+    assert.deepEqual(deliveredSessionIDs, [expectedSessionID])
+    assert.equal(signal?.aborted, false, 'subscription remains active before disposal')
+    assert.equal(streamClosed, false, 'event stream remains open until disposal')
+    v2Dispose()
+    assert.equal(signal?.aborted, true, 'v2Dispose aborts the event subscription')
+    await finished
+    assert.equal(streamClosed, true, 'event iterator exits after the disposal signal')
   })
 
   // ─── Tool Registration Tests ────────────────────────────────────────
@@ -357,7 +502,10 @@ async function main(): Promise<void> {
         },
       }) as never,
     )
-    assert.equal(added.length, 9)
+    // 6 tools survive the Fase 2 delegate removal: hashline_edit, the 3 goal
+    // tools, pantheon_cost and pantheon_model (the 3 delegation tools left
+    // src/plugin-v2.ts with the V1 delegation toolset).
+    assert.equal(added.length, 6)
     for (const tool of added) {
       const result = await tool.execute({}, {})
       assert.ok(
@@ -439,15 +587,20 @@ async function main(): Promise<void> {
     assert.equal(system.length, 6)
   })
 
-  test('Fase 4 context handler accepts a single string system', async () => {
+  test('Fase 4 context handler normalizes a single string system to SystemParts', async () => {
     const handler = fase4Handlers.context
     assert.ok(handler != null)
     const event = { system: 'solo system', generation: {} }
     await handler(event) // must not throw
     const system: unknown = (event as { system?: unknown }).system
     assert.ok(Array.isArray(system), 'single string should normalize to an array')
-    assert.ok(system.some((s) => typeof s === 'string' && s.includes('solo system')))
-    assert.ok(system.some((s) => typeof s === 'string' && s.includes('Pantheon routing policy')))
+    const parts = system as Array<{ type?: unknown; text?: unknown }>
+    assert.ok(
+      parts.every((s) => s.type === 'text' && typeof s.text === 'string'),
+      'every entry must be a canonical SystemPart',
+    )
+    assert.ok(parts.some((s) => String(s.text).includes('solo system')))
+    assert.ok(parts.some((s) => String(s.text).includes('Pantheon routing policy')))
   })
 
   test('Fase 4 context handler ignores non-array system', async () => {
@@ -466,8 +619,8 @@ async function main(): Promise<void> {
       generation: {},
     }
     await handler(event) // must not throw
-    const count = event.system.filter(
-      (s) => typeof s === 'string' && s.includes('Pantheon routing policy'),
+    const count = (event.system as Array<{ text?: unknown }>).filter(
+      (s) => typeof s?.text === 'string' && s.text.includes('Pantheon routing policy'),
     ).length
     assert.equal(count, 1)
   })
@@ -510,26 +663,33 @@ async function main(): Promise<void> {
       generation: {},
     }
     await handler(event) // must not throw
-    const system = event.system as unknown[]
+    const system = event.system as Array<{ type?: unknown; text?: unknown }>
     assert.equal(system.length, 3)
-    const last = system[2] as { type?: unknown; text?: unknown }
+    assert.ok(
+      system.every((s) => s.type === 'text' && typeof s.text === 'string'),
+      'all entries normalized to SystemParts',
+    )
+    const last = system[2]
     assert.equal(last.type, 'text')
     assert.ok(typeof last.text === 'string' && last.text.includes('Pantheon routing policy'))
   })
 
-  test('Fase 4 context handler preserves single-string behavior', async () => {
+  test('Fase 4 context handler normalizes legacy string arrays to SystemParts', async () => {
     const handler = fase4Handlers.context
     assert.ok(handler != null)
-    const event = { system: 'solo happy', generation: {} }
+    const event = { system: ['solo happy'], generation: {} }
     await handler(event) // happy path preserved
-    const system = (event as { system?: unknown }).system as unknown[]
+    const system = (event as { system?: unknown }).system as Array<{
+      type?: unknown
+      text?: unknown
+    }>
     assert.ok(Array.isArray(system))
-    assert.ok(system.some((s) => typeof s === 'string' && (s as string).includes('solo happy')))
     assert.ok(
-      system.some(
-        (s) => typeof s === 'string' && (s as string).includes('Pantheon routing policy'),
-      ),
+      system.every((s) => s.type === 'text' && typeof s.text === 'string'),
+      'raw strings upgraded to canonical SystemParts (2.0.16 system is Array<SystemPart>)',
     )
+    assert.ok(system.some((s) => String(s.text).includes('solo happy')))
+    assert.ok(system.some((s) => String(s.text).includes('Pantheon routing policy')))
   })
 
   test('agent transform degrades non-string system without throwing', async () => {
@@ -608,11 +768,9 @@ async function main(): Promise<void> {
   test('createV2Bridge returns a frozen PantheonV2Bridge', () => {
     const bridge = createV2Bridge({
       board: { list: () => [], get: () => undefined } as never,
-      delegationClient: { session: {} } as never,
     })
     assert.ok(bridge != null)
     assert.ok(bridge.board != null)
-    assert.ok(bridge.delegationClient != null)
     assert.equal(bridge.goalStore, undefined)
     assert.equal(bridge.todoEnforcer, undefined)
     assert.equal(bridge.visionHandler, undefined)
@@ -636,7 +794,6 @@ async function main(): Promise<void> {
     const ctx = { options: {} as Record<string, unknown> }
     const bridge = createV2Bridge({
       board: { list: () => [] } as never,
-      delegationClient: { session: {} } as never,
     })
     injectBridge(ctx, bridge)
     const retrieved = getV2BridgeFromContext(ctx)
@@ -681,7 +838,6 @@ async function main(): Promise<void> {
   test('bridge with all singletons', () => {
     const bridge = createV2Bridge({
       board: { list: () => [], get: () => undefined, updateStatus: async () => {} } as never,
-      delegationClient: { session: { create: async () => ({ id: 'test' }) } } as never,
       goalStore: { list: async () => [] } as never,
       todoEnforcer: { onIdle: async () => {}, noteUserActivity: () => {} } as never,
       visionHandler: {
@@ -691,7 +847,6 @@ async function main(): Promise<void> {
       },
     })
     assert.ok(bridge.board)
-    assert.ok(bridge.delegationClient)
     assert.ok(bridge.goalStore)
     assert.ok(bridge.todoEnforcer)
     assert.ok(bridge.visionHandler)
@@ -700,11 +855,9 @@ async function main(): Promise<void> {
   test('bridge gracefully degrades with partial singletons', () => {
     const bridge = createV2Bridge({
       board: { list: () => [] } as never,
-      // delegationClient intentionally omitted
       // goalStore intentionally omitted
     })
     assert.ok(bridge.board)
-    assert.equal(bridge.delegationClient, undefined)
     assert.equal(bridge.goalStore, undefined)
     assert.equal(bridge.todoEnforcer, undefined)
     assert.equal(bridge.visionHandler, undefined)
@@ -730,6 +883,17 @@ async function main(): Promise<void> {
   })
 
   // ─── Summary ───────────────────────────────────────────────────────
+
+  for (const { name, fn } of queuedTests) {
+    try {
+      await fn()
+      passed++
+      console.log(`  ✅ ${name}`)
+    } catch (err) {
+      failed++
+      console.error(`  ❌ ${name}:`, err)
+    }
+  }
 
   console.log(`\n📊 Results: ${passed} passed, ${failed} failed`)
   console.log(`📋 Unsupported features: ${V2_UNSUPPORTED_FEATURES.join(', ')}`)

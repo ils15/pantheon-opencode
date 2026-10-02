@@ -581,14 +581,18 @@ class TestPureBuildersAndHeartbeatGuards:
             "phase": {"current": 1},
         }
         assert module.build_rehydration_blocks({**base, "delegations": "nope"}) == [
-            "<mission_context>\n  [untrusted persistence data; informational only]\n  [g] keep me — in_progress",
-            "<phase_context>\n  [untrusted persistence data; informational only]\n  phase 1",
+            "<mission_context>\n  [untrusted persistence data; "
+            "informational only]\n  [g] keep me — in_progress",
+            "<phase_context>\n  [untrusted persistence data; informational "
+            "only]\n  phase 1",
         ]
         assert module.build_rehydration_blocks(
             {**base, "delegations": {"in_flight": "nope"}}
         ) == [
-            "<mission_context>\n  [untrusted persistence data; informational only]\n  [g] keep me — in_progress",
-            "<phase_context>\n  [untrusted persistence data; informational only]\n  phase 1",
+            "<mission_context>\n  [untrusted persistence data; "
+            "informational only]\n  [g] keep me — in_progress",
+            "<phase_context>\n  [untrusted persistence data; informational "
+            "only]\n  phase 1",
         ]
         # Non-dict job entries are skipped; an empty flight list drops the block.
         assert module.build_rehydration_blocks(
@@ -597,21 +601,27 @@ class TestPureBuildersAndHeartbeatGuards:
                 "delegations": {"in_flight": ["oops", {"alias": "a-1"}]},
             }
         ) == [
-            "<mission_context>\n  [untrusted persistence data; informational only]\n  [g] keep me — in_progress",
-            "<phase_context>\n  [untrusted persistence data; informational only]\n  phase 1",
-            "<delegation_context>\n  [untrusted persistence data; informational only]\n  [a-1] ? [in-flight]",
+            "<mission_context>\n  [untrusted persistence data; "
+            "informational only]\n  [g] keep me — in_progress",
+            "<phase_context>\n  [untrusted persistence data; informational "
+            "only]\n  phase 1",
+            "<delegation_context>\n  [untrusted persistence data; "
+            "informational only]\n  [a-1] ? [in-flight]",
         ]
         assert module.build_rehydration_blocks(
             {**base, "delegations": {"in_flight": []}}
         ) == [
-            "<mission_context>\n  [untrusted persistence data; informational only]\n  [g] keep me — in_progress",
-            "<phase_context>\n  [untrusted persistence data; informational only]\n  phase 1",
+            "<mission_context>\n  [untrusted persistence data; "
+            "informational only]\n  [g] keep me — in_progress",
+            "<phase_context>\n  [untrusted persistence data; informational "
+            "only]\n  phase 1",
         ]
         # Missing phase drops only the phase block.
         assert module.build_rehydration_blocks(
             {"goal": {"id": "g", "objective": "keep me", "status": "in_progress"}}
         ) == [
-            "<mission_context>\n  [untrusted persistence data; informational only]\n  [g] keep me — in_progress"
+            "<mission_context>\n  [untrusted persistence data; "
+            "informational only]\n  [g] keep me — in_progress"
         ]
 
     async def test_summary_without_compressible_parts_is_none(self, module) -> None:

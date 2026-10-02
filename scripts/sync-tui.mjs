@@ -193,7 +193,7 @@ async function main() {
     // The plugin references in opencode.json already point INTO this package,
     // so only the copies would go stale after a package update.
     const { syncCopyArtifacts } = await import('./sync-artifacts.mjs')
-    const { readState, writeState } = await import('./install/state.mjs')
+    const { createInitialState, readState, writeState } = await import('./install/state.mjs')
     const pkgVersion = readVersion(join(ROOT, 'package.json')) ?? 'unknown'
     const synced = syncCopyArtifacts(configDir)
     if (synced.errors.length > 0) {
@@ -206,10 +206,16 @@ async function main() {
     // venv, MCP entries).
     try {
       const previous = readState(configDir)
-      writeState(configDir, {
-        pantheon_version: pkgVersion,
-        previous_version: previous?.pantheon_version ?? null,
-      })
+      // Preserve the existing v2 manifest (applied_migrations, components, …).
+      // Writing a bare { pantheon_version, previous_version } object stamped
+      // it `schema_version: 2` while dropping `applied_migrations`, and the
+      // next `init` crashed in runMigrations() reading `.push` on undefined.
+      const state = previous ?? createInitialState(pkgVersion)
+      if (previous?.pantheon_version && previous.pantheon_version !== pkgVersion) {
+        state.previous_version = previous.pantheon_version
+      }
+      state.pantheon_version = pkgVersion
+      writeState(configDir, state)
       if (previous?.pantheon_version && previous.pantheon_version !== pkgVersion) {
         console.log(
           `  ⚠️  Installation moved ${previous.pantheon_version} → ${pkgVersion}. ` +

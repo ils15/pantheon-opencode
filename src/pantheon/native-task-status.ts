@@ -2,8 +2,8 @@
  * Native Task Status — classifies BackgroundJobRecord results from native
  * task() delegation into actionable status codes.
  *
- * Pure module — zero external dependencies. Consumed by native-probe.ts
- * and the delegation manager to decide retry/skip/escalate strategy.
+ * Pure module — zero external dependencies. Consumed by the tool-ceiling and
+ * cost layers to decide retry/skip/escalate strategy.
  *
  * @module native-task-status
  */

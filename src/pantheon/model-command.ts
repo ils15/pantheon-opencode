@@ -23,8 +23,6 @@ import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
-
-import type { ToolContextLike } from './delegation.ts'
 import {
   capabilityEntry,
   hasVision,
@@ -32,6 +30,7 @@ import {
   normalizeCapability,
   resolveActivePreset,
 } from './presets.mjs'
+import type { ToolContextLike } from './tool-context.ts'
 
 export type ModelScope = 'project' | 'global'
 export type ModelAction = 'status' | 'show' | 'set' | 'reset'
@@ -351,7 +350,9 @@ function presetPathForScope(options: ModelCommandOptions, scope: ModelScope): st
   const globalCandidates = globalConfigCandidates(options).map((p) =>
     resolve(join(dirname(p), '.pantheon', 'active-preset.json')),
   )
-  return globalCandidates[0] ?? candidates[0]!
+  const fallback = globalCandidates[0] ?? candidates[0]
+  if (!fallback) throw new ModelCommandError('global preset path is unavailable')
+  return fallback
 }
 
 async function readActivePresetRaw(path: string, label: string): Promise<ReadFileResult> {
@@ -553,10 +554,16 @@ async function updateActivePreset(
     const overrides = shaped.overrides as Record<string, unknown>
     const agents = overrides.agents as Record<string, unknown>
 
-    const agentKey = validateAgent(args.agent!)
+    if (typeof args.agent !== 'string') {
+      throw new ModelCommandError(`${action} requires --agent <name>`)
+    }
+    const agentKey = validateAgent(args.agent)
 
     if (action === 'set') {
-      const model = args.model!
+      if (typeof args.model !== 'string') {
+        throw new ModelCommandError('set requires --model <provider/model-id>')
+      }
+      const model = args.model
       const effort = args.effort
       let variantInfo: { variant: 'low' | 'medium' | 'high' | null; clamped: boolean }
       try {
@@ -779,22 +786,25 @@ async function promptViaReadline(
 ): Promise<Record<string, unknown>> {
   const answers: Record<string, unknown> = {}
   // Q1 agent
-  const agentQ = questions[0]!
+  const agentQ = questions[0]
+  const modelQ = questions[1]
+  const effortQ = questions[2]
+  const scopeQ = questions[3]
+  if (!agentQ || !modelQ || !effortQ || !scopeQ) {
+    throw new ModelCommandError('wizard requires agent, model, effort, and scope questions')
+  }
   const agentPrompt = `${agentQ.question} [${KNOWN_AGENTS.join('/')}] : `
   const agentAns = (await rl.question(agentPrompt)).trim().toLowerCase()
   answers.agent = agentAns || KNOWN_AGENTS[0]
 
-  const modelQ = questions[1]!
   const modelAns = (await rl.question(`${modelQ.question} : `)).trim()
   answers.model = modelAns
 
-  const effortQ = questions[2]!
   const effortAns = (await rl.question(`${effortQ.question} [low/medium/high] : `))
     .trim()
     .toLowerCase()
   answers.effort = effortAns || 'medium'
 
-  const scopeQ = questions[3]!
   const scopeAns = (await rl.question(`${scopeQ.question} [project/global] : `))
     .trim()
     .toLowerCase()

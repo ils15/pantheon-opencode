@@ -21,9 +21,8 @@ import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-
-import type { ToolContextLike } from './delegation.ts'
 import type { NativeTaskStatus } from './native-task-status.ts'
+import type { ToolContextLike } from './tool-context.ts'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)

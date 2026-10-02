@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { emitKeypressEvents } from 'node:readline'
-import { colors, icons } from './cli-ui.mjs'
+import { colors } from './cli-ui.mjs'
 
 const cursorHide = () => process.stdout.write('\x1b[?25l')
 const cursorShow = () => process.stdout.write('\x1b[?25h')
@@ -95,7 +95,7 @@ export async function promptMultiSelect(
     const lineCount = lines.length
     if (previousLineCount > 0) cursorUp(previousLineCount)
     clearDown()
-    process.stdout.write(lines.join('\n') + '\n')
+    process.stdout.write(`${lines.join('\n')}\n`)
     previousLineCount = lineCount
   }
 
@@ -122,7 +122,7 @@ export async function promptMultiSelect(
       reject(new Error('Canceled'))
     }
 
-    function handler(str, key) {
+    function handler(_str, key) {
       if (!key) return
       if ((key.ctrl && key.name === 'c') || key.name === 'escape') {
         cancel()
@@ -184,7 +184,7 @@ export async function promptConfirm(message, { default: def = true } = {}) {
       reject(new Error('Canceled'))
     }
 
-    function handler(str, key) {
+    function handler(_str, key) {
       if (!key) return
       if ((key.ctrl && key.name === 'c') || key.name === 'escape') {
         cancel()
@@ -263,7 +263,7 @@ export async function promptList(options, { title = '' } = {}) {
     const lineCount = lines.length
     if (previousLineCount > 0) cursorUp(previousLineCount)
     clearDown()
-    process.stdout.write(lines.join('\n') + '\n')
+    process.stdout.write(`${lines.join('\n')}\n`)
     previousLineCount = lineCount
   }
 
@@ -290,7 +290,7 @@ export async function promptList(options, { title = '' } = {}) {
       reject(new Error('Canceled'))
     }
 
-    function handler(str, key) {
+    function handler(_str, key) {
       if (!key) return
       if ((key.ctrl && key.name === 'c') || key.name === 'escape') {
         cancel()

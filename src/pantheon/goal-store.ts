@@ -15,7 +15,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { assertSafeParentSessionID } from './delegation-finalize.ts'
+import { assertSafeParentSessionID } from './session-id.ts'
 
 export type GoalStatus = 'pending' | 'in_progress' | 'done'
 

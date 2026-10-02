@@ -1,8 +1,26 @@
 # Pantheon Memory System Guide
 
+> **⚠️ Partly historical.** This guide was written for the retired ChromaDB
+> memory system (`memory_consolidate`, `memory_delete`, `memory_update`,
+> `memory_compress`, `memory_cleanup`, `memory_sessions`, `category_filter`,
+> `content=` parameters, `all-MiniLM-L6-v2`). **None of those exist today.**
+> The sections below that describe the *current* server have been corrected;
+> every section describing a `memory_*` tool other than the six
+> `memory_store` / `memory_search` / `memory_recall` / `memory_forget` /
+> `memory_list` / `memory_stats` is preserved as a historical record of the
+> retired system and must not be used as an API reference.
+>
+> Current API: see [MCP.md](MCP.md#pantheon-memory) and
+> [mcp-tools.md](mcp-tools.md).
+
 Pantheon's memory system provides persistent, multi-strategy memory for AI
-agents using sqlite-vec (vector extension) + fastembed (local ONNX
-embeddings). Six tools are accessible via the `pantheon-memory` MCP server.
+agents using **SQLite FTS5 (BM25)** — lexical keyword retrieval only. Nine
+tools are accessible via the `pantheon-memory` MCP server (six `memory_*` plus
+three `code_*`).
+
+The vector pipeline (`sqlite-vec` + `fastembed`, ~50MB of wheels and ~185MB
+RSS) was removed outright. There is **no semantic/vector retrieval**: a query
+must share a token with the stored text to match it.
 
 **Server script:** `scripts/memory_mcp_server.py`
 **Storage:** `~/.pantheon/memory/memory.db`
@@ -14,10 +32,9 @@ embeddings). Six tools are accessible via the `pantheon-memory` MCP server.
 ### Architecture
 
 ```
-Agent tool call → MCP server → ChromaDB PersistentClient
+Agent tool call → MCP server → SQLite FTS5 (BM25)
                                     │
-                            sentence-transformers
-                            (all-MiniLM-L6-v2)
+                      FTS sync triggers (memories ⇄ memories_fts)
                                     │
                             SQLite storage
                             (~/.pantheon/memory/)
@@ -25,19 +42,17 @@ Agent tool call → MCP server → ChromaDB PersistentClient
 
 ### Scoring Strategy
 
-Each memory retrieval uses **Reciprocal Rank Fusion (RRF)** that combines two
-signals:
+Each memory retrieval ranks by **FTS5 BM25**, with an opt-in freshness decay:
 
 | Signal | Weight | Description |
 |--------|--------|-------------|
-| **Dense vector similarity** | Primary | sqlite-vec cosine similarity between query and stored embeddings |
-| **Keyword (FTS5 BM25)** | Primary | Full-text keyword search, fused with vector via RRF |
+| **Keyword (FTS5 BM25)** | Primary | Full-text keyword relevance. Stopwords are dropped and terms of 4+ characters are prefix-matched. |
 | **Freshness decay** | Opt-in | `decay_days` param on `memory_search` (default off). `freshness = 2^(-days_since_created / decay_days)` |
 
-**Freshness decay formula:** `fused_rrf_score × freshness`, where
+**Freshness decay formula:** `bm25_score × freshness`, where
 `freshness = 2^(-days_since_created / decay_days)`. Decay is **off by
-default** (backward compatible) — pass `decay_days` to `memory_search` to
-enable it. With `decay_days=30`, an entry's freshness contribution halves
+default** — pass `decay_days` to `memory_search` to enable it. With
+`decay_days=30`, an entry's freshness contribution halves
 every 30 days.
 
 ### Memory Metadata
@@ -442,11 +457,17 @@ memory_export(session_id="sprint-17", filename="/tmp/sprint-17-export.md")
 
 ## Storage & Performance
 
+> Historical — the table below describes the **retired** ChromaDB system
+> (`chroma.sqlite3`, `all-MiniLM-L6-v2`, category/links model). The live
+> server stores everything in `~/.pantheon/memory/memory.db` using
+> `memory_store(value, namespace, key, metadata)`; see
+> [MCP.md](MCP.md#pantheon-memory).
+
 | Aspect | Detail |
 |--------|--------|
-| **Database** | ChromaDB PersistentClient (SQLite-backed) |
-| **Location** | `~/.pantheon/memory/chroma.sqlite3` |
-| **Embedding model** | `all-MiniLM-L6-v2` (~80MB, downloaded once via sentence-transformers) |
+| **Database** | ChromaDB PersistentClient (SQLite-backed) — RETIRED |
+| **Location** | `~/.pantheon/memory/chroma.sqlite3` — RETIRED, now `memory.db` |
+| **Embedding model** | `all-MiniLM-L6-v2` (~80MB, downloaded once via sentence-transformers) — REMOVED |
 | **Max content length** | 50,000 characters per entry |
 | **Max results** | 100 per search, 20 per recall |
 | **Categories** | Unlimited (user-defined strings) |
@@ -468,6 +489,7 @@ memory_export(session_id="sprint-17", filename="/tmp/sprint-17-export.md")
 | `memory_recall` returns empty | No entries match context | Store some content first, try broader query |
 | "Failed to store memory" | Content too long (>50k chars) | Use `truncate=True` or reduce content size |
 | Search returns irrelevant results | No entries with matching semantics | Store more content, use specific category filters |
+| Search returns nothing for a paraphrased query | Retrieval is lexical only — no embedding to match on | Re-query with tokens that actually appear in the stored text |
 | Entry not found in link/traverse | ID was from a different ChromaDB instance | Check `~/.pantheon/memory/` exists and is consistent |
 | Export creates empty file | No entries match the session_id | Verify session_id with `memory_sessions()` |
-| Model download fails | No internet for first-time download | Ensure network access for `all-MiniLM-L6-v2` download |
+| Model download fails | No internet for first-time download | RETIRED — no model is downloaded any more |
