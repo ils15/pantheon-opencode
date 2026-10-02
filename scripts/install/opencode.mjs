@@ -61,6 +61,33 @@ const COMPONENT_NAMES = [
   'runtime',
 ]
 
+/**
+ * Per-agent fields owned by the framework: for an agent that already exists in
+ * the target config these are overwritten from the canonical source, and for a
+ * new agent they are the seed. Everything else on an existing entry is the
+ * user's and is left alone.
+ *
+ * `source` is written right next to these (for both new and existing agents) but
+ * is kept out of the loop so it can also be set independently — the migration in
+ * config-migration.mjs mirrors this list plus `source`, and tests assert the two
+ * stay equal as sets.
+ *
+ * KNOWN DEBT: `permission` is the V1 spelling. V2 reads `permissions`, so an
+ * agent can carry both keys after an install and the V1 one becomes dead weight.
+ * Tracked for the next slice; changing it here would change what an install
+ * writes.
+ *
+ * @type {readonly string[]}
+ */
+export const MANAGED_FIELDS = Object.freeze([
+  'temperature',
+  'color',
+  'permission',
+  'mode',
+  'hidden',
+  'disable_model_invocation',
+])
+
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
 }
@@ -854,14 +881,6 @@ export async function installOpenCode(
 
   const canonicalAgentConfig = readAgentConfigFromCanonical()
   const agentSources = getAgentSources(agentPrefix)
-  const MANAGED_FIELDS = [
-    'temperature',
-    'color',
-    'permission',
-    'mode',
-    'hidden',
-    'disable_model_invocation',
-  ]
 
   if (config.agent === undefined) config.agent = {}
 

@@ -19,6 +19,7 @@ import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
 import {
   installOpenCode,
   isGlobalConfigDir,
+  MANAGED_FIELDS,
   pluginReferenceIdentity,
   resolveInstalledPlugin,
   resolveTuiCopyTarget,
@@ -704,10 +705,10 @@ test('the installer has no remaining write path for steps', async () => {
     /\bfm\.steps\b/,
     'frontmatter still copies fm.steps into the agent config',
   )
-  const managedFields = source.match(/const MANAGED_FIELDS = \[([^\]]*)\]/)?.[1] ?? ''
-  assert.doesNotMatch(
-    managedFields,
-    /'steps'/,
+  // Read the exported constant, not a regex over the source: a constant built
+  // differently would silently narrow what this assertion checks.
+  assert.ok(
+    !MANAGED_FIELDS.includes('steps'),
     "MANAGED_FIELDS still merges 'steps' into existing and new agents",
   )
   // Behavioral half of the same invariant: a fresh install writes no ceiling.

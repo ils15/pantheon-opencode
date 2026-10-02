@@ -6,11 +6,21 @@
  */
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { migrateV1toV2, migrateV2toV1 } from '../scripts/install/config-migration.mjs'
+import { pathToFileURL } from 'node:url'
+import {
+  MANAGED_AGENT_FIELDS,
+  managedAgentFieldDrift,
+  migrateV1toV2,
+  migrateV2toV1,
+} from '../scripts/install/config-migration.mjs'
+import { MANAGED_FIELDS } from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
+
+const MIGRATION_MODULE = join(ROOT, 'scripts', 'install', 'config-migration.mjs')
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -354,34 +364,95 @@ describe('config-migration', () => {
       )
     })
 
-    it('uses the same managed-field list as the installer', () => {
-      // The two lists must not drift: the migration reimplements the installer's
-      // merge because it runs before it, so both must agree on the field names.
-      // `permission` is the V1 spelling — the converter renames it to
-      // `permissions` before the merge, so compare on the V2 name.
-      const source = readFileSync(join(ROOT, 'scripts', 'install', 'opencode.mjs'), 'utf8')
-      const managed = source.match(/const MANAGED_FIELDS = \[([^\]]*)\]/)?.[1] ?? ''
-      const installerFields = (managed.match(/'([^']+)'/g) ?? []).map((f) =>
-        f.slice(1, -1).replace(/^permission$/, 'permissions'),
+    it('carries over a V1-only field instead of dropping it (N3)', () => {
+      // The installer preserves `description` on an existing agent — it is
+      // written for NEW agents only, never for existing ones ("Existing agent
+      // fields belong to the user"). So the migration must not treat it as
+      // framework-managed, but dropping it because the V2 base happens to lack
+      // the key loses the user's value outright, and nothing writes it back on
+      // any later install. V1-only keys are therefore carried over; the base
+      // still wins on conflict.
+      const migrated = migrateV1toV2({
+        agent: { zeus: { description: 'from V1' } },
+        agents: { zeus: { model: 'x' } },
+      })
+      assert.deepEqual(
+        migrated.agents.zeus,
+        { model: 'x', description: 'from V1' },
+        'a V1-only field must survive the merge, not vanish',
       )
-      assert.ok(installerFields.length > 0, 'installer MANAGED_FIELDS must be readable')
-      for (const field of installerFields) {
+    })
+
+    it('lets the V2 base keep its own value when both blocks set the field', () => {
+      // Counterpart of the test above: carrying over is a gap fill, not a
+      // takeover. `description` stays user-owned, so the base wins.
+      const migrated = migrateV1toV2({
+        agent: { zeus: { description: 'from V1' } },
+        agents: { zeus: { description: 'from V2' } },
+      })
+      assert.equal(migrated.agents.zeus.description, 'from V2', 'user field from V2 preserved')
+    })
+
+    it('every field the migration declares managed overwrites the V2 base', () => {
+      // Behavioral half of the guard: whatever MANAGED_AGENT_FIELDS claims must
+      // actually win over the base when both blocks are present.
+      for (const field of MANAGED_AGENT_FIELDS) {
         const merged = migrateV1toV2({
           agent: { zeus: { [field]: 'from-v1' } },
           agents: { zeus: { mode: 'subagent' } },
         }).agents.zeus
         assert.equal(merged[field], 'from-v1', `managed field ${field} must overwrite the V2 base`)
       }
-      // `source` is written next to MANAGED_FIELDS at opencode.mjs:878, so the
-      // migration must treat it as managed too — it is the field the bug
-      // report calls out as lost.
-      assert.equal(
-        migrateV1toV2({
-          agent: { zeus: { source: 'agents/zeus.md' } },
-          agents: { zeus: { mode: 'subagent' } },
-        }).agents.zeus.source,
-        'agents/zeus.md',
+    })
+
+    it('uses the same managed-field list as the installer, in both directions', () => {
+      // The two lists must not drift: the migration reimplements the installer's
+      // merge because it runs before it, so both must agree on the field names.
+      // `source` is written next to MANAGED_FIELDS, so the migration must treat
+      // it as managed too. Equality is asserted as a SET in both directions —
+      // checking one side only would let a field the migration claims as managed
+      // start overwriting user config that the installer never touches.
+      assert.deepEqual(
+        managedAgentFieldDrift([...MANAGED_FIELDS, 'source']),
+        { onlyInMigration: [], onlyInInstaller: [] },
+        'the managed-field lists must be equal as sets, in both directions',
       )
+    })
+
+    it('the drift guard fails when the migration list gains a field (N1)', async () => {
+      // The destructive failure this guard exists for: adding `model` to the
+      // migration's managed list makes it overwrite the user's model on every
+      // install, and the old one-directional guard stayed green. Assert the
+      // guard rejects the mutation. Applied to a COPY of the module so the repo
+      // is never dirtied.
+      const dir = mkdtempSync(join(tmpdir(), 'pantheon-drift-'))
+      try {
+        const copy = join(dir, 'config-migration.mjs')
+        const original = readFileSync(MIGRATION_MODULE, 'utf8')
+        const mutated = original.replace(
+          /(const MANAGED_AGENT_FIELDS = (?:Object\.freeze\(\s*)?\[)/,
+          "$1\n  'model',",
+        )
+        assert.notEqual(mutated, original, 'the mutation must apply, or this test is vacuous')
+        writeFileSync(copy, mutated)
+        const drifted = await import(pathToFileURL(copy).href)
+        assert.deepEqual(
+          drifted.managedAgentFieldDrift([...MANAGED_FIELDS, 'source']),
+          { onlyInMigration: ['model'], onlyInInstaller: [] },
+          'a field added to the migration list must be reported as drift',
+        )
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('the drift guard fails when the installer list gains a field', () => {
+      // Same guard, opposite side: a field the installer starts writing must be
+      // reported too, or the migration would stop mirroring it.
+      assert.deepEqual(managedAgentFieldDrift([...MANAGED_FIELDS, 'source', 'steps']), {
+        onlyInMigration: [],
+        onlyInInstaller: ['steps'],
+      })
     })
   })
 

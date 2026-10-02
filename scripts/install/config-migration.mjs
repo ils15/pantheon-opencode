@@ -305,16 +305,32 @@ const V2_TO_V1_RENAMES = Object.fromEntries(
 )
 
 /**
- * Agent fields owned by the framework. Mirrors MANAGED_FIELDS in
- * install/opencode.mjs (881-884) plus `source`, which the installer writes
- * next to them (878). The migration runs before that merge, so it has to apply
- * the same precedence itself when both `agent` and `agents` coexist: these
- * come from the V1 block, every other field stays the user's.
+ * Agent fields owned by the framework. Mirrors the exported MANAGED_FIELDS in
+ * install/opencode.mjs plus `source`, which the installer writes next to them.
+ * The migration runs before that merge, so it has to apply the same precedence
+ * itself when both `agent` and `agents` coexist: these come from the V1 block,
+ * every other field stays the user's.
  *
  * `permissions` is the V2 name — the converter renames the V1 `permission`
  * block before the merge runs.
+ *
+ * `description` is deliberately absent, and this list is deliberately narrower
+ * than what the installer writes. The installer writes a description only when
+ * it creates an agent (install/opencode.mjs, the new-agent branch); on an agent
+ * that already exists it leaves the value alone, under its own comment "Existing
+ * agent fields belong to the user". So a description is framework-owned for a
+ * NEW agent and user-owned for an EXISTING one. Listing it here would make the
+ * migration stricter than the installer and would overwrite a description the
+ * installer deliberately preserves. mergeManagedAgents carries the value across
+ * instead, so it survives the merge without being treated as framework-owned.
+ *
+ * KNOWN DEBT: the installer still writes the V1 spelling `permission`, while V2
+ * reads `permissions`. An agent that goes through this merge can therefore end
+ * up carrying both keys, with `permission` left as dead weight that nothing
+ * reads. Tracked for the next slice; not fixed here, because picking a winner
+ * changes what an install writes.
  */
-const MANAGED_AGENT_FIELDS = [
+export const MANAGED_AGENT_FIELDS = Object.freeze([
   'source',
   'temperature',
   'color',
@@ -322,7 +338,33 @@ const MANAGED_AGENT_FIELDS = [
   'mode',
   'hidden',
   'disable_model_invocation',
-]
+])
+
+/**
+ * Compare this module's managed-agent list against the installer's.
+ *
+ * The two merge paths have to agree: the migration reimplements the installer's
+ * merge because it runs before it. A field present on only one side is silent
+ * divergence — either the migration overwrites a field the installer leaves
+ * alone, or it stops mirroring one the installer now writes. Both directions
+ * matter, so the result is reported as a pair of differences rather than a
+ * boolean.
+ *
+ * Names are compared after the converter's renames, because that is the
+ * spelling the merge actually sees.
+ *
+ * @param {string[]} installerFields - MANAGED_FIELDS as exported by install/opencode.mjs
+ * @returns {{ onlyInMigration: string[], onlyInInstaller: string[] }}
+ */
+export function managedAgentFieldDrift(installerFields) {
+  const toV2Name = (field) => V1_TO_V2_RENAMES[field] ?? field
+  const migration = new Set(MANAGED_AGENT_FIELDS.map(toV2Name))
+  const installer = new Set(installerFields.map(toV2Name))
+  return {
+    onlyInMigration: [...migration].filter((f) => !installer.has(f)).sort(),
+    onlyInInstaller: [...installer].filter((f) => !migration.has(f)).sort(),
+  }
+}
 
 /** @returns {boolean} true for a plain name→config map (not null/array) */
 function isAgentMap(value) {
@@ -332,9 +374,17 @@ function isAgentMap(value) {
 /**
  * Merge the converted V1 `agent` block into an existing V2 `agents` base.
  *
- * Agents present in both are merged field by field: the base is kept and only
- * MANAGED_AGENT_FIELDS are overwritten by the V1 values. Agents present in
- * only one block are taken as they are — a union, not a replacement.
+ * Agents present in both are merged field by field: the base is kept, keys the
+ * base does not have are filled in from the V1 block, and MANAGED_AGENT_FIELDS
+ * are overwritten by the V1 values. Agents present in only one block are taken
+ * as they are — a union, not a replacement.
+ *
+ * Filling the gaps matters, and it is not description-specific: any key present
+ * only in the V1 block used to vanish here — `model`, `provider` and `mcp` too.
+ * `description` is the visible case, because the installer never writes one for
+ * an existing agent, so the V1 block is the only place that value can come from
+ * and the agent lost it on every install, permanently. Filling gaps can never
+ * destroy a base value; on conflict the base still wins, as before.
  *
  * @param {object} base - existing V2 `agents` map
  * @param {object} managed - converted V1 `agent` map
@@ -350,6 +400,9 @@ function mergeManagedAgents(base, managed) {
       continue
     }
     const entry = { ...existing }
+    for (const [field, value] of Object.entries(agentConfig)) {
+      if (!(field in entry)) entry[field] = value
+    }
     for (const field of MANAGED_AGENT_FIELDS) {
       if (field in agentConfig) entry[field] = agentConfig[field]
     }
