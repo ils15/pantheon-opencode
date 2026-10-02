@@ -836,7 +836,6 @@ export async function installOpenCode(
       if (fm.mode) agent.mode = fm.mode
       if (fm.hidden) agent.hidden = fm.hidden
       if (fm.temperature !== undefined) agent.temperature = fm.temperature
-      if (fm.steps !== undefined) agent.steps = fm.steps
       // Support both hyphen (YAML) and underscore (JSON) key variants
       if (fm['disable-model-invocation'] !== undefined)
         agent.disable_model_invocation = fm['disable-model-invocation']
@@ -856,7 +855,6 @@ export async function installOpenCode(
   const canonicalAgentConfig = readAgentConfigFromCanonical()
   const agentSources = getAgentSources(agentPrefix)
   const MANAGED_FIELDS = [
-    'steps',
     'temperature',
     'color',
     'permission',
@@ -1222,6 +1220,22 @@ export async function installOpenCode(
   if (version === 'v2') {
     info(S.v2Migrating)
     configToWrite = migrateV1toV2(config)
+
+    // Pantheon no longer sets a step ceiling. Any `steps` sitting on a managed
+    // agent was written by an earlier install and never chosen by the user —
+    // the merge above is additive by design (no delete path), so drop it here
+    // and let the host default apply. This runs after the migration because
+    // migrateV1toV2 copies the V1 `agent` block across verbatim (including any
+    // stale `steps`), which is exactly how the value reappears in V2.
+    // User-defined agents are out of scope and keep their value; the V1
+    // singular `agent` block is deliberately untouched (V1 is retiring).
+    const v2Agents = configToWrite.agents
+    if (v2Agents && typeof v2Agents === 'object' && !Array.isArray(v2Agents)) {
+      for (const name of Object.keys(canonicalAgentConfig)) {
+        const entry = v2Agents[name]
+        if (entry && typeof entry === 'object' && !Array.isArray(entry)) delete entry.steps
+      }
+    }
   }
 
   const configContent = `${JSON.stringify(configToWrite, null, 2)}\n`

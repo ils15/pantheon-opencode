@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
 import {
   installOpenCode,
   isGlobalConfigDir,
@@ -618,6 +619,134 @@ test('user-set model is never overwritten by the merge', async () => {
   try {
     const config = await runInstall(target, { model: 'user/custom-model' })
     assert.equal(config.model, 'user/custom-model')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+// ─── Stale `steps` removal on managed agents ────────────────────────────────
+// Dropping `steps` from the canonical agent frontmatter stopped Pantheon from
+// *writing* a step ceiling, but the installer is additive by design
+// (install/opencode.mjs:886-887) and has no delete path — so every config
+// installed before that change kept its stale value forever.
+//
+// Scope is the agents Pantheon manages. A user-defined agent is never touched,
+// and the V1 singular `agent` block is deliberately left alone (V1 in
+// retirement). The V2 `agents` block is produced in exactly one place — the
+// `version === 'v2'` branch that calls migrateV1toV2 — so that is the single
+// choke point; config-migration.mjs stays a pure shape converter and the
+// delete runs after it.
+
+test('v2 install strips a stale steps ceiling from a managed agent', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-v2-'))
+  try {
+    const config = await runInstall(
+      target,
+      { agent: { zeus: { mode: 'primary', steps: 45, permission: { edit: 'allow' } } } },
+      'v2',
+    )
+    // The stale value rode in on the V1 `agent` block and was carried across
+    // by migrateV1toV2; the install must strip it so the host default wins.
+    assert.equal(config.agents.zeus.steps, undefined)
+    // Everything else about the managed agent is untouched.
+    assert.equal(config.agents.zeus.mode, 'primary')
+    assert.equal(config.agents.zeus.source, '.opencode/agents/zeus.md')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('v1 install leaves the singular agent block steps value alone', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-v1-'))
+  try {
+    const config = await runInstall(
+      target,
+      { agent: { zeus: { mode: 'primary', steps: 45 } } },
+      'v1',
+    )
+    // The cleanup is V2-only: `agent` (singular) is the retiring V1 shape and
+    // is never written by a v2 install, so touching it would be pointless and
+    // would regress a V1 downgrade.
+    assert.equal(config.agent.zeus.steps, 45)
+    assert.equal(config.agents, undefined)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('v2 install preserves steps on an agent the user defined', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-user-'))
+  try {
+    const config = await runInstall(
+      target,
+      { agent: { zeus: { mode: 'primary', steps: 45 }, meuAgente: { mode: 'subagent', steps: 12 } } },
+      'v2',
+    )
+    // Over-deletion guard: `meuAgente` is not a Pantheon-managed agent, so it
+    // is outside the cleanup's scope and keeps the user's value. Only the
+    // managed `zeus` loses its stale ceiling.
+    assert.equal(config.agents.meuAgente.steps, 12)
+    assert.equal(config.agents.zeus.steps, undefined)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('the installer has no remaining write path for steps', async () => {
+  const source = readFileSync(join(ROOT, 'scripts', 'install', 'opencode.mjs'), 'utf8')
+  // Two writers existed: the frontmatter extraction and the MANAGED_FIELDS
+  // merge list. Both are gone, so the post-migration delete has no write path
+  // left to contradict it on the same pass.
+  assert.doesNotMatch(source, /\bfm\.steps\b/, 'frontmatter still copies fm.steps into the agent config')
+  const managedFields = source.match(/const MANAGED_FIELDS = \[([^\]]*)\]/)?.[1] ?? ''
+  assert.doesNotMatch(
+    managedFields,
+    /'steps'/,
+    "MANAGED_FIELDS still merges 'steps' into existing and new agents",
+  )
+  // Behavioral half of the same invariant: a fresh install writes no ceiling.
+  for (const version of ['v1', 'v2']) {
+    const target = mkdtempSync(join(tmpdir(), `pantheon-steps-fresh-${version}-`))
+    try {
+      const config = await runInstall(target, null, version)
+      const agents = version === 'v2' ? config.agents : config.agent
+      assert.ok(agents && typeof agents === 'object', `fresh ${version} install wrote no agents`)
+      for (const [name, entry] of Object.entries(agents)) {
+        assert.equal(entry.steps, undefined, `fresh ${version} install wrote steps on ${name}`)
+      }
+    } finally {
+      rmSync(target, { recursive: true, force: true })
+    }
+  }
+})
+
+test('migrateV1toV2 still carries steps and the installer drops it afterwards', async () => {
+  // config-migration.mjs must stay a pure shape converter: the `{ ...agentConfig }`
+  // spread there (config-migration.mjs:329) is what carries `steps` into V2, and
+  // stripping it there would make the converter lossy for every caller. The
+  // delete belongs downstream in opencode.mjs, inside the v2 branch.
+  const migrated = migrateV1toV2({ agent: { zeus: { mode: 'primary', steps: 45 } } })
+  assert.equal(migrated.agents.zeus.steps, 45, 'the pure converter must not lose fields')
+
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-migrate-'))
+  try {
+    const config = await runInstall(target, { agent: { zeus: { mode: 'primary', steps: 45 } } }, 'v2')
+    assert.equal(config.agents.zeus.steps, undefined)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('a managed agent absent from the config is created without steps', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-new-'))
+  try {
+    // Seed only a user agent, so every Pantheon agent takes the "new agent"
+    // creation branch and is built purely from the canonical frontmatter.
+    const config = await runInstall(target, { agent: { meuAgente: { mode: 'subagent' } } }, 'v2')
+    const zeus = config.agents.zeus
+    assert.ok(zeus, 'the managed agent must be created')
+    assert.equal(zeus.steps, undefined, 'a newly created agent must not gain a steps ceiling')
+    assert.equal(zeus.source, '.opencode/agents/zeus.md')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
