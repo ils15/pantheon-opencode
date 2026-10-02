@@ -10,7 +10,6 @@ permission:
   task:
     "*": deny
 temperature: 0.3
-steps: 35
 skills:
   - incremental-implementation
 mcp_tools:

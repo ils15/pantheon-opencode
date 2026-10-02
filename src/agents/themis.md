@@ -11,7 +11,6 @@ permission:
   task:
     "*": deny
 temperature: 0.1
-steps: 30
 skills:
   - code-review-checklist
   - security-hardening

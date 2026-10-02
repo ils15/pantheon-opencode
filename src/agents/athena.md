@@ -6,7 +6,6 @@ description: Strategic planner & architect — research-first, plan-only, never 
 mode: all
 reasoning_effort: high
 
-steps: 30
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
