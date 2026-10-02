@@ -171,6 +171,29 @@ O instalador continua gravando as configurações de compatibilidade exigidas
 pelo host OpenCode selecionado, como `experimental.subagent_depth`; isso não
 converte um plugin V1 em V2 nem dá hooks V1 ao V2.
 
+O Pantheon não define mais um teto de passos para os agentes. No OpenCode 2 o
+campo `steps` é opcional e não tem default: ausente significa que o host não
+aplica nenhum limite nativo. Uma config escrita antes dessa mudança ainda
+carrega o valor antigo, e o caminho de instalação v2 o remove de todos os
+agentes que o Pantheon gerencia — um agente definido por você nunca é tocado,
+e o bloco V1 singular `agent`, em retirada, é deixado intacto. Rode o
+instalador uma vez para limpar um valor antigo de uma config existente:
+
+```bash
+npx pantheon-opencode init --opencode-version=v2
+```
+
+O controle de contexto não é uma configuração do Pantheon. Qualquer orçamento
+que um agente terá vem das settings de compactação do próprio host OpenCode,
+e o Pantheon não as define.
+
+Quando um bloco V1 `agent` e um bloco V2 `agents` coexistem — o que acontece
+em qualquer `opencode.json` já instalado — a conversão V1→V2 mescla os dois em
+vez de deixar um substituir o outro. O bloco V2 é a base, os campos
+gerenciados que vêm do V1 sobrescrevem, e os seus próprios campos são
+preservados, com a mesma precedência que o instalador já aplica em outros
+pontos. A ordem das chaves não muda o resultado.
+
 ## Atualizando entre releases (beta.5+)
 
 Um comando mantém uma instalação existente em dia:

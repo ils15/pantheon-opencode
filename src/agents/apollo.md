@@ -17,7 +17,6 @@ permission:
   task:
     "*": deny
 temperature: 0.1
-steps: 30
 skills:
   - auto-continue
 mcp_tools:

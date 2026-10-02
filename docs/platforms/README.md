@@ -28,25 +28,19 @@ npx pantheon-opencode init --project
 
 ## Step Limits (opencode.json)
 
-Configuration `steps` per agent — controls how many tool calls the agent can make before being forced to respond:
+`steps` is an **optional host field**, not a Pantheon setting. **Pantheon sets no step
+ceiling** — the field is absent from every agent it ships, and absent means no native ceiling.
 
-| Agent | Steps | Justification |
-|---|---|---|
-| Zeus | 30 | Orchestrator — delegates to 5+ sub-agents |
-| Hermes, Aphrodite | 30 | TDD: test → code → test → refactor → lint |
-| Demeter | 20 | Migrations + queries + indexes |
-| Hephaestus | 25 | RAG pipelines + embeddings + chains |
-| Themis | 20 | Multi-file review: lint + coverage + OWASP |
-| Athena | 20 | Planning + research + Zeus council synthesis |
-| Gaia | 20 | Multi-provider configuration |
-| **Mnemosyne** | **20** | ADR: read code → write → verify → commit |
-| Apollo | 15 | Parallel search (3-10 searches) |
-| Nyx | 15 | Observability |
-| Iris | 12 | GitHub: branch → commit → push → PR |
-| Prometheus | 15 | Docker + CI/CD |
-| **Talos** | **5** | Fast hotfix (1 file, no TDD) |
+The only override is your own config. On an agent **managed by Pantheon**, that override is
+removed on every v2 install: the installer cannot tell a value it wrote from a value you wrote
+— same key, same value — so honouring your copy would need a provenance marker it does not have.
 
-> Adjust `steps` in `opencode.json` as needed. Each tool call counts as 1 step.
+> The installed agent `.md` is **overwritten** on the next `init`/sync. Edits to
+> `~/.config/opencode/agents/*.md` do not persist. This is current behavior, not a recent
+> regression — don't report it as one.
+
+Host-level context control comes from OpenCode's own compaction settings.
+**Pantheon does not define them.**
 
 ## Provider Usage Capability (B3-02)
 

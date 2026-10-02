@@ -12,7 +12,6 @@ permission:
   task:
     "*": deny
 temperature: 0.2
-steps: 30
 skills:
   - git-workflow-and-versioning
   - incremental-implementation

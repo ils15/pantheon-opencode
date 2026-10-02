@@ -9,7 +9,6 @@ permission:
   task:
     "*": allow
 temperature: 0.2
-steps: 45
 mcp_tools:
   pantheon-resources: all
   pantheon-memory:

@@ -11,10 +11,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      move this section to a versioned entry and reset the template below. -->
 
 ## 🆕 What's New
+- **`steps` não é mais definido pelo Pantheon**: removido dos 14 agentes em
+  `src/agents/`. No OpenCode 2 o campo é opcional e **sem default** — ausente
+  significa **sem teto nativo**. O host não impõe teto; o Pantheon estava
+  escrevendo um.
+- **Instalador v2 remove `steps` residual**: configs já instalados passam a ter
+  o `steps` apagado dos agentes gerenciados. Escopo restrito aos agentes que o
+  Pantheon gerencia — um agente definido pelo usuário nunca é tocado. O bloco V1
+  singular `agent` é deliberadamente intocado (V1 em retirada).
+- **Substitutos ao teto**: `task(background=true)` para trabalho fora da
+  foreground, `experimental.subagent_depth` para aninhamento de subagentes e
+  paralelismo entre delegações independentes.
+- **Limpeza**: `max_steps` e `max_compaction_items` removidos de
+  `src/routing.yml`. `loadRoutingMaxSteps` nunca teve um único import — 2
+  matches no repo (definição e typedef), ambos removidos.
 
 ## 🐞 Fixed
+- **`migrateV1toV2` descartava campos gerenciados**: com os blocos `agent` (V1)
+  e `agents` (V2) coexistindo — o caso de qualquer config já instalado — o
+  spread raso fazia um substituir o outro por inteiro. Na ordem de chaves do
+  `opencode.json` real, o lado perdedor era o do usuário. Agora **mescla**: a
+  base é o bloco V2, os campos gerenciados do V1 sobrescrevem, e os campos do
+  usuário são preservados. Mesma semântica já usada em `install/opencode.mjs`.
+- **`docs/platforms/README.md` tinha tabela de step limits errada**: 14 linhas
+  listando limites por agente, **nenhum valor batendo** com `src/agents/`.
+  Tabela removida e a seção reescrita.
 
 ## ⚠️ Known Issues
+- **Migração — rode o init uma vez**: `npx pantheon-opencode init
+  --opencode-version=v2` **uma única vez** limpa o `steps` residual. Sem isso o
+  config instalado continua carregando o teto antigo.
+- **O `.md` de agente instalado é sobrescrito no próximo sync**: editar
+  `~/.config/opencode/agents/*.md` esperando persistência **não funciona**.
+  Comportamento **pré-existente**, não é regressão desta mudança — mas agora
+  está documentado para não ser reportado como uma.
+- **`steps` definido à mão num agente gerenciado é removido a cada install v2**:
+  o instalador não distingue um valor que ele escreveu de um valor que você
+  escreveu (mesma chave, mesmo valor). Workaround: definir no frontmatter do
+  agente — e lembrar que ele **também** é sobrescrito no próximo sync.
 
 ## ✅ Closed Issues
 
