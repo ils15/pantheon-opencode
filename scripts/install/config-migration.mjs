@@ -304,6 +304,61 @@ const V2_TO_V1_RENAMES = Object.fromEntries(
   Object.entries(V1_TO_V2_RENAMES).map(([k, v]) => [v, k]),
 )
 
+/**
+ * Agent fields owned by the framework. Mirrors MANAGED_FIELDS in
+ * install/opencode.mjs (881-884) plus `source`, which the installer writes
+ * next to them (878). The migration runs before that merge, so it has to apply
+ * the same precedence itself when both `agent` and `agents` coexist: these
+ * come from the V1 block, every other field stays the user's.
+ *
+ * `permissions` is the V2 name — the converter renames the V1 `permission`
+ * block before the merge runs.
+ */
+const MANAGED_AGENT_FIELDS = [
+  'source',
+  'temperature',
+  'color',
+  'permissions',
+  'mode',
+  'hidden',
+  'disable_model_invocation',
+]
+
+/** @returns {boolean} true for a plain name→config map (not null/array) */
+function isAgentMap(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Merge the converted V1 `agent` block into an existing V2 `agents` base.
+ *
+ * Agents present in both are merged field by field: the base is kept and only
+ * MANAGED_AGENT_FIELDS are overwritten by the V1 values. Agents present in
+ * only one block are taken as they are — a union, not a replacement.
+ *
+ * @param {object} base - existing V2 `agents` map
+ * @param {object} managed - converted V1 `agent` map
+ * @returns {object} merged map
+ */
+function mergeManagedAgents(base, managed) {
+  const merged = { ...base }
+
+  for (const [name, agentConfig] of Object.entries(managed)) {
+    const existing = merged[name]
+    if (!isAgentMap(existing) || !isAgentMap(agentConfig)) {
+      merged[name] = agentConfig
+      continue
+    }
+    const entry = { ...existing }
+    for (const field of MANAGED_AGENT_FIELDS) {
+      if (field in agentConfig) entry[field] = agentConfig[field]
+    }
+    merged[name] = entry
+  }
+
+  return merged
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -333,7 +388,20 @@ export function migrateV1toV2(config) {
         }
         agents[agentName] = ac
       }
-      result.agents = agents
+      // An `agents` (V2) block may already exist — the installed opencode.json
+      // carries both, in either key order. Renaming onto it with a plain
+      // replace dropped the whole managed merge, so merge instead.
+      const base = result.agents
+      result.agents = isAgentMap(base) ? mergeManagedAgents(base, agents) : agents
+    } else if (key === 'agents') {
+      // V2 block: it is the base. The singular `agent` key may already have
+      // been converted above, in which case merge the two.
+      const managed = result.agents
+      if (isAgentMap(value)) {
+        result.agents = isAgentMap(managed) ? mergeManagedAgents(value, managed) : value
+      } else if (!isAgentMap(managed)) {
+        result.agents = value
+      }
     } else if (key === 'provider' && typeof value === 'object' && value !== null) {
       const providers = {}
       for (const [provName, provConfig] of Object.entries(value)) {

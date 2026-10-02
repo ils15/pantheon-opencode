@@ -6,8 +6,11 @@
  */
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { migrateV1toV2, migrateV2toV1 } from '../scripts/install/config-migration.mjs'
+import { ROOT } from '../scripts/install/shared.mjs'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -263,6 +266,122 @@ describe('config-migration', () => {
     it('should handle config with only $schema', () => {
       const v2 = migrateV1toV2({ $schema: 'https://opencode.ai/config.json' })
       assert.equal(v2.$schema, 'https://opencode.ai/config.json')
+    })
+  })
+
+  // ── `agent` + `agents` coexistence ───────────────────────────────────────
+  // The installed opencode.json carries BOTH blocks: `agent` (V1 singular,
+  // written by the v1 install path) and `agents` (V2 plural). Renaming one
+  // onto the other with a shallow spread let whichever key came second replace
+  // the whole per-agent object, so the Pantheon-managed merge — source,
+  // temperature, permissions — was thrown away on a real config.
+  //
+  // The fix reuses the semantics the installer already applies at
+  // install/opencode.mjs:881-884: the V2 `agents` block is the base and the
+  // framework-managed fields coming from the V1 `agent` block overwrite it.
+  // Everything the user set and Pantheon does not manage is preserved.
+  describe('migrateV1toV2 — agent and agents coexist', () => {
+    it('renames a pure V1 agent block into agents', () => {
+      const v2 = migrateV1toV2({
+        agent: { zeus: { mode: 'primary', source: 'agents/zeus.md' } },
+      })
+      assert.equal(v2.agent, undefined, 'singular block removed')
+      assert.deepEqual(v2.agents, { zeus: { mode: 'primary', source: 'agents/zeus.md' } })
+    })
+
+    it('leaves an already-V2 agents block untouched', () => {
+      const agents = { zeus: { mode: 'subagent', steps: 53 } }
+      const v2 = migrateV1toV2({ agents })
+      assert.deepEqual(v2.agents, agents, 'no conversion needed, no rewrite')
+    })
+
+    it('merges both blocks for the same agent instead of clobbering', () => {
+      const v2 = migrateV1toV2({
+        agent: { zeus: { source: 'agents/zeus.md', temperature: 0.2 } },
+        agents: { zeus: { mode: 'subagent', steps: 53 } },
+      })
+      assert.equal(v2.agents.zeus.source, 'agents/zeus.md', 'managed field from V1 survives')
+      assert.equal(v2.agents.zeus.temperature, 0.2, 'managed field from V1 survives')
+      assert.equal(v2.agents.zeus.mode, 'subagent', 'user field from V2 preserved')
+      assert.equal(v2.agents.zeus.steps, 53, 'user field from V2 preserved')
+    })
+
+    it('unions agents that appear in only one of the two blocks', () => {
+      const v2 = migrateV1toV2({
+        agent: { onlyV1: { mode: 'primary' }, both: { source: 'agents/both.md' } },
+        agents: { onlyV2: { mode: 'subagent' }, both: { mode: 'subagent' } },
+      })
+      assert.deepEqual(Object.keys(v2.agents).sort(), ['both', 'onlyV1', 'onlyV2'])
+      assert.equal(v2.agents.onlyV1.mode, 'primary', 'V1-only agent migrated')
+      assert.equal(v2.agents.onlyV2.mode, 'subagent', 'V2-only agent untouched')
+      assert.equal(v2.agents.both.source, 'agents/both.md', 'shared agent merged')
+      assert.equal(v2.agents.both.mode, 'subagent', 'shared agent kept the user field')
+    })
+
+    it('lets the framework-managed field win when both blocks set it', () => {
+      // Same precedence as install/opencode.mjs:881-884 — managed fields are
+      // framework-owned, so the V1 value is authoritative.
+      const v2 = migrateV1toV2({
+        agent: { zeus: { mode: 'primary', temperature: 0.2 } },
+        agents: { zeus: { mode: 'subagent', temperature: 0.9 } },
+      })
+      assert.equal(v2.agents.zeus.mode, 'primary', 'managed field overwritten by the V1 value')
+      assert.equal(v2.agents.zeus.temperature, 0.2, 'managed field overwritten by the V1 value')
+    })
+
+    it('still carries steps when it is present in the input', () => {
+      // Agnosticism guard: the converter moves values, it never drops them.
+      // Stripping the stale ceiling is the installer's job (opencode.mjs).
+      const v2 = migrateV1toV2({ agent: { zeus: { mode: 'primary', steps: 45 } } })
+      assert.equal(v2.agents.zeus.steps, 45, 'the pure converter must not lose fields')
+    })
+
+    it('falls back to replacing when the existing agents block is not an object', () => {
+      const notAMap = migrateV1toV2({
+        agent: { zeus: { mode: 'primary' } },
+        agents: 'nope',
+      })
+      assert.deepEqual(notAMap.agents, { zeus: { mode: 'primary' } }, 'previous behaviour: replace')
+
+      const badEntry = migrateV1toV2({
+        agent: { zeus: { mode: 'primary' } },
+        agents: { zeus: 'nope' },
+      })
+      assert.deepEqual(
+        badEntry.agents,
+        { zeus: { mode: 'primary' } },
+        'previous behaviour: replace',
+      )
+    })
+
+    it('uses the same managed-field list as the installer', () => {
+      // The two lists must not drift: the migration reimplements the installer's
+      // merge because it runs before it, so both must agree on the field names.
+      // `permission` is the V1 spelling — the converter renames it to
+      // `permissions` before the merge, so compare on the V2 name.
+      const source = readFileSync(join(ROOT, 'scripts', 'install', 'opencode.mjs'), 'utf8')
+      const managed = source.match(/const MANAGED_FIELDS = \[([^\]]*)\]/)?.[1] ?? ''
+      const installerFields = (managed.match(/'([^']+)'/g) ?? []).map((f) =>
+        f.slice(1, -1).replace(/^permission$/, 'permissions'),
+      )
+      assert.ok(installerFields.length > 0, 'installer MANAGED_FIELDS must be readable')
+      for (const field of installerFields) {
+        const merged = migrateV1toV2({
+          agent: { zeus: { [field]: 'from-v1' } },
+          agents: { zeus: { mode: 'subagent' } },
+        }).agents.zeus
+        assert.equal(merged[field], 'from-v1', `managed field ${field} must overwrite the V2 base`)
+      }
+      // `source` is written next to MANAGED_FIELDS at opencode.mjs:878, so the
+      // migration must treat it as managed too — it is the field the bug
+      // report calls out as lost.
+      assert.equal(
+        migrateV1toV2({
+          agent: { zeus: { source: 'agents/zeus.md' } },
+          agents: { zeus: { mode: 'subagent' } },
+        }).agents.zeus.source,
+        'agents/zeus.md',
+      )
     })
   })
 

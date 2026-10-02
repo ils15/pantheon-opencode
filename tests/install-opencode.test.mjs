@@ -679,7 +679,9 @@ test('v2 install preserves steps on an agent the user defined', async () => {
   try {
     const config = await runInstall(
       target,
-      { agent: { zeus: { mode: 'primary', steps: 45 }, meuAgente: { mode: 'subagent', steps: 12 } } },
+      {
+        agent: { zeus: { mode: 'primary', steps: 45 }, meuAgente: { mode: 'subagent', steps: 12 } },
+      },
       'v2',
     )
     // Over-deletion guard: `meuAgente` is not a Pantheon-managed agent, so it
@@ -697,7 +699,11 @@ test('the installer has no remaining write path for steps', async () => {
   // Two writers existed: the frontmatter extraction and the MANAGED_FIELDS
   // merge list. Both are gone, so the post-migration delete has no write path
   // left to contradict it on the same pass.
-  assert.doesNotMatch(source, /\bfm\.steps\b/, 'frontmatter still copies fm.steps into the agent config')
+  assert.doesNotMatch(
+    source,
+    /\bfm\.steps\b/,
+    'frontmatter still copies fm.steps into the agent config',
+  )
   const managedFields = source.match(/const MANAGED_FIELDS = \[([^\]]*)\]/)?.[1] ?? ''
   assert.doesNotMatch(
     managedFields,
@@ -730,7 +736,11 @@ test('migrateV1toV2 still carries steps and the installer drops it afterwards', 
 
   const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-migrate-'))
   try {
-    const config = await runInstall(target, { agent: { zeus: { mode: 'primary', steps: 45 } } }, 'v2')
+    const config = await runInstall(
+      target,
+      { agent: { zeus: { mode: 'primary', steps: 45 } } },
+      'v2',
+    )
     assert.equal(config.agents.zeus.steps, undefined)
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -747,6 +757,45 @@ test('a managed agent absent from the config is created without steps', async ()
     assert.ok(zeus, 'the managed agent must be created')
     assert.equal(zeus.steps, undefined, 'a newly created agent must not gain a steps ceiling')
     assert.equal(zeus.source, '.opencode/agents/zeus.md')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+// ─── Coexistence of the `agent` and `agents` blocks ─────────────────────────
+// The installed opencode.json carries BOTH blocks, so a v2 install always hit
+// the case where migrateV1toV2 renamed the singular block onto an existing
+// plural one. The shallow spread replaced the whole per-agent object, which
+// threw away the Pantheon-managed merge (source, temperature, permissions).
+// The installer semantics at opencode.mjs:881-884 are the contract: managed
+// fields overwrite, user fields are preserved.
+
+test('v2 install keeps the managed agent merge when agent and agents coexist', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-agents-coexist-'))
+  try {
+    const config = await runInstall(
+      target,
+      {
+        agent: { zeus: { mode: 'primary', temperature: 0.2, permission: { edit: 'deny' } } },
+        agents: { zeus: { mode: 'subagent', steps: 45 }, meuAgente: { mode: 'subagent' } },
+      },
+      'v2',
+    )
+    const zeus = config.agents.zeus
+    // Managed fields from the V1 block survive the rename.
+    assert.equal(zeus.source, '.opencode/agents/zeus.md', 'managed source must not be discarded')
+    assert.equal(zeus.temperature, 0.2, 'managed temperature must not be discarded')
+    assert.deepEqual(
+      zeus.permissions.filter((p) => p.action === 'edit'),
+      [{ action: 'edit', resource: '*', effect: 'deny' }],
+      'managed permissions must not be discarded',
+    )
+    assert.equal(zeus.mode, 'primary', 'a managed field set by both blocks takes the V1 value')
+    // User fields from the V2 block are preserved, and the stale ceiling on
+    // the managed agent is still stripped by the post-migration delete.
+    assert.equal(zeus.steps, undefined, 'the managed steps strip must still run')
+    assert.deepEqual(config.agents.meuAgente, { mode: 'subagent' }, 'V2-only agent untouched')
+    assert.equal(config.agent, undefined, 'the singular block is still consumed by the rename')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
