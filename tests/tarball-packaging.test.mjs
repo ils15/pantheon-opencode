@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -70,6 +71,25 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     // negations because .npmignore is overridden by a files whitelist.
     assert.doesNotMatch(listing, /(?:^|\/)__pycache__(?:\/|$)|\.pyc$/)
     execFileSync('tar', ['-xzf', join(ROOT, tarball), '-C', work])
+    const packageRoot = join(work, 'package')
+    const codeModeRoot = join(packageRoot, '.pantheon', 'code-mode')
+    const codeModeManifest = JSON.parse(readFileSync(join(codeModeRoot, 'manifest.json'), 'utf8'))
+    const manifestEntries = Object.entries(codeModeManifest.scripts ?? {})
+    const shippedScripts = textFiles(codeModeRoot)
+      .filter((file) => /\.(?:py|sh)$/.test(file))
+      .map((file) => file.slice(codeModeRoot.length + 1))
+      .sort()
+    assert.deepEqual(
+      manifestEntries.map(([script]) => script).sort(),
+      shippedScripts,
+      'code-mode manifest must contain exactly the scripts shipped in the tarball',
+    )
+    for (const [script, expectedHash] of manifestEntries) {
+      const scriptPath = join(codeModeRoot, script)
+      assert.equal(existsSync(scriptPath), true, `manifest script is missing: ${script}`)
+      const actualHash = createHash('sha256').update(readFileSync(scriptPath)).digest('hex')
+      assert.equal(actualHash, expectedHash, `manifest hash mismatch: ${script}`)
+    }
     const contents = readFileSync(join(work, 'package', 'opencode.json'), 'utf8')
     assertExecutableConfigIsPathFree(join(work, 'package'))
     assert.doesNotMatch(contents, forbidden)
@@ -97,6 +117,21 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     // The code-mode payload must ship inside the tarball so fresh installs
     // can seed the runtime scripts directory.
     assert.match(listing, /^package\/\.pantheon\/code-mode\/compress-inline\.py$/m)
+    assert.doesNotMatch(
+      listing,
+      /package\/\.pantheon\/code-mode\/session-end-save\.(?:py|sh)/,
+      'retired session-save scripts must not be packaged',
+    )
+    assert.doesNotMatch(
+      listing,
+      /package\/\.pantheon\/code-mode\/eval-[^/]+\.py/,
+      'evaluation helpers must remain local-only',
+    )
+    assert.doesNotMatch(
+      listing,
+      /(?:^|\/)evals?(?:\/|$)|(?:^|\/)promptfoo(?:\/|$)/i,
+      'local evals and Promptfoo assets must remain excluded',
+    )
 
     const redaction = spawnSync(
       process.execPath,
@@ -118,8 +153,21 @@ test('installed package resolves hooks to its installed absolute path', () => {
   const project = join(work, 'project')
   mkdirSync(project)
   try {
+    // Install the tarball with a redirected OpenCode config dir. Installing our
+    // own tarball runs its `postinstall` (`postinstall.mjs && sync-tui.mjs`), and
+    // sync-tui resolves the developer's REAL config dir: $XDG_CONFIG_HOME/
+    // opencode if it exists, else ~/.opencode. Left unredirected it copies the
+    // repo's src/plugins/tui over the live ~/.config/opencode/plugins/pantheon-tui
+    // and then runs `npm ci --omit=dev` *there* — silently rewriting the user's
+    // environment (and dropping dev deps) while this suite still reports green.
+    //
+    // The sandbox dir must CONTAIN an `opencode` entry: resolveConfigDir() only
+    // falls through to the real ~/.opencode when the XDG path is absent.
+    const sandboxConfig = join(work, 'sandbox-config')
+    mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true })
     execFileSync('npm', ['install', '--prefix', work, join(ROOT, tarball)], {
       encoding: 'utf8',
+      env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
     })
     const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
     const result = spawnSync(

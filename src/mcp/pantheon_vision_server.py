@@ -15,6 +15,7 @@ import json
 import logging
 import mimetypes
 import os
+import sqlite3
 import struct
 import sys
 from dataclasses import dataclass
@@ -220,7 +221,9 @@ async def _prepare_input(value: str) -> ImageInput:
             raise VisionError("Invalid image URL.")
         mime = _mime_from_path(Path(parsed.path))
         if mime is None and Path(parsed.path).suffix:
-            raise VisionError("Unsupported image MIME type. Use PNG, JPEG, WebP, or GIF.")
+            raise VisionError(
+                "Unsupported image MIME type. Use PNG, JPEG, WebP, or GIF."
+            )
         # The remote server owns the bytes.  The gateway receives the URL and
         # enforces its own fetch limits; unknown extensions remain possible.
         return ImageInput(value, mime or "image/jpeg", None, None, None)
@@ -238,9 +241,7 @@ async def _prepare_input(value: str) -> ImageInput:
         raise VisionError("Unsupported image MIME type. Use PNG, JPEG, WebP, or GIF.")
     encoded = base64.b64encode(data).decode("ascii")
     width, height = _dimensions(data, mime)
-    return ImageInput(
-        f"data:{mime};base64,{encoded}", mime, len(data), width, height
-    )
+    return ImageInput(f"data:{mime};base64,{encoded}", mime, len(data), width, height)
 
 
 def _extract_key(value: Any) -> str | None:
@@ -281,23 +282,107 @@ def _strip_provider_prefix(model: str) -> str:
     return model_name if separator else model
 
 
+def _opencode_data_dir() -> Path:
+    """Locate the OpenCode data directory on either V1 or V2 hosts."""
+    return Path.home() / ".local" / "share" / "opencode"
+
+
+def _key_from_credential_db(provider: str) -> str | None:
+    """Read a provider key from the V2 SQLite credential store.
+
+    OpenCode V2 moved credentials out of ``<data dir>/auth.json`` and into a
+    ``credential`` table in ``<data dir>/opencode.db``; the V1 JSON file no
+    longer exists on a V2 host, so reading it alone left auth silently
+    unresolvable. The value is plaintext JSON of the form
+    ``{"type": "key", "key": "..."}``, so the stdlib is sufficient — no new
+    dependency.
+
+    The database is opened read-only via a URI so a missing or locked file
+    cannot be created or mutated by a health check.
+
+    Args:
+        provider: Integration id to look up, e.g. ``"opencode-go"``.
+
+    Returns:
+        The stored key, or None when the store, table, row, or key is absent.
+    """
+    db_path = _opencode_data_dir() / "opencode.db"
+    if not db_path.is_file():
+        return None
+    uri = f"file:{db_path}?mode=ro"
+    conn = None
+    try:
+        conn = sqlite3.connect(uri, uri=True, timeout=5.0)
+        row = conn.execute(
+            "SELECT value FROM credential "
+            "WHERE integration_id = ? AND active = 1 LIMIT 1",
+            (provider,),
+        ).fetchone()
+    except (sqlite3.Error, ValueError):
+        _logger.warning("Could not read the OpenCode credential store at %s", db_path)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+    if row is None:
+        return None
+    try:
+        return _extract_key(json.loads(row[0]))
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
 def _resolve_auth() -> tuple[str | None, str]:
-    """Resolve auth in env-first, then OpenCode auth-store order."""
+    """Resolve auth in env-first, then OpenCode credential-store order.
+
+    Precedence, highest first:
+
+    1. ``PANTHEON_OPENCODE_API_KEY``
+    2. ``OPENCODE_API_KEY``
+    3. the V2 SQLite ``credential`` table (``opencode-go``, then ``opencode``)
+    4. a legacy V1 ``<data dir>/auth.json`` file, for hosts that still have one
+
+    The V1 file is checked last and only when it exists; it is absent on a V2
+    host. When no source yields a key this returns None and the caller raises,
+    so the failure names the paths and env vars that were tried rather than
+    surfacing as a confusing 401 from the gateway.
+    """
     model = os.getenv("PANTHEON_VISION_MODEL") or DEFAULT_MODEL
     env_key = os.getenv("PANTHEON_OPENCODE_API_KEY") or os.getenv("OPENCODE_API_KEY")
     if env_key:
         return env_key, _endpoint_for_model(model)
 
-    auth_path = Path.home() / ".local" / "share" / "opencode" / "auth.json"
-    try:
-        auth = json.loads(auth_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        auth = {}
-    if isinstance(auth, dict):
-        for provider, endpoint in (("opencode-go", GO_ENDPOINT), ("opencode", OPENCODE_ENDPOINT)):
-            key = _extract_key(auth.get(provider))
-            if key:
-                return key, endpoint
+    for provider, endpoint in (
+        ("opencode-go", GO_ENDPOINT),
+        ("opencode", OPENCODE_ENDPOINT),
+    ):
+        key = _key_from_credential_db(provider)
+        if key:
+            return key, endpoint
+
+    auth_path = _opencode_data_dir() / "auth.json"
+    if auth_path.is_file():
+        try:
+            auth = json.loads(auth_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            auth = {}
+        if isinstance(auth, dict):
+            for provider, endpoint in (
+                ("opencode-go", GO_ENDPOINT),
+                ("opencode", OPENCODE_ENDPOINT),
+            ):
+                key = _extract_key(auth.get(provider))
+                if key:
+                    return key, endpoint
+
+    _logger.error(
+        "No OpenCode credential found. Set PANTHEON_OPENCODE_API_KEY (or "
+        "OPENCODE_API_KEY), or store a key for 'opencode-go' in %s "
+        "(tried: env, the credential table in %s, and the legacy %s).",
+        _opencode_data_dir() / "opencode.db",
+        _opencode_data_dir() / "opencode.db",
+        auth_path,
+    )
     return None, _endpoint_for_model(model)
 
 
@@ -343,7 +428,9 @@ def _scrub(value: str, key: str | None) -> str:
 def _sanitized_gateway_body(body: dict[str, Any]) -> dict[str, Any]:
     """Non-sensitive summary of a gateway request body (no keys, no image bytes)."""
     messages = body.get("messages")
-    content = messages[0].get("content") if isinstance(messages, list) and messages else None
+    content = (
+        messages[0].get("content") if isinstance(messages, list) and messages else None
+    )
     chunks = content if isinstance(content, list) else [content]
     parts: list[dict[str, Any]] = []
     for chunk in chunks:
@@ -353,7 +440,9 @@ def _sanitized_gateway_body(body: dict[str, Any]) -> dict[str, Any]:
             parts.append({"type": "image_url"})
         else:
             text = chunk.get("text")
-            parts.append({"type": "text", "chars": len(text) if isinstance(text, str) else 0})
+            parts.append(
+                {"type": "text", "chars": len(text) if isinstance(text, str) else 0}
+            )
     return {
         "model": body.get("model"),
         "response_format": body.get("response_format"),
@@ -380,7 +469,12 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
     """Send one multimodal request to the selected OpenCode gateway."""
     key, endpoint = _resolve_auth()
     if not key:
-        raise VisionError("OpenCode API key not configured.")
+        raise VisionError(
+            "OpenCode API key not configured. Set PANTHEON_OPENCODE_API_KEY or "
+            "OPENCODE_API_KEY, or store a key for 'opencode-go' in the OpenCode "
+            "credential database (~/.local/share/opencode/opencode.db). "
+            "See the pantheon.vision error log for the paths tried."
+        )
     safe_prompt = prompt.replace(key, "[redacted]")
     content: list[dict[str, Any]] = [
         {"type": "text", "text": safe_prompt},
@@ -396,7 +490,10 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
             response = await client.post(
                 endpoint,
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
                 json=body,
             )
         if response.status_code >= HTTP_ERROR_STATUS:
@@ -417,7 +514,9 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
         payload = response.json()
         choices = payload.get("choices") if isinstance(payload, dict) else None
         message = choices[0].get("message") if choices else None
-        text = _content_text(message.get("content") if isinstance(message, dict) else "")
+        text = _content_text(
+            message.get("content") if isinstance(message, dict) else ""
+        )
         if not text:
             raise VisionError("Vision gateway returned an empty response.")
         return _scrub(text, key)
@@ -425,7 +524,13 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
         raise
     except (httpx.TimeoutException, TimeoutError) as exc:
         raise VisionError("Vision gateway request timed out.") from exc
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+    except (
+        httpx.HTTPError,
+        json.JSONDecodeError,
+        KeyError,
+        IndexError,
+        TypeError,
+    ) as exc:
         raise VisionError("Could not read the vision gateway response.") from exc
     except Exception as exc:
         raise VisionError("Vision gateway request failed.") from exc
@@ -433,7 +538,11 @@ async def _gateway(image: ImageInput, prompt: str, *, structured: bool = False) 
 
 def _error_message(exc: Exception) -> str:
     """Return a stable, non-sensitive tool error."""
-    return f"Error: {exc}" if isinstance(exc, VisionError) else "Error: Vision request failed."
+    return (
+        f"Error: {exc}"
+        if isinstance(exc, VisionError)
+        else "Error: Vision request failed."
+    )
 
 
 _DESCRIBE_PROMPT = (
@@ -442,7 +551,8 @@ _DESCRIBE_PROMPT = (
 )
 _OCR_PROMPT = (
     "Perform OCR on this image. Transcribe all visible text exactly, preserving "
-    "lines, spacing, punctuation, and formatting (formatação) where possible. If there is no "
+    "lines, spacing, punctuation, and formatting (formatação) where possible. "
+    "If there is no "
     "text, say clearly that no text was found. Do not describe the image."
 )
 _ANALYZE_PROMPT = (
@@ -472,7 +582,9 @@ async def vision_ocr(path: str) -> str:
         return _error_message(exc)
 
 
-@mcp.tool(description="Analyze an image and return metadata, description, and OCR as JSON.")
+@mcp.tool(
+    description="Analyze an image and return metadata, description, and OCR as JSON."
+)
 async def vision_analyze(path: str) -> str:
     """Return local metadata plus one structured description/OCR gateway call."""
     try:

@@ -101,6 +101,12 @@ test('test_doctor_manifest_extra_unlisted_script_exits_nonzero', (t) => {
   assert.match(validateCodeModeManifest(dir).message, /extra\.sh/)
 })
 
+test('doctor ignores local eval scripts outside the runtime manifest', (t) => {
+  const { dir } = fixture(t)
+  writeFileSync(join(dir, 'eval-local.py'), 'print("local eval")\n')
+  assert.deepEqual(validateCodeModeManifest(dir), { ok: true, count: 1, total: 1 })
+})
+
 test('test_doctor_manifest_respects_pantheon_project', (t) => {
   const { dir } = fixture(t)
   const project = join(dir, 'project')

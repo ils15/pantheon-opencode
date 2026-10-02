@@ -26,7 +26,6 @@ skills:
   - artifact-management
   - context-compression
   - auto-continue
-  - orchestration-workflow
   - incremental-implementation
 
 ---
@@ -202,7 +201,7 @@ Zeus (nivel 0) -> Apollo/Hermes (nivel 1) -> sub-subagente (nivel 2 max).
 
 | Tier | Trigger | Action |
 |------|---------|--------|
-| Tier 1 — Auto-index | Any agent returns subtask_summary | `memory_store()` direto -> Vector Memory |
+| Tier 1 — Auto-index | Any agent returns subtask_summary | `memory_store()` direto -> FTS5 memory |
 | Tier 2 — Compression | Themis APPROVED | compress_context -> ZZ -> memory-bank |
 
 ## MCP Tools

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ---
-# description: Monte Carlo reliability scoring for skills/agents — simulates N runs of the core workflow (plugin-eval layer 3)
+# description: Monte Carlo reliability scoring for skills/agents — simulates N
+# runs of the core workflow (plugin-eval layer 3)
 # timeout: 120
 # ---
 """Monte Carlo reliability layer of the plugin-eval certification pipeline (PR 3).
@@ -32,23 +33,58 @@ import signal
 import subprocess
 import sys
 from datetime import date
+from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 DEFAULT_RUNS = 20
 DEFAULT_SEED = 42
 TEST_TIMEOUT = 15.0
-SAFE_COMMAND_PREFIXES = ("pytest", "python -m pytest", "npm test", "npm run test", "npm run verify", "bash", "python", "python3", "./")
+RELIABILITY_THRESHOLD = 75.0
+SAFE_COMMAND_PREFIXES = (
+    "pytest",
+    "python -m pytest",
+    "npm test",
+    "npm run test",
+    "npm run verify",
+    "bash",
+    "python",
+    "python3",
+    "./",
+)
 KNOWN_AGENTS = frozenset(
     {
-        "athena", "apollo", "hermes", "aphrodite", "demeter", "themis",
-        "prometheus", "hephaestus", "nyx", "gaia", "iris", "mnemosyne",
-        "talos", "zeus",
+        "athena",
+        "apollo",
+        "hermes",
+        "aphrodite",
+        "demeter",
+        "themis",
+        "prometheus",
+        "hephaestus",
+        "nyx",
+        "gaia",
+        "iris",
+        "mnemosyne",
+        "talos",
+        "zeus",
     }
 )
 FILE_REF_RE = re.compile(r"`([\w./-]+\.(?:py|sh|js|ts|mjs|md|json|yml|yaml|toml))`")
-COMMAND_STARTS = ("python", "python3", "bash", "npm", "node", "npx", "pytest", "uv", "./")
-SUPPORTED_COMMANDS = frozenset({"python", "python3", "bash", "npm", "node", "npx", "pytest", "uv"})
+COMMAND_STARTS = (
+    "python",
+    "python3",
+    "bash",
+    "npm",
+    "node",
+    "npx",
+    "pytest",
+    "uv",
+    "./",
+)
+SUPPORTED_COMMANDS = frozenset(
+    {"python", "python3", "bash", "npm", "node", "npx", "pytest", "uv"}
+)
 SHELL_OPERATORS = (";", "&&", "||", "|", ">", "<", "`", "$(")
 TEST_SECTION_RE = re.compile(r"^##+\s+(?:Verification|Testing|Test)\b.*$", re.MULTILINE)
 
@@ -105,13 +141,12 @@ def _parse_frontmatter(text: str) -> dict[str, Any] | None:
         return None
     block = text[3:end]
     try:
-        import yaml  # local import: optional dependency
-
+        yaml = import_module("yaml")
         data = yaml.safe_load(block)
         return data if isinstance(data, dict) else None
     except ImportError:
         return _minimal_yaml(block)
-    except Exception:  # noqa: BLE001 - any YAML error means invalid frontmatter
+    except Exception:
         return None
 
 
@@ -145,7 +180,12 @@ def _as_list(value: Any) -> list[Any]:
 
 def _extract_references(doc: Path, text: str, is_agent: bool) -> dict[str, list[str]]:
     """Extract file refs, commands, agent mentions, and (agents) skill refs."""
-    refs: dict[str, list[str]] = {"files": [], "commands": [], "agents": [], "skills": []}
+    refs: dict[str, list[str]] = {
+        "files": [],
+        "commands": [],
+        "agents": [],
+        "skills": [],
+    }
     for match in FILE_REF_RE.finditer(text):
         ref = match.group(1)
         if ref not in refs["files"]:
@@ -177,7 +217,9 @@ def _find_test_command(doc: Path, text: str) -> str | None:
         section = text[match.end() :].split("\n##", 1)[0]
         for line in section.splitlines():
             stripped = line.strip()
-            if stripped.startswith(SAFE_COMMAND_PREFIXES) and not stripped.startswith(("#", "//")):
+            if stripped.startswith(SAFE_COMMAND_PREFIXES) and not stripped.startswith(
+                ("#", "//")
+            ):
                 return stripped.split("&&")[0].strip()
     return None
 
@@ -230,19 +272,24 @@ def _check_command(cmd: str, base: Path, repo_root: Path) -> tuple[bool, str]:
     return True, ""
 
 
-def _run_test_command(cmd: str, base: Path) -> tuple[bool, str]:
-    """Run an allowlisted command without invoking a shell."""
+def _parse_test_command(cmd: str) -> tuple[list[str] | None, str | None]:
+    """Parse and validate an allowlisted command without invoking a shell."""
     if any(operator in cmd for operator in SHELL_OPERATORS):
-        return False, f"unsafe test command skipped: shell operator in {cmd}"
+        return None, f"unsafe test command skipped: shell operator in {cmd}"
     try:
         argv = shlex.split(cmd)
     except ValueError as exc:
-        return False, f"unsafe test command skipped: invalid command syntax: {exc}"
+        return None, f"unsafe test command skipped: invalid command syntax: {exc}"
     if not argv:
-        return False, "unsafe test command skipped: empty command"
+        return None, "unsafe test command skipped: empty command"
     executable = Path(argv[0]).name if argv[0].startswith("./") else argv[0]
     if executable not in SUPPORTED_COMMANDS and not argv[0].startswith("./"):
-        return False, f"unsafe test command skipped: unsupported command: {argv[0]}"
+        return None, f"unsafe test command skipped: unsupported command: {argv[0]}"
+    return argv, None
+
+
+def _execute_test_command(argv: list[str], cmd: str, base: Path) -> tuple[bool, str]:
+    """Execute a previously validated command and return its result."""
     try:
         proc = subprocess.Popen(
             argv,
@@ -267,48 +314,99 @@ def _run_test_command(cmd: str, base: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def _run_test_command(cmd: str, base: Path) -> tuple[bool, str]:
+    """Run an allowlisted command without invoking a shell."""
+    argv, error = _parse_test_command(cmd)
+    if error is not None:
+        return False, error
+    return _execute_test_command(argv, cmd, base)
+
+
+class _SimulationState:
+    """Inputs and cached state shared by each simulated run."""
+
+    def __init__(self, **values: object) -> None:
+        self.doc = cast(Path, values["doc"])
+        self.is_agent = cast(bool, values["is_agent"])
+        self.refs = cast(dict[str, list[str]], values["refs"])
+        self.test_cmd = cast(str | None, values["test_cmd"])
+        self.test_result = cast(tuple[bool, str] | None, values["test_result"])
+        self.repo_root = cast(Path, values["repo_root"])
+        self.skills_dirs = cast(list[Path], values["skills_dirs"])
+        self.agents_dir = cast(Path, values["agents_dir"])
+
+
+def _sampled_items(rng: random.Random, items: list[str]) -> list[str]:
+    """Return the seeded random subset used by one simulated run."""
+    if not items:
+        return []
+    count = rng.randint(max(1, len(items) // 2), len(items))
+    return rng.sample(items, count)
+
+
+def _file_failures(rng: random.Random, state: _SimulationState) -> list[str]:
+    """Check the sampled file references for one simulated run."""
+    failures: list[str] = []
+    for ref in _sampled_items(rng, state.refs["files"]):
+        ok, reason = _check_file(ref, state.doc.parent, state.repo_root)
+        if not ok:
+            failures.append(reason)
+    return failures
+
+
+def _command_failures(rng: random.Random, state: _SimulationState) -> list[str]:
+    """Check the sampled command references for one simulated run."""
+    failures: list[str] = []
+    for cmd in _sampled_items(rng, state.refs["commands"]):
+        ok, reason = _check_command(cmd, state.doc.parent, state.repo_root)
+        if not ok:
+            failures.append(reason)
+    return failures
+
+
+def _agent_failures(state: _SimulationState) -> list[str]:
+    """Check referenced agent definitions for one simulated run."""
+    return [
+        f"unknown agent reference: @{agent}"
+        for agent in state.refs["agents"]
+        if agent in KNOWN_AGENTS and not (state.agents_dir / f"{agent}.md").exists()
+    ]
+
+
+def _skill_failures(state: _SimulationState) -> list[str]:
+    """Check referenced skill definitions for one simulated run."""
+    return [
+        f"unknown skill reference: {skill}"
+        for skill in state.refs["skills"]
+        if not any(
+            (directory / skill / "SKILL.md").exists() for directory in state.skills_dirs
+        )
+    ]
+
+
+def _test_failures(state: _SimulationState) -> list[str]:
+    """Run the declared test command once and reuse its result."""
+    if not state.test_cmd:
+        return []
+    if state.test_result is None:
+        state.test_result = _run_test_command(state.test_cmd, state.doc.parent)
+    return [state.test_result[1]] if not state.test_result[0] else []
+
+
 def _simulate(
-    rng: random.Random,
-    doc: Path,
-    is_agent: bool,
-    refs: dict[str, list[str]],
-    test_cmd: str | None,
-    test_result: tuple[bool, str] | None,
-    repo_root: Path,
-    skills_dirs: list[Path],
-    agents_dir: Path,
+    rng: random.Random, state: _SimulationState
 ) -> tuple[list[str], tuple[bool, str] | None]:
     """Run one simulated execution; return (failure reasons, cached test result)."""
     failures: list[str] = []
-    ok, reason = _check_frontmatter(doc, is_agent)
+    ok, reason = _check_frontmatter(state.doc, state.is_agent)
     if not ok:
         failures.append(reason)
-    files = refs["files"]
-    if files:
-        k = rng.randint(max(1, len(files) // 2), len(files))
-        for ref in rng.sample(files, k):
-            ok, reason = _check_file(ref, doc.parent, repo_root)
-            if not ok:
-                failures.append(reason)
-    commands = refs["commands"]
-    if commands:
-        k = rng.randint(max(1, len(commands) // 2), len(commands))
-        for cmd in rng.sample(commands, k):
-            ok, reason = _check_command(cmd, doc.parent, repo_root)
-            if not ok:
-                failures.append(reason)
-    for agent in refs["agents"]:
-        if agent in KNOWN_AGENTS and not (agents_dir / f"{agent}.md").exists():
-            failures.append(f"unknown agent reference: @{agent}")
-    for skill in refs["skills"]:
-        if not any((directory / skill / "SKILL.md").exists() for directory in skills_dirs):
-            failures.append(f"unknown skill reference: {skill}")
-    if test_cmd:
-        if test_result is None:
-            test_result = _run_test_command(test_cmd, doc.parent)
-        if not test_result[0]:
-            failures.append(test_result[1])
-    return failures, test_result
+    failures.extend(_file_failures(rng, state))
+    failures.extend(_command_failures(rng, state))
+    failures.extend(_agent_failures(state))
+    failures.extend(_skill_failures(state))
+    failures.extend(_test_failures(state))
+    return failures, state.test_result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -317,15 +415,22 @@ def main(argv: list[str] | None = None) -> int:
         description="Monte Carlo reliability scoring (plugin-eval layer 3)."
     )
     parser.add_argument("path", help="Path to a skill/agent directory or doc file")
-    parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="Simulated runs (default 20)")
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="RNG seed (default 42)")
+    parser.add_argument(
+        "--runs", type=int, default=DEFAULT_RUNS, help="Simulated runs (default 20)"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=DEFAULT_SEED, help="RNG seed (default 42)"
+    )
     args = parser.parse_args(argv)
     if args.runs < 1:
         print("eval-monte-carlo: --runs must be >= 1", file=sys.stderr)
         return 2
     repo_root = Path(__file__).resolve().parent.parent.parent
     agents_dir = repo_root / "src" / "agents"
-    skills_dirs = [repo_root / ".opencode" / "skills", Path.home() / ".config" / "opencode" / "skills"]
+    skills_dirs = [
+        repo_root / ".opencode" / "skills",
+        Path.home() / ".config" / "opencode" / "skills",
+    ]
     try:
         doc = _discover_doc(Path(args.path))
     except ValueError as exc:
@@ -338,12 +443,19 @@ def main(argv: list[str] | None = None) -> int:
     test_cmd = _find_test_command(doc, text)
     rng = random.Random(args.seed)
     failures_list: list[dict[str, Any]] = []
-    test_result: tuple[bool, str] | None = None
+    state = _SimulationState(
+        doc=doc,
+        is_agent=is_agent,
+        refs=refs,
+        test_cmd=test_cmd,
+        test_result=None,
+        repo_root=repo_root,
+        skills_dirs=skills_dirs,
+        agents_dir=agents_dir,
+    )
     passes = 0
     for run in range(1, args.runs + 1):
-        failures, test_result = _simulate(
-            rng, doc, is_agent, refs, test_cmd, test_result, repo_root, skills_dirs, agents_dir
-        )
+        failures, _ = _simulate(rng, state)
         if failures:
             failures_list.append({"run": run, "reasons": failures})
         else:
@@ -361,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
         "failures": failures_list,
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0 if reliability >= 75.0 else 1
+    return 0 if reliability >= RELIABILITY_THRESHOLD else 1
 
 
 if __name__ == "__main__":

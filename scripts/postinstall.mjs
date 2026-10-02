@@ -5,13 +5,6 @@
  * Runs after `npm install` completes. Validates environment and prints
  * setup instructions. Does NOT install Pantheon platform components.
  */
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const __dirname = fileURLToPath(new URL('.', import.meta.url))
-const _ROOT = join(__dirname, '..')
-
 const REQUIRED_NODE_MAJOR = 18
 const nodeMajor = parseInt(process.versions.node.split('.')[0], 10)
 

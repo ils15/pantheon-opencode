@@ -14,7 +14,8 @@ Pantheon follows **Semantic Versioning** based on [Conventional Commits](https:/
 | `feat:` | **MINOR** (x.y.0) |
 | `fix:`, `chore:`, `docs:`, `refactor:`, etc. | **PATCH** (x.y.z) |
 
-Operational version in this checkout: **v1.5.0-beta.2**.
+Operational version in this checkout: **v1.6.0-beta.1** (first beta compatible
+with OpenCode 2).
 
 ---
 
@@ -58,7 +59,10 @@ npm install --prefix src/plugins/tui && npm run build --prefix src/plugins/tui
 edit `CHANGELOG.md` by hand. Release validation also
 keeps the root pair (`package.json` + `package-lock.json`) and the TUI pair
 (`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`) in the
-same versioned inventory. **It no longer creates git tags** — tags are
+same versioned inventory. The TUI is a root **workspace**, so CI installs both
+with a single `npm ci --ignore-scripts` at the root; the nested TUI lock is
+still versioned and still shipped because the user-facing postinstall syncs
+against it. **It no longer creates git tags** — tags are
 workflow-owned (see below).
 
 ---
@@ -71,6 +75,10 @@ workflow-owned (see below).
    node scripts/versioning.mjs apply minor   # or patch/major
    ```
    or edit `package.json` directly — the version is the release signal.
+   The TUI manifest (`src/plugins/tui/package.json`) carries the same version;
+   `npm run version:check` fails when the two drift. `node_modules/` state is
+   irrelevant here: the TUI is a root workspace, so one root `npm ci
+   --ignore-scripts` installs it.
 3. Fill in the promoted changelog section with the release notes for the
    upcoming version. The release body is **extracted from this section**, so
    it must exist and be accurate.
@@ -219,11 +227,10 @@ runs so beta and stable paths can never double-publish.
 
 The release evidence is fail-closed and has one artifact identity:
 
-- root dependencies use `npm ci --ignore-scripts` with `package.json` and
-  `package-lock.json`;
-- the TUI is checked independently with
-  `npm ci --prefix src/plugins/tui --ignore-scripts` and its own manifest and
-  lockfile;
+- root dependencies and the TUI workspace use one `npm ci --ignore-scripts`
+  with `package.json` and `package-lock.json`;
+- the TUI manifest and lockfile remain independently validated as package and
+  publish evidence;
 - a release creates one npm `.tgz` tarball, computes one SHA-256, and carries
   that exact file and digest from validation to publication; a second `npm
   pack` is not a valid replacement;

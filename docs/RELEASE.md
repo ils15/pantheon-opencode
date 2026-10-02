@@ -2,13 +2,14 @@
 
 ## Versão operacional e esquema de versão
 
-Este checkout usa **v1.5.0-beta.2** como versão operacional local. Este texto
+Este checkout usa **v1.6.0-beta.1** como versão operacional local — a primeira
+beta compatível com OpenCode 2. Este texto
 não afirma que uma beta futura foi publicada; use os placeholders
 `vX.Y.Z` e `vX.Y.Z-beta.N` ao descrever releases futuras. A referência
 publicada **v1.4.3** é somente histórica e pertence a uma **família Zenodo
-anterior** (pré-1.5.x): seu registro é a **version** DOI
+anterior** (pré-1.6.x): seu registro é a **version** DOI
 [10.5281/zenodo.22306637](https://doi.org/10.5281/zenodo.22306637). As versões
-atuais (**1.5.x**) usam a família **ativa**, cujo **concept** DOI é
+atuais (**1.6.x**) usam a família **ativa**, cujo **concept** DOI é
 [10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136)
 (`conceptrecid 22650136`), que sempre resolve para a última versão arquivada.
 A integração Zenodo↔GitHub arquiva **toda** GitHub Release (sem filtro de
@@ -64,8 +65,9 @@ Labels de PR, push, merge e tag **não** disparam nenhum fluxo de release.
    revisão desejada. Um push comum na `main` não inicia uma release.
 3. O workflow valida os manifests e locks do root (`package.json` +
    `package-lock.json`) e do TUI (`src/plugins/tui/package.json` +
-   `src/plugins/tui/package-lock.json`) com `npm ci --ignore-scripts`, sem
-   fallback para `npm install`, e valida o SHA exato antes de:
+   `src/plugins/tui/package-lock.json`) com um único `npm ci --ignore-scripts`
+   na raiz — o TUI é um *workspace* do root, então não há segunda etapa de
+   instalação — sem fallback para `npm install`, e valida o SHA exato antes de:
    - Publicar no npm com tag `latest`
    - Criar GitHub Release
 
