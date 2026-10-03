@@ -21,7 +21,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
+import { load } from 'js-yaml'
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -47,7 +47,7 @@ function parseAgentFrontmatter(content) {
   if (!match) return null
 
   try {
-    const fm = yaml.load(match[1])
+    const fm = load(match[1])
     if (!fm || typeof fm !== 'object' || !fm.name) return null
     return {
       name: String(fm.name),

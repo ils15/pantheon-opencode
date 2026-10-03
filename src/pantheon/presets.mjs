@@ -26,7 +26,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
+import { load } from 'js-yaml'
 
 export const EFFORT_RANK = { low: 0, medium: 1, high: 2 }
 
@@ -192,7 +192,7 @@ export function loadPresetDefs(routingPath) {
   }
   let routing
   try {
-    routing = yaml.load(raw)
+    routing = load(raw)
   } catch (err) {
     throw new Error(`presets: failed to load routing.yml: ${err.message}`)
   }
@@ -209,7 +209,7 @@ export function loadPresetDefs(routingPath) {
 function loadRoutingYaml(routingPath) {
   const path = routingPath ?? fileURLToPath(new URL('../routing.yml', import.meta.url))
   const raw = readFileSync(path, 'utf8')
-  const routing = yaml.load(raw)
+  const routing = load(raw)
   return routing && typeof routing === 'object' ? routing : null
 }
 
