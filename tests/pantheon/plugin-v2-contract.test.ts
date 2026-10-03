@@ -5,8 +5,22 @@ import Module, { createRequire } from 'node:module'
 
 type Registration = { dispose: () => Promise<void> }
 
+type JsonLoader = (module: { exports: unknown }, filename: string) => void
+
+type AjvInstance = {
+  compile: (schema: Record<string, unknown>) => ValidateFn
+}
+type ValidateFn = ((value: unknown) => boolean) & { errors?: unknown }
+
+const jsonExtensions = Module as unknown as {
+  _extensions: Record<string, JsonLoader | undefined>
+}
+
+/** The `.json` loader as it was BEFORE the bootstrap patched it. */
+const ORIGINAL_JSON_LOADER = jsonExtensions._extensions['.json']
+
 /**
- * Load the real ajv, working around a tsx loader defect.
+ * ajv bootstrap — MODULE LEVEL, executed once at import, before any test body.
  *
  * `npm run test:ts` runs THIS file under `NODE_OPTIONS=--conditions=import`
  * (that flag exists because `@opencode-ai/plugin` publishes only an `import`
@@ -16,26 +30,65 @@ type Registration = { dispose: () => Promise<void> }
  *
  *   SyntaxError: .../ajv/dist/refs/data.json: Unexpected token 'v', "var $id="h"...
  *
- * The `.json` files are valid on disk — verified by reading them directly in
- * this function. Swapping in a plain `JSON.parse` loader for the duration of
- * the `require` and restoring the original afterwards is what makes ajv load.
- * Scoped, restored in `finally`, and it does not change how anything else in
- * the suite reads JSON.
+ * The `.json` files are valid on disk — verified by reading them directly here.
+ *
+ * WHY MODULE LEVEL AND NOT PER-TEST: this file is one process, and
+ * `Module._extensions['.json']` is a patch on the global CommonJS loader, not
+ * on a test. Doing it inside a test body (or inside a helper several bodies
+ * call) leaves the window open for the whole run and makes any cross-file leak
+ * fail somewhere far from its cause. So the patch is installed and REMOVED
+ * here, during module evaluation, and the only thing that survives into the
+ * tests is the constructed Ajv instance. After this function returns,
+ * `Module._extensions['.json']` is identical to what it was before —
+ * `ORIGINAL_JSON_LOADER` is captured above the patch so the test below can
+ * assert exactly that.
+ *
+ * A throwing `require` still restores the loader: the patch lives in
+ * `finally`, so a failure here leaves the process with a working JSON loader
+ * instead of a permanently patched one.
  */
-function loadAjv(): typeof import('ajv').default {
-  type JsonLoader = (module: { exports: unknown }, filename: string) => void
-  const extensions = Module as unknown as {
-    _extensions: Record<string, JsonLoader | undefined>
-  }
-  const original = extensions._extensions['.json']
-  extensions._extensions['.json'] = (module, filename) => {
+function bootstrapAjv(): AjvInstance {
+  jsonExtensions._extensions['.json'] = (module, filename) => {
     module.exports = JSON.parse(readFileSync(filename, 'utf8'))
   }
   try {
-    return createRequire(import.meta.url)('ajv') as typeof import('ajv').default
+    const required = createRequire(import.meta.url)('ajv') as {
+      default?: new (opts: Record<string, unknown>) => AjvInstance
+    }
+    const Ctor = required.default ?? (required as unknown as new (o: unknown) => AjvInstance)
+    return new Ctor({ allErrors: true, strict: false })
   } finally {
-    extensions._extensions['.json'] = original
+    jsonExtensions._extensions['.json'] = ORIGINAL_JSON_LOADER
   }
+}
+
+/** The single Ajv instance every test in this file compiles against. */
+const AJV = bootstrapAjv()
+
+/**
+ * Compiled validators, keyed by the schema's serialization.
+ *
+ * Keyed by structure rather than by object identity on purpose: the host mock
+ * re-runs each tool's transform on every registration, so a structurally
+ * identical `output` schema arrives as a NEW object each time. Keying by
+ * identity would hand every registration its own validator and make "one
+ * validator throughout the suite" untrue. Keying by `JSON.stringify` means one
+ * schema means one validator, which is also the property ajv caches itself.
+ */
+const VALIDATOR_CACHE = new Map<string, ValidateFn>()
+
+/** Every (schemaKey, validator) pair this suite has used, in call order. */
+const validatorUses: Array<{ schemaKey: string; validate: ValidateFn }> = []
+
+function compiledValidator(schema: Record<string, unknown>): ValidateFn {
+  const schemaKey = JSON.stringify(schema)
+  let validate = VALIDATOR_CACHE.get(schemaKey)
+  if (validate === undefined) {
+    validate = AJV.compile(schema)
+    VALIDATOR_CACHE.set(schemaKey, validate)
+  }
+  validatorUses.push({ schemaKey, validate })
+  return validate
 }
 
 function registration(disposed: string[], name: string): Registration {
@@ -585,8 +638,10 @@ async function main(): Promise<void> {
    * invisible until production. Using the actual library removes the class of
    * bug where the test's notion of JSON Schema and the host's diverge.
    *
+   * `compiledValidator` (module level, above) returns the SAME cached function
+   * for a given schema on every call — ajv is constructed once at import and
+   * this step never re-instantiates it.
    */
-  const ajv = new (loadAjv())({ allErrors: true, strict: false })
 
   /** The host's output-schema validation step, as a pass/fail verdict. */
   function hostValidatesDeclaredOutput(
@@ -594,7 +649,7 @@ async function main(): Promise<void> {
     output: unknown,
   ): { ok: true } | { ok: false; message: string } {
     if (schema === undefined) return { ok: true }
-    const validate = ajv.compile(schema)
+    const validate = compiledValidator(schema)
     if (validate(output)) return { ok: true }
     const issues = (validate.errors ?? [])
       .map((error) => `${error.instancePath || '/'} ${error.message ?? 'is invalid'}`)
@@ -1331,6 +1386,53 @@ async function main(): Promise<void> {
       /actual enforcement is wired\s+through the V1/,
       'the false coverage claim about V1 enforcement must be gone',
     )
+  })
+
+  test('the bootstrap restores Module._extensions[".json"] to its original value', () => {
+    // The ajv shim patches the GLOBAL CommonJS JSON loader. If it survived past
+    // the module-level bootstrap, every later require of a .json file in this
+    // process would read through a test-owned loader — a leak that fails far
+    // from its cause. ORIGINAL_JSON_LOADER is captured above the patch, so
+    // identity comparison is the exact assertion, not an approximation.
+    assert.equal(
+      jsonExtensions._extensions['.json'],
+      ORIGINAL_JSON_LOADER,
+      'the ajv bootstrap must restore the .json loader it patched',
+    )
+    assert.notEqual(
+      jsonExtensions._extensions['.json'],
+      undefined,
+      'sanity: the loader must still be registered, not deleted',
+    )
+  })
+
+  test('ajv is constructed once and the cached validator is one object throughout', () => {
+    assert.ok(
+      validatorUses.length >= 2,
+      `expected the suite to have validated against ajv more than once, saw ${validatorUses.length}`,
+    )
+    // Group recorded uses by schema and assert each schema resolved to exactly
+    // one validator function. Several distinct schemas are fine — they are
+    // different validators by design; the invariant is per-schema identity.
+    const bySchema = new Map<string, Set<ValidateFn>>()
+    for (const use of validatorUses) {
+      const seen = bySchema.get(use.schemaKey) ?? new Set<ValidateFn>()
+      seen.add(use.validate)
+      bySchema.set(use.schemaKey, seen)
+    }
+    for (const [schemaKey, validators] of bySchema) {
+      assert.equal(
+        validators.size,
+        1,
+        `schema ${schemaKey} compiled to ${validators.size} distinct validators; every test must share one`,
+      )
+    }
+    // And a fresh call returns the very object earlier calls recorded.
+    const [first] = validatorUses
+    if (first !== undefined) {
+      const again = compiledValidator(JSON.parse(first.schemaKey) as Record<string, unknown>)
+      assert.equal(again, first.validate, 'compiledValidator must return the cached object')
+    }
   })
 
   // ─── V1→V2 Bridge Tests ────────────────────────────────────────────
