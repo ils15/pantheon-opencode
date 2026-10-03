@@ -110,7 +110,7 @@
     "typescript": "6.0.3"
   },
   "overrides": {
-    "rolldown": "1.2.0"
+    "rolldown": "1.2.7"
   },
   "repository": {
     "type": "git",
