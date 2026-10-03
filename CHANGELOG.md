@@ -18,6 +18,96 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.3] - 2026-10-03
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+- **Três ferramentas V2 agora executam de verdade**: `hashline_edit`,
+  `pantheon_cost` e `pantheon_model` rodam no host `opencode v2.0.x`. Antes
+  eram placeholders que declaravam sucesso sem fazer nada.
+- **Enforcement de sessão read-only no caminho V2**: `apollo` e `gaia` voltam
+  a ter escrita bloqueada, com o guard registrado no próprio plugin V2 — sem
+  depender de uma ponte que a instalação V2 não monta.
+- **Varredura de segredos de alta confiança no caminho V2**: o único hard block
+  de segurança que a V1 tinha, e que estava inerte por viver num plugin que a
+  instalação V2 não carrega, passa a rodar.
+
+## 🐞 Fixed
+- **As 6 ferramentas de plugin do V2 falhavam em 100% das chamadas**:
+  `hashline_edit`, `pantheon_cost` e `pantheon_model` lançavam
+  `Tool result declared output without an output schema` em toda invocação. A
+  causa era assimetria local — `draft.add()` não declarava `output` enquanto o
+  `execute` resolvia `{ output: string }`. O host exige simetria nos dois
+  sentidos: resultado com `output` e nenhuma declaração lança, assim como
+  declaração sem `output` no resultado. `output` passou a ser **obrigatório** na
+  interface `V2ToolDef`, então o compilador exige a declaração daqui em diante.
+- **A suíte exigia o defeito**: `tests/pantheon/plugin-v2-contract.test.ts`
+  afirmava que o resultado carregava `.output` string — literalmente a condição
+  de falha, contra um mock que não reproduzia a exigência do host. O teste foi
+  reescrito para o invariante de simetria, contra um mock que constrói o
+  `outputSchema` a partir de `def.output` como o host faz
+  (`output: I.outputSchema ?? {}`), cobrindo as duas direções do bicondicional.
+- **A imposição read-only não existia na superfície V2**: `createEnforcementGuard`
+  só era instanciado em `src/plugin.ts`, que o `opencode.json` da release não
+  declara — V2 nunca carrega V1. Com `hashline_edit` funcional, uma sessão
+  somente-leitura podia escrever arquivos. O guard passou a ser registrado no
+  hook `execute.before` do V2, e `pantheon_model` — que escreve
+  `active-preset.json` em escopo project e global — foi acrescentado a
+  `DEFAULT_BLOCKED_TOOLS`, o que corrige também a V1. `pantheon_cost` ficou de
+  fora de propósito: só lê `opencode.db`.
+- **O único hard block de segurança da V1 estava inerte**: o scan de segredos de
+  alta confiança vivia em `src/plugins/pantheon-hooks.ts`, um plugin que a
+  instalação V2 não carrega — inerte por construção, não por má configuração.
+  Passou a rodar dentro do `execute.before` do V2
+  (`scripts/hooks/scan-secrets.sh`; exit 2 bloqueia, exit 1 é advisory e só
+  registra). O caminho do script foi verificado a partir do tarball instalado,
+  não só do repo.
+- **Cinco comentários afirmavam cobertura que não existe** ("wired through the
+  V1…"). Corrigidos — é o defeito "anunciado como vivo, morto no caminho", a
+  mesma classe do bug original, transferida do tool para o controle de segurança.
+
+## ⚠️ Known Issues
+- **A release entrega 3 ferramentas V2 funcionais, não 6**:
+  `pantheon_goal_create`, `pantheon_goal_get` e `pantheon_goal_update` foram
+  **removidos** da superfície V2. `GoalLoopDeps` exige `store`, `client` e
+  `board`, que não existem no `PluginContext` V2, e a bridge V1 resolve para
+  `null` fora da V1. Registrá-las como placeholders não funcionais seria pior
+  que a ausência: anunciá-las seria mentira silenciosa. Marcador `goal-tools`
+  em `V2_UNSUPPORTED_FEATURES`. **Breaking** para quem usava esses tools no
+  host V2 — o contrato V1 permanece disponível para o goal loop.
+- **A matriz de delegação nativa da V1 não é replicada na V2**: o guard V2 cobre
+  a lista de ferramentas bloqueadas, mas não a matriz caller→target nem a negação
+  de `task` em sessão filha. A matriz precisa de uma hierarquia de sessões
+  semeada a partir dos metadados de sessão, e o V2 não expõe esse caminho de
+  semeadura — `SessionHierarchyRegistry.isRoot` reporta `true` para sessões
+  desconhecidas enquanto não semeada, então semeá-la pela metade negaria todo
+  `task()`. O branch é pulado em vez de negado indiscriminadamente. Marcador
+  `delegation-matrix`. `task` continua negada em sessão somente-leitura pela
+  lista de ferramentas bloqueadas, então a profundidade 2 se sustenta; o que
+  não existe é a matriz. Coberto por `experimental.subagent_depth` nesta
+  configuração, mas a garantia do plugin não existe.
+- **O log do scan de segredos escreve só em `.pantheon/logs/hooks.log`**: o
+  `PluginContext` V2 não expõe `client` nem `directory`, então os canais de log
+  estruturado e de toast da V1 não existem nessa superfície. É menos
+  observabilidade, não menos bloqueio.
+- **Falha de infraestrutura do scanner é fail-open por decisão**: script ausente
+  ou timeout não bloqueiam. `runHook` nunca rejeita e um erro de infraestrutura
+  não deve negar chamadas não relacionadas. Ausência do script não bloqueia.
+
+## ✅ Closed Issues
+- **Drift de documentação no `README.pt-BR.md`**: a tabela de contrato de
+  runtime e o parágrafo de superfície listavam 6 ferramentas V2 e as 3 de goal,
+  que não estão registradas. Corrigido para 3 ferramentas, com a razão da
+  ausência e o ponto de imposição read-only.
+- **Cinco comentários de falsa cobertura** sobre a imposição read-only e o scan
+  de segredos.
+- **Shim do loader JSON do ajv elevado a bootstrap de módulo**: o patch de
+  `Module._extensions['.json']` era aplicado de dentro de `loadAjv()` e ficava
+  vivo durante todo o run, podendo vazar entre arquivos de teste e se manifestar
+  longe da causa. Agora instala, carrega e restaura em nível de módulo, antes de
+  qualquer corpo de teste, com `finally`.
 ## [v1.6.0-beta.2] - 2026-10-02
 
 ## 🆕 What's New

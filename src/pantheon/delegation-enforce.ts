@@ -9,12 +9,14 @@
  * module never needs the opencode SDK — the handler is a structural closure
  * wired from plugin.ts.
  *
- * Blocked tools (edit, write, bash, task, hashline_edit):
+ * Blocked tools (edit, write, bash, task, hashline_edit, pantheon_model):
  *   - edit/write/bash are the mutating surface — read-only agents (apollo,
  *     gaia) must stay investigation-only.
  *   - `hashline_edit` is the Wave 2 (PR #46) tag-anchored edit tool — it is a
  *     write surface too, so read-only agents must not bypass enforcement via
  *     it.
+ *   - `pantheon_model` writes active-preset.json in project and global scope —
+ *     a config write a read-only session must not perform.
  *   - `task` is blocked too, which hard-enforces depth-2: a read-only agent
  *     cannot spawn its own subagents.
  *
@@ -182,6 +184,13 @@ export const DEFAULT_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
   'bash',
   'task',
   'hashline_edit',
+  // `pantheon_model` writes active-preset.json in BOTH the project and the
+  // global scope, so it is a write surface with the same blast radius as
+  // `write`. Read-only agents have no reason to change agent models, and a
+  // global override from an investigation-only session is unrecoverable from
+  // inside that session. `pantheon_cost` is deliberately absent: it only reads
+  // opencode.db.
+  'pantheon_model',
 ])
 
 // ─── Zeus Read Guard ──────────────────────────────────────────────────
