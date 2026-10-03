@@ -73,15 +73,16 @@ and copying it back — and that regeneration re-resolves the entire transitive
 tree, so its diff must be reviewed. `tests/tui-workspace-lock.test.mjs` is the
 gate that catches a drift in either direction.
 
-### Why `overrides: { "rolldown": "1.2.0" }` exists
+### Why `overrides: { "rolldown": "1.2.7" }` exists
 
-`tsdown@0.22.14` declares `rolldown: "~1.2.0"`, and `~1.2.0` legitimately
-admits 1.2.11, whose minifier constant-folds differently (`1800*1e3` becomes
-`18e5`). Pinning `tsdown` does not pin the bundler, and a direct
-`devDependency` would not hold either: Node resolution prefers the nearest
-`node_modules`, so a future `tsdown` requiring `^1.3.0` would nest and resolve
-its own copy while the manifest still read `1.2.0`. `overrides` is global and is
-the only mechanism that actually holds.
+`tsdown@0.23.0` requires `rolldown: "~1.2.7"`. The exact `1.2.7` override
+satisfies that range and keeps the workspace and standalone TUI installs on
+the same bundler, whose minifier output is part of the committed bundle. Pinning
+tsdown alone does not pin its dependency; a direct `devDependency` would not
+hold either because Node resolution can prefer a nearer nested copy. The root
+and standalone TUI overrides both enforce the same version. tsdown 0.23.0's
+engine range (`^22.18.0 || ^24.11.0 || >=26.0.0`) is compatible with the
+project's declared Node support (`^22.22.2 || ^24.15.0 || >=26.0.0`).
 
 Two consequences a maintainer must know before touching it:
 
@@ -89,11 +90,10 @@ Two consequences a maintainer must know before touching it:
   silently contradict a dependent's declared range. `tests/tui-workspace-lock.test.mjs`
   asserts the override against `tsdown`'s declared range and that the root lock
   resolves exactly one `rolldown`; CI additionally asserts the installed
-  version is exactly `1.2.0`.
-- Bumping it "helpfully" will break the `TUI dist freshness` gate with a
-  ~35-line constant-folding diff in the committed bundle that reads like a port
-  regression. Bump the override and regenerate `dist` deliberately, in the same
-  change.
+  version is exactly `1.2.7`.
+- Changing it can alter minifier output and break the `TUI dist freshness`
+  gate. Update both overrides, regenerate both locks, rebuild `dist`, and
+  review the generated diff together.
 
 ## Coverage reporting
 

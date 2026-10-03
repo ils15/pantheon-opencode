@@ -15,7 +15,9 @@ from unittest.mock import patch
 
 import eval_store
 import pytest
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
+
+from tests.conftest import _resource_contents
 
 # Module path — canonical source lives in src/mcp/
 MODULE_PATH = "src.mcp.mcp_resources_server"
@@ -26,8 +28,9 @@ def _text(contents: list | str) -> str:
     """Extract text from FastMCP results (list[ReadResourceContents]) or strings."""
     if isinstance(contents, str):
         return contents
-    if isinstance(contents, list) and len(contents) > 0:
-        item = contents[0]
+    blocks = _resource_contents(contents)
+    if blocks:
+        item = blocks[0]
         # ReadResourceContents has .content attribute
         if hasattr(item, "content"):
             return item.content
@@ -348,7 +351,10 @@ class TestResourceTemplates:
     async def test_agent_template_registered(self, server: FastMCP) -> None:
         """The agent template pantheon://agents/{name} should be registered."""
         templates = await server.list_resource_templates()
-        uris = [str(t.uriTemplate) for t in templates]
+        uris = [
+            str(getattr(t, "uri_template", getattr(t, "uriTemplate", "")))
+            for t in templates
+        ]
         matches = [u for u in uris if "agents" in u and "{" in u]
         assert len(matches) > 0
 
@@ -409,7 +415,10 @@ class TestResourceTemplates:
     async def test_deepwork_template_registered(self, server: FastMCP) -> None:
         """The deepwork template pantheon://deepwork/{slug} should be registered."""
         templates = await server.list_resource_templates()
-        uris = [str(t.uriTemplate) for t in templates]
+        uris = [
+            str(getattr(t, "uri_template", getattr(t, "uriTemplate", "")))
+            for t in templates
+        ]
         matches = [u for u in uris if "deepwork" in u]
         assert len(matches) > 0
 
@@ -422,7 +431,10 @@ class TestResourceTemplates:
     async def test_deepwork_status_template_registered(self, server: FastMCP) -> None:
         """The deepwork status template should be registered."""
         templates = await server.list_resource_templates()
-        uris = [str(t.uriTemplate) for t in templates]
+        uris = [
+            str(getattr(t, "uri_template", getattr(t, "uriTemplate", "")))
+            for t in templates
+        ]
         matches = [u for u in uris if "deepwork" in u and "status" in u]
         assert len(matches) > 0
 
@@ -437,7 +449,10 @@ class TestResourceTemplates:
     async def test_skill_template_registered(self, server: FastMCP) -> None:
         """The skill template pantheon://skills/{name} should be registered."""
         templates = await server.list_resource_templates()
-        uris = [str(t.uriTemplate) for t in templates]
+        uris = [
+            str(getattr(t, "uri_template", getattr(t, "uriTemplate", "")))
+            for t in templates
+        ]
         matches = [u for u in uris if "skills" in u and "{" in u]
         assert len(matches) > 0
 
@@ -456,7 +471,10 @@ class TestResourceTemplates:
     async def test_memory_bank_template_registered(self, server: FastMCP) -> None:
         """The memory-bank template should be registered."""
         templates = await server.list_resource_templates()
-        uris = [str(t.uriTemplate) for t in templates]
+        uris = [
+            str(getattr(t, "uri_template", getattr(t, "uriTemplate", "")))
+            for t in templates
+        ]
         matches = [u for u in uris if "memory-bank" in u]
         assert len(matches) > 0
 
@@ -516,7 +534,10 @@ class TestResourceList:
     async def test_all_templates_listed(self, server: FastMCP) -> None:
         """All template URIs should appear in the resource templates list."""
         templates = await server.list_resource_templates()
-        uris = [str(t.uriTemplate) for t in templates]
+        uris = [
+            str(getattr(t, "uri_template", getattr(t, "uriTemplate", "")))
+            for t in templates
+        ]
         assert "pantheon://agents/{agent_name}" in uris
         assert "pantheon://deepwork/{slug}" in uris
         assert "pantheon://deepwork/{slug}/status" in uris
@@ -621,7 +642,10 @@ class TestEvalResources:
     async def test_eval_template_registered(self, server: FastMCP) -> None:
         """The eval template pantheon://eval/{plugin} should be registered."""
         templates = await server.list_resource_templates()
-        uris = [str(t.uriTemplate) for t in templates]
+        uris = [
+            str(getattr(t, "uri_template", getattr(t, "uriTemplate", "")))
+            for t in templates
+        ]
         matches = [u for u in uris if "eval" in u and "{" in u]
         assert len(matches) > 0
 

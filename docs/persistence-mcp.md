@@ -2,8 +2,8 @@
 
 **Server:** `pantheon-persistence`
 **Script:** `scripts/mcp_persistence_server.py`
-**Dependencies:** `mcp.server.fastmcp` and project path helpers; SQLite/FTS5
-storage uses the Python standard library.
+**Dependencies:** `mcp==2.2.0`, standalone `fastmcp==4.0.10`, and project path
+helpers; SQLite/FTS5 storage uses the Python standard library.
 
 A lightweight key-value store with SQLite + FTS5, TTL, and namespaces.
 Separate from `pantheon-memory` (which is also FTS5-backed, without TTL).
@@ -232,6 +232,6 @@ purge_expired(scope="project")
 | Search | FTS5 (exato/keyword) | FTS5 BM25 (keyword, sem stopwords) |
 | TTL | ✅ Por entrada | ❌ Nenhum |
 | Namespace | ✅ Coluna + scope | ✅ Coluna `namespace` |
-| Dependencies | FastMCP + stdlib SQLite/FTS5 | FastMCP + stdlib SQLite/FTS5 |
+| Dependencies | MCP SDK 2.2 + FastMCP 4 + stdlib SQLite/FTS5 | MCP SDK 2.2 + FastMCP 4 + stdlib SQLite/FTS5 |
 | Tools | 14 | 9 |
 | Source lines | 1,843 (`src/mcp`) | 836 (`src/mcp`) |

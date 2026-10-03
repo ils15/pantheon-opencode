@@ -2,6 +2,7 @@
 
 import { strict as assert } from 'node:assert'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -12,6 +13,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { healthCheck } from '../scripts/install/health-check.mjs'
 import {
   resolveInstalledPlugin,
   resolveTuiCopyTarget,
@@ -72,6 +74,42 @@ assert.deepEqual(
 )
 for (const dependency of ['pillow', 'paddle', 'gemini', 'torch']) {
   assert.equal(new RegExp(`^${dependency}(?:[<>=!~]|$)`, 'mi').test(visionRequirements), false)
+}
+
+// The post-install check must probe the standalone FastMCP import path used by
+// the MCP v2-compatible runtime, not the removed SDK v1 re-export.
+const healthTarget = mkdtempSync(join(tmpdir(), 'pantheon-mcp-health-'))
+try {
+  const scriptsDir = join(healthTarget, 'scripts')
+  const sourceDir = join(healthTarget, 'src', 'mcp')
+  const pythonDir = join(healthTarget, '.venv', 'bin')
+  mkdirSync(scriptsDir, { recursive: true })
+  mkdirSync(sourceDir, { recursive: true })
+  mkdirSync(pythonDir, { recursive: true })
+  for (const name of [
+    'mcp_persistence_server.py',
+    'mcp_resources_server.py',
+    'code_mode_server.py',
+    'memory_mcp_server.py',
+    '_pantheon_paths.py',
+  ]) {
+    writeFileSync(join(scriptsDir, name), '')
+  }
+  writeFileSync(join(sourceDir, 'pantheon_vision_server.py'), '')
+  writeFileSync(join(sourceDir, 'requirements-vision.txt'), 'mcp==2.2.0\nfastmcp==4.0.10\n')
+  const fakePython = join(pythonDir, 'python3')
+  writeFileSync(
+    fakePython,
+    '#!/bin/sh\nif [ "$1" = "-c" ] && printf "%s" "$2" | grep -Fq "from fastmcp import FastMCP"; then\n  printf "mcp=2.2.0 fastmcp=4.0.10 fastmcp.server.server\\n"\nfi\nexit 0\n',
+  )
+  chmodSync(fakePython, 0o755)
+
+  const health = healthCheck(healthTarget, { pythonTarget: healthTarget })
+  const sdkCheck = health.passed.find(({ check }) => check === 'mcp-sdk')
+  assert.ok(sdkCheck, 'the MCP SDK health check passes')
+  assert.match(sdkCheck.detail, /mcp=2\.2\.0 fastmcp=4\.0\.10/)
+} finally {
+  rmSync(healthTarget, { recursive: true, force: true })
 }
 
 // ---------------------------------------------------------------------------

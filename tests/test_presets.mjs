@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
+import { load } from 'js-yaml'
 import * as presets from '../src/pantheon/presets.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -52,7 +52,7 @@ function fixtureRouting(yamlBody) {
 
 /** Load repo routing.yml agent names (canonical, minus legacy aliases). */
 function repoAgents() {
-  const routing = yaml.load(readFileSync(join(ROOT, 'src', 'routing.yml'), 'utf8'))
+  const routing = load(readFileSync(join(ROOT, 'src', 'routing.yml'), 'utf8'))
   return Object.keys(routing.agents || {}).filter((a) => a !== 'zen' && a !== 'zeus_copilot')
 }
 

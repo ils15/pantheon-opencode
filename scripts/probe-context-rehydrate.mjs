@@ -63,6 +63,12 @@ spec.loader.exec_module(module)
 
 async def call(name, arguments):
     result = await module.mcp.call_tool(name, arguments)
+    structured = getattr(result, "structured_content", None)
+    if structured is not None:
+        metadata = getattr(result, "meta", None) or {}
+        if metadata.get("fastmcp", {}).get("wrap_result"):
+            return structured.get("result") if isinstance(structured, dict) else structured
+        return structured
     if isinstance(result, tuple):
         structured = result[1]
         if structured is not None:

@@ -24,7 +24,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 mcp = FastMCP("pantheon-vision")
 

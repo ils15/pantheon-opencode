@@ -24,7 +24,7 @@ if (parseInt(process.versions.node.split('.')[0], 10) < REQUIRED_NODE_MAJOR) {
   process.exit(1)
 }
 
-import yaml from 'js-yaml'
+import { dump, load } from 'js-yaml'
 
 export const __dirname = dirname(fileURLToPath(import.meta.url))
 export const ROOT = join(__dirname, '..', '..')
@@ -326,10 +326,10 @@ export function collectSkillNames() {
  * Returns { fm: object, body: string } or null if no frontmatter.
  */
 export function parseFrontmatter(content) {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
+  const match = content.match(/^---\r?\n([\s\S]*?)(?:\r?\n)?---\r?\n?([\s\S]*)$/)
   if (!match) return null
   return {
-    fm: yaml.load(match[1]) ?? {},
+    fm: match[1].trim() ? (load(match[1]) ?? {}) : {},
     body: match[2],
   }
 }
@@ -339,9 +339,9 @@ export function parseFrontmatter(content) {
  * Uses long-line mode and avoids unnecessary quoting.
  */
 export function serializeFm(fm) {
-  return yaml.dump(fm, {
+  return dump(fm, {
     lineWidth: -1,
-    quotingType: '"',
+    quoteStyle: 'double',
     forceQuotes: false,
     noRefs: true,
   })

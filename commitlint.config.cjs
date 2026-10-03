@@ -35,6 +35,7 @@ module.exports = {
         'docs',
         'ci',
         'deps',
+        'deps-dev',
         'release',
         'config',
         'validate',

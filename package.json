@@ -97,21 +97,22 @@
     "!**/*.pyc"
   ],
   "dependencies": {
-    "@opencode-ai/plugin": "1.18.30",
-    "js-yaml": "^4.3.2",
-    "zod": "4.1.8"
+    "@opencode-ai/plugin": "1.18.33",
+    "js-yaml": "^5.4.2",
+    "zod": "4.1.8",
+    "@opencode-ai/sdk": "1.18.33"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13",
-    "@commitlint/cli": "21.2.2",
-    "@commitlint/config-conventional": "21.2.2",
+    "@biomejs/biome": "2.5.14",
+    "@commitlint/cli": "21.2.3",
+    "@commitlint/config-conventional": "21.2.3",
     "ajv": "8.20.0",
     "husky": "^9.1.7",
-    "tsx": "4.23.13",
-    "typescript": "6.0.3"
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
   },
   "overrides": {
-    "rolldown": "1.2.0"
+    "rolldown": "1.2.7"
   },
   "repository": {
     "type": "git",

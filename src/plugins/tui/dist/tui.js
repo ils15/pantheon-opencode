@@ -121,12 +121,14 @@ async function resolvePresetForTui(env, cwd) {
 }
 async function detectVersion(api) {
 	try {
-		const pkgContent = await readFile(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf8");
+		const pkgUrl = new URL("../../package.json", import.meta.url);
+		const pkgContent = await readFile(fileURLToPath(pkgUrl), "utf8");
 		const pkg = JSON.parse(pkgContent);
 		if (pkg.version) return pkg.version;
 	} catch {}
 	try {
-		const pkgContent = await readFile(fileURLToPath(new URL("../../../../package.json", import.meta.url)), "utf8");
+		const pkgUrl = new URL("../../../../package.json", import.meta.url);
+		const pkgContent = await readFile(fileURLToPath(pkgUrl), "utf8");
 		const pkg = JSON.parse(pkgContent);
 		if (pkg.version) return pkg.version;
 	} catch {}
@@ -763,10 +765,7 @@ function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
 			case "Started":
 				if (value !== "" && started === void 0) started = value;
 				break;
-			case "Finalized":
-				finalized = value;
-				break;
-			default: break;
+			case "Finalized": finalized = value;
 		}
 	}
 	const startedAt = started !== void 0 ? Date.parse(started) : NaN;
@@ -885,7 +884,7 @@ function compareDelegationEntries(a, b) {
 *  then the most recent terminal reports; the remaining tail is collapsed
 *  by the View into a single "… +N more" line. Pure — so the history-only panel (no sessionID) is testable
 *  without the TUI runtime. */
-function splitDelegationList(all, maxRecent = 8, now = Date.now(), staleThresholdMs = 1800 * 1e3) {
+function splitDelegationList(all, maxRecent = 8, now = Date.now(), staleThresholdMs = 18e5) {
 	const isActiveState = (st) => st === "running" || st === "retry" || st === "stale-running";
 	return {
 		active: all.filter((d) => isActiveState(d.state)).map((d) => markStaleIfRunning(d, now, staleThresholdMs)).sort(compareDelegationEntries),
@@ -900,20 +899,20 @@ function splitDelegationList(all, maxRecent = 8, now = Date.now(), staleThreshol
 /** Live-first window used by {@link ceilingDelegationList} (kept for the
 *  ceiling helper and existing tests): active jobs first, then the most
 *  recent terminal reports (capped). Pure. */
-function visibleDelegationList(all, maxTerminal = 8, now = Date.now(), staleThresholdMs = 1800 * 1e3) {
+function visibleDelegationList(all, maxTerminal = 8, now = Date.now(), staleThresholdMs = 18e5) {
 	const { active, recent } = splitDelegationList(all, maxTerminal, now, staleThresholdMs);
 	return [...active, ...recent];
 }
 /** Default stale-running threshold: 30 minutes. */
-const STALE_RUNNING_THRESHOLD_MS = 1800 * 1e3;
+const STALE_RUNNING_THRESHOLD_MS = 18e5;
 /** Idle silence window: if no updatedAt change in this window, the entry is
 *  considered stale. Combined with the stale-running threshold to produce the
 *  display-only `stale-running` state. */
-const IDLE_SILENCE_MS = 60 * 1e3;
+const IDLE_SILENCE_MS = 6e4;
 /** Visual-only terminal retention windows. Reports remain on disk; these
 *  constants only control which rows enter the TUI window. */
-const DELEGATION_DONE_RETENTION_MS = 120 * 1e3;
-const DELEGATION_FAILED_RETENTION_MS = 600 * 1e3;
+const DELEGATION_DONE_RETENTION_MS = 12e4;
+const DELEGATION_FAILED_RETENTION_MS = 6e5;
 /** Grace window for an ABSENT child status. `api.state.session.status()` only
 *  carries the sessions that are currently ALIVE; every finished child of a
 *  long-lived session is missing from that map. A child with no status is
@@ -923,7 +922,7 @@ const DELEGATION_FAILED_RETENTION_MS = 600 * 1e3;
 *  has not been registered by the status API yet: within this window of its
 *  last activity (`time.updated`, falling back to `time.created`) it still
 *  reads as running. */
-const DELEGATION_CHILD_STATUS_GRACE_MS = 60 * 1e3;
+const DELEGATION_CHILD_STATUS_GRACE_MS = 6e4;
 /** Recency window for the children channel. `session.children` returns EVERY
 *  child the focused session ever spawned, so a long session accumulates
 *  hundreds of historical rows that would inflate the panel. A child whose
@@ -931,12 +930,12 @@ const DELEGATION_CHILD_STATUS_GRACE_MS = 60 * 1e3;
 *  is older than this window is dropped BEFORE it can enter the list. 24h
 *  keeps the sidebar scoped to current work while still covering long
 *  delegations. A child with no timestamp at all is kept (fail-open). */
-const DELEGATION_CHILDREN_RECENCY_MS = 1440 * 60 * 1e3;
+const DELEGATION_CHILDREN_RECENCY_MS = 864e5;
 /** Alias-less NATIVE task() live entries never receive a report alias (the
 *  task tool output carries none), so the 30s alias-less prune in
 *  mergeChildDelegationSources must not apply to them — 5 minutes covers a
 *  slow child listing while still bounding the live map. */
-const NATIVE_LIVE_ALIASLESS_TTL_MS = 300 * 1e3;
+const NATIVE_LIVE_ALIASLESS_TTL_MS = 3e5;
 /**
 * Mark a running entry as `stale-running` if it has been running longer than
 * the threshold AND has no recent activity (no `updatedAt` change in the last
@@ -1040,7 +1039,7 @@ function delegationStateTone(state) {
 /** Bounded tracker: child session id → latest running tool call. */
 const latestToolActivity = /* @__PURE__ */ new Map();
 const MAX_TOOL_ACTIVITY_ENTRIES = 200;
-const TOOL_ACTIVITY_TTL_MS = 300 * 1e3;
+const TOOL_ACTIVITY_TTL_MS = 3e5;
 /** First usable summary string from common tool input fields. */
 function summarizeToolInput(input) {
 	if (!input) return "";
@@ -1558,9 +1557,7 @@ function formatDelegationHeader(entries) {
 		case "failed":
 			failed++;
 			break;
-		case "done":
-			done++;
-			break;
+		case "done": done++;
 	}
 	const tail = failed > 0 ? ` · ${failed} failed` : "";
 	return `(${active} active · ${done} done${tail})`;

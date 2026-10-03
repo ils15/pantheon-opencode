@@ -18,9 +18,11 @@ PNG_1X1 = base64.b64decode(
 )
 
 
-def _tool_text(result: tuple[list[Any], dict[str, Any]]) -> str:
+def _tool_text(result: Any) -> str:
     """Extract the text returned by FastMCP's call_tool helper."""
-    blocks, _ = result
+    blocks = getattr(result, "content", result)
+    if isinstance(blocks, tuple):
+        blocks = blocks[0]
     block = blocks[0]
     return block.text if hasattr(block, "text") else str(block)
 

@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from _pantheon_paths import pantheon_home
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from pydantic import BeforeValidator, Field
 
 try:

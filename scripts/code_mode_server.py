@@ -36,7 +36,7 @@ from typing import Any
 
 import yaml
 from _pantheon_paths import pantheon_home, pantheon_project
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".sh", ".py"})

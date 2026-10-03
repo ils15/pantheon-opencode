@@ -63,6 +63,13 @@ async def _exec(module, name: str, *, json_output: bool = False):
 
 def _payload(result) -> dict:
     """Normalise a tool result (FastMCP call_tool tuple or plain dict)."""
+    structured = getattr(result, "structured_content", None)
+    if isinstance(structured, dict):
+        metadata = getattr(result, "meta", None) or {}
+        if metadata.get("fastmcp", {}).get("wrap_result"):
+            text = structured.get("result", "")
+            return json.loads(text) if isinstance(text, str) and text else text or {}
+        return structured
     if isinstance(result, tuple):
         blocks = result[0]
         text = blocks[0].text if blocks and hasattr(blocks[0], "text") else ""

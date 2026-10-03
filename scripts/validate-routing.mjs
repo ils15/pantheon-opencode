@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
+import { load } from 'js-yaml'
 import { validatePresetDefs } from '../src/pantheon/presets.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -52,7 +52,7 @@ if (!existsSync(routingPath)) {
   console.error('❌ routing.yml not found')
   process.exit(1)
 }
-const routing = yaml.load(readFileSync(routingPath, 'utf8'))
+const routing = load(readFileSync(routingPath, 'utf8'))
 
 console.log('🔍 Validating routing.yml...\n')
 
@@ -253,7 +253,7 @@ function parseFrontmatter(filePath) {
   const match = content.match(FRONTMATTER_RE)
   if (!match) return null
   try {
-    return yaml.load(match[1])
+    return load(match[1])
   } catch {
     return null
   }

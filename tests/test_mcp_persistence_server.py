@@ -30,13 +30,20 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
+from pydantic import ValidationError as PydanticValidationError
 
-from tests.conftest import _json
+from tests.conftest import _json, _tool_input_schema, _tool_text
 
 # Module path — canonical source lives in src/mcp/
 MODULE_PATH = "src.mcp.mcp_persistence_server"
+MCP_VALIDATION_ERRORS = (
+    ToolError,
+    FastMCPValidationError,
+    PydanticValidationError,
+)
 
 
 def _text_from_tool(result: Any) -> str:
@@ -46,13 +53,7 @@ def _text_from_tool(result: Any) -> str:
     ``(content_blocks, structured)`` tuple for sync tools with an output
     schema — handle both shapes.
     """
-    content_blocks = result[0] if isinstance(result, tuple) else result
-    if content_blocks and len(content_blocks) > 0:
-        block = content_blocks[0]
-        if hasattr(block, "text"):
-            return block.text
-        return str(block)
-    return ""
+    return _tool_text(result)
 
 
 def _force_expiry(module, namespace: str, key: str) -> None:
@@ -130,7 +131,7 @@ class TestTools:
 
         by_name = {tool.name: tool for tool in tools}
         for name in ("context_rehydrate", "context_session_summary"):
-            required = by_name[name].inputSchema.get("required", [])
+            required = _tool_input_schema(by_name[name]).get("required", [])
             assert "session_id" in required, (
                 f"{name} must require session_id to prevent cross-session recovery"
             )
@@ -282,7 +283,7 @@ class TestKVStoreGet:
         self, server: FastMCP, ttl: object
     ) -> None:
         """kv_store must reject non-positive and non-integer TTL values."""
-        with pytest.raises(ToolError, match="ttl"):
+        with pytest.raises(MCP_VALIDATION_ERRORS, match="ttl"):
             await server.call_tool(
                 "kv_store",
                 {"namespace": "ttl", "key": "invalid", "value": "v", "ttl": ttl},
@@ -678,12 +679,12 @@ class TestContextCheckpoints:
         self, server: FastMCP
     ) -> None:
         """Missing or blank IDs fail closed instead of creating a UUID namespace."""
-        with pytest.raises(ToolError, match="session_id"):
+        with pytest.raises(MCP_VALIDATION_ERRORS, match="session_id"):
             await server.call_tool(
                 "context_save",
                 {"slug": "required", "key": "phase:1", "content": "{}"},
             )
-        with pytest.raises(ToolError, match="session_id"):
+        with pytest.raises(MCP_VALIDATION_ERRORS, match="session_id"):
             await server.call_tool(
                 "context_save",
                 {
@@ -693,15 +694,15 @@ class TestContextCheckpoints:
                     "session_id": " ",
                 },
             )
-        with pytest.raises(ToolError, match="session_id"):
+        with pytest.raises(MCP_VALIDATION_ERRORS, match="session_id"):
             await server.call_tool("context_rehydrate", {"slug": "required"})
-        with pytest.raises(ToolError, match="session_id"):
+        with pytest.raises(MCP_VALIDATION_ERRORS, match="session_id"):
             await server.call_tool(
                 "context_rehydrate", {"slug": "required", "session_id": ""}
             )
-        with pytest.raises(ToolError, match="session_id"):
+        with pytest.raises(MCP_VALIDATION_ERRORS, match="session_id"):
             await server.call_tool("context_session_summary", {"slug": "required"})
-        with pytest.raises(ToolError, match="session_id"):
+        with pytest.raises(MCP_VALIDATION_ERRORS, match="session_id"):
             await server.call_tool(
                 "context_session_summary", {"slug": "required", "session_id": " "}
             )
@@ -846,7 +847,7 @@ class TestContextCheckpoints:
         self, server: FastMCP, ttl: object
     ) -> None:
         """context_save must reject non-positive and non-integer TTL values."""
-        with pytest.raises(ToolError, match="ttl"):
+        with pytest.raises(MCP_VALIDATION_ERRORS, match="ttl"):
             await server.call_tool(
                 "context_save",
                 {
@@ -1024,7 +1025,7 @@ class TestContextCheckpoints:
         )
 
         assert first["session_id"] != second["session_id"]
-        with pytest.raises(ToolError, match="session_id"):
+        with pytest.raises(MCP_VALIDATION_ERRORS, match="session_id"):
             await server.call_tool("context_rehydrate", {"slug": "reused-slug"})
         assert _json(
             await server.call_tool(
@@ -1840,7 +1841,9 @@ class TestValidationReporting:
     async def test_context_content_schema_carries_shapes(self, server: FastMCP) -> None:
         """The declared input schema states goal/phase must be objects."""
         tools = {t.name: t for t in await server.list_tools()}
-        content_schema = tools["context_save"].inputSchema["properties"]["content"]
+        content_schema = _tool_input_schema(tools["context_save"])["properties"][
+            "content"
+        ]
         description = content_schema.get("description", "")
 
         assert "'phase', 'delegations' and 'heartbeat' must be objects" in description

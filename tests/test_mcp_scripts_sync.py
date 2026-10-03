@@ -65,6 +65,18 @@ MEMORY_SOURCE_CONTRACT_MARKERS = (
     "def code_neighbors(",
 )
 
+MCP_SERVER_PATHS = (
+    "src/mcp/mcp_persistence_server.py",
+    "src/mcp/mcp_resources_server.py",
+    "src/mcp/code_mode_server.py",
+    "src/mcp/memory_mcp_server.py",
+    "src/mcp/pantheon_vision_server.py",
+    "scripts/mcp_persistence_server.py",
+    "scripts/mcp_resources_server.py",
+    "scripts/code_mode_server.py",
+    "scripts/memory_mcp_server.py",
+)
+
 
 @pytest.mark.parametrize(
     ("scripts_path", "canonical_path"),
@@ -131,6 +143,59 @@ def test_memory_mcp_copies_keep_distinct_contracts(
     assert scripts_text != canonical_text, (
         "memory MCP copies are intentionally divergent: the src/mcp copy must "
         "retain its codemap contract without being copied into scripts/"
+    )
+
+
+@pytest.mark.parametrize("server_path", MCP_SERVER_PATHS)
+def test_mcp_servers_use_standalone_fastmcp_api(server_path: str) -> None:
+    server_file = REPO_ROOT / server_path
+    server_text = server_file.read_text(encoding="utf-8")
+
+    assert "from fastmcp import FastMCP" in server_text, (
+        f"{server_path} must import FastMCP from the standalone fastmcp package"
+    )
+    assert "mcp.server.fastmcp" not in server_text, (
+        f"{server_path} still imports the removed MCP v1 FastMCP module"
+    )
+
+
+def test_mcp_requirement_manifests_pin_the_coordinated_major_versions() -> None:
+    expected = {"mcp": "2.2.0", "fastmcp": "4.0.10"}
+    manifests = (
+        REPO_ROOT / "src/mcp/requirements-mcp.txt",
+        REPO_ROOT / "src/mcp/requirements-vision.txt",
+    )
+
+    for manifest in manifests:
+        pins = {}
+        for raw_line in manifest.read_text(encoding="utf-8").splitlines():
+            line = raw_line.partition("#")[0].strip()
+            if "==" in line:
+                name, version = line.split("==", maxsplit=1)
+                pins[name.lower()] = version
+        assert {name: pins.get(name) for name in expected} == expected, (
+            f"{manifest.relative_to(REPO_ROOT)} must pin the coordinated MCP majors"
+        )
+
+
+def test_shared_runtime_manifest_includes_vision_httpx_dependency() -> None:
+    shared_manifest = REPO_ROOT / "src/mcp/requirements-mcp.txt"
+    vision_manifest = REPO_ROOT / "src/mcp/requirements-vision.txt"
+
+    def pinned_version(manifest: Path, package: str) -> str | None:
+        for raw_line in manifest.read_text(encoding="utf-8").splitlines():
+            line = raw_line.partition("#")[0].strip()
+            name, separator, version = line.partition("==")
+            if separator and name.lower() == package:
+                return version
+        return None
+
+    assert pinned_version(shared_manifest, "httpx") == "0.28.1", (
+        "setupVenv installs requirements-mcp.txt into the shared runtime, "
+        "which must include the vision server's httpx dependency"
+    )
+    assert pinned_version(vision_manifest, "httpx") == "0.28.1", (
+        "the vision dependency manifest and shared runtime must use the same httpx pin"
     )
 
 

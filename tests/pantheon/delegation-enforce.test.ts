@@ -18,7 +18,7 @@
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 
-import yaml from 'js-yaml'
+import { load } from 'js-yaml'
 
 import {
   createEnforcementGuard,
@@ -269,7 +269,7 @@ async function main() {
   await testAsync(
     'READ_ONLY_AGENTS mirrors routing.yml background_delegation.read_only_agents (no drift)',
     async () => {
-      const routing = yaml.load(
+      const routing = load(
         readFileSync(new URL('../../src/routing.yml', import.meta.url), 'utf8'),
       ) as { background_delegation?: { read_only_agents?: string[] } }
       const fromRouting = (routing.background_delegation?.read_only_agents ?? []).map((agent) =>

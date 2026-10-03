@@ -16,6 +16,9 @@ export default defineConfig({
   outDir: 'dist',
   clean: true,
   outExtensions: () => ({ js: '.js' }),
+  dts: {
+    tsconfig: join(__dirname, 'tsconfig.build.json'),
+  },
   define: {
     __PANTHEON_VERSION__: JSON.stringify(pkg.version),
   },
