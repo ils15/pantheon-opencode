@@ -78,11 +78,14 @@ clear handoff between stages of work.
 
 ## Status
 
-Operational checkout version: **v1.6.0-beta.1** (first beta compatible with
-OpenCode 2; publication is not asserted here). Pantheon is designed for OpenCode and depends on the
-availability and configuration of OpenCode and any optional services you choose
-to use. Check the [releases](https://github.com/ils15/pantheon-opencode/releases)
-and [changelog](CHANGELOG.md) for the latest published changes.
+Candidate version: the manifests in this checkout express the version being
+prepared, not a confirmed publication. A beta is published only after the
+Release workflow completes successfully. To check which version is actually
+published, consult the npm `beta` dist-tag. Pantheon is designed for OpenCode
+and depends on the availability and configuration of OpenCode and any optional
+services you choose to use. Check the
+[releases](https://github.com/ils15/pantheon-opencode/releases) and
+[changelog](CHANGELOG.md) for the latest published changes.
 
 ## Delegation (native `task()`)
 

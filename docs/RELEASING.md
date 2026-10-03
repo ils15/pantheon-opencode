@@ -14,8 +14,10 @@ Pantheon follows **Semantic Versioning** based on [Conventional Commits](https:/
 | `feat:` | **MINOR** (x.y.0) |
 | `fix:`, `chore:`, `docs:`, `refactor:`, etc. | **PATCH** (x.y.z) |
 
-Operational version in this checkout: **v1.6.0-beta.1** (first beta compatible
-with OpenCode 2).
+Candidate version: the manifests in this checkout express the version being
+prepared; they do not confirm a publication. A beta is published only after
+the Release workflow completes successfully. To check which version is
+actually published, consult the npm `beta` dist-tag.
 
 ---
 
@@ -82,16 +84,25 @@ workflow-owned (see below).
 3. Fill in the promoted changelog section with the release notes for the
    upcoming version. The release body is **extracted from this section**, so
    it must exist and be accurate.
-4. Commit + push + open a PR to `main`. Stage only these intentional release
-   files; do not include untracked RED tests, generated artifacts, or any
-   other paths:
+4. Commit + push + open a PR to `main`. Review the **complete** working-tree
+   diff, then stage every intentional release change: all outputs produced by
+   `versioning.mjs` and any release docs deliberately edited. The paths below
+   are illustrative and incomplete; check the full diff rather than treating
+   this list as exhaustive. In particular, **do not omit
+   `src/plugins/tui/dist/tui.js`**: the bundle embeds the package version and
+   CI checks TUI dist freshness. Leave unrelated changes and untracked RED
+   tests out of the release commit.
 
    ```bash
+   git status --short
+   git diff
    git add CHANGELOG.md docs/RELEASING.md package.json package-lock.json \
      plugin.json pyproject.toml src/plugins/tui/package.json \
-     src/plugins/tui/package-lock.json
+     src/plugins/tui/package-lock.json src/plugins/tui/dist/tui.js
+   # Add any other intentional paths found while reviewing the complete diff.
    git diff --cached --check
    git diff --cached --name-only
+   git diff --cached
    git commit -m "chore(release): vX.Y.Z"
    git push -u origin <branch>
    ```

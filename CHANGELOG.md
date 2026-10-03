@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      move this section to a versioned entry and reset the template below. -->
 
 ## 🆕 What's New
+
+## 🐞 Fixed
+
+## ⚠️ Known Issues
+
+## ✅ Closed Issues
+
+## [v1.6.0-beta.2] - 2026-10-02
+
+## 🆕 What's New
 - **`steps` não é mais definido pelo Pantheon**: removido dos 14 agentes em
   `src/agents/`. No OpenCode 2 o campo é opcional e **sem default** — ausente
   significa **sem teto nativo**. O host não impõe teto; o Pantheon estava
@@ -38,6 +48,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Tabela removida e a seção reescrita.
 
 ## ⚠️ Known Issues
+- **Permissões de agente**: V1 usa `permission` e V2 usa `permissions`; ao mesclar esses blocos, a chave legada `permission` pode permanecer inerte ao lado de `permissions`.
 - **Migração — rode o init uma vez**: `npx pantheon-opencode init
   --opencode-version=v2` **uma única vez** limpa o `steps` residual. Sem isso o
   config instalado continua carregando o teto antigo.
@@ -49,9 +60,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   o instalador não distingue um valor que ele escreveu de um valor que você
   escreveu (mesma chave, mesmo valor). Workaround: definir no frontmatter do
   agente — e lembrar que ele **também** é sobrescrito no próximo sync.
-
-## ✅ Closed Issues
-
 ## [v1.6.0-beta.1] - 2026-09-30
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

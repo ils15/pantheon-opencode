@@ -2,10 +2,10 @@
 
 ## Versão operacional e esquema de versão
 
-Este checkout usa **v1.6.0-beta.1** como versão operacional local — a primeira
-beta compatível com OpenCode 2. Este texto
-não afirma que uma beta futura foi publicada; use os placeholders
-`vX.Y.Z` e `vX.Y.Z-beta.N` ao descrever releases futuras. A referência
+Os manifests deste checkout expressam a versão candidata, não confirmam uma
+publicação. Uma versão beta só é publicada depois que o workflow Release
+termina com sucesso. Para saber qual versão está realmente publicada,
+consulte a dist-tag `beta` do npm. A referência
 publicada **v1.4.3** é somente histórica e pertence a uma **família Zenodo
 anterior** (pré-1.6.x): seu registro é a **version** DOI
 [10.5281/zenodo.22306637](https://doi.org/10.5281/zenodo.22306637). As versões
