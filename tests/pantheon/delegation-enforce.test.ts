@@ -225,8 +225,9 @@ async function main() {
 
       assert.deepEqual(
         [...DEFAULT_BLOCKED_TOOLS].sort(),
-        ['bash', 'edit', 'hashline_edit', 'task', 'write'],
-        'host covers edit/write/bash/task — hashline_edit is the plugin tool the guard must add',
+        ['bash', 'edit', 'hashline_edit', 'pantheon_model', 'task', 'write'],
+        'host covers edit/write/bash/task — hashline_edit and pantheon_model are the plugin ' +
+          'tools the guard must add (both are write surfaces)',
       )
 
       for (const agent of ['apollo', 'gaia']) {

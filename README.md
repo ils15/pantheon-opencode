@@ -186,16 +186,36 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
 | Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) |
-| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 6 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
+| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 4 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
 | V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 
-The V2 plugin provides 6 orchestration tools (`hashline_edit`,
-`pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`,
-`pantheon_cost`, `pantheon_model`), 4 event subscriptions (`session.created`,
-`session.idle`, `session.error`, `session.compacted`), session hooks (`prompt`,
-`context`), and tool hooks (`execute.before`, `execute.after`). Unsupported V2
-features are `legacy-hooks` (the V1-specific hook surface), `catalog-transform`,
-`integration-transform`, and `skill-transform`.
+The V2 plugin provides 3 orchestration tools (`hashline_edit`, `pantheon_cost`,
+`pantheon_model`), 4 event subscriptions (`session.created`, `session.idle`,
+`session.error`, `session.compacted`), session hooks (`prompt`, `context`),
+and a tool `execute.before` hook that enforces read-only sessions. The 3 goal
+tools are **not**
+registered on V2: the goal loop needs a `GoalStore`, a `GoalLoopClient` and a
+`BackgroundJobBoard`, none of which the V2 `PluginContext` exposes, so the gap
+is reported as the `goal-tools` unsupported-feature marker. Use the V1
+contract if you need the goal loop.
+
+The V2 `execute.before` hook is the read-only enforcement point for that
+surface: the host includes the active agent on the event, a read-only agent
+(`apollo`, `gaia`) registers its session, and the shared
+`createEnforcementGuard` throws to deny `edit`, `write`, `bash`, `task`,
+`hashline_edit` and `pantheon_model`. It does **not** rely on the V1
+`tool.execute.before` hook, which lives in `src/plugin.ts` and is not loaded
+when only `plugin-v2` is configured. The companion `execute.after` hook and the
+`permission.evaluate` hook are registration points with no V2-side behaviour,
+and the V1 caller/target delegation matrix for native `task()` is not enforced
+on V2.
+
+Every V2 tool declares an `output` schema. OpenCode 2.0.x requires the
+declaration and the resolved result to agree in both directions, so an
+undeclared tool — or one that returns `output` without declaring it — fails on
+every call. Unsupported V2 features are `legacy-hooks` (the V1-specific hook
+surface), `catalog-transform`, `integration-transform`, `skill-transform` and
+`goal-tools`.
 
 The package exposes both contracts as importable exports: `pantheon-opencode/plugin`
 (V1), `pantheon-opencode/plugin-v2` (V2) and `pantheon-opencode/v2-bridge`

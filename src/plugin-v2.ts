@@ -2,10 +2,22 @@
  * Pantheon V2 Plugin — full orchestration plugin for OpenCode V2.
  *
  * Registers:
- * - 6 orchestration tools via V2 tool.transform (with V1 bridge fallback)
+ * - 3 self-sufficient tools via V2 tool.transform (hashline_edit,
+ *   pantheon_cost, pantheon_model — see ./pantheon/v2-tools.ts; the goal tools
+ *   need V1 infrastructure and are absent from this surface)
  * - 4 event subscriptions (session.created, idle, error, compacted)
- * - Session hooks (prompt, context, compaction) and tool hooks (execute.before/after)
- * - Permission hooks for custom authorization
+ * - Session hooks (prompt, context, compaction)
+ * - A tool `execute.before` hook that ENFORCES read-only sessions: the agent
+ *   arrives on the host's event, a read-only agent (apollo/gaia) registers its
+ *   session, and the shared `createEnforcementGuard` throws to deny
+ *   `hashline_edit` / `pantheon_model` / `edit` / `write` / `bash` / `task`.
+ *   See `registerV2ToolHooks`.
+ * - A tool `execute.after` hook and a permission hook, registered as
+ *   registration points with no V2-side behaviour
+ *
+ * Every tool registered through `draft.add` MUST declare `output`, and its
+ * `execute` MUST resolve to a value carrying `output`. The host enforces the
+ * two as a pair — see `V2ToolDraft` for the exact contract.
  *
  * The transitional SDK types used here expose these domains:
  *   ctx.agent / ctx.command / ctx.model / ctx.reference / ctx.skill /
@@ -39,10 +51,18 @@ import type {
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
 import {
+  createEnforcementGuard,
+  readOnlyRegistry,
+  syncReadOnlySession,
+  type ToolExecuteBeforeInput,
+  type ToolExecuteBeforeOutput,
+} from './pantheon/delegation-enforce.ts'
+import {
   getV2BridgeFromContext,
   type PantheonV2Bridge,
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
+import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
 
@@ -63,6 +83,12 @@ export const V2_UNSUPPORTED_FEATURES: string[] = [
   // directory source. This is narrower than (and distinct from) ctx.skill's
   // host availability or callable transform.
   'skill-transform',
+  // Adapter limitation, not a host gap: the goal loop needs a GoalStore, a
+  // GoalLoopClient and a BackgroundJobBoard, none of which the V2
+  // PluginContext exposes, and the V1 bridge resolves to null outside V1.
+  // pantheon_goal_create/get/update are therefore absent from the V2 surface
+  // rather than registered as non-functional placeholders.
+  'goal-tools',
 ]
 
 // ─── Constants ───────────────────────────────────────────────────────────
@@ -283,7 +309,10 @@ function transformReferences(draft: ReferenceDraft): void {
  *
  * The V2 tool.transform API (when available) provides:
  *   draft.namespace({ name: "pantheon", description: "..." })
- *   draft.add({ name, description, input, execute })
+ *   draft.add({ name, description, input, output, execute })
+ *
+ * `output` is part of the required shape, not an optional extra: see
+ * `V2ToolDraft` for the host contract that makes it mandatory.
  *
  * Returns true if tools were registered, false if the API is unavailable.
  */
@@ -297,18 +326,29 @@ async function registerV2Tools(context: PluginContext): Promise<boolean> {
   }
 
   try {
-    // Tool definitions require infrastructure instances — when available via
-    // V2 context, they are passed through; otherwise the factory returns
-    // definitions with lazy execute wrappers.
-    const toolDefs = createV2ToolDefinitionsFromContext(context)
+    // Tool definitions carry their own `output` declaration; the draft requires
+    // it, and the host rejects a definition whose result shape cannot satisfy
+    // the declaration it makes.
+    const toolDefs = createV2ToolDefinitions()
 
     await toolCtx.transform((draft: V2ToolDraft) => {
+      // Catalog grouping only. The host computes a tool's registration id as
+      // `options.namespace === undefined ? name : `${namespace}_${name}``, and
+      // `draft.namespace()` does NOT set `options.namespace` on later `add`
+      // calls — so the tools stay `hashline_edit` / `pantheon_cost` /
+      // `pantheon_model`, not `pantheon_*`. That bare name is what the
+      // enforcement guard's blocked-tool list matches on; see
+      // `adaptV2ExecuteBeforeEvent`.
       draft.namespace({ name: 'pantheon', description: 'Pantheon orchestration tools' })
       for (const def of toolDefs) {
         draft.add({
           name: def.name,
           description: def.description,
           input: def.input,
+          // Required by the host contract: without this the tool fails on
+          // every call with "Tool result declared output without an output
+          // schema". Must stay paired with def.execute resolving to `output`.
+          output: def.output,
           execute: def.execute,
         })
       }
@@ -377,20 +417,35 @@ async function handleV2SessionEvent(event: V2SessionEvent): Promise<void> {
   }
 }
 
+/**
+ * Session-created handler: currently a no-op on the V2-only surface.
+ *
+ * V1 seeds session state here (`sessionHierarchy.register(info)` plus the
+ * root-session set) from the full session metadata carried by its own event.
+ * The V2 event does not carry that metadata, and — more to the point — V1 is a
+ * separate plugin instance that is not loaded when only `plugin-v2` is
+ * configured. So nothing runs here on a V2-only install. Do not read the bridge
+ * check below as coverage: a non-null bridge means a host process that ALSO
+ * loaded V1, and V1 does the seeding itself.
+ *
+ * The absent hierarchy seed is why the V2 enforcement guard is built without
+ * `isRootSession` / `isChildSession`; see `docs/UPGRADING.md`, "Known
+ * limitation — V2 enforcement covers the blocked-tool list, not the V1
+ * delegation matrix".
+ */
 async function onSessionCreated(_event: V2SessionEvent): Promise<void> {
-  // Seed session state — handled by V1 bridge or direct registration.
-  // The V2 event doesn't carry enough context for full hierarchy setup;
-  // bridge.board is used when available for root-session registration.
   const _bridge = resolveBridge()
   if (_bridge?.board != null) {
-    // Bridge available: board will register root sessions via the V1 event hook.
-    // This is a no-op here — V1 handles hierarchy setup.
+    // Bridge present ⇒ this process also loaded V1, whose own event hook owns
+    // root-session registration. Intentionally nothing to do on the V2 side.
   }
 }
 
 async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
-  // Idle continuation — goal loop / todo enforcer dispatch.
-  // Bridge provides the full V1 infrastructure when available.
+  // Idle continuation — goal loop / todo enforcer dispatch. This one really
+  // does delegate: `bridge.todoEnforcer` is the V1 enforcer instance, reached
+  // only in a process that also loaded V1. On a V2-only install the bridge
+  // resolves to null and idle continuation does not run.
   const sessionID = _event.properties?.sessionID as string | undefined
   if (!sessionID) return
   const bridge = resolveBridge()
@@ -403,23 +458,23 @@ async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
   }
 }
 
-async function onSessionError(_event: V2SessionEvent): Promise<void> {
-  // Error handling — board transition to error.
-  const bridge = resolveBridge()
-  if (bridge?.board != null) {
-    // Bridge available: error handling is done by the V1 event hook.
-    // V2 only logs — V1 owns the board transition.
-  }
-}
+/**
+ * Session-error handler: no V2-side implementation.
+ *
+ * The board error transition lives in V1's event hook, which is not loaded on
+ * a V2-only install. There is nothing to do here — deliberately, rather than
+ * describing behaviour this handler does not have.
+ */
+async function onSessionError(_event: V2SessionEvent): Promise<void> {}
 
-async function onSessionCompacted(_event: V2SessionEvent): Promise<void> {
-  // Compaction restore — todo preserve / context rebuild.
-  const bridge = resolveBridge()
-  if (bridge?.todoEnforcer != null) {
-    // Bridge available: todo preservation is done by V1 compaction hook.
-    // V2 only logs — V1 handles full compaction context build.
-  }
-}
+/**
+ * Session-compacted handler: no V2-side implementation.
+ *
+ * Todo preservation and compaction context build live in the V1 path
+ * (`todo-preserve.ts`, driven by V1's compaction hook), which is not loaded on
+ * a V2-only install.
+ */
+async function onSessionCompacted(_event: V2SessionEvent): Promise<void> {}
 
 // ─── V2 Session Hooks ───────────────────────────────────────────────────
 
@@ -487,8 +542,10 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   try {
     // "prompt" hook — vision message interception
     await sessionCtx.hook('prompt', (_event: unknown) => {
-      // Vision interception delegates to the V1 vision handler.
-      // Without V1 client access, this is a graceful no-op.
+      // Vision interception. No V2-side implementation: the handler lives in
+      // the V1 path (`vision.chatMessage`), which is not loaded on a V2-only
+      // install. This is a permanent no-op there, not a graceful degradation —
+      // nothing is delegated, because there is nothing here to delegate to.
     })
     registered = true
   } catch {
@@ -499,6 +556,88 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
 }
 
 // ─── V2 Tool Hooks ──────────────────────────────────────────────────────
+
+/**
+ * The `tool.execute.before` event as the host dispatches it (opencode 2.0.22).
+ *
+ * Transcribed from the host's tool service:
+ *
+ *   trigger("tool", "execute.before", { tool, sessionID, agent, messageID, id, input })
+ *
+ * Two shape differences from V1's positional `(input, output)` pair, both
+ * handled by {@link adaptV2ExecuteBeforeEvent}: the host passes ONE payload
+ * object, and the tool arguments live on `input` where V1 called them
+ * `output.args`.
+ *
+ * `agent` is a required field of the host's tool context
+ * (`ToolInvocation.context = { sessionID, agent, messageID, id }`), so the
+ * active agent arrives on the very event the enforcement guard needs. V1 had to
+ * learn it from a separate `chat.params` hook and keep a session→agent map; V2
+ * does not have to, and neither does this module.
+ */
+interface V2ToolExecuteBeforeEvent {
+  tool?: unknown
+  sessionID?: unknown
+  agent?: unknown
+  id?: unknown
+  input?: unknown
+}
+
+/**
+ * Read-only enforcement for the V2 tool surface.
+ *
+ * The same factory, the same `DEFAULT_BLOCKED_TOOLS` and the same read-only set
+ * that V1 uses, so the two surfaces cannot drift on what counts as a mutating
+ * tool — `hashline_edit` and `pantheon_model` are denied here for exactly the
+ * reason they are denied in V1.
+ *
+ * Deliberately NOT passed `getSessionAgent` / `isRootSession` / `isChildSession`:
+ * those drive V1's native-`task()` delegation matrix, which needs a session
+ * hierarchy seeded from session metadata. `SessionHierarchyRegistry.isRoot`
+ * reports `true` for unknown sessions while unseeded, so passing an unseeded
+ * predicate here would DENY every `task()` call in every session. Leaving them
+ * out skips that branch (the guard tests `options?.isRootSession !== undefined`).
+ * `task` is still denied inside a read-only session via the blocked-tool list,
+ * so depth-2 holds for apollo/gaia; the caller/target matrix itself is NOT
+ * enforced on V2. That is a known gap, not a covered case.
+ */
+const v2EnforcementGuard = createEnforcementGuard({
+  getReadOnlySessions: () => readOnlyRegistry.sessionIDs(),
+})
+
+/**
+ * Project a V2 `execute.before` event onto the two-argument shape
+ * `createEnforcementGuard` was built for.
+ *
+ * `tool` is the host's registration id, computed as
+ * `options.namespace === undefined ? name : `${namespace}_${name}``. Pantheon
+ * declares a namespace for catalog grouping but sets `options.namespace` on no
+ * tool, so the id is the bare name (`hashline_edit`) and the blocked-tool match
+ * fires. A tool that opted into `options.namespace` would gain a prefix and stop
+ * matching — the integration test in tests/pantheon/plugin-v2-contract.test.ts
+ * drives the real registration path and asserts on the registered names, so
+ * that drift fails a test instead of silently disabling enforcement.
+ *
+ * A missing `sessionID` maps to the empty key: the registry lookup then matches
+ * the event's own (absent) identity, so a blocked tool in a read-only session is
+ * still denied. Fail-closed on the one axis that matters.
+ */
+function adaptV2ExecuteBeforeEvent(event: unknown): {
+  input: ToolExecuteBeforeInput
+  output: ToolExecuteBeforeOutput
+  agent: unknown
+} {
+  const payload = (event ?? {}) as V2ToolExecuteBeforeEvent
+  return {
+    input: {
+      tool: typeof payload.tool === 'string' ? payload.tool : '',
+      sessionID: typeof payload.sessionID === 'string' ? payload.sessionID : '',
+      callID: typeof payload.id === 'string' ? payload.id : '',
+    },
+    output: { args: payload.input },
+    agent: payload.agent,
+  }
+}
 
 /**
  * Register tool execution hooks via V2 ctx.tool.hook.
@@ -523,16 +662,24 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
   let registered = false
 
   try {
-    // "execute.before" — read-only enforcement + command normalization
-    await toolCtx.hook('execute.before', (_event: unknown) => {
-      // Enforcement guard runs via V1 bridge when infrastructure is available.
-      // The V2 hook is a registration point; actual enforcement is wired
-      // through the V1 tool.execute.before hook.
-      const bridge = resolveBridge()
-      if (bridge?.board != null) {
-        // Bridge available: V1 enforcement guard handles read-only + command normalization.
-        // No additional V2-side enforcement needed.
-      }
+    // "execute.before" — read-only enforcement. Throwing from this handler
+    // DENIES the tool call and the host surfaces the message to the session,
+    // which is how the guard blocks a mutating tool in a read-only session.
+    //
+    // This is the enforcement point for the V2 surface, not a delegation to
+    // V1: `src/plugin.ts` is not loaded when only `plugin-v2` is configured
+    // (opencode.json `plugins`), so the V1 `tool.execute.before` hook does not
+    // exist in that process. The guard below is instantiated here and consulted
+    // here; without it the tools registered by registerV2Tools would be a live
+    // write path in every session, including read-only ones.
+    await toolCtx.hook('execute.before', async (event: unknown) => {
+      const { input, output, agent } = adaptV2ExecuteBeforeEvent(event)
+      // V2's equivalent of V1's `chat.params` trigger: the host puts the active
+      // agent on the event itself, so registering here needs no separate hook
+      // and no session→agent map. A non-read-only (or absent) agent revokes the
+      // registration, which also covers an in-session agent switch.
+      syncReadOnlySession(readOnlyRegistry, input.sessionID, agent)
+      await v2EnforcementGuard(input, output)
     })
     registered = true
   } catch {
@@ -540,13 +687,14 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
   }
 
   try {
-    // "execute.after" — hashline read enhance + context sandbox
+    // "execute.after" — hashline read enhance + context sandbox.
+    //
+    // Registration point only: there is no V2-side behaviour here. The
+    // enhancer/sandbox live in the V1 path (`pantheon-hooks.ts` +
+    // `context-sandbox.ts`), a separate plugin instance that is not loaded when
+    // only `plugin-v2` is configured.
     await toolCtx.hook('execute.after', (_event: unknown) => {
-      // Read enhancer + sandbox run via V1 bridge.
-      const bridge = resolveBridge()
-      if (bridge?.visionHandler != null) {
-        // Bridge available: V1 vision handler + read enhancer handle post-execution.
-      }
+      // Intentionally empty.
     })
     registered = true
   } catch {
@@ -580,8 +728,11 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
 
   try {
     await permCtx.hook('evaluate', (_event: unknown) => {
-      // Custom permission logic — Zeus read guard + read-only enforcement.
-      // Wired through V1 tool.execute.before when infrastructure is available.
+      // Registration point only — no V2-side permission logic. Read-only
+      // enforcement does NOT run here: it runs in the `execute.before` handler
+      // above, which is the hook the host consults before a tool executes. Do
+      // not read this as "the V1 guards cover it": V1 is a different plugin
+      // instance and is not loaded when only `plugin-v2` is configured.
     })
     return true
   } catch {
@@ -593,7 +744,15 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
 // ─── Tool Definition Factory ─────────────────────────────────────────────
 
 /**
- * Internal types for V2 tool draft.
+ * Minimal structural view of the V2 tool draft.
+ *
+ * `output` is REQUIRED. The host (opencode 2.0.22) enforces a biconditional on
+ * a tool's declared `output` and the value its `execute` resolves to:
+ * `def.output === undefined` together with `'output' in result` throws
+ * "Tool result declared output without an output schema", and a declared
+ * `output` whose result omits the key throws "Tool did not return its
+ * declared output". A missing declaration therefore fails every call, so the
+ * field is mandatory here rather than optional.
  */
 interface V2ToolDraft {
   namespace(config: { name: string; description: string }): void
@@ -601,91 +760,12 @@ interface V2ToolDraft {
     name: string
     description: string
     input: Record<string, unknown>
+    output: Record<string, unknown>
     execute: (input: Record<string, unknown>, context: unknown) => Promise<V2ToolResult>
   }): void
 }
 
-/**
- * V2 tool result shape.
- *
- * The V1 SDK types `ToolResult` as `string | { output: string, ... }`, but
- * the V2 beta host reads a field off the resolved value (minified `Ce`) and
- * throws `Ce is not an Object` when a tool resolves to a bare string. Our
- * handlers are fail-open, so that host-side TypeError escapes instead of
- * being contained. Always resolve to the object shape — it satisfies both
- * the SDK union and the beta host.
- */
-export interface V2ToolResult {
-  output: string
-}
-
-/**
- * A V2 tool definition ready for registration.
- */
-interface V2ToolDef {
-  name: string
-  description: string
-  input: Record<string, unknown>
-  execute: (input: Record<string, unknown>, context: unknown) => Promise<V2ToolResult>
-}
-
-/**
- * Create V2 tool definitions from the plugin context.
- *
- * When V1 infrastructure (BackgroundJobBoard, delegation client, etc.) is
- * available through the V2 context, tools are wired directly. Otherwise,
- * each tool returns an error message explaining the limitation.
- */
-function createV2ToolDefinitionsFromContext(_context: PluginContext): V2ToolDef[] {
-  // Tool definitions are created lazily. When the full V1 infrastructure
-  // is bridged through the V2 context, these can be wired to real implementations.
-  // For now, they are structural definitions with placeholder execute functions
-  // that explain the V2 limitation.
-  const v2UnavailableMessage =
-    'This tool requires V1 infrastructure (BackgroundJobBoard, SDK client). ' +
-    'Use the V1 plugin (src/plugin.ts) for full tool support, or wire V1 ' +
-    'infrastructure through the V2 bridge (src/pantheon/v2-bridge.ts).'
-
-  const toolNames = [
-    'hashline_edit',
-    'pantheon_goal_create',
-    'pantheon_goal_get',
-    'pantheon_goal_update',
-    'pantheon_cost',
-    'pantheon_model',
-  ]
-
-  const toolDescriptions: Record<string, string> = {
-    hashline_edit:
-      'Edit a file anchored by hashline refs (LINE#TAG) instead of raw line numbers. ' +
-      'Ops: replace, append, prepend, delete. ALL refs validated against ORIGINAL file first.',
-    pantheon_goal_create:
-      'Create the single active goal for this session. The goal loop then continues the ' +
-      'session automatically on idle until the goal is marked done.',
-    pantheon_goal_get:
-      'Return the active goal for this session (status, objective, continuations).',
-    pantheon_goal_update:
-      'Update the active goal: set status (pending/in_progress/done) and/or rewrite the objective. ' +
-      'Setting status to done stops all further continuations.',
-    pantheon_cost:
-      'Report delegation cost + token usage by agent over the last N days, read from opencode.db.',
-    pantheon_model:
-      'Show, set, or reset per-agent model overrides in active-preset.json (project or global).',
-  }
-
-  return toolNames.map((name) => ({
-    name,
-    description: toolDescriptions[name] ?? `Pantheon tool: ${name}`,
-    input: { type: 'object' as const, properties: {} },
-    // FOLLOW-UP: wire the real tool wrappers (costCommand/goalTools) once V1
-    // infrastructure is resolvable in the V2 standalone context. Until then,
-    // placeholders resolve to the object shape so the beta host never sees a
-    // bare string.
-    execute: async (_input: Record<string, unknown>, _context: unknown): Promise<V2ToolResult> => {
-      return { output: `${name}: ${v2UnavailableMessage}` }
-    },
-  }))
-}
+export type { V2ToolDef, V2ToolResult } from './pantheon/v2-tools.ts'
 
 // ─── Plugin Definition ───────────────────────────────────────────────────
 
@@ -786,7 +866,10 @@ export const plugin = define({
         // Proven by the canary's negative control.
         await compactionCtx.hook('compaction', (_event: unknown) => {
           // Compaction context build — injects active goals, pending todos,
-          // and in-flight delegations. Wired through V1 infrastructure.
+          // and in-flight delegations. No V2-side implementation: that build
+          // lives in the V1 path, which is not loaded on a V2-only install.
+          // This registration is a real hook (the canary below proves it
+          // fires) with no V2 behaviour behind it.
           //
           // Opt-in lifetime proof for the host-backed hook canary
           // (tests/pantheon/plugin-v2-hook-canary.test.mjs, MODE=real). It is

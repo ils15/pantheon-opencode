@@ -9,7 +9,74 @@ upgrading, choose the contract that matches the OpenCode host you will run:
 | Selector | Config key | Pantheon entry | Scope |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and the V1 `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), board lifecycle, V1 hooks and implemented compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 6 orchestration tools, 4 event subscriptions, session hooks (`prompt`, `context`), tool hooks (`execute.before`/`after`), plus configuration transforms |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 4 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+
+**Changed in 1.6.0 — the V2 tool surface is 3 tools, not 6.** The three goal
+tools (`pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`) are
+**not registered on the V2 contract**. The goal loop requires a `GoalStore`, a
+`GoalLoopClient` and a `BackgroundJobBoard`, none of which the V2
+`PluginContext` exposes, and the V1 bridge resolves to `null` outside V1. They
+were previously registered as placeholders that returned an explanatory string —
+but on OpenCode 2.0.x such a tool fails on **every** call with
+`Tool result declared output without an output schema`, so the placeholder never
+ran usefully. They are now absent instead. `getUnsupportedFeatures()` reports
+the gap as the `goal-tools` marker. Use the V1 contract if you need the goal
+loop.
+
+Three further V2 fixes ship alongside it:
+
+- Every V2 tool now declares `output`. The host requires the declaration and
+  the resolved result to agree, in both directions; an undeclared tool fails on
+  100% of calls.
+- The V2 tool `execute.before` hook **enforces read-only sessions** instead of
+  being a no-op. The three V2 tools — including the `hashline_edit` write
+  primitive and `pantheon_model`, which writes `active-preset.json` in project
+  *and* global scope — were reachable from a delegated `apollo`/`gaia` session,
+  because the V1 `tool.execute.before` hook that was meant to deny them lives in
+  `src/plugin.ts`, which is not loaded when only `plugin-v2` is configured. The
+  V2 plugin now instantiates the same `createEnforcementGuard` and denies
+  `edit`, `write`, `bash`, `task`, `hashline_edit` and `pantheon_model` in a
+  read-only session. The host puts the active agent on the `execute.before`
+  event itself, so V2 needs no `chat.params`-equivalent hook to populate the
+  registry.
+- `pantheon_model` on V2 has no interactive wizard (a tool call has no
+  terminal). Pass `action="status"` to read overrides, or `agent` + `model`
+  with `action="set"`.
+
+### Known limitation — V2 enforcement covers the blocked-tool list, not the V1 delegation matrix
+
+This is a scope reduction relative to V1, stated here rather than left to be
+discovered in a code comment.
+
+V1 passes `isRootSession` / `isChildSession` into `createEnforcementGuard`, which
+makes the guard enforce the **native delegation matrix**: who may call `task()`,
+and which target agents a given caller is allowed to reach. V2 deliberately does
+**not** pass them. `SessionHierarchyRegistry.isRoot` reports `true` for any
+session it has not been seeded with, and V2 never seeds it, so wiring an unseeded
+predicate into the V2 guard would deny **every** `task()` call in **every**
+session — including Zeus's own delegations. Omitting the predicates skips that
+branch entirely.
+
+The consequence is exactly what it says: **the V2 guard enforces the
+`DEFAULT_BLOCKED_TOOLS` list and nothing more.** The caller/target matrix is not
+replicated on V2. This is a known gap, not a covered case.
+
+What still holds on V2:
+
+- Read-only denial for `apollo`/`gaia` — `edit`, `write`, `bash`, `task`,
+  `hashline_edit` and `pantheon_model` are denied.
+- The depth-2 guarantee for those two agents, because `task` is itself in the
+  blocked-tool list, so an investigation session cannot delegate further.
+
+What does not: any caller/target restriction for a write-capable session. If you
+depend on the V1 delegation matrix, run the V1 contract.
+
+What the V2 tool hooks do **not** do: `execute.after` is a registration point
+with no V2-side behaviour (the read enhancer and context sandbox are the V1
+`pantheon-hooks.ts` / `context-sandbox.ts` path), the `permission.evaluate` hook
+is likewise empty, and the `session.prompt`/`compaction` hooks are registration
+points only — vision interception and compaction context build have no V2-side
+implementation, because both live on the V1 path.
 
 The installer removes Pantheon entries from both config shapes and writes only
 the selected generation. It does not mix `src/plugin.ts` or
