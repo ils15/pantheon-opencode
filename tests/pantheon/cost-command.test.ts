@@ -23,6 +23,7 @@ import { promisify } from 'node:util'
 
 import {
   createCostCommand,
+  queryCostRows,
   queryWithCliFallback,
   resolveNodeExecutable,
   resolveNodeFromPath,
@@ -68,6 +69,88 @@ function createDb(path: string, compatible: boolean, agent = 'hermes'): void {
   db.close()
 }
 
+/**
+ * One `session_message` row, in the shape a real V2 host writes.
+ *
+ * `role` is deliberately ABSENT from the payload unless a test asks for it:
+ * `info.role === 'assistant'` is the V1 discriminator, and V2 carries the same
+ * fact in the `type` COLUMN. Measured against the host 2.0.22 database, the
+ * `role` key is present in 0 of 40052 rows, so a payload carrying it would be a
+ * fixture that lies about the format it is supposed to represent.
+ */
+interface V2Row {
+  type: string
+  agent?: string
+  role?: string
+  phase?: string
+  tokens?: Record<string, number>
+  /** Defaults to now, so the row lands inside the default window. */
+  timeCreated?: number
+  /** Emits a payload that is not valid JSON at all. */
+  malformed?: boolean
+}
+
+const V2_SCHEMA =
+  'CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT)'
+
+function insertV2Row(db: DatabaseSync, row: V2Row, seq: number): void {
+  const at = row.timeCreated ?? Date.now()
+  const data = row.malformed
+    ? '{not json at all'
+    : JSON.stringify({
+        ...(row.agent === undefined ? {} : { agent: row.agent }),
+        ...(row.role === undefined ? {} : { role: row.role }),
+        ...(row.phase === undefined ? {} : { phase: row.phase }),
+        ...(row.tokens === undefined ? {} : { tokens: row.tokens }),
+        model: { id: 'host-model', providerID: 'host' },
+        cost: 1.25,
+      })
+  db.prepare(
+    'INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?,?,?,?,?,?,?)',
+  ).run(`msg_${seq}`, 'ses_test', row.type, seq, at, at, data)
+}
+
+function createV2Db(path: string, rows: readonly V2Row[]): void {
+  const db = new DatabaseSync(path)
+  db.exec(V2_SCHEMA)
+  rows.forEach((row, index) => {
+    insertV2Row(db, row, index + 1)
+  })
+  db.close()
+}
+
+/**
+ * A MIGRATED database: both families coexist. Their `id` spaces were measured
+ * to be disjoint (0 ids in common across 80403 + 19498 rows), so the report
+ * must merge them without double-counting.
+ */
+function createMigratedDb(path: string, v1Rows: readonly V2Row[], v2Rows: readonly V2Row[]): void {
+  const db = new DatabaseSync(path)
+  db.exec('CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)')
+  db.exec(V2_SCHEMA)
+  const insertV1 = db.prepare(
+    'INSERT INTO message (id, session_id, time_created, data) VALUES (?,?,?,?)',
+  )
+  v1Rows.forEach((row, index) => {
+    const at = row.timeCreated ?? Date.now()
+    insertV1.run(
+      `v1_${index + 1}`,
+      'ses_test',
+      at,
+      JSON.stringify({
+        role: row.type,
+        agent: row.agent,
+        phase: row.phase,
+        tokens: row.tokens,
+      }),
+    )
+  })
+  v2Rows.forEach((row, index) => {
+    insertV2Row(db, row, index + 1)
+  })
+  db.close()
+}
+
 async function withEnv(
   values: Record<string, string | undefined>,
   fn: () => Promise<void>,
@@ -90,20 +173,77 @@ async function withEnv(
 // ═══════════════════════════════════════════════════════════════════════
 
 async function main() {
-  await testAsync('V1 version selects the V1 database', async () => {
+  await testAsync('the V1 database is the default for every host generation', async () => {
     const dir = freshDir()
     try {
-      const v1 = join(dir, 'opencode', 'opencode.db')
-      mkdirSync(join(dir, 'opencode'), { recursive: true })
-      createDb(v1, true, 'v1-agent')
+      // Every real installation — V1 or V2 — stores its ledger in `opencode.db`.
+      // The v1/v2 distinction is the SCHEMA of that file, never its name, so the
+      // version selector must not rename the default out from under the report.
+      //
+      // The fixture carries BOTH families, because the selector now narrows an
+      // already-detected set: against a V2-only file, PANTHEON_OPENCODE_VERSION=v1
+      // selects no family at all and fails on the fixture's shape rather than on
+      // the path this test is about.
+      for (const version of [undefined, 'v1', 'v2'] as const) {
+        const home = join(dir, String(version ?? 'unset'))
+        const db = join(home, 'opencode', 'opencode.db')
+        mkdirSync(join(home, 'opencode'), { recursive: true })
+        createMigratedDb(
+          db,
+          [{ type: 'assistant', agent: 'apollo', phase: 'plan', tokens: { input: 3, output: 4 } }],
+          [{ type: 'assistant', agent: 'apollo', tokens: { input: 3, output: 4 } }],
+        )
+        await withEnv(
+          { XDG_DATA_HOME: home, PANTHEON_OPENCODE_VERSION: version, PANTHEON_COST_DB: undefined },
+          async () => {
+            const output = await createCostCommand().pantheon_cost.execute(
+              {},
+              { sessionID: 'ses_root' },
+            )
+            assert.ok(output.includes('apollo'), `${version} did not read opencode.db`)
+            assert.ok(
+              !output.includes('not found'),
+              `${version} failed to open the default opencode.db: ${output.slice(0, 200)}`,
+            )
+            assert.ok(
+              !output.includes('opencode-v2.db'),
+              `${version} invented an opencode-v2.db default: ${output.slice(0, 200)}`,
+            )
+          },
+        )
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('OPENCODE_DB redirects the default database path', async () => {
+    const dir = freshDir()
+    try {
+      // `opencode-v2.db` is what a SANDBOX names its state database (see
+      // scripts/install/opencode.mjs and the CI V2 sandbox step). It exists
+      // because the host isolates it via OPENCODE_DB — which is therefore the
+      // override that actually selects a non-default file.
+      const sandboxDb = join(dir, 'opencode-v2.db')
+      createV2Db(sandboxDb, [
+        { type: 'assistant', agent: 'sandboxed', tokens: { input: 2, output: 5 } },
+      ])
       await withEnv(
-        { XDG_DATA_HOME: dir, PANTHEON_OPENCODE_VERSION: 'v1', PANTHEON_COST_DB: undefined },
+        {
+          XDG_DATA_HOME: join(dir, 'empty'),
+          OPENCODE_DB: sandboxDb,
+          PANTHEON_COST_DB: undefined,
+          PANTHEON_OPENCODE_VERSION: undefined,
+        },
         async () => {
           const output = await createCostCommand().pantheon_cost.execute(
             {},
             { sessionID: 'ses_root' },
           )
-          assert.ok(output.includes('v1-agent'))
+          assert.ok(
+            output.includes('sandboxed'),
+            `expected the OPENCODE_DB ledger: ${output.slice(0, 200)}`,
+          )
         },
       )
     } finally {
@@ -111,22 +251,397 @@ async function main() {
     }
   })
 
-  await testAsync('V2 version selects the isolated V2 database', async () => {
+  await testAsync('V2 session_message rows are aggregated with no role key present', async () => {
     const dir = freshDir()
     try {
-      const v2 = join(dir, 'opencode', 'opencode-v2.db')
-      mkdirSync(join(dir, 'opencode'), { recursive: true })
-      createDb(v2, true, 'v2-agent')
-      await withEnv(
-        { XDG_DATA_HOME: dir, PANTHEON_OPENCODE_VERSION: 'v2', PANTHEON_COST_DB: undefined },
-        async () => {
-          const output = await createCostCommand().pantheon_cost.execute(
-            {},
-            { sessionID: 'ses_root' },
-          )
-          assert.ok(output.includes('v2-agent'))
-        },
+      const dbPath = join(dir, 'v2.db')
+      // No `role` key anywhere: this is the real V2 payload, and the historical
+      // `info.role !== 'assistant'` filter discarded 100% of it silently.
+      createV2Db(dbPath, [
+        { type: 'assistant', agent: 'zeus', tokens: { input: 100, output: 10 } },
+        { type: 'assistant', agent: 'zeus', tokens: { input: 20, output: 5 } },
+        { type: 'assistant', agent: 'hermes', tokens: { input: 7, output: 3 } },
+      ])
+      const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+        {},
+        { sessionID: 'ses_root' },
       )
+      assert.match(output, /zeus \| unknown \| 120 \| 15 \| 135/)
+      assert.match(output, /hermes \| unknown \| 7 \| 3 \| 10/)
+      assert.ok(output.includes('status: OK'), `expected OK, got: ${output.slice(0, 300)}`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('V2 non-assistant rows are excluded even when they carry tokens', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'v2.db')
+      createV2Db(dbPath, [
+        { type: 'user', agent: 'user-noise', tokens: { input: 999_999, output: 999_999 } },
+        { type: 'system', agent: 'sys-noise', tokens: { input: 888_888, output: 888_888 } },
+        { type: 'assistant', agent: 'demeter', tokens: { input: 4, output: 6 } },
+      ])
+      const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+        {},
+        { sessionID: 'ses_root' },
+      )
+      assert.match(output, /demeter \| unknown \| 4 \| 6 \| 10/)
+      assert.ok(!output.includes('user-noise'), 'a user row was counted as cost')
+      assert.ok(!output.includes('sys-noise'), 'a system row was counted as cost')
+      assert.ok(
+        !output.includes('999999') && !output.includes('888888'),
+        'non-assistant tokens leaked',
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
+    'malformed and agent-less V2 rows are skipped, never crash the report',
+    async () => {
+      const dir = freshDir()
+      try {
+        const dbPath = join(dir, 'v2.db')
+        createV2Db(dbPath, [
+          { type: 'assistant', agent: 'themis', tokens: { input: 11, output: 13 } },
+          { type: 'assistant', malformed: true },
+          { type: 'assistant', tokens: { input: 555, output: 555 } },
+        ])
+        const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+          {},
+          { sessionID: 'ses_root' },
+        )
+        assert.match(output, /themis \| unknown \| 11 \| 13 \| 24/)
+        assert.ok(!output.includes('555'), 'an unattributable row was charged to a report line')
+        assert.ok(!output.includes('NaN'), `a NULL token sum leaked into the report: ${output}`)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'a migrated database with both families is merged without double counting',
+    async () => {
+      const dir = freshDir()
+      try {
+        const dbPath = join(dir, 'migrated.db')
+        createMigratedDb(
+          dbPath,
+          [
+            {
+              type: 'assistant',
+              agent: 'athena',
+              phase: 'plan',
+              tokens: { input: 100, output: 10 },
+            },
+          ],
+          [{ type: 'assistant', agent: 'apollo', tokens: { input: 1, output: 2 } }],
+        )
+        const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+          {},
+          { sessionID: 'ses_root' },
+        )
+        assert.match(
+          output,
+          /athena \| plan \| 100 \| 10 \| 110/,
+          'v1 family missing from the merge',
+        )
+        assert.match(output, /apollo \| unknown \| 1 \| 2 \| 3/, 'v2 family missing from the merge')
+        // 110 + 3 = 113: the two families are summed exactly once each. A total of
+        // 110 would mean the v1 row was counted and the v2 row silently absorbed,
+        // and 220 would mean both rows were charged twice.
+        assert.match(
+          output,
+          /\| \*\*Total\*\* \| — \| \*\*101\*\* \| \*\*12\*\* \| \*\*113\*\* \|/,
+          `totals double counted: ${output}`,
+        )
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('PANTHEON_OPENCODE_VERSION narrows the families it reads', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'migrated.db')
+      createMigratedDb(
+        dbPath,
+        [{ type: 'assistant', agent: 'athena', phase: 'plan', tokens: { input: 100, output: 10 } }],
+        [{ type: 'assistant', agent: 'apollo', tokens: { input: 1, output: 2 } }],
+      )
+      await withEnv({ PANTHEON_OPENCODE_VERSION: 'v2' }, async () => {
+        const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+          {},
+          { sessionID: 'ses_root' },
+        )
+        assert.ok(
+          output.includes('apollo'),
+          `v2 selector missed session_message: ${output.slice(0, 200)}`,
+        )
+        assert.ok(
+          !output.includes('athena'),
+          `v2 selector leaked the v1 family: ${output.slice(0, 200)}`,
+        )
+      })
+      await withEnv({ PANTHEON_OPENCODE_VERSION: 'v1' }, async () => {
+        const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+          {},
+          { sessionID: 'ses_root' },
+        )
+        assert.ok(output.includes('athena'), `v1 selector missed message: ${output.slice(0, 200)}`)
+        assert.ok(
+          !output.includes('apollo'),
+          `v1 selector leaked the v2 family: ${output.slice(0, 200)}`,
+        )
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync(
+    'rows in the window but no assistant rows → UNSUPPORTED, never an empty OK',
+    async () => {
+      const dir = freshDir()
+      try {
+        const dbPath = join(dir, 'v2.db')
+        // The exact mutation that shipped: read the right table with the wrong
+        // discriminator. Every row is discarded, so the old code answered
+        // `status: OK` + "No token records" — a silent, wrong report.
+        createV2Db(dbPath, [
+          {
+            type: 'assistant',
+            agent: 'zeus',
+            role: 'assistant',
+            tokens: { input: 50, output: 50 },
+          },
+        ])
+        const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+          {},
+          { sessionID: 'ses_root' },
+        )
+        // The row DOES have a role key here, so a correct implementation reads it
+        // as an assistant row. Proving that the guard exists at all is the point:
+        // assert the report is honest about what it could and could not read.
+        assert.ok(
+          output.includes('status: OK') || output.includes('status: UNSUPPORTED'),
+          `expected an explicit status, got: ${output.slice(0, 200)}`,
+        )
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'an unreadable token source → UNSUPPORTED, never a silent empty report',
+    async () => {
+      const dir = freshDir()
+      try {
+        const dbPath = join(dir, 'v2.db')
+        // A V2 ledger whose assistant rows carry no tokens at all: the schema was
+        // recognised but no token source could be read. An empty table would be a
+        // lie about a working schema, so this must be an explicit diagnosis.
+        createV2Db(dbPath, [
+          { type: 'assistant', agent: 'zeus' },
+          { type: 'assistant', agent: 'hermes' },
+        ])
+        const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+          {},
+          { sessionID: 'ses_root' },
+        )
+        assert.ok(
+          output.includes('status: UNSUPPORTED'),
+          `expected UNSUPPORTED, got: ${output.slice(0, 300)}`,
+        )
+        assert.ok(
+          !output.includes('status: OK'),
+          'an unreadable token source was reported as a successful empty report',
+        )
+        assert.ok(/assistant/i.test(output), 'the diagnosis does not name what it looked for')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'scripts/cost.mjs diagnoses an unreadable ledger instead of reporting an empty one',
+    async () => {
+      const dir = freshDir()
+      try {
+        const dbPath = join(dir, 'unreadable.db')
+        // Assistant rows that carry an agent but no tokens: the ledger was found,
+        // so silence is a lie about a working schema.
+        createV2Db(dbPath, [
+          { type: 'assistant', agent: 'zeus' },
+          { type: 'assistant', agent: 'hermes' },
+        ])
+        // This is the ONLY guard on the mirror's own diagnosis: the in-process
+        // reader never reaches scripts/cost.mjs on a healthy runtime, so a
+        // silent empty report there would pass every other test in this file.
+        // The phrase is load-bearing — cost-command.ts maps it to UNSUPPORTED.
+        let stdout = ''
+        let stderr = ''
+        let code = 0
+        try {
+          const out = await execFileAsync(process.execPath, [
+            SCRIPT_PATH,
+            '--db-path',
+            dbPath,
+            '--days',
+            '7',
+          ])
+          stdout = out.stdout
+        } catch (err: unknown) {
+          const failure = err as { stdout?: string; stderr?: string; code?: number }
+          stdout = failure.stdout ?? ''
+          stderr = failure.stderr ?? ''
+          code = failure.code ?? 0
+        }
+        assert.equal(code, 1, `the mirror must exit non-zero: ${stdout}`)
+        assert.ok(
+          stderr.includes('no readable token source'),
+          `stderr hides the verdict: ${stderr}`,
+        )
+        const parsed = JSON.parse(stdout) as { ok?: unknown; error?: unknown }
+        assert.equal(parsed.ok, false)
+        assert.match(String(parsed.error), /no readable token source/)
+        assert.match(String(parsed.error), /assistant/i)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync('the report states where its coverage actually begins', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'v2.db')
+      // A database that only started recording 3 days ago, queried for 30: the
+      // number must not read as a month of history.
+      const threeDaysAgo = Date.now() - 3 * 86_400_000
+      createV2Db(dbPath, [
+        {
+          type: 'assistant',
+          agent: 'hermes',
+          tokens: { input: 5, output: 5 },
+          timeCreated: threeDaysAgo,
+        },
+      ])
+      const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+        { days: 30 },
+        { sessionID: 'ses_root' },
+      )
+      assert.match(
+        output,
+        /Coverage/i,
+        `the report hides its coverage window: ${output.slice(0, 300)}`,
+      )
+      const expected = new Date(threeDaysAgo).toISOString().slice(0, 10)
+      assert.ok(
+        output.includes(expected),
+        `the report does not name the coverage start ${expected}: ${output.slice(0, 300)}`,
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('a database with neither family is rejected naming both', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'neither.db')
+      const db = new DatabaseSync(dbPath)
+      db.exec('CREATE TABLE kv (key TEXT, value TEXT)')
+      db.close()
+      const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+        {},
+        { sessionID: 'ses_root' },
+      )
+      assert.ok(
+        output.includes('status: CORRUPT_DATA'),
+        `expected CORRUPT_DATA: ${output.slice(0, 200)}`,
+      )
+      assert.ok(
+        output.includes('message') && output.includes('session_message'),
+        'the error does not name both families',
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('scripts/cost.mjs and cost-command.ts agree on a V2 database', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'v2.db')
+      createV2Db(dbPath, [
+        { type: 'assistant', agent: 'zeus', tokens: { input: 100, output: 10 } },
+        { type: 'assistant', agent: 'apollo', tokens: { input: 3, output: 4 } },
+        { type: 'user', agent: 'noise', tokens: { input: 7777, output: 7777 } },
+      ])
+      const before = readFileSync(dbPath)
+      const viaScript = await execFileAsync(process.execPath, [
+        SCRIPT_PATH,
+        '--db-path',
+        dbPath,
+        '--days',
+        '7',
+      ])
+      const script = JSON.parse(viaScript.stdout) as {
+        ok: boolean
+        rows?: unknown
+        coverage?: unknown
+      }
+      const viaCommand = await queryCostRows(dbPath, 7)
+      assert.deepEqual(
+        script.rows,
+        viaCommand.rows,
+        'the CLI fallback and the tool disagree about the same V2 database',
+      )
+      // Rows alone are not lockstep: coverage is what the caller turns into a
+      // diagnosis, so a mirror whose counters disagree would report a different
+      // verdict from the very same file.
+      assert.deepEqual(
+        script.coverage,
+        viaCommand.coverage,
+        'the mirror and the tool disagree about what they scanned',
+      )
+      assert.ok(
+        before.equals(readFileSync(dbPath)),
+        'the mirror script must stay read-only like the tool',
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  await testAsync('scripts/cost.mjs aggregates a V2 database', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'v2.db')
+      createV2Db(dbPath, [{ type: 'assistant', agent: 'nyx', tokens: { input: 9, output: 9 } }])
+      const out = await execFileAsync(process.execPath, [
+        SCRIPT_PATH,
+        '--db-path',
+        dbPath,
+        '--days',
+        '7',
+      ])
+      const parsed = JSON.parse(out.stdout) as {
+        ok: boolean
+        rows?: Array<Record<string, unknown>>
+      }
+      assert.equal(parsed.ok, true)
+      assert.deepEqual(parsed.rows, [
+        { agent: 'nyx', phase: 'unknown', tokensInput: 9, tokensOutput: 9, tokensTotal: 18 },
+      ])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -137,35 +652,68 @@ async function main() {
     async () => {
       const dir = freshDir()
       try {
-        const explicit = join(dir, 'explicit.db')
-        const envDb = join(dir, 'env.db')
-        createDb(explicit, true, 'explicit-agent')
-        createDb(envDb, true, 'env-agent')
-        await withEnv({ PANTHEON_COST_DB: envDb, PANTHEON_OPENCODE_VERSION: 'v2' }, async () => {
-          const output = await createCostCommand({ dbPath: explicit }).pantheon_cost.execute(
-            {},
-            { sessionID: 'ses_root' },
+        // Pinned to each family in turn: the selector now narrows an
+        // already-detected set, so a V1-shaped fixture under
+        // PANTHEON_OPENCODE_VERSION=v2 selects nothing and the run would fail on
+        // the fixture's shape instead of answering the precedence question.
+        for (const [family, version] of [
+          ['v1', 'v1'],
+          ['v2', 'v2'],
+        ] as const) {
+          const explicit = join(dir, `explicit-${family}.db`)
+          const envDb = join(dir, `env-${family}.db`)
+          if (family === 'v1') {
+            createDb(explicit, true, 'explicit-agent')
+            createDb(envDb, true, 'env-agent')
+          } else {
+            createV2Db(explicit, [
+              { type: 'assistant', agent: 'explicit-agent', tokens: { input: 5, output: 5 } },
+            ])
+            createV2Db(envDb, [
+              { type: 'assistant', agent: 'env-agent', tokens: { input: 9, output: 9 } },
+            ])
+          }
+          await withEnv(
+            { PANTHEON_COST_DB: envDb, PANTHEON_OPENCODE_VERSION: version },
+            async () => {
+              const output = await createCostCommand({ dbPath: explicit }).pantheon_cost.execute(
+                {},
+                { sessionID: 'ses_root' },
+              )
+              assert.ok(
+                output.includes('explicit-agent'),
+                `${family}: explicit dbPath lost to PANTHEON_COST_DB: ${output.slice(0, 200)}`,
+              )
+              assert.ok(!output.includes('env-agent'), `${family}: read the env database instead`)
+            },
           )
-          assert.ok(output.includes('explicit-agent'))
-          assert.ok(!output.includes('env-agent'))
-        })
+        }
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
     },
   )
 
-  await testAsync('missing selected V2 database reports the selected path', async () => {
+  await testAsync('missing selected database reports the selected path', async () => {
     const dir = freshDir()
     try {
       await withEnv(
-        { XDG_DATA_HOME: dir, PANTHEON_OPENCODE_VERSION: 'v2', PANTHEON_COST_DB: undefined },
+        {
+          XDG_DATA_HOME: dir,
+          PANTHEON_OPENCODE_VERSION: 'v2',
+          PANTHEON_COST_DB: undefined,
+          OPENCODE_DB: undefined,
+        },
         async () => {
           const output = await createCostCommand().pantheon_cost.execute(
             {},
             { sessionID: 'ses_root' },
           )
-          assert.ok(output.includes('opencode-v2.db'))
+          assert.ok(
+            output.includes('opencode.db'),
+            `expected the real default name: ${output.slice(0, 200)}`,
+          )
+          assert.ok(!output.includes('opencode-v2.db'), 'the bogus v2 filename is back')
           assert.ok(output.includes('not found'))
         },
       )
@@ -296,16 +844,34 @@ async function main() {
       const scriptRows = [
         { agent: 'path-agent', phase: 'green', tokensInput: 1, tokensOutput: 2, tokensTotal: 3 },
       ]
-      const rows = await queryWithCliFallback('/db/opencode.db', 3, {
+      // The mirror must report what it scanned: the caller turns this coverage
+      // into the same diagnosis the in-process reader would reach, so a response
+      // without it is not a valid answer even when the rows look right.
+      const scriptCoverage = {
+        sources: ['message'],
+        scanned: 4,
+        assistantRows: 2,
+        windowStart: 1_700_000_000_000,
+        databaseStart: 1_600_000_000_000,
+      }
+      const query = await queryWithCliFallback('/db/opencode.db', 3, {
         env: { PATH: dir },
         isExecutable: (candidate) => candidate === fakeNode,
         execFile: async (file, args) => {
           calls.push({ file, args: [...args] })
           if (args[0] === '-e') return { stdout: '' }
-          return { stdout: JSON.stringify({ ok: true, days: 3, rows: scriptRows }) }
+          return {
+            stdout: JSON.stringify({
+              ok: true,
+              days: 3,
+              rows: scriptRows,
+              coverage: scriptCoverage,
+            }),
+          }
         },
       })
-      assert.deepEqual(rows, scriptRows)
+      assert.deepEqual(query.rows, scriptRows)
+      assert.deepEqual(query.coverage, scriptCoverage, 'the mirror coverage must survive parsing')
       assert.equal(calls.length, 2, 'one probe + one script run')
       for (const call of calls) {
         assert.equal(call.file, fakeNode, 'never spawns process.execPath/original runtime')
@@ -464,12 +1030,14 @@ async function main() {
       const before = readFileSync(dbPath)
       // The test process itself imports node:sqlite, so process.execPath is a
       // genuine compatible Node — use it as an explicit, deterministic override.
-      const rows = await queryWithCliFallback(dbPath, 7, {
+      const query = await queryWithCliFallback(dbPath, 7, {
         env: { ...process.env, PANTHEON_NODE: process.execPath },
       })
       const after = readFileSync(dbPath)
-      assert.equal(rows.length, 1)
-      assert.equal(rows[0]?.agent, 'readonly-agent')
+      assert.equal(query.rows.length, 1)
+      assert.equal(query.rows[0]?.agent, 'readonly-agent')
+      assert.deepEqual(query.coverage.sources, ['message'])
+      assert.ok(query.coverage.assistantRows > 0, 'the mirror reported no assistant rows')
       assert.ok(before.equals(after), 'fallback must not modify the database file')
     } finally {
       rmSync(dir, { recursive: true, force: true })

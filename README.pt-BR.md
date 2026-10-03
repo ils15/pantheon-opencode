@@ -179,13 +179,23 @@ instalador remove referências Pantheon das duas formas de config antes de
 gravar apenas o registro Pantheon selecionado. Entradas de terceiros não são
 convertidas nem reivindicadas por essa regra.
 
-O relatório `pantheon_cost`, disponível nos plugins V1 e V2, pode selecionar o banco com
-`PANTHEON_OPENCODE_VERSION=v1` ou `v2` (`opencode.db` ou `opencode-v2.db`).
-`PANTHEON_COST_DB=/caminho/absoluto/para/opencode.db` tem precedência sobre o
-seletor de versão, e um `dbPath` explícito fornecido pelo chamador da
-ferramenta tem precedência sobre ambos. O resolver nunca consulta o banco da
-outra versão e reporta um erro acionável quando o banco selecionado está
-ausente ou com schema incompatível.
+O relatório `pantheon_cost`, disponível nos plugins V1 e V2, resolve o banco por
+CAMINHO, nesta ordem: um `dbPath` explícito fornecido pelo chamador da
+ferramenta, depois `PANTHEON_COST_DB=/caminho/absoluto/para/opencode.db`,
+depois `OPENCODE_DB`, e por fim o padrão do XDG `opencode.db`. Não há nome de
+arquivo por versão nessa cadeia: `opencode-v2.db` não é um banco de um host 2.x
+— é o nome que um sandbox dá ao próprio banco de estado via `OPENCODE_DB`.
+
+A distinção v1/v2 é o SCHEMA DETECTADO, não o nome do arquivo. O relatório
+procura as tabelas `message` e `session_message` e lê aquele que o banco aberto
+realmente tiver, porque um banco migrado carrega as duas famílias ao mesmo
+tempo. `PANTHEON_OPENCODE_VERSION=v1|v2` não seleciona arquivo nenhum: apenas
+estreita um conjunto já detectado para uma família de tabelas, e falha rápido
+quando o valor não é `v1` nem `v2` ou quando a família pedida não existe lá.
+Sem a variável, todas as famílias detectadas são lidas. Um banco sem nenhuma
+das duas tabelas volta como erro acionável (`CORRUPT_DATA`), e um ledger que
+existe mas não produz tokens legíveis como `UNSUPPORTED` — nunca como um
+relatório vazio com sucesso.
 
 O instalador continua gravando as configurações de compatibilidade exigidas
 pelo host OpenCode selecionado, como `experimental.subagent_depth`; isso não

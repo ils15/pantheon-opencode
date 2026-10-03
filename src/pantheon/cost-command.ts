@@ -7,11 +7,27 @@
  *   - only path: node:sqlite (DatabaseSync, readOnly) — node ≥ 22.5;
  *   - missing/unreadable db → a diagnostic contract status as TEXT.
  *
- * dbPath resolution: explicit option > env PANTHEON_COST_DB > the version-aware
- * default selected by PANTHEON_OPENCODE_VERSION (v1 or v2). An unset version
- * deliberately preserves V1 behavior. The tool is wired in
- * plugin.ts alongside the delegation toolset (usable by zeus and any agent
- * with tool access — no routing change needed).
+ * ## Host generations
+ *
+ * The V1/V2 distinction is the SCHEMA of opencode.db, never its filename: every
+ * real installation writes `opencode.db`, and a migrated database carries BOTH
+ * `message` (V1) and `session_message` (V2) tables at once. The two families are
+ * detected by table presence and their `id` spaces are disjoint, so both are
+ * read and merged rather than one being guessed at.
+ *
+ * The two discriminators are NOT interchangeable. V1 marks assistant turns with
+ * `data.role = 'assistant'`; V2 has no `role` key at all (measured: absent from
+ * 40052 of 40052 rows on the host 2.0.22 database) and marks them with the
+ * `type = 'assistant'` COLUMN. Reusing the V1 predicate against V2 discards
+ * every row, which is why an unreadable ledger is reported as UNSUPPORTED
+ * instead of as a successful, empty report.
+ *
+ * dbPath resolution: explicit option > PANTHEON_COST_DB > OPENCODE_DB > the XDG
+ * default `opencode.db`. OPENCODE_DB is what a SANDBOX uses to name its state
+ * database `opencode-v2.db`, so it — not the host generation — is what selects
+ * a non-default file. The tool is wired in plugin.ts alongside the delegation
+ * toolset (usable by zeus and any agent with tool access — no routing change
+ * needed).
  *
  * @module cost-command
  */
@@ -34,6 +50,45 @@ export interface CostRow {
   tokensInput: number
   tokensOutput: number
   tokensTotal: number
+}
+
+/**
+ * Host table families that can carry a token ledger. A migrated database
+ * carries both at once.
+ */
+export type CostSource = 'message' | 'session_message'
+
+const COST_SOURCES: readonly CostSource[] = ['message', 'session_message']
+
+/**
+ * Which table family each host generation stores its ledger in.
+ *
+ * Spelled out rather than comparing the literals: `'message' === 'v1'` is
+ * false, so a filter written as `source === requested` narrows to nothing and
+ * every version-pinned read fails.
+ */
+const VERSION_SOURCES: Record<OpenCodeVersion, CostSource> = {
+  v1: 'message',
+  v2: 'session_message',
+}
+
+/** What the query actually found, so the report can describe its own coverage. */
+export interface CostCoverage {
+  /** Table families that contributed rows. */
+  sources: CostSource[]
+  /** Rows of ANY type inside the window. */
+  scanned: number
+  /** Rows that passed the schema-appropriate assistant discriminator. */
+  assistantRows: number
+  /** Earliest row in the WHOLE database (epoch ms) — the history the file holds. */
+  databaseStart?: number
+  /** Earliest row inside the requested window (epoch ms). */
+  windowStart?: number
+}
+
+export interface CostQuery {
+  rows: CostRow[]
+  coverage: CostCoverage
 }
 
 export interface CostCommandOptions {
@@ -77,32 +132,39 @@ const costArgs = {
     .describe('Number of days of delegation history to include (default 7).'),
 } satisfies z.ZodRawShape
 
-/** Return the safe, isolated state DB name for an OpenCode version. */
-function defaultDbPath(version: OpenCodeVersion | undefined): string {
+/** The XDG state directory every real host installation writes its ledger to. */
+function defaultDbPath(): string {
   const xdg = process.env.XDG_DATA_HOME
   const dataHome = xdg !== undefined && xdg !== '' ? xdg : join(homedir(), '.local', 'share')
-  const filename = version === 'v2' ? 'opencode-v2.db' : 'opencode.db'
-  return join(dataHome, 'opencode', filename)
+  return join(dataHome, 'opencode', 'opencode.db')
+}
+
+/** Read and validate the optional host-generation selector. */
+function requestedVersion(): OpenCodeVersion | undefined {
+  const configured = process.env.PANTHEON_OPENCODE_VERSION
+  if (configured === undefined) return undefined
+  if (configured !== 'v1' && configured !== 'v2') {
+    throw new Error(`invalid PANTHEON_OPENCODE_VERSION "${configured}"; expected "v1" or "v2"`)
+  }
+  return configured
 }
 
 /**
- * Resolve the database without probing another version's database.
+ * Resolve the database.
  *
- * Explicit paths always win. A version selector changes exactly one default
- * filename; it never falls back to V1, which prevents a V2 report from
- * silently reading V1 history (or vice versa).
+ * Precedence: explicit option → PANTHEON_COST_DB → OPENCODE_DB → the XDG
+ * default `opencode.db`. An invalid PANTHEON_OPENCODE_VERSION fails fast rather
+ * than being silently ignored.
+ *
+ * There is deliberately NO per-version filename. Deriving one from the host
+ * generation pointed the V2 report at `opencode-v2.db`, which exists only
+ * because a sandbox sets OPENCODE_DB — hence OPENCODE_DB's place in this chain.
  */
 export function resolveCostDbPath(options?: CostCommandOptions): string {
-  const explicit = options?.dbPath || process.env.PANTHEON_COST_DB
+  const explicit = options?.dbPath || process.env.PANTHEON_COST_DB || process.env.OPENCODE_DB
   if (explicit) return explicit
-
-  const configuredVersion = process.env.PANTHEON_OPENCODE_VERSION
-  if (configuredVersion !== undefined && configuredVersion !== 'v1' && configuredVersion !== 'v2') {
-    throw new Error(
-      `invalid PANTHEON_OPENCODE_VERSION "${configuredVersion}"; expected "v1" or "v2"`,
-    )
-  }
-  return defaultDbPath(configuredVersion as OpenCodeVersion | undefined)
+  requestedVersion()
+  return defaultDbPath()
 }
 
 /**
@@ -116,90 +178,291 @@ function findExistingDb(override?: string): string | undefined {
   return existsSync(candidate) ? candidate : undefined
 }
 
-function assertCompatibleSchema(db: {
-  prepare(sql: string): { get(): unknown; all(...args: unknown[]): unknown[] }
-}): void {
-  const row = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'message'")
-    .get()
-  if (row === undefined) {
-    throw new Error('incompatible opencode.db schema: required "message" table is missing')
-  }
-  const columns = db.prepare('PRAGMA table_info(message)').all() as Array<{ name?: unknown }>
-  const names = new Set(columns.map((column) => column.name))
-  const missing = ['data', 'time_created'].filter((name) => !names.has(name))
-  if (missing.length > 0) {
+/**
+ * Detect the ledger families by TABLE PRESENCE.
+ *
+ * Presence is the only reliable discriminator: a migrated database carries both
+ * families, so pinning a schema-version constant would break whichever
+ * population it excluded, and no manifest declares a supported host range.
+ * PANTHEON_OPENCODE_VERSION only NARROWS an already-detected set — it never
+ * chooses a file and never invents a family that is not there.
+ */
+function resolveSources(db: SqliteDatabase, requested: OpenCodeVersion | undefined): CostSource[] {
+  const present = new Set(
+    (
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('message', 'session_message')",
+        )
+        .all() as Array<{ name?: unknown }>
+    ).map((row) => String(row.name)),
+  )
+  const detected = COST_SOURCES.filter((source) => present.has(source))
+  if (detected.length === 0) {
     throw new Error(
-      `incompatible opencode.db schema: message table is missing ${missing.join(', ')}; select the matching V1/V2 database`,
+      'incompatible opencode.db schema: neither the "message" nor the "session_message" table exists, so there is no token ledger to read',
     )
   }
+  if (requested === undefined) return detected
+  const wanted = VERSION_SOURCES[requested]
+  const narrowed = detected.filter((source) => source === wanted)
+  if (narrowed.length === 0) {
+    throw new Error(
+      `incompatible opencode.db schema: PANTHEON_OPENCODE_VERSION=${requested} selected no table family, but this database contains ${detected.join(' and ')}`,
+    )
+  }
+  return narrowed
 }
 
-/** Aggregate tokens by agent and phase via node:sqlite (read-only). */
-async function queryWithNodeSqlite(
-  dbPath: string,
-  days: number,
-  sqlite: SqliteModule,
-): Promise<CostRow[]> {
+/**
+ * Per-family aggregation.
+ *
+ * Aggregating in SQL instead of pulling `data` blobs into JS is not a
+ * micro-optimisation: the host's own 7-day window is 271 MB across 26410
+ * assistant rows, and the equivalent SQL finishes in 0.9 s over the
+ * time_created index.
+ *
+ * Two correctness details are load-bearing:
+ *   - `json_valid(data)` gates every extraction, because `json_extract` and
+ *     `->>` both RAISE on malformed JSON in node:sqlite's bundled SQLite. The
+ *     inner CTE applies it before extracting anything, so the outer query can
+ *     never see an unparseable payload whatever order SQLite evaluates terms in.
+ *   - `COALESCE(SUM(...), 0)` — a group whose tokens are all NULL sums to NULL,
+ *     and adding NULL into an accumulator would print NaN into the report.
+ *
+ * V1 marks assistant turns with `data.role`; V2 marks them with the `type`
+ * COLUMN. V2 carries no `role` key, so the V1 predicate would match nothing.
+ */
+const AGGREGATE_SQL: Record<CostSource, string> = {
+  message: `
+    WITH valid AS (
+      SELECT json_extract(data, '$.role') AS role,
+             json_extract(data, '$.agent') AS agent,
+             json_extract(data, '$.phase') AS phase,
+             json_extract(data, '$.metadata.phase') AS metadataPhase,
+             CAST(json_extract(data, '$.tokens.input') AS INTEGER) AS inTok,
+             CAST(json_extract(data, '$.tokens.output') AS INTEGER) AS outTok
+      FROM message
+      WHERE time_created >= ? AND json_valid(data)
+    )
+    SELECT agent AS agent,
+           COALESCE(NULLIF(phase, ''), NULLIF(metadataPhase, ''), 'unknown') AS phase,
+           COALESCE(SUM(inTok), 0) AS tokensInput,
+           COALESCE(SUM(outTok), 0) AS tokensOutput,
+           COUNT(*) AS rows
+    FROM valid
+    WHERE role = 'assistant'
+    GROUP BY 1, 2
+    HAVING agent IS NOT NULL AND agent != ''`,
+  session_message: `
+    WITH valid AS (
+      SELECT json_extract(data, '$.agent') AS agent,
+             CAST(json_extract(data, '$.tokens.input') AS INTEGER) AS inTok,
+             CAST(json_extract(data, '$.tokens.output') AS INTEGER) AS outTok
+      FROM session_message
+      WHERE time_created >= ? AND type = 'assistant' AND json_valid(data)
+    )
+    SELECT agent AS agent,
+           'unknown' AS phase,
+           COALESCE(SUM(inTok), 0) AS tokensInput,
+           COALESCE(SUM(outTok), 0) AS tokensOutput,
+           COUNT(*) AS rows
+    FROM valid
+    GROUP BY 1
+    HAVING agent IS NOT NULL AND agent != ''`,
+}
+
+/**
+ * Window counters — the evidence a diagnosis is built from. A report that
+ * scanned rows but matched no assistant row must say so rather than render an
+ * empty table under a success status.
+ */
+const COUNTER_SQL: Record<CostSource, string> = {
+  message: `
+    SELECT
+      (SELECT COUNT(*) FROM message WHERE time_created >= ?) AS scanned,
+      (SELECT MIN(time_created) FROM message WHERE time_created >= ?) AS windowStart,
+      (SELECT COUNT(*) FROM (
+         SELECT json_extract(data, '$.role') AS role
+         FROM message WHERE time_created >= ? AND json_valid(data)
+       ) WHERE role = 'assistant') AS assistantRows`,
+  session_message: `
+    SELECT
+      (SELECT COUNT(*) FROM session_message WHERE time_created >= ?) AS scanned,
+      (SELECT MIN(time_created) FROM session_message WHERE time_created >= ?) AS windowStart,
+      (SELECT COUNT(*) FROM session_message WHERE time_created >= ? AND type = 'assistant') AS assistantRows`,
+}
+
+const DATABASE_START_SQL: Record<CostSource, string> = {
+  message: 'SELECT MIN(time_created) AS databaseStart FROM message',
+  session_message: 'SELECT MIN(time_created) AS databaseStart FROM session_message',
+}
+
+type Counters = { scanned?: unknown; windowStart?: unknown; assistantRows?: unknown }
+
+function numberOf(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function emptyCoverage(sources: CostSource[]): CostCoverage {
+  return { sources, scanned: 0, assistantRows: 0 }
+}
+
+/**
+ * Read the token ledger of one database, read-only.
+ *
+ * Exported so the mirrored implementation in scripts/cost.mjs can be held to
+ * the same answer in tests. The script cannot import this module: it runs on a
+ * plain Node precisely because node:sqlite is missing from the plugin runtime.
+ */
+export async function queryCostRows(dbPath: string, days: number): Promise<CostQuery> {
+  const sqlite = (await import('node:sqlite')) as SqliteModule
+  return queryWithSqlite(dbPath, days, sqlite)
+}
+
+/** Shared aggregation path for the in-process reader and queryCostRows. */
+function queryWithSqlite(dbPath: string, days: number, sqlite: SqliteModule): CostQuery {
   const db = new sqlite.DatabaseSync(dbPath, { readOnly: true })
   try {
-    assertCompatibleSchema(db)
+    const sources = resolveSources(db, requestedVersion())
     const since = Date.now() - days * 86_400_000
-    const rows = db
-      .prepare('SELECT data FROM message WHERE time_created >= ?')
-      .all(since) as Array<{ data?: unknown }>
-    // Rows without a data payload carry no cost info — skip them instead of
-    // coercing null/undefined into "null"/"undefined" strings.
-    return aggregateMessages(rows.flatMap((row) => (row?.data == null ? [] : [String(row.data)])))
+    const byAgentAndPhase = new Map<string, CostRow>()
+    const coverage = emptyCoverage([])
+
+    const note = (key: 'windowStart' | 'databaseStart', value: number | undefined): void => {
+      if (value === undefined) return
+      const current = coverage[key]
+      coverage[key] = current === undefined ? value : Math.min(current, value)
+    }
+
+    for (const source of sources) {
+      const countersRow = (
+        db.prepare(COUNTER_SQL[source]).all(since, since, since) as Array<Counters>
+      )[0]
+      coverage.sources.push(source)
+      coverage.scanned += numberOf(countersRow?.scanned) ?? 0
+      coverage.assistantRows += numberOf(countersRow?.assistantRows) ?? 0
+      note('windowStart', numberOf(countersRow?.windowStart))
+      note(
+        'databaseStart',
+        numberOf(
+          (db.prepare(DATABASE_START_SQL[source]).get() as { databaseStart?: unknown })
+            ?.databaseStart,
+        ),
+      )
+
+      const groups = db.prepare(AGGREGATE_SQL[source]).all(since) as Array<{
+        agent?: unknown
+        phase?: unknown
+        tokensInput?: unknown
+        tokensOutput?: unknown
+      }>
+      for (const group of groups) {
+        const agent = String(group.agent ?? '')
+        if (agent === '') continue
+        const phase =
+          group.phase === undefined || group.phase === null ? 'unknown' : String(group.phase)
+        const tokensInput = numberOf(group.tokensInput) ?? 0
+        const tokensOutput = numberOf(group.tokensOutput) ?? 0
+        // Keyed on a NUL separator: agent names cannot contain it, so an agent
+        // whose name ends in the phase cannot collide with a phase-only row.
+        const key = `${agent}\u0000${phase}`
+        const acc = byAgentAndPhase.get(key) ?? {
+          agent,
+          phase,
+          tokensInput: 0,
+          tokensOutput: 0,
+          tokensTotal: 0,
+        }
+        acc.tokensInput += tokensInput
+        acc.tokensOutput += tokensOutput
+        acc.tokensTotal += tokensInput + tokensOutput
+        byAgentAndPhase.set(key, acc)
+      }
+    }
+
+    const rows = [...byAgentAndPhase.values()].sort((a, b) => b.tokensTotal - a.tokensTotal)
+    return { rows, coverage }
   } finally {
     db.close()
   }
 }
 
-/** Parse message.data JSON rows and aggregate tokens by assistant agent/phase. */
-function aggregateMessages(dataValues: readonly string[]): CostRow[] {
-  const byAgentAndPhase = new Map<string, CostRow>()
-  for (const value of dataValues) {
-    try {
-      const outer = JSON.parse(value) as Record<string, unknown>
-      // The message row wraps the payload in a nested JSON string; when it
-      // is not a string, the row IS the payload (either way: flat info).
-      const info =
-        typeof outer.data === 'string' ? (JSON.parse(outer.data) as Record<string, unknown>) : outer
-      if (info.role !== 'assistant') continue
-      const agent = typeof info.agent === 'string' && info.agent !== '' ? info.agent : null
-      if (agent === null) continue
-      const metadata = info.metadata as Record<string, unknown> | undefined
-      const phase =
-        (typeof info.phase === 'string' && info.phase) ||
-        (typeof metadata?.phase === 'string' && metadata.phase) ||
-        'unknown'
-      const tokens = (info.tokens ?? {}) as Record<string, unknown>
-      const tokensInput = Number(tokens.input) || 0
-      const tokensOutput = Number(tokens.output) || 0
-      const key = `${agent}\u0000${phase}`
-      const acc = byAgentAndPhase.get(key) ?? {
-        agent,
-        phase,
-        tokensInput: 0,
-        tokensOutput: 0,
-        tokensTotal: 0,
-      }
-      acc.tokensInput += tokensInput
-      acc.tokensOutput += tokensOutput
-      acc.tokensTotal += tokensInput + tokensOutput
-      byAgentAndPhase.set(key, acc)
-    } catch {
-      // Skip malformed rows — a partial ledger never breaks the report.
-    }
+/** ISO day (UTC) — the granularity a coverage claim can honestly carry. */
+function isoDay(epochMs: number): string {
+  return new Date(epochMs).toISOString().slice(0, 10)
+}
+
+/**
+ * Describe the window the numbers actually cover.
+ *
+ * A database created by a V2 host holds only the days since it was created, so
+ * a 30-day request over 8 days of history must not read as a month of usage.
+ */
+function formatCoverage(coverage: CostCoverage, days: number): string {
+  const databaseStart = coverage.databaseStart
+  if (databaseStart === undefined) {
+    return `Coverage: this database holds no message rows at all, so the ${days}-day window cannot be covered.`
   }
-  return [...byAgentAndPhase.values()].sort((a, b) => b.tokensTotal - a.tokensTotal)
+  const start = isoDay(databaseStart)
+  const heldDays = Math.floor((Date.now() - databaseStart) / 86_400_000) + 1
+  const head = `Coverage: this database holds ${heldDays} day${heldDays === 1 ? '' : 's'} of history, from ${start}`
+  if (coverage.windowStart === undefined) {
+    return `${head}, and no rows fall inside the requested ${days}-day window.`
+  }
+  if (heldDays < days) {
+    return `${head}, so the requested ${days}-day window is only covered from ${isoDay(coverage.windowStart)}.`
+  }
+  return `${head} (requested window: ${days} days).`
+}
+
+/**
+ * Diagnose a ledger that WAS found but could not be read.
+ *
+ * An empty table under a success status is a worse failure than the error it
+ * replaces: it is indistinguishable from a quiet week. Every branch here is a
+ * case where rows exist but no total could be attributed, so the tool must
+ * diagnose it instead of printing an empty ledger.
+ *
+ * The last branch asks whether ANY row carries a token, not whether any row
+ * exists: an aggregate can carry an agent and still sum to zero (no `tokens`
+ * key), and rendering `| agent | unknown | 0 | 0 | 0 |` under `status: OK`
+ * asserts a measurement that was never made.
+ */
+function diagnoseUnreadableLedger(query: CostQuery, days: number): string | undefined {
+  const { scanned, assistantRows, sources } = query.coverage
+  if (scanned === 0) return undefined
+  const tables = sources.join(' and ')
+  if (assistantRows === 0) {
+    return (
+      `no readable token source: ${scanned} row(s) were scanned in the last ${days} day(s) ` +
+      `but none matched the assistant discriminator of ${tables}, so no usage can be attributed. ` +
+      'This is an unrecognised ledger layout, not an empty one; point PANTHEON_COST_DB at a ' +
+      'database whose token layout this build understands.'
+    )
+  }
+  if (!query.rows.some((row) => row.tokensInput !== 0 || row.tokensOutput !== 0)) {
+    return (
+      `no readable token source: ${assistantRows} assistant row(s) were found in ${tables} ` +
+      'but none carried both an attributable agent and a token payload, so no usage can be ' +
+      'attributed. This is an unrecognised ledger layout, not an empty one.'
+    )
+  }
+  return undefined
 }
 
 /** Render the aggregate as a markdown table with a total row. */
-function renderMarkdown(rows: readonly CostRow[], days: number): string {
+function renderMarkdown(query: CostQuery, days: number): string {
+  const { rows, coverage } = query
+  const header = `## Token usage by agent and phase (last ${days} days)`
+  const footer = [
+    formatCoverage(coverage, days),
+    `Source: opencode.db (read-only) — table families: ${coverage.sources.join(' + ')} — ${coverage.assistantRows} assistant row(s) scanned`,
+  ].join('\n')
   if (rows.length === 0) {
-    return `## Token usage by agent and phase (last ${days} days)\n\nNo token records in the last ${days} days.`
+    return `${header}\n\nNo token records in the last ${days} days.\n\n${footer}`
   }
   const total = rows.reduce(
     (acc, r) => {
@@ -211,7 +474,7 @@ function renderMarkdown(rows: readonly CostRow[], days: number): string {
     { tokensInput: 0, tokensOutput: 0, tokensTotal: 0 },
   )
   const lines = [
-    `## Token usage by agent and phase (last ${days} days)`,
+    header,
     '',
     '| Agent | Phase | Tokens In | Tokens Out | Tokens Total |',
     '|-------|-------|----------:|-----------:|-------------:|',
@@ -221,7 +484,7 @@ function renderMarkdown(rows: readonly CostRow[], days: number): string {
     ),
     `| **Total** | — | **${total.tokensInput}** | **${total.tokensOutput}** | **${total.tokensTotal}** |`,
     '',
-    `Source: opencode.db (read-only)`,
+    footer,
   ]
   return lines.join('\n')
 }
@@ -297,7 +560,7 @@ export function resolveNodeFromPath(
   if (pathValue === '') return undefined
   const isWindows = process.platform === 'win32'
   const extensions = isWindows
-    ? (env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';').filter((ext) => ext !== '')
+    ? (env.PATHEXT ?? '.EXE;.BAT;.CMD;.COM').split(';').filter((ext) => ext !== '')
     : ['']
   for (const dir of pathValue.split(delimiter)) {
     if (dir === '') continue
@@ -386,8 +649,9 @@ function extractScriptFailure(err: unknown): string {
 
 /**
  * Spawn `node scripts/cost.mjs` as a CLI fallback when node:sqlite is
- * unavailable in the plugin process (e.g. Bun runtime). Returns CostRow[] by
- * parsing the JSON the script writes to stdout.
+ * unavailable in the plugin process (e.g. Bun runtime). Returns the same
+ * CostQuery the in-process reader produces by parsing the JSON the script
+ * writes to stdout.
  *
  * Resolves a REAL Node binary (PANTHEON_NODE → PATH): process.execPath under
  * Bun is the Bun binary, which cannot run node:sqlite. The resolved binary is
@@ -398,7 +662,7 @@ export async function queryWithCliFallback(
   dbPath: string,
   days: number,
   deps?: CliFallbackDeps,
-): Promise<CostRow[]> {
+): Promise<CostQuery> {
   const env = deps?.env ?? process.env
   const execFileAsync = deps?.execFile ?? defaultExecFile
   const isExecutable = deps?.isExecutable ?? defaultIsExecutable
@@ -436,7 +700,7 @@ export async function queryWithCliFallback(
   if (parsed === null || typeof parsed !== 'object') {
     throw new Error(`CLI fallback returned non-JSON output: ${truncateForError(stdout)}`)
   }
-  const record = parsed as { ok?: unknown; rows?: unknown; error?: unknown }
+  const record = parsed as { ok?: unknown; rows?: unknown; coverage?: unknown; error?: unknown }
   if (record.ok !== true) {
     const detail =
       typeof record.error === 'string' && record.error !== ''
@@ -447,7 +711,33 @@ export async function queryWithCliFallback(
   if (!Array.isArray(record.rows)) {
     throw new Error('CLI fallback failed: scripts/cost.mjs response is missing the rows array')
   }
-  return record.rows as CostRow[]
+  const coverage = record.coverage
+  if (coverage === null || typeof coverage !== 'object') {
+    throw new Error(
+      'CLI fallback failed: scripts/cost.mjs response is missing the coverage object; the mirror must report what it scanned',
+    )
+  }
+  const mirror = coverage as {
+    sources?: unknown
+    scanned?: unknown
+    assistantRows?: unknown
+    databaseStart?: unknown
+    windowStart?: unknown
+  }
+  return {
+    rows: record.rows as CostRow[],
+    coverage: {
+      sources: Array.isArray(mirror.sources) ? (mirror.sources as CostSource[]) : [],
+      scanned: numberOf(mirror.scanned) ?? 0,
+      assistantRows: numberOf(mirror.assistantRows) ?? 0,
+      ...(numberOf(mirror.databaseStart) === undefined
+        ? {}
+        : { databaseStart: numberOf(mirror.databaseStart) as number }),
+      ...(numberOf(mirror.windowStart) === undefined
+        ? {}
+        : { windowStart: numberOf(mirror.windowStart) as number }),
+    },
+  }
 }
 
 export function createCostCommand(options?: CostCommandOptions): CostCommand {
@@ -473,7 +763,10 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
       detail.includes('not found') ||
       detail.includes('unknown builtin') ||
       detail.includes('no such built-in') ||
-      detail.includes('cannot find module')
+      detail.includes('cannot find module') ||
+      // The mirror's own "found a ledger but could not read tokens" verdict.
+      // Must stay in step with scripts/cost.mjs, which emits this exact phrase.
+      detail.includes('no readable token source')
     ) {
       return 'UNSUPPORTED'
     }
@@ -486,6 +779,13 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
       return 'CORRUPT_DATA'
     }
     return 'UNAVAILABLE'
+  }
+
+  /** Run a query and turn its coverage into either a report or a diagnosis. */
+  const render = (query: CostQuery, days: number): string => {
+    const unreadable = diagnoseUnreadableLedger(query, days)
+    if (unreadable !== undefined) return failure('UNSUPPORTED', unreadable)
+    return `status: OK\n${renderMarkdown(query, days)}`
   }
 
   const execute = async (args: { days?: number }, _ctx: ToolContextLike): Promise<string> => {
@@ -507,16 +807,14 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
         const status = statusForError(loadErr)
         if (status === 'UNSUPPORTED') {
           try {
-            const rows = await queryWithCliFallback(dbPath, days, options?.cliFallback)
-            return `status: OK\n${renderMarkdown(rows, days)}`
+            return render(await queryWithCliFallback(dbPath, days, options?.cliFallback), days)
           } catch (cliErr: unknown) {
             return failure(statusForError(cliErr), diagnostic(cliErr))
           }
         }
         throw loadErr
       }
-      const rows = await queryWithNodeSqlite(dbPath, days, sqlite)
-      return `status: OK\n${renderMarkdown(rows, days)}`
+      return render(queryWithSqlite(dbPath, days, sqlite), days)
     } catch (err: unknown) {
       return failure(statusForError(err), diagnostic(err))
     }
@@ -525,7 +823,7 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
   return {
     pantheon_cost: {
       description:
-        'Report input, output, and total token usage by agent and phase over the last N days, read from opencode.db (read-only, no monetary values).',
+        'Report input, output, and total token usage by agent and phase over the last N days, read from opencode.db (read-only, no monetary values). The report states the coverage window it actually covers.',
       args: costArgs,
       execute,
     },
