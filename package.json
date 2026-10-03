@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.6.0-beta.3",
+  "version": "1.6.0-beta.4",
   "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
@@ -46,6 +46,7 @@
     "coverage:plugin-v2": "node scripts/check-plugin-v2-coverage.mjs",
     "test:ts": "for f in tests/pantheon/*.test.ts; do if [ \"$f\" = tests/pantheon/plugin-v2-contract.test.ts ]; then NODE_OPTIONS=--conditions=import tsx \"$f\"; else tsx \"$f\"; fi || exit 1; done",
     "test:hooks": "node --test tests/pantheon/plugin-v2-hook-canary.test.mjs",
+    "test:tool-canary": "node --test tests/canary/plugin-v2-tool-canary.test.mjs",
     "test:all": "npm run test:ci && npm run test:node && npm run test:ts",
     "test": "npm run test:all",
     "test:ci": "python3 -m pytest -q --tb=short 2>&1"

@@ -56,11 +56,48 @@ function setEnvironment(values) {
   }
 }
 
+/**
+ * Write the rows in the family the requested host generation actually uses.
+ *
+ * Call sites describe an assistant turn the way they always have
+ * (`role: 'assistant'`, plus a `phase`). This function translates that
+ * descriptor into what is on disk: for V2, `role` becomes the `type` COLUMN and
+ * `phase` is dropped, because a real V2 payload carries neither — measured, the
+ * `role` key is absent from 40052 of 40052 rows on a host 2.0.22 database.
+ *
+ * Keeping that translation in ONE place is the point: a fixture that wrote
+ * `role` into a session_message row asserts the V1 format under a V2 name, which
+ * is exactly how the stale V1 predicate in the CLI mirror stayed green — the
+ * synthetic database agreed with the bug instead of contradicting it.
+ */
 function createSyntheticDb(DatabaseSync, path, rows) {
   const db = new DatabaseSync(path)
-  db.exec('CREATE TABLE message (data TEXT NOT NULL, time_created INTEGER NOT NULL)')
-  const insert = db.prepare('INSERT INTO message (data, time_created) VALUES (?, ?)')
-  for (const data of rows) insert.run(JSON.stringify(data), Date.now())
+  if (requestedVersion === 'v2') {
+    db.exec(
+      'CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT)',
+    )
+    const insert = db.prepare(
+      'INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?,?,?,?,?,?,?)',
+    )
+    rows.forEach((row, index) => {
+      const payload = { ...row }
+      delete payload.role
+      delete payload.phase
+      insert.run(
+        `msg_${index + 1}`,
+        'ses_probe',
+        row.role,
+        index + 1,
+        Date.now(),
+        Date.now(),
+        JSON.stringify(payload),
+      )
+    })
+  } else {
+    db.exec('CREATE TABLE message (data TEXT NOT NULL, time_created INTEGER NOT NULL)')
+    const insert = db.prepare('INSERT INTO message (data, time_created) VALUES (?, ?)')
+    for (const data of rows) insert.run(JSON.stringify(data), Date.now())
+  }
   db.close()
 }
 
@@ -129,7 +166,10 @@ async function main() {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-cost-probe-'))
   const dataHome = join(root, 'data')
   const opencodeDir = join(dataHome, 'opencode')
-  const selectedDb = join(opencodeDir, requestedVersion === 'v2' ? 'opencode-v2.db' : 'opencode.db')
+  // Every real installation writes `opencode.db`; the v1/v2 distinction is the
+  // SCHEMA of that file, never its name. Deriving `opencode-v2.db` here made the
+  // probe assert a path that exists on no real machine.
+  const selectedDb = join(opencodeDir, 'opencode.db')
   const otherDb = join(root, 'other.db')
   const envDb = join(root, 'env.db')
   const explicitDb = join(root, 'explicit.db')
@@ -139,7 +179,9 @@ async function main() {
   try {
     mkdirSync(opencodeDir, { recursive: true })
     // These rows intentionally include a monetary-looking field to prove it is
-    // ignored; only input/output/total tokens may appear in the report.
+    // ignored; only input/output/total tokens may appear in the report. Every
+    // V2 phase reads back as `unknown` because the V2 reader emits that literal:
+    // a V2 payload carries no phase field for a reader to recover.
     const selectedRows =
       requestedVersion === 'v2'
         ? [
@@ -224,8 +266,8 @@ async function main() {
         selectedOutput,
         requestedVersion === 'v2'
           ? [
-              { agent: 'aphrodite', phase: 'plan', input: 8, output: 10, total: 18 },
-              { agent: 'zeus', phase: 'audit', input: 4, output: 6, total: 10 },
+              { agent: 'aphrodite', phase: 'unknown', input: 8, output: 10, total: 18 },
+              { agent: 'zeus', phase: 'unknown', input: 4, output: 6, total: 10 },
             ]
           : [
               { agent: 'hermes', phase: 'plan', input: 13, output: 24, total: 37 },
@@ -250,7 +292,12 @@ async function main() {
         {},
         { sessionID: 'cost-probe' },
       )
-      requireOutput(output, '| env-agent | override | 1 | 2 | 3 |', 'PANTHEON_COST_DB')
+      // V2 has no phase to report, so the same row reads back as 'unknown'.
+      requireOutput(
+        output,
+        `| env-agent | ${requestedVersion === 'v2' ? 'unknown' : 'override'} | 1 | 2 | 3 |`,
+        'PANTHEON_COST_DB',
+      )
       if (output.includes('wrong-version') || output.includes('env-agent') === false) {
         throw new Error('PANTHEON_COST_DB did not override the version-selected database')
       }
@@ -269,7 +316,11 @@ async function main() {
         {},
         { sessionID: 'cost-probe' },
       )
-      requireOutput(output, '| explicit-agent | explicit | 9 | 1 | 10 |', 'explicit dbPath')
+      requireOutput(
+        output,
+        `| explicit-agent | ${requestedVersion === 'v2' ? 'unknown' : 'explicit'} | 9 | 1 | 10 |`,
+        'explicit dbPath',
+      )
       if (output.includes('env-agent')) throw new Error('explicit dbPath did not take precedence')
       checks.push('explicit dbPath precedence: PASS')
     } finally {
@@ -287,11 +338,7 @@ async function main() {
         { sessionID: 'cost-probe' },
       )
       requireOutput(output, 'not found', 'missing DB')
-      requireOutput(
-        output,
-        requestedVersion === 'v2' ? 'opencode-v2.db' : 'opencode.db',
-        'selected missing DB path',
-      )
+      requireOutput(output, 'opencode.db', 'selected missing DB path')
       checks.push('missing DB: PASS')
     } finally {
       missingRestore()
@@ -302,7 +349,16 @@ async function main() {
     }).pantheon_cost.execute({}, { sessionID: 'cost-probe' })
     requireOutput(incompatibleOutput, 'incompatible opencode.db schema', 'incompatible schema')
     checks.push('incompatible schema: PASS')
-    emit('PASS', 'offline synthetic DB checks passed; no real DB was read', checks)
+    // Names the synthetic fixture that was built, because the previous wording
+    // ("no real DB was read") was true of every run and therefore true of the run
+    // in which the V2 ledger was read as V1 and silently dropped. A verdict that
+    // cannot fail is not a verdict: it stayed green across the exact defect it
+    // was meant to cover.
+    emit(
+      'PASS',
+      `${checks.length} synthetic ${requestedVersion} checks passed against a temporary opencode.db (no user database was read)`,
+      checks,
+    )
   } catch (error) {
     emit('FAIL', diagnostic(error), checks)
   } finally {

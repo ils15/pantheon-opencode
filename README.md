@@ -244,13 +244,23 @@ Pantheon references from both config shapes before writing only the selected
 Pantheon registration. Third-party entries are not converted or claimed by
 this rule.
 
-The V1-only `pantheon_cost` report can select its database with
-`PANTHEON_OPENCODE_VERSION=v1` or `v2` (`opencode.db` or `opencode-v2.db`).
-`PANTHEON_COST_DB=/absolute/path/to/opencode.db` takes precedence over the
-version selector, and an explicit `dbPath` supplied by the tool caller takes
-precedence over both. The resolver never probes the other version's database
-and reports an actionable error when the selected DB is missing or has an
-incompatible schema.
+The `pantheon_cost` report resolves its database by PATH, in this order: an
+explicit `dbPath` supplied by the tool caller, then
+`PANTHEON_COST_DB=/absolute/path/to/opencode.db`, then `OPENCODE_DB`, then the
+XDG default `opencode.db`. There is no per-version filename in that chain:
+`opencode-v2.db` is not a host 2.x database — it is the name a sandbox gives
+its own state database through `OPENCODE_DB`.
+
+The v1/v2 distinction is the DETECTED SCHEMA, not the file name. The report
+looks for the `message` and `session_message` tables and reads whichever the
+open database actually holds, because a migrated database carries both
+families at once. `PANTHEON_OPENCODE_VERSION=v1|v2` selects no file: it only
+narrows an already-detected set to one table family, and fails fast when the
+value is neither `v1` nor `v2` or when the requested family is not there. Left
+unset, every detected family is read. A database carrying neither table comes
+back as an actionable error (`CORRUPT_DATA`), and a ledger that exists but
+yields no readable tokens as `UNSUPPORTED` — never as a successful empty
+report.
 
 The installer still writes the compatibility settings required by the selected
 OpenCode host, such as `experimental.subagent_depth`; this does not convert a

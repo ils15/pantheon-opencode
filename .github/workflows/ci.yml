@@ -161,6 +161,47 @@ jobs:
       - name: V2 hook canary (static guards; host-gated cases skip without a V2 binary)
         run: npm run test:hooks
 
+      # V2 tool canary (tests/canary/plugin-v2-tool-canary.test.mjs). It is the
+      # only gate that drives a Pantheon tool through a REAL host — the hook
+      # canary above only exercises the built-in `read` tool, which is how
+      # `draft.add({ name, description, input, execute })` without `output`
+      # shipped for 26 days with every test green.
+      #
+      # It is deliberately NOT matched by test:node's `tests/pantheon/*.mjs`
+      # glob, which runs every file concurrently: the hook canary failed 15/15
+      # under 24 workers from CPU starvation. So it runs here, as its own
+      # serial step, and the file stays where it is. Do not raise concurrency
+      # or fold this into `npm test` to "save a step".
+      #
+      # Two steps, because the file holds two different claims:
+      #   1. two cases that need no host at all — they run unconditionally;
+      #   2. the host-backed cases, which need an `opencode` binary and are
+      #      unavailable on this runner. That unavailability is announced in the
+      #      log on purpose: "no binary" and "never tested" must not look the
+      #      same in the run summary.
+      - name: V2 tool canary (host-free guards)
+        env:
+          # The host-free cases are host-free by construction, so this step
+          # claims exactly the two it runs. Pointing BINARY at a path that does
+          # not exist stops the file's `before` hook from starting a real host
+          # even on a machine that has one — otherwise a broken host would fail
+          # a step whose guarantee does not depend on the host.
+          PANTHEON_TOOL_CANARY_BIN: /nonexistent/opencode
+        run: >-
+          node --test
+          --test-name-pattern='the host environment is redirected into the sandbox|the mutation really removes output from draft.add'
+          tests/canary/plugin-v2-tool-canary.test.mjs
+
+      - name: V2 tool canary (full host run)
+        run: |
+          set -euo pipefail
+          if ! command -v "${PANTHEON_TOOL_CANARY_BIN:-opencode}" >/dev/null 2>&1; then
+            echo "::notice title=Tool canary SKIPPED::no 'opencode' binary on PATH — the host-backed tool canary did NOT run here. The host-free guards in the previous step DID run."
+            echo "SKIPPED (visible): no 'opencode' binary on PATH, so src/plugin-v2.ts was NOT driven through a live host in this job."
+            exit 0
+          fi
+          npm run test:tool-canary
+
       - name: Security audit
         run: |
           npm run audit

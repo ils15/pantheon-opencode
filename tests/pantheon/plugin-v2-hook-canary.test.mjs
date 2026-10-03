@@ -729,21 +729,44 @@ test('real plugin regression guards: honest transform support claims and correct
     /context\.catalog\b/,
     'real plugin calls the removed ctx.catalog domain',
   )
-  assert.match(source, /ctx\.integration and/, 'integration domain probe is not documented')
   assert.match(
     source,
-    /ctx\.skill have callable `\.transform` methods/,
-    'host-supported skill transform domain is not documented',
+    /ctx\.integration and\s*\n?\s*ctx\.skill/,
+    'host-supported integration and skill transform domains are not documented',
+  )
+  // The host-context claims must cite the host version the canary MEASURED, not
+  // an older probe. A comment that says "2.0.18" here is exactly the drift that
+  // let a stale claim about `ctx.tool` survive: the 2.0.22 host has
+  // ctx.tool.transform and ctx.tool.hook, and the header now records that with
+  // the measurement behind it.
+  assert.doesNotMatch(
+    source,
+    /2\.0\.18 runtime probe/,
+    'the host-context claims still cite the superseded 2.0.18 probe',
   )
   assert.match(
     source,
-    /only ctx\.catalog was absent/i,
-    'the runtime probe must distinguish catalog absence from supported domains',
+    /ctx\.tool\.transform\s+function/,
+    'the measured 2.0.22 ctx.tool.transform result is not documented',
   )
   assert.match(
     source,
-    /callback effects were\s+\*\s+not observed for any domain/,
-    'unproven transform callback effects are not disclosed',
+    /ctx\.catalog\s+absent/,
+    'the measured 2.0.22 ctx.catalog absence is not documented',
+  )
+  // The four domains the 1.18.x SDK types omit must stay named, because that is
+  // what `hostDomains` exists for and what the tool canary proves on a host.
+  for (const domain of ['tool', 'event', 'permission', 'session']) {
+    assert.match(
+      source,
+      new RegExp(`ctx\\.${domain}`),
+      `ctx.${domain} is no longer named; hostDomains would be undocumented`,
+    )
+  }
+  assert.match(
+    source,
+    /no `tool`, `event`, `permission` or `session`/,
+    'the SDK-domain gap is no longer stated',
   )
   assert.doesNotMatch(
     source,

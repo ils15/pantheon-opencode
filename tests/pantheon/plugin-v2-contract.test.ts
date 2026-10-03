@@ -235,11 +235,16 @@ async function main(): Promise<void> {
   })
 
   test('transform support notes distinguish host domains from Pantheon behavior', () => {
-    assert.match(pluginSource, /2\.0\.18 host runtime probe/)
-    assert.match(pluginSource, /ctx\.integration and/)
-    assert.match(pluginSource, /ctx\.skill have callable `\.transform` methods/)
-    assert.match(pluginSource, /callback effects were\s+\*\s+not observed for any domain/)
-    assert.match(pluginSource, /only ctx\.catalog was absent/i)
+    // The host-context claims must cite the version the canary MEASURED
+    // (opencode 2.0.22, tests/canary/plugin-v2-tool-canary.test.mjs). These
+    // assertions previously pinned the superseded "2.0.18 runtime probe"
+    // wording, which is how a stale claim about ctx.tool survived: the 2.0.22
+    // host has ctx.tool.transform and ctx.tool.hook and they work.
+    assert.doesNotMatch(pluginSource, /2\.0\.18 host runtime probe/)
+    assert.match(pluginSource, /ctx\.tool\.transform\s+function/)
+    assert.match(pluginSource, /ctx\.tool\.hook\s+function/)
+    assert.match(pluginSource, /ctx\.catalog\s+absent/)
+    assert.match(pluginSource, /ctx\.integration and\s*\n?\s*ctx\.skill/)
     assert.match(pluginSource, /SkillEditor\.source\(\)/)
     assert.doesNotMatch(
       pluginSource,
@@ -247,6 +252,57 @@ async function main(): Promise<void> {
     )
     assert.equal(typeof context.integration.transform, 'function')
     assert.equal(typeof context.skill.transform, 'function')
+  })
+
+  test('the four SDK-missing domains are declared, not cast ad hoc', () => {
+    // `hostDomains` is the single documented cast for tool/event/permission/
+    // session. This test pins that the declaration survives and that the
+    // anonymous casts it replaced do not come back.
+    assert.match(pluginSource, /interface HostPluginContext extends PluginContext/)
+    assert.match(pluginSource, /function hostDomains\(context: PluginContext\): HostPluginContext/)
+    // Six call sites: registerV2Tools, subscribeV2Events, registerV2SessionHooks,
+    // registerV2ToolHooks, registerV2PermissionHook, and Phase 7's compaction
+    // hook. One more means a new phase started bypassing the declaration.
+    assert.equal(
+      (pluginSource.match(/hostDomains\(context\)/g) ?? []).length,
+      6,
+      'every host-domain read must go through hostDomains(context)',
+    )
+    assert.doesNotMatch(
+      pluginSource,
+      /as unknown as Record<string, unknown>\)\.(tool|event|permission|session)/,
+      'an ad-hoc cast crept back in; use hostDomains()',
+    )
+    for (const domain of ['tool', 'event', 'permission', 'session']) {
+      assert.match(
+        pluginSource,
+        new RegExp(`\\b${domain}\\?: V2\\w*Domain`),
+        `${domain} is not declared`,
+      )
+    }
+    // The declaration must not erase the definition checks. Each of these is the
+    // guard that turns an absent domain into a marked-unsupported feature rather
+    // than a silent no-op — and the host-backed tool canary is what proves the
+    // domains are present on a real 2.0.22 host in the first place.
+    assert.match(pluginSource, /if \(!toolCtx\?\.transform\) \{\s*\n\s*return false/)
+    assert.match(pluginSource, /if \(!eventCtx\?\.subscribe\) \{\s*\n\s*return undefined/)
+    assert.match(pluginSource, /if \(!sessionCtx\?\.hook\) \{\s*\n\s*return false/)
+    assert.match(pluginSource, /if \(!toolCtx\?\.hook\) \{\s*\n\s*return false/)
+    assert.match(pluginSource, /if \(!permCtx\?\.hook\) \{/)
+  })
+
+  test('the secret block message is English like the rest of the plugin', () => {
+    // This string is what the user reads when a tool is blocked, so it is
+    // runtime surface, not style. A Portuguese release note elsewhere in the
+    // repo is not a reason for this one to be Portuguese.
+    const declared = /const SECRET_BLOCK_MESSAGE\s*=\s*\n?\s*'([^']*)'/.exec(pluginSource)
+    assert.ok(declared !== null, 'plugin-v2.ts must declare SECRET_BLOCK_MESSAGE')
+    assert.equal(
+      declared[1],
+      '[plugin-v2] Blocked: high-confidence secret detected in tool input — see .pantheon/logs/hooks.log',
+      'the block message drifted from the agreed English wording',
+    )
+    assert.doesNotMatch(pluginSource, /\[plugin-v2\] Bloqueado/)
   })
 
   test('zeus agent mode is set to primary', () => {
@@ -1525,7 +1581,7 @@ async function main(): Promise<void> {
       denial !== null,
       'a high-confidence `sk-bf-` token in a write payload must be denied — this is the only hard secret block on the V2 surface',
     )
-    assert.match(denial, /segredo de alta confian[cç]a/)
+    assert.match(denial, /\[plugin-v2\] Blocked: high-confidence secret detected/)
   })
 
   test('every high-confidence token family is blocked, not just the Bifrost one', async () => {
