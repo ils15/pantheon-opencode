@@ -15,7 +15,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
+import { load } from 'js-yaml'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..', '..')
@@ -31,7 +31,7 @@ function parseFrontmatter(filePath) {
   const match = content.match(FRONTMATTER_RE)
   if (!match) return null
   try {
-    return yaml.load(match[1])
+    return load(match[1])
   } catch {
     return null
   }
@@ -45,7 +45,7 @@ function getAgentNames() {
 }
 
 function loadRouting() {
-  return yaml.load(readFileSync(ROUTING_PATH, 'utf8'))
+  return load(readFileSync(ROUTING_PATH, 'utf8'))
 }
 
 // ─── Expected matrix ──────────────────────────────────────────────────
