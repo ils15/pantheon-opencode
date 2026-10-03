@@ -12,6 +12,13 @@
  *   session, and the shared `createEnforcementGuard` throws to deny
  *   `hashline_edit` / `pantheon_model` / `edit` / `write` / `bash` / `task`.
  *   See `registerV2ToolHooks`.
+ * - The SAME `execute.before` hook runs scripts/hooks/scan-secrets.sh over the
+ *   tool input and throws on exit 2 (high-confidence token match). This is the
+ *   ONLY hard security block on the V2 surface. It is wired HERE, not delegated
+ *   to `src/plugins/pantheon-hooks.ts`: opencode.json declares only
+ *   `src/plugin-v2` in `plugins`, so the V1 plugin never loads on a V2-only
+ *   install and V1's identical block was inert by construction.
+
  * - A tool `execute.after` hook and a permission hook, registered as
  *   registration points with no V2-side behaviour
  *
@@ -41,7 +48,8 @@
  * @module plugin-v2
  */
 
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type {
   AgentDraft,
@@ -63,6 +71,7 @@ import {
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.ts'
+import { type HookPayload, runHook } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
 
@@ -563,6 +572,80 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   return registered
 }
 
+// ─── V2 Secret Scan ─────────────────────────────────────────────────────
+
+/**
+ * High-confidence secret token formats — MIRRORS `SECRET_MASK_RE` in
+ * src/plugins/pantheon-hooks.ts (V1) and `HIGH_CONFIDENCE_PATTERNS` in
+ * scripts/hooks/scan-secrets.sh.
+ *
+ * Duplicated rather than imported because the V1 module is a separate plugin
+ * that is NOT loaded on a V2-only install (see the module header), and pulling
+ * it in for one regex would resurrect exactly the V1-hook coupling V2 exists to
+ * remove. The drift risk is real and is asserted by a test in
+ * tests/pantheon/plugin-v2-contract.test.ts.
+ *
+ * Applied to every log line this module writes, so a hook trail can never
+ * contain a raw credential. Header/KEY names (the Bifrost header alone,
+ * `api_key=...`) are deliberately NOT matched: they are not secret values.
+ */
+const SECRET_MASK_RE =
+  /(sk-bf-[A-Za-z0-9_-]{8,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{36,}|glpat-[A-Za-z0-9_-]{20}|sk-[a-zA-Z0-9]{20,}|sk_live_[a-zA-Z0-9]{20,}|sk_test_[a-zA-Z0-9]{20,}|xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24}|bearer\s+[a-zA-Z0-9_.-]{20,}|eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*)/gi
+
+/** Replace every high-confidence secret match with '****'. */
+function maskSecret(text: string): string {
+  return text.replace(SECRET_MASK_RE, '****')
+}
+
+/**
+ * Message thrown when scan-secrets.sh exits 2 (a high-confidence token match).
+ *
+ * This is the only deliberate throw on the V2 surface, and it mirrors the V1
+ * message (src/plugins/pantheon-hooks.ts `SECRET_BLOCK_MESSAGE`). opencode's
+ * Plugin.trigger has no catch around hook invocations, so the rejection
+ * propagates and fails the tool's execute promise BEFORE the tool body runs —
+ * the same hard block V1 had, which was inert on a V2-only install because
+ * pantheon-hooks.ts is never loaded there (opencode.json `plugins` declares only
+ * `src/plugin-v2`).
+ */
+const SECRET_BLOCK_MESSAGE =
+  '[plugin-v2] Bloqueado: segredo de alta confiança detectado no tool input — consulte .pantheon/logs/hooks.log'
+
+/**
+ * Append one masked, ISO-stamped line to .pantheon/logs/hooks.log under the
+ * working directory, and return whether it landed.
+ *
+ * V1's `reportFailure` also writes to `client.app.log` and shows a TUI toast.
+ * The V2 `PluginContext` exposes NEITHER (it is
+ * `{options, agent, aisdk, catalog, command, integration, plugin, reference,
+ * skill}` — no `client`, no `directory`), so this module has only the file
+ * channel. That is a real reduction in observability versus V1, stated here
+ * rather than implied. Best-effort by contract: a logging failure must never
+ * take down the session.
+ */
+function appendV2HookLog(line: string): boolean {
+  const masked = maskSecret(line)
+  if (masked === '') return false
+  const stamp = new Date().toISOString()
+  // Multi-line scanner stderr would otherwise produce continuation lines with
+  // no timestamp (V1's P0-5 fix) — one message becomes N timestamped lines.
+  const body = masked
+    .split('\n')
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+    .map((part) => `[${stamp}] ${part}`)
+    .join('\n')
+  if (body === '') return false
+  try {
+    const dir = path.join(process.cwd(), '.pantheon', 'logs')
+    mkdirSync(dir, { recursive: true })
+    appendFileSync(path.join(dir, 'hooks.log'), `${body}\n`, 'utf8')
+    return true
+  } catch {
+    return false
+  }
+}
+
 // ─── V2 Tool Hooks ──────────────────────────────────────────────────────
 
 /**
@@ -687,7 +770,43 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
       // and no session→agent map. A non-read-only (or absent) agent revokes the
       // registration, which also covers an in-session agent switch.
       syncReadOnlySession(readOnlyRegistry, input.sessionID, agent)
+      // Deliberately OUTSIDE the try/catch below: a read-only denial must keep
+      // propagating to the host, not be swallowed as a scanner failure.
       await v2EnforcementGuard(input, output)
+
+      // High-confidence secret scan (scripts/hooks/scan-secrets.sh). This is the
+      // ONLY hard block on the V2 surface, and it exists here — rather than via
+      // `src/plugins/pantheon-hooks.ts` — because that module is a separate
+      // plugin that is never loaded on a V2-only install: opencode.json
+      // `plugins` declares only `src/plugin-v2`. V1's scan-secrets block was
+      // therefore inert by construction, not by misconfiguration.
+      //
+      // exit 2 → block. exit 1 (low-confidence header/KEY names) → advisory,
+      // logged only. A scanner failure (missing script, timeout) is fail-OPEN:
+      // runHook never rejects, and an infrastructure error must not deny
+      // unrelated tool calls.
+      let blockError: Error | null = null
+      try {
+        const payload: HookPayload = {
+          tool_name: input.tool,
+          tool_input: output.args ?? {},
+          agent_id: typeof agent === 'string' ? agent : '',
+          session_id: input.sessionID,
+        }
+        const scan = await runHook('scan-secrets.sh', payload)
+        if (scan.code === 2) {
+          appendV2HookLog(SECRET_BLOCK_MESSAGE)
+          appendV2HookLog(scan.stderr)
+          blockError = new Error(SECRET_BLOCK_MESSAGE)
+        } else if (scan.code === 1) {
+          // Advisory: log only, never block.
+          appendV2HookLog(scan.stderr)
+        }
+      } catch {
+        // Never let the scanner take down the session — runHook resolves a
+        // structured result instead of rejecting, so this is belt-and-braces.
+      }
+      if (blockError !== null) throw blockError
     })
     registered = true
   } catch {

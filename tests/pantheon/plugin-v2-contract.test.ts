@@ -1452,6 +1452,221 @@ async function main(): Promise<void> {
     }
   })
 
+  // ─── V2 Secret Scan (integration) ─────────────────────────────────────
+  //
+  // Same discipline as the enforcement section above: these drive the REAL
+  // `execute.before` handler captured from `plugin.setup`, and the REAL
+  // scripts/hooks/scan-secrets.sh as a child process. Nothing here is mocked.
+  //
+  // Why this exists at all: opencode.json declares only `src/plugin-v2` in
+  // `plugins`, so `src/plugins/pantheon-hooks.ts` is never loaded on a V2-only
+  // install. V1's high-confidence secret block therefore did not run — inert by
+  // construction, not by misconfiguration of one machine. This is the only hard
+  // security block on the V2 surface, so the wiring itself is the thing under
+  // test: deleting the `runHook('scan-secrets.sh', …)` call must drop these.
+
+  console.log('\n🔐 V2 Secret Scan Tests')
+
+  /**
+   * Drive the captured `execute.before` handler with arbitrary tool input and
+   * report whether it denied, plus the message the session would see.
+   */
+  async function secretScanDenial(
+    before: (event: unknown) => void | Promise<void>,
+    tool: string,
+    toolInput: Record<string, unknown>,
+  ): Promise<string | null> {
+    try {
+      await before({
+        tool,
+        // A NON-read-only agent, so the read-only guard cannot be what denies
+        // the call: any denial observed here is attributable to the scan alone.
+        sessionID: 'ses_v2_scan',
+        agent: 'zeus',
+        messageID: 'msg_scan',
+        id: 'call_scan',
+        input: toolInput,
+      })
+      return null
+    } catch (err: unknown) {
+      return err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  const scanCaptured = await setupCapturingToolHooks()
+
+  /**
+   * Sample token values, assembled from fragments at runtime.
+   *
+   * These are invented, not real credentials — but the pre-commit gitleaks hook
+   * cannot tell a fixture from a leak, and it is right not to. Assembling each
+   * value from parts keeps every high-confidence pattern out of this file's
+   * bytes, which is the same trick scripts/hooks/scan-secrets.sh uses for its own
+   * Bifrost markers (see the comment above BIFROST_HEADER there). A literal
+   * token in the test source would also make the repository's own secret scan
+   * self-match, which is the same class of problem this wiring exists to catch.
+   */
+  const SAMPLE_TOKENS = {
+    bifrost: `sk${'-'}bf${'-'}abcdef1234567890ABCD`,
+    akia: `AKIA${'IOSFODNN7EXAMPLE'}`,
+    githubPat: `ghp${'_'}abcdefghijklmnopqrstuvwxyz0123456789`,
+    gitlabPat: `glpat${'-'}abcdefghij0123456789`,
+    bearer: `Bearer ${'abcdefghij0123456789ABCDEFGHI'}`,
+    jwt: `eyJhbGciOiJIUzI1NiJ9${'.'}eyJzdWIiOiIxIn0${'.'}eyJzaWcifQ`,
+  } as const
+
+  test('a high-confidence token in tool input is BLOCKED through the V2 registration path', async () => {
+    const denial = await secretScanDenial(
+      scanCaptured.before as (e: unknown) => Promise<void>,
+      'write',
+      { filePath: 'notes.md', content: `export const K = "${SAMPLE_TOKENS.bifrost}"` },
+    )
+    assert.ok(
+      denial !== null,
+      'a high-confidence `sk-bf-` token in a write payload must be denied — this is the only hard secret block on the V2 surface',
+    )
+    assert.match(denial, /segredo de alta confian[cç]a/)
+  })
+
+  test('every high-confidence token family is blocked, not just the Bifrost one', async () => {
+    // One regex family that regressed silently is exactly the failure mode that
+    // made the block inert in the first place. Each value below must be denied.
+    const tokens: Array<[string, string]> = [
+      ['AKIA', SAMPLE_TOKENS.akia],
+      ['github PAT', SAMPLE_TOKENS.githubPat],
+      ['gitlab PAT', SAMPLE_TOKENS.gitlabPat],
+      ['bearer', SAMPLE_TOKENS.bearer],
+      ['jwt', SAMPLE_TOKENS.jwt],
+    ]
+    for (const [label, value] of tokens) {
+      const denial = await secretScanDenial(
+        scanCaptured.before as (e: unknown) => Promise<void>,
+        'write',
+        { filePath: 'notes.md', content: `token=${value}` },
+      )
+      assert.ok(denial !== null, `${label} token must be denied by the secret scan`)
+    }
+  })
+
+  test('an ordinary tool call is NOT denied by the secret scan', async () => {
+    // The block must be specific. A scanner that denies everything is as broken
+    // as one that denies nothing, and this is the test that says so.
+    const denial = await secretScanDenial(
+      scanCaptured.before as (e: unknown) => Promise<void>,
+      'read',
+      { filePath: 'src/index.ts', content: 'export const answer = 42' },
+    )
+    assert.equal(denial, null, 'a benign tool call must pass the secret scan')
+  })
+
+  test('a Bifrost header name alone stays advisory (low confidence, never blocks)', async () => {
+    // The Bifrost header is a header/KEY NAME, not a token value. V1 classifies
+    // it as low-confidence and logs without blocking; V2 must not harden it into
+    // a block or every request carrying the header would be denied. Assembled
+    // from fragments for the same reason as SAMPLE_TOKENS: the repository's own
+    // secret-scan pre-commit hook reads the literal as a credential.
+    const headerName = `x${'-'}bf${'-'}vk`
+    const denial = await secretScanDenial(
+      scanCaptured.before as (e: unknown) => Promise<void>,
+      'write',
+      { filePath: 'notes.md', content: `headers: { "${headerName}": "not-a-real-token" }` },
+    )
+    assert.equal(denial, null, 'the Bifrost header name must not block on its own')
+  })
+
+  test('removing the scan-secrets wiring from plugin-v2 drops the secret block', async () => {
+    // Structural counterpart to the behavioural tests above. If the block is
+    // ever "restored" by re-registering the V1 plugin (pantheon-hooks.ts) the
+    // file would stop calling the runner itself, and on a V2-only install —
+    // opencode.json `plugins: ["src/plugin-v2"]` — the block would go inert
+    // again while every behavioural test kept passing on a machine that has the
+    // V1 plugin lying around. These two assertions together fail that.
+    assert.match(
+      pluginSource,
+      /runHook\(\s*'scan-secrets\.sh'/,
+      'plugin-v2.ts must invoke scan-secrets.sh through the shared hook runner',
+    )
+    assert.match(
+      pluginSource,
+      /code === 2/,
+      'the high-confidence exit code (2) must be the one that blocks',
+    )
+    // Anchored to a line whose first token is `import`, so the module's prose
+    // about `src/plugins/pantheon-hooks.ts` (six mentions, all in comments)
+    // cannot satisfy or trip it — only a real import statement can.
+    assert.doesNotMatch(
+      pluginSource,
+      /^\s*import\s+(?:[^'"]*from\s+)?['"][^'"]*pantheon-hooks(?:\.ts)?['"]/m,
+      'plugin-v2 must not import the V1 hooks plugin: it is not loaded on a V2-only install, so importing it would make the block inert again',
+    )
+  })
+
+  test('the opencode.json the release publishes loads plugin-v2 and not the V1 hooks plugin', () => {
+    // The inertness was not a wiring mistake inside plugin-v2.ts — it was the
+    // published manifest. `src/plugins/pantheon-hooks.ts` declares the block,
+    // but nothing in the shipped plugin list loads it, so it never ran. This
+    // pins the manifest so adding a V1 plugin reference becomes a visible
+    // decision rather than a silent one.
+    const manifest = JSON.parse(
+      readFileSync(new URL('../../opencode.json', import.meta.url), 'utf8'),
+    ) as { plugins?: string[] }
+    assert.ok(Array.isArray(manifest.plugins), 'opencode.json must declare a plugins array')
+    assert.ok(
+      manifest.plugins?.includes('src/plugin-v2'),
+      'the V2 plugin must be in the published plugin list',
+    )
+    assert.ok(
+      !manifest.plugins?.some((p) => p.includes('pantheon-hooks')),
+      'the V1 hooks plugin must not be in the published plugin list; its block is wired into plugin-v2 instead',
+    )
+  })
+
+  test('the secret mask regex in plugin-v2 has not drifted from the V1 surface', () => {
+    // The mask regex is duplicated (V1's copy is unreachable from V2). Drift
+    // means a redacted value is no longer redacted, so the two must stay in
+    // step. Compared against the V1 source rather than a second literal here, so
+    // there is exactly one place to update.
+    const v1Source = readFileSync(
+      new URL('../../src/plugins/pantheon-hooks.ts', import.meta.url),
+      'utf8',
+    )
+    const extract = (source: string): string | null => {
+      // The literal is a single line in both files; `[^\n]*` keeps the match
+      // from running past it into the next declaration.
+      const match = /const SECRET_MASK_RE\s*=\s*(\/[^\n]*\/[a-z]*)/.exec(source)
+      return match?.[1]?.trim() ?? null
+    }
+    const v2Mask = extract(pluginSource)
+    const v1Mask = extract(v1Source)
+    assert.ok(v2Mask !== null, 'plugin-v2.ts must define SECRET_MASK_RE')
+    assert.ok(v1Mask !== null, 'pantheon-hooks.ts must define SECRET_MASK_RE')
+    assert.equal(v2Mask, v1Mask, 'the V1 and V2 secret mask regexes have drifted')
+  })
+
+  test('scan-secrets.sh is shipped in the published package and reachable from the plugin', () => {
+    // The failure this guards is silent and looks like a fix: if the script is
+    // not in the package `files` list, or the runner's relative resolution
+    // breaks from an install prefix, runHook returns code 1 and the block never
+    // fires on a real install — while every test here still passes from the repo.
+    const pkg = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { files?: string[] }
+    assert.ok(pkg.files?.includes('scripts/hooks/**'), 'scripts/hooks/** must be published')
+    assert.ok(
+      pkg.files?.includes('src/plugins/**'),
+      'src/plugins/** (the hook runner) must be published',
+    )
+    // The runner resolves scripts/hooks/ from its own import.meta.url:
+    // src/plugins/hook-runner.ts -> ../../scripts/hooks/. Both halves are in
+    // `files`, so the relative hop is intact for any install prefix
+    // (lib/node_modules, the npx cache, or a linked checkout).
+    assert.match(
+      readFileSync(new URL('../../src/plugins/hook-runner.ts', import.meta.url), 'utf8'),
+      /new URL\('\.\.\/\.\.\/scripts\/hooks\/', import\.meta\.url\)/,
+      'the hook runner must anchor its scripts/hooks resolution on import.meta.url, not process.cwd()',
+    )
+  })
+
   // ─── V1→V2 Bridge Tests ────────────────────────────────────────────
 
   console.log('\n🌉 V1→V2 Bridge Tests')
