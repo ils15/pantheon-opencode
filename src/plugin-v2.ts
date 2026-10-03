@@ -26,21 +26,44 @@
  * `execute` MUST resolve to a value carrying `output`. The host enforces the
  * two as a pair — see `V2ToolDraft` for the exact contract.
  *
- * The transitional SDK types used here expose these domains:
- *   ctx.agent / ctx.command / ctx.model / ctx.reference / ctx.skill /
- *   ctx.tool / ctx.event / ctx.permission / ctx.session
+ * ## The four domains the SDK types do not carry
  *
- * A separate OpenCode 2.0.18 host runtime probe confirmed ctx.integration and
- * ctx.skill have callable `.transform` methods; only ctx.catalog was absent.
- * The probe's callback effects were
- * not observed for any domain. This runtime probe is not an SDK compatibility
- * claim. Pantheon's Phase 1/config transform
- * registrations cover agent, command, and reference; `ctx.tool.transform` is
- * attempted separately in Phase 2. Integration and skill transform callbacks
- * are not registered by Pantheon, so their effects remain unproven. The
- * narrower `SkillEditor.source()` helper is absent from the inspected SDK
- * editor shape, so directory-source registration remains unsupported; that
- * does not imply that `ctx.skill` or its transform is absent.
+ * `@opencode-ai/plugin` 1.18.33 types `PluginContext` as exactly:
+ *   options · agent · aisdk · catalog · command · integration · plugin ·
+ *   reference · skill
+ * — no `tool`, `event`, `permission` or `session`. 1.18.34 (`latest`) is the
+ * same, so following the stable SDK line does not resolve this: it is a
+ * STRUCTURAL DECLARATION task, not a pin reconciliation.
+ *
+ * A live opencode 2.0.22 host DOES have all four, with the shapes this module
+ * uses. Measured by `tests/canary/plugin-v2-tool-canary.test.mjs`, which loads
+ * this file through the real loader and records `Object.keys(ctx)` from inside
+ * the host:
+ *
+ *   agent aisdk app command event experimental generate integration location
+ *   mcp model options permission plugin provider reference rpc session shell
+ *   skill storage tool vcs websearch worktree
+ *
+ *   ctx.tool.transform        function
+ *   ctx.tool.hook             function
+ *   ctx.tool.list             function
+ *   ctx.event.subscribe       function
+ *   ctx.permission.hook       function
+ *   ctx.session.hook          function
+ *   ctx.catalog               absent
+ *
+ * `HostPluginContext` below declares exactly the minimum of that, and
+ * `hostDomains` is the SINGLE documented cast that reaches them — replacing the
+ * six repeated `as unknown as Record<string, unknown>` casts this file carried
+ * (Phases 2, 3, 4, 5, 6 and 7 — every phase except Phase 1, which reads the
+ * SDK-typed domains directly), each of which type-checked nothing at all. The
+ * per-domain definition checks stay: `registerV2Tools` still returns `false`
+ * and marks `tool-transform` when `ctx.tool.transform` is missing, and likewise
+ * for the others. The cast is not a licence to assume: the canary above is what
+ * proves the domains exist on a real host, and it fails if they stop existing.
+ *
+ * If the SDK ever exposes these four, replacing `hostDomains` with the real
+ * type is a one-line change. Do NOT make that change while 1.18.x lacks them.
  *
  * V2_UNSUPPORTED_FEATURES distinguishes adapter limitations from observed
  * host-absent APIs; setup handles optional registrations on a best-effort basis.
@@ -82,15 +105,19 @@ import { type HookPayload, runHook } from './plugins/hook-runner.ts'
  */
 export const V2_UNSUPPORTED_FEATURES: string[] = [
   'legacy-hooks',
-  // `catalog` alone was absent in the OpenCode 2.0.18 runtime probe.
+  // `ctx.catalog` is the one domain a live 2.0.22 host does NOT have: it is
+  // absent from `Object.keys(ctx)`, measured in
+  // tests/canary/plugin-v2-tool-canary.test.mjs. (`catalog` IS in the 1.18.33
+  // SDK's PluginContext, so the SDK types it and the host does not provide it.)
   'catalog-transform',
-  // The host exposes callable transforms for integration and skill, but
-  // Pantheon does not register/use them and no host callback effects were
-  // observed. These entries describe adapter support, not host availability.
+  // Adapter support, NOT host availability: 2.0.22 exposes ctx.integration and
+  // ctx.skill with callable transforms, and Pantheon deliberately registers
+  // neither. These entries record what this plugin does not implement.
   'integration-transform',
-  // The inspected SkillEditor shape has no `source()` helper for adding a
-  // directory source. This is narrower than (and distinct from) ctx.skill's
-  // host availability or callable transform.
+  // The inspected SkillEditor shape has no `source()` helper — i.e. no
+  // `SkillEditor.source()` — for adding a directory source. This is narrower
+  // than (and distinct from) ctx.skill's host availability or callable
+  // transform, which a live 2.0.22 host does provide.
   'skill-transform',
   // Adapter limitation, not a host gap: the goal loop needs a GoalStore, a
   // GoalLoopClient and a BackgroundJobBoard, none of which the V2
@@ -187,6 +214,68 @@ function markUnsupported(feature: string): void {
   if (!V2_UNSUPPORTED_FEATURES.includes(feature)) {
     V2_UNSUPPORTED_FEATURES.push(feature)
   }
+}
+
+// ─── Host context domains the SDK types do not carry ────────────────────
+
+/**
+ * The minimal shape of `ctx.tool` this module uses, as a live opencode 2.0.22
+ * host provides it. `transform` registers the Pantheon tools, `hook` installs
+ * the `execute.before`/`execute.after` guards, `list` is the host-built
+ * descriptor dump the canary asserts on.
+ */
+interface V2ToolDomain {
+  transform?: (cb: (draft: V2ToolDraft) => void) => Promise<unknown>
+  hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
+  list?: () => Promise<unknown>
+}
+
+/** The minimal shape of `ctx.event`: one async-iterable subscription. */
+interface V2EventDomain {
+  subscribe?: (opts?: { signal?: AbortSignal }) => AsyncIterable<V2SessionEvent>
+}
+
+/**
+ * The minimal shape of `ctx.permission`.
+ *
+ * Only a hook name and a handler: the plugin registers `evaluate` as a
+ * registration point and deliberately runs no V2-side permission logic, so no
+ * richer payload type is claimed here.
+ */
+interface V2PermissionDomain {
+  hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
+}
+
+/**
+ * The minimal shape of `ctx.session`.
+ *
+ * Only `hook(name, handler)`. The host accepts any string and silently drops an
+ * unknown one — which is why the hook names below were a live defect once and
+ * why the host-backed hook canary exists.
+ */
+interface V2SessionDomain {
+  hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
+}
+
+/** `PluginContext` plus the four domains 1.18.x omits. See the module header. */
+interface HostPluginContext extends PluginContext {
+  tool?: V2ToolDomain
+  event?: V2EventDomain
+  permission?: V2PermissionDomain
+  session?: V2SessionDomain
+}
+
+/**
+ * THE cast to the host's context. Every optional member stays optional and every
+ * caller re-checks before use, so this narrows nothing away: it replaces five
+ * anonymous `Record<string, unknown>` casts with one named, documented,
+ * type-checked boundary.
+ *
+ * When the SDK ships these four domains, delete this function and use
+ * `PluginContext` directly.
+ */
+function hostDomains(context: PluginContext): HostPluginContext {
+  return context as HostPluginContext
 }
 
 // ─── V1 Bridge Integration ──────────────────────────────────────────────
@@ -334,9 +423,7 @@ function transformReferences(draft: ReferenceDraft): void {
  * Returns true if tools were registered, false if the API is unavailable.
  */
 async function registerV2Tools(context: PluginContext): Promise<boolean> {
-  const toolCtx = (context as unknown as Record<string, unknown>).tool as
-    | { transform?: (cb: (draft: V2ToolDraft) => void) => Promise<unknown> }
-    | undefined
+  const toolCtx = hostDomains(context).tool
 
   if (!toolCtx?.transform) {
     return false
@@ -387,9 +474,7 @@ async function registerV2Tools(context: PluginContext): Promise<boolean> {
  * Returns a cleanup function, or undefined if the API is unavailable.
  */
 function subscribeV2Events(context: PluginContext): (() => void) | undefined {
-  const eventCtx = (context as unknown as Record<string, unknown>).event as
-    | { subscribe?: (opts?: { signal?: AbortSignal }) => AsyncIterable<V2SessionEvent> }
-    | undefined
+  const eventCtx = hostDomains(context).event
 
   if (!eventCtx?.subscribe) {
     return undefined
@@ -505,11 +590,7 @@ async function onSessionCompacted(_event: V2SessionEvent): Promise<void> {}
  * Returns true if any hooks were registered.
  */
 async function registerV2SessionHooks(context: PluginContext): Promise<boolean> {
-  const sessionCtx = (context as unknown as Record<string, unknown>).session as
-    | {
-        hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
-      }
-    | undefined
+  const sessionCtx = hostDomains(context).session
 
   if (!sessionCtx?.hook) {
     return false
@@ -600,16 +681,21 @@ function maskSecret(text: string): string {
 /**
  * Message thrown when scan-secrets.sh exits 2 (a high-confidence token match).
  *
- * This is the only deliberate throw on the V2 surface, and it mirrors the V1
- * message (src/plugins/pantheon-hooks.ts `SECRET_BLOCK_MESSAGE`). opencode's
+ * This is the only deliberate throw on the V2 surface. opencode's
  * Plugin.trigger has no catch around hook invocations, so the rejection
  * propagates and fails the tool's execute promise BEFORE the tool body runs —
- * the same hard block V1 had, which was inert on a V2-only install because
+ * the same hard block V1 has (src/plugins/pantheon-hooks.ts
+ * `SECRET_BLOCK_MESSAGE`), which was inert on a V2-only install because
  * pantheon-hooks.ts is never loaded there (opencode.json `plugins` declares only
  * `src/plugin-v2`).
+ *
+ * English, like every other message this module emits: this string surfaces in
+ * the user's session as the tool error, so it is read by whoever hit the block,
+ * not by the code that raised it. A Portuguese release note elsewhere in the
+ * repo is not a reason for the runtime message to be Portuguese too.
  */
 const SECRET_BLOCK_MESSAGE =
-  '[plugin-v2] Bloqueado: segredo de alta confiança detectado no tool input — consulte .pantheon/logs/hooks.log'
+  '[plugin-v2] Blocked: high-confidence secret detected in tool input — see .pantheon/logs/hooks.log'
 
 /**
  * Append one masked, ISO-stamped line to .pantheon/logs/hooks.log under the
@@ -740,11 +826,7 @@ function adaptV2ExecuteBeforeEvent(event: unknown): {
  * Returns true if any hooks were registered.
  */
 async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
-  const toolCtx = (context as unknown as Record<string, unknown>).tool as
-    | {
-        hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
-      }
-    | undefined
+  const toolCtx = hostDomains(context).tool
 
   if (!toolCtx?.hook) {
     return false
@@ -842,11 +924,7 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
  * Returns true if the hook was registered.
  */
 async function registerV2PermissionHook(context: PluginContext): Promise<boolean> {
-  const permCtx = (context as unknown as Record<string, unknown>).permission as
-    | {
-        hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
-      }
-    | undefined
+  const permCtx = hostDomains(context).permission
 
   if (!permCtx?.hook) {
     markUnsupported('permission-hook')
@@ -920,10 +998,12 @@ export const plugin = define({
     //
     // Pantheon's Phase 1/config transform registrations cover agent, command,
     // and reference; ctx.tool.transform is attempted separately in Phase 2.
-    // The 2.0.18 runtime probe found ctx.integration and ctx.skill with
-    // callable transforms, but no callback effects were observed; neither is
-    // registered here. Only ctx.catalog was absent in that probe.
-    // The hook canary tests hook firing only, not transform callback effects.
+    // ctx.integration and ctx.skill are present on a live 2.0.22 host and neither
+    // is registered here — that is a Pantheon scope choice, not a host gap.
+    // ctx.catalog is the one domain the host does not provide.
+    // Phase 1 registers against the SDK-typed `context.agent` / `.command` /
+    // `.reference` directly; the four domains the SDK omits are reached only
+    // through `hostDomains` (see the module header).
     const phase1Transforms: Array<{ feature: string; register: () => Promise<unknown> }> = [
       { feature: 'agent-transform', register: () => context.agent.transform(transformAgents) },
       {
@@ -976,14 +1056,7 @@ export const plugin = define({
     await registerV2PermissionHook(context).catch(() => false)
 
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────
-    const compactionCtx = (context as unknown as Record<string, unknown>).session as
-      | {
-          hook?: (
-            name: string,
-            handler: (event: unknown) => void | Promise<void>,
-          ) => Promise<unknown>
-        }
-      | undefined
+    const compactionCtx = hostDomains(context).session
     if (compactionCtx?.hook) {
       try {
         // 2.0.16 `SessionHooks` key is `compaction` (the migration doc maps
