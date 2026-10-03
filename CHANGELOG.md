@@ -18,6 +18,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.4] - 2026-10-03
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Canário host-backed que dirige `hashline_edit` end-to-end** (`tests/canary/plugin-v2-tool-canary.test.mjs`, 12 casos): carrega `src/plugin-v2.ts` pelo loader real do host `opencode 2.0.22` e registra `Object.keys(ctx)` de dentro do host — medidos, `tool`/`event`/`permission`/`session` existem e `catalog` não. É o primeiro gate que dirige uma ferramenta do Pantheon por um host real. O canário existente só dirige o `read` embutido, e foi por isso que `draft.add()` sem `output` sobreviveu 26 dias com todos os testes verdes.
+- **Os quatro domínios que o SDK `@opencode-ai/plugin` não tipa** (`tool`, `event`, `permission`, `session`) passaram a uma declaração estrutural local (`HostPluginContext`) e **um** cast documentado (`hostDomains()`), no lugar de seis `as unknown as Record<string, unknown>` que não verificavam tipo nenhum. Todo membro continua opcional e todo chamador reconferir antes de usar. A linha estável do SDK é `1.18.x` e não carrega o contrato do host — `1.18.34` (`latest`) é idêntica a `1.18.33`, então seguir o `dev` diário resolveria pior, não melhor.
+
+## 🐞 Fixed
+
+- `pantheon_cost` respondia `CORRUPT_DATA` em **toda** chamada contra o host 2.0.22: exigia a tabela `message`, que não existe nesse banco. Os tokens de assistant **estão** legíveis em `session_message`. **Não é renomeação:** `session_message` tem coluna `data`, mas não tem a chave `role` dentro dela — `json_type(data,'$.role')` é nulo em **0 de 40 307** linhas válidas. O V1 marca turnos de assistant com `data.role`; o V2 marca pela **coluna** `type`. Trocar apenas o nome da tabela casaria com nada e devolveria `status: OK` em silêncio. A detecção passa a ser por **presença de tabela**, porque as duas famílias coexistem em bancos migrados.
+- `PANTHEON_OPENCODE_VERSION` nunca selecionou o schema: só mudava o **nome do arquivo**, e `opencode-v2.db` é o isolamento do sandbox via `OPENCODE_DB`, não um banco de host 2.x. A distinção v1/v2 é o **schema detectado**; a variável agora apenas restringe um conjunto já detectado e falha rápido quando pede uma família ausente.
+- `scripts/cost.mjs` duplicava o mesmo bug literal, com o mesmo assert — o fallback continuava morto. `probe-pantheon-cost.mjs` acompanha.
+- O report agora **declara a cobertura temporal** que ele mediu (janela varrida, linha mais antiga), em vez de apresentar totais como se cobrissem meses.
+
+## ⚠️ Known Issues
+
+- O canário **host-backed pula no CI**: o runner não tem binário `opencode`. O skip é **visível** no log (`::notice`), e os dois casos sem host rodam incondicionalmente, com `PANTHEON_TOOL_CANARY_BIN` apontado para um caminho inexistente. Rodar de verdade exige um modo no script de sandbox — **não feito**.
+- A cobertura de custo do banco v2 é de **~8,3 dias** nesta máquina (primeiro registro em 2026-09-25). O histórico v1 (~96 dias) fica num diretório irmão com nome de epoch, que **não** é contrato e por isso não é descoberto automaticamente. Quem quiser aponta `PANTHEON_COST_DB`.
+- `metadata.phase` nunca existiu em v1 nem em v2 — medido: 0 linhas de `session_message` têm `$.metadata.phase` nem `$.phase`. A coluna Phase sempre foi `unknown`. Não é regressão, é feature que nunca funcionou.
 ## [v1.6.0-beta.3] - 2026-10-03
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
