@@ -23,6 +23,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. --&gt;
 
+## 🆕 What's New
+- **Três ferramentas V2 agora executam de verdade**: `hashline_edit`,
+  `pantheon_cost` e `pantheon_model` rodam no host `opencode v2.0.x`. Antes
+  eram placeholders que declaravam sucesso sem fazer nada.
+- **Enforcement de sessão read-only no caminho V2**: `apollo` e `gaia` voltam
+  a ter escrita bloqueada, com o guard registrado no próprio plugin V2 — sem
+  depender de uma ponte que a instalação V2 não monta.
+- **Varredura de segredos de alta confiança no caminho V2**: o único hard block
+  de segurança que a V1 tinha, e que estava inerte por viver num plugin que a
+  instalação V2 não carrega, passa a rodar.
+
 ## 🐞 Fixed
 - **As 6 ferramentas de plugin do V2 falhavam em 100% das chamadas**:
   `hashline_edit`, `pantheon_cost` e `pantheon_model` lançavam
