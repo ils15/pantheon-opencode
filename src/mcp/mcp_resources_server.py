@@ -19,7 +19,7 @@ from typing import Any
 import yaml
 from _pantheon_paths import has_symlink_component, pantheon_home, pantheon_project
 from eval_store import get_latest_eval, list_evals
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 # ── Path Resolution ──────────────────────────────────────────────────────────
 _PANTHEON_HOME: Path = pantheon_home()

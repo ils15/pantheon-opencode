@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
+
+from tests.conftest import _resource_contents, _tool_text
 
 # Module path — canonical source lives in src/mcp/
 MODULE_PATH = "src.mcp.code_mode_server"
@@ -23,12 +25,13 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / ".pantheon" / "code-mode"
 
 
-def _text(contents: list | str) -> str:
+def _text(contents: Any) -> str:
     """Extract text from FastMCP read_resource result."""
     if isinstance(contents, str):
         return contents
-    if isinstance(contents, list) and len(contents) > 0:
-        item = contents[0]
+    blocks = _resource_contents(contents)
+    if blocks:
+        item = blocks[0]
         if hasattr(item, "content"):
             return item.content
         return str(item)
@@ -41,13 +44,7 @@ def _text_from_tool(result: tuple[Any, dict[str, Any]]) -> str:
     call_tool returns (Sequence[ContentBlock], dict) — we extract from
     the first TextContent in the sequence.
     """
-    content_blocks, _ = result
-    if content_blocks and len(content_blocks) > 0:
-        block = content_blocks[0]
-        if hasattr(block, "text"):
-            return block.text
-        return str(block)
-    return ""
+    return _tool_text(result)
 
 
 @pytest.fixture(scope="session")
@@ -190,7 +187,10 @@ class TestResources:
     async def test_script_content_uri_registered(self, server: FastMCP) -> None:
         """The script content template should be registered."""
         templates = await server.list_resource_templates()
-        uris = [str(t.uriTemplate) for t in templates]
+        uris = [
+            str(getattr(t, "uri_template", getattr(t, "uriTemplate", "")))
+            for t in templates
+        ]
         matches = [u for u in uris if "code-mode/scripts" in u]
         assert len(matches) > 0
 

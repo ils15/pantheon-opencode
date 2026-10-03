@@ -27,7 +27,9 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
+
+from tests.conftest import _resource_contents, _tool_input_schema
 
 # Module path — canonical source lives in src/mcp/
 MODULE_PATH = "src.mcp.memory_mcp_server"
@@ -37,16 +39,19 @@ def _text(contents: list | str) -> str:
     """Extract text from FastMCP read_resource result."""
     if isinstance(contents, str):
         return contents
-    if isinstance(contents, list) and len(contents) > 0:
-        item = contents[0]
+    blocks = _resource_contents(contents)
+    if blocks:
+        item = blocks[0]
         if hasattr(item, "content"):
             return item.content
         return str(item)
     return str(contents)
 
 
-def _text_from_tool(result: tuple[Any, dict[str, Any]]) -> str:
-    content_blocks, _ = result
+def _text_from_tool(result: Any) -> str:
+    content_blocks = getattr(result, "content", result)
+    if isinstance(content_blocks, tuple):
+        content_blocks = content_blocks[0]
     if not content_blocks or len(content_blocks) == 0:
         return
     if len(content_blocks) == 1:
@@ -224,7 +229,9 @@ class TestMemoryStoreValidationReporting:
         tools = {t.name: t for t in await server.list_tools()}
         store = tools["memory_store"]
 
-        schema_description = store.inputSchema["properties"]["metadata"]["description"]
+        schema_description = _tool_input_schema(store)["properties"]["metadata"][
+            "description"
+        ]
         assert "encoded as a STRING" in schema_description
         assert "not an object" in schema_description
         assert "JSON object encoded as a STRING" in (store.description or "")
@@ -1064,6 +1071,12 @@ class TestVectorRemoval:
                 assert not hasattr(m, gone), f"{gone} still present"
 
             def parsed(result):
+                structured = getattr(result, "structured_content", None)
+                if structured is not None:
+                    metadata = getattr(result, "meta", None) or {}
+                    if metadata.get("fastmcp", {}).get("wrap_result"):
+                        return structured.get("result")
+                    return structured
                 return json.loads(result[0][0].text)
 
             def as_list(data):

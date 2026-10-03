@@ -21,6 +21,8 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import _resource_contents, _tool_text
+
 MODULE_PATH = "src.mcp.code_mode_server"
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / ".pantheon" / "code-mode"
@@ -28,13 +30,7 @@ SCRIPTS_DIR = ROOT / ".pantheon" / "code-mode"
 
 def _text_from_tool(result: Any) -> str:
     """Extract text from FastMCP call_tool result (list or tuple shape)."""
-    content_blocks = result[0] if isinstance(result, tuple) else result
-    if content_blocks and len(content_blocks) > 0:
-        block = content_blocks[0]
-        if hasattr(block, "text"):
-            return block.text
-        return str(block)
-    return ""
+    return _tool_text(result)
 
 
 def _json(result: Any) -> Any:
@@ -349,7 +345,7 @@ class TestResourceMetadata:
             result = await server.read_resource(
                 "pantheon://code-mode/scripts/fm_resource.py"
             )
-            contents = result[0] if isinstance(result, tuple) else result
+            contents = _resource_contents(result)
             text = (
                 contents[0].content
                 if hasattr(contents[0], "content")
@@ -369,7 +365,7 @@ class TestResourceMetadata:
             result = await server.read_resource(
                 "pantheon://code-mode/scripts/fm_resource_plain.py"
             )
-            contents = result[0] if isinstance(result, tuple) else result
+            contents = _resource_contents(result)
             text = (
                 contents[0].content
                 if hasattr(contents[0], "content")

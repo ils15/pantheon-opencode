@@ -1,10 +1,10 @@
 # Pantheon MCP runtime dependencies — EXACT pins (issue #21)
-# Pinned to the versions validated in the sandbox venv (2026-08-05).
+# Coordinated MCP SDK/FastMCP major migration (Dependabot PRs #140 and #188).
 # Update deliberately via: pip install -U <pkg> && pip freeze | grep -iE '^(mcp|fastmcp|pyyaml)'
 # Memory search is FTS5 (SQLite stdlib): sqlite-vec and fastembed were removed
 # with the vector pipeline — the server no longer imports either.
-mcp==1.29.0
-fastmcp==3.4.6
+mcp==2.2.0
+fastmcp==4.0.10
 pydantic==2.12.5
 pydantic-settings==2.14.2
 pyyaml==6.0.3
