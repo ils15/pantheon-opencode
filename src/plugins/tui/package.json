@@ -16,7 +16,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && node scripts/normalize-dist-newlines.mjs",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
@@ -28,7 +28,10 @@
   },
   "devDependencies": {
     "rolldown-plugin-solid": "0.2.1",
-    "tsdown": "0.23.0"
+    "tsdown": "0.22.14"
+  },
+  "overrides": {
+    "rolldown": "1.2.0"
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.18.33",
