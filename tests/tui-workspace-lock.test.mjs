@@ -288,7 +288,7 @@ test('root overrides cannot silently contradict a declared dependency range', ()
   // `overrides` BYPASSES range checking instead of erroring, so a pinned
   // override can quietly violate a dependent's declared range — exactly the
   // silent-drift class the TUI dist-freshness gate exists to catch.
-  const declared = rootLock.packages?.['src/plugins/tui/node_modules/tsdown']
+  const declared = rootLock.packages?.['node_modules/tsdown']
   assert.ok(declared, 'the root workspace lock must resolve tsdown for the TUI workspace')
   const range = declared.dependencies?.rolldown
   assert.ok(range, 'tsdown must still declare a rolldown range for this check to mean anything')
@@ -333,6 +333,21 @@ test('the standalone TUI lock preserves the root rolldown pin', () => {
     rootPkg.overrides.rolldown,
     'the standalone TUI install must resolve the same pinned bundler as the workspace build',
   )
+})
+
+test('tsdown 0.23.0 and both lockfiles share the compatible rolldown pin', () => {
+  const expectedRolldown = '1.2.7'
+  const expectedTsdown = '0.23.0'
+  const rootTsdown = rootLock.packages?.['node_modules/tsdown']
+  const standaloneTsdown = tuiLock.packages?.['node_modules/tsdown']
+
+  assert.equal(tuiPkg.devDependencies?.tsdown, expectedTsdown)
+  assert.equal(rootTsdown?.version, expectedTsdown)
+  assert.equal(standaloneTsdown?.version, expectedTsdown)
+  assert.equal(rootPkg.overrides?.rolldown, expectedRolldown)
+  assert.equal(tuiPkg.overrides?.rolldown, expectedRolldown)
+  assert.equal(rootLock.packages?.['node_modules/rolldown']?.version, expectedRolldown)
+  assert.equal(tuiLock.packages?.['node_modules/rolldown']?.version, expectedRolldown)
 })
 
 test('the nested TUI lock and the root lock agree on shared runtime deps', () => {

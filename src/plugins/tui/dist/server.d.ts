@@ -11,7 +11,6 @@
  * This stub satisfies the loader contract; pantheon-tui is TUI-only and has
  * no background server work of its own.
  */
-declare function server(): {};
+export default function server(): {};
 //#endregion
-export { server as default };
 //# sourceMappingURL=server.d.ts.map
