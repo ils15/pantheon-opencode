@@ -131,8 +131,10 @@ jobs:
       - name: TUI dist freshness (rebuild must be a no-op)
         run: |
           npm run build --prefix src/plugins/tui
-          # Fail if the committed dist differs from a fresh build (guards
-          # against shipping a stale TUI bundle).
+          # Normalize final newlines to match the pre-commit end-of-file-fixer
+          # convention, then fail if the committed dist differs from a fresh
+          # build (guards against shipping a stale TUI bundle).
+          node -e "const f=require('fs'),d='src/plugins/tui/dist/';for(const n of f.readdirSync(d)){const p=d+n,s=f.readFileSync(p);if(s.length&&s.at(-1)!==10)f.appendFileSync(p,'\n')}"
           git diff --exit-code src/plugins/tui/dist
 
       - name: Run unified test suite (pytest + node + ts)
