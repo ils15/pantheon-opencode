@@ -5,6 +5,12 @@ AI agent capabilities with persistent memory, resource discovery, vision, and
 confined script execution. All five are local Python stdio servers that
 auto-start with OpenCode.
 
+The packaged runtime pins the MCP Python SDK to `mcp==2.2.0` and the standalone
+FastMCP server framework to `fastmcp==4.0.10`. Server code imports `FastMCP`
+from `fastmcp`; MCP SDK v2 removed the old `mcp.server.fastmcp` re-export.
+Installation creates the isolated Python environment from the appropriate
+manifest in `src/mcp/`.
+
 ---
 
 ## Server Comparison

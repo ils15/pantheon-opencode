@@ -173,13 +173,20 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
   if (python) {
     const mcpResult = spawnSync(
       python,
-      ['-c', 'from mcp.server.fastmcp import FastMCP; print(FastMCP.__module__)'],
+      [
+        '-c',
+        'import importlib.metadata as metadata; from fastmcp import FastMCP; ' +
+          'print(f\'mcp={metadata.version("mcp")} fastmcp={metadata.version("fastmcp")} {FastMCP.__module__}\')',
+      ],
       { stdio: 'pipe' },
     )
     if (mcpResult.status === 0) {
       results.passed.push({ check: 'mcp-sdk', detail: mcpResult.stdout.toString().trim() })
     } else {
-      results.failed.push({ check: 'mcp-sdk', detail: 'NOT INSTALLED — all MCP servers will fail' })
+      results.failed.push({
+        check: 'mcp-sdk',
+        detail: 'MCP SDK or standalone FastMCP is unavailable — all MCP servers will fail',
+      })
     }
   }
   // Check 4: the memory server's only search backend is the stdlib's own

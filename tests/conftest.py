@@ -54,11 +54,19 @@ def _restore_code_mode_manifest():
 def _json(result: Any) -> Any:
     """Parse the payload returned by a persistence tool call.
 
-    FastMCP returns ``(content_blocks, structured)`` tuples for tools with an
+    FastMCP 4 returns ``(content_blocks, structured)`` tuples for tools with an
     output schema (str/list returns) and plain content-block lists for dict
     returns. Prefer the structured payload when present; fall back to parsing
     the JSON text.
     """
+    structured = getattr(result, "structured_content", None)
+    if structured is not None:
+        metadata = getattr(result, "meta", None) or {}
+        if metadata.get("fastmcp", {}).get("wrap_result") and isinstance(
+            structured, dict
+        ):
+            return structured.get("result")
+        return structured
     if isinstance(result, tuple):
         _, structured = result
         if isinstance(structured, dict) and "result" in structured:
@@ -67,6 +75,30 @@ def _json(result: Any) -> Any:
     block = result[0] if result else None
     text = getattr(block, "text", None) or str(block)
     return json.loads(text) if text else None
+
+
+def _tool_input_schema(tool: Any) -> dict[str, Any]:
+    """Return the JSON input schema across FastMCP's v3 and v4 APIs."""
+    return getattr(tool, "parameters", None) or getattr(tool, "inputSchema", {})
+
+
+def _tool_text(result: Any) -> str:
+    """Extract the first textual content block across FastMCP result APIs."""
+    blocks = getattr(result, "content", result)
+    if isinstance(blocks, tuple):
+        blocks = blocks[0]
+    if not blocks:
+        return ""
+    block = blocks[0]
+    return getattr(block, "text", str(block))
+
+
+def _resource_contents(result: Any) -> list[Any]:
+    """Return content blocks from either ResourceResult or legacy output."""
+    contents = getattr(result, "contents", result)
+    if isinstance(contents, tuple):
+        contents = contents[0]
+    return contents if isinstance(contents, list) else [contents]
 
 
 @pytest.fixture(scope="session")

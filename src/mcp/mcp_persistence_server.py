@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Annotated
 
 from _pantheon_paths import pantheon_home, pantheon_project
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from pydantic import Field
 
 # ── Schema ──────────────────────────────────────────────────────────────────────
