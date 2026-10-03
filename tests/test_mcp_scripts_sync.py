@@ -178,6 +178,27 @@ def test_mcp_requirement_manifests_pin_the_coordinated_major_versions() -> None:
         )
 
 
+def test_shared_runtime_manifest_includes_vision_httpx_dependency() -> None:
+    shared_manifest = REPO_ROOT / "src/mcp/requirements-mcp.txt"
+    vision_manifest = REPO_ROOT / "src/mcp/requirements-vision.txt"
+
+    def pinned_version(manifest: Path, package: str) -> str | None:
+        for raw_line in manifest.read_text(encoding="utf-8").splitlines():
+            line = raw_line.partition("#")[0].strip()
+            name, separator, version = line.partition("==")
+            if separator and name.lower() == package:
+                return version
+        return None
+
+    assert pinned_version(shared_manifest, "httpx") == "0.28.1", (
+        "setupVenv installs requirements-mcp.txt into the shared runtime, "
+        "which must include the vision server's httpx dependency"
+    )
+    assert pinned_version(vision_manifest, "httpx") == "0.28.1", (
+        "the vision dependency manifest and shared runtime must use the same httpx pin"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Runtime import resolution — conftest.py puts scripts/ FIRST on sys.path, so
 # top-level imports execute the shipped runtime copies. These tests pin that
