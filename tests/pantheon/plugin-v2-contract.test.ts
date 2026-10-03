@@ -146,6 +146,23 @@ async function main(): Promise<void> {
     assert.ok(features.length > 0)
   })
 
+  test('the unenforced delegation matrix is discoverable as a marker', () => {
+    // The caller/target matrix is NOT enforced on V2: the guard skips that
+    // branch rather than deny every task() call. UPGRADING.md says so in prose,
+    // but prose is not queryable — getUnsupportedFeatures() is the surface an
+    // operator or a diagnostic actually reads. Following the `goal-tools`
+    // precedent, the gap is registered as a marker instead of being left as a
+    // comment plus a paragraph somewhere else.
+    assert.ok(
+      getUnsupportedFeatures().includes('delegation-matrix'),
+      'the unenforced V2 delegation matrix must be reported by getUnsupportedFeatures()',
+    )
+    assert.ok(
+      V2_UNSUPPORTED_FEATURES.includes('delegation-matrix'),
+      'delegation-matrix must live in V2_UNSUPPORTED_FEATURES, not only in a comment',
+    )
+  })
+
   test('V1/V2 tool contract is eager, not lazy MCP schema registration', () => {
     assert.match(pluginV1Source, /tool:\s*\{/)
     assert.match(pluginSource, /toolCtx\?\.transform/)

@@ -89,6 +89,14 @@ export const V2_UNSUPPORTED_FEATURES: string[] = [
   // pantheon_goal_create/get/update are therefore absent from the V2 surface
   // rather than registered as non-functional placeholders.
   'goal-tools',
+  // Adapter limitation, not a host gap: the caller/target delegation matrix
+  // needs a session hierarchy seeded from session metadata, and V2 exposes no
+  // seed path for it — SessionHierarchyRegistry.isRoot reports `true` for
+  // unknown sessions while unseeded, which would deny every `task()` call. The
+  // branch is therefore skipped rather than left to deny indiscriminately.
+  // Read-only depth-2 still holds via the blocked-tool list in the guard below,
+  // so this marker records an unenforced matrix, not an unenforced depth limit.
+  'delegation-matrix',
 ]
 
 // ─── Constants ───────────────────────────────────────────────────────────
