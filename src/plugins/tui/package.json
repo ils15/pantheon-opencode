@@ -22,8 +22,8 @@
   "peerDependencies": {
     "@opencode-ai/plugin": "1.18.33",
     "@opencode-ai/sdk": "1.18.33",
-    "@opentui/core": "0.5.12",
-    "@opentui/solid": "0.5.12",
+    "@opentui/core": "0.5.10",
+    "@opentui/solid": "0.5.10",
     "solid-js": "1.9.12"
   },
   "devDependencies": {
@@ -32,8 +32,8 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.18.33",
-    "@opentui/core": "0.5.12",
-    "@opentui/solid": "0.5.12",
+    "@opentui/core": "0.5.10",
+    "@opentui/solid": "0.5.10",
     "solid-js": "1.9.12"
   }
 }
