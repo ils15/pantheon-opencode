@@ -441,10 +441,12 @@ context_save(slug, "phase:N", json({
 }), session_id=SESSION_ID)
 ```
 **`content.phase` must be an OBJECT, not a bare number.** `{"phase": 1}` is rejected with
-`phase must be an object (got number)`. Valid keys: `current` and `total` (non-negative
-ints) and `name` (string, max 256 **bytes** — the guard measures `len(value.encode())`,
-so multi-byte characters count as more than one). The `"phase:N"` slot KEY above is
-unrelated to `content.phase` and stays a plain string.
+`context_save: content.phase must be an object (got number)`. The server reads `current`
+and `total` (non-negative ints) and `name` (string, max 256 **bytes** — the guard
+measures `len(value.encode())`, so multi-byte characters count as more than one). That
+set is not closed: any other key inside `phase` is accepted and ignored, never an
+error. The `"phase:N"` slot KEY above is unrelated to `content.phase` and stays a plain
+string.
 All checkpoints auto-expire after 4h (TTL=14400).
 
 ### Gatilho de Pré-Compactação (Anti-perda de estado)

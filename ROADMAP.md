@@ -7,14 +7,25 @@
 > superfície de tools do plugin está morta em runtime (P0-1) e que dois
 > contratos documentados são rejeitados pelo servidor (P1-1, P1-2).
 >
+> **Correção de 2026-10-04, rodada seguinte.** A leitura anterior tratava a
+> superfície morta como um **gap passivo** e a atribuía à forma do registro. As
+> duas metades dessa leitura foram falsificadas: a forma de registro já era a
+> correta e **provadamente carregava**, e o que a derrubou foi uma **regressão
+> introduzida pelo installer**. P0-1 foi reescrito nesse enquadramento, o slot
+> P0-2 virou tombstone `WITHDRAWN` com a alegação remanescente em P2-10, e dois
+> P0 novos entraram (P0-5, P0-6).
+>
 > **Regra de inclusão (agnosticidade).** Todo item abaixo é uma propriedade do
 > **repositório**, reproduzível em qualquer máquina. Não entra aqui nada que
 > dependa da configuração de um host, da conta de um usuário, de um endpoint de
 > terceiro ou do catálogo momentâneo de um provedor. Onde a evidência original
 > foi uma observação de máquina, o item registra o **defeito estrutural** e a
 > observação aparece marcada como auditoria datada — ela data a descoberta, não
-> um fato durável. Citações `arquivo:linha` foram lidas neste worktree em
-> `v1.6.0-beta.4`; em `origin/main` os números diferem (lá faltam 5 commits).
+> um fato durável. Citações `arquivo:linha` foram lidas e re-derivadas contra
+> `e3930f1`, o `origin/main` atual. Dos 24 arquivos citados, **3** mudaram nesse
+> commit, e só neles âncora de linha deslocou: `scripts/install/opencode.mjs`,
+> `scripts/install/config-migration.mjs` e `bin/pantheon-init.mjs`. Os outros 21
+> resolvem byte a byte — nenhuma âncora deles precisa ser re-checada.
 
 ---
 
@@ -22,9 +33,9 @@
 
 | Área | Contrato verificável |
 |---|---|
-| OpenCode V1 | `src/plugin.ts` preserva o plugin V1 **em código**: `hashline_edit`, as 3 goal tools, `pantheon_cost`, `pantheon_model`, BackgroundJobBoard, eventos/tool hooks e compaction hook. Não está na superfície viva — o host descarta as entradas `.ts` que essa geração registra (P0-1). |
-| OpenCode V2 | O host da série 2.x **rejeita caminhos de arquivo `.ts`** nas arrays de plugin e descarta a entrada. A recusa foi **medida em runtime** no host `2.0.22`, cujo log traz `configured plugin path must be a directory` — essa string é do **host**, não do repositório: código, testes e docs do repo citam apenas a paráfrase `must be a directory`. Arquivos dentro de um **diretório** `<configDir>/plugin/` ou `<configDir>/plugins/` são aceitos. As chaves singular `plugin` e plural `plugins` são ambas lidas — a normalização concatena a singular na plural. O adapter continua sem registrar Board nem compaction V1, e não é um adapter de paridade do runtime V1. |
-| Installer | Seleciona **uma única** geração (`v1`, `v2` ou `auto`). `v1` registra **arquivos** `.ts` sob a chave singular `plugin`; `v2` registra o **diretório** `src/plugin-v2` sob a chave plural `plugins`. `auto` resolve para `v2` apenas com `OPENCODE_VERSION=v2` ou `OPENCODE_BIN` casando `/(?:^\|[\\/])opencode2(?:\.exe)?$/i` (`scripts/install/opencode-version.mjs:36-47`); qualquer outro caso cai em `v1`. **O default é `v1`** (`scripts/install/opencode.mjs:480`, `resolveOpenCodeVersion(opts.version ?? 'v1')`). |
+| OpenCode V1 | `src/plugin.ts` preserva o plugin V1 **em código**: `hashline_edit`, as 3 goal tools, `pantheon_cost`, `pantheon_model`, BackgroundJobBoard, eventos/tool hooks e compaction hook. Não está na superfície viva — a entrada `.ts` que essa geração registra é descartada pelo host, porque o ramo `v1` do installer rodou contra um host V2 (P0-1). |
+| OpenCode V2 | O host da série 2.x **rejeita caminhos de arquivo `.ts`** nas arrays de plugin e descarta a entrada. A recusa foi **medida em runtime** no host `2.0.22`, cujo log traz `configured plugin path must be a directory` — essa string é do **host**, não do repositório: código, testes e docs do repo citam apenas a paráfrase `must be a directory`. Arquivos dentro de um **diretório** `<configDir>/plugin/` ou `<configDir>/plugins/` são aceitos. As chaves singular `plugin` e plural `plugins` são ambas lidas — a normalização concatena a singular na plural. **A forma do lado V2 está correta e comprovadamente carrega**: `src/plugin-v2.ts:989-990` declara `plugin = define({` com `id: 'pantheon-opencode-v2'`, `:992` define `async setup`, e `:1124` faz `export default`; `define` é identidade no SDK instalado, e `src/plugin-v2/` contém o `index.ts` que o resolver acha sem `package.json`. O que derruba a superfície é o installer **remover** essa entrada, não ela ser inválida (P0-1). O adapter continua sem registrar Board nem compaction V1, e não é um adapter de paridade do runtime V1. |
+| Installer | Seleciona **uma única** geração (`v1`, `v2` ou `auto`). `v1` registra **arquivos** `.ts` sob a chave singular `plugin`; `v2` registra o **diretório** `src/plugin-v2` sob a chave plural `plugins`. `auto` resolve para `v2` apenas com `OPENCODE_VERSION=v2` ou `OPENCODE_BIN` casando `/(?:^\|[\\/])opencode2(?:\.exe)?$/i` (`scripts/install/opencode-version.mjs:36-47`); qualquer outro caso cai em `v1`. **O default é `v1`** (`scripts/install/opencode.mjs:518`, `resolveOpenCodeVersion(opts.version ?? 'v1')`) — e esse gate de versão é o defeito de P0-1, P0-5 e P0-6. |
 | MCP servers | Os 5 servidores rodam em MCP2.2 + FastMCP 4.0.10, com `httpx==0.28.1` pinado no runtime compartilhado. Fontes canônicas em `src/mcp/*.py`; o installer copia de lá. A cópia `scripts/memory_mcp_server.py` é **intencionalmente divergente** (contrato de memória leve, sem ferramentas de codemap) e essa assimetria é portada por `tests/test_mcp_scripts_sync.py` — é desenho, não drift. |
 | TUI | `pantheon-tui` é componente separado, registrado em `tui.json` somente quando `plugins` é instalado. Native tasks exigem origem, relação parent/child e status fornecidos explicitamente pelo host; ausência de Markdown não é autodetecção. |
 | Histórico e recuperação | `.pantheon/delegations/` guarda relatórios históricos do antigo engine V1 de delegação (removido em favor do `task()` nativo). Jobs antigos/running não são auto-retomados após restart. |
@@ -32,7 +43,7 @@
 | Native tasks no painel | O mirror de children de `task(background=true)` no board compartilhado (singleton globalThis, à prova do double-load npm+repo) está implementado em `src/plugin.ts`, e o painel de Delegations o lê. **Não está na superfície viva** enquanto P0-1 existir — não tratar como entrega runtime. |
 | Painel de Delegations v2 | Atividade ao vivo por delegação (`↳ <tool> <resumo>` via message.part), estado `retry` distinto (⟳) e seção `Archived (n)` paginada para relatórios terminais antigos. |
 | Update e freshness | `pantheon-opencode update` instala o novo pacote pelo dist-tag e re-roda init; o postinstall sincroniza todos os artefatos de cópia; marker `install-state.json` + `doctor` detectam drift de versão; CI falha se o `dist/` da TUI commitada estiver stale. |
-| Installer resiliente | Pré-checagens de python3/npm antes de escrever; `opencode.json` atômico com `.bak`; venv falha → instalação completa sem entradas MCP (aviso); refs Pantheon de instalações antigas (node_modules de outros prefixes/caches npx) são podadas a cada init. |
+| Installer resiliente | Pré-checagens de python3/npm antes de escrever; `opencode.json` atômico com `.bak`; venv falha → instalação completa sem entradas MCP (aviso); refs Pantheon de instalações antigas (node_modules de outros prefixes/caches npx) são podadas a cada init. A poda resolve refs *velhos*; não resolve ref *que aponta para a árvore de instalação errada* — a config grava um caminho absoluto re-resolvido só no `init` (P0-6). |
 | Estado entregue | v1.6.0-beta.4 está em `main` (PR #197). O PR #196 (migração MCP2/FastMCP4) foi mergeado. |
 
 ### Limites que não são promessa de roadmap
@@ -84,12 +95,14 @@ ser pegos.
 
 ## 🔭 Próxima iteração
 
-Vinte e quatro itens verificados, ordenados por severidade. Cada item carrega um
+Vinte e seis itens verificados, ordenados por severidade. Cada item carrega um
 marcador `Status:` próprio — nenhum precisa ser inferido.
 
 **Legenda de status.** `CLOSED (doc)` — o defeito era de documentação e foi
 corrigido por esta reescrita; nada além do próprio texto depende dele. `OPEN` —
-o defeito persiste e o item continua vivo.
+o defeito persiste e o item continua vivo. `WITHDRAWN` — a alegação do registro
+foi falsificada por auditoria posterior: o registro vira **tombstone**, preserva
+o id e o histórico, e não descreve mais defeito nenhum.
 
 **Escopo desta mudança.** Nenhum defeito de **código** é corrigido neste branch:
 a mudança é exclusivamente de documentação. Os quatro itens `CLOSED (doc)` —
@@ -97,42 +110,106 @@ P1-1, P1-2, P1-3 e P1-4 — são os defeitos de documentação que vivem nos
 arquivos que este branch efetivamente alterou; o critério é **escopo de
 arquivo**, não classe de defeito. P1-6 (`docs/INSTALLATION.md` anuncia
 `pantheon_cost` sem ressalva) é também um defeito de documentação, mas seu
-arquivo está fora deste escopo, então permanece `OPEN`. Os outros 20
-permanecem `OPEN`.
+arquivo está fora deste escopo, então permanece `OPEN`.
 
-**P0-1 — A superfície de tools do plugin está morta.**
+**Contagem.** Um **item** é um registro vivo — `OPEN` ou `CLOSED (doc)`. O
+tombstone `WITHDRAWN` preserva o id e não conta como item, porque não descreve
+trabalho. São 27 registros: 26 itens (4 `CLOSED (doc)`, 22 `OPEN`) e 1
+tombstone, **P0-2**, cuja alegação remanescente vive em **P2-10**.
+
+**P0-1 — Regressão: uma run do installer desregistrou a entrada V2 que
+carregava.**
 **Status: OPEN.**
-Observação de 2026-10-04: nenhuma tool registrada pelo plugin aparece no
-catálogo. São 6 registradas em `src/plugin.ts:407-417` (`hashline_edit`, as 3
-`pantheon_goal_*`, `pantheon_cost`, `pantheon_model`) e 3 de `plugin-v2`; só os
-5 servidores MCP estão vivos. **Defeito estrutural:** a geração `v1` do
-installer escreve entradas de arquivo `.ts` na chave singular `plugin`, forma
-que o host recusa com `must be a directory` — nenhum módulo Pantheon entra no
-processo Node. Não é bug de `plugin-v2.ts`: a geração `v2` já registra a
-entrada de diretório correta. A mesma auditoria registrou 128 dessas rejeições
-no log do host num único probe — o número data a descoberta, o defeito é do
-código. Nota: `pantheon_delegate`/`_read`/`_list` **não** contam aqui — foram
+A superfície de tools do plugin está morta em runtime: nenhuma tool registrada
+pelo plugin aparece no catálogo (observação de 2026-10-04). São 6 registradas em
+`src/plugin.ts:407-417` (`hashline_edit`, as 3 `pantheon_goal_*`,
+`pantheon_cost`, `pantheon_model`) e 3 de `plugin-v2`; só os 5 servidores MCP
+estão vivos. Nota: `pantheon_delegate`/`_read`/`_list` **não** contam aqui — foram
 removidos do plugin V1 em 1.5.0 (`docs/UPGRADING.md:139-142`) e nunca foram
 registrados nesta geração.
 
-**Local exato do defeito (OS-1).** `scripts/install/opencode.mjs` se contradiz:
-a geração `v1` escreve entradas `.ts` de **arquivo** sob a chave singular
-`plugin` (`ensurePantheonPlugin('src/plugin.ts')` e
-`'src/plugins/pantheon-hooks.ts'`, L1021-1022), enquanto o **mesmo arquivo**
-documenta essa forma como inválida (`must be a directory`, L190 e L1045-1048).
-É aqui que P0-1 se corrige — `src/plugin-v2.ts` já registra o diretório correto.
+**O enquadramento anterior estava errado nos dois lados.** A leitura anterior
+era *gap passivo, forma do registro errada, registre o diretório em vez do
+arquivo*. Auditoria posterior falsificou as duas metades — e a correção é mais
+grave, porque troca "falta" por "quebra":
 
-**P0-2 — `scan-secrets.sh` está inerte.**
-**Status: OPEN.**
-É um bloqueio duro deliberado — `exit 2` faz o plugin lançar e a tool call ser
-bloqueada — e roda num caminho que nunca carrega: o hook é invocado tanto de
-`src/plugin-v2.ts` (L878) quanto de
-`src/plugins/pantheon-hooks.ts` (L1180), e nenhuma geração ativa carrega
-qualquer um desses módulos (P0-1 descarta as duas entradas `.ts`). Consequência:
-os 14 agentes têm `read: allow` (`src/agents/*.md`), então qualquer um deles
-pode ler um arquivo de credencial gravado no diretório de secrets da config e
-gravar o token real num arquivo versionado — o gate que barraria isso é
-exatamente o hook que não carrega.
+- **A forma de registro já era a correta e carregava.** `src/plugin-v2.ts:989-990`
+  declara `plugin = define({` com `id: 'pantheon-opencode-v2'`, `:992` define
+  `async setup` e `:1124` faz `export default`; `define` é identidade no SDK
+  instalado (`@opencode-ai/plugin/dist/v2/promise/plugin.js`), e
+  `src/plugin-v2/` contém apenas `index.ts` — sem `package.json`, que o resolver
+  não exige. Auditoria datada (2026-10-03) registrou 104 carregamentos limpos
+  dessa entrada ao longo do dia, sem WARN de falha acompanhante. **Não há o que
+  corrigir no plugin** — nenhuma mudança de `define`/`id`/`setup`, nenhuma
+  entrada `server.*` em `src/plugin-v2/`.
+- **Não era gap passivo: foi uma run do installer.** A mesma auditoria achou a
+  superfície viva e depois a perdeu. Uma reescrita de config removeu da array
+  plural `plugins` a entrada de diretório `…/src/plugin-v2` que funcionava, e
+  adicionou à array singular `plugin` os dois caminhos de arquivo `.ts` que o
+  host recusa. A reescrita também inscreveu **os dois dialetos de config de uma
+  vez** (`agents`+`agent`, `permissions`+`permission`, `providers`+`provider`) —
+  assinatura de um merge com forma V1 rodando contra um host V2. O primeiro WARN
+  de rejeição veio **+1.3 s** depois da reescrita, apontado exatamente para
+  aqueles dois alvos `.ts`; depois dele, zero carregamentos V2 pelo resto do dia.
+  Auditoria datada: os números datam a descoberta, não são estado durável.
+
+**Causa raiz e local exato do defeito (OS-1): o gate de versão em
+`scripts/install/opencode.mjs`** — não o plugin, não o call site de registro.
+Cadeia verificada, toda neste worktree:
+
+- `opencode.mjs:518` — `resolveOpenCodeVersion(opts.version ?? 'v1')`.
+  **O default é `v1`**, sem detector.
+- `opencode.mjs:1056` — o ramo `v1` roda
+  `removePantheonPluginReferences(config.plugins)`: **apagou uma entrada V2 de
+  diretório que estava funcionando**.
+- `opencode.mjs:1077-1078` — `ensurePantheonPlugin('src/plugin.ts')` e
+  `ensurePantheonPlugin('src/plugins/pantheon-hooks.ts')`: **escreveram os dois
+  caminhos `.ts` rejeitados**.
+- `opencode.mjs:1082-1115` — o ramo `v2` **nunca rodou**. Teria removido esses
+  refs `.ts` de `config.plugin` em `:1086-1088`; eles ainda estão lá.
+- `opencode.mjs:231` / `:234` / `:213` — `PANTHEON_V2_PLUGIN` **já é o
+  diretório**, e `PANTHEON_V2_LEGACY_FILE` é mapeado para ele por
+  `resolveInstalledPlugin`. **A forma correta já está no código e simplesmente
+  nunca é alcançada no ramo `v1`.**
+- `opencode.mjs:34` / `:1354` — `detectVersion` já é importado e já é usado no
+  fluxo: a capacidade de detectar a geração existe e não é consultada na decisão
+  de registro.
+
+**Limite honesto desta auditoria.** Não foi possível determinar **qual**
+invocação do installer produziu a reescrita: nenhum log do lado do installer
+sobrevive nesse caminho. A conclusão se sustenta sem essa identificação — o
+delta da config e o WARN de +1.3 s, apontado exatamente para os dois alvos `.ts`,
+são evidência independente e suficiente, e são consistentes entre si.
+
+**O que este item proíbe como correção.** Nenhuma mudança no plugin resolve
+isto: adicionar `Plugin.define`/`id`/`setup`, ou uma entrada `server.*` em
+`src/plugin-v2/`, são edições em código que já está correto e comprovadamente
+carregando.
+
+**P0-2 — O secret scanner não protege contra a leitura de um arquivo de
+credencial.**
+**Status: WITHDRAWN.**
+**Tombstone. Não descreve defeito e não pede correção.** O slot fica porque este
+id já é citado por outras rodadas e pelo histórico deste documento.
+
+A alegação original: os 14 agentes (`read: allow`) poderiam ler um arquivo de
+credencial e gravar o token real num arquivo versionado, com raio "segredos +
+repo público". A premissa que a sustentava — que o hook de secret-scanning nunca
+carrega — era ela própria falsa: o log que a provava era saída de teste, não
+superfície viva.
+
+**Retirada, por dois motivos que a sustentam de pé.**
+
+- **O controle assumido não pode funcionar naquele caminho.** O hook casa
+  **valores** de secret nos argumentos da tool call, e o input de uma chamada
+  `read` é um **caminho de arquivo** — que não casa com padrão de valor nenhum.
+  Ele não tem gating por leitura, carregue ou não.
+- **A classe de caminho não é deste pacote.** Era a configuração pessoal de uma
+  máquina: nenhuma fase do installer, caminho de postinstall ou componente de
+  runtime deste pacote cria um diretório `secrets/` nem grava credencial no
+  diretório de config.
+
+A parte que sobrevive é mais estreita e está em **P2-10**.
 
 **P0-3 — `doctor` dá verde falso para uma tool que não existe (OS-2).**
 **Status: OPEN.** `probeNodeSqlite` (`scripts/doctor.mjs:1661-1673`) importa
@@ -154,6 +231,84 @@ invalida o próprio instrumento de medição — e por isso precede tudo que dep
 de observação de catálogo, incluído o probe que originou P0-1. Sem diagnóstico:
 não se sabe se a causa é cache de catálogo, ciclo de vida de plugin, ou
 re-registro concorrente.
+
+**P0-5 — Nomes de ação de permissão desatualizados quebram o enforcement
+read-only em host V2.**
+**Status: OPEN.**
+**Independente de P0-1:** este defeito é de **config gravada em disco**, então
+morde mesmo depois que o plugin volta a carregar. P0-1 remove um módulo do
+processo; P0-5 remove um *deny*.
+
+**O que é entregue, não interno.** Os 14 templates em `src/agents/*.md` declaram
+`permission.bash` (14/14) e `permission.task` (14/14); `mnemosyne.md:39` declara
+`permission.write`. `scripts/install/opencode.mjs:926` copia o bloco `permission`
+do frontmatter **verbatim** para a config instalada, e `src/routing.yml:531-533`
+semeia um `permission.task` de topo. São regras entregues ao usuário.
+
+**O tradutor não conhece duas das três chaves.** No ramo `v2`,
+`scripts/install/config-migration.mjs:441-444` converte o `permission` de cada
+agente para `permissions` através de `convertPermissionsV1toV2`. O mapa
+`V1_PERMISSION_TO_ACTION` (`:33-39`) tem **quatro** entradas — `bash`, `skill`,
+`edit`, `websearch`. **`task` e `write` não estão nele**, e caem no passthrough
+`V1_PERMISSION_TO_ACTION[key] || key` (`:53`), que emite a chave V1 **como se já
+fosse um nome de ação V2**. O mapa reverso (`:75-80`) herda exatamente a mesma
+lacuna, então o drift também não é detectável na volta.
+
+**A direção do mismatch não é resolvível a partir do repositório — e isso também
+é o defeito.** O mapa do repo afirma `bash → shell` (`:34`), enquanto a
+documentação de permissões do host, auditada em 2026-10-03, continua chaveando
+permissão por **nome de tool** (`bash`, `task`, com `write` coberto por `edit`).
+O repo não pode estar certo nas duas direções. O item é escrito assim de
+propósito: **quaisquer que sejam os nomes reais, `task` e `write` são as duas
+chaves que o tradutor do repo não conhece** — e a cobertura do tradutor é
+incompleta em relação às chaves que o próprio repo entrega. Auditoria datada da
+documentação do host; a lista de defaults do host também é propriedade de uma
+versão, não do repositório.
+
+**Efeito líquido.** O enforcement read-only dos 14 agentes — `bash: deny`,
+`task: deny`, e o `write` restrito do `mnemosyne` — chega ao host V2 com `task` e
+`write` emitidos sob o nome da chave V1, que a documentação do host não lista
+como nome de ação. **O que o host faz com uma chave que não reconhece não é
+verificável a partir do repositório**, e por isso não é afirmado aqui. Pior: o
+ramo `v1` não executa **nenhuma** dessa tradução
+(`opencode.mjs:1324`), então o mesmo host V2 alcançado pelo gate mal resolvido
+de P0-1 recebe as chaves V1 sem sequer a renomeação de bloco.
+
+**P0-6 — A config grava um caminho absoluto para a árvore de instalação, e ele
+só é re-resolvido no `init`.**
+**Status: OPEN.**
+Isto faz um upgrade **não ter efeito silenciosamente**, que é a classe de falha
+mais cara que existe: nada quebra, nada avisa, e a versão antiga continua
+rodando.
+
+**O defeito estrutural.** `resolveInstalledPlugin` resolve refs Pantheon para
+caminho **absoluto** — `join(ROOT, normalized)`
+(`scripts/install/opencode.mjs:210`, e `:213` para o ref legado) — e o ramo `v2`
+grava esse absoluto na config (`:1110-1114`). `ROOT` é onde quer que o pacote
+tenha sido resolvido no momento daquele `init`: um prefixo global, ou a árvore de
+um cache de `npx`. Um registro que aponta para dentro de um cache não é uma
+instalação durável: limpeza de cache, ou qualquer ambiente onde esse cache não
+existe, deixa o registro pendurado.
+
+**Por que `update` não fecha o buraco.** `bin/pantheon-init.mjs:171` faz
+`npm install -g`, e `:181` re-roda `init --yes --headless` — então o caminho de
+`update` **re-resolve**. O buraco está em toda rota de upgrade que não passa por
+esse comando: `npm i -g` direto, um `npx` que resolve uma versão mais nova do que
+a config registra, ou uma árvore de instalação que muda de lugar. A poda que a
+tabela de contrato já descreve limpa refs *velhos*; ela não conserta um ref que
+aponta para a árvore errada.
+
+**Corroboração externa.** A documentação de plugins do host afirma que plugins
+npm resolvidos são instalados em startup e cacheados em um diretório de cache
+próprio, sem invalidação declarada — logo um restart normal não puxa uma versão
+cacheada mais nova. Auditoria datada da documentação do host, 2026-10-03.
+
+**Auditoria datada (2026-10-04), não estado durável:** naquela máquina o registro
+vivo resolvia para dentro de um cache de `npx` em vez de uma instalação global
+durável, a instalação global estava uma versão atrás da cópia cacheada, e o
+marker de freshness existia só sob o cache. Esses números mudam; o defeito — um
+caminho absoluto para uma árvore de cache gravado na config, re-resolvido apenas
+no `init` — é do código.
 
 **P1-1 — Contrato documentado de `memory_store` é rejeitado.**
 **Status: CLOSED (doc) — corrigido por esta reescrita.**
@@ -330,7 +485,7 @@ a raiz do memory bank quando ela não existe.
 Os cinco entrypoints Python terminam em `_server.py` — `code_mode_server.py`,
 `memory_mcp_server.py`, `mcp_persistence_server.py`, `mcp_resources_server.py`,
 `pantheon_vision_server.py` (todos em `src/mcp/`, referenciados por
-`scripts/install/opencode.mjs:713-736` e documentados em `docs/MCP.md:37-53`).
+`scripts/install/opencode.mjs:765-788` e documentados em `docs/MCP.md:37-53`).
 Qualquer `pkill -f server.py` — um idioma comum em tooling de agente — casa
 com todas as command lines MCP e mata a frota inteira como dano colateral.
 Observação datada (2026-10-04): 20 processos em 4 workspaces saíram dentro de
@@ -358,6 +513,31 @@ orquestrador não possa promover um snapshot local a fato de projeto. A mesma
 regra vale para achados de disponibilidade de modelo, que são propriedade de uma
 conta e não do repositório (ver P1-5).
 
+**P2-10 — O secret scanner não protege contra a leitura de um arquivo de
+credencial cujo caminho o agente já sabe.**
+**Status: OPEN.**
+`scan-secrets.sh` casa **valores** de secret no input da tool call — as expressões
+de `HIGH_CONFIDENCE_PATTERNS` e `LOW_CONFIDENCE_PATTERNS`,
+`scripts/hooks/scan-secrets.sh:19-38` — e o hook dispara em
+`tool.execute.before` (`src/plugins/pantheon-hooks.ts:1172`, payload montado de
+`output.args` em `:1183`), ou seja, sobre **argumentos**, nunca sobre acesso ao
+sistema de arquivos. O input de uma chamada `read` é um **caminho de arquivo**, e
+um caminho não casa com nenhum padrão de valor. O hook **não tem capacidade de
+gating por leitura**: um agente que já sabe o caminho lê o arquivo sem que nada
+intervenha, e a documentação de plugins do host mostra o caminho oposto como
+idiomático — o exemplo de `.env protection` intercepta `input.tool === "read"` e
+inspeciona `output.args.filePath`. Auditoria datada da documentação do host,
+2026-10-03.
+
+**Onde a correção pertence.** Qualquer modelo de permissão que queira restringir
+**leituras** tem de viver nos grants de `permission` que o installer semeia —
+`scripts/install/opencode.mjs:924-926` (cópia do bloco `permission` do
+frontmatter de cada agente), `:970-975` (grant de `bash` por agente),
+`:1132-1181` (bloco `permission` de topo, com a lista `bash` de allow por
+prefixo) e `:1300-1316` (defaults de `permission.mcp` por servidor MCP). O
+secret scanner é a camada errada para essa pergunta, porque a pergunta não é
+"esse texto é um segredo" e sim "esse caminho deveria poder ser lido".
+
 ---
 
 ## Histórico
@@ -377,7 +557,8 @@ conta e não do repositório (ver P1-5).
 
 | Data | Mudança |
 |------|---------|
-| 2026-10-04 | **Backlog dobrado para 24 itens + evidência positiva de orquestração.** Gate de agnosticidade aplicado ao documento inteiro: reescritos P0-1 (defeito estrutural do installer em vez de contagem de log de uma máquina), P0-2 (removido caminho de credencial específico de um host) e P1-5 (ausência de gate contra catálogo de provedor, com a lista de modelos rebaixada a auditoria datada). Adicionados P0-4 (oscilação de catálogo de tools numa mesma sessão — nunca diagnosticada), P1-7..P1-11 (gate de permissões pré-dispatch, `sessionID` em dispatch abortado, `pantheon-vision` inferior ao fallback nativo, matcher que sugere a string rejeitada, `docs/MEMORY.md` publicando a assinatura retirada de `memory_store`) e P2-3..P2-9 (`memory_search` expõe léxico, exclusão de arquivo, briefing Wave 0 por paráfrase, papel do `nyx`, `mnemosyne` inerte fora do repo, issue #198 do token `server.py`, rotulagem portátil/específico de ambiente no Apollo). Adicionada seção de validação: 16 dispatches / 9 agentes, 0 timeouts, 93,75% de sucesso, resume de sessão preservando 46 medidas, 5/5 erros de orquestração pegos por agentes, 5 recusas honestas. Dois achados de MCP de terceiro foram descartados pelo gate de agnosticidade — não são componente Pantheon. |
+| 2026-10-04 | **Rodada de correção de severidade: 24 → 26 itens.** Duas alegações P0 foram falsificadas por auditoria posterior e uma delas foi retirada. **P0-1 reescrito:** a superfície de tools não estava morta por *gap passivo* nem por forma de registro errada — a forma de registro já era a correta e carregava, e o que a derrubou foi uma **run do installer** que rodou o ramo `v1` (default em `opencode.mjs:518`) contra um host V2, apagando a entrada de diretório V2 que funcionava e escrevendo dois caminhos `.ts` rejeitados. Causa raiz realçada para o **gate de versão**; proibidas como correção as mudanças em `define`/`id`/`setup` e a entrada `server.*` em `src/plugin-v2/`, que editariam código já correto. **P0-2 retirado e virado tombstone `WITHDRAWN`, com a parte remanescente promovida a P2-10**: a premissa "o hook de secret-scanning nunca carrega" era falsa — o log que a provava era saída de teste, não superfície viva — e a alegação não se sustentava por dois motivos independentes: o scanner casa **valores** em argumentos de tool call, e o input de uma chamada `read` é um caminho, então ele não tem gating por leitura, carregue ou não; e o caminho de credencial era da configuração pessoal de uma máquina, que este pacote não cria. **Dois P0 novos:** P0-5 (nomes de ação de permissão desatualizados — o tradutor do repo conhece `bash`/`skill`/`edit`/`websearch` mas não `task` nem `write`, que o repo entrega; degrada o enforcement read-only dos 14 agentes, independente de P0-1) e P0-6 (a config grava caminho absoluto para a árvore de instalação, re-resolvido só no `init`, o que faz upgrade não ter efeito silenciosamente). Duas frases foram retiradas por serem refutadas: uma tratava entrada de log de hook como prova de superfície viva, e uma atribuía a uma sessão anterior ao rewrite o módulo ainda carregado — a run relevante começou três horas **depois** do rewrite. Contagem e markers reconciliados: 26 itens vivos (4 `CLOSED (doc)`, 22 `OPEN`) mais 1 tombstone `WITHDRAWN` (P0-2). Gate de agnosticidade re-aplicado a tudo que foi escrito; duas citações de linha do briefing não resolveram e foram corrigidas na fonte (`config-migration.mjs` e o seeding de `permission` no installer). |
+| 2026-10-04 | **Backlog dobrado para 24 itens + evidência positiva de orquestração.** Gate de agnosticidade aplicado ao documento inteiro: reescritos P0-1 (defeito estrutural do installer em vez de contagem de log de uma máquina), P0-2 (removido caminho de credencial específico de um host; hoje tombstone `WITHDRAWN`) e P1-5 (ausência de gate contra catálogo de provedor, com a lista de modelos rebaixada a auditoria datada). Adicionados P0-4 (oscilação de catálogo de tools numa mesma sessão — nunca diagnosticada), P1-7..P1-11 (gate de permissões pré-dispatch, `sessionID` em dispatch abortado, `pantheon-vision` inferior ao fallback nativo, matcher que sugere a string rejeitada, `docs/MEMORY.md` publicando a assinatura retirada de `memory_store`) e P2-3..P2-9 (`memory_search` expõe léxico, exclusão de arquivo, briefing Wave 0 por paráfrase, papel do `nyx`, `mnemosyne` inerte fora do repo, issue #198 do token `server.py`, rotulagem portátil/específico de ambiente no Apollo). Adicionada seção de validação: 16 dispatches / 9 agentes, 0 timeouts, 93,75% de sucesso, resume de sessão preservando 46 medidas, 5/5 erros de orquestração pegos por agentes, 5 recusas honestas. Dois achados de MCP de terceiro foram descartados pelo gate de agnosticidade — não são componente Pantheon. |
 | 2026-10-04 | **Roadmap reativado** após o zeramento de 2026-09-12. Superfície de tools do plugin provada morta em runtime, com causa isolada na seleção de geração (P0-1); `pantheon_cost` corrigido para indisponível (P1-3); contratos de `memory_store` (P1-1) e `context_save` (P1-2) corrigidos; backlog de 8 itens reescrito a partir de probe runtime. |
 | 2026-10-04 | **Backlog ampliado para 11 itens** com 5 achados posteriores à reescrita: local exato do defeito de P0-1 no installer, que se contradiz (OS-1); falso verde do check K do `doctor`, que probeia o backend e não o registro da tool (OS-2); `docs/INSTALLATION.md` anunciando `pantheon_cost` sem ressalva (OS-3); e falta de teste de fronteira para o limite de `phase.name` (OS-5). Contrato de `.ts` vs diretório já estava correto na tabela (OS-4) e não foi duplicado. |
 | 2026-09-12 | **beta.5/beta.6 entregues.** Native tasks no painel (mirror no board), painel v2 (atividade ao vivo, Archived paginado, retry), `update` + garantia de freshness (postinstall sync, drift no doctor, CI anti-stale), installer resiliente (preflight, config atômico + .bak, venv não-fatal, poda de refs velhas), i18n pt/en auto-detect. |
