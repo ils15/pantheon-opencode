@@ -64,14 +64,67 @@ const VERSION_TOKEN = /(?<![\d.])v?(\d+)\.(\d+)/gi
 // whatever else the banner mentions. This is what distinguishes
 // "node v22.1.0 (opencode 1.18.33)" — where the two candidates are a runtime
 // version and the tool version — from a genuine contradiction.
-const TOOL_NAME_BEFORE = /opencode[\s:=]*$/i
+//
+// KNOWN LIMIT, deliberately not worked around: this anchor is a NAME anchor, so
+// any sentence that puts "opencode" in front of a version-shaped token reads as
+// a host banner. A probe whose output is `warning: deprecated, upgrade to
+// opencode 2.0.0` resolves to v2 in silence. Closing it would need a rule that
+// rejects a mid-sentence "opencode X.Y.Z" — but "node v22.1.0 (opencode 1.18.33)"
+// is exactly such a mid-sentence anchor, and it is the reason the anchor exists:
+// dropping it lets a leading runtime token flip a genuine 1.x host to v2. The
+// defect class is not the nag wording (a phrase blacklist closes these three
+// strings and none of the others), it is name-adjacency. `probeHostVersion`
+// spawns whatever OPENCODE_BIN names and accepts any exit-0 binary, so a wrapper
+// or shim printing a bare path is indistinguishable from the real host by
+// construction. An operator whose `opencode` is a wrapper gets v2 silently; the
+// documented remedy is `--opencode-version`, not a heuristic that would trade
+// this silent misclassification for a different one.
+const ANCHOR_NAME = 'opencode'
+
+// How far back the anchor scan looks. `[\s:=]*` is unbounded, so no finite
+// window is exact — the cap is what makes the scan O(1) per token instead of
+// copying the whole prefix, which was quadratic and let a verbose host outrun the
+// 5s spawn timeout (that timeout guards the spawn, not the parse). The budget is
+// sized from the anchor itself (ANCHOR_NAME plus separators), not guessed: the
+// longest separator run in any realistic banner is ~10 bytes. Past the budget an
+// anchor is simply missed, and that degrades to the loud consensus path — it can
+// turn a quiet resolution into a warned one, never into a different resolution.
+const ANCHOR_SEPARATOR_BUDGET = 56
+const ANCHOR_WINDOW_BYTES = ANCHOR_NAME.length + ANCHOR_SEPARATOR_BUDGET
+const TOOL_NAME_BEFORE = new RegExp(`${ANCHOR_NAME}[\\s:=]*$`, 'i')
 
 // A major at or above this is a calendar year, not a release number:
-// "built 2026.10.04" is version-SHAPED but describes no release. Dropping these
-// is what stops a build date from reading as a major and silently flipping an
-// unknown host to v2. If a host ever genuinely ships a 100+ major it degrades
-// to a loud v1 rather than a silent wrong answer — the safe direction to fail.
+// "built 2026.10.04" is version-SHAPED but describes no release. So is major 0,
+// which is a prerelease placeholder rather than a release — and major 0 read as
+// "older than 2" is the original defect (V1 config on a 2.x host) recurring for
+// a 2.x beta. Which brings the subtlety this gate turns on:
+//
+//   * UNANCHORED and implausible -> noise. A date or a build counter says
+//     nothing about the host's generation, so dropping it is a resolution, not a
+//     failure: "opencode v2.0.22 built 2026.10.04" stays quiet.
+//   * ANCHORED and implausible -> the host's OWN version, which we cannot read.
+//     Discarding it would promote a surviving `node v22` token to deciding power
+//     and answer in silence — "opencode 100.0.0 (node v22.1.0)" would resolve to
+//     v2 with no warning. So a refused anchored major is reported, not dropped.
+//
+// Both cases fail LOUD rather than silently, which is the safe direction, and
+// the loud-v1 claim holds for the anchored case without depending on the dropped
+// token being the only candidate.
 const FIRST_PLAUSIBLE_MAJOR = 100
+
+/** Is `major` a value we refuse to read as a release number? */
+function isImplausibleMajor(major) {
+  return major === 0 || major >= FIRST_PLAUSIBLE_MAJOR
+}
+
+/**
+ * The slice of `source` the anchor scan inspects — bounded on purpose (see
+ * ANCHOR_WINDOW_BYTES) so the scan does not copy the prefix per token.
+ * @param {string} source @param {number} index @returns {string}
+ */
+function anchorWindow(source, index) {
+  return source.slice(Math.max(0, index - ANCHOR_WINDOW_BYTES), index)
+}
 
 /**
  * Reduce a `--version` string to the single major it unambiguously reports.
@@ -83,21 +136,26 @@ const FIRST_PLAUSIBLE_MAJOR = 100
  * outrank it and does the same. A name-anchored token defeats both.
  *
  * @param {string} text raw `--version` output from one stream
- * @returns {{major: number}|{ambiguous: number[]}|null} `{major}` when the host
- *   version is identifiable, `{ambiguous}` when version-shaped tokens disagree
- *   and nothing says which is the host's, `null` when nothing is version-shaped.
+ * @returns {{major: number}|{ambiguous: number[]}|{unreadable: number}|null}
+ *   `{major}` when the host version is identifiable, `{ambiguous}` when
+ *   version-shaped tokens disagree and nothing says which is the host's,
+ *   `{unreadable}` when the host's own anchored token reports a major this gate
+ *   will not interpret, and `null` when nothing is version-shaped.
  */
 function parseHostMajor(text) {
   const source = String(text ?? '')
   const candidates = []
+  let unreadable = null
   for (const match of source.matchAll(VERSION_TOKEN)) {
     const major = Number(match[1])
-    if (major >= FIRST_PLAUSIBLE_MAJOR) continue
-    candidates.push({
-      major,
-      anchored: TOOL_NAME_BEFORE.test(source.slice(0, match.index)),
-    })
+    const anchored = TOOL_NAME_BEFORE.test(anchorWindow(source, match.index))
+    if (isImplausibleMajor(major)) {
+      if (anchored && unreadable === null) unreadable = major
+      continue
+    }
+    candidates.push({ major, anchored })
   }
+  if (unreadable !== null) return { unreadable }
   if (candidates.length === 0) return null
 
   const anchored = candidates.filter((candidate) => candidate.anchored)
@@ -132,11 +190,13 @@ function parseHostMajor(text) {
  * Historical note, NOT an observation of this host: an OpenCode 2.x prerelease
  * once printed "0.0.0-next-17444", which any "major >= 2 => v2" probe reads as
  * major 0 and would resolve to v1. That string does not come from the host —
- * it survives only in this repo's comments. Verified 2026-10-04: `opencode2`
- * here is a 47-byte shim that execs `opencode`, and `opencode2 --version`
- * prints "opencode v2.0.22" on stdout. So for a real `opencode2` today both
- * the basename and the probe return v2 and the ordering is harmless rather
- * than load-bearing; what it still defends is the general case above.
+ * it survives only in this repo's comments and test fixtures. It is also why a
+ * major-0 anchored token now takes the loud path rather than resolving to v1 in
+ * silence (see FIRST_PLAUSIBLE_MAJOR). Verified 2026-10-04: `opencode2` here is
+ * a 47-byte shim that execs `opencode`, and `opencode2 --version` prints
+ * "opencode v2.0.22" on stdout. So for a real `opencode2` today both the
+ * basename and the probe return v2 and the ordering is harmless rather than
+ * load-bearing; what it still defends is the general case above.
  *
  * Step 5 falls back to v1 rather than v2 on purpose. Writing a plural
  * `plugins` directory entry on an unknown 1.x host would be ignored there,
@@ -197,6 +257,19 @@ export function resolveOpenCodeVersion(requested = 'auto', options = {}) {
         `${JSON.stringify(`${streams.stdout}${streams.stderr}`.trim())}. ` +
         `Falling back to the V1 configuration; if this host is OpenCode 2.x re-run with ` +
         `--opencode-version v2 (or v1 to force V1).`,
+    )
+    return 'v1'
+  }
+  if (parsed.unreadable !== undefined) {
+    // The host named itself and reported a major this gate refuses to read (0,
+    // or a calendar year). That is not noise like a trailing build date — it is
+    // the host's own version, so letting a surviving runtime token decide would
+    // be a silent guess. Say what we saw and fall back loudly.
+    warn(
+      `The host OpenCode version output reports major ${parsed.unreadable}, which is ` +
+        `not a release number this gate can interpret (a prerelease placeholder or a ` +
+        `calendar year). Falling back to the V1 configuration; pass --opencode-version v2 ` +
+        `if this host is OpenCode 2.x (or v1 to force V1).`,
     )
     return 'v1'
   }

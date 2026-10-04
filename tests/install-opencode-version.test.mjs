@@ -59,6 +59,19 @@ const hostProbeFails = () => {
 /** Swallow the soft-fail warning so test output stays readable. */
 const silentWarn = () => {}
 
+/**
+ * A very long `--version` banner: `tokens` version-shaped noise tokens followed
+ * by the host's own name-anchored version. Every noise token is one iteration
+ * of the anchor scan, so the token count is what a quadratic parse shows up in.
+ */
+function verboseBanner(tokens) {
+  const noise = []
+  for (let index = 0; index < tokens; index += 1) {
+    noise.push(`node v22.${index % 30}.${index % 17} `)
+  }
+  return `${noise.join('')}opencode v2.0.22\n`
+}
+
 /** Resolve with an isolated env and a swallowed warning — for the gate tests. */
 const resolveVersion = (options) =>
   resolveOpenCodeVersion('auto', { env: {}, warn: silentWarn, ...options })
@@ -294,6 +307,10 @@ test('the default gate follows the host probe, with explicit > env > basename > 
   assert.equal(
     resolve({
       env: { OPENCODE_BIN: '/usr/local/bin/opencode2' },
+      // Fictional string from this repo's history, NOT an observation of any
+      // host — see the historical note in scripts/install/opencode-version.mjs.
+      // The basename short-circuits before the probe is read, so the value is
+      // irrelevant to what this test pins.
       probe: hostSays('0.0.0-next-17444'),
     }),
     'v2',
@@ -374,6 +391,131 @@ test('a date is never read as a major version', () => {
     'v2',
   )
   assert.equal(warnings.length, 0, 'a trailing build date is noise, not ambiguity')
+})
+
+test('a major-0 prerelease banner is unresolvable rather than a silent v1', () => {
+  // The original defect class — V1 config written on a 2.x host — recurring for a
+  // build that reports major 0. "0.0.0-next-17444" is the exact string this
+  // repo's own comments cite, so the code has to reject it rather than quietly
+  // read it as "older than 2". A genuine 0.x host is a decade away; if one ever
+  // exists, a loud fallback is the correct direction to fail.
+  for (const output of ['opencode 0.0.0-next-17444', 'opencode 0.1.0', '0.0.0-next-17444']) {
+    const warnings = []
+    const resolved = resolveOpenCodeVersion('auto', {
+      env: {},
+      probe: hostSays(output),
+      warn: (message) => warnings.push(message),
+    })
+
+    assert.equal(resolved, 'v1', `a major-0 banner must fall back to v1: ${JSON.stringify(output)}`)
+    assert.equal(warnings.length, 1, `a major-0 banner must warn: ${JSON.stringify(output)}`)
+  }
+  // An UNANCHORED 0 alongside a real version stays noise, like a date: the
+  // surviving token still decides, because nothing claims the 0 is the host's.
+  const warnings = []
+  assert.equal(
+    resolveOpenCodeVersion('auto', {
+      env: {},
+      probe: hostSays('opencode v2.0.22 (build 0.9.9)'),
+      warn: (message) => warnings.push(message),
+    }),
+    'v2',
+  )
+  assert.equal(warnings.length, 0, 'an unanchored 0 next to a real host version is noise')
+})
+
+test('an anchored major we cannot interpret is loud even when a runtime token survives', () => {
+  // A name-anchored token IS the host's own version. When its major is one we
+  // refuse to interpret (0, or a calendar year >= 100), dropping it and letting
+  // a surviving `node v22` promote itself to deciding power is a SILENT wrong
+  // answer — the exact defect this gate exists to prevent. So a refused ANCHORED
+  // major is reported, not discarded.
+  for (const output of ['opencode 100.0.0 (node v22.1.0)', 'opencode 100.0.0 (runtime 2.0.0)']) {
+    const warnings = []
+    const resolved = resolveOpenCodeVersion('auto', {
+      env: {},
+      probe: hostSays(output),
+      warn: (message) => warnings.push(message),
+    })
+
+    assert.equal(
+      resolved,
+      'v1',
+      `an uninterpretable anchored major must fall back to v1: ${JSON.stringify(output)}`,
+    )
+    assert.equal(
+      warnings.length,
+      1,
+      `an uninterpretable anchored major must warn: ${JSON.stringify(output)}`,
+    )
+  }
+  // The quiet counterpart stays quiet: an UNANCHORED date is noise, not an
+  // unreadable host version. Only the anchored case is loud.
+  const warnings = []
+  assert.equal(
+    resolveOpenCodeVersion('auto', {
+      env: {},
+      probe: hostSays('opencode v2.0.22 built 2026.10.04'),
+      warn: (message) => warnings.push(message),
+    }),
+    'v2',
+  )
+  assert.equal(warnings.length, 0, 'a dropped unanchored date must stay silent')
+})
+
+test('parsing cost stays linear in the size of the probe output', () => {
+  // Anchoring used to copy the entire prefix once per match
+  // (`source.slice(0, match.index)`), which is quadratic in output size: ~4x
+  // per doubling of token count. The 5s spawn timeout guards the spawn, not the
+  // parse, so a verbose host could hang the installer well past it.
+  const stdout = verboseBanner(80000)
+  assert.ok(
+    Buffer.byteLength(stdout) > 1_000_000,
+    'the case must be large enough for a quadratic prefix copy to show',
+  )
+
+  const startedAt = process.hrtime.bigint()
+  const resolved = resolveVersion({ probe: hostSays(stdout) })
+  const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6
+
+  // Correctness first: the bound must never be passable by resolving less.
+  assert.equal(resolved, 'v2', 'a long banner must still resolve to the host version')
+  // Measured 4824ms for this case with the full-prefix copy, and ~50ms with the
+  // bounded anchor window. The copy's cost also varies ~3.5x with GC history
+  // (the same input measured 1200ms at 40k tokens mid-suite vs 4400ms cold), so
+  // the bound sits well under the fastest old measurement: >10x headroom to catch
+  // the quadratic, ~8x of slack below it so a loaded CI box cannot flake this.
+  assert.ok(
+    elapsedMs < 400,
+    `parsing a ${Buffer.byteLength(stdout)}-byte banner took ${elapsedMs.toFixed(0)}ms, expected <400ms`,
+  )
+})
+
+test('an anchor beyond the bounded window loses its anchor but never resolves silently wrong', () => {
+  // The anchor window is bounded (ANCHOR_WINDOW_BYTES in the parser) because
+  // `[\s:=]*` is unbounded — no finite window is exact. Past the budget the
+  // anchor is missed, so the parse falls back to consensus among all tokens,
+  // which either agrees with the anchored answer or goes LOUD. It can never turn
+  // one resolution into a different resolution.
+  const warnings = []
+  const resolved = resolveOpenCodeVersion('auto', {
+    env: {},
+    probe: hostSays(`opencode${' '.repeat(200)}2.0.22 node v1.18.33`),
+    warn: (message) => warnings.push(message),
+  })
+  assert.equal(
+    resolved,
+    'v1',
+    'a missed anchor must not silently read the host version from a runtime token',
+  )
+  assert.equal(warnings.length, 1, 'a missed anchor must go loud, not guess')
+
+  // Inside the budget the anchor still decides, which is the whole point of it.
+  assert.equal(
+    resolveVersion({ probe: hostSays(`opencode${' '.repeat(8)}2.0.22 node v1.18.33`) }),
+    'v2',
+    'an anchor within the budget must still outrank a contradicting runtime token',
+  )
 })
 
 test('the probe reads stdout first and only falls back to stderr', () => {
