@@ -52,17 +52,6 @@ assert.equal(existsSync('scripts/pantheon_vision_server.py'), false)
 assert.ok(existsSync('src/mcp/pantheon_vision_server.py'))
 assert.equal(existsSync('src/pantheon/pantheon_vision_server.py'), false)
 
-// The committed opencode.json must never carry provider credentials.
-const configText = readFileSync('opencode.json', 'utf8')
-const config = JSON.parse(configText)
-assert.ok(config.mcp?.bifrost?.url)
-assert.equal(config.mcp.bifrost.headers, undefined)
-const bifrostHeader = ['x', '-bf-', 'vk'].join('')
-const bifrostTokenPrefix = ['sk', '-bf-'].join('')
-assert.equal(new RegExp(bifrostHeader, 'i').test(configText), false)
-assert.equal(new RegExp(bifrostTokenPrefix, 'i').test(configText), false)
-assert.equal(/(?:api[_-]?key|token|secret)\s*[:=]\s*["'][^"']{12,}/i.test(configText), false)
-
 // The packaged vision requirements stay minimal (no heavy ML deps).
 const visionRequirements = readFileSync('src/mcp/requirements-vision.txt', 'utf8')
 assert.deepEqual(

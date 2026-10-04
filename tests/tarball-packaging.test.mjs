@@ -51,12 +51,25 @@ function textFiles(root) {
   return files
 }
 
+// Executable configs npm actually publishes. Kept in sync with the
+// `files` allow-list in package.json — no hardcoded opencode.json.
+const shippedExecutableConfigs = ['plugin.json', 'src/plugins/tui/package.json']
+
 function assertExecutableConfigIsPathFree(packageRoot) {
-  const configPath = join(packageRoot, 'opencode.json')
-  const config = JSON.parse(readFileSync(configPath, 'utf8'))
-  assert.equal(config.plugin, undefined, 'published opencode.json must be a path-free template')
-  assert.doesNotMatch(readFileSync(configPath, 'utf8'), executableForbidden)
-  assert.doesNotMatch(readFileSync(configPath, 'utf8'), privateUrl)
+  for (const rel of shippedExecutableConfigs) {
+    const configPath = join(packageRoot, rel)
+    assert.ok(existsSync(configPath), `published executable config is missing: ${rel}`)
+    const text = readFileSync(configPath, 'utf8')
+    assert.doesNotMatch(text, executableForbidden, `machine path in published ${rel}`)
+    assert.doesNotMatch(text, privateUrl, `private URL in published ${rel}`)
+    const config = JSON.parse(text)
+    if (Array.isArray(config.plugin))
+      assert.equal(
+        config.plugin.some((entry) => entry.startsWith('/')),
+        false,
+        `${rel} must be a path-free template (no absolute plugin entries)`,
+      )
+  }
 }
 
 test('tarball contains no machine paths and ships the runtime inputs', () => {
@@ -90,9 +103,7 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
       const actualHash = createHash('sha256').update(readFileSync(scriptPath)).digest('hex')
       assert.equal(actualHash, expectedHash, `manifest hash mismatch: ${script}`)
     }
-    const contents = readFileSync(join(work, 'package', 'opencode.json'), 'utf8')
-    assertExecutableConfigIsPathFree(join(work, 'package'))
-    assert.doesNotMatch(contents, forbidden)
+    assertExecutableConfigIsPathFree(packageRoot)
     for (const file of textFiles(join(work, 'package'))) {
       const rel = file.slice(join(work, 'package').length + 1)
       const text = readFileSync(file, 'utf8')
@@ -227,8 +238,7 @@ test('package validator rejects executable templates with machine paths', () => 
       join(ROOT, 'src', 'plugins', 'tui', 'package.json'),
       join(fixture, 'tui.json'),
     ])
-    execFileSync('cp', [join(ROOT, 'opencode.json'), join(fixture, 'opencode.json')])
-    const configPath = join(fixture, 'opencode.json')
+    const configPath = join(fixture, 'plugin.json')
     const config = JSON.parse(readFileSync(configPath, 'utf8'))
     config.plugin = ['/home/checkout/src/plugins/pantheon-hooks.ts']
     writeFileSync(configPath, `${JSON.stringify(config)}\n`)

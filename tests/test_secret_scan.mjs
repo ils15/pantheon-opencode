@@ -1,10 +1,8 @@
 import { strict as assert } from 'node:assert'
-import { readFileSync } from 'node:fs'
 import { allowlistedFiles, scanText, scanVersionableFiles } from '../scripts/secret-scan.mjs'
 
 // Pattern names built from parts (never the real secret value).
 const bifrostHeader = ['x', '-bf-', 'vk'].join('')
-const bifrostTokenPrefix = ['sk', '-bf-'].join('')
 const apiKeyName = ['api', 'Key'].join('')
 const authorizationName = ['Author', 'ization'].join('')
 const dummyBifrostValue = ['sk', '-bf-', 'test-do-not-use'].join('')
@@ -28,15 +26,8 @@ assert.ok(scanText(`token: ${dummyBifrostValue}`, 'fixture').length > 0)
 assert.ok(scanText(`"${apiKeyName}": "fixture-api-key-value"`, 'fixture').length > 0)
 assert.ok(scanText(`"${authorizationName}": "Bearer fixture-bearer-value"`, 'fixture').length > 0)
 
-// Regression: opencode.json must contain 0 occurrences of the header/prefix (masked scan).
-const opencodeText = readFileSync('opencode.json', 'utf8')
-assert.ok(
-  !opencodeText.includes(bifrostHeader),
-  'opencode.json must not contain the Bifrost header name',
-)
-assert.ok(
-  !opencodeText.includes(bifrostTokenPrefix),
-  'opencode.json must not contain the Bifrost token prefix',
-)
+// Regression guard for the Bifrost header/prefix: scanVersionableFiles()
+// asserted above is the real guard — it scans EVERY versionable file, so a
+// per-file assertion was a manual duplicate of it.
 
 console.log('✅ versionable-file secret scan passed')
