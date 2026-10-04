@@ -58,8 +58,14 @@ Para otimizar decisoes de delegacao e reduzir gasto de tokens:
 2. Se score > 0.85 → reutiliza agente + background_mode do cache
 3. Se score ≤ 0.85 → aplica regras estaticas e memory_store() com:
    - key: deleg:<task_type>
-   - value: {agent, background, pattern}
-   - metadata: {type: "decision", score: N}
+   - value: JSON.stringify({agent, background, pattern})
+   - metadata: JSON.stringify({type: "decision", score: N})
+
+   `value` E `metadata` sao JSON-encoded strings — o runtime exige que o
+   chamador serialize os dois. Objeto cru em `metadata` e rejeitado pelo
+   `BeforeValidator` do servidor com `metadata must be a JSON object encoded
+   as a string (got object). json.dumps it first. Example: metadata='{"type":
+   "decision", "score": 0.9}'`.
 
 4. **kv_store("deleg:<pattern>", ...)** para padroes recorrentes de delegacao
 5. **kv_get("deleg:<pattern>")** para reusar decisoes ja tomadas
@@ -88,14 +94,19 @@ memory_store({
     precedent_used: false,
     timestamp: "<ISO-8601>"
   },
-  metadata: {
+  metadata: JSON.stringify({
     type: "council_decision",
     specialist_count: N,
     model_tier_used: "premium|default|fast"
-  }
+  })
 })
 ```
 `value` is JSON-serialized before storing (the MCP `memory_store.value` argument is a string).
+`metadata` works the same way — it is a JSON object encoded as a **string**, so pass
+`JSON.stringify({...})`. A raw object is rejected with `metadata must be a JSON object
+encoded as a string (got object). json.dumps it first. Example: metadata='{"type":
+"decision", "score": 0.9}'` (enforced by a `BeforeValidator` in
+`memory_mcp_server.py`). **Both `value` and `metadata` must be serialized by the caller.**
 
 ### Read Path (Precedent Fast-Path)
 Before dispatching a new council, Zeus runs:
