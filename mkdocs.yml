@@ -58,6 +58,7 @@ nav:
     - Installation: INSTALLATION.md
     - Quick Start: QUICKSTART.md
   - Architecture: ARCHITECTURE.md
+  - Permissions, Gates & Delegation: PERMISSIONS-QUALITY-DELEGATION.md
   - Platforms: PLATFORMS.md
   - Release Process: RELEASING.md
   - Branch Protection: BRANCH-PROTECTION.md
