@@ -275,8 +275,14 @@ Para otimizar decisoes de delegacao e reduzir gasto de tokens:
 2. Se score > 0.85 → reutiliza agente + background_mode do cache
 3. Se score ≤ 0.85 → aplica regras estaticas e memory_store() com:
    - key: deleg:<task_type>
-   - value: {agent, background, pattern}
-   - metadata: {type: "decision", score: N}
+   - value: JSON.stringify({agent, background, pattern})
+   - metadata: JSON.stringify({type: "decision", score: N})
+
+   `value` E `metadata` sao JSON-encoded strings — o runtime exige que o
+   chamador serialize os dois. Objeto cru em `metadata` e rejeitado pelo
+   `BeforeValidator` do servidor com `metadata must be a JSON object encoded
+   as a string (got object). json.dumps it first. Example: metadata='{"type":
+   "decision", "score": 0.9}'`.
 
 4. **kv_store("deleg:<pattern>", ...)** para padroes recorrentes de delegacao
 5. **kv_get("deleg:<pattern>")** para reusar decisoes ja tomadas
@@ -305,14 +311,19 @@ memory_store({
     precedent_used: false,
     timestamp: "<ISO-8601>"
   },
-  metadata: {
+  metadata: JSON.stringify({
     type: "council_decision",
     specialist_count: N,
     model_tier_used: "premium|default|fast"
-  }
+  })
 })
 ```
 `value` is JSON-serialized before storing (the MCP `memory_store.value` argument is a string).
+`metadata` works the same way — it is a JSON object encoded as a **string**, so pass
+`JSON.stringify({...})`. A raw object is rejected with `metadata must be a JSON object
+encoded as a string (got object). json.dumps it first. Example: metadata='{"type":
+"decision", "score": 0.9}'` (enforced by a `BeforeValidator` in
+`memory_mcp_server.py`). **Both `value` and `metadata` must be serialized by the caller.**
 
 ### Read Path (Precedent Fast-Path)
 Before dispatching a new council, Zeus runs:
@@ -425,9 +436,15 @@ No file I/O, no checkpoint_session.py — TTL (4h) handles cleanup automatically
 Before ANY delegate dispatch, save a checkpoint:
 ```
 context_save(slug, "phase:N", json({
-  "phase": N, "turn_count": N, "agent": "...", "summary": "..."
+  "phase": {"current": N, "total": M, "name": "..."},
+  "turn_count": N, "agent": "...", "summary": "..."
 }), session_id=SESSION_ID)
 ```
+**`content.phase` must be an OBJECT, not a bare number.** `{"phase": 1}` is rejected with
+`phase must be an object (got number)`. Valid keys: `current` and `total` (non-negative
+ints) and `name` (string, max 256 **bytes** — the guard measures `len(value.encode())`,
+so multi-byte characters count as more than one). The `"phase:N"` slot KEY above is
+unrelated to `content.phase` and stays a plain string.
 All checkpoints auto-expire after 4h (TTL=14400).
 
 ### Gatilho de Pré-Compactação (Anti-perda de estado)

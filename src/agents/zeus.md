@@ -284,7 +284,26 @@ in `task-result-guard.ts` (plugin `tool.execute.after` chain): an
 empty/whitespace-only result is converted into an explicit error so a silent
 child failure is never mistaken for success. No manual retry helper is required.
 
-### /cost — pantheon_cost tool (WIRED no plugin)
+### /cost — pantheon_cost tool (INDISPONIVEL no runtime atual)
+`pantheon_cost` **NAO existe na superficie ativa**: uma busca no catalogo de tools
+nao retorna tool alguma com esse nome. Causa raiz comprovada em runtime: o host
+`opencode v2.0.22` rejeita caminhos de arquivo `.ts` nos arrays de plugin do
+config (a string de recusa `configured plugin path must be a directory` foi
+**medida em runtime** nesse host; o repositorio so registra a parafrase
+`must be a directory`), e a selecao de geracao resolve para a geracao **V1** —
+`resolveOpenCodeVersion` tem default `'v1'`
+(`scripts/install/opencode-version.mjs:36`) e so vira V2 com `OPENCODE_VERSION=v2`
+ou basename `opencode2` (linha 46); esta maquina usa o binario `bin/opencode`.
+A geracao V1 escreve entradas `.ts` sob a chave singular `plugin`
+(`scripts/install/opencode.mjs:1013-1023`) e o host descarta todas — nenhum modulo
+Pantheon entra no processo Node, logo nenhuma tool de plugin existe. A geracao V2
+registraria o entry de **diretorio** correto (`src/plugin-v2`,
+`scripts/install/opencode.mjs:193`). Volta a existir assim que a selecao de geracao
+for corrigida; ate la, tratar `/cost` como indisponivel.
+
+Comportamento abaixo — **NAO VERIFICADO em runtime** (o modulo existe em
+`src/pantheon/cost-command.ts` mas nunca e carregado no processo, logo pode estar
+correto e permanece nao verificado):
 `pantheon_cost({ days?: number })` le o `opencode.db` READ-ONLY usando o backend
 unico `node:sqlite`; se indisponivel, retorna `UNSUPPORTED`, sem fallback. Devolve tabela markdown de custo + tokens por
 agente nos ultimos N dias (default 7). Uso: quando Nyx pedir visibilidade de

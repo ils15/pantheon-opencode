@@ -66,9 +66,15 @@ No file I/O, no checkpoint_session.py — TTL (4h) handles cleanup automatically
 Before ANY delegate dispatch, save a checkpoint:
 ```
 context_save(slug, "phase:N", json({
-  "phase": N, "turn_count": N, "agent": "...", "summary": "..."
+  "phase": {"current": N, "total": M, "name": "..."},
+  "turn_count": N, "agent": "...", "summary": "..."
 }), session_id=SESSION_ID)
 ```
+**`content.phase` must be an OBJECT, not a bare number.** `{"phase": 1}` is rejected with
+`phase must be an object (got number)`. Valid keys: `current` and `total` (non-negative
+ints) and `name` (string, max 256 **bytes** — the guard measures `len(value.encode())`,
+so multi-byte characters count as more than one). The `"phase:N"` slot KEY above is
+unrelated to `content.phase` and stays a plain string.
 All checkpoints auto-expire after 4h (TTL=14400).
 
 ### Gatilho de Pré-Compactação (Anti-perda de estado)
