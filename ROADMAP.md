@@ -35,7 +35,7 @@
 |---|---|
 | OpenCode V1 | `src/plugin.ts` preserva o plugin V1 **em código**: `hashline_edit`, as 3 goal tools, `pantheon_cost`, `pantheon_model`, BackgroundJobBoard, eventos/tool hooks e compaction hook. Não está na superfície viva — a entrada `.ts` que essa geração registra é descartada pelo host, porque o ramo `v1` do installer rodou contra um host V2 (P0-1). |
 | OpenCode V2 | O host da série 2.x **rejeita caminhos de arquivo `.ts`** nas arrays de plugin e descarta a entrada. A recusa foi **medida em runtime** no host `2.0.22`, cujo log traz `configured plugin path must be a directory` — essa string é do **host**, não do repositório: código, testes e docs do repo citam apenas a paráfrase `must be a directory`. Arquivos dentro de um **diretório** `<configDir>/plugin/` ou `<configDir>/plugins/` são aceitos. As chaves singular `plugin` e plural `plugins` são ambas lidas — a normalização concatena a singular na plural. **A forma do lado V2 está correta e comprovadamente carrega**: `src/plugin-v2.ts:989-990` declara `plugin = define({` com `id: 'pantheon-opencode-v2'`, `:992` define `async setup`, e `:1124` faz `export default`; `define` é identidade no SDK instalado, e `src/plugin-v2/` contém o `index.ts` que o resolver acha sem `package.json`. O que derruba a superfície é o installer **remover** essa entrada, não ela ser inválida (P0-1). O adapter continua sem registrar Board nem compaction V1, e não é um adapter de paridade do runtime V1. |
-| Installer | Seleciona **uma única** geração (`v1`, `v2` ou `auto`). `v1` registra **arquivos** `.ts` sob a chave singular `plugin`; `v2` registra o **diretório** `src/plugin-v2` sob a chave plural `plugins`. `auto` resolve para `v2` apenas com `OPENCODE_VERSION=v2` ou `OPENCODE_BIN` casando `/(?:^\|[\\/])opencode2(?:\.exe)?$/i` (`scripts/install/opencode-version.mjs:36-47`); qualquer outro caso cai em `v1`. **O default é `v1`** (`scripts/install/opencode.mjs:518`, `resolveOpenCodeVersion(opts.version ?? 'v1')`) — e esse gate de versão é o defeito de P0-1, P0-5 e P0-6. |
+| Installer | Seleciona **uma única** geração (`v1`, `v2` ou `auto`). `v1` registra **arquivos** `.ts` sob a chave singular `plugin`; `v2` registra o **diretório** `src/plugin-v2` sob a chave plural `plugins`. `auto` resolve para `v2` apenas com `OPENCODE_VERSION=v2` ou `OPENCODE_BIN` casando `/(?:^\|[\\/])opencode2(?:\.exe)?$/i` (`scripts/install/opencode-version.mjs:36-47`); qualquer outro caso cai em `v1`. **O default é `v1`**, e o que chega ao usuário é a **CLI**: `bin/pantheon-init.mjs:425` passa `versionOpt ?? 'v1'`, o que faz curto-circuito em `opencode-version.mjs:40` antes de `opencode.mjs:518` (`resolveOpenCodeVersion(opts.version ?? 'v1')`) ser alcançado — e esse gate de versão é o defeito de P0-1, P0-5 e P0-6. |
 | MCP servers | Os 5 servidores rodam em MCP2.2 + FastMCP 4.0.10, com `httpx==0.28.1` pinado no runtime compartilhado. Fontes canônicas em `src/mcp/*.py`; o installer copia de lá. A cópia `scripts/memory_mcp_server.py` é **intencionalmente divergente** (contrato de memória leve, sem ferramentas de codemap) e essa assimetria é portada por `tests/test_mcp_scripts_sync.py` — é desenho, não drift. |
 | TUI | `pantheon-tui` é componente separado, registrado em `tui.json` somente quando `plugins` é instalado. Native tasks exigem origem, relação parent/child e status fornecidos explicitamente pelo host; ausência de Markdown não é autodetecção. |
 | Histórico e recuperação | `.pantheon/delegations/` guarda relatórios históricos do antigo engine V1 de delegação (removido em favor do `task()` nativo). Jobs antigos/running não são auto-retomados após restart. |
@@ -153,12 +153,23 @@ grave, porque troca "falta" por "quebra":
   aqueles dois alvos `.ts`; depois dele, zero carregamentos V2 pelo resto do dia.
   Auditoria datada: os números datam a descoberta, não são estado durável.
 
-**Causa raiz e local exato do defeito (OS-1): o gate de versão em
-`scripts/install/opencode.mjs`** — não o plugin, não o call site de registro.
-Cadeia verificada, toda neste worktree:
+**Causa raiz e local exato do defeito (OS-1): o gate de versão — dois defaults,
+em `bin/pantheon-init.mjs:425` e `scripts/install/opencode.mjs:518`, e nenhum
+detector entre eles** — não o plugin, não o call site de registro. Cadeia
+verificada, toda neste worktree:
 
-- `opencode.mjs:518` — `resolveOpenCodeVersion(opts.version ?? 'v1')`.
-  **O default é `v1`**, sem detector.
+- **São dois defaults, e o que chega ao usuário é o segundo.**
+  `bin/pantheon-init.mjs:425` passa `version: versionOpt ?? 'v1'` — um `'v1'`
+  **concreto** em toda run sem flag (`versionOpt` é `null` sem flag,
+  `bin/pantheon-init.mjs:335-340`). Esse valor explícito faz curto-circuito em
+  `scripts/install/opencode-version.mjs:40` (`if (requested === 'v1' ||
+  requested === 'v2') return requested`), **antes** dos hints de
+  `OPENCODE_VERSION` / `OPENCODE_BIN` em `:42-46`. **Logo o default de
+  `opencode.mjs:518` — `resolveOpenCodeVersion(opts.version ?? 'v1')` — nunca é
+  alcançado em produção** pela CLI. *Consequência prática para quem planeja a
+  correção:* mudar **só** `opencode.mjs:518` é **inerte**, e mudar **só**
+  `bin/pantheon-init.mjs:425` também é, se a biblioteca do installer for chamada
+  direto sem `version`. O mínimo é os **dois** defaults mais um ramo de detecção.
 - `opencode.mjs:1056` — o ramo `v1` roda
   `removePantheonPluginReferences(config.plugins)`: **apagou uma entrada V2 de
   diretório que estava funcionando**.
@@ -172,8 +183,19 @@ Cadeia verificada, toda neste worktree:
   `resolveInstalledPlugin`. **A forma correta já está no código e simplesmente
   nunca é alcançada no ramo `v1`.**
 - `opencode.mjs:34` / `:1354` — `detectVersion` já é importado e já é usado no
-  fluxo: a capacidade de detectar a geração existe e não é consultada na decisão
-  de registro.
+  fluxo, mas **não serve aqui e não é o que a frase anterior alegava.**
+  `detectVersion(target)` lê `<target>/.pantheon/install-state.json` e devolve a
+  **versão do próprio pacote Pantheon** (`scripts/install/migrate.mjs:36-40` →
+  `readState`, `scripts/install/state.mjs:61-62` →
+  `state.pantheon_version || state.version`), e o call site em `:1354` o consome
+  como entrada da escada de migração **do pacote** (`runMigrations`, `:1356`).
+  Reutilizá-lo aqui compararia `1.6.0-beta.4` contra nada. **O que existe é um
+  seletor de versão, não um detector de versão do host: não há detector em lugar
+  nenhum do pacote**, nem em `scripts/doctor.mjs` — o único sinal de geração do
+  host é o regex de nome de binário em
+  `scripts/install/opencode-version.mjs:46`, que é um **hint de `OPENCODE_BIN`**,
+  alcançado só por `auto`. Uma correção por detecção tem de **escrever** o
+  detector; não há o que reaproveitar.
 
 **Limite honesto desta auditoria.** Não foi possível determinar **qual**
 invocação do installer produziu a reescrita: nenhum log do lado do installer
@@ -185,6 +207,40 @@ são evidência independente e suficiente, e são consistentes entre si.
 isto: adicionar `Plugin.define`/`id`/`setup`, ou uma entrada `server.*` em
 `src/plugin-v2/`, são edições em código que já está correto e comprovadamente
 carregando.
+
+**Limite do conserto: um gate resolvido devolve 3 tools, não 6 — e não devolve o
+Board.** Para que "consertar o gate" não seja lido como "a superfície volta":
+`src/pantheon/v2-tools.ts:391` (`createV2ToolDefinitions`) devolve **3**
+definições — `hashline_edit`, `pantheon_cost`, `pantheon_model` — e é isso que
+o ramo `v2` passa a registrar. As 3 `pantheon_goal_*` **não voltam**: estão fora
+da superfície V2 **por desenho**, não por acidente —
+`src/pantheon/v2-tools.ts:5-15` e o marker `goal-tools` de
+`V2_UNSUPPORTED_FEATURES` (`src/plugin-v2.ts:122-127`) registram que
+`GoalStore`, `GoalLoopClient` e `BackgroundJobBoard` não existem no
+`PluginContext` V2 e que a bridge V1 resolve para `null` fora do V1. O
+**BackgroundJobBoard é V1-only**. Ou seja: o conserto devolve **3** tools, não as
+**6** de `src/plugin.ts:407-417`, e não devolve o Board. **Isto é limitação do
+conserto, não defeito novo** — não abre item, não mudaria o `Status:` deste item
+se o gate fosse consertado amanhã.
+
+**Auto-cura, e por que ainda é preciso `init` manual.** Uma escolha de versão
+correta **auto-cura** uma config já corrompida, e **não há migração separada a
+escrever**: o ramo `v2` remove os refs `.ts` V1 da chave **singular**
+(`opencode.mjs:1086-1088`, `removePantheonPluginReferences(config.plugin)`), e o
+casamento por identidade cobre refs **in-tree** e de **cache `node_modules`** —
+`managedPluginIdentity` (`:261-303`) compara o absoluto contra
+`INSTALLED_PANTHEON_PLUGIN_PATHS` (`:274-278`) e casa por **sufixo** atrás de
+`/node_modules/pantheon-opencode/` (`:290-299`), o que cobre prefixos de `npx` e
+de outros `nvm`; refs em forma de objeto entram por `pluginMetadataReferences`
+(`:253-259`). **Falha só para path relativo não canônico** — `./src/plugin.ts`,
+`./src/plugin-v2`, `src/plugins/../plugin.ts`: `normalizePluginRef` (`:221-223`)
+normaliza separador e barra final mas **não absolutiza**, e `isAbsolute` em
+`:274` é falso — `normalizePluginRef` não é `resolve()`. O installer nunca grava
+essa forma (`:210` grava `join(ROOT, normalized)`, sempre absoluto), logo a
+config corrompida pela **própria** run do `v1` é sempre auto-curável. **Mas
+`postinstall` não roda `init`** — `scripts/postinstall.mjs:35` apenas **imprime**
+o hint `npx pantheon-opencode init` — então o usuário afetado precisa **re-rodar
+`init` à mão**. **Isto é material de release note, não um item novo.**
 
 **P0-2 — O secret scanner não protege contra a leitura de um arquivo de
 credencial.**
@@ -557,6 +613,7 @@ secret scanner é a camada errada para essa pergunta, porque a pergunta não é
 
 | Data | Mudança |
 |------|---------|
+| 2026-10-04 | **Três correções factuais em P0-1, sem mudança de escopo.** (1) A alegação de que "a capacidade de detectar a geração existe e não é consultada" era **falsa**: `detectVersion` (`scripts/install/migrate.mjs:36-40`) devolve a versão do **próprio pacote** Pantheon, e **não existe detector de versão do host em nenhum lugar do pacote** — há seletor, não detector. (2) O local do defeito estava **incompleto**: o default que chega ao usuário é `bin/pantheon-init.mjs:425`, e ele curto-circuita em `opencode-version.mjs:40` antes de `opencode.mjs:518` — mudar **só** um dos dois é inerte. (3) Acrescentado o **limite do conserto**: um gate resolvido devolve **3** tools, não as 6, e não devolve o Board — as `pantheon_goal_*` são **V1-only por desenho**. Registrada a **auto-cura** (o ramo `v2` já remove os refs `.ts` da chave singular e o casamento por identidade cobre in-tree e cache `node_modules`, então **não há migração nova**) com a ressalva de que **`postinstall` não roda `init`** — material de release note. Enquadramento, severidade e todos os `Status:` preservados; **nenhuma contagem mudou**. |
 | 2026-10-04 | **Rodada de correção de severidade: 24 → 26 itens.** Duas alegações P0 foram falsificadas por auditoria posterior e uma delas foi retirada. **P0-1 reescrito:** a superfície de tools não estava morta por *gap passivo* nem por forma de registro errada — a forma de registro já era a correta e carregava, e o que a derrubou foi uma **run do installer** que rodou o ramo `v1` (default em `opencode.mjs:518`) contra um host V2, apagando a entrada de diretório V2 que funcionava e escrevendo dois caminhos `.ts` rejeitados. Causa raiz realçada para o **gate de versão**; proibidas como correção as mudanças em `define`/`id`/`setup` e a entrada `server.*` em `src/plugin-v2/`, que editariam código já correto. **P0-2 retirado e virado tombstone `WITHDRAWN`, com a parte remanescente promovida a P2-10**: a premissa "o hook de secret-scanning nunca carrega" era falsa — o log que a provava era saída de teste, não superfície viva — e a alegação não se sustentava por dois motivos independentes: o scanner casa **valores** em argumentos de tool call, e o input de uma chamada `read` é um caminho, então ele não tem gating por leitura, carregue ou não; e o caminho de credencial era da configuração pessoal de uma máquina, que este pacote não cria. **Dois P0 novos:** P0-5 (nomes de ação de permissão desatualizados — o tradutor do repo conhece `bash`/`skill`/`edit`/`websearch` mas não `task` nem `write`, que o repo entrega; degrada o enforcement read-only dos 14 agentes, independente de P0-1) e P0-6 (a config grava caminho absoluto para a árvore de instalação, re-resolvido só no `init`, o que faz upgrade não ter efeito silenciosamente). Duas frases foram retiradas por serem refutadas: uma tratava entrada de log de hook como prova de superfície viva, e uma atribuía a uma sessão anterior ao rewrite o módulo ainda carregado — a run relevante começou três horas **depois** do rewrite. Contagem e markers reconciliados: 26 itens vivos (4 `CLOSED (doc)`, 22 `OPEN`) mais 1 tombstone `WITHDRAWN` (P0-2). Gate de agnosticidade re-aplicado a tudo que foi escrito; duas citações de linha do briefing não resolveram e foram corrigidas na fonte (`config-migration.mjs` e o seeding de `permission` no installer). |
 | 2026-10-04 | **Backlog dobrado para 24 itens + evidência positiva de orquestração.** Gate de agnosticidade aplicado ao documento inteiro: reescritos P0-1 (defeito estrutural do installer em vez de contagem de log de uma máquina), P0-2 (removido caminho de credencial específico de um host; hoje tombstone `WITHDRAWN`) e P1-5 (ausência de gate contra catálogo de provedor, com a lista de modelos rebaixada a auditoria datada). Adicionados P0-4 (oscilação de catálogo de tools numa mesma sessão — nunca diagnosticada), P1-7..P1-11 (gate de permissões pré-dispatch, `sessionID` em dispatch abortado, `pantheon-vision` inferior ao fallback nativo, matcher que sugere a string rejeitada, `docs/MEMORY.md` publicando a assinatura retirada de `memory_store`) e P2-3..P2-9 (`memory_search` expõe léxico, exclusão de arquivo, briefing Wave 0 por paráfrase, papel do `nyx`, `mnemosyne` inerte fora do repo, issue #198 do token `server.py`, rotulagem portátil/específico de ambiente no Apollo). Adicionada seção de validação: 16 dispatches / 9 agentes, 0 timeouts, 93,75% de sucesso, resume de sessão preservando 46 medidas, 5/5 erros de orquestração pegos por agentes, 5 recusas honestas. Dois achados de MCP de terceiro foram descartados pelo gate de agnosticidade — não são componente Pantheon. |
 | 2026-10-04 | **Roadmap reativado** após o zeramento de 2026-09-12. Superfície de tools do plugin provada morta em runtime, com causa isolada na seleção de geração (P0-1); `pantheon_cost` corrigido para indisponível (P1-3); contratos de `memory_store` (P1-1) e `context_save` (P1-2) corrigidos; backlog de 8 itens reescrito a partir de probe runtime. |
