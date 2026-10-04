@@ -109,6 +109,10 @@ async function main(): Promise<void> {
   } = await import('../../src/plugin-v2.ts')
   const pluginSource = await readFile(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
   const pluginV1Source = await readFile(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
+  const unsupportedSeedSource = await readFile(
+    new URL('../../src/pantheon/v2-unsupported.mjs', import.meta.url),
+    'utf8',
+  )
 
   let passed = 0
   let failed = 0
@@ -161,6 +165,24 @@ async function main(): Promise<void> {
       V2_UNSUPPORTED_FEATURES.includes('delegation-matrix'),
       'delegation-matrix must live in V2_UNSUPPORTED_FEATURES, not only in a comment',
     )
+  })
+
+  test('getUnsupportedFeatures carries every marker the installer and doctor report', async () => {
+    // S0 anti-drift link. Install and doctor report the seed from
+    // src/pantheon/v2-unsupported.mjs; the live list here is built from that
+    // same seed and then appended to at runtime. If the plugin ever stopped
+    // seeding from the shared module, the marker a user is shown at install
+    // time would no longer be one the plugin itself reports — so assert the
+    // seed is a subset, entry for entry, rather than just non-empty.
+    const { V2_UNSUPPORTED_FEATURE_SEED } = await import('../../src/pantheon/v2-unsupported.mjs')
+    const reported = getUnsupportedFeatures()
+    assert.ok(V2_UNSUPPORTED_FEATURE_SEED.length > 0, 'the shared seed must not be empty')
+    for (const feature of V2_UNSUPPORTED_FEATURE_SEED) {
+      assert.ok(
+        reported.includes(feature),
+        `getUnsupportedFeatures() must carry the shared "${feature}" marker that install and doctor report`,
+      )
+    }
   })
 
   test('V1/V2 tool contract is eager, not lazy MCP schema registration', () => {
@@ -245,7 +267,14 @@ async function main(): Promise<void> {
     assert.match(pluginSource, /ctx\.tool\.hook\s+function/)
     assert.match(pluginSource, /ctx\.catalog\s+absent/)
     assert.match(pluginSource, /ctx\.integration and\s*\n?\s*ctx\.skill/)
-    assert.match(pluginSource, /SkillEditor\.source\(\)/)
+    // The per-marker rationale (which marker means host-absent vs deliberate
+    // Pantheon scope) now lives beside the markers themselves, in the shared
+    // plain-`.mjs` seed that the installer and doctor report from — see S0 in
+    // src/pantheon/v2-unsupported.mjs. The guard is unchanged in strength: the
+    // claim must still be written down, and it must still be MEASURED wording.
+    // Asserting it against plugin-v2.ts alone would have forced the rationale
+    // to be duplicated back into a file that no longer owns those strings.
+    assert.match(unsupportedSeedSource, /SkillEditor\.source\(\)/)
     assert.doesNotMatch(
       pluginSource,
       /ctx\.integration.*no longer a context domain|ctx\.skill.*no longer a context domain/s,

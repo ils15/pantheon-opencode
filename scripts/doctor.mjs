@@ -29,6 +29,8 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
+
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
@@ -1431,6 +1433,85 @@ export function checkPluginVersionDrift(args) {
 }
 
 // ---------------------------------------------------------------------------
+// Check H4: V2 feature reduction (the surface a migrating user loses)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether an opencode.json registers the V2 generation of the Pantheon plugin.
+ *
+ * The V2 contract is the PLURAL `plugins` key; V1 is the singular `plugin` key.
+ * So the key alone is not the test — a config can legitimately carry a
+ * third-party entry in `plugins`. What identifies the generation is a Pantheon
+ * V2 entry inside it. Matched on the `plugin-v2` marker so all three real
+ * spellings are recognised: the canonical DIRECTORY (`src/plugin-v2`), an
+ * absolute path to it, and the package export (`pantheon-opencode/plugin-v2`).
+ *
+ * @param {unknown} ref
+ * @returns {boolean}
+ */
+function isV2PluginRef(ref) {
+  const candidate =
+    typeof ref === 'string'
+      ? ref
+      : ref && typeof ref === 'object'
+        ? (ref.path ?? ref.source ?? ref.id ?? ref.name)
+        : undefined
+  return typeof candidate === 'string' && candidate.includes('plugin-v2')
+}
+
+/**
+ * The V2 feature-reduction markers to report for a set of collected configs.
+ *
+ * Returns the shared seed verbatim when ANY reachable config registers the V2
+ * generation, and an empty list otherwise. The strings come from
+ * `src/pantheon/v2-unsupported.mjs` — the same seed `getUnsupportedFeatures()`
+ * is built from — so doctor cannot report a reduction the plugin does not, or
+ * miss one it does. Nothing is reworded here.
+ *
+ * @param {{path:string, data:object}[]} configs
+ * @returns {string[]}
+ */
+export function collectV2UnsupportedFeatures(configs) {
+  const registered = configs.some((cfg) => {
+    const list = cfg.data?.plugins
+    return Array.isArray(list) && list.some(isV2PluginRef)
+  })
+  return registered ? listV2UnsupportedFeatures() : []
+}
+
+/**
+ * Report the V2 feature reduction through doctor's own output shape
+ * (section + warn/info), so it lands in the health summary like every other
+ * finding and never changes the exit code: a V2 install is a supported
+ * configuration, not a broken one.
+ *
+ * @param {{target:string, env?:object}} args
+ * @returns {'reported'|'no-v2-generation'|'no-config'}
+ */
+export function checkV2UnsupportedFeatures(args) {
+  section('H4. V2 Feature Reduction')
+
+  const configs = collectMcpConfigs(args)
+  if (configs.length === 0) {
+    info('No opencode.json was found — V2 feature reduction check skipped')
+    return 'no-config'
+  }
+
+  const features = collectV2UnsupportedFeatures(configs)
+  if (features.length === 0) {
+    info('No V2 plugin generation registered — nothing reduced')
+    return 'no-v2-generation'
+  }
+
+  warn(
+    `Pantheon is registered on the V2 plugin generation, which registers 3 tools ` +
+      `(hashline_edit, pantheon_cost, pantheon_model) instead of the V1 surface's 6 plus ` +
+      `the BackgroundJobBoard and the caller/target delegation matrix. Unsupported: ${features.join(', ')}`,
+  )
+  return 'reported'
+}
+
+// ---------------------------------------------------------------------------
 // Check G: AGENTS.md freshness
 // ---------------------------------------------------------------------------
 
@@ -1802,6 +1883,7 @@ async function main() {
   checkAgentsMdFreshness(args)
   checkSubagentDepthPlacement(args)
   checkPermissionTaskPresence(args)
+  checkV2UnsupportedFeatures(args)
 
   printSummary(args.target)
 

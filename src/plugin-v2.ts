@@ -94,6 +94,7 @@ import {
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.ts'
+import { V2_UNSUPPORTED_FEATURE_SEED } from './pantheon/v2-unsupported.mjs'
 import { type HookPayload, runHook } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
@@ -103,37 +104,18 @@ import { type HookPayload, runHook } from './plugins/hook-runner.ts'
  * the observed host. A listed feature is not necessarily a host-absent API.
  * Additional features are appended during setup when a required API is missing.
  */
-export const V2_UNSUPPORTED_FEATURES: string[] = [
-  'legacy-hooks',
-  // `ctx.catalog` is the one domain a live 2.0.22 host does NOT have: it is
-  // absent from `Object.keys(ctx)`, measured in
-  // tests/canary/plugin-v2-tool-canary.test.mjs. (`catalog` IS in the 1.18.33
-  // SDK's PluginContext, so the SDK types it and the host does not provide it.)
-  'catalog-transform',
-  // Adapter support, NOT host availability: 2.0.22 exposes ctx.integration and
-  // ctx.skill with callable transforms, and Pantheon deliberately registers
-  // neither. These entries record what this plugin does not implement.
-  'integration-transform',
-  // The inspected SkillEditor shape has no `source()` helper — i.e. no
-  // `SkillEditor.source()` — for adding a directory source. This is narrower
-  // than (and distinct from) ctx.skill's host availability or callable
-  // transform, which a live 2.0.22 host does provide.
-  'skill-transform',
-  // Adapter limitation, not a host gap: the goal loop needs a GoalStore, a
-  // GoalLoopClient and a BackgroundJobBoard, none of which the V2
-  // PluginContext exposes, and the V1 bridge resolves to null outside V1.
-  // pantheon_goal_create/get/update are therefore absent from the V2 surface
-  // rather than registered as non-functional placeholders.
-  'goal-tools',
-  // Adapter limitation, not a host gap: the caller/target delegation matrix
-  // needs a session hierarchy seeded from session metadata, and V2 exposes no
-  // seed path for it — SessionHierarchyRegistry.isRoot reports `true` for
-  // unknown sessions while unseeded, which would deny every `task()` call. The
-  // branch is therefore skipped rather than left to deny indiscriminately.
-  // Read-only depth-2 still holds via the blocked-tool list in the guard below,
-  // so this marker records an unenforced matrix, not an unenforced depth limit.
-  'delegation-matrix',
-]
+/**
+ * Live unsupported-feature list: the shared seed plus anything `markUnsupported`
+ * appends while this process talks to a real host.
+ *
+ * The seed lives in `src/pantheon/v2-unsupported.mjs` — a plain-`.mjs` module —
+ * so that the V2 installer and `scripts/doctor.mjs` report the SAME strings
+ * without either of them having to import TypeScript. This array stays a
+ * mutable copy rather than the shared seed itself: `markUnsupported` appends to
+ * it, and the seed must stay frozen. `getUnsupportedFeatures()` still returns
+ * this exact reference.
+ */
+export const V2_UNSUPPORTED_FEATURES: string[] = [...V2_UNSUPPORTED_FEATURE_SEED]
 
 // ─── Constants ───────────────────────────────────────────────────────────
 
@@ -1115,7 +1097,14 @@ export function v2Dispose(): void {
 }
 
 /**
- * Get the current list of unsupported V2 features (for diagnostics).
+ * The current list of unsupported V2 features.
+ *
+ * Read by the installer and by `doctor` (both via the shared seed in
+ * `src/pantheon/v2-unsupported.mjs`) so the markers a user is shown are the
+ * same ones this returns, rather than a hand-copied duplicate.
+ *
+ * This returns the LIVE array: the shared seed plus whatever `markUnsupported`
+ * appended while this process talked to a real host.
  */
 export function getUnsupportedFeatures(): readonly string[] {
   return V2_UNSUPPORTED_FEATURES
