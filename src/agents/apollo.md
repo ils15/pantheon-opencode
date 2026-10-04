@@ -38,7 +38,10 @@ mcp_tools:
 - Generate structured summaries (not raw dumps)
 
 ### 2. External Research
-- Web search via bifrost MCP tools for documentation, blog posts, GitHub repos
+- Web search through whatever web-search MCP the USER has configured — Pantheon
+  bundles none and does not assume one. If no search tool is available, skip
+  external search and say so; never present an unverified recollection as a
+  citation.
 - Context7 for library documentation
 - Read URLs with webfetch for known resource URLs
 
@@ -50,7 +53,9 @@ mcp_tools:
 ##  TOOLS NOT AVAILABLE
 - bash - forbidden (cannot run commands)
 - edit - forbidden (read-only agent)
-- bifrost - use bifrost MCP tools for search
+- Web search by default - no search MCP is bundled or pre-configured. Use one
+  ONLY if the user's own config exposes it; otherwise state that external search
+  was unavailable instead of improvising.
 
 ## MCP Security
 - Never embed credentials in URLs (grep for token=, key=, secret=)

@@ -468,7 +468,16 @@ test('V2 fresh install has permissions as array and flat MCP keys', async () => 
     if ('mcp' in config) {
       assert.ok(typeof config.mcp === 'object' && config.mcp !== null, 'V2 mcp must be an object')
       assert.ok(!('servers' in config.mcp), 'V2 mcp must not have servers sub-key')
-      assert.ok(config.mcp.bifrost, 'V2 mcp must retain the flat bifrost server')
+      // Server names are the user's own — the installer never invents one, and
+      // this install carries no `runtime` component, so any entry here came
+      // from the user. Assert the shape for whatever they are called.
+      for (const [name, server] of Object.entries(config.mcp)) {
+        assert.equal(
+          typeof server === 'object' && server !== null && !Array.isArray(server),
+          true,
+          `V2 mcp.${name} must be a server config object`,
+        )
+      }
     }
   } finally {
     rmSync(target, { recursive: true, force: true })

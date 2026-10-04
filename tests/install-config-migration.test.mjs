@@ -72,7 +72,7 @@ const V1_CONFIG = {
   mcp: {
     bifrost: {
       type: 'remote',
-      url: 'https://llm.ofertachina.cloud/mcp',
+      url: 'https://example.com/mcp',
       enabled: true,
     },
   },
@@ -143,7 +143,7 @@ const V2_EXPECTED = {
   mcp: {
     bifrost: {
       type: 'remote',
-      url: 'https://llm.ofertachina.cloud/mcp',
+      url: 'https://example.com/mcp',
       enabled: true,
     },
   },
