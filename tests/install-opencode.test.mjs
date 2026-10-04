@@ -360,6 +360,79 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
   }
 })
 
+// Regression: a repository-root opencode.json is a contributor's PERSONAL dev
+// harness. Reading it unconditionally injected the developer's provider/plugins
+// into every generated config. The merge is now opt-in via --merge-dev-config.
+test('default install never reads a repository-root opencode.json', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-no-dev-merge-'))
+  const devDir = mkdtempSync(join(tmpdir(), 'pantheon-dev-config-'))
+  const devConfig = join(devDir, 'opencode.json')
+  try {
+    // A dev config that WOULD be merged if the file were read implicitly.
+    writeFileSync(
+      devConfig,
+      JSON.stringify({
+        plugins: ['npm:@acme/should-not-appear'],
+        provider: { devonly: { options: { endpoint: 'https://dev.invalid' } } },
+        compaction: { devonly: true },
+      }),
+    )
+    // Prove the coupling is closed: this dev config is never referenced, and
+    // the installer consults no repository-root opencode.json on the default
+    // path (opts.mergeDevConfig is undefined → pantheonConfig stays null).
+    const config = await installOpenCode(target, false, false, COMPONENTS, {
+      yes: true,
+      headless: true,
+      version: 'v1',
+    }).then(() => JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')))
+    assert.ok(
+      !config.plugins?.includes('npm:@acme/should-not-appear') &&
+        !config.plugin?.includes('npm:@acme/should-not-appear'),
+      'dev config plugin must not leak into a default install',
+    )
+    assert.equal(config.provider?.devonly, undefined, 'dev provider must not leak')
+    assert.equal(config.compaction?.devonly, undefined, 'dev compaction must not leak')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+    rmSync(devDir, { recursive: true, force: true })
+  }
+})
+
+test('--merge-dev-config merges third-party plugin/provider/compaction from the given config', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-dev-merge-'))
+  const devDir = mkdtempSync(join(tmpdir(), 'pantheon-dev-config-'))
+  const devConfig = join(devDir, 'opencode.json')
+  try {
+    // A real dev config carries both plugin shapes; V1 reads the singular key.
+    writeFileSync(
+      devConfig,
+      JSON.stringify({
+        plugin: ['npm:@acme/merged-plugin'],
+        plugins: ['npm:@acme/merged-plugin'],
+        provider: { merged: { options: { endpoint: 'https://merged.invalid' } } },
+        compaction: { merged: true },
+      }),
+    )
+    const config = await installOpenCode(target, false, false, COMPONENTS, {
+      yes: true,
+      headless: true,
+      version: 'v1',
+      mergeDevConfig: devConfig,
+    }).then(() => JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')))
+    // V1 keeps the singular plugin list and the flat provider/compaction keys,
+    // so the merged third-party entries are directly observable.
+    assert.ok(
+      config.plugin.includes('npm:@acme/merged-plugin'),
+      'explicitly merged plugin must be present',
+    )
+    assert.equal(config.provider.merged.options.endpoint, 'https://merged.invalid')
+    assert.equal(config.compaction.merged, true)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+    rmSync(devDir, { recursive: true, force: true })
+  }
+})
+
 test('fresh install writes experimental.subagent_depth=2 and is byte-identical on rerun', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-depth-'))
   try {

@@ -51,12 +51,25 @@ function textFiles(root) {
   return files
 }
 
+// Executable configs npm actually publishes. Kept in sync with the
+// `files` allow-list in package.json — no hardcoded opencode.json.
+const shippedExecutableConfigs = ['plugin.json', 'src/plugins/tui/package.json']
+
 function assertExecutableConfigIsPathFree(packageRoot) {
-  const configPath = join(packageRoot, 'opencode.json')
-  const config = JSON.parse(readFileSync(configPath, 'utf8'))
-  assert.equal(config.plugin, undefined, 'published opencode.json must be a path-free template')
-  assert.doesNotMatch(readFileSync(configPath, 'utf8'), executableForbidden)
-  assert.doesNotMatch(readFileSync(configPath, 'utf8'), privateUrl)
+  for (const rel of shippedExecutableConfigs) {
+    const configPath = join(packageRoot, rel)
+    assert.ok(existsSync(configPath), `published executable config is missing: ${rel}`)
+    const text = readFileSync(configPath, 'utf8')
+    assert.doesNotMatch(text, executableForbidden, `machine path in published ${rel}`)
+    assert.doesNotMatch(text, privateUrl, `private URL in published ${rel}`)
+    const config = JSON.parse(text)
+    if (Array.isArray(config.plugin))
+      assert.equal(
+        config.plugin.some((entry) => entry.startsWith('/')),
+        false,
+        `${rel} must be a path-free template (no absolute plugin entries)`,
+      )
+  }
 }
 
 test('tarball contains no machine paths and ships the runtime inputs', () => {
@@ -90,9 +103,7 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
       const actualHash = createHash('sha256').update(readFileSync(scriptPath)).digest('hex')
       assert.equal(actualHash, expectedHash, `manifest hash mismatch: ${script}`)
     }
-    const contents = readFileSync(join(work, 'package', 'opencode.json'), 'utf8')
-    assertExecutableConfigIsPathFree(join(work, 'package'))
-    assert.doesNotMatch(contents, forbidden)
+    assertExecutableConfigIsPathFree(packageRoot)
     for (const file of textFiles(join(work, 'package'))) {
       const rel = file.slice(join(work, 'package').length + 1)
       const text = readFileSync(file, 'utf8')
@@ -181,6 +192,14 @@ test('installed package resolves hooks to its installed absolute path', () => {
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const config = JSON.parse(readFileSync(join(project, 'opencode.json'), 'utf8'))
     const installedRoot = resolve(work, 'node_modules', 'pantheon-opencode')
+    // The defaults asserted below are read from the installer's code. Pin that
+    // independence here: if a template ever ships again and quietly starts
+    // seeding them, this test stops proving the code path it exists to guard.
+    assert.equal(
+      existsSync(join(installedRoot, 'opencode.json')),
+      false,
+      'installed package must not ship an opencode.json template',
+    )
     // Installer contract: BOTH pantheon plugins are registered unconditionally
     // — the root-level delegation plugin (src/plugin.ts) and the runtime hooks
     // plugin (src/plugins/pantheon-hooks.ts) — resolved to absolute paths
@@ -192,6 +211,42 @@ test('installed package resolves hooks to its installed absolute path', () => {
     for (const entry of config.plugin) {
       assert.equal(existsSync(entry), true, `registered plugin must exist: ${entry}`)
     }
+    // Regression guard (after the packaged opencode.json template was dropped
+    // from `files`): the product defaults an install seeds are code constants in
+    // scripts/install/opencode.mjs, NOT read from a template that no longer
+    // ships. If they move back to a template — or back out of the installer —
+    // these two assertions are what fails.
+    assert.equal(config.default_agent, 'zeus')
+    // The skills component IS selected by this install (`pantheon-init` default
+    // component list includes skills, and no --components narrows it), so the
+    // grant below is the gated one — not the unconditional merge it used to be
+    // shadowed by. Assert the component explicitly so the two cannot be
+    // confused again.
+    assert.ok(
+      existsSync(join(project, '.opencode', 'skills')),
+      'this install must select the skills component for the skill grant to apply',
+    )
+    assert.equal(config.permission.skill['*'], 'allow')
+    // Regression guard: the default bash allowlist is the five commands
+    // Pantheon's own agents must run unattended, and nothing else. Growing it
+    // again is a silent product/security decision made for every installer, so
+    // the allow-set and the deny-set are both pinned here.
+    const bashKeys = Object.keys(config.permission.bash ?? {})
+    for (const required of ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *']) {
+      assert.ok(bashKeys.includes(required), `permission.bash must allow \`${required}\``)
+    }
+    for (const forbidden of ['black', 'pip', 'docker', 'curl', 'gh', 'make']) {
+      assert.equal(
+        bashKeys.some((key) => key === `${forbidden} *` || key === forbidden),
+        false,
+        `permission.bash must NOT pre-allow \`${forbidden}\` — that is the installing user's call`,
+      )
+    }
+    assert.deepEqual(
+      bashKeys.sort(),
+      ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *'],
+      'permission.bash must be exactly the five agent-required commands',
+    )
     assert.doesNotMatch(JSON.stringify(config), executableForbidden)
     const tui = JSON.parse(readFileSync(join(project, '.opencode', 'tui.json'), 'utf8'))
     // Installer contract (af40321): the TUI plugin is COPIED to the target
@@ -213,6 +268,59 @@ test('installed package resolves hooks to its installed absolute path', () => {
   }
 })
 
+test('installed package leaves an explicit permission.skill choice alone', () => {
+  // Same mechanism as the installer tests that seed an existing user config
+  // (runInstall(target, existingConfig) in install-opencode.test.mjs): write the
+  // user's own opencode.json into the target, then install over it. This one
+  // does it against the real tarball, because the bug is in shipped code.
+  const tarball = pack()
+  const work = mkdtempSync(join(tmpdir(), 'pantheon-prefix-skill-'))
+  const project = join(work, 'project')
+  mkdirSync(project)
+  try {
+    const sandboxConfig = join(work, 'sandbox-config')
+    mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true })
+    execFileSync('npm', ['install', '--prefix', work, join(ROOT, tarball)], {
+      encoding: 'utf8',
+      env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
+    })
+    // A user who locked skills down on purpose. The skills component IS selected
+    // (same default component list as the test above), so the installer reaches
+    // the grant — and must decline to make it.
+    writeFileSync(
+      join(project, 'opencode.json'),
+      JSON.stringify(
+        { permission: { skill: { '*': 'deny' }, websearch: 'allow' }, theme: 'user-theme' },
+        null,
+        2,
+      ),
+    )
+    const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
+    const result = spawnSync(
+      process.execPath,
+      [cli, 'init', '--project', '--no-mcp', '--headless', '-y'],
+      { cwd: project, encoding: 'utf8' },
+    )
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.ok(
+      existsSync(join(project, '.opencode', 'skills')),
+      'this install must select the skills component, or the guard proves nothing',
+    )
+    const config = JSON.parse(readFileSync(join(project, 'opencode.json'), 'utf8'))
+    // The regression: an unconditional `config.permission.skill = {'*':'allow'}`
+    // silently flipped this deny to allow on every install that selected skills.
+    assert.deepEqual(config.permission.skill, { '*': 'deny' }, 'explicit deny must survive')
+    // The user's own neighbouring values are untouched too — the merge is
+    // absent-only, not a wholesale replacement of the block.
+    assert.equal(config.permission.websearch, 'allow')
+    assert.equal(config.theme, 'user-theme')
+    assert.equal(config.default_agent, 'zeus', 'unrelated defaults are still seeded')
+  } finally {
+    rmSync(join(ROOT, tarball), { force: true })
+    rmSync(work, { recursive: true, force: true })
+  }
+})
+
 test('package validator rejects executable templates with machine paths', () => {
   const fixture = mkdtempSync(join(tmpdir(), 'pantheon-package-fixture-'))
   try {
@@ -227,8 +335,7 @@ test('package validator rejects executable templates with machine paths', () => 
       join(ROOT, 'src', 'plugins', 'tui', 'package.json'),
       join(fixture, 'tui.json'),
     ])
-    execFileSync('cp', [join(ROOT, 'opencode.json'), join(fixture, 'opencode.json')])
-    const configPath = join(fixture, 'opencode.json')
+    const configPath = join(fixture, 'plugin.json')
     const config = JSON.parse(readFileSync(configPath, 'utf8'))
     config.plugin = ['/home/checkout/src/plugins/pantheon-hooks.ts']
     writeFileSync(configPath, `${JSON.stringify(config)}\n`)

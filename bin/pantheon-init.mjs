@@ -54,6 +54,9 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --components agents,skills,instructions')
   console.log('  npx pantheon-opencode init --opencode-version v1|v2|auto')
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
+  console.log(
+    '  npx pantheon-opencode init --merge-dev-config <path> # Merge a dev config (off by default)',
+  )
   console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)')
   console.log(
     '  npx pantheon-opencode update [--stable]    # Update package + re-run init (default: beta channel)',
@@ -287,6 +290,7 @@ async function main() {
       '--version',
       '--opencode-version',
       '--components',
+      '--merge-dev-config',
     ])
     for (let i = 1; i < args.length; i++) {
       const arg = args[i]
@@ -368,6 +372,22 @@ async function main() {
       }
     }
 
+    // --merge-dev-config <path> opts IN to merging a contributor's personal
+    // OpenCode config into the generated one. Only third-party plugin/provider/
+    // compaction entries are merged; Pantheon-owned entries are always stripped.
+    // Absent this flag no repository-root config is read (product defaults come
+    // from the installer code, never from a dev checkout).
+    const mergeDevConfigIndex = args.indexOf('--merge-dev-config')
+    const inlineMergeDevConfig = args.find((arg) => arg.startsWith('--merge-dev-config='))
+    const mergeDevConfigOpt =
+      mergeDevConfigIndex >= 0
+        ? (args[mergeDevConfigIndex + 1] ?? null)
+        : (inlineMergeDevConfig?.split('=', 2)[1] ?? null)
+    if (mergeDevConfigIndex >= 0 && mergeDevConfigOpt === null) {
+      console.error('❌ --merge-dev-config requires a file path')
+      process.exit(1)
+    }
+
     const components = requestedComponents ?? [
       'agents',
       'skills',
@@ -403,6 +423,7 @@ async function main() {
         smallModel: smallModelOpt,
         preset: presetOpt,
         version: versionOpt ?? 'v1',
+        mergeDevConfig: mergeDevConfigOpt,
       })
     } catch (err) {
       if (err?.message === 'Canceled') {

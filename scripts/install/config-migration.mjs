@@ -229,8 +229,11 @@ function convertProviderV2toV1(_name, config) {
 /**
  * Convert V1 MCP config to V2.
  *
- * V1: { bifrost: { type: "remote", url: "...", enabled: true, timeout: 30000 } }
- * V2 installer output: { bifrost: { type: "remote", url: "...", enabled: true } }
+ * The server names are arbitrary — a user calls theirs whatever they like, and
+ * which MCP servers exist is entirely their configuration, never ours.
+ *
+ * V1: { myserver: { type: "remote", url: "...", enabled: true, timeout: 30000 } }
+ * V2 installer output: { myserver: { type: "remote", url: "...", enabled: true } }
  *
  * OpenCode 1.18.18 does not have an `mcp.servers` wrapper. It interprets
  * `servers` as the name of an MCP server and then rejects it with

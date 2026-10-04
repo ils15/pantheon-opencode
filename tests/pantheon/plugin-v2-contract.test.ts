@@ -1657,26 +1657,6 @@ async function main(): Promise<void> {
     )
   })
 
-  test('the opencode.json the release publishes loads plugin-v2 and not the V1 hooks plugin', () => {
-    // The inertness was not a wiring mistake inside plugin-v2.ts — it was the
-    // published manifest. `src/plugins/pantheon-hooks.ts` declares the block,
-    // but nothing in the shipped plugin list loads it, so it never ran. This
-    // pins the manifest so adding a V1 plugin reference becomes a visible
-    // decision rather than a silent one.
-    const manifest = JSON.parse(
-      readFileSync(new URL('../../opencode.json', import.meta.url), 'utf8'),
-    ) as { plugins?: string[] }
-    assert.ok(Array.isArray(manifest.plugins), 'opencode.json must declare a plugins array')
-    assert.ok(
-      manifest.plugins?.includes('src/plugin-v2'),
-      'the V2 plugin must be in the published plugin list',
-    )
-    assert.ok(
-      !manifest.plugins?.some((p) => p.includes('pantheon-hooks')),
-      'the V1 hooks plugin must not be in the published plugin list; its block is wired into plugin-v2 instead',
-    )
-  })
-
   test('the secret mask regex in plugin-v2 has not drifted from the V1 surface', () => {
     // The mask regex is duplicated (V1's copy is unreachable from V2). Drift
     // means a redacted value is no longer redacted, so the two must stay in

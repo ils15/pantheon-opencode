@@ -76,7 +76,6 @@
     "bin/*.mjs",
     "AGENTS.md",
     "CHANGELOG.md",
-    "opencode.json",
     "src/mcp/*.py",
     "src/instructions/*.instructions.md",
     "src/mcp/*.mjs",

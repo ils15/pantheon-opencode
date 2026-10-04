@@ -62,6 +62,44 @@ const COMPONENT_NAMES = [
 ]
 
 /**
+ * The product defaults an install seeds into the user's `opencode.json`.
+ *
+ * They live HERE, in code, rather than in a template shipped in the npm
+ * tarball: that template also carried a maintainer's private MCP endpoint,
+ * provider models and per-developer permission overrides, and shipping it to
+ * every installer was the bug (#199). Reading defaults off it meant deleting it
+ * silently stopped the seeding, so the defaults are now stated next to the code
+ * that consumes them.
+ *
+ * PERSONAL CONFIGURATION MUST NEVER BE SEEDED HERE: this is the installer's
+ * contract with every user, and a value that is only right on one machine
+ * belongs in that machine's own `opencode.json`. Deliberately NOT carried over
+ * from the template, each because it was personal rather than a product
+ * default:
+ *   - `provider` — pinned the maintainer's provider, model and modalities.
+ *   - `mcp` — a private remote MCP endpoint.
+ *   - `agent` — the maintainer's per-agent permission overrides.
+ *   - `permission.websearch: "deny"` — a personal restriction; a user may rely
+ *     on web search, so denying it is not ours to decide.
+ *   - `permission.bash` — the template's dev allowlist (git, npm, ruff, …), a
+ *     personal judgement about which commands to trust.
+ * Anything added here must be justifiable as "correct for a fresh install of
+ * the product, for anyone".
+ *
+ * Other seeding paths are untouched by this constant and still run: the config
+ * merge derives plugin refs, provider and compaction from a repository-root
+ * opencode.json when a contributor has one, and separately gates its own
+ * permission grants — `skill` on the skills component, `bash` unconditionally —
+ * on whether the user's own config already set them.
+ *
+ * Frozen, and copied only into a confirmed gap (never into a key the user
+ * already set), so nothing here can be mutated through a user's config.
+ */
+const PRODUCT_CONFIG_DEFAULTS = Object.freeze({
+  default_agent: 'zeus',
+})
+
+/**
  * Per-agent fields owned by the framework: for an agent that already exists in
  * the target config these are overwritten from the canonical source, and for a
  * new agent they are the seed. Everything else on an existing entry is the
@@ -158,8 +196,8 @@ function mergeMissing(target, source) {
 }
 
 /**
- * Resolve a plugin ref from the packaged opencode.json to a path INSIDE the
- * installed package.
+ * Resolve a plugin ref from the repository-root opencode.json to a path INSIDE
+ * the installed package.
  *
  * Only exact Pantheon plugin identities are resolved into the installed
  * package. In particular, a third-party absolute path ending in
@@ -514,10 +552,24 @@ export async function installOpenCode(
     }
   }
 
-  const pantheonConfigPath = join(ROOT, 'opencode.json')
+  // Product defaults live in code (PRODUCT_CONFIG_DEFAULTS). A repository-root
+  // opencode.json is a contributor's PERSONAL dev harness, not product data, so
+  // it must never be read just because it happens to exist: doing so silently
+  // injects the developer's provider/plugins/compaction into every config an
+  // install generates. The merge is therefore opt-in only, via
+  // --merge-dev-config <path>. Absent the flag, no root-level config is read.
+  const mergeDevConfigOpt = opts.mergeDevConfig ?? null
+  if (mergeDevConfigOpt !== null && typeof mergeDevConfigOpt !== 'string') {
+    throw new Error('mergeDevConfig requires a file path string')
+  }
+  const pantheonConfigPath =
+    typeof mergeDevConfigOpt === 'string' ? resolve(mergeDevConfigOpt) : null
   const targetConfigPath = join(target, 'opencode.json')
   const config = readJsonConfig(targetConfigPath)
-  const pantheonConfig = readJsonConfig(pantheonConfigPath)
+  const pantheonConfig =
+    pantheonConfigPath !== null && existsSync(pantheonConfigPath)
+      ? readJsonConfig(pantheonConfigPath)
+      : null
 
   // beta.5 preflight: fail BEFORE any files are written when the runtime
   // component needs toolchain pieces that are missing. Nothing has been
@@ -939,8 +991,11 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   // B.5 Ensure critical top-level OpenCode config sections
   // --------------------------------------------------------------------
-  if (config.default_agent === undefined && pantheonConfig.default_agent !== undefined) {
-    config.default_agent = pantheonConfig.default_agent
+  // Seeded from code, not from a packaged template: see
+  // PRODUCT_CONFIG_DEFAULTS. Only fills a gap — a user who already chose a
+  // default agent keeps it.
+  if (config.default_agent === undefined) {
+    config.default_agent = PRODUCT_CONFIG_DEFAULTS.default_agent
   }
   // Apply only explicit top-level model overrides. Existing values remain
   // untouched and an install without either flag leaves both fields absent.
@@ -982,8 +1037,9 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   // B.5.1 Hermetic plugin resolution (packaging fix)
   // --------------------------------------------------------------------
-  // The packaged opencode.json may reference plugins via developer-machine
-  // absolute paths (e.g. <dev>/pantheon/.../src/plugin.ts or
+  // A developer running from a checkout has a repository-root opencode.json
+  // that may reference plugins via developer-machine absolute paths (e.g.
+  // <dev>/pantheon/.../src/plugin.ts or
   // <dev>/pantheon/.../src/plugins/pantheon-hooks.ts). Copying those
   // verbatim into the user's config would break every global install on any
   // other machine. resolveInstalledPlugin() rewrites each entry to the plugin
@@ -1002,7 +1058,7 @@ export async function installOpenCode(
     if (config.plugin === undefined) config.plugin = []
     if (Array.isArray(config.plugin)) {
       config.plugin = removePantheonPluginReferences(config.plugin)
-      if (Array.isArray(pantheonConfig.plugin)) {
+      if (Array.isArray(pantheonConfig?.plugin)) {
         for (const plugin of pantheonConfig.plugin) {
           if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugin, plugin)) {
             config.plugin.push(deepClone(plugin))
@@ -1032,7 +1088,7 @@ export async function installOpenCode(
     }
     if (!Array.isArray(config.plugins)) config.plugins = []
     config.plugins = deduplicatePluginReferences(removePantheonPluginReferences(config.plugins))
-    if (Array.isArray(pantheonConfig.plugins)) {
+    if (Array.isArray(pantheonConfig?.plugins)) {
       for (const plugin of pantheonConfig.plugins) {
         if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugins, plugin)) {
           config.plugins.push(deepClone(plugin))
@@ -1058,33 +1114,68 @@ export async function installOpenCode(
     config.plugins.push(resolvedV2)
   }
 
-  if (config.provider === undefined && pantheonConfig.provider !== undefined) {
-    config.provider = deepClone(pantheonConfig.provider)
-  } else if (config.provider !== undefined && pantheonConfig.provider !== undefined) {
-    mergeMissing(config.provider, pantheonConfig.provider)
-  }
+  if (pantheonConfig !== null) {
+    if (config.provider === undefined && pantheonConfig.provider !== undefined) {
+      config.provider = deepClone(pantheonConfig.provider)
+    } else if (config.provider !== undefined && pantheonConfig.provider !== undefined) {
+      mergeMissing(config.provider, pantheonConfig.provider)
+    }
 
-  if (config.compaction === undefined && pantheonConfig.compaction !== undefined) {
-    config.compaction = deepClone(pantheonConfig.compaction)
-  } else if (config.compaction !== undefined && pantheonConfig.compaction !== undefined) {
-    mergeMissing(config.compaction, pantheonConfig.compaction)
+    if (config.compaction === undefined && pantheonConfig.compaction !== undefined) {
+      config.compaction = deepClone(pantheonConfig.compaction)
+    } else if (config.compaction !== undefined && pantheonConfig.compaction !== undefined) {
+      mergeMissing(config.compaction, pantheonConfig.compaction)
+    }
   }
 
   // --------------------------------------------------------------------
   // C. Merge permissions
   // --------------------------------------------------------------------
   if (config.permission === undefined) config.permission = {}
-  if (pantheonConfig.permission !== undefined) {
-    mergeMissing(config.permission, pantheonConfig.permission)
-  }
   if (
     typeof config.permission === 'object' &&
     config.permission !== null &&
     !Array.isArray(config.permission)
   ) {
-    if (componentSet.has('skills')) {
+    // Fill-if-absent, never overwrite. Pantheon's skills cannot be invoked
+    // without this grant, so an install that just installed them seeds it —
+    // but a user who deliberately set `permission.skill` (to `deny`, or to a
+    // partial map of their own) keeps their choice. This was an unconditional
+    // assignment nine lines below a comment that said "never overwrite", which
+    // silently flipped an explicit deny to allow.
+    //
+    // Gated on the skills component AND absent-only, which is the whole point:
+    // `skill` is a capability grant for something this install just wrote to
+    // disk. A runtime-only or agents-only install has nothing to grant, so it
+    // must not seed the key. It used to anyway, via the unconditional
+    // PRODUCT_CONFIG_DEFAULTS.permission merge that sat above this block —
+    // which also made this gate dead code.
+    if (componentSet.has('skills') && config.permission.skill === undefined) {
       config.permission.skill = { '*': 'allow' }
     }
+    // These five are the commands Pantheon's OWN agents must be able to run
+    // unattended to do their job: version control, package execution, and the
+    // test/lint pair every implementation agent reaches for. That is the whole
+    // bar for a grant made on every install.
+    //
+    // Anything beyond it is the installing user's judgement about which
+    // commands to trust on their machine, to be made in THEIR config — not ours
+    // to grant silently on their behalf. The personal dev allowlist this grew
+    // out of was the same category of decision, one layer further out of view.
+    //
+    // Specifically NOT granted, and why:
+    //   - `curl` — arbitrary network egress; the widest grant on the list and
+    //     not required to install or run anything here.
+    //   - `docker` — host/daemon access; a container runtime is not an
+    //     installation requirement.
+    //   - `gh` — third-party account access on someone's behalf; a GitHub CLI
+    //     login is never something an installer may assume.
+    //   - `pip`, `black`, `make` — ordinary toolchain commands with no Pantheon
+    //     agent dependency; users who want them can add them.
+    //
+    // NOTE: this grant is NOT gated on the skills component — unlike
+    // permission.skill above, agents are installed by the agents component and
+    // the test/lint commands are needed whichever components were selected.
     if (config.permission.bash === undefined) {
       config.permission.bash = {
         'git *': 'allow',
@@ -1092,12 +1183,6 @@ export async function installOpenCode(
         'npx *': 'allow',
         'pytest *': 'allow',
         'ruff *': 'allow',
-        'black *': 'allow',
-        'pip *': 'allow',
-        'docker *': 'allow',
-        'curl *': 'allow',
-        'gh *': 'allow',
-        'make *': 'allow',
       }
     }
   }
