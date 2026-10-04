@@ -1128,6 +1128,29 @@ export async function installOpenCode(
     if (componentSet.has('skills')) {
       config.permission.skill = { '*': 'allow' }
     }
+    // These five are the commands Pantheon's OWN agents must be able to run
+    // unattended to do their job: version control, package execution, and the
+    // test/lint pair every implementation agent reaches for. That is the whole
+    // bar for a grant made on every install.
+    //
+    // Anything beyond it is the installing user's judgement about which
+    // commands to trust on their machine, to be made in THEIR config — not ours
+    // to grant silently on their behalf. The personal dev allowlist this grew
+    // out of was the same category of decision, one layer further out of view.
+    //
+    // Specifically NOT granted, and why:
+    //   - `curl` — arbitrary network egress; the widest grant on the list and
+    //     not required to install or run anything here.
+    //   - `docker` — host/daemon access; a container runtime is not an
+    //     installation requirement.
+    //   - `gh` — third-party account access on someone's behalf; a GitHub CLI
+    //     login is never something an installer may assume.
+    //   - `pip`, `black`, `make` — ordinary toolchain commands with no Pantheon
+    //     agent dependency; users who want them can add them.
+    //
+    // NOTE: this grant is NOT gated on the skills component — unlike
+    // permission.skill below, agents are installed by the agents component and
+    // the test/lint commands are needed whichever components were selected.
     if (config.permission.bash === undefined) {
       config.permission.bash = {
         'git *': 'allow',
@@ -1135,12 +1158,6 @@ export async function installOpenCode(
         'npx *': 'allow',
         'pytest *': 'allow',
         'ruff *': 'allow',
-        'black *': 'allow',
-        'pip *': 'allow',
-        'docker *': 'allow',
-        'curl *': 'allow',
-        'gh *': 'allow',
-        'make *': 'allow',
       }
     }
   }

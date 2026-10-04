@@ -217,7 +217,36 @@ test('installed package resolves hooks to its installed absolute path', () => {
     // ships. If they move back to a template — or back out of the installer —
     // these two assertions are what fails.
     assert.equal(config.default_agent, 'zeus')
+    // The skills component IS selected by this install (`pantheon-init` default
+    // component list includes skills, and no --components narrows it), so the
+    // grant below is the gated one — not the unconditional merge it used to be
+    // shadowed by. Assert the component explicitly so the two cannot be
+    // confused again.
+    assert.ok(
+      existsSync(join(project, '.opencode', 'skills')),
+      'this install must select the skills component for the skill grant to apply',
+    )
     assert.equal(config.permission.skill['*'], 'allow')
+    // Regression guard: the default bash allowlist is the five commands
+    // Pantheon's own agents must run unattended, and nothing else. Growing it
+    // again is a silent product/security decision made for every installer, so
+    // the allow-set and the deny-set are both pinned here.
+    const bashKeys = Object.keys(config.permission.bash ?? {})
+    for (const required of ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *']) {
+      assert.ok(bashKeys.includes(required), `permission.bash must allow \`${required}\``)
+    }
+    for (const forbidden of ['black', 'pip', 'docker', 'curl', 'gh', 'make']) {
+      assert.equal(
+        bashKeys.some((key) => key === `${forbidden} *` || key === forbidden),
+        false,
+        `permission.bash must NOT pre-allow \`${forbidden}\` — that is the installing user's call`,
+      )
+    }
+    assert.deepEqual(
+      bashKeys.sort(),
+      ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *'],
+      'permission.bash must be exactly the five agent-required commands',
+    )
     assert.doesNotMatch(JSON.stringify(config), executableForbidden)
     const tui = JSON.parse(readFileSync(join(project, '.opencode', 'tui.json'), 'utf8'))
     // Installer contract (af40321): the TUI plugin is COPIED to the target
