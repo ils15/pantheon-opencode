@@ -236,13 +236,22 @@ npx pantheon-opencode init --opencode-version v2
 npx pantheon-opencode init --opencode-version auto
 ```
 
-`--version v1|v2|auto` is accepted as the older selector spelling when used
-after `init`. `auto` is conservative, not general platform autodetection:
-`OPENCODE_VERSION=v1|v2` wins; otherwise an `OPENCODE_BIN` ending in
-`opencode2` selects V2; every other case selects V1. The installer removes
-Pantheon references from both config shapes before writing only the selected
-Pantheon registration. Third-party entries are not converted or claimed by
-this rule.
+`auto` is the default. `--version v1|v2|auto` is accepted as the older
+selector spelling when used after `init`. `auto` resolves the generation from
+the host in this order: an explicit `OPENCODE_VERSION=v1|v2` wins; otherwise an
+`OPENCODE_BIN` path ending in `opencode2` selects V2; otherwise the host
+binary is asked for its `--version` and a major of 2 or more selects V2. Every
+other case — an unreadable probe, an unparseable banner, or a banner whose
+version-like tokens contradict each other with no tool name to break the tie —
+warns once and falls back to V1, because a plural `plugins` directory entry on
+an unknown 1.x host loses the plugin entirely.
+
+The probe prefers the token that follows the tool name, so a runtime token
+ahead of it (`node v22.1.0 (opencode 1.18.33)`) or a trailing build date
+(`opencode v1.18.33 built 2026.10.04`) cannot flip the generation. The
+installer removes Pantheon references from both config shapes before writing
+only the selected Pantheon registration. Third-party entries are not converted
+or claimed by this rule.
 
 The `pantheon_cost` report resolves its database by PATH, in this order: an
 explicit `dbPath` supplied by the tool caller, then

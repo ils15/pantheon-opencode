@@ -95,9 +95,9 @@ That file intentionally contains the V2-only registration:
 `plugin-v2` transforms configuration drafts; it does not provide V1 delegate
 tools, hooks, BackgroundJobBoard integration, compaction, or automatic resume.
 If you prefer the supported installer, use
-`npx pantheon-opencode init --project --opencode-version v1` or `v2` instead;
-`auto` is only the conservative selector described above, not general
-platform detection.
+`npx pantheon-opencode init --project --opencode-version v1` or `v2` to pin the
+generation. `auto` is the default and resolves the generation from the host by
+probing its `--version`; see the installer docs for the full precedence order.
 
 ### How It Works
 

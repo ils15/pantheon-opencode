@@ -171,11 +171,20 @@ npx pantheon-opencode init --opencode-version v2
 npx pantheon-opencode init --opencode-version auto
 ```
 
-`--version v1|v2|auto` é aceito como a grafia antiga do seletor quando usado
-depois de `init`. `auto` é conservador, não uma autodetecção geral de
-plataforma: `OPENCODE_VERSION=v1|v2` vence; caso contrário, um `OPENCODE_BIN`
-terminando em `opencode2` seleciona V2; qualquer outro caso seleciona V1. O
-instalador remove referências Pantheon das duas formas de config antes de
+`auto` é o padrão. `--version v1|v2|auto` é aceito como a grafia antiga do seletor
+quando usado depois de `init`. `auto` resolve a geração a partir do host nesta
+ordem: um `OPENCODE_VERSION=v1|v2` explícito vence; caso contrário, um
+`OPENCODE_BIN` terminando em `opencode2` seleciona V2; caso contrário o binário
+do host é consultado com `--version` e uma major >= 2 seleciona V2. Qualquer
+outro caso — uma sonda ilegível, um banner não interpretável, ou um banner
+cujos tokens de versão se contradizem sem um nome de ferramenta que desfaça o
+empate — avisa uma vez e volta para V1, porque uma entrada de diretório em
+`plugins` plural em um host 1.x desconhecido perde o plugin inteiro.
+
+A sonda prefere o token que vem logo após o nome da ferramenta, então um token
+de runtime antes dele (`node v22.1.0 (opencode 1.18.33)`) ou uma data de build
+no final (`opencode v1.18.33 built 2026.10.04`) não conseguem virar a geração.
+O instalador remove referências Pantheon das duas formas de config antes de
 gravar apenas o registro Pantheon selecionado. Entradas de terceiros não são
 convertidas nem reivindicadas por essa regra.
 

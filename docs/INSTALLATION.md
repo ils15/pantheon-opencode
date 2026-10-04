@@ -144,13 +144,16 @@ npx pantheon-opencode init --opencode-version v2
 npx pantheon-opencode init --opencode-version auto
 ```
 
-`--version v1|v2` remains accepted after `init` as the legacy spelling;
-use `--opencode-version auto` for the conservative selector.
-`auto` is conservative, not general platform or runtime autodetection:
-`OPENCODE_VERSION=v1|v2` wins; otherwise an `OPENCODE_BIN` path ending in
-`opencode2` selects V2, and all other cases select V1. It never installs both
-Pantheon plugin generations. Third-party plugin entries are retained as
-third-party entries and are not converted by this selection.
+`auto` is the default, so the flag is only needed to override it.
+`--version v1|v2` remains accepted after `init` as the legacy spelling.
+`auto` reads the generation from the host: `OPENCODE_VERSION=v1|v2` wins;
+otherwise an `OPENCODE_BIN` path ending in `opencode2` selects V2; otherwise
+the host binary is asked for its `--version` and a major of 2 or more selects
+V2. Any other case — an unreadable probe, an unparseable banner, or
+contradictory version tokens with no tool name to break the tie — warns once
+and selects V1. It never installs both Pantheon plugin generations. Third-party
+plugin entries are retained as third-party entries and are not converted by
+this selection.
 
 ### Config nativo V2
 
