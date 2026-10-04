@@ -89,14 +89,14 @@ const COMPONENT_NAMES = [
  * Other seeding paths are untouched by this constant and still run: the config
  * merge derives plugin refs, provider and compaction from a repository-root
  * opencode.json when a contributor has one, and separately gates its own
- * permission.bash allowlist on the skills component.
+ * permission grants — `skill` on the skills component, `bash` unconditionally —
+ * on whether the user's own config already set them.
  *
- * Frozen: mergeMissing() deep-clones every value it copies out, so nothing here
- * is ever handed to a user's config by reference.
+ * Frozen, and copied only into a confirmed gap (never into a key the user
+ * already set), so nothing here can be mutated through a user's config.
  */
 const PRODUCT_CONFIG_DEFAULTS = Object.freeze({
   default_agent: 'zeus',
-  permission: { skill: { '*': 'allow' } },
 })
 
 /**
@@ -1116,16 +1116,25 @@ export async function installOpenCode(
   // C. Merge permissions
   // --------------------------------------------------------------------
   if (config.permission === undefined) config.permission = {}
-  // Merge-missing, never overwrite: an existing user's `permission` block keeps
-  // every value it has and only gains the keys it is missing. Defaults come
-  // from code (PRODUCT_CONFIG_DEFAULTS), not from a packaged template.
-  mergeMissing(config.permission, PRODUCT_CONFIG_DEFAULTS.permission)
   if (
     typeof config.permission === 'object' &&
     config.permission !== null &&
     !Array.isArray(config.permission)
   ) {
-    if (componentSet.has('skills')) {
+    // Fill-if-absent, never overwrite. Pantheon's skills cannot be invoked
+    // without this grant, so an install that just installed them seeds it —
+    // but a user who deliberately set `permission.skill` (to `deny`, or to a
+    // partial map of their own) keeps their choice. This was an unconditional
+    // assignment nine lines below a comment that said "never overwrite", which
+    // silently flipped an explicit deny to allow.
+    //
+    // Gated on the skills component AND absent-only, which is the whole point:
+    // `skill` is a capability grant for something this install just wrote to
+    // disk. A runtime-only or agents-only install has nothing to grant, so it
+    // must not seed the key. It used to anyway, via the unconditional
+    // PRODUCT_CONFIG_DEFAULTS.permission merge that sat above this block —
+    // which also made this gate dead code.
+    if (componentSet.has('skills') && config.permission.skill === undefined) {
       config.permission.skill = { '*': 'allow' }
     }
     // These five are the commands Pantheon's OWN agents must be able to run

@@ -268,6 +268,59 @@ test('installed package resolves hooks to its installed absolute path', () => {
   }
 })
 
+test('installed package leaves an explicit permission.skill choice alone', () => {
+  // Same mechanism as the installer tests that seed an existing user config
+  // (runInstall(target, existingConfig) in install-opencode.test.mjs): write the
+  // user's own opencode.json into the target, then install over it. This one
+  // does it against the real tarball, because the bug is in shipped code.
+  const tarball = pack()
+  const work = mkdtempSync(join(tmpdir(), 'pantheon-prefix-skill-'))
+  const project = join(work, 'project')
+  mkdirSync(project)
+  try {
+    const sandboxConfig = join(work, 'sandbox-config')
+    mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true })
+    execFileSync('npm', ['install', '--prefix', work, join(ROOT, tarball)], {
+      encoding: 'utf8',
+      env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
+    })
+    // A user who locked skills down on purpose. The skills component IS selected
+    // (same default component list as the test above), so the installer reaches
+    // the grant — and must decline to make it.
+    writeFileSync(
+      join(project, 'opencode.json'),
+      JSON.stringify(
+        { permission: { skill: { '*': 'deny' }, websearch: 'allow' }, theme: 'user-theme' },
+        null,
+        2,
+      ),
+    )
+    const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
+    const result = spawnSync(
+      process.execPath,
+      [cli, 'init', '--project', '--no-mcp', '--headless', '-y'],
+      { cwd: project, encoding: 'utf8' },
+    )
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.ok(
+      existsSync(join(project, '.opencode', 'skills')),
+      'this install must select the skills component, or the guard proves nothing',
+    )
+    const config = JSON.parse(readFileSync(join(project, 'opencode.json'), 'utf8'))
+    // The regression: an unconditional `config.permission.skill = {'*':'allow'}`
+    // silently flipped this deny to allow on every install that selected skills.
+    assert.deepEqual(config.permission.skill, { '*': 'deny' }, 'explicit deny must survive')
+    // The user's own neighbouring values are untouched too — the merge is
+    // absent-only, not a wholesale replacement of the block.
+    assert.equal(config.permission.websearch, 'allow')
+    assert.equal(config.theme, 'user-theme')
+    assert.equal(config.default_agent, 'zeus', 'unrelated defaults are still seeded')
+  } finally {
+    rmSync(join(ROOT, tarball), { force: true })
+    rmSync(work, { recursive: true, force: true })
+  }
+})
+
 test('package validator rejects executable templates with machine paths', () => {
   const fixture = mkdtempSync(join(tmpdir(), 'pantheon-package-fixture-'))
   try {
