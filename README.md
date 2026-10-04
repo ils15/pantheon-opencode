@@ -499,6 +499,14 @@ Ideas, bug reports, documentation improvements, and code contributions are
 welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue
 or pull request.
 
+### Project-level `opencode.json`
+
+The published package carries no `opencode.json` template. `init` still writes
+your project's `opencode.json` itself, so installs are unaffected. Contributors
+who keep a project-level `opencode.json` for their own OpenCode sessions should
+leave it untracked — `.git/info/exclude` per clone, or a shared `.gitignore`
+decision — rather than versioning it.
+
 ## Citation and DOI
 
 Pantheon is released under the [MIT License](LICENSE). Cite the
