@@ -443,7 +443,14 @@ test('fresh install writes experimental.subagent_depth=2 and is byte-identical o
     assert.equal(firstConfig.experimental?.subagent_depth, 2)
     assert.equal('subagent_depth' in firstConfig, false)
 
-    await installOpenCode(target, false, false, COMPONENTS, { yes: true, headless: true })
+    // Explicit 'v1' on BOTH sides: this asserts idempotency, not the host
+    // gate. runInstall defaults to 'v1', so leaving this call on the default
+    // made the two halves disagree on any 2.x developer host.
+    await installOpenCode(target, false, false, COMPONENTS, {
+      yes: true,
+      headless: true,
+      version: 'v1',
+    })
     assert.equal(readFileSync(configPath, 'utf8'), firstBytes)
   } finally {
     rmSync(target, { recursive: true, force: true })

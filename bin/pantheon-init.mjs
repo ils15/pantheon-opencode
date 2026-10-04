@@ -8,8 +8,10 @@
  * installOpenCode() from scripts/install/opencode.mjs.
  *
  * Dual-version install (Phase 3): the generated config is V1-shaped and valid
- * under BOTH OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2`
- * v0.0.0-next-17444). V2 reads the same config locations and normalizes V1
+ * under BOTH OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2`, OpenCode 2.x —
+ * `opencode2 --version` prints "opencode v2.0.22"; an early 2.x prerelease
+ * printed "0.0.0-next-17444", which is history and not a host observation).
+ * V2 reads the same config locations and normalizes V1
  * fields in memory — no native V2 conversion. `--version v2` labels the
  * install for the operator; state isolation is a runtime concern
  * (OPENCODE_DB ~/.local/share/opencode/opencode-v2.db, service port 49375).
@@ -422,7 +424,7 @@ async function main() {
         model: modelOpt,
         smallModel: smallModelOpt,
         preset: presetOpt,
-        version: versionOpt ?? 'v1',
+        version: versionOpt ?? 'auto',
         mergeDevConfig: mergeDevConfigOpt,
       })
     } catch (err) {

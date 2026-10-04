@@ -183,7 +183,10 @@ test('installed package resolves hooks to its installed absolute path', () => {
     const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
     const result = spawnSync(
       process.execPath,
-      [cli, 'init', '--project', '--no-mcp', '--headless', '-y'],
+      // --opencode-version v1 pins the generation: this asserts path resolution
+      // inside the INSTALLED package, not the host gate. Left on the default it
+      // resolves against the developer's real OpenCode and asserts nothing.
+      [cli, 'init', '--project', '--no-mcp', '--headless', '-y', '--opencode-version', 'v1'],
       {
         cwd: project,
         encoding: 'utf8',
@@ -200,10 +203,13 @@ test('installed package resolves hooks to its installed absolute path', () => {
       false,
       'installed package must not ship an opencode.json template',
     )
-    // Installer contract: BOTH pantheon plugins are registered unconditionally
-    // — the root-level delegation plugin (src/plugin.ts) and the runtime hooks
-    // plugin (src/plugins/pantheon-hooks.ts) — resolved to absolute paths
-    // inside the INSTALLED package (never dev-machine paths).
+    // Installer contract (this run is pinned to v1 above): both pantheon plugins
+    // are registered on the V1 branch — the root-level delegation plugin
+    // (src/plugin.ts) and the runtime hooks plugin (src/plugins/pantheon-hooks.ts)
+    // — resolved to absolute paths inside the INSTALLED package (never
+    // dev-machine paths). Not unconditional: the V2 branch registers only the
+    // src/plugin-v2 directory under the plural `plugins` key, and the default
+    // generation now comes from the host-version gate.
     assert.deepEqual(config.plugin, [
       join(installedRoot, 'src', 'plugin.ts'),
       join(installedRoot, 'src', 'plugins', 'pantheon-hooks.ts'),
@@ -298,7 +304,9 @@ test('installed package leaves an explicit permission.skill choice alone', () =>
     const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
     const result = spawnSync(
       process.execPath,
-      [cli, 'init', '--project', '--no-mcp', '--headless', '-y'],
+      // Pinned to v1 for the same reason as the test above: the subject is the
+      // permission merge, not the host-version gate.
+      [cli, 'init', '--project', '--no-mcp', '--headless', '-y', '--opencode-version', 'v1'],
       { cwd: project, encoding: 'utf8' },
     )
     assert.equal(result.status, 0, result.stderr || result.stdout)

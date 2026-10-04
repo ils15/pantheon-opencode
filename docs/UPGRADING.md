@@ -84,19 +84,46 @@ the selected generation. It does not mix `src/plugin.ts` or
 third-party entries are retained and are not converted.
 
 ```bash
-# Pick one contract for this OpenCode configuration
+# Pin one contract for this OpenCode configuration
 npx pantheon-opencode init --opencode-version v1
 npx pantheon-opencode init --opencode-version v2
 
-# Conservative selector: explicit OPENCODE_VERSION wins; otherwise
-# OPENCODE_BIN ending in opencode2 selects V2, and all other cases select V1.
+# The default. Reads the generation from the host: explicit
+# OPENCODE_VERSION wins; otherwise an OPENCODE_BIN ending in opencode2
+# selects V2; otherwise the host's own --version decides (major >= 2 => V2).
 npx pantheon-opencode init --opencode-version auto
 ```
 
-`--version v1|v2` remains accepted after `init` as the legacy spelling; use
-`--opencode-version auto` for the conservative selector.
-`auto` is not general platform autodetection and never installs both Pantheon
-plugin generations.
+`--version v1|v2` remains accepted after `init` as the legacy spelling.
+`auto` is the default and never installs both Pantheon plugin generations.
+
+### Debugging: the host is on the wrong generation
+
+An install that lands on the wrong generation means the gate could not read the
+host, not that it guessed wrong. `auto` falls back to V1 — with one visible
+warning — in exactly three situations:
+
+- **The probe could not run.** `opencode` was not on `PATH`, or
+  `OPENCODE_BIN` pointed somewhere unrunnable. The warning quotes the spawn
+  error. Fix the path, or pass `--opencode-version v2` explicitly.
+- **The banner had no readable version.** Some hosts print a bare build date
+  (`built 2026.10.04`) instead of a version; a date is never read as a major.
+  The warning quotes what the probe returned.
+- **The banner contradicted itself.** Version-like tokens that disagree with no
+  tool name to break the tie, for example `1.18.33 (runtime 2.0.0)`. The
+  warning lists the majors it found. Pass the generation explicitly.
+
+To see what the gate actually reads, run the host binary yourself:
+
+```bash
+opencode --version
+```
+
+The gate prefers the version token that immediately follows the tool name, so
+`node v22.1.0 (opencode 1.18.33)` resolves as a 1.x host and
+`opencode v1.18.33 built 2026.10.04` resolves as 1.x too. If the resolution is
+still not what you expect, `--opencode-version v1|v2` overrides it outright and
+`OPENCODE_VERSION` overrides everything except the explicit flag.
 
 ### Updating between beta releases (1.5.0-beta.5+)
 

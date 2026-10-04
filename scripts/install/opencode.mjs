@@ -4,10 +4,14 @@
  *
  * Dual-version install (Phase 3): V1 and V2 receive the schema each runtime
  * actually consumes. V1 (`opencode` 1.18.x) uses the singular `plugin` key;
- * V2 (`opencode2` v0.0.0-next-17444) converts that list to `plugins` before
- * writing its config. Known V2 beta gaps handled here: top-level
- * `subagent_depth` is migrated to `experimental.subagent_depth`, and the
- * instruction content is consolidated into AGENTS.md, which both versions
+ * V2 (`opencode2`, OpenCode 2.x — `opencode2 --version` prints
+ * "opencode v2.0.22") converts that list to `plugins` before
+ * writing its config. An early 2.x prerelease printed "0.0.0-next-17444"
+ * instead; that is history, not what hosts report today, and it must not be
+ * cited as an observation (see the precedence rationale in
+ * scripts/install/opencode-version.mjs). Known V2 beta gaps handled here:
+ * top-level `subagent_depth` is migrated to `experimental.subagent_depth`, and
+ * the instruction content is consolidated into AGENTS.md, which both versions
  * load. Pass --version v2 to pantheon-init for an informational label; state
  * isolation is handled at runtime via OPENCODE_DB.
  */
@@ -515,7 +519,12 @@ export async function installOpenCode(
   // --opencode-version=v2. V2 normalizes V1 fields in memory (no rewrite) and
   // isolates its state DB via OPENCODE_DB (~/.local/share/opencode/opencode-v2.db)
   // with a distinct service port (49375 vs V1's 49374).
-  const version = resolveOpenCodeVersion(opts.version ?? 'v1')
+  // Default to 'auto' so a flagless run resolves against the actual host. A
+  // hardcoded 'v1' here (or in bin/pantheon-init.mjs) is what shipped the bug:
+  // the V1 branch writes .ts file paths that a 2.x host drops from the config.
+  // `opts` is forwarded as the resolver's options bag so a caller (and CI) can
+  // pin env/probe instead of spawning a real host binary.
+  const version = resolveOpenCodeVersion(opts.version ?? 'auto', opts)
   if (version === 'v2') {
     info(
       'OpenCode V2 target — shared config; state isolated via OPENCODE_DB ' +
