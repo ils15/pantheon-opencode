@@ -552,10 +552,24 @@ export async function installOpenCode(
     }
   }
 
-  const pantheonConfigPath = join(ROOT, 'opencode.json')
+  // Product defaults live in code (PRODUCT_CONFIG_DEFAULTS). A repository-root
+  // opencode.json is a contributor's PERSONAL dev harness, not product data, so
+  // it must never be read just because it happens to exist: doing so silently
+  // injects the developer's provider/plugins/compaction into every config an
+  // install generates. The merge is therefore opt-in only, via
+  // --merge-dev-config <path>. Absent the flag, no root-level config is read.
+  const mergeDevConfigOpt = opts.mergeDevConfig ?? null
+  if (mergeDevConfigOpt !== null && typeof mergeDevConfigOpt !== 'string') {
+    throw new Error('mergeDevConfig requires a file path string')
+  }
+  const pantheonConfigPath =
+    typeof mergeDevConfigOpt === 'string' ? resolve(mergeDevConfigOpt) : null
   const targetConfigPath = join(target, 'opencode.json')
   const config = readJsonConfig(targetConfigPath)
-  const pantheonConfig = readJsonConfig(pantheonConfigPath)
+  const pantheonConfig =
+    pantheonConfigPath !== null && existsSync(pantheonConfigPath)
+      ? readJsonConfig(pantheonConfigPath)
+      : null
 
   // beta.5 preflight: fail BEFORE any files are written when the runtime
   // component needs toolchain pieces that are missing. Nothing has been
@@ -1044,7 +1058,7 @@ export async function installOpenCode(
     if (config.plugin === undefined) config.plugin = []
     if (Array.isArray(config.plugin)) {
       config.plugin = removePantheonPluginReferences(config.plugin)
-      if (Array.isArray(pantheonConfig.plugin)) {
+      if (Array.isArray(pantheonConfig?.plugin)) {
         for (const plugin of pantheonConfig.plugin) {
           if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugin, plugin)) {
             config.plugin.push(deepClone(plugin))
@@ -1074,7 +1088,7 @@ export async function installOpenCode(
     }
     if (!Array.isArray(config.plugins)) config.plugins = []
     config.plugins = deduplicatePluginReferences(removePantheonPluginReferences(config.plugins))
-    if (Array.isArray(pantheonConfig.plugins)) {
+    if (Array.isArray(pantheonConfig?.plugins)) {
       for (const plugin of pantheonConfig.plugins) {
         if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugins, plugin)) {
           config.plugins.push(deepClone(plugin))
@@ -1100,16 +1114,18 @@ export async function installOpenCode(
     config.plugins.push(resolvedV2)
   }
 
-  if (config.provider === undefined && pantheonConfig.provider !== undefined) {
-    config.provider = deepClone(pantheonConfig.provider)
-  } else if (config.provider !== undefined && pantheonConfig.provider !== undefined) {
-    mergeMissing(config.provider, pantheonConfig.provider)
-  }
+  if (pantheonConfig !== null) {
+    if (config.provider === undefined && pantheonConfig.provider !== undefined) {
+      config.provider = deepClone(pantheonConfig.provider)
+    } else if (config.provider !== undefined && pantheonConfig.provider !== undefined) {
+      mergeMissing(config.provider, pantheonConfig.provider)
+    }
 
-  if (config.compaction === undefined && pantheonConfig.compaction !== undefined) {
-    config.compaction = deepClone(pantheonConfig.compaction)
-  } else if (config.compaction !== undefined && pantheonConfig.compaction !== undefined) {
-    mergeMissing(config.compaction, pantheonConfig.compaction)
+    if (config.compaction === undefined && pantheonConfig.compaction !== undefined) {
+      config.compaction = deepClone(pantheonConfig.compaction)
+    } else if (config.compaction !== undefined && pantheonConfig.compaction !== undefined) {
+      mergeMissing(config.compaction, pantheonConfig.compaction)
+    }
   }
 
   // --------------------------------------------------------------------
@@ -1158,7 +1174,7 @@ export async function installOpenCode(
     //     agent dependency; users who want them can add them.
     //
     // NOTE: this grant is NOT gated on the skills component — unlike
-    // permission.skill below, agents are installed by the agents component and
+    // permission.skill above, agents are installed by the agents component and
     // the test/lint commands are needed whichever components were selected.
     if (config.permission.bash === undefined) {
       config.permission.bash = {
