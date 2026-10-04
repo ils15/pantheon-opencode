@@ -5,7 +5,7 @@
  * - 3 self-sufficient tools via V2 tool.transform (hashline_edit,
  *   pantheon_cost, pantheon_model — see ./pantheon/v2-tools.ts; the goal tools
  *   need V1 infrastructure and are absent from this surface)
- * - 4 event subscriptions (session.created, idle, error, compacted)
+ * - 5 event subscriptions (session.created, idle, deleted, error, compacted)
  * - Session hooks (prompt, context, compaction)
  * - A tool `execute.before` hook that ENFORCES read-only sessions: the agent
  *   arrives on the host's event, a read-only agent (apollo/gaia) registers its
@@ -490,6 +490,9 @@ async function handleV2SessionEvent(event: V2SessionEvent): Promise<void> {
     case 'session.idle':
       await onSessionIdle(event)
       break
+    case 'session.deleted':
+      await onSessionDeleted(event)
+      break
     case 'session.error':
       await onSessionError(event)
       break
@@ -542,6 +545,41 @@ async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
       // Fail-open: idle continuation must never break the session.
     }
   }
+}
+
+/**
+ * Session-deleted handler: drop the read-only registration.
+ *
+ * `readOnlyRegistry` is a process-wide singleton and the `execute.before` hook
+ * populates it on every delegated `apollo`/`gaia` call. V1 prunes it on
+ * `session.deleted` (`src/plugin.ts`); V2 did not, so on a long-lived host
+ * every finished investigation session stayed registered for the life of the
+ * process — a slow leak, and a stale entry that would keep denying tools if
+ * the id were ever reused.
+ *
+ * This mirrors V1: unregister the session, which drops its agent entry with it
+ * (the registry stores one `ReadOnlyEntry` per session id). V1 also clears a
+ * `sessionAgents` map here; V2 has no such map and needs no equivalent, since
+ * it reads the active agent off the event instead of caching it.
+ *
+ * The id is read from `properties.sessionID` — the field the sibling
+ * `session.idle` handler already uses — falling back to V1's
+ * `properties.info.id`. Both spellings are accepted because the V2 SDK types
+ * `session.deleted` as `{ sessionID, info }` and a miss here is a silent leak,
+ * which is precisely the bug this handler exists to close.
+ */
+async function onSessionDeleted(event: V2SessionEvent): Promise<void> {
+  const properties = event.properties
+  if (properties === undefined) return
+  const info = properties.info
+  const sessionID =
+    typeof properties.sessionID === 'string'
+      ? properties.sessionID
+      : info !== null && typeof info === 'object'
+        ? (info as { id?: unknown }).id
+        : undefined
+  if (typeof sessionID !== 'string' || sessionID === '') return
+  readOnlyRegistry.unregister(sessionID)
 }
 
 /**

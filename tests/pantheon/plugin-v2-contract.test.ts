@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import Module, { createRequire } from 'node:module'
 
+import { readOnlyRegistry, syncReadOnlySession } from '../../src/pantheon/delegation-enforce.ts'
+
 type Registration = { dispose: () => Promise<void> }
 
 type JsonLoader = (module: { exports: unknown }, filename: string) => void
@@ -655,6 +657,107 @@ async function main(): Promise<void> {
     assert.equal(signal?.aborted, true, 'v2Dispose aborts the event subscription')
     await finished
     assert.equal(streamClosed, true, 'event iterator exits after the disposal signal')
+  })
+
+  // ─── Registry leak: session.deleted (S3) ────────────────────────────
+
+  test('session.deleted drops the read-only registration instead of leaking it', async () => {
+    // `readOnlyRegistry` is process-wide and the V2 execute.before hook
+    // populates it, but V2 never pruned it: there was no `session.deleted`
+    // case in `handleV2SessionEvent`, so every finished session left an entry
+    // behind for the life of the process. V1 prunes it. Drive the REAL event
+    // subscription path rather than the handler directly, so the test also
+    // proves the event is routed.
+    const sessionID = 'ses-v2-deleted-leak'
+    // Precondition: a delegated apollo session registered itself.
+    syncReadOnlySession(readOnlyRegistry, sessionID, 'apollo')
+    assert.equal(
+      readOnlyRegistry.has(sessionID),
+      true,
+      'precondition: the read-only registration exists before the delete',
+    )
+
+    let handled!: () => void
+    const wasHandled = new Promise<void>((resolve) => {
+      handled = resolve
+    })
+
+    await plugin.setup(
+      makeBaseContext({
+        event: {
+          subscribe: ({ signal }: { signal: AbortSignal }) => ({
+            async *[Symbol.asyncIterator]() {
+              yield {
+                type: 'session.deleted',
+                properties: { sessionID, info: { id: sessionID } },
+              }
+              // The consumer asks for the NEXT event only after it has awaited
+              // the handler for this one, so resolving here means the handler
+              // has already run — no sleep, no race.
+              handled()
+              await new Promise<void>((resolve) => {
+                if (signal.aborted) {
+                  resolve()
+                  return
+                }
+                signal.addEventListener('abort', () => resolve(), { once: true })
+              })
+            },
+          }),
+        },
+      }) as never,
+    )
+
+    await wasHandled
+
+    assert.equal(
+      readOnlyRegistry.has(sessionID),
+      false,
+      'a deleted session must not remain registered as read-only',
+    )
+    assert.equal(
+      readOnlyRegistry.get(sessionID),
+      undefined,
+      "the deleted session's agent entry must be dropped too",
+    )
+    v2Dispose()
+  })
+
+  test('session.deleted resolves the session id from info.id as well', async () => {
+    // V1 reads `ev.properties.info.id`; the V2 SDK types `session.deleted` as
+    // `{ sessionID, info }`. Both spellings must drop the entry — reading only
+    // one would reintroduce the leak under the other payload.
+    const sessionID = 'ses-v2-deleted-infoid'
+    syncReadOnlySession(readOnlyRegistry, sessionID, 'gaia')
+    assert.equal(readOnlyRegistry.has(sessionID), true)
+
+    let handled!: () => void
+    const wasHandled = new Promise<void>((resolve) => {
+      handled = resolve
+    })
+
+    await plugin.setup(
+      makeBaseContext({
+        event: {
+          subscribe: () => ({
+            async *[Symbol.asyncIterator]() {
+              // `sessionID` deliberately absent: info.id only.
+              yield { type: 'session.deleted', properties: { info: { id: sessionID } } }
+              handled()
+              await new Promise<void>(() => {})
+            },
+          }),
+        },
+      }) as never,
+    )
+
+    await wasHandled
+    assert.equal(
+      readOnlyRegistry.has(sessionID),
+      false,
+      'the info.id payload shape must also drop the registration',
+    )
+    v2Dispose()
   })
 
   // ─── Tool Registration Tests ────────────────────────────────────────

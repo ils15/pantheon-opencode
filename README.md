@@ -188,12 +188,13 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
 | Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) |
-| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 4 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
 | V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 
 The V2 plugin provides 3 orchestration tools (`hashline_edit`, `pantheon_cost`,
-`pantheon_model`), 4 event subscriptions (`session.created`, `session.idle`,
-`session.error`, `session.compacted`), session hooks (`prompt`, `context`),
+`pantheon_model`), 5 event subscriptions (`session.created`, `session.idle`,
+`session.deleted`, `session.error`, `session.compacted`), session hooks
+(`prompt`, `context`),
 and a tool `execute.before` hook that enforces read-only sessions. The 3 goal
 tools are **not**
 registered on V2: the goal loop needs a `GoalStore`, a `GoalLoopClient` and a
