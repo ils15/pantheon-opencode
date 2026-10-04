@@ -59,13 +59,21 @@ export const V2_UNSUPPORTED_FEATURE_SEED = Object.freeze([
   // pantheon_goal_create/get/update are therefore absent from the V2 surface
   // rather than registered as non-functional placeholders.
   'goal-tools',
-  // Adapter limitation, not a host gap: the caller/target delegation matrix
-  // needs a session hierarchy seeded from session metadata, and V2 exposes no
-  // seed path for it — SessionHierarchyRegistry.isRoot reports `true` for
-  // unknown sessions while unseeded, which would deny every `task()` call. The
-  // branch is therefore skipped rather than left to deny indiscriminately.
-  // Read-only depth-2 still holds via the blocked-tool list in the guard below,
-  // so this marker records an unenforced matrix, not an unenforced depth limit.
+  // Adapter limitation, not a host gap — TWO separate reasons, which are easy
+  // to conflate and were once stated wrongly (see the v2EnforcementGuard
+  // comment in src/plugin-v2.ts for the long form):
+  //   - MISSING WIRING: V2 keeps no session→agent map (the host puts the agent
+  //     on the execute.before event), so there is no `getSessionAgent` to pass.
+  //     The guard would then call isDelegationAllowed(undefined, target) → false
+  //     and throw "caller agent is unavailable" on EVERY task() call.
+  //   - UNSEEDED HIERARCHY: V2 exposes no seed path, and an unseeded
+  //     SessionHierarchyRegistry gates exactly two things — the depth-2 child
+  //     deny and the root-session gate. Unseeded, isChild is always false, so
+  //     neither can be trusted.
+  // Note the hierarchy is NOT what would deny: isRoot reports `true` for an
+  // unknown session while unseeded, which PASSES the root gate.
+  // Read-only depth-2 still holds via the blocked-tool list in the guard, so
+  // this marker records an unenforced matrix, not an unenforced depth limit.
   'delegation-matrix',
 ])
 

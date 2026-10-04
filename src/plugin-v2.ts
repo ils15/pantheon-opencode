@@ -512,10 +512,12 @@ async function handleV2SessionEvent(event: V2SessionEvent): Promise<void> {
  * check below as coverage: a non-null bridge means a host process that ALSO
  * loaded V1, and V1 does the seeding itself.
  *
- * The absent hierarchy seed is why the V2 enforcement guard is built without
- * `isRootSession` / `isChildSession`; see `docs/UPGRADING.md`, "Known
- * limitation — V2 enforcement covers the blocked-tool list, not the V1
- * delegation matrix".
+ * The absent hierarchy seed is ONE of the two reasons the V2 enforcement guard
+ * is built without `isRootSession` / `isChildSession`; the other — and the one
+ * that would actually deny every `task()` call — is the absent
+ * `getSessionAgent`. See the `v2EnforcementGuard` comment below for both, and
+ * `docs/UPGRADING.md`, "Known limitation — V2 enforcement covers the
+ * blocked-tool list, not the V1 delegation matrix".
  */
 async function onSessionCreated(_event: V2SessionEvent): Promise<void> {
   const _bridge = resolveBridge()
@@ -750,15 +752,31 @@ interface V2ToolExecuteBeforeEvent {
  * tool — `hashline_edit` and `pantheon_model` are denied here for exactly the
  * reason they are denied in V1.
  *
- * Deliberately NOT passed `getSessionAgent` / `isRootSession` / `isChildSession`:
- * those drive V1's native-`task()` delegation matrix, which needs a session
- * hierarchy seeded from session metadata. `SessionHierarchyRegistry.isRoot`
- * reports `true` for unknown sessions while unseeded, so passing an unseeded
- * predicate here would DENY every `task()` call in every session. Leaving them
- * out skips that branch (the guard tests `options?.isRootSession !== undefined`).
- * `task` is still denied inside a read-only session via the blocked-tool list,
- * so depth-2 holds for apollo/gaia; the caller/target matrix itself is NOT
- * enforced on V2. That is a known gap, not a covered case.
+ * Deliberately NOT passed `getSessionAgent` / `isRootSession` / `isChildSession`.
+ * There are TWO distinct reasons, and conflating them is what produced a wrong
+ * causal chain here once already — keep them apart:
+ *
+ * 1. MISSING `getSessionAgent` (wiring). This is what would deny every
+ *    `task()` call. V2 learns the active agent from the `execute.before` event
+ *    itself and keeps no session→agent map, so there is no lookup to hand the
+ *    guard. The guard would call `isDelegationAllowed(undefined, target)`,
+ *    which returns `false`, and throw "caller agent is unavailable" — for
+ *    every caller, including Zeus. Note what is NOT happening: an unseeded
+ *    `isRootSession` would *pass* the root gate (`isRoot` reports `true` for an
+ *    unknown session), so the hierarchy is not what denies here.
+ *
+ * 2. UNSEEDED HIERARCHY (design). `SessionHierarchyRegistry` is what gates
+ *    exactly two things, and nothing else: the depth-2 child deny
+ *    (`isChildSession`) and the root-session gate (`isRootSession`). Left
+ *    unseeded, `isChild` is `false` for every session, so depth-2 would never
+ *    fire on a genuine child — a hierarchy that cannot tell a child from a root
+ *    is not a trustworthy input to either check.
+ *
+ * Omitting all three skips the branch wholesale: the guard only enters it when
+ * `options?.isRootSession !== undefined`. `task` is still denied inside a
+ * read-only session via the blocked-tool list, so depth-2 holds for
+ * apollo/gaia; the caller/target matrix itself is NOT enforced on V2. That is
+ * a known gap, not a covered case.
  */
 const v2EnforcementGuard = createEnforcementGuard({
   getReadOnlySessions: () => readOnlyRegistry.sessionIDs(),

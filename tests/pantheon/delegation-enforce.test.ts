@@ -27,6 +27,7 @@ import {
   READ_ONLY_AGENTS,
   ReadOnlySessionRegistry,
   readOnlyRegistry,
+  SessionHierarchyRegistry,
   syncReadOnlySession,
   type ToolExecuteBeforeHandler,
   zeusReadGuard,
@@ -296,6 +297,103 @@ async function main() {
         source,
         /ev\.type === 'session\.deleted'[\s\S]{0,200}readOnlyRegistry\.unregister/,
         'session.deleted must unregister the read-only session',
+      )
+    },
+  )
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // S1 — pin the WHY behind the unenforced V2 delegation matrix.
+  //
+  // `src/plugin-v2.ts` and `docs/UPGRADING.md` both used to justify omitting
+  // the delegation predicates by saying that `isRoot` reports `true` while
+  // unseeded, "which would deny every task() call". That chain is inverted:
+  // `true` PASSES the root gate. These assertions lock the real mechanism so
+  // the prose cannot drift back into designing around a problem it does not
+  // describe. This slice documents existing behaviour — it changes nothing.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  await testAsync('unseeded hierarchy: an unknown session resolves as ROOT', () => {
+    const hierarchy = new SessionHierarchyRegistry()
+    // seedState is 'unseeded' until an authoritative snapshot lands, so an
+    // unknown session is deliberately unclassified rather than denied.
+    assert.equal(
+      hierarchy.isRoot('ses-unknown'),
+      true,
+      'an unseeded hierarchy must resolve an unknown session as root',
+    )
+    assert.equal(
+      hierarchy.isChild('ses-unknown'),
+      false,
+      'an unseeded hierarchy must not classify an unknown session as a child',
+    )
+  })
+
+  await testAsync(
+    'unseeded root PASSES the root gate — the deny comes from the missing caller agent',
+    async () => {
+      // The load-bearing correction. A guard handed `isRootSession` but no
+      // `getSessionAgent` throws — and the reason it names is the caller
+      // agent, not the root gate. `getSessionAgent` has nothing to do with the
+      // session hierarchy; it is missing wiring.
+      const noCaller = createEnforcementGuard({
+        getReadOnlySessions: () => new Set<string>(),
+        options: { isRootSession: () => true },
+      })
+      await assert.rejects(
+        noCaller(
+          { tool: 'task', sessionID: 'ses-unknown', callID: 'call-1' },
+          { args: { subagent_type: 'apollo' } },
+        ),
+        /caller agent is unavailable/,
+        'isDelegationAllowed(undefined, …) must be the deny, not the root gate',
+      )
+
+      // Contrapositive: with a caller identity supplied, the SAME unseeded root
+      // predicate lets the delegation through. So the hierarchy predicate alone
+      // never denies — which is what the old comment claimed it did.
+      const withCaller = createEnforcementGuard({
+        getReadOnlySessions: () => new Set<string>(),
+        options: { isRootSession: () => true, getSessionAgent: () => 'zeus' },
+      })
+      await withCaller(
+        { tool: 'task', sessionID: 'ses-unknown', callID: 'call-2' },
+        { args: { subagent_type: 'apollo' } },
+      )
+    },
+  )
+
+  await testAsync(
+    'the hierarchy gates exactly two things: the depth-2 child deny and the root gate',
+    async () => {
+      const hierarchy = new SessionHierarchyRegistry()
+
+      // (1) depth-2 child deny — driven by isChildSession.
+      const child = hierarchy
+      child.register({ id: 'ses-child', parentID: 'ses-root' })
+      const childDeny = createEnforcementGuard({
+        getReadOnlySessions: () => new Set<string>(),
+        options: { isChildSession: (id) => hierarchy.isChild(id) },
+      })
+      await assert.rejects(
+        childDeny({ tool: 'task', sessionID: 'ses-child', callID: 'call-3' }),
+        /child session/,
+        'a child session must be denied the delegation tool',
+      )
+
+      // (2) root-session gate — driven by isRootSession. A SEEDED child that is
+      // not denied by the depth-2 check (no isChildSession passed) is denied
+      // here instead, naming the root gate as the reason.
+      const rootDeny = createEnforcementGuard({
+        getReadOnlySessions: () => new Set<string>(),
+        options: { isRootSession: (id) => hierarchy.isRoot(id) },
+      })
+      await assert.rejects(
+        rootDeny(
+          { tool: 'task', sessionID: 'ses-child', callID: 'call-4' },
+          { args: { subagent_type: 'apollo' } },
+        ),
+        /not an authorized root session/,
+        'a seeded non-root session must be denied by the root gate',
       )
     },
   )
