@@ -192,6 +192,14 @@ test('installed package resolves hooks to its installed absolute path', () => {
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const config = JSON.parse(readFileSync(join(project, 'opencode.json'), 'utf8'))
     const installedRoot = resolve(work, 'node_modules', 'pantheon-opencode')
+    // The defaults asserted below are read from the installer's code. Pin that
+    // independence here: if a template ever ships again and quietly starts
+    // seeding them, this test stops proving the code path it exists to guard.
+    assert.equal(
+      existsSync(join(installedRoot, 'opencode.json')),
+      false,
+      'installed package must not ship an opencode.json template',
+    )
     // Installer contract: BOTH pantheon plugins are registered unconditionally
     // — the root-level delegation plugin (src/plugin.ts) and the runtime hooks
     // plugin (src/plugins/pantheon-hooks.ts) — resolved to absolute paths
@@ -203,6 +211,13 @@ test('installed package resolves hooks to its installed absolute path', () => {
     for (const entry of config.plugin) {
       assert.equal(existsSync(entry), true, `registered plugin must exist: ${entry}`)
     }
+    // Regression guard (after the packaged opencode.json template was dropped
+    // from `files`): the product defaults an install seeds are code constants in
+    // scripts/install/opencode.mjs, NOT read from a template that no longer
+    // ships. If they move back to a template — or back out of the installer —
+    // these two assertions are what fails.
+    assert.equal(config.default_agent, 'zeus')
+    assert.equal(config.permission.skill['*'], 'allow')
     assert.doesNotMatch(JSON.stringify(config), executableForbidden)
     const tui = JSON.parse(readFileSync(join(project, '.opencode', 'tui.json'), 'utf8'))
     // Installer contract (af40321): the TUI plugin is COPIED to the target

@@ -62,6 +62,44 @@ const COMPONENT_NAMES = [
 ]
 
 /**
+ * The product defaults an install seeds into the user's `opencode.json`.
+ *
+ * They live HERE, in code, rather than in a template shipped in the npm
+ * tarball: that template also carried a maintainer's private MCP endpoint,
+ * provider models and per-developer permission overrides, and shipping it to
+ * every installer was the bug (#199). Reading defaults off it meant deleting it
+ * silently stopped the seeding, so the defaults are now stated next to the code
+ * that consumes them.
+ *
+ * PERSONAL CONFIGURATION MUST NEVER BE SEEDED HERE: this is the installer's
+ * contract with every user, and a value that is only right on one machine
+ * belongs in that machine's own `opencode.json`. Deliberately NOT carried over
+ * from the template, each because it was personal rather than a product
+ * default:
+ *   - `provider` — pinned the maintainer's provider, model and modalities.
+ *   - `mcp` — a private remote MCP endpoint.
+ *   - `agent` — the maintainer's per-agent permission overrides.
+ *   - `permission.websearch: "deny"` — a personal restriction; a user may rely
+ *     on web search, so denying it is not ours to decide.
+ *   - `permission.bash` — the template's dev allowlist (git, npm, ruff, …), a
+ *     personal judgement about which commands to trust.
+ * Anything added here must be justifiable as "correct for a fresh install of
+ * the product, for anyone".
+ *
+ * Other seeding paths are untouched by this constant and still run: the config
+ * merge derives plugin refs, provider and compaction from a repository-root
+ * opencode.json when a contributor has one, and separately gates its own
+ * permission.bash allowlist on the skills component.
+ *
+ * Frozen: mergeMissing() deep-clones every value it copies out, so nothing here
+ * is ever handed to a user's config by reference.
+ */
+const PRODUCT_CONFIG_DEFAULTS = Object.freeze({
+  default_agent: 'zeus',
+  permission: { skill: { '*': 'allow' } },
+})
+
+/**
  * Per-agent fields owned by the framework: for an agent that already exists in
  * the target config these are overwritten from the canonical source, and for a
  * new agent they are the seed. Everything else on an existing entry is the
@@ -158,8 +196,8 @@ function mergeMissing(target, source) {
 }
 
 /**
- * Resolve a plugin ref from the packaged opencode.json to a path INSIDE the
- * installed package.
+ * Resolve a plugin ref from the repository-root opencode.json to a path INSIDE
+ * the installed package.
  *
  * Only exact Pantheon plugin identities are resolved into the installed
  * package. In particular, a third-party absolute path ending in
@@ -939,8 +977,11 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   // B.5 Ensure critical top-level OpenCode config sections
   // --------------------------------------------------------------------
-  if (config.default_agent === undefined && pantheonConfig.default_agent !== undefined) {
-    config.default_agent = pantheonConfig.default_agent
+  // Seeded from code, not from a packaged template: see
+  // PRODUCT_CONFIG_DEFAULTS. Only fills a gap — a user who already chose a
+  // default agent keeps it.
+  if (config.default_agent === undefined) {
+    config.default_agent = PRODUCT_CONFIG_DEFAULTS.default_agent
   }
   // Apply only explicit top-level model overrides. Existing values remain
   // untouched and an install without either flag leaves both fields absent.
@@ -982,8 +1023,9 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   // B.5.1 Hermetic plugin resolution (packaging fix)
   // --------------------------------------------------------------------
-  // The packaged opencode.json may reference plugins via developer-machine
-  // absolute paths (e.g. <dev>/pantheon/.../src/plugin.ts or
+  // A developer running from a checkout has a repository-root opencode.json
+  // that may reference plugins via developer-machine absolute paths (e.g.
+  // <dev>/pantheon/.../src/plugin.ts or
   // <dev>/pantheon/.../src/plugins/pantheon-hooks.ts). Copying those
   // verbatim into the user's config would break every global install on any
   // other machine. resolveInstalledPlugin() rewrites each entry to the plugin
@@ -1074,9 +1116,10 @@ export async function installOpenCode(
   // C. Merge permissions
   // --------------------------------------------------------------------
   if (config.permission === undefined) config.permission = {}
-  if (pantheonConfig.permission !== undefined) {
-    mergeMissing(config.permission, pantheonConfig.permission)
-  }
+  // Merge-missing, never overwrite: an existing user's `permission` block keeps
+  // every value it has and only gains the keys it is missing. Defaults come
+  // from code (PRODUCT_CONFIG_DEFAULTS), not from a packaged template.
+  mergeMissing(config.permission, PRODUCT_CONFIG_DEFAULTS.permission)
   if (
     typeof config.permission === 'object' &&
     config.permission !== null &&
