@@ -16,6 +16,7 @@ Reference documentation for the Pantheon multi-agent framework.
 | Guide | Description |
 |-------|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture & design patterns |
+| [PERMISSIONS-QUALITY-DELEGATION.md](PERMISSIONS-QUALITY-DELEGATION.md) | Cross-cutting map: quality gates, the four permission layers, delegation |
 | [PLATFORMS.md](PLATFORMS.md) | Platform support (OpenCode-only) |
 | [UPGRADING.md](UPGRADING.md) | Version upgrade guide ([Português](UPGRADING.pt-BR.md)) |
 
