@@ -5,6 +5,7 @@ reasoning_effort: medium
 permission:
   read: allow
   edit: deny
+  hashline_edit: deny
   bash: deny
   task:
     "*": allow

@@ -15,6 +15,7 @@ skills:
   - memory-bank
 permission:
   edit: deny
+  hashline_edit: deny
   bash: deny
   read: allow
   grep: allow
