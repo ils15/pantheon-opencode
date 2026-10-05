@@ -9,6 +9,7 @@ permission:
   bash: allow
   webfetch: allow
   edit: deny
+  hashline_edit: deny
   task:
     "*": deny
 temperature: 0.1
