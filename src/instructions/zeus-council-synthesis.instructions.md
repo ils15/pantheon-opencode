@@ -36,7 +36,7 @@ sequenceDiagram
     participant T as Themis (Audit + Moderator)
 
     U->>Z: /pantheon [--research] question
-    Z->>M: memory_search(council_decisions)
+    Z->>M: memory_search(query, namespace="council_decisions")
     alt Precedent found (score > 0.85)
         M-->>Z: ⚠️ Cached decision
         Z->>U: Fast-path precedent
@@ -85,7 +85,7 @@ sequenceDiagram
 ## Dispatch Sequence (9-Step Protocol)
 
 ### Step 0 — Precedent Fast-Path (Fase 1)
-Run the precedent read path defined in `## Memory Protocol > Council Decisions Namespace` (`memory_search(query, top_k=2, namespace="council_decisions")`). If no precedent applies, proceed to Step 0b.
+Run the precedent read path defined in `## Memory Protocol > Council Decisions Namespace` (`memory_search(query=question, top_k=2, namespace="council_decisions")`). If no precedent applies, proceed to Step 0b.
 
 ### Step 0b — Apollo Pre-Scan (Fase 2, --research flag)
 If `/pantheon --research <question>`: dispatch @apollo with 30s timeout. Inject findings as `shared_context` into ALL specialist prompts. Skip if flag absent.

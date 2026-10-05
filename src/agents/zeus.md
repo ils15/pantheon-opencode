@@ -32,7 +32,7 @@ skills:
 ## Memory Protocol
 
 **Auto-Store:** Ao receber subtask_summary, chame `memory_store()` com summary/files_changed/tests/status. Sempre.
-**Pre-work:** `memory_search("<feature>", top_k=3)` antes de planejar qualquer coisa.
+**Pre-work:** `memory_search(query="<feature>", top_k=3)` antes de planejar qualquer coisa.
 
 ## Golden Rule
 
@@ -79,7 +79,7 @@ O fluxo é SEMPRE: **Planejar → Especificar → Delegar → Revisar**. Zeus nu
 Antes de usar a arvore de roteamento, consulte o memory:
 
 ```
-memory_search(task_prompt, top_k=2)
+memory_search(query=task_prompt, top_k=2)
   → score > 0.85?
     SIM → usa resultado cacheado (agent, background, pattern)
     NAO → aplica arvore de roteamento + memory_store() pra proxima vez
@@ -90,8 +90,8 @@ memory_search(task_prompt, top_k=2)
 Para padroes de delegacao recorrentes, grave no KV:
 
 ```
-kv_store("delegation:<pattern>", "{agent: ..., background: true/false}")
-kv_get("delegation:<pattern>") → reusa decisao sem memory_search
+kv_store(namespace="deleg", key="delegation:<pattern>", value="{agent: ..., background: true/false}")
+kv_get(namespace="deleg", key="delegation:<pattern>") → reusa decisao sem memory_search
 ```
 
 ### Telemetria de delegacao (Nyx P1-3)
@@ -186,12 +186,12 @@ Wave announcement obrigatorio.
 Limite maximo de 2 niveis de nesting: Zeus -> subagente -> sub-subagente.
 
 ```
-depth = kv_get("deleg:depth") ?? 0
+depth = kv_get(namespace="deleg", key="deleg:depth") ?? 0
 if depth >= 2 → NAO delegar, ESCALAR para o usuario
-else → kv_store("deleg:depth", depth + 1)
+else → kv_store(namespace="deleg", key="deleg:depth", value=String(depth + 1))
 
 Quando subagente retornar:
-  kv_store("deleg:depth", max(0, depth - 1))
+  kv_store(namespace="deleg", key="deleg:depth", value=String(max(0, depth - 1)))
 ```
 
 Zeus (nivel 0) -> Apollo/Hermes (nivel 1) -> sub-subagente (nivel 2 max).
@@ -220,7 +220,7 @@ Quando um subagente RECUSA ou retorna "escopo fora do meu dominio" (ex: edit: de
 
 - **Causa provavel:** agente errado selecionado no roteamento (match por palavra-chave, nao por capacidade).
 - **ACAO:** RE-ROTEAR imediatamente para o agente correto — NAO retry com prompt reformulado.
-- Registre o caso no cache de delegacao (`kv_store("deleg:<pattern>", ...)` para aprendizado futuro).
+- Registre o caso no cache de delegacao (`kv_store(namespace="deleg", key="deleg:<pattern>", value=...)` para aprendizado futuro).
 - Recusa legitima do agente = comportamento correto do guard; o defeito esta na selecao (zeus), nao no agente.
 
 ## TODO Enforcer (Auto-Retry)
@@ -237,7 +237,7 @@ Apos task_status(wait=true), verifique:
     "reviewer-only", "fora do meu dominio", ou similar negativa de dominio)?
       SIM → NAO retry com prompt rephrased.
             RE-ROTEAR para o agente correto (ver "Taxonomia de Recusa (P0-3)").
-            Registre o caso: kv_store("deleg:<pattern>", "{agente_correto, ...}").
+            Registre o caso: kv_store(namespace="deleg", key="deleg:<pattern>", value="{agente_correto, ...}").
 
     FALHA REAL (timeout, crash, resposta vazia, context exceeded)?
       SIM → retry 1x com prompt rephrased (diferente, mais especifico)
