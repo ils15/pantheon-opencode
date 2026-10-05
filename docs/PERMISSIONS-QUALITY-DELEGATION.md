@@ -97,7 +97,7 @@ failing-closed gates, but they are not the reviewer:
 | A child session may not delegate again | same guard, child-session branch | `src/pantheon/delegation-enforce.ts:353` |
 | Caller/target delegation matrix | same guard, `isDelegationAllowed` | `src/pantheon/delegation-enforce.ts:138` |
 | The orchestrator may not read source | `zeusReadGuard` throws | `src/pantheon/delegation-enforce.ts:221` |
-| Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:137` |
+| Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:138` |
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
 | Secrets | pre-commit gitleaks + CI scan | `.pre-commit-config.yaml:7` |
 
@@ -234,7 +234,7 @@ Selected examples, to show the shapes in use:
 The per-agent `delegation` intent lives in three more frontmatter-adjacent places,
 and they are three different layers again: `mode:` (`subagent` / `all` / `primary`),
 `visible: false`, and the `tools:` map. Only `mode` reaches the installed config
-(`scripts/install/opencode.mjs:924`).
+(`scripts/install/opencode.mjs:939`).
 
 ### 2.3 Layer 2 — `routing.yml`: what is read, and what is not
 
@@ -285,9 +285,9 @@ The verdict above is about the first; a reader who greps for the function name u
 
 This is the layer that reaches the host, and it is produced by a deliberately narrow
 extraction. The installer reads each agent file's frontmatter and copies **seven keys**
-into the installed config (`scripts/install/opencode.mjs:906`): colour, description,
+into the installed config (`scripts/install/opencode.mjs:921`): colour, description,
 mode, hidden, temperature, the model-invocation flag, and `permission`
-(`scripts/install/opencode.mjs:933`). Those seven are the whole of what provably
+(`scripts/install/opencode.mjs:948`). Those seven are the whole of what provably
 reaches an installed config.
 
 Everything else in an agent's frontmatter does not reach it. The installer extracts no
@@ -298,16 +298,16 @@ returns nothing.
 On top of the per-agent blocks, the installer seeds a small set of **top-level**
 defaults. These are declared in code rather than in a packaged template, with an
 explicit contract that nothing personal may be seeded there
-(`scripts/install/opencode.mjs:102`). What actually gets seeded, and the rule that
+(`scripts/install/opencode.mjs:103`). What actually gets seeded, and the rule that
 governs each:
 
 | Seeded value | Rule | Citation |
 |---|---|---|
-| `default_agent` | only if absent — a user's choice is kept | `scripts/install/opencode.mjs:103` |
-| `permission` as an object | only if absent | `scripts/install/opencode.mjs:1143` |
-| `permission.skill: {"*": allow}` | only if absent, and only when the skills component is installed | `scripts/install/opencode.mjs:1162` |
-| `permission.bash` dev allowlist | only if absent | `scripts/install/opencode.mjs:1188` |
-| `permission.mcp.<server>` defaults | per server, only if absent | `scripts/install/opencode.mjs:1312` |
+| `default_agent` | only if absent — a user's choice is kept | `scripts/install/opencode.mjs:104` |
+| `permission` as an object | only if absent | `scripts/install/opencode.mjs:1158` |
+| `permission.skill: {"*": allow}` | only if absent, and only when the skills component is installed | `scripts/install/opencode.mjs:1177` |
+| `permission.bash` dev allowlist | only if absent | `scripts/install/opencode.mjs:1203` |
+| `permission.mcp.<server>` defaults | per server, only if absent | `scripts/install/opencode.mjs:1327` |
 
 Two properties of this layer matter for everything downstream:
 
@@ -316,20 +316,20 @@ Two properties of this layer matter for everything downstream:
   config, and a user value always survives an install.
 - **Per-agent permissions behave the opposite way.** The per-agent merge is not
   gap-filling: for an agent that already exists, the framework-managed fields are
-  overwritten from the canonical source (`scripts/install/opencode.mjs:959`). So the
+  overwritten from the canonical source (`scripts/install/opencode.mjs:974`). So the
   *agent-level* permissions are authoritative and the *top-level* ones defer to the
   user. Those two rules are different on purpose and it is worth knowing which side
   of the line a given setting falls on.
 
 For a **new** agent the seed is a fresh object, with one repair step: if the
 canonical permission block has no `bash` key, one is copied in
-(`scripts/install/opencode.mjs:983`). That branch is unreachable for any agent that
+(`scripts/install/opencode.mjs:998`). That branch is unreachable for any agent that
 already declares a `bash` entry, which is all of them.
 
 ### 2.5 Layer 4 — the V1→V2 translation map
 
 This layer runs only when the installer resolves the V2 generation
-(`scripts/install/opencode.mjs:1335`). It converts the V1-shaped config the merge
+(`scripts/install/opencode.mjs:1350`). It converts the V1-shaped config the merge
 produced into the V2 shape before writing.
 
 The permission-action map is four entries (`scripts/install/config-migration.mjs:33`):
@@ -378,9 +378,9 @@ require inspecting installed configs and host behaviour respectively. Treat the
 count of affected keys as a floor, never as a total.
 
 **A second, documented gap on the same path.** The installer writes the V1 spelling
-`permission` (`scripts/install/opencode.mjs:127`) while V2 reads `permissions`. Both
+`permission` (`scripts/install/opencode.mjs:128`) while V2 reads `permissions`. Both
 files record this as known debt rather than fixing it
-(`scripts/install/opencode.mjs:117`, `scripts/install/config-migration.mjs:330`),
+(`scripts/install/opencode.mjs:118`, `scripts/install/config-migration.mjs:330`),
 because choosing a winner changes what an install writes. The migration's own
 managed-field list uses the V2 name
 (`scripts/install/config-migration.mjs:340`), and a drift guard asserts the two
@@ -595,11 +595,13 @@ for orchestrator state. A planner should not assume reusing one reuses the other
 plugin contracts Pantheon ships, selected at install time by a generation gate
 (`scripts/install/opencode-version.mjs:213`). They are not statements about any
 particular host build. The installer registers a different plugin set per contract
-and strips the other's entries (`scripts/install/opencode.mjs:1060`, `scripts/install/opencode.mjs:1091`), so
+and strips the other's entries (`scripts/install/opencode.mjs:1075`, `scripts/install/opencode.mjs:1106`), so
 this is a genuine fork, not a preference.
 
-The V2 adapter maintains an explicit list of what it does not implement
-(`src/plugin-v2.ts:106`). Two of those entries decide what a planner may rely on.
+The V2 adapter maintains an explicit list of what it does not implement, seeded in a
+plain-`.mjs` module so the plugin, the installer and `doctor` all read the same
+strings (`src/pantheon/v2-unsupported.mjs:55`). Two of those entries decide what a
+planner may rely on.
 
 #### Delegation: available on both contracts, but with a different enforcement floor
 
@@ -612,13 +614,43 @@ Native delegation is available on both contracts — it is the host's engine.
 | Depth-2 for read-only agents | Yes | Yes |
 | **Caller/target matrix enforced** | **Yes** | **No** |
 
-The V2 adapter deliberately omits the session-hierarchy predicates, because the
-hierarchy registry reports an unseeded session as a root, and wiring an unseeded
-predicate would deny every delegation in every session. Omitting the predicates skips
-that branch. The source states the consequence plainly: the matrix is *not* enforced
-on V2, and this is a known gap, not a covered case
-(`src/plugin-v2.ts:779`). The upgrade guide documents the same limitation from the
-user's side — see [Known limitation](UPGRADING.md).
+The V2 adapter builds its guard without `getSessionAgent`, `isRootSession` or
+`isChildSession` (`src/plugin-v2.ts:870`), for **two** independent reasons that are
+easy to conflate. Keeping them apart matters, because the one that sounds structural
+is not the one that denies:
+
+1. **Missing `getSessionAgent` — wiring.** This is what would deny **every** `task()`
+   call in **every** session. V2 learns the active agent from the `execute.before`
+   event itself and keeps no session→agent map, so there is no lookup to hand the
+   guard: it would call `isDelegationAllowed(undefined, target)`, which returns `false`
+   for an undefined caller (`src/pantheon/delegation-enforce.ts:145`) and throw *caller
+   agent is unavailable*.
+2. **Unwired hierarchy — design.** `SessionHierarchyRegistry` gates exactly two
+   things, and nothing else: the depth-2 child deny and the root-session gate. Left
+   unseeded, `isChild` is `false` for every session, so depth-2 would never fire on a
+   genuine child, and a registry that cannot tell a child from a root is not
+   trustworthy input to either check.
+
+**The inference that is easy to get backwards.** The registry does report an unseeded
+session as a *root*, and `true` **passes** the root gate
+(`src/pantheon/delegation-enforce.ts:110`) — it does not deny. The deny in case 1 comes
+from the absent caller identity, not from the hierarchy.
+
+**Unwired, not impossible.** The V2 `session.created` event carries
+`properties.info: Session`, and `Session` declares `parentID?: string` — the same field
+V1 seeds from on that exact event, a superset of the two fields V1 reads there — so
+seeding V2's live sessions is one line in `onSessionCreated`
+(`src/plugin-v2.ts:513`). The real asymmetry is V1's *second* source: the fail-open
+`client.session.list()` startup seed covering sessions that predate plugin load, which
+has no V2 equivalent at all because the V2 `PluginContext` exposes no `client`
+(`src/plugin-v2.ts:531`). Whether a live host actually populates `info.parentID` on
+that event is **UNVERIFIED** — no measurement reads an event payload.
+
+Omitting all three predicates skips the branch entirely; the guard only enters it when
+`isRootSession` is defined. The consequence is stated plainly in the source: the
+caller/target matrix itself is **not** enforced on V2, and this is a known gap, not a
+covered case (`src/plugin-v2.ts:867`). The upgrade guide documents the same limitation
+from the user's side — see [Known limitation](UPGRADING.md).
 
 **What this means for planning:** on the V2 contract, the restriction "only the
 orchestrator and the two read-only scouts may delegate" is a **convention you are
@@ -628,22 +660,24 @@ delegation tool is itself in their blocked-tool list.
 
 #### The board: available on V1, absent on V2
 
-This is the part with no existing documentation, and it is the part that fails
-silently.
+This is the part with no existing documentation, and the part whose absence is now
+**announced** rather than silent — at install time and in `doctor`.
 
 **On the V2 contract there is no board.** Not "a reduced board" — the state machine,
 the store and the client it needs are all reachable only from the V1 plugin, which
 the V2 contract does not register. The adapter lists the goal tooling as absent for
 exactly this reason: it needs a store, a loop client and a board, none of which the
-V2 plugin context exposes (`src/plugin-v2.ts:122`).
+V2 plugin context exposes (`src/pantheon/v2-unsupported.mjs:71`).
 
 The bridge that would carry them across exists and is never wired. The bridge factory
 and the context accessor are both implemented
 (`src/pantheon/v2-bridge.ts:89`, `src/pantheon/v2-bridge.ts:110`), and **no production code path calls the
 factory** — its only callers are in the test suite. So the V2 accessor returns null
 in every real configuration, and that null is handled by *not registering the
-dependent tools* rather than by registering them as non-functional. Absent, not
-broken: which is why there is no error to notice.
+dependent tools* rather than by registering them as non-functional. **Absent, not
+broken** still describes the board itself — but "absent" no longer means "unnoticed":
+the reduction carries a marker (`goal-tools`, `src/pantheon/v2-unsupported.mjs:76`),
+and two surfaces report it.
 
 | Board capability | V1 contract | V2 contract |
 |---|---|---|
@@ -653,11 +687,25 @@ broken: which is why there is no error to notice.
 | Recovery of running jobs after restart | Yes | No |
 | `markReconciled` / `formatForPrompt` / `waitForTerminal` | Callable per instructions | No |
 
-**Planning against the board on the V2 contract fails silently.** No error, no
-warning, no failed dispatch. The work runs — because the work runs on the native
-engine — and the board-shaped bookkeeping simply does not happen. A workflow whose
-step is "register the job, then poll the board for completion" will hang on the poll
-with a job that was never registered, and the only symptom is that nothing arrives.
+**Planning against the board on the V2 contract still produces no error and no failed
+dispatch** — the work runs, because the work runs on the native engine, and the
+board-shaped bookkeeping simply does not happen. A workflow whose step is "register the
+job, then poll the board for completion" still hangs on the poll with a job that was
+never registered.
+
+What changed is the **notice**, not the capability. Two surfaces now state the
+reduction instead of leaving a planner to infer it from silence:
+
+- **At install.** A V2-generation install prints the unsupported-feature list next to
+  the existing V2 target notice (`scripts/install/opencode.mjs:546`).
+- **In `doctor`.** The reduction is a standing health finding, section H4, at `warn`
+  level when the V2 generation is registered (`scripts/doctor.mjs:1560`). It never
+  changes the exit code: a V2 install is a supported configuration, not a broken one.
+
+Both read the same frozen seed the plugin builds its live list from
+(`src/pantheon/v2-unsupported.mjs:55`), so the two surfaces cannot report a reduction
+the plugin does not, or miss one it does. Neither surface helps a workflow *mid-flight*:
+the notice arrives before you depend on the board, not when a dispatch goes unrecorded.
 
 Two V1-specific behaviours worth stating conditionally as well, since both are
 recorded as observations of specific host builds rather than as guarantees:

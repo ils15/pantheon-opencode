@@ -148,6 +148,13 @@ Each platform exposes MCP tools with different naming. The same tool `memory_rec
 | **Continue** | Original name | `memory_recall` (injected via schema) |
 | ** ** | Original name | `memory_recall` (injected via schema) |
 
+> **In the Code Mode `execute` sandbox the visible catalog is a subset, not the
+> registry above.** For `pantheon-persistence`, only 5 of its 14 tools appear; the
+> rest are reachable but unlisted. Resolve a hidden tool by calling `search()` for its
+> exact path and then invoking that path **literally** — passing the whole path string
+> as a single key fails even though `search()` returned it, and the error names the
+> same string you supplied (see **P1-10** in [ROADMAP.md](../ROADMAP.md)).
+
 ---
 
 ## Permission Tiers
