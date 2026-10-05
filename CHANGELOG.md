@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🐞 Fixed
 
+- **A matriz de delegação da V1 não é replicada na V2 porque a hierarquia de sessões está DESLIGADA, não porque o V2 não a carrega**: o `session.created` do V2 traz `properties.info: Session` com `parentID?` — o mesmo campo que a V1 semeia no mesmo evento (`@opencode-ai/sdk` v2 `gen/types.gen.d.ts`), então semear as sessões vivas seria uma linha; o que realmente não tem equivalente V2 é a *segunda* fonte da V1, o seed de `client.session.list()` para sessões anteriores ao carregamento do plugin, porque o `PluginContext` do V2 não expõe `client`. Se um host 2.0.22 ao vivo popula `info.parentID` nesse evento continua **não verificado** (nenhum canário lê payload de evento). O texto desta release dizia que o V2 "não expõe esse caminho de semeadura", afirmação que os tipos do SDK refutam; a linha publicada em `v1.6.0-beta.4` fica como registro.
+
 ## ⚠️ Known Issues
 
 ## ✅ Closed Issues

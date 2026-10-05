@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { listV2UnsupportedFeatures } from '../../src/pantheon/v2-unsupported.mjs'
 import {
   bullet,
   colors,
@@ -529,6 +530,20 @@ export async function installOpenCode(
     info(
       'OpenCode V2 target — shared config; state isolated via OPENCODE_DB ' +
         '(~/.local/share/opencode/opencode-v2.db), service port 49375',
+    )
+    // Say what the V2 contract does NOT give you, at the moment the user picks
+    // it. The V2 surface is 3 tools (hashline_edit, pantheon_cost,
+    // pantheon_model); V1's is 6 plus the BackgroundJobBoard, the three goal
+    // tools and the caller/target delegation matrix. This list was previously
+    // reachable only through `getUnsupportedFeatures()`, which no production
+    // code called — a user migrating hit the reduction with no warning at all.
+    //
+    // The markers are read from the same seed `getUnsupportedFeatures()` is
+    // built from (src/pantheon/v2-unsupported.mjs), so this notice cannot drift
+    // from what the plugin reports. Advisory: a V2 install is a supported
+    // configuration, not a failure.
+    info(
+      `V2 plugin generation — reduced surface. Unsupported features: ${listV2UnsupportedFeatures().join(', ')}`,
     )
   }
 

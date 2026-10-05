@@ -9,7 +9,7 @@ upgrading, choose the contract that matches the OpenCode host you will run:
 | Selector | Config key | Pantheon entry | Scope |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and the V1 `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), board lifecycle, V1 hooks and implemented compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 4 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
 
 **Changed in 1.6.0 — the V2 tool surface is 3 tools, not 6.** The three goal
 tools (`pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`) are
@@ -48,14 +48,43 @@ Three further V2 fixes ship alongside it:
 This is a scope reduction relative to V1, stated here rather than left to be
 discovered in a code comment.
 
-V1 passes `isRootSession` / `isChildSession` into `createEnforcementGuard`, which
-makes the guard enforce the **native delegation matrix**: who may call `task()`,
-and which target agents a given caller is allowed to reach. V2 deliberately does
-**not** pass them. `SessionHierarchyRegistry.isRoot` reports `true` for any
-session it has not been seeded with, and V2 never seeds it, so wiring an unseeded
-predicate into the V2 guard would deny **every** `task()` call in **every**
-session — including Zeus's own delegations. Omitting the predicates skips that
-branch entirely.
+V1 passes `isRootSession` / `isChildSession` / `getSessionAgent` into
+`createEnforcementGuard`, which makes the guard enforce the **native delegation
+matrix**: who may call `task()`, and which target agents a given caller is
+allowed to reach. V2 deliberately does **not** pass them. There are two distinct
+reasons, and it is worth keeping them apart — an earlier revision of this
+document attributed both to the session hierarchy, which is only half right.
+
+1. **Missing `getSessionAgent` — wiring.** This is the half that would deny
+   **every** `task()` call in **every** session, including Zeus's own
+   delegations. V2 learns the active agent from the `execute.before` event
+   itself and keeps no session→agent map, so there is no lookup to hand the
+   guard. The guard would call `isDelegationAllowed(undefined, target)`, which
+   returns `false`, and throw `caller agent is unavailable`.
+2. **Unwired hierarchy — design.** `SessionHierarchyRegistry` gates exactly
+   two things and nothing else: the depth-2 child deny (`isChildSession`) and
+   the root-session gate (`isRootSession`). V2 seeds no session→parent map
+   anywhere, and unseeded `isChild` is `false` for every session — so depth-2
+   would never fire on a genuine child, and a hierarchy that cannot tell a child
+   from a root is not trustworthy input to either check.
+
+   **Unwired, not impossible.** The V2 `session.created` event carries
+   `properties.info: Session`, and `Session` declares `parentID?: string` — the
+   same field V1 seeds from on the same event, so seeding V2's live sessions is
+   one line. What has no V2 equivalent is V1's *second* source: the fail-open
+   `client.session.list()` startup seed covering sessions that predate plugin
+   load, which needs a `client` the V2 `PluginContext` does not expose. Whether
+   a live 2.0.22 host actually populates `info.parentID` on that event is
+   **unverified** — no measurement reads an event payload. What is proven is the
+   type carries the field and that no V2 code path reads it.
+
+To be precise about a claim that is easy to get backwards:
+`SessionHierarchyRegistry.isRoot` reports `true` for a session it has not been
+seeded with, and `true` **passes** the root gate — it does not deny. The deny
+in case 1 comes from the absent caller identity, not from the hierarchy.
+
+Omitting all three predicates skips the branch entirely (the guard only enters
+it when `isRootSession` is defined).
 
 The consequence is exactly what it says: **the V2 guard enforces the
 `DEFAULT_BLOCKED_TOOLS` list and nothing more.** The caller/target matrix is not

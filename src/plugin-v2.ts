@@ -5,7 +5,7 @@
  * - 3 self-sufficient tools via V2 tool.transform (hashline_edit,
  *   pantheon_cost, pantheon_model — see ./pantheon/v2-tools.ts; the goal tools
  *   need V1 infrastructure and are absent from this surface)
- * - 4 event subscriptions (session.created, idle, error, compacted)
+ * - 5 event subscriptions (session.created, idle, deleted, error, compacted)
  * - Session hooks (prompt, context, compaction)
  * - A tool `execute.before` hook that ENFORCES read-only sessions: the agent
  *   arrives on the host's event, a read-only agent (apollo/gaia) registers its
@@ -94,6 +94,7 @@ import {
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.ts'
+import { V2_UNSUPPORTED_FEATURE_SEED } from './pantheon/v2-unsupported.mjs'
 import { type HookPayload, runHook } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
@@ -103,37 +104,18 @@ import { type HookPayload, runHook } from './plugins/hook-runner.ts'
  * the observed host. A listed feature is not necessarily a host-absent API.
  * Additional features are appended during setup when a required API is missing.
  */
-export const V2_UNSUPPORTED_FEATURES: string[] = [
-  'legacy-hooks',
-  // `ctx.catalog` is the one domain a live 2.0.22 host does NOT have: it is
-  // absent from `Object.keys(ctx)`, measured in
-  // tests/canary/plugin-v2-tool-canary.test.mjs. (`catalog` IS in the 1.18.33
-  // SDK's PluginContext, so the SDK types it and the host does not provide it.)
-  'catalog-transform',
-  // Adapter support, NOT host availability: 2.0.22 exposes ctx.integration and
-  // ctx.skill with callable transforms, and Pantheon deliberately registers
-  // neither. These entries record what this plugin does not implement.
-  'integration-transform',
-  // The inspected SkillEditor shape has no `source()` helper — i.e. no
-  // `SkillEditor.source()` — for adding a directory source. This is narrower
-  // than (and distinct from) ctx.skill's host availability or callable
-  // transform, which a live 2.0.22 host does provide.
-  'skill-transform',
-  // Adapter limitation, not a host gap: the goal loop needs a GoalStore, a
-  // GoalLoopClient and a BackgroundJobBoard, none of which the V2
-  // PluginContext exposes, and the V1 bridge resolves to null outside V1.
-  // pantheon_goal_create/get/update are therefore absent from the V2 surface
-  // rather than registered as non-functional placeholders.
-  'goal-tools',
-  // Adapter limitation, not a host gap: the caller/target delegation matrix
-  // needs a session hierarchy seeded from session metadata, and V2 exposes no
-  // seed path for it — SessionHierarchyRegistry.isRoot reports `true` for
-  // unknown sessions while unseeded, which would deny every `task()` call. The
-  // branch is therefore skipped rather than left to deny indiscriminately.
-  // Read-only depth-2 still holds via the blocked-tool list in the guard below,
-  // so this marker records an unenforced matrix, not an unenforced depth limit.
-  'delegation-matrix',
-]
+/**
+ * Live unsupported-feature list: the shared seed plus anything `markUnsupported`
+ * appends while this process talks to a real host.
+ *
+ * The seed lives in `src/pantheon/v2-unsupported.mjs` — a plain-`.mjs` module —
+ * so that the V2 installer and `scripts/doctor.mjs` report the SAME strings
+ * without either of them having to import TypeScript. This array stays a
+ * mutable copy rather than the shared seed itself: `markUnsupported` appends to
+ * it, and the seed must stay frozen. `getUnsupportedFeatures()` still returns
+ * this exact reference.
+ */
+export const V2_UNSUPPORTED_FEATURES: string[] = [...V2_UNSUPPORTED_FEATURE_SEED]
 
 // ─── Constants ───────────────────────────────────────────────────────────
 
@@ -508,6 +490,9 @@ async function handleV2SessionEvent(event: V2SessionEvent): Promise<void> {
     case 'session.idle':
       await onSessionIdle(event)
       break
+    case 'session.deleted':
+      await onSessionDeleted(event)
+      break
     case 'session.error':
       await onSessionError(event)
       break
@@ -522,18 +507,44 @@ async function handleV2SessionEvent(event: V2SessionEvent): Promise<void> {
 /**
  * Session-created handler: currently a no-op on the V2-only surface.
  *
- * V1 seeds session state here (`sessionHierarchy.register(info)` plus the
- * root-session set) from the full session metadata carried by its own event.
- * The V2 event does not carry that metadata, and — more to the point — V1 is a
- * separate plugin instance that is not loaded when only `plugin-v2` is
- * configured. So nothing runs here on a V2-only install. Do not read the bridge
- * check below as coverage: a non-null bridge means a host process that ALSO
- * loaded V1, and V1 does the seeding itself.
+ * V1 seeds session state here — `sessionHierarchy.register(info)` plus the
+ * root-session set — from the full session metadata carried by its own event.
  *
- * The absent hierarchy seed is why the V2 enforcement guard is built without
- * `isRootSession` / `isChildSession`; see `docs/UPGRADING.md`, "Known
- * limitation — V2 enforcement covers the blocked-tool list, not the V1
- * delegation matrix".
+ * THE V2 EVENT CARRIES THE SAME METADATA, so this is an UNWIRED seed, not an
+ * impossible one. The V2 SDK types `session.created` as
+ * `{ sessionID: string; info: Session }`, and `Session` declares
+ * `parentID?: string` (`@opencode-ai/sdk` v2 `gen/types.gen.d.ts`) — a superset
+ * of the two fields V1 reads on this exact event. Seeding here would be a copy
+ * of V1's line. An earlier revision of this comment claimed the metadata was
+ * absent from the V2 event; the SDK types refute that, so do not restore it.
+ *
+ * WHAT IS NOT MEASURED, in either direction: whether a live 2.0.22 host
+ * populates `info.parentID` on this event. The tool canary records
+ * `Object.keys(ctx)` from inside the host, not event payloads, so host
+ * population is UNVERIFIED. What is proven is only that the type carries the
+ * field and that no code path here reads it.
+ *
+ * The real asymmetry is the OTHER of V1's two seed sources. Besides this event,
+ * V1 runs a fail-open startup seed from `client.session.list()`
+ * (`seedRootSessionsInBackground`, `src/plugin.ts`) to cover sessions that
+ * predate plugin load, because opencode does not replay `session.created` for
+ * them. V2's `PluginContext` exposes no `client` at all — `options`, `agent`,
+ * `aisdk`, `catalog`, `command`, `integration`, `plugin`, `reference`, `skill`,
+ * and nothing else — so that enumeration has NO V2 EQUIVALENT. Wiring this
+ * handler would recover live sessions only, never resumed ones.
+ *
+ * And — more to the point — V1 is a separate plugin instance that is not loaded
+ * when only `plugin-v2` is configured, so on a V2-only install nothing seeds
+ * the hierarchy at all. Do not read the bridge check below as coverage: a
+ * non-null bridge means a host process that ALSO loaded V1, and V1 does the
+ * seeding itself.
+ *
+ * The unwired hierarchy seed is ONE of the two reasons the V2 enforcement guard
+ * is built without `isRootSession` / `isChildSession`; the other — and the one
+ * that would actually deny every `task()` call — is the absent
+ * `getSessionAgent`. See the `v2EnforcementGuard` comment below for both, and
+ * `docs/UPGRADING.md`, "Known limitation — V2 enforcement covers the
+ * blocked-tool list, not the V1 delegation matrix".
  */
 async function onSessionCreated(_event: V2SessionEvent): Promise<void> {
   const _bridge = resolveBridge()
@@ -558,6 +569,58 @@ async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
       // Fail-open: idle continuation must never break the session.
     }
   }
+}
+
+/**
+ * Session-deleted handler: drop the read-only registration.
+ *
+ * `readOnlyRegistry` is a process-wide singleton and the `execute.before` hook
+ * populates it on every delegated `apollo`/`gaia` call. V1 prunes it on
+ * `session.deleted` (`src/plugin.ts`); V2 did not, so on a long-lived host
+ * every finished investigation session stayed registered for the life of the
+ * process — a slow leak, and a stale entry that would keep denying tools if
+ * the id were ever reused.
+ *
+ * This mirrors V1: unregister the session, which drops its agent entry with it
+ * (the registry stores one `ReadOnlyEntry` per session id). V1 also clears a
+ * `sessionAgents` map here; V2 has no such map and needs no equivalent, since
+ * it reads the active agent off the event instead of caching it.
+ *
+ * The id is read from `properties.sessionID` — the field the sibling
+ * `session.idle` handler already uses — falling back to V1's
+ * `properties.info.id`. Both spellings are accepted because the V2 SDK types
+ * `session.deleted` as `{ sessionID, info }` and a miss here is a silent leak,
+ * which is precisely the bug this handler exists to close.
+ *
+ * A payload with NEITHER spelling is fail-open, and unavoidably so: unregistering
+ * is what needs the id, so an id that cannot be resolved cannot be cleaned up
+ * and the entry survives. The docstring used to leave that as a documented
+ * silent branch; it now warns on the way out, because the only other symptom of
+ * a renamed field is a registry that grows for the life of the process.
+ */
+async function onSessionDeleted(event: V2SessionEvent): Promise<void> {
+  const properties = event.properties
+  if (properties === undefined) return
+  const info = properties.info
+  const sessionID =
+    typeof properties.sessionID === 'string'
+      ? properties.sessionID
+      : info !== null && typeof info === 'object'
+        ? (info as { id?: unknown }).id
+        : undefined
+  if (typeof sessionID !== 'string' || sessionID === '') {
+    // Fail-open by necessity, loud by choice: the entry for this session (if
+    // any) cannot be identified, so it stays registered. Same `console.warn`
+    // channel as the event-subscription error above — this module has no
+    // logger, and a diagnostic nobody reads on stderr is still a silent leak.
+    console.warn(
+      '[Pantheon V2] session.deleted carried no session id ' +
+        '(neither properties.sessionID nor properties.info.id); ' +
+        'its read-only registration cannot be pruned and will persist.',
+    )
+    return
+  }
+  readOnlyRegistry.unregister(sessionID)
 }
 
 /**
@@ -768,15 +831,41 @@ interface V2ToolExecuteBeforeEvent {
  * tool — `hashline_edit` and `pantheon_model` are denied here for exactly the
  * reason they are denied in V1.
  *
- * Deliberately NOT passed `getSessionAgent` / `isRootSession` / `isChildSession`:
- * those drive V1's native-`task()` delegation matrix, which needs a session
- * hierarchy seeded from session metadata. `SessionHierarchyRegistry.isRoot`
- * reports `true` for unknown sessions while unseeded, so passing an unseeded
- * predicate here would DENY every `task()` call in every session. Leaving them
- * out skips that branch (the guard tests `options?.isRootSession !== undefined`).
- * `task` is still denied inside a read-only session via the blocked-tool list,
- * so depth-2 holds for apollo/gaia; the caller/target matrix itself is NOT
- * enforced on V2. That is a known gap, not a covered case.
+ * Deliberately NOT passed `getSessionAgent` / `isRootSession` / `isChildSession`.
+ * There are TWO distinct reasons, and conflating them is what produced a wrong
+ * causal chain here once already — keep them apart:
+ *
+ * 1. MISSING `getSessionAgent` (wiring). This is what would deny every
+ *    `task()` call. V2 learns the active agent from the `execute.before` event
+ *    itself and keeps no session→agent map, so there is no lookup to hand the
+ *    guard. The guard would call `isDelegationAllowed(undefined, target)`,
+ *    which returns `false`, and throw "caller agent is unavailable" — for
+ *    every caller, including Zeus. Note what is NOT happening: an unseeded
+ *    `isRootSession` would *pass* the root gate (`isRoot` reports `true` for an
+ *    unknown session), so the hierarchy is not what denies here.
+ *
+ * 2. UNWIRED HIERARCHY (design). `SessionHierarchyRegistry` is what gates
+ *    exactly two things, and nothing else: the depth-2 child deny
+ *    (`isChildSession`) and the root-session gate (`isRootSession`). Left
+ *    unseeded, `isChild` is `false` for every session, so depth-2 would never
+ *    fire on a genuine child — a hierarchy that cannot tell a child from a root
+ *    is not a trustworthy input to either check.
+ *
+ *    "Unwired", not "impossible": the V2 `session.created` event carries
+ *    `properties.info: Session` including `parentID?`, the same field V1 seeds
+ *    from on the same event, so one line in `onSessionCreated` would seed live
+ *    sessions (see its docstring). What has no V2 equivalent is V1's SECOND
+ *    source, the `client.session.list()` startup seed — V2's `PluginContext`
+ *    exposes no `client`. Whether a live 2.0.22 host populates `info.parentID`
+ *    is UNVERIFIED; no canary reads an event payload. So the correct summary is
+ *    "seeded for nothing", not "unseedable", and the guard's omission is right
+ *    today for the weaker reason that nothing seeds it at all.
+ *
+ * Omitting all three skips the branch wholesale: the guard only enters it when
+ * `options?.isRootSession !== undefined`. `task` is still denied inside a
+ * read-only session via the blocked-tool list, so depth-2 holds for
+ * apollo/gaia; the caller/target matrix itself is NOT enforced on V2. That is
+ * a known gap, not a covered case.
  */
 const v2EnforcementGuard = createEnforcementGuard({
   getReadOnlySessions: () => readOnlyRegistry.sessionIDs(),
@@ -1115,7 +1204,14 @@ export function v2Dispose(): void {
 }
 
 /**
- * Get the current list of unsupported V2 features (for diagnostics).
+ * The current list of unsupported V2 features.
+ *
+ * Read by the installer and by `doctor` (both via the shared seed in
+ * `src/pantheon/v2-unsupported.mjs`) so the markers a user is shown are the
+ * same ones this returns, rather than a hand-copied duplicate.
+ *
+ * This returns the LIVE array: the shared seed plus whatever `markUnsupported`
+ * appended while this process talked to a real host.
  */
 export function getUnsupportedFeatures(): readonly string[] {
   return V2_UNSUPPORTED_FEATURES
