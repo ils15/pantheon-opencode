@@ -27,6 +27,45 @@
  * narrowest substitution that gets there — replacing the host would defeat the
  * purpose of the canary.
  *
+ * ## TESTED HOST VERSION — read this before trusting a green run
+ *
+ * This canary is written against ONE host generation:
+ *
+ *   TESTED_HOST_VERSION = 'opencode v2.0.22'
+ *
+ * Every "measured fact" below was measured on that host against this repo, and
+ * the canary is only meaningful when run against a host that still provides the
+ * API surface it drives. Two host facts pin it there, and BOTH must hold:
+ *
+ *   1. `POST /api/experimental/session/{id}/wait` exists. In the host generation
+ *      that PR #213's CI step installed (`@opencode-ai/cli@0.0.0-beta-19271`,
+ *      which is what `@opencode-ai/cli@beta` resolved to on 2026-10-05) this
+ *      route was PROMOTED out of `/experimental` to `POST /api/session/{id}/wait`
+ *      and the `/experimental` path returns HTTP 404.
+ *   2. `ctx.tool.list()` exists on the plugin context. On that same
+ *      `0.0.0-beta-19271` host it is ABSENT, so the probe below cannot dump the
+ *      host-built tool descriptors at all.
+ *
+ * `opencode v2.0.22` is NOT installable from the npm `@opencode-ai/cli` line:
+ * every version of that package that ships an `opencode2` binary (the line runs
+ * `0.0.0-beta-17498` .. `0.0.0-beta-19271`) already serves `/api/session/{id}/wait`
+ * instead, and public `anomalyco/opencode` GitHub releases stop at v1.18.x. So
+ * there is no npm spec that satisfies both facts above.
+ *
+ * CONSEQUENCE, stated plainly: this canary CANNOT pass against any host CI is
+ * able to install today. It passes on the developer's real host (`opencode
+ * v2.0.22`) and fails on the npm beta line for the two reasons above. Do not
+ * "fix" that by relaxing an assertion here, and do not treat a pinned-beta
+ * failure of this file as a plugin regression — it is a host-generation
+ * mismatch. Migrating this canary to the newer host (both facts above) is
+ * tracked as issue #216. It is NOT a one-line path swap: the `ctx.tool.list()`
+ * probe is the only way this file currently observes the host-built descriptor,
+ * and observing that descriptor is precisely what this canary exists to do, so
+ * it needs a new observation surface rather than a deleted assertion. Until #216
+ * lands, the honest CI signal for the pinned host is THIS failure, and the
+ * plugin's own behaviour is separately evidenced by the 10/12 that do pass once
+ * the renamed route is used.
+ *
  * ## Measured facts this file depends on (opencode 2.0.22, against this repo)
  *
  *   1. `opencode serve` prints `server listening on <url>` then

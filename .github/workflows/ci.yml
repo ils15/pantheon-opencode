@@ -188,6 +188,37 @@ jobs:
       # which installs the host, re-verifies it, and rejects a summary that
       # skipped anything. `tests/ci-workflow-fail-closed.test.mjs` exercises all
       # three failure paths.
+      #
+      # TESTED HOST VERSION — what this gate actually proves
+      # ----------------------------------------------------
+      # The canary is written against ONE host generation, and it is NOT the
+      # host this job installs. The two disagree, and that disagreement is the
+      # whole story of this gate:
+      #
+      #   canary written against : opencode v2.0.22
+      #   host installed below    : @opencode-ai/cli@0.0.0-beta-19271
+      #                             (binary `opencode2 v0.0.0-beta-19271`)
+      #
+      # On v2.0.22 the canary drives `POST /api/experimental/session/{id}/wait`
+      # and reads `ctx.tool.list()`. On the installed beta BOTH are gone: `/wait`
+      # was promoted out of `/experimental` to `POST /api/session/{id}/wait`
+      # (the `/experimental` path answers 404), and `ctx.tool.list` is absent.
+      # That is why the canary fails 12/12 here. It is a host-generation
+      # mismatch, NOT a plugin regression: with the route renamed, 10/12 pass on
+      # this same beta, including the edit actually being applied and the mutant
+      # still being caught.
+      #
+      # So the install is PINNED rather than tracking `@beta`, and the pin is
+      # deliberately NOT a floating tag: a tag makes this gate's verdict change
+      # under the branch with no diff to review. The `npm view` drift annotation
+      # in the install step below is what makes the pin's age visible.
+      #
+      # Do NOT "fix" this step by relaxing a canary assertion, by dropping the
+      # skip check, or by re-pointing the canary at a beta it has not been
+      # verified against. Migrating the canary to the newer host is a separate,
+      # reviewed change tracked as issue #216; until then this gate's honest
+      # output is RED, and the fail-closed guarantee below is what keeps it from
+      # lying.
       - name: V2 tool canary (host-free guards)
         env:
           # The host-free cases are host-free by construction, so this step
@@ -227,9 +258,15 @@ jobs:
       #    project dependencies still come from the single `npm ci` above; the
       #    workflow-text guard in tests/ci-workflow-fail-closed.test.mjs allows
       #    exactly this one shape and no other.
+      # 3. The spec is an EXACT version, not `@beta`. `@beta` resolved to
+      #    0.0.0-beta-19271 on 2026-10-05 and is a moving target: every beta
+      #    release can change what this gate proves, with no diff on the branch
+      #    to review and no way to tell a plugin regression from a host change.
+      #    An exact pin makes the gate's verdict reproducible; the drift
+      #    annotation below makes the pin's age visible instead of silent.
       - name: Install the OpenCode host CLI for the tool canary
         env:
-          OPENCODE_CANARY_CLI_SPEC: '@opencode-ai/cli@beta'
+          OPENCODE_CANARY_CLI_SPEC: '@opencode-ai/cli@0.0.0-beta-19271'
         run: |
           set -euo pipefail
           prefix="$RUNNER_TEMP/pantheon-canary-cli"
@@ -239,15 +276,18 @@ jobs:
           # by EXACT name — never an `opencode*` glob, which would equally match
           # a broken `opencode-broken` and paper over a genuinely missing host.
           #
-          # Both names are checked because the host is reachable under either:
-          # `opencode2` is the name the npm CLI package actually ships (its `bin`
-          # map has exactly one entry, `opencode2`), while `opencode` is what a
-          # normal install provides and what the canary file defaults to. They
-          # are the same host in practice — scripts/install/opencode-version.mjs
-          # records that `opencode2` there is a 47-byte shim that execs
-          # `opencode`, and that `opencode2 --version` prints "opencode v2.0.22".
-          # `opencode` is probed first so the canary keeps its documented
-          # default when a real install is present.
+          # Both names are checked because a host can be reachable under either,
+          # but they are NOT interchangeable and must not be treated as one. The
+          # npm package ships a real `opencode2` binary (its `bin` map has
+          # exactly one entry, `opencode2`), and that binary is a DIFFERENT host
+          # from the `opencode` a normal install provides — it is not a shim onto
+          # it. This comment previously claimed the two "are the same host in
+          # practice", on the strength of scripts/install/opencode-version.mjs,
+          # which observed a 47-byte local `opencode2` shim execing a local
+          # `opencode`. That is true of one developer's install directory and
+          # false of what this step installs. Believing it is what let a host
+          # whose API had moved on be validated as though it were the host the
+          # canary was written against. See the TESTED HOST VERSION block above.
           cli=''
           for name in opencode opencode2; do
             candidate="$prefix/bin/$name"
@@ -263,6 +303,31 @@ jobs:
           fi
           echo "Tool canary host: $cli ($("$cli" --version 2>&1 | head -1))"
           echo "PANTHEON_CANARY_CLI=$cli" >> "$GITHUB_ENV"
+
+          # DRIFT VISIBILITY — the smallest thing that stops the pin rotting
+          # quietly. The pin above is what this gate proves; the `beta` dist-tag
+          # is what an unpinned run would have installed. When they differ, the
+          # canary's verdict no longer speaks for the host a fresh install gives.
+          #
+          # This ANNOTATES rather than fails, deliberately. Failing on drift
+          # would turn every beta release into a red run that has nothing to do
+          # with this branch, and that is exactly the noise that gets a gate
+          # switched off. The gate below keeps testing the pinned host it
+          # documents; this line is what tells a reader that host is no longer
+          # the newest one.
+          #
+          # The re-point procedure is documented in the canary file header
+          # ("TESTED HOST VERSION"): re-verify the canary against the candidate
+          # host locally FIRST, then bump this spec in the SAME commit as any
+          # canary change, so the pin and what it proves can never disagree.
+          pin="${OPENCODE_CANARY_CLI_SPEC##*@}"
+          if current_beta="$(npm view @opencode-ai/cli dist-tags.beta 2>/dev/null)"; then
+            if [ "$current_beta" != "$pin" ]; then
+              echo "::warning title=Tool canary host pin is behind beta::This run proved the plugin against $OPENCODE_CANARY_CLI_SPEC, but the beta dist-tag now resolves to $current_beta, so the pinned host is no longer what a fresh install gives. Re-point per the procedure in tests/canary/plugin-v2-tool-canary.test.mjs — and re-verify the canary against the new host before pinning it."
+            fi
+          else
+            echo "::warning title=Tool canary beta lookup unresolved::Could not read the @opencode-ai/cli beta dist-tag, so pin drift is UNKNOWN for this run. Only the pinned host was proven."
+          fi
 
       - name: V2 tool canary (full host run)
         run: |

@@ -156,6 +156,18 @@ function stepRunCode(stepName) {
 const CANARY_INSTALL_STEP = 'Install the OpenCode host CLI for the tool canary'
 const CANARY_RUN_STEP = 'V2 tool canary (full host run)'
 
+/** The host-backed canary file — the one gate that drives a Pantheon tool. */
+const CANARY_TEST = fileURLToPath(
+  new URL('./canary/plugin-v2-tool-canary.test.mjs', import.meta.url),
+)
+
+/** The `OPENCODE_CANARY_CLI_SPEC` the install step installs. */
+function canaryCliSpec() {
+  const spec = /OPENCODE_CANARY_CLI_SPEC:\s*'([^']+)'/.exec(workflow)?.[1]
+  assert.ok(spec, `the ${CANARY_INSTALL_STEP} step must declare its host spec`)
+  return spec
+}
+
 /** A sandbox with a stub `npm`, a runner temp dir and a GITHUB_ENV to inspect. */
 function canarySandbox(t, npmStub) {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-canary-gate-'))
@@ -379,7 +391,7 @@ test('the host install step FAILS when npm installs nothing runnable', (t) => {
       PATH: `${sandbox.bin}:/usr/bin:/bin`,
       RUNNER_TEMP: sandbox.runnerTemp,
       GITHUB_ENV: sandbox.githubEnv,
-      OPENCODE_CANARY_CLI_SPEC: '@opencode-ai/cli@beta',
+      OPENCODE_CANARY_CLI_SPEC: '@opencode-ai/cli@0.0.0-beta-19271',
     })
     assert.notEqual(
       result.status,
@@ -414,7 +426,7 @@ test('the host install step RESOLVES both opencode and the opencode2 name', (t) 
       PATH: `${sandbox.bin}:/usr/bin:/bin`,
       RUNNER_TEMP: sandbox.runnerTemp,
       GITHUB_ENV: sandbox.githubEnv,
-      OPENCODE_CANARY_CLI_SPEC: '@opencode-ai/cli@beta',
+      OPENCODE_CANARY_CLI_SPEC: '@opencode-ai/cli@0.0.0-beta-19271',
     })
     assert.equal(
       result.status,
@@ -429,6 +441,101 @@ test('the host install step RESOLVES both opencode and the opencode2 name', (t) 
       `the resolved host for '${shipped}' must be that exact binary, by name`,
     )
   }
+})
+
+test('the tool canary host CLI is pinned to an EXACT version, never a floating tag', () => {
+  // `@beta` is the failure this pins. It resolved to 0.0.0-beta-19271 on
+  // 2026-10-05 and moves on every beta release, so the gate's verdict could
+  // change with no diff on the branch to review and no way to tell a plugin
+  // regression from a host change. A range has the same defect.
+  const spec = canaryCliSpec()
+  assert.match(
+    spec,
+    /^@opencode-ai\/cli@\d+\.\d+\.\d+-[\w.-]+$/,
+    `the tool canary host must be pinned to one exact version, got ${spec}`,
+  )
+  for (const floating of ['@beta', '@latest', '@next', '@dev', '^', '~', '*', '>=', '>']) {
+    assert.ok(
+      !spec.includes(floating),
+      `the tool canary host spec must not float (${floating}): ${spec}`,
+    )
+  }
+})
+
+test('the pinned host, the canary it drives, and the docs cannot silently disagree', () => {
+  // A pin nobody re-reads is how a gate becomes a comforting lie: the number in
+  // ci.yml stops matching the host the canary was actually verified against, and
+  // both files still look authoritative. So the pin has to be visible in BOTH
+  // files, and the canary has to name the host generation it was written against.
+  const pinned = canaryCliSpec().split('@').pop()
+  // Must be a CONCRETE version, not a tag. Without this, a floating spec makes
+  // the two checks below pass vacuously: "beta" occurs in prose in both files,
+  // so the doc-sync assertion would be satisfied by the word, not by a version.
+  assert.match(
+    pinned,
+    /^\d+\.\d+\.\d+-[\w.-]+$/,
+    `the host spec must resolve to a concrete version to be worth documenting, got ${pinned}`,
+  )
+  const canary = readFileSync(CANARY_TEST, 'utf8')
+
+  const testedHost = /TESTED_HOST_VERSION\s*=\s*'([^']+)'/.exec(canary)?.[1]
+  assert.ok(
+    testedHost,
+    `${CANARY_TEST} must declare TESTED_HOST_VERSION: a reader has to know which host the canary proves`,
+  )
+  assert.match(
+    testedHost,
+    /^opencode v\d+\.\d+\.\d+$/,
+    `TESTED_HOST_VERSION must name one concrete host version, got ${testedHost}`,
+  )
+
+  // The installed host must be named where the threat model is written, and in
+  // the canary that will be migrated onto it — otherwise the "what does this
+  // gate prove" answer lives in only one of the two files that matter.
+  assert.match(
+    workflow,
+    /TESTED HOST VERSION/,
+    'ci.yml must document the tested host version in its threat-model section',
+  )
+  assert.ok(
+    workflow.includes(pinned),
+    `ci.yml must name the pinned host version (${pinned}) so the pin is auditable`,
+  )
+  assert.ok(
+    canary.includes(pinned),
+    `${CANARY_TEST} must name the installed host version (${pinned}) so the canary and the pin cannot drift apart`,
+  )
+})
+
+test('the tool canary install step makes pin drift VISIBLE', () => {
+  // The smallest thing that stops a pin rotting quietly: every run says whether
+  // the pinned host is still what an unpinned install would give.
+  //
+  // It annotates rather than fails, on purpose. A red-on-drift gate would go red
+  // on every beta release regardless of the branch under test, which is the noise
+  // that gets a gate switched off — and the gate must keep testing the pinned
+  // host it documents either way.
+  const installCode = stepRunCode(CANARY_INSTALL_STEP)
+  assert.match(
+    installCode,
+    /npm view @opencode-ai\/cli dist-tags\.beta/,
+    'the install step must read the current beta dist-tag to detect drift',
+  )
+  assert.match(
+    installCode,
+    /::warning title=Tool canary host pin is behind beta/,
+    'drift between the pin and beta must be annotated',
+  )
+  assert.match(
+    installCode,
+    /::warning title=Tool canary beta lookup unresolved/,
+    'an unreadable beta dist-tag is UNKNOWN drift, not zero drift — it must say so',
+  )
+  assert.doesNotMatch(
+    installCode,
+    /\|\| true/,
+    'a failed beta lookup must not be swallowed into a silent pass',
+  )
 })
 
 test('CI validates YAML and installs locked dependencies only', () => {
