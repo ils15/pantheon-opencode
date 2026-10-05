@@ -31,7 +31,9 @@ way to plan work, make progress, check results, and keep useful project context.
 ## Start in 2 minutes
 
 Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js
-22.22.2+ (or 24.15.0+ / 26+).
+22.22.2+ (or 24.15.0+ / 26+). For which OpenCode generation each Pantheon
+release line supports, see
+[Compatibility and support policy](#compatibility-and-support-policy).
 
 Pantheon declares `engines.node` as `^22.22.2 || ^24.15.0 || >=26.0.0`. The
 floor reflects what the dependency tree actually needs — the transitive
@@ -88,6 +90,81 @@ and depends on the availability and configuration of OpenCode and any optional
 services you choose to use. Check the
 [releases](https://github.com/ils15/pantheon-opencode/releases) and
 [changelog](CHANGELOG.md) for the latest published changes.
+
+## Compatibility and support policy
+
+> ### ⚠️ 1.6.x is the LAST line that supports OpenCode 1.X
+>
+> **OpenCode 1.X support ends after the 1.6 line.** From **1.7 onward, every
+> release is a breaking change targeting OpenCode 2.** A 1.6.x install is the
+> last one that runs on an OpenCode 1.X host; do not plan an upgrade across the
+> 1.6 → 1.7 boundary while your host is still on OpenCode 1.X.
+
+| Pantheon line | OpenCode 1.X host | OpenCode 2 host |
+|---|---|---|
+| **1.6.x** (current line) | **Supported.** V1 plugin contract | Supported, reduced surface — V2 contract |
+| **1.7 and later** | **Not supported.** Breaking change | Target of the 1.7+ work |
+
+Both columns of the 1.6.x row are real, and they are not the same claim. Read
+[the plugin contract](#opencode-v1v2--dual-version-160-beta1) for what each
+generation actually registers.
+
+### What "supported on OpenCode 1.X" concretely means
+
+On the 1.6 line, an OpenCode 1.X host gets the **V1 plugin**:
+`src/plugin.ts` plus `src/plugins/pantheon-hooks.ts`, registered under the
+singular `plugin` config key. That surface registers 6 tools
+(`hashline_edit`, the 3 `pantheon_goal_*` tools, `pantheon_cost`,
+`pantheon_model`), the BackgroundJobBoard lifecycle, the V1 event/tool hooks and
+the V1 compaction path. It is selected automatically: the generation gate
+(`--opencode-version`, else `OPENCODE_VERSION`, else a `OPENCODE_BIN` basename of
+`opencode2`, else a `--version` probe where major ≥ 2 selects V2) resolves a 1.X
+host to V1.
+
+The two generations are exclusive. The installer strips Pantheon references from
+both config shapes and registers only the selected one, so a 1.X host never
+loads the V2 plugin and a V2 host never loads the V1 plugin. Forcing V2 on a 1.X
+host is an unsupported mixed/wrong-generation configuration, not a supported mode.
+
+### What the OpenCode 2 path is — and is not
+
+**Not inert.** The V2 path (`src/plugin-v2`, registered as a directory because
+the V2 loader rejects bare file paths) registers real tools with real
+`input`/`output` schemas via `ctx.tool.transform()`, 5 event subscriptions,
+session hooks and a tool `execute.before` hook that enforces read-only sessions.
+It is a smaller surface than V1 by design, not a stub: the 3 goal tools and the
+V1 caller→target delegation matrix are absent, and `getUnsupportedFeatures()`
+reports that as `goal-tools` and `delegation-matrix`.
+
+**Not complete either, and the V2 support claim is currently narrowed.** Two
+facts, both recorded in this repository rather than smoothed over:
+
+- **The host-backed V2 gate is red on the installable OpenCode CLI.** The V2 tool
+  canary (`tests/canary/plugin-v2-tool-canary.test.mjs`) was written against
+  `opencode 2.0.22`, which no npm channel publishes. Against the installable
+  `@opencode-ai/cli` host, `/api/experimental/session/{id}/wait` has been
+  promoted to `/api/session/{id}/wait` (the old path 404s) and `ctx.tool.list`
+  is absent, so the canary fails 12/12 there. That is a canary/host-generation
+  mismatch, not a measured plugin regression — with only the route renamed, 10/12
+  pass on the same host, including the edit being applied and the mutant still
+  caught. Tracked as [issue
+  #216](https://github.com/ils15/pantheon-opencode/issues/216); the fail-closed
+  CI change is [PR #213](https://github.com/ils15/pantheon-opencode/pull/213).
+- **The 2.x host claims in `src/plugin-v2.ts` are measured against `2.0.22`
+  specifically**, not against the current installable CLI. Re-measurement
+  against the current host is outstanding and is tracked in the same issue.
+
+Treat the 1.6 line's OpenCode 2 support as **real but partial**, and do not read
+the 1.6.x row as "OpenCode 2 is finished".
+
+### Verified against which OpenCode versions
+
+| What | Verified against | How |
+|---|---|---|
+| V1 plugin + generation gate | The OpenCode 1.18.x line. This package pins `@opencode-ai/plugin` and `@opencode-ai/sdk` to `1.18.33`; the highest published `opencode-ai` host package (the one shipping the `opencode` binary) is `1.18.34` | Dependency pin (`package.json`); generation-gate unit tests over injected host banners; installer end-to-end tests asserting the emitted `opencode.json` shape |
+| V2 plugin tool surface | `opencode 2.0.22` (the host the canary was written against) | `tests/canary/plugin-v2-tool-canary.test.mjs`, driving `hashline_edit` through a real `opencode serve` |
+| V2 against the current installable CLI | **Not verified.** Canary fails 12/12; see issue #216 | — |
+| Exact 1.X host version the 1.6 line is exercised against end-to-end | **Unverified.** No V1 host leg exists: the sandbox runner is V2-only and `--run v1` is rejected | — |
 
 ## Delegation (native `task()`)
 
@@ -300,6 +377,11 @@ preserved, matching the precedence the installer already applies elsewhere.
 Key order does not matter.
 
 ## Updating between releases (beta.5+)
+
+> **Read [Compatibility and support policy](#compatibility-and-support-policy)
+> before upgrading across a line boundary.** 1.6.x is the last line that
+> supports an OpenCode 1.X host; 1.7+ is breaking-change territory targeting
+> OpenCode 2. Within the 1.6 line, `update` is the supported path.
 
 One command keeps an existing installation current:
 

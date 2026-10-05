@@ -2,6 +2,17 @@
 
 [Português (Brasil)](UPGRADING.pt-BR.md)
 
+> ### ⚠️ Before you upgrade: check the line boundary
+>
+> **1.6.x is the last Pantheon line that supports an OpenCode 1.X host. From
+> 1.7 onward every release is a breaking change targeting OpenCode 2.** Upgrading
+> from any 1.6.x release to 1.7+ therefore crosses both a Pantheon support
+> boundary and an OpenCode major boundary at once. The policy, its support
+> matrix and what is verified against which host are in the
+> [README compatibility section](../README.md#compatibility-and-support-policy)
+> and, in more detail, in
+> [INSTALLATION.md](INSTALLATION.md#opencode-v1v2--contrato-de-plugin).
+> Everything below applies to upgrades *within* the 1.6 line.
 
 Pantheon 1.5.0 formalizes two exclusive OpenCode plugin contracts. Before
 upgrading, choose the contract that matches the OpenCode host you will run:
