@@ -48,9 +48,9 @@ assert.equal(
 )
 
 // The vision server has a single canonical home in the package.
-assert.equal(existsSync('scripts/pantheon_vision_server.py'), false)
-assert.ok(existsSync('src/mcp/pantheon_vision_server.py'))
-assert.equal(existsSync('src/pantheon/pantheon_vision_server.py'), false)
+assert.equal(existsSync('scripts/pantheon_vision.py'), false)
+assert.ok(existsSync('src/mcp/pantheon_vision.py'))
+assert.equal(existsSync('src/pantheon/pantheon_vision.py'), false)
 
 // The packaged vision requirements stay minimal (no heavy ML deps).
 const visionRequirements = readFileSync('src/mcp/requirements-vision.txt', 'utf8')
@@ -76,15 +76,15 @@ try {
   mkdirSync(sourceDir, { recursive: true })
   mkdirSync(pythonDir, { recursive: true })
   for (const name of [
-    'mcp_persistence_server.py',
-    'mcp_resources_server.py',
-    'code_mode_server.py',
-    'memory_mcp_server.py',
+    'mcp_persistence.py',
+    'mcp_resources.py',
+    'code_mode.py',
+    'memory_mcp.py',
     '_pantheon_paths.py',
   ]) {
     writeFileSync(join(scriptsDir, name), '')
   }
-  writeFileSync(join(sourceDir, 'pantheon_vision_server.py'), '')
+  writeFileSync(join(sourceDir, 'pantheon_vision.py'), '')
   writeFileSync(join(sourceDir, 'requirements-vision.txt'), 'mcp==2.2.0\nfastmcp==4.0.10\n')
   const fakePython = join(pythonDir, 'python3')
   writeFileSync(

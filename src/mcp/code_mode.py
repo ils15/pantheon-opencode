@@ -5,12 +5,12 @@ Provides a confined execution environment for orchestration scripts
 via MCP tools and resources.
 
 Usage:
-    python scripts/code_mode_server.py
+    python scripts/code_mode.py
 
 Or via MCP client (stdio transport):
     pantheon-code-mode:
         command: python
-        args: ["scripts/code_mode_server.py"]
+        args: ["scripts/code_mode.py"]
 """
 
 from __future__ import annotations

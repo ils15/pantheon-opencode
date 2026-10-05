@@ -252,7 +252,7 @@ Any `npm ci` failure blocks the run. There is no `npm install` fallback, and
 
 ### Intentional MCP source divergence
 
-`scripts/memory_mcp_server.py` and `src/mcp/memory_mcp_server.py` are
+`scripts/memory_mcp.py` and `src/mcp/memory_mcp.py` are
 intentionally divergent. The standalone `scripts/` copy preserves the
 lightweight `memory_*` server contract; the installed `src/mcp/` copy also
 loads the optional codemap schema and exposes `code_index`, `code_query`, and

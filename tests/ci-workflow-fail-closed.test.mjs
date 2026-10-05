@@ -144,7 +144,7 @@ test('CI validates YAML and installs locked dependencies only', () => {
     'CI must install the locked MCP deps before pytest',
   )
   // The memory server's vector pipeline (sqlite-vec + fastembed) was removed
-  // outright — no flag, no fallback. memory_mcp_server is stdlib + FTS5 now,
+  // outright — no flag, no fallback. memory_mcp is stdlib + FTS5 now,
   // so CI must install NEITHER backend. These guards are inverted from the
   // original pair, which asserted sqlite-vec was installed and fastembed was
   // not: they now keep the removal fail-closed, so reintroducing either wheel
@@ -320,11 +320,11 @@ test('V2 config merge rewrites stale MCP paths to the active sandbox', (t) => {
   const project = join(sandboxRoot, 'project-v2')
   const runtime = join(project, '.opencode')
   const managed = [
-    ['pantheon-code-mode', 'code_mode_server.py'],
-    ['pantheon-memory', 'memory_mcp_server.py'],
-    ['pantheon-persistence', 'mcp_persistence_server.py'],
-    ['pantheon-resources', 'mcp_resources_server.py'],
-    ['pantheon-vision', 'pantheon_vision_server.py'],
+    ['pantheon-code-mode', 'code_mode.py'],
+    ['pantheon-memory', 'memory_mcp.py'],
+    ['pantheon-persistence', 'mcp_persistence.py'],
+    ['pantheon-resources', 'mcp_resources.py'],
+    ['pantheon-vision', 'pantheon_vision.py'],
   ]
   const scripts = managed.map(([, script]) => script)
   mkdirSync(join(runtime, 'scripts'), { recursive: true })

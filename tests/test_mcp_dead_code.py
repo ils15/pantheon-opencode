@@ -19,7 +19,7 @@ Reachability is decided from the actual wiring, not from filenames:
   files become runnable MCP servers; it lists each server explicitly
   (``mcpScripts`` / ``canonicalMcpScripts``).
 * Server entrypoints import their collaborators (e.g.
-  ``mcp_resources_server`` imports ``eval_store``), which transitively covers
+  ``mcp_resources`` imports ``eval_store``), which transitively covers
   library modules. ``_pantheon_paths`` is imported by every server too.
 """
 

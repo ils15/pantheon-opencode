@@ -1,7 +1,7 @@
 # Pantheon Persistence MCP
 
 **Server:** `pantheon-persistence`
-**Script:** `scripts/mcp_persistence_server.py`
+**Script:** `scripts/mcp_persistence.py`
 **Dependencies:** `mcp==2.2.0`, standalone `fastmcp==4.0.10`, and project path
 helpers; SQLite/FTS5 storage uses the Python standard library.
 

@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from src.mcp import pantheon_vision_server as vision
+from src.mcp import pantheon_vision as vision
 
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"

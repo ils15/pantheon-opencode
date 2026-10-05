@@ -305,14 +305,14 @@ class TestNeighbors:
 
 
 class TestMcpIntegration:
-    """Integration via memory_mcp_server wrappers — isolated DB via _set_memory_dir."""
+    """Integration via memory_mcp wrappers — isolated DB via _set_memory_dir."""
 
     def test_mcp_code_index_and_query_isolated(self, tmp_path: Path) -> None:
-        # No importorskip: memory_mcp_server is stdlib + FTS5 only since the
+        # No importorskip: memory_mcp is stdlib + FTS5 only since the
         # vector pipeline was removed, so importing it no longer pulls a heavy
         # optional wheel. Gating on a backend the server does not use would
         # silently drop this integration coverage.
-        import src.mcp.memory_mcp_server as mem
+        import src.mcp.memory_mcp as mem
 
         mem._set_memory_dir(tmp_path / "memdb")
         p = tmp_path / "isolated.py"
@@ -323,7 +323,7 @@ class TestMcpIntegration:
         assert any(x["name"] == "IsolatedXYZ" for x in res)
 
     def test_mcp_code_neighbors_isolated(self, tmp_path: Path) -> None:
-        import src.mcp.memory_mcp_server as mem
+        import src.mcp.memory_mcp as mem
 
         mem._set_memory_dir(tmp_path / "memdb2")
         p = tmp_path / "app_iso.py"

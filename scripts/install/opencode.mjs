@@ -34,7 +34,7 @@ import {
   success,
   warning,
 } from './cli-ui.mjs'
-import { migrateV1toV2 } from './config-migration.mjs'
+import { migrateMcpEntrypointPaths, migrateV1toV2 } from './config-migration.mjs'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
 import { resolveOpenCodeVersion } from './opencode-version.mjs'
@@ -499,6 +499,92 @@ export function setupRuntimePhase(target, { dryRun, clean, isGlobal }, stats, de
   }
 }
 
+/**
+ * Write the five managed MCP server entries into `config`, healing any stale
+ * entrypoint paths first.
+ *
+ * The heal runs on EVERY install, not only when an entry is missing: the
+ * per-server guards below are add-only, so an existing install whose
+ * `opencode.json` still carries a pre-rename `*_server.py` path would never be
+ * repaired. Healing first means a re-run of the installer fixes an orphaned
+ * config in place — the migration that makes the rename non-breaking.
+ *
+ * @param {object} config - full config object (mutated in place)
+ * @param {{ runtimeTarget: string, venvPython: string }} ctx
+ * @returns {{ healed: number }} number of stale path strings rewritten
+ */
+export function applyMcpServerEntries(config, { runtimeTarget, venvPython }) {
+  config.mcp = config.mcp || {}
+  // MCP stays a flat named-server map for BOTH V1 and V2: OpenCode 1.18.x has
+  // no `mcp.servers` wrapper and rejects one with "Missing key
+  // mcp.servers.enabled". config-migration.mjs normalizes any legacy
+  // wrapper-shaped entries back to the flat map.
+  const healed = migrateMcpEntrypointPaths(config.mcp)
+
+  // Only add if not already configured by user
+  if (!config.mcp['pantheon-resources']) {
+    config.mcp['pantheon-resources'] = {
+      type: 'local',
+      cwd: runtimeTarget,
+      command: [venvPython, 'scripts/mcp_resources.py'],
+      enabled: true,
+    }
+  }
+  if (!config.mcp['pantheon-code-mode']) {
+    config.mcp['pantheon-code-mode'] = {
+      type: 'local',
+      cwd: runtimeTarget,
+      command: [venvPython, 'scripts/code_mode.py'],
+      enabled: true,
+    }
+  }
+  if (!config.mcp['pantheon-memory']) {
+    config.mcp['pantheon-memory'] = {
+      type: 'local',
+      cwd: runtimeTarget,
+      command: [venvPython, 'scripts/memory_mcp.py'],
+      enabled: true,
+    }
+  }
+  if (!config.mcp['pantheon-persistence']) {
+    config.mcp['pantheon-persistence'] = {
+      type: 'local',
+      cwd: runtimeTarget,
+      command: [venvPython, 'scripts/mcp_persistence.py'],
+      enabled: true,
+    }
+  }
+  if (!config.mcp['pantheon-vision']) {
+    config.mcp['pantheon-vision'] = {
+      type: 'local',
+      cwd: runtimeTarget,
+      command: [venvPython, 'scripts/pantheon_vision.py'],
+      enabled: true,
+    }
+  }
+
+  // Default MCP permissions
+  config.permission = config.permission || {}
+  config.permission.mcp = config.permission.mcp || {}
+  if (!config.permission.mcp['pantheon-resources']) {
+    config.permission.mcp['pantheon-resources'] = 'allow'
+  }
+  if (!config.permission.mcp['pantheon-code-mode']) {
+    config.permission.mcp['pantheon-code-mode'] = 'ask'
+  }
+  if (!config.permission.mcp['pantheon-memory']) {
+    config.permission.mcp['pantheon-memory'] = 'allow'
+  }
+  if (!config.permission.mcp['pantheon-persistence']) {
+    config.permission.mcp['pantheon-persistence'] = 'allow'
+  }
+  if (!config.permission.mcp['pantheon-vision']) {
+    config.permission.mcp['pantheon-vision'] = 'ask'
+  }
+
+  return { healed }
+}
+
 export async function installOpenCode(
   target,
   dryRun = false,
@@ -786,30 +872,30 @@ export async function installOpenCode(
 
     // ── MCP server scripts ──
     const mcpScripts = [
-      'mcp_resources_server.py',
-      'code_mode_server.py',
-      'memory_mcp_server.py',
+      'mcp_resources.py',
+      'code_mode.py',
+      'memory_mcp.py',
       'scrub-secrets.py',
       '_pantheon_paths.py',
       'mcp_codemap_module.py',
-      'mcp_persistence_server.py',
-      'pantheon_vision_server.py',
+      'mcp_persistence.py',
+      'pantheon_vision.py',
       'eval_store.py',
     ]
     const srcScriptsDir = join(ROOT, 'scripts')
     // Canonical MCP server sources live in src/mcp/. Map them explicitly so the
     // sync always copies from the canonical source, never from the stale root
     // scripts/ copies (which previously propagated bugs like the missing
-    // `import uuid` in mcp_persistence_server.py). scrub-secrets.py is not in
+    // `import uuid` in mcp_persistence.py). scrub-secrets.py is not in
     // src/mcp/ and intentionally falls back to join(ROOT, 'scripts').
     const canonicalMcpScripts = {
-      'mcp_resources_server.py': join(ROOT, 'src', 'mcp', 'mcp_resources_server.py'),
-      'code_mode_server.py': join(ROOT, 'src', 'mcp', 'code_mode_server.py'),
-      'memory_mcp_server.py': join(ROOT, 'src', 'mcp', 'memory_mcp_server.py'),
+      'mcp_resources.py': join(ROOT, 'src', 'mcp', 'mcp_resources.py'),
+      'code_mode.py': join(ROOT, 'src', 'mcp', 'code_mode.py'),
+      'memory_mcp.py': join(ROOT, 'src', 'mcp', 'memory_mcp.py'),
       '_pantheon_paths.py': join(ROOT, 'src', 'mcp', '_pantheon_paths.py'),
       'mcp_codemap_module.py': join(ROOT, 'src', 'mcp', 'mcp_codemap_module.py'),
-      'mcp_persistence_server.py': join(ROOT, 'src', 'mcp', 'mcp_persistence_server.py'),
-      'pantheon_vision_server.py': join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py'),
+      'mcp_persistence.py': join(ROOT, 'src', 'mcp', 'mcp_persistence.py'),
+      'pantheon_vision.py': join(ROOT, 'src', 'mcp', 'pantheon_vision.py'),
       'eval_store.py': join(ROOT, 'src', 'mcp', 'eval_store.py'),
     }
     const dstScriptsDir = join(runtimeTarget, 'scripts')
@@ -1263,82 +1349,18 @@ export async function installOpenCode(
   // at a venv that does not exist would make every MCP fail to launch.
   // --------------------------------------------------------------------
   if (componentSet.has('runtime') && runtimeHealthy) {
-    config.mcp = config.mcp || {}
-    // MCP stays a flat named-server map for BOTH V1 and V2: OpenCode 1.18.x
-    // has no `mcp.servers` wrapper and rejects one with
-    // "Missing key mcp.servers.enabled". config-migration.mjs normalizes any
-    // legacy wrapper-shaped entries back to the flat map.
-    // P1-3: derive the MCP python from the SAME venv layout setupVenv
-    // creates (<target>/.venv via venvPythonPath). For project installs the
-    // runtime payload lives under <target>/.opencode (runtimeTarget), but the
-    // venv is created at <target>/.venv — pointing MCP commands at
+    // P1-3: derive the MCP python from the SAME venv layout setupVenv creates
+    // (<target>/.venv via venvPythonPath). For project installs the runtime
+    // payload lives under <target>/.opencode (runtimeTarget), but the venv is
+    // created at <target>/.venv — pointing MCP commands at
     // runtimeTarget/.venv would reference an executable that never exists.
-    const runtimeTarget = isGlobal ? target : join(target, '.opencode')
-    const venvPython = venvPythonPath(target)
     // Point the config at the venv even on a first install; setupVenv runs
     // later in this function and creates this path before OpenCode starts.
-    const memoryPython = venvPython
-
-    // Only add if not already configured by user
-    if (!config.mcp['pantheon-resources']) {
-      config.mcp['pantheon-resources'] = {
-        type: 'local',
-        cwd: runtimeTarget,
-        command: [memoryPython, 'scripts/mcp_resources_server.py'],
-        enabled: true,
-      }
-    }
-    if (!config.mcp['pantheon-code-mode']) {
-      config.mcp['pantheon-code-mode'] = {
-        type: 'local',
-        cwd: runtimeTarget,
-        command: [memoryPython, 'scripts/code_mode_server.py'],
-        enabled: true,
-      }
-    }
-    if (!config.mcp['pantheon-memory']) {
-      config.mcp['pantheon-memory'] = {
-        type: 'local',
-        cwd: runtimeTarget,
-        command: [memoryPython, 'scripts/memory_mcp_server.py'],
-        enabled: true,
-      }
-    }
-    if (!config.mcp['pantheon-persistence']) {
-      config.mcp['pantheon-persistence'] = {
-        type: 'local',
-        cwd: runtimeTarget,
-        command: [memoryPython, 'scripts/mcp_persistence_server.py'],
-        enabled: true,
-      }
-    }
-    if (!config.mcp['pantheon-vision']) {
-      config.mcp['pantheon-vision'] = {
-        type: 'local',
-        cwd: runtimeTarget,
-        command: [memoryPython, 'scripts/pantheon_vision_server.py'],
-        enabled: true,
-      }
-    }
-
-    // Default MCP permissions
-    config.permission = config.permission || {}
-    config.permission.mcp = config.permission.mcp || {}
-    if (!config.permission.mcp['pantheon-resources']) {
-      config.permission.mcp['pantheon-resources'] = 'allow'
-    }
-    if (!config.permission.mcp['pantheon-code-mode']) {
-      config.permission.mcp['pantheon-code-mode'] = 'ask'
-    }
-    if (!config.permission.mcp['pantheon-memory']) {
-      config.permission.mcp['pantheon-memory'] = 'allow'
-    }
-    if (!config.permission.mcp['pantheon-persistence']) {
-      config.permission.mcp['pantheon-persistence'] = 'allow'
-    }
-    if (!config.permission.mcp['pantheon-vision']) {
-      config.permission.mcp['pantheon-vision'] = 'ask'
-    }
+    const runtimeTarget = isGlobal ? target : join(target, '.opencode')
+    applyMcpServerEntries(config, {
+      runtimeTarget,
+      venvPython: venvPythonPath(target),
+    })
   }
 
   // ── V2 native migration ──

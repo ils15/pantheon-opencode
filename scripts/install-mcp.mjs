@@ -24,6 +24,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
+import { migrateMcpEntrypointPaths } from './install/config-migration.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -70,11 +71,11 @@ function resolveServerScript(relPath) {
 }
 
 const VENV_PYTHON = resolveVenvPython()
-const MCP_RESOURCES_SERVER = resolveServerScript('scripts/mcp_resources_server.py')
-const CODE_MODE_SERVER = resolveServerScript('scripts/code_mode_server.py')
-const MEMORY_MCP_SERVER = resolveServerScript('scripts/memory_mcp_server.py')
-const MCP_PERSISTENCE_SERVER = resolveServerScript('scripts/mcp_persistence_server.py')
-const PANTHEON_VISION_SERVER = resolveServerScript('src/mcp/pantheon_vision_server.py')
+const MCP_RESOURCES_SERVER = resolveServerScript('scripts/mcp_resources.py')
+const CODE_MODE_SERVER = resolveServerScript('scripts/code_mode.py')
+const MEMORY_MCP_SERVER = resolveServerScript('scripts/memory_mcp.py')
+const MCP_PERSISTENCE_SERVER = resolveServerScript('scripts/mcp_persistence.py')
+const PANTHEON_VISION_SERVER = resolveServerScript('src/mcp/pantheon_vision.py')
 
 // ---------------------------------------------------------------------------
 // MCP Definitions
@@ -209,7 +210,7 @@ export const MCPS = {
       if (existsSync(scriptPath)) {
         return { ok: true, message: 'server script present' }
       }
-      return { ok: false, message: 'mcp_resources_server.py not found at resolved path' }
+      return { ok: false, message: 'mcp_resources.py not found at resolved path' }
     },
   },
   'pantheon-code-mode': {
@@ -230,7 +231,7 @@ export const MCPS = {
       if (existsSync(scriptPath)) {
         return { ok: true, message: 'server script present' }
       }
-      return { ok: false, message: 'code_mode_server.py not found at resolved path' }
+      return { ok: false, message: 'code_mode.py not found at resolved path' }
     },
   },
   'pantheon-memory': {
@@ -251,7 +252,7 @@ export const MCPS = {
       if (existsSync(scriptPath)) {
         return { ok: true, message: 'server script present' }
       }
-      return { ok: false, message: 'memory_mcp_server.py not found at resolved path' }
+      return { ok: false, message: 'memory_mcp.py not found at resolved path' }
     },
   },
   'pantheon-persistence': {
@@ -272,7 +273,7 @@ export const MCPS = {
       if (existsSync(scriptPath)) {
         return { ok: true, message: 'server script present' }
       }
-      return { ok: false, message: 'mcp_persistence_server.py not found at resolved path' }
+      return { ok: false, message: 'mcp_persistence.py not found at resolved path' }
     },
   },
   'pantheon-vision': {
@@ -471,8 +472,22 @@ function writeMcpConfig(platformName, mcpKey, dryRun, force) {
     config[key] = {}
   }
 
+  // Heal pre-rename MCP entrypoint paths before the skip check, so re-running
+  // the installer repairs an existing config whose `*_server.py` paths were
+  // orphaned by the entrypoint rename. Without this the rename is a silent
+  // break for every already-installed config (see config-migration.mjs).
+  const healed = migrateMcpEntrypointPaths(config[key])
+
   // Check if the MCP already has an entry
   if (config[key][mcpKey] && !force) {
+    if (healed > 0 && !dryRun) {
+      writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+      return {
+        status: 'healed',
+        path: configPath,
+        reason: `Updated ${healed} stale MCP entrypoint path(s) in ${platform.configFile}`,
+      }
+    }
     return {
       status: 'skipped',
       reason: `Already exists in ${platform.configFile} (use --force to overwrite)`,
@@ -704,6 +719,10 @@ function logResult(platformLabel, mcpKey, result) {
     case 'skipped':
       console.log(`  ⏭️  ${label} — ${result.reason}`)
       progress.skipped.push({ platform: platformLabel, mcp: mcpKey, reason: result.reason })
+      break
+    case 'healed':
+      console.log(`  🩹 ${label} — ${result.reason}`)
+      progress.installed.push({ platform: platformLabel, mcp: mcpKey })
       break
     case 'dry-run': {
       const desc =

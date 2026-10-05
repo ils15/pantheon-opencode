@@ -23,7 +23,7 @@ import pytest
 
 from tests.conftest import _resource_contents, _tool_text
 
-MODULE_PATH = "src.mcp.code_mode_server"
+MODULE_PATH = "src.mcp.code_mode"
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / ".pantheon" / "code-mode"
 

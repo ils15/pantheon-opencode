@@ -22,7 +22,7 @@ The vector pipeline (`sqlite-vec` + `fastembed`, ~50MB of wheels and ~185MB
 RSS) was removed outright. There is **no semantic/vector retrieval**: a query
 must share a token with the stored text to match it.
 
-**Server script:** `scripts/memory_mcp_server.py`
+**Server script:** `scripts/memory_mcp.py`
 **Storage:** `~/.pantheon/memory/memory.db`
 
 ---

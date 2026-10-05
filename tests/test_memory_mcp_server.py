@@ -32,7 +32,7 @@ from fastmcp import FastMCP
 from tests.conftest import _resource_contents, _tool_input_schema
 
 # Module path — canonical source lives in src/mcp/
-MODULE_PATH = "src.mcp.memory_mcp_server"
+MODULE_PATH = "src.mcp.memory_mcp"
 
 
 def _text(contents: list | str) -> str:
@@ -1009,7 +1009,7 @@ class TestVectorRemoval:
     def test_shipped_scripts_copy_also_has_no_vector_path(self) -> None:
         """The scripts/ copy ships standalone and must agree on the removal."""
         copy = (
-            Path(__file__).resolve().parent.parent / "scripts" / "memory_mcp_server.py"
+            Path(__file__).resolve().parent.parent / "scripts" / "memory_mcp.py"
         ).read_text(encoding="utf-8")
         for banned in (
             "import sqlite_vec",
@@ -1056,7 +1056,7 @@ class TestVectorRemoval:
             sys.modules["fastembed"] = None
             sys.modules["sqlite_vec"] = None
 
-            import src.mcp.memory_mcp_server as m
+            import src.mcp.memory_mcp as m
 
             m._set_memory_dir(tempfile.mkdtemp())
 

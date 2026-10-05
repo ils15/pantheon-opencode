@@ -1,4 +1,4 @@
-"""Tests for the Pantheon Code Mode MCP Adapter (scripts/code_mode_server.py).
+"""Tests for the Pantheon Code Mode MCP Adapter (scripts/code_mode.py).
 
 Tests cover:
 - Server name and instructions
@@ -20,7 +20,7 @@ from fastmcp import FastMCP
 from tests.conftest import _resource_contents, _tool_text
 
 # Module path — canonical source lives in src/mcp/
-MODULE_PATH = "src.mcp.code_mode_server"
+MODULE_PATH = "src.mcp.code_mode"
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / ".pantheon" / "code-mode"
 

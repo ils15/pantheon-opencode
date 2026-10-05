@@ -77,8 +77,8 @@ jobs:
           python3 -m pip install --quiet coverage pytest pyyaml yamllint pip-audit
           python3 -m pip install --quiet pytest-asyncio==1.3.0
           # Import-time deps of the MCP servers collected by pytest
-          # (mcp_resources_server / pantheon_vision_server / code_mode_server /
-          # mcp_persistence_server need mcp + httpx). memory_mcp_server needs
+          # (mcp_resources / pantheon_vision / code_mode /
+          # mcp_persistence need mcp + httpx). memory_mcp needs
           # none of it beyond the stdlib: its search is FTS5, and the vector
           # pipeline (sqlite-vec + fastembed) was removed, so neither is
           # installed here.

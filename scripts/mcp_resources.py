@@ -7,7 +7,7 @@ Provides MCP resources for the Pantheon agent framework:
   plans/status, memory-bank files
 
 Usage:
-    python scripts/mcp_resources_server.py
+    python scripts/mcp_resources.py
 """
 
 from __future__ import annotations

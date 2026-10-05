@@ -639,7 +639,7 @@ Allowed fields: file paths, status, pass/fail verdicts, phase names, agent names
 
 ### Layer 2 — Regex pattern scrub (automatic via MCP layer)
 
-**Source of truth:** `scripts/scrub-secrets.py` — the single canonical scrubber. Both `memory_mcp_server.py` and `compress-inline.py` load it via `importlib` (the filename has a hyphen and cannot be `import`ed normally). Do NOT maintain a separate inline pattern list.
+**Source of truth:** `scripts/scrub-secrets.py` — the single canonical scrubber. Both `memory_mcp.py` and `compress-inline.py` load it via `importlib` (the filename has a hyphen and cannot be `import`ed normally). Do NOT maintain a separate inline pattern list.
 
 **Real signature:**
 

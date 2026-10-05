@@ -289,6 +289,81 @@ function convertMcpV2toV1(mcpConfig) {
 }
 
 // ---------------------------------------------------------------------------
+// MCP entrypoint path migration
+// ---------------------------------------------------------------------------
+
+/**
+ * Entrypoint filename renames: every historical Python MCP entrypoint shared
+ * the `server.py` token, so a broad `pkill -f server.py` (a common idiom in
+ * agent and scratch tooling) matched the entire fleet and killed it as
+ * collateral. The five entrypoints now carry distinct tokens.
+ *
+ * The rename alone is a BREAKING change for existing installs: their
+ * `opencode.json` carries literal paths like `scripts/memory_mcp_server.py`,
+ * and a path that no longer resolves fails every MCP server silently (the
+ * same class of failure as the dead plugin surface). This map is the single
+ * source of truth for the stale → current basename rewrite that repairs them.
+ */
+export const MCP_ENTRYPOINT_RENAMES = Object.freeze({
+  'mcp_resources_server.py': 'mcp_resources.py',
+  'code_mode_server.py': 'code_mode.py',
+  'memory_mcp_server.py': 'memory_mcp.py',
+  'mcp_persistence_server.py': 'mcp_persistence.py',
+  'pantheon_vision_server.py': 'pantheon_vision.py',
+})
+
+/**
+ * Rewrite a single path/argument string when its basename is a renamed MCP
+ * entrypoint. The directory prefix is preserved verbatim, so both relative
+ * (`scripts/memory_mcp_server.py`) and absolute/hand-edited paths heal without
+ * discarding a user's chosen location. Non-matching values pass through.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function renameMcpEntrypointPath(value) {
+  if (typeof value !== 'string') return value
+  const slash = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'))
+  const base = value.slice(slash + 1)
+  const renamed = MCP_ENTRYPOINT_RENAMES[base]
+  if (!renamed) return value
+  return value.slice(0, value.length - base.length) + renamed
+}
+
+/**
+ * Heal stale MCP entrypoint paths in a flat named-server map, in place.
+ *
+ * Scans every server — not only the `pantheon-*` keys — because a user who
+ * hand-edited their config may have renamed the key while keeping the
+ * Pantheon path. Both `command` (installer writes `[python, script]`) and
+ * `args` (the standalone installer writes `[script]`) are covered, since
+ * which array carries the script differs between installers.
+ *
+ * @param {object} mcp - the `mcp` map from a config (mutated in place)
+ * @returns {number} count of rewritten strings (0 = already current)
+ */
+export function migrateMcpEntrypointPaths(mcp) {
+  if (!mcp || typeof mcp !== 'object' || Array.isArray(mcp)) return 0
+
+  let changed = 0
+  for (const server of Object.values(mcp)) {
+    if (!server || typeof server !== 'object') continue
+    for (const field of ['command', 'args']) {
+      const list = server[field]
+      if (!Array.isArray(list)) continue
+      for (let i = 0; i < list.length; i++) {
+        const next = renameMcpEntrypointPath(list[i])
+        if (next !== list[i]) {
+          list[i] = next
+          changed++
+        }
+      }
+    }
+  }
+  return changed
+}
+
+// ---------------------------------------------------------------------------
 // Top-level key mappings
 // ---------------------------------------------------------------------------
 
