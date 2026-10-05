@@ -29,6 +29,8 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
+
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
@@ -1431,6 +1433,153 @@ export function checkPluginVersionDrift(args) {
 }
 
 // ---------------------------------------------------------------------------
+// Check H4: V2 feature reduction (the surface a migrating user loses)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether an opencode.json registers the V2 generation of the Pantheon plugin.
+ *
+ * The V2 contract is the PLURAL `plugins` key; V1 is the singular `plugin` key.
+ * So the key alone is not the test — a config can legitimately carry a
+ * third-party entry in `plugins`. What identifies the generation is a Pantheon
+ * V2 entry inside it. Matched on the `plugin-v2` marker so all three real
+ * spellings are recognised: the canonical DIRECTORY (`src/plugin-v2`), an
+ * absolute path to it, and the package export (`pantheon-opencode/plugin-v2`).
+ *
+ * @param {unknown} ref
+ * @returns {boolean}
+ */
+function isV2PluginRef(ref) {
+  const candidate =
+    typeof ref === 'string'
+      ? ref
+      : ref && typeof ref === 'object'
+        ? (ref.path ?? ref.source ?? ref.id ?? ref.name)
+        : undefined
+  return typeof candidate === 'string' && candidate.includes('plugin-v2')
+}
+
+/**
+ * Whether any reachable config registers the V2 generation of the Pantheon
+ * plugin. Split out of {@link collectV2UnsupportedFeatures} because "is the V2
+ * generation registered" and "does the seed list anything" are TWO facts: the
+ * first is about the user's config, the second about this repository's seed. A
+ * single `features.length === 0` cannot tell them apart, and conflating them
+ * let an emptied seed print "no V2 generation registered — nothing reduced".
+ *
+ * @param {{path:string, data:object}[]} configs
+ * @returns {boolean}
+ */
+export function isV2GenerationRegistered(configs) {
+  return configs.some((cfg) => {
+    const list = cfg.data?.plugins
+    return Array.isArray(list) && list.some(isV2PluginRef)
+  })
+}
+
+/**
+ * The V2 feature-reduction markers to report for a set of collected configs.
+ *
+ * Returns the shared seed verbatim when ANY reachable config registers the V2
+ * generation, and an empty list otherwise. The strings come from
+ * `src/pantheon/v2-unsupported.mjs` — the same seed `getUnsupportedFeatures()`
+ * is built from — so doctor cannot report a reduction the plugin does not, or
+ * miss one it does. Nothing is reworded here.
+ *
+ * An empty result is ambiguous on its own and deliberately not interpreted
+ * here: ask {@link isV2GenerationRegistered} for the registration fact, or
+ * {@link describeV2Reduction} to get both at once.
+ *
+ * @param {{path:string, data:object}[]} configs
+ * @returns {string[]}
+ */
+export function collectV2UnsupportedFeatures(configs) {
+  return isV2GenerationRegistered(configs) ? listV2UnsupportedFeatures() : []
+}
+
+/**
+ * Decide what H4 prints, from the two distinct facts rather than from one list
+ * length.
+ *
+ * Three cases, and the middle one used to be silently reported as the first:
+ *
+ *   - not registered → info. A V1 install is a supported configuration with
+ *     nothing to reduce, and saying so plainly is correct.
+ *   - registered, seed EMPTY → warn. This is a packaging fault in THIS repo,
+ *     not an absence of reduction: the V2 surface really is reduced and the
+ *     report is missing. It must never claim "nothing reduced".
+ *   - registered, seed populated → warn, listing every marker.
+ *
+ * Pure and exported so the empty-seed branch is testable without stubbing the
+ * frozen seed module. `status` is returned alongside the text so a caller never
+ * has to recover the case by matching on the message.
+ *
+ * @param {{registered:boolean, features:string[]}} input
+ * @returns {{status:'reported'|'empty-seed'|'no-v2-generation', level:'info'|'warn', message:string}}
+ */
+export function describeV2Reduction({ registered, features }) {
+  if (!registered) {
+    return {
+      status: 'no-v2-generation',
+      level: 'info',
+      message: 'No V2 plugin generation registered — nothing reduced',
+    }
+  }
+  if (features.length === 0) {
+    return {
+      status: 'empty-seed',
+      level: 'warn',
+      message:
+        'Pantheon IS registered on the V2 plugin generation, but the shared ' +
+        'unsupported-feature seed is empty, so the reduction cannot be reported. ' +
+        "That is a fault in this installation's reporting, not an absence of " +
+        'reduction: the V2 surface still drops the 3 goal tools and the ' +
+        'caller/target delegation matrix.',
+    }
+  }
+  return {
+    status: 'reported',
+    level: 'warn',
+    message:
+      'Pantheon is registered on the V2 plugin generation, which registers 3 tools ' +
+      "(hashline_edit, pantheon_cost, pantheon_model) instead of the V1 surface's 6 plus " +
+      `the BackgroundJobBoard and the caller/target delegation matrix. Unsupported: ${features.join(', ')}`,
+  }
+}
+
+/**
+ * Report the V2 feature reduction through doctor's own output shape
+ * (section + warn/info), so it lands in the health summary like every other
+ * finding and never changes the exit code: a V2 install is a supported
+ * configuration, not a broken one.
+ *
+ * @param {{target:string, env?:object}} args
+ * @returns {'reported'|'empty-seed'|'no-v2-generation'|'no-config'}
+ */
+export function checkV2UnsupportedFeatures(args) {
+  section('H4. V2 Feature Reduction')
+
+  const configs = collectMcpConfigs(args)
+  if (configs.length === 0) {
+    info('No opencode.json was found — V2 feature reduction check skipped')
+    return 'no-config'
+  }
+
+  // Branch on REGISTRATION, not on the marker count: an empty seed on a
+  // registered V2 generation is a reporting fault and must not be reported as
+  // the reassuring "nothing reduced".
+  const registered = isV2GenerationRegistered(configs)
+  const verdict = describeV2Reduction({
+    registered,
+    features: collectV2UnsupportedFeatures(configs),
+  })
+  if (verdict.level === 'info') info(verdict.message)
+  else warn(verdict.message)
+
+  return verdict.status
+}
+
+// ---------------------------------------------------------------------------
 // Check G: AGENTS.md freshness
 // ---------------------------------------------------------------------------
 
@@ -1802,6 +1951,7 @@ async function main() {
   checkAgentsMdFreshness(args)
   checkSubagentDepthPlacement(args)
   checkPermissionTaskPresence(args)
+  checkV2UnsupportedFeatures(args)
 
   printSummary(args.target)
 

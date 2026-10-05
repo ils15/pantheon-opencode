@@ -58,6 +58,7 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const CANARY_SRC = join(here, '..', 'fixtures', 'opencode-v2-hook-canary', 'index.ts')
 const REAL_PLUGIN_SRC = join(here, '..', '..', 'src', 'plugin-v2.ts')
+const UNSUPPORTED_SEED_SRC = join(here, '..', '..', 'src', 'pantheon', 'v2-unsupported.mjs')
 const TEST_SRC = fileURLToPath(import.meta.url)
 
 const BIN = process.env.PANTHEON_HOOK_CANARY_BIN ?? 'opencode'
@@ -605,6 +606,15 @@ function readPluginSource() {
   return readFileSync(REAL_PLUGIN_SRC, 'utf8')
 }
 
+/**
+ * The shared unsupported-feature seed, which now owns the per-marker rationale
+ * that used to live in plugin-v2.ts. The guard below has to read it as well:
+ * a plugin-only assertion stopped covering the strings it exists to police.
+ */
+function readUnsupportedSeedSource() {
+  return readFileSync(UNSUPPORTED_SEED_SRC, 'utf8')
+}
+
 test('real plugin context hook exposes context marker', {
   skip: skipped,
 }, async () => {
@@ -772,6 +782,14 @@ test('real plugin regression guards: honest transform support claims and correct
     source,
     /ctx\.integration.*no longer a context domain|ctx\.skill.*no longer a context domain/s,
     'plugin must not describe integration or skill as host-absent',
+  )
+  // Same guard, second source: the per-marker rationale moved into the shared
+  // seed, so the stale wording could equally well be written there. Reading only
+  // the plugin would leave that copy unpoliced.
+  assert.doesNotMatch(
+    readUnsupportedSeedSource(),
+    /ctx\.integration.*no longer a context domain|ctx\.skill.*no longer a context domain/s,
+    'the unsupported-feature seed must not describe integration or skill as host-absent',
   )
   assert.doesNotMatch(
     source,

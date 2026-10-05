@@ -122,10 +122,10 @@ selected generation:
 | Selection | OpenCode key | Pantheon registration | Contract |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: `hashline_edit` + goal/cost/model tools, board lifecycle, V1 events/tool hooks and V1 compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 4 event subscriptions, session hooks, a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks, a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
 
 The V2 plugin is now a **full orchestration plugin** — not just a configuration
-adapter. It registers 3 tools via `ctx.tool.transform()`, subscribes to 4
+adapter. It registers 3 tools via `ctx.tool.transform()`, subscribes to 5
 session lifecycle events, and wires session hooks plus a tool `execute.before`
 hook that enforces read-only sessions (`apollo`/`gaia` are denied `edit`,
 `write`, `bash`, `task`, `hashline_edit` and `pantheon_model`). The 3 goal
