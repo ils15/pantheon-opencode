@@ -271,7 +271,7 @@ Each agent file defines overrides in its `## 🧠 Memory Protocol` section:
 
 Para otimizar decisoes de delegacao e reduzir gasto de tokens:
 
-1. **memory_search(task_prompt, top_k=2)** antes de aplicar a arvore de roteamento
+1. **memory_search(query=task_prompt, top_k=2)** antes de aplicar a arvore de roteamento
 2. Se score > 0.85 → reutiliza agente + background_mode do cache
 3. Se score ≤ 0.85 → aplica regras estaticas e memory_store() com:
    - key: deleg:<task_type>
@@ -284,8 +284,8 @@ Para otimizar decisoes de delegacao e reduzir gasto de tokens:
    as a string (got object). json.dumps it first. Example: metadata='{"type":
    "decision", "score": 0.9}'`.
 
-4. **kv_store("deleg:<pattern>", ...)** para padroes recorrentes de delegacao
-5. **kv_get("deleg:<pattern>")** para reusar decisoes ja tomadas
+4. **kv_store(namespace="deleg", key="deleg:<pattern>", value=...)** para padroes recorrentes de delegacao
+5. **kv_get(namespace="deleg", key="deleg:<pattern>")** para reusar decisoes ja tomadas
 
 Isso elimina ~300 tokens de reasoning por delegacao quando o cache acerta.
 
@@ -299,7 +299,7 @@ After every `/pantheon` council synthesis completes, Zeus stores:
 memory_store({
   namespace: "council_decisions",
   key: "council:<yyyy-mm-dd>:<slug>",
-  value: {
+  value: JSON.stringify({
     question: "original question",
     specialists: ["@agent1", "@agent2"],
     recommendation: "final recommendation",
@@ -310,7 +310,7 @@ memory_store({
     themis_audit: "approved|issues",
     precedent_used: false,
     timestamp: "<ISO-8601>"
-  },
+  }),
   metadata: JSON.stringify({
     type: "council_decision",
     specialist_count: N,
@@ -328,7 +328,7 @@ encoded as a string (got object). json.dumps it first. Example: metadata='{"type
 ### Read Path (Precedent Fast-Path)
 Before dispatching a new council, Zeus runs:
 ```
-memory_search(question, top_k=2, namespace="council_decisions")
+memory_search(query=question, top_k=2, namespace="council_decisions")
 ```
 
 Result interpretation:
@@ -426,16 +426,16 @@ All session state lives in **pantheon-persistence** (namespace `checkpoint:<slug
 No file I/O, no checkpoint_session.py — TTL (4h) handles cleanup automatically.
 
 ### Heartbeat Check
-- If `context_get(slug, "heartbeat")` returns a checkin older than 300s, log a stall warning and resume
+- If `context_get(slug=slug, key="heartbeat", session_id=SESSION_ID)` returns a checkin older than 300s, log a stall warning and resume
 - Write heartbeat after every anti-stall recovery action:
   ```
-  context_save(slug, "heartbeat", json({"status": "alive", "last_action": "...", "turn_count": N}))
+  context_save(slug=slug, key="heartbeat", content=JSON.stringify({"status": "alive", "last_action": "...", "turn_count": N}), session_id=SESSION_ID)
   ```
 
 ### Checkpoint Auto-Save (Pré-Compactação)
 Before ANY delegate dispatch, save a checkpoint:
 ```
-context_save(slug, "phase:N", json({
+context_save(slug=slug, key="phase:N", content=JSON.stringify({
   "phase": {"current": N, "total": M, "name": "..."},
   "turn_count": N, "agent": "...", "summary": "..."
 }), session_id=SESSION_ID)
@@ -456,15 +456,15 @@ o Zeus DEVE salvar o estado atual:
 2. Salve heartbeat + phase atual + tarefas pendentes
 3. Só então permita que a compactação prossiga
 ```
-# Ao iniciar sessão:
-result = context_save(slug, "init", session_state)
+# Ao iniciar sessão (session_id é REQUIRED — use o id da sessão corrente):
+result = context_save(slug=slug, key="init", content=JSON.stringify(session_state), session_id=SESSION_ID)
 SESSION_ID = result.session_id   # ← guarde para toda a sessão
 
 # Antes de CADA delegação:
-context_save(slug, f"pre:{agent}", current_state, session_id=SESSION_ID)
+context_save(slug=slug, key=f"pre:{agent}", content=JSON.stringify(current_state), session_id=SESSION_ID)
 
 # Após retorno do agente:
-context_save(slug, f"post:{agent}", result_state, session_id=SESSION_ID)
+context_save(slug=slug, key=f"post:{agent}", content=JSON.stringify(result_state), session_id=SESSION_ID)
 ```
 Isso garante que o estado sobreviva à compactação — o "latest" pointer
 sempre aponta para o checkpoint mais recente, mesmo após compactação.
@@ -473,9 +473,9 @@ sempre aponta para o checkpoint mais recente, mesmo após compactação.
 ### Context Retrieval
 Next-phase agents retrieve previous context via:
 ```
-context_get(slug, "latest")        # most recent checkpoint
-context_get(slug, "phase:3")      # specific phase
-context_list(slug)                 # all checkpoints
+context_get(slug=slug, session_id=SESSION_ID)                    # most recent checkpoint ("latest" is the default key)
+context_get(slug=slug, key="phase:3", session_id=SESSION_ID)     # specific phase
+context_list(slug=slug, session_id=SESSION_ID)                   # all checkpoints
 ```
 
 ### Long-Session Progress
@@ -535,7 +535,7 @@ sequenceDiagram
     participant T as Themis (Audit + Moderator)
 
     U->>Z: /pantheon [--research] question
-    Z->>M: memory_search(council_decisions)
+    Z->>M: memory_search(query, namespace="council_decisions")
     alt Precedent found (score > 0.85)
         M-->>Z: ⚠️ Cached decision
         Z->>U: Fast-path precedent
@@ -584,7 +584,7 @@ sequenceDiagram
 ## Dispatch Sequence (9-Step Protocol)
 
 ### Step 0 — Precedent Fast-Path (Fase 1)
-Run the precedent read path defined in `## Memory Protocol > Council Decisions Namespace` (`memory_search(query, top_k=2, namespace="council_decisions")`). If no precedent applies, proceed to Step 0b.
+Run the precedent read path defined in `## Memory Protocol > Council Decisions Namespace` (`memory_search(query=question, top_k=2, namespace="council_decisions")`). If no precedent applies, proceed to Step 0b.
 
 ### Step 0b — Apollo Pre-Scan (Fase 2, --research flag)
 If `/pantheon --research <question>`: dispatch @apollo with 30s timeout. Inject findings as `shared_context` into ALL specialist prompts. Skip if flag absent.
