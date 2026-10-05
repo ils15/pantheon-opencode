@@ -54,7 +54,7 @@ Each agent file defines overrides in its `## 🧠 Memory Protocol` section:
 
 Para otimizar decisoes de delegacao e reduzir gasto de tokens:
 
-1. **memory_search(task_prompt, top_k=2)** antes de aplicar a arvore de roteamento
+1. **memory_search(query=task_prompt, top_k=2)** antes de aplicar a arvore de roteamento
 2. Se score > 0.85 → reutiliza agente + background_mode do cache
 3. Se score ≤ 0.85 → aplica regras estaticas e memory_store() com:
    - key: deleg:<task_type>
@@ -67,8 +67,8 @@ Para otimizar decisoes de delegacao e reduzir gasto de tokens:
    as a string (got object). json.dumps it first. Example: metadata='{"type":
    "decision", "score": 0.9}'`.
 
-4. **kv_store("deleg:<pattern>", ...)** para padroes recorrentes de delegacao
-5. **kv_get("deleg:<pattern>")** para reusar decisoes ja tomadas
+4. **kv_store(namespace="deleg", key="deleg:<pattern>", value=...)** para padroes recorrentes de delegacao
+5. **kv_get(namespace="deleg", key="deleg:<pattern>")** para reusar decisoes ja tomadas
 
 Isso elimina ~300 tokens de reasoning por delegacao quando o cache acerta.
 
@@ -82,7 +82,7 @@ After every `/pantheon` council synthesis completes, Zeus stores:
 memory_store({
   namespace: "council_decisions",
   key: "council:<yyyy-mm-dd>:<slug>",
-  value: {
+  value: JSON.stringify({
     question: "original question",
     specialists: ["@agent1", "@agent2"],
     recommendation: "final recommendation",
@@ -93,7 +93,7 @@ memory_store({
     themis_audit: "approved|issues",
     precedent_used: false,
     timestamp: "<ISO-8601>"
-  },
+  }),
   metadata: JSON.stringify({
     type: "council_decision",
     specialist_count: N,
@@ -111,7 +111,7 @@ encoded as a string (got object). json.dumps it first. Example: metadata='{"type
 ### Read Path (Precedent Fast-Path)
 Before dispatching a new council, Zeus runs:
 ```
-memory_search(question, top_k=2, namespace="council_decisions")
+memory_search(query=question, top_k=2, namespace="council_decisions")
 ```
 
 Result interpretation:

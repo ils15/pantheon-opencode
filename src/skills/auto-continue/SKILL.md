@@ -163,19 +163,19 @@ Should I now run the migration tests? [waiting]
 Session state is **not** file-based. It lives in **pantheon-persistence** under the
 `checkpoint:<slug>` namespace and is cleaned up automatically by a 4h TTL.
 
-Write state with `context_save(slug, key, value, session_id=...)` and read it back with
-`context_get(slug, "latest", session_id=...)`. Capture `session_id` from the first `context_save`
+Write state with `context_save(slug=slug, key=key, content=JSON.stringify(state), session_id=...)` and read it back with
+`context_get(slug=slug, key="latest", session_id=...)`. Capture `session_id` from the first `context_save`
 of the session and reuse it for the rest of the session, so the `latest` pointer survives
 compaction.
 
 ### Heartbeat Check
-- If `context_get(slug, "heartbeat")` returns a checkin older than 300s, log a stall warning and resume
+- If `context_get(slug=slug, key="heartbeat", session_id=...)` returns a checkin older than 300s, log a stall warning and resume
 - Write a heartbeat after every anti-stall recovery action
 
 ### Checkpoint Rules
 1. Save a checkpoint before **every** delegate dispatch and after every agent returns
 2. Include current phase, turn count, and remaining tasks
-3. On resume: `context_get(slug, "latest")` restores the most recent checkpoint
+3. On resume: `context_get(slug=slug, key="latest", session_id=...)` restores the most recent checkpoint
 
 > Do not create `heartbeat.json`, `checkpoint-<N>.json`, or `session.json` under
 > `.pantheon/deepwork/`. That file-based mechanism is retired — TTL handles cleanup, and reading

@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🐞 Fixed
 
+- **Os exemplos de chamada MCP nos arquivos de prompt ensinavam um contrato que não existe no schema real.** Um `pantheon-persistence.kv_get` ao vivo foi rejeitado com `namespace: Missing key`; a linha que o produziu foi `src/agents/zeus.md:189` (`depth = kv_get("deleg:depth") ?? 0`), cuja cópia instalada em `~/.config/opencode/agents/zeus.md` é a que executou. A causa não era o servidor MCP: os arquivos de agente e de instrução ensinavam chamadas posicionais sem `namespace`, enquanto o schema real é `kv_get({ namespace /* obrigatório, sem default */, key, scope? })` — `kv_store.namespace` é igualmente obrigatório e `kv_store.value` é `str`. **A correção está nos docs, e não em adicionar um `namespace` default:** um default escreveria estado de coordenação no namespace errado silenciosamente, então *obrigatório* é o desenho correto. A mesma classe de defeito foi corrigida em `context_save` (posicional, com um helper `json()` inexistente e sem o `session_id` obrigatório → forma por palavra-chave com `content=JSON.stringify(...)`), em `memory_store` (`value` precisa ser uma string JSON codificada → agora iguala o padrão já correto de `metadata`, o que resolveu uma aut contradição no mesmo arquivo), na aritmética de profundidade (envolvida em `String(...)`, porque `kv_store.value` é `str` e não `int`) e em `memory_search(query, ...)` → `query=` em todas as instâncias. `AGENTS.md` é artefato gerado e foi reconstruído, nunca editado à mão.
+
 ## ⚠️ Known Issues
 
 ## ✅ Closed Issues
