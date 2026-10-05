@@ -114,6 +114,50 @@ JavaScript coverage at all. Python coverage additionally requires
 
 ## OpenCode V1/V2 — contrato de plugin
 
+### Support boundary — 1.6.x is the last OpenCode 1.X line
+
+> **OpenCode 1.X support ends after the 1.6 line.** From 1.7 onward every
+> release is a breaking change targeting OpenCode 2. Read this before
+> installing or upgrading across the 1.6 → 1.7 boundary.
+
+| Pantheon line | OpenCode 1.X host | OpenCode 2 host |
+|---|---|---|
+| **1.6.x** | **Supported** — V1 contract, selected automatically | Supported with a reduced surface — V2 contract |
+| **1.7 and later** | **Not supported** — breaking change | Target of the 1.7+ work |
+
+The two 1.6.x cells are different claims. The 1.X cell is the V1 plugin
+(`src/plugin.ts` + `src/plugins/pantheon-hooks.ts` under the singular `plugin`
+key, 6 tools including the goal tools, board lifecycle, V1 hooks and the V1
+compaction path). The OpenCode 2 cell is the V2 plugin, which is a real
+orchestration surface and a **narrower** one: 3 tools, no goal tools, no V1
+caller→target delegation matrix. Neither generation is ever registered together
+with the other.
+
+**OpenCode 2 support on the 1.6 line is real but partial — do not read the
+table as "OpenCode 2 is done":**
+
+- The V2 tool surface ships real `input`/`output` schemas and real enforcement
+  (`ctx.tool.transform()`, a read-only-enforcing `execute.before`), verified
+  against `opencode 2.0.22` by `tests/canary/plugin-v2-tool-canary.test.mjs`.
+- That host version is **not published on any npm channel**. Against the
+  installable `@opencode-ai/cli` the same canary fails 12/12, because
+  `/api/experimental/session/{id}/wait` was promoted to
+  `/api/session/{id}/wait` (old path → 404) and `ctx.tool.list` is absent. With
+  only the route corrected, 10/12 pass on that host — so this is a
+  canary/host-generation mismatch, not a measured plugin regression. Tracked in
+  issue #216; the fail-closed CI step is PR #213.
+- **No V1 host leg exists for end-to-end validation.** The sandbox runner
+  (`scripts/test-opencode-v2-sandbox.sh`) is V2-only and rejects `--run v1`. The
+  exact 1.X host version the 1.6 line is exercised against end-to-end is
+  therefore **unverified**; the 1.X path is covered by the dependency pin
+  (`@opencode-ai/plugin` / `@opencode-ai/sdk` `1.18.33`), the generation-gate
+  unit tests and the installer end-to-end tests over emitted config.
+
+The full policy, including the verification table, is in the
+[README compatibility section](../README.md#compatibility-and-support-policy).
+
+### Escolha de geração
+
 Pantheon 1.6.0-beta.1 does not load both Pantheon plugin generations in one
 installation. The ordinary OpenCode settings may be merged, but the installer
 removes Pantheon references from both config shapes before registering only the
