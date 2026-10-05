@@ -56,16 +56,16 @@ All session state lives in **pantheon-persistence** (namespace `checkpoint:<slug
 No file I/O, no checkpoint_session.py — TTL (4h) handles cleanup automatically.
 
 ### Heartbeat Check
-- If `context_get(slug, "heartbeat")` returns a checkin older than 300s, log a stall warning and resume
+- If `context_get(slug=slug, key="heartbeat", session_id=SESSION_ID)` returns a checkin older than 300s, log a stall warning and resume
 - Write heartbeat after every anti-stall recovery action:
   ```
-  context_save(slug, "heartbeat", json({"status": "alive", "last_action": "...", "turn_count": N}))
+  context_save(slug=slug, key="heartbeat", content=JSON.stringify({"status": "alive", "last_action": "...", "turn_count": N}), session_id=SESSION_ID)
   ```
 
 ### Checkpoint Auto-Save (Pré-Compactação)
 Before ANY delegate dispatch, save a checkpoint:
 ```
-context_save(slug, "phase:N", json({
+context_save(slug=slug, key="phase:N", content=JSON.stringify({
   "phase": {"current": N, "total": M, "name": "..."},
   "turn_count": N, "agent": "...", "summary": "..."
 }), session_id=SESSION_ID)
@@ -86,15 +86,15 @@ o Zeus DEVE salvar o estado atual:
 2. Salve heartbeat + phase atual + tarefas pendentes
 3. Só então permita que a compactação prossiga
 ```
-# Ao iniciar sessão:
-result = context_save(slug, "init", session_state)
+# Ao iniciar sessão (session_id é REQUIRED — use o id da sessão corrente):
+result = context_save(slug=slug, key="init", content=JSON.stringify(session_state), session_id=SESSION_ID)
 SESSION_ID = result.session_id   # ← guarde para toda a sessão
 
 # Antes de CADA delegação:
-context_save(slug, f"pre:{agent}", current_state, session_id=SESSION_ID)
+context_save(slug=slug, key=f"pre:{agent}", content=JSON.stringify(current_state), session_id=SESSION_ID)
 
 # Após retorno do agente:
-context_save(slug, f"post:{agent}", result_state, session_id=SESSION_ID)
+context_save(slug=slug, key=f"post:{agent}", content=JSON.stringify(result_state), session_id=SESSION_ID)
 ```
 Isso garante que o estado sobreviva à compactação — o "latest" pointer
 sempre aponta para o checkpoint mais recente, mesmo após compactação.
@@ -103,9 +103,9 @@ sempre aponta para o checkpoint mais recente, mesmo após compactação.
 ### Context Retrieval
 Next-phase agents retrieve previous context via:
 ```
-context_get(slug, "latest")        # most recent checkpoint
-context_get(slug, "phase:3")      # specific phase
-context_list(slug)                 # all checkpoints
+context_get(slug=slug, session_id=SESSION_ID)                    # most recent checkpoint ("latest" is the default key)
+context_get(slug=slug, key="phase:3", session_id=SESSION_ID)     # specific phase
+context_list(slug=slug, session_id=SESSION_ID)                   # all checkpoints
 ```
 
 ### Long-Session Progress

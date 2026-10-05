@@ -122,7 +122,7 @@ Frontend: `tdd-with-agents`, `visual-review-pipeline`, `incremental-implementati
 
 
 ## Session Context Retrieval
-When dispatched by Zeus, call context_get(slug, "latest", session_id=SESSION_ID)
+When dispatched by Zeus, call context_get(slug=slug, key="latest", session_id=SESSION_ID)
 if session_slug is provided in dispatch metadata. Apply any "remaining_tasks",
 "current_phase", or "gotchas" from the retrieved context.
 If context_get returns None, proceed fresh (first phase or expired session).
