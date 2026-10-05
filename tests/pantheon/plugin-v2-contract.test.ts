@@ -277,10 +277,22 @@ async function main(): Promise<void> {
     // Asserting it against plugin-v2.ts alone would have forced the rationale
     // to be duplicated back into a file that no longer owns those strings.
     assert.match(unsupportedSeedSource, /SkillEditor\.source\(\)/)
-    assert.doesNotMatch(
-      pluginSource,
-      /ctx\.integration.*no longer a context domain|ctx\.skill.*no longer a context domain/s,
-    )
+    // The forbidden wording can now be written into EITHER file, because S0
+    // moved the rationale out of plugin-v2.ts and into the shared seed. Before
+    // that move this guard ran against pluginSource alone and could not miss;
+    // after it, a plugin-only assertion silently stopped covering the seed —
+    // which is the exact stale claim this assertion exists to prevent. So it
+    // runs against both, and the label makes a failure name the guilty file.
+    for (const [label, text] of [
+      ['plugin-v2.ts', pluginSource],
+      ['v2-unsupported.mjs', unsupportedSeedSource],
+    ] as const) {
+      assert.doesNotMatch(
+        text,
+        /ctx\.integration.*no longer a context domain|ctx\.skill.*no longer a context domain/s,
+        `${label} must not describe integration or skill as host-absent`,
+      )
+    }
     assert.equal(typeof context.integration.transform, 'function')
     assert.equal(typeof context.skill.transform, 'function')
   })
@@ -756,6 +768,61 @@ async function main(): Promise<void> {
       readOnlyRegistry.has(sessionID),
       false,
       'the info.id payload shape must also drop the registration',
+    )
+    v2Dispose()
+  })
+
+  test('an unresolvable session.deleted id warns instead of leaking silently', async () => {
+    // The fail-open branch is unavoidable: an unknown session id cannot be
+    // unregistered, because unregistering is exactly what needs the id. So the
+    // entry stays. What must NOT be silent is the miss — if a host ever renames
+    // or drops the field, the leak returns and the only symptom would be a
+    // registry that grows forever. One warning makes it diagnosable.
+    const leaked = 'ses-v2-deleted-unresolvable'
+    syncReadOnlySession(readOnlyRegistry, leaked, 'apollo')
+    assert.equal(readOnlyRegistry.has(leaked), true, 'precondition: the entry exists')
+
+    let handled!: () => void
+    const wasHandled = new Promise<void>((resolve) => {
+      handled = resolve
+    })
+
+    const warnings: string[] = []
+    const originalWarn = console.warn
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '))
+    }
+    try {
+      await plugin.setup(
+        makeBaseContext({
+          event: {
+            subscribe: () => ({
+              async *[Symbol.asyncIterator]() {
+                // Neither `sessionID` nor `info.id`: an unresolvable payload.
+                yield { type: 'session.deleted', properties: { info: {} } }
+                handled()
+                await new Promise<void>(() => {})
+              },
+            }),
+          },
+        }) as never,
+      )
+
+      await wasHandled
+    } finally {
+      console.warn = originalWarn
+    }
+
+    assert.equal(
+      warnings.some((line) => line.includes('session.deleted') && line.includes('id')),
+      true,
+      `an unresolvable session.deleted id must warn; captured: ${JSON.stringify(warnings)}`,
+    )
+    // The fail-open behaviour itself is unchanged and now explicit.
+    assert.equal(
+      readOnlyRegistry.has(leaked),
+      true,
+      'an unresolvable id cannot be unregistered; the entry survives by design',
     )
     v2Dispose()
   })

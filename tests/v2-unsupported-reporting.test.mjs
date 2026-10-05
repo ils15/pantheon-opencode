@@ -24,7 +24,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { checkV2UnsupportedFeatures, collectV2UnsupportedFeatures } from '../scripts/doctor.mjs'
+import {
+  checkV2UnsupportedFeatures,
+  collectV2UnsupportedFeatures,
+  describeV2Reduction,
+  isV2GenerationRegistered,
+} from '../scripts/doctor.mjs'
 import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
 
@@ -192,6 +197,53 @@ test('doctor stays quiet when no V2 generation is registered', () => {
   } finally {
     rmSync(sandbox, { recursive: true, force: true })
   }
+})
+
+// ─── Registration vs seed emptiness (N1) ────────────────────────────────
+
+test('registration and seed emptiness are separate facts, not one list length', () => {
+  const v2 = [config('project root', { plugins: ['src/plugin-v2'] })]
+  const v1 = [config('project root', { plugin: ['/opt/pantheon/src/plugin.ts'] })]
+  assert.equal(isV2GenerationRegistered(v2), true, 'a V2 registration must be detected')
+  assert.equal(isV2GenerationRegistered(v1), false, 'a V1-only config must not read as V2')
+})
+
+test('an EMPTY seed on a registered V2 generation never reports "nothing reduced"', () => {
+  // The bug this pins: doctor branched on `features.length === 0`, which
+  // conflates "no V2 generation registered" with "the seed is empty". An emptied
+  // seed therefore printed the reassuring and FALSE "No V2 plugin generation
+  // registered — nothing reduced" on a V2 install, hiding the very reduction
+  // H4 exists to report.
+  const verdict = describeV2Reduction({ registered: true, features: [] })
+  assert.ok(
+    !verdict.message.includes('nothing reduced'),
+    `a registered V2 generation with an empty seed must not be reported as reducing nothing; got: ${verdict.message}`,
+  )
+  assert.ok(
+    !verdict.message.includes('No V2 plugin generation registered'),
+    'the message must not claim the generation is unregistered while it is registered',
+  )
+  assert.match(
+    verdict.message,
+    /seed/i,
+    'the message must name the empty seed as the cause it can actually see',
+  )
+  assert.equal(verdict.level, 'warn', 'a packaging fault is worth a warning, not an info line')
+  assert.equal(verdict.status, 'empty-seed', "an emptied seed must not report as 'reported'")
+})
+
+test('no V2 generation registered still reports "nothing reduced", quietly', () => {
+  const verdict = describeV2Reduction({ registered: false, features: [] })
+  assert.equal(verdict.level, 'info', 'an ordinary V1 install is not a finding')
+  assert.equal(verdict.status, 'no-v2-generation')
+  assert.match(verdict.message, /No V2 plugin generation registered — nothing reduced/)
+})
+
+test('a registered V2 generation with a populated seed reports every marker', () => {
+  const verdict = describeV2Reduction({ registered: true, features: SEED })
+  assert.equal(verdict.level, 'warn')
+  assert.equal(verdict.status, 'reported')
+  assertReportsEveryFeature(verdict.message, "doctor's H4 verdict")
 })
 
 /** Synchronous variant of {@link captureOutput}. */

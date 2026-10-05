@@ -507,15 +507,39 @@ async function handleV2SessionEvent(event: V2SessionEvent): Promise<void> {
 /**
  * Session-created handler: currently a no-op on the V2-only surface.
  *
- * V1 seeds session state here (`sessionHierarchy.register(info)` plus the
- * root-session set) from the full session metadata carried by its own event.
- * The V2 event does not carry that metadata, and — more to the point — V1 is a
- * separate plugin instance that is not loaded when only `plugin-v2` is
- * configured. So nothing runs here on a V2-only install. Do not read the bridge
- * check below as coverage: a non-null bridge means a host process that ALSO
- * loaded V1, and V1 does the seeding itself.
+ * V1 seeds session state here — `sessionHierarchy.register(info)` plus the
+ * root-session set — from the full session metadata carried by its own event.
  *
- * The absent hierarchy seed is ONE of the two reasons the V2 enforcement guard
+ * THE V2 EVENT CARRIES THE SAME METADATA, so this is an UNWIRED seed, not an
+ * impossible one. The V2 SDK types `session.created` as
+ * `{ sessionID: string; info: Session }`, and `Session` declares
+ * `parentID?: string` (`@opencode-ai/sdk` v2 `gen/types.gen.d.ts`) — a superset
+ * of the two fields V1 reads on this exact event. Seeding here would be a copy
+ * of V1's line. An earlier revision of this comment claimed the metadata was
+ * absent from the V2 event; the SDK types refute that, so do not restore it.
+ *
+ * WHAT IS NOT MEASURED, in either direction: whether a live 2.0.22 host
+ * populates `info.parentID` on this event. The tool canary records
+ * `Object.keys(ctx)` from inside the host, not event payloads, so host
+ * population is UNVERIFIED. What is proven is only that the type carries the
+ * field and that no code path here reads it.
+ *
+ * The real asymmetry is the OTHER of V1's two seed sources. Besides this event,
+ * V1 runs a fail-open startup seed from `client.session.list()`
+ * (`seedRootSessionsInBackground`, `src/plugin.ts`) to cover sessions that
+ * predate plugin load, because opencode does not replay `session.created` for
+ * them. V2's `PluginContext` exposes no `client` at all — `options`, `agent`,
+ * `aisdk`, `catalog`, `command`, `integration`, `plugin`, `reference`, `skill`,
+ * and nothing else — so that enumeration has NO V2 EQUIVALENT. Wiring this
+ * handler would recover live sessions only, never resumed ones.
+ *
+ * And — more to the point — V1 is a separate plugin instance that is not loaded
+ * when only `plugin-v2` is configured, so on a V2-only install nothing seeds
+ * the hierarchy at all. Do not read the bridge check below as coverage: a
+ * non-null bridge means a host process that ALSO loaded V1, and V1 does the
+ * seeding itself.
+ *
+ * The unwired hierarchy seed is ONE of the two reasons the V2 enforcement guard
  * is built without `isRootSession` / `isChildSession`; the other — and the one
  * that would actually deny every `task()` call — is the absent
  * `getSessionAgent`. See the `v2EnforcementGuard` comment below for both, and
@@ -567,6 +591,12 @@ async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
  * `properties.info.id`. Both spellings are accepted because the V2 SDK types
  * `session.deleted` as `{ sessionID, info }` and a miss here is a silent leak,
  * which is precisely the bug this handler exists to close.
+ *
+ * A payload with NEITHER spelling is fail-open, and unavoidably so: unregistering
+ * is what needs the id, so an id that cannot be resolved cannot be cleaned up
+ * and the entry survives. The docstring used to leave that as a documented
+ * silent branch; it now warns on the way out, because the only other symptom of
+ * a renamed field is a registry that grows for the life of the process.
  */
 async function onSessionDeleted(event: V2SessionEvent): Promise<void> {
   const properties = event.properties
@@ -578,7 +608,18 @@ async function onSessionDeleted(event: V2SessionEvent): Promise<void> {
       : info !== null && typeof info === 'object'
         ? (info as { id?: unknown }).id
         : undefined
-  if (typeof sessionID !== 'string' || sessionID === '') return
+  if (typeof sessionID !== 'string' || sessionID === '') {
+    // Fail-open by necessity, loud by choice: the entry for this session (if
+    // any) cannot be identified, so it stays registered. Same `console.warn`
+    // channel as the event-subscription error above — this module has no
+    // logger, and a diagnostic nobody reads on stderr is still a silent leak.
+    console.warn(
+      '[Pantheon V2] session.deleted carried no session id ' +
+        '(neither properties.sessionID nor properties.info.id); ' +
+        'its read-only registration cannot be pruned and will persist.',
+    )
+    return
+  }
   readOnlyRegistry.unregister(sessionID)
 }
 
@@ -803,12 +844,22 @@ interface V2ToolExecuteBeforeEvent {
  *    `isRootSession` would *pass* the root gate (`isRoot` reports `true` for an
  *    unknown session), so the hierarchy is not what denies here.
  *
- * 2. UNSEEDED HIERARCHY (design). `SessionHierarchyRegistry` is what gates
+ * 2. UNWIRED HIERARCHY (design). `SessionHierarchyRegistry` is what gates
  *    exactly two things, and nothing else: the depth-2 child deny
  *    (`isChildSession`) and the root-session gate (`isRootSession`). Left
  *    unseeded, `isChild` is `false` for every session, so depth-2 would never
  *    fire on a genuine child — a hierarchy that cannot tell a child from a root
  *    is not a trustworthy input to either check.
+ *
+ *    "Unwired", not "impossible": the V2 `session.created` event carries
+ *    `properties.info: Session` including `parentID?`, the same field V1 seeds
+ *    from on the same event, so one line in `onSessionCreated` would seed live
+ *    sessions (see its docstring). What has no V2 equivalent is V1's SECOND
+ *    source, the `client.session.list()` startup seed — V2's `PluginContext`
+ *    exposes no `client`. Whether a live 2.0.22 host populates `info.parentID`
+ *    is UNVERIFIED; no canary reads an event payload. So the correct summary is
+ *    "seeded for nothing", not "unseedable", and the guard's omission is right
+ *    today for the weaker reason that nothing seeds it at all.
  *
  * Omitting all three skips the branch wholesale: the guard only enters it when
  * `options?.isRootSession !== undefined`. `task` is still denied inside a

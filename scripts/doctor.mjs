@@ -1460,6 +1460,24 @@ function isV2PluginRef(ref) {
 }
 
 /**
+ * Whether any reachable config registers the V2 generation of the Pantheon
+ * plugin. Split out of {@link collectV2UnsupportedFeatures} because "is the V2
+ * generation registered" and "does the seed list anything" are TWO facts: the
+ * first is about the user's config, the second about this repository's seed. A
+ * single `features.length === 0` cannot tell them apart, and conflating them
+ * let an emptied seed print "no V2 generation registered — nothing reduced".
+ *
+ * @param {{path:string, data:object}[]} configs
+ * @returns {boolean}
+ */
+export function isV2GenerationRegistered(configs) {
+  return configs.some((cfg) => {
+    const list = cfg.data?.plugins
+    return Array.isArray(list) && list.some(isV2PluginRef)
+  })
+}
+
+/**
  * The V2 feature-reduction markers to report for a set of collected configs.
  *
  * Returns the shared seed verbatim when ANY reachable config registers the V2
@@ -1468,15 +1486,65 @@ function isV2PluginRef(ref) {
  * is built from — so doctor cannot report a reduction the plugin does not, or
  * miss one it does. Nothing is reworded here.
  *
+ * An empty result is ambiguous on its own and deliberately not interpreted
+ * here: ask {@link isV2GenerationRegistered} for the registration fact, or
+ * {@link describeV2Reduction} to get both at once.
+ *
  * @param {{path:string, data:object}[]} configs
  * @returns {string[]}
  */
 export function collectV2UnsupportedFeatures(configs) {
-  const registered = configs.some((cfg) => {
-    const list = cfg.data?.plugins
-    return Array.isArray(list) && list.some(isV2PluginRef)
-  })
-  return registered ? listV2UnsupportedFeatures() : []
+  return isV2GenerationRegistered(configs) ? listV2UnsupportedFeatures() : []
+}
+
+/**
+ * Decide what H4 prints, from the two distinct facts rather than from one list
+ * length.
+ *
+ * Three cases, and the middle one used to be silently reported as the first:
+ *
+ *   - not registered → info. A V1 install is a supported configuration with
+ *     nothing to reduce, and saying so plainly is correct.
+ *   - registered, seed EMPTY → warn. This is a packaging fault in THIS repo,
+ *     not an absence of reduction: the V2 surface really is reduced and the
+ *     report is missing. It must never claim "nothing reduced".
+ *   - registered, seed populated → warn, listing every marker.
+ *
+ * Pure and exported so the empty-seed branch is testable without stubbing the
+ * frozen seed module. `status` is returned alongside the text so a caller never
+ * has to recover the case by matching on the message.
+ *
+ * @param {{registered:boolean, features:string[]}} input
+ * @returns {{status:'reported'|'empty-seed'|'no-v2-generation', level:'info'|'warn', message:string}}
+ */
+export function describeV2Reduction({ registered, features }) {
+  if (!registered) {
+    return {
+      status: 'no-v2-generation',
+      level: 'info',
+      message: 'No V2 plugin generation registered — nothing reduced',
+    }
+  }
+  if (features.length === 0) {
+    return {
+      status: 'empty-seed',
+      level: 'warn',
+      message:
+        'Pantheon IS registered on the V2 plugin generation, but the shared ' +
+        'unsupported-feature seed is empty, so the reduction cannot be reported. ' +
+        "That is a fault in this installation's reporting, not an absence of " +
+        'reduction: the V2 surface still drops the 3 goal tools and the ' +
+        'caller/target delegation matrix.',
+    }
+  }
+  return {
+    status: 'reported',
+    level: 'warn',
+    message:
+      'Pantheon is registered on the V2 plugin generation, which registers 3 tools ' +
+      "(hashline_edit, pantheon_cost, pantheon_model) instead of the V1 surface's 6 plus " +
+      `the BackgroundJobBoard and the caller/target delegation matrix. Unsupported: ${features.join(', ')}`,
+  }
 }
 
 /**
@@ -1486,7 +1554,7 @@ export function collectV2UnsupportedFeatures(configs) {
  * configuration, not a broken one.
  *
  * @param {{target:string, env?:object}} args
- * @returns {'reported'|'no-v2-generation'|'no-config'}
+ * @returns {'reported'|'empty-seed'|'no-v2-generation'|'no-config'}
  */
 export function checkV2UnsupportedFeatures(args) {
   section('H4. V2 Feature Reduction')
@@ -1497,18 +1565,18 @@ export function checkV2UnsupportedFeatures(args) {
     return 'no-config'
   }
 
-  const features = collectV2UnsupportedFeatures(configs)
-  if (features.length === 0) {
-    info('No V2 plugin generation registered — nothing reduced')
-    return 'no-v2-generation'
-  }
+  // Branch on REGISTRATION, not on the marker count: an empty seed on a
+  // registered V2 generation is a reporting fault and must not be reported as
+  // the reassuring "nothing reduced".
+  const registered = isV2GenerationRegistered(configs)
+  const verdict = describeV2Reduction({
+    registered,
+    features: collectV2UnsupportedFeatures(configs),
+  })
+  if (verdict.level === 'info') info(verdict.message)
+  else warn(verdict.message)
 
-  warn(
-    `Pantheon is registered on the V2 plugin generation, which registers 3 tools ` +
-      `(hashline_edit, pantheon_cost, pantheon_model) instead of the V1 surface's 6 plus ` +
-      `the BackgroundJobBoard and the caller/target delegation matrix. Unsupported: ${features.join(', ')}`,
-  )
-  return 'reported'
+  return verdict.status
 }
 
 // ---------------------------------------------------------------------------

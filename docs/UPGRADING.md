@@ -61,12 +61,22 @@ document attributed both to the session hierarchy, which is only half right.
    itself and keeps no session→agent map, so there is no lookup to hand the
    guard. The guard would call `isDelegationAllowed(undefined, target)`, which
    returns `false`, and throw `caller agent is unavailable`.
-2. **Unseeded hierarchy — design.** `SessionHierarchyRegistry` gates exactly
+2. **Unwired hierarchy — design.** `SessionHierarchyRegistry` gates exactly
    two things and nothing else: the depth-2 child deny (`isChildSession`) and
-   the root-session gate (`isRootSession`). V2 exposes no seed path for it, and
-   unseeded `isChild` is `false` for every session — so depth-2 would never fire
-   on a genuine child, and a hierarchy that cannot tell a child from a root is
-   not trustworthy input to either check.
+   the root-session gate (`isRootSession`). V2 seeds no session→parent map
+   anywhere, and unseeded `isChild` is `false` for every session — so depth-2
+   would never fire on a genuine child, and a hierarchy that cannot tell a child
+   from a root is not trustworthy input to either check.
+
+   **Unwired, not impossible.** The V2 `session.created` event carries
+   `properties.info: Session`, and `Session` declares `parentID?: string` — the
+   same field V1 seeds from on the same event, so seeding V2's live sessions is
+   one line. What has no V2 equivalent is V1's *second* source: the fail-open
+   `client.session.list()` startup seed covering sessions that predate plugin
+   load, which needs a `client` the V2 `PluginContext` does not expose. Whether
+   a live 2.0.22 host actually populates `info.parentID` on that event is
+   **unverified** — no measurement reads an event payload. What is proven is the
+   type carries the field and that no V2 code path reads it.
 
 To be precise about a claim that is easy to get backwards:
 `SessionHierarchyRegistry.isRoot` reports `true` for a session it has not been
