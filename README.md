@@ -460,7 +460,7 @@ in the sandbox root) · `2` usage error · `3` sandbox not prepared.
 
 ### Intentional memory MCP divergence
 
-`scripts/memory_mcp_server.py` and `src/mcp/memory_mcp_server.py` are
+`scripts/memory_mcp.py` and `src/mcp/memory_mcp.py` are
 intentionally different. The standalone `scripts/` copy keeps the lightweight
 `memory_*` contract; the installed `src/mcp/` copy additionally exposes the
 optional codemap schema and `code_index`, `code_query`, and `code_neighbors`.

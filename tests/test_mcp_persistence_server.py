@@ -1,4 +1,4 @@
-"""Tests for the Pantheon Persistence MCP Server (src/mcp/mcp_persistence_server.py).
+"""Tests for the Pantheon Persistence MCP Server (src/mcp/mcp_persistence.py).
 
 Tests cover:
 - Server name and instructions
@@ -38,7 +38,7 @@ from pydantic import ValidationError as PydanticValidationError
 from tests.conftest import _json, _tool_input_schema, _tool_text
 
 # Module path — canonical source lives in src/mcp/
-MODULE_PATH = "src.mcp.mcp_persistence_server"
+MODULE_PATH = "src.mcp.mcp_persistence"
 MCP_VALIDATION_ERRORS = (
     ToolError,
     FastMCPValidationError,

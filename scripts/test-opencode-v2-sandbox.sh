@@ -241,11 +241,11 @@ try:
 except OSError:
     raise SystemExit(1)
 expected = {
-    "code_mode_server.py",
-    "memory_mcp_server.py",
-    "mcp_persistence_server.py",
-    "mcp_resources_server.py",
-    "pantheon_vision_server.py",
+    "code_mode.py",
+    "memory_mcp.py",
+    "mcp_persistence.py",
+    "mcp_resources.py",
+    "pantheon_vision.py",
 }
 pattern = re.compile(
     r"spawning process \{\s*"
@@ -515,11 +515,11 @@ try:
 except OSError:
     raise SystemExit(1)
 expected = {
-    "code_mode_server.py",
-    "memory_mcp_server.py",
-    "mcp_persistence_server.py",
-    "mcp_resources_server.py",
-    "pantheon_vision_server.py",
+    "code_mode.py",
+    "memory_mcp.py",
+    "mcp_persistence.py",
+    "mcp_resources.py",
+    "pantheon_vision.py",
 }
 pattern = re.compile(
     r"spawning process \{\s*"
@@ -642,11 +642,11 @@ config_path = Path(os.environ["CONFIG_PATH"])
 runtime_dir = os.environ["RUNTIME_DIR"]
 python_bin = os.environ["MCP_PYTHON"]
 managed = {
-    "pantheon-code-mode": "code_mode_server.py",
-    "pantheon-memory": "memory_mcp_server.py",
-    "pantheon-persistence": "mcp_persistence_server.py",
-    "pantheon-resources": "mcp_resources_server.py",
-    "pantheon-vision": "pantheon_vision_server.py",
+    "pantheon-code-mode": "code_mode.py",
+    "pantheon-memory": "memory_mcp.py",
+    "pantheon-persistence": "mcp_persistence.py",
+    "pantheon-resources": "mcp_resources.py",
+    "pantheon-vision": "pantheon_vision.py",
 }
 try:
     config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -829,7 +829,7 @@ else
 fi
 
 echo "--- Gate (b): pantheon://agents CONTENT check ---"
-RESOURCES_SRV="$PANTHEON_GLOBAL/scripts/mcp_resources_server.py"
+RESOURCES_SRV="$PANTHEON_GLOBAL/scripts/mcp_resources.py"
 if [ ! -f "$RESOURCES_SRV" ]; then
   record_status "pantheon://agents resource" "FAIL" "resources server not found at $RESOURCES_SRV"
 else
@@ -1013,11 +1013,11 @@ config_path = Path(os.environ["CONFIG_PATH"])
 runtime_dir = os.environ["RUNTIME_DIR"]
 python_bin = os.environ["MCP_PYTHON"]
 managed = {
-    "pantheon-code-mode": "code_mode_server.py",
-    "pantheon-memory": "memory_mcp_server.py",
-    "pantheon-persistence": "mcp_persistence_server.py",
-    "pantheon-resources": "mcp_resources_server.py",
-    "pantheon-vision": "pantheon_vision_server.py",
+    "pantheon-code-mode": "code_mode.py",
+    "pantheon-memory": "memory_mcp.py",
+    "pantheon-persistence": "mcp_persistence.py",
+    "pantheon-resources": "mcp_resources.py",
+    "pantheon-vision": "pantheon_vision.py",
 }
 
 try:

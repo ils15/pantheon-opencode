@@ -15,7 +15,7 @@ for p in [PROJECT_ROOT, PROJECT_ROOT / "src" / "mcp", PROJECT_ROOT / "scripts"]:
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-PERSISTENCE_MODULE_PATH = "src.mcp.mcp_persistence_server"
+PERSISTENCE_MODULE_PATH = "src.mcp.mcp_persistence"
 
 _CODE_MODE_MANIFEST = PROJECT_ROOT / ".pantheon" / "code-mode" / "manifest.json"
 

@@ -645,7 +645,7 @@ removed from all `tui.json` locations OpenCode reads: `~/.opencode/tui.json`,
 
 ### Intentional memory MCP copies
 
-`scripts/memory_mcp_server.py` and `src/mcp/memory_mcp_server.py` are
+`scripts/memory_mcp.py` and `src/mcp/memory_mcp.py` are
 intentionally divergent, not a failed synchronization. The standalone
 `scripts/` copy keeps the lightweight `memory_*` contract; the installed
 `src/mcp/` copy additionally wires the optional codemap schema and
@@ -676,7 +676,7 @@ failures behave:
 ```bash
 # Verify the interpreter and script exist for each configured server
 ls /home/ils15/.config/opencode/.venv/bin/python3
-ls /home/ils15/.config/opencode/scripts/mcp_resources_server.py
+ls /home/ils15/.config/opencode/scripts/mcp_resources.py
 # etc. — compare against the paths in ~/.config/opencode/opencode.json
 
 # Static check — `npm run doctor` (or `pantheon-opencode doctor`) validates

@@ -285,7 +285,7 @@ test('runtime-only install copies executable MCP assets and remains idempotent',
     assert.equal(config.mcp.servers, undefined)
     assert.equal(config.mcp['pantheon-resources'].enabled, true)
     assert.equal(config.mcp['pantheon-code-mode'].enabled, true)
-    assert.ok(existsSync(join(runtime, 'scripts', 'mcp_resources_server.py')))
+    assert.ok(existsSync(join(runtime, 'scripts', 'mcp_resources.py')))
     assert.ok(existsSync(join(runtime, 'requirements-vision.txt')))
     // Code-mode payload is seeded from the packaged .pantheon/code-mode dir
     // (project layout: <target>/.opencode/.pantheon/code-mode).
@@ -302,13 +302,13 @@ test('runtime-only install copies executable MCP assets and remains idempotent',
       existsSync(join(runtime, '.pantheon', 'tiers.json')),
       existsSync(join(ROOT, '.pantheon', 'tiers.json')),
     )
-    const before = readFileSync(join(runtime, 'scripts', 'code_mode_server.py'), 'utf8')
+    const before = readFileSync(join(runtime, 'scripts', 'code_mode.py'), 'utf8')
     await installOpenCode(target, false, false, ['runtime'], {
       yes: true,
       headless: true,
       version: 'v2',
     })
-    assert.equal(readFileSync(join(runtime, 'scripts', 'code_mode_server.py'), 'utf8'), before)
+    assert.equal(readFileSync(join(runtime, 'scripts', 'code_mode.py'), 'utf8'), before)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

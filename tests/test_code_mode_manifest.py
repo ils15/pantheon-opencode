@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-MODULE_PATH = "src.mcp.code_mode_server"
+MODULE_PATH = "src.mcp.code_mode"
 
 ECHO_BODY = "#!/usr/bin/env python3\nprint('MANIFEST_MARKER')\n"
 EXPECTED_GENERATED_SCRIPT_COUNT = 2

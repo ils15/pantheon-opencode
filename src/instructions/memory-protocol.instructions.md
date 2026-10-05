@@ -106,7 +106,7 @@ memory_store({
 `JSON.stringify({...})`. A raw object is rejected with `metadata must be a JSON object
 encoded as a string (got object). json.dumps it first. Example: metadata='{"type":
 "decision", "score": 0.9}'` (enforced by a `BeforeValidator` in
-`memory_mcp_server.py`). **Both `value` and `metadata` must be serialized by the caller.**
+`memory_mcp.py`). **Both `value` and `metadata` must be serialized by the caller.**
 
 ### Read Path (Precedent Fast-Path)
 Before dispatching a new council, Zeus runs:

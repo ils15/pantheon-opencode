@@ -19,12 +19,11 @@ Tools:
     memory_stats   — DB statistics
 
 Usage:
-    python scripts/memory_mcp_server.py
+    python scripts/memory_mcp.py
 """
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import json
 import sqlite3
@@ -37,21 +36,10 @@ from _pantheon_paths import pantheon_home
 from fastmcp import FastMCP
 from pydantic import BeforeValidator, Field
 
-try:
-    import mcp_codemap_module as _codemap
-except ImportError:  # pragma: no cover - deployed runtime may need path fix
-    try:
-        import sys as _sys
-        from pathlib import Path as _Path
-
-        _sys.path.insert(0, str(_Path(__file__).parent))
-        import mcp_codemap_module as _codemap  # type: ignore[no-redef]
-    except ImportError:
-        _codemap = None  # type: ignore[assignment]
-
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 DB_PATH = pantheon_home() / "memory" / "memory.db"
+
 
 _BYTE_UNIT = 1024
 
@@ -128,9 +116,7 @@ mcp = FastMCP(
 def _get_db() -> sqlite3.Connection:
     """Get or create the SQLite connection singleton.
 
-    Creates DB directory, applies WAL/performance pragmas, and runs schema
-    init. The ``code_*`` tools share this connection, so the codemap schema
-    is applied on the same handle.
+    Creates DB directory, applies WAL/performance pragmas and runs schema init.
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
@@ -139,9 +125,6 @@ def _get_db() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA_SQL)
-    if _codemap is not None:
-        with contextlib.suppress(Exception):
-            _codemap.ensure_codemap_schema(conn)
     return conn
 
 
@@ -864,80 +847,6 @@ def memory_stats() -> dict[str, Any]:
         stats["db_size_human"] = "unknown"
 
     return stats
-
-
-# ── Codemap Tools ───────────────────────────────────────────────────────────
-
-
-@mcp.tool(
-    description="Index codebase files incrementally (hash-based skip). "
-    "Parses Python (ast) and TypeScript (regex) to build knowledge graph.",
-)
-def code_index(
-    path: str | None = None,
-    force: bool = False,
-) -> dict[str, Any]:
-    """Index code files into knowledge graph.
-
-    Args:
-        path: File or directory to index; None = cwd.
-        force: Re-parse even if hash unchanged.
-
-    Returns:
-        Dict with indexed, skipped, errors, large_skipped, unsupported.
-    """
-    if _codemap is None:
-        return {"error": "codemap module not available"}
-    db = _get_conn()
-    return _codemap.code_index(db, path, force)
-
-
-@mcp.tool(
-    description=(
-        "Search code entities via FTS5 (with LIKE fallback) and optional type filter."
-    ),
-)
-def code_query(
-    query: str,
-    type: str | None = None,
-    limit: int = 10,
-) -> list[dict[str, Any]]:
-    """Search code entities.
-
-    Args:
-        query: Search term (FTS5).
-        type: Optional entity type filter (class, function, method, etc.).
-        limit: Max results (1-50).
-
-    Returns:
-        List of matching entities.
-    """
-    if _codemap is None:
-        return [{"error": "codemap module not available"}]
-    db = _get_conn()
-    return _codemap.code_query(db, query, type, limit)
-
-
-@mcp.tool(
-    description="Get neighbors of a code entity via relations graph (BFS depth 1-3).",
-)
-def code_neighbors(
-    entity_id: str,
-    depth: int = 1,
-) -> dict[str, Any]:
-    """Get graph neighbors for an entity.
-
-    Args:
-        entity_id: Entity ID (hash).
-        depth: BFS depth 1-3.
-
-    Returns:
-        Dict with entity, neighbors, relations or error if not found.
-    """
-    if _codemap is None:
-        return {"error": "codemap module not available"}
-    db = _get_conn()
-    return _codemap.code_neighbors(db, entity_id, depth)
 
 
 # ── Main Entrypoint ───────────────────────────────────────────────────────────

@@ -1002,7 +1002,7 @@ function checkVenvLayer(args) {
 /**
  * Return whether *dir* contains an executable code-mode target.
  *
- * Mirrors `_has_usable_scripts` in `scripts/code_mode_server.py`: a directory
+ * Mirrors `_has_usable_scripts` in `scripts/code_mode.py`: a directory
  * is only a valid resolver candidate when it is a real (non-symlink) directory
  * containing a regular `.py`/`.sh` direct child. This prevents an empty project
  * overlay from masking a lower-priority installation that actually ships

@@ -21,7 +21,7 @@ from fastmcp import FastMCP
 
 from tests.conftest import _json
 
-MODULE_PATH = "src.mcp.mcp_persistence_server"
+MODULE_PATH = "src.mcp.mcp_persistence"
 
 
 def _long_session_checkpoint() -> str:

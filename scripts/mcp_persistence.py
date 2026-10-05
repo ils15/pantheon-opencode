@@ -5,7 +5,7 @@ Key-Value store with FTS5 full-text search, TTL-based expiration,
 and namespace isolation. Uses SQLite with zero external dependencies.
 
 Usage:
-    python scripts/mcp_persistence_server.py
+    python scripts/mcp_persistence.py
 """
 
 from __future__ import annotations

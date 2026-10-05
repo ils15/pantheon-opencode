@@ -31,13 +31,13 @@ import {
 
 /** Canonical MCP script sources — mirrors installOpenCode phase 2.10. */
 const MCP_SCRIPTS = {
-  'mcp_resources_server.py': () => join(ROOT, 'src', 'mcp', 'mcp_resources_server.py'),
-  'code_mode_server.py': () => join(ROOT, 'src', 'mcp', 'code_mode_server.py'),
-  'memory_mcp_server.py': () => join(ROOT, 'src', 'mcp', 'memory_mcp_server.py'),
-  'mcp_persistence_server.py': () => join(ROOT, 'src', 'mcp', 'mcp_persistence_server.py'),
+  'mcp_resources.py': () => join(ROOT, 'src', 'mcp', 'mcp_resources.py'),
+  'code_mode.py': () => join(ROOT, 'src', 'mcp', 'code_mode.py'),
+  'memory_mcp.py': () => join(ROOT, 'src', 'mcp', 'memory_mcp.py'),
+  'mcp_persistence.py': () => join(ROOT, 'src', 'mcp', 'mcp_persistence.py'),
   '_pantheon_paths.py': () => join(ROOT, 'src', 'mcp', '_pantheon_paths.py'),
   'mcp_codemap_module.py': () => join(ROOT, 'src', 'mcp', 'mcp_codemap_module.py'),
-  'pantheon_vision_server.py': () => join(ROOT, 'src', 'mcp', 'pantheon_vision_server.py'),
+  'pantheon_vision.py': () => join(ROOT, 'src', 'mcp', 'pantheon_vision.py'),
   'eval_store.py': () => join(ROOT, 'src', 'mcp', 'eval_store.py'),
   'scrub-secrets.py': () => join(ROOT, 'scripts', 'scrub-secrets.py'),
 }

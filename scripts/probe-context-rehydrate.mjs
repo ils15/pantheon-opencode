@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 
 const requestedVersion = valueFor('--version')
 const jsonOutput = process.argv.includes('--json')
-const runtime = fileURLToPath(new URL('./mcp_persistence_server.py', import.meta.url))
+const runtime = fileURLToPath(new URL('./mcp_persistence.py', import.meta.url))
 
 function valueFor(name) {
   const index = process.argv.indexOf(name)
@@ -192,7 +192,7 @@ async function main() {
     return
   }
   if (!existsSync(runtime)) {
-    unavailable('installed package does not include mcp_persistence_server.py')
+    unavailable('installed package does not include mcp_persistence.py')
     return
   }
 

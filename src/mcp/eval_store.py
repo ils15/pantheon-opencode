@@ -2,7 +2,7 @@
 """Plugin eval certification storage — ``plugin_eval`` memory namespace.
 
 Thin stdlib-only wrapper around the memory SQLite DB (same schema as
-``src/mcp/memory_mcp_server.py``) for plugin-eval certification results.
+``src/mcp/memory_mcp.py``) for plugin-eval certification results.
 
 Namespace: ``plugin_eval``
 Key format: ``eval:<name>:<date>``  (e.g. ``eval:tdd-with-agents:2026-08-21``)
@@ -30,7 +30,7 @@ from typing import Any
 
 NAMESPACE = "plugin_eval"
 
-# Minimal schema — matches memory_mcp_server.SCHEMA_SQL for the memories
+# Minimal schema — matches memory_mcp.SCHEMA_SQL for the memories
 # table (vec/FTS tables are initialized by the memory MCP server on first
 # run; eval entries remain readable via list/recall regardless).
 _SCHEMA_SQL = """

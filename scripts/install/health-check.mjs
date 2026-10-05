@@ -27,7 +27,7 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
   const visionServer = resolveVisionServer(target)
 
   // Check 1: Critical runtime scripts exist
-  const scripts = ['mcp_persistence_server.py', '_pantheon_paths.py']
+  const scripts = ['mcp_persistence.py', '_pantheon_paths.py']
   for (const script of scripts) {
     const path = join(target, 'scripts', script)
     if (existsSync(path)) {
@@ -44,8 +44,8 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
       check: visionServer.check,
       detail: visionServer.detail,
     })
-    const installedVisionServer = join(target, 'scripts', 'pantheon_vision_server.py')
-    const canonicalVisionServer = join(target, 'src', 'mcp', 'pantheon_vision_server.py')
+    const installedVisionServer = join(target, 'scripts', 'pantheon_vision.py')
+    const canonicalVisionServer = join(target, 'src', 'mcp', 'pantheon_vision.py')
     if (existsSync(installedVisionServer) && existsSync(canonicalVisionServer)) {
       try {
         if (
@@ -54,7 +54,7 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
         ) {
           results.failed.push({
             check: 'pantheon-vision source drift',
-            detail: 'installed script differs from src/mcp/pantheon_vision_server.py',
+            detail: 'installed script differs from src/mcp/pantheon_vision.py',
           })
         }
       } catch {
@@ -66,7 +66,7 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
     }
   } else {
     results.failed.push({
-      check: 'src/mcp/pantheon_vision_server.py',
+      check: 'src/mcp/pantheon_vision.py',
       detail: 'NOT FOUND — canonical vision server source is unavailable',
     })
   }
@@ -104,12 +104,7 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
   }
 
   // Check 2: Syntax check on each MCP server script
-  const mcpScripts = [
-    'mcp_persistence_server.py',
-    'mcp_resources_server.py',
-    'code_mode_server.py',
-    'memory_mcp_server.py',
-  ]
+  const mcpScripts = ['mcp_persistence.py', 'mcp_resources.py', 'code_mode.py', 'memory_mcp.py']
   for (const script of mcpScripts) {
     const path = join(target, 'scripts', script)
     if (existsSync(path) && python) {
@@ -135,12 +130,12 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
     })
     if (result.status === 0) {
       results.passed.push({
-        check: 'syntax:pantheon_vision_server.py',
+        check: 'syntax:pantheon_vision.py',
         detail: 'valid',
       })
     } else {
       results.failed.push({
-        check: 'syntax:pantheon_vision_server.py',
+        check: 'syntax:pantheon_vision.py',
         detail: result.stderr.toString().trim().split('\n').slice(-1)[0],
       })
     }
@@ -231,13 +226,13 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
 function resolveVisionServer(target) {
   const candidates = [
     {
-      path: join(target, 'src', 'mcp', 'pantheon_vision_server.py'),
-      check: 'src/mcp/pantheon_vision_server.py',
+      path: join(target, 'src', 'mcp', 'pantheon_vision.py'),
+      check: 'src/mcp/pantheon_vision.py',
       detail: 'canonical source exists',
     },
     {
-      path: join(target, 'scripts', 'pantheon_vision_server.py'),
-      check: 'scripts/pantheon_vision_server.py',
+      path: join(target, 'scripts', 'pantheon_vision.py'),
+      check: 'scripts/pantheon_vision.py',
       detail: 'installed copy exists (deployed from src/mcp)',
     },
   ]

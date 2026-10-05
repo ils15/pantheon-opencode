@@ -3,7 +3,7 @@
 The installer (scripts/install/opencode.mjs) always copies MCP server scripts
 from the canonical ``src/mcp/`` directory. Historical copies in ``scripts/``
 must stay byte-identical; drift between the two locations previously
-propagated bugs (e.g. missing ``import uuid`` in mcp_persistence_server.py).
+propagated bugs (e.g. missing ``import uuid`` in mcp_persistence.py).
 
 The memory MCP server is the exception: the standalone ``scripts/`` copy keeps
 the lightweight memory contract, while ``src/mcp/`` also exposes codemap tools.
@@ -26,14 +26,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # (scripts/ copy, src/mcp/ canonical copy) that must be byte-identical.
 REQUIRED_BYTE_IDENTICAL_PAIRS = [
     ("scripts/_pantheon_paths.py", "src/mcp/_pantheon_paths.py"),
-    ("scripts/mcp_resources_server.py", "src/mcp/mcp_resources_server.py"),
-    ("scripts/code_mode_server.py", "src/mcp/code_mode_server.py"),
+    ("scripts/mcp_resources.py", "src/mcp/mcp_resources.py"),
+    ("scripts/code_mode.py", "src/mcp/code_mode.py"),
 ]
 
 # Keep this pair in the byte-identical gate when both copies exist. Some
 # distributions do not ship the persistence server in both locations.
 OPTIONAL_BYTE_IDENTICAL_PAIRS = [
-    ("scripts/mcp_persistence_server.py", "src/mcp/mcp_persistence_server.py"),
+    ("scripts/mcp_persistence.py", "src/mcp/mcp_persistence.py"),
 ]
 
 BYTE_IDENTICAL_PAIRS = REQUIRED_BYTE_IDENTICAL_PAIRS + [
@@ -43,7 +43,7 @@ BYTE_IDENTICAL_PAIRS = REQUIRED_BYTE_IDENTICAL_PAIRS + [
 ]
 
 INTENTIONALLY_DIVERGENT_PAIRS = [
-    ("scripts/memory_mcp_server.py", "src/mcp/memory_mcp_server.py"),
+    ("scripts/memory_mcp.py", "src/mcp/memory_mcp.py"),
 ]
 
 MEMORY_SCRIPT_CONTRACT_MARKERS = (
@@ -66,15 +66,15 @@ MEMORY_SOURCE_CONTRACT_MARKERS = (
 )
 
 MCP_SERVER_PATHS = (
-    "src/mcp/mcp_persistence_server.py",
-    "src/mcp/mcp_resources_server.py",
-    "src/mcp/code_mode_server.py",
-    "src/mcp/memory_mcp_server.py",
-    "src/mcp/pantheon_vision_server.py",
-    "scripts/mcp_persistence_server.py",
-    "scripts/mcp_resources_server.py",
-    "scripts/code_mode_server.py",
-    "scripts/memory_mcp_server.py",
+    "src/mcp/mcp_persistence.py",
+    "src/mcp/mcp_resources.py",
+    "src/mcp/code_mode.py",
+    "src/mcp/memory_mcp.py",
+    "src/mcp/pantheon_vision.py",
+    "scripts/mcp_persistence.py",
+    "scripts/mcp_resources.py",
+    "scripts/code_mode.py",
+    "scripts/memory_mcp.py",
 )
 
 
@@ -219,7 +219,7 @@ def scripts_resources_copy(
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setenv("PANTHEON_PROJECT", str(project))
     monkeypatch.chdir(project)
-    mod = importlib.import_module("mcp_resources_server")
+    mod = importlib.import_module("mcp_resources")
     importlib.reload(mod)
     return mod
 
@@ -229,7 +229,7 @@ def test_runtime_copy_resolves_to_scripts_dir(
 ) -> None:
     assert (
         Path(scripts_resources_copy.__file__).resolve()
-        == (REPO_ROOT / "scripts" / "mcp_resources_server.py").resolve()
+        == (REPO_ROOT / "scripts" / "mcp_resources.py").resolve()
     )
 
 
@@ -260,7 +260,7 @@ def test_runtime_copy_imports_standalone(tmp_path: Path) -> None:
         [
             sys.executable,
             "-c",
-            "import mcp_resources_server as m; "
+            "import mcp_resources as m; "
             "print(m._PANTHEON_HOME); print(m._PANTHEON_PROJECT)",
         ],
         env=env,

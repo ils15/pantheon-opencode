@@ -121,7 +121,7 @@ Falha em qualquer `npm ci` bloqueia a execução. A variável
 
 ## Divergência intencional do memory MCP
 
-`scripts/memory_mcp_server.py` e `src/mcp/memory_mcp_server.py` são
+`scripts/memory_mcp.py` e `src/mcp/memory_mcp.py` são
 intencionalmente diferentes. A cópia em `scripts/` mantém o contrato leve de
 `memory_*`; a cópia instalada em `src/mcp/` também expõe o schema opcional de
 codemap e as ferramentas `code_index`, `code_query` e `code_neighbors`. As

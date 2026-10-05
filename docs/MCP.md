@@ -34,23 +34,23 @@ Add to your platform config (e.g., `opencode.json` or `.mcp.json`):
   "mcpServers": {
     "pantheon-resources": {
       "command": "python3",
-      "args": ["scripts/mcp_resources_server.py"]
+      "args": ["scripts/mcp_resources.py"]
     },
     "pantheon-code-mode": {
       "command": "python3",
-      "args": ["scripts/code_mode_server.py"]
+      "args": ["scripts/code_mode.py"]
     },
     "pantheon-memory": {
       "command": "python3",
-      "args": ["scripts/memory_mcp_server.py"]
+      "args": ["scripts/memory_mcp.py"]
     },
     "pantheon-persistence": {
       "command": "python3",
-      "args": ["scripts/mcp_persistence_server.py"]
+      "args": ["scripts/mcp_persistence.py"]
     },
     "pantheon-vision": {
       "command": "python3",
-      "args": ["src/mcp/pantheon_vision_server.py"]
+      "args": ["src/mcp/pantheon_vision.py"]
     }
   }
 }
@@ -84,7 +84,7 @@ In `opencode.json`, set auto-approve levels:
 
 ## pantheon-resources
 
-**Script:** `scripts/mcp_resources_server.py`
+**Script:** `scripts/mcp_resources.py`
 
 Read-only resource server exposing Pantheon framework metadata. No tools, only
 resources and resource templates accessible via `pantheon://` URIs.
@@ -128,7 +128,7 @@ read_mcp_resource(server="pantheon-resources", uri="pantheon://skills/hermes")
 
 ## pantheon-code-mode
 
-**Script:** `scripts/code_mode_server.py`
+**Script:** `scripts/code_mode.py`
 
 Confined script execution server. Runs `.sh` and `.py` scripts from
 `.pantheon/code-mode/` with a 30-second timeout.
@@ -184,7 +184,7 @@ execute_code_script("deploy.sh")
 
 ## pantheon-memory
 
-**Script:** `scripts/memory_mcp_server.py`
+**Script:** `scripts/memory_mcp.py`
 
 Persistent, lightweight memory server using **SQLite FTS5 (BM25)** for lexical
 keyword search. No embedding model and no vector index: recall is purely
@@ -229,7 +229,7 @@ See `docs/MEMORY.md` for complete usage guide with examples for all 9 tools.
 
 ## pantheon-persistence
 
-**Script:** `scripts/mcp_persistence_server.py`
+**Script:** `scripts/mcp_persistence.py`
 
 Namespaced local key-value storage with FTS5 search, TTL expiration, and scope
 isolation. See `docs/persistence-mcp.md` for the complete tool reference.
@@ -238,10 +238,10 @@ isolation. See `docs/persistence-mcp.md` for the complete tool reference.
 
 ## pantheon-vision
 
-**Canonical source:** `src/mcp/pantheon_vision_server.py`
+**Canonical source:** `src/mcp/pantheon_vision.py`
 
 Lightweight image MCP server. The installer deploys a runtime copy under
-`scripts/pantheon_vision_server.py` from the canonical source; do not maintain
+`scripts/pantheon_vision.py` from the canonical source; do not maintain
 a second source copy under `scripts/`.
 
 ### Tools
@@ -271,6 +271,29 @@ injects this MCP when native vision is unavailable. Bifrost is opt-in only via
 | Find relevant past decisions | pantheon-memory |
 | Recall a memory by key | pantheon-memory |
 | Describe, OCR, or analyze an image | pantheon-vision |
+
+---
+
+## Killing MCP Servers Safely
+
+MCP servers are separate OS processes launched by the client. **Never terminate
+them with a bare filename substring** — a broad idiom such as
+`pkill -f server.py` matches every process whose command line contains that
+token, not just the one you meant. This was observed once as collateral damage:
+an external `SIGTERM` on a `server.py` pattern took down the whole MCP fleet
+(20 processes across 4 workspaces) within a 91 ms window.
+
+**Kill by PID or by port, never by a bare filename substring.** To stop a
+specific server, find its PID (`pgrep -f '/absolute/path/to/memory_mcp.py'`,
+matching the full path) and `kill <pid>` it, or stop the client that owns it.
+A full-path pattern is anchored to the server you mean; a bare `server.py` is
+not.
+
+The five entrypoints were also renamed away from the shared `*_server.py`
+token (`mcp_resources.py`, `code_mode.py`, `memory_mcp.py`,
+`mcp_persistence.py`, `pantheon_vision.py`) so a broad `server.py` pattern no
+longer matches any of them. That is defense in depth — the PID/port rule still
+governs how you stop a process.
 
 ---
 

@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-MODULE_PATH = "src.mcp.code_mode_server"
+MODULE_PATH = "src.mcp.code_mode"
 
 
 @pytest.fixture(scope="session")

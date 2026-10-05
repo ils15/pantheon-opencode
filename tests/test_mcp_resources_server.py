@@ -20,7 +20,7 @@ from fastmcp import FastMCP
 from tests.conftest import _resource_contents
 
 # Module path — canonical source lives in src/mcp/
-MODULE_PATH = "src.mcp.mcp_resources_server"
+MODULE_PATH = "src.mcp.mcp_resources"
 ROOT = Path(__file__).resolve().parent.parent
 
 
