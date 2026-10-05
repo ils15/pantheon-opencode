@@ -14,12 +14,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🐞 Fixed
 
-- **A matriz de delegação da V1 não é replicada na V2 porque a hierarquia de sessões está DESLIGADA, não porque o V2 não a carrega**: o `session.created` do V2 traz `properties.info: Session` com `parentID?` — o mesmo campo que a V1 semeia no mesmo evento (`@opencode-ai/sdk` v2 `gen/types.gen.d.ts`), então semear as sessões vivas seria uma linha; o que realmente não tem equivalente V2 é a *segunda* fonte da V1, o seed de `client.session.list()` para sessões anteriores ao carregamento do plugin, porque o `PluginContext` do V2 não expõe `client`. Se um host 2.0.22 ao vivo popula `info.parentID` nesse evento continua **não verificado** (nenhum canário lê payload de evento). O texto desta release dizia que o V2 "não expõe esse caminho de semeadura", afirmação que os tipos do SDK refutam; a linha publicada em `v1.6.0-beta.4` fica como registro.
-
 ## ⚠️ Known Issues
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.5] - 2026-10-05
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **O gate de geração do plugin passa a ler a versão do host — e a superfície de ferramentas deixa de desaparecer num host OpenCode 2.x.** O seletor de geração tinha três defaults `'v1'` (`bin/pantheon-init.mjs`, `scripts/install/opencode.mjs` e a assinatura do resolver em `scripts/install/opencode-version.mjs`). Nesse ramo, o installer grava caminhos de arquivo `.ts` na chave singular `plugin`; um host 2.x rejeita caminhos de arquivo ali (`configured plugin path must be a directory`), **descarta** as entradas e, ao fazer isso, **remove** a entrada de diretório V2 que já estava registrada e funcionando. O sintoma era um host aparentemente saudável — a frota MCP subia normalmente — com um único WARN no log e **nenhuma** ferramenta do plugin no catálogo: sem `pantheon_cost`, sem `hashline_edit`, sem `pantheon_model`, sem BackgroundJobBoard e sem hooks. Os três defaults passam a `'auto'`, e `auto` consulta a versão do host. Precedência: flag explícita > `OPENCODE_VERSION` > basename `opencode2` > probe de `--version` > aviso e fallback `v1`. Isto restaura as **3** ferramentas que o contrato V2 registra (`hashline_edit`, `pantheon_cost`, `pantheon_model`); não é paridade com o V1 — ver **Issues Conhecidas**.
+- **Uma instalação na geração V2 e o `doctor` agora declaram a superfície reduzida em vez de deixá-la ser descoberta.** A lista de recursos não suportados no V2 (`getUnsupportedFeatures()`) não tinha nenhum consumidor em produção — só testes a liam. O installer passa a imprimi-la ao lado do aviso de destino V2, e o `doctor` a reporta como um achado próprio, sem alterar o código de saída (uma instalação V2 é uma configuração suportada, não quebrada). A V2 registra 3 ferramentas, não 6, e não tem BackgroundJobBoard; as 3 ferramentas de goal não são registradas na V2 por desenho. O texto agora é único, vindo de `src/pantheon/v2-unsupported.mjs`.
+- **Renomeação dos entrypoints MCP (issue #198).** Os cinco entrypoints Python deixaram de compartilhar o token `server.py`, então um `pkill -f server.py` amplo não derruba mais a frota inteira como efeito colateral. Inclui uma migração em tempo de instalação para que as instalações existentes não fiquem órfãs.
+- **O pacote npm deixou de versionar e distribuir a configuração pessoal de desenvolvimento do OpenCode.** `opencode.json` e `.opencode/` (comandos, plugins e skills) saíram do controle de versão: a config carregava um endpoint MCP privado e overrides de permissão por desenvolvedor, e o harness V1 de comandos/plugins foi substituído por `src/plugin-v2.ts`. O `init` continua gerando a config do projeto do usuário, então instalações não são afetadas; para contribuidores, um `opencode.json` pessoal deve ir em `.git/info/exclude`.
+- **Documentação: `ROADMAP.md` reescrito e um novo documento de fronteira.** O roadmap foi reescrito com as causas-raiz verificadas, e um novo documento — `docs/PERMISSIONS-QUALITY-DELEGATION.md` — mapeia os gates de qualidade, as quatro camadas de permissão e a delegação num só lugar, marcando explicitamente o que ainda não foi verificado.
+
+## 🐞 Fixed
+
+- **A leitura do banner de versão do host era quadrática.** Um banner longo custava **11,1 s** para ser interpretado, contra o timeout de **5 s** do spawn de `--version`; o timeout guarda o processo, não a leitura, então um host verboso conseguia estourá-lo. A interpretação passou a ser **linear**.
+- **O `readOnlyRegistry` do V2 não era podado no `session.deleted`.** O registro é global ao processo e nunca era limpo quando uma sessão do V2 terminava, então entradas de sessões encerradas acumulavam. O `session.deleted` do V2 passa a podar o registro, como a V1 já fazia.
+
+## ⚠️ Known Issues
+
+- **Ação necessária: re-executar o `init` numa instalação afetada.** O `postinstall` **não** roda o `init`. Quem teve a configuração corrompida por uma instalação `v1` anterior **não** é auto-corrigido apenas por atualizar o pacote — é preciso rodar o installer de novo (`npx pantheon-opencode init`). Uma escolha correta de geração **auto-corrige** a configuração (o ramo V2 já remove as referências `.ts` do V1), mas só quando o installer roda. O mesmo vale para a renomeação dos entrypoints: instalações existentes continuam funcionando porque os arquivos antigos são mantidos, mas os caminhos só são corrigidos numa nova execução do installer; até lá, esses usuários permanecem nos entrypoints antigos e sujeitos ao efeito colateral do `server.py`.
+- **A superfície V2 é menor que a V1 por desenho.** A V2 registra 3 ferramentas (`hashline_edit`, `pantheon_cost`, `pantheon_model`), não 6, e não tem BackgroundJobBoard; as 3 `pantheon_goal_*` são V1-only e a matriz de delegação caller→target não é replicada. O installer e o `doctor` agora **dizem** isso (ver What's New), mas a funcionalidade ausente não é restaurada.
+- **O fallback continua a ser `v1`.** Quando o probe do host falha, não consegue ser interpretado, ou traz versões contraditórias, o resolver avisa **uma vez** e cai para `v1`, em vez de arriscar um host 1.x com uma entrada `plugins` que ele ignoraria. É um erro alto e visível, mas ainda é uma queda para a configuração V1.
+
+## ✅ Closed Issues
+
+- **A justificativa da matriz de delegação V1→V2 foi corrigida.** O texto dizia que o V2 "não expõe esse caminho de semeadura"; os tipos do SDK refutam isso. A causa real da matriz não replicada não é a ausência de um caminho de semeadura (`session.created` do V2 traz `properties.info: Session` com `parentID?`, o mesmo campo que a V1 semeia), mas a *segunda* fonte da V1 — o seed de `client.session.list()` para sessões anteriores ao carregamento do plugin — porque o `PluginContext` do V2 não expõe `client`. Se um host 2.0.22 ao vivo popula `info.parentID` nesse evento continua **não verificado** (nenhum canário lê payload de evento). A linha publicada em `v1.6.0-beta.4` fica como registro.
 ## [v1.6.0-beta.4] - 2026-10-03
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
