@@ -20,10 +20,10 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "1.18.33",
+    "@opencode-ai/plugin": "1.18.34",
     "@opencode-ai/sdk": "1.18.33",
-    "@opentui/core": "0.5.10",
-    "@opentui/solid": "0.5.10",
+    "@opentui/core": "0.5.14",
+    "@opentui/solid": "0.5.14",
     "solid-js": "1.9.12"
   },
   "devDependencies": {
@@ -34,9 +34,9 @@
     "rolldown": "1.2.7"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "1.18.33",
-    "@opentui/core": "0.5.10",
-    "@opentui/solid": "0.5.10",
+    "@opencode-ai/plugin": "1.18.34",
+    "@opentui/core": "0.5.14",
+    "@opentui/solid": "0.5.14",
     "solid-js": "1.9.12"
   }
 }
