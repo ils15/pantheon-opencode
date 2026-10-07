@@ -1,55 +1,115 @@
 name: npm dist-tag remove (operator)
 
-# Explicit operator action. Removes a NON-protected dist-tag from npm using
-# the same credential the Release workflow uses (secrets.NPM_TOKEN).
-# Refuses to touch `latest` or `beta` (use the rollback workflow for beta).
+# The preflight job publishes the intended mutation in the run summary before
+# the protected environment starts its required-reviewer gate.
 on:
   workflow_dispatch:
     inputs:
       dist_tag:
-        description: 'dist-tag to remove (e.g. next)'
+        description: 'Non-protected npm dist-tag to remove (e.g. next)'
         required: true
         default: 'next'
+        type: string
       confirm:
         description: 'Type REMOVE to confirm'
         required: true
+        type: string
+
+permissions: {}
 
 concurrency:
   group: npm-dist-tag-remove
   cancel-in-progress: false
 
 jobs:
-  remove-dist-tag:
+  preflight:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    permissions: {}
     steps:
-      - name: Guard inputs
+      - name: Validate operator, ref, attempt, and tag
         env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           DIST_TAG: ${{ inputs.dist_tag }}
           CONFIRM: ${{ inputs.confirm }}
         run: |
           set -euo pipefail
-          [ "$CONFIRM" = "REMOVE" ] || { echo "::error::confirm must be exactly REMOVE"; exit 1; }
-          [ -n "$DIST_TAG" ] || { echo "::error::dist_tag is required"; exit 1; }
-          case "$DIST_TAG" in
-            latest) echo "::error::refusing to remove protected tag 'latest'"; exit 1 ;;
-            beta)   echo "::error::refusing to remove 'beta'; use the beta rollback workflow"; exit 1 ;;
-          esac
+          node --input-type=module <<'NODE'
+          const rawTag = String(process.env.DIST_TAG ?? '')
+          const tag = rawTag.trim()
+          if (rawTag !== tag) throw new Error('Dist-tag must not have surrounding whitespace.')
+          if (process.env.GITHUB_REF !== 'refs/heads/main') throw new Error('Dist-tag removal is allowed only from refs/heads/main.')
+          if (process.env.GITHUB_ACTOR !== 'ils15' || process.env.GITHUB_TRIGGERING_ACTOR !== 'ils15') throw new Error('Actor and triggering actor must both be ils15.')
+          if (process.env.GITHUB_RUN_ATTEMPT !== '1') throw new Error('Reruns are forbidden.')
+          if (process.env.CONFIRM !== 'REMOVE') throw new Error('confirm must be exactly REMOVE.')
+          if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(tag)) throw new Error('Dist-tag must be a valid 1-64 character npm tag.')
+          if (tag === 'latest' || tag === 'beta') throw new Error(`refusing to remove protected tag '${tag}'.`)
+          NODE
 
-      - uses: actions/setup-node@v4
+      - name: Summarize requested dist-tag before environment approval
+        env:
+          DIST_TAG: ${{ inputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## npm dist-tag removal request'
+            echo
+            echo '| Package | Tag |'
+            echo '| --- | --- |'
+            echo '| `pantheon-opencode` | `'"$DIST_TAG"'` |'
+            echo
+            echo 'This is a destructive npm metadata change. It will not proceed until the beta-release environment reviewer approves it.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  remove-dist-tag:
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: beta-release
+    permissions: {}
+    steps:
+      - name: Revalidate operator, ref, attempt, and tag
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          DIST_TAG: ${{ inputs.dist_tag }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const rawTag = String(process.env.DIST_TAG ?? '')
+          const tag = rawTag.trim()
+          if (rawTag !== tag) throw new Error('Dist-tag must not have surrounding whitespace.')
+          if (process.env.GITHUB_REF !== 'refs/heads/main') throw new Error('Dist-tag removal is allowed only from refs/heads/main.')
+          if (process.env.GITHUB_ACTOR !== 'ils15' || process.env.GITHUB_TRIGGERING_ACTOR !== 'ils15') throw new Error('Actor and triggering actor must both be ils15.')
+          if (process.env.GITHUB_RUN_ATTEMPT !== '1') throw new Error('Reruns are forbidden.')
+          if (process.env.CONFIRM !== 'REMOVE') throw new Error('confirm must be exactly REMOVE.')
+          if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(tag)) throw new Error('Dist-tag must be a valid 1-64 character npm tag.')
+          if (tag === 'latest' || tag === 'beta') throw new Error(`refusing to remove protected tag '${tag}'.`)
+          NODE
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
+          node-version: '24'
 
       - name: Show dist-tags before
         run: npm view pantheon-opencode dist-tags --json
 
       - name: Remove dist-tag
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.BETA_RELEASE_NPM_TOKEN }}
           DIST_TAG: ${{ inputs.dist_tag }}
-        run: npm dist-tag rm pantheon-opencode "$DIST_TAG" --registry https://registry.npmjs.org
+        run: |
+          set -euo pipefail
+          [ -n "${NODE_AUTH_TOKEN:-}" ] || { echo '::error::beta-release environment secret BETA_RELEASE_NPM_TOKEN is required.'; exit 1; }
+          npmrc="$RUNNER_TEMP/npmrc"
+          umask 077
+          trap 'rm -f "$npmrc"' EXIT
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$npmrc"
+          NPM_CONFIG_USERCONFIG="$npmrc" npm dist-tag rm pantheon-opencode "$DIST_TAG" --registry https://registry.npmjs.org
 
       - name: Show dist-tags after
         run: npm view pantheon-opencode dist-tags --json

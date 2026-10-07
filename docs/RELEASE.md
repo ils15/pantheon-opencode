@@ -30,60 +30,42 @@ linha sequencial `-beta.N`; semver: `X.Y.Z-beta.N` < `X.Y.Z`.
 
 | Canal | Formato | Exemplo | Como publicar |
 |-------|---------|---------|---------------|
-| Beta | `X.Y.Z-beta.N` | `vX.Y.Z-beta.N` | `workflow_dispatch` com `release_channel=beta` |
-| Stable | `X.Y.Z` | `vX.Y.Z` | `workflow_dispatch` com `release_channel=stable` (default) |
+| Beta | `X.Y.Z-beta.N` | `vX.Y.Z-beta.N` | `Release validation` + aprovação do digest + `Release` (`beta`) |
+| Stable | `X.Y.Z` | `vX.Y.Z` | `Release validation` + aprovação do digest + `Release` (`stable`) |
 
 ## Fluxos
 
-Toda publicação é autorizada **somente** por um `workflow_dispatch` explícito.
-Labels de PR, push, merge e tag **não** disparam nenhum fluxo de release.
+Toda publicação usa dois fluxos manuais, ambos limitados em runtime à `main`,
+ao ator e triggering actor `ils15` e à primeira tentativa:
 
-### Beta Release (dispatch explícito)
+1. Execute `Release validation` com o SHA completo do commit desejado, alcançável
+   pela `main`. O fluxo empacota uma vez e gera artefatos imutáveis de pacote e
+   proveniência; o resumo mostra versão, IDs e SHA-256.
+2. Revise o resumo e aprove explicitamente o digest exato na conversa. Só então
+   despache `Release` com os mesmos IDs do run/artefatos, SHA e digest aprovados.
+   Um verificador sem credenciais valida o run, a proveniência e os bytes; o job
+   de publicação aguarda a aprovação do ambiente `beta-release`, baixa os mesmos
+   artefatos por ID e verifica o digest novamente. Não há novo empacotamento.
 
-1. Na branch de release, avance a versão beta commitada:
-   ```bash
-   node scripts/versioning.mjs apply --beta   # ou: node scripts/versioning.mjs beta
-   ```
-   O comando escreve `X.Y.Z-beta.(N+1)` (ou `X.Y.(Z+1)-beta.1` se a versão
-   atual for stable) em todos os manifests e promove o `[Unreleased]` do
-   `CHANGELOG.md` para `## [vX.Y.Z-beta.N]`, exatamente como o caminho stable.
-   Não edite o `CHANGELOG.md` manualmente.
-2. Commit e push do inventário de versão + `CHANGELOG.md`.
-3. No GitHub Actions, execute manualmente `Release` (`workflow_dispatch`) com
-   `release_channel=beta` na revisão desejada. O workflow lê a versão
-   commitada, exige `X.Y.Z-beta.N`, extrai as notas da seção do `CHANGELOG.md`,
-   cria a tag `vX.Y.Z-beta.N` e publica no npm com tag `beta`. O canal beta
-   **não cria GitHub Release** — a integração oficial Zenodo↔GitHub arquiva
-   *toda* Release (inclusive pre-release), então a tag sozinha é usada para
-   recuperação e a beta não aparece na família Zenodo.
-4. Instalar: `npm install pantheon-opencode@beta`
+Stable cria tag e GitHub Release e publica com dist-tag `latest`. Beta cria a tag
+e publica com `beta`, sem GitHub Release. Recovery é somente para beta e exige
+que a tag existente aponte para o mesmo SHA do artefato validado. A remoção de
+dist-tag usa o mesmo gate de ambiente e recusa `latest` e `beta`.
 
-### Stable Release (dispatch explícito)
+**Pré-requisito operacional: antes de despachar `Release` ou remoção de
+dist-tag, configure manualmente `BETA_RELEASE_NPM_TOKEN` como secret do ambiente
+GitHub `beta-release`, remova os secrets `NPM_TOKEN` dos escopos de repositório
+e organização e confirme que não existe `BETA_RELEASE_NPM_TOKEN` nesses escopos.**
+O workflow referencia somente o nome único do secret de ambiente; este repositório
+não lê, migra nem remove credenciais. A validação pode rodar sem esse secret, mas
+não autoriza publicação: não despache os fluxos `Release` ou remoção de dist-tag
+até cumprir todos os pré-requisitos. O ambiente deve exigir revisão de `ils15`,
+permitir auto-revisão e restringir deployments à `main`; configure-o
+separadamente.
 
-1. Merge o PR de release na `main` com mensagem `chore(release): vX.Y.Z`.
-2. No GitHub Actions, execute manualmente `Release` (`workflow_dispatch`) na
-   revisão desejada. Um push comum na `main` não inicia uma release.
-3. O workflow valida os manifests e locks do root (`package.json` +
-   `package-lock.json`) e do TUI (`src/plugins/tui/package.json` +
-   `src/plugins/tui/package-lock.json`) com um único `npm ci --ignore-scripts`
-   na raiz — o TUI é um *workspace* do root, então não há segunda etapa de
-   instalação — sem fallback para `npm install`, e valida o SHA exato antes de:
-   - Publicar no npm com tag `latest`
-   - Criar GitHub Release
-
-### Recuperação de beta já criado
-
-Quando a tag já existe, mas o `npm publish` falhou, execute `Release`
-manualmente informando `recovery_version` (sem `v`) e `recovery_target_sha`
-(SHA completo de 40 hex). Para a versão commitada `X.Y.Z-beta.N` basta esse par;
-o `recovery_pr_number` é aceito apenas para recuperar o formato legado
-`X.Y.Z-beta.<pr>.<7-char-sha>`, no qual os três campos são obrigatórios. Como a
-beta não cria GitHub Release, a recuperação se apoia **apenas na tag**: o modo
-valida os campos antes do checkout, exige a tag existente apontando para o
-`TARGET_SHA` (sem exigir Release), não cria nem move recursos no GitHub e
-publica somente se a versão exata ainda não estiver no npm. Versões parciais,
-inválidas, tags ausentes ou erros de API abortam sem mutação; se a versão já
-existir, a execução é idempotente.
+Consulte [docs/RELEASING.md](RELEASING.md) para o procedimento e os detalhes do
+contrato de proveniência. Merge de PR, validação bem-sucedida ou tag não publica
+por si só; cada etapa é uma ação separada com aprovação humana.
 
 ## Notas de release por canal
 
@@ -95,7 +77,7 @@ a seção não existir.
 |-------|-----------------|
 | Stable | Seção curada `## [X.Y.Z]` do `CHANGELOG.md`. Falha se ausente. |
 | Beta | Seção curada `## [X.Y.Z-beta.N]` do `CHANGELOG.md`. Falha se ausente. |
-| Recuperação | Nota estática (`Recovery publish for existing tag ...`); as notas originais não são re-geradas. |
+| Recuperação | Notas já incluídas no artefato imutável validado; não há novo empacotamento. |
 
 Adicionar a seção do `CHANGELOG.md` é obrigatório para os dois canais, inclusive
 beta — assim o mesmo artefato commitado é a única fonte de verdade.
@@ -113,8 +95,8 @@ fatal, não degradação silenciosa.
 - O SHA-256 é calculado para esse mesmo arquivo e o digest acompanha o tarball
   da validação até a publicação; não há um segundo `npm pack` para substituir o
   artefato validado.
-- O tarball, a tag e o GitHub Release ficam vinculados ao mesmo `TARGET_SHA`
-  completo.
+- O manifesto vincula SHA de origem, versão, IDs do workflow/run/artefato e
+  digest; a tag e o GitHub Release ficam vinculados ao mesmo SHA completo.
 
 Falha em qualquer `npm ci` bloqueia a execução. A variável
 `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` não é suportada.
@@ -147,7 +129,7 @@ Antes (removido em jul/2026):
 - Commit spammado `chore(release):` a cada push
 
 Depois (set/2026 — fail-closed):
-- `release.yml`: beta e stable somente por `workflow_dispatch` explícito
-  (`release_channel` escolhe o canal; nenhum label de PR publica)
+- `release-validation.yml` cria artefato imutável; `release.yml` verifica e
+  publica apenas após digest aprovado e ambiente protegido
 - Sem commits de bump automáticos no develop
 - Toda validação é PASS-only: status não-PASS bloqueia, nunca degrada

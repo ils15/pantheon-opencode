@@ -1,0 +1,206 @@
+name: Release validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: 'Full 40-character commit SHA reachable from main to package exactly once'
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-validation-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Enforce authorized first-attempt main dispatch
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const sha = String(process.env.SOURCE_COMMIT ?? '').trim()
+          if (process.env.GITHUB_REF !== 'refs/heads/main') throw new Error('Validation is allowed only from refs/heads/main.')
+          if (process.env.GITHUB_ACTOR !== 'ils15' || process.env.GITHUB_TRIGGERING_ACTOR !== 'ils15') throw new Error('Actor and triggering actor must both be ils15.')
+          if (process.env.GITHUB_RUN_ATTEMPT !== '1') throw new Error('Validation reruns are forbidden.')
+          if (!/^[0-9a-fA-F]{40}$/.test(sha)) throw new Error('source_commit must be a full 40-character hexadecimal SHA.')
+          NODE
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Confirm source commit is on main and check out exact SHA
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          source_sha="${SOURCE_COMMIT,,}"
+          git cat-file -e "$source_sha^{commit}"
+          git merge-base --is-ancestor "$source_sha" origin/main || {
+            echo '::error::source_commit must be reachable from the current origin/main.'
+            exit 1
+          }
+          git checkout --detach "$source_sha"
+          [ "$(git rev-parse HEAD)" = "$source_sha" ] || {
+            echo '::error::Checkout does not match source_commit.'
+            exit 1
+          }
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Validate version manifests
+        run: npm run version:check
+
+      - name: Read validation workflow ID
+        id: workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          workflow_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)"
+          [[ "$workflow_id" =~ ^[1-9][0-9]*$ ]] || {
+            echo '::error::Could not read the validation workflow ID.'
+            exit 1
+          }
+          echo "id=$workflow_id" >> "$GITHUB_OUTPUT"
+
+      # This is the sole package invocation in the validation pipeline. The
+      # script uses npm pack exactly once and writes evidence alongside it.
+      - name: Package source once and validate evidence
+        id: package
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/release-package"
+          mkdir -p "$output"
+          npm run package:evidence -- --output-dir="$output" --target-sha="${SOURCE_COMMIT,,}"
+          shopt -s nullglob
+          tarballs=("$output"/*.tgz)
+          [ "${#tarballs[@]}" -eq 1 ] && [ -f "${tarballs[0]}" ] || {
+            echo '::error::Package evidence must contain exactly one npm tarball.'
+            exit 1
+          }
+          values="$(node --input-type=module - "$output/metadata.json" "${tarballs[0]}" "$SOURCE_COMMIT" <<'NODE'
+          import { createHash } from 'node:crypto'
+          import { readFileSync } from 'node:fs'
+          import { basename } from 'node:path'
+          const [metadataPath, tarballPath, rawSha] = process.argv.slice(2)
+          const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'))
+          const sourceSha = rawSha.toLowerCase()
+          const actual = createHash('sha256').update(readFileSync(tarballPath)).digest('hex')
+          if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.[1-9]\d*)?$/.test(metadata.version ?? '')) throw new Error('Package version must be stable X.Y.Z or sequential X.Y.Z-beta.N.')
+          if (metadata.targetSha !== sourceSha) throw new Error('Package evidence source SHA mismatch.')
+          if (metadata.tarball !== basename(tarballPath)) throw new Error('Package evidence tarball name mismatch.')
+          if (metadata.tarballSha256 !== actual || !/^[0-9a-f]{64}$/.test(actual)) throw new Error('Package evidence SHA-256 mismatch.')
+          process.stdout.write(`${metadata.version}\t${actual}\t${metadata.tarball}`)
+          NODE
+          )"
+          IFS=$'\t' read -r version digest tarball_name <<< "$values"
+          printf '%s\n' "Release notes for $version are extracted from the selected source's CHANGELOG.md."
+          node scripts/changelog-extract.mjs "$version" > "$output/release-notes.md"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "tarball_name=$tarball_name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable package artifact
+        id: package_artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-package-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-package
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Create provenance manifest binding the package artifact ID
+        id: provenance
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          TARBALL_SHA256: ${{ steps.package.outputs.digest }}
+          TARBALL_NAME: ${{ steps.package.outputs.tarball_name }}
+          PACKAGE_ARTIFACT_ID: ${{ steps.package_artifact.outputs.artifact-id }}
+          WORKFLOW_ID: ${{ steps.workflow.outputs.id }}
+        run: |
+          set -euo pipefail
+          [[ "$PACKAGE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || {
+            echo '::error::Package artifact service did not return an immutable artifact ID.'
+            exit 1
+          }
+          node --input-type=module - "$RUNNER_TEMP/release-provenance.json" <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          const [path] = process.argv.slice(2)
+          const manifest = {
+            schemaVersion: 1,
+            sourceCommit: process.env.SOURCE_COMMIT.toLowerCase(),
+            version: process.env.PACKAGE_VERSION,
+            workflowId: Number(process.env.WORKFLOW_ID),
+            workflowPath: '.github/workflows/release-validation.yml',
+            runId: Number(process.env.GITHUB_RUN_ID),
+            artifactId: Number(process.env.PACKAGE_ARTIFACT_ID),
+            tarball: process.env.TARBALL_NAME,
+            tarballSha256: process.env.TARBALL_SHA256,
+          }
+          if (!Number.isSafeInteger(manifest.workflowId) || !Number.isSafeInteger(manifest.runId)) throw new Error('Invalid workflow or run ID.')
+          writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' })
+          NODE
+          echo "path=$RUNNER_TEMP/release-provenance.json" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable provenance manifest
+        id: manifest_artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-provenance-${{ github.run_id }}
+          path: ${{ steps.provenance.outputs.path }}
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Write validation summary
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          TARBALL_SHA256: ${{ steps.package.outputs.digest }}
+          WORKFLOW_ID: ${{ steps.workflow.outputs.id }}
+          PACKAGE_ARTIFACT_ID: ${{ steps.package_artifact.outputs.artifact-id }}
+          MANIFEST_ARTIFACT_ID: ${{ steps.manifest_artifact.outputs.artifact-id }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## Release validation complete'
+            echo
+            echo '| Value | Exact result |'
+            echo '| --- | --- |'
+            echo "| Source commit | \`${SOURCE_COMMIT,,}\` |"
+            echo "| Package version | \`$PACKAGE_VERSION\` |"
+            echo "| Validation workflow ID | \`$WORKFLOW_ID\` |"
+            echo "| Validation run ID | \`$GITHUB_RUN_ID\` |"
+            echo "| Package artifact ID | \`$PACKAGE_ARTIFACT_ID\` |"
+            echo "| Provenance artifact ID | \`$MANIFEST_ARTIFACT_ID\` |"
+            echo "| Tarball SHA-256 | \`$TARBALL_SHA256\` |"
+            echo
+            echo 'Review and explicitly approve this exact digest in the conversation before dispatching the separate Release workflow. Do not treat this validation as publication approval.'
+          } >> "$GITHUB_STEP_SUMMARY"

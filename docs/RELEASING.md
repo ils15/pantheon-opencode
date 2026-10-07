@@ -112,9 +112,9 @@ workflow-owned (see below).
    required checks before merging.
 
 > No tag is created locally. Merging an ordinary PR does **not** release. To
-> publish a stable version, use the explicit `Release` workflow dispatch after
-> the intended commit is on `main`; it validates manifests and preserves the
-> exact target-SHA/idempotency checks.
+> publish a stable version, first run `Release validation`, approve its exact
+> digest, and then dispatch the separate `Release` workflow after the intended
+> commit is on `main`. The workflows enforce the immutable artifact handoff.
 
 ---
 
@@ -165,171 +165,106 @@ paste into the `[Unreleased]` CHANGELOG section (diagnostics go to stderr).
 
 ### Release body by channel
 
-`release.yml` extracts the release body from the committed `CHANGELOG.md` for
-both dispatch channels; only the stable channel attaches it to a GitHub Release:
+Release validation extracts the curated version section from the source
+commit's `CHANGELOG.md` and carries the resulting notes in the immutable package
+artifact. Stable attaches those notes to its GitHub Release; beta creates no
+GitHub Release. Recovery uses the notes already carried by the previously
+validated artifact. Beta versions must be committed as `X.Y.Z-beta.N`; stable
+versions use `X.Y.Z`.
 
-| Channel | Notes source |
-|---------|--------------|
-| stable | `node scripts/changelog-extract.mjs X.Y.Z` reads the curated `## [X.Y.Z]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Used as the GitHub Release body. |
-| beta | `node scripts/changelog-extract.mjs X.Y.Z-beta.N` reads the curated `## [X.Y.Z-beta.N]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Carried in the release artifact only — beta creates no GitHub Release. |
-| recovery | Static note (`Recovery publish for existing tag ...`); the original notes are not regenerated. |
+### Release flow
 
-The version is committed, so a `CHANGELOG.md` section is authorable before the
-dispatch and is required for **both** channels. Beta does not use generated
-conventional-commit notes.
+1. Prepare and merge the version/changelog change through the normal reviewed
+   PR process. A merge alone never publishes.
+2. Dispatch [Release validation](../.github/workflows/release-validation.yml)
+   from `main` as `ils15`, with the full source commit SHA. The workflow rejects
+   off-main commits, reruns, malformed SHAs, and commits not reachable from
+   current `origin/main`.
+3. Inspect its run summary. Record the workflow ID, run ID, package artifact ID,
+   provenance artifact ID, source SHA, package version, and tarball SHA-256.
+   Explicitly approve that exact digest in the conversation before any phase-two
+   dispatch. The validation workflow has no npm secret and performs no release
+   mutation.
+4. Dispatch [Release](../.github/workflows/release.yml) from `main` as `ils15`,
+   supplying the exact validation run/artifact IDs, source SHA, and the approved
+   digest. Choose `stable` or `beta`; recovery additionally supplies the exact
+   existing beta `recovery_version`.
+5. The read-only verifier confirms the successful first-attempt validation run,
+   exact workflow path/ID, actor, main ref, artifact ownership, manifest,
+   version, source SHA, and package digest. It reports all exact values in the
+   run summary. The separate `publish` job then waits for `beta-release`
+   environment approval, re-downloads the same immutable artifact IDs, and
+   verifies the digest again before mutation.
+6. Stable creates/verifies the immutable `vX.Y.Z` tag, creates the GitHub
+   Release, and publishes the same `.tgz` with npm `latest`. Beta creates or
+   verifies the `vX.Y.Z-beta.N` tag and publishes with npm `beta`; it does not
+   create a GitHub Release because the Zenodo integration archives releases.
+   Recovery is beta-only, requires the existing tag to point to the artifact's
+   exact source SHA, does not move/create a tag, and publishes only the exact
+   validated artifact if the version is not already on npm.
 
-### Flow
+Every validation and release dispatch rejects `github.ref != refs/heads/main`,
+any actor or triggering actor other than `ils15`, and `run_attempt != 1`. A
+failed attempt must be replaced by a new, separately reviewed first-attempt run;
+reruns are intentionally unavailable. The separate dist-tag-removal workflow
+uses the same operator/ref/attempt policy, prints the target package/tag in a
+preflight summary before its environment gate, and refuses the protected tags
+`latest` and `beta`.
 
-1. **Commit** — Conventional Commits enforced by commitlint (local hook + CI).
-2. **Generate** — `node scripts/release-notes.mjs` → paste the output into the
-   `[Unreleased]` section, or let `apply --notes` do it automatically.
-3. **CHANGELOG** — `node scripts/versioning.mjs apply minor [--notes]` bumps
-   the manifests and promotes `[Unreleased]` → `[vX.Y.Z]`. With `--notes` the
-   promoted entry is pre-filled from the grouped commits (mapped to the final
-   emoji groups `## 🆕 What's New / 🐞 Fixed / ⚠️ Known Issues /
-   ✅ Closed Issues`); without it the flow stays manual. `--notes`
-   **replaces** any manual `[Unreleased]` content — review the diff before
-   committing.
-4. **Release body by channel** — `node scripts/changelog-extract.mjs <version>`
-   pulls the curated versioned section into the GitHub Release body for both
-   stable (`X.Y.Z`) and beta (`X.Y.Z-beta.N`), and fails if the section is
-   missing; recovery uses a static note and does not regenerate notes.
-5. **Publish** — the workflow tags the exact dispatch target SHA and publishes
-   to npm (stable or beta per the `release_channel` input).
+### Required GitHub environment and credential migration
 
----
+Before dispatching `Release` or npm dist-tag removal, configure the
+`beta-release` GitHub Environment
+with required reviewer `ils15`, self-review allowed, and deployment branches
+restricted to `main`. Manually add the npm credential as the unique
+`BETA_RELEASE_NPM_TOKEN` **environment secret**. Remove repository- and
+organization-level `NPM_TOKEN` secrets, and ensure no repository- or
+organization-level `BETA_RELEASE_NPM_TOKEN` exists. The workflows reference
+only `secrets.BETA_RELEASE_NPM_TOKEN` and do not inspect, read, migrate, or
+remove any credential. Therefore the operator setup/removal is a hard
+prerequisite: **do not manually dispatch Release or npm dist-tag removal until
+it is complete**. Release validation has no npm token reference and may run
+before this migration, but it never authorizes publication by itself.
 
-## Stable Release (manual dispatch)
+### Package and provenance contract
 
-Dispatching [`.github/workflows/release.yml`](../.github/workflows/release.yml)
-without recovery inputs runs the stable release path:
+- `release-validation.yml` checks out only the requested full source SHA after
+  confirming it is reachable from current `origin/main`; dependencies install
+  with `npm ci --ignore-scripts`.
+- The package-evidence command runs once and produces exactly one npm `.tgz`.
+  Its SHA-256 and source/version metadata are checked before upload.
+- The package and provenance manifest are separate immutable Actions artifacts
+  because the package artifact ID is only known after upload. The manifest binds
+  source SHA, version, validation workflow ID/path, run ID, package artifact ID,
+  tarball filename, and tarball digest. The workflow summary provides both
+  artifact IDs.
+- Phase two fetches the validation run and artifact list with read-only
+  `actions:read`, requires the named artifacts to belong to that exact run and
+  not be expired, then downloads by numeric artifact IDs (never by mutable
+  artifact name or latest run).
+- The protected job downloads those same IDs again and independently verifies
+  the manifest, tarball bytes, npm package name/version, and approved digest.
+  No checkout, install, package, or repack occurs after artifact handoff.
+- Artifact retention is 90 days. An expired/missing artifact, unknown API
+  response, malformed input, mismatched identity, or failed digest check blocks
+  publication.
 
-1. **Type**: channel=`stable`, npm dist-tag=`latest`.
-2. **Version gate** — package.json must be a clean `X.Y.Z` and not strictly
-   behind the latest stable git tag (exact `vX.Y.Z` tags only; `-beta.*`
-   pre-release tags are excluded from the comparison). Fails loudly if the
-   version was never bumped.
-3. **Pack and verify** — the validation job packs exactly one immutable npm
-   tarball with lifecycle scripts disabled. It records that tarball's
-   SHA-256 together with the full `TARGET_SHA`; the release job recomputes the
-   digest and rejects any mismatch.
-4. **Idempotent guard** — if tag `vX.Y.Z` exists AND its GitHub Release
-   exists, exit 0 (already released). If the tag exists but the release is
-   missing, continue and complete the release (tag creation is skipped).
-5. **Release body** — `node scripts/changelog-extract.mjs X.Y.Z` extracts the
-   `## [X.Y.Z] - date` section from `CHANGELOG.md` into
-   the runner temp path `$RUNNER_TEMP/release-notes.md` (published as
-   `release-artifact/release-notes.md`); fails if the section is missing.
-6. **Tag creation (workflow-owned)** — a tag ref is created through the
-   repository-scoped GitHub API **on the exact dispatch target SHA**.
-7. **GitHub Release** —
-   `gh release create vX.Y.Z --target <dispatch-sha> --verify-tag --title "Pantheon vX.Y.Z" --notes-file release-artifact/release-notes.md`.
-8. **npm publish (final step)** — gated by the idempotency
-   lookup, then that same tarball (without repacking) is published with
-   `--tag latest --access public --provenance`. The SHA-256 validated in the
-   validation job is therefore the SHA-256 of the file published to npm.
+### Recovery and interruption handling
 
-A global concurrency group (`release`, no cancel-in-progress) serializes
-runs so beta and stable paths can never double-publish.
+Recovery is no longer an alternate build or direct-publish route. It uses the
+same verified phase-one artifact and phase-two gate as every other publication.
+The requested `recovery_version` must be `X.Y.Z-beta.N`, match the package and
+manifest version, and its existing `v<version>` tag must point at the artifact's
+source commit. Missing/moved tags and any source/version/hash mismatch fail
+closed. Reruns are rejected; if an operation fails, review the exact partial
+state and start a new first-attempt dispatch with the same still-valid artifact
+only after separately confirming it remains appropriate.
 
----
-
-## Package and evidence contract
-
-The release evidence is fail-closed and has one artifact identity:
-
-- root dependencies and the TUI workspace use one `npm ci --ignore-scripts`
-  with `package.json` and `package-lock.json`;
-- the TUI manifest and lockfile remain independently validated as package and
-  publish evidence;
-- a release creates one npm `.tgz` tarball, computes one SHA-256, and carries
-  that exact file and digest from validation to publication; a second `npm
-  pack` is not a valid replacement;
-- the tarball and GitHub tag/release are bound to the same full `TARGET_SHA`.
-
-Any `npm ci` failure blocks the run. There is no `npm install` fallback, and
-`PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` is not part of the current contract.
-
-### Intentional MCP source divergence
-
-`scripts/memory_mcp.py` and `src/mcp/memory_mcp.py` are
-intentionally divergent. The standalone `scripts/` copy preserves the
-lightweight `memory_*` server contract; the installed `src/mcp/` copy also
-loads the optional codemap schema and exposes `code_index`, `code_query`, and
-`code_neighbors`. The other shared MCP copies remain byte-identical. The
-separate behavior and required markers are tested by
-`tests/test_mcp_scripts_sync.py`; do not resolve this pair by copying one file
-over the other.
-
----
-
-## Beta Releases (explicit dispatch with `release_channel=beta`)
-
-Publication is authorized **only** by an explicit `workflow_dispatch` of
-`release.yml`. PR labels, pushes, merges, and tags never trigger or authorize a
-release. Dispatching with `release_channel=beta` runs the beta path; a beta
-recovery is triggered by a dispatch carrying `recovery_version` plus
-`recovery_target_sha` (and `recovery_pr_number` only for the legacy format); a
-dispatch without recovery inputs and `release_channel=stable` (the default) is
-the stable path.
-
-1. Type: channel=`beta`, npm dist-tag=`beta`.
-2. **Committed version** — `apply --beta` advanced `package.json` (and the
-   other manifests) to `X.Y.Z-beta.N` before the dispatch. The workflow reads
-   the committed version; it never computes a beta version and never queries
-   npm for a baseline. A version that is not `X.Y.Z-beta.N` fails the gate.
-3. **CHANGELOG** — the bump PR must contain a `## [X.Y.Z-beta.N] - date` section;
-   the release body is extracted from it and the dispatch fails if it is
-   missing. Beta does not use generated conventional-commit notes.
-4. **Tag** — the immutable tag `vX.Y.Z-beta.N` is created on the **dispatch
-   target SHA**. Beta creates **no** GitHub Release: the official Zenodo ↔
-   GitHub integration archives every Release (pre-releases included), so a beta
-   Release would add an unwanted version to the Zenodo family. The git tag alone
-   backs by-tag recovery.
-5. `npm publish --tag beta` publishes the immutable artifact. The workflow does
-   not create a PR comment.
-
----
-
-## Recovery / Failure Handling
-
-### Beta npm-publish recovery (explicit dispatch)
-
-If a beta's git tag already exists but npm publishing failed, rerun `Release`
-with `recovery_version` (the committed `X.Y.Z-beta.N`, without `v`) and
-`recovery_target_sha` (the full 40-hex commit SHA). The legacy
-`X.Y.Z-beta.<pr>.<sha7>` format is still accepted but additionally requires
-`recovery_pr_number` matching the version and the seven-character SHA suffix.
-For the current `X.Y.Z-beta.N` format only the version and SHA are needed. The
-workflow checks these values before checkout, requires the remote `v<version>`
-tag to exist on the recovery target SHA, and never creates or moves a tag or
-release in this mode (beta creates no GitHub Release, so recovery is bound to
-the tag alone). It packs the immutable checkout and publishes only when that
-exact npm version is absent; an existing npm version is a successful no-op.
-Partial or invalid inputs, a missing tag, API errors, and tag mismatches fail
-closed.
-
-The recovery path is beta-only and does not calculate a new version or change
-the normal stable dispatch and beta-channel dispatch paths.
-
-The pipeline is designed so **reruns are safe**:
-
-- **Already fully released** → the idempotent guard exits 0; nothing is
-  re-tagged, re-released, or re-published.
-- **Crash between tag push and release create (stable)** → tag exists but
-  release is missing; a rerun skips tag creation and completes the release.
-  Beta creates no Release, so its reruns proceed to the npm step.
-- **Crash after npm publish** → a rerun hits the idempotent guard (exit 0),
-  and the npm existence check prevents publishing the same version again.
-- **changelog-extract fails on a stable or beta dispatch** → the `[X.Y.Z]` /
-  `[X.Y.Z-beta.N]` section is missing from `CHANGELOG.md`; add it in the bump PR
-  and rerun. Both non-recovery channels extract the release body from the
-  committed `CHANGELOG.md`; recovery uses a static note.
-
-Before a manual rerun, verify the expected pre-run state (`git tag`, GitHub
-releases, and the npm version) directly against the live registries.
-
----
+The workflow checks public npm metadata for an existing exact version before
+publishing; an existing exact version is a no-op, while any lookup error other
+than an explicit not-found fails closed. The environment secret is exposed only
+to the single `npm publish` step and mapped to `NODE_AUTH_TOKEN` there. GitHub
+write credentials are confined to the tag and GitHub Release mutation steps.
 
 ## npm Policy
 

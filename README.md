@@ -469,23 +469,44 @@ running package, naming both versions and the removal (`pantheon_delegate` in
 
 ## Releases
 
-Publication is authorized **only** by an explicit `workflow_dispatch` of the
-`Release` workflow (`release_channel` input selects beta or stable). PR labels,
-pushes, merges, and tags never publish anything, and every validation gate is
-fail-closed: only an explicit PASS authorizes release evidence. See
-[docs/RELEASING.md](docs/RELEASING.md) for validation and recovery details.
+Releases use two manually dispatched workflows, both restricted at runtime to
+`main`, actor and triggering actor `ils15`, and first attempts only:
 
-Release validation keeps each manifest with its lockfile: the root
-`package.json` + `package-lock.json` and the TUI
-`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`. Both use
-`npm ci --ignore-scripts`; an `npm ci` failure blocks the run and there is no
-`npm install` fallback. A release carries one `.tgz` tarball, computes the
-SHA-256 of that same artifact, and binds the tarball and GitHub release to the
-full `TARGET_SHA`; a second pack is not interchangeable.
+1. **Validate** with [Release validation](.github/workflows/release-validation.yml)
+   and an explicit full `source_commit` SHA reachable from `main`. It checks out
+   that exact commit, packages once, and uploads immutable package and
+   provenance artifacts. The run summary reports the source, version, workflow
+   and run IDs, artifact IDs, and tarball SHA-256.
+2. Review the validation summary and explicitly approve its exact SHA-256 in the
+   conversation. Dispatch [Release](.github/workflows/release.yml) with those
+   exact run/artifact IDs, source SHA, and approved digest. The credentialless
+   verifier confirms the validation workflow/run, manifest, package version,
+   source, and tarball bytes; only then does the `beta-release` environment gate
+   the tag/release/npm mutation job. Publication consumes that same artifact;
+   it does not repack.
 
-CI also rebuilds the TUI with `npm run build --prefix src/plugins/tui` and
-checks every packaged `dist` artifact byte-for-byte against its checked-in
-version, including final newlines.
+Stable and beta publication share this gate. Stable creates its Git tag and
+GitHub Release and publishes with the `latest` dist-tag. Beta creates the tag
+and publishes with `beta` (no GitHub Release). Recovery is beta-only and must
+use an already-existing beta tag that points to the same validated source SHA
+and an artifact whose version equals `recovery_version`. The standalone
+[dist-tag removal workflow](.github/workflows/npm-dist-tag-remove.yml) also
+requires the protected environment and refuses `latest` and `beta`.
+
+**Operator prerequisite—before any publish or dist-tag removal, manually
+configure `BETA_RELEASE_NPM_TOKEN` as a secret on the `beta-release` GitHub
+Environment, remove repository- and organization-level `NPM_TOKEN` secrets, and
+ensure no repository- or organization-level `BETA_RELEASE_NPM_TOKEN` exists.**
+The workflows reference only the unique environment secret name; this repository
+change does not inspect, read, migrate, or remove credentials. Configure
+`beta-release` separately with required reviewer `ils15`, self-review allowed,
+and deployment branch restricted to `main`. Do not dispatch the release or
+dist-tag removal workflows until all secret prerequisites are complete.
+
+See [docs/RELEASING.md](docs/RELEASING.md) for the operator checklist, artifact
+contract, recovery behavior, and environment requirements. A successful
+validation run is not release approval; no workflow is dispatched, tag created,
+or package published automatically.
 
 ## Sandbox validation (V2)
 
