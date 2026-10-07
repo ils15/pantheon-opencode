@@ -18,6 +18,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.7] - 2026-10-07
+
+## 🆕 What's New
+
+- **A barra lateral de delegações se atualiza com eventos de tarefas em andamento.** O store observável conecta eventos de partes de mensagem à atualização da lista, mantendo o polling de segurança e a limpeza dos listeners no encerramento.
+
+## 🐞 Fixed
+
+- **Build e pacote TUI mais confiáveis:** os artefatos de distribuição têm build reproduzível e testes de smoke exercitam o bundle empacotado, os eventos ao vivo e o descarte dos listeners.
+- **Dependências de produção do TUI atualizadas para versões corrigidas:** Babel Core 7.29.7 e Seroval 1.6.8, preservando Solid 1.9.12 exigido pelo peer do OpenTUI; os locks raiz e standalone permanecem alinhados.
+- **Inventário de skills empacotado validado contra os metadados do plugin e do instalador** (20 skills).
+- **Roteamento de memória reutiliza a busca obrigatória do início da tarefa**, sem emitir uma segunda busca para escolher agente.
+
 ## [v1.6.0-beta.6] - 2026-10-05
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
