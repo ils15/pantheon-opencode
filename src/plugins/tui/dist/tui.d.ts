@@ -1,4 +1,4 @@
-import { TuiPluginModule } from "@opencode-ai/plugin/tui";
+import { TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui";
 //#region src/index.d.ts
 export type DelegationEntry = {
   /** Job alias, e.g. "apo-1" (from the H1 title, falling back to filename). */
@@ -487,17 +487,20 @@ export declare function navigateToDelegationSession(route: {
 export declare function createDelegationRowOpenHandler(route: {
   navigate?: (name: string, params?: Record<string, unknown>) => void | PromiseLike<void>;
 } | undefined, taskID: string | undefined): () => void;
-/** Plugin-level live delegation store shared with the event subscriptions
- *  in `tui()`: the map of live entries + a version signal bumped on every
- *  mutation. The View subscribes to the version (in an effect) to refresh the
- *  durable child list and also reads the map as an optimistic live source. */
+/** Plugin-level live delegation store shared by event subscriptions and View.
+ *  Mutations notify subscribers so the View can refresh its durable child
+ *  list while also reading the map as an optimistic live source. */
 export type LiveDelegationStore = {
   map: Map<string, LiveDelegationEntry>;
-  /** Reactive version getter — View reads it inside an effect to re-fetch. */
-  version: () => number;
-  /** Bump the version after a live mutation. */
+  /** Subscribe to invalidations consumed by the sidebar's refresh path. */
+  subscribe: (listener: () => void) => () => void;
+  /** Notify sidebar subscribers after a live mutation. */
   bump: () => void;
 };
+/** Create the observable live store shared by task events and the sidebar. */
+export declare function createLiveDelegationStore(): LiveDelegationStore;
+/** Register the live task-part events that invalidate the sidebar store. */
+export declare function registerLiveDelegationEvents(api: TuiPluginApi, liveStore: LiveDelegationStore): () => void;
 declare const plugin: TuiPluginModule & {
   id: string;
   setup: () => Promise<void>;

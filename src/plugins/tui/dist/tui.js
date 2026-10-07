@@ -4,7 +4,7 @@ import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promise
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 //#region src/index.tsx
 /** @jsxImportSource @opentui/solid */
 /**
@@ -1805,10 +1805,49 @@ function DelegationRow(props) {
 		return _el$13;
 	})();
 }
-/** Plugin-level live delegation store shared with the event subscriptions
-*  in `tui()`: the map of live entries + a version signal bumped on every
-*  mutation. The View subscribes to the version (in an effect) to refresh the
-*  durable child list and also reads the map as an optimistic live source. */
+/** Plugin-level live delegation store shared by event subscriptions and View.
+*  Mutations notify subscribers so the View can refresh its durable child
+*  list while also reading the map as an optimistic live source. */
+/** Create the observable live store shared by task events and the sidebar. */
+function createLiveDelegationStore() {
+	const listeners = /* @__PURE__ */ new Set();
+	return {
+		map: /* @__PURE__ */ new Map(),
+		subscribe(listener) {
+			listeners.add(listener);
+			return () => listeners.delete(listener);
+		},
+		bump() {
+			for (const listener of listeners) listener();
+		}
+	};
+}
+/** Register the live task-part events that invalidate the sidebar store. */
+function registerLiveDelegationEvents(api, liveStore) {
+	const unsubLive = [];
+	try {
+		unsubLive.push(api.event.on("message.part.updated", (event) => {
+			const props = event?.properties ?? {};
+			const part = props.part ?? props.info?.part;
+			if (part === void 0) return;
+			const sample = extractToolActivity(part);
+			if (sample !== null) trackToolActivity(latestToolActivity, sample.sessionID, sample.activity);
+			if (reduceDelegationToolPart(liveStore.map, part)) liveStore.bump();
+		}));
+	} catch {}
+	try {
+		unsubLive.push(api.event.on("message.part.removed", (event) => {
+			const props = event?.properties ?? {};
+			const partID = props.partID ?? props.part?.id;
+			if (partID !== void 0 && removeDelegationEntry(liveStore.map, partID)) liveStore.bump();
+		}));
+	} catch {}
+	return () => {
+		for (const unsub of unsubLive) try {
+			unsub();
+		} catch {}
+	};
+}
 function View(props) {
 	const [showSessions, setShowSessions] = createSignal(false);
 	const [showDelegations, setShowDelegations] = createSignal(true);
@@ -1938,11 +1977,12 @@ function View(props) {
 			cleanup.push(props.api.event.on("session.deleted", eventRefresh));
 			cleanup.push(props.api.event.on("session.status", eventRefresh));
 		} catch {}
-		createEffect(() => {
-			props.liveStore.version();
+		cleanup.push(props.liveStore.subscribe(() => {
 			eventRefreshCount += 1;
 			refreshDelegations();
-		});
+		}));
+		eventRefreshCount += 1;
+		refreshDelegations();
 		const poll = setInterval(() => {
 			setNow(Date.now());
 			refreshDelegations();
@@ -2169,34 +2209,10 @@ const tui = (api, _options, _meta) => {
 	const [version, setVersion] = createSignal(null);
 	detectVersion(api).then((detected) => setVersion(detected)).catch(() => setVersion(null));
 	setupUsageBar(api);
-	const [liveVersion, setLiveVersion] = createSignal(0);
-	const liveStore = {
-		map: /* @__PURE__ */ new Map(),
-		version: liveVersion,
-		bump: () => setLiveVersion((v) => v + 1)
-	};
-	const unsubLive = [];
-	try {
-		unsubLive.push(api.event.on("message.part.updated", (event) => {
-			const props = event?.properties ?? {};
-			const part = props.part ?? props.info?.part;
-			if (part === void 0) return;
-			const sample = extractToolActivity(part);
-			if (sample !== null) trackToolActivity(latestToolActivity, sample.sessionID, sample.activity);
-			if (reduceDelegationToolPart(liveStore.map, part)) liveStore.bump();
-		}));
-	} catch {}
-	try {
-		unsubLive.push(api.event.on("message.part.removed", (event) => {
-			const props = event?.properties ?? {};
-			const partID = props.partID ?? props.part?.id;
-			if (partID !== void 0 && removeDelegationEntry(liveStore.map, partID)) liveStore.bump();
-		}));
-	} catch {}
+	const liveStore = createLiveDelegationStore();
+	const unsubscribeLive = registerLiveDelegationEvents(api, liveStore);
 	api.lifecycle.onDispose(() => {
-		for (const unsub of unsubLive) try {
-			unsub();
-		} catch {}
+		unsubscribeLive();
 		liveStore.map.clear();
 	});
 	api.slots.register({
@@ -2221,6 +2237,6 @@ const plugin = {
 	setup: async () => {}
 };
 //#endregion
-export { DELEGATION_ALIAS_WIDTH, DELEGATION_CHILDREN_RECENCY_MS, DELEGATION_CHILD_STATUS_GRACE_MS, DELEGATION_DESCRIPTION_MAX, DELEGATION_DONE_RETENTION_MS, DELEGATION_ELAPSED_WIDTH, DELEGATION_FAILED_RETENTION_MS, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, IDLE_SILENCE_MS, NATIVE_LIVE_ALIASLESS_TTL_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, createDelegationRowOpenHandler, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, filterDelegationsToSession, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { DELEGATION_ALIAS_WIDTH, DELEGATION_CHILDREN_RECENCY_MS, DELEGATION_CHILD_STATUS_GRACE_MS, DELEGATION_DESCRIPTION_MAX, DELEGATION_DONE_RETENTION_MS, DELEGATION_ELAPSED_WIDTH, DELEGATION_FAILED_RETENTION_MS, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, IDLE_SILENCE_MS, NATIVE_LIVE_ALIASLESS_TTL_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, createDelegationRowOpenHandler, createLiveDelegationStore, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, filterDelegationsToSession, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, registerLiveDelegationEvents, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
 
 //# sourceMappingURL=tui.js.map
