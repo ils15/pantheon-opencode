@@ -229,9 +229,12 @@ in each agent's `## 🧠 Memory Protocol` section.
 ## Universal Rules
 
 ### 1. Pre-Work Read-Only Recall
-**Call `memory_search()` at task start before any file reads.**
+**Before any file reads, call exactly once at task start:** `memory_search(query=task_prompt, top_k=2)`.
+- Retain and reuse that same result as task context and as input to delegation routing.
+- A KV cache hit does not skip the task-start search or trigger another FTS search; Zeus still uses the same result for both context and routing.
+- Council-precedent lookup is a separate, explicitly scoped search and remains unchanged.
 - Use domain-specific context matching your agent's focus area
-- Single call per task, not per turn
+- Do not issue another task-memory search for routing during the same task
 - Agents have **read-only** memory access — only `memory_search()` is available
 
 ### 2. Auto-Store by Zeus on Subtask Summary
@@ -267,13 +270,14 @@ Each agent file defines overrides in its `## 🧠 Memory Protocol` section:
 - Agent-specific rules (session-end, sprint close, quick-index, etc.)
 
 
-## Delegation Cache
+## Delegation Cache Instructions
 
-Para otimizar decisoes de delegacao e reduzir gasto de tokens:
+Instrucoes para o comportamento do cache de roteamento:
 
-1. **memory_search(query=task_prompt, top_k=2)** antes de aplicar a arvore de roteamento
-2. Se score > 0.85 → reutiliza agente + background_mode do cache
-3. Se score ≤ 0.85 → aplica regras estaticas e memory_store() com:
+1. Reutilize o resultado da busca task-start obrigatoria descrita acima para contexto da tarefa e para decidir o roteamento; nao execute uma segunda busca FTS.
+2. Consulte o KV quando houver uma entrada de cache, mas mesmo em KV hit use o mesmo resultado task-start como entrada para o roteamento.
+3. Se score > 0.85 → considere agente + background_mode do resultado cacheado
+4. Se score ≤ 0.85 (cache miss) → aplique regras estaticas e grave a decisao tanto com `memory_store()` quanto com `kv_store()` usando os contratos de cache existentes:
    - key: deleg:<task_type>
    - value: JSON.stringify({agent, background, pattern})
    - metadata: JSON.stringify({type: "decision", score: N})
@@ -284,10 +288,8 @@ Para otimizar decisoes de delegacao e reduzir gasto de tokens:
    as a string (got object). json.dumps it first. Example: metadata='{"type":
    "decision", "score": 0.9}'`.
 
-4. **kv_store(namespace="deleg", key="deleg:<pattern>", value=...)** para padroes recorrentes de delegacao
-5. **kv_get(namespace="deleg", key="deleg:<pattern>")** para reusar decisoes ja tomadas
-
-Isso elimina ~300 tokens de reasoning por delegacao quando o cache acerta.
+5. **kv_store(namespace="deleg", key="deleg:<pattern>", value=...)** para padroes recorrentes de delegacao
+6. **kv_get(namespace="deleg", key="deleg:<pattern>")** para consultar decisoes ja tomadas, sem substituir a busca task-start obrigatoria
 
 ## Council Decisions Namespace
 
@@ -326,7 +328,7 @@ encoded as a string (got object). json.dumps it first. Example: metadata='{"type
 `memory_mcp.py`). **Both `value` and `metadata` must be serialized by the caller.**
 
 ### Read Path (Precedent Fast-Path)
-Before dispatching a new council, Zeus runs:
+Before dispatching a new council, Zeus runs this separate council-precedent search in addition to the task-start search:
 ```
 memory_search(query=question, top_k=2, namespace="council_decisions")
 ```
