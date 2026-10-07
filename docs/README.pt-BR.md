@@ -12,7 +12,7 @@ curta em português sem duplicar os guias técnicos.
 - [Início rápido](QUICKSTART.md) — primeiros comandos
 - [Arquitetura](ARCHITECTURE.md) — visão do sistema
 - [Agentes](agents/README.md) — referência dos 14 agentes
-- [Skills](../src/skills/README.md) — referência das 21 skills
+- [Skills](../src/skills/README.md) — referência das 20 skills
 
 ## Operação
 

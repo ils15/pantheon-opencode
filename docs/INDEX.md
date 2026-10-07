@@ -1,6 +1,6 @@
 # Pantheon Documentation Index
 
-> **A multi-agent orchestration framework** — 14 specialized agents, OpenCode, 21 skills.
+> **A multi-agent orchestration framework** — 14 specialized agents, OpenCode, 20 skills.
 
 ---
 

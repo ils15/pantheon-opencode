@@ -329,7 +329,7 @@ export async function runInteractiveInstall({ components = [], defaultComponents
     {
       name: 'skills',
       value: 'skills',
-      description: `Reusable skill workflows (${21} skills)`,
+      description: `Reusable skill workflows (${20} skills)`,
     },
     {
       name: 'instructions',

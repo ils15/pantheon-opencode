@@ -96,11 +96,16 @@ function markToolHook(label: string, event: unknown): void {
 function markPermissionHook(event: unknown): void {
   // PermissionEvaluation exposes action/sessionID, but no tool-call ID.
   const hook = event as { action?: unknown; sessionID?: unknown }
-  mark('permission.hook:evaluate', JSON.stringify({ action: hook.action, sessionID: hook.sessionID }))
+  mark(
+    'permission.hook:evaluate',
+    JSON.stringify({ action: hook.action, sessionID: hook.sessionID }),
+  )
 }
 
 interface CanaryContext {
-  session: { hook: (name: string, cb: (event: unknown) => void | Promise<void>) => Promise<unknown> }
+  session: {
+    hook: (name: string, cb: (event: unknown) => void | Promise<void>) => Promise<unknown>
+  }
   tool: { hook: (name: string, cb: (event: unknown) => void | Promise<void>) => Promise<unknown> }
   permission: {
     hook: (name: string, cb: (event: unknown) => void | Promise<void>) => Promise<unknown>

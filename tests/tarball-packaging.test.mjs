@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { test } from 'node:test'
 
 const ROOT = process.cwd()
@@ -85,6 +85,43 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     assert.doesNotMatch(listing, /(?:^|\/)__pycache__(?:\/|$)|\.pyc$/)
     execFileSync('tar', ['-xzf', join(ROOT, tarball), '-C', work])
     const packageRoot = join(work, 'package')
+    const actualSkills = textFiles(join(packageRoot, 'src', 'skills'))
+      .map((file) => relative(packageRoot, file).split('\\').join('/'))
+      .filter((file) => /^src\/skills\/[^/]+\/SKILL\.md$/.test(file))
+      .sort()
+    const skillLock = JSON.parse(readFileSync(join(packageRoot, 'skills-lock.json'), 'utf8'))
+    const expectedSkills = Object.keys(skillLock)
+      .filter((file) => /^src\/skills\/[^/]+\/SKILL\.md$/.test(file))
+      .sort()
+    assert.deepEqual(
+      actualSkills,
+      expectedSkills,
+      'tarball must ship the canonical skill inventory',
+    )
+
+    const pluginMetadata = JSON.parse(readFileSync(join(packageRoot, 'plugin.json'), 'utf8'))
+    const declaredSkillCount = /\b(\d+) skills\b/i.exec(pluginMetadata.description)?.[1]
+    assert.ok(declaredSkillCount, 'plugin description must declare its skill count')
+    assert.equal(
+      Number(declaredSkillCount),
+      actualSkills.length,
+      'plugin skill metadata must match the packaged skill inventory',
+    )
+
+    const interactiveInstaller = readFileSync(
+      join(packageRoot, 'scripts', 'install', 'interactive.mjs'),
+      'utf8',
+    )
+    const installerDeclaredSkillCount = /Reusable skill workflows \(\$\{(\d+)\} skills\)/.exec(
+      interactiveInstaller,
+    )?.[1]
+    assert.ok(installerDeclaredSkillCount, 'interactive installer must declare its skill count')
+    assert.equal(
+      Number(installerDeclaredSkillCount),
+      actualSkills.length,
+      'interactive installer skill count must match the packaged skill inventory',
+    )
+
     const codeModeRoot = join(packageRoot, '.pantheon', 'code-mode')
     const codeModeManifest = JSON.parse(readFileSync(join(codeModeRoot, 'manifest.json'), 'utf8'))
     const manifestEntries = Object.entries(codeModeManifest.scripts ?? {})
