@@ -367,3 +367,116 @@ test('the nested TUI lock and the root lock agree on shared runtime deps', () =>
     )
   }
 })
+
+test('both install locks keep TUI production advisories patched and Solid peer-compatible', () => {
+  const minimums = { '@babel/core': '7.29.6', seroval: '1.6.3' }
+  const lockTrees = [
+    ['root workspace', rootLock],
+    ['standalone TUI', tuiLock],
+  ]
+
+  for (const [treeName, lock] of lockTrees) {
+    for (const [dependency, minimum] of Object.entries(minimums)) {
+      const matches = Object.entries(lock.packages ?? {}).filter(
+        ([path]) =>
+          path === `node_modules/${dependency}` || path.endsWith(`/node_modules/${dependency}`),
+      )
+      assert.ok(matches.length > 0, `${treeName} lock must resolve ${dependency}`)
+      for (const [path, entry] of matches) {
+        assert.ok(
+          satisfies(entry.version, `>=${minimum}`),
+          `${treeName} lock resolves ${dependency}@${entry.version} at ${path}; expected >=${minimum}`,
+        )
+      }
+    }
+
+    const solidEntries = Object.entries(lock.packages ?? {}).filter(
+      ([path]) => path === 'node_modules/solid-js' || path.endsWith('/node_modules/solid-js'),
+    )
+    assert.ok(solidEntries.length > 0, `${treeName} lock must resolve solid-js`)
+    for (const [path, entry] of solidEntries) {
+      assert.equal(
+        entry.version,
+        '1.9.12',
+        `${treeName} lock resolves solid-js@${entry.version} at ${path}; @opentui/solid requires exactly 1.9.12`,
+      )
+    }
+  }
+
+  for (const [treeName, manifest] of [
+    ['root workspace', rootPkg],
+    ['standalone TUI', tuiPkg],
+  ]) {
+    assert.ok(
+      satisfies(manifest.overrides?.['@babel/core'], '>=7.29.6'),
+      `${treeName} Babel override must be >=7.29.6`,
+    )
+    assert.ok(
+      satisfies(manifest.overrides?.seroval, '>=1.6.3'),
+      `${treeName} Seroval override must be >=1.6.3`,
+    )
+    assert.equal(manifest.overrides?.['solid-js'], '1.9.12', `${treeName} Solid peer override`)
+  }
+
+  for (const dependency of [...Object.keys(minimums), 'solid-js']) {
+    assert.equal(
+      rootPkg.overrides?.[dependency],
+      tuiPkg.overrides?.[dependency],
+      `root and standalone TUI overrides must agree on ${dependency}`,
+    )
+  }
+
+  for (const dependency of [...Object.keys(minimums), 'solid-js']) {
+    const resolvedVersions = (lock) =>
+      Object.entries(lock.packages ?? {})
+        .filter(
+          ([path]) =>
+            path === `node_modules/${dependency}` || path.endsWith(`/node_modules/${dependency}`),
+        )
+        .map(([, entry]) => entry.version)
+        .sort()
+    assert.deepEqual(
+      resolvedVersions(rootLock),
+      resolvedVersions(tuiLock),
+      `root and standalone TUI locks must resolve the same ${dependency} versions`,
+    )
+  }
+})
+
+test('Solid 1.9.12 server integration remains compatible with patched Seroval', async () => {
+  const serovalPackage = readJson('../node_modules/seroval/package.json')
+  assert.ok(
+    satisfies(serovalPackage.version, '>=1.6.3'),
+    `expected patched Seroval >=1.6.3, found ${serovalPackage.version}`,
+  )
+
+  // Solid 1.9.12's web server renderer imports these Seroval exports and uses
+  // Serializer.write/close for streamed hydration data. Exercise that same
+  // public API shape with a Promise, then import and call the real renderer.
+  const [{ renderToString }, { Serializer, Feature, getCrossReferenceHeader }] = await Promise.all([
+    import('solid-js/web'),
+    import('seroval'),
+  ])
+  assert.equal(typeof getCrossReferenceHeader('compat'), 'string')
+
+  const chunks = []
+  const errors = []
+  const serializer = new Serializer({
+    scopeId: 'compat',
+    plugins: [],
+    globalIdentifier: '_$HY.r',
+    disabledFeatures: Feature.AggregateError | Feature.BigIntTypedArray,
+    onData: (chunk) => chunks.push(chunk),
+    onError: (error) => errors.push(error),
+  })
+  serializer.write('record', { value: 'solid-seroval-interop' })
+  serializer.write('promise', Promise.resolve({ value: 'solid-seroval-interop' }))
+  serializer.close()
+
+  assert.deepEqual(errors, [])
+  assert.ok(chunks.some((chunk) => chunk.includes('solid-seroval-interop')))
+  assert.equal(
+    renderToString(() => 'solid-renderer-interop'),
+    'solid-renderer-interop',
+  )
+})

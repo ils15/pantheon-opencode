@@ -175,6 +175,16 @@ there is no Pantheon-specific delegation tool surface to configure. See
 [ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md) for the
 historical engine contract.
 
+This beta.6 candidate combines package and dependency updates, security advisory
+overrides, lint and inventory coverage, TUI restoration and state-refresh work,
+and memory/delegation prompt deduplication. The Zeus prompt reuses one
+task-start memory-search result for task context and delegation routing,
+including on a KV hit; automatic subtask-summary storage and delegation
+safeguards remain in place. Runtime call counts and latency have not been
+measured. Checkpoint/session bootstrap and effective Zeus `context_save`/`context_get`
+access are blocked, unverified follow-up work—not fixed features in this
+candidate.
+
 ## Cost tool backend
 
 `pantheon_cost` prefers a read-only `node:sqlite` backend against the selected
@@ -472,6 +482,10 @@ Release validation keeps each manifest with its lockfile: the root
 `npm install` fallback. A release carries one `.tgz` tarball, computes the
 SHA-256 of that same artifact, and binds the tarball and GitHub release to the
 full `TARGET_SHA`; a second pack is not interchangeable.
+
+CI also rebuilds the TUI with `npm run build --prefix src/plugins/tui` and
+checks every packaged `dist` artifact byte-for-byte against its checked-in
+version, including final newlines.
 
 ## Sandbox validation (V2)
 

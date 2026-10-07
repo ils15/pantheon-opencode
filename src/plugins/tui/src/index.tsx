@@ -53,16 +53,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from '@opencode-ai/plugin/tui'
-import {
-  createEffect,
-  createMemo,
-  createResource,
-  createSignal,
-  For,
-  onCleanup,
-  onMount,
-  Show,
-} from 'solid-js'
+import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 
 // ─── Double-load guard (mirrors src/pantheon/plugin-once.ts) ───────────────
 // Opencode merges global + project plugin paths, so this module can load twice
@@ -919,9 +910,9 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      (filterDelegationsToSession) drops every non-focused report — the panel
  *      lists only the focused session.
  *
- *   3. REFRESH — session.created/updated/deleted/status events and
- *      message.part.updated/removed (via liveStore.version bumps) re-fetch
- *      children; a 1s safety poll (oh-my-opencode-slim pattern) re-fetches
+ *   3. REFRESH — session.created/updated/deleted/status events and live-store
+ *      subscription notifications re-fetch children; a 1s safety poll
+ *      (oh-my-opencode-slim pattern) re-fetches
  *      children + re-reads the md so the panel updates EVEN without events.
  *
  *   4. DIAGNOSTICS — every re-fetch logs
@@ -947,8 +938,8 @@ async function setupUsageBar(api: TuiPluginApi) {
  *      panel renders EMPTY — zero rows, zero errors.
  *
  * The live tool-part lifecycle helpers below remain (tested, exported) but
- * are no longer the source of truth: they feed a version signal that merely
- * re-triggers the children fetch. Everything is fail-open: a missing
+ * are no longer the source of truth: they update the shared live store, whose
+ * subscribers re-trigger the children fetch. Everything is fail-open: a missing
  * children API or directory yields [], and any unreadable input is skipped —
  * never crash. */
 
@@ -2631,16 +2622,86 @@ function DelegationRow(props: {
 
 /* ─── Main Sidebar View ──────────────────────────────────── */
 
-/** Plugin-level live delegation store shared with the event subscriptions
- *  in `tui()`: the map of live entries + a version signal bumped on every
- *  mutation. The View subscribes to the version (in an effect) to refresh the
- *  durable child list and also reads the map as an optimistic live source. */
+/** Plugin-level live delegation store shared by event subscriptions and View.
+ *  Mutations notify subscribers so the View can refresh its durable child
+ *  list while also reading the map as an optimistic live source. */
 export type LiveDelegationStore = {
   map: Map<string, LiveDelegationEntry>
-  /** Reactive version getter — View reads it inside an effect to re-fetch. */
-  version: () => number
-  /** Bump the version after a live mutation. */
+  /** Subscribe to invalidations consumed by the sidebar's refresh path. */
+  subscribe: (listener: () => void) => () => void
+  /** Notify sidebar subscribers after a live mutation. */
   bump: () => void
+}
+
+/** Create the observable live store shared by task events and the sidebar. */
+export function createLiveDelegationStore(): LiveDelegationStore {
+  const listeners = new Set<() => void>()
+  return {
+    map: new Map<string, LiveDelegationEntry>(),
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    bump() {
+      for (const listener of listeners) listener()
+    },
+  }
+}
+
+/** Register the live task-part events that invalidate the sidebar store. */
+export function registerLiveDelegationEvents(
+  api: TuiPluginApi,
+  liveStore: LiveDelegationStore,
+): () => void {
+  const unsubLive: (() => void)[] = []
+
+  try {
+    unsubLive.push(
+      api.event.on('message.part.updated', (event: unknown) => {
+        // SDK v2 shape: properties.part (v1 drift: properties.info.part).
+        const props = ((event as { properties?: unknown } | null)?.properties ?? {}) as {
+          part?: unknown
+          info?: { part?: unknown }
+        }
+        const part = (props.part ?? props.info?.part) as DelegationToolPart | undefined
+        if (part === undefined) return
+        // beta.6: track the live tool call per child session (panel's
+        // activity line). Fire-and-forget — display-only state.
+        const sample = extractToolActivity(part as Parameters<typeof extractToolActivity>[0])
+        if (sample !== null)
+          trackToolActivity(latestToolActivity, sample.sessionID, sample.activity)
+        if (reduceDelegationToolPart(liveStore.map, part)) liveStore.bump()
+      }),
+    )
+  } catch {
+    /* events API unavailable — children API + 1s poll cover the panel */
+  }
+
+  try {
+    unsubLive.push(
+      api.event.on('message.part.removed', (event: unknown) => {
+        // SDK v2 shape: properties.partID (v1 drift: properties.part.id).
+        const props = ((event as { properties?: unknown } | null)?.properties ?? {}) as {
+          partID?: string
+          part?: { id?: string }
+        }
+        const partID = props.partID ?? props.part?.id
+        if (partID !== undefined && removeDelegationEntry(liveStore.map, partID)) liveStore.bump()
+      }),
+    )
+  } catch {
+    /* events API unavailable — children API + 1s poll cover the panel */
+  }
+
+  return () => {
+    for (const unsub of unsubLive) {
+      try {
+        unsub()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 function View(props: {
@@ -2758,7 +2819,7 @@ function View(props: {
   // means the event bus isn't delivering, and the 1s poll is what keeps
   // the panel honest.
   let eventRefreshCount = 0
-  // In-flight guard: overlap between the poll, events and the version effect
+  // In-flight guard: overlap between the poll, events and store subscribers
   // collapses into one fetch — no duplicate work, no duplicate entries.
   let delegationsInflight: Promise<void> | null = null
   const refreshDelegations = () => {
@@ -2910,14 +2971,17 @@ function View(props: {
       /* events API not available — the 1s poll still covers it */
     }
 
-    // message.part.updated/removed → liveStore.version() bumps (tui()):
-    // subscribe here so the panel ALSO re-fetches children when tool-part
-    // events DO arrive and the updated live row is rendered immediately.
-    createEffect(() => {
-      props.liveStore.version() // subscribe to live mutations
-      eventRefreshCount += 1
-      void refreshDelegations()
-    })
+    // Task-part events invalidate the same store the panel reads, refreshing
+    // children when those events arrive and making optimistic live rows visible.
+    cleanup.push(
+      props.liveStore.subscribe(() => {
+        eventRefreshCount += 1
+        void refreshDelegations()
+      }),
+    )
+    // Fetch the initial state; future updates use the store subscription above.
+    eventRefreshCount += 1
+    void refreshDelegations()
 
     // Safety poll (OMO-slim pattern): 1s re-fetch children + md + tick the
     // elapsed counter. Guarantees the panel updates even with zero events.
@@ -2935,8 +2999,8 @@ function View(props: {
     // compacting, so after a compaction/attach the live map would start
     // empty even though the session still holds the delegation tool parts.
     // Re-seed the live map from the session's existing parts (in message
-    // order) right after the subscriptions are registered — the version
-    // bump re-triggers the children fetch. Fail-open: if the SDK access is
+    // order) right after the subscriptions are registered — the store
+    // notification re-triggers the children fetch. Fail-open: if the SDK access is
     // unavailable we skip — the children API + the 1s poll keep the panel
     // working.
     try {
@@ -3072,61 +3136,18 @@ const tui: TuiPlugin = (api, _options, _meta) => {
   // Vendored feature (MIT): AI subscription usage gauges.
   void setupUsageBar(api) // async init — never blocks sidebar registration
 
-  // ── Live delegation store (tool-part tracker, kept as a REFRESH
-  // TRIGGER) ──
+  // ── Live delegation store (tool-part tracker + sidebar invalidation) ──
   // The Delegations panel's PRIMARY source is `api.client.session.children`
   // (delegations-sidebar pattern) — `message.part.updated` may not fire for
   // the native task tool on runtime 1.18.13 (the "(0)" symptom). The
-  // tool-part lifecycle below still tracks `task` parts and bumps a version
-  // signal the View subscribes to: when part events DO arrive, the panel
+  // tool-part lifecycle below still tracks `task` parts and invalidates the
+  // store subscription consumed by the View: when part events DO arrive, the panel
   // re-fetches children. Fail-open: if the events API is unavailable nothing
   // subscribes and the 1s safety poll keeps the panel working (never crash).
-  const [liveVersion, setLiveVersion] = createSignal(0)
-  const liveStore: LiveDelegationStore = {
-    map: new Map<string, LiveDelegationEntry>(),
-    version: liveVersion,
-    bump: () => setLiveVersion((v) => v + 1),
-  }
-  const unsubLive: (() => void)[] = []
-
-  try {
-    unsubLive.push(
-      api.event.on('message.part.updated', (event: any) => {
-        // SDK v2 shape: properties.part (v1 drift: properties.info.part).
-        const props = (event?.properties ?? {}) as { part?: unknown; info?: { part?: unknown } }
-        const part = (props.part ?? props.info?.part) as DelegationToolPart | undefined
-        if (part === undefined) return
-        // beta.6: track the live tool call per child session (panel's
-        // activity line). Fire-and-forget — display-only state.
-        const sample = extractToolActivity(part as any)
-        if (sample !== null)
-          trackToolActivity(latestToolActivity, sample.sessionID, sample.activity)
-        if (reduceDelegationToolPart(liveStore.map, part)) liveStore.bump()
-      }),
-    )
-  } catch {
-    /* events API unavailable — children API + 1s poll cover the panel */
-  }
-  try {
-    unsubLive.push(
-      api.event.on('message.part.removed', (event: any) => {
-        // SDK v2 shape: properties.partID (v1 drift: properties.part.id).
-        const props = (event?.properties ?? {}) as { partID?: string; part?: { id?: string } }
-        const partID = props.partID ?? props.part?.id
-        if (partID !== undefined && removeDelegationEntry(liveStore.map, partID)) liveStore.bump()
-      }),
-    )
-  } catch {
-    /* events API unavailable — children API + 1s poll cover the panel */
-  }
+  const liveStore = createLiveDelegationStore()
+  const unsubscribeLive = registerLiveDelegationEvents(api, liveStore)
   api.lifecycle.onDispose(() => {
-    for (const unsub of unsubLive) {
-      try {
-        unsub()
-      } catch {
-        /* ignore */
-      }
-    }
+    unsubscribeLive()
     liveStore.map.clear()
   })
 

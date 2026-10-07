@@ -33,7 +33,7 @@ skills:
 ## Memory Protocol
 
 **Auto-Store:** Ao receber subtask_summary, chame `memory_store()` com summary/files_changed/tests/status. Sempre.
-**Pre-work:** `memory_search(query="<feature>", top_k=3)` antes de planejar qualquer coisa.
+**Pre-work:** Use a única busca de task-start definida no protocolo universal; reutilize o mesmo resultado como contexto da tarefa e para roteamento. Não faça outra busca FTS.
 
 ## Golden Rule
 
@@ -75,15 +75,15 @@ O fluxo é SEMPRE: **Planejar → Especificar → Delegar → Revisar**. Zeus nu
 
 **Auto-continue** só com pedido explícito do usuário.
 
-## Delegation Cache (Otimizacao de Tokens)
+## Delegation Cache Instructions
 
-Antes de usar a arvore de roteamento, consulte o memory:
+Antes de usar a arvore de roteamento, reutilize o resultado da busca unica de task-start definido no protocolo universal, tanto como contexto da tarefa quanto como entrada para o roteamento. Isso continua obrigatorio quando houver hit no KV; nao faca uma segunda busca FTS para roteamento. A busca separada de council-precedent continua independente.
 
 ```
-memory_search(query=task_prompt, top_k=2)
-  → score > 0.85?
-    SIM → usa resultado cacheado (agent, background, pattern)
-    NAO → aplica arvore de roteamento + memory_store() pra proxima vez
+resultado da busca task-start + resultado do KV → usados juntos na decisao de roteamento
+  → score da busca > 0.85?
+    SIM → considera o resultado cacheado (agent, background, pattern)
+    NAO (cache miss) → aplica arvore de roteamento e grava a decisao em memory_store() e kv_store()
 ```
 
 ### Cache via pantheon-persistence
@@ -92,7 +92,7 @@ Para padroes de delegacao recorrentes, grave no KV:
 
 ```
 kv_store(namespace="deleg", key="delegation:<pattern>", value="{agent: ..., background: true/false}")
-kv_get(namespace="deleg", key="delegation:<pattern>") → reusa decisao sem memory_search
+kv_get(namespace="deleg", key="delegation:<pattern>") → consulta a decisao KV; o mesmo resultado da busca task-start continua sendo usado para contexto e roteamento
 ```
 
 ### Telemetria de delegacao (Nyx P1-3)
@@ -206,7 +206,7 @@ Zeus (nivel 0) -> Apollo/Hermes (nivel 1) -> sub-subagente (nivel 2 max).
 
 ## MCP Tools
 
-`memory_recall()` inicio, `memory_store()` apos cada fase. `pantheon://routing` para consultar.
+`pantheon://routing` para consultar. O armazenamento de resumos de tarefa ocorre automaticamente quando Zeus recebe um `subtask_summary`.
 
 ### References
 - Routing: `pantheon://routing`

@@ -3,7 +3,7 @@
   "publisher": "ils15",
   "version": "1.6.0-beta.6",
   "displayName": "Pantheon",
-  "description": "Conductor-Delegate orchestration platform with 14 specialized agents, 21 skills, and OpenCode support.",
+  "description": "Conductor-Delegate orchestration platform with 14 specialized agents, 20 skills, and OpenCode support.",
   "agents": "./src/agents",
   "skills": "./src/skills",
   "instructions": "./src/instructions",

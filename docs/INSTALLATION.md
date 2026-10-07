@@ -95,6 +95,23 @@ Two consequences a maintainer must know before touching it:
   gate. Update both overrides, regenerate both locks, rebuild `dist`, and
   review the generated diff together.
 
+### TUI production security overrides
+
+The root and standalone TUI manifests override `@babel/core` to `7.29.7`
+(security floor `>=7.29.6`) and `seroval` to `1.6.8` (security floor
+`>=1.6.3`). The affected packages are reachable from the shipped TUI runtime;
+these pins clear the audited production advisories while upstream
+`@opentui/solid@0.5.10` still pins Babel `7.28.0` and Solid `1.9.12`.
+
+`seroval@1.6.8` is outside Solid `1.9.12`'s declared `~1.5.0` range. Keep
+`solid-js` pinned to the exact `1.9.12` peer required by OpenTUI rather than
+allowing a workspace copy of `1.9.15`; `tests/tui-workspace-lock.test.mjs`
+checks both lock trees and exercises the Seroval serializer API used by
+Solid's server renderer. Run that regression, both clean install paths, and
+the production audit before changing these overrides. Remove them only when
+upstream dependency ranges accept patched releases and the production audit
+remains clear without them.
+
 ## Coverage reporting
 
 `npm run coverage` runs `test:node` under Node's built-in
