@@ -36,7 +36,7 @@ applyTo: "**/*.{ts,tsx,js,jsx}"
 ## Testing
 - React Testing Library (no snapshot testing)
 - Test behavior not implementation
-- >80% coverage requirement
+- Test changed behavior proportionally; honor repository coverage thresholds when measurable and relevant, and preserve stronger requirements for auth/security/data-integrity paths
 - Test user workflows
 
 ## Styling

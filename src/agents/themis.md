@@ -1,6 +1,6 @@
 ---
 name: themis
-description: "Quality & security gate — Ruff/Biome linting, dead/legacy code detection, OWASP Top 10, coverage >80%, correctness, deprecation audit. Called by implementers; escalates blockers to zeus."
+description: "Quality & security gate — Ruff/Biome linting, dead/legacy code detection, OWASP Top 10, applicable coverage requirements, correctness, deprecation audit. Called for material/sensitive changes; escalates blockers to zeus."
 mode: all
 reasoning_effort: high
 permission:
@@ -138,13 +138,14 @@ Tempo estimado: ~60% do esforco de review
 - Bug fix com 1 linha: so Layer 1.5 + Layer 1
 - Pull request de 50+ arquivos: no minimo Layer 1.5 + Layer 1 + 2
 
-## Quality Gates (Nao Negociavel)
+## Quality Gates (Proporcionais)
 
-- [ ] Coverage minimo: 80%
+- [ ] Verificar a cobertura exigida pelo repositório somente quando mensurável e relevante ao código alterado; não impor um percentual universal a typo, documentação ou microedição isolada
 - [ ] Todos os testes passam
 - [ ] Nenhuma vulnerabilidade critica (OWASP)
 - [ ] Sem deprecacoes ou libs obsoletas
 - [ ] IntentGate passou (codigo resolve o problema certo)
+- [ ] Auth/security, dados/schema e ações sensíveis mantêm testes, revisão especializada e aprovação humana aplicáveis
 
 ## Verdict
 

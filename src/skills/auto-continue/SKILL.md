@@ -18,16 +18,16 @@ Disciplined automatic continuation through multi-step tasks. Eliminates unnecess
 
 ---
 
-## Mandatory Gates (ALWAYS STOP)
+## Risk-Proportional Gates
 
 | Gate | Trigger | What happens |
 |---|---|---|
-| **GATE 0 — Agora Gate** | Agora outputs `AWAITING_APPROVAL` OR `## 🏛️ Agora Council` synthesis block appears | **HARD STOP.** Do not call any tool, do not continue any todo, do not suggest next steps. Wait for user to type: APPROVE / REQUEST CHANGES / DISCARD. "ok", "yes", "sure", "continue" are NOT valid. |
-| **GATE 1 — Plan Approval** | Athena generates a plan | User confirms scope before code is written |
-| **GATE 2 — Phase Review** | Themis reviews implementation | User sees changes before next phase |
-| **GATE 3 — Git Commit** | After each phase is approved | User controls git history; no auto-commit |
+| **GATE 0 — Explicit Council** | User explicitly invokes council and it returns `AWAITING_APPROVAL` | Stop and follow the approval the council requests; do not launch a council automatically for ordinary implementation. |
+| **GATE 1 — Plan Approval** | A plan was requested or scope/risk makes planning necessary | Ask before implementation only when the plan introduces a material choice or risk; omit this gate for a bounded, clear fix. |
+| **GATE 2 — Risk Review** | Auth/security, data/schema/migration, API contract, production configuration, or other material risk | Themis review and human approval before sensitive or irreversible action. For a trivial, isolated, reversible edit, provide a concise result instead of manufacturing a review phase. |
+| **GATE 3 — Git / External Action** | Commit, push, merge, production deploy, destructive operation, global configuration, or broad permission change | Always stop for explicit human approval. Full-auto never authorizes these actions by implication. |
 
-> **Agora is always GATE 0**: any response containing `AWAITING_APPROVAL` or a `## 🏛️ Agora Council` block overrides all auto-continue rules.
+An explicit `AWAITING_APPROVAL` from an invoked council remains a hard stop. Authentication/security and data/schema changes retain their review and approval gates even in full-auto.
 
 ---
 
@@ -36,7 +36,7 @@ Disciplined automatic continuation through multi-step tasks. Eliminates unnecess
 **Continue automatically when:**
 - Next todo is a direct consequence of the current one
 - Action is reversible (file edits, tests, linting)
-- Scope is within the approved plan
+- Scope is within the user's explicitly authorized task (a prior plan is not required for a small clear fix)
 - No new ambiguity has emerged
 
 **Stop and ask when:**
@@ -44,6 +44,11 @@ Disciplined automatic continuation through multi-step tasks. Eliminates unnecess
 - An unexpected error changes the approach
 - A dependency is missing or broken
 - Remaining context is too thin to carry the task through — write an explicit handoff instead
+- The task reaches a sensitive gate in the table above; full-auto does not override it
+
+### Full-auto Authorization
+
+Full-auto may continue only within a task and scope the user explicitly authorized. It may run reversible edits and proportionate verification; it must stop for auth/security, data/schema changes with risk, destructive or global changes, broad permissions, deploy, push, or merge. Never infer permission to expand the scope from a full-auto request.
 
 ---
 
@@ -52,12 +57,12 @@ Disciplined automatic continuation through multi-step tasks. Eliminates unnecess
 ## Implementation Pattern
 
 ```
-1. Create todos for all steps at start
+1. Create todos only for multi-step work; a one-step fix needs no todo ceremony
 2. Mark first todo in_progress
 3. Complete work → mark completed immediately
 4. Mark next todo in_progress → repeat
 5. Do NOT ask "should I continue?" between clear steps
-6. Stop at Gate 1, 2, or 3
+6. Stop at any applicable risk gate; do not require a plan/review gate for a low-risk edit
 7. After gate approval, resume with next todo
 ```
 
@@ -89,9 +94,9 @@ Phase N complete. Summary:
 
 ### Cooldown Rules
 1. **Between parallel waves (no dependency):** No cooldown needed — wave results are independent
-2. **Between sequential waves (with dependency):** Always run cooldown — dependencies may have changed context
-3. **After Themis review (GATE 2):** Cooldown is mandatory — review findings may change the plan
-4. **Session reuse check:** Before starting next phase, check if a specialist session from a previous phase can be reused (see session-goal skill)
+2. **Between sequential phases:** Summarize when dependencies or risk changed; skip ceremony for one-step work
+3. **After required Themis review:** Reassess findings before continuing
+4. **Session reuse check:** Reuse a prior specialist session only when it reduces real context duplication
 
 ### Abbreviated Cooldown
 When auto-continuing between sequential non-gated phases, the cooldown is abbreviated to one line:
@@ -173,8 +178,8 @@ compaction.
 - Write a heartbeat after every anti-stall recovery action
 
 ### Checkpoint Rules
-1. Save a checkpoint before **every** delegate dispatch and after every agent returns
-2. Include current phase, turn count, and remaining tasks
+1. Save checkpoints for long-running/multi-phase work, context-loss risk, or substantive parallel work — not a one-off command or bounded fix
+2. Include current phase and remaining tasks when a checkpoint is warranted
 3. On resume: `context_get(slug=slug, key="latest", session_id=...)` restores the most recent checkpoint
 
 > Do not create `heartbeat.json`, `checkpoint-<N>.json`, or `session.json` under
@@ -189,10 +194,10 @@ Configurable gates for different platforms and risk levels:
 
 | Gate | Default | Auto-Approval Condition |
 |------|---------|------------------------|
-| GATE 0 — Council/Plan | Always Ask | N/A — always requires human |
-| GATE 1 — Plan Approval | Always Ask | Plan matches acceptance criteria + no risks flagged |
-| GATE 2 — Themis Review | Ask by Default | Auto-approve if: Themis APPROVED + no CRITICAL/HIGH issues + coverage ≥80% |
-| GATE 3 — Git Commit | Never Auto | N/A — always manual |
+| Council | Only when explicitly invoked | Never auto-start a council for ordinary implementation |
+| Plan approval | Only for requested or risk-required plans | Skip for bounded, clear work |
+| Themis review | Required for sensitive/material changes | May omit for trivial isolated edits; never auto-bypass required findings |
+| Git / external actions | Never Auto | Commit, push, merge, deploy, destructive/global changes require explicit approval |
 | Deploy | Always Ask | N/A — always requires human |
 | Destructive DB Ops | Always Ask | N/A — always requires human |
 
@@ -205,8 +210,8 @@ auto-continue:
   idle_stall: 120            # seconds before stall detection
   idle_pause: 300            # seconds before auto-pause
   gates:
-    plan_approval: always_ask
-    themis_review: auto_approve_if_clean
+    plan_approval: when_required_by_scope_or_risk
+    themis_review: required_for_sensitive_or_material_changes
     git_commit: never_auto
     deploy: always_ask
     destructive_ops: always_ask

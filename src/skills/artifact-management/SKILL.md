@@ -1,6 +1,6 @@
 ---
 name: artifact-management
-description: "Structured artifact trail for feature implementations — plans, implementations, reviews, and decisions."
+description: "Structured artifacts for planned, multi-phase, or materially risky implementation work."
 context: fork
 globs: []
 alwaysApply: false
@@ -8,7 +8,7 @@ alwaysApply: false
 
 # Artifact Management
 
-Structured artifact trail system for documenting feature implementations. Defines what, where, and how agents produce phase outputs.
+Structured artifact trail for planned, multi-phase, or materially risky implementation work. Artifacts are not a prerequisite for simple fixes or read-only investigation.
 
 ---
 
@@ -54,6 +54,13 @@ All ephemeral artifacts live in `.pantheon/memory-bank/.tmp/` — gitignored and
 | Decision | Any → Mnemosyne | `ADR-<topic>.md` |
 
 > **Zeus does NOT generate artifacts.** He orchestrates agents that generate them.
+
+## Proportional Use
+
+- Create PLAN/IMPL/REVIEW artifacts for planned multi-phase work or when risk, auditability, or an explicit request needs a durable phase trail.
+- A bounded, reversible fix should be investigated only as far as needed, implemented, verified with focused checks, and returned as a concise summary. Do not create PLAN, IMPL, or REVIEW artifacts for it.
+- Read-only lookup or trivial discovery needs no DISC artifact; use one only when findings are broad enough to be reused or drive a material decision.
+- The absence of an artifact never waives Themis review or human approval for auth/security, data/schema/migrations, production-impacting work, or sensitive actions.
 
 ---
 
@@ -103,9 +110,9 @@ All ephemeral artifacts live in `.pantheon/memory-bank/.tmp/` — gitignored and
 
 ## Human Pause Points
 
-1. **After PLAN** → user reads `.tmp/PLAN-<feature>.md` and approves
-2. **After REVIEW** → user reads `.tmp/REVIEW-<feature>.md` and validates focus items
-3. **Before git commit** → user executes manually
+1. **After a required PLAN** → pause only when a material scope/risk decision needs approval.
+2. **After required REVIEW** → preserve auth/security/data/schema and other sensitive approval gates.
+3. **Before commit/push/merge/deploy or destructive/global action** → require explicit human approval.
 
 ---
 

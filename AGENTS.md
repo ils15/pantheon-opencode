@@ -9,19 +9,19 @@ This project uses the Pantheon multi-agent framework with 14 specialized agents.
 
 | Agent | Role |
 |-------|------|
-| @aphrodite | Frontend specialist — React 19, TypeScript strict, WCAG accessibility, responsive design, TDD, modern API patterns, deprecated npm detection. Calls apollo for discovery, sends to themis for review. |
+| @aphrodite | Frontend specialist — React 19, TypeScript strict, WCAG accessibility, responsive design, TDD, modern API patterns, deprecated npm detection. Uses discovery/review proportionally to scope and risk. |
 | @apollo | Read-only investigation scout — 3–10 parallel searches across codebase, external docs, and GitHub. Called by: athena, zeus, hermes, aphrodite, demeter. No edits, no commands. |
 | @athena | Strategic planner & architect — research-first, plan-only, never implements. Plans include quality gates (ruff/Biome, dep detection, LTS policy). Calls apollo for discovery. |
-| @demeter | Database specialist — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, TDD migrations, modern DB libs. Calls apollo for discovery, sends to themis. |
+| @demeter | Database specialist — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, TDD migrations, modern DB libs. Preserves review gates for schema/data changes. |
 | @gaia | Remote sensing domain specialist — satellite image processing, spectral analysis, SAR, change detection, time series, ML/DL classification. Read-only analysis of geospatial data. |
 | @hephaestus | AI tooling & pipelines specialist — LangChain/LangGraph chains, RAG architecture, vector stores, embedding strategies. Forges AI infrastructure. Calls apollo, sends to themis. |
-| @hermes | Backend specialist — FastAPI, Python, async, TDD (RED→GREEN→REFACTOR), modern Python stdlib, obsolete lib detection. Calls apollo for discovery, sends to themis. |
+| @hermes | Backend specialist — FastAPI, Python, async, TDD (RED→GREEN→REFACTOR), modern Python stdlib, obsolete lib detection. Uses discovery/review proportionally to scope and risk. |
 | @iris | GitHub operations specialist — branches, pull requests, issues, releases, tags. Called by zeus after review. Never pushes or merges without explicit human approval. Integrates with VS Code GitHub Pull Requests extension. |
 | @mnemosyne | Memory bank quality owner — initializes .pantheon/memory-bank/, writes ADRs and task records on explicit request. Called by zeus. Never invoked automatically after phases. |
 | @nyx | Observability & monitoring specialist — OpenTelemetry tracing, token/cost tracking, agent performance analytics, LangSmith integration. Calls apollo for discovery, sends to themis. |
 | @prometheus | Infrastructure + model provider specialist — Docker, CI/CD, multi-model routing, cost optimization, provider abstraction |
 | @talos | Hotfix express lane — direct fixes for small bugs, CSS, typos, minor logic. No TDD ceremony, no orchestration overhead. Standalone, no subagents. Escalates complex issues to zeus. |
-| @themis | Quality & security gate — ruff/Biome linting, dead/legacy code detection, OWASP Top 10, coverage >80%, correctness, deprecation audit. Called by implementers; escalates blockers to zeus. |
+| @themis | Quality & security gate — ruff/Biome linting, dead/legacy code detection, OWASP Top 10, applicable coverage requirements, correctness, deprecation audit. Reviews material/sensitive changes. |
 | @zeus | Central orchestrator — never implements. Delegates to: athena, apollo, hermes, aphrodite, demeter, prometheus, themis, iris, mnemosyne, talos, hephaestus, nyx |
 
 ## OpenCode Setup
@@ -43,8 +43,8 @@ Para validar a instalação global do pacote pantheon-opencode COMO UM USUÁRIO 
 
 ## Conventions
 
-- TDD: Write failing test first, then implement
-- Coverage minimum: 80%
+- TDD: RED→GREEN→REFACTOR for testable behavior; use focused checks for micro-edits
+- Honor repository coverage thresholds when relevant; preserve stronger auth/security/data-integrity gates
 - Async/await on all I/O
 - Type hints on all functions
 - PRs always update the README — every pull request must document newly added features, behaviors, env vars, or commands in the README before being opened.
@@ -208,7 +208,7 @@ used as context for the response.
 ## Testing
 - React Testing Library (no snapshot testing)
 - Test behavior not implementation
-- >80% coverage requirement
+- Test changed behavior proportionally; honor repository coverage thresholds when measurable and relevant, and preserve stronger requirements for auth/security/data-integrity paths
 - Test user workflows
 
 ## Styling
@@ -345,68 +345,18 @@ On tasks expected to run > 5 turns:
 
 ## Heartbeat & Checkpoint Integration
 
-All session state lives in **pantheon-persistence** (namespace `checkpoint:<slug>`).
-No file I/O, no checkpoint_session.py — TTL (4h) handles cleanup automatically.
+Use **pantheon-persistence** (`checkpoint:<slug>`, 4h TTL), not checkpoint files/scripts.
 
-### Heartbeat Check
-- If `context_get(slug=slug, key="heartbeat", session_id=SESSION_ID)` returns a checkin older than 300s, log a stall warning and resume
-- Write heartbeat after every anti-stall recovery action:
-  ```
-  context_save(slug=slug, key="heartbeat", content=JSON.stringify({"status": "alive", "last_action": "...", "turn_count": N}), session_id=SESSION_ID)
-  ```
+Check a heartbeat for stale state during long sessions; save one after anti-stall recovery.
 
-### Checkpoint Auto-Save (Pré-Compactação)
-Before ANY delegate dispatch, save a checkpoint:
-```
-context_save(slug=slug, key="phase:N", content=JSON.stringify({
-  "phase": {"current": N, "total": M, "name": "..."},
-  "turn_count": N, "agent": "...", "summary": "..."
-}), session_id=SESSION_ID)
-```
-**`content.phase` must be an OBJECT, not a bare number.** `{"phase": 1}` is rejected with
-`context_save: content.phase must be an object (got number)`. The server reads `current`
-and `total` (non-negative ints) and `name` (string, max 256 **bytes** — the guard
-measures `len(value.encode())`, so multi-byte characters count as more than one). That
-set is not closed: any other key inside `phase` is accepted and ignored, never an
-error. The `"phase:N"` slot KEY above is unrelated to `content.phase` and stays a plain
-string.
-All checkpoints auto-expire after 4h (TTL=14400).
-
-### Gatilho de Pré-Compactação (Anti-perda de estado)
-Antes da compactação nativa do OpenCode disparar (75-96% do context window),
-o Zeus DEVE salvar o estado atual:
-1. Capture session_id do primeiro `context_save` da sessão
-2. Salve heartbeat + phase atual + tarefas pendentes
-3. Só então permita que a compactação prossiga
-```
-# Ao iniciar sessão (session_id é REQUIRED — use o id da sessão corrente):
-result = context_save(slug=slug, key="init", content=JSON.stringify(session_state), session_id=SESSION_ID)
-SESSION_ID = result.session_id   # ← guarde para toda a sessão
-
-# Antes de CADA delegação:
-context_save(slug=slug, key=f"pre:{agent}", content=JSON.stringify(current_state), session_id=SESSION_ID)
-
-# Após retorno do agente:
-context_save(slug=slug, key=f"post:{agent}", content=JSON.stringify(result_state), session_id=SESSION_ID)
-```
-Isso garante que o estado sobreviva à compactação — o "latest" pointer
-sempre aponta para o checkpoint mais recente, mesmo após compactação.
-
+### Checkpoint / Pre-Compaction
+Checkpoint only long-running or multi-phase work, when context loss is plausible; never add it for a one-off command or bounded fix. Save current phase and remaining tasks before a consequential dispatch and before compaction. Use `context_save` with an object-valued `phase`; see `skill: auto-continue` for the payload. Checkpoints expire after 4h.
 
 ### Context Retrieval
-Next-phase agents retrieve previous context via:
-```
-context_get(slug=slug, session_id=SESSION_ID)                    # most recent checkpoint ("latest" is the default key)
-context_get(slug=slug, key="phase:3", session_id=SESSION_ID)     # specific phase
-context_list(slug=slug, session_id=SESSION_ID)                   # all checkpoints
-```
+For a real next phase, retrieve the latest checkpoint and apply remaining tasks/gotchas; do not create checkpoints just to retrieve context for a bounded task.
 
 ### Long-Session Progress
-Every 5 turns during a long session, update STATUS.md with:
-- Current phase
-- Completed tasks
-- Pending tasks
-- Any blockers
+For long-lived multi-phase work, update an existing/requested progress record every 5 turns with completed and pending work and blockers. Do not create STATUS.md for a bounded task.
 
 <!-- Source: src/instructions/zeus-communication-rules.instructions.md -->
 ## Zeus Communication Rules
@@ -519,6 +469,9 @@ Initial attempt → timeout/failure → log it → make at most one retry
 ```
 `background_delegation.retry_count: 1` means one retry after the initial attempt, not one total attempt. Never restart an exhausted chain automatically.
 
+Apply the retry only to a transient dispatch failure (timeout, crash, or empty response). A failed test, validation, or migration is a result to diagnose, not a reason to repeat the same command or agent blindly. Track agents already tried: each agent may be retried at most once and each listed fallback may be tried at most once. For auth/security/data/schema work, a fallback must preserve specialist competence, Themis review, and human approval; otherwise stop and escalate. Never let full-auto bypass these gates.
+An agent refusal or scope-boundary response is not a transient failure: do not retry it with a rephrased prompt. Correct the route once if the right specialist is clear; otherwise stop and ask.
+
 ## Fallback Chain Definitions
 
 Each fallback chain is evaluated left-to-right: if the first fallback fails, try the second, etc.
@@ -547,29 +500,27 @@ Check for a reusable session before dispatch and obey `session_max` in `routing.
 
 # 📦 SUBTASK DISPATCH (Lightweight Delegation)
 
-Subtask is a bounded, low-risk delegation mode that **skips** the standard artifact lifecycle. Use it for focused work that doesn't need Themis review.
+Subtask is a bounded, low-risk delegation mode that **skips** the standard artifact lifecycle. Choose it by risk and need for review, not by a fixed file/line count.
 
 ## When to Use Subtask vs Full Task
 
-> **REGRA DE OURO:** Quando em dúvida, use full task. Subtask é para o que você tem 100% de certeza que é seguro pular revisão.
+Use the lightest path that safely meets the request. A multi-file but bounded low-risk change does not automatically need a plan/artifact phase.
 
 ### Subtask Decision Tree (run BEFORE every delegation)
 
 ```
-□ Scope: ≤2 files AND ≤10 lines changed?         [YES→continue | NO→full task]
-□ Risk: No schema change, no security impact?      [YES→continue | NO→full task]
-□ Auth: No authentication/authorization logic?      [YES→continue | NO→full task]
-□ Data: No data loss risk, no migration?            [YES→continue | NO→full task]
-□ Review: Output does NOT feed into Themis review?  [YES→continue | NO→full task]
+□ Is the scope clear, bounded, and reversible?                 [YES→continue | NO→clarify/plan]
+□ Does it avoid auth/security, data/schema, and destructive risk? [YES→continue | NO→full review/gates]
+□ Is there no required Themis/audit handoff for this change?     [YES→continue | NO→preserve that review]
 
-ALL YES → subtask (skip artifact + Themis)
-ANY NO  → full task (IMPL artifact + Themis review mandatory)
+ALL YES → direct/lightweight execution; no routine plan or artifact
+ANY NO  → add only the planning, artifact, specialist review, and approval gates the risk requires
 ```
 
 ### Safety Rules
-1. **Bounded scope** — single file or read-only investigation
+1. **Bounded scope** — can be a small multi-file change or a read-only investigation
 2. **Low risk** — no security implications, no data loss, no breaking changes
-3. **No Themis dependency** — output doesn't feed into a phase that requires review
+3. **No required Themis dependency** — sensitive/material output retains its review gate
 
 ## Subtask Return Format
 Return the required `## subtask_summary` fields defined in `## Agent Return Format`; include `memory_context` when memory was used.

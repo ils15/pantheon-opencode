@@ -8,13 +8,21 @@ alwaysApply: false
 
 # TDD with Agents
 
-Enforce RED → GREEN → REFACTOR cycle across all implementation agents. Includes advanced testing patterns for E2E, load, mutation, and contract testing.
+Use RED → GREEN → REFACTOR for behavior-changing implementation where a meaningful test can express the change. Keep verification proportional to the changed surface and risk; advanced testing patterns are reserved for changes that warrant them.
 
 ---
 
 ## Core Principle
 
-> **Write the test FIRST. Watch it fail. Write minimal code to pass. Refactor with confidence.**
+> **For testable behavior changes, write the focused test first, observe RED, implement minimally, then refactor.**
+
+## Proportional TDD
+
+- Use the complete RED → GREEN → REFACTOR cycle for new or changed behavior when a focused test is practical. Include a focused regression check for bug fixes.
+- For typo, formatting, documentation-only, or otherwise non-behavioral edits, do not invent a test; inspect the diff and run the narrowest relevant validation.
+- Run targeted tests for a small change. Run broader suites when the changed surface, integration boundaries, or risk make them useful; do not run the whole suite solely because one line changed.
+- If a relevant existing test already captures the behavior, use it instead of adding a duplicate. If no automated check can express the change, report the manual or static verification performed.
+- Auth, security, payment, data-integrity, and schema/migration changes retain focused RED/GREEN tests, required regression coverage, and Themis review. Do not weaken a project-specific required safety gate.
 
 ---
 
@@ -112,12 +120,12 @@ def test_provider_satisfies_consumer_contract():
     pass
 ```
 
-### Mutation Testing
+### Mutation Testing (high-risk/critical logic only)
 - Mutate source code (change `>` to `<`, remove conditions)
 - Run tests → should fail (mutation killed)
 - If tests pass → test is weak; improve it
 
-### Visual Regression
+### Visual Regression (visual behavior only)
 ```typescript
 test('homepage looks the same', async ({ page }) => {
   await page.goto('/')
@@ -129,8 +137,8 @@ test('homepage looks the same', async ({ page }) => {
 
 ## Coverage Rules
 
-- **Minimum: 80%** for all code
-- **Critical paths: 100%** (auth, payments, data integrity)
+- Follow a repository's explicit coverage threshold when the changed code is in its measurement scope; do not manufacture a coverage target for docs, formatting, or a tiny isolated edit.
+- **Critical paths:** preserve project-required coverage and tests for auth, payments, and data integrity.
 - **No snapshot testing** — test behavior, not output shape
 - **Test edge cases**: empty input, null, boundary values, errors
 
@@ -143,20 +151,20 @@ test('homepage looks the same', async ({ page }) => {
 | **Hermes** | Unit + integration for FastAPI endpoints, services, middleware |
 | **Aphrodite** | Component behavior tests with React Testing Library |
 | **Demeter** | Migration upgrade/downgrade, query correctness |
-| **Themis** | Verifies coverage ≥80%, edge cases tested, error conditions |
+| **Themis** | Reviews the changed surface, relevant edge/error cases, and applicable repository coverage requirements; always review sensitive/material changes |
 
 ---
 
 ## Workflow
 
 ```
-1. Zeus/Athena defines feature with testable acceptance criteria
+1. Use a plan/spec only when scope, risk, or ambiguity warrants it; a bounded fix may proceed directly
 2. Hermes writes failing test (RED)
 3. Hermes implements minimal code (GREEN)
 4. Hermes refactors (REFACTOR)
 5. Aphrodite writes frontend tests in parallel
-6. Themis reviews: coverage, edge cases, correctness
-7. If coverage <80% → NEEDS_REVISION
+6. Themis reviews sensitive or material changes, checking changed behavior and applicable quality gates
+7. Escalate unmet repository or safety-critical test requirements; do not fail a micro-edit against an unrelated global coverage figure
 ```
 
 ---
