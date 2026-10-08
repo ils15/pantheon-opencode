@@ -10,35 +10,23 @@ When a delegated agent does not respond in time, enforce the timeout policy from
 
 ## Timeout Behavior by Agent Role
 
-| Agent Role | Timeout | Retry Policy | Fallback Chain | Partial Results OK? | Reasoning Effort |
-|------------|---------|-------------|----------|---------------------|------------------|
-| Explorer (@apollo) | 60s | 2 retries, exp backoff | @athena (plan) → @hermes (impl) | ✅ Yes | low |
-| Implementer (@hermes, @aphrodite, @demeter) | 180s | 3 retries, exp backoff | @talos (hotfix) → @athena (replan) | ❌ No | medium |
-| Reviewer (@themis) | 120s | 3 retries, exp backoff | @zeus (escalate) → user | ❌ No | high |
-| Infrastructure (@prometheus) | 300s | 3 retries, exp backoff | @hermes (config) → @zeus (escalate) | ❌ No | medium |
-| Hotfix (@talos) | 30s | 2 retries, no backoff | @hermes (full fix) | ✅ Yes | low |
-| Remote Sensing (@gaia) | 120s | 2 retries, exp backoff | @hermes (generic) | ✅ Yes | high |
+| Agent Role | Timeout | Retry Policy | Partial Results OK? | Reasoning Effort |
+|------------|---------|--------------|---------------------|------------------|
+| Explorer (@apollo) | 60s | 1 retry | ✅ Yes | low |
+| Implementer (@hermes, @aphrodite, @demeter) | 180s | 1 retry | ❌ No | medium |
+| Reviewer (@themis) | 120s | 1 retry | ❌ No | high |
+| Infrastructure (@prometheus) | 300s | 1 retry | ❌ No | medium |
+| Hotfix (@talos) | 30s | 1 retry | ✅ Yes | low |
+| Remote Sensing (@gaia) | 120s | 1 retry | ✅ Yes | high |
 
 ## Retry Flow
 
 ```
-Task dispatch → timeout elapsed → log timeout
-  ├─ retry_count > 0 → retry with exponential backoff → decrement retry_count
-  │    └─ still failing? → retry again (up to retry_count limit)
-  │
-  ├─ retries exhausted → FALLBACK CHAIN:
-  │    ├─ fallback[0] exists? → dispatch to fallback agent
-  │    │    └─ keep original task spec + context; add error context
-  │    ├─ fallback[1] exists? → dispatch to second fallback
-  │    └─ all fallbacks failed? → ESCALATE
-  │
-  ├─ no fallbacks defined → return TIMEOUT error to user
-  │
-  └─ ESCALATE: "Agent X failed after N retries. Fallbacks Y, Z also failed.
-                 Options: (a) try different agent, (b) simplify scope, (c) manual"
+Initial attempt → timeout/failure → log it → make at most one retry
+  └─ retry fails → try fallback agents left-to-right with original task/context
+       └─ all fallbacks fail (or none exist) → report the chain and escalate
 ```
-
-
+`background_delegation.retry_count: 1` means one retry after the initial attempt, not one total attempt. Never restart an exhausted chain automatically.
 
 ## Fallback Chain Definitions
 
@@ -59,22 +47,10 @@ Each fallback chain is evaluated left-to-right: if the first fallback fails, try
 | @mnemosyne | @zeus (manual) | — | user |
 
 ### Escalation Protocol
-When ALL fallbacks fail:
-1. Log the full failure chain: which agents were tried, what error each returned
-2. Report to user: "Task [X] failed. Tried: [agent list]. Error: [summary]."
-3. Offer options: (a) try different approach, (b) simplify scope, (c) manual fix
-4. NEVER retry the same chain automatically — break the cycle
+When all fallbacks fail, report the tried agents and errors, offer a different approach/simpler scope/manual fix, and stop. Never retry the same chain automatically.
 
 ### Session Reuse Check
-Before dispatching a task, check if a reusable session exists:
-
-```
-@hermes — continuing from previous session.
-Files already explored: backend/routers/auth.py, backend/services/auth_service.py.
-New task: add refresh token rotation.
-```
-
-Use `session_max` from routing.yml to determine how many sessions to keep per agent.
+Check for a reusable session before dispatch and obey `session_max` in `routing.yml`.
 
 ---
 
@@ -99,34 +75,13 @@ ALL YES → subtask (skip artifact + Themis)
 ANY NO  → full task (IMPL artifact + Themis review mandatory)
 ```
 
-### Comparison Table
-
-| Aspect | Subtask | Full Task |
-|--------|---------|-----------|
-| Scope | Single file, <10 lines, read-only | Feature, multi-file, schema change |
-| Risk | Low (no security/data implications) | Any risk level |
-| Artifact | ❌ No IMPL artifact | ✅ IMPL artifact required |
-| Themis review | ❌ None | ✅ Mandatory |
-| Use case | Apollo discovery, Talos hotfix, bounded fix | Feature implementation, migration, API change |
-
-### Concrete Examples
-
-| Task | Scope | Risk | Subtask? | Why |
-|------|-------|------|----------|-----|
-| Fix typo in CSS class | 1 file, 1 line | None | ✅ | Bounded, no security impact |
-| Add error handling to existing endpoint | 1 file, 5 lines | Low | ✅ | No schema change |
-| Implement login endpoint | 2+ files, 50+ lines | High (auth) | ❌ | Security-critical, needs Themis |
-| Database migration | 1 file, 15 lines | High (data) | ❌ | Data loss risk, needs rollback |
-| Apollo codebase search | 0 files | None | ✅ | Read-only investigation |
-| Update README | 1 file, 3 lines | None | ✅ | Documentation only |
-
 ### Safety Rules
 1. **Bounded scope** — single file or read-only investigation
 2. **Low risk** — no security implications, no data loss, no breaking changes
 3. **No Themis dependency** — output doesn't feed into a phase that requires review
 
 ## Subtask Return Format
-Return the standard `## subtask_summary` defined in `## Agent Return Format` (files_changed, summary, tests, coverage, tokens, status, blockers).
+Return the required `## subtask_summary` fields defined in `## Agent Return Format`; include `memory_context` when memory was used.
 
 ## Timeout Parcial (Partial Results)
 

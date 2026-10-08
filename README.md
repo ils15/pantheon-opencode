@@ -185,6 +185,9 @@ measured. Checkpoint/session bootstrap and effective Zeus `context_save`/`contex
 access are blocked, unverified follow-up work—not fixed features in this
 candidate.
 
+Delegated tasks get at most one retry after an initial timeout or failure. If
+that retry fails, the configured fallback or escalation chain applies.
+
 ## Cost tool backend
 
 `pantheon_cost` prefers a read-only `node:sqlite` backend against the selected

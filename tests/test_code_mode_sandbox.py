@@ -118,34 +118,53 @@ class TestPrlimitPrefix:
         assert len(cpu_args) == 1
 
     def test_nproc_is_derived_not_hardcoded(self, module) -> None:
-        """--nproc must clear the UID's current task count, whatever it is.
+        """--nproc must cover one live UID task-count snapshot plus headroom.
 
         RLIMIT_NPROC is a per-real-UID total across processes AND threads. A
         hardcoded value below the host's current usage makes the first fork()
         inside the sandbox fail with EAGAIN, which is what --nproc=512 did on
-        a host already running more than 512 tasks. Pin the BEHAVIOUR — the
-        limit must exceed the live count — not the number.
+        a host already running more than 512 tasks. Capture the live count
+        once and use that same snapshot to derive and check the limit.
         """
-        result = module._prlimit_prefix("/usr/bin/prlimit")
+        current = module._uid_task_count()
+        assert current is not None
+        with (
+            patch.object(module, "_uid_task_count", return_value=current) as task_count,
+            patch.object(
+                module.resource,
+                "getrlimit",
+                return_value=(0, module.resource.RLIM_INFINITY),
+            ),
+        ):
+            result = module._prlimit_prefix("/usr/bin/prlimit")
+        task_count.assert_called_once_with()
         assert result is not None
         nproc_args = [a for a in result if a.startswith("--nproc=")]
         assert len(nproc_args) == 1, result
         limit = int(nproc_args[0].split("=", 1)[1])
-        current = module._uid_task_count()
-        assert current is not None
-        assert limit > current, (
-            f"nproc={limit} does not exceed the UID's current task count "
-            f"{current}; the sandbox would fail its first fork with EAGAIN"
+        assert limit == current + module.NPROC_HEADROOM, (
+            f"nproc={limit} must cover the captured UID task count {current} "
+            f"plus NPROC_HEADROOM={module.NPROC_HEADROOM}"
         )
 
     def test_nproc_headroom_bounds_fork_bomb(self, module) -> None:
         """The derived limit still caps how much a script can add."""
-        result = module._prlimit_prefix("/usr/bin/prlimit")
+        current = 1_000
+        with (
+            patch.object(module, "_uid_task_count", return_value=current) as task_count,
+            patch.object(
+                module.resource,
+                "getrlimit",
+                return_value=(0, current + module.NPROC_HEADROOM + 1),
+            ),
+        ):
+            result = module._prlimit_prefix("/usr/bin/prlimit")
+        task_count.assert_called_once_with()
         assert result is not None
         limit = int(
             next(a for a in result if a.startswith("--nproc=")).split("=", 1)[1]
         )
-        current = module._uid_task_count()
+        assert limit == current + module.NPROC_HEADROOM
         assert limit <= current + module.NPROC_HEADROOM
         assert limit - current <= module.NPROC_HEADROOM
 

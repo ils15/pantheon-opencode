@@ -13,6 +13,10 @@ const allowedExclusions = [
   '!.ruff_cache',
   '!.venv',
   '!.opencode',
+  '!.pantheon/autocontinue',
+  '!.pantheon/board',
+  '!.pantheon/deepwork/board-signals',
+  '!.pantheon/goals',
   '!logs',
 ]
 

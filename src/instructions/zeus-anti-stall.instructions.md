@@ -34,14 +34,7 @@ Self-check every 3 turns: "Am I waiting on a delegate? Have I polled without nee
 
 When a delegation fails (timeout, empty response, error):
 
-1. **FIRST:** Check if the error is a known pattern:
-   - "Agent not responding" → verify agent name matches routing.yml
-   - "Context exceeded" → reduce scope, split into smaller tasks
-   - "Permission denied" → verify agent has correct tools/permissions
-
-2. **Retry ONCE** with rephrased prompt — add: "Previous attempt failed with: [error]. Adjusted approach: [what changed]."
-
-3. **If retry also fails** → do NOT retry blindly; follow the fallback chain and escalation protocol in `## ⏱️ Timeout & Retry Enforcement`.
+Check known errors first (agent name, context size, or permissions), then make **one retry after the initial attempt** (`background_delegation.retry_count: 1`) with a corrected prompt. If it fails, do not retry the same agent again; follow the fallback chain and escalation protocol in `## ⏱️ Timeout & Retry Enforcement`.
 
 ## Progress Checkpoint
 
