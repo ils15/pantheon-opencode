@@ -1,0 +1,55 @@
+{
+  "schema_version": "pantheon.contract.b1-b6.v1",
+  "frozen": true,
+  "freeze_flag": "congela-pos-T1",
+  "source": "ADR-0012 D1 — proposta oficial Athena; lista nominal SOL ausente no repositório (Apollo: originais inexistentes)",
+  "exclude_metrics": ["currency", "JEVS"],
+  "thresholds": {
+    "tokens_pct": 20,
+    "latency_pct": 10,
+    "quality_pp": 5
+  },
+  "snapshots": {
+    "base": "850191c",
+    "head": "dc9018d"
+  },
+  "repetitions": 5,
+  "blocks": [
+    {
+      "id": "B1",
+      "name": "Canonical agents contract",
+      "scope": "Campos required/optional de agents/*.agent.md (src/agents/*.md)",
+      "sources": ["src/agents/*.md"]
+    },
+    {
+      "id": "B2",
+      "name": "Routing contract",
+      "scope": "routing.yml como single source of truth (src/routing.yml)",
+      "sources": ["src/routing.yml"]
+    },
+    {
+      "id": "B3",
+      "name": "Permission shape contract",
+      "scope": "Formato canônico de permissões (permission.task + background_delegation.read_only_agents + schema)",
+      "sources": ["src/routing.yml", "pantheon.schema.json"]
+    },
+    {
+      "id": "B4",
+      "name": "Skills/commands metadata contract",
+      "scope": "Metadados de skills (SKILL.md frontmatter) e commands",
+      "sources": ["src/skills/*/SKILL.md", "commands/*.md"]
+    },
+    {
+      "id": "B5",
+      "name": "Version contract",
+      "scope": "Semver 1.x, package.json SSOT (cf. ADR-0007)",
+      "sources": ["package.json", "plugin.json", "pyproject.toml"]
+    },
+    {
+      "id": "B6",
+      "name": "Quality gates contract",
+      "scope": "planeja → implementa → checa → aprova → PR; @themis audita cada gate",
+      "sources": ["AGENTS.md", "src/instructions/*.instructions.md"]
+    }
+  ]
+}

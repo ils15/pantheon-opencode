@@ -1,0 +1,810 @@
+{
+  "aggregate": {
+    "B1:base": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 18586.0,
+      "tokens_median": 18586.0,
+      "tokens_min": 18586.0,
+      "tool_calls_median": 0.0
+    },
+    "B1:head": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 18691.0,
+      "tokens_median": 18691.0,
+      "tokens_min": 18691.0,
+      "tool_calls_median": 0.0
+    },
+    "B2:base": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 4508.0,
+      "tokens_median": 4508.0,
+      "tokens_min": 4508.0,
+      "tool_calls_median": 0.0
+    },
+    "B2:head": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 4634.0,
+      "tokens_median": 4634.0,
+      "tokens_min": 4634.0,
+      "tool_calls_median": 0.0
+    },
+    "B3:base": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 5765.0,
+      "tokens_median": 5765.0,
+      "tokens_min": 5765.0,
+      "tool_calls_median": 0.0
+    },
+    "B3:head": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 5891.0,
+      "tokens_median": 5891.0,
+      "tokens_min": 5891.0,
+      "tool_calls_median": 0.0
+    },
+    "B4:base": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 26284.0,
+      "tokens_median": 26284.0,
+      "tokens_min": 26284.0,
+      "tool_calls_median": 0.0
+    },
+    "B4:head": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 27256.0,
+      "tokens_median": 27256.0,
+      "tokens_min": 27256.0,
+      "tool_calls_median": 0.0
+    },
+    "B5:base": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 2055.0,
+      "tokens_median": 2055.0,
+      "tokens_min": 2055.0,
+      "tool_calls_median": 0.0
+    },
+    "B5:head": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 2055.0,
+      "tokens_median": 2055.0,
+      "tokens_min": 2055.0,
+      "tool_calls_median": 0.0
+    },
+    "B6:base": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 14092.0,
+      "tokens_median": 14092.0,
+      "tokens_min": 14092.0,
+      "tool_calls_median": 0.0
+    },
+    "B6:head": {
+      "acceptance_rate": 1.0,
+      "distinct_results": 1.0,
+      "latency_median": 0.0,
+      "samples": 5.0,
+      "tokens_max": 9715.0,
+      "tokens_median": 9715.0,
+      "tokens_min": 9715.0,
+      "tool_calls_median": 0.0
+    }
+  },
+  "comparison_gate": {
+    "eligible": false,
+    "reason": "offline static baseline \u2014 no live model measurement"
+  },
+  "configs": [
+    "base",
+    "head"
+  ],
+  "contract": {
+    "freeze_flag": "congela-pos-T1",
+    "frozen": true,
+    "schema_version": "pantheon.contract.b1-b6.v1",
+    "snapshots": {
+      "base": "850191c",
+      "head": "dc9018d"
+    },
+    "source": "ADR-0012 D1 \u2014 proposta oficial Athena; lista nominal SOL ausente no reposit\u00f3rio (Apollo: originais inexistentes)",
+    "thresholds": {
+      "latency_pct": 10.0,
+      "quality_pp": 5.0,
+      "tokens_pct": 20.0
+    }
+  },
+  "exclude_metrics": [
+    "currency",
+    "JEVS"
+  ],
+  "measurement_source": "offline_static",
+  "mode": "offline",
+  "parity": {
+    "blocks": {
+      "B1": {
+        "breaches": [],
+        "delta_latency_pct": null,
+        "delta_quality_pp": 0.0,
+        "delta_tokens_pct": 0.5649,
+        "verdict": "within"
+      },
+      "B2": {
+        "breaches": [],
+        "delta_latency_pct": null,
+        "delta_quality_pp": 0.0,
+        "delta_tokens_pct": 2.795,
+        "verdict": "within"
+      },
+      "B3": {
+        "breaches": [],
+        "delta_latency_pct": null,
+        "delta_quality_pp": 0.0,
+        "delta_tokens_pct": 2.1856,
+        "verdict": "within"
+      },
+      "B4": {
+        "breaches": [],
+        "delta_latency_pct": null,
+        "delta_quality_pp": 0.0,
+        "delta_tokens_pct": 3.6981,
+        "verdict": "within"
+      },
+      "B5": {
+        "breaches": [],
+        "delta_latency_pct": null,
+        "delta_quality_pp": 0.0,
+        "delta_tokens_pct": 0.0,
+        "verdict": "within"
+      },
+      "B6": {
+        "breaches": [],
+        "delta_latency_pct": null,
+        "delta_quality_pp": 0.0,
+        "delta_tokens_pct": -31.0602,
+        "verdict": "within"
+      }
+    },
+    "overall": "within",
+    "thresholds": {
+      "latency_pct": 10.0,
+      "quality_pp": 5.0,
+      "tokens_pct": 20.0
+    }
+  },
+  "repetitions": 5,
+  "sample_count": 60,
+  "samples": [
+    {
+      "accepted": true,
+      "block_id": "B1",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "d8a5ee6762223bb4",
+      "tokens": 18586,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B1",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "608dae39e57f8849",
+      "tokens": 18691,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B2",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "451eb8661581b480",
+      "tokens": 4508,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B2",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "7bcc78d2b1749513",
+      "tokens": 4634,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B3",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "018e02bdf1570560",
+      "tokens": 5765,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B3",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "ca87d7f3664b415a",
+      "tokens": 5891,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B4",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "df7eea0d54322c53",
+      "tokens": 26284,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B4",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "4df939e9380268a8",
+      "tokens": 27256,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B5",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "32c1b3572b1eca90",
+      "tokens": 2055,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B5",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "32c1b3572b1eca90",
+      "tokens": 2055,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B6",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "2f12697ce5e829c2",
+      "tokens": 14092,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B6",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 0,
+      "result": "27a8b3b54597a70f",
+      "tokens": 9715,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B1",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "608dae39e57f8849",
+      "tokens": 18691,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B1",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "d8a5ee6762223bb4",
+      "tokens": 18586,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B2",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "7bcc78d2b1749513",
+      "tokens": 4634,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B2",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "451eb8661581b480",
+      "tokens": 4508,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B3",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "ca87d7f3664b415a",
+      "tokens": 5891,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B3",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "018e02bdf1570560",
+      "tokens": 5765,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B4",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "4df939e9380268a8",
+      "tokens": 27256,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B4",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "df7eea0d54322c53",
+      "tokens": 26284,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B5",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "32c1b3572b1eca90",
+      "tokens": 2055,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B5",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "32c1b3572b1eca90",
+      "tokens": 2055,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B6",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "27a8b3b54597a70f",
+      "tokens": 9715,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B6",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 1,
+      "result": "2f12697ce5e829c2",
+      "tokens": 14092,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B1",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "d8a5ee6762223bb4",
+      "tokens": 18586,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B1",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "608dae39e57f8849",
+      "tokens": 18691,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B2",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "451eb8661581b480",
+      "tokens": 4508,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B2",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "7bcc78d2b1749513",
+      "tokens": 4634,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B3",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "018e02bdf1570560",
+      "tokens": 5765,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B3",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "ca87d7f3664b415a",
+      "tokens": 5891,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B4",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "df7eea0d54322c53",
+      "tokens": 26284,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B4",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "4df939e9380268a8",
+      "tokens": 27256,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B5",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "32c1b3572b1eca90",
+      "tokens": 2055,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B5",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "32c1b3572b1eca90",
+      "tokens": 2055,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B6",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "2f12697ce5e829c2",
+      "tokens": 14092,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B6",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 2,
+      "result": "27a8b3b54597a70f",
+      "tokens": 9715,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B1",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "608dae39e57f8849",
+      "tokens": 18691,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B1",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "d8a5ee6762223bb4",
+      "tokens": 18586,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B2",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "7bcc78d2b1749513",
+      "tokens": 4634,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B2",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "451eb8661581b480",
+      "tokens": 4508,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B3",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "ca87d7f3664b415a",
+      "tokens": 5891,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B3",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "018e02bdf1570560",
+      "tokens": 5765,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B4",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "4df939e9380268a8",
+      "tokens": 27256,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B4",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "df7eea0d54322c53",
+      "tokens": 26284,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B5",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "32c1b3572b1eca90",
+      "tokens": 2055,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B5",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "32c1b3572b1eca90",
+      "tokens": 2055,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B6",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "27a8b3b54597a70f",
+      "tokens": 9715,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B6",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 3,
+      "result": "2f12697ce5e829c2",
+      "tokens": 14092,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B1",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "d8a5ee6762223bb4",
+      "tokens": 18586,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B1",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "608dae39e57f8849",
+      "tokens": 18691,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B2",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "451eb8661581b480",
+      "tokens": 4508,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B2",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "7bcc78d2b1749513",
+      "tokens": 4634,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B3",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "018e02bdf1570560",
+      "tokens": 5765,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B3",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "ca87d7f3664b415a",
+      "tokens": 5891,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B4",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "df7eea0d54322c53",
+      "tokens": 26284,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B4",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "4df939e9380268a8",
+      "tokens": 27256,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B5",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "32c1b3572b1eca90",
+      "tokens": 2055,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B5",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "32c1b3572b1eca90",
+      "tokens": 2055,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B6",
+      "config": "base",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "2f12697ce5e829c2",
+      "tokens": 14092,
+      "tool_calls": 0
+    },
+    {
+      "accepted": true,
+      "block_id": "B6",
+      "config": "head",
+      "latency_ms": 0,
+      "repetition": 4,
+      "result": "27a8b3b54597a70f",
+      "tokens": 9715,
+      "tool_calls": 0
+    }
+  ],
+  "schema_version": "pantheon.t1-baseline.v1"
+}

@@ -54,7 +54,13 @@ test('automatic execution is bounded and never bypasses sensitive actions', () =
 })
 
 test('quality/cost claims require measurement rather than projected percentages', () => {
-  assert.match(generated, /test changed behavior proportionally/i)
+  // The selective lean merge scoped frontend standards to @aphrodite, so the
+  // changed-behavior phrase now lives in the frontend source rather than in the
+  // shared baseline. The shared baseline must still require proportional,
+  // measured checks and must never promise a projected coverage percentage.
+  const frontend = read('../src/instructions/frontend-standards.instructions.md')
+  assert.match(frontend, /test changed behavior proportionally/i)
+  assert.match(generated, /use focused checks for micro-edits/i)
   assert.doesNotMatch(generated, /coverage minimum:\s*80%/i)
   assert.match(implementers[4], /quality deltas only after an A\/B evaluation/i)
   assert.match(implementers[4], /never combine unrelated tier savings/i)
