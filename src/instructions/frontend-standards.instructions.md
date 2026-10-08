@@ -2,6 +2,8 @@
 description: "Frontend development standards for React/TypeScript"
 name: "Frontend Development Standards"
 applyTo: "**/*.{ts,tsx,js,jsx}"
+agents: [aphrodite]
+fallback: shared
 ---
 
 # Frontend Development Standards (Aphrodite)

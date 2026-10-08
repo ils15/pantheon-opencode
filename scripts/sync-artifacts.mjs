@@ -19,10 +19,10 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { copyAgentPrompts } from './build-agents-md.mjs'
 
 import {
   collectSkillNames,
-  copyFiles,
   installSkills,
   ROOT,
   syncDir,
@@ -59,7 +59,7 @@ export function syncCopyArtifacts(configDir) {
     const dstAgents = join(configDir, 'agents')
     if (existsSync(join(ROOT, 'src', 'agents'))) {
       mkdirSync(dstAgents, { recursive: true })
-      bump(copyFiles(join(ROOT, 'src', 'agents'), dstAgents, false))
+      bump(copyAgentPrompts(join(ROOT, 'src', 'agents'), dstAgents, false))
       const routing = join(ROOT, 'src', 'routing.yml')
       if (existsSync(routing)) {
         if (

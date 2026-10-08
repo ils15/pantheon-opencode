@@ -2,7 +2,7 @@
 /**
  * agents-md.mjs — Dynamic AGENTS.md generator from canonical agent frontmatter
  *
- * Reads all agents/*.agent.md files, extracts name + description from frontmatter,
+ * Reads all canonical src/agents/*.md files, extracts name + description from frontmatter,
  * and generates AGENTS.md content dynamically. Eliminates hardcoded agent tables
  * in platform installers (claude.mjs, cursor.mjs, windsurf.mjs, cline.mjs, etc.).
  *
@@ -64,7 +64,7 @@ function parseAgentFrontmatter(content) {
 // ---------------------------------------------------------------------------
 
 /**
- * Read all canonical agents/*.agent.md files, parse frontmatter,
+ * Read all canonical src/agents/*.md files, parse frontmatter,
  * and return an array of agent metadata objects sorted alphabetically by name.
  *
  * Skips files that don't match the `*.agent.md` pattern, files without

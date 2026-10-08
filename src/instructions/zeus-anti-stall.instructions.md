@@ -1,7 +1,8 @@
 ---
 description: "Stall detection, phase reminders, delegate retry, and progress checkpoints for Zeus"
 name: "Zeus Anti-Stall"
-applyTo: "agents/zeus.agent.md"
+agents: [zeus]
+fallback: shared
 ---
 
 # 🛑 ANTI-STALL & STALL DETECTION
@@ -32,13 +33,16 @@ Self-check every 3 turns: "Am I waiting on a delegate? Have I polled without nee
 
 ## Delegate Retry Enhancement
 
-When a delegation fails (timeout, empty response, error):
-
-Check known errors first (agent name, context size, or permissions), then make **one retry after the initial attempt** (`background_delegation.retry_count: 1`) with a corrected prompt. If it fails, do not retry the same agent again; follow the fallback chain and escalation protocol in `## ⏱️ Timeout & Retry Enforcement`.
+When a delegation has a transient dispatch failure (timeout, crash, or empty
+response), check known causes first and allow at most one corrected retry per
+agent/task. Do not retry a scope refusal or a failed test/validation; reroute
+only when the correct specialist is clear, otherwise diagnose or escalate.
+After a transient retry fails, follow the canonical fallback chain once and
+escalate rather than restarting it. See `## ⏱️ Timeout & Retry Enforcement`.
 
 ## Progress Checkpoint
 
-On tasks expected to run > 5 turns:
+For long-running or multi-phase tasks expected to run > 5 turns only:
 - After turn 5: output `[CHECKPOINT] Completed so far: [summary]. Remaining: [list].`
 - After turn 10: re-evaluate. If < 50% done, consider splitting or escalating.
 - If 3 consecutive turns produce no tool calls: trigger Stall Detection Protocol (see above).

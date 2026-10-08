@@ -1,0 +1,42 @@
+{
+  "historical_delta": {
+    "added_lines": 14,
+    "explanation": "The later memory-protocol guidance has 14 added and 12 removed AGENTS.md lines, a net increase of two; the removed claimed token saving is not converted into a metric.",
+    "from": "historical_936",
+    "line_delta": 2,
+    "removed_lines": 12,
+    "source_instruction": "src/instructions/memory-protocol.instructions.md",
+    "to": "historical_938"
+  },
+  "line_count_convention": "LF-delimited logical lines; count a final unterminated line once; empty content has zero lines",
+  "schema_version": "pantheon.agent-baseline-provenance.v1",
+  "snapshots": {
+    "current_f1": {
+      "blob_sha": "ba032668dd3e5d0838f51a70bcad91cc8697fc72",
+      "bytes": 30353,
+      "commit_sha": "850191c2fffee112386cc16fd983e6073f7884d8",
+      "content_sha256": "68fd0ca441b0cc3174e2c84a19b05aa3f5de8af796c5c40370daa27232c40fb0",
+      "ends_with_lf": true,
+      "line_count": 585,
+      "path": "AGENTS.md"
+    },
+    "historical_936": {
+      "blob_sha": "84e797234f7485af6d3d2a180c8562b0366b8ba1",
+      "bytes": 43147,
+      "commit_sha": "1c2ddacabed8d441ed70d543e809aab919343ca4",
+      "content_sha256": "4920aa98f7aa7b4655fc86fd4f33a4cf09616f1ca767aa2788726c6ba13ad6c2",
+      "ends_with_lf": true,
+      "line_count": 936,
+      "path": "AGENTS.md"
+    },
+    "historical_938": {
+      "blob_sha": "e377650adf9f5ad939e566a719b2cef04e04f27d",
+      "bytes": 43930,
+      "commit_sha": "beecdd737adc69e6622815bfd40af5d2359e8376",
+      "content_sha256": "89060e2282bc10ec801fc0d06bf3e4aefa7bb6f0630b99ae50804fd0b0c17521",
+      "ends_with_lf": true,
+      "line_count": 938,
+      "path": "AGENTS.md"
+    }
+  }
+}

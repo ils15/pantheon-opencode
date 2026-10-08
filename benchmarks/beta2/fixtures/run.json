@@ -11,7 +11,7 @@
     "rows": 28,
     "baseline_quality_accepted": 14,
     "candidate_quality_accepted": 14,
-    "candidate_net_tokens_less_than_baseline": true,
+    "comparison": "blocked: fixture metrics are mocked and are not OpenCode measurements",
     "holdout_quality_floor": 1.0
   }
 }

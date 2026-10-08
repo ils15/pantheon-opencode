@@ -608,6 +608,22 @@ Ideas, bug reports, documentation improvements, and code contributions are
 welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue
 or pull request.
 
+### Reproducible benchmark evidence
+
+The beta2 benchmark records reported token usage separately from its
+character-based fallback estimate; source bytes and logical line counts remain
+provenance data and are never converted into tokens. Cross-report comparisons
+require matching model/config provenance and reported OpenCode usage. Offline
+fixture responses are mocked: their reported values are labeled separately,
+excluded from `actual` usage, and blocked from comparative metrics and GEPA.
+Fixture quality outcomes test the offline contract; they are not evaluation
+evidence.
+Reproduce the
+checked-in AGENTS.md history manifest with
+`python3 -m benchmarks.beta2.provenance --output benchmarks/beta2/fixtures/agent-baseline-provenance.json`.
+For OpenCode benchmark runs, provide `--model` and `--config-sha256` so reports
+can be compared safely.
+
 ### Project-level `opencode.json`
 
 The published package carries no `opencode.json` template. `init` still writes

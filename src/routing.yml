@@ -459,6 +459,8 @@ handoffs:
         (priority-aware, budget-allocated), archive IMPL/REVIEW to 02-progress-log.md,
         update _xref/index.md cross-references.'
 
+# Canonical explicit fallback map for Zeus timeout/retry policy. Evaluate
+# left-to-right; an absent agent entry means escalate (never guess a fallback).
 fallback_chains:
   apollo:
     - athena

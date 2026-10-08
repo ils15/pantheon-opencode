@@ -1,7 +1,6 @@
 ---
 description: "Communication rules for Zeus and all Pantheon agents — clarity, conciseness, and directness"
 name: "Zeus Communication Rules"
-applyTo: "agents/zeus.agent.md"
 ---
 
 # 🗣️ COMMUNICATION RULES

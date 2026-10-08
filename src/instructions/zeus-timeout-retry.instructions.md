@@ -1,7 +1,8 @@
 ---
 description: "Timeout enforcement, retry policies, subtask dispatch, and timeout tracking for Zeus"
 name: "Zeus Timeout & Retry"
-applyTo: "agents/zeus.agent.md"
+agents: [zeus]
+fallback: shared
 ---
 
 # ⏱️ TIMEOUT & RETRY ENFORCEMENT
@@ -33,21 +34,17 @@ An agent refusal or scope-boundary response is not a transient failure: do not r
 
 ## Fallback Chain Definitions
 
-Each fallback chain is evaluated left-to-right: if the first fallback fails, try the second, etc.
+`routing.yml` → `fallback_chains` is the canonical agent-by-agent mapping. Evaluate
+the configured chain left-to-right; if an agent has no configured chain, stop
+and escalate rather than guessing a fallback. Each listed fallback may be tried
+at most once, and an exhausted chain is never restarted automatically.
 
-| Agent | Fallback[0] | Fallback[1] | Escalate To |
-|-------|------------|------------|-------------|
-| @apollo | @athena (plan scoped task) | @hermes (implement search) | @zeus |
-| @hermes | @talos (minimal fix) | @athena (replan + simplify) | @zeus |
-| @aphrodite | @talos (CSS/UX fix) | @hermes (generic fallback) | @zeus |
-| @demeter | @hermes (generic backend) | @athena (replan schema) | @zeus |
-| @themis | @zeus (direct escalation) | — | user |
-| @prometheus | @hermes (config/deploy) | @zeus | user |
-| @talos | @hermes (full implementation) | — | @zeus |
-| @hephaestus | @nyx (observability debug) | @hermes (generic) | @zeus |
-| @nyx | @hermes (generic) | — | @zeus |
-| @iris | @zeus (manual override) | — | user |
-| @mnemosyne | @zeus (manual) | — | user |
+### Refusal Is a Routing Error
+
+For a domain/scope refusal, do not retry with a rephrased prompt. Correct the
+route once only when the right specialist is clear; otherwise stop and ask.
+Record one `DelegationCacheDecision` telemetry item for the corrected route,
+including `reroute_from`, `reroute_to`, and `delegation_id` when available.
 
 ### Escalation Protocol
 When all fallbacks fail, report the tried agents and errors, offer a different approach/simpler scope/manual fix, and stop. Never retry the same chain automatically.

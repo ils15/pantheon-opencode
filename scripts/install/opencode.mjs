@@ -21,6 +21,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } f
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { listV2UnsupportedFeatures } from '../../src/pantheon/v2-unsupported.mjs'
+import { copyAgentPrompts } from '../build-agents-md.mjs'
 import {
   bullet,
   colors,
@@ -42,7 +43,6 @@ import { copyPluginFiles, installPlugin, registerPlugin, unregisterPlugin } from
 import {
   checkRuntimePrerequisites,
   collectSkillNames,
-  copyFiles,
   installSkills,
   parseFrontmatter,
   ROOT,
@@ -726,7 +726,7 @@ export async function installOpenCode(
           rmSync(join(dstDir, f), { recursive: true, force: true })
         }
       }
-      const { created, skipped } = copyFiles(srcDir, dstDir, dryRun)
+      const { created, skipped } = copyAgentPrompts(srcDir, dstDir, dryRun)
       stats.created += created
       stats.skipped += skipped
       agentStep(true)
@@ -775,11 +775,12 @@ export async function installOpenCode(
   }
 
   // -----------------------------------------------------------------------
-  // 2.5 Install instructions: AGENTS.md only (--components instructions)
+  // 2.5 Install shared instructions: AGENTS.md (--components instructions)
   // -----------------------------------------------------------------------
   // AGENTS.md is the single instruction file both V1 and V2 load; the
-  // generated file embeds every src/instructions/*.instructions.md body, so
-  // the individual files are NOT copied anymore (nothing references
+  // generated file embeds shared instructions; agent-scoped instructions are
+  // already rendered into supported agent prompt markdown during copy. The
+  // individual source fragments are NOT copied (nothing references
   // <config>/instructions/ after the section-D merge fix — copying them would
   // just leave stale duplicates on disk).
   if (componentSet.has('instructions')) {
@@ -792,6 +793,20 @@ export async function installOpenCode(
       const status = writeIfChanged(dstAgentsMd, content, dryRun)
       if (status === 'created') stats.created++
       else stats.skipped++
+    }
+    // An instruction-only upgrade must also refresh selective guidance on
+    // already-installed Pantheon agents, but must not create agents the user
+    // did not install. Full agent installs do this in phase 1 above.
+    if (!componentSet.has('agents')) {
+      const installedAgents = isGlobal
+        ? join(target, 'agents')
+        : join(target, '.opencode', 'agents')
+      const sourceAgents = join(ROOT, 'src', 'agents')
+      if (existsSync(installedAgents) && existsSync(sourceAgents)) {
+        const refreshed = copyAgentPrompts(sourceAgents, installedAgents, dryRun, true)
+        stats.created += refreshed.created
+        stats.skipped += refreshed.skipped
+      }
     }
   }
 
@@ -987,7 +1002,7 @@ export async function installOpenCode(
   //    on top. Preserves user's MCP, provider, plugins, compaction, theme.
   // -----------------------------------------------------------------------
   // --------------------------------------------------------------------
-  // A. Parse canonical agent config from agents/*.agent.md frontmatter
+  // A. Parse canonical agent config from src/agents/*.md frontmatter
   //    and merge into opencode.json config.
   // --------------------------------------------------------------------
   function getAgentSources(agentPrefix) {
@@ -1302,8 +1317,8 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   // AGENTS.md is the single instruction file both V1 and V2 load (V1
   // auto-discovers it, V2 loads it explicitly). The generated AGENTS.md
-  // (scripts/build-agents-md.mjs) already embeds every
-  // src/instructions/*.instructions.md body, so the `instructions/*.md`
+  // contains shared rules; agent-scoped rules are in the installed agent
+  // prompts. The `instructions/*.md`
   // glob is no longer needed — keeping it would duplicate content under V1
   // and is ignored under V2 anyway. Only ensure AGENTS.md is present.
   const pantheonInstructions = ['AGENTS.md']
