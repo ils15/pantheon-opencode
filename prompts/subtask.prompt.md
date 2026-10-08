@@ -58,52 +58,33 @@ Constraints: <what not to touch, time limit>
 
 ## Subtask Summary Format
 
-Every subtask worker MUST end its response with this structured block:
+Every worker MUST end with this canonical return contract. All listed fields are required; use `X% (if applicable)` for coverage and `null` when there are no blockers.
 
 ```
-<subtask_summary>
-Status: completed | blocked | partial | timed_out
-Agent: <agent-name>
-Scope: <what was requested>
-
-Changes:
-- <file> — <what changed>
-
-Findings:
-- <key finding>
-
-Validation:
-- <test results or verification>
-
-Risks / Follow-up:
-- <issues discovered>
-
-Duration: <N>s
-Session alias: <agent-N>
-</subtask_summary>
+## subtask_summary
+**files_changed:** [list of file paths, one per line]
+**summary:** What was done, in 2-3 sentences
+**tests:** ✅ All passing / ⚠️ X failing / ❌ Not run (reason)
+**coverage:** X% (if applicable)
+**tokens:** ~N input / ~M output (estimated)
+**status:** complete | partial (reason) | escalated (reason)
+**blockers:** [list any blockers or null]
 ```
 
-Zeus should parse this summary and decide next action based on `Status`:
-
-| Status | Zeus Action |
-|--------|-------------|
-| `completed` | Integrate results, proceed |
-| `blocked` | Check blocker, re-delegate or escalate |
-| `partial` | Use available results, note missing parts |
-| `timed_out` | Retry once or use fallback agent |
+If you used `memory_recall` or `memory_search`, include the relevant entries as memory context; omit this only when no memory tool was used.
 
 ---
 
 ## Timeout & Retry
 
-Subtasks have a configurable timeout. Default: 120s.
+Subtasks default to a 120s timeout. `background_delegation.retry_count: 1` means one retry after the initial attempt.
 
 ```
 When a subtask times out:
   1. Wait 30s (cooldown)
-  2. Retry once
-  3. If retry fails → fallback to direct task() delegation
-  4. If direct task() also fails → escalate to user
+  2. Make the single retry
+  3. If it fails, use one direct task() fallback (with the same one-retry limit)
+  4. If that fallback fails, escalate; do not restart the subtask or fallback chain
 ```
 
 ---
@@ -123,11 +104,10 @@ Timeout: 60s
 If the worker times out but has already found some results, it returns:
 
 ```
-<subtask_summary>
-Status: partial
+## subtask_summary
+**status:** partial (timed out after scanning 2 of 5 files)
+**summary:** Found authentication patterns in auth.py and login.py; 3 files remain.
 ...
-Partial results: [auth.py, login.py scanned; 3 files pending]
-</subtask_summary>
 ```
 
 Zeus uses the partial results and re-delegates the remaining scope.

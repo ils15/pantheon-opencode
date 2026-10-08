@@ -223,133 +223,61 @@ used as context for the response.
 
 # 🧠 Memory Protocol — Universal Rules
 
-These rules apply to ALL Pantheon agents. Agent-specific overrides are defined
-in each agent's `## 🧠 Memory Protocol` section.
+These rules apply to all agents; each agent file may add domain-specific rules.
 
 ## Universal Rules
 
-### 1. Pre-Work Read-Only Recall
+### Task-start search
 **Before any file reads, call exactly once at task start:** `memory_search(query=task_prompt, top_k=2)`.
-- Retain and reuse that same result as task context and as input to delegation routing.
-- A KV cache hit does not skip the task-start search or trigger another FTS search; Zeus still uses the same result for both context and routing.
-- Council-precedent lookup is a separate, explicitly scoped search and remains unchanged.
-- Use domain-specific context matching your agent's focus area
-- Do not issue another task-memory search for routing during the same task
-- Agents have **read-only** memory access — only `memory_search()` is available
+- Reuse the same result for task context and delegation routing. A KV cache hit does not skip this search or trigger another task FTS search.
+- Council-precedent lookup is separate. Use domain-relevant context; do not issue another task-memory search for routing.
+- Agents have read-only memory access: only `memory_search()` is available.
 
-### 2. Auto-Store by Zeus on Subtask Summary
-**`memory_store()` is called AUTOMATICALLY by Zeus when you return a subtask_summary.**
-- Include a clear `summary` field in your return — no explicit `memory_store()` call needed
-- This is the **ONLY** persistence path: agent → subtask_summary → Zeus → memory_store
-- Zeus persists ALL agent returns (implementers and read-only agents alike)
+### Summary persistence and WAL
+`memory_store()` is called automatically by Zeus when an agent returns a `subtask_summary`; include a clear `summary`. This is the only persistence path, for implementers and read-only agents alike.
+Before storing, Zeus writes `.pantheon/memory-wal/<agent>/<timestamp>.json` with `{agent, phase, summary, files_changed, status, timestamp}`. The WAL precedes storage, is recovered next session if storage fails, and expires after 7 days.
 
-### 3. Write-Ahead Log (WAL)
-Before Zeus calls `memory_store()`, it writes a write-ahead log to:
-```
-.pantheon/memory-wal/<agent>/<timestamp>.json
-```
-- WAL format: `{ agent, phase, summary, files_changed, status, timestamp }`
-- WAL is written **before** the store operation — if store crashes, WAL is recovered on next session start
-- WAL files are ephemeral (auto-cleaned after 7 days)
-
-### 4. Relevance Threshold
-**Skip search results if relevance score < 0.3.**
-- Prevents noise from unrelated past entries
-- Applies to `memory_search()` results only
-
-### 5. Permanent Documentation
-**ADR-level decisions → delegate to `@mnemosyne`.**
-- Use for: architecture decisions, significant trade-offs, pattern changes
-- Not for: routine task summaries (handled by Auto-Store)
-
-## Per-Agent Overrides
-
-Each agent file defines overrides in its `## 🧠 Memory Protocol` section:
-- Domain-specific `memory_search()` context string
-- Read-only access via `memory_search()` only — no `memory_store` for subagents
-- Agent-specific rules (session-end, sprint close, quick-index, etc.)
-
+### Relevance and permanent records
+Skip `memory_search()` results below 0.3 relevance. Delegate ADR-level architecture decisions, significant trade-offs, and pattern changes to @mnemosyne; routine summaries use auto-store.
 
 ## Delegation Cache Instructions
 
-Instrucoes para o comportamento do cache de roteamento:
+Reuse the required task-start result for routing; never issue a second task FTS search. Consult KV entries, but use the same result even on a cache hit. Score > 0.85: consider the cached agent and `background_mode`. On cache miss (≤0.85), use static rules and persist with `memory_store()` and `kv_store`:
+- key: `deleg:<task_type>`; value: `JSON.stringify({agent, background, pattern})`
+- metadata: `JSON.stringify({type: "decision", score: N})`
+- Use `kv_store(namespace="deleg", key="deleg:<pattern>", value=...)` for recurring patterns and `kv_get(namespace="deleg", key="deleg:<pattern>")` to read them.
 
-1. Reutilize o resultado da busca task-start obrigatoria descrita acima para contexto da tarefa e para decidir o roteamento; nao execute uma segunda busca FTS.
-2. Consulte o KV quando houver uma entrada de cache, mas mesmo em KV hit use o mesmo resultado task-start como entrada para o roteamento.
-3. Se score > 0.85 → considere agente + background_mode do resultado cacheado
-4. Se score ≤ 0.85 (cache miss) → aplique regras estaticas e grave a decisao tanto com `memory_store()` quanto com `kv_store()` usando os contratos de cache existentes:
-   - key: deleg:<task_type>
-   - value: JSON.stringify({agent, background, pattern})
-   - metadata: JSON.stringify({type: "decision", score: N})
-
-   `value` E `metadata` sao JSON-encoded strings — o runtime exige que o
-   chamador serialize os dois. Objeto cru em `metadata` e rejeitado pelo
-   `BeforeValidator` do servidor com `metadata must be a JSON object encoded
-   as a string (got object). json.dumps it first. Example: metadata='{"type":
-   "decision", "score": 0.9}'`.
-
-5. **kv_store(namespace="deleg", key="deleg:<pattern>", value=...)** para padroes recorrentes de delegacao
-6. **kv_get(namespace="deleg", key="deleg:<pattern>")** para consultar decisoes ja tomadas, sem substituir a busca task-start obrigatoria
+Both `value` and `metadata` are JSON-encoded strings. A raw metadata object is rejected (`metadata must be a JSON object encoded as a string`); serialize it with `JSON.stringify({...})` before calling the tool.
 
 ## Council Decisions Namespace
 
-Council synthesis decisions are persisted in a dedicated `council_decisions` namespace for precedent fast-path retrieval:
+Persist completed `/pantheon` decisions in `council_decisions` for precedent retrieval.
 
-### Write Path
-After every `/pantheon` council synthesis completes, Zeus stores:
+### Write path
+Use `key="council:<yyyy-mm-dd>:<slug>"`; JSON-stringify both `value` and `metadata` before `memory_store()`:
+```json
+{
+  "question": "original question", "specialists": ["@agent1"],
+  "recommendation": "...", "confidence": "High|Medium|Low",
+  "agreements": ["..."], "divergences": [{"issue": "...", "resolution": "..."}],
+  "response_rate": "X of Y", "themis_audit": "approved|issues",
+  "precedent_used": false, "timestamp": "<ISO-8601>"
+}
 ```
-memory_store({
-  namespace: "council_decisions",
-  key: "council:<yyyy-mm-dd>:<slug>",
-  value: JSON.stringify({
-    question: "original question",
-    specialists: ["@agent1", "@agent2"],
-    recommendation: "final recommendation",
-    confidence: "High|Medium|Low",
-    agreements: ["point1", "point2"],
-    divergences: [{"issue": "...", "resolution": "..."}],
-    response_rate: "X of Y",
-    themis_audit: "approved|issues",
-    precedent_used: false,
-    timestamp: "<ISO-8601>"
-  }),
-  metadata: JSON.stringify({
-    type: "council_decision",
-    specialist_count: N,
-    model_tier_used: "premium|default|fast"
-  })
-})
-```
-`value` is JSON-serialized before storing (the MCP `memory_store.value` argument is a string).
-`metadata` works the same way — it is a JSON object encoded as a **string**, so pass
-`JSON.stringify({...})`. A raw object is rejected with `metadata must be a JSON object
-encoded as a string (got object). json.dumps it first. Example: metadata='{"type":
-"decision", "score": 0.9}'` (enforced by a `BeforeValidator` in
-`memory_mcp.py`). **Both `value` and `metadata` must be serialized by the caller.**
+Metadata contains `{type: "council_decision", specialist_count: N, model_tier_used: "premium|default|fast"}`. Both arguments must be serialized strings; raw objects are invalid.
 
-### Read Path (Precedent Fast-Path)
-Before dispatching a new council, Zeus runs this separate council-precedent search in addition to the task-start search:
-```
-memory_search(query=question, top_k=2, namespace="council_decisions")
-```
+### Read path and maintenance
+Before a new council, make this separate search in addition to the required task-start search:
+`memory_search(query=question, top_k=2, namespace="council_decisions")`.
 
-Result interpretation:
 | Score | Age | Action |
-|-------|-----|--------|
-| > 0.85 | < 30 days | Return precedent verbatim (note "⚠️ Decisão de [data] — reavaliar se contexto mudou") as fast-path answer. Skip council dispatch entirely. |
-| > 0.85 | >= 30 days | Return with warning "Reavaliar se contexto mudou — decisão tem mais de 30 dias" + proceed with council |
-| 0.5 - 0.85 | Any | Include as context for specialists but still dispatch council |
-| < 0.5 | Any | Ignore, proceed with fresh council |
+|---|---|---|
+| > 0.85 | < 30 days | Return precedent verbatim with a re-evaluate-context warning; skip dispatch. |
+| > 0.85 | ≥ 30 days | Include warning and dispatch fresh council. |
+| 0.5–0.85 | any | Give precedent as context and dispatch. |
+| < 0.5 | any | Ignore; dispatch fresh council. |
 
-### TTL & Maintenance
-- Council decisions are LONG-TERM (no TTL or TTL = 365 days)
-- Stale decisions (age > 90 days) should be flagged but NOT deleted — they remain as historical record
-- Purge only via explicit namespace cleanup when decisions are superseded by ADRs
-
-### When NOT to Use
-- Routine task summaries → use `default` namespace (auto-store by Zeus)
-- Sprint/progress tracking → use `session` namespace
-- ADR-level architecture decisions → delegate to @mnemosyne for permanent documentation
+Keep decisions long-term (no TTL or 365 days). Flag entries >90 days as stale, never delete them automatically; purge only by explicit namespace cleanup when superseded by ADRs. Use `default` for routine summaries, `session` for progress, and @mnemosyne for ADRs.
 
 <!-- Source: src/instructions/yagni.instructions.md -->
 ## YAGNI Anti-overengineering
@@ -406,14 +334,7 @@ Self-check every 3 turns: "Am I waiting on a delegate? Have I polled without nee
 
 When a delegation fails (timeout, empty response, error):
 
-1. **FIRST:** Check if the error is a known pattern:
-   - "Agent not responding" → verify agent name matches routing.yml
-   - "Context exceeded" → reduce scope, split into smaller tasks
-   - "Permission denied" → verify agent has correct tools/permissions
-
-2. **Retry ONCE** with rephrased prompt — add: "Previous attempt failed with: [error]. Adjusted approach: [what changed]."
-
-3. **If retry also fails** → do NOT retry blindly; follow the fallback chain and escalation protocol in `## ⏱️ Timeout & Retry Enforcement`.
+Check known errors first (agent name, context size, or permissions), then make **one retry after the initial attempt** (`background_delegation.retry_count: 1`) with a corrected prompt. If it fails, do not retry the same agent again; follow the fallback chain and escalation protocol in `## ⏱️ Timeout & Retry Enforcement`.
 
 ## Progress Checkpoint
 
@@ -507,198 +428,31 @@ These rules apply to Zeus and all agents in the system:
 
 # 🏛️ INLINE COUNCIL SYNTHESIS — /pantheon
 
-When a question requires multiple expert perspectives on a trade-off or architecture decision, **dispatch specialists inline** (visible to user) instead of delegating to a hidden subagent.
+Use an inline specialist council for material trade-offs, architecture/security choices, technology selection, cost/quality decisions, or multi-stakeholder questions. Do not use it for ordinary implementation tasks.
 
-## Trigger Patterns (detect ANY)
-- Trade-off questions: "which is better?", "should we use X or Y?", "compare A and B"
-- Architecture decisions with long-term impact
-- Security/compliance choices
-- Technology selection (databases, frameworks, providers, libraries)
-- "Is this safe?", "trade-offs of...", "what are the risks?"
-- Cost vs quality decisions
-- Multi-stakeholder concerns (frontend + backend + infra)
+## Dispatch and Synthesis
 
-```mermaid
----
-config:
-  look: classic
-  theme: dark
----
-sequenceDiagram
-    participant U as User
-    participant Z as Zeus
-    participant M as Memory (Precedent)
-    participant A as Apollo (Research)
-    participant B as BackgroundJobBoard
-    participant S1 as Specialist 1
-    participant S2 as Specialist 2
-    participant S3 as Specialist 3
-    participant W as Web Search
-    participant T as Themis (Audit + Moderator)
+1. **Precedent:** Run the separate `council_decisions` search defined in `## Memory Protocol`. Apply its age/score rules; if no fast-path decision applies, continue.
+2. **Research (optional):** For `/pantheon --research <question>`, ask @apollo for a 30s pre-scan and pass findings as `shared_context` to every specialist.
+3. **Register:** Before dispatch, call `board.registerLaunch` with a council task ID, parent session, Zeus, question, and synthesis objective. This enables crash recovery.
+4. **Select and dispatch:** Choose at most 3 agents using the domain map below. Send all `task()` calls in one message. Each prompt includes the question, shared context, required response format, and role timeout (120s reviewers; 60s explorers/implementers).
+5. **Collect:** Wait for all responses and note timeouts. Partial responses are acceptable only from read-only @apollo or @gaia.
+6. **Validate confidence:** High requires at least 3 verifiable claims; otherwise downgrade to Medium and state why. Medium requires at least 1 claim; Low needs no minimum. Opinions alone are not specific claims.
+7. **Resolve divergence:** Compute agreement rate as `min(agreements, divergences) / total_points` from structured `agreement_signals`. Below 50%, and only if no agent timed out, run one rebuttal round with all responses and the current synthesis draft. Treat revised responses as final. If disagreement remains below 50%, research factual divergence points with official docs, benchmarks, or issues (max 3 searches; seek 2 independent sources per point when possible). Skip research for subjective-only disagreements. Send responses and a cited evidence brief to @themis as moderator; request verdicts, overall direction, confidence, and unresolved issues. Low confidence or unresolved points remain explicit in the synthesis. Moderator and audit roles are separate.
+8. **Synthesize and audit:** Use the output format below, then ask @themis to compare raw responses with the synthesis. Check representation of every specialist, preserved divergences, accurate attribution, and confidence specificity. Fix any issue before delivery.
+9. **Persist:** Store the decision using the `council_decisions` write format in `## Memory Protocol`, then call `board.markReconciled(task_id)`.
 
-    U->>Z: /pantheon [--research] question
-    Z->>M: memory_search(query, namespace="council_decisions")
-    alt Precedent found (score > 0.85)
-        M-->>Z: ⚠️ Cached decision
-        Z->>U: Fast-path precedent
-    else No precedent
-        opt --research flag
-            Z->>A: 30s pre-scan
-            A-->>Z: Context brief
-        end
-        Z->>B: registerLaunch({council session})
-        par Dispatch all specialists
-            Z->>S1: Domain query + shared context
-            Z->>S2: Domain query + shared context
-            Z->>S3: Domain query + shared context
-        end
-        par Collect responses
-            S1-->>Z: Structured response
-            S2-->>Z: Structured response
-            S3-->>Z: Structured response
-        end
-        Note over Z: Cross-validate confidence
-        alt Agreement rate < 50%
-            Z->>S1: Rebuttal round
-            Z->>S2: Rebuttal round
-            Z->>S3: Rebuttal round
-            S1-->>Z: Refined response
-            S2-->>Z: Refined response
-            S3-->>Z: Refined response
-            Note over Z: Ainda divergência?
-            alt Agreement rate STILL < 50%
-                Z->>W: browser_search() for each divergence point
-                W-->>Z: Evidence brief with sources
-                Z->>T: Dispatches as moderator
-                Note over T: Reviews evidence + specialist responses
-                T-->>Z: Moderator verdict
-            end
-        end
-        Z->>Z: Synthesize (with evidence if tie-broken)
-        Z->>T: Audit synthesis fidelity
-        T-->>Z: ✅ / ⚠️ Issues
-        Z->>M: Store decision
-        Z->>B: Mark reconciled
-        Z->>U: 🏛️ Council Synthesis
-    end
-```
+If context is lost, use `board.recoverRunningJobs()` and `board.formatForPrompt()` to find unreconciled work. Re-dispatch a crashed council with the same question and label it as a retry.
 
-## Dispatch Sequence (9-Step Protocol)
+## Specialist Response Format
 
-### Step 0 — Precedent Fast-Path (Fase 1)
-Run the precedent read path defined in `## Memory Protocol > Council Decisions Namespace` (`memory_search(query=question, top_k=2, namespace="council_decisions")`). If no precedent applies, proceed to Step 0b.
+Require `## specialist_response` from `## Agent Return Format`: `position`, `reasoning`, `trade_offs`, `risks`, `confidence`, `agreement_signals`, and `specific_claims`.
 
-### Step 0b — Apollo Pre-Scan (Fase 2, --research flag)
-If `/pantheon --research <question>`: dispatch @apollo with 30s timeout. Inject findings as `shared_context` into ALL specialist prompts. Skip if flag absent.
+## Domain Map
 
-### Step 1 — Register on BackgroundJobBoard (Fase 1)
-Before dispatching specialists:
-```
-board.registerLaunch({
-  taskID: "council:<uuid>",
-  parentSessionID: "<session-id>",
-  agent: "zeus",
-  description: "Council: <question>",
-  objective: "Synthesize specialist recommendations"
-})
-```
-Enables crash recovery — if context is lost mid-synthesis, the board preserves session state.
-
-### Step 2 — Select Specialists
-Use domain-to-specialist mapping table (below). Max 3 specialists.
-
-### Step 3 — Dispatch ALL task() calls in ONE message
-Each specialist prompt MUST include:
-- Structured output template (see Specialist Output Format below)
-- `shared_context` if Apollo pre-scan was done
-- Timeout per role: 120s for reviewers, 60s for explorers/implementers
-
-### Step 4 — Collect Responses
-Wait for all responses. Note TIMEOUT agents. Partial results OK only for read-only specialists (@apollo, @gaia).
-
-### Step 5 — Confidence Cross-Validation (Fase 2)
-For each specialist response, validate confidence claims:
-
-| Reported | Minimum Required | Action |
-|----------|-----------------|--------|
-| High | ≥ 3 specific claims | If fewer → downgrade to Medium, annotate "(auto-downgraded from High: only N specific claims)" |
-| Medium | ≥ 1 specific claim | Pass |
-| Low | Any response | Pass |
-
-"Specific claim" = statement with evidence, data point, or verifiable fact (not opinion).
-
-### Step 6 — Divergence-Gated Rebuttal Round (Fase 2, conditional)
-Calculate agreement rate = `min(agreements, divergences) / total_points` from structured `agreement_signals`. If < 50% agreement:
-- Dispatch ONE rebuttal round: specialists see ALL other responses and refine their own
-- Updated responses treated as final
-- Hard cap: MAX 3 total rounds (initial + 2 rebuttals)
-- Skip if any TIMEOUT occurred (can't rebuttal without all voices)
-
-### Step 6b — Modo Desempate com Evidência (Fase 2, conditional)
-
-If after Step 6 the agreement rate is STILL < 50% (rebuttal did not resolve divergence):
-
-1. **Identify divergence points** — Parse all specialist responses (initial + rebuttal) and extract specific issues where positions differ
-2. **Web research** — For EACH divergence point, Zeus calls `browser_search()` or `webfetch()` to find factual evidence:
-   - Benchmarks, documentation, GitHub issues, official sources
-   - At least 2 independent sources per point when possible
-   - Focus on factual data, not opinion
-3. **Compile Evidence Brief** — Structure findings as:
-   ```
-   ## evidence_brief
-   **divergence_point_1:** <description>
-   **evidence_found:** <facts from web, max 3 sentences>
-   **sources:** [URL1, URL2]
-
-   **divergence_point_2:** ...
-   ```
-4. **Dispatch @themis as moderator** — Send ONE task with:
-   - All specialist responses (initial + rebuttal)
-   - The evidence brief
-   - Prompt: "Act as impartial moderator. These specialists disagree on [points]. Here is web evidence on each point. Issue a final verdict for each divergence point, citing specific evidence. Return structured verdict."
-5. **Themis returns moderator verdict** in this format:
-   ```
-   ## moderator_verdict
-   **divergence_points_analyzed:** <count>
-   **verdicts:**
-     - <point 1>: <decision> — evidence: <citation>
-     - <point 2>: <decision> — evidence: <citation>
-   **overall_direction:** <which approach is better supported by evidence>
-   **confidence:** High | Medium | Low
-   **unresolved:** <any points still unclear despite evidence>
-   ```
-6. **Zeus incorporates verdict** into synthesis (Step 7), showing which evidence supported which conclusion
-
-**Rules:**
-- Only triggers when agreement rate < 50% AFTER rebuttal round
-- Skip if NO divergence points are web-researchable (purely subjective/opinion-based disagreements)
-- Max 3 web searches per council (prevents runaway)
-- If Themis confidence is Low or points remain unresolved, note this explicitly in synthesis
-- Themis moderator role is SEPARATE from the Themis Audit Gate (Step 8) — they serve different functions
-
-### Step 7 — Zeus Synthesize
-Use structured `agreement_signals` to auto-detect agreements/divergences. Output synthesis template (see below).
-
-### Step 8 — Themis Audit Gate (Fase 1)
-Post-synthesis, dispatch @themis:
-```
-task(subagent_type: "themis", prompt: "Audit this council synthesis for fidelity. Compare raw specialist responses against the synthesized output. Check: (1) Any specialist misrepresented? (2) Divergences hidden or softened? (3) Confidence claims match response specificity? Return ✅ or list specific issues.")
-```
-- If ✅ → proceed
-- If issues → fix each issue before delivering to user
-
-### Step 9 — Persist & Reconcile (Fase 1)
-Persist the decision using the write path in `## Memory Protocol > Council Decisions Namespace`, then `board.markReconciled("<task-id>")`.
-
-## Specialist Output Format (Fase 1 — machine-parseable structured fields)
-
-Specialists MUST return the structured `## specialist_response` format (position, reasoning, trade_offs, risks, confidence, agreement_signals, specific_claims) defined in `## Agent Return Format > Council Specialist Response Format`.
-
-## Domain-to-Specialist Mapping
-
-| Domain | Specialists |
-|--------|-------------|
-| Architecture | hermes, demeter, themis, athena |
+| Domain | Candidate agents |
+|---|---|
+| Architecture | athena, hermes, demeter, themis |
 | Security | themis, hermes, prometheus, nyx |
 | Database | demeter, hermes, prometheus |
 | AI/RAG | hephaestus, nyx |
@@ -707,97 +461,35 @@ Specialists MUST return the structured `## specialist_response` format (position
 | Observability | nyx, hermes |
 | General | athena, themis, hermes |
 
-## Synthesis Output Template (enhanced)
+## User-Facing Synthesis
 
-```
+```text
 ## 🏛️ Council Synthesis
-
-**Question:** <original question>
-**Date:** <date>
-**Response rate:** X of Y specialists responded
-**Timed out:** @agent1, @agent2 (if any)
-**Precedent used:** yes/no (which one, date)
-**Research context:** <shared_context summary> (if --research)
+Question / date / response rate / timed-out agents / precedent / research context
 
 ### Specialist Perspectives
 | Agent | Position | Trade-offs | Confidence |
-|-------|----------|------------|------------|
-| @agent1 | ... | ... | High/Med/Low |
 
 ### Agreements
-- <what 2+ specialists agree on>
+- Points shared by multiple specialists
 
 ### Divergences
-| Issue | Side A | Side B | Resolution |
-|-------|--------|--------|------------|
+| Issue | Sides | Resolution |
 
-### Evidence & Moderation (if tie-break activated)
-**Divergence points researched:** <list>
-**Evidence summary:** <key findings from web>
-**Moderator verdict:** <Themis final determination>
-**Sources:** <citations>
+### Evidence & Moderation (when used)
+Research points, evidence, moderator verdict, cited sources, unresolved issues
 
 ### Recommendation
-<decisive conclusion>
+Decisive conclusion
 
 ### Audit Gate
-**Status:** ✅ Themis approved | ⚠️ Issues corrected
+Themis approved, or issues corrected
 
 ### Decision Gate
-**Confidence:** High/Medium/Low (adjusted for response rate)
+Confidence adjusted for response rate
 ```
 
-## Themis Audit Gate Rules (Fase 1)
-
-1. Every specialist mentioned in synthesis? → ✅
-2. Divergences from raw responses preserved (not softened/hidden)? → ✅
-3. No specialist attributed a position they didn't state? → ✅
-4. Confidence claims match response specificity? → ✅
-5. If any ❌, list specific issues for Zeus to fix before delivery
-
-## Rebuttal Round Rules (Fase 2)
-
-1. Only triggers when agreement rate < 50%
-2. MAX 3 rounds total (including initial dispatch)
-3. Skip if any TIMEOUT (can't rebuttal without all voices)
-4. Each rebuttal round: specialist sees ALL other responses + current synthesis draft
-5. Refined responses replace originals for the final synthesis
-6. If agreement rate STILL < 50% after rebuttal → Step 6b (Modo Desempate com Evidência)
-
-## Crash Recovery via BackgroundJobBoard (Fase 1)
-
-If Zeus context crashes mid-council:
-1. On restart, `board.recoverRunningJobs()` marks running jobs as error
-2. Check `board.formatForPrompt()` for unreconciled terminal jobs
-3. Re-dispatch council with same question, noting: "⚠️ Retry — previous council session crashed. Using same question."
-
-## Performance Budget
-
-| Step | Latency | Phase |
-|------|---------|-------|
-| Precedent fast-path | < 500ms | Fase 1 |
-| Apollo pre-scan | +30s (optional, --research) | Fase 2 |
-| Specialist dispatch | bounded by slowest (60-120s) | — |
-| Rebuttal round | +60s (conditional, < 50% agreement) | Fase 2 |
-| Web search (tie-break) | +15s (conditional, < 50% after rebuttal) | Fase 2 |
-| Themis moderator | +15s (conditional, tie-break activated) | Fase 2 |
-| Themis audit | +15s | Fase 1 |
-| **Total worst case** (research + rebuttal + tie-break) | ~255s | — |
-| **Total typical** (no research, no rebuttal, no tie-break) | ~45-90s | — |
-
-> **Note**: The user can explicitly invoke this via `/pantheon <question>`. The `--research` flag adds Apollo pre-scan. All decisions are stored in `council_decisions` memory namespace for fast-path retrieval on future councils.
-
-## Modo Desempate Rules (Fase 2)
-
-1. Only triggers when agreement rate < 50% AFTER rebuttal round
-2. If no divergence points are web-researchable (pure opinion disagreement), skip — Zeus synthesizes with lower confidence
-3. Max 3 web searches per council invocation
-4. Themis moderator role is DISTINCT from Themis audit gate:
-   - Moderator: resolves substantive disagreement between specialists (reads evidence, gives verdict)
-   - Audit gate: checks synthesis fidelity against raw responses (quality assurance)
-   Both run in the same council invocation, at different steps
-5. If Themis moderator confidence is Low, mark as "unresolved tie" in the synthesis output
-6. Evidence from web search must be cited with source URL or document reference — no anonymous claims
+The user invokes this flow with `/pantheon <question>`; `--research` enables the Apollo pre-scan. Preserve actual specialist timeout or unresolved-tie details in the response.
 
 <!-- Source: src/instructions/zeus-timeout-retry.instructions.md -->
 ## Zeus Timeout & Retry
@@ -809,35 +501,23 @@ When a delegated agent does not respond in time, enforce the timeout policy from
 
 ## Timeout Behavior by Agent Role
 
-| Agent Role | Timeout | Retry Policy | Fallback Chain | Partial Results OK? | Reasoning Effort |
-|------------|---------|-------------|----------|---------------------|------------------|
-| Explorer (@apollo) | 60s | 2 retries, exp backoff | @athena (plan) → @hermes (impl) | ✅ Yes | low |
-| Implementer (@hermes, @aphrodite, @demeter) | 180s | 3 retries, exp backoff | @talos (hotfix) → @athena (replan) | ❌ No | medium |
-| Reviewer (@themis) | 120s | 3 retries, exp backoff | @zeus (escalate) → user | ❌ No | high |
-| Infrastructure (@prometheus) | 300s | 3 retries, exp backoff | @hermes (config) → @zeus (escalate) | ❌ No | medium |
-| Hotfix (@talos) | 30s | 2 retries, no backoff | @hermes (full fix) | ✅ Yes | low |
-| Remote Sensing (@gaia) | 120s | 2 retries, exp backoff | @hermes (generic) | ✅ Yes | high |
+| Agent Role | Timeout | Retry Policy | Partial Results OK? | Reasoning Effort |
+|------------|---------|--------------|---------------------|------------------|
+| Explorer (@apollo) | 60s | 1 retry | ✅ Yes | low |
+| Implementer (@hermes, @aphrodite, @demeter) | 180s | 1 retry | ❌ No | medium |
+| Reviewer (@themis) | 120s | 1 retry | ❌ No | high |
+| Infrastructure (@prometheus) | 300s | 1 retry | ❌ No | medium |
+| Hotfix (@talos) | 30s | 1 retry | ✅ Yes | low |
+| Remote Sensing (@gaia) | 120s | 1 retry | ✅ Yes | high |
 
 ## Retry Flow
 
 ```
-Task dispatch → timeout elapsed → log timeout
-  ├─ retry_count > 0 → retry with exponential backoff → decrement retry_count
-  │    └─ still failing? → retry again (up to retry_count limit)
-  │
-  ├─ retries exhausted → FALLBACK CHAIN:
-  │    ├─ fallback[0] exists? → dispatch to fallback agent
-  │    │    └─ keep original task spec + context; add error context
-  │    ├─ fallback[1] exists? → dispatch to second fallback
-  │    └─ all fallbacks failed? → ESCALATE
-  │
-  ├─ no fallbacks defined → return TIMEOUT error to user
-  │
-  └─ ESCALATE: "Agent X failed after N retries. Fallbacks Y, Z also failed.
-                 Options: (a) try different agent, (b) simplify scope, (c) manual"
+Initial attempt → timeout/failure → log it → make at most one retry
+  └─ retry fails → try fallback agents left-to-right with original task/context
+       └─ all fallbacks fail (or none exist) → report the chain and escalate
 ```
-
-
+`background_delegation.retry_count: 1` means one retry after the initial attempt, not one total attempt. Never restart an exhausted chain automatically.
 
 ## Fallback Chain Definitions
 
@@ -858,22 +538,10 @@ Each fallback chain is evaluated left-to-right: if the first fallback fails, try
 | @mnemosyne | @zeus (manual) | — | user |
 
 ### Escalation Protocol
-When ALL fallbacks fail:
-1. Log the full failure chain: which agents were tried, what error each returned
-2. Report to user: "Task [X] failed. Tried: [agent list]. Error: [summary]."
-3. Offer options: (a) try different approach, (b) simplify scope, (c) manual fix
-4. NEVER retry the same chain automatically — break the cycle
+When all fallbacks fail, report the tried agents and errors, offer a different approach/simpler scope/manual fix, and stop. Never retry the same chain automatically.
 
 ### Session Reuse Check
-Before dispatching a task, check if a reusable session exists:
-
-```
-@hermes — continuing from previous session.
-Files already explored: backend/routers/auth.py, backend/services/auth_service.py.
-New task: add refresh token rotation.
-```
-
-Use `session_max` from routing.yml to determine how many sessions to keep per agent.
+Check for a reusable session before dispatch and obey `session_max` in `routing.yml`.
 
 ---
 
@@ -898,34 +566,13 @@ ALL YES → subtask (skip artifact + Themis)
 ANY NO  → full task (IMPL artifact + Themis review mandatory)
 ```
 
-### Comparison Table
-
-| Aspect | Subtask | Full Task |
-|--------|---------|-----------|
-| Scope | Single file, <10 lines, read-only | Feature, multi-file, schema change |
-| Risk | Low (no security/data implications) | Any risk level |
-| Artifact | ❌ No IMPL artifact | ✅ IMPL artifact required |
-| Themis review | ❌ None | ✅ Mandatory |
-| Use case | Apollo discovery, Talos hotfix, bounded fix | Feature implementation, migration, API change |
-
-### Concrete Examples
-
-| Task | Scope | Risk | Subtask? | Why |
-|------|-------|------|----------|-----|
-| Fix typo in CSS class | 1 file, 1 line | None | ✅ | Bounded, no security impact |
-| Add error handling to existing endpoint | 1 file, 5 lines | Low | ✅ | No schema change |
-| Implement login endpoint | 2+ files, 50+ lines | High (auth) | ❌ | Security-critical, needs Themis |
-| Database migration | 1 file, 15 lines | High (data) | ❌ | Data loss risk, needs rollback |
-| Apollo codebase search | 0 files | None | ✅ | Read-only investigation |
-| Update README | 1 file, 3 lines | None | ✅ | Documentation only |
-
 ### Safety Rules
 1. **Bounded scope** — single file or read-only investigation
 2. **Low risk** — no security implications, no data loss, no breaking changes
 3. **No Themis dependency** — output doesn't feed into a phase that requires review
 
 ## Subtask Return Format
-Return the standard `## subtask_summary` defined in `## Agent Return Format` (files_changed, summary, tests, coverage, tokens, status, blockers).
+Return the required `## subtask_summary` fields defined in `## Agent Return Format`; include `memory_context` when memory was used.
 
 ## Timeout Parcial (Partial Results)
 
