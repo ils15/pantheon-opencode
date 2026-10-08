@@ -18,6 +18,10 @@ const allowedExclusions = [
   '!.pantheon/deepwork/board-signals',
   '!.pantheon/goals',
   '!logs',
+  // Generated W1 T1 baseline report: machine-readable data, not source. The
+  // harness emits multi-line short arrays that Biome's JSON formatter would
+  // collapse on every regeneration, so the artifact is kept out of the linter.
+  '!benchmarks/beta2/baseline-t1.json',
 ]
 
 function exclusionMatchesPath(pattern, filePath) {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 from collections.abc import Iterable, Mapping
@@ -22,6 +23,9 @@ from .metrics import output_fingerprint, redact_text
 
 DEFAULT_DATASET = Path(__file__).with_name("dataset.json")
 VARIANTS: Final[tuple[str, str]] = ("baseline", "candidate")
+FIXTURE_CONFIG_SHA256: Final[str] = hashlib.sha256(
+    b"pantheon-beta2-offline-fixture-v1"
+).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,8 @@ class BenchmarkOptions:
     workspace: Path | None = None
     binary: str = "opencode"
     dry_run: bool = False
+    model: str | None = None
+    config_sha256: str | None = None
 
     @classmethod
     def from_kwargs(cls, values: Mapping[str, object]) -> BenchmarkOptions:
@@ -45,6 +51,8 @@ class BenchmarkOptions:
             "workspace",
             "binary",
             "dry_run",
+            "model",
+            "config_sha256",
         }
         unknown = set(values) - allowed
         if unknown:
@@ -55,6 +63,8 @@ class BenchmarkOptions:
         workspace = values.get("workspace")
         binary = values.get("binary", "opencode")
         dry_run = values.get("dry_run", False)
+        model = values.get("model")
+        config_sha256 = values.get("config_sha256")
         if not isinstance(mode, str):
             raise TypeError("mode must be a string")
         if not isinstance(candidate_prompts, (dict, type(None))):
@@ -67,6 +77,10 @@ class BenchmarkOptions:
             raise TypeError("binary must be a string")
         if not isinstance(dry_run, bool):
             raise TypeError("dry_run must be a boolean")
+        if not isinstance(model, (str, type(None))):
+            raise TypeError("model must be a string or None")
+        if not isinstance(config_sha256, (str, type(None))):
+            raise TypeError("config_sha256 must be a string or None")
         return cls(
             mode=mode,
             candidate_prompts=candidate_prompts or {},
@@ -74,6 +88,8 @@ class BenchmarkOptions:
             workspace=workspace,
             binary=binary,
             dry_run=dry_run,
+            model=model,
+            config_sha256=config_sha256,
         )
 
 
@@ -153,7 +169,11 @@ def _preview(value: str, limit: int = 500) -> str:
 
 
 def _execution_result(
-    task: Task, variant: str, prompt: str, execution: Execution, sandbox: Path
+    task: Task,
+    variant: str,
+    prompt: str,
+    execution: Execution,
+    sandbox: Path,
 ) -> dict[str, object]:
     quality = (
         evaluate_quality(task, execution.output, sandbox)
@@ -176,6 +196,16 @@ def _execution_result(
         status = "budget_failed"
     else:
         status = "accepted"
+    usage_values = {
+        "input": tokens.input_tokens,
+        "output": tokens.output_tokens,
+        "tool_schema": tokens.tool_schema_tokens,
+        "tool_output": tokens.tool_output_tokens,
+        "retrieval": tokens.retrieval_tokens,
+        "measurement": tokens.measurement_tokens,
+        "total": tokens.total_tokens,
+        "net_total": tokens.net_tokens,
+    }
     return {
         "task_id": task.task_id,
         "agent": task.agent,
@@ -203,6 +233,33 @@ def _execution_result(
             "total": tokens.total_tokens,
             "net_total": tokens.net_tokens,
             "estimated": tokens.estimated,
+            "usage_source": "character_heuristic"
+            if tokens.estimated
+            else "fixture_reported"
+            if execution.is_fixture
+            else "reported",
+            "estimate_method": "ceil_python_characters_div_4"
+            if tokens.estimated
+            else None,
+            "actual": None
+            if tokens.estimated or execution.is_fixture
+            else usage_values,
+            "fixture_reported": usage_values
+            if execution.is_fixture and not tokens.estimated
+            else None,
+            "character_estimate": {
+                "input": tokens.input_tokens,
+                "output": tokens.output_tokens,
+                "tool_schema": tokens.tool_schema_tokens,
+                "tool_output": tokens.tool_output_tokens,
+                "retrieval": tokens.retrieval_tokens,
+                "measurement": tokens.measurement_tokens,
+                "total": tokens.total_tokens,
+                "net_total": tokens.net_tokens,
+            }
+            if tokens.estimated
+            else None,
+            "tokenizer_estimate": None,
         },
         "latency_ms": execution.latency_ms,
         "calls": execution.calls,
@@ -228,6 +285,7 @@ def _missing_fixture(task_id: str, variant: str, prompt: str) -> Execution:
         0,
         66,
         f"missing fixture response for {task_id}/{variant}",
+        True,
     )
 
 
@@ -297,6 +355,30 @@ def _comparison(results: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def _comparison_block_reason(
+    results: list[dict[str, object]],
+    mode: str,
+    comparison_context: dict[str, object],
+) -> str | None:
+    """Require real OpenCode runs and reported usage before comparisons."""
+    if mode == "fixture":
+        return "fixture responses are mocked; comparisons require OpenCode measurements"
+    if mode == "opencode" and (
+        not isinstance(comparison_context.get("model"), str)
+        or not comparison_context["model"]
+        or not isinstance(comparison_context.get("config_sha256"), str)
+        or not comparison_context["config_sha256"]
+    ):
+        return "model and config_sha256 are required for OpenCode comparisons"
+    if any(
+        not isinstance(row.get("tokens"), dict)
+        or row["tokens"].get("usage_source") != "reported"
+        for row in results
+    ):
+        return "actual token usage is required for every comparison row"
+    return None
+
+
 def _run_benchmark(dataset: Dataset, options: BenchmarkOptions) -> dict[str, object]:
     """Run one benchmark using validated options."""
     selected_mode = (
@@ -357,17 +439,36 @@ def _run_benchmark(dataset: Dataset, options: BenchmarkOptions) -> dict[str, obj
                 else:
                     execution = run_opencode(options.binary, prompt, task, sandbox)
                 results.append(
-                    _execution_result(task, variant, prompt, execution, sandbox)
+                    _execution_result(
+                        task,
+                        variant,
+                        prompt,
+                        execution,
+                        sandbox,
+                    )
                 )
+    comparison_context = {
+        "model": options.model or ("fixture" if selected_mode == "fixture" else None),
+        "config_sha256": options.config_sha256
+        or (FIXTURE_CONFIG_SHA256 if selected_mode == "fixture" else None),
+    }
+    comparison_block_reason = _comparison_block_reason(
+        results, selected_mode, comparison_context
+    )
     return {
         "schema_version": "beta2.report.v1",
         "dataset_version": dataset.schema_version,
         "mode": selected_mode,
+        "comparison_context": comparison_context,
         "dry_run": False,
         "reproducible": True,
         "secret_storage": "redacted previews and output hashes only",
         "tasks": results,
-        "comparison": _comparison(results),
+        "comparison": None if comparison_block_reason else _comparison(results),
+        "comparison_gate": {
+            "eligible": comparison_block_reason is None,
+            "reason": comparison_block_reason,
+        },
     }
 
 
@@ -398,6 +499,9 @@ def render_markdown(report: dict[str, object]) -> str:
         f"- Secrets: `{report.get('secret_storage', 'not executed')}`",
         "",
     ]
+    gate = report.get("comparison_gate")
+    if isinstance(gate, dict) and gate.get("eligible") is False:
+        lines += [f"- Comparison blocked: `{gate.get('reason', 'ineligible')}`", ""]
     comparison = report.get("comparison")
     if isinstance(comparison, dict):
         baseline, candidate = comparison["baseline"], comparison["candidate"]
@@ -474,6 +578,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--candidate-prompts", type=Path)
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--binary", default="opencode")
+    parser.add_argument("--model")
+    parser.add_argument("--config-sha256")
     parser.add_argument("--output-json", type=Path)
     parser.add_argument("--output-markdown", type=Path)
     parser.add_argument("--dry-run", action="store_true")
@@ -491,6 +597,8 @@ def main(argv: list[str] | None = None) -> int:
             fixture_responses=load_fixture_responses(args.fixture),
             workspace=args.workspace,
             binary=args.binary,
+            model=args.model,
+            config_sha256=args.config_sha256,
             dry_run=args.dry_run,
         )
     except (DatasetError, FileNotFoundError, ValueError) as exc:

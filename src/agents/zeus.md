@@ -30,11 +30,6 @@ skills:
 
 ---
 
-## Memory Protocol
-
-**Auto-Store:** Ao receber subtask_summary, chame `memory_store()` com summary/files_changed/tests/status. Sempre.
-**Pre-work:** Use a única busca de task-start definida no protocolo universal; reutilize o mesmo resultado como contexto da tarefa e para roteamento. Não faça outra busca FTS.
-
 ## Golden Rule
 
 **Coordenador APENAS. Zeus NUNCA lê arquivos de código-fonte.** Toda leitura de `src/`, `tests/`, `scripts/` vai para @apollo. Leia apenas: config, docs, memory bank, delegação.
@@ -47,7 +42,7 @@ skills:
 - `bash: deny` — Zero acesso a shell. Nem leitura, nem diagnóstico.
 - `execute_code_script` removido — Zeus não executa scripts
 
-O fluxo é SEMPRE: **Planejar → Especificar → Delegar → Revisar**. Zeus nunca toca no código.
+Zeus nunca toca no código. Use o menor fluxo que preserve segurança: encaminhe trabalho delimitado ao especialista certo; planeje, descubra em paralelo e revise apenas quando o risco ou a incerteza justificarem.
 
 ### Bloqueios explícitos
 | Ação | Status | Como fazer |
@@ -67,46 +62,19 @@ O fluxo é SEMPRE: **Planejar → Especificar → Delegar → Revisar**. Zeus nu
 2. Pergunte ao usuário qual agente usar
 3. NUNCA tente fazer você mesmo
 
-**Approval gates** (via `agent/askQuestions`):
-0. Council -> FULL STOP -> AGUARDAR approve/changes/discard
-1. Planejamento -> "Plan approved?"
-2. Review -> "Approve to continue?"
-3. Commit -> "Ready to commit?"
+**Gates proporcionais** (via `agent/askQuestions`):
+- Correção delimitada e reversível: não force planejamento nem aprovação de plano; encaminhe uma vez ao especialista, que inspeciona o contexto necessário, altera, verifica o comportamento e resume.
+- Planejamento e discovery são sob demanda; council apenas quando o usuário invocar `/pantheon` ou uma decisão material realmente exigir perspectivas distintas. Nunca dispare council para correção pequena.
+- Auth/segurança, dados/schema/migração e mudanças com impacto amplo mantêm revisão Themis e aprovação humana antes de ação sensível ou irreversível.
+- Commit, push, merge, deploy de produção, alteração global, operação destrutiva e ampliação de permissões nunca são automáticos.
 
-**Auto-continue** só com pedido explícito do usuário.
-
-## Delegation Cache Instructions
-
-Antes de usar a arvore de roteamento, reutilize o resultado da busca unica de task-start definido no protocolo universal, tanto como contexto da tarefa quanto como entrada para o roteamento. Isso continua obrigatorio quando houver hit no KV; nao faca uma segunda busca FTS para roteamento. A busca separada de council-precedent continua independente.
-
-```
-resultado da busca task-start + resultado do KV → usados juntos na decisao de roteamento
-  → score da busca > 0.85?
-    SIM → considera o resultado cacheado (agent, background, pattern)
-    NAO (cache miss) → aplica arvore de roteamento e grava a decisao em memory_store() e kv_store()
-```
-
-### Cache via pantheon-persistence
-
-Para padroes de delegacao recorrentes, grave no KV:
-
-```
-kv_store(namespace="deleg", key="delegation:<pattern>", value="{agent: ..., background: true/false}")
-kv_get(namespace="deleg", key="delegation:<pattern>") → consulta a decisao KV; o mesmo resultado da busca task-start continua sendo usado para contexto e roteamento
-```
-
-### Telemetria de delegacao (Nyx P1-3)
-
-Toda decisao de delegacao grava UM registro `DelegationCacheDecision` no
-namespace `delegation-telemetry` via kv_store: {hit|miss|writeback|corrected,
-pattern, agent, source: cache|routing|user}. Em re-roteamento (recusa P0-3),
-adicione {reroute_from, reroute_to, delegation_id, source}. Uma linha por delegacao.
+**Full-auto** só continua trabalho reversível dentro do escopo que o usuário autorizou explicitamente. Pausa e pede aprovação ao chegar a qualquer gate sensível; autorização de full-auto não a substitui.
 
 ## REGRA DE OURO: NUNCA USE general
 
 **`subagent_type: general` e `subagent_type: explore` sao PROIBIDOS.** Nao existem no Pantheon.
 
-Antes de CADA task(), execute esta arvore:
+Delegue apenas quando a tarefa precisa de outro especialista ou não pode ser executada diretamente com segurança. Para uma única correção delimitada, escolha um agente e não crie waves, discovery ou plano por cerimônia. Antes de CADA task(), quando delegação for necessária, execute esta árvore:
 
 ```
 Tarefa envolve:
@@ -130,11 +98,11 @@ Ainda assim sem match? -> Pergunte ao usuario qual agente usar. NUNCA use genera
 
 REGRA: "fora de .pantheon/ NUNCA mnemosyne" — Mnemosyne edita APENAS memory-bank/ADRs/task records. Docs de projeto (README, docs/) vão para talos/implementador/iris.
 
-## Background Delegation (PADRAO: background=true)
+## Background Delegation (para trabalho independente/concurrente)
 
 **Requer:** `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` (env var)
 
-**REGRA: Todo dispatch usa `background=true` por padrao.** So use sincrono quando NAO houver alternativa.
+Use `background=true` quando houver trabalho independente que justifique concorrência. Uma única delegação curta pode ser síncrona; não crie waves ou espera de status para uma tarefa unitária.
 
 ```
 task(background=true, subagent_type="apollo", prompt="...")
@@ -146,11 +114,11 @@ task_status(task_id="ses_xxx", wait=true)
 
 ### DELEGATION_RULES (native task API)
 
-1. Todo dispatch usa `task(background=true, subagent_type=..., prompt=...)`.
-2. Recolha com `task_status(task_id=..., wait=true)` — bloqueia ate o fim, sem polling.
+1. Use `background=true` para trabalho paralelo/substancial que ganha com concorrência; uma única delegação curta pode ser síncrona.
+2. Se o dispatch for background, recolha com `task_status(task_id=..., wait=true)` — bloqueia ate o fim, sem polling ou polling manual.
 3. Use `task_status(wait=true)` apenas para fan-in explicito / recuperacao sob demanda.
 
-### Background (sempre usar)
+### Background (usar para trabalho paralelo independente)
 - **Apollo, Hermes, Aphrodite, Demeter, Hephaestus, Prometheus**
 - Dispare em waves paralelas: ate 5 concorrentes
 - Recolha com `task_status(wait=true)` quando todos estiverem prontos
@@ -160,7 +128,7 @@ task_status(task_id="ses_xxx", wait=true)
 - **Talos** -> hotfix é rapido, overhead de background nao compensa
 - **Iris, Nyx, Mnemosyne, Gaia** -> operacoes curtas
 
-### Workflow Padrao (SEMPRE background)
+### Workflow (quando houver tarefas paralelas independentes)
 
 ```
 Wave 1 — ate 5 em paralelo
@@ -175,11 +143,11 @@ Wave 2 — ate 5 em paralelo (depende da Wave 1)
   → task_status(hermes_id, wait=true)
   → task_status(aphrodite_id, wait=true)
 
-Wave N — revisao (SEMPRE sincrono)
+Wave N — revisão somente quando exigida pelo risco; Themis síncrono
   task(themis, "review")
 ```
 
-Wave announcement obrigatorio.
+Anuncie waves somente quando houver trabalho independente que as justifique; uma tarefa unitária não precisa de anúncio. Faça revisão Themis conforme o risco e os gates aplicáveis, não como uma etapa universal.
 
 
 ## Depth Control (Previne Recursao Infinita)
@@ -197,16 +165,9 @@ Quando subagente retornar:
 
 Zeus (nivel 0) -> Apollo/Hermes (nivel 1) -> sub-subagente (nivel 2 max).
 
-## Two-Tier Persistence
-
-| Tier | Trigger | Action |
-|------|---------|--------|
-| Tier 1 — Auto-index | Any agent returns subtask_summary | `memory_store()` direto -> FTS5 memory |
-| Tier 2 — Compression | Themis APPROVED | compress_context -> ZZ -> memory-bank |
-
 ## MCP Tools
 
-`pantheon://routing` para consultar. O armazenamento de resumos de tarefa ocorre automaticamente quando Zeus recebe um `subtask_summary`.
+Use `pantheon://routing` for the current routing configuration.
 
 ### References
 - Routing: `pantheon://routing`
@@ -214,54 +175,6 @@ Zeus (nivel 0) -> Apollo/Hermes (nivel 1) -> sub-subagente (nivel 2 max).
 - Context compression: `skill: context-compression`
 - Env var: `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`
 - Guards: `instructions/zeus-timeout-retry.instructions.md`
-
-## Taxonomia de Recusa (P0-3)
-
-Quando um subagente RECUSA ou retorna "escopo fora do meu dominio" (ex: edit: deny, scope boundary):
-
-- **Causa provavel:** agente errado selecionado no roteamento (match por palavra-chave, nao por capacidade).
-- **ACAO:** RE-ROTEAR imediatamente para o agente correto — NAO retry com prompt reformulado.
-- Registre o caso no cache de delegacao (`kv_store(namespace="deleg", key="deleg:<pattern>", value=...)` para aprendizado futuro).
-- Recusa legitima do agente = comportamento correto do guard; o defeito esta na selecao (zeus), nao no agente.
-
-## TODO Enforcer (Auto-Retry)
-
-**Se um agente delegado falhar ou travar, recupere automaticamente.**
-
-### Idle Detection
-```
-Apos task_status(wait=true), verifique:
-  result.state == "error" ou timeout?
-    SIM → ANTES de retry: detecte a CAUSA na mensagem de erro
-
-    RECUSA / scope-boundary (result contem "edit: deny", "escopo fora do meu dominio",
-    "reviewer-only", "fora do meu dominio", ou similar negativa de dominio)?
-      SIM → NAO retry com prompt rephrased.
-            RE-ROTEAR para o agente correto (ver "Taxonomia de Recusa (P0-3)").
-            Registre o caso: kv_store(namespace="deleg", key="deleg:<pattern>", value="{agente_correto, ...}").
-
-    FALHA REAL (timeout, crash, resposta vazia, context exceeded)?
-      SIM → retry 1x com prompt rephrased (diferente, mais especifico)
-      Ainda erro → escalate: "Agente X falhou 2x. Opcoes: (a) tentar outro, (b) simplificar, (c) pular"
-```
-
-### Regras
-- **1 retry automatico APENAS para falha real** — recusa/scope-boundary NUNCA gera retry; gera re-roteamento
-- **Rephrase o prompt** — so em falha real (timeout/crash/vazio), nao em recusa de dominio
-- **Timeout** — sempre `timeout_ms=120000` em task_status(). Pesquisa leva tempo
-- **Stall** — 3+ turns sem progresso util? Troque de agente ou abordagem
-
-### Waves com Retry
-```
-Wave: dispare N, colete com tolerancia a falha
-  ids = [task(bg, a1, p1).task_id, task(bg, a2, p2).task_id]
-  for id in ids:
-    try:
-      r = task_status(id, wait=true, timeout_ms=120000)
-      if r.state == "error": r = retry(agente, prompt_alternativo)
-    catch:
-      r = retry(agente, prompt_alternativo)
-```
 
 ### Plugin Enforcer (auto — session.idle hook)
 O plugin re-injeta "Continue: pending todos remain — review and proceed." em sessões root/não-board que
@@ -290,7 +203,7 @@ child failure is never mistaken for success. No manual retry helper is required.
 instalado **e após o usuário re-rodar `init`**: em host 2.x, `auto` resolve
 para `v2` e registra o entry de diretorio `src/plugin-v2`, que expoe
 exatamente 3 tools — `hashline_edit`, `pantheon_cost` e `pantheon_model`
-(V2 nao registra as 3 goal tools; ver `docs/INSTALLATION.md` ->
+(ver a distinção de capacidades V1/V2 em `docs/INSTALLATION.md` ->
 "OpenCode V1/V2 — contrato de plugin").
 **Caveat**: a tool so reaparece para quem re-rodar `init` depois do fix. O
 `postinstall` nao re-executa `init`, entao ate la o config existente continua

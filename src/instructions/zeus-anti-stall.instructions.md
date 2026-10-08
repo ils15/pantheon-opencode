@@ -1,7 +1,8 @@
 ---
 description: "Stall detection, phase reminders, delegate retry, and progress checkpoints for Zeus"
 name: "Zeus Anti-Stall"
-applyTo: "agents/zeus.agent.md"
+agents: [zeus]
+fallback: shared
 ---
 
 # 🛑 ANTI-STALL & STALL DETECTION
@@ -32,78 +33,31 @@ Self-check every 3 turns: "Am I waiting on a delegate? Have I polled without nee
 
 ## Delegate Retry Enhancement
 
-When a delegation fails (timeout, empty response, error):
-
-Check known errors first (agent name, context size, or permissions), then make **one retry after the initial attempt** (`background_delegation.retry_count: 1`) with a corrected prompt. If it fails, do not retry the same agent again; follow the fallback chain and escalation protocol in `## ⏱️ Timeout & Retry Enforcement`.
+When a delegation has a transient dispatch failure (timeout, crash, or empty
+response), check known causes first and allow at most one corrected retry per
+agent/task. Do not retry a scope refusal or a failed test/validation; reroute
+only when the correct specialist is clear, otherwise diagnose or escalate.
+After a transient retry fails, follow the canonical fallback chain once and
+escalate rather than restarting it. See `## ⏱️ Timeout & Retry Enforcement`.
 
 ## Progress Checkpoint
 
-On tasks expected to run > 5 turns:
+For long-running or multi-phase tasks expected to run > 5 turns only:
 - After turn 5: output `[CHECKPOINT] Completed so far: [summary]. Remaining: [list].`
 - After turn 10: re-evaluate. If < 50% done, consider splitting or escalating.
 - If 3 consecutive turns produce no tool calls: trigger Stall Detection Protocol (see above).
 
 ## Heartbeat & Checkpoint Integration
 
-All session state lives in **pantheon-persistence** (namespace `checkpoint:<slug>`).
-No file I/O, no checkpoint_session.py — TTL (4h) handles cleanup automatically.
+Use **pantheon-persistence** (`checkpoint:<slug>`, 4h TTL), not checkpoint files/scripts.
 
-### Heartbeat Check
-- If `context_get(slug=slug, key="heartbeat", session_id=SESSION_ID)` returns a checkin older than 300s, log a stall warning and resume
-- Write heartbeat after every anti-stall recovery action:
-  ```
-  context_save(slug=slug, key="heartbeat", content=JSON.stringify({"status": "alive", "last_action": "...", "turn_count": N}), session_id=SESSION_ID)
-  ```
+Check a heartbeat for stale state during long sessions; save one after anti-stall recovery.
 
-### Checkpoint Auto-Save (Pré-Compactação)
-Before ANY delegate dispatch, save a checkpoint:
-```
-context_save(slug=slug, key="phase:N", content=JSON.stringify({
-  "phase": {"current": N, "total": M, "name": "..."},
-  "turn_count": N, "agent": "...", "summary": "..."
-}), session_id=SESSION_ID)
-```
-**`content.phase` must be an OBJECT, not a bare number.** `{"phase": 1}` is rejected with
-`context_save: content.phase must be an object (got number)`. The server reads `current`
-and `total` (non-negative ints) and `name` (string, max 256 **bytes** — the guard
-measures `len(value.encode())`, so multi-byte characters count as more than one). That
-set is not closed: any other key inside `phase` is accepted and ignored, never an
-error. The `"phase:N"` slot KEY above is unrelated to `content.phase` and stays a plain
-string.
-All checkpoints auto-expire after 4h (TTL=14400).
-
-### Gatilho de Pré-Compactação (Anti-perda de estado)
-Antes da compactação nativa do OpenCode disparar (75-96% do context window),
-o Zeus DEVE salvar o estado atual:
-1. Capture session_id do primeiro `context_save` da sessão
-2. Salve heartbeat + phase atual + tarefas pendentes
-3. Só então permita que a compactação prossiga
-```
-# Ao iniciar sessão (session_id é REQUIRED — use o id da sessão corrente):
-result = context_save(slug=slug, key="init", content=JSON.stringify(session_state), session_id=SESSION_ID)
-SESSION_ID = result.session_id   # ← guarde para toda a sessão
-
-# Antes de CADA delegação:
-context_save(slug=slug, key=f"pre:{agent}", content=JSON.stringify(current_state), session_id=SESSION_ID)
-
-# Após retorno do agente:
-context_save(slug=slug, key=f"post:{agent}", content=JSON.stringify(result_state), session_id=SESSION_ID)
-```
-Isso garante que o estado sobreviva à compactação — o "latest" pointer
-sempre aponta para o checkpoint mais recente, mesmo após compactação.
-
+### Checkpoint / Pre-Compaction
+Checkpoint only long-running or multi-phase work, when context loss is plausible; never add it for a one-off command or bounded fix. Save current phase and remaining tasks before a consequential dispatch and before compaction. Use `context_save` with an object-valued `phase`; see `skill: auto-continue` for the payload. Checkpoints expire after 4h.
 
 ### Context Retrieval
-Next-phase agents retrieve previous context via:
-```
-context_get(slug=slug, session_id=SESSION_ID)                    # most recent checkpoint ("latest" is the default key)
-context_get(slug=slug, key="phase:3", session_id=SESSION_ID)     # specific phase
-context_list(slug=slug, session_id=SESSION_ID)                   # all checkpoints
-```
+For a real next phase, retrieve the latest checkpoint and apply remaining tasks/gotchas; do not create checkpoints just to retrieve context for a bounded task.
 
 ### Long-Session Progress
-Every 5 turns during a long session, update STATUS.md with:
-- Current phase
-- Completed tasks
-- Pending tasks
-- Any blockers
+For long-lived multi-phase work, update an existing/requested progress record every 5 turns with completed and pending work and blockers. Do not create STATUS.md for a bounded task.

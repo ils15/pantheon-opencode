@@ -47,6 +47,21 @@ def export_gepa_payload(
     dataset: Dataset, report: dict[str, object] | None = None
 ) -> dict[str, object]:
     """Create the optional-package-neutral GEPA dataset and metric payload."""
+    gate = report.get("comparison_gate") if isinstance(report, dict) else None
+    comparison_eligible = (
+        isinstance(report, dict)
+        and report.get("mode") == "opencode"
+        and isinstance(gate, dict)
+        and gate.get("eligible") is True
+    )
+    if isinstance(report, dict) and report.get("mode") == "fixture":
+        block_reason = "fixture reports are mocked and cannot support GEPA comparisons"
+    elif comparison_eligible:
+        block_reason = None
+    elif isinstance(gate, dict) and isinstance(gate.get("reason"), str):
+        block_reason = gate["reason"]
+    else:
+        block_reason = "an eligible OpenCode report is required"
     return {
         "schema_version": "beta2.gepa.v1",
         "gepa_installed": gepa_available(),
@@ -59,6 +74,8 @@ def export_gepa_payload(
             "secondary": "net tokens = total - retrieval - measurement",
             "efficiency": "accepted tasks / (net tokens / 1000)",
             "holdout_required": True,
+            "comparison_eligible": comparison_eligible,
+            "block_reason": block_reason,
         },
         "report": report,
         "auto_apply": False,
@@ -101,6 +118,60 @@ def _split_stats(
     return quality, len(rows), net_tokens
 
 
+def _validate_comparable_reports(
+    baseline_report: dict[str, object], candidate_report: dict[str, object]
+) -> None:
+    """Reject cross-run comparisons without matching model/config and real usage."""
+    if (
+        baseline_report.get("mode") == "fixture"
+        or candidate_report.get("mode") == "fixture"
+    ):
+        raise ValueError(
+            "fixture reports are mocked and cannot support GEPA comparisons"
+        )
+    if (
+        baseline_report.get("mode") != "opencode"
+        or candidate_report.get("mode") != "opencode"
+    ):
+        raise ValueError("GEPA comparison requires OpenCode reports")
+    baseline_context = baseline_report.get("comparison_context")
+    candidate_context = candidate_report.get("comparison_context")
+    if not isinstance(baseline_context, dict) or not isinstance(
+        candidate_context, dict
+    ):
+        raise ValueError("comparison requires model and config provenance")
+    for field in ("model", "config_sha256"):
+        baseline_value = baseline_context.get(field)
+        candidate_value = candidate_context.get(field)
+        if not isinstance(baseline_value, str) or not baseline_value:
+            raise ValueError(f"comparison requires a non-empty {field}")
+        if baseline_value != candidate_value:
+            label = "config" if field == "config_sha256" else "model"
+            raise ValueError(f"comparison {label} mismatch")
+    for report, variant in (
+        (baseline_report, "baseline"),
+        (candidate_report, "candidate"),
+    ):
+        rows = [
+            row
+            for row in report.get("tasks", [])
+            if isinstance(row, dict) and row.get("variant") == variant
+        ]
+        if not rows or any(
+            not isinstance(row.get("tokens"), dict)
+            or row["tokens"].get("usage_source") != "reported"
+            or row["tokens"].get("estimated") is not False
+            or not isinstance(row["tokens"].get("actual"), dict)
+            or not isinstance(row["tokens"]["actual"].get("net_total"), int)
+            or isinstance(row["tokens"]["actual"].get("net_total"), bool)
+            or row["tokens"]["actual"].get("net_total") < 0
+            or row["tokens"].get("net_total")
+            != row["tokens"]["actual"].get("net_total")
+            for row in rows
+        ):
+            raise ValueError("comparison requires actual token usage for every row")
+
+
 def evaluate_candidate(
     baseline_report: dict[str, object],
     candidate_report: dict[str, object],
@@ -108,6 +179,7 @@ def evaluate_candidate(
     quality_floor: float = 1.0,
 ) -> dict[str, object]:
     """Apply quality-floor and holdout gates; never writes source files."""
+    _validate_comparable_reports(baseline_report, candidate_report)
     if not 0.0 <= quality_floor <= 1.0:
         raise ValueError("quality_floor must be between 0 and 1")
     details: dict[str, object] = {}
@@ -211,9 +283,13 @@ def main(argv: list[str] | None = None) -> int:
         del dataset  # Validate the dataset before accepting a report.
         baseline = json.loads(args.baseline_report.read_text(encoding="utf-8"))
         candidate = json.loads(args.candidate_report.read_text(encoding="utf-8"))
-        payload = evaluate_candidate(
-            baseline, candidate, quality_floor=args.quality_floor
-        )
+        try:
+            payload = evaluate_candidate(
+                baseline, candidate, quality_floor=args.quality_floor
+            )
+        except ValueError as exc:
+            print(f"beta2 GEPA comparison rejected: {exc}")
+            return 2
     args.output.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

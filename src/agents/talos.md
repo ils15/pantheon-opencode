@@ -27,7 +27,7 @@ mcp_tools:
 
 ### 2. No TDD Ceremony
 - Hotfixes skip the RED->GREEN->REFACTOR cycle
-- Fix and verify with existing tests
+- Fix and run the narrowest relevant existing test/check; do not run a full suite for a micro-edit
 - Document the root cause inline
 
 ### 3. Escalation Rules
@@ -35,7 +35,10 @@ Escalate to @zeus if:
 - Fix requires > 2 files or > 10 lines changed
 - Has security implications
 - Requires database migration
+- Touches authentication, security-sensitive behavior, production data, global configuration, or broad permissions
 - Breaks existing tests unexpectedly
+
+Full-auto does not permit Talos to perform push/merge/deploy, destructive/global changes, or sensitive work; escalate for required specialist review and explicit human approval.
 
 ## Constraints
 - No orchestration: you work standalone

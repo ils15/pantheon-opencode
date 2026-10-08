@@ -1,7 +1,7 @@
 ---
 description: "Standardized return format for agent delegation results"
 name: "Agent Return Format"
-applyTo: "agents/*.agent.md"
+agents: ["*"]
 ---
 
 # Agent Return Format

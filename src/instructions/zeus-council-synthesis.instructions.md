@@ -1,7 +1,8 @@
 ---
 description: "Council synthesis — dispatch 2-3 specialists inline for multi-perspective decisions with precedent fast-path, confidence cross-validation, rebuttal rounds, and Themis audit gate"
 name: "Zeus Council Synthesis"
-applyTo: "agents/zeus.agent.md"
+agents: [zeus]
+fallback: shared
 ---
 
 # 🏛️ INLINE COUNCIL SYNTHESIS — /pantheon

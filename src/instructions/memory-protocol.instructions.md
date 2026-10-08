@@ -1,7 +1,7 @@
 ---
 description: "Universal memory protocol rules for all Pantheon agents with agent-specific overrides"
 name: "Memory Protocol"
-applyTo: "agents/*.agent.md"
+agents: ["*"]
 ---
 
 # 🧠 Memory Protocol — Universal Rules

@@ -2,6 +2,8 @@
 description: "Backend development standards for FastAPI/Python APIs"
 name: "Backend Development Standards"
 applyTo: "**/*.py"
+agents: [hermes]
+fallback: shared
 ---
 
 # Backend Development Standards (Hermes)

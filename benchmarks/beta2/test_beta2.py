@@ -35,6 +35,7 @@ SUCCESS_CALLS = 3
 RETRY_ATTEMPTS = 1
 OS_ERROR_RETURN_CODE = 127
 CANDIDATE_VARIANT_COUNT = 4
+REPORTED_TOKEN_TOTAL = 6
 
 
 @pytest.fixture
@@ -85,11 +86,17 @@ def test_fixture_run_covers_every_task_and_never_calls_opencode(
     assert report["mode"] == "fixture"
     assert report["dry_run"] is False
     assert len(report["tasks"]) == TASK_ROW_COUNT
-    assert report["comparison"]["baseline"]["quality_accepted_tasks"] == AGENT_COUNT
-    assert report["comparison"]["candidate"]["quality_accepted_tasks"] == AGENT_COUNT
-    assert (
-        report["comparison"]["candidate"]["net_total_tokens"]
-        < report["comparison"]["baseline"]["net_total_tokens"]
+    assert report["comparison"] is None
+    assert report["comparison_gate"] == {
+        "eligible": False,
+        "reason": (
+            "fixture responses are mocked; comparisons require OpenCode measurements"
+        ),
+    }
+    assert all(
+        row["tokens"]["usage_source"] == "fixture_reported"
+        and row["tokens"]["actual"] is None
+        for row in report["tasks"]
     )
 
 
@@ -242,15 +249,15 @@ def test_optional_gepa_contract_has_no_required_dependency(dataset, responses):
     report = run_benchmark(dataset, mode="fixture", fixture_responses=responses)
     payload = export_gepa_payload(dataset, report)
     candidates = generate_prompt_candidates("Return a result", count=2)
-    selection = evaluate_candidate(report, report, quality_floor=1.0)
+    with pytest.raises(ValueError, match=r"fixture.*mocked"):
+        evaluate_candidate(report, report, quality_floor=1.0)
 
     assert isinstance(payload["gepa_installed"], bool)
     assert payload["auto_apply"] is False
     assert payload["metric"]["holdout_required"] is True
+    assert payload["metric"]["comparison_eligible"] is False
+    assert "fixture reports are mocked" in payload["metric"]["block_reason"]
     assert len(candidates) == CANDIDATE_COUNT
-    assert selection["approved"] is True
-    assert selection["quality_first"] is True
-    assert selection["auto_apply"] is False
 
 
 def test_executor_allowlist_and_payload_helpers():
@@ -402,20 +409,29 @@ def test_gepa_rejects_quality_regression_and_no_improvement():
             "variant": variant,
             "split": split,
             "quality_accepted": quality,
-            "tokens": {"net_total": tokens},
+            "tokens": {
+                "net_total": tokens,
+                "estimated": False,
+                "usage_source": "reported",
+                "actual": {"total": tokens, "net_total": tokens},
+            },
         }
 
     baseline = {
+        "mode": "opencode",
+        "comparison_context": {"model": "model-a", "config_sha256": "a" * 64},
         "tasks": [
             row("baseline", "train", True, 10),
             row("baseline", "holdout", True, 10),
-        ]
+        ],
     }
     candidate = {
+        "mode": "opencode",
+        "comparison_context": {"model": "model-a", "config_sha256": "a" * 64},
         "tasks": [
             row("candidate", "train", False, 10),
             row("candidate", "holdout", False, 10),
-        ]
+        ],
     }
 
     selection = evaluate_candidate(baseline, candidate)
@@ -430,6 +446,66 @@ def test_gepa_rejects_quality_regression_and_no_improvement():
         evaluate_candidate(baseline, candidate, quality_floor=2.0)
 
 
+def test_gepa_comparison_rejects_incompatible_or_unmeasured_reports():
+    def report(variant, *, model="model-a", config="a" * 64, usage=True):
+        tokens = (
+            {
+                "net_total": 10,
+                "estimated": False,
+                "usage_source": "reported",
+                "actual": {"total": 10, "net_total": 10},
+            }
+            if usage
+            else None
+        )
+        row = {
+            "variant": variant,
+            "split": "train",
+            "quality_accepted": True,
+        }
+        if tokens is not None:
+            row["tokens"] = tokens
+        return {
+            "mode": "opencode",
+            "comparison_context": {
+                "model": model,
+                "config_sha256": config,
+            },
+            "tasks": [row],
+        }
+
+    baseline = report("baseline")
+    with pytest.raises(ValueError, match="model"):
+        evaluate_candidate(baseline, report("candidate", model="model-b"))
+    with pytest.raises(ValueError, match="config"):
+        evaluate_candidate(baseline, report("candidate", config="b" * 64))
+    with pytest.raises(ValueError, match="actual token usage"):
+        evaluate_candidate(baseline, report("candidate", usage=False))
+    with pytest.raises(ValueError, match="actual token usage"):
+        evaluate_candidate(
+            baseline,
+            report("candidate", usage=True)
+            | {
+                "tasks": [
+                    {
+                        "variant": "candidate",
+                        "split": "train",
+                        "quality_accepted": True,
+                        "tokens": {
+                            "net_total": 10,
+                            "estimated": True,
+                            "usage_source": "character_heuristic",
+                        },
+                    }
+                ]
+            },
+        )
+
+    fixture_candidate = report("candidate") | {"mode": "fixture"}
+    with pytest.raises(ValueError, match=r"fixture.*mocked"):
+        evaluate_candidate(baseline, fixture_candidate)
+
+
 def test_gepa_cli_exports_proposes_and_selects(dataset, tmp_path):
     dataset_path = tmp_path / "dataset.json"
     dataset_path.write_text(DATASET_PATH.read_text(encoding="utf-8"), encoding="utf-8")
@@ -438,8 +514,53 @@ def test_gepa_cli_exports_proposes_and_selects(dataset, tmp_path):
     select_path = tmp_path / "select.json"
     baseline_path = tmp_path / "baseline.json"
     candidate_path = tmp_path / "candidate.json"
-    baseline_path.write_text(json.dumps({"tasks": []}), encoding="utf-8")
-    candidate_path.write_text(json.dumps({"tasks": []}), encoding="utf-8")
+    context = {"model": "fixture-model", "config_sha256": "a" * 64}
+    baseline_path.write_text(
+        json.dumps(
+            {
+                "mode": "opencode",
+                "comparison_context": context,
+                "tasks": [
+                    {
+                        "variant": "baseline",
+                        "split": split,
+                        "quality_accepted": True,
+                        "tokens": {
+                            "net_total": 10,
+                            "estimated": False,
+                            "usage_source": "reported",
+                            "actual": {"total": 10, "net_total": 10},
+                        },
+                    }
+                    for split in ("train", "holdout")
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "mode": "opencode",
+                "comparison_context": context,
+                "tasks": [
+                    {
+                        "variant": "candidate",
+                        "split": split,
+                        "quality_accepted": True,
+                        "tokens": {
+                            "net_total": 10,
+                            "estimated": False,
+                            "usage_source": "reported",
+                            "actual": {"total": 10, "net_total": 10},
+                        },
+                    }
+                    for split in ("train", "holdout")
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     assert (
         gepa_module.main(
@@ -530,7 +651,16 @@ def test_runner_options_and_loaders_validate_inputs(tmp_path):
 def test_runner_missing_fixture_and_cli_outputs(dataset, responses, tmp_path):
     missing = run_benchmark(dataset, mode="fixture")
     assert all(row["status"] == "execution_error" for row in missing["tasks"])
-    assert "execution_error" in runner_module.render_markdown(missing)
+    assert missing["comparison"] is None
+    assert missing["comparison_gate"] == {
+        "eligible": False,
+        "reason": (
+            "fixture responses are mocked; comparisons require OpenCode measurements"
+        ),
+    }
+    missing_markdown = runner_module.render_markdown(missing)
+    assert "execution_error" in missing_markdown
+    assert "Comparison blocked" in missing_markdown
 
     prompts_path = tmp_path / "prompts.json"
     prompts_path.write_text(
@@ -571,6 +701,27 @@ def test_runner_execution_statuses(dataset, tmp_path):
         task, "baseline", task.prompt, accepted, tmp_path
     )
     assert accepted_row["status"] == "accepted"
+    assert accepted_row["tokens"]["usage_source"] == "character_heuristic"
+    assert accepted_row["tokens"]["actual"] is None
+    assert accepted_row["tokens"]["estimate_method"] == "ceil_python_characters_div_4"
+    assert accepted_row["tokens"]["character_estimate"] is not None
+    assert accepted_row["tokens"]["tokenizer_estimate"] is None
+
+    reported = run_fixture(
+        {
+            "output": "ZEUS_OK",
+            "usage": {"input_tokens": 4, "output_tokens": 2},
+        },
+        task.prompt,
+    )
+    reported_row = runner_module._execution_result(
+        task, "baseline", task.prompt, reported, tmp_path
+    )
+    assert reported_row["tokens"]["usage_source"] == "fixture_reported"
+    assert reported_row["tokens"]["actual"] is None
+    assert reported_row["tokens"]["fixture_reported"]["total"] == REPORTED_TOKEN_TOTAL
+    assert reported_row["tokens"]["character_estimate"] is None
+    assert reported_row["tokens"]["tokenizer_estimate"] is None
 
     failed = run_fixture({"output": "wrong"}, task.prompt)
     failed_row = runner_module._execution_result(

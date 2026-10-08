@@ -1,9 +1,9 @@
 {
   "src/skills/agent-coordination/SKILL.md": "cfd040ef29e3dd0fd5e0e67773874facf7c06e3284898afe1fddba4456c3f1aa",
-  "src/skills/artifact-management/SKILL.md": "c60e493666bedf46e9113d0dd20106489d5c5a73905e1370fcfc1c0d71c59185",
-  "src/skills/auto-continue/SKILL.md": "a7a4ec7ab35970bec36bcc286b95881b43a75e3bcdb626a17ebb9e397dd1a708",
+  "src/skills/artifact-management/SKILL.md": "91d68c8f2d1b642725adfc6df11e55865a8491aca690dc27d02ea7c778d49d41",
+  "src/skills/auto-continue/SKILL.md": "1ab324d2ef6f4d2368b7e7cbcc0a7ad7bfcc33961d9c9826e46f41f9521d23e1",
   "src/skills/clonedeps/SKILL.md": "3e0b43cf96da98c83699dc48db3fd58fbfda84b9022bb70d3747875c81c3e124",
-  "src/skills/code-review-checklist/SKILL.md": "0e59367c65ef4608db80a0674279f32cfc3f67dca7236f233b61a47fe506579f",
+  "src/skills/code-review-checklist/SKILL.md": "6445513ab880efdb1005861ae13cb9a215f80b9d260f6278499f60771e07858c",
   "src/skills/codemap/SKILL.md": "87af5271e1576e154cadff313eab16264b726e43d094520736b7a5b03b409a4a",
   "src/skills/context-compression/SKILL.md": "9c65c132beb0dc7bd20335cfd7f41c589f5168a72dcf5d51740bc66f2865e027",
   "src/skills/git-workflow-and-versioning/SKILL.md": "685a94041f1b4ce2a430301f517b89102055696267c369a7e8fb191606659276",
@@ -15,7 +15,7 @@
   "src/skills/session-goal/SKILL.md": "793498265f70253c20524f6adc88bcc86db11d7160fe8232a26aedc6b1c5489f",
   "src/skills/simplify/SKILL.md": "aa739e9f75962a77d6574557d674ea01b5aea95e580b721d66c058753161b053",
   "src/skills/spec-driven-development/SKILL.md": "e93b9103d6cd1848ab01328efde82c1daf564d1cabbdc2278254b346fcf55d02",
-  "src/skills/tdd-with-agents/SKILL.md": "9880919a46b74f549f948147d8b086b008635de94fa259f76261d067772bb8e3",
+  "src/skills/tdd-with-agents/SKILL.md": "9d20607ea34fc3e02c7e3ef5186b103d84196bd9a13aaadd55a44f41339125da",
   "src/skills/verification-planning/SKILL.md": "14186446ef51e1ba2c87b337e8d5f86e566d805156ab21fba2a75f8c4a99df3f",
   "src/skills/visual-review-pipeline/SKILL.md": "f6e65ff75a9325c38e0e9dde8e87f09b873e14e490936ef48aa80201bb68fe10",
   "src/skills/worktrees/SKILL.md": "0033c5f8a50f210f31f0256ba8cc0fd99c65674a2aabedb05d8e69447b5ec218"

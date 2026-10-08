@@ -9,19 +9,19 @@ This project uses the Pantheon multi-agent framework with 14 specialized agents.
 
 | Agent | Role |
 |-------|------|
-| @aphrodite | Frontend specialist — React 19, TypeScript strict, WCAG accessibility, responsive design, TDD, modern API patterns, deprecated npm detection. Calls apollo for discovery, sends to themis for review. |
+| @aphrodite | Frontend specialist — React 19, TypeScript strict, WCAG accessibility, responsive design, TDD, modern API patterns, deprecated npm detection. Uses discovery/review proportionally to scope and risk. |
 | @apollo | Read-only investigation scout — 3–10 parallel searches across codebase, external docs, and GitHub. Called by: athena, zeus, hermes, aphrodite, demeter. No edits, no commands. |
 | @athena | Strategic planner & architect — research-first, plan-only, never implements. Plans include quality gates (ruff/Biome, dep detection, LTS policy). Calls apollo for discovery. |
-| @demeter | Database specialist — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, TDD migrations, modern DB libs. Calls apollo for discovery, sends to themis. |
+| @demeter | Database specialist — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, TDD migrations, modern DB libs. Preserves review gates for schema/data changes. |
 | @gaia | Remote sensing domain specialist — satellite image processing, spectral analysis, SAR, change detection, time series, ML/DL classification. Read-only analysis of geospatial data. |
 | @hephaestus | AI tooling & pipelines specialist — LangChain/LangGraph chains, RAG architecture, vector stores, embedding strategies. Forges AI infrastructure. Calls apollo, sends to themis. |
-| @hermes | Backend specialist — FastAPI, Python, async, TDD (RED→GREEN→REFACTOR), modern Python stdlib, obsolete lib detection. Calls apollo for discovery, sends to themis. |
+| @hermes | Backend specialist — FastAPI, Python, async, TDD (RED→GREEN→REFACTOR), modern Python stdlib, obsolete lib detection. Uses discovery/review proportionally to scope and risk. |
 | @iris | GitHub operations specialist — branches, pull requests, issues, releases, tags. Called by zeus after review. Never pushes or merges without explicit human approval. Integrates with VS Code GitHub Pull Requests extension. |
 | @mnemosyne | Memory bank quality owner — initializes .pantheon/memory-bank/, writes ADRs and task records on explicit request. Called by zeus. Never invoked automatically after phases. |
 | @nyx | Observability & monitoring specialist — OpenTelemetry tracing, token/cost tracking, agent performance analytics, LangSmith integration. Calls apollo for discovery, sends to themis. |
 | @prometheus | Infrastructure + model provider specialist — Docker, CI/CD, multi-model routing, cost optimization, provider abstraction |
 | @talos | Hotfix express lane — direct fixes for small bugs, CSS, typos, minor logic. No TDD ceremony, no orchestration overhead. Standalone, no subagents. Escalates complex issues to zeus. |
-| @themis | Quality & security gate — ruff/Biome linting, dead/legacy code detection, OWASP Top 10, coverage >80%, correctness, deprecation audit. Called by implementers; escalates blockers to zeus. |
+| @themis | Quality & security gate — ruff/Biome linting, dead/legacy code detection, OWASP Top 10, applicable coverage requirements, correctness, deprecation audit. Reviews material/sensitive changes. |
 | @zeus | Central orchestrator — never implements. Delegates to: athena, apollo, hermes, aphrodite, demeter, prometheus, themis, iris, mnemosyne, talos, hephaestus, nyx |
 
 ## OpenCode Setup
@@ -43,8 +43,8 @@ Para validar a instalação global do pacote pantheon-opencode COMO UM USUÁRIO 
 
 ## Conventions
 
-- TDD: Write failing test first, then implement
-- Coverage minimum: 80%
+- TDD: RED→GREEN→REFACTOR for testable behavior; use focused checks for micro-edits
+- Honor repository coverage thresholds when relevant; preserve stronger auth/security/data-integrity gates
 - Async/await on all I/O
 - Type hints on all functions
 - PRs always update the README — every pull request must document newly added features, behaviors, env vars, or commands in the README before being opened.
@@ -55,7 +55,8 @@ Para validar a instalação global do pacote pantheon-opencode COMO UM USUÁRIO 
 
 The following sections are consolidated from `src/instructions/*.instructions.md`
 so both OpenCode V1 (auto-loads AGENTS.md) and V2 (loads AGENTS.md, ignores the
-`instructions` config key) receive identical instruction content.
+`instructions` config key) receive identical shared rules. Agent-scoped rules
+are rendered into only the matching installed agent prompts.
 
 <!-- Source: src/instructions/agent-return-format.instructions.md -->
 ## Agent Return Format
@@ -127,95 +128,6 @@ When responding to a `/pantheon` council synthesis invocation, specialists MUST 
 ## Memory Context
 If this agent used `memory_recall` or `memory_search`, include the relevant memory entries
 used as context for the response.
-
-<!-- Source: src/instructions/backend-standards.instructions.md -->
-## Backend Development Standards
-
-
-# Backend Development Standards (Hermes)
-
-## Async/Await
-- Use async/await for ALL I/O operations (database, external APIs, file operations)
-- Never block on async operations
-- Use `asyncio.gather()` for parallel operations
-
-## Test-Driven Development
-- RED: Write a failing test
-- GREEN: Write minimal code to pass
-- REFACTOR: Improve without breaking tests
-
-## Type Safety
-- Type hints on all function parameters
-- Type hints on all return types
-- Use Pydantic for request/response validation
-
-## Code Organization
-- Maximum 300 lines per file
-- Separate: routes → services → models
-- Docstrings on public functions (Google format)
-
-## Error Handling
-- Never silent failures (catch and log)
-- Use appropriate HTTP status codes
-- Return friendly error messages (no stack traces)
-- Implement retry logic with exponential backoff
-
-## Performance
-- Avoid N+1 queries (use eager loading/joins)
-- Implement pagination for list endpoints
-- Cache frequently accessed data
-- Monitor for async deadlocks
-
-## Security
-- Input validation on all endpoints
-- CSRF protection
-- Rate limiting for sensitive endpoints
-- Sanitize logs (never log passwords/tokens)
-
-<!-- Source: src/instructions/frontend-standards.instructions.md -->
-## Frontend Development Standards
-
-
-# Frontend Development Standards (Aphrodite)
-
-## TypeScript
-- Strict mode always (no `any` types)
-- Props interfaces on all components
-- Return type annotations on all functions
-
-## Components
-- Single Responsibility Principle
-- Reusable and composable
-- Max 300 lines per component
-- Atomic Design pattern
-
-## Accessibility
-- ARIA labels on interactive elements
-- Keyboard navigation support
-- Color contrast WCAG AA
-- Semantic HTML
-
-## Responsive Design
-- Mobile-first approach
-- Breakpoints: 640px, 768px, 1024px, 1280px
-- Test on multiple devices
-
-## State Management
-- Hooks (useState, useContext, useReducer)
-- Centralized state for app-wide data
-- Local state for component-specific needs
-
-## Testing
-- React Testing Library (no snapshot testing)
-- Test behavior not implementation
-- >80% coverage requirement
-- Test user workflows
-
-## Styling
-- Tailwind CSS + custom CSS when needed
-- Design tokens for colors/spacing
-- Responsive classes
-- No inline styles
 
 <!-- Source: src/instructions/memory-protocol.instructions.md -->
 ## Memory Protocol
@@ -300,114 +212,6 @@ Keep decisions long-term (no TTL or 365 days). Flag entries >90 days as stale, n
 
 When reviewing code, always ask: "Is this YAGNI? Could we solve this more simply?"
 
-<!-- Source: src/instructions/zeus-anti-stall.instructions.md -->
-## Zeus Anti-Stall
-
-
-# 🛑 ANTI-STALL & STALL DETECTION
-
-You MUST proactively detect and recover from stalled states. Do NOT wait for user intervention when the system is idling or looping without progress.
-
-## Stall Detection Protocol
-
-You MUST self-monitor for these stall conditions:
-
-| Symptom | Detection Rule | Recovery Action |
-|---------|---------------|-----------------|
-| Silent loop | 3+ consecutive turns with no tool call AND no visible progress | Output `[STALL_DETECTED]` and re-read your task definition. If still stuck, escalate to user with: "I appear to be stuck on [task]. Options: (1) retry with different approach, (2) delegate to specialist, (3) simplify scope." |
-| Delegation black hole | Agent dispatched but no response after 2x the timeout from routing.yml | Log the hang, cancel via `cancel_task`, then follow the fallback chain in `## ⏱️ Timeout & Retry Enforcement` |
-| Circular delegation | Same specialist re-dispatched for same task 2+ times without progress | Break cycle: dispatch to different specialist OR escalate to user |
-| Idle after completion | All background tasks completed but no synthesis/next step for 2+ turns | Force synthesis: summarize all completed results and propose next action |
-| Context thrash | Re-reading same files repeatedly without new action | Stop re-reading. State: "Already have context on [file]. Proceeding with [action]." |
-
-## Phase Reminder
-
-After dispatching background specialists, you MUST:
-1. DO NOT poll running jobs or consume their partial output
-2. DO NOT advance dependent work until terminal results arrive
-3. Continue orchestration ONLY on non-overlapping independent work
-4. If nothing independent remains, briefly report what was launched and WAIT
-
-Self-check every 3 turns: "Am I waiting on a delegate? Have I polled without need? Is there independent work I can do?"
-
-## Delegate Retry Enhancement
-
-When a delegation fails (timeout, empty response, error):
-
-Check known errors first (agent name, context size, or permissions), then make **one retry after the initial attempt** (`background_delegation.retry_count: 1`) with a corrected prompt. If it fails, do not retry the same agent again; follow the fallback chain and escalation protocol in `## ⏱️ Timeout & Retry Enforcement`.
-
-## Progress Checkpoint
-
-On tasks expected to run > 5 turns:
-- After turn 5: output `[CHECKPOINT] Completed so far: [summary]. Remaining: [list].`
-- After turn 10: re-evaluate. If < 50% done, consider splitting or escalating.
-- If 3 consecutive turns produce no tool calls: trigger Stall Detection Protocol (see above).
-
-## Heartbeat & Checkpoint Integration
-
-All session state lives in **pantheon-persistence** (namespace `checkpoint:<slug>`).
-No file I/O, no checkpoint_session.py — TTL (4h) handles cleanup automatically.
-
-### Heartbeat Check
-- If `context_get(slug=slug, key="heartbeat", session_id=SESSION_ID)` returns a checkin older than 300s, log a stall warning and resume
-- Write heartbeat after every anti-stall recovery action:
-  ```
-  context_save(slug=slug, key="heartbeat", content=JSON.stringify({"status": "alive", "last_action": "...", "turn_count": N}), session_id=SESSION_ID)
-  ```
-
-### Checkpoint Auto-Save (Pré-Compactação)
-Before ANY delegate dispatch, save a checkpoint:
-```
-context_save(slug=slug, key="phase:N", content=JSON.stringify({
-  "phase": {"current": N, "total": M, "name": "..."},
-  "turn_count": N, "agent": "...", "summary": "..."
-}), session_id=SESSION_ID)
-```
-**`content.phase` must be an OBJECT, not a bare number.** `{"phase": 1}` is rejected with
-`context_save: content.phase must be an object (got number)`. The server reads `current`
-and `total` (non-negative ints) and `name` (string, max 256 **bytes** — the guard
-measures `len(value.encode())`, so multi-byte characters count as more than one). That
-set is not closed: any other key inside `phase` is accepted and ignored, never an
-error. The `"phase:N"` slot KEY above is unrelated to `content.phase` and stays a plain
-string.
-All checkpoints auto-expire after 4h (TTL=14400).
-
-### Gatilho de Pré-Compactação (Anti-perda de estado)
-Antes da compactação nativa do OpenCode disparar (75-96% do context window),
-o Zeus DEVE salvar o estado atual:
-1. Capture session_id do primeiro `context_save` da sessão
-2. Salve heartbeat + phase atual + tarefas pendentes
-3. Só então permita que a compactação prossiga
-```
-# Ao iniciar sessão (session_id é REQUIRED — use o id da sessão corrente):
-result = context_save(slug=slug, key="init", content=JSON.stringify(session_state), session_id=SESSION_ID)
-SESSION_ID = result.session_id   # ← guarde para toda a sessão
-
-# Antes de CADA delegação:
-context_save(slug=slug, key=f"pre:{agent}", content=JSON.stringify(current_state), session_id=SESSION_ID)
-
-# Após retorno do agente:
-context_save(slug=slug, key=f"post:{agent}", content=JSON.stringify(result_state), session_id=SESSION_ID)
-```
-Isso garante que o estado sobreviva à compactação — o "latest" pointer
-sempre aponta para o checkpoint mais recente, mesmo após compactação.
-
-
-### Context Retrieval
-Next-phase agents retrieve previous context via:
-```
-context_get(slug=slug, session_id=SESSION_ID)                    # most recent checkpoint ("latest" is the default key)
-context_get(slug=slug, key="phase:3", session_id=SESSION_ID)     # specific phase
-context_list(slug=slug, session_id=SESSION_ID)                   # all checkpoints
-```
-
-### Long-Session Progress
-Every 5 turns during a long session, update STATUS.md with:
-- Current phase
-- Completed tasks
-- Pending tasks
-- Any blockers
-
 <!-- Source: src/instructions/zeus-communication-rules.instructions.md -->
 ## Zeus Communication Rules
 
@@ -421,165 +225,3 @@ These rules apply to Zeus and all agents in the system:
 - **Concise Execution**: Skip lengthy preambles. State what you're doing in one line, do it, report the outcome. Avoid verbose commentary around trivial steps.
 - **No Padding**: Don't add filler sentences, summaries of what was just said, or redundant confirmations. Every sentence must carry information.
 - **Uncertainty = Ask**: If requirements are ambiguous, ask one targeted question. Don't guess and implement the wrong thing.
-
-<!-- Source: src/instructions/zeus-council-synthesis.instructions.md -->
-## Zeus Council Synthesis
-
-
-# 🏛️ INLINE COUNCIL SYNTHESIS — /pantheon
-
-Use an inline specialist council for material trade-offs, architecture/security choices, technology selection, cost/quality decisions, or multi-stakeholder questions. Do not use it for ordinary implementation tasks.
-
-## Dispatch and Synthesis
-
-1. **Precedent:** Run the separate `council_decisions` search defined in `## Memory Protocol`. Apply its age/score rules; if no fast-path decision applies, continue.
-2. **Research (optional):** For `/pantheon --research <question>`, ask @apollo for a 30s pre-scan and pass findings as `shared_context` to every specialist.
-3. **Register:** Before dispatch, call `board.registerLaunch` with a council task ID, parent session, Zeus, question, and synthesis objective. This enables crash recovery.
-4. **Select and dispatch:** Choose at most 3 agents using the domain map below. Send all `task()` calls in one message. Each prompt includes the question, shared context, required response format, and role timeout (120s reviewers; 60s explorers/implementers).
-5. **Collect:** Wait for all responses and note timeouts. Partial responses are acceptable only from read-only @apollo or @gaia.
-6. **Validate confidence:** High requires at least 3 verifiable claims; otherwise downgrade to Medium and state why. Medium requires at least 1 claim; Low needs no minimum. Opinions alone are not specific claims.
-7. **Resolve divergence:** Compute agreement rate as `min(agreements, divergences) / total_points` from structured `agreement_signals`. Below 50%, and only if no agent timed out, run one rebuttal round with all responses and the current synthesis draft. Treat revised responses as final. If disagreement remains below 50%, research factual divergence points with official docs, benchmarks, or issues (max 3 searches; seek 2 independent sources per point when possible). Skip research for subjective-only disagreements. Send responses and a cited evidence brief to @themis as moderator; request verdicts, overall direction, confidence, and unresolved issues. Low confidence or unresolved points remain explicit in the synthesis. Moderator and audit roles are separate.
-8. **Synthesize and audit:** Use the output format below, then ask @themis to compare raw responses with the synthesis. Check representation of every specialist, preserved divergences, accurate attribution, and confidence specificity. Fix any issue before delivery.
-9. **Persist:** Store the decision using the `council_decisions` write format in `## Memory Protocol`, then call `board.markReconciled(task_id)`.
-
-If context is lost, use `board.recoverRunningJobs()` and `board.formatForPrompt()` to find unreconciled work. Re-dispatch a crashed council with the same question and label it as a retry.
-
-## Specialist Response Format
-
-Require `## specialist_response` from `## Agent Return Format`: `position`, `reasoning`, `trade_offs`, `risks`, `confidence`, `agreement_signals`, and `specific_claims`.
-
-## Domain Map
-
-| Domain | Candidate agents |
-|---|---|
-| Architecture | athena, hermes, demeter, themis |
-| Security | themis, hermes, prometheus, nyx |
-| Database | demeter, hermes, prometheus |
-| AI/RAG | hephaestus, nyx |
-| Infrastructure | prometheus, hermes, themis |
-| Frontend/UX | aphrodite, themis, hermes |
-| Observability | nyx, hermes |
-| General | athena, themis, hermes |
-
-## User-Facing Synthesis
-
-```text
-## 🏛️ Council Synthesis
-Question / date / response rate / timed-out agents / precedent / research context
-
-### Specialist Perspectives
-| Agent | Position | Trade-offs | Confidence |
-
-### Agreements
-- Points shared by multiple specialists
-
-### Divergences
-| Issue | Sides | Resolution |
-
-### Evidence & Moderation (when used)
-Research points, evidence, moderator verdict, cited sources, unresolved issues
-
-### Recommendation
-Decisive conclusion
-
-### Audit Gate
-Themis approved, or issues corrected
-
-### Decision Gate
-Confidence adjusted for response rate
-```
-
-The user invokes this flow with `/pantheon <question>`; `--research` enables the Apollo pre-scan. Preserve actual specialist timeout or unresolved-tie details in the response.
-
-<!-- Source: src/instructions/zeus-timeout-retry.instructions.md -->
-## Zeus Timeout & Retry
-
-
-# ⏱️ TIMEOUT & RETRY ENFORCEMENT
-
-When a delegated agent does not respond in time, enforce the timeout policy from `routing.yml`.
-
-## Timeout Behavior by Agent Role
-
-| Agent Role | Timeout | Retry Policy | Partial Results OK? | Reasoning Effort |
-|------------|---------|--------------|---------------------|------------------|
-| Explorer (@apollo) | 60s | 1 retry | ✅ Yes | low |
-| Implementer (@hermes, @aphrodite, @demeter) | 180s | 1 retry | ❌ No | medium |
-| Reviewer (@themis) | 120s | 1 retry | ❌ No | high |
-| Infrastructure (@prometheus) | 300s | 1 retry | ❌ No | medium |
-| Hotfix (@talos) | 30s | 1 retry | ✅ Yes | low |
-| Remote Sensing (@gaia) | 120s | 1 retry | ✅ Yes | high |
-
-## Retry Flow
-
-```
-Initial attempt → timeout/failure → log it → make at most one retry
-  └─ retry fails → try fallback agents left-to-right with original task/context
-       └─ all fallbacks fail (or none exist) → report the chain and escalate
-```
-`background_delegation.retry_count: 1` means one retry after the initial attempt, not one total attempt. Never restart an exhausted chain automatically.
-
-## Fallback Chain Definitions
-
-Each fallback chain is evaluated left-to-right: if the first fallback fails, try the second, etc.
-
-| Agent | Fallback[0] | Fallback[1] | Escalate To |
-|-------|------------|------------|-------------|
-| @apollo | @athena (plan scoped task) | @hermes (implement search) | @zeus |
-| @hermes | @talos (minimal fix) | @athena (replan + simplify) | @zeus |
-| @aphrodite | @talos (CSS/UX fix) | @hermes (generic fallback) | @zeus |
-| @demeter | @hermes (generic backend) | @athena (replan schema) | @zeus |
-| @themis | @zeus (direct escalation) | — | user |
-| @prometheus | @hermes (config/deploy) | @zeus | user |
-| @talos | @hermes (full implementation) | — | @zeus |
-| @hephaestus | @nyx (observability debug) | @hermes (generic) | @zeus |
-| @nyx | @hermes (generic) | — | @zeus |
-| @iris | @zeus (manual override) | — | user |
-| @mnemosyne | @zeus (manual) | — | user |
-
-### Escalation Protocol
-When all fallbacks fail, report the tried agents and errors, offer a different approach/simpler scope/manual fix, and stop. Never retry the same chain automatically.
-
-### Session Reuse Check
-Check for a reusable session before dispatch and obey `session_max` in `routing.yml`.
-
----
-
-# 📦 SUBTASK DISPATCH (Lightweight Delegation)
-
-Subtask is a bounded, low-risk delegation mode that **skips** the standard artifact lifecycle. Use it for focused work that doesn't need Themis review.
-
-## When to Use Subtask vs Full Task
-
-> **REGRA DE OURO:** Quando em dúvida, use full task. Subtask é para o que você tem 100% de certeza que é seguro pular revisão.
-
-### Subtask Decision Tree (run BEFORE every delegation)
-
-```
-□ Scope: ≤2 files AND ≤10 lines changed?         [YES→continue | NO→full task]
-□ Risk: No schema change, no security impact?      [YES→continue | NO→full task]
-□ Auth: No authentication/authorization logic?      [YES→continue | NO→full task]
-□ Data: No data loss risk, no migration?            [YES→continue | NO→full task]
-□ Review: Output does NOT feed into Themis review?  [YES→continue | NO→full task]
-
-ALL YES → subtask (skip artifact + Themis)
-ANY NO  → full task (IMPL artifact + Themis review mandatory)
-```
-
-### Safety Rules
-1. **Bounded scope** — single file or read-only investigation
-2. **Low risk** — no security implications, no data loss, no breaking changes
-3. **No Themis dependency** — output doesn't feed into a phase that requires review
-
-## Subtask Return Format
-Return the required `## subtask_summary` fields defined in `## Agent Return Format`; include `memory_context` when memory was used.
-
-## Timeout Parcial (Partial Results)
-
-Only agents marked ✅ in the Timeout Behavior table above may return partial results: @apollo (partial file list, e.g. "found 7 of 12 files before timeout"), @gaia (partial literature findings) and @talos (confirm progress if a hotfix times out). Never for implementers or reviewers — they must complete or fail. When dispatching with partial-OK, set the expectation: `@apollo Search for auth files. Timeout parcial OK — return whatever you have.`
-
----
-
-# 📊 TIMEOUT TRACKING
-
-Track in-flight delegations against the Timeout Behavior table above. Log timeouts to `/memories/session/timeout-log.md` for later analysis.

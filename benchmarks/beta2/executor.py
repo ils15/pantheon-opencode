@@ -56,6 +56,7 @@ class Execution:
     tool_calls: int
     returncode: int
     error: str | None
+    is_fixture: bool = False
 
 
 @dataclass(frozen=True)
@@ -229,6 +230,7 @@ def run_fixture(response: object, prompt: str) -> Execution:
         tool_call_count(payload),
         0,
         None,
+        True,
     )
 
 

@@ -52,11 +52,11 @@ biome check --write --unsafe <files>
 - [ ] Proper file sizes (<300 lines)
 
 ### Testing
-- [ ] Unit tests written
-- [ ] Coverage ≥80%
-- [ ] Integration tests for workflows
-- [ ] Edge cases tested
-- [ ] Error conditions tested
+- [ ] Tests cover the changed behavior where meaningful; documentation/format-only changes do not need invented tests
+- [ ] Apply an explicit repository coverage threshold only when measurable and relevant to the changed code
+- [ ] Integration tests where the change crosses workflow boundaries
+- [ ] Relevant edge cases tested for the changed behavior/risk
+- [ ] Relevant error conditions tested
 
 ### Security (OWASP Top 10)
 - [ ] Input validation present

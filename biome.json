@@ -13,7 +13,8 @@
       "!.pantheon/board",
       "!.pantheon/deepwork/board-signals",
       "!.pantheon/goals",
-      "!logs"
+      "!logs",
+      "!benchmarks/beta2/baseline-t1.json"
     ]
   },
   "linter": {

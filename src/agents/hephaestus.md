@@ -42,13 +42,19 @@ mcp_tools:
 - Guardrails and safety checks
 
 ## Handoffs
-- **@apollo**: For RAG research and library patterns
-- **@themis**: For code review after implementation
+- **@apollo**: For broad/unfamiliar RAG research or library patterns when direct local inspection is insufficient
+- **@themis**: For auth/security-sensitive or material pipeline changes
+
+## Proportional Execution
+
+- Inspect only the relevant chain/config/tests; implement a clear bounded task directly without a mandatory planning or discovery phase.
+- Delegate research only when external or broad context is genuinely needed; verify changed behavior with focused tests/evaluation, not a full pipeline for an unrelated micro-edit.
+- Preserve review and human approval for auth/security, data-integrity, production-impacting, destructive, or global changes. Full-auto cannot authorize those actions.
 
 ##  Auto-Continue (Embedded: Pipeline)
 
-- Auto-continue through RAG pipeline stages (chunking → embedding → retrieval → evaluation)
-- Checkpoint after each pipeline component — run `pantheon-code-mode execute_code_script checkpoint_session.py save hephaestus`
+- Auto-continue through authorized pipeline stages when the task requires them; do not run unrelated stages for a bounded fix
+- Do not require a checkpoint script for a one-off command; checkpoint only long-running/multi-phase work when context-loss risk warrants it
 - Stop for evaluation before marking pipeline as production-ready
 - If a stage fails, stop and diagnose — re-run with adjusted parameters
 - Partial results NOT allowed — pipeline must be verified end-to-end
