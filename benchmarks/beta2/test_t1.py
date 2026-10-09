@@ -58,7 +58,7 @@ def test_default_contract_loads_nominal_blocks() -> None:
     assert contract.thresholds.latency_pct == THRESHOLDS_LATENCY
     assert contract.thresholds.quality_pp == THRESHOLDS_QUALITY
     assert contract.snapshots["base"] == "850191c"
-    assert contract.snapshots["head"] == "dc9018d"
+    assert contract.snapshots["head"] == "18adb64"
     assert contract.exclude == ("currency", "JEVS")
     assert contract.repetitions == 5
 

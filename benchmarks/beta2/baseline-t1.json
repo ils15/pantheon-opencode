@@ -95,9 +95,9 @@
       "distinct_results": 1.0,
       "latency_median": 0.0,
       "samples": 5.0,
-      "tokens_max": 2055.0,
-      "tokens_median": 2055.0,
-      "tokens_min": 2055.0,
+      "tokens_max": 2075.0,
+      "tokens_median": 2075.0,
+      "tokens_min": 2075.0,
       "tool_calls_median": 0.0
     },
     "B6:base": {
@@ -135,7 +135,7 @@
     "schema_version": "pantheon.contract.b1-b6.v1",
     "snapshots": {
       "base": "850191c",
-      "head": "dc9018d"
+      "head": "18adb64"
     },
     "source": "ADR-0012 D1 \u2014 proposta oficial Athena; lista nominal SOL ausente no reposit\u00f3rio (Apollo: originais inexistentes)",
     "thresholds": {
@@ -184,7 +184,7 @@
         "breaches": [],
         "delta_latency_pct": null,
         "delta_quality_pp": 0.0,
-        "delta_tokens_pct": 0.0,
+        "delta_tokens_pct": 0.9732,
         "verdict": "within"
       },
       "B6": {
@@ -201,6 +201,12 @@
       "quality_pp": 5.0,
       "tokens_pct": 20.0
     }
+  },
+  "provenance": {
+    "command": "python3 -m benchmarks.beta2.t1 --repo . --output-json benchmarks/beta2/baseline-t1.json --output-markdown benchmarks/beta2/baseline-t1.md",
+    "generated_date": "2026-10-09",
+    "snapshot_head_commit": "18adb64c05b42bcfe4f614dbcfa6ed127dc7678e",
+    "snapshot_head_commit_date": "2026-10-08T11:22:18-03:00"
   },
   "repetitions": 5,
   "sample_count": 60,
@@ -301,8 +307,8 @@
       "config": "head",
       "latency_ms": 0,
       "repetition": 0,
-      "result": "32c1b3572b1eca90",
-      "tokens": 2055,
+      "result": "753f03f996b51d79",
+      "tokens": 2075,
       "tool_calls": 0
     },
     {
@@ -411,8 +417,8 @@
       "config": "head",
       "latency_ms": 0,
       "repetition": 1,
-      "result": "32c1b3572b1eca90",
-      "tokens": 2055,
+      "result": "753f03f996b51d79",
+      "tokens": 2075,
       "tool_calls": 0
     },
     {
@@ -541,8 +547,8 @@
       "config": "head",
       "latency_ms": 0,
       "repetition": 2,
-      "result": "32c1b3572b1eca90",
-      "tokens": 2055,
+      "result": "753f03f996b51d79",
+      "tokens": 2075,
       "tool_calls": 0
     },
     {
@@ -651,8 +657,8 @@
       "config": "head",
       "latency_ms": 0,
       "repetition": 3,
-      "result": "32c1b3572b1eca90",
-      "tokens": 2055,
+      "result": "753f03f996b51d79",
+      "tokens": 2075,
       "tool_calls": 0
     },
     {
@@ -781,8 +787,8 @@
       "config": "head",
       "latency_ms": 0,
       "repetition": 4,
-      "result": "32c1b3572b1eca90",
-      "tokens": 2055,
+      "result": "753f03f996b51d79",
+      "tokens": 2075,
       "tool_calls": 0
     },
     {
