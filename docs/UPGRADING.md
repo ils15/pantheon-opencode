@@ -54,69 +54,23 @@ Three further V2 fixes ship alongside it:
   terminal). Pass `action="status"` to read overrides, or `agent` + `model`
   with `action="set"`.
 
-### Known limitation — V2 enforcement covers the blocked-tool list, not the V1 delegation matrix
+### V2 delegation and hook behavior
 
-This is a scope reduction relative to V1, stated here rather than left to be
-discovered in a code comment.
+V2 enforces the caller/target matrix for Pantheon-managed targets across every
+entry in `permission.evaluate`'s `resources` array. Native-only resources pass
+through unchanged to OpenCode; mixed native/Pantheon and multi-target requests
+are denied unless every Pantheon target is explicitly allowed for the
+authoritative caller. Explicit host denies remain final, and malformed or
+unknown resource data fails closed. The V2.0.25 sandbox probe observed
+`resources`, `agent`, `sessionID`, and `effect` on the permission event, with a
+mutable output argument. If that output argument is absent, a policy denial
+throws an error rather than silently relying on a status mutation that cannot
+occur.
 
-V1 passes `isRootSession` / `isChildSession` / `getSessionAgent` into
-`createEnforcementGuard`, which makes the guard enforce the **native delegation
-matrix**: who may call `task()`, and which target agents a given caller is
-allowed to reach. V2 deliberately does **not** pass them. There are two distinct
-reasons, and it is worth keeping them apart — an earlier revision of this
-document attributed both to the session hierarchy, which is only half right.
-
-1. **Missing `getSessionAgent` — wiring.** This is the half that would deny
-   **every** `task()` call in **every** session, including Zeus's own
-   delegations. V2 learns the active agent from the `execute.before` event
-   itself and keeps no session→agent map, so there is no lookup to hand the
-   guard. The guard would call `isDelegationAllowed(undefined, target)`, which
-   returns `false`, and throw `caller agent is unavailable`.
-2. **Unwired hierarchy — design.** `SessionHierarchyRegistry` gates exactly
-   two things and nothing else: the depth-2 child deny (`isChildSession`) and
-   the root-session gate (`isRootSession`). V2 seeds no session→parent map
-   anywhere, and unseeded `isChild` is `false` for every session — so depth-2
-   would never fire on a genuine child, and a hierarchy that cannot tell a child
-   from a root is not trustworthy input to either check.
-
-   **Unwired, not impossible.** The V2 `session.created` event carries
-   `properties.info: Session`, and `Session` declares `parentID?: string` — the
-   same field V1 seeds from on the same event, so seeding V2's live sessions is
-   one line. What has no V2 equivalent is V1's *second* source: the fail-open
-   `client.session.list()` startup seed covering sessions that predate plugin
-   load, which needs a `client` the V2 `PluginContext` does not expose. Whether
-   a live 2.0.22 host actually populates `info.parentID` on that event is
-   **unverified** — no measurement reads an event payload. What is proven is the
-   type carries the field and that no V2 code path reads it.
-
-To be precise about a claim that is easy to get backwards:
-`SessionHierarchyRegistry.isRoot` reports `true` for a session it has not been
-seeded with, and `true` **passes** the root gate — it does not deny. The deny
-in case 1 comes from the absent caller identity, not from the hierarchy.
-
-Omitting all three predicates skips the branch entirely (the guard only enters
-it when `isRootSession` is defined).
-
-The consequence is exactly what it says: **the V2 guard enforces the
-`DEFAULT_BLOCKED_TOOLS` list and nothing more.** The caller/target matrix is not
-replicated on V2. This is a known gap, not a covered case.
-
-What still holds on V2:
-
-- Read-only denial for `apollo`/`gaia` — `edit`, `write`, `bash`, `task`,
-  `hashline_edit` and `pantheon_model` are denied.
-- The depth-2 guarantee for those two agents, because `task` is itself in the
-  blocked-tool list, so an investigation session cannot delegate further.
-
-What does not: any caller/target restriction for a write-capable session. If you
-depend on the V1 delegation matrix, run the V1 contract.
-
-What the V2 tool hooks do **not** do: `execute.after` is a registration point
-with no V2-side behaviour (the read enhancer and context sandbox are the V1
-`pantheon-hooks.ts` / `context-sandbox.ts` path), the `permission.evaluate` hook
-is likewise empty, and the `session.prompt`/`compaction` hooks are registration
-points only — vision interception and compaction context build have no V2-side
-implementation, because both live on the V1 path.
+V2 `execute.after` runs the completed-result parity chain in this order:
+`task-result-guard` → `context-sandbox` → `read-enhancer`. The `session.prompt`
+and compaction hooks remain registration-only; vision interception and
+compaction context construction remain V1-only.
 
 The installer removes Pantheon entries from both config shapes and writes only
 the selected generation. It does not mix `src/plugin.ts` or

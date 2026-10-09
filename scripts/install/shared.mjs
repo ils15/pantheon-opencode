@@ -7,6 +7,7 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -257,17 +258,105 @@ export function copyFiles(srcDir, dstDir, dryRun, renameMap = null, clean = fals
   return { created, skipped }
 }
 
-export function writeIfChanged(filePath, content, dryRun) {
-  const existing = existsSync(filePath) ? readFileSync(filePath, 'utf8') : null
+/**
+ * `lstat` that returns `null` instead of throwing for an absent path.
+ *
+ * Deliberately `lstat`, not `stat`/`existsSync`: both of those follow the link,
+ * so a DANGLING symlink reads as absent and the atomic rename below would then
+ * silently replace the link itself. `lstat` sees the link and lets the write
+ * guard refuse it.
+ */
+function lstatOrNull(filePath) {
+  try {
+    return lstatSync(filePath)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Read a path's raw text, or `null` when it cannot be read (absent, dangling
+ * symlink target, permission error). The caller decides what "unreadable"
+ * means; this never throws.
+ */
+function readFileOrNull(filePath) {
+  try {
+    return readFileSync(filePath, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Atomically create/overwrite a text file, skipping an unchanged write.
+ *
+ * @param {string} filePath - destination path
+ * @param {string} content - full file content
+ * @param {boolean} dryRun - when true, compute the outcome without writing
+ * @param {object} [options]
+ * @param {string|null} [options.expectedContent] - the raw content the caller
+ *   read this path from, if any. When supplied, the write proceeds only if the
+ *   on-disk content STILL matches it — compared once up front AND again
+ *   immediately before the rename; otherwise it returns `'conflict'` and leaves
+ *   the file alone. This is a best-effort COMPARE-BEFORE-WRITE guard, NOT a
+ *   filesystem CAS: the final re-read and the rename are still two syscalls, so
+ *   a writer that lands between them is not prevented. What it does close is
+ *   the window the installer actually races with — a config the caller parsed
+ *   going stale during the same run — and it keeps the target and the `.bak`
+ *   consistent with the bytes that were checked.
+ * @param {(existing: string|null) => void} [options.beforeRecheck] - runs after
+ *   the initial content check and before the last-moment re-read. Injection
+ *   point so tests can simulate a concurrent writer landing in the window;
+ *   production callers omit it (undefined is a no-op).
+ * @param {(existing: string|null) => void} [options.beforeSwap] - runs after the
+ *   expected-content checks pass and immediately before the rename, so side
+ *   effects that must not fire on a conflict (e.g. the `.bak` copy) live here.
+ * @returns {'created'|'skipped'|'conflict'}
+ */
+export function writeIfChanged(filePath, content, dryRun, options = {}) {
+  const { expectedContent, beforeSwap, beforeRecheck } = options
+
+  // Refuse to write through/over a symlink. A dangling symlink is invisible to
+  // existsSync, and rename-over-link would replace the link rather than its
+  // target — both are silent redirections the installer must not perform.
+  const stat = lstatOrNull(filePath)
+  if (stat?.isSymbolicLink()) {
+    throw new Error(`Refusing to write through symlink: ${filePath}`)
+  }
+
+  const existing = stat === null ? null : readFileOrNull(filePath)
   if (existing === content) {
     return 'skipped'
   }
+  if (expectedContent !== undefined && existing !== expectedContent) {
+    // The file changed since the caller read it (or appeared/disappeared).
+    // Do not clobber the newer content; the caller decides how to react.
+    return 'conflict'
+  }
   if (!dryRun) {
+    // Seam for a concurrent writer to land between the read above and the
+    // re-read below. No production caller passes this.
+    if (typeof beforeRecheck === 'function') beforeRecheck(existing)
+
     // Atomic write: write a temp sibling and rename over the target so a
     // crash mid-write can never leave a truncated file behind (rename is
     // atomic within the same directory).
     const tmpPath = `${filePath}.tmp-${process.pid}`
     writeFileSync(tmpPath, content, 'utf8')
+
+    // Last-moment re-read. The initial compare and this rename are separate
+    // syscalls, so a concurrent writer can land in between; re-check the
+    // expected bytes immediately before the swap. On a mismatch, drop the temp
+    // and leave the target AND any existing `.bak` byte-identical.
+    if (expectedContent !== undefined) {
+      const current = readFileOrNull(filePath)
+      if (current !== expectedContent) {
+        rmSync(tmpPath, { force: true })
+        return 'conflict'
+      }
+    }
+
+    if (typeof beforeSwap === 'function') beforeSwap(existing)
     renameSync(tmpPath, filePath)
   }
   return 'created'
@@ -277,12 +366,31 @@ export function writeIfChanged(filePath, content, dryRun) {
  * beta.5: write the user's opencode.json with a same-directory backup of the
  * previous content. The installer rewrites the whole config; a `.bak` gives
  * the user a one-step recovery if a merge ever goes wrong.
+ *
+ * The backup is created INSIDE the `beforeSwap` hook, so it fires only after
+ * both expected-content checks pass (the initial compare and the last-moment
+ * re-read before the rename). A conflict observed at either point leaves the
+ * target AND any pre-existing `.bak` untouched, rather than overwriting the
+ * user's last known-good backup with a stale copy on a no-op write.
+ *
+ * @param {string} filePath
+ * @param {string} content
+ * @param {boolean} dryRun
+ * @param {object} [options] - forwarded to {@link writeIfChanged}
  */
-export function writeConfigWithBackup(filePath, content, dryRun) {
-  if (!dryRun && existsSync(filePath)) {
-    copyFileSync(filePath, `${filePath}.bak`)
-  }
-  return writeIfChanged(filePath, content, dryRun)
+export function writeConfigWithBackup(filePath, content, dryRun, options = {}) {
+  return writeIfChanged(filePath, content, dryRun, {
+    expectedContent: options.expectedContent,
+    beforeRecheck: options.beforeRecheck,
+    beforeSwap: (existing) => {
+      if (existing === null) return
+      try {
+        copyFileSync(filePath, `${filePath}.bak`)
+      } catch {
+        // Best-effort: a backup failure must not block the install.
+      }
+    },
+  })
 }
 
 /**

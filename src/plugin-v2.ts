@@ -19,8 +19,8 @@
  *   `src/plugin-v2` in `plugins`, so the V1 plugin never loads on a V2-only
  *   install and V1's identical block was inert by construction.
 
- * - A tool `execute.after` hook and a permission hook, registered as
- *   registration points with no V2-side behaviour
+ * - A tool `execute.after` hook and a permission hook, with permission
+ *   evaluation enforcing the caller/target matrix for Pantheon agents
  *
  * Every tool registered through `draft.add` MUST declare `output`, and its
  * `execute` MUST resolve to a value carrying `output`. The host enforces the
@@ -93,9 +93,17 @@ import {
   type PantheonV2Bridge,
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
+import {
+  type AuthoritativeSession,
+  evaluateV2Delegation,
+  PANTHEON_AGENTS,
+  type V2PermissionEvent,
+  v2ResourceTarget,
+} from './pantheon/v2-delegation-enforce.ts'
+import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/v2-execute-after.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.ts'
 import { V2_UNSUPPORTED_FEATURE_SEED } from './pantheon/v2-unsupported.mjs'
-import { type HookPayload, runHook } from './plugins/hook-runner.ts'
+import { type HookPayload, type HookResult, runHook } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
 
@@ -220,12 +228,15 @@ interface V2EventDomain {
 /**
  * The minimal shape of `ctx.permission`.
  *
- * Only a hook name and a handler: the plugin registers `evaluate` as a
- * registration point and deliberately runs no V2-side permission logic, so no
- * richer payload type is claimed here.
+ * The V2.0.25 live contract supplies an `evaluate` event with `resources`;
+ * runtime validation remains defensive because SDK declarations omit this
+ * domain and the host may evolve independently.
  */
 interface V2PermissionDomain {
-  hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
+  hook?: (
+    name: string,
+    handler: (event: unknown, output?: unknown) => void | Promise<void>,
+  ) => Promise<unknown>
 }
 
 /**
@@ -237,6 +248,7 @@ interface V2PermissionDomain {
  */
 interface V2SessionDomain {
   hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
+  get?: (sessionID: string) => Promise<unknown>
 }
 
 /** `PluginContext` plus the four domains 1.18.x omits. See the module header. */
@@ -761,6 +773,26 @@ const SECRET_BLOCK_MESSAGE =
   '[plugin-v2] Blocked: high-confidence secret detected in tool input — see .pantheon/logs/hooks.log'
 
 /**
+ * Message thrown when the secret scanner cannot produce a trustworthy verdict —
+ * the script is missing/unexecutable, the child timed out or was killed, the
+ * payload could not be serialized, the report was malformed, or the exit status
+ * was unexpected.
+ *
+ * This is a deliberate fail-CLOSED denial. The previous handler blocked only
+ * `code === 2` and treated every other outcome as advisory — but the runner
+ * reports a missing script, a spawn failure and a payload-serialization failure
+ * as `code: 1` too (src/plugins/hook-runner.ts), so a broken scanner read as a
+ * clean advisory and the tool ran, silently disabling the only hard secret block
+ * on the V2 surface.
+ *
+ * English and user-facing, like {@link SECRET_BLOCK_MESSAGE}. It carries no
+ * scanner output on purpose: a scan that failed mid-flight may still be holding
+ * the raw payload, and the denial must not become the leak it exists to prevent.
+ */
+const SECRET_SCAN_UNAVAILABLE_MESSAGE =
+  '[plugin-v2] Blocked: the secret scanner could not complete, so this tool call was denied (fail-closed) — see .pantheon/logs/hooks.log'
+
+/**
  * Append one masked, ISO-stamped line to .pantheon/logs/hooks.log under the
  * working directory, and return whether it landed.
  *
@@ -793,6 +825,98 @@ function appendV2HookLog(line: string): boolean {
   } catch {
     return false
   }
+}
+
+// ─── V2 Secret-Scan Verdict ─────────────────────────────────────────────
+
+/**
+ * The scanner's own report marker, written to stderr on every non-clean run
+ * (exit 1 advisory, exit 2 block). It is the discriminator between a genuine
+ * low-confidence advisory and a runner infrastructure failure, BOTH of which
+ * surface as `code === 1`: the runner's own failures (missing/unexecutable
+ * script, spawn error, payload-serialization error) resolve a structured
+ * `HookResult` with `code: 1` and no scan report, while the real scanner's
+ * advisory always carries this marker. Requiring it means a scanner that stops
+ * reporting fails toward a denial, never toward a silent allow.
+ */
+const SECRET_SCAN_MARKER = '[SECRET SCAN]'
+
+/** Sanitized failure classes — logged in place of raw scanner output. */
+type SecretScanFailureReason =
+  | 'scanner-timeout'
+  | 'scanner-signal'
+  | 'scanner-spawn-failure'
+  | 'scanner-serialization-failure'
+  | 'scanner-malformed-output'
+  | 'scanner-unexpected-exit'
+
+type SecretScanDecision =
+  | { action: 'allow' }
+  | { action: 'advisory' }
+  | { action: 'block' }
+  | { action: 'fail-closed'; reason: SecretScanFailureReason }
+
+/**
+ * The runner's own infrastructure-failure messages (see hook-runner.ts), matched
+ * at the start of stderr where the runner is the only writer. Matching a prefix
+ * rather than a substring keeps a scan report that merely happens to quote one
+ * of these phrases from flipping a valid advisory into a denial.
+ */
+const SCANNER_INFRA_FAILURES: ReadonlyArray<[string, SecretScanFailureReason]> = [
+  ['payload serialization failed:', 'scanner-serialization-failure'],
+  ['spawn failed:', 'scanner-spawn-failure'],
+  ['hook script failed to spawn:', 'scanner-spawn-failure'],
+]
+
+/**
+ * Classify one secret-scan {@link HookResult} into an enforcement decision.
+ *
+ * fail-closed by construction: `allow` and `advisory` are reachable only from a
+ * result that is unambiguously a completed scanner run. Everything else —
+ * timeout, signal, spawn/serialization failure, missing report, unknown or
+ * unexpected exit status — denies. `advisory` additionally requires the
+ * scanner's own report marker, which is what separates an exit-1 advisory from
+ * the runner's exit-1 infrastructure failure.
+ *
+ * `block` covers the high-confidence match (exit 2); the caller turns it into
+ * the user-facing block.
+ */
+function evaluateSecretScanResult(scan: HookResult): SecretScanDecision {
+  if (scan.timedOut) return { action: 'fail-closed', reason: 'scanner-timeout' }
+  if (scan.signal !== null) return { action: 'fail-closed', reason: 'scanner-signal' }
+  if (!Number.isInteger(scan.code)) {
+    return { action: 'fail-closed', reason: 'scanner-malformed-output' }
+  }
+  for (const [signature, reason] of SCANNER_INFRA_FAILURES) {
+    if (scan.stderr.startsWith(signature)) return { action: 'fail-closed', reason }
+  }
+  if (scan.code === 0) return { action: 'allow' }
+  if (scan.code === 2) return { action: 'block' }
+  if (scan.code === 1) {
+    return scan.stderr.includes(SECRET_SCAN_MARKER)
+      ? { action: 'advisory' }
+      : { action: 'fail-closed', reason: 'scanner-malformed-output' }
+  }
+  return { action: 'fail-closed', reason: 'scanner-unexpected-exit' }
+}
+
+/** Invocation of scripts/hooks/scan-secrets.sh used by the tool guard. */
+type SecretScanRunner = (payload: HookPayload) => Promise<HookResult>
+
+const defaultSecretScanRunner: SecretScanRunner = (payload) => runHook('scan-secrets.sh', payload)
+
+let secretScanRunner: SecretScanRunner = defaultSecretScanRunner
+
+/**
+ * Test seam — override (or, with `null`, restore) the V2 secret-scan runner.
+ *
+ * Exported only for tests/pantheon/plugin-v2-contract.test.ts, which injects
+ * structured {@link HookResult}s (missing scanner, timeout, malformed output)
+ * that the real script cannot be made to produce on demand. There is no
+ * production caller; the shipped handler always uses `defaultSecretScanRunner`.
+ */
+export function setV2SecretScanRunnerForTests(runner: SecretScanRunner | null): void {
+  secretScanRunner = runner ?? defaultSecretScanRunner
 }
 
 // ─── V2 Tool Hooks ──────────────────────────────────────────────────────
@@ -952,10 +1076,13 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
       // `plugins` declares only `src/plugin-v2`. V1's scan-secrets block was
       // therefore inert by construction, not by misconfiguration.
       //
-      // exit 2 → block. exit 1 (low-confidence header/KEY names) → advisory,
-      // logged only. A scanner failure (missing script, timeout) is fail-OPEN:
-      // runHook never rejects, and an infrastructure error must not deny
-      // unrelated tool calls.
+      // exit 0 → allow. exit 1 with a valid scanner report → advisory, logged
+      // only. exit 2 (high-confidence match) → deny. A scanner that does NOT
+      // produce a trustworthy verdict — missing/unexecutable script, timeout,
+      // killed child, spawn/serialization failure, malformed or unexpected
+      // output — is fail-CLOSED: this pending tool call is denied, the session
+      // is not. (runHook resolves a structured result instead of rejecting, so
+      // the exit-code-only reading below cannot lean on an exception.)
       let blockError: Error | null = null
       try {
         const payload: HookPayload = {
@@ -964,18 +1091,29 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
           agent_id: typeof agent === 'string' ? agent : '',
           session_id: input.sessionID,
         }
-        const scan = await runHook('scan-secrets.sh', payload)
-        if (scan.code === 2) {
+        const scan = await secretScanRunner(payload)
+        const decision = evaluateSecretScanResult(scan)
+        if (decision.action === 'block') {
           appendV2HookLog(SECRET_BLOCK_MESSAGE)
           appendV2HookLog(scan.stderr)
           blockError = new Error(SECRET_BLOCK_MESSAGE)
-        } else if (scan.code === 1) {
+        } else if (decision.action === 'advisory') {
           // Advisory: log only, never block.
           appendV2HookLog(scan.stderr)
+        } else if (decision.action === 'fail-closed') {
+          // Sanitized failure category only — never the scanner's raw stderr,
+          // which on a failure path is unverified and may carry the very
+          // payload the scan exists to keep out of logs.
+          appendV2HookLog(`${SECRET_SCAN_UNAVAILABLE_MESSAGE} (${decision.reason})`)
+          blockError = new Error(SECRET_SCAN_UNAVAILABLE_MESSAGE)
         }
       } catch {
-        // Never let the scanner take down the session — runHook resolves a
-        // structured result instead of rejecting, so this is belt-and-braces.
+        // The runner is contracted to resolve a structured result, so this only
+        // guards an unexpected throw (including a future change to the runner).
+        // A scanner that cannot run is fail-CLOSED: deny this call rather than
+        // let it through with no scan at all.
+        appendV2HookLog(SECRET_SCAN_UNAVAILABLE_MESSAGE)
+        blockError = new Error(SECRET_SCAN_UNAVAILABLE_MESSAGE)
       }
       if (blockError !== null) throw blockError
     })
@@ -985,15 +1123,19 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
   }
 
   try {
-    // "execute.after" — hashline read enhance + context sandbox.
+    // "execute.after" — the V1 parity chain (task-result-guard →
+    // context-sandbox → read-enhancer) rebuilt on the V2 event shape.
     //
-    // Registration point only: there is no V2-side behaviour here. The
-    // enhancer/sandbox live in the V1 path (`pantheon-hooks.ts` +
-    // `context-sandbox.ts`), a separate plugin instance that is not loaded when
-    // only `plugin-v2` is configured.
-    await toolCtx.hook('execute.after', (_event: unknown) => {
-      // Intentionally empty.
+    // This IS behaviour, not a registration point: on a V2-only install the V1
+    // `pantheon-hooks` plugin is not loaded, so this handler is the only thing
+    // that truncates oversized output and tags `read` with hashline refs.
+    // The sandbox config comes from `ctx.options.context_sandbox` (the V2 copy
+    // the installer writes — V2.0.25 drops the V1 top-level key), resolved with
+    // the same resolver V1 uses.
+    const v2ExecuteAfter = createV2ExecuteAfter({
+      sandbox: resolveV2SandboxConfig(context.options),
     })
+    await toolCtx.hook('execute.after', (event: unknown) => v2ExecuteAfter(event))
     registered = true
   } catch {
     // Tool after-hook not supported
@@ -1008,12 +1150,13 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
  * Register permission hook via V2 ctx.permission.hook.
  *
  * The V2 permission.hook API (when available) provides:
- *   ctx.permission.hook("evaluate", handler) — custom permission logic
+ *   ctx.permission.hook("evaluate", handler) — host permission evaluation
  *
  * Returns true if the hook was registered.
  */
 async function registerV2PermissionHook(context: PluginContext): Promise<boolean> {
-  const permCtx = hostDomains(context).permission
+  const domains = hostDomains(context)
+  const permCtx = domains.permission
 
   if (!permCtx?.hook) {
     markUnsupported('permission-hook')
@@ -1021,12 +1164,79 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
   }
 
   try {
-    await permCtx.hook('evaluate', (_event: unknown) => {
-      // Registration point only — no V2-side permission logic. Read-only
-      // enforcement does NOT run here: it runs in the `execute.before` handler
-      // above, which is the hook the host consults before a tool executes. Do
-      // not read this as "the V1 guards cover it": V1 is a different plugin
-      // instance and is not loaded when only `plugin-v2` is configured.
+    await permCtx.hook('evaluate', async (rawEvent: unknown, rawOutput?: unknown) => {
+      const event = rawEvent as V2PermissionEvent | null
+      const output =
+        rawOutput !== null && typeof rawOutput === 'object'
+          ? (rawOutput as { status?: unknown })
+          : undefined
+      const statusBefore = output?.status
+      const writeProof = (statusAfter: unknown): void => {
+        const proofPath = process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF
+        if (!proofPath || !event || !Array.isArray(event.resources)) return
+        try {
+          appendFileSync(
+            proofPath,
+            `permission.evaluate ${JSON.stringify({
+              resources: event.resources,
+              agent: event.agent,
+              sessionID: event.sessionID,
+              effect: event.effect,
+              eventFields: ['resources', 'agent', 'sessionID', 'effect'].filter((key) =>
+                Object.hasOwn(event, key),
+              ),
+              outputPresent: output !== undefined,
+              statusBefore: statusBefore ?? null,
+              statusAfter: statusAfter ?? null,
+            })}\n`,
+          )
+        } catch {
+          // Instrumentation is best-effort and must not affect permission flow.
+        }
+      }
+      const deny = (): void => {
+        if (!output) {
+          writeProof(undefined)
+          throw new Error('permission output is unavailable; denying V2 permission evaluation')
+        }
+        output.status = 'deny'
+        writeProof(output.status)
+      }
+
+      if (output?.status === 'deny') {
+        writeProof(output.status)
+        return // explicit host deny is final
+      }
+      if (event == null || !Array.isArray(event.resources)) {
+        deny()
+        return
+      }
+      const targets = event.resources.map(v2ResourceTarget)
+      if (targets.some((target) => target === undefined)) {
+        deny()
+        return
+      }
+      const hasPantheonTarget = targets.some((target) => PANTHEON_AGENTS.has(target ?? ''))
+      let session: AuthoritativeSession | undefined
+      if (hasPantheonTarget) {
+        try {
+          const sessionID = typeof event.sessionID === 'string' ? event.sessionID : ''
+          if (!sessionID || !domains.session?.get) throw new Error('session lookup unavailable')
+          const retrieved = await domains.session.get(sessionID)
+          if (retrieved === null || typeof retrieved !== 'object')
+            throw new Error('invalid session')
+          session = retrieved as AuthoritativeSession
+        } catch {
+          deny()
+          return
+        }
+      }
+
+      // Native-only resources remain under host policy. If a Pantheon target
+      // appears anywhere, the shared policy evaluates the complete resource set.
+      const decision = evaluateV2Delegation(event, session, output?.status)
+      if (decision === 'deny') deny()
+      else writeProof(output?.status)
     })
     return true
   } catch {

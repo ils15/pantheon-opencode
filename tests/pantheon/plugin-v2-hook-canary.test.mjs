@@ -78,6 +78,9 @@ const BINARY_AVAILABLE = (() => {
     return false
   }
 })()
+const HOST_VERSION = BINARY_AVAILABLE
+  ? spawnSync(BIN, ['--version'], { encoding: 'utf8' }).stdout.trim()
+  : ''
 
 /** @type {import('node:child_process').ChildProcess | null} */
 let server = null
@@ -92,6 +95,16 @@ const skipped = BINARY_AVAILABLE ? false : `opencode binary not found on PATH ($
 
 function fixtureOnlySkip(reason) {
   return skipped || (IS_REAL ? reason : false)
+}
+
+/**
+ * The inverse of {@link fixtureOnlySkip}: run a test ONLY in real-plugin mode.
+ * The fixture plugin records hook dispatch as proof; it performs no result
+ * augmentation, so a user-visible change can only be observed with the real
+ * `src/plugin-v2.ts` loaded by the host.
+ */
+function realOnlySkip(reason) {
+  return skipped || (IS_REAL ? false : reason)
 }
 
 function freePort() {
@@ -177,7 +190,10 @@ before(async () => {
       cwd: projectDir,
       env: {
         ...process.env,
+        // Keep all live canary state out of the developer's shared DB.
+        OPENCODE_DB: join(projectDir, 'opencode.db'),
         PANTHEON_HOOK_CANARY_PROOF: proofFile,
+        PANTHEON_HOOK_CANARY_PERMISSION_PROOF: proofFile,
         PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH: blockedReadPath,
         // Only the real plugin reads this; it opts the shipped handler into
         // writing an observable lifetime proof to the same file.
@@ -378,6 +394,27 @@ function findCompletedReadCall(messages, expectedPath, nonce) {
   return target
 }
 
+/**
+ * Assert the USER-VISIBLE read result carries a hashline tag on the nonce line.
+ *
+ * This is the REAL execute.after parity contract. A recorded proof event only
+ * proves a callback fired; only the real plugin-v2 rewrites the read output, so
+ * the tag must appear in the session's completed tool result itself.
+ */
+function assertHashlineTaggedRead(output, nonce) {
+  const text = typeof output === 'string' ? output : String(output)
+  const match = text.split('\n').find((line) => line.includes(nonce))
+  assert.ok(
+    match !== undefined,
+    `completed read result did not contain the nonce: ${text.slice(0, 200)}`,
+  )
+  assert.match(
+    match,
+    /^\s*[0-9]+#[A-Za-z0-9]+\|/,
+    `the nonce line is NOT hashline-tagged — user-visible parity is missing: ${match}`,
+  )
+}
+
 function appendedProofRecords(beforeProof, afterProof) {
   assert.ok(
     afterProof.startsWith(beforeProof),
@@ -441,6 +478,53 @@ function assertReadPermissionObserved(beforeProof, afterProof, expectedSessionID
   assert.ok(
     readPermissionEvent,
     'permission.evaluate did not record action=read in this prompt window; this is callback observation only, not a security-enforcement assertion',
+  )
+}
+
+function assertLiveDelegationDeny(beforeProof, afterProof, toolCall) {
+  const records = appendedProofRecords(beforeProof, afterProof).filter(
+    (record) => record.label === 'permission.evaluate',
+  )
+  const targetRecord = records.find(
+    (record) =>
+      Array.isArray(record.resources) &&
+      record.resources.some(
+        (resource) =>
+          resource === 'demeter' ||
+          (resource && typeof resource === 'object' && resource.target === 'demeter'),
+      ),
+  )
+  assert.ok(
+    targetRecord,
+    'OpenCode V2.0.25 did not provide permission.evaluate resources[] containing target demeter',
+  )
+  for (const field of ['resources', 'agent', 'sessionID', 'effect']) {
+    assert.ok(
+      targetRecord.eventFields?.includes(field),
+      `OpenCode V2.0.25 permission.evaluate event did not expose ${field}`,
+    )
+  }
+  assert.equal(targetRecord.outputPresent, true, 'permission hook output argument was absent')
+  assert.equal(
+    targetRecord.statusBefore,
+    'ask',
+    'permission hook did not receive an undecided output',
+  )
+  assert.equal(targetRecord.statusAfter, 'deny', 'Pantheon hook did not force a deny for demeter')
+  assert.notEqual(
+    targetRecord.statusBefore,
+    targetRecord.statusAfter,
+    'canary proof must show a real output mutation, not infer deny from policy',
+  )
+  assert.equal(
+    toolCall?.state?.status,
+    'error',
+    'host should reject the delegated task before its body can return the canary marker',
+  )
+  assert.doesNotMatch(
+    JSON.stringify(toolCall?.state?.output ?? toolCall?.state?.result ?? ''),
+    /CANARY-DELEGATION-BODY-RAN/,
+    'denied delegated body unexpectedly returned its marker',
   )
 }
 
@@ -581,6 +665,26 @@ test('read-result assertion rejects a read call that did not complete', () => {
   assert.throws(() => findCompletedReadCall(messages, filePath, nonce), /no completed read result/i)
 })
 
+test('hashline read assertion accepts a tagged nonce line', () => {
+  assert.doesNotThrow(() =>
+    assertHashlineTaggedRead('1#AB12|CANARY-READ-tagged\n', 'CANARY-READ-tagged'),
+  )
+})
+
+test('hashline read assertion rejects an untagged nonce line', () => {
+  assert.throws(
+    () => assertHashlineTaggedRead('1: CANARY-READ-untagged\n', 'CANARY-READ-untagged'),
+    /NOT hashline-tagged/,
+  )
+})
+
+test('hashline read assertion rejects a result that lacks the nonce', () => {
+  assert.throws(
+    () => assertHashlineTaggedRead('1#AB12|something else\n', 'CANARY-READ-missing'),
+    /did not contain the nonce/,
+  )
+})
+
 test('permission.evaluate assertion requires a new read action for this session', () => {
   const beforeProof = `permission.hook:evaluate ${JSON.stringify({ action: 'read', sessionID: 'ses-canary' })}\n`
   const unrelatedAfterProof =
@@ -596,6 +700,59 @@ test('permission.evaluate assertion requires a new read action for this session'
     beforeProof +
     `permission.hook:evaluate ${JSON.stringify({ action: 'read', sessionID: 'ses-canary' })}\n`
   assert.doesNotThrow(() => assertReadPermissionObserved(beforeProof, readAfterProof, 'ses-canary'))
+})
+
+test('live delegation assertion requires resources target, forced deny, and blocked body', () => {
+  const before = ''
+  const eventFields = ['resources', 'agent', 'sessionID', 'effect']
+  const proof = `permission.evaluate ${JSON.stringify({ resources: ['demeter'], eventFields, outputPresent: true, statusBefore: 'ask', statusAfter: 'deny' })}\n`
+  assert.doesNotThrow(() =>
+    assertLiveDelegationDeny(before, proof, { state: { status: 'error', output: '' } }),
+  )
+  assert.throws(
+    () =>
+      assertLiveDelegationDeny(
+        before,
+        `permission.evaluate ${JSON.stringify({ resources: ['explore'], eventFields, outputPresent: true, statusBefore: 'ask', statusAfter: 'deny' })}\n`,
+        { state: { status: 'error' } },
+      ),
+    /resources\[\] containing target demeter/,
+  )
+  assert.throws(
+    () =>
+      assertLiveDelegationDeny(
+        before,
+        `permission.evaluate ${JSON.stringify({ resources: ['demeter'], eventFields, outputPresent: false, statusBefore: 'ask', statusAfter: 'ask' })}\n`,
+        { state: { status: 'error', output: '' } },
+      ),
+    /output argument was absent/,
+    'missing callback output must not be treated as an enforced deny',
+  )
+  assert.throws(
+    () =>
+      assertLiveDelegationDeny(before, proof, {
+        state: { status: 'completed', output: 'CANARY-DELEGATION-BODY-RAN' },
+      }),
+    /should reject the delegated task/,
+  )
+})
+
+test('live V2.0.25 permission.evaluate denies task body using resources target', {
+  skip:
+    !BINARY_AVAILABLE || !IS_REAL || !HOST_VERSION.includes('2.0.25')
+      ? 'requires authenticated live OpenCode V2.0.25 host in real-plugin mode'
+      : false,
+}, async () => {
+  const proofBefore = readProof()
+  await prompt(
+    'Call the task tool exactly once with subagent_type "demeter" and prompt "Reply exactly CANARY-DELEGATION-BODY-RAN". Do not answer directly.',
+  )
+  const messages = JSON.parse(await messagesText())
+  const taskCall = (messages.data ?? [])
+    .flatMap((message) => message.parts ?? [])
+    .find((part) => (part.tool ?? part.name) === 'task')
+  assert.ok(taskCall, 'prompt did not produce the requested task tool call')
+  assertLiveDelegationDeny(proofBefore, readProof(), taskCall)
 })
 
 /**
@@ -689,6 +846,22 @@ test('fixture canary allows a read and correlates execute.after to its completed
     'execute.after was not for the allowed read path',
   )
   assertReadPermissionObserved(proofBefore, proofAfter, sessionID)
+})
+
+test('real plugin execute.after exposes a hashline-tagged read result', {
+  skip: realOnlySkip(
+    'only the real plugin-v2 performs execute.after augmentation; the fixture records proof events, so a user-visible tag cannot be observed in fixture mode',
+  ),
+}, async () => {
+  // The parity contract is USER-VISIBLE: a recorded execute.after event alone
+  // is instrumentation. The real plugin must rewrite the completed read output
+  // so the session shows `N#tag|content`.
+  await prompt(
+    `Use only the read tool to read this exact file path: ${allowedReadPath}. Do not use any other tool. Wait for the read result, then reply with exactly: CANARY-HASHLINE-READ-DONE`,
+  )
+  const messages = JSON.parse(await messagesText())
+  const readCall = findCompletedReadCall(messages, allowedReadPath, allowedReadNonce)
+  assertHashlineTaggedRead(completedToolOutput(readCall.state), allowedReadNonce)
 })
 
 test('session.hook("compaction") fires on compaction', { skip: skipped }, async () => {

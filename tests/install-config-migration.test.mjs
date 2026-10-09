@@ -12,8 +12,10 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { pathToFileURL } from 'node:url'
 import {
+  CONTEXT_SANDBOX_LIMIT_FIELDS,
   MANAGED_AGENT_FIELDS,
   managedAgentFieldDrift,
+  mergeContextSandboxBlocks,
   migrateV1toV2,
   migrateV2toV1,
 } from '../scripts/install/config-migration.mjs'
@@ -674,6 +676,120 @@ describe('config-migration', () => {
       assert.equal(v2.agents.talos.permissions.length, 8)
       // MCP disabled
       assert.equal(v2.mcp.bifrost.enabled, true)
+    })
+  })
+
+  describe('mergeContextSandboxBlocks — V1 top-level → V2 plugin options', () => {
+    it('copies the legacy block verbatim when there is no explicit V2 value', () => {
+      const legacy = { enabled: false, limits: { read: { maxLines: 12, keepHead: 4 } } }
+      assert.deepEqual(mergeContextSandboxBlocks(undefined, legacy), legacy)
+    })
+
+    it('lets an explicit V2 leaf win over the legacy leaf', () => {
+      const merged = mergeContextSandboxBlocks(
+        { limits: { read: { maxLines: 10 } } },
+        { limits: { read: { maxLines: 5, keepHead: 3 } } },
+      )
+      assert.deepEqual(merged, { limits: { read: { maxLines: 10, keepHead: 3 } } })
+    })
+
+    it('lets an explicit V2 enabled win over the legacy enabled', () => {
+      assert.equal(mergeContextSandboxBlocks({ enabled: true }, { enabled: false }).enabled, true)
+      assert.equal(mergeContextSandboxBlocks({ enabled: false }, { enabled: true }).enabled, false)
+    })
+
+    it('preserves explicit false and numeric 0 (not treated as unset)', () => {
+      const merged = mergeContextSandboxBlocks(
+        { enabled: false, limits: { read: { keepHead: 0 } } },
+        { enabled: true, limits: { read: { keepHead: 9, keepTail: 2 } } },
+      )
+      assert.equal(merged.enabled, false)
+      assert.equal(merged.limits.read.keepHead, 0)
+      assert.equal(merged.limits.read.keepTail, 2)
+    })
+
+    it('fills every known leaf group from the legacy block', () => {
+      const merged = mergeContextSandboxBlocks(undefined, {
+        limits: {
+          read: { maxLines: 1, keepHead: 2, keepTail: 3 },
+          grep: { maxResults: 4, keepTop: 5 },
+          glob: { maxFiles: 6, keepTop: 7 },
+          webfetch: { maxChars: 8, keepHead: 9 },
+        },
+      })
+      assert.deepEqual(merged.limits, {
+        read: { maxLines: 1, keepHead: 2, keepTail: 3 },
+        grep: { maxResults: 4, keepTop: 5 },
+        glob: { maxFiles: 6, keepTop: 7 },
+        webfetch: { maxChars: 8, keepHead: 9 },
+      })
+    })
+
+    it('returns an empty object for an empty legacy block', () => {
+      assert.deepEqual(mergeContextSandboxBlocks(undefined, {}), {})
+    })
+
+    it('is idempotent — merging the result again changes nothing', () => {
+      const legacy = { enabled: false, limits: { read: { maxLines: 3 } } }
+      const once = mergeContextSandboxBlocks(undefined, legacy)
+      const twice = mergeContextSandboxBlocks(once, legacy)
+      assert.deepEqual(twice, once)
+    })
+
+    it('rejects a null legacy block', () => {
+      assert.throws(() => mergeContextSandboxBlocks(undefined, null), /must be an object/)
+    })
+
+    it('rejects a non-object legacy block', () => {
+      assert.throws(() => mergeContextSandboxBlocks(undefined, 'off'), /must be an object/)
+      assert.throws(() => mergeContextSandboxBlocks(undefined, [1, 2]), /must be an object/)
+    })
+
+    it('rejects a non-boolean enabled', () => {
+      assert.throws(() => mergeContextSandboxBlocks(undefined, { enabled: 'yes' }), /boolean/)
+    })
+
+    it('rejects a null limits object', () => {
+      assert.throws(() => mergeContextSandboxBlocks(undefined, { limits: null }), /limits must be/)
+    })
+
+    it('rejects a null known leaf group', () => {
+      assert.throws(
+        () => mergeContextSandboxBlocks(undefined, { limits: { read: null } }),
+        /limits\.read must be an object/,
+      )
+    })
+
+    it('rejects a non-numeric or negative leaf', () => {
+      assert.throws(
+        () => mergeContextSandboxBlocks(undefined, { limits: { read: { maxLines: 'big' } } }),
+        /non-negative number/,
+      )
+      assert.throws(
+        () => mergeContextSandboxBlocks(undefined, { limits: { grep: { keepTop: -1 } } }),
+        /non-negative number/,
+      )
+      assert.throws(
+        () => mergeContextSandboxBlocks(undefined, { limits: { read: { keepTail: Number.NaN } } }),
+        /non-negative number/,
+      )
+    })
+
+    it('ignores unknown keys rather than rejecting them', () => {
+      const merged = mergeContextSandboxBlocks(undefined, {
+        custom: true,
+        limits: { read: { maxLines: 2, customLeaf: 99 } },
+      })
+      assert.deepEqual(merged, { limits: { read: { maxLines: 2 } } })
+    })
+
+    it('exposes the field map used for validation', () => {
+      assert.deepEqual(Object.keys(CONTEXT_SANDBOX_LIMIT_FIELDS), [
+        'read',
+        'grep',
+        'glob',
+        'webfetch',
+      ])
     })
   })
 })
