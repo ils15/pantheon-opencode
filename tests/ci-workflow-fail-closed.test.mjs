@@ -246,8 +246,8 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
         /unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE/g,
       ) ?? []
     ).length,
-    2,
-    'both environments must clear inherited OPENCODE_CONFIG contamination',
+    3,
+    'the main runner, generated runner, and launcher must clear inherited OPENCODE_CONFIG contamination',
   )
   assert.doesNotMatch(
     harness,

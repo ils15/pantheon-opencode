@@ -38,11 +38,17 @@
 #                            install spec only — it is not a dependency of this
 #                            package, and no code imports it.
 #   PANTHEON_REPO            Repository the sandbox is built from (default: the
-#                            checkout this script lives in). Only read by the
-#                            GENERATED run-test.sh, which cannot derive it from
-#                            its own location and reads the .repo-dir file this
-#                            script generates beside it. --reset refuses a
-#                            sandbox root that overlaps either protected repo.
+#                            checkout this script lives in). Must be an existing
+#                            Pantheon checkout; used consistently by prepare,
+#                            generated run-test.sh and --reset guards.
+#   PANTHEON_V2_PORT         Dedicated loopback port (default: 49376). The
+#                            harness fails if it is invalid or already bound;
+#                            it never stops or reuses an existing service.
+#   PANTHEON_V2_HOST         IPv4 loopback IP for the V2 service (default:
+#                            127.0.0.1); non-loopback addresses are rejected.
+#   PANTHEON_V2_MCP_LIST_TIMEOUT
+#                            Per-call `opencode mcp list` timeout in seconds
+#                            (default: 15).
 #   PANTHEON_SANDBOX_MODEL   Model used by init/prompts
 #                            (default: opencode-go/mimo-v2.5)
 #   PANTHEON_PROMPT_TIMEOUT  Per-prompt timeout in seconds (default: 300)
@@ -51,13 +57,14 @@
 #             2 = usage error, 3 = sandbox not prepared.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # Derived from this script's own location so the sandbox is always built from
 # the checkout that CONTAINS this harness. It must never be inferred from a
 # sibling directory: a sibling may be a different checkout (or a different
 # branch) with unrelated uncommitted work, and --prepare runs `npm pack` inside
 # it, writing a tarball into that tree.
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+REPO_DIR="$SCRIPT_REPO_DIR"
 
 SANDBOX_ROOT="${PANTHEON_SANDBOX_ROOT:-$HOME/pantheon-sandbox}"
 SANDBOX_HOME="$SANDBOX_ROOT/home"
@@ -108,7 +115,59 @@ log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+resolve_harness_repo() {
+  local requested_repo="${PANTHEON_REPO:-$SCRIPT_REPO_DIR}"
+  [ -n "$requested_repo" ] \
+    || die "PANTHEON_REPO must not be empty"
+  case "$requested_repo" in
+    /*) ;;
+    *) die "PANTHEON_REPO must be an absolute path (got: $requested_repo)" ;;
+  esac
+  [ -d "$requested_repo" ] \
+    || die "PANTHEON_REPO path does not exist or is not a directory: $requested_repo"
+  REPO_DIR="$(cd -P -- "$requested_repo" 2>/dev/null && pwd -P)" \
+    || die "cannot resolve PANTHEON_REPO path: $requested_repo"
+  [ -f "$REPO_DIR/package.json" ] \
+    || die "PANTHEON_REPO is not a Pantheon package checkout (package.json missing): $REPO_DIR"
+  node -e 'if (require(process.argv[1]).name !== "pantheon-opencode") process.exit(1)' \
+    "$REPO_DIR/package.json" \
+    || die "PANTHEON_REPO package name must be pantheon-opencode: $REPO_DIR"
+}
+
 project_dir() { printf '%s/project-%s' "$SANDBOX_ROOT" "$TARGET_VERSION"; }
+
+validate_v2_port() {
+  local port_number
+  [[ "$V2_PORT" =~ ^[0-9]{1,5}$ ]] \
+    || die "PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')"
+  port_number=$((10#$V2_PORT))
+  [ "$port_number" -ge 1 ] && [ "$port_number" -le 65535 ] \
+    || die "PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')"
+  V2_PORT="$port_number"
+}
+
+assert_v2_port_available() {
+  validate_v2_port
+  if ! python3 - "$V2_LOOPBACK_HOST" "$V2_PORT" <<'PY'
+import ipaddress
+import socket
+import sys
+
+host, raw_port = sys.argv[1], sys.argv[2]
+try:
+    address = ipaddress.ip_address(host)
+    if not address.is_loopback or address.version != 4:
+        raise ValueError("host must be an IPv4 loopback IP address")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, int(raw_port)))
+except (OSError, ValueError) as exc:
+    print(f"cannot bind dedicated V2 port {host}:{raw_port}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  then
+    die "dedicated V2 port $V2_PORT is already in use or unavailable; refusing to reuse or stop an unrelated service"
+  fi
+}
 
 # Resolve a binary STRICTLY inside the sandbox npm prefix — never fall back to
 # the dev PATH, otherwise a non-prepared sandbox would silently test the host
@@ -129,6 +188,7 @@ sandbox_bin() { # echoes the V2 binary path; rc 1 if missing
 # ── Sandbox environment isolation ─────────────────────────────────────────────
 
 sandbox_env() {
+  validate_v2_port
   export HOME="$SANDBOX_HOME"
   export PATH="$NPM_PREFIX/bin:$HOME/.config/opencode/.venv/bin:$PATH"
   export npm_config_prefix="$NPM_PREFIX"
@@ -330,6 +390,7 @@ start_v2_service() { # binary project
   if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
     return 0
   fi
+  validate_v2_port
 
   # Never attach to an unrelated service on the dedicated port. A successful
   # health probe before our process starts is an environmental collision, not
@@ -338,6 +399,7 @@ start_v2_service() { # binary project
     "http://$V2_LOOPBACK_HOST:${V2_PORT}/global/health" >/dev/null 2>&1; then
     die "dedicated V2 port ${V2_PORT} is already in use; refusing to reuse an unrelated service"
   fi
+  assert_v2_port_available
 
   rm -f "$V2_SERVER_LOG" "$V2_SERVICE_STATE" "$HOME/.local/share/opencode/log/opencode.log"
   (cd "$project" && "$bin" serve --hostname "$V2_LOOPBACK_HOST" --port "$V2_PORT" --service) \
@@ -372,15 +434,30 @@ trap stop_v2_service EXIT
 
 # ── Gate (b): sandbox run-test.sh with pantheon://agents content validation ──
 
+# Node's compile cache is disposable, but tmp/ can also contain runtime state
+# and human handoffs. Expire only hash-named cache files owned by this user after
+# 30 days; never recurse through links or prune any other tmp/ entry.
+cleanup_sandbox_tmp() {
+  local cache_dir="$SANDBOX_ROOT/tmp/node-compile-cache" cache_file cache_name owner
+  [ -d "$SANDBOX_ROOT/tmp" ] && [ ! -L "$SANDBOX_ROOT/tmp" ] || return 0
+  [ -d "$cache_dir" ] && [ ! -L "$cache_dir" ] || return 0
+  owner="$(id -un)" || return 0
+  while IFS= read -r -d '' cache_file; do
+    cache_name="${cache_file##*/}"
+    if [[ "$cache_name" =~ ^[[:xdigit:]]{8}$ ]]; then
+      rm -f -- "$cache_file"
+    fi
+  done < <(find "$cache_dir" -xdev -type f -user "$owner" -mtime +30 -print0)
+}
+
 write_run_test_sh() {
-  # Quoted heredoc: the body is emitted verbatim, so nothing inside is expanded
-  # at generation time. REPO_DIR is the one value the body needs, and it is
-  # handed over as its own generated file instead of a placeholder baked into
-  # the shell source: interpolating it meant escaping for TWO languages (sed
-  # replacement text AND the double-quoted shell context it lands in), and only
-  # the first set was escaped — a path containing `$`, a backtick, a backslash
-  # or a quote was silently rewritten or executed by the generated script.
-  printf '%s\n' "$REPO_DIR" > "$SANDBOX_ROOT/.repo-dir"
+  # Keep the path in a regular data file instead of shell source. Write it
+  # atomically so an interrupted prepare cannot leave a truncated .repo-dir.
+  local repo_file_tmp
+  repo_file_tmp="$(mktemp "$SANDBOX_ROOT/.repo-dir.XXXXXX")"
+  printf '%s\n' "$REPO_DIR" > "$repo_file_tmp"
+  chmod 600 "$repo_file_tmp"
+  mv -f -- "$repo_file_tmp" "$SANDBOX_ROOT/.repo-dir"
   cat > "$SANDBOX_ROOT/run-test.sh" <<'RUNTEST'
 #!/usr/bin/env bash
 # Generated by pantheon-opencode scripts/test-opencode-v2-sandbox.sh --prepare
@@ -388,25 +465,11 @@ write_run_test_sh() {
 # 0 errors, AND the CONTENT of pantheon://agents (zeus/hermes present).
 set -euo pipefail
 
-SANDBOX_DIR="$(cd "$(dirname "$0")" && pwd)"
+SANDBOX_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SANDBOX_HOME="$SANDBOX_DIR/home"
 NPM_PREFIX="$SANDBOX_HOME/.npm-global"
 PANTHEON_GLOBAL="$SANDBOX_HOME/.config/opencode"
 SANDBOX_VENV="$PANTHEON_GLOBAL/.venv"
-# The checkout this harness ran from, written by the generator into the
-# .repo-dir file next to this script. It used to be a placeholder baked into
-# this line and substituted with sed afterwards, but the sandbox lives outside
-# any repo so the value cannot be derived from this file's own location either.
-# Reading a file the generator wrote keeps the path out of the shell source, so
-# no escaping can be wrong. PANTHEON_REPO may still override it; the generator's
-# --reset guard refuses to run when that points inside a repo, so an override
-# can never turn this into a repo-wiping target.
-REPO_DIR="${PANTHEON_REPO:-$(cat "$SANDBOX_DIR/.repo-dir")}"
-
-echo "=== Pantheon Sandbox Test (OpenCode V2) ==="
-echo "Sandbox: $SANDBOX_DIR"
-echo "Repo:    $REPO_DIR"
-
 export HOME="$SANDBOX_HOME"
 export PATH="$NPM_PREFIX/bin:$SANDBOX_VENV/bin:$PATH"
 export npm_config_prefix="$NPM_PREFIX"
@@ -418,9 +481,90 @@ V2_DB="${PANTHEON_V2_DB:-$SANDBOX_DIR/opencode-v2.db}"
 V2_PORT="${PANTHEON_V2_PORT:-49376}"
 V2_LOOPBACK_HOST="${PANTHEON_V2_HOST:-127.0.0.1}"
 V2_HANDSHAKE_TIMEOUT="${PANTHEON_V2_HANDSHAKE_TIMEOUT:-60}"
+V2_MCP_LIST_TIMEOUT="${PANTHEON_V2_MCP_LIST_TIMEOUT:-15}"
 V2_SERVER_LOG="$SANDBOX_DIR/v2-server.log"
 V2_SERVICE_STATE="$SANDBOX_HOME/.local/state/opencode/service.json"
 V2_SERVER_PID=""
+
+resolve_sandbox_repo() {
+  local requested_repo resolved_repo repo_file
+  if [ -n "${PANTHEON_REPO:-}" ]; then
+    requested_repo="$PANTHEON_REPO"
+  else
+    repo_file="$SANDBOX_DIR/.repo-dir"
+    [ -f "$repo_file" ] && [ ! -L "$repo_file" ] \
+      || { printf 'ERROR: sandbox .repo-dir is missing or not a regular file: %s\n' "$repo_file" >&2; return 1; }
+    IFS= read -r requested_repo < "$repo_file" \
+      || { printf 'ERROR: sandbox .repo-dir is empty or unreadable: %s\n' "$repo_file" >&2; return 1; }
+  fi
+  [ -n "$requested_repo" ] \
+    || { printf 'ERROR: repository path is empty (PANTHEON_REPO/.repo-dir)\n' >&2; return 1; }
+  case "$requested_repo" in
+    /*) ;;
+    *) printf 'ERROR: repository path must be absolute: %s\n' "$requested_repo" >&2; return 1 ;;
+  esac
+  [ -d "$requested_repo" ] \
+    || { printf 'ERROR: repository path does not exist or is not a directory: %s\n' "$requested_repo" >&2; return 1; }
+  resolved_repo="$(cd -P -- "$requested_repo" 2>/dev/null && pwd -P)" \
+    || { printf 'ERROR: cannot resolve repository path: %s\n' "$requested_repo" >&2; return 1; }
+  [ -f "$resolved_repo/package.json" ] \
+    || { printf 'ERROR: repository package.json is missing: %s\n' "$resolved_repo" >&2; return 1; }
+  node -e 'if (require(process.argv[1]).name !== "pantheon-opencode") process.exit(1)' \
+    "$resolved_repo/package.json" \
+    || { printf 'ERROR: repository package name must be pantheon-opencode: %s\n' "$resolved_repo" >&2; return 1; }
+  printf '%s\n' "$resolved_repo"
+}
+
+path_is_same_or_descendant() {
+  local candidate="$1" parent="$2"
+  [ "$candidate" = "$parent" ] && return 0
+  [ "$parent" = "/" ] && [[ "$candidate" = /* ]] && return 0
+  case "$candidate" in "$parent"/*) return 0 ;; esac
+  return 1
+}
+
+validate_v2_port() {
+  local port_number
+  [[ "$V2_PORT" =~ ^[0-9]{1,5}$ ]] \
+    || { printf "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '%s')\n" "$V2_PORT" >&2; return 1; }
+  port_number=$((10#$V2_PORT))
+  [ "$port_number" -ge 1 ] && [ "$port_number" -le 65535 ] \
+    || { printf "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '%s')\n" "$V2_PORT" >&2; return 1; }
+  V2_PORT="$port_number"
+}
+
+assert_v2_port_available() {
+  validate_v2_port || return 1
+  python3 - "$V2_LOOPBACK_HOST" "$V2_PORT" <<'PY'
+import ipaddress
+import socket
+import sys
+
+host, raw_port = sys.argv[1], sys.argv[2]
+try:
+    address = ipaddress.ip_address(host)
+    if not address.is_loopback or address.version != 4:
+        raise ValueError("host must be an IPv4 loopback IP address")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, int(raw_port)))
+except (OSError, ValueError) as exc:
+    print(f"ERROR: dedicated V2 port {host}:{raw_port} is already in use or unavailable; refusing to reuse or stop an unrelated service: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+REPO_DIR="$(resolve_sandbox_repo)" || exit 1
+if path_is_same_or_descendant "$SANDBOX_DIR" "$REPO_DIR" \
+  || path_is_same_or_descendant "$REPO_DIR" "$SANDBOX_DIR"; then
+  printf 'ERROR: sandbox path overlaps the selected repository; refusing to package: sandbox=%s repo=%s\n' \
+    "$SANDBOX_DIR" "$REPO_DIR" >&2
+  exit 1
+fi
+validate_v2_port || exit 1
+echo "=== Pantheon Sandbox Test (OpenCode V2) ==="
+echo "Sandbox: $SANDBOX_DIR"
+echo "Repo:    $REPO_DIR"
+
 export OPENCODE_CONFIG_DIR="$(dirname "$V2_CONFIG")"
 export OPENCODE_DB="$V2_DB"
 export PANTHEON_V2_PORT="$V2_PORT"
@@ -558,11 +702,13 @@ start_v2_service() {
   if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
     return 0
   fi
+  validate_v2_port || return 1
   if curl --fail --silent --show-error --max-time 1 \
     "http://$V2_LOOPBACK_HOST:${V2_PORT}/global/health" >/dev/null 2>&1; then
     echo "ERROR: dedicated V2 port $V2_PORT is already in use" >&2
     return 1
   fi
+  assert_v2_port_available || return 1
   rm -f "$V2_SERVER_LOG" "$V2_SERVICE_STATE" "$HOME/.local/share/opencode/log/opencode.log"
   (cd "$project" && "$bin" serve --hostname "$V2_LOOPBACK_HOST" --port "$V2_PORT" --service) \
     >"$V2_SERVER_LOG" 2>&1 &
@@ -873,6 +1019,99 @@ RUNTEST
   chmod +x "$SANDBOX_ROOT/run-test.sh"
 }
 
+write_sandbox_entrypoints() {
+  cat > "$SANDBOX_ROOT/start-pantheon.sh" <<'START'
+#!/usr/bin/env bash
+set -euo pipefail
+
+SANDBOX_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+SANDBOX_HOME="$SANDBOX_DIR/home"
+NPM_PREFIX="$SANDBOX_HOME/.npm-global"
+V2_BIN="$NPM_PREFIX/bin/opencode2"
+PROJECT_DIR="$SANDBOX_DIR/project-v2"
+V2_HOST="${PANTHEON_V2_HOST:-127.0.0.1}"
+V2_PORT="${PANTHEON_V2_PORT:-49376}"
+if [[ ! "$V2_PORT" =~ ^[0-9]{1,5}$ ]]; then
+  echo "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')" >&2
+  exit 1
+fi
+V2_PORT=$((10#$V2_PORT))
+if [ "$V2_PORT" -lt 1 ] || [ "$V2_PORT" -gt 65535 ]; then
+  echo "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')" >&2
+  exit 1
+fi
+if ! python3 - "$V2_HOST" "$V2_PORT" <<'PY'
+import ipaddress
+import socket
+import sys
+
+host, raw_port = sys.argv[1], sys.argv[2]
+try:
+    address = ipaddress.ip_address(host)
+    if not address.is_loopback or address.version != 4:
+        raise ValueError("host must be an IPv4 loopback IP address")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, int(raw_port)))
+except (OSError, ValueError) as exc:
+    print(f"ERROR: dedicated V2 port {host}:{raw_port} is already in use or unavailable; no service was stopped: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+then
+  exit 1
+fi
+[ -x "$V2_BIN" ] || { echo "ERROR: V2 binary is missing: $V2_BIN" >&2; exit 3; }
+[ -d "$PROJECT_DIR" ] || { echo "ERROR: V2 project is missing: $PROJECT_DIR (run --prepare first)" >&2; exit 3; }
+
+export HOME="$SANDBOX_HOME"
+export PATH="$NPM_PREFIX/bin:$SANDBOX_HOME/.config/opencode/.venv/bin:$PATH"
+export npm_config_prefix="$NPM_PREFIX"
+export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
+export OPENCODE_CONFIG_DIR="$PROJECT_DIR"
+export OPENCODE_DB="${PANTHEON_V2_DB:-$SANDBOX_DIR/opencode-v2.db}"
+export PANTHEON_V2_PORT="$V2_PORT"
+export PORT="$V2_PORT"
+unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE
+cd "$PROJECT_DIR"
+exec "$V2_BIN"
+START
+  chmod +x "$SANDBOX_ROOT/start-pantheon.sh"
+
+  cat > "$SANDBOX_ROOT/README.md" <<'SANDBOXREADME'
+# Pantheon isolated OpenCode V2 sandbox
+
+This folder is generated by `scripts/test-opencode-v2-sandbox.sh --prepare` and
+uses its own HOME, npm prefix, project config, database, and Python environment.
+It does not use the developer's OpenCode configuration.
+
+## Use
+
+- Validate the installation: `bash ~/pantheon-sandbox/run-test.sh`
+- Open the isolated TUI: `bash ~/pantheon-sandbox/start-pantheon.sh`
+- Recreate/update the sandbox: `scripts/test-opencode-v2-sandbox.sh --prepare`
+- Reset only after reviewing the sandbox path: `scripts/test-opencode-v2-sandbox.sh --reset`
+
+## Environment overrides
+
+- `PANTHEON_SANDBOX_ROOT`: sandbox location (default `~/pantheon-sandbox`).
+- `PANTHEON_REPO`: existing Pantheon checkout used consistently for packaging;
+  a missing, dangling, or non-Pantheon path fails before `npm pack`.
+- `PANTHEON_V2_PORT`: dedicated loopback port (default `49376`). The scripts
+  reject invalid or occupied ports and never stop or reuse an existing service.
+- `PANTHEON_V2_HOST`: IPv4 loopback IP (default `127.0.0.1`); other addresses
+  are rejected to avoid exposing the sandbox service on external interfaces.
+- `PANTHEON_V2_MCP_LIST_TIMEOUT`: each `opencode mcp list` timeout in seconds
+  (default `15`).
+- `OPENCODE_V2_SPEC`: OpenCode V2 npm install spec (default `@opencode-ai/cli@beta`).
+
+## Temporary files
+
+No blanket `tmp/` cleanup is performed. On `--prepare`, only hash-named files
+owned by the current user under `tmp/node-compile-cache/` older than 30 days may
+expire. Runtime state, unknown files, and handoff/evidence files are retained.
+Do not remove `tmp/` recursively.
+SANDBOXREADME
+}
+
 # ── Reset / Prepare ───────────────────────────────────────────────────────────
 
 # Resolve existing symlinked directory components and normalize missing path
@@ -920,6 +1159,12 @@ canonicalize_path() {
   printf '%s\n' "$resolved"
 }
 
+canonicalize_existing_directory() {
+  local path="$1"
+  [ -n "$path" ] && [ -d "$path" ] || return 1
+  (cd -P -- "$path" 2>/dev/null && pwd -P)
+}
+
 # Compare complete path components; a sibling such as project-extra is not
 # inside project. The root directory is a parent of every absolute path.
 path_is_same_or_descendant() {
@@ -932,38 +1177,40 @@ path_is_same_or_descendant() {
   return 1
 }
 
-cmd_reset() {
-  # Guard BOTH repos this harness can act on. REPO_DIR is where `--prepare`
-  # runs `npm pack`; PANTHEON_REPO is the documented override the GENERATED
-  # run-test.sh honours, and it may point somewhere else entirely. Refusing
-  # only the default left an override able to name a checkout and have the
-  # generated script pack a tarball into it.
-  local protected canonical_root canonical_home canonical_protected
+guard_sandbox_root() {
+  # Both destructive reset and prepare are forbidden from overlapping HOME or
+  # any package checkout. This prevents packing generated sandbox files into a
+  # repo and prevents reset from deleting a repo or one of its ancestors.
+  local action="${1:-use}" protected canonical_root canonical_home canonical_protected
   canonical_root="$(canonicalize_path "$SANDBOX_ROOT")" \
-    || die "refusing to reset sandbox root that cannot be canonicalized: $SANDBOX_ROOT"
+    || die "refusing to $action sandbox root that cannot be canonicalized: $SANDBOX_ROOT"
   canonical_home="$(canonicalize_path "$HOME")" \
-    || die "refusing to reset because HOME cannot be canonicalized: $HOME"
+    || die "refusing to $action sandbox because HOME cannot be canonicalized: $HOME"
   [ "$canonical_root" != "/" ] \
-    || die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (filesystem root)"
+    || die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (filesystem root)"
   [ "$canonical_root" != "$canonical_home" ] \
-    || die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (HOME)"
+    || die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (HOME)"
   if path_is_same_or_descendant "$canonical_home" "$canonical_root"; then
-    die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of HOME $HOME)"
+    die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of HOME $HOME)"
   fi
 
   for protected in "$REPO_DIR" "${PANTHEON_REPO:-}"; do
     [ -n "$protected" ] || continue
-    canonical_protected="$(canonicalize_path "$protected")" \
-      || die "refusing to reset because protected repo path cannot be canonicalized: $protected"
+    canonical_protected="$(canonicalize_existing_directory "$protected")" \
+      || die "refusing to $action sandbox because protected repo path is missing or cannot be resolved: $protected"
     if path_is_same_or_descendant "$canonical_root" "$canonical_protected"; then
-      die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is equal to or inside the repo $protected)"
+      die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (it is equal to or inside the repo $protected)"
     fi
     if path_is_same_or_descendant "$canonical_protected" "$canonical_root"; then
-      die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of the repo $protected)"
+      die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of the repo $protected)"
     fi
   done
+}
+
+cmd_reset() {
+  guard_sandbox_root reset
   log "Resetting sandbox: $SANDBOX_ROOT"
-  rm -rf "$SANDBOX_ROOT"
+  rm -rf -- "$SANDBOX_ROOT"
   log "Sandbox removed."
 }
 
@@ -1078,8 +1325,12 @@ PY
 }
 
 cmd_prepare() {
+  validate_v2_port
+  guard_sandbox_root use
   mkdir -p "$SANDBOX_HOME" "$NPM_PREFIX"
+  cleanup_sandbox_tmp
   write_run_test_sh
+  write_sandbox_entrypoints
   sandbox_env
   install_binaries
   local pan
@@ -1682,6 +1933,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$MODE_RESET" -eq 1 ]; then
+  resolve_harness_repo
   cmd_reset
   exit 0
 fi
@@ -1691,6 +1943,8 @@ if [ "$MODE_PREPARE" -eq 0 ] && [ -z "$RUN_VERSION" ] \
   && [ "$MODE_REHYDRATE" -eq 0 ] && [ "$MODE_HOOKS" -eq 0 ]; then
   usage
 fi
+
+resolve_harness_repo
 
 if [ "$MODE_PREPARE" -eq 1 ]; then
   cmd_prepare

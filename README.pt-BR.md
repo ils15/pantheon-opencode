@@ -71,8 +71,9 @@ verificações repetíveis e passagens claras entre etapas do trabalho.
 
 ## Status
 
-Versão operacional neste checkout: **v1.6.0-beta.1** (primeira beta compatível
-com OpenCode 2; esta página não afirma publicação). O Pantheon foi feito para OpenCode e depende da
+Versão candidata neste checkout: **v1.6.0 estável** (manifestos preparados;
+publicação ainda não confirmada). O histórico das betas permanece no
+[changelog](CHANGELOG.md). O Pantheon foi feito para OpenCode e depende da
 disponibilidade e da configuração do OpenCode e dos serviços opcionais que você
 escolher. Veja as [releases](https://github.com/ils15/pantheon-opencode/releases)
 e o [changelog](CHANGELOG.md) para acompanhar as mudanças publicadas.

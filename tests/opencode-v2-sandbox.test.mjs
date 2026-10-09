@@ -8,8 +8,10 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -55,6 +57,17 @@ function generate(repoDir, sandboxRoot, defsFile) {
   return join(sandboxRoot, 'run-test.sh')
 }
 
+function withoutEnv(...names) {
+  const env = { ...process.env }
+  for (const name of names) delete env[name]
+  return env
+}
+
+function loadDefinitions(defsFile) {
+  writeFileSync(defsFile, DEFINITIONS)
+  return defsFile
+}
+
 /** Execute the generated script and return its stdout. */
 function runGenerated(generated, stubBin) {
   // The generated script's first real action is `npm pack` inside the repo. A
@@ -93,7 +106,7 @@ test('runner is V2-only: no V1 leg, no sibling-repo inference', () => {
   // had unrelated uncommitted work, and --prepare packs a tarball inside it.
   assert.match(
     src,
-    /REPO_DIR="\$\(cd "\$SCRIPT_DIR\/\.\." && pwd\)"/,
+    /SCRIPT_REPO_DIR="\$\(cd "\$SCRIPT_DIR\/\.\." && pwd -P\)"/,
     'REPO_DIR must be derived from SCRIPT_DIR',
   )
   assert.doesNotMatch(
@@ -137,6 +150,7 @@ test('the generated run-test.sh echoes the repo dir byte-for-byte (adversarial p
     const repoDir = join(workDir, label.replace(/\W+/g, '_'), segments)
     const sandboxRoot = join(workDir, `sandbox-${label.replace(/\W+/g, '_')}`)
     mkdirSync(repoDir, { recursive: true })
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"pantheon-opencode"}\n')
     mkdirSync(sandboxRoot, { recursive: true })
 
     const generated = generate(repoDir, sandboxRoot, defsFile)
@@ -183,6 +197,10 @@ test('--reset refuses a sandbox root inside any repo it can act on', () => {
 })
 
 function runReset(sandboxRoot, protectedRepo) {
+  mkdirSync(protectedRepo, { recursive: true })
+  if (!existsSync(join(protectedRepo, 'package.json'))) {
+    writeFileSync(join(protectedRepo, 'package.json'), '{"name":"pantheon-opencode"}\n')
+  }
   return spawnSync('bash', [RUNNER, '--reset'], {
     encoding: 'utf8',
     env: {
@@ -317,6 +335,296 @@ test('--reset still allows a safe sandbox root below its temporary parent', (t) 
   assert.equal(result.status, 0, `safe reset failed:\n${result.stdout}\n${result.stderr}`)
   assert.equal(existsSync(sandboxRoot), false, 'safe sandbox root should be removed')
   assert.equal(existsSync(protectedSentinel), true, 'protected repo must remain untouched')
+})
+
+test('generated run-test defaults MCP list timeout to 15 with no inherited env', (t) => {
+  const workDir = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-timeout-default-'))
+  t.after(() => rmSync(workDir, { recursive: true, force: true }))
+  const repoDir = join(workDir, 'repo')
+  const sandboxRoot = join(workDir, 'sandbox')
+  mkdirSync(repoDir, { recursive: true })
+  writeFileSync(join(repoDir, 'package.json'), '{"name":"pantheon-opencode"}\n')
+  mkdirSync(sandboxRoot, { recursive: true })
+  const generated = generate(repoDir, sandboxRoot, join(workDir, 'definitions.sh'))
+  const generatedSource = readFileSync(generated, 'utf8')
+  assert.match(RUNNER_SRC, /V2_MCP_LIST_TIMEOUT="\$\{PANTHEON_V2_MCP_LIST_TIMEOUT:-15\}"/)
+  const executionPrefix = generatedSource.slice(
+    0,
+    generatedSource.indexOf('echo "=== Pantheon Sandbox Test'),
+  )
+  assert.notEqual(executionPrefix.length, 0, 'generated run-test bootstrap is missing')
+  const prefixFile = join(sandboxRoot, '.timeout-probe.sh')
+  writeFileSync(prefixFile, `${executionPrefix}\nprintf "%s" "$V2_MCP_LIST_TIMEOUT"\n`, {
+    mode: 0o755,
+  })
+  const env = withoutEnv('PANTHEON_V2_MCP_LIST_TIMEOUT', 'PANTHEON_V2_PORT', 'PORT')
+  const result = spawnSync('bash', [prefixFile], { encoding: 'utf8', env })
+  assert.equal(result.status, 0, `generated bootstrap failed under set -u: ${result.stderr}`)
+  assert.equal(result.stdout, '15')
+
+  const resetRoot = join(workDir, 'reset-root')
+  mkdirSync(resetRoot)
+  writeFileSync(join(resetRoot, 'sentinel'), 'preserve')
+  const reset = spawnSync('bash', [RUNNER, '--reset'], {
+    encoding: 'utf8',
+    env: {
+      ...withoutEnv('PANTHEON_V2_MCP_LIST_TIMEOUT', 'PANTHEON_REPO'),
+      PANTHEON_SANDBOX_ROOT: resetRoot,
+      HOME: join(workDir, 'synthetic-home'),
+    },
+  })
+  assert.equal(reset.status, 0, `--reset should work without timeout env: ${reset.stderr}`)
+  assert.equal(existsSync(resetRoot), false)
+})
+
+test('generated run-test rejects dangling .repo-dir and PANTHEON_REPO before packing', (t) => {
+  const workDir = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-dangling-repo-'))
+  t.after(() => rmSync(workDir, { recursive: true, force: true }))
+  const repoDir = join(workDir, 'repo')
+  const sandboxRoot = join(workDir, 'sandbox')
+  mkdirSync(repoDir, { recursive: true })
+  writeFileSync(join(repoDir, 'package.json'), '{"name":"pantheon-opencode"}\n')
+  mkdirSync(sandboxRoot, { recursive: true })
+  const generated = generate(repoDir, sandboxRoot, join(workDir, 'definitions.sh'))
+
+  writeFileSync(join(sandboxRoot, '.repo-dir'), `${join(workDir, 'missing-default')}\n`)
+  const danglingDefault = spawnSync('bash', [generated], {
+    encoding: 'utf8',
+    env: withoutEnv('PANTHEON_REPO'),
+  })
+  assert.notEqual(danglingDefault.status, 0)
+  assert.match(
+    danglingDefault.stderr,
+    /repository path .*does not exist|cannot resolve.*repository/i,
+  )
+
+  writeFileSync(join(sandboxRoot, '.repo-dir'), `${repoDir}\n`)
+  const danglingOverride = spawnSync('bash', [generated], {
+    encoding: 'utf8',
+    env: { ...withoutEnv(), PANTHEON_REPO: join(workDir, 'missing-override') },
+  })
+  assert.notEqual(danglingOverride.status, 0)
+  assert.match(
+    danglingOverride.stderr,
+    /repository path .*does not exist|cannot resolve.*repository/i,
+  )
+
+  const relativeOverride = spawnSync('bash', [generated], {
+    encoding: 'utf8',
+    env: { ...withoutEnv(), PANTHEON_REPO: 'relative/checkout' },
+  })
+  assert.notEqual(relativeOverride.status, 0)
+  assert.match(relativeOverride.stderr, /repository path must be absolute/i)
+
+  const nestedSandbox = join(repoDir, 'generated-sandbox')
+  mkdirSync(nestedSandbox, { recursive: true })
+  const nestedRunner = generate(repoDir, nestedSandbox, join(workDir, 'nested-definitions.sh'))
+  const overlap = spawnSync('bash', [nestedRunner], {
+    encoding: 'utf8',
+    env: withoutEnv('PANTHEON_REPO'),
+  })
+  assert.notEqual(overlap.status, 0)
+  assert.match(overlap.stderr, /sandbox path overlaps the selected repository/i)
+})
+
+test('--reset refuses a dangling PANTHEON_REPO and preserves the sandbox', (t) => {
+  const workDir = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-reset-dangling-'))
+  t.after(() => rmSync(workDir, { recursive: true, force: true }))
+  const sandboxRoot = join(workDir, 'sandbox')
+  mkdirSync(sandboxRoot, { recursive: true })
+  const sentinel = join(sandboxRoot, 'handoff.txt')
+  writeFileSync(sentinel, 'keep')
+  const result = spawnSync('bash', [RUNNER, '--reset'], {
+    encoding: 'utf8',
+    env: {
+      ...withoutEnv('PANTHEON_V2_MCP_LIST_TIMEOUT'),
+      PANTHEON_SANDBOX_ROOT: sandboxRoot,
+      PANTHEON_REPO: join(workDir, 'missing-repo'),
+      HOME: join(workDir, 'synthetic-home'),
+    },
+  })
+  assert.notEqual(result.status, 0, `dangling repo override must fail closed: ${result.stdout}`)
+  assert.equal(existsSync(sentinel), true, 'reset must leave the sandbox sentinel intact')
+})
+
+test('--prepare refuses to write the sandbox inside its protected checkout', (t) => {
+  const workDir = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-prepare-guard-'))
+  t.after(() => rmSync(workDir, { recursive: true, force: true }))
+  const repoDir = join(workDir, 'repo')
+  const sandboxRoot = join(repoDir, 'sandbox')
+  mkdirSync(repoDir, { recursive: true })
+  writeFileSync(join(repoDir, 'package.json'), '{"name":"pantheon-opencode"}\n')
+
+  const result = spawnSync('bash', [RUNNER, '--prepare'], {
+    encoding: 'utf8',
+    env: {
+      ...withoutEnv(),
+      PANTHEON_REPO: repoDir,
+      PANTHEON_SANDBOX_ROOT: sandboxRoot,
+      HOME: join(workDir, 'synthetic-home'),
+    },
+    timeout: 15000,
+  })
+  assert.notEqual(
+    result.status,
+    0,
+    `prepare must fail before writing into checkout: ${result.stdout}`,
+  )
+  assert.match(result.stderr, /refusing to use unsafe sandbox root/i)
+  assert.equal(
+    existsSync(sandboxRoot),
+    false,
+    'unsafe prepare must not create sandbox files in repo',
+  )
+})
+
+test('V2 port validation rejects invalid ports and refuses conflicts without stopping services', async (t) => {
+  const workDir = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-port-guard-'))
+  t.after(() => rmSync(workDir, { recursive: true, force: true }))
+  const definitions = loadDefinitions(join(workDir, 'definitions.sh'))
+  const repoDir = join(workDir, 'repo')
+  const sandboxRoot = join(workDir, 'sandbox')
+  mkdirSync(repoDir, { recursive: true })
+  writeFileSync(join(repoDir, 'package.json'), '{"name":"pantheon-opencode"}\n')
+  mkdirSync(sandboxRoot, { recursive: true })
+  const generated = generate(repoDir, sandboxRoot, definitions)
+  const generatedSource = readFileSync(generated, 'utf8')
+  const bootstrap = generatedSource.slice(
+    0,
+    generatedSource.indexOf('echo "=== Pantheon Sandbox Test'),
+  )
+  const portProbe = join(sandboxRoot, '.port-guard-probe.sh')
+  writeFileSync(portProbe, `${bootstrap}\nassert_v2_port_available\n`, { mode: 0o755 })
+
+  const invalid = spawnSync(
+    'bash',
+    ['-c', 'set -euo pipefail; source "$RUNNER_DEFS"; V2_PORT=65536; validate_v2_port'],
+    { encoding: 'utf8', env: { ...withoutEnv(), RUNNER_DEFS: definitions } },
+  )
+  assert.notEqual(invalid.status, 0, 'out-of-range ports must be rejected')
+  assert.match(invalid.stderr, /PANTHEON_V2_PORT.*1.*65535/i)
+
+  const nonLoopback = spawnSync(
+    'bash',
+    ['-c', 'set -euo pipefail; source "$RUNNER_DEFS"; assert_v2_port_available'],
+    {
+      encoding: 'utf8',
+      env: {
+        ...withoutEnv(),
+        RUNNER_DEFS: definitions,
+        PANTHEON_V2_HOST: '203.0.113.1',
+        PANTHEON_V2_PORT: '49377',
+      },
+    },
+  )
+  assert.notEqual(nonLoopback.status, 0, 'non-loopback addresses must be rejected')
+  assert.match(nonLoopback.stderr, /host must be an IPv4 loopback IP/i)
+
+  const listener = createServer()
+  await new Promise((resolve, reject) => {
+    listener.once('error', reject)
+    listener.listen(0, '127.0.0.1', resolve)
+  })
+  t.after(() => new Promise((resolve) => listener.close(resolve)))
+  const { port } = listener.address()
+  const conflict = spawnSync(
+    'bash',
+    ['-c', 'set -euo pipefail; source "$RUNNER_DEFS"; assert_v2_port_available'],
+    {
+      encoding: 'utf8',
+      env: {
+        ...withoutEnv('PANTHEON_V2_MCP_LIST_TIMEOUT'),
+        RUNNER_DEFS: definitions,
+        PANTHEON_V2_HOST: '127.0.0.1',
+        PANTHEON_V2_PORT: String(port),
+      },
+    },
+  )
+  assert.notEqual(conflict.status, 0, 'an occupied port must be rejected')
+  assert.match(conflict.stderr, /already in use/i)
+  assert.equal(listener.listening, true, 'port guard must not stop the existing service')
+
+  const generatedConflict = spawnSync('bash', [portProbe], {
+    encoding: 'utf8',
+    env: {
+      ...withoutEnv('PANTHEON_V2_MCP_LIST_TIMEOUT'),
+      PANTHEON_V2_HOST: '127.0.0.1',
+      PANTHEON_V2_PORT: String(port),
+    },
+  })
+  assert.notEqual(generatedConflict.status, 0, 'generated run-test must reject the occupied port')
+  assert.match(generatedConflict.stderr, /already in use/i)
+  assert.equal(listener.listening, true, 'generated port guard must not stop the existing service')
+})
+
+test('sandbox tmp TTL only prunes old Node compile-cache files, retaining handoffs', (t) => {
+  const workDir = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-tmp-ttl-'))
+  t.after(() => rmSync(workDir, { recursive: true, force: true }))
+  const definitions = loadDefinitions(join(workDir, 'definitions.sh'))
+  const sandboxRoot = join(workDir, 'sandbox')
+  mkdirSync(sandboxRoot, { recursive: true })
+  const cacheDir = join(sandboxRoot, 'tmp', 'node-compile-cache', 'v24')
+  const oldCache = join(cacheDir, 'a1b2c3d4')
+  const freshCache = join(cacheDir, 'fresh-cache-entry')
+  const unknownCache = join(cacheDir, 'handoff.patch')
+  const handoff = join(sandboxRoot, 'tmp', 'pr224-phase2-hermes.patch')
+  const runtimeDir = join(sandboxRoot, 'tmp', 'opencode')
+  mkdirSync(cacheDir, { recursive: true })
+  mkdirSync(runtimeDir, { recursive: true })
+  writeFileSync(oldCache, 'stale cache')
+  writeFileSync(freshCache, 'fresh cache')
+  writeFileSync(unknownCache, 'not a cache entry')
+  writeFileSync(handoff, 'handoff evidence')
+  const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000)
+  utimesSync(oldCache, old, old)
+
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      'set -euo pipefail; source "$RUNNER_DEFS"; SANDBOX_ROOT="$TEST_SANDBOX"; cleanup_sandbox_tmp',
+    ],
+    {
+      encoding: 'utf8',
+      env: { ...withoutEnv(), RUNNER_DEFS: definitions, TEST_SANDBOX: sandboxRoot },
+    },
+  )
+  assert.equal(result.status, 0, `TTL cleanup failed: ${result.stderr}`)
+  assert.equal(existsSync(oldCache), false, 'old generated compile cache should expire')
+  assert.equal(existsSync(freshCache), true, 'fresh cache should remain')
+  assert.equal(existsSync(unknownCache), true, 'unknown cache-dir files must remain')
+  assert.equal(existsSync(handoff), true, 'unrecognized handoff evidence must remain')
+  assert.equal(existsSync(runtimeDir), true, 'runtime scratch directory must remain')
+})
+
+test('prepare emits isolated TUI launcher and sandbox README with runtime overrides', (t) => {
+  const workDir = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-entrypoints-'))
+  t.after(() => rmSync(workDir, { recursive: true, force: true }))
+  const definitions = loadDefinitions(join(workDir, 'definitions.sh'))
+  const sandboxRoot = join(workDir, 'sandbox')
+  mkdirSync(sandboxRoot, { recursive: true })
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      'set -euo pipefail; source "$RUNNER_DEFS"; SANDBOX_ROOT="$TEST_SANDBOX"; write_sandbox_entrypoints',
+    ],
+    {
+      encoding: 'utf8',
+      env: { ...withoutEnv(), RUNNER_DEFS: definitions, TEST_SANDBOX: sandboxRoot },
+    },
+  )
+  assert.equal(result.status, 0, `sandbox entrypoint generation failed: ${result.stderr}`)
+  const launcher = join(sandboxRoot, 'start-pantheon.sh')
+  const readme = join(sandboxRoot, 'README.md')
+  assert.ok(existsSync(launcher), 'prepare must generate the launcher referenced by run-test')
+  assert.ok(existsSync(readme), 'prepare must generate the sandbox README')
+  assert.ok(statSync(launcher).mode & 0o111, 'sandbox launcher must be executable')
+  const syntax = spawnSync('bash', ['-n', launcher], { encoding: 'utf8' })
+  assert.equal(syntax.status, 0, `generated launcher has invalid bash syntax: ${syntax.stderr}`)
+  assert.match(readFileSync(launcher, 'utf8'), /PANTHEON_V2_PORT/)
+  assert.match(readFileSync(readme, 'utf8'), /PANTHEON_V2_MCP_LIST_TIMEOUT.*15/s)
+  assert.match(readFileSync(readme, 'utf8'), /PANTHEON_V2_PORT.*49376/s)
 })
 
 test('--reset canonicalizes a symlink alias before comparing protected repos', (t) => {

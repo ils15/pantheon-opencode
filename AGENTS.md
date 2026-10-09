@@ -38,8 +38,9 @@ Para validar a instalação global do pacote pantheon-opencode COMO UM USUÁRIO 
 
 - Rodar: `bash ~/pantheon-sandbox/run-test.sh` (opencode mcp list 5/5 connected + doctor 0 erros + abre TUI isolado)
 - Regra para agentes: ao validar instalação global (npm pack, `init`, MCPs, hooks), usar o sandbox — NUNCA testar no ambiente de dev
-- Descarte: `rm -rf ~/pantheon-sandbox`
-- Detalhes: ver `~/pantheon-sandbox/README.md`
+- Prepare/atualize com `bash scripts/test-opencode-v2-sandbox.sh --prepare`; isso gera `run-test.sh`, `start-pantheon.sh` e o README do sandbox
+- Descarte somente pelo reset com guardas: `bash scripts/test-opencode-v2-sandbox.sh --reset` (nunca use `rm -rf` manualmente)
+- Detalhes: ver `~/pantheon-sandbox/README.md` após o prepare
 
 ## Conventions
 
