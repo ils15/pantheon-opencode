@@ -663,12 +663,33 @@ opencode
 npm run doctor
 ```
 
-**Instalação global isolada:** para testar o pacote instalado em um sandbox
-isolado (sem contaminar o ambiente de dev, que mistura várias instalações), use
-`~/pantheon-sandbox/` — rode `bash ~/pantheon-sandbox/run-test.sh` (mcp list 5/5
-+ doctor + TUI isolado). Esse gate cobre o sandbox preparado; não é uma alegação
-de suporte para todo host real. Descarte com `rm -rf ~/pantheon-sandbox`; detalhes
-em `~/pantheon-sandbox/README.md`.
+**Instalação global isolada:** prepare o sandbox fora do ambiente de dev (que
+mistura várias instalações):
+
+```bash
+bash scripts/test-opencode-v2-sandbox.sh --prepare
+bash ~/pantheon-sandbox/run-test.sh
+# or open the isolated TUI
+bash ~/pantheon-sandbox/start-pantheon.sh
+```
+
+O runner verifica mcp list 5/5 + doctor. O `--prepare` gera os dois entrypoints
+e `~/pantheon-sandbox/README.md`. Esse
+gate cobre o sandbox preparado; não é uma alegação de suporte para todo host
+real. Para descartar, use o reset com guardas:
+`bash scripts/test-opencode-v2-sandbox.sh --reset` — não remova o sandbox com
+`rm -rf` manualmente.
+
+Overrides disponíveis: `PANTHEON_V2_MCP_LIST_TIMEOUT` (default `15` segundos
+por chamada `mcp list`), `PANTHEON_V2_PORT` (default `49376`, somente porta
+livre; conflito falha sem parar nem reutilizar serviço existente),
+`PANTHEON_V2_HOST` (default `127.0.0.1`; somente IPv4 loopback) e
+`PANTHEON_REPO` (checkout Pantheon existente, caminho absoluto, aplicado
+consistentemente no prepare e no `run-test.sh`). O `.repo-dir` gerado é validado
+antes de empacotar; caminho ausente, dangling, relativo ou de outro pacote falha
+fechado. O preparo expira apenas arquivos hash de cache Node com mais de 30 dias
+em `tmp/node-compile-cache`; runtime e arquivos de handoff/evidência são
+preservados. Detalhes são escritos no README do sandbox.
 
 ## Troubleshooting
 

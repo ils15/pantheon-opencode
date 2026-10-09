@@ -18,6 +18,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0] - 2026-10-09
+
+This stable candidate consolidates the beta.1–beta.6 changes. The original beta
+entries remain below as historical records so release detail is not discarded.
+
+## 🆕 What's New
+
+- **OpenCode V2 plugin and installer path:** generation detection, V2 plugin
+  registration, three functional V2 tools, read-only enforcement, and explicit
+  reporting of the smaller V2 feature surface. The V1 API path remains in the
+  package, but no V1 host has been exercised end-to-end in this release.
+- **Sandbox validation and release hardening:** fail-closed checks, V2 MCP and
+  hook probes, package/version inventory validation, and reproducible package
+  evidence. The sandbox now generates its runner, isolated TUI launcher, and
+  README during `--prepare`.
+- **Dependency and TUI maintenance:** synchronized release manifests, updated
+  dependency/security overrides, and TUI/runtime consistency checks.
+
+## 🐞 Fixed
+
+- `PANTHEON_V2_MCP_LIST_TIMEOUT` now defaults to 15 seconds in both the harness
+  and generated `run-test.sh`, including under `set -u`; the default does not
+  depend on an exported environment variable.
+- `PANTHEON_REPO` is resolved consistently for prepare, generated tests, and
+  reset guards. Relative, dangling, missing, or non-Pantheon paths fail before
+  packaging; `.repo-dir` is atomically written and validated before use.
+- Sandbox prepare/reset reject roots overlapping a checkout or the user's
+  `HOME`. `PANTHEON_V2_PORT` defaults to 49376, is range-checked, and refuses an
+  occupied port without reusing or stopping the existing service.
+- Sandbox `tmp/` is not blanket-deleted: prepare only expires hash-named Node
+  compile-cache files owned by the current user and older than 30 days. Runtime
+  state, unknown entries, and handoff/evidence files remain untouched.
+
+## ⚠️ Known Issues
+
+- **V1 host canary is deferred.** The tested package dependency pair is
+  `@opencode-ai/plugin@1.18.33` + `@opencode-ai/sdk@1.18.33`; this is not an
+  end-to-end V1 host compatibility claim. No OpenCode `1.18.35` host support is
+  asserted.
+- **V2 support remains partial.** The tool canary was authored against
+  `opencode 2.0.22`; the installable CLI has drifted from that canary contract
+  (tracked in issue #216). See the README compatibility table for the measured
+  evidence and limitations.
+
 ## [v1.6.0-beta.6] - 2026-10-05
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
