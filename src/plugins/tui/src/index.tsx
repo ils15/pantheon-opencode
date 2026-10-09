@@ -745,7 +745,22 @@ async function loadConfig(configPath: string | undefined): Promise<UsageBarConfi
  *  registers nothing) when no provider is enabled — mirrors the standalone
  *  plugin's early return. */
 async function setupUsageBar(api: TuiPluginApi) {
+  let disposed = false
+  let clockInterval: ReturnType<typeof setInterval> | undefined
+  const pollTimeouts = new Set<ReturnType<typeof setTimeout>>()
+
+  // This optional feature owns timers independently from the sidebar. A slow
+  // config read may finish after shutdown, so register cleanup before awaiting
+  // anything and check the disposed flag at every async boundary.
+  api.lifecycle.onDispose(() => {
+    disposed = true
+    if (clockInterval !== undefined) clearInterval(clockInterval)
+    for (const timeout of pollTimeouts) clearTimeout(timeout)
+    pollTimeouts.clear()
+  })
+
   const config = await loadConfig(api.state.path?.config)
+  if (disposed) return
   if (api.state.path?.state) opencodeAuthFile = join(api.state.path.state, 'auth.json')
 
   const enabled = providers.filter((p) => config.providers[p.id].enabled)
@@ -762,15 +777,26 @@ async function setupUsageBar(api: TuiPluginApi) {
   const [byStatus, setByStatus] = createSignal<Record<string, StatusIndicator>>({})
   const [now, setNow] = createSignal(Date.now())
 
-  setInterval(() => setNow(Date.now()), 1_000)
+  clockInterval = setInterval(() => setNow(Date.now()), 1_000)
+
+  const schedulePoll = (run: () => void, delay: number) => {
+    if (disposed) return
+    const timeout = setTimeout(() => {
+      pollTimeouts.delete(timeout)
+      if (!disposed) run()
+    }, delay)
+    pollTimeouts.add(timeout)
+  }
 
   for (const p of enabled) {
     const cfg = config.providers[p.id]
     const poll = async () => {
+      if (disposed) return
       // Fetch usage and status concurrently; status pages are CDN-backed and
       // never throttle, so we poll them on the same cadence as usage.
       const statusP = config.showStatus && p.statusUrl ? fetchStatus(p.statusUrl) : null
       const [all, status] = await Promise.all([p.fetchUsage(cfg), statusP])
+      if (disposed) return
       if (all) {
         const windows = all.filter((w) => cfg.show[w.category] && w.resetsAt > Date.now())
         setByProvider((prev) => ({ ...prev, [p.id]: windows }))
@@ -779,9 +805,13 @@ async function setupUsageBar(api: TuiPluginApi) {
       // `null` means the status fetch failed — keep the last known indicator.
       if (status !== null) setByStatus((prev) => ({ ...prev, [p.id]: status }))
       // Back off when the usage fetch failed (e.g. 429 — these endpoints throttle).
-      setTimeout(poll, all ? POLL_MS : POLL_MS * 3)
+      schedulePoll(runPoll, all ? POLL_MS : POLL_MS * 3)
     }
-    void poll()
+    const runPoll = () => {
+      if (disposed) return
+      void poll().catch(() => schedulePoll(runPoll, POLL_MS * 3))
+    }
+    runPoll()
   }
 
   api.slots.register({
@@ -3134,7 +3164,9 @@ const tui: TuiPlugin = (api, _options, _meta) => {
     .catch(() => setVersion(null))
 
   // Vendored feature (MIT): AI subscription usage gauges.
-  void setupUsageBar(api) // async init — never blocks sidebar registration
+  // Usage indicators are optional: a config, storage, or slot failure must
+  // never turn an otherwise healthy TUI startup into an unhandled rejection.
+  void setupUsageBar(api).catch(() => undefined)
 
   // ── Live delegation store (tool-part tracker + sidebar invalidation) ──
   // The Delegations panel's PRIMARY source is `api.client.session.children`

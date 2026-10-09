@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -17,7 +18,18 @@ test('packaged TUI bundle registers its sidebar, handles a task event, and dispo
   const originalBun = globalThis.Bun
   const registrations = []
   const disposers = []
+  const activeIntervals = new Set()
+  const activeTimeouts = new Set()
   const handlers = new Map()
+  const originalTimers = {
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+    fetch: globalThis.fetch,
+  }
+  const unhandledRejections = []
+  const onUnhandledRejection = (reason) => unhandledRejections.push(reason)
   let configWasParsed
   const parsedConfig = new Promise((resolve) => {
     configWasParsed = resolve
@@ -42,17 +54,40 @@ test('packaged TUI bundle registers its sidebar, handles a task event, and dispo
       },
     },
     lifecycle: { onDispose: (dispose) => disposers.push(dispose) },
-    slots: { register: (registration) => registrations.push(registration) },
+    slots: {
+      register(registration) {
+        registrations.push(registration)
+        if (registration.order === 60) throw new Error('optional usage slot unavailable')
+      },
+    },
     kv: { get: () => undefined, set: () => {} },
   }
 
   try {
+    globalThis.setInterval = (callback) => {
+      const timer = { callback }
+      activeIntervals.add(timer)
+      return timer
+    }
+    globalThis.clearInterval = (timer) => activeIntervals.delete(timer)
+    globalThis.setTimeout = (callback) => {
+      const timer = { callback }
+      activeTimeouts.add(timer)
+      return timer
+    }
+    globalThis.clearTimeout = (timer) => activeTimeouts.delete(timer)
+    globalThis.fetch = async () => ({ ok: false })
+    process.on('unhandledRejection', onUnhandledRejection)
     globalThis.Bun = {
       TOML: {
         parse: () => {
           configWasParsed()
           return {
-            anthropic: { enabled: false },
+            ui: { show_status: false },
+            anthropic: {
+              enabled: true,
+              credentials_path: join(project, 'missing-credentials.json'),
+            },
             openai: { enabled: false },
             opencodego: { enabled: false },
           }
@@ -63,15 +98,26 @@ test('packaged TUI bundle registers its sidebar, handles a task event, and dispo
     assert.equal(plugin.id, 'pantheon.tui')
     await plugin.setup()
     plugin.tui(api)
-    // Let the plugin's fire-and-forget config read and provider selection
-    // finish before removing its temporary config directory.
-    await parsedConfig
-    await new Promise((resolve) => setImmediate(resolve))
-
     const sidebar = registrations
       .map((registration) => registration.slots.sidebar_content)
       .find((slot) => typeof slot === 'function')
-    assert.equal(typeof sidebar, 'function', 'the packaged plugin exposes its sidebar render slot')
+    assert.equal(typeof sidebar, 'function', 'the sidebar registers before optional config I/O')
+
+    // Let the optional config read and provider selection finish. The usage
+    // slot is deliberately made unavailable to exercise fail-open startup.
+    await parsedConfig
+    await delay(25)
+
+    assert.equal(
+      activeIntervals.size,
+      1,
+      'the optional usage refresh timer starts after config I/O',
+    )
+    assert.equal(
+      unhandledRejections.length,
+      0,
+      'an optional usage-slot failure does not reject TUI startup',
+    )
 
     const event = handlers.get('message.part.updated')?.[0]
     assert.equal(typeof event, 'function', 'the packaged plugin subscribes to live tool events')
@@ -142,14 +188,27 @@ test('packaged TUI bundle registers its sidebar, handles a task event, and dispo
       'the SDK event listener does not rely on a return value',
     )
 
-    assert.equal(disposers.length, 1, 'the plugin registers a clean-exit disposer')
+    assert.equal(disposers.length, 2, 'the plugin registers event and usage cleanup handlers')
     for (const dispose of disposers) dispose()
+    await delay(25)
+    assert.equal(activeIntervals.size, 0, 'clean exit clears the usage refresh interval')
+    assert.equal(
+      activeTimeouts.size,
+      0,
+      'clean exit prevents pending provider polls from rescheduling',
+    )
     assert.equal(
       [...handlers.values()].reduce((count, registered) => count + registered.length, 0),
       0,
       'clean exit removes live tool event listeners',
     )
   } finally {
+    process.off('unhandledRejection', onUnhandledRejection)
+    globalThis.setInterval = originalTimers.setInterval
+    globalThis.clearInterval = originalTimers.clearInterval
+    globalThis.setTimeout = originalTimers.setTimeout
+    globalThis.clearTimeout = originalTimers.clearTimeout
+    globalThis.fetch = originalTimers.fetch
     if (originalBun === undefined) delete globalThis.Bun
     else globalThis.Bun = originalBun
     rmSync(project, { recursive: true, force: true })
