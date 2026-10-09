@@ -2,8 +2,9 @@ import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import Module, { createRequire } from 'node:module'
-
+import { join } from 'node:path'
 import { readOnlyRegistry, syncReadOnlySession } from '../../src/pantheon/delegation-enforce.ts'
+import type { HookResult } from '../../src/plugins/hook-runner.ts'
 
 type Registration = { dispose: () => Promise<void> }
 
@@ -152,21 +153,9 @@ async function main(): Promise<void> {
     assert.ok(features.length > 0)
   })
 
-  test('the unenforced delegation matrix is discoverable as a marker', () => {
-    // The caller/target matrix is NOT enforced on V2: the guard skips that
-    // branch rather than deny every task() call. UPGRADING.md says so in prose,
-    // but prose is not queryable — getUnsupportedFeatures() is the surface an
-    // operator or a diagnostic actually reads. Following the `goal-tools`
-    // precedent, the gap is registered as a marker instead of being left as a
-    // comment plus a paragraph somewhere else.
-    assert.ok(
-      getUnsupportedFeatures().includes('delegation-matrix'),
-      'the unenforced V2 delegation matrix must be reported by getUnsupportedFeatures()',
-    )
-    assert.ok(
-      V2_UNSUPPORTED_FEATURES.includes('delegation-matrix'),
-      'delegation-matrix must live in V2_UNSUPPORTED_FEATURES, not only in a comment',
-    )
+  test('the caller-target delegation matrix is enforced rather than reported unsupported', () => {
+    assert.equal(getUnsupportedFeatures().includes('delegation-matrix'), false)
+    assert.equal(V2_UNSUPPORTED_FEATURES.includes('delegation-matrix'), false)
   })
 
   test('getUnsupportedFeatures carries every marker the installer and doctor report', async () => {
@@ -459,6 +448,89 @@ async function main(): Promise<void> {
       ...overrides,
     }
   }
+
+  test('permission hook denies disallowed V2 delegation using authoritative session identity', async () => {
+    let permissionHandler: ((event: unknown, output?: unknown) => void | Promise<void>) | undefined
+    const bodyCalls: string[] = []
+    await plugin.setup(
+      makeBaseContext({
+        permission: {
+          hook: async (_name: string, handler: typeof permissionHandler) => {
+            permissionHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+        session: {
+          get: async (sessionID: string) => {
+            if (sessionID === 'invalid') throw new Error('unknown session')
+            return { id: sessionID, agent: 'athena' }
+          },
+        },
+      }) as never,
+    )
+
+    assert.equal(typeof permissionHandler, 'function')
+    const handler = permissionHandler
+    const denied = { status: 'ask' }
+    await handler?.({ sessionID: 'root', agent: 'zeus', resources: ['demeter'] }, denied)
+    assert.equal(
+      denied.status,
+      'deny',
+      'forged event identity cannot widen the authoritative caller',
+    )
+
+    const allowed = { status: 'ask' }
+    await handler?.({ sessionID: 'root', agent: 'athena', resources: ['apollo'] }, allowed)
+    assert.equal(
+      allowed.status,
+      'ask',
+      'allowed matrix edge must not be converted into an allow grant',
+    )
+    if (allowed.status !== 'deny') bodyCalls.push('apollo')
+
+    const invalid = { status: 'ask' }
+    await handler?.({ sessionID: 'invalid', resources: ['apollo'] }, invalid)
+    assert.equal(invalid.status, 'deny', 'invalid session lookup fails closed')
+    if (invalid.status !== 'deny') bodyCalls.push('invalid')
+
+    await assert.rejects(
+      () => handler?.({ sessionID: 'root', resources: ['demeter'] }),
+      /permission output is unavailable/i,
+      'a denied V2 delegation must fail closed if the host omits the mutable output argument',
+    )
+
+    const explicitDeny = { status: 'deny' }
+    await handler?.({ sessionID: 'root', resources: ['apollo'] }, explicitDeny)
+    assert.equal(explicitDeny.status, 'deny', 'configured host denial remains final')
+
+    const native = { status: 'ask' }
+    await handler?.({ sessionID: 'invalid', resources: ['explore'] }, native)
+    assert.equal(native.status, 'ask', 'native target keeps host permission behavior')
+
+    const nativeFirstPantheonSecond = { status: 'ask' }
+    await handler?.(
+      { sessionID: 'root', resources: ['explore', 'demeter'] },
+      nativeFirstPantheonSecond,
+    )
+    assert.equal(
+      nativeFirstPantheonSecond.status,
+      'deny',
+      'native-first V2 resources cannot bypass a later Pantheon target',
+    )
+
+    const multiplePantheonTargets = { status: 'ask' }
+    await handler?.({ sessionID: 'root', resources: ['apollo', 'hermes'] }, multiplePantheonTargets)
+    assert.equal(
+      multiplePantheonTargets.status,
+      'deny',
+      'all Pantheon targets must be explicitly allowed for the authoritative caller',
+    )
+
+    const unknownResource = { status: 'ask' }
+    await handler?.({ sessionID: 'root', resources: ['apollo', null] }, unknownResource)
+    assert.equal(unknownResource.status, 'deny', 'unknown resource values fail closed')
+    assert.deepEqual(bodyCalls, ['apollo'], 'only allowed delegation proceeds to its body')
+  })
 
   // Case 1: agent draft without `list` (beta 19192) — setup must resolve.
   let case1Resolved = false
@@ -1467,7 +1539,9 @@ async function main(): Promise<void> {
   }
 
   /** Run plugin.setup against a host mock that records tools and tool hooks. */
-  async function setupCapturingToolHooks(): Promise<CapturedToolHooks> {
+  async function setupCapturingToolHooks(
+    contextOverrides: Record<string, unknown> = {},
+  ): Promise<CapturedToolHooks> {
     readOnlyRegistry.clear()
     const captured: CapturedToolHooks = { tools: [] }
     await plugin.setup(
@@ -1500,6 +1574,7 @@ async function main(): Promise<void> {
             return { dispose: async () => {} }
           },
         },
+        ...contextOverrides,
       }) as never,
     )
     return captured
@@ -1902,6 +1977,303 @@ async function main(): Promise<void> {
     )
   })
 
+  // ─── V2 Secret Scan Fail-Closed (infrastructure failure) ─────────────
+  //
+  // The handler above is only as strong as its treatment of the scanner's
+  // FAILURE modes. The real script cannot be made to time out, vanish, or emit
+  // a malformed report on demand, so these tests drive the SAME captured
+  // `execute.before` handler with structured `HookResult`s injected through the
+  // runner seam. Each row models the host's before→execute contract: the
+  // handler throwing IS the denial, and a denial must mean the tool body never
+  // runs.
+  //
+  // Why it matters: the prior handler blocked `code === 2` and treated every
+  // other outcome as advisory, but the runner reports a missing script, a spawn
+  // failure and a serialization failure as `code: 1` as well (see
+  // src/plugins/hook-runner.ts). A broken scanner therefore read as a clean
+  // advisory and the tool ran — the only hard secret block on the V2 surface,
+  // silently off.
+
+  console.log('\n🔐 V2 Secret Scan Fail-Closed Tests')
+
+  const { setV2SecretScanRunnerForTests } = await import('../../src/plugin-v2.ts')
+
+  /** Hook log the module appends to (appendV2HookLog uses process.cwd()). */
+  const HOOK_LOG_PATH = join(process.cwd(), '.pantheon', 'logs', 'hooks.log')
+  const readHookLog = (): string => {
+    try {
+      return readFileSync(HOOK_LOG_PATH, 'utf8')
+    } catch {
+      return ''
+    }
+  }
+
+  interface ScanOutcome {
+    denied: boolean
+    message: string | null
+    bodyRan: boolean
+  }
+
+  /**
+   * Model the host's `execute.before` → `tool.execute` sequence against the
+   * captured handler with a scanner result injected. The body is marked as run
+   * ONLY when the handler resolves, exactly as the host does it, so `bodyRan`
+   * stands in for "the tool executed".
+   */
+  async function executeWithScan(
+    scan: HookResult,
+    event: Record<string, unknown> = {
+      tool: 'write',
+      sessionID: 'ses_v2_scan_infra',
+      agent: 'zeus',
+      messageID: 'msg_infra',
+      id: 'call_infra',
+      input: { filePath: 'notes.md', content: 'harmless' },
+    },
+  ): Promise<ScanOutcome> {
+    let bodyRan = false
+    setV2SecretScanRunnerForTests(async () => scan)
+    try {
+      try {
+        await (scanCaptured.before as (e: unknown) => Promise<void>)(event)
+      } catch (err: unknown) {
+        return {
+          denied: true,
+          message: err instanceof Error ? err.message : String(err),
+          bodyRan,
+        }
+      }
+      // Handler resolved → the host would now run the tool body.
+      bodyRan = true
+      return { denied: false, message: null, bodyRan }
+    } finally {
+      setV2SecretScanRunnerForTests(null)
+    }
+  }
+
+  const scanResult = (code: number, stderr = ''): HookResult => ({
+    code,
+    stdout: '',
+    stderr,
+    signal: null,
+    timedOut: false,
+  })
+
+  /** The scanner's own report marker; a genuine advisory always carries it. */
+  const SCAN_REPORT = '[SECRET SCAN] Potential secret detected (low confidence): abcd****wxyz'
+  const HIGH_CONFIDENCE_REPORT =
+    '[SECRET SCAN] High-confidence hardcoded secret detected. Tool call will be BLOCKED.'
+
+  interface ScanCase {
+    label: string
+    scan: HookResult
+    expectDenied: boolean
+    messageMatch?: RegExp
+  }
+
+  const failClosedCases: ScanCase[] = [
+    {
+      label: 'exit 0 + clean report → allow, body runs',
+      scan: scanResult(0),
+      expectDenied: false,
+    },
+    {
+      label: 'exit 1 + valid low-confidence advisory → allow (advisory), body runs',
+      scan: scanResult(1, SCAN_REPORT),
+      expectDenied: false,
+    },
+    {
+      label: 'exit 2 high-confidence match → deny before the body',
+      scan: scanResult(2, HIGH_CONFIDENCE_REPORT),
+      expectDenied: true,
+      messageMatch: /\[plugin-v2\] Blocked: high-confidence secret detected/,
+    },
+    {
+      label: 'missing script (ENOENT) → fail closed',
+      scan: scanResult(1, 'hook script failed to spawn: spawn scan-secrets.sh ENOENT'),
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+    {
+      label: 'unexecutable scanner (EACCES) → fail closed',
+      scan: scanResult(1, 'hook script failed to spawn: spawn scan-secrets.sh EACCES'),
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+    {
+      label: 'timeout (killed, timedOut) → fail closed',
+      scan: { code: 1, stdout: '', stderr: '', signal: 'SIGKILL', timedOut: true },
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+    {
+      label: 'killed by signal without the timeout flag → fail closed',
+      scan: { code: 1, stdout: '', stderr: '', signal: 'SIGTERM', timedOut: false },
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+    {
+      label: 'synchronous spawn failure → fail closed',
+      scan: scanResult(1, 'spawn failed: spawn scan-secrets.sh ENOENT'),
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+    {
+      label: 'payload serialization failure (code 1) → fail closed',
+      scan: scanResult(1, 'payload serialization failed: Converting circular structure to JSON'),
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+    {
+      label: 'malformed result: exit 1 with an empty report → fail closed',
+      scan: scanResult(1, ''),
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+    {
+      label: 'malformed result: exit 1 with unrelated stderr → fail closed',
+      scan: scanResult(1, 'warning: something else'),
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+    {
+      label: 'unexpected exit status 3 → fail closed',
+      scan: scanResult(3, ''),
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+    {
+      label: 'unexpected exit status 127 → fail closed',
+      scan: scanResult(127, ''),
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+    {
+      label: 'negative exit status → fail closed',
+      scan: scanResult(-1, ''),
+      expectDenied: true,
+      messageMatch: /scanner could not complete/,
+    },
+  ]
+
+  for (const c of failClosedCases) {
+    test(`secret scan: ${c.label}`, async () => {
+      const outcome = await executeWithScan(c.scan)
+      assert.equal(
+        outcome.denied,
+        c.expectDenied,
+        `${c.label}: expected denied=${c.expectDenied}, got ${outcome.denied} (message: ${outcome.message})`,
+      )
+      // The host contract: a denial means the tool body must NOT run.
+      assert.equal(
+        outcome.bodyRan,
+        !c.expectDenied,
+        `the tool body must ${c.expectDenied ? 'not ' : ''}run for case: ${c.label}`,
+      )
+      if (c.expectDenied && c.messageMatch) {
+        assert.ok(outcome.message !== null, `${c.label}: a denial must carry a message`)
+        assert.match(outcome.message, c.messageMatch)
+      }
+    })
+  }
+
+  test('secret scan: a runner that rejects fails closed (no fail-open on throw)', async () => {
+    let bodyRan = false
+    let denied = false
+    let message: string | null = null
+    setV2SecretScanRunnerForTests(async () => {
+      throw new Error('scanner runner exploded')
+    })
+    try {
+      await (scanCaptured.before as (e: unknown) => Promise<void>)({
+        tool: 'write',
+        sessionID: 'ses_v2_scan_throw',
+        agent: 'zeus',
+        messageID: 'msg_throw',
+        id: 'call_throw',
+        input: { filePath: 'notes.md', content: 'harmless' },
+      })
+      bodyRan = true
+    } catch (err: unknown) {
+      denied = true
+      message = err instanceof Error ? err.message : String(err)
+    } finally {
+      setV2SecretScanRunnerForTests(null)
+    }
+    assert.equal(denied, true, 'a rejecting scanner runner must deny, not allow')
+    assert.equal(bodyRan, false, 'the tool body must not run when the runner rejects')
+    assert.match(message ?? '', /scanner could not complete/)
+  })
+
+  test('secret scan: the read-only deny runs BEFORE the scanner (and the scanner is not invoked)', async () => {
+    // Ordering guard: the read-only guard is deliberately OUTSIDE the scan
+    // try/catch so its denial propagates untouched. If scanning moved ahead of
+    // it, a read-only mutating call would be reported as a scanner failure and
+    // the read-only semantics would be lost — even though it still denied.
+    let scannerCalls = 0
+    setV2SecretScanRunnerForTests(async () => {
+      scannerCalls++
+      return scanResult(0)
+    })
+    let message: string | null = null
+    try {
+      await (scanCaptured.before as (e: unknown) => Promise<void>)({
+        tool: 'hashline_edit',
+        sessionID: 'ses_v2_scan_order_apollo',
+        agent: 'apollo',
+        messageID: 'msg_order',
+        id: 'call_order',
+        input: {},
+      })
+    } catch (err: unknown) {
+      message = err instanceof Error ? err.message : String(err)
+    } finally {
+      setV2SecretScanRunnerForTests(null)
+    }
+    assert.match(message ?? '', /READ-ONLY/, 'the read-only deny must still be the one reported')
+    assert.equal(
+      scannerCalls,
+      0,
+      'the secret scanner must NOT run for a call the read-only guard already denied',
+    )
+  })
+
+  test('secret scan: a fail-closed denial does not echo scanner output into the hook log', async () => {
+    // A scan that failed mid-flight may still be holding the raw payload. The
+    // denial message is sanitized and the log line carries only a failure
+    // category, so nothing the scanner saw can leak through this path.
+    const canary = 'PAYLOAD_CANARY_DO_NOT_LOG_9f3a'
+    const before = readHookLog()
+    const outcome = await executeWithScan(scanResult(1, `hook script failed to spawn: ${canary}`))
+    assert.equal(outcome.denied, true, 'the spawn failure must deny')
+    const delta = readHookLog().slice(before.length)
+    assert.doesNotMatch(
+      delta,
+      new RegExp(canary),
+      'a fail-closed denial must not write unverified scanner output to the hook log',
+    )
+    assert.match(
+      delta,
+      /scanner could not complete/,
+      'the sanitized failure category must be logged instead',
+    )
+    assert.doesNotMatch(outcome.message ?? '', new RegExp(canary))
+  })
+
+  test('secret scan: a high-confidence block still masks the token in the hook log', async () => {
+    // The block path is the one place scanner output is logged; the mask regex
+    // must redact the token there so the block cannot become the leak.
+    const token = ['sk', '-bf-', 'a'.repeat(24)].join('')
+    const before = readHookLog()
+    const outcome = await executeWithScan(
+      scanResult(2, `[SECRET SCAN] High-confidence secret detected: ${token} BLOCKED`),
+    )
+    assert.equal(outcome.denied, true, 'the high-confidence match must deny')
+    const delta = readHookLog().slice(before.length)
+    assert.doesNotMatch(delta, new RegExp(token), 'the raw token must never reach the hook log')
+    assert.match(delta, /\*\*\*\*/, 'the masked token must be logged')
+  })
+
   // ─── V1→V2 Bridge Tests ────────────────────────────────────────────
 
   console.log('\n🌉 V1→V2 Bridge Tests')
@@ -2025,6 +2397,57 @@ async function main(): Promise<void> {
     const f1 = getUnsupportedFeatures()
     const f2 = getUnsupportedFeatures()
     assert.strictEqual(f1, f2)
+  })
+
+  // ─── V2 execute.after parity (PR224) ───────────────────────────────
+  // The V1 tool.execute.after chain (task-result-guard → context-sandbox →
+  // read-enhancer) must run on the V2 event shape. A registered-but-empty
+  // handler would pass a "is it a function" check while leaving the chain dead.
+
+  const HASHLINE_TAG = /(?:^|\n)\s*[0-9]+#[A-Za-z0-9]+\|/
+
+  test('V2 execute.after augments a completed read with hashline tags (not a no-op)', async () => {
+    const captured = await setupCapturingToolHooks()
+    assert.equal(typeof captured.after, 'function', 'plugin-v2 must register execute.after')
+    const event: Record<string, unknown> = {
+      tool: 'read',
+      sessionID: 'ses_v2_after',
+      agent: 'zeus',
+      messageID: 'msg_after',
+      id: 'call_after',
+      input: { filePath: '/tmp/x.ts' },
+      status: 'completed',
+      result: { output: '1: alpha\n2: beta' },
+    }
+    await (captured.after as (e: unknown) => Promise<void>)(event)
+    const out = (event.result as { output: string }).output
+    assert.match(out, HASHLINE_TAG, `read result must be hashline-tagged, got: ${out}`)
+  })
+
+  test('V2 execute.after honours ctx.options.context_sandbox (disabled)', async () => {
+    const captured = await setupCapturingToolHooks({
+      options: { context_sandbox: { enabled: false, limits: { read: { maxLines: 1 } } } },
+    })
+    const event: Record<string, unknown> = {
+      tool: 'read',
+      sessionID: 'ses_v2_after_disabled',
+      id: 'call_after_disabled',
+      status: 'completed',
+      result: { output: '1: one\n2: two\n3: three' },
+    }
+    await (captured.after as (e: unknown) => Promise<void>)(event)
+    const out = (event.result as { output: string }).output
+    assert.ok(!out.includes('[TRUNCATED:'), 'a disabled sandbox must not truncate')
+    assert.match(out, HASHLINE_TAG, 'hashline tagging survives a disabled sandbox')
+  })
+
+  test('V2 execute.after tolerates a malformed event without throwing', async () => {
+    const captured = await setupCapturingToolHooks()
+    const after = captured.after as (e: unknown) => Promise<void>
+    await after(undefined)
+    await after({})
+    await after({ tool: 'read', status: 'error', error: { message: 'x' } })
+    await after({ tool: 'read', status: 'completed', result: 7 })
   })
 
   // ─── Summary ───────────────────────────────────────────────────────

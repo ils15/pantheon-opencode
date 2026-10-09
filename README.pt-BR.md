@@ -141,10 +141,16 @@ dessa superfície: o host inclui o agente ativo no evento, um agente somente-lei
 compartilhado lança para negar `edit`, `write`, `bash`, `task`,
 `hashline_edit` e `pantheon_model`. Ele **não** depende do hook
 `tool.execute.before` do V1, que vive em `src/plugin.ts` e não é carregado
-quando apenas `plugin-v2` está configurado. Os hooks companheiros
-`execute.after` e `permission.evaluate` são pontos de registro sem comportamento
-do lado V2, e a matriz de delegação caller/target da V1 para o `task()` nativo
-não é imposta no V2.
+quando apenas `plugin-v2` está configurado. O hook `permission.evaluate`
+aplica no V2 a matriz caller/target para destinos gerenciados pelo Pantheon,
+considerando todos os itens do array `resources` do host. Recursos
+exclusivamente nativos são repassados sem alteração à política de permissões do
+OpenCode; pedidos mistos (nativos/Pantheon) e com vários destinos são negados,
+a menos que todos os destinos Pantheon sejam explicitamente permitidos para o
+chamador autoritativo. Uma negação explícita do host é final, e dados de
+recursos ausentes ou desconhecidos são negados por padrão. O `execute.after` do
+V2 executa a cadeia de resultados concluídos `task-result-guard` →
+`context-sandbox` → `read-enhancer`; eventos de erro permanecem inalterados.
 
 Toda ferramenta V2 declara um schema `output`. O OpenCode 2.0.x exige que a
 declaração e o resultado resolvido concordem nos dois sentidos, então uma

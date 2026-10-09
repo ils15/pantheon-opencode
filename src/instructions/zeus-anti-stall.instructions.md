@@ -54,7 +54,7 @@ Use **pantheon-persistence** (`checkpoint:<slug>`, 4h TTL), not checkpoint files
 Check a heartbeat for stale state during long sessions; save one after anti-stall recovery.
 
 ### Checkpoint / Pre-Compaction
-Checkpoint only long-running or multi-phase work, when context loss is plausible; never add it for a one-off command or bounded fix. Save current phase and remaining tasks before a consequential dispatch and before compaction. Use `context_save` with an object-valued `phase`; see `skill: auto-continue` for the payload. Checkpoints expire after 4h.
+Checkpoint only long-running or multi-phase work, when context loss is plausible; never add it for a one-off command or bounded fix. Save current phase and remaining tasks before a consequential dispatch and before compaction. Use `context_save` with `content` = `JSON.stringify` of an object whose nested `phase`/`goal`/`delegations`/`heartbeat` values are objects and whose `tail` is an array; omit an unset `goal` rather than passing a string. See `skill: auto-continue` for the payload. Checkpoints expire after 4h.
 
 ### Context Retrieval
 For a real next phase, retrieve the latest checkpoint and apply remaining tasks/gotchas; do not create checkpoints just to retrieve context for a bounded task.

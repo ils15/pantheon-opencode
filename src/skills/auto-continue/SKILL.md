@@ -171,7 +171,9 @@ Session state is **not** file-based. It lives in **pantheon-persistence** under 
 Write state with `context_save(slug=slug, key=key, content=JSON.stringify(state), session_id=...)` and read it back with
 `context_get(slug=slug, key="latest", session_id=...)`. Capture `session_id` from the first `context_save`
 of the session and reuse it for the rest of the session, so the `latest` pointer survives
-compaction.
+compaction. `state` must be an object — never pass a bare string as `content`: its
+`goal`/`phase`/`delegations`/`heartbeat` values are objects and `tail` is an array.
+`goal` is optional; when unset, omit the key rather than passing a string placeholder.
 
 ### Heartbeat Check
 - If `context_get(slug=slug, key="heartbeat", session_id=...)` returns a checkin older than 300s, log a stall warning and resume

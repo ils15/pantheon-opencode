@@ -124,15 +124,18 @@ revision while holding the write lock. This is last-writer-wins for callers
 that omit revisions; the schema has no separate CAS column and no migration is
 performed.
 
-Content is bounded to 64 KiB. Structured checkpoint JSON is an object with
-bounded `goal`, `phase`, `delegations.in_flight`, `tail`, and `heartbeat`
-fields. Rehydrated values are untrusted data: output blocks include an
-informational label and escape markup/control delimiters without executing or
-rewriting the stored value. Invalid JSON or an invalid checkpoint shape fails
-closed; recovery never scans sibling keys. Explicit TTLs are validated as
-integers from 1 to 31,536,000 seconds; omitted `context_save.ttl` uses the
-key policy (300 seconds for `heartbeat`, 14,400 seconds for other context
-keys).
+Content is bounded to 64 KiB. `content` is a JSON-encoded string, not a raw
+object: callers pass `JSON.stringify(state)`, and the decoded top level must be
+an object. Inside it, `goal`, `phase`, `delegations` (with `in_flight`), and
+`heartbeat` are objects and `tail` is an array — passing one of them as a bare
+string is rejected as an invalid checkpoint shape. `goal` is optional: when it
+is not set, omit the key rather than sending a string placeholder. Rehydrated
+values are untrusted data: output blocks include an informational label and
+escape markup/control delimiters without executing or rewriting the stored
+value. Invalid JSON or an invalid checkpoint shape fails closed; recovery never
+scans sibling keys. Explicit TTLs are validated as integers from 1 to 31,536,000
+seconds; omitted `context_save.ttl` uses the key policy (300 seconds for
+`heartbeat`, 14,400 seconds for other context keys).
 
 ### context_save
 Save a context checkpoint for a session/phase.
@@ -140,7 +143,9 @@ Save a context checkpoint for a session/phase.
 `context_save(slug, key, content, session_id, ttl?, scope?, revision?)`
 - `slug`: session identifier (e.g. "auth-refactor")
 - `key`: checkpoint key (e.g. "phase:3", "latest", "heartbeat")
-- `content`: JSON-serializable string
+- `content`: JSON-serializable string (`JSON.stringify` of an object whose
+  `goal`/`phase`/`delegations`/`heartbeat` values are objects and `tail` is an
+  array; omit an unset optional `goal` rather than passing a string)
 - `session_id`: required opaque session identifier
 - `ttl`: optional integer from 1 to 31,536,000 seconds; omitted values default
   to heartbeat 300s and 14,400s for latest, tail, and other context keys

@@ -74,29 +74,6 @@ export const V2_UNSUPPORTED_FEATURE_SEED = Object.freeze([
   // pantheon_goal_create/get/update are therefore absent from the V2 surface
   // rather than registered as non-functional placeholders.
   'goal-tools',
-  // Adapter limitation, not a host gap — TWO separate reasons, which are easy
-  // to conflate and were once stated wrongly (see the v2EnforcementGuard
-  // comment in src/plugin-v2.ts for the long form):
-  //   - MISSING WIRING: V2 keeps no session→agent map (the host puts the agent
-  //     on the execute.before event), so there is no `getSessionAgent` to pass.
-  //     The guard would then call isDelegationAllowed(undefined, target) → false
-  //     and throw "caller agent is unavailable" on EVERY task() call.
-  //   - UNWIRED HIERARCHY: V2 seeds no session→parent map anywhere, and an
-  //     unseeded SessionHierarchyRegistry gates exactly two things — the depth-2
-  //     child deny and the root-session gate. Unseeded, isChild is always false,
-  //     so neither can be trusted. UNWIRED, not impossible: the V2
-  //     `session.created` event carries `properties.info: Session` with
-  //     `parentID?`, the same field V1 seeds from on the same event, and one
-  //     line in onSessionCreated would seed live sessions. V1's OTHER source —
-  //     the client.session.list() startup seed for sessions predating plugin
-  //     load — has no V2 equivalent at all, because V2's PluginContext exposes
-  //     no `client`. Whether a live 2.0.22 host populates info.parentID on that
-  //     event is UNVERIFIED: the canary records Object.keys(ctx), not payloads.
-  // Note the hierarchy is NOT what would deny: isRoot reports `true` for an
-  // unknown session while unseeded, which PASSES the root gate.
-  // Read-only depth-2 still holds via the blocked-tool list in the guard, so
-  // this marker records an unenforced matrix, not an unenforced depth limit.
-  'delegation-matrix',
 ])
 
 /**

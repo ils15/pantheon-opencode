@@ -491,6 +491,119 @@ function mergeManagedAgents(base, managed) {
 }
 
 // ---------------------------------------------------------------------------
+// context_sandbox: V1 top-level block → V2 plugin options
+// ---------------------------------------------------------------------------
+//
+// `context_sandbox` is a Pantheon-owned, V1 top-level setting (src/plugin.ts
+// reads `config.context_sandbox`). OpenCode V2 no longer carries custom
+// top-level keys: a sandbox probe against V2.0.25 showed `context_sandbox`
+// exits 0 but is SILENTLY DROPPED — identical to an arbitrary unknown key and
+// with no warning — while a value nested under a plugin entry's `options`
+// survives verbatim (plugin options are not schema-validated). The V2 adapter
+// reads the setting as `ctx.options.context_sandbox`.
+//
+// So the migration DUPLICATES the V1 top-level block into the exact Pantheon V2
+// plugin entry's options. The top-level block is deliberately LEFT IN PLACE so
+// a user who downgrades to V1 keeps the setting. Precedence per leaf:
+//   explicit V2 plugin option  >  legacy top-level fill  >  runtime defaults
+// (defaults are never written by the installer — the adapter resolves them).
+//
+// A null or type-invalid known field is not silently coerced: the merge throws
+// BEFORE the config is written, so a malformed block aborts the install instead
+// of persisting a value that changes runtime behaviour.
+
+/** Tool-keyed leaf fields of `context_sandbox.limits`. */
+export const CONTEXT_SANDBOX_LIMIT_FIELDS = Object.freeze({
+  read: Object.freeze(['maxLines', 'keepHead', 'keepTail']),
+  grep: Object.freeze(['maxResults', 'keepTop']),
+  glob: Object.freeze(['maxFiles', 'keepTop']),
+  webfetch: Object.freeze(['maxChars', 'keepHead']),
+})
+
+/** @returns {boolean} true for a plain name→value map (not null/array) */
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Validate one `context_sandbox` block (top-level legacy or V2 plugin option).
+ *
+ * `undefined` (key absent) is valid. Anything else must be a plain object with
+ * an optional boolean `enabled` and an optional `limits` object whose known
+ * tool groups are plain objects carrying only non-negative finite numbers.
+ * Unknown keys are ignored (the runtime resolver does the same).
+ *
+ * @param {unknown} block
+ * @param {string} label - human-readable origin, used in the thrown message
+ * @throws {Error} on a null or type-invalid known field
+ */
+function assertSandboxBlock(block, label) {
+  if (block === undefined) return
+  if (!isPlainObject(block)) {
+    throw new Error(`${label} must be an object when present`)
+  }
+  if ('enabled' in block && typeof block.enabled !== 'boolean') {
+    throw new Error(`${label}.enabled must be a boolean`)
+  }
+  if ('limits' in block) {
+    if (!isPlainObject(block.limits)) {
+      throw new Error(`${label}.limits must be an object`)
+    }
+    for (const [tool, fields] of Object.entries(CONTEXT_SANDBOX_LIMIT_FIELDS)) {
+      const group = block.limits[tool]
+      if (group === undefined) continue
+      if (!isPlainObject(group)) {
+        throw new Error(`${label}.limits.${tool} must be an object`)
+      }
+      for (const field of fields) {
+        if (!(field in group)) continue
+        const value = group[field]
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+          throw new Error(`${label}.limits.${tool}.${field} must be a non-negative number`)
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Merge a legacy (V1 top-level) context_sandbox block into an optional explicit
+ * V2 block. Values are compared per leaf, so `enabled: false` and a numeric `0`
+ * are preserved (not mistaken for "unset").
+ *
+ * @param {object|undefined} v2Explicit - existing `plugins[...].options.context_sandbox`
+ * @param {object|undefined} legacy - top-level `context_sandbox`
+ * @returns {object} merged block (only keys that were actually set)
+ * @throws {Error} when either block is null/type-invalid
+ */
+export function mergeContextSandboxBlocks(v2Explicit, legacy) {
+  assertSandboxBlock(v2Explicit, 'plugins[...].options.context_sandbox')
+  assertSandboxBlock(legacy, 'context_sandbox')
+
+  const explicit = isPlainObject(v2Explicit) ? v2Explicit : {}
+  const base = isPlainObject(legacy) ? legacy : {}
+  const merged = {}
+
+  if ('enabled' in explicit) merged.enabled = explicit.enabled
+  else if ('enabled' in base) merged.enabled = base.enabled
+
+  const mergedLimits = {}
+  for (const [tool, fields] of Object.entries(CONTEXT_SANDBOX_LIMIT_FIELDS)) {
+    const explicitGroup = isPlainObject(explicit.limits?.[tool]) ? explicit.limits[tool] : null
+    const baseGroup = isPlainObject(base.limits?.[tool]) ? base.limits[tool] : null
+    const group = {}
+    for (const field of fields) {
+      if (explicitGroup && field in explicitGroup) group[field] = explicitGroup[field]
+      else if (baseGroup && field in baseGroup) group[field] = baseGroup[field]
+    }
+    if (Object.keys(group).length > 0) mergedLimits[tool] = group
+  }
+  if (Object.keys(mergedLimits).length > 0) merged.limits = mergedLimits
+
+  return merged
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 

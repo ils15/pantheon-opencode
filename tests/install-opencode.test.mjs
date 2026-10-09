@@ -11,12 +11,21 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
 import {
+  applyContextSandboxToV2Plugins,
   installOpenCode,
   isGlobalConfigDir,
   MANAGED_FIELDS,
@@ -25,7 +34,7 @@ import {
   resolveTuiCopyTarget,
   tuiConfigLocations,
 } from '../scripts/install/opencode.mjs'
-import { ROOT } from '../scripts/install/shared.mjs'
+import { ROOT, writeConfigWithBackup, writeIfChanged } from '../scripts/install/shared.mjs'
 
 const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 const THIRD_PARTY_HOOKS = '/tmp/pantheon-opencode-vendor/src/plugins/pantheon-hooks.ts'
@@ -904,5 +913,368 @@ test('v2 install keeps the managed agent merge when agent and agents coexist', a
     assert.equal(config.agent, undefined, 'the singular block is still consumed by the rename')
   } finally {
     rmSync(target, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// context_sandbox: V1 top-level → exact V2 plugin options (PR224)
+// ---------------------------------------------------------------------------
+// V2.0.25 accepts but SILENTLY DROPS a top-level `context_sandbox` key (sandbox
+// probe evidence), while plugin-entry `options` survive verbatim. The installer
+// therefore duplicates the V1 block into the Pantheon V2 plugin entry's options
+// and leaves the top-level block for a V1 downgrade.
+
+test('V2 install duplicates a V1 top-level context_sandbox into the Pantheon plugin options', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-'))
+  try {
+    const legacy = { enabled: false, limits: { read: { maxLines: 12, keepHead: 4 } } }
+    const config = await runInstall(target, { context_sandbox: legacy }, 'v2')
+
+    // V1 top-level block is preserved for a downgrade.
+    assert.deepEqual(config.context_sandbox, legacy, 'top-level block must survive')
+    // The exact Pantheon V2 entry carries the same value under options.
+    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    assert.equal(typeof entry, 'object', 'the Pantheon V2 entry becomes an options object')
+    assert.equal(entry.package, join(ROOT, 'src', 'plugin-v2'))
+    assert.deepEqual(entry.options.context_sandbox, legacy)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('an explicit V2 plugin option wins per leaf over the legacy top-level block', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-merge-'))
+  try {
+    const config = await runInstall(
+      target,
+      {
+        context_sandbox: { enabled: false, limits: { read: { maxLines: 5, keepTail: 2 } } },
+        plugins: [
+          {
+            package: join(ROOT, 'src', 'plugin-v2'),
+            options: { context_sandbox: { limits: { read: { maxLines: 99 } } } },
+          },
+        ],
+      },
+      'v2',
+    )
+    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    assert.deepEqual(entry.options.context_sandbox, {
+      enabled: false,
+      limits: { read: { maxLines: 99, keepTail: 2 } },
+    })
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('a null context_sandbox aborts the install before the config is rewritten', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-null-'))
+  try {
+    const seed = '{\n  "context_sandbox": null\n}\n'
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'opencode.json'), seed)
+
+    await assert.rejects(
+      () =>
+        installOpenCode(target, false, false, COMPONENTS, {
+          yes: true,
+          headless: true,
+          version: 'v2',
+        }),
+      /context_sandbox must be an object/,
+    )
+    assert.equal(readFileSync(join(target, 'opencode.json'), 'utf8'), seed, 'config untouched')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('context_sandbox migration is idempotent across repeated V2 installs', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-idem-'))
+  try {
+    const legacy = { enabled: true, limits: { grep: { maxResults: 7 } } }
+    const first = await runInstall(target, { context_sandbox: legacy }, 'v2')
+    const second = await runInstall(target, first, 'v2')
+    assert.deepEqual(second, first, 'second install must be a no-op')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('context_sandbox migration preserves third-party plugin entries and their options', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-thirdparty-'))
+  try {
+    const thirdParty = { package: 'npm:@acme/other', options: { keep: true } }
+    const config = await runInstall(
+      target,
+      { context_sandbox: { enabled: false }, plugins: [thirdParty] },
+      'v2',
+    )
+    const preserved = config.plugins.find(
+      (ref) => pluginReferenceIdentity(ref) === 'npm:@acme/other',
+    )
+    assert.deepEqual(preserved, thirdParty, 'third-party entry and options untouched')
+    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    assert.deepEqual(entry.options.context_sandbox, { enabled: false })
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('applyContextSandboxToV2Plugins converts a string entry and leaves others intact', () => {
+  const v2ref = join(ROOT, 'src', 'plugin-v2')
+  const plugins = ['npm:@acme/other', v2ref]
+  applyContextSandboxToV2Plugins(plugins, { enabled: true })
+  assert.equal(plugins[0], 'npm:@acme/other')
+  assert.deepEqual(plugins[1], {
+    package: v2ref,
+    options: { context_sandbox: { enabled: true } },
+  })
+})
+
+test('applyContextSandboxToV2Plugins is a no-op when the legacy key is absent', () => {
+  const plugins = [join(ROOT, 'src', 'plugin-v2')]
+  assert.deepEqual(applyContextSandboxToV2Plugins(plugins, undefined), [
+    join(ROOT, 'src', 'plugin-v2'),
+  ])
+})
+
+test('V2-only null/invalid context_sandbox options abort even without a legacy key', async () => {
+  // Regression: the migration used to early-return whenever the legacy V1
+  // top-level key was absent, so an explicit `plugins[].options.context_sandbox`
+  // was never validated and a null/invalid value persisted straight to disk.
+  const invalidCases = [
+    { label: 'null', options: { context_sandbox: null }, error: /must be an object/ },
+    {
+      label: 'invalid known leaf',
+      options: { context_sandbox: { limits: { read: { maxLines: -1 } } } },
+      error: /non-negative number/,
+    },
+  ]
+
+  for (const { label, options, error } of invalidCases) {
+    const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-v2invalid-'))
+    const configPath = join(target, 'opencode.json')
+    try {
+      const seed = `${JSON.stringify(
+        { plugins: [{ package: join(ROOT, 'src', 'plugin-v2'), options }] },
+        null,
+        2,
+      )}\n`
+      mkdirSync(target, { recursive: true })
+      writeFileSync(configPath, seed)
+
+      await assert.rejects(
+        () =>
+          installOpenCode(target, false, false, COMPONENTS, {
+            yes: true,
+            headless: true,
+            version: 'v2',
+          }),
+        error,
+        `invalid V2-only context_sandbox (${label}) must abort the install`,
+      )
+      assert.equal(readFileSync(configPath, 'utf8'), seed, `config untouched (${label})`)
+    } finally {
+      rmSync(target, { recursive: true, force: true })
+    }
+  }
+})
+
+test('V2-only valid context_sandbox options are validated and preserved idempotently', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-v2only-'))
+  try {
+    const options = {
+      context_sandbox: { enabled: false, limits: { read: { maxLines: 5, keepHead: 0 } } },
+      sibling_option: 'kept',
+    }
+    const first = await runInstall(
+      target,
+      { plugins: [{ package: join(ROOT, 'src', 'plugin-v2'), options }] },
+      'v2',
+    )
+    const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    assert.deepEqual(
+      entry.options.context_sandbox,
+      options.context_sandbox,
+      'valid V2-only options must survive validation unchanged',
+    )
+    assert.equal(entry.options.sibling_option, 'kept', 'sibling plugin options preserved')
+
+    const second = await runInstall(target, first, 'v2')
+    assert.deepEqual(second, first, 'a second V2-only install must be a byte-identical no-op')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('a V2 plugin entry with no managed option stays a no-op string entry', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-none-'))
+  try {
+    const first = await runInstall(target, null, 'v2')
+    const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    assert.equal(entry, join(ROOT, 'src', 'plugin-v2'), 'no options object without legacy input')
+
+    const second = await runInstall(target, first, 'v2')
+    assert.deepEqual(second, first, 'absent legacy + absent V2 options stays idempotent')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Transactional config write guard (shared.mjs)
+// ---------------------------------------------------------------------------
+
+test('writeIfChanged refuses to write through a symlink (including dangling)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-symlink-'))
+  try {
+    const link = join(dir, 'opencode.json')
+    symlinkSync(join(dir, 'missing.json'), link)
+    assert.throws(() => writeIfChanged(link, '{}', false), /symlink/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('writeIfChanged reports a conflict and leaves newer on-disk content alone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-conflict-'))
+  try {
+    const target = join(dir, 'opencode.json')
+    writeFileSync(target, '{"newer":true}\n')
+    const outcome = writeIfChanged(target, '{"mine":true}\n', false, {
+      expectedContent: '{"stale":true}\n',
+    })
+    assert.equal(outcome, 'conflict')
+    assert.equal(readFileSync(target, 'utf8'), '{"newer":true}\n')
+    assert.equal(existsSync(`${target}.bak`), false, 'no spurious backup on conflict')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('writeConfigWithBackup preserves the previous backup when a late conflict is observed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-bak-conflict-'))
+  try {
+    const target = join(dir, 'opencode.json')
+    writeFileSync(target, '{"v":1}\n')
+    assert.equal(
+      writeConfigWithBackup(target, '{"v":2}\n', false, { expectedContent: '{"v":1}\n' }),
+      'created',
+    )
+    assert.equal(readFileSync(`${target}.bak`, 'utf8'), '{"v":1}\n')
+
+    // A later write whose expected content no longer matches must not clobber
+    // the last known-good backup.
+    writeFileSync(target, '{"v":3}\n')
+    assert.equal(
+      writeConfigWithBackup(target, '{"v":4}\n', false, { expectedContent: '{"stale":true}\n' }),
+      'conflict',
+    )
+    assert.equal(readFileSync(target, 'utf8'), '{"v":3}\n')
+    assert.equal(readFileSync(`${target}.bak`, 'utf8'), '{"v":1}\n')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('writeConfigWithBackup re-checks content immediately before the swap (TOCTOU)', () => {
+  // The expected-content check cannot be a one-shot compare: the read and the
+  // rename are two syscalls, and a concurrent writer can land between them.
+  // Simulate that write via the `beforeRecheck` seam (which fires after the
+  // initial check and before the last-moment re-read) and require the installer
+  // to refuse rather than clobber the newer bytes.
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-toctou-'))
+  try {
+    const target = join(dir, 'opencode.json')
+    const backupPath = `${target}.bak`
+    const original = '{"v":1}\n'
+    const concurrent = '{"v":2-concurrent}\n'
+    const priorBackup = '{"v":0}\n'
+    writeFileSync(target, original)
+    writeFileSync(backupPath, priorBackup)
+
+    const outcome = writeConfigWithBackup(target, '{"v":3-installed}\n', false, {
+      expectedContent: original,
+      beforeRecheck: () => writeFileSync(target, concurrent),
+    })
+
+    assert.equal(outcome, 'conflict', 'a race must surface as a conflict, not a silent write')
+    assert.equal(readFileSync(target, 'utf8'), concurrent, 'the concurrent edit is preserved')
+    assert.equal(readFileSync(backupPath, 'utf8'), priorBackup, 'prior .bak stays byte-identical')
+    assert.equal(
+      existsSync(`${target}.tmp-${process.pid}`),
+      false,
+      'the temp sibling is cleaned up after a conflict',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a config race during install aborts the install instead of reporting success', async () => {
+  // The installer must not treat a detected conflict as an ordinary skipped
+  // write: the user's file changed under it, so a "successful" summary would be
+  // a lie. The recheck seam stands in for a concurrent editor.
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-install-race-'))
+  const configPath = join(target, 'opencode.json')
+  const backupPath = `${configPath}.bak`
+  const priorBackup = '{"v":0}\n'
+  const concurrent = '{"concurrent":true}\n'
+  try {
+    mkdirSync(target, { recursive: true })
+    writeFileSync(configPath, JSON.stringify({ $schema: 'https://opencode.ai/config.json' }))
+    writeFileSync(backupPath, priorBackup)
+
+    await assert.rejects(
+      () =>
+        installOpenCode(target, false, false, COMPONENTS, {
+          yes: true,
+          headless: true,
+          version: 'v2',
+          deps: { beforeRecheck: () => writeFileSync(configPath, concurrent) },
+        }),
+      /changed on disk during install/,
+    )
+    assert.equal(readFileSync(configPath, 'utf8'), concurrent, 'config not clobbered')
+    assert.equal(readFileSync(backupPath, 'utf8'), priorBackup, 'prior .bak untouched')
+    assert.equal(
+      existsSync(`${configPath}.tmp-${process.pid}`),
+      false,
+      'temp sibling cleaned up after the aborted install',
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('context_sandbox migration is applied independently to global and project targets', async () => {
+  const parent = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-scope-'))
+  const globalTarget = join(parent, 'opencode')
+  const projectTarget = join(parent, 'project')
+  const previousXdg = process.env.XDG_CONFIG_HOME
+  process.env.XDG_CONFIG_HOME = parent
+  try {
+    const legacy = { enabled: false, limits: { glob: { maxFiles: 3 } } }
+    for (const target of [globalTarget, projectTarget]) {
+      mkdirSync(target, { recursive: true })
+      writeFileSync(
+        join(target, 'opencode.json'),
+        JSON.stringify({ context_sandbox: legacy }, null, 2),
+      )
+      await installOpenCode(target, false, false, COMPONENTS, {
+        yes: true,
+        headless: true,
+        version: 'v2',
+      })
+      const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+      const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+      assert.deepEqual(entry.options.context_sandbox, legacy, `scope migrate failed for ${target}`)
+    }
+  } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previousXdg
+    rmSync(parent, { recursive: true, force: true })
   }
 })

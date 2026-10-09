@@ -131,10 +131,15 @@ host is an unsupported mixed/wrong-generation configuration, not a supported mod
 **Not inert.** The V2 path (`src/plugin-v2`, registered as a directory because
 the V2 loader rejects bare file paths) registers real tools with real
 `input`/`output` schemas via `ctx.tool.transform()`, 5 event subscriptions,
-session hooks and a tool `execute.before` hook that enforces read-only sessions.
-It is a smaller surface than V1 by design, not a stub: the 3 goal tools and the
-V1 caller→target delegation matrix are absent, and `getUnsupportedFeatures()`
-reports that as `goal-tools` and `delegation-matrix`.
+session hooks and tool/permission hooks that enforce read-only sessions and the
+caller→target delegation matrix. The matrix applies only to Pantheon-managed
+targets: Zeus may delegate to any registered agent; Athena and Hermes may target
+Apollo only; other Pantheon callers and unknown callers are denied. Child
+sessions cannot delegate to Pantheon agents. Calls between native/custom agents
+remain under host permissions. The V2 path never adds an allow grant or
+overrides an explicit host deny; missing or mismatched identity fails closed
+for the attempted Pantheon delegation. The 3 goal tools remain unsupported and
+are reported as `goal-tools`.
 
 **Not complete either, and the V2 support claim is currently narrowed.** Two
 facts, both recorded in this repository rather than smoothed over:
@@ -298,10 +303,16 @@ surface: the host includes the active agent on the event, a read-only agent
 `createEnforcementGuard` throws to deny `edit`, `write`, `bash`, `task`,
 `hashline_edit` and `pantheon_model`. It does **not** rely on the V1
 `tool.execute.before` hook, which lives in `src/plugin.ts` and is not loaded
-when only `plugin-v2` is configured. The companion `execute.after` hook and the
-`permission.evaluate` hook are registration points with no V2-side behaviour,
-and the V1 caller/target delegation matrix for native `task()` is not enforced
-on V2.
+when only `plugin-v2` is configured. The `permission.evaluate` hook enforces
+the V2 caller/target matrix for Pantheon-managed targets across every entry in
+the host's `resources` array. Native-only resources pass through unchanged to
+OpenCode's permission policy; mixed native/Pantheon requests and multi-target
+requests are denied unless every Pantheon target is explicitly allowed for the
+authoritative caller. Explicit host denies remain final, and missing or
+unknown resource data fails closed. If a denied evaluation has no mutable host
+output argument, the hook throws to fail closed rather than silently omitting
+the denial. V2 `execute.after` runs the completed-result chain:
+`task-result-guard` → `context-sandbox` → `read-enhancer`.
 
 Every V2 tool declares an `output` schema. OpenCode 2.0.x requires the
 declaration and the resolved result to agree in both directions, so an

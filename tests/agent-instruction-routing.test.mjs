@@ -135,3 +135,23 @@ test('timeout instructions use the explicit routing fallback map as canonical', 
   assert.match(routing, /fallback_chains:\s*[\s\S]*?hermes:\s*\n\s*- talos\s*\n\s*- athena/)
   assert.match(timeout, /if an agent has no configured chain, stop[\s\S]*escalate/i)
 })
+
+test('context_save guidance documents the object content contract', () => {
+  // `content` is a JSON string whose DECODED top level must be an object:
+  // nesting a bare string where `goal` (or another structured field) belongs is
+  // rejected by the persistence server as an invalid checkpoint shape. The
+  // guidance must say so, and must tell callers to OMIT an unset optional
+  // `goal` instead of sending a string placeholder.
+  const antiStall = read('../src/instructions/zeus-anti-stall.instructions.md')
+  assert.match(antiStall, /JSON\.stringify/)
+  assert.match(antiStall, /omit an unset `goal`/)
+
+  const skill = read('../src/skills/auto-continue/SKILL.md')
+  assert.match(skill, /JSON\.stringify\(state\)/)
+  assert.match(skill, /omit the key rather than passing a string/)
+
+  const persistence = read('../docs/persistence-mcp.md')
+  assert.match(persistence, /JSON-encoded string/)
+  assert.match(persistence, /`goal` is optional/)
+  assert.match(persistence, /`tail` is an array/)
+})

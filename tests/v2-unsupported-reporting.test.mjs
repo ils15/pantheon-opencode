@@ -66,7 +66,7 @@ test('the shared seed is a non-empty list of feature markers', () => {
   assert.ok(SEED.length > 0, 'the seed must not be empty')
   // The two reductions a migrating user actually loses.
   assert.ok(SEED.includes('goal-tools'), 'goal-tools must be in the seed')
-  assert.ok(SEED.includes('delegation-matrix'), 'delegation-matrix must be in the seed')
+  assert.equal(SEED.includes('delegation-matrix'), false, 'the matrix is enforced in V2')
 })
 
 test('a returned seed is a copy — a reporter cannot mutate the shared list', () => {
@@ -107,7 +107,7 @@ test('a V1-generation install does not report the V2 reduction', async () => {
         version: 'v1',
       }),
     )
-    for (const feature of ['goal-tools', 'delegation-matrix']) {
+    for (const feature of ['goal-tools']) {
       assert.ok(
         !output.includes(feature),
         `a V1-generation install must not report the V2-only "${feature}" marker; got:\n${output}`,

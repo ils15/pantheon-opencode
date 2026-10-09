@@ -35,7 +35,11 @@ import {
   success,
   warning,
 } from './cli-ui.mjs'
-import { migrateMcpEntrypointPaths, migrateV1toV2 } from './config-migration.mjs'
+import {
+  mergeContextSandboxBlocks,
+  migrateMcpEntrypointPaths,
+  migrateV1toV2,
+} from './config-migration.mjs'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
 import { resolveOpenCodeVersion } from './opencode-version.mjs'
@@ -168,6 +172,27 @@ function readJsonConfig(filePath) {
 
   try {
     return JSON.parse(readFileSync(filePath, 'utf8'))
+  } catch (cause) {
+    throw new Error(`Invalid JSON in ${filePath}`, { cause })
+  }
+}
+
+/**
+ * Read a JSON config AND the exact raw text it was parsed from.
+ *
+ * The raw text is threaded to {@link writeConfigWithBackup} as the
+ * expected-content guard, so the compare-before-rename uses the SAME bytes the
+ * caller parsed — no second read that could observe a different file.
+ *
+ * @param {string} filePath
+ * @returns {{ config: object, raw: string|null }}
+ * @throws {Error} on invalid JSON (before any write happens)
+ */
+function readJsonConfigWithRaw(filePath) {
+  if (!existsSync(filePath)) return { config: {}, raw: null }
+  const raw = readFileSync(filePath, 'utf8')
+  try {
+    return { config: JSON.parse(raw), raw }
   } catch (cause) {
     throw new Error(`Invalid JSON in ${filePath}`, { cause })
   }
@@ -343,6 +368,71 @@ export function deduplicatePluginReferences(refs) {
     seen.add(identity)
     return true
   })
+}
+
+/**
+ * Duplicate the V1 top-level `context_sandbox` block into the exact Pantheon V2
+ * plugin entry's `options`, converting a plain-string entry into the
+ * `{ package, options }` object form the host accepts.
+ *
+ * Why the copy is required: OpenCode V2.0.25 silently drops a top-level
+ * `context_sandbox` key (probe evidence in the module header of
+ * config-migration.mjs), so the V1 setting would be lost on a V1→V2 install.
+ * The V1 top-level block is LEFT IN PLACE so a downgrade keeps working.
+ *
+ * Precedence is delegated to {@link mergeContextSandboxBlocks}: an explicit V2
+ * option leaf wins, the legacy block fills only unset leaves, and the runtime
+ * resolver supplies defaults. Only the Pantheon V2 entry is touched — every
+ * other plugin entry, and every other option on this entry, is preserved.
+ *
+ * The managed V2 option is ALWAYS validated — even when no legacy V1 block is
+ * present — because the migration is the only place that validates it. An
+ * earlier version returned early on `legacySandbox === undefined`, so an
+ * explicit `plugins[].options.context_sandbox` of `null` (or any type-invalid
+ * known value) was never checked and persisted straight to disk.
+ *
+ * @param {unknown[]} plugins - V2 `plugins` array (mutated in place)
+ * @param {unknown} legacySandbox - V1 top-level `context_sandbox` (may be undefined)
+ * @returns {unknown[]} the same array
+ * @throws {Error} when the legacy block or the existing V2 option is null or
+ *   type-invalid (checked before any config write)
+ */
+export function applyContextSandboxToV2Plugins(plugins, legacySandbox) {
+  if (!Array.isArray(plugins)) return plugins
+
+  const index = plugins.findIndex((ref) => pluginReferenceIdentity(ref) === PANTHEON_V2_PLUGIN)
+  if (index === -1) return plugins
+
+  const entry = plugins[index]
+  const isObjectEntry = typeof entry === 'object' && entry !== null && !Array.isArray(entry)
+  const hasOptions =
+    isObjectEntry &&
+    typeof entry.options === 'object' &&
+    entry.options !== null &&
+    !Array.isArray(entry.options)
+  const existingOptions = hasOptions ? entry.options : {}
+  const hasExistingSandbox = Object.hasOwn(existingOptions, 'context_sandbox')
+
+  // Nothing managed to migrate OR validate: leave the entry untouched so a
+  // re-install stays a true no-op. `legacySandbox === undefined` covers an
+  // absent V1 key; `!hasExistingSandbox` covers a V2 entry with no managed
+  // option yet. An explicit `null` is a PRESENT key (`hasExistingSandbox`), so
+  // it is deliberately NOT skipped and must be validated below.
+  if (legacySandbox === undefined && !hasExistingSandbox) return plugins
+
+  // Run the managed option through the validator unconditionally, merging the
+  // legacy block in only when it exists. A null/type-invalid existing option
+  // throws here, BEFORE the config is written.
+  const mergedSandbox = mergeContextSandboxBlocks(existingOptions.context_sandbox, legacySandbox)
+  const packageId = isObjectEntry ? entry.package : entry
+
+  // Rebuild the entry as an object so the options survive a V2 host (which
+  // preserves plugin option objects verbatim).
+  plugins[index] = {
+    package: packageId,
+    options: { ...existingOptions, context_sandbox: mergedSandbox },
+  }
+  return plugins
 }
 
 export { parseOpenCodeVersion, resolveOpenCodeVersion } from './opencode-version.mjs'
@@ -675,7 +765,7 @@ export async function installOpenCode(
   const pantheonConfigPath =
     typeof mergeDevConfigOpt === 'string' ? resolve(mergeDevConfigOpt) : null
   const targetConfigPath = join(target, 'opencode.json')
-  const config = readJsonConfig(targetConfigPath)
+  const { config, raw: configRaw } = readJsonConfigWithRaw(targetConfigPath)
   const pantheonConfig =
     pantheonConfigPath !== null && existsSync(pantheonConfigPath)
       ? readJsonConfig(pantheonConfigPath)
@@ -1212,6 +1302,18 @@ export async function installOpenCode(
       config.plugin = removePantheonPluginReferences(config.plugin)
     }
     if (!Array.isArray(config.plugins)) config.plugins = []
+    // Preserve any options already set on the Pantheon V2 entry across the
+    // remove/re-add below. The context_sandbox migration reads them, and a
+    // silent drop would lose a hand-set sandbox limit or any other plugin
+    // option the user chose. Only the object form can carry options.
+    const existingV2Options =
+      config.plugins
+        .filter((ref) => pluginReferenceIdentity(ref) === PANTHEON_V2_PLUGIN)
+        .map((ref) =>
+          typeof ref === 'object' && ref !== null && !Array.isArray(ref) ? ref.options : null,
+        )
+        .find((options) => options && typeof options === 'object' && !Array.isArray(options)) ??
+      null
     config.plugins = deduplicatePluginReferences(removePantheonPluginReferences(config.plugins))
     if (Array.isArray(pantheonConfig?.plugins)) {
       for (const plugin of pantheonConfig.plugins) {
@@ -1236,7 +1338,11 @@ export async function installOpenCode(
     config.plugins = config.plugins.filter(
       (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedV2),
     )
-    config.plugins.push(resolvedV2)
+    config.plugins.push(
+      existingV2Options === null
+        ? resolvedV2
+        : { package: resolvedV2, options: deepClone(existingV2Options) },
+    )
   }
 
   if (pantheonConfig !== null) {
@@ -1401,10 +1507,36 @@ export async function installOpenCode(
         if (entry && typeof entry === 'object' && !Array.isArray(entry)) delete entry.steps
       }
     }
+
+    // Carry the V1 top-level `context_sandbox` into the exact Pantheon V2
+    // plugin entry's `options` — V2.0.25 silently drops the top-level key, so
+    // without this the user's enabled/limits choice is lost on a V1→V2 install.
+    // The V1 block itself is preserved by migrateV1toV2 for a downgrade.
+    // A null/type-invalid block throws HERE, before any config write.
+    configToWrite.plugins = applyContextSandboxToV2Plugins(
+      configToWrite.plugins,
+      config.context_sandbox,
+    )
   }
 
   const configContent = `${JSON.stringify(configToWrite, null, 2)}\n`
-  const status = writeConfigWithBackup(targetConfigPath, configContent, dryRun)
+  const status = writeConfigWithBackup(targetConfigPath, configContent, dryRun, {
+    expectedContent: configRaw,
+    // Test seam: lets a test simulate a concurrent writer landing between the
+    // initial config read and the pre-swap recheck. Absent in production.
+    beforeRecheck: opts.deps?.beforeRecheck,
+  })
+  if (status === 'conflict') {
+    // The user's config changed under the installer between the read and the
+    // swap. Treating this as an ordinary skipped write would report a
+    // successful install over a file we never actually updated — fail loudly
+    // and leave the target and its `.bak` byte-identical instead.
+    throw new Error(
+      `Installation aborted: ${targetConfigPath} changed on disk during install ` +
+        '(it no longer matches the content that was read); refusing to overwrite it. ' +
+        'Re-run the installer once the file is stable.',
+    )
+  }
   if (status === 'created') stats.created++
   else stats.skipped++
 
