@@ -201,6 +201,11 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
   assert.match(testJob[0], /npm run test:node/)
   assert.match(testJob[0], /npm run test:ts/)
   assert.match(testJob[0], /coverage run --branch --source=src\/mcp -m pytest/)
+  assert.match(
+    testJob[0],
+    /git fetch --no-tags --depth=1 origin 850191c2fffee112386cc16fd983e6073f7884d8/,
+    'the shallow test-suite checkout must fetch the historical T1 snapshot used by offline tests',
+  )
   const validateJob = workflow.match(/^ {2}validate:[\s\S]*?(?=^ {2}test-suite:)/m)
   assert.ok(validateJob, 'CI must keep packaging and sandbox validation separate')
   assert.doesNotMatch(validateJob[0], /npm test|coverage run/)
