@@ -12,8 +12,8 @@
  *   session, and the shared `createEnforcementGuard` throws to deny
  *   `hashline_edit` / `pantheon_model` / `edit` / `write` / `bash` / `task`.
  *   See `registerV2ToolHooks`.
- * - The SAME `execute.before` hook runs scripts/hooks/scan-secrets.sh over the
- *   tool input and throws on exit 2 (high-confidence token match). This is the
+ * - The SAME `execute.before` hook scans serialized tool input in-process and
+ *   throws on a high-confidence token match. This is the
  *   ONLY hard security block on the V2 surface. It is wired HERE, not delegated
  *   to `src/plugins/pantheon-hooks.ts`: opencode.json declares only
  *   `src/plugin-v2` in `plugins`, so the V1 plugin never loads on a V2-only
@@ -88,6 +88,7 @@ import {
   type ToolExecuteBeforeInput,
   type ToolExecuteBeforeOutput,
 } from './pantheon/delegation-enforce.ts'
+import { scanSecretPayload } from './pantheon/secret-scanner.ts'
 import {
   getV2BridgeFromContext,
   type PantheonV2Bridge,
@@ -103,7 +104,6 @@ import {
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/v2-execute-after.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.ts'
 import { V2_UNSUPPORTED_FEATURE_SEED } from './pantheon/v2-unsupported.mjs'
-import { type HookPayload, type HookResult, runHook } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
 
@@ -731,15 +731,12 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
 // ─── V2 Secret Scan ─────────────────────────────────────────────────────
 
 /**
- * High-confidence secret token formats — MIRRORS `SECRET_MASK_RE` in
- * src/plugins/pantheon-hooks.ts (V1) and `HIGH_CONFIDENCE_PATTERNS` in
- * scripts/hooks/scan-secrets.sh.
+ * High-confidence secret token formats used to redact unrelated runtime logs.
+ * Detection itself is shared with V1 in `pantheon/secret-scanner.ts`.
  *
- * Duplicated rather than imported because the V1 module is a separate plugin
- * that is NOT loaded on a V2-only install (see the module header), and pulling
- * it in for one regex would resurrect exactly the V1-hook coupling V2 exists to
- * remove. The drift risk is real and is asserted by a test in
- * tests/pantheon/plugin-v2-contract.test.ts.
+ * This separate log-redaction expression is not the runtime detector. It is
+ * kept local because it masks arbitrary log strings, while the shared scanner
+ * returns masked findings and never returns raw payload content.
  *
  * Applied to every log line this module writes, so a hook trail can never
  * contain a raw credential. Header/KEY names (the Bifrost header alone,
@@ -754,7 +751,7 @@ function maskSecret(text: string): string {
 }
 
 /**
- * Message thrown when scan-secrets.sh exits 2 (a high-confidence token match).
+ * Message thrown when a high-confidence token match is detected.
  *
  * This is the only deliberate throw on the V2 surface. opencode's
  * Plugin.trigger has no catch around hook invocations, so the rejection
@@ -773,17 +770,8 @@ const SECRET_BLOCK_MESSAGE =
   '[plugin-v2] Blocked: high-confidence secret detected in tool input — see .pantheon/logs/hooks.log'
 
 /**
- * Message thrown when the secret scanner cannot produce a trustworthy verdict —
- * the script is missing/unexecutable, the child timed out or was killed, the
- * payload could not be serialized, the report was malformed, or the exit status
- * was unexpected.
- *
- * This is a deliberate fail-CLOSED denial. The previous handler blocked only
- * `code === 2` and treated every other outcome as advisory — but the runner
- * reports a missing script, a spawn failure and a payload-serialization failure
- * as `code: 1` too (src/plugins/hook-runner.ts), so a broken scanner read as a
- * clean advisory and the tool ran, silently disabling the only hard secret block
- * on the V2 surface.
+ * Message thrown when the scanner cannot validate or serialize the tool input.
+ * Invalid scanner input is a deliberate fail-CLOSED denial.
  *
  * English and user-facing, like {@link SECRET_BLOCK_MESSAGE}. It carries no
  * scanner output on purpose: a scan that failed mid-flight may still be holding
@@ -791,6 +779,80 @@ const SECRET_BLOCK_MESSAGE =
  */
 const SECRET_SCAN_UNAVAILABLE_MESSAGE =
   '[plugin-v2] Blocked: the secret scanner could not complete, so this tool call was denied (fail-closed) — see .pantheon/logs/hooks.log'
+
+const SECRET_SCAN_MARKER = '[SECRET SCAN]'
+
+type SecretScanPayload = {
+  tool_name?: string
+  tool_input?: unknown
+  agent_id?: string
+  session_id?: string
+}
+
+type SecretScanHookResult = {
+  code: number
+  stdout: string
+  stderr: string
+  signal: NodeJS.Signals | null
+  timedOut: boolean
+}
+
+type SecretScanFailureReason = 'scanner-malformed-output' | 'scanner-unexpected-exit'
+
+type SecretScanDecision =
+  | { action: 'allow' }
+  | { action: 'advisory' }
+  | { action: 'block' }
+  | { action: 'fail-closed'; reason: SecretScanFailureReason }
+
+function evaluateSecretScanResult(scan: SecretScanHookResult): SecretScanDecision {
+  if (scan.timedOut || scan.signal !== null) {
+    return { action: 'fail-closed', reason: 'scanner-unexpected-exit' }
+  }
+  if (!Number.isInteger(scan.code)) {
+    return { action: 'fail-closed', reason: 'scanner-malformed-output' }
+  }
+  if (scan.code === 0) return { action: 'allow' }
+  if (scan.code === 2) return { action: 'block' }
+  if (scan.code === 1) {
+    return scan.stderr.includes(SECRET_SCAN_MARKER)
+      ? { action: 'advisory' }
+      : { action: 'fail-closed', reason: 'scanner-malformed-output' }
+  }
+  return { action: 'fail-closed', reason: 'scanner-unexpected-exit' }
+}
+
+/** Convert the pure scanner result into the existing fail-closed verdict shape. */
+async function scanSecretInProcess(payload: SecretScanPayload): Promise<SecretScanHookResult> {
+  const result = scanSecretPayload(payload)
+  const reports =
+    result.status === 'block' || result.status === 'advisory'
+      ? result.findings.map(
+          (finding) =>
+            `[SECRET SCAN] ${finding.confidence}-confidence match: ${finding.masked} (pattern: ${finding.pattern})`,
+        )
+      : []
+  const code = result.status === 'clean' ? 0 : result.status === 'block' ? 2 : 1
+  const stderr =
+    result.status === 'invalid'
+      ? 'scanner input validation failed'
+      : result.status === 'block'
+        ? `${reports.join('\n')}\n[SECRET SCAN] High-confidence hardcoded secret detected. Tool call will be BLOCKED.`
+        : result.status === 'advisory'
+          ? `${reports.join('\n')}\n[SECRET SCAN] Possible secret detected. Remove it and use environment variables or a vault.`
+          : ''
+  return { code, stdout: '', stderr, signal: null, timedOut: false }
+}
+
+let secretScanRunner: (payload: SecretScanPayload) => Promise<SecretScanHookResult> =
+  scanSecretInProcess
+
+/** Test-only seam for exercising malformed scanner verdicts without a host. */
+export function setV2SecretScanRunnerForTests(
+  runner: ((payload: SecretScanPayload) => Promise<SecretScanHookResult>) | null,
+): void {
+  secretScanRunner = runner ?? scanSecretInProcess
+}
 
 /**
  * Append one masked, ISO-stamped line to .pantheon/logs/hooks.log under the
@@ -825,98 +887,6 @@ function appendV2HookLog(line: string): boolean {
   } catch {
     return false
   }
-}
-
-// ─── V2 Secret-Scan Verdict ─────────────────────────────────────────────
-
-/**
- * The scanner's own report marker, written to stderr on every non-clean run
- * (exit 1 advisory, exit 2 block). It is the discriminator between a genuine
- * low-confidence advisory and a runner infrastructure failure, BOTH of which
- * surface as `code === 1`: the runner's own failures (missing/unexecutable
- * script, spawn error, payload-serialization error) resolve a structured
- * `HookResult` with `code: 1` and no scan report, while the real scanner's
- * advisory always carries this marker. Requiring it means a scanner that stops
- * reporting fails toward a denial, never toward a silent allow.
- */
-const SECRET_SCAN_MARKER = '[SECRET SCAN]'
-
-/** Sanitized failure classes — logged in place of raw scanner output. */
-type SecretScanFailureReason =
-  | 'scanner-timeout'
-  | 'scanner-signal'
-  | 'scanner-spawn-failure'
-  | 'scanner-serialization-failure'
-  | 'scanner-malformed-output'
-  | 'scanner-unexpected-exit'
-
-type SecretScanDecision =
-  | { action: 'allow' }
-  | { action: 'advisory' }
-  | { action: 'block' }
-  | { action: 'fail-closed'; reason: SecretScanFailureReason }
-
-/**
- * The runner's own infrastructure-failure messages (see hook-runner.ts), matched
- * at the start of stderr where the runner is the only writer. Matching a prefix
- * rather than a substring keeps a scan report that merely happens to quote one
- * of these phrases from flipping a valid advisory into a denial.
- */
-const SCANNER_INFRA_FAILURES: ReadonlyArray<[string, SecretScanFailureReason]> = [
-  ['payload serialization failed:', 'scanner-serialization-failure'],
-  ['spawn failed:', 'scanner-spawn-failure'],
-  ['hook script failed to spawn:', 'scanner-spawn-failure'],
-]
-
-/**
- * Classify one secret-scan {@link HookResult} into an enforcement decision.
- *
- * fail-closed by construction: `allow` and `advisory` are reachable only from a
- * result that is unambiguously a completed scanner run. Everything else —
- * timeout, signal, spawn/serialization failure, missing report, unknown or
- * unexpected exit status — denies. `advisory` additionally requires the
- * scanner's own report marker, which is what separates an exit-1 advisory from
- * the runner's exit-1 infrastructure failure.
- *
- * `block` covers the high-confidence match (exit 2); the caller turns it into
- * the user-facing block.
- */
-function evaluateSecretScanResult(scan: HookResult): SecretScanDecision {
-  if (scan.timedOut) return { action: 'fail-closed', reason: 'scanner-timeout' }
-  if (scan.signal !== null) return { action: 'fail-closed', reason: 'scanner-signal' }
-  if (!Number.isInteger(scan.code)) {
-    return { action: 'fail-closed', reason: 'scanner-malformed-output' }
-  }
-  for (const [signature, reason] of SCANNER_INFRA_FAILURES) {
-    if (scan.stderr.startsWith(signature)) return { action: 'fail-closed', reason }
-  }
-  if (scan.code === 0) return { action: 'allow' }
-  if (scan.code === 2) return { action: 'block' }
-  if (scan.code === 1) {
-    return scan.stderr.includes(SECRET_SCAN_MARKER)
-      ? { action: 'advisory' }
-      : { action: 'fail-closed', reason: 'scanner-malformed-output' }
-  }
-  return { action: 'fail-closed', reason: 'scanner-unexpected-exit' }
-}
-
-/** Invocation of scripts/hooks/scan-secrets.sh used by the tool guard. */
-type SecretScanRunner = (payload: HookPayload) => Promise<HookResult>
-
-const defaultSecretScanRunner: SecretScanRunner = (payload) => runHook('scan-secrets.sh', payload)
-
-let secretScanRunner: SecretScanRunner = defaultSecretScanRunner
-
-/**
- * Test seam — override (or, with `null`, restore) the V2 secret-scan runner.
- *
- * Exported only for tests/pantheon/plugin-v2-contract.test.ts, which injects
- * structured {@link HookResult}s (missing scanner, timeout, malformed output)
- * that the real script cannot be made to produce on demand. There is no
- * production caller; the shipped handler always uses `defaultSecretScanRunner`.
- */
-export function setV2SecretScanRunnerForTests(runner: SecretScanRunner | null): void {
-  secretScanRunner = runner ?? defaultSecretScanRunner
 }
 
 // ─── V2 Tool Hooks ──────────────────────────────────────────────────────
@@ -1069,25 +1039,20 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
       // propagating to the host, not be swallowed as a scanner failure.
       await v2EnforcementGuard(input, output)
 
-      // High-confidence secret scan (scripts/hooks/scan-secrets.sh). This is the
+      // In-process high-confidence secret scan. This is the
       // ONLY hard block on the V2 surface, and it exists here — rather than via
       // `src/plugins/pantheon-hooks.ts` — because that module is a separate
       // plugin that is never loaded on a V2-only install: opencode.json
-      // `plugins` declares only `src/plugin-v2`. V1's scan-secrets block was
-      // therefore inert by construction, not by misconfiguration.
+      // `plugins` declares only `src/plugin-v2`. Both V1 and V2 import the same
+      // scanner module so this remains active on either install surface.
       //
-      // exit 0 → allow. exit 1 with a valid scanner report → advisory, logged
-      // only. exit 2 (high-confidence match) → deny. A scanner that does NOT
-      // produce a trustworthy verdict — missing/unexecutable script, timeout,
-      // killed child, spawn/serialization failure, malformed or unexpected
-      // output — is fail-CLOSED: this pending tool call is denied, the session
-      // is not. (runHook resolves a structured result instead of rejecting, so
-      // the exit-code-only reading below cannot lean on an exception.)
+      // Clean → allow. Low-confidence match → advisory. High-confidence match
+      // or malformed/non-serializable input → deny this tool call.
       let blockError: Error | null = null
       try {
-        const payload: HookPayload = {
+        const payload: SecretScanPayload = {
           tool_name: input.tool,
-          tool_input: output.args ?? {},
+          tool_input: output.args,
           agent_id: typeof agent === 'string' ? agent : '',
           session_id: input.sessionID,
         }
@@ -1098,20 +1063,15 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
           appendV2HookLog(scan.stderr)
           blockError = new Error(SECRET_BLOCK_MESSAGE)
         } else if (decision.action === 'advisory') {
-          // Advisory: log only, never block.
+          // The pure scanner reports masked matches only.
           appendV2HookLog(scan.stderr)
         } else if (decision.action === 'fail-closed') {
-          // Sanitized failure category only — never the scanner's raw stderr,
-          // which on a failure path is unverified and may carry the very
-          // payload the scan exists to keep out of logs.
+          // Never persist scanner output from an invalid verdict.
           appendV2HookLog(`${SECRET_SCAN_UNAVAILABLE_MESSAGE} (${decision.reason})`)
           blockError = new Error(SECRET_SCAN_UNAVAILABLE_MESSAGE)
         }
       } catch {
-        // The runner is contracted to resolve a structured result, so this only
-        // guards an unexpected throw (including a future change to the runner).
-        // A scanner that cannot run is fail-CLOSED: deny this call rather than
-        // let it through with no scan at all.
+        // Keep the enforcement fail-closed if the scanner unexpectedly throws.
         appendV2HookLog(SECRET_SCAN_UNAVAILABLE_MESSAGE)
         blockError = new Error(SECRET_SCAN_UNAVAILABLE_MESSAGE)
       }

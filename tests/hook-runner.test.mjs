@@ -22,12 +22,11 @@ import { resolveHooksDir, runHook } from '../src/plugins/hook-runner.ts'
 
 const SESSION_ID = 'test-session-001'
 
-test('resolveHooksDir points at scripts/hooks with 10 executable scripts', () => {
+test('resolveHooksDir points at scripts/hooks with 9 executable scripts', () => {
   const dir = resolveHooksDir()
   assert.match(dir, /scripts\/hooks\/?$/)
   for (const script of [
     'validate-talos-scope.sh',
-    'scan-secrets.sh',
     'validate-tool-safety.sh',
     'format-multi-language.sh',
     'validate-post-conditions.sh',
@@ -106,82 +105,6 @@ test('allows talos doing harmless edits (exit 0)', async () => {
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}: ${res.stderr}`)
 })
 
-// ─── scan-secrets.sh ────────────────────────────────────────────────────
-// Hybrid blocking contract (user-approved (c), 2026-08-06 — see the
-// pantheon-hooks.ts header and scripts/hooks/scan-secrets.sh):
-//   exit 0 — no match.
-//   exit 1 — LOW_CONFIDENCE match only (header/KEY NAMES: the Bifrost header
-//            name alone, api_key=, password=, secret=). Advisory: the
-//            plugin logs + toasts, does NOT block.
-//   exit 2 — HIGH_CONFIDENCE match (real provider token formats). The
-//            plugin BLOCKS the tool call (throws after logging).
-
-test('blocks high-confidence hardcoded secret in tool input (exit 2 — hybrid block)', async () => {
-  const githubPrefix = ['gh', 'p_'].join('')
-  const res = await runHook('scan-secrets.sh', {
-    tool_name: 'bash',
-    tool_input: {
-      command: `curl -H "Authorization: token ${githubPrefix + 'a'.repeat(36)}" https://api.github.com`,
-    },
-    agent_id: 'hermes',
-    session_id: SESSION_ID,
-  })
-  assert.equal(res.code, 2, `expected exit 2 (block), got ${res.code}: ${res.stderr}`)
-  assert.match(res.stderr, /SECRET SCAN/)
-  assert.match(res.stderr, /BLOCKED/, 'stderr must indicate the tool call is blocked')
-})
-
-test('blocks a high-confidence provider token and never logs its raw value', async () => {
-  const token = ['sk', '-bf-', 'fixture-', 'a'.repeat(24)].join('')
-  const res = await runHook('scan-secrets.sh', {
-    tool_name: 'bash',
-    tool_input: { command: `printf '%s' '${token}'` },
-    agent_id: 'hermes',
-    session_id: SESSION_ID,
-  })
-  assert.equal(res.code, 2, `expected exit 2 (block), got ${res.code}: ${res.stderr}`)
-  assert.doesNotMatch(res.stderr, new RegExp(token), 'scanner logs must not expose the token')
-  assert.match(res.stderr, /\*\*\*\*/)
-})
-
-test('accepts safe placeholder text that resembles a documented token pattern', async () => {
-  const placeholder = ['sk', '-bf-', '<REDACTED>'].join('')
-  const githubPrefix = ['gh', 'p_'].join('')
-  const res = await runHook('scan-secrets.sh', {
-    tool_name: 'bash',
-    tool_input: { command: `printf '%s %s' '${placeholder}' '${githubPrefix}<PLACEHOLDER>'` },
-    agent_id: 'hermes',
-    session_id: SESSION_ID,
-  })
-  assert.equal(res.code, 0, `safe placeholders must not block, got ${res.code}: ${res.stderr}`)
-  assert.equal(res.stderr, '')
-})
-
-test('treats low-confidence header name alone as advisory (exit 1, no block)', async () => {
-  // Header name assembled from parts so this file never contains the literal
-  // name (self-match avoidance — see tests/test_secret_scan.mjs).
-  const bifrostHeader = ['x', '-bf-', 'vk'].join('')
-  const res = await runHook('scan-secrets.sh', {
-    tool_name: 'bash',
-    tool_input: { command: `curl -H "${bifrostHeader}: abc123" https://example.com` },
-    agent_id: 'hermes',
-    session_id: SESSION_ID,
-  })
-  assert.equal(res.code, 1, `expected exit 1 (advisory), got ${res.code}: ${res.stderr}`)
-  assert.match(res.stderr, /SECRET SCAN/)
-  assert.match(res.stderr, /low confidence/i)
-})
-
-test('passes clean input (exit 0)', async () => {
-  const res = await runHook('scan-secrets.sh', {
-    tool_name: 'bash',
-    tool_input: { command: 'ls -la && git status' },
-    agent_id: 'hermes',
-    session_id: SESSION_ID,
-  })
-  assert.equal(res.code, 0, `expected exit 0, got ${res.code}: ${res.stderr}`)
-})
-
 // ─── runner robustness ──────────────────────────────────────────────────
 
 test('runHook NEVER throws on missing script — resolves with code 1', async () => {
@@ -195,11 +118,11 @@ test('runHook NEVER throws on missing script — resolves with code 1', async ()
   assert.match(res.stderr, /ENOENT|spawn|failed/i)
 })
 
-test('runHook never rejects on a non-serializable payload and fails closed', async () => {
+test('runHook never rejects on a non-serializable payload', async () => {
   const payload = { tool_input: { circular: null } }
   payload.tool_input.circular = payload
 
-  const res = await runHook('scan-secrets.sh', payload)
+  const res = await runHook('validate-tool-safety.sh', payload)
   assert.equal(typeof res.code, 'number')
   assert.equal(res.code, 1)
   assert.equal(res.timedOut, false)
