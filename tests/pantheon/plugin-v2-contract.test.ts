@@ -671,13 +671,47 @@ async function main(): Promise<void> {
 
     assert.equal(setupResolved, true)
     assert.deepEqual(hookAttempts, [
+      'tool:execute.before',
       'session:context',
       'session:prompt',
-      'tool:execute.before',
-      'tool:execute.after',
       'permission:evaluate',
       'session:compaction',
     ])
+  })
+
+  test('V2 does not expose Pantheon tools when required execute.before registration fails', async () => {
+    for (const marker of ['secret-scan-hook', 'pantheon-tools-disabled']) {
+      const markerIndex = V2_UNSUPPORTED_FEATURES.indexOf(marker)
+      if (markerIndex !== -1) V2_UNSUPPORTED_FEATURES.splice(markerIndex, 1)
+    }
+    const hookAttempts: string[] = []
+    const exposedPantheonTools: string[] = []
+    let transformAttempts = 0
+    await plugin.setup(
+      makeBaseContext({
+        tool: {
+          hook: async (name: string) => {
+            hookAttempts.push(name)
+            if (name === 'execute.before') throw new Error('security hook unavailable')
+            return registration(disposed, `tool:${name}`)
+          },
+          transform: async (callback: (draft: never) => void) => {
+            transformAttempts++
+            callback({
+              namespace: () => {},
+              add: (definition: { name: string }) => exposedPantheonTools.push(definition.name),
+            } as never)
+            return registration(disposed, 'tool:transform')
+          },
+        },
+      }) as never,
+    )
+
+    assert.deepEqual(hookAttempts, ['execute.before'])
+    assert.equal(transformAttempts, 0, 'tool transform must not run without required scanning')
+    assert.deepEqual(exposedPantheonTools, [], 'no Pantheon V2 tools may become available')
+    assert.ok(getUnsupportedFeatures().includes('secret-scan-hook'))
+    assert.ok(getUnsupportedFeatures().includes('pantheon-tools-disabled'))
   })
 
   test('event subscription delivers session idle and v2Dispose aborts its stream', async () => {
@@ -1023,6 +1057,7 @@ async function main(): Promise<void> {
     await plugin.setup(
       makeBaseContext({
         tool: {
+          hook: async () => registration(disposed, 'tool-hook'),
           transform: async (callback: (draft: never) => void) => {
             callback({
               namespace: (config: { name: string; description?: string }) => {
@@ -2013,6 +2048,18 @@ async function main(): Promise<void> {
       scanCaptured.before as (e: unknown) => Promise<void>,
       'write',
       canary,
+    )
+    assert.match(denial ?? '', /scanner could not complete/)
+    assert.doesNotMatch(readHookLog().slice(before.length), new RegExp(canary))
+  })
+
+  test('oversized V2 serialized args fail closed without logging their content', async () => {
+    const canary = 'OVERSIZED_V2_ARGS_CANARY_NEVER_LOG'
+    const before = readHookLog()
+    const denial = await secretScanDenial(
+      scanCaptured.before as (e: unknown) => Promise<void>,
+      'write',
+      { filePath: 'notes.md', content: `${canary}${'a'.repeat(5_242_880)}` },
     )
     assert.match(denial ?? '', /scanner could not complete/)
     assert.doesNotMatch(readHookLog().slice(before.length), new RegExp(canary))

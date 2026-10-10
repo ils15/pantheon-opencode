@@ -162,3 +162,19 @@ for (const size of [1_024, 10_240, 102_400, 262_144, 1_048_576, 5_242_880]) {
     assert.equal(scanSecretText('a'.repeat(size)).status, 'clean')
   })
 }
+
+test('rejects scanner text above the 5 MiB input boundary without returning content', () => {
+  const result = scanSecretText('a'.repeat(5_242_881))
+  assert.deepEqual(result, { status: 'invalid' })
+  assert.doesNotMatch(JSON.stringify(result), /a{32}/)
+})
+
+test('uses UTF-8 byte size for the 5 MiB scanner boundary', () => {
+  assert.equal(scanSecretText('é'.repeat(2_621_440)).status, 'clean')
+  assert.deepEqual(scanSecretText('é'.repeat(2_621_441)), { status: 'invalid' })
+})
+
+test('serialized payloads above 5 MiB fail closed', () => {
+  const result = scanSecretPayload({ tool_input: { content: 'a'.repeat(5_242_880) } })
+  assert.deepEqual(result, { status: 'invalid' })
+})

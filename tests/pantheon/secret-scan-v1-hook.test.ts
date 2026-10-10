@@ -69,6 +69,20 @@ test('V1 malformed args fail closed without echoing the invalid input', async ()
   assert.doesNotMatch(`${outcome.message}\n${appLogs.join('\n')}`, new RegExp(canary))
 })
 
+test('V1 oversized serialized args fail closed without logging their content', async () => {
+  const canary = 'OVERSIZED_V1_ARGS_CANARY_NEVER_LOG'
+  const outcome = await runBefore({
+    filePath: 'notes.md',
+    content: `${canary}${'a'.repeat(5_242_880)}`,
+  })
+  assert.equal(outcome.denied, true)
+  assert.equal(outcome.bodyRan, false)
+  assert.match(outcome.message, /fail-closed/)
+  const hooksLog = join(directory, '.pantheon', 'logs', 'hooks.log')
+  const log = existsSync(hooksLog) ? readFileSync(hooksLog, 'utf8') : ''
+  assert.doesNotMatch(`${outcome.message}\n${log}\n${appLogs.join('\n')}`, new RegExp(canary))
+})
+
 test('V1 safe input passes through execute.before', async () => {
   const outcome = await runBefore({ filePath: 'notes.md', content: 'ordinary safe text' })
   assert.equal(outcome.denied, false)
