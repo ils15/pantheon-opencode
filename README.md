@@ -193,7 +193,9 @@ historical engine contract.
 This beta.7 candidate combines native per-agent MCP permissions for OpenCode V1
 and V2, V2 delegation-permission alignment, simpler memory/compression
 instructions, and a sandbox check that proves the installed package matches
-this checkout instead of silently accepting stale npm-cached code. The Zeus
+this checkout instead of silently accepting stale npm-cached code. The isolated
+sandbox launcher also pins the OpenCode background service to its dedicated
+loopback port, rather than colliding with another OpenCode installation. The Zeus
 prompt reuses one task-start memory-search result for context and routing;
 runtime call counts and latency have not been measured. A manual V2
 `HERMES-PONG` dispatch previously returned

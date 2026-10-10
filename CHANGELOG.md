@@ -40,7 +40,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   versão e arquivos do pacote instalado com este checkout e rejeita referências
   npm antigas nas configurações ativas antes de validar o runtime.
 - O `--prepare` agora gera `start-pantheon.sh` para abrir o TUI interativo com o
-  beta instalado e HOME, projeto e banco de dados isolados do sandbox.
+  beta instalado e HOME, configuração XDG, projeto e banco de dados isolados do
+  sandbox. O launcher fixa a porta do serviço gerenciado em `49376` e falha sem
+  parar serviços existentes se a porta dedicada já estiver ocupada.
 
 ## 🐞 Fixed
 

@@ -890,17 +890,49 @@ SANDBOX_DIR="$(cd "$(dirname "$0")" && pwd)"
 SANDBOX_HOME="$SANDBOX_DIR/home"
 NPM_PREFIX="$SANDBOX_HOME/.npm-global"
 SANDBOX_VENV="$SANDBOX_HOME/.config/opencode/.venv"
+V2_PORT="${PANTHEON_V2_PORT:-49376}"
+if [[ ! "$V2_PORT" =~ ^[0-9]{1,5}$ ]]; then
+  echo "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')" >&2
+  exit 1
+fi
+V2_PORT=$((10#$V2_PORT))
+if [ "$V2_PORT" -lt 1 ] || [ "$V2_PORT" -gt 65535 ]; then
+  echo "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')" >&2
+  exit 1
+fi
+if ! python3 - "$V2_PORT" <<'CHECKPORT'
+import socket
+import sys
+
+port = int(sys.argv[1])
+try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", port))
+except OSError as exc:
+    print(f"ERROR: dedicated V2 port 127.0.0.1:{port} is already in use or unavailable; no service was stopped: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+CHECKPORT
+then
+  exit 1
+fi
 
 export HOME="$SANDBOX_HOME"
 export PATH="$NPM_PREFIX/bin:$SANDBOX_VENV/bin:$PATH"
 export npm_config_prefix="$NPM_PREFIX"
+export XDG_CONFIG_HOME="$SANDBOX_HOME/.config"
+export XDG_CONFIG_DIRS="$SANDBOX_HOME/.config/xdg"
+export XDG_DATA_HOME="$SANDBOX_HOME/.local/share"
+export XDG_DATA_DIRS="$SANDBOX_HOME/.local/share/xdg"
 export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
+export XDG_CACHE_HOME="$SANDBOX_HOME/.cache"
 export OPENCODE_CONFIG_DIR="$SANDBOX_DIR/project-v2"
 export OPENCODE_DB="${PANTHEON_V2_DB:-$SANDBOX_DIR/opencode-v2.db}"
-export PANTHEON_V2_PORT="${PANTHEON_V2_PORT:-49376}"
+export PANTHEON_V2_PORT="$V2_PORT"
 export PORT="$PANTHEON_V2_PORT"
-unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE
+unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE \
+  OPENCODE_DATA_DIR OPENCODE_STATE_DIR OPENCODE_CACHE_DIR OPENCODE_STORAGE_PATH
 
+"$NPM_PREFIX/bin/opencode2" service set port "$V2_PORT"
 cd "$SANDBOX_DIR/project-v2"
 exec "$NPM_PREFIX/bin/opencode2" "$@"
 STARTPANTHEON

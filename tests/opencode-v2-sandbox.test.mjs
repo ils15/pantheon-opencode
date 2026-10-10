@@ -142,8 +142,16 @@ test('prepare generates an interactive launcher isolated to the sandbox beta', (
 
   const src = readFileSync(launcher, 'utf8')
   assert.match(src, /export HOME="\$SANDBOX_HOME"/)
+  assert.match(src, /export XDG_CONFIG_HOME="\$SANDBOX_HOME\/\.config"/)
+  assert.match(src, /export XDG_DATA_HOME="\$SANDBOX_HOME\/\.local\/share"/)
   assert.match(src, /export OPENCODE_CONFIG_DIR="\$SANDBOX_DIR\/project-v2"/)
+  assert.match(src, /service set port "\$V2_PORT"/)
+  assert.match(src, /PANTHEON_V2_PORT:-49376/)
   assert.match(src, /opencode-v2\.db/)
+  assert.ok(
+    src.indexOf('service set port') < src.indexOf('exec "$NPM_PREFIX/bin/opencode2"'),
+    'the managed service port must be isolated before the TUI starts',
+  )
   assert.match(src, /exec "\$NPM_PREFIX\/bin\/opencode2" "\$@"/)
 })
 
