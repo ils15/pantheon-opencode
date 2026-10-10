@@ -70,12 +70,51 @@ occur.
 V2 `execute.after` runs the completed-result parity chain in this order:
 `task-result-guard` → `context-sandbox` → `read-enhancer`. The `session.prompt`
 and compaction hooks remain registration-only; vision interception and
-compaction context construction remain V1-only.
+compaction context construction remain V1-only. `context-sandbox` is a
+post-result transformation, not an authorization boundary or a general
+fail-closed control.
+
+#### V2 `context_sandbox` configuration and security scope
+
+The V2 host does not preserve the V1 top-level `context_sandbox` setting. In an
+isolated live-host probe against `opencode2 v0.0.0-beta-19271` (2026-10-09),
+`GET /api/config` omitted a supplied top-level `context_sandbox`, while a plugin
+entry's `options.context_sandbox` arrived unchanged in `ctx.options`. A direct
+top-level V2 setting is therefore **unsupported/inert**; do not treat it as
+active protection. The V2 installer translates a legacy top-level block into
+the Pantheon plugin's `plugins[].options.context_sandbox`, preserving the
+top-level copy for a later V1 downgrade. Existing installer tests cover the
+translation, per-leaf precedence, validation, and idempotence. When editing a
+V2 config manually, use the nested plugin option.
+
+“Fail closed” is deliberately scoped to the V2 delegation policy and secret
+scanner failure paths exercised with injected failures. It is not a claim about
+every V2 hook, every config key, or `context-sandbox` result transformation.
 
 The installer removes Pantheon entries from both config shapes and writes only
 the selected generation. It does not mix `src/plugin.ts` or
 `src/plugins/pantheon-hooks.ts` with `<installed>/src/plugin-v2`; unrelated
 third-party entries are retained and are not converted.
+
+#### Repeatable V2 verification and interactive-TUI waiver
+
+The isolated install/MCP/doctor gate is repeatable without loading third-party
+plugins:
+
+```bash
+bash scripts/test-opencode-v2-sandbox.sh --prepare
+bash ~/pantheon-sandbox/run-test.sh
+```
+
+The local read-hook replay and the host-backed hook slice are separate checks;
+the former uses explicit fixture events rather than relying on a model to call
+`read`, and the latter exercises hook dispatch through the isolated OpenCode
+host. The V2 contract tests exercise delegation decisions with controlled
+permission events. `tests/tui-packaged-smoke.test.mjs` verifies that the
+packaged TUI plugin registers its sidebar, handles a task event, and disposes.
+This is an explicit waiver for an automated *interactive TUI session*: no
+interactive keystroke/session claim is made by the headless MCP, hook, contract,
+or packaged-plugin smoke checks.
 
 ```bash
 # Pin one contract for this OpenCode configuration

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   generateAgentPrompt,
+  generateAgentsMd,
   logicalLineCount,
   readInstructions,
 } from '../scripts/build-agents-md.mjs'
@@ -44,12 +45,12 @@ test('generated shared baseline is smaller than the prior Tier 1 byte range', ()
   assert.ok(bytes < 28_555, `generated AGENTS.md is ${bytes} bytes`)
 })
 
-test('generated line counts use LF boundaries without assuming a final newline', () => {
+test('generated baseline stays canonical and line counts use LF boundaries', () => {
   assert.equal(logicalLineCount('one\ntwo\n'), 2)
   assert.equal(logicalLineCount('one\ntwo'), 2)
   assert.equal(logicalLineCount('one'), 1)
   assert.equal(logicalLineCount(''), 0)
-  assert.equal(logicalLineCount(generated), 227)
+  assert.equal(generated, generateAgentsMd(readInstructions()))
 })
 
 test('delegation retry guidance uses one retry before protected fallbacks', () => {

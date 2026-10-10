@@ -1088,6 +1088,82 @@ test('--reset protects global OpenCode config/data paths and their ancestors', (
   }
 })
 
+test('--reset rejects final OPENCODE_CONFIG and OPENCODE_DB symlinks before deleting targets', (t) => {
+  const tempParent = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-reset-file-symlink-'))
+  t.after(() => rmSync(tempParent, { recursive: true, force: true }))
+  const sandboxRoot = join(tempParent, 'sandbox')
+  const externalDir = join(tempParent, 'external')
+  const protectedRepo = join(tempParent, 'repo')
+  const home = join(tempParent, 'home')
+  mkdirSync(sandboxRoot, { recursive: true })
+  mkdirSync(externalDir, { recursive: true })
+  mkdirSync(join(protectedRepo, '.git'), { recursive: true })
+
+  const cases = [
+    {
+      name: 'absolute OPENCODE_CONFIG target inside sandbox',
+      variable: 'OPENCODE_CONFIG',
+      target: join(sandboxRoot, 'config-absolute-sentinel'),
+      targetExists: true,
+    },
+    {
+      name: 'relative OPENCODE_DB target with dot-dot inside sandbox',
+      variable: 'OPENCODE_DB',
+      target: '../sandbox/db-relative-sentinel',
+      targetPath: join(sandboxRoot, 'db-relative-sentinel'),
+      targetExists: true,
+    },
+    {
+      name: 'dangling relative OPENCODE_CONFIG symlink',
+      variable: 'OPENCODE_CONFIG',
+      target: '../sandbox/missing-config-target',
+      targetExists: false,
+    },
+    {
+      name: 'dangling absolute OPENCODE_DB symlink',
+      variable: 'OPENCODE_DB',
+      target: join(sandboxRoot, 'missing-db-target'),
+      targetExists: false,
+    },
+  ]
+
+  for (const [index, scenario] of cases.entries()) {
+    const targetPath = scenario.targetPath ?? scenario.target
+    const linkPath = join(externalDir, `override-${index}`)
+    const sandboxSentinel = join(sandboxRoot, `sandbox-sentinel-${index}`)
+    const targetContents = `keep target for ${scenario.name}`
+    writeFileSync(sandboxSentinel, `keep sandbox for ${scenario.name}`)
+    if (scenario.targetExists) writeFileSync(targetPath, targetContents)
+    symlinkSync(scenario.target, linkPath, 'file')
+
+    const result = runReset(sandboxRoot, protectedRepo, {
+      HOME: home,
+      OPENCODE_CONFIG: scenario.variable === 'OPENCODE_CONFIG' ? linkPath : '',
+      OPENCODE_DB: scenario.variable === 'OPENCODE_DB' ? linkPath : '',
+    })
+
+    assert.notEqual(
+      result.status,
+      0,
+      `reset must reject ${scenario.name}:\n${result.stdout}\n${result.stderr}`,
+    )
+    assert.match(result.stderr, /symbolic link|symlink/i, `${scenario.name} should be identified`)
+    assert.equal(existsSync(sandboxSentinel), true, `${scenario.name} deleted the sandbox`)
+    assert.equal(
+      readFileSync(sandboxSentinel, 'utf8'),
+      `keep sandbox for ${scenario.name}`,
+      `${scenario.name} changed the sandbox sentinel`,
+    )
+    if (scenario.targetExists) {
+      assert.equal(
+        readFileSync(targetPath, 'utf8'),
+        targetContents,
+        `${scenario.name} deleted or changed its canonical target`,
+      )
+    }
+  }
+})
+
 test('--reset protects every colon-separated XDG config/data directory and opencode child', (t) => {
   const tempParent = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-reset-xdg-list-'))
   t.after(() => rmSync(tempParent, { recursive: true, force: true }))
