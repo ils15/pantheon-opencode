@@ -13,8 +13,6 @@ mcp_tools:
 temperature: 0.3
 skills:
   - tdd-with-agents
-  - file-prompts
-  - streaming-patterns
   - git-workflow-and-versioning
   - incremental-implementation
 permission:
@@ -261,10 +259,3 @@ Compress working context with the `context-compression` skill (L1, Pantheon-nati
 
 ## Skills
 Implementação: `tdd-with-agents`, `incremental-implementation`, `code-review-checklist`, `git-workflow-and-versioning`
-
-
-## Session Context Retrieval
-When dispatched by Zeus, call context_get(slug=slug, key="latest", session_id=SESSION_ID)
-if session_slug is provided in dispatch metadata. Apply any "remaining_tasks",
-"current_phase", or "gotchas" from the retrieved context.
-If context_get returns None, proceed fresh (first phase or expired session).

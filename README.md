@@ -64,6 +64,13 @@ Once OpenCode is running, describe the outcome you want:
 ```
 
 Pantheon helps turn that request into a plan and a sequence of reviewed steps.
+For questions that do not require repository changes, Zeus answers directly;
+small, reversible fixes use one specialist dispatch. Discovery, planning,
+parallel work, and council review are reserved for tasks that benefit from them.
+
+For a tiny, bounded repair, invoke `@talos` directly (for example,
+`@talos fix this typo`). That skips the Zeus orchestration call; use `/pantheon`
+for planning, delegation, multi-file work, or quality gates.
 
 ## Who is it for?
 
@@ -183,15 +190,18 @@ historical engine contract.
 This 1.6.0 stable candidate consolidates beta.1–beta.6, including package and
 dependency updates, security advisory overrides, lint and inventory coverage,
 TUI restoration and state-refresh work, and memory/delegation prompt
-deduplication. The Zeus prompt reuses one task-start memory-search result for
-task context and delegation routing, including on a KV hit; automatic
-subtask-summary storage and delegation safeguards remain in place. Runtime call
-counts and latency have not been measured. Checkpoint/session bootstrap and
-effective Zeus `context_save`/`context_get` access are blocked, unverified
-follow-up work—not fixed features in this candidate.
+deduplication. The Zeus fast path answers no-change questions directly and
+routes bounded fixes once; the council procedure is loaded only for a council.
+Routing uses static agent descriptions without per-task KV/cache calls. Stale
+beta-era operational history and synthetic timeout/session
+instructions were removed. Runtime call counts and latency have not been
+measured; V2 TUI startup and clean exit were verified in the isolated sandbox,
+but a model-backed interactive turn remains unverified and is not claimed by
+this candidate.
 
-Delegated tasks get at most one retry after an initial timeout or failure. If
-that retry fails, the configured fallback or escalation chain applies.
+Transient delegation dispatch failures get at most one retry. A refusal or
+failed check is not repeated; after the retry fails, the configured fallback
+chain applies once or Zeus escalates.
 
 ## Cost tool backend
 

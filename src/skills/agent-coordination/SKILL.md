@@ -1,95 +1,25 @@
 ---
 name: agent-coordination
-description: "Multi-agent orchestration with model routing, category delegation, and sprint management. Use for coordinating Pantheon agents."
+description: "Coordinate two or more specialists for substantial multi-phase work. Skip for questions, bounded fixes, and one-agent tasks."
 context: fork
 globs: []
 alwaysApply: false
 ---
 
-# Agent Coordination
+# Agent coordination
 
-Master guide to orchestrating the multi-agent system. Includes category routing, model selection, and sprint management for rapid, TDD-driven feature development.
+Load only when the work genuinely needs multiple specialists or dependent phases. For the default routing, retry, and safety rules, follow Zeus and `pantheon://routing`.
 
----
+## Lean coordination
 
-## Agent Hierarchy
+1. State the desired outcome and split only work with distinct ownership or dependencies. Ask @athena to plan only when scope, architecture, or acceptance criteria are materially unclear.
+2. Assign each bounded task to the most specific configured specialist. Include relevant context, expected result, and focused verification; do not make @apollo rediscover context the implementer can inspect directly.
+3. Dispatch independent tasks together only when native background delegation is enabled. Otherwise use normal `task()` calls. Do not create waves for a single task or poll without a returned task ID.
+4. Collect summaries once, resolve dependencies, and report evidence, remaining risk, and blockers. Add @themis, artifacts, or user approval only where the task's risk or requested workflow requires them.
 
-See `AGENTS.md` for the full agent table.
+## Boundaries
 
----
-
-## Category Routing
-
-Route tasks to optimized agents based on category instead of specifying agents manually:
-
-| Category | Agent | Use For |
-|----------|-------|---------|
-| **Deep** | Athena, Hephaestus | Complex planning, AI pipelines |
-| **Quick** | Talos, Apollo | Fast fixes, codebase search |
-| **Ultrabrain** | Zeus | Multi-agent orchestration, model routing |
-
----
-
-## Sprint Workflow
-
-```
-1. User describes feature
-2. @athena creates PLAN with phases and agents
-3. User approves PLAN (GATE 1)
-4. Zeus dispatches agents to phases (parallel when possible)
-5. Each agent: TDD cycle → writes IMPL artifact
-6. @themis reviews all phases (GATE 2)
-7. User reviews Themis findings
-8. If approved → user commits (GATE 3)
-9. @mnemosyne updates memory bank
-```
-
----
-
-## Parallel Execution Declaration
-
-```
-🔀 PARALLEL EXECUTION — Phase 2
-Running simultaneously:
-- @hermes   → backend tests   → .tmp/IMPL-phase2-hermes.md
-- @aphrodite → frontend       → .tmp/IMPL-phase2-aphrodite.md
-- @demeter  → migrations      → .tmp/IMPL-phase2-demeter.md
-Themis reviews all three after completion.
-```
-
----
-
-## Artifact Protocol
-
-All phase outputs go to `.pantheon/memory-bank/.tmp/`. See `skill: artifact-management` for the complete protocol (who generates what, templates, lifecycle).
-
----
-
-## Safety Gates
-
-| Gate | When | Why |
-|------|------|-----|
-| **GATE 1** | After PLAN | User confirms scope |
-| **GATE 2** | After Themis review | User sees changes |
-| **GATE 3** | Before git commit | User controls history |
-
----
-
-## Model Selection
-
-Model routing is handled by Prometheus and the platform configuration. Zeus delegates model selection to the tier system (`fast` / `default` / `coding` / `premium`).
-
-- **Deep tasks** → High-quality models (Claude, GPT-4)
-- **Quick tasks** → Fast/cheap models (Haiku, 4o-mini)
-- **Visual tasks** → Multimodal models (GPT-4V, Claude Vision)
-- **Cost optimization** → Route to cheapest model that meets quality bar
-
----
-
-## Anti-Patterns
-
-- ❌ Zeus doing implementation work (orchestrates, doesn't code)
-- ❌ Skipping TDD cycle (RED → GREEN → REFACTOR)
-- ❌ Auto-committing without user approval
-- ❌ Parallel phases with dependencies (order matters)
-- ❌ Ignoring Themis CRITICAL findings
+- Zeus coordinates; implementation agents inspect, edit, and verify their assigned scope.
+- Preserve auth/security, data/schema, destructive-action, production, and permission gates.
+- Do not commit, push, merge, deploy, or broaden scope without explicit authorization.
+- Model selection comes from the active configured preset; do not invent a model tier or price.

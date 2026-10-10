@@ -4,14 +4,14 @@
 
 Skills are reference modules loaded on demand by agents. Each skill provides domain-specific knowledge — architecture patterns, security checklists, optimization strategies, and implementation guides. Agents load skills when their task matches the skill's description, keeping context focused and token-efficient.
 
-There are **20 skills** divided into **5 domains**.
+There are **21 skills** divided into **5 domains**.
 
 ## Skills by Domain
 
 ### Domain 1: Orchestration & Workflow
 
 1. **agent-coordination** — `agent-coordination/SKILL.md`
-   - Multi-agent orchestration with model routing, category delegation, and sprint management.
+   - Lightweight coordination for substantial tasks with multiple independent specialists.
    - Used by: Zeus
 
 2. **artifact-management** — `artifact-management/SKILL.md`
@@ -34,6 +34,10 @@ There are **20 skills** divided into **5 domains**.
    - Pin session objectives to prevent scope creep across long multi-agent sessions.
    - Used by: Zeus, Mnemosyne
 
+- **council-synthesis** — `council-synthesis/SKILL.md`
+  - Full structured council workflow, loaded only for `/pantheon` or a material multi-perspective decision.
+  - Used by: Zeus
+
 ### Domain 2: Development Tools
 
 7. **clonedeps** — `clonedeps/SKILL.md`
@@ -46,7 +50,7 @@ There are **20 skills** divided into **5 domains**.
 
 9. **incremental-implementation** — `incremental-implementation/SKILL.md`
     - Implement in thin vertical slices — one commit per task, testable, rollback-safe.
-    - Used by: Zeus, Hermes, Aphrodite, Demeter, Prometheus, Talos
+    - Used by: Hermes, Aphrodite, Demeter, Prometheus, Talos
 
 10. **loop-engineering** — `loop-engineering/SKILL.md`
     - Iterative refinement pattern for complex problems — solve, review, improve, repeat in controlled cycles.
@@ -129,7 +133,7 @@ The `SKILL.md` file contains YAML frontmatter with `name`, `description`, and pl
 | 6 | session-goal | Orchestration & Workflow | Zeus, Mnemosyne |
 | 7 | clonedeps | Development Tools | Hermes, Hephaestus |
 | 8 | git-workflow-and-versioning | Development Tools | Hermes, Prometheus, Iris |
-| 9 | incremental-implementation | Development Tools | Zeus, Hermes, Aphrodite, Demeter, Prometheus, Talos |
+| 9 | incremental-implementation | Development Tools | Hermes, Aphrodite, Demeter, Prometheus, Talos |
 | 10 | loop-engineering | Development Tools | All agents |
 | 11 | reflect | Development Tools | All agents |
 | 12 | simplify | Development Tools | All agents |
@@ -141,6 +145,7 @@ The `SKILL.md` file contains YAML frontmatter with `name`, `description`, and pl
 | 18 | spec-driven-development | Planning | Athena |
 | 19 | verification-planning | Planning | Athena, Zeus |
 | 20 | visual-review-pipeline | Frontend Development | Aphrodite |
+| 21 | council-synthesis | Orchestration & Workflow | Zeus |
 
 ---
 

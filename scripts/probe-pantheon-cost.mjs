@@ -8,9 +8,10 @@
  * temporary synthetic opencode database. A missing fixture runtime is also
  * AMBIENTAL rather than a false PASS.
  */
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const requestedVersion = valueFor('--version')
 const jsonOutput = process.argv.includes('--json')
@@ -151,19 +152,27 @@ async function main() {
     return
   }
 
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-cost-probe-'))
   let DatabaseSync
   let createCostCommand
   try {
     ;({ DatabaseSync } = await import('node:sqlite'))
-    ;({ createCostCommand } = await import(source.href))
+    // Node's built-in TS stripping deliberately refuses files under
+    // node_modules. Exercise the shipped command from an isolated temp copy
+    // while resolving its runtime dependencies through the installed package.
+    const runtimeSource = join(root, 'cost-command.ts')
+    const packageNodeModules = fileURLToPath(new URL('../node_modules/', import.meta.url))
+    copyFileSync(fileURLToPath(source), runtimeSource)
+    symlinkSync(packageNodeModules, join(root, 'node_modules'), 'dir')
+    ;({ createCostCommand } = await import(pathToFileURL(runtimeSource).href))
   } catch (error) {
+    rmSync(root, { recursive: true, force: true })
     ambiental(
       `pantheon_cost fixture runtime unavailable: ${error instanceof Error ? error.message : String(error)}`,
     )
     return
   }
 
-  const root = mkdtempSync(join(tmpdir(), 'pantheon-cost-probe-'))
   const dataHome = join(root, 'data')
   const opencodeDir = join(dataHome, 'opencode')
   // Every real installation writes `opencode.db`; the v1/v2 distinction is the
@@ -254,6 +263,7 @@ async function main() {
 
     const restore = setEnvironment({
       XDG_DATA_HOME: dataHome,
+      OPENCODE_DB: undefined,
       PANTHEON_OPENCODE_VERSION: requestedVersion,
       PANTHEON_COST_DB: undefined,
     })
@@ -284,6 +294,7 @@ async function main() {
 
     const envRestore = setEnvironment({
       XDG_DATA_HOME: dataHome,
+      OPENCODE_DB: undefined,
       PANTHEON_OPENCODE_VERSION: requestedVersion,
       PANTHEON_COST_DB: envDb,
     })
@@ -308,6 +319,7 @@ async function main() {
 
     const explicitRestore = setEnvironment({
       XDG_DATA_HOME: dataHome,
+      OPENCODE_DB: undefined,
       PANTHEON_OPENCODE_VERSION: requestedVersion,
       PANTHEON_COST_DB: envDb,
     })
@@ -329,6 +341,7 @@ async function main() {
 
     const missingRestore = setEnvironment({
       XDG_DATA_HOME: join(root, 'missing-data'),
+      OPENCODE_DB: undefined,
       PANTHEON_OPENCODE_VERSION: requestedVersion,
       PANTHEON_COST_DB: undefined,
     })
