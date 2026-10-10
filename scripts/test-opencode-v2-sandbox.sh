@@ -108,6 +108,7 @@ MODE_COST=0
 MODE_REHYDRATE=0
 MODE_HOOKS=0
 RUN_VERSION=""
+SANDBOX_ENV_READY=0
 
 usage() {
   sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -191,6 +192,14 @@ sandbox_bin() { # echoes the V2 binary path; rc 1 if missing
 # ── Sandbox environment isolation ─────────────────────────────────────────────
 
 sandbox_env() {
+  # Combined modes can call this more than once in one shell. After the first
+  # setup, HOME intentionally lives below SANDBOX_ROOT; re-running the full
+  # overlap guard would mistake that supported isolation layout for an unsafe
+  # ancestor relationship.
+  if [ "$SANDBOX_ENV_READY" -eq 1 ]; then
+    return 0
+  fi
+
   guard_sandbox_root use
   canonicalize_sandbox_root
   validate_v2_port
@@ -233,6 +242,7 @@ sandbox_env() {
     OPENCODE_DATA_DIR OPENCODE_STATE_DIR OPENCODE_CACHE_DIR OPENCODE_STORAGE_PATH
   sandbox_path_guard "$V2_SERVICE_STATE" file-allow-missing-parent
   sandbox_path_guard "$(dirname "$V2_SERVICE_STATE")" dir-create
+  SANDBOX_ENV_READY=1
 }
 
 stop_v2_service() {

@@ -276,7 +276,7 @@ test('sandbox_env overrides inherited XDG/OpenCode selectors before writes', (t)
     'bash',
     [
       '-c',
-      'set -euo pipefail; source "$RUNNER_DEFS"; REPO_DIR="$TEST_REPO"; sandbox_env; ! printenv OPENCODE_DATA_DIR >/dev/null; ! printenv OPENCODE_STATE_DIR >/dev/null; ! printenv OPENCODE_CACHE_DIR >/dev/null; ! printenv OPENCODE_STORAGE_PATH >/dev/null; for dir in "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"; do mkdir -p "$dir/opencode"; printf isolated > "$dir/opencode/probe"; done; printf "%s\\n" "$SANDBOX_ROOT" "$XDG_CONFIG_HOME" "$XDG_CONFIG_DIRS" "$XDG_DATA_HOME" "$XDG_DATA_DIRS" "$XDG_STATE_HOME" "$XDG_CACHE_HOME" "$npm_config_cache" "$OPENCODE_CONFIG_DIR" "$OPENCODE_DB"',
+      'set -euo pipefail; source "$RUNNER_DEFS"; REPO_DIR="$TEST_REPO"; sandbox_env; sandbox_env; ! printenv OPENCODE_DATA_DIR >/dev/null; ! printenv OPENCODE_STATE_DIR >/dev/null; ! printenv OPENCODE_CACHE_DIR >/dev/null; ! printenv OPENCODE_STORAGE_PATH >/dev/null; for dir in "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"; do mkdir -p "$dir/opencode"; printf isolated > "$dir/opencode/probe"; done; printf "%s\\n" "$SANDBOX_ROOT" "$XDG_CONFIG_HOME" "$XDG_CONFIG_DIRS" "$XDG_DATA_HOME" "$XDG_DATA_DIRS" "$XDG_STATE_HOME" "$XDG_CACHE_HOME" "$npm_config_cache" "$OPENCODE_CONFIG_DIR" "$OPENCODE_DB"',
     ],
     {
       encoding: 'utf8',

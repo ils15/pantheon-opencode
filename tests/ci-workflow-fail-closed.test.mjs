@@ -204,9 +204,10 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
     sandboxStep[0],
     /PANTHEON_SANDBOX_ROOT:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2/,
   )
-  assert.match(
+  assert.doesNotMatch(
     sandboxStep[0],
-    /OPENCODE_DB:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2\/opencode-v2\.db/,
+    /OPENCODE_DB:\s+/,
+    'the sandbox harness owns OPENCODE_DB and sets it only after path guards run',
   )
   assert.doesNotMatch(
     sandboxStep[0],

@@ -1,92 +1,18 @@
 ---
-description: "Timeout enforcement, retry policies, subtask dispatch, and timeout tracking for Zeus"
+description: "Bounded retries and lightweight subtask routing for Zeus"
 name: "Zeus Timeout & Retry"
 agents: [zeus]
 fallback: shared
 ---
 
-# ⏱️ TIMEOUT & RETRY ENFORCEMENT
+# Bounded delegation
 
-When a delegated agent does not respond in time, enforce the timeout policy from `routing.yml`.
+Use the native `task()` result as the source of truth. Do not simulate per-agent timers, poll without a known background task ID, or check for reusable sessions through APIs that are not available. `routing.yml` defines the concurrency limit, retry count, and canonical fallback chains.
 
-## Timeout Behavior by Agent Role
+For a transient dispatch failure (timeout, crash, or empty response), retry that agent once. If it fails again, follow its configured fallback chain left-to-right once; if none is configured or the chain is exhausted, report what failed and stop. Never retry a refusal, failed test, validation, or migration as though it were a dispatch error. Do not restart an exhausted chain.
 
-| Agent Role | Timeout | Retry Policy | Partial Results OK? | Reasoning Effort |
-|------------|---------|--------------|---------------------|------------------|
-| Explorer (@apollo) | 60s | 1 retry | ✅ Yes | low |
-| Implementer (@hermes, @aphrodite, @demeter) | 180s | 1 retry | ❌ No | medium |
-| Reviewer (@themis) | 120s | 1 retry | ❌ No | high |
-| Infrastructure (@prometheus) | 300s | 1 retry | ❌ No | medium |
-| Hotfix (@talos) | 30s | 1 retry | ✅ Yes | low |
-| Remote Sensing (@gaia) | 120s | 1 retry | ✅ Yes | high |
+Fallbacks for auth/security/data/schema work must preserve specialist competence, Themis review, and human approval. Full-auto does not bypass these gates.
 
-## Retry Flow
+## Lightweight subtask
 
-```
-Initial attempt → timeout/failure → log it → make at most one retry
-  └─ retry fails → try fallback agents left-to-right with original task/context
-       └─ all fallbacks fail (or none exist) → report the chain and escalate
-```
-`background_delegation.retry_count: 1` means one retry after the initial attempt, not one total attempt. Never restart an exhausted chain automatically.
-
-Apply the retry only to a transient dispatch failure (timeout, crash, or empty response). A failed test, validation, or migration is a result to diagnose, not a reason to repeat the same command or agent blindly. Track agents already tried: each agent may be retried at most once and each listed fallback may be tried at most once. For auth/security/data/schema work, a fallback must preserve specialist competence, Themis review, and human approval; otherwise stop and escalate. Never let full-auto bypass these gates.
-An agent refusal or scope-boundary response is not a transient failure: do not retry it with a rephrased prompt. Correct the route once if the right specialist is clear; otherwise stop and ask.
-
-## Fallback Chain Definitions
-
-`routing.yml` → `fallback_chains` is the canonical agent-by-agent mapping. Evaluate
-the configured chain left-to-right; if an agent has no configured chain, stop
-and escalate rather than guessing a fallback. Each listed fallback may be tried
-at most once, and an exhausted chain is never restarted automatically.
-
-### Refusal Is a Routing Error
-
-For a domain/scope refusal, do not retry with a rephrased prompt. Correct the
-route once only when the right specialist is clear; otherwise stop and ask.
-Record one `DelegationCacheDecision` telemetry item for the corrected route,
-including `reroute_from`, `reroute_to`, and `delegation_id` when available.
-
-### Escalation Protocol
-When all fallbacks fail, report the tried agents and errors, offer a different approach/simpler scope/manual fix, and stop. Never retry the same chain automatically.
-
-### Session Reuse Check
-Check for a reusable session before dispatch and obey `session_max` in `routing.yml`.
-
----
-
-# 📦 SUBTASK DISPATCH (Lightweight Delegation)
-
-Subtask is a bounded, low-risk delegation mode that **skips** the standard artifact lifecycle. Choose it by risk and need for review, not by a fixed file/line count.
-
-## When to Use Subtask vs Full Task
-
-Use the lightest path that safely meets the request. A multi-file but bounded low-risk change does not automatically need a plan/artifact phase.
-
-### Subtask Decision Tree (run BEFORE every delegation)
-
-```
-□ Is the scope clear, bounded, and reversible?                 [YES→continue | NO→clarify/plan]
-□ Does it avoid auth/security, data/schema, and destructive risk? [YES→continue | NO→full review/gates]
-□ Is there no required Themis/audit handoff for this change?     [YES→continue | NO→preserve that review]
-
-ALL YES → direct/lightweight execution; no routine plan or artifact
-ANY NO  → add only the planning, artifact, specialist review, and approval gates the risk requires
-```
-
-### Safety Rules
-1. **Bounded scope** — can be a small multi-file change or a read-only investigation
-2. **Low risk** — no security implications, no data loss, no breaking changes
-3. **No required Themis dependency** — sensitive/material output retains its review gate
-
-## Subtask Return Format
-Return the required `## subtask_summary` fields defined in `## Agent Return Format`; include `memory_context` when memory was used.
-
-## Timeout Parcial (Partial Results)
-
-Only agents marked ✅ in the Timeout Behavior table above may return partial results: @apollo (partial file list, e.g. "found 7 of 12 files before timeout"), @gaia (partial literature findings) and @talos (confirm progress if a hotfix times out). Never for implementers or reviewers — they must complete or fail. When dispatching with partial-OK, set the expectation: `@apollo Search for auth files. Timeout parcial OK — return whatever you have.`
-
----
-
-# 📊 TIMEOUT TRACKING
-
-Track in-flight delegations against the Timeout Behavior table above. Log timeouts to `/memories/session/timeout-log.md` for later analysis.
+For clear, bounded, reversible, low-risk work, dispatch directly to one specialist. Skip routine plan/artifact phases and discovery; ask the specialist to inspect only relevant context, make the change, run focused verification, and return `subtask_summary`. Add planning, artifacts, Themis review, or approval only when scope or risk requires them.

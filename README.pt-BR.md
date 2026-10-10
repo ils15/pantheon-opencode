@@ -53,6 +53,19 @@ Com o OpenCode em execução, descreva o resultado que você quer:
 ```
 
 O Pantheon ajuda a transformar esse pedido em um plano e em etapas revisadas.
+Perguntas sem mudança no repositório são respondidas diretamente; correções
+pequenas usam uma única delegação. Discovery, planejamento, paralelismo e
+revisão em council ficam para quando o escopo ou o risco justificarem.
+
+Para uma correção pequena e bem delimitada, chame `@talos` diretamente (por
+exemplo, `@talos corrija este typo`). Assim você pula a chamada de orquestração
+do Zeus; use `/pantheon` para planejamento, delegação, mudanças em vários
+arquivos ou gates de qualidade.
+
+O procedimento completo de council só é carregado em `/pantheon` ou quando uma
+decisão material realmente exige perspectivas distintas. Falhas de dispatch
+podem ser tentadas novamente uma vez; testes reprovados e recusas não são
+repetidos automaticamente.
 
 ## Para quem é?
 

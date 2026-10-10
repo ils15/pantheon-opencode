@@ -5,33 +5,33 @@ import test from 'node:test'
 const readPrompt = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const zeus = readPrompt('../src/agents/zeus.md')
 const memoryProtocol = readPrompt('../src/instructions/memory-protocol.instructions.md')
+const zeusMemoryOps = readPrompt('../src/instructions/zeus-memory-operations.instructions.md')
 const generatedAgents = readPrompt('../AGENTS.md')
 const taskStartSearch = 'memory_search(query=task_prompt, top_k=2)'
 
-test('memory/delegation prompts reuse one task-start search and preserve required gates', () => {
+test('memory/delegation prompts avoid per-dispatch KV calls and preserve council memory', () => {
   const taskSearchCount = generatedAgents.split(taskStartSearch).length - 1
   assert.equal(taskSearchCount, 1, 'the task-start FTS query belongs to shared core exactly once')
   assert.doesNotMatch(zeus, /memory_search\(query=task_prompt/)
   assert.match(memoryProtocol, /Before any file reads, call exactly once at task start/i)
   assert.match(memoryProtocol, /same result.*task context.*delegation routing/i)
   assert.match(memoryProtocol, /KV cache hit.*does not skip.*search/i)
-  assert.match(memoryProtocol, /cache miss[\s\S]*memory_store[\s\S]*kv_store/i)
+  assert.doesNotMatch(memoryProtocol, /## Delegation Cache Instructions/)
+  assert.match(zeusMemoryOps, /Use the task-start memory result.*static agent descriptions/i)
+  assert.match(zeusMemoryOps, /Do not add KV\/cache calls to ordinary dispatches/i)
+  assert.doesNotMatch(zeusMemoryOps, /kv_(?:get|store|search)/)
+  assert.doesNotMatch(zeus, /pantheon-persistence|kv_(?:get|store|search)/)
   assert.match(memoryProtocol, /memory_store\(\).*AUTOMATICALLY by Zeus.*subtask_summary/i)
 
-  assert.match(zeus, /depth >= 2.*NAO delegar, ESCALAR para o usuario/)
-  assert.match(zeus, /depth - 1/)
+  assert.match(zeus, /no máximo um especialista auxiliar/)
+  assert.doesNotMatch(zeus, /deleg:depth/)
+  assert.match(zeus, /council-synthesis/)
+  assert.doesNotMatch(zeus, /INLINE COUNCIL SYNTHESIS/)
   assert.match(
-    memoryProtocol,
+    zeusMemoryOps,
     /memory_search\(query=question, top_k=2, namespace="council_decisions"\)/,
   )
-  assert.equal(
-    (
-      generatedAgents.match(
-        /memory_search\(query=question, top_k=2, namespace="council_decisions"\)/g,
-      ) ?? []
-    ).length,
-    1,
-  )
+  assert.doesNotMatch(generatedAgents, /council_decisions/)
 
   assert.doesNotMatch(zeus, /memory_recall\(\)/, 'do not direct generic no-key recall')
   assert.doesNotMatch(zeus, /memory_store\(\).*apos cada fase/i)
@@ -39,7 +39,7 @@ test('memory/delegation prompts reuse one task-start search and preserve require
 })
 
 test('delegation cache wording makes no unsupported token-savings claims', () => {
-  const prompts = `${memoryProtocol}\n${zeus}\n${generatedAgents}`
+  const prompts = `${memoryProtocol}\n${zeusMemoryOps}\n${zeus}\n${generatedAgents}`
   const unsupportedSavingsClaims = [
     /otimiza(?:r|ção)\s+(?:a\s+)?decis(?:ão|ões)\s+de\s+deleg(?:ação|ações)[^\n]*tokens?/i,
     /reduzir\s+(?:o\s+)?gasto\s+de\s+tokens?/i,
@@ -56,6 +56,7 @@ test('delegation cache wording makes no unsupported token-savings claims', () =>
     )
   }
 
-  assert.match(memoryProtocol, /^## Delegation Cache Instructions$/m)
+  assert.match(zeusMemoryOps, /^## Routing$/m)
+  assert.doesNotMatch(memoryProtocol, /^## Delegation Cache$/m)
   assert.doesNotMatch(zeus, /^## Delegation Cache Instructions$/m)
 })

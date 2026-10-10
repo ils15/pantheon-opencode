@@ -15,9 +15,13 @@ const implementers = ['hermes', 'aphrodite', 'demeter', 'hephaestus', 'prometheu
 )
 
 test('small bounded changes use direct, proportionate execution', () => {
-  assert.match(zeus, /trabalho delimitado ao especialista/i)
-  assert.match(zeus, /não force planejamento/i)
-  assert.match(zeus, /Nunca dispare council para correção pequena/i)
+  assert.match(zeus, /Implementação delimitada: escolha um especialista/i)
+  assert.match(zeus, /responda diretamente, sem delegar/i)
+  assert.match(zeus, /uma delegação direta a @talos/i)
+  assert.match(zeus, /não acrescente discovery ou waves por padrão/i)
+  assert.match(zeus, /sem Athena, Apollo, plano, artefato ou revisão Themis de rotina/i)
+  assert.match(zeus, /carregue a skill `council-synthesis`/i)
+  assert.doesNotMatch(zeus, /INLINE COUNCIL SYNTHESIS/)
   assert.match(artifacts, /trivial|bounded/i)
   assert.match(artifacts, /read-only/i)
   assert.match(tdd, /micro|small|proportionate/i)
@@ -46,11 +50,8 @@ test('automatic execution is bounded and never bypasses sensitive actions', () =
   assert.match(autoContinue, /full-auto/i)
   assert.match(autoContinue, /never auto|never automate|must not be automated/i)
   assert.match(routing, /retry_count:\s*1\b/)
-  assert.match(timeoutRetry, /never retry the same chain automatically/i)
-  assert.match(
-    timeoutRetry,
-    /(?:refusal|recusa)[\s\S]*?(?:no retry|don't retry|do not retry|não gera retry)/i,
-  )
+  assert.match(timeoutRetry, /Do not restart an exhausted chain/i)
+  assert.match(timeoutRetry, /Never retry a refusal/i)
 })
 
 test('quality/cost claims require measurement rather than projected percentages', () => {

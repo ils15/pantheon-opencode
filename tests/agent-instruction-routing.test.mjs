@@ -40,6 +40,32 @@ test('shared AGENTS baseline excludes agent-scoped and language-specific instruc
   assert.ok(!baseline.includes('Frontend Development Standards (Aphrodite)'))
 })
 
+test('Zeus-only operations stay scoped and council procedure loads on demand', () => {
+  const shared = generateAgentsMd(instructions)
+  const zeus = generateAgentPrompt('zeus', '## Zeus prompt', instructions)
+  const hermes = generateAgentPrompt('hermes', '## Hermes prompt', instructions)
+  const council = read('../src/skills/council-synthesis/SKILL.md')
+  const zeusSource = read('../src/agents/zeus.md')
+
+  assert.doesNotMatch(shared, /## Zeus Memory Operations/)
+  assert.doesNotMatch(shared, /## Council Decisions/)
+  assert.doesNotMatch(shared, /Council Specialist Response Format/)
+  assert.match(zeus, /## Zeus Memory Operations/)
+  assert.match(zeus, /## Council Decisions/)
+  assert.match(zeusSource, /council-synthesis/)
+  assert.doesNotMatch(zeus, /INLINE COUNCIL SYNTHESIS/)
+  assert.match(council, /Council synthesis/)
+  assert.doesNotMatch(hermes, /## Zeus Memory Operations|## Council Decisions/)
+  assert.doesNotMatch(zeusSource, /context_(?:save|get)/)
+  assert.doesNotMatch(
+    council,
+    /board\.(?:registerLaunch|markReconciled|recoverRunningJobs|formatForPrompt)/,
+  )
+  for (const agent of ['aphrodite', 'hermes', 'demeter', 'hephaestus']) {
+    assert.doesNotMatch(read(`../src/agents/${agent}.md`), /context_get\(/)
+  }
+})
+
 test('agent prompts get only their explicit instructions and a safe shared fallback', () => {
   const hermes = generateAgentPrompt('hermes', '## Hermes prompt', instructions)
   assert.ok(hermes.includes('Backend Development Standards (Hermes)'))
@@ -53,11 +79,12 @@ test('agent prompts get only their explicit instructions and a safe shared fallb
   assert.ok(!aphrodite.includes('Backend Development Standards (Hermes)'))
 
   const zeus = generateAgentPrompt('zeus', '## Zeus prompt', instructions)
-  assert.ok(zeus.includes('INLINE COUNCIL SYNTHESIS'))
-  assert.ok(zeus.includes('STALL DETECTION'))
-  assert.ok(zeus.includes('Fallback Chain Definitions'))
-  assert.ok(zeus.includes('one retry after the initial attempt'))
-  assert.equal((zeus.match(/DelegationCacheDecision/g) ?? []).length, 1)
+  assert.ok(read('../src/agents/zeus.md').includes('council-synthesis'))
+  assert.ok(!zeus.includes('INLINE COUNCIL SYNTHESIS'))
+  assert.ok(zeus.includes('Stall recovery'))
+  assert.ok(zeus.includes('fallback chain'))
+  assert.ok(zeus.includes('retry that agent once'))
+  assert.equal((zeus.match(/DelegationCacheDecision/g) ?? []).length, 0)
   assert.ok(!zeus.includes('Backend Development Standards (Hermes)'))
   assert.doesNotMatch(zeus, /GoalLoop/)
 
@@ -65,13 +92,17 @@ test('agent prompts get only their explicit instructions and a safe shared fallb
   const frontend = read('../src/instructions/frontend-standards.instructions.md')
   const timeout = read('../src/instructions/zeus-timeout-retry.instructions.md')
   const themis = read('../src/agents/themis.md')
-  assert.match(antiStall, /long-running or multi-phase tasks expected to run > 5 turns only/)
+  assert.match(antiStall, /expected to span more than five turns/)
   assert.match(frontend, /Strict mode always/)
   assert.match(frontend, /Keyboard navigation support/)
   assert.match(frontend, /Test changed behavior proportionally/)
-  assert.match(timeout, /only to a transient dispatch failure/)
+  assert.match(timeout, /transient dispatch failure/)
   assert.match(timeout, /preserve specialist competence, Themis review, and human approval/)
-  assert.match(timeout, /if an agent has no configured chain, stop[\s\S]*escalate/i)
+  assert.match(timeout, /chain is exhausted, report what failed and stop/i)
+  assert.doesNotMatch(
+    timeout,
+    /Timeout Behavior by Agent Role|Session Reuse Check|TIMEOUT TRACKING/,
+  )
   assert.match(themis, /applicable coverage requirements/)
   assert.match(themis, /BLOCK_INTENT/)
 
@@ -95,8 +126,9 @@ test('agent-specific instructions are present in the actual installed agent prom
     assert.ok(installedHermes.includes('Backend Development Standards (Hermes)'))
     assert.ok(installedHermes.includes('Apply only when a target workspace file matches `**/*.py`'))
     assert.ok(!installedHermes.includes('INLINE COUNCIL SYNTHESIS'))
-    assert.ok(installedZeus.includes('INLINE COUNCIL SYNTHESIS'))
-    assert.ok(installedZeus.includes('Fallback Chain Definitions'))
+    assert.ok(installedZeus.includes('council-synthesis'))
+    assert.ok(!installedZeus.includes('INLINE COUNCIL SYNTHESIS'))
+    assert.ok(installedZeus.includes('retry that agent once'))
     assert.ok(!installedZeus.includes('Backend Development Standards (Hermes)'))
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -128,25 +160,26 @@ test('generated Zeus prompt avoids duplicating canonical memory and stall protoc
   assert.doesNotMatch(zeusSource, /DelegationCacheDecision/)
 })
 
-test('timeout instructions use the explicit routing fallback map as canonical', () => {
+test('timeout instructions use routing as canonical without synthetic timer loops', () => {
   const timeout = read('../src/instructions/zeus-timeout-retry.instructions.md')
   const routing = read('../src/routing.yml')
-  assert.match(timeout, /routing\.yml.*fallback_chains.*canonical/s)
+  assert.match(
+    timeout,
+    /`routing\.yml` defines the concurrency limit, retry count, and canonical fallback chains/,
+  )
   assert.match(routing, /fallback_chains:\s*[\s\S]*?hermes:\s*\n\s*- talos\s*\n\s*- athena/)
-  assert.match(timeout, /if an agent has no configured chain, stop[\s\S]*escalate/i)
+  assert.match(timeout, /none is configured or the chain is exhausted[\s\S]*stop/i)
+  assert.match(timeout, /Do not simulate per-agent timers/)
 })
 
-test('context_save guidance documents the object content contract', () => {
-  // `content` is a JSON string whose DECODED top level must be an object:
-  // nesting a bare string where `goal` (or another structured field) belongs is
-  // rejected by the persistence server as an invalid checkpoint shape. The
-  // guidance must say so, and must tell callers to OMIT an unset optional
-  // `goal` instead of sending a string placeholder.
+test('stall guidance avoids invented task IDs and recovery APIs', () => {
   const antiStall = read('../src/instructions/zeus-anti-stall.instructions.md')
-  assert.match(antiStall, /JSON\.stringify/)
-  assert.match(antiStall, /omit an unset `goal`/)
+  const zeusSource = read('../src/agents/zeus.md')
+  assert.match(antiStall, /Do not invent task IDs, session APIs, or recovery state/)
+  assert.doesNotMatch(zeusSource, /context_(?:save|get)/)
 
   const skill = read('../src/skills/auto-continue/SKILL.md')
+  assert.match(skill, /only when `context_save` and `context_get` are explicitly present/)
   assert.match(skill, /JSON\.stringify\(state\)/)
   assert.match(skill, /omit the key rather than passing a string/)
 

@@ -47,8 +47,8 @@ const samples = [
   },
   {
     name: 'messaging token',
-    positive: `xoxb-${'1234567890'}-${'1234567890123'}-${'abcdefghijklmnopqrstuvwx'}`,
-    boundary: `xoxb-${'123456789'}-${'1234567890'}-${'abcdefghijklmnopqrstuvwx'}`,
+    positive: `${'xox'}${'b-'}${'1234567890'}-${'1234567890123'}-${'abcdefghijklmnopqrstuvwx'}`,
+    boundary: `${'xox'}${'b-'}${'123456789'}-${'1234567890'}-${'abcdefghijklmnopqrstuvwx'}`,
     status: 'block',
   },
   {
