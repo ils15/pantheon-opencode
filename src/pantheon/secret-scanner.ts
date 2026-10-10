@@ -19,6 +19,9 @@ export type SecretScanResult =
   | { status: 'block'; findings: SecretScanFinding[] }
   | { status: 'advisory'; findings: SecretScanFinding[] }
 
+/** Maximum UTF-8 size of the serialized scanner input (5 MiB). */
+export const MAX_SECRET_SCAN_INPUT_BYTES = 5 * 1024 * 1024
+
 type SecretPattern = {
   name: string
   confidence: 'high' | 'low'
@@ -33,6 +36,9 @@ const WHITESPACE_RE = /\s/
 
 // Compile all runtime detection expressions once when this shared module loads.
 // Do not add the repository-hygiene patterns from scripts/secret-scan.mjs here.
+// The expressions use bounded character classes and fixed separators; none has
+// nested ambiguous quantifiers. The 5 MiB input cap also bounds their linear
+// scans and the assignment/JWT parsing loops below.
 const SECRET_PATTERNS: SecretPattern[] = [
   { name: 'aws-access-key', confidence: 'high', regex: /AKIA[0-9A-Z]{16}/i },
   { name: 'github-token', confidence: 'high', regex: /gh[pousr]_[A-Za-z0-9_]{36,}/i },
@@ -212,6 +218,12 @@ function findJwtMatch(input: string): string | undefined {
 /** Scan serialized tool text, returning no raw input or match values. */
 export function scanSecretText(input: unknown): SecretScanResult {
   if (typeof input !== 'string') return { status: 'invalid' }
+  // A code-unit precheck avoids doing a full byte count for obviously huge
+  // strings. UTF-8 byte size is authoritative for the supported-input limit.
+  if (input.length > MAX_SECRET_SCAN_INPUT_BYTES) return { status: 'invalid' }
+  if (Buffer.byteLength(input, 'utf8') > MAX_SECRET_SCAN_INPUT_BYTES) {
+    return { status: 'invalid' }
+  }
 
   const findings: SecretScanFinding[] = []
   const lowerInput = input.toLowerCase()

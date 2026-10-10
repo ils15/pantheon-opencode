@@ -1006,7 +1006,9 @@ function adaptV2ExecuteBeforeEvent(event: unknown): {
  *   ctx.tool.hook("execute.before", handler) — pre-execution guard
  *   ctx.tool.hook("execute.after", handler)  — post-execution augment
  *
- * Returns true if any hooks were registered.
+ * Returns true only if the security-critical `execute.before` hook registered.
+ * The post-execution hook is optional and cannot make an unprotected tool
+ * surface ready.
  */
 async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
   const toolCtx = hostDomains(context).tool
@@ -1014,8 +1016,6 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
   if (!toolCtx?.hook) {
     return false
   }
-
-  let registered = false
 
   try {
     // "execute.before" — read-only enforcement. Throwing from this handler
@@ -1077,9 +1077,11 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
       }
       if (blockError !== null) throw blockError
     })
-    registered = true
   } catch {
-    // Tool before-hook not supported
+    // Never proceed to Pantheon tool registration without this guard. The host
+    // may still expose its own built-in tools; this marker does not claim to
+    // block or scan native host tool paths.
+    return false
   }
 
   try {
@@ -1096,12 +1098,11 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
       sandbox: resolveV2SandboxConfig(context.options),
     })
     await toolCtx.hook('execute.after', (event: unknown) => v2ExecuteAfter(event))
-    registered = true
   } catch {
-    // Tool after-hook not supported
+    markUnsupported('tool-execute-after-hook')
   }
 
-  return registered
+  return true
 }
 
 // ─── V2 Permission Hook ─────────────────────────────────────────────────
@@ -1285,13 +1286,30 @@ export const plugin = define({
       }
     })
 
-    // ─── Phase 2: V2 Tool Registration (best-effort) ─────────────────
-    const toolsRegistered = await registerV2Tools(context).catch(() => false)
-    if (!toolsRegistered) {
+    // ─── Phase 2: Required V2 execute.before enforcement ──────────────
+    // Register the scanner/read-only gate before any Pantheon V2 tools can be
+    // added. A missing/rejected hook disables the custom Pantheon tool surface;
+    // native host built-ins may still remain available and are not claimed to
+    // be covered by this plugin guard.
+    const toolHooksRegistered = await registerV2ToolHooks(context).catch(() => false)
+    if (!toolHooksRegistered) {
+      markUnsupported('tool-execute-hooks')
+      markUnsupported('secret-scan-hook')
+      markUnsupported('pantheon-tools-disabled')
+      console.error(
+        '[Pantheon V2] Secret-scanning enforcement is unavailable; Pantheon V2 tools were not registered. Native host tools may remain available and are not covered by this guard.',
+      )
+    }
+
+    // ─── Phase 3: V2 Tool Registration (guarded) ─────────────────────
+    const toolsRegistered = toolHooksRegistered
+      ? await registerV2Tools(context).catch(() => false)
+      : false
+    if (!toolsRegistered && toolHooksRegistered) {
       markUnsupported('tool-transform')
     }
 
-    // ─── Phase 3: V2 Event Subscription (best-effort) ────────────────
+    // ─── Phase 4: V2 Event Subscription (best-effort) ────────────────
     const eventCleanup = subscribeV2Events(context)
     if (eventCleanup) {
       activeCleanups.push(eventCleanup)
@@ -1299,16 +1317,10 @@ export const plugin = define({
       markUnsupported('event-stream')
     }
 
-    // ─── Phase 4: V2 Session Hooks (best-effort) ─────────────────────
+    // ─── Phase 5: V2 Session Hooks (best-effort) ─────────────────────
     const sessionHooksRegistered = await registerV2SessionHooks(context).catch(() => false)
     if (!sessionHooksRegistered) {
       markUnsupported('session-hooks')
-    }
-
-    // ─── Phase 5: V2 Tool Hooks (best-effort) ────────────────────────
-    const toolHooksRegistered = await registerV2ToolHooks(context).catch(() => false)
-    if (!toolHooksRegistered) {
-      markUnsupported('tool-execute-hooks')
     }
 
     // ─── Phase 6: V2 Permission Hook (best-effort) ───────────────────

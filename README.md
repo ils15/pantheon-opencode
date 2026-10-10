@@ -283,7 +283,7 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
 | Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) |
-| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | V2 plugin: 3 Pantheon tools when required enforcement registers, 5 event subscriptions, session hooks (`prompt`, `context`), a read-only and secret-scanning `execute.before` hook, plus configuration transforms |
 | V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 
 The V2 plugin provides 3 orchestration tools (`hashline_edit`, `pantheon_cost`,
@@ -320,6 +320,22 @@ undeclared tool — or one that returns `output` without declaring it — fails 
 every call. Unsupported V2 features are `legacy-hooks` (the V1-specific hook
 surface), `catalog-transform`, `integration-transform`, `skill-transform` and
 `goal-tools`.
+
+### Runtime secret-scanning limit
+
+V1 and V2 use the same in-process scanner on their tool `execute.before` paths.
+The scanner accepts up to **5 MiB (5,242,880 UTF-8 bytes) of serialized hook
+payload**. Larger or malformed payloads are denied fail-closed; the rejected
+payload is not written to the scanner log. This bound applies to the complete
+serialized hook payload, not just one argument field.
+
+V2 registers its required enforcement hook before registering Pantheon tools.
+If the host rejects that hook, startup reports `secret-scan-hook` and
+`pantheon-tools-disabled`, and Pantheon V2 tools are not registered. This does
+not disable or claim scanner coverage for native host built-in tools; those may
+remain available under the host's own policies. The opt-in scanner-only timing
+harness is reproducible with `npx tsx scripts/bench-secret-scanner.ts` and does
+not print scan input.
 
 The package exposes both contracts as importable exports: `pantheon-opencode/plugin`
 (V1), `pantheon-opencode/plugin-v2` (V2) and `pantheon-opencode/v2-bridge`
