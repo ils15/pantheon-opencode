@@ -372,6 +372,16 @@ assert.deepEqual(
   'both plugin lists are collected in order',
 )
 assert.deepEqual(
+  collectRegisteredPluginRefs([
+    {
+      path: '/c/opencode.json',
+      data: { plugins: [{ package: 'pantheon-opencode@1.6.0', options: { context_sandbox: {} } }] },
+    },
+  ]).map((ref) => ref.path),
+  ['pantheon-opencode@1.6.0'],
+  'object-shaped npm plugin entries retain the exact package pin for drift checks',
+)
+assert.deepEqual(
   collectRegisteredPluginRefs([{ path: '/c/opencode.json', data: {} }]),
   [],
   'no plugin keys → no refs',
@@ -413,6 +423,36 @@ try {
     'same-version installed copy reports sync (no false positive)',
   )
 
+  writeFileSync(
+    join(driftFixture, 'opencode.json'),
+    JSON.stringify({ plugins: ['pantheon-opencode@1.5.2'] }),
+  )
+  assert.equal(
+    checkPluginVersionDrift({ target: driftFixture, env: { HOME: driftFixture } }),
+    'drift',
+    'doctor detects an outdated exact npm plugin pin',
+  )
+
+  writeFileSync(
+    join(driftFixture, 'opencode.json'),
+    JSON.stringify({ plugins: ['pantheon-opencode@1.6.0-rc.1'] }),
+  )
+  assert.equal(
+    checkPluginVersionDrift({ target: driftFixture, env: { HOME: driftFixture } }),
+    'drift',
+    'doctor detects prerelease npm pins beyond the beta.N form',
+  )
+
+  writeFileSync(
+    join(driftFixture, 'opencode.json'),
+    JSON.stringify({ plugins: [{ package: `pantheon-opencode@${packageVersion}`, options: {} }] }),
+  )
+  assert.equal(
+    checkPluginVersionDrift({ target: driftFixture, env: { HOME: driftFixture } }),
+    'sync',
+    'doctor recognises a current package pin when V2 options use object form',
+  )
+
   // A project that registers the plugin by relative/ROOT path (dev checkout)
   // has no node_modules copy to compare and is skipped, never flagged.
   writeFileSync(join(driftFixture, 'opencode.json'), JSON.stringify({ plugins: ['src/plugin-v2'] }))
@@ -432,6 +472,11 @@ try {
 const supported = classifyNodeSqliteProbe({ available: true, version: 'v22.22.2' })
 assert.equal(supported.status, 'ok', 'available node:sqlite classifies as ok')
 assert.match(supported.message, /node:sqlite available/, 'ok message names node:sqlite')
+assert.match(
+  supported.message,
+  /doctor does not verify pantheon_cost tool registration/,
+  'SQLite availability is not presented as proof that the tool registered',
+)
 
 const unsupported = classifyNodeSqliteProbe({ available: false, version: 'v18.20.0' })
 assert.equal(unsupported.status, 'unsupported', 'missing node:sqlite classifies as unsupported')

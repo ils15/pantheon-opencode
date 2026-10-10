@@ -36,7 +36,8 @@ import { ROOT } from '../scripts/install/shared.mjs'
 // Constants
 // ---------------------------------------------------------------------------
 
-const V2_PLUGIN = join(ROOT, 'src', 'plugin-v2')
+const V2_PLUGIN_DIR = join(ROOT, 'src', 'plugin-v2')
+const V2_PLUGIN = `pantheon-opencode@${JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version}`
 // Legacy V2 refs (migrated by the installer into V2_PLUGIN): the npm
 // shorthand the beta resolves via npm install (NpmInstallFailedError) and the
 // pre-directory-contract file path (loader warns "must be a directory").
@@ -240,6 +241,7 @@ test('V1 fresh install does NOT include V2 plugin entry in plugin array', async 
         p === V2_EXPORT ||
         p === V2_LEGACY_FILE ||
         p === join(ROOT, 'src', 'plugin-v2.ts') ||
+        p === V2_PLUGIN_DIR ||
         p === V2_PLUGIN,
     )
     assert.ok(!hasV2Export, 'V1 config must not contain V2 plugin entry')
@@ -405,32 +407,36 @@ test('V1 includes talos agent with permission configuration', async () => {
 // 3. V2 shape specifics
 // ---------------------------------------------------------------------------
 
-test('V2 fresh install produces plugins (plural) as array with managed dir entry', async () => {
+test('V2 fresh install produces plugins (plural) with a versioned package entry', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-fresh-'))
   try {
     const config = await runInstall(target, 'v2')
     assert.ok(Array.isArray(config.plugins), 'config.plugins must be an array')
     assert.ok(
       config.plugins.includes(V2_PLUGIN),
-      `V2 plugin dir ${V2_PLUGIN} missing from plugins array: ${JSON.stringify(config.plugins)}`,
+      `V2 plugin package ${V2_PLUGIN} missing from plugins array: ${JSON.stringify(config.plugins)}`,
     )
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
 })
 
-test('V2 fresh install registers a directory that carries the loader contract', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-dircontract-'))
+test('V2 package root export carries the plugin loader contract', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-root-export-'))
   try {
     const config = await runInstall(target, 'v2')
-    assert.ok(config.plugins.includes(V2_PLUGIN), 'V2 plugin entry missing')
+    assert.ok(config.plugins.includes(V2_PLUGIN), 'V2 plugin package entry missing')
     assert.ok(
-      existsSync(V2_PLUGIN) && statSync(V2_PLUGIN).isDirectory(),
-      `entry must be a directory: ${V2_PLUGIN}`,
+      existsSync(V2_PLUGIN_DIR) && statSync(V2_PLUGIN_DIR).isDirectory(),
+      `the package's V2 source directory must exist: ${V2_PLUGIN_DIR}`,
     )
     assert.ok(
-      existsSync(join(V2_PLUGIN, 'index.ts')),
-      `entry directory must carry a real index.ts: ${V2_PLUGIN}`,
+      existsSync(join(V2_PLUGIN_DIR, 'index.ts')),
+      `the package's V2 source directory must carry its local loader shim: ${V2_PLUGIN_DIR}`,
+    )
+    assert.equal(
+      JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).exports['.'],
+      './src/plugin-v2.ts',
     )
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -521,7 +527,7 @@ test('V2 removes Pantheon V2 refs from plugins before adding the managed entry',
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-dedup-'))
   try {
     const config = await runInstall(target, 'v2', {
-      plugins: [V2_EXPORT, V2_LEGACY_FILE, V2_PLUGIN, 'other-plugin'],
+      plugins: [V2_EXPORT, V2_LEGACY_FILE, V2_PLUGIN_DIR, V2_PLUGIN, 'other-plugin'],
     })
     const v2Count = config.plugins.filter((p) => p === V2_PLUGIN).length
     assert.equal(v2Count, 1, 'V2 plugin must appear exactly once')

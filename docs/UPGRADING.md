@@ -1,4 +1,4 @@
-# Upgrading Pantheon — 1.5.0
+# Upgrading Pantheon — 1.6.0
 
 [Português (Brasil)](UPGRADING.pt-BR.md)
 
@@ -14,13 +14,13 @@
 > [INSTALLATION.md](INSTALLATION.md#opencode-v1v2--contrato-de-plugin).
 > Everything below applies to upgrades *within* the 1.6 line.
 
-Pantheon 1.5.0 formalizes two exclusive OpenCode plugin contracts. Before
+Pantheon 1.6.0 documents two exclusive OpenCode plugin contracts. Before
 upgrading, choose the contract that matches the OpenCode host you will run:
 
 | Selector | Config key | Pantheon entry | Scope |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and the V1 `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), board lifecycle, V1 hooks and implemented compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| `v2` | plural `plugins` | Exact npm package `pantheon-opencode@<version>` (package root exports `src/plugin-v2.ts`) | V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks, read-only and caller/target permission hooks, plus configuration transforms |
 
 **Changed in 1.6.0 — the V2 tool surface is 3 tools, not 6.** The three goal
 tools (`pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`) are
@@ -70,12 +70,54 @@ occur.
 V2 `execute.after` runs the completed-result parity chain in this order:
 `task-result-guard` → `context-sandbox` → `read-enhancer`. The `session.prompt`
 and compaction hooks remain registration-only; vision interception and
-compaction context construction remain V1-only.
+compaction context construction remain V1-only. `context-sandbox` is a
+post-result transformation, not an authorization boundary or a general
+fail-closed control.
+
+#### V2 `context_sandbox` configuration and security scope
+
+The V2 host does not preserve the V1 top-level `context_sandbox` setting. In an
+isolated live-host probe against `opencode2 v0.0.0-beta-19271` (2026-10-09),
+`GET /api/config` omitted a supplied top-level `context_sandbox`, while a plugin
+entry's `options.context_sandbox` arrived unchanged in `ctx.options`. A direct
+top-level V2 setting is therefore **unsupported/inert**; do not treat it as
+active protection. The V2 installer translates a legacy top-level block into
+the Pantheon plugin's `plugins[].options.context_sandbox`, preserving the
+top-level copy for a later V1 downgrade. Existing installer tests cover the
+translation, per-leaf precedence, validation, and idempotence. When editing a
+V2 config manually, use the nested plugin option.
+
+“Fail closed” is deliberately scoped to the V2 delegation policy and secret
+scanner failure paths exercised with injected failures. It is not a claim about
+every V2 hook, every config key, or `context-sandbox` result transformation.
 
 The installer removes Pantheon entries from both config shapes and writes only
-the selected generation. It does not mix `src/plugin.ts` or
-`src/plugins/pantheon-hooks.ts` with `<installed>/src/plugin-v2`; unrelated
-third-party entries are retained and are not converted.
+the selected generation. V1 keeps package-local paths; V2 writes the exact npm
+package version rather than an absolute path into a global prefix or transient
+`npx` cache. It does not mix the V1 entries with the V2 package; unrelated
+third-party entries are retained and are not converted. The package root export
+is the V2 plugin entry, while `pantheon-opencode/plugin` remains the explicit
+V1 export.
+
+#### Repeatable V2 verification and interactive-TUI waiver
+
+The isolated install/MCP/doctor gate is repeatable without loading third-party
+plugins:
+
+```bash
+bash scripts/test-opencode-v2-sandbox.sh --prepare
+bash ~/pantheon-sandbox/run-test.sh
+```
+
+The local read-hook replay and the host-backed hook slice are separate checks;
+the former uses explicit fixture events rather than relying on a model to call
+`read`, and the latter exercises hook dispatch through the isolated OpenCode
+host. The V2 contract tests exercise delegation decisions with controlled
+permission events. `tests/tui-packaged-smoke.test.mjs` verifies that the
+packaged TUI plugin registers its sidebar, handles a task event, and disposes.
+This is an explicit waiver for an automated *interactive TUI session*: no
+interactive keystroke/session claim is made by the headless MCP, hook, contract,
+or packaged-plugin smoke checks.
 
 ```bash
 # Pin one contract for this OpenCode configuration
@@ -119,7 +161,10 @@ The gate prefers the version token that immediately follows the tool name, so
 still not what you expect, `--opencode-version v1|v2` overrides it outright and
 `OPENCODE_VERSION` overrides everything except the explicit flag.
 
-### Updating between beta releases (1.5.0-beta.5+)
+### Historical note: updating between 1.5.0 beta releases
+
+The following workflow applied to the 1.5.0 beta channel. For a 1.6.0
+installation, use the migration checklist below instead.
 
 1. Stop OpenCode.
 2. Run `npx pantheon-opencode@beta update` (beta channel, the default during
@@ -151,7 +196,7 @@ venv and MCP entries.
    a separate `tui.json` registration; installing V2 does not imply that the
    TUI or V1 runtime is loaded.
 4. Inspect the result: V1 Pantheon entries belong in `plugin`; the V2 Pantheon
-   entry is the `<installed>/src/plugin-v2` directory in `plugins`.
+   entry is a versioned `pantheon-opencode@<version>` package in `plugins`.
 5. Restart OpenCode after changing configuration. This restart reloads the
    selected plugin; it is not an automatic resume of delegated work.
 
@@ -183,7 +228,7 @@ choice between a legacy runtime plugin and a narrower configuration adapter.
 ## Historical upgrade notes (superseded)
 
 The following notes describe older releases and are retained for historical
-reference. They are not the active 1.5.0 installation contract.
+reference. They are not the active 1.6.0 installation contract.
 
 ### Upgrading to v1.0 (OpenCode-only)
 

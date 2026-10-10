@@ -167,7 +167,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.6.0-beta.6";
+	return "1.6.0-beta.7";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.
@@ -509,12 +509,22 @@ async function loadConfig(configPath) {
 		return defaultConfig();
 	}
 }
-/** Vendored usage-bar plugin init: reads config, seeds the kv cache, starts
-*  the poll loop and registers the `app_bottom` slot. Skips everything (and
+/** Vendored usage-bar plugin init: reads config, seeds the kv cache, registers
+*  the `app_bottom` slot, then starts the poll loop. Skips everything (and
 *  registers nothing) when no provider is enabled — mirrors the standalone
 *  plugin's early return. */
 async function setupUsageBar(api) {
+	let disposed = false;
+	let clockInterval;
+	const pollTimeouts = /* @__PURE__ */ new Set();
+	api.lifecycle.onDispose(() => {
+		disposed = true;
+		if (clockInterval !== void 0) clearInterval(clockInterval);
+		for (const timeout of pollTimeouts) clearTimeout(timeout);
+		pollTimeouts.clear();
+	});
 	const config = await loadConfig(api.state.path?.config);
+	if (disposed) return;
 	if (api.state.path?.state) opencodeAuthFile = join(api.state.path.state, "auth.json");
 	const enabled = providers.filter((p) => config.providers[p.id].enabled);
 	if (enabled.length === 0) return;
@@ -526,28 +536,6 @@ async function setupUsageBar(api) {
 	const [byProvider, setByProvider] = createSignal(seed);
 	const [byStatus, setByStatus] = createSignal({});
 	const [now, setNow] = createSignal(Date.now());
-	setInterval(() => setNow(Date.now()), 1e3);
-	for (const p of enabled) {
-		const cfg = config.providers[p.id];
-		const poll = async () => {
-			const statusP = config.showStatus && p.statusUrl ? fetchStatus(p.statusUrl) : null;
-			const [all, status] = await Promise.all([p.fetchUsage(cfg), statusP]);
-			if (all) {
-				const windows = all.filter((w) => cfg.show[w.category] && w.resetsAt > Date.now());
-				setByProvider((prev) => ({
-					...prev,
-					[p.id]: windows
-				}));
-				api.kv.set(`usage-bar.${p.id}.windows`, windows);
-			}
-			if (status !== null) setByStatus((prev) => ({
-				...prev,
-				[p.id]: status
-			}));
-			setTimeout(poll, all ? POLL_MS : POLL_MS * 3);
-		};
-		poll();
-	}
 	api.slots.register({
 		order: 60,
 		slots: { app_bottom() {
@@ -696,6 +684,42 @@ async function setupUsageBar(api) {
 			});
 		} }
 	});
+	clockInterval = setInterval(() => setNow(Date.now()), 1e3);
+	const schedulePoll = (run, delay) => {
+		if (disposed) return;
+		const timeout = setTimeout(() => {
+			pollTimeouts.delete(timeout);
+			if (!disposed) run();
+		}, delay);
+		pollTimeouts.add(timeout);
+	};
+	for (const p of enabled) {
+		const cfg = config.providers[p.id];
+		const poll = async () => {
+			if (disposed) return;
+			const statusP = config.showStatus && p.statusUrl ? fetchStatus(p.statusUrl) : null;
+			const [all, status] = await Promise.all([p.fetchUsage(cfg), statusP]);
+			if (disposed) return;
+			if (all) {
+				const windows = all.filter((w) => cfg.show[w.category] && w.resetsAt > Date.now());
+				setByProvider((prev) => ({
+					...prev,
+					[p.id]: windows
+				}));
+				api.kv.set(`usage-bar.${p.id}.windows`, windows);
+			}
+			if (status !== null) setByStatus((prev) => ({
+				...prev,
+				[p.id]: status
+			}));
+			schedulePoll(runPoll, all ? POLL_MS : POLL_MS * 3);
+		};
+		const runPoll = () => {
+			if (disposed) return;
+			poll().catch(() => schedulePoll(runPoll, POLL_MS * 3));
+		};
+		runPoll();
+	}
 }
 /** True for `\s` characters (space, tab, newline, CR) — plain char checks so
 *  the parser stays regex-free (CodeQL flagged the old `\s*`/`\s+` + `(.+)`
@@ -2208,7 +2232,7 @@ const tui = (api, _options, _meta) => {
 	if (pantheonPluginOnce("pantheon:tui")) return;
 	const [version, setVersion] = createSignal(null);
 	detectVersion(api).then((detected) => setVersion(detected)).catch(() => setVersion(null));
-	setupUsageBar(api);
+	setupUsageBar(api).catch(() => void 0);
 	const liveStore = createLiveDelegationStore();
 	const unsubscribeLive = registerLiveDelegationEvents(api, liveStore);
 	api.lifecycle.onDispose(() => {

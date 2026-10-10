@@ -18,6 +18,122 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.7] - 2026-10-10
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Simpler agent dispatch:** answer no-change questions directly, send bounded
+  fixes to one specialist, load council instructions on demand, and remove
+  routine per-task KV/cache routing. No token, cost, or latency savings are
+  claimed without live measurements.
+- **V2 install and permissions:** use a versioned package-root plugin pin and
+  migrate V1 `task`/`write` permissions to V2 `subagent`/`edit`, retaining the
+  stricter effect when rules collide.
+- **Release and runtime hardening:** bounded in-process secret scanning,
+  fail-closed V2 registration, TUI timer disposal, truthful doctor reporting,
+  and guarded V2 sandbox prepare/reset.
+
+## 🐞 Fixed
+
+- TUI usage polling now starts only after its optional slot registers and all
+  refresh timers are disposed on shutdown.
+- Doctor detects version drift in string and object V2 package pins, including
+  prerelease versions; checkout installs warn when their exact npm pin is not
+  published yet.
+- V2 permission migration maps `task → subagent` and `write → edit` and
+  preserves the stricter conflicting rule.
+
+## ⚠️ Known Issues
+
+- Live provider E2E is blocked by HTTP 403; an interactive model-backed V2 TUI
+  turn remains unverified.
+- The V2 tool canary targets OpenCode 2.0.22 while the installable CLI differs
+  (issue #216); V1 host end-to-end validation is also deferred.
+- The observed P0-4 tool-catalog oscillation has no reproduced cause; its
+  reproduction harness remains follow-up work.
+- V2 `init` from an unpublished source checkout writes a versioned npm pin that
+  cannot resolve until that version is published; the installer warns.
+## [v1.6.0] - 2026-10-10
+
+This stable candidate consolidates the beta.1–beta.6 changes. The original beta
+entries remain below as historical records so release detail is not discarded.
+
+## 🆕 What's New
+
+- **OpenCode V2 plugin and installer path:** generation detection, V2 plugin
+  registration, three functional V2 tools, read-only enforcement, and explicit
+  reporting of the smaller V2 feature surface. The V1 API path remains in the
+  package, but no V1 host has been exercised end-to-end in this release.
+- **Sandbox validation and release hardening:** fail-closed checks, V2 MCP and
+  hook probes, package/version inventory validation, and reproducible package
+  evidence. The sandbox now generates its runner, isolated TUI launcher, and
+  README during `--prepare`.
+- **Dependency and TUI maintenance:** synchronized release manifests, updated
+  dependency/security overrides, and TUI/runtime consistency checks.
+- **Simpler agent dispatch path:** no-change questions can be answered directly;
+  bounded fixes route to one specialist; council guidance is loaded on demand;
+  and default routing no longer makes per-task KV/cache lookups. Synthetic
+  timeout/session behavior unsupported by the host was removed. These changes
+  simplify the prompt and dispatch path; this release makes no measured token,
+  cost, or latency improvement claim.
+
+## 🐞 Fixed
+
+- `PANTHEON_V2_MCP_LIST_TIMEOUT` now defaults to 15 seconds in both the harness
+  and generated `run-test.sh`, including under `set -u`; the default does not
+  depend on an exported environment variable.
+- `PANTHEON_REPO` is resolved consistently for prepare, generated tests, and
+  reset guards. Relative, dangling, missing, or non-Pantheon paths fail before
+  packaging; `.repo-dir` is atomically written and validated before use.
+- Sandbox prepare/reset reject roots overlapping a checkout or the user's
+  `HOME`. `PANTHEON_V2_PORT` defaults to 49376, is range-checked, and refuses an
+  occupied port without reusing or stopping the existing service.
+- Sandbox `tmp/` is not blanket-deleted: prepare only expires hash-named Node
+  compile-cache files owned by the current user and older than 30 days. Runtime
+  state, unknown entries, and handoff/evidence files remain untouched.
+- **V2 plugin registration is stable across install locations.** `init` now
+  writes the exact `pantheon-opencode@<version>` npm entry and the package root
+  exports the V2 plugin. This replaces absolute paths into a global prefix or
+  transient `npx` cache; `doctor` recognizes the pinned package and reports
+  version drift. A clean production-only package consumer test covers the root
+  export.
+- **V1-to-V2 permissions preserve their intended actions.** Migration maps
+  `task` to V2 `subagent` and `write` to the `edit` action that also governs
+  `write`/`patch`. If V1 `edit` and `write` rules collide on one resource, the
+  more restrictive effect wins. Tests cover global and nested agent rules.
+- **`doctor` distinguishes SQLite readiness from tool registration.** The
+  `node:sqlite` check now says it verifies only the backend prerequisite, not
+  whether `pantheon_cost` registered on the active host.
+- **Release documentation was reconciled with current code.** The V2 caller /
+  target matrix is enforced by `permission.evaluate`; the bridge export is an
+  importable utility but is not wired into production; the V2 event count and
+  package registration format are corrected in both READMEs and the install /
+  upgrade guides.
+
+## ⚠️ Known Issues
+
+- **V1 host canary is deferred.** The tested package dependency pair is
+  `@opencode-ai/plugin@1.18.33` + `@opencode-ai/sdk@1.18.33`; this is not an
+  end-to-end V1 host compatibility claim. No OpenCode `1.18.35` host support is
+  asserted.
+- **V2 support remains partial.** The tool canary was authored against
+  `opencode 2.0.22`; the installable CLI has drifted from that canary contract
+  (tracked in issue #216). See the README compatibility table for the measured
+  evidence and limitations.
+- **Release validation is not complete.** Live provider E2E returned HTTP 403,
+  the interactive V2 TUI/model-backed turn has not been verified, and the
+  previously observed within-session tool-catalog oscillation (P0-4) still has
+  no reproduced cause. This candidate must not be published until the host
+  validation gates are resolved or explicitly waived.
+- **V2 init from an unpublished source checkout cannot bootstrap its own npm
+  pin.** It writes the exact package version and emits a warning; OpenCode
+  cannot resolve that version until it is published. This is limited to
+  running the installer from the repository checkout. After publication, use
+  the npm-installed or `npx` installer for the supported consumer path.
+
 ## [v1.6.0-beta.6] - 2026-10-05
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

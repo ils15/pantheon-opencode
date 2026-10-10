@@ -1,10 +1,11 @@
 {
-  "src/skills/agent-coordination/SKILL.md": "cfd040ef29e3dd0fd5e0e67773874facf7c06e3284898afe1fddba4456c3f1aa",
+  "src/skills/agent-coordination/SKILL.md": "cedeaf001d70abbb526a61bcd0feaaca10b9898ac8e983dae573511f6b34ca34",
   "src/skills/artifact-management/SKILL.md": "91d68c8f2d1b642725adfc6df11e55865a8491aca690dc27d02ea7c778d49d41",
-  "src/skills/auto-continue/SKILL.md": "1e31a25880162b51e773cae0ed48c3a3bbf3672e02ed7fdf48bfecd1c89f60a7",
+  "src/skills/auto-continue/SKILL.md": "5ab932a5f48db30d955da579bebe85eeda9985284ed1fda6705104a6f62d84d2",
   "src/skills/clonedeps/SKILL.md": "3e0b43cf96da98c83699dc48db3fd58fbfda84b9022bb70d3747875c81c3e124",
   "src/skills/code-review-checklist/SKILL.md": "6445513ab880efdb1005861ae13cb9a215f80b9d260f6278499f60771e07858c",
   "src/skills/codemap/SKILL.md": "87af5271e1576e154cadff313eab16264b726e43d094520736b7a5b03b409a4a",
+  "src/skills/council-synthesis/SKILL.md": "ef479ba6f6d15c84b2129620733dc2733e62778cfeb6ba83febf5b0af21371a7",
   "src/skills/context-compression/SKILL.md": "9c65c132beb0dc7bd20335cfd7f41c589f5168a72dcf5d51740bc66f2865e027",
   "src/skills/git-workflow-and-versioning/SKILL.md": "685a94041f1b4ce2a430301f517b89102055696267c369a7e8fb191606659276",
   "src/skills/incremental-implementation/SKILL.md": "7065ddb45da3c6b6751de07f290e92e6cb072e949a2e3aaae13ee7762f0a70fc",

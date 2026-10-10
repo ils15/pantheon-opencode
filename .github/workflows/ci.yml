@@ -226,7 +226,6 @@ jobs:
       - name: V2 sandbox (isolated database and dedicated port)
         env:
           PANTHEON_SANDBOX_ROOT: ${{ runner.temp }}/pantheon-sandbox-v2
-          OPENCODE_DB: ${{ runner.temp }}/pantheon-sandbox-v2/opencode-v2.db
           PANTHEON_V2_PORT: '49376'
           PORT: '49376'
         run: |

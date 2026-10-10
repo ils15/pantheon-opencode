@@ -64,6 +64,13 @@ Once OpenCode is running, describe the outcome you want:
 ```
 
 Pantheon helps turn that request into a plan and a sequence of reviewed steps.
+For questions that do not require repository changes, Zeus answers directly;
+small, reversible fixes use one specialist dispatch. Discovery, planning,
+parallel work, and council review are reserved for tasks that benefit from them.
+
+For a tiny, bounded repair, invoke `@talos` directly (for example,
+`@talos fix this typo`). That skips the Zeus orchestration call; use `/pantheon`
+for planning, delegation, multi-file work, or quality gates.
 
 ## Who is it for?
 
@@ -82,10 +89,10 @@ clear handoff between stages of work.
 
 ## Status
 
-Candidate version: the manifests in this checkout express the version being
-prepared, not a confirmed publication. A beta is published only after the
-Release workflow completes successfully. To check which version is actually
-published, consult the npm `beta` dist-tag. Pantheon is designed for OpenCode
+Candidate version: **1.6.0-beta.7**. The manifests in this checkout express a
+beta candidate, not a confirmed publication; beta publication happens only
+after the explicit Release workflow completes successfully. To check the
+published beta, consult the npm `beta` dist-tag. Pantheon is designed for OpenCode
 and depends on the availability and configuration of OpenCode and any optional
 services you choose to use. Check the
 [releases](https://github.com/ils15/pantheon-opencode/releases) and
@@ -128,18 +135,19 @@ host is an unsupported mixed/wrong-generation configuration, not a supported mod
 
 ### What the OpenCode 2 path is — and is not
 
-**Not inert.** The V2 path (`src/plugin-v2`, registered as a directory because
-the V2 loader rejects bare file paths) registers real tools with real
-`input`/`output` schemas via `ctx.tool.transform()`, 5 event subscriptions,
-session hooks and tool/permission hooks that enforce read-only sessions and the
-caller→target delegation matrix. The matrix applies only to Pantheon-managed
-targets: Zeus may delegate to any registered agent; Athena and Hermes may target
-Apollo only; other Pantheon callers and unknown callers are denied. Child
-sessions cannot delegate to Pantheon agents. Calls between native/custom agents
-remain under host permissions. The V2 path never adds an allow grant or
-overrides an explicit host deny; missing or mismatched identity fails closed
-for the attempted Pantheon delegation. The 3 goal tools remain unsupported and
-are reported as `goal-tools`.
+**Not inert.** V2 registers the version-pinned npm package
+`pantheon-opencode@<version>` (pinned to the installed Pantheon version); its
+package-root export points to `src/plugin-v2.ts`.
+It registers real tools with `input`/`output` schemas via
+`ctx.tool.transform()`, five event subscriptions, session hooks, and tool/
+permission hooks for read-only enforcement and the Pantheon caller→target
+delegation matrix. For Pantheon-managed targets, Zeus may delegate to any
+registered agent; Athena and Hermes may target Apollo only; other Pantheon
+callers and unknown callers are denied. Child sessions cannot delegate to
+Pantheon agents. Native/custom targets remain under host permissions. V2 never
+adds an allow grant or overrides an explicit host deny; missing or mismatched
+identity fails closed for a Pantheon delegation. The three goal tools remain
+unsupported and are reported as `goal-tools`.
 
 **Not complete either, and the V2 support claim is currently narrowed.** Two
 facts, both recorded in this repository rather than smoothed over:
@@ -162,14 +170,14 @@ facts, both recorded in this repository rather than smoothed over:
 Treat the 1.6 line's OpenCode 2 support as **real but partial**, and do not read
 the 1.6.x row as "OpenCode 2 is finished".
 
-### Verified against which OpenCode versions
+### Verified dependency and host evidence
 
 | What | Verified against | How |
 |---|---|---|
-| V1 plugin + generation gate | The OpenCode 1.18.x line. This package pins `@opencode-ai/plugin` and `@opencode-ai/sdk` to `1.18.33`; the highest published `opencode-ai` host package (the one shipping the `opencode` binary) is `1.18.34` | Dependency pin (`package.json`); generation-gate unit tests over injected host banners; installer end-to-end tests asserting the emitted `opencode.json` shape |
+| V1 plugin API/generation checks | The dependency pair pinned by this release: `@opencode-ai/plugin@1.18.33` + `@opencode-ai/sdk@1.18.33` | `package.json`; generation-gate unit tests over injected host banners; installer end-to-end tests asserting the emitted `opencode.json` shape. This is not a claim that a V1 host was exercised end-to-end. |
 | V2 plugin tool surface | `opencode 2.0.22` (the host the canary was written against) | `tests/canary/plugin-v2-tool-canary.test.mjs`, driving `hashline_edit` through a real `opencode serve` |
 | V2 against the current installable CLI | **Not verified.** Canary fails 12/12; see issue #216 | — |
-| Exact 1.X host version the 1.6 line is exercised against end-to-end | **Unverified.** No V1 host leg exists: the sandbox runner is V2-only and `--run v1` is rejected | — |
+| Exact 1.X host version exercised end-to-end | **Unverified; V1 host canary deferred.** The sandbox runner is V2-only and `--run v1` is rejected | — |
 
 ## Delegation (native `task()`)
 
@@ -180,18 +188,17 @@ there is no Pantheon-specific delegation tool surface to configure. See
 [ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md) for the
 historical engine contract.
 
-This beta.6 candidate combines package and dependency updates, security advisory
-overrides, lint and inventory coverage, TUI restoration and state-refresh work,
-and memory/delegation prompt deduplication. The Zeus prompt reuses one
-task-start memory-search result for task context and delegation routing,
-including on a KV hit; automatic subtask-summary storage and delegation
-safeguards remain in place. Runtime call counts and latency have not been
-measured. Checkpoint/session bootstrap and effective Zeus `context_save`/`context_get`
-access are blocked, unverified follow-up work—not fixed features in this
-candidate.
+This 1.6.0-beta.7 candidate consolidates the final beta.6 follow-ups: safer
+V2 installation and permission migration, bounded in-process secret scanning,
+sandbox hardening, TUI lifecycle fixes, and a simpler agent dispatch path.
+Zeus answers no-change questions directly and routes bounded fixes once; the
+council procedure is loaded only for a council, without per-task KV/cache
+lookups. Runtime call counts and latency have not been measured. Live provider
+E2E and a model-backed interactive V2 TUI turn remain unverified.
 
-Delegated tasks get at most one retry after an initial timeout or failure. If
-that retry fails, the configured fallback or escalation chain applies.
+Transient delegation dispatch failures get at most one retry. A refusal or
+failed check is not repeated; after the retry fails, the configured fallback
+chain applies once or Zeus escalates.
 
 ## Cost tool backend
 
@@ -282,8 +289,8 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 | | V1 | V2 |
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
-| Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) |
-| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | Version-pinned npm package `pantheon-opencode@<version>` (root export loads V2) |
+| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | V2 plugin: 3 Pantheon tools when required enforcement registers, 5 event subscriptions, session hooks (`prompt`, `context`), a read-only and secret-scanning `execute.before` hook, plus configuration transforms |
 | V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 
 The V2 plugin provides 3 orchestration tools (`hashline_edit`, `pantheon_cost`,
@@ -321,14 +328,41 @@ every call. Unsupported V2 features are `legacy-hooks` (the V1-specific hook
 surface), `catalog-transform`, `integration-transform`, `skill-transform` and
 `goal-tools`.
 
-The package exposes both contracts as importable exports: `pantheon-opencode/plugin`
-(V1), `pantheon-opencode/plugin-v2` (V2) and `pantheon-opencode/v2-bridge`
-(optional interop), so a host can load either contract explicitly.
+When `init --opencode-version v2` migrates a V1-shaped permission config, it
+translates `task` to the V2 `subagent` action and `write` to `edit` (which also
+covers host `write`/`patch`). If legacy `edit` and `write` rules collide on a
+resource, migration keeps the stricter effect. Hand-edited V2 configs should
+use the native top-level `permissions` array and action/resource/effect form.
 
-The V1→V2 bridge (`src/pantheon/v2-bridge.ts`) enables optional interop:
-V1 infrastructure singletons (BackgroundJobBoard, GoalStore,
-TodoEnforcer, VisionHandler) are passed through V2 `ctx.options`. The bridge is
-optional — V2 works standalone with graceful degradation.
+### Runtime secret-scanning limit
+
+V1 and V2 use the same in-process scanner on their tool `execute.before` paths.
+The scanner accepts up to **5 MiB (5,242,880 UTF-8 bytes) of serialized hook
+payload**. Larger or malformed payloads are denied fail-closed; the rejected
+payload is not written to the scanner log. This bound applies to the complete
+serialized hook payload, not just one argument field. Before calling
+`JSON.stringify`, the scanner iteratively preflights compact JSON byte size,
+including UTF-8 and JSON escapes, and stops as soon as the limit is exceeded.
+It rejects cycles, enumerable accessors and `toJSON` hooks, proxies, excessive
+nesting, and non-JSON values without serializing or logging them.
+
+V2 registers its required enforcement hook before registering Pantheon tools.
+If the host rejects that hook, startup reports `secret-scan-hook` and
+`pantheon-tools-disabled`, and Pantheon V2 tools are not registered. This does
+not disable or claim scanner coverage for native host built-in tools; those may
+remain available under the host's own policies. The opt-in timing harness is
+reproducible with `npx tsx scripts/bench-secret-scanner.ts`: it runs 3 warmups
+and 15 measured calls per size, reporting median timings for the current
+`scanSecretText` implementation on safe ASCII strings only. It excludes payload
+preflight/serialization and host-hook overhead, is not a historical or
+Bash-versus-TypeScript comparison, and makes no speedup claim. It does not print
+scan input.
+
+The package exposes both contracts as importable exports: the package root and
+`pantheon-opencode/plugin-v2` load V2; `pantheon-opencode/plugin` loads V1.
+`pantheon-opencode/v2-bridge` is currently an importable utility only:
+production setup does not wire it into the V2 plugin, so it does not provide
+runtime interoperability or restore V1 goal/board features.
 
 Select the contract explicitly when installing:
 
@@ -345,8 +379,8 @@ the host in this order: an explicit `OPENCODE_VERSION=v1|v2` wins; otherwise an
 binary is asked for its `--version` and a major of 2 or more selects V2. Every
 other case — an unreadable probe, an unparseable banner, or a banner whose
 version-like tokens contradict each other with no tool name to break the tie —
-warns once and falls back to V1, because a plural `plugins` directory entry on
-an unknown 1.x host loses the plugin entirely.
+warns once and falls back to V1, because the V2-only package export is not a
+valid V1 runtime contract on an unknown 1.x host.
 
 The probe prefers the token that follows the tool name, so a runtime token
 ahead of it (`node v22.1.0 (opencode 1.18.33)`) or a trailing build date
@@ -410,8 +444,9 @@ Key order does not matter.
 One command keeps an existing installation current:
 
 ```bash
-# Without a global install, ALWAYS pin the dist-tag — plain `npx
-# pantheon-opencode` resolves `latest`, which is the stable release (1.4.3):
+# Without a global install, pin the intended npm dist-tag. The `latest` tag
+# reflects the most recently published stable release, not an unpublished
+# release candidate:
 npx pantheon-opencode@beta update            # npm beta channel + config refresh
 npx pantheon-opencode@beta update --stable   # stable channel instead
 
@@ -512,10 +547,12 @@ agent delegation. The gate is fail-closed: every required check must return an
 explicit PASS; timeouts, auth/network/provider failures and missing
 prerequisites block the run.
 
-"V2" here refers only to the hook canary observed against an OpenCode v2.0.18
-host, where at least one tested hook callback fired; it does not establish
-compatibility with the stable `@opencode/plugin@2.0.18` SDK or full 2.x
-contract. This branch still pins transitional `@opencode-ai/plugin@1.18.30`.
+The historical hook canary observed at least one callback on an OpenCode
+v2.0.18 host; the tool canary was written against v2.0.22. Those observations
+do not establish compatibility with the current installable `@opencode-ai/cli@beta`,
+an SDK contract for all of 2.x, or a V1 host. This release pins the V1 plugin
+dependency pair at `@opencode-ai/plugin@1.18.33` and `@opencode-ai/sdk@1.18.33`;
+the V1 host canary remains deferred.
 On hosts where both `opencode` and `opencode2` exist, the latter is typically
 a shim that execs the same binary, so an older side-by-side comparison proved
 nothing about the binary itself. The project is V2-exclusive, so there is a
@@ -528,7 +565,7 @@ scripts/test-opencode-v2-sandbox.sh --prompts     # base validation + prompt bat
 scripts/test-opencode-v2-sandbox.sh --rehydrate   # offline context rehydration/session-summary probe
 scripts/test-opencode-v2-sandbox.sh --hooks       # V2 hook callback canary
 scripts/test-opencode-v2-sandbox.sh --rehydrate --hooks # run both canaries
-scripts/test-opencode-v2-sandbox.sh --reset       # wipe the sandbox root
+scripts/test-opencode-v2-sandbox.sh --reset       # guarded reset of the sandbox root
 ```
 
 Modes are combinable (e.g. `--prepare --run v2 --prompts`). `--rehydrate` runs
@@ -541,8 +578,20 @@ rehydration fails, and the command returns a failing status afterward. These
 are test/sandbox canaries, not proof of Pantheon security enforcement. Binaries
 are resolved strictly inside the sandbox npm prefix — a non-prepared sandbox
 fails fast instead of silently testing the host installation. The sandbox is
-always built from the checkout this script lives in; it never infers a
-repository from a sibling directory.
+always built from the checkout this script lives in unless `PANTHEON_REPO` is
+set to an absolute path for an existing `pantheon-opencode` checkout. The same
+resolved checkout is used by prepare and the generated `run-test.sh`; dangling,
+relative, and non-Pantheon paths fail before packaging. `--prepare` generates
+`run-test.sh`, `start-pantheon.sh`, and a sandbox-local `README.md`.
+
+`PANTHEON_V2_PORT` selects the dedicated loopback port (default `49376`). The
+harness validates the port and refuses an occupied listener without reusing or
+stopping it. `PANTHEON_V2_HOST` defaults to `127.0.0.1` and rejects non-loopback
+addresses. `PANTHEON_V2_MCP_LIST_TIMEOUT` controls each `mcp list` call
+(default `15` seconds). On prepare, only hash-named Node compile-cache files
+owned by the current user and older than 30 days may expire under
+`tmp/node-compile-cache`; runtime state and unrecognized files (including
+handoff evidence) are preserved.
 
 This validates the prepared isolated sandbox only. A PASS is not proof of
 support for every real host or for host configurations that were not exercised.

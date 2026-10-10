@@ -671,13 +671,47 @@ async function main(): Promise<void> {
 
     assert.equal(setupResolved, true)
     assert.deepEqual(hookAttempts, [
+      'tool:execute.before',
       'session:context',
       'session:prompt',
-      'tool:execute.before',
-      'tool:execute.after',
       'permission:evaluate',
       'session:compaction',
     ])
+  })
+
+  test('V2 does not expose Pantheon tools when required execute.before registration fails', async () => {
+    for (const marker of ['secret-scan-hook', 'pantheon-tools-disabled']) {
+      const markerIndex = V2_UNSUPPORTED_FEATURES.indexOf(marker)
+      if (markerIndex !== -1) V2_UNSUPPORTED_FEATURES.splice(markerIndex, 1)
+    }
+    const hookAttempts: string[] = []
+    const exposedPantheonTools: string[] = []
+    let transformAttempts = 0
+    await plugin.setup(
+      makeBaseContext({
+        tool: {
+          hook: async (name: string) => {
+            hookAttempts.push(name)
+            if (name === 'execute.before') throw new Error('security hook unavailable')
+            return registration(disposed, `tool:${name}`)
+          },
+          transform: async (callback: (draft: never) => void) => {
+            transformAttempts++
+            callback({
+              namespace: () => {},
+              add: (definition: { name: string }) => exposedPantheonTools.push(definition.name),
+            } as never)
+            return registration(disposed, 'tool:transform')
+          },
+        },
+      }) as never,
+    )
+
+    assert.deepEqual(hookAttempts, ['execute.before'])
+    assert.equal(transformAttempts, 0, 'tool transform must not run without required scanning')
+    assert.deepEqual(exposedPantheonTools, [], 'no Pantheon V2 tools may become available')
+    assert.ok(getUnsupportedFeatures().includes('secret-scan-hook'))
+    assert.ok(getUnsupportedFeatures().includes('pantheon-tools-disabled'))
   })
 
   test('event subscription delivers session idle and v2Dispose aborts its stream', async () => {
@@ -1023,6 +1057,7 @@ async function main(): Promise<void> {
     await plugin.setup(
       makeBaseContext({
         tool: {
+          hook: async () => registration(disposed, 'tool-hook'),
           transform: async (callback: (draft: never) => void) => {
             callback({
               namespace: (config: { name: string; description?: string }) => {
@@ -1701,12 +1736,17 @@ async function main(): Promise<void> {
     assert.equal(afterSwitch, null, 'a switched session must no longer be denied')
   })
 
-  test('a malformed execute.before event is tolerated and denied closed on the blocked set', async () => {
+  test('malformed execute.before events are denied fail-closed', async () => {
     const before = apolloCaptured.before as (e: unknown) => Promise<void>
-    // No crash on a junk payload: the hook must not throw at the host.
-    await before(undefined)
-    await before({})
-    await before({ tool: 'hashline_edit', agent: 42 })
+    for (const malformed of [undefined, {}, { tool: 'hashline_edit', agent: 42 }]) {
+      let denial = ''
+      try {
+        await before(malformed)
+      } catch (err: unknown) {
+        denial = err instanceof Error ? err.message : String(err)
+      }
+      assert.match(denial, /scanner could not complete/)
+    }
     // A blocked tool attributed to a read-only agent with no sessionID is still
     // denied rather than allowed.
     let denial: string | null = null
@@ -1784,16 +1824,10 @@ async function main(): Promise<void> {
 
   // ─── V2 Secret Scan (integration) ─────────────────────────────────────
   //
-  // Same discipline as the enforcement section above: these drive the REAL
-  // `execute.before` handler captured from `plugin.setup`, and the REAL
-  // scripts/hooks/scan-secrets.sh as a child process. Nothing here is mocked.
-  //
-  // Why this exists at all: opencode.json declares only `src/plugin-v2` in
-  // `plugins`, so `src/plugins/pantheon-hooks.ts` is never loaded on a V2-only
-  // install. V1's high-confidence secret block therefore did not run — inert by
-  // construction, not by misconfiguration of one machine. This is the only hard
-  // security block on the V2 surface, so the wiring itself is the thing under
-  // test: deleting the `runHook('scan-secrets.sh', …)` call must drop these.
+  // Drive the REAL `execute.before` handler captured from `plugin.setup` and
+  // the shared in-process scanner. No host or scanner child process is needed.
+  // V2 must register its own block because V1's plugin is not loaded on a
+  // V2-only install; both hooks import the same scanner implementation.
 
   console.log('\n🔐 V2 Secret Scan Tests')
 
@@ -1804,7 +1838,7 @@ async function main(): Promise<void> {
   async function secretScanDenial(
     before: (event: unknown) => void | Promise<void>,
     tool: string,
-    toolInput: Record<string, unknown>,
+    toolInput: unknown,
   ): Promise<string | null> {
     try {
       await before({
@@ -1831,8 +1865,7 @@ async function main(): Promise<void> {
    * These are invented, not real credentials — but the pre-commit gitleaks hook
    * cannot tell a fixture from a leak, and it is right not to. Assembling each
    * value from parts keeps every high-confidence pattern out of this file's
-   * bytes, which is the same trick scripts/hooks/scan-secrets.sh uses for its own
-   * Bifrost markers (see the comment above BIFROST_HEADER there). A literal
+   * bytes, avoiding self-matches by the repository hygiene scanner. A literal
    * token in the test source would also make the repository's own secret scan
    * self-match, which is the same class of problem this wiring exists to catch.
    */
@@ -1889,6 +1922,34 @@ async function main(): Promise<void> {
     assert.equal(denial, null, 'a benign tool call must pass the secret scan')
   })
 
+  test('the V2 hook blocks the tool body on a match and permits it for clean input', async () => {
+    const before = scanCaptured.before as (event: unknown) => Promise<void>
+    const execute = async (content: string): Promise<boolean> => {
+      let bodyRan = false
+      try {
+        await before({
+          tool: 'write',
+          sessionID: 'ses_v2_scan_body',
+          agent: 'zeus',
+          messageID: 'msg_body',
+          id: `call-${content.length}`,
+          input: { filePath: 'notes.md', content },
+        })
+        bodyRan = true
+      } catch {
+        // The host proceeds to the tool body only when execute.before resolves.
+      }
+      return bodyRan
+    }
+    const token = `sk${'-'}bf${'-'}abcdef1234567890ABCD`
+    assert.equal(await execute(token), false, 'a detected token must deny before tool execution')
+    assert.equal(
+      await execute('ordinary safe text'),
+      true,
+      'clean content proceeds to the tool body',
+    )
+  })
+
   test('a Bifrost header name alone stays advisory (low confidence, never blocks)', async () => {
     // The Bifrost header is a header/KEY NAME, not a token value. V1 classifies
     // it as low-confidence and logs without blocking; V2 must not harden it into
@@ -1904,23 +1965,16 @@ async function main(): Promise<void> {
     assert.equal(denial, null, 'the Bifrost header name must not block on its own')
   })
 
-  test('removing the scan-secrets wiring from plugin-v2 drops the secret block', async () => {
-    // Structural counterpart to the behavioural tests above. If the block is
-    // ever "restored" by re-registering the V1 plugin (pantheon-hooks.ts) the
-    // file would stop calling the runner itself, and on a V2-only install —
-    // opencode.json `plugins: ["src/plugin-v2"]` — the block would go inert
-    // again while every behavioural test kept passing on a machine that has the
-    // V1 plugin lying around. These two assertions together fail that.
-    assert.match(
-      pluginSource,
-      /runHook\(\s*'scan-secrets\.sh'/,
-      'plugin-v2.ts must invoke scan-secrets.sh through the shared hook runner',
+  test('V2 uses the shared in-process scanner and keeps its own hook enforcement', async () => {
+    assert.match(pluginSource, /scanSecretPayload/)
+    assert.doesNotMatch(pluginSource, /runHook\(\s*['"]scan-secrets\.sh/)
+    assert.match(pluginSource, /decision\.action === 'block'/)
+    const v1Source = readFileSync(
+      new URL('../../src/plugins/pantheon-hooks.ts', import.meta.url),
+      'utf8',
     )
-    assert.match(
-      pluginSource,
-      /code === 2/,
-      'the high-confidence exit code (2) must be the one that blocks',
-    )
+    assert.match(v1Source, /scanSecretPayload/)
+    assert.doesNotMatch(v1Source, /['"]scan-secrets\.sh['"]/)
     // Anchored to a line whose first token is `import`, so the module's prose
     // about `src/plugins/pantheon-hooks.ts` (six mentions, all in comments)
     // cannot satisfy or trip it — only a real import statement can.
@@ -1953,48 +2007,27 @@ async function main(): Promise<void> {
     assert.equal(v2Mask, v1Mask, 'the V1 and V2 secret mask regexes have drifted')
   })
 
-  test('scan-secrets.sh is shipped in the published package and reachable from the plugin', () => {
-    // The failure this guards is silent and looks like a fix: if the script is
-    // not in the package `files` list, or the runner's relative resolution
-    // breaks from an install prefix, runHook returns code 1 and the block never
-    // fires on a real install — while every test here still passes from the repo.
+  test('the shared scanner is packaged and scan-secrets.sh is no longer a runtime dependency', () => {
     const pkg = JSON.parse(
       readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     ) as { files?: string[] }
-    assert.ok(pkg.files?.includes('scripts/hooks/**'), 'scripts/hooks/** must be published')
     assert.ok(
-      pkg.files?.includes('src/plugins/**'),
-      'src/plugins/** (the hook runner) must be published',
+      pkg.files?.includes('src/pantheon/**'),
+      'src/pantheon/** (the shared scanner) must be published',
     )
-    // The runner resolves scripts/hooks/ from its own import.meta.url:
-    // src/plugins/hook-runner.ts -> ../../scripts/hooks/. Both halves are in
-    // `files`, so the relative hop is intact for any install prefix
-    // (lib/node_modules, the npx cache, or a linked checkout).
-    assert.match(
-      readFileSync(new URL('../../src/plugins/hook-runner.ts', import.meta.url), 'utf8'),
-      /new URL\('\.\.\/\.\.\/scripts\/hooks\/', import\.meta\.url\)/,
-      'the hook runner must anchor its scripts/hooks resolution on import.meta.url, not process.cwd()',
+    assert.ok(pkg.files?.includes('scripts/hooks/**'), 'other V1 script hooks remain packaged')
+    assert.throws(
+      () => readFileSync(new URL('../../scripts/hooks/scan-secrets.sh', import.meta.url), 'utf8'),
+      'the removed runtime scanner must not be present',
     )
   })
 
-  // ─── V2 Secret Scan Fail-Closed (infrastructure failure) ─────────────
+  // ─── V2 Secret Scan Fail-Closed verdict contract ───────────────────────
   //
-  // The handler above is only as strong as its treatment of the scanner's
-  // FAILURE modes. The real script cannot be made to time out, vanish, or emit
-  // a malformed report on demand, so these tests drive the SAME captured
-  // `execute.before` handler with structured `HookResult`s injected through the
-  // runner seam. Each row models the host's before→execute contract: the
-  // handler throwing IS the denial, and a denial must mean the tool body never
-  // runs.
-  //
-  // Why it matters: the prior handler blocked `code === 2` and treated every
-  // other outcome as advisory, but the runner reports a missing script, a spawn
-  // failure and a serialization failure as `code: 1` as well (see
-  // src/plugins/hook-runner.ts). A broken scanner therefore read as a clean
-  // advisory and the tool ran — the only hard secret block on the V2 surface,
-  // silently off.
+  // Production scanning is in-process. The test seam injects malformed verdicts
+  // to keep the guard's fail-closed behavior explicit; it never spawns a child.
 
-  console.log('\n🔐 V2 Secret Scan Fail-Closed Tests')
+  console.log('\n🔐 V2 Secret Scan Verdict Tests')
 
   const { setV2SecretScanRunnerForTests } = await import('../../src/plugin-v2.ts')
 
@@ -2007,6 +2040,30 @@ async function main(): Promise<void> {
       return ''
     }
   }
+
+  test('malformed V2 tool args fail closed and are not logged', async () => {
+    const canary = 'MALFORMED_V2_ARGS_CANARY_NEVER_LOG'
+    const before = readHookLog()
+    const denial = await secretScanDenial(
+      scanCaptured.before as (e: unknown) => Promise<void>,
+      'write',
+      canary,
+    )
+    assert.match(denial ?? '', /scanner could not complete/)
+    assert.doesNotMatch(readHookLog().slice(before.length), new RegExp(canary))
+  })
+
+  test('oversized V2 serialized args fail closed without logging their content', async () => {
+    const canary = 'OVERSIZED_V2_ARGS_CANARY_NEVER_LOG'
+    const before = readHookLog()
+    const denial = await secretScanDenial(
+      scanCaptured.before as (e: unknown) => Promise<void>,
+      'write',
+      { filePath: 'notes.md', content: `${canary}${'a'.repeat(5_242_880)}` },
+    )
+    assert.match(denial ?? '', /scanner could not complete/)
+    assert.doesNotMatch(readHookLog().slice(before.length), new RegExp(canary))
+  })
 
   interface ScanOutcome {
     denied: boolean
@@ -2089,37 +2146,37 @@ async function main(): Promise<void> {
       messageMatch: /\[plugin-v2\] Blocked: high-confidence secret detected/,
     },
     {
-      label: 'missing script (ENOENT) → fail closed',
+      label: 'legacy missing-script verdict → fail closed',
       scan: scanResult(1, 'hook script failed to spawn: spawn scan-secrets.sh ENOENT'),
       expectDenied: true,
       messageMatch: /scanner could not complete/,
     },
     {
-      label: 'unexecutable scanner (EACCES) → fail closed',
+      label: 'legacy unexecutable-scanner verdict → fail closed',
       scan: scanResult(1, 'hook script failed to spawn: spawn scan-secrets.sh EACCES'),
       expectDenied: true,
       messageMatch: /scanner could not complete/,
     },
     {
-      label: 'timeout (killed, timedOut) → fail closed',
+      label: 'legacy timeout verdict → fail closed',
       scan: { code: 1, stdout: '', stderr: '', signal: 'SIGKILL', timedOut: true },
       expectDenied: true,
       messageMatch: /scanner could not complete/,
     },
     {
-      label: 'killed by signal without the timeout flag → fail closed',
+      label: 'legacy signal verdict → fail closed',
       scan: { code: 1, stdout: '', stderr: '', signal: 'SIGTERM', timedOut: false },
       expectDenied: true,
       messageMatch: /scanner could not complete/,
     },
     {
-      label: 'synchronous spawn failure → fail closed',
+      label: 'legacy spawn-failure verdict → fail closed',
       scan: scanResult(1, 'spawn failed: spawn scan-secrets.sh ENOENT'),
       expectDenied: true,
       messageMatch: /scanner could not complete/,
     },
     {
-      label: 'payload serialization failure (code 1) → fail closed',
+      label: 'malformed serialization verdict → fail closed',
       scan: scanResult(1, 'payload serialization failed: Converting circular structure to JSON'),
       expectDenied: true,
       messageMatch: /scanner could not complete/,

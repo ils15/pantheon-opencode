@@ -1,6 +1,6 @@
 # Pantheon for OpenCode
 
-Complete setup and usage guide for running Pantheon **v1.5.0** in [OpenCode](https://opencode.ai) — 4 presets (`go-free`/`go-fast`/`go-premium`/`openai` puro), wizard 3 perguntas, herança nativa default — the open-source AI coding agent for the terminal, desktop, and IDE.
+Complete setup and usage guide for running Pantheon **v1.6.0** with [OpenCode](https://opencode.ai). The release supports separate V1 and V2 plugin contracts; select the one matching your host and review the documented V2 feature boundaries before migrating.
 
 ---
 
@@ -52,9 +52,10 @@ cp -r src/agents/. /path/to/your-project/.opencode/agents/
 ```
 
 Choose exactly one plugin contract before creating the config. In Pantheon
-1.5.0, the singular `plugin` key selects the preserved V1 runtime; the
-plural `plugins` key with the `<installed>/src/plugin-v2` directory selects the V2
-configuration adapter. Do not register both Pantheon generations.
+1.6.0, the singular `plugin` key selects the preserved V1 runtime; the plural
+`plugins` key with the version-pinned npm package `pantheon-opencode@<version>`
+selects the V2 plugin. The package-root export is the V2 entrypoint. Do not
+register both Pantheon generations.
 
 For the preserved V1 runtime, create `/path/to/your-project/opencode.json`
 with the singular `plugin` key. Replace `<pantheon-checkout>` with the
@@ -76,24 +77,21 @@ event/tool hooks, or the implemented V1 compaction path. Delegation itself uses
 OpenCode's native `task()`. The hooks are not auto-discovered from
 `.opencode/plugins/`.
 
-For the V2 adapter, and only when V1 delegate APIs are not expected, copy the
-repository's root config as a V2 starting point:
-
-```bash
-cp opencode.json /path/to/your-project/opencode.json
-```
-
-That file intentionally contains the V2-only registration:
+For V2, and only when the V1 goal tools/board are not required, add the V2-only
+registration to `/path/to/your-project/opencode.json`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["<installed>/src/plugin-v2"]
+  "plugins": ["pantheon-opencode@1.6.0"]
 }
 ```
 
-`plugin-v2` transforms configuration drafts; it does not provide V1 delegate
-tools, hooks, BackgroundJobBoard integration, compaction, or automatic resume.
+V2 registers its own tools, read-only enforcement and caller/target permission
+hook, but it does not provide the V1 goal tools, BackgroundJobBoard integration,
+vision interception, V1 compaction-context builder, or automatic resume. The
+`v2-bridge` export is not wired into production and does not restore those V1
+features.
 If you prefer the supported installer, use
 `npx pantheon-opencode init --project --opencode-version v1` or `v2` to pin the
 generation. `auto` is the default and resolves the generation from the host by
@@ -192,7 +190,8 @@ Override permissions per-agent in `opencode.json` when the host supports it:
 
 ### Task Permissions (Subagent Control)
 
-Control which subagents can be invoked using `permission.task` with glob patterns:
+For a V1 config, the legacy `permission.task` object controls which subagents
+can be invoked:
 
 ```json
 {
@@ -207,7 +206,29 @@ Control which subagents can be invoked using `permission.task` with glob pattern
 }
 ```
 
-This can also be set per-agent to restrict which subagents each Pantheon agent can delegate to:
+V2 uses the top-level `permissions` array and the `subagent` action instead of
+the V1 `permission.task` object. The V1→V2 installer migration translates
+`task → subagent` and `write → edit`; hand-edited V2 configs should use the
+native V2 form directly:
+
+```json
+{
+  "permissions": [
+    { "action": "subagent", "resource": "*", "effect": "allow" },
+    { "action": "subagent", "resource": "internal-*", "effect": "deny" }
+  ]
+}
+```
+
+V2 applies permission rules in order; the later deny takes precedence for
+`internal-*` targets. See the [OpenCode V2 permissions guide](https://opencode.ai/v2/docs/permissions/) for the complete action and precedence contract.
+
+When V1 migration maps both `edit` and `write` onto V2's `edit` action and the
+same resource has conflicting effects, it keeps the stricter effect (`deny` >
+`ask` > `allow`).
+
+The legacy V1 object can also be set per-agent to restrict which subagents a
+Pantheon agent can delegate to:
 
 ```json
 {
@@ -222,6 +243,20 @@ This can also be set per-agent to restrict which subagents each Pantheon agent c
           "internal-*": "deny"
         }
       }
+    }
+  }
+}
+```
+
+On V2, per-agent rules use `agents.<id>.permissions` with the same action / resource / effect shape:
+
+```json
+{
+  "agents": {
+    "zeus": {
+      "permissions": [
+        { "action": "subagent", "resource": "internal-*", "effect": "deny" }
+      ]
     }
   }
 }
@@ -306,9 +341,10 @@ claim conversion or feature parity with another editor's Markdown format.
 
 ## OpenCode-Specific Features
 
-### TUI Plugin (v1.5.0)
+### TUI Plugin (introduced in v1.5.0)
 
-Pantheon v1.5.0 ships a **TUI plugin** for OpenCode that provides:
+Pantheon introduced its **TUI plugin** in v1.5.0; it remains available in
+v1.6.0 as a separately installed component that provides:
 - **Live deepwork status** — see active phases, progress, and checkpoints
 - **Activity feed** — real-time agent delegation events
 - **Toast notifications** — phase completion, review results, gate approvals

@@ -65,11 +65,17 @@ function runCli(args, { cwd, env } = {}) {
 }
 
 /** env for CLI tests: keys present, model-preset env unset. */
+function isolatedTestEnv() {
+  const env = { ...process.env }
+  // This host-only marker changes external process bootstrapping and must not
+  // leak into the CLI's own subprocess tests.
+  delete env.PANTHEON_ENV_LOADED
+  return env
+}
+
 function cliEnv() {
-  const env = {
-    ...process.env,
-    PANTHEON_OPENCODE_API_KEY: 'dummy',
-  }
+  const env = isolatedTestEnv()
+  env.PANTHEON_OPENCODE_API_KEY = 'dummy'
   delete env.PANTHEON_MODEL_PRESET
   return env
 }
@@ -642,7 +648,7 @@ test('T15: set-tier unknown name exits 1 and lists go-free', () => {
 
 // ─── T16: fail-fast missing key ────────────────────────────────────────
 test('T16: set-tier fails fast when API key env missing, writes nothing', () => {
-  const env = { ...process.env }
+  const env = isolatedTestEnv()
   delete env.PANTHEON_MODEL_PRESET
   delete env.PANTHEON_OPENCODE_API_KEY
   const dir = makeTmp()
@@ -860,6 +866,7 @@ test('T20: validate-routing exits 0 and reports 4 presets', () => {
   const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'validate-routing.mjs')], {
     cwd: ROOT,
     encoding: 'utf8',
+    env: isolatedTestEnv(),
   })
   assert.equal(r.status, 0, r.stdout + r.stderr)
   assert.ok(r.stdout.includes('Presets defined: 4'), r.stdout)

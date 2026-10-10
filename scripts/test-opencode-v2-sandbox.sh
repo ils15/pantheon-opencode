@@ -38,11 +38,17 @@
 #                            install spec only — it is not a dependency of this
 #                            package, and no code imports it.
 #   PANTHEON_REPO            Repository the sandbox is built from (default: the
-#                            checkout this script lives in). Only read by the
-#                            GENERATED run-test.sh, which cannot derive it from
-#                            its own location and reads the .repo-dir file this
-#                            script generates beside it. --reset refuses a
-#                            sandbox root that overlaps either protected repo.
+#                            checkout this script lives in). Must be an existing
+#                            Pantheon checkout; used consistently by prepare,
+#                            generated run-test.sh and --reset guards.
+#   PANTHEON_V2_PORT         Dedicated loopback port (default: 49376). The
+#                            harness fails if it is invalid or already bound;
+#                            it never stops or reuses an existing service.
+#   PANTHEON_V2_HOST         IPv4 loopback IP for the V2 service (default:
+#                            127.0.0.1); non-loopback addresses are rejected.
+#   PANTHEON_V2_MCP_LIST_TIMEOUT
+#                            Per-call `opencode mcp list` timeout in seconds
+#                            (default: 15).
 #   PANTHEON_SANDBOX_MODEL   Model used by init/prompts
 #                            (default: opencode-go/mimo-v2.5)
 #   PANTHEON_PROMPT_TIMEOUT  Per-prompt timeout in seconds (default: 300)
@@ -51,13 +57,14 @@
 #             2 = usage error, 3 = sandbox not prepared.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # Derived from this script's own location so the sandbox is always built from
 # the checkout that CONTAINS this harness. It must never be inferred from a
 # sibling directory: a sibling may be a different checkout (or a different
-# branch) with unrelated uncommitted work, and --prepare runs `npm pack` inside
-# it, writing a tarball into that tree.
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# branch) with unrelated uncommitted work. Package tarballs are written only to
+# an isolated temporary directory inside the selected sandbox.
+SCRIPT_REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+REPO_DIR="$SCRIPT_REPO_DIR"
 
 SANDBOX_ROOT="${PANTHEON_SANDBOX_ROOT:-$HOME/pantheon-sandbox}"
 SANDBOX_HOME="$SANDBOX_ROOT/home"
@@ -72,8 +79,11 @@ V2_BIN="${OPENCODE_V2_BIN:-opencode2}"
 # OpenCode V2's CLI talks to its background service for `mcp list`. Keep the
 # probe hermetic: an inherited config, database, or PORT can otherwise make
 # the command query a different service and report a false result.
-V2_CONFIG="${PANTHEON_V2_CONFIG:-$SANDBOX_ROOT/project-v2/opencode.json}"
-V2_DB="${PANTHEON_V2_DB:-$SANDBOX_ROOT/opencode-v2.db}"
+# These locations are intentionally fixed inside the sandbox. External config
+# and database overrides could make prepare/run write outside the safe root.
+V2_CONFIG="$SANDBOX_ROOT/project-v2/opencode.json"
+V2_DB="$SANDBOX_ROOT/opencode-v2.db"
+unset PANTHEON_V2_CONFIG PANTHEON_V2_DB
 V2_PORT="${PANTHEON_V2_PORT:-49376}"
 V2_LOOPBACK_HOST="${PANTHEON_V2_HOST:-127.0.0.1}"
 V2_HANDSHAKE_TIMEOUT="${PANTHEON_V2_HANDSHAKE_TIMEOUT:-60}"
@@ -98,6 +108,7 @@ MODE_COST=0
 MODE_REHYDRATE=0
 MODE_HOOKS=0
 RUN_VERSION=""
+SANDBOX_ENV_READY=0
 
 usage() {
   sed -n '2,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -108,7 +119,59 @@ log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+resolve_harness_repo() {
+  local requested_repo="${PANTHEON_REPO:-$SCRIPT_REPO_DIR}"
+  [ -n "$requested_repo" ] \
+    || die "PANTHEON_REPO must not be empty"
+  case "$requested_repo" in
+    /*) ;;
+    *) die "PANTHEON_REPO must be an absolute path (got: $requested_repo)" ;;
+  esac
+  [ -d "$requested_repo" ] \
+    || die "PANTHEON_REPO path does not exist or is not a directory: $requested_repo"
+  REPO_DIR="$(cd -P -- "$requested_repo" 2>/dev/null && pwd -P)" \
+    || die "cannot resolve PANTHEON_REPO path: $requested_repo"
+  [ -f "$REPO_DIR/package.json" ] \
+    || die "PANTHEON_REPO is not a Pantheon package checkout (package.json missing): $REPO_DIR"
+  node -e 'if (require(process.argv[1]).name !== "pantheon-opencode") process.exit(1)' \
+    "$REPO_DIR/package.json" \
+    || die "PANTHEON_REPO package name must be pantheon-opencode: $REPO_DIR"
+}
+
 project_dir() { printf '%s/project-%s' "$SANDBOX_ROOT" "$TARGET_VERSION"; }
+
+validate_v2_port() {
+  local port_number
+  [[ "$V2_PORT" =~ ^[0-9]{1,5}$ ]] \
+    || die "PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')"
+  port_number=$((10#$V2_PORT))
+  [ "$port_number" -ge 1 ] && [ "$port_number" -le 65535 ] \
+    || die "PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')"
+  V2_PORT="$port_number"
+}
+
+assert_v2_port_available() {
+  validate_v2_port
+  if ! python3 - "$V2_LOOPBACK_HOST" "$V2_PORT" <<'PY'
+import ipaddress
+import socket
+import sys
+
+host, raw_port = sys.argv[1], sys.argv[2]
+try:
+    address = ipaddress.ip_address(host)
+    if not address.is_loopback or address.version != 4:
+        raise ValueError("host must be an IPv4 loopback IP address")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, int(raw_port)))
+except (OSError, ValueError) as exc:
+    print(f"cannot bind dedicated V2 port {host}:{raw_port}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  then
+    die "dedicated V2 port $V2_PORT is already in use or unavailable; refusing to reuse or stop an unrelated service"
+  fi
+}
 
 # Resolve a binary STRICTLY inside the sandbox npm prefix — never fall back to
 # the dev PATH, otherwise a non-prepared sandbox would silently test the host
@@ -129,10 +192,45 @@ sandbox_bin() { # echoes the V2 binary path; rc 1 if missing
 # ── Sandbox environment isolation ─────────────────────────────────────────────
 
 sandbox_env() {
+  # Combined modes can call this more than once in one shell. After the first
+  # setup, HOME intentionally lives below SANDBOX_ROOT; re-running the full
+  # overlap guard would mistake that supported isolation layout for an unsafe
+  # ancestor relationship.
+  if [ "$SANDBOX_ENV_READY" -eq 1 ]; then
+    return 0
+  fi
+
+  guard_sandbox_root use
+  canonicalize_sandbox_root
+  validate_v2_port
+  mkdir -p -- "$SANDBOX_ROOT"
+  sandbox_path_guard "$SANDBOX_ROOT" dir-check
+  sandbox_path_guard "$SANDBOX_HOME" dir-create
+  sandbox_path_guard "$NPM_PREFIX" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.npm-cache" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.config" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.config/opencode" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.config/xdg" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.local/share" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.local/share/opencode" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.local/share/xdg" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.local/state" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.local/state/opencode" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.cache" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.cache/opencode" dir-create
+  sandbox_path_guard "$SANDBOX_HOME/.opencode" dir-create
+  sandbox_path_guard "$V2_CONFIG" file-allow-missing-parent
+  sandbox_path_guard "$V2_DB" file-allow-missing-parent
   export HOME="$SANDBOX_HOME"
   export PATH="$NPM_PREFIX/bin:$HOME/.config/opencode/.venv/bin:$PATH"
   export npm_config_prefix="$NPM_PREFIX"
+  export npm_config_cache="$SANDBOX_HOME/.npm-cache"
+  export XDG_CONFIG_HOME="$SANDBOX_HOME/.config"
+  export XDG_CONFIG_DIRS="$SANDBOX_HOME/.config/xdg"
+  export XDG_DATA_HOME="$SANDBOX_HOME/.local/share"
+  export XDG_DATA_DIRS="$SANDBOX_HOME/.local/share/xdg"
   export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
+  export XDG_CACHE_HOME="$SANDBOX_HOME/.cache"
   # Do not inherit an OpenChamber/developer-machine config selector. The V2
   # project config is created by prepare_project and is the only config this
   # gate is allowed to inspect.
@@ -140,8 +238,11 @@ sandbox_env() {
   export OPENCODE_DB="$V2_DB"
   export PANTHEON_V2_PORT="$V2_PORT"
   export PORT="$V2_PORT"
-  unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE
-  mkdir -p "$SANDBOX_ROOT" "$(dirname "$V2_DB")" "$(dirname "$V2_SERVICE_STATE")"
+  unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE \
+    OPENCODE_DATA_DIR OPENCODE_STATE_DIR OPENCODE_CACHE_DIR OPENCODE_STORAGE_PATH
+  sandbox_path_guard "$V2_SERVICE_STATE" file-allow-missing-parent
+  sandbox_path_guard "$(dirname "$V2_SERVICE_STATE")" dir-create
+  SANDBOX_ENV_READY=1
 }
 
 stop_v2_service() {
@@ -330,6 +431,7 @@ start_v2_service() { # binary project
   if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
     return 0
   fi
+  validate_v2_port
 
   # Never attach to an unrelated service on the dedicated port. A successful
   # health probe before our process starts is an environmental collision, not
@@ -338,6 +440,7 @@ start_v2_service() { # binary project
     "http://$V2_LOOPBACK_HOST:${V2_PORT}/global/health" >/dev/null 2>&1; then
     die "dedicated V2 port ${V2_PORT} is already in use; refusing to reuse an unrelated service"
   fi
+  assert_v2_port_available
 
   rm -f "$V2_SERVER_LOG" "$V2_SERVICE_STATE" "$HOME/.local/share/opencode/log/opencode.log"
   (cd "$project" && "$bin" serve --hostname "$V2_LOOPBACK_HOST" --port "$V2_PORT" --service) \
@@ -372,61 +475,221 @@ trap stop_v2_service EXIT
 
 # ── Gate (b): sandbox run-test.sh with pantheon://agents content validation ──
 
+# Node's compile cache is disposable, but tmp/ can also contain runtime state
+# and human handoffs. Expire only hash-named cache files owned by this user after
+# 30 days; never recurse through links or prune any other tmp/ entry.
+cleanup_sandbox_tmp() {
+  local cache_dir="$SANDBOX_ROOT/tmp/node-compile-cache" cache_file cache_name owner
+  [ -d "$SANDBOX_ROOT/tmp" ] && [ ! -L "$SANDBOX_ROOT/tmp" ] || return 0
+  [ -d "$cache_dir" ] && [ ! -L "$cache_dir" ] || return 0
+  owner="$(id -un)" || return 0
+  while IFS= read -r -d '' cache_file; do
+    cache_name="${cache_file##*/}"
+    if [[ "$cache_name" =~ ^[[:xdigit:]]{8}$ ]]; then
+      rm -f -- "$cache_file"
+    fi
+  done < <(find "$cache_dir" -xdev -type f -user "$owner" -mtime +30 -print0)
+}
+
 write_run_test_sh() {
-  # Quoted heredoc: the body is emitted verbatim, so nothing inside is expanded
-  # at generation time. REPO_DIR is the one value the body needs, and it is
-  # handed over as its own generated file instead of a placeholder baked into
-  # the shell source: interpolating it meant escaping for TWO languages (sed
-  # replacement text AND the double-quoted shell context it lands in), and only
-  # the first set was escaped — a path containing `$`, a backtick, a backslash
-  # or a quote was silently rewritten or executed by the generated script.
-  printf '%s\n' "$REPO_DIR" > "$SANDBOX_ROOT/.repo-dir"
-  cat > "$SANDBOX_ROOT/run-test.sh" <<'RUNTEST'
+  canonicalize_sandbox_root
+  mkdir -p -- "$SANDBOX_ROOT"
+  sandbox_path_guard "$SANDBOX_ROOT" dir-check
+  sandbox_path_guard "$SANDBOX_ROOT/.repo-dir" replace-file
+  sandbox_path_guard "$SANDBOX_ROOT/run-test.sh" replace-file
+  # Keep the path in a regular data file instead of shell source. Write it
+  # atomically so an interrupted prepare cannot leave a truncated .repo-dir.
+  local repo_file_tmp run_test_tmp
+  repo_file_tmp="$(mktemp "$SANDBOX_ROOT/.repo-dir.XXXXXX")" \
+    || die "cannot create temporary .repo-dir"
+  if ! printf '%s\n' "$REPO_DIR" > "$repo_file_tmp"; then
+    rm -f -- "$repo_file_tmp"
+    die "cannot write temporary .repo-dir"
+  fi
+  atomic_replace_file "$repo_file_tmp" "$SANDBOX_ROOT/.repo-dir" 0600 \
+    || die "cannot atomically replace .repo-dir"
+  run_test_tmp="$(mktemp "$SANDBOX_ROOT/.run-test.sh.XXXXXX")" \
+    || die "cannot create temporary run-test.sh"
+  if ! cat > "$run_test_tmp" <<'RUNTEST'
 #!/usr/bin/env bash
 # Generated by pantheon-opencode scripts/test-opencode-v2-sandbox.sh --prepare
 # Validates the global install: the V2 binary, exactly 5 connected MCPs, doctor
 # 0 errors, AND the CONTENT of pantheon://agents (zeus/hermes present).
 set -euo pipefail
 
-SANDBOX_DIR="$(cd "$(dirname "$0")" && pwd)"
+SANDBOX_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SANDBOX_HOME="$SANDBOX_DIR/home"
 NPM_PREFIX="$SANDBOX_HOME/.npm-global"
 PANTHEON_GLOBAL="$SANDBOX_HOME/.config/opencode"
 SANDBOX_VENV="$PANTHEON_GLOBAL/.venv"
-# The checkout this harness ran from, written by the generator into the
-# .repo-dir file next to this script. It used to be a placeholder baked into
-# this line and substituted with sed afterwards, but the sandbox lives outside
-# any repo so the value cannot be derived from this file's own location either.
-# Reading a file the generator wrote keeps the path out of the shell source, so
-# no escaping can be wrong. PANTHEON_REPO may still override it; the generator's
-# --reset guard refuses to run when that points inside a repo, so an override
-# can never turn this into a repo-wiping target.
-REPO_DIR="${PANTHEON_REPO:-$(cat "$SANDBOX_DIR/.repo-dir")}"
+export HOME="$SANDBOX_HOME"
+export PATH="$NPM_PREFIX/bin:$SANDBOX_VENV/bin:$PATH"
+export npm_config_prefix="$NPM_PREFIX"
+export npm_config_cache="$SANDBOX_HOME/.npm-cache"
+export XDG_CONFIG_HOME="$SANDBOX_HOME/.config"
+export XDG_CONFIG_DIRS="$SANDBOX_HOME/.config/xdg"
+export XDG_DATA_HOME="$SANDBOX_HOME/.local/share"
+export XDG_DATA_DIRS="$SANDBOX_HOME/.local/share/xdg"
+export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
+export XDG_CACHE_HOME="$SANDBOX_HOME/.cache"
+# The V2 CLI resolves `mcp list` through its service. Keep generated sandbox
+# runs isolated from any config/database/port inherited from the host.
+V2_CONFIG="$SANDBOX_DIR/project-v2/opencode.json"
+V2_DB="$SANDBOX_DIR/opencode-v2.db"
+V2_PORT="${PANTHEON_V2_PORT:-49376}"
+V2_LOOPBACK_HOST="${PANTHEON_V2_HOST:-127.0.0.1}"
+V2_HANDSHAKE_TIMEOUT="${PANTHEON_V2_HANDSHAKE_TIMEOUT:-60}"
+V2_MCP_LIST_TIMEOUT="${PANTHEON_V2_MCP_LIST_TIMEOUT:-15}"
+V2_SERVER_LOG="$SANDBOX_DIR/v2-server.log"
+V2_SERVICE_STATE="$SANDBOX_HOME/.local/state/opencode/service.json"
+V2_SERVER_PID=""
 
+resolve_sandbox_repo() {
+  local requested_repo resolved_repo repo_file
+  if [ -n "${PANTHEON_REPO:-}" ]; then
+    requested_repo="$PANTHEON_REPO"
+  else
+    repo_file="$SANDBOX_DIR/.repo-dir"
+    [ -f "$repo_file" ] && [ ! -L "$repo_file" ] \
+      || { printf 'ERROR: sandbox .repo-dir is missing or not a regular file: %s\n' "$repo_file" >&2; return 1; }
+    IFS= read -r requested_repo < "$repo_file" \
+      || { printf 'ERROR: sandbox .repo-dir is empty or unreadable: %s\n' "$repo_file" >&2; return 1; }
+  fi
+  [ -n "$requested_repo" ] \
+    || { printf 'ERROR: repository path is empty (PANTHEON_REPO/.repo-dir)\n' >&2; return 1; }
+  case "$requested_repo" in
+    /*) ;;
+    *) printf 'ERROR: repository path must be absolute: %s\n' "$requested_repo" >&2; return 1 ;;
+  esac
+  [ -d "$requested_repo" ] \
+    || { printf 'ERROR: repository path does not exist or is not a directory: %s\n' "$requested_repo" >&2; return 1; }
+  resolved_repo="$(cd -P -- "$requested_repo" 2>/dev/null && pwd -P)" \
+    || { printf 'ERROR: cannot resolve repository path: %s\n' "$requested_repo" >&2; return 1; }
+  [ -f "$resolved_repo/package.json" ] \
+    || { printf 'ERROR: repository package.json is missing: %s\n' "$resolved_repo" >&2; return 1; }
+  node -e 'if (require(process.argv[1]).name !== "pantheon-opencode") process.exit(1)' \
+    "$resolved_repo/package.json" \
+    || { printf 'ERROR: repository package name must be pantheon-opencode: %s\n' "$resolved_repo" >&2; return 1; }
+  printf '%s\n' "$resolved_repo"
+}
+
+path_is_same_or_descendant() {
+  local candidate="$1" parent="$2"
+  [ "$candidate" = "$parent" ] && return 0
+  [ "$parent" = "/" ] && [[ "$candidate" = /* ]] && return 0
+  case "$candidate" in "$parent"/*) return 0 ;; esac
+  return 1
+}
+
+validate_v2_port() {
+  local port_number
+  [[ "$V2_PORT" =~ ^[0-9]{1,5}$ ]] \
+    || { printf "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '%s')\n" "$V2_PORT" >&2; return 1; }
+  port_number=$((10#$V2_PORT))
+  [ "$port_number" -ge 1 ] && [ "$port_number" -le 65535 ] \
+    || { printf "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '%s')\n" "$V2_PORT" >&2; return 1; }
+  V2_PORT="$port_number"
+}
+
+assert_v2_port_available() {
+  validate_v2_port || return 1
+  python3 - "$V2_LOOPBACK_HOST" "$V2_PORT" <<'PY'
+import ipaddress
+import socket
+import sys
+
+host, raw_port = sys.argv[1], sys.argv[2]
+try:
+    address = ipaddress.ip_address(host)
+    if not address.is_loopback or address.version != 4:
+        raise ValueError("host must be an IPv4 loopback IP address")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, int(raw_port)))
+except (OSError, ValueError) as exc:
+    print(f"ERROR: dedicated V2 port {host}:{raw_port} is already in use or unavailable; refusing to reuse or stop an unrelated service: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+REPO_DIR="$(resolve_sandbox_repo)" || exit 1
+if path_is_same_or_descendant "$SANDBOX_DIR" "$REPO_DIR" \
+  || path_is_same_or_descendant "$REPO_DIR" "$SANDBOX_DIR"; then
+  printf 'ERROR: sandbox path overlaps the selected repository; refusing to package: sandbox=%s repo=%s\n' \
+    "$SANDBOX_DIR" "$REPO_DIR" >&2
+  exit 1
+fi
+validate_v2_port || exit 1
 echo "=== Pantheon Sandbox Test (OpenCode V2) ==="
 echo "Sandbox: $SANDBOX_DIR"
 echo "Repo:    $REPO_DIR"
 
-export HOME="$SANDBOX_HOME"
-export PATH="$NPM_PREFIX/bin:$SANDBOX_VENV/bin:$PATH"
-export npm_config_prefix="$NPM_PREFIX"
-export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
-# The V2 CLI resolves `mcp list` through its service. Keep generated sandbox
-# runs isolated from any config/database/port inherited from the host.
-V2_CONFIG="$SANDBOX_DIR/project-v2/opencode.json"
-V2_DB="${PANTHEON_V2_DB:-$SANDBOX_DIR/opencode-v2.db}"
-V2_PORT="${PANTHEON_V2_PORT:-49376}"
-V2_LOOPBACK_HOST="${PANTHEON_V2_HOST:-127.0.0.1}"
-V2_HANDSHAKE_TIMEOUT="${PANTHEON_V2_HANDSHAKE_TIMEOUT:-60}"
-V2_SERVER_LOG="$SANDBOX_DIR/v2-server.log"
-V2_SERVICE_STATE="$SANDBOX_HOME/.local/state/opencode/service.json"
-V2_SERVER_PID=""
 export OPENCODE_CONFIG_DIR="$(dirname "$V2_CONFIG")"
 export OPENCODE_DB="$V2_DB"
 export PANTHEON_V2_PORT="$V2_PORT"
 export PORT="$V2_PORT"
-unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE
-mkdir -p "$(dirname "$V2_SERVICE_STATE")"
+unset PANTHEON_V2_CONFIG PANTHEON_V2_DB
+unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE \
+  OPENCODE_DATA_DIR OPENCODE_STATE_DIR OPENCODE_CACHE_DIR OPENCODE_STORAGE_PATH
+
+validate_sandbox_paths() {
+  SANDBOX_DIR="$SANDBOX_DIR" python3 - <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(os.environ["SANDBOX_DIR"])
+if root.resolve(strict=True) != root:
+    raise SystemExit(f"ERROR: sandbox root is not canonical: {root}")
+
+def validate(path, directory):
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        raise SystemExit(f"ERROR: sandbox path escaped root: {path}")
+    if any(part in ("", ".", "..") for part in relative.parts):
+        raise SystemExit(f"ERROR: unsafe sandbox path component: {path}")
+    current = root
+    for index, part in enumerate(relative.parts):
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(info.st_mode):
+            raise SystemExit(f"ERROR: sandbox path contains symlink: {current}")
+        is_final = index == len(relative.parts) - 1
+        if (not is_final or directory) and not stat.S_ISDIR(info.st_mode):
+            raise SystemExit(f"ERROR: sandbox path component is not a directory: {current}")
+        if is_final and not directory and not stat.S_ISREG(info.st_mode):
+            raise SystemExit(f"ERROR: sandbox output is not a regular file: {current}")
+        if current.resolve(strict=True) != current:
+            raise SystemExit(f"ERROR: sandbox path resolves outside its lexical location: {current}")
+
+for directory in (
+    root / "home",
+    root / "home/.npm-cache",
+    root / "home/.config",
+    root / "home/.config/opencode",
+    root / "home/.config/xdg",
+    root / "home/.local/share",
+    root / "home/.local/share/opencode",
+    root / "home/.local/share/xdg",
+    root / "home/.local/state",
+    root / "home/.local/state/opencode",
+    root / "home/.cache",
+    root / "home/.cache/opencode",
+    root / "home/.opencode",
+    root / "project-v2",
+):
+    validate(directory, True)
+for output in (root / "project-v2/opencode.json", root / "opencode-v2.db"):
+    validate(output, False)
+PY
+}
+validate_sandbox_paths
+sandbox_path_parent="$(dirname "$V2_SERVICE_STATE")"
+mkdir -p "$sandbox_path_parent"
 
 stop_v2_service() {
   if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
@@ -469,6 +732,8 @@ wait_for_v2_service_registration() {
         python3 - <<'PY'
 import json
 import os
+import stat
+import tempfile
 from pathlib import Path
 
 path = Path(os.environ["SERVICE_STATE"])
@@ -558,11 +823,13 @@ start_v2_service() {
   if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
     return 0
   fi
+  validate_v2_port || return 1
   if curl --fail --silent --show-error --max-time 1 \
     "http://$V2_LOOPBACK_HOST:${V2_PORT}/global/health" >/dev/null 2>&1; then
     echo "ERROR: dedicated V2 port $V2_PORT is already in use" >&2
     return 1
   fi
+  assert_v2_port_available || return 1
   rm -f "$V2_SERVER_LOG" "$V2_SERVICE_STATE" "$HOME/.local/share/opencode/log/opencode.log"
   (cd "$project" && "$bin" serve --hostname "$V2_LOOPBACK_HOST" --port "$V2_PORT" --service) \
     >"$V2_SERVER_LOG" 2>&1 &
@@ -636,6 +903,8 @@ rewrite_v2_mcp_config() {
     python3 - <<'PY'
 import json
 import os
+import stat
+import tempfile
 from pathlib import Path
 
 config_path = Path(os.environ["CONFIG_PATH"])
@@ -662,9 +931,20 @@ for name, script in managed.items():
     entry.pop("disabled", None)
     entry.update(type="local", cwd=runtime_dir, command=[python_bin, f"scripts/{script}"], enabled=True)
     mcp[name] = entry
-tmp_path = config_path.with_name(config_path.name + ".sandbox-tmp")
-tmp_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-os.replace(tmp_path, config_path)
+temp_fd, temp_name = tempfile.mkstemp(
+    prefix=f".{config_path.name}.", suffix=".tmp", dir=config_path.parent
+)
+tmp_path = Path(temp_name)
+try:
+    with os.fdopen(temp_fd, "w", encoding="utf-8") as stream:
+        stream.write(json.dumps(config, indent=2) + "\n")
+    os.chmod(tmp_path, stat.S_IMODE(config_path.stat().st_mode))
+    os.replace(tmp_path, config_path)
+finally:
+    try:
+        tmp_path.unlink()
+    except FileNotFoundError:
+        pass
 validated = json.loads(config_path.read_text(encoding="utf-8"))
 for name, script in managed.items():
     entry = validated.get("mcp", {}).get(name)
@@ -798,13 +1078,40 @@ check_mcp() { # label binary project
 echo "--- Binaries ---"
 check_binary "V2 binary" opencode2
 
+install_pantheon_package() {
+  local pack_dir pack_json filename tgz
+  pack_dir="$(mktemp -d "$SANDBOX_DIR/.pantheon-npm-pack.XXXXXX")" \
+    || { echo "ERROR: cannot create isolated npm pack directory" >&2; exit 1; }
+  pack_json="$pack_dir/pack.json"
+  if ! (cd "$REPO_DIR" && npm pack --ignore-scripts --json --pack-destination "$pack_dir") > "$pack_json"; then
+    find "$pack_dir" -maxdepth 1 -type f -name 'pantheon-opencode-*.tgz' -delete
+    rm -f -- "$pack_json"
+    rmdir -- "$pack_dir" 2>/dev/null || true
+    echo "ERROR: npm pack failed" >&2
+    exit 1
+  fi
+  if ! filename="$(node -e 'const p=JSON.parse(require("fs").readFileSync(0,"utf8")); if (!Array.isArray(p) || p.length !== 1 || typeof p[0].filename !== "string") process.exit(1); process.stdout.write(p[0].filename)' < "$pack_json")" \
+    || [[ "$filename" != pantheon-opencode-*.tgz || "$filename" == */* || ! -f "$pack_dir/$filename" ]]; then
+    find "$pack_dir" -maxdepth 1 -type f -name 'pantheon-opencode-*.tgz' -delete
+    rm -f -- "$pack_json"
+    rmdir -- "$pack_dir" 2>/dev/null || true
+    echo "ERROR: npm pack returned an invalid tarball filename" >&2
+    exit 1
+  fi
+  tgz="$pack_dir/$filename"
+  npm rm -g pantheon-opencode 2>/dev/null || true
+  if ! npm install -g "$tgz"; then
+    rm -f -- "$tgz" "$pack_json"
+    rmdir -- "$pack_dir" 2>/dev/null || true
+    echo "ERROR: install of isolated tarball failed: $tgz" >&2
+    exit 1
+  fi
+  rm -f -- "$tgz" "$pack_json"
+  rmdir -- "$pack_dir"
+}
+
 echo "--- Building tarball ---"
-cd "$REPO_DIR"
-npm pack --ignore-scripts 2>/dev/null || { echo "ERROR: npm pack failed"; exit 1; }
-TGZ=$(ls -t pantheon-opencode-*.tgz | head -1)
-npm rm -g pantheon-opencode 2>/dev/null || true
-npm install -g "$TGZ"
-if ! git -C "$REPO_DIR" ls-files --error-unmatch -- "$TGZ" >/dev/null 2>&1; then rm -f -- "$TGZ"; fi
+install_pantheon_package
 
 echo "--- Init (headless) ---"
 pantheon-opencode init --headless -y
@@ -870,7 +1177,188 @@ if [ "$FINAL_VERDICT" != "PASS" ]; then
 fi
 echo "Next: open the isolated TUI with: $SANDBOX_DIR/start-pantheon.sh"
 RUNTEST
-  chmod +x "$SANDBOX_ROOT/run-test.sh"
+  then
+    rm -f -- "$run_test_tmp"
+    die "cannot write temporary run-test.sh"
+  fi
+  atomic_replace_file "$run_test_tmp" "$SANDBOX_ROOT/run-test.sh" 0755 \
+    || die "cannot atomically replace run-test.sh"
+}
+
+write_sandbox_entrypoints() {
+  canonicalize_sandbox_root
+  mkdir -p -- "$SANDBOX_ROOT"
+  sandbox_path_guard "$SANDBOX_ROOT" dir-check
+  sandbox_path_guard "$SANDBOX_ROOT/start-pantheon.sh" replace-file
+  sandbox_path_guard "$SANDBOX_ROOT/README.md" replace-file
+  local launcher_tmp readme_tmp
+  launcher_tmp="$(mktemp "$SANDBOX_ROOT/.start-pantheon.sh.XXXXXX")" \
+    || die "cannot create temporary start-pantheon.sh"
+  if ! cat > "$launcher_tmp" <<'START'
+#!/usr/bin/env bash
+set -euo pipefail
+
+SANDBOX_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+SANDBOX_HOME="$SANDBOX_DIR/home"
+NPM_PREFIX="$SANDBOX_HOME/.npm-global"
+V2_BIN="$NPM_PREFIX/bin/opencode2"
+PROJECT_DIR="$SANDBOX_DIR/project-v2"
+V2_HOST="${PANTHEON_V2_HOST:-127.0.0.1}"
+V2_PORT="${PANTHEON_V2_PORT:-49376}"
+if [[ ! "$V2_PORT" =~ ^[0-9]{1,5}$ ]]; then
+  echo "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')" >&2
+  exit 1
+fi
+V2_PORT=$((10#$V2_PORT))
+if [ "$V2_PORT" -lt 1 ] || [ "$V2_PORT" -gt 65535 ]; then
+  echo "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')" >&2
+  exit 1
+fi
+if ! python3 - "$V2_HOST" "$V2_PORT" <<'PY'
+import ipaddress
+import socket
+import sys
+
+host, raw_port = sys.argv[1], sys.argv[2]
+try:
+    address = ipaddress.ip_address(host)
+    if not address.is_loopback or address.version != 4:
+        raise ValueError("host must be an IPv4 loopback IP address")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, int(raw_port)))
+except (OSError, ValueError) as exc:
+    print(f"ERROR: dedicated V2 port {host}:{raw_port} is already in use or unavailable; no service was stopped: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+then
+  exit 1
+fi
+[ -x "$V2_BIN" ] || { echo "ERROR: V2 binary is missing: $V2_BIN" >&2; exit 3; }
+[ -d "$PROJECT_DIR" ] || { echo "ERROR: V2 project is missing: $PROJECT_DIR (run --prepare first)" >&2; exit 3; }
+
+export HOME="$SANDBOX_HOME"
+export PATH="$NPM_PREFIX/bin:$SANDBOX_HOME/.config/opencode/.venv/bin:$PATH"
+export npm_config_prefix="$NPM_PREFIX"
+export npm_config_cache="$SANDBOX_HOME/.npm-cache"
+export XDG_CONFIG_HOME="$SANDBOX_HOME/.config"
+export XDG_CONFIG_DIRS="$SANDBOX_HOME/.config/xdg"
+export XDG_DATA_HOME="$SANDBOX_HOME/.local/share"
+export XDG_DATA_DIRS="$SANDBOX_HOME/.local/share/xdg"
+export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
+export XDG_CACHE_HOME="$SANDBOX_HOME/.cache"
+V2_CONFIG="$SANDBOX_DIR/project-v2/opencode.json"
+export OPENCODE_CONFIG_DIR="$PROJECT_DIR"
+export OPENCODE_DB="$SANDBOX_DIR/opencode-v2.db"
+export PANTHEON_V2_PORT="$V2_PORT"
+export PORT="$V2_PORT"
+unset PANTHEON_V2_CONFIG PANTHEON_V2_DB
+unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE \
+  OPENCODE_DATA_DIR OPENCODE_STATE_DIR OPENCODE_CACHE_DIR OPENCODE_STORAGE_PATH
+python3 - "$SANDBOX_DIR" <<'PY'
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+if root.resolve(strict=True) != root:
+    raise SystemExit(f"ERROR: sandbox root is not canonical: {root}")
+
+def validate(path, directory):
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        raise SystemExit(f"ERROR: sandbox path escaped root: {path}")
+    if any(part in ("", ".", "..") for part in relative.parts):
+        raise SystemExit(f"ERROR: unsafe sandbox path component: {path}")
+    current = root
+    for index, part in enumerate(relative.parts):
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(info.st_mode):
+            raise SystemExit(f"ERROR: sandbox path contains symlink: {current}")
+        final = index == len(relative.parts) - 1
+        if (not final or directory) and not stat.S_ISDIR(info.st_mode):
+            raise SystemExit(f"ERROR: sandbox path component is not a directory: {current}")
+        if final and not directory and not stat.S_ISREG(info.st_mode):
+            raise SystemExit(f"ERROR: sandbox output is not a regular file: {current}")
+        if current.resolve(strict=True) != current:
+            raise SystemExit(f"ERROR: sandbox path resolves outside its lexical location: {current}")
+
+for directory in (
+    root / "home",
+    root / "home/.npm-cache",
+    root / "home/.config",
+    root / "home/.config/opencode",
+    root / "home/.config/xdg",
+    root / "home/.local/share",
+    root / "home/.local/share/opencode",
+    root / "home/.local/share/xdg",
+    root / "home/.local/state",
+    root / "home/.local/state/opencode",
+    root / "home/.cache",
+    root / "home/.cache/opencode",
+    root / "home/.opencode",
+    root / "project-v2",
+):
+    validate(directory, True)
+for output in (root / "project-v2/opencode.json", root / "opencode-v2.db"):
+    validate(output, False)
+PY
+cd "$PROJECT_DIR"
+exec "$V2_BIN"
+START
+  then
+    rm -f -- "$launcher_tmp"
+    die "cannot write temporary start-pantheon.sh"
+  fi
+  atomic_replace_file "$launcher_tmp" "$SANDBOX_ROOT/start-pantheon.sh" 0755 \
+    || die "cannot atomically replace start-pantheon.sh"
+
+  readme_tmp="$(mktemp "$SANDBOX_ROOT/.README.md.XXXXXX")" \
+    || die "cannot create temporary sandbox README"
+  if ! cat > "$readme_tmp" <<'SANDBOXREADME'
+# Pantheon isolated OpenCode V2 sandbox
+
+This folder is generated by `scripts/test-opencode-v2-sandbox.sh --prepare` and
+uses its own HOME, npm prefix, project config, database, and Python environment.
+It does not use the developer's OpenCode configuration.
+
+## Use
+
+- Validate the installation: `bash ~/pantheon-sandbox/run-test.sh`
+- Open the isolated TUI: `bash ~/pantheon-sandbox/start-pantheon.sh`
+- Recreate/update the sandbox: `scripts/test-opencode-v2-sandbox.sh --prepare`
+- Reset only after reviewing the sandbox path: `scripts/test-opencode-v2-sandbox.sh --reset`
+
+## Environment overrides
+
+- `PANTHEON_SANDBOX_ROOT`: sandbox location (default `~/pantheon-sandbox`).
+- `PANTHEON_REPO`: existing Pantheon checkout used consistently for packaging;
+  a missing, dangling, or non-Pantheon path fails before `npm pack`.
+- `PANTHEON_V2_PORT`: dedicated loopback port (default `49376`). The scripts
+  reject invalid or occupied ports and never stop or reuse an existing service.
+- `PANTHEON_V2_HOST`: IPv4 loopback IP (default `127.0.0.1`); other addresses
+  are rejected to avoid exposing the sandbox service on external interfaces.
+- `PANTHEON_V2_MCP_LIST_TIMEOUT`: each `opencode mcp list` timeout in seconds
+  (default `15`).
+- `OPENCODE_V2_SPEC`: OpenCode V2 npm install spec (default `@opencode-ai/cli@beta`).
+
+## Temporary files
+
+No blanket `tmp/` cleanup is performed. On `--prepare`, only hash-named files
+owned by the current user under `tmp/node-compile-cache/` older than 30 days may
+expire. Runtime state, unknown files, and handoff/evidence files are retained.
+Do not remove `tmp/` recursively.
+SANDBOXREADME
+  then
+    rm -f -- "$readme_tmp"
+    die "cannot write temporary sandbox README"
+  fi
+  atomic_replace_file "$readme_tmp" "$SANDBOX_ROOT/README.md" 0644 \
+    || die "cannot atomically replace sandbox README"
 }
 
 # ── Reset / Prepare ───────────────────────────────────────────────────────────
@@ -920,6 +1408,12 @@ canonicalize_path() {
   printf '%s\n' "$resolved"
 }
 
+canonicalize_existing_directory() {
+  local path="$1"
+  [ -n "$path" ] && [ -d "$path" ] || return 1
+  (cd -P -- "$path" 2>/dev/null && pwd -P)
+}
+
 # Compare complete path components; a sibling such as project-extra is not
 # inside project. The root directory is a parent of every absolute path.
 path_is_same_or_descendant() {
@@ -932,58 +1426,261 @@ path_is_same_or_descendant() {
   return 1
 }
 
-cmd_reset() {
-  # Guard BOTH repos this harness can act on. REPO_DIR is where `--prepare`
-  # runs `npm pack`; PANTHEON_REPO is the documented override the GENERATED
-  # run-test.sh honours, and it may point somewhere else entirely. Refusing
-  # only the default left an override able to name a checkout and have the
-  # generated script pack a tarball into it.
-  local protected canonical_root canonical_home canonical_protected
+canonicalize_sandbox_root() {
+  local canonical_root
   canonical_root="$(canonicalize_path "$SANDBOX_ROOT")" \
-    || die "refusing to reset sandbox root that cannot be canonicalized: $SANDBOX_ROOT"
-  canonical_home="$(canonicalize_path "$HOME")" \
-    || die "refusing to reset because HOME cannot be canonicalized: $HOME"
-  [ "$canonical_root" != "/" ] \
-    || die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (filesystem root)"
-  [ "$canonical_root" != "$canonical_home" ] \
-    || die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (HOME)"
-  if path_is_same_or_descendant "$canonical_home" "$canonical_root"; then
-    die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of HOME $HOME)"
+    || die "cannot canonicalize sandbox root: $SANDBOX_ROOT"
+  SANDBOX_ROOT="$canonical_root"
+  SANDBOX_HOME="$SANDBOX_ROOT/home"
+  NPM_PREFIX="$SANDBOX_HOME/.npm-global"
+  V2_CONFIG="$SANDBOX_ROOT/project-v2/opencode.json"
+  V2_DB="$SANDBOX_ROOT/opencode-v2.db"
+  V2_SERVER_LOG="$SANDBOX_ROOT/v2-server.log"
+  V2_SERVICE_STATE="$SANDBOX_HOME/.local/state/opencode/service.json"
+  REPORT_FILE="$SANDBOX_ROOT/prompts-report.md"
+  COST_REPORT_FILE="$SANDBOX_ROOT/pantheon-cost-report.md"
+  REHYDRATE_REPORT_FILE="$SANDBOX_ROOT/context-rehydrate-report.md"
+  EXTRACT_PY="$SANDBOX_ROOT/.prompt-extract-json.py"
+}
+
+# Validate/create paths one component at a time. Existing symlinks are rejected
+# rather than followed, and every existing component must resolve to its lexical
+# location below the canonical sandbox root.
+sandbox_path_guard() {
+  local target="$1" mode="$2"
+  SANDBOX_ROOT="$SANDBOX_ROOT" python3 - "$target" "$mode" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(os.environ["SANDBOX_ROOT"])
+target = Path(sys.argv[1])
+mode = sys.argv[2]
+
+def fail(message):
+    print(f"ERROR: unsafe sandbox path {target}: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+if not root.is_absolute() or not target.is_absolute():
+    fail("paths must be absolute")
+try:
+    relative = target.relative_to(root)
+except ValueError:
+    fail("path is outside the canonical sandbox root")
+parts = relative.parts
+if any(part in ("", ".", "..") for part in parts):
+    fail("dot or empty path components are not allowed")
+
+try:
+    root_stat = root.lstat()
+except OSError as exc:
+    fail(f"sandbox root is missing: {exc}")
+if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+    fail("sandbox root must be a real directory")
+if root.resolve(strict=True) != root:
+    fail("sandbox root is not canonical")
+
+if mode.startswith("dir-"):
+    current = root
+    for part in parts:
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            if mode != "dir-create":
+                fail("directory does not exist")
+            try:
+                current.mkdir()
+            except OSError as exc:
+                fail(f"cannot create directory: {exc}")
+            info = current.lstat()
+        except OSError as exc:
+            fail(f"cannot inspect path: {exc}")
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            fail("directory component is a symlink or not a directory")
+        if current.resolve(strict=True) != current:
+            fail("directory component resolves outside its lexical path")
+    raise SystemExit(0)
+
+if mode not in ("file-check", "file-allow-missing-parent", "replace-file"):
+    fail(f"unknown validation mode {mode}")
+
+current = root
+for part in parts[:-1]:
+    current = current / part
+    try:
+        info = current.lstat()
+    except FileNotFoundError:
+        if mode == "file-allow-missing-parent":
+            raise SystemExit(0)
+        fail("parent directory does not exist")
+    except OSError as exc:
+        fail(f"cannot inspect parent: {exc}")
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        fail("parent component is a symlink or not a directory")
+    if current.resolve(strict=True) != current:
+        fail("parent component resolves outside its lexical path")
+
+if not parts:
+    fail("expected a file path below the sandbox root")
+leaf = current / parts[-1]
+try:
+    info = leaf.lstat()
+except FileNotFoundError:
+    raise SystemExit(0)
+except OSError as exc:
+    fail(f"cannot inspect file: {exc}")
+if mode != "replace-file" and stat.S_ISLNK(info.st_mode):
+    fail("file is a symlink")
+if mode != "replace-file" and not stat.S_ISREG(info.st_mode):
+    fail("file is not a regular file")
+PY
+}
+
+atomic_replace_file() {
+  local temporary="$1" destination="$2" mode="$3"
+  if ! chmod "$mode" "$temporary"; then
+    rm -f -- "$temporary"
+    return 1
   fi
+  if ! mv -fT -- "$temporary" "$destination"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+
+guard_sandbox_root() {
+  # Both destructive reset and prepare are forbidden from overlapping HOME or
+  # any package checkout. This prevents packing generated sandbox files into a
+  # repo and prevents reset from deleting a repo or one of its ancestors.
+  local action="${1:-use}" protected canonical_root canonical_home canonical_protected
+  local config_home data_home state_home cache_home
+  local path_list path_entry
+  canonical_root="$(canonicalize_path "$SANDBOX_ROOT")" \
+    || die "refusing to $action sandbox root that cannot be canonicalized: $SANDBOX_ROOT"
+  canonical_home="$(canonicalize_path "$HOME")" \
+    || die "refusing to $action sandbox because HOME cannot be canonicalized: $HOME"
+  [ "$canonical_root" != "/" ] \
+    || die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (filesystem root)"
+  [ "$canonical_root" != "$canonical_home" ] \
+    || die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (HOME)"
+  if path_is_same_or_descendant "$canonical_home" "$canonical_root"; then
+    die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of HOME $HOME)"
+  fi
+
+  config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
+  cache_home="${XDG_CACHE_HOME:-$HOME/.cache}"
+  for path_list in "${XDG_CONFIG_DIRS:-}" "${XDG_DATA_DIRS:-}"; do
+    while [ -n "$path_list" ]; do
+      case "$path_list" in
+        *:*) path_entry="${path_list%%:*}"; path_list="${path_list#*:}" ;;
+        *) path_entry="$path_list"; path_list="" ;;
+      esac
+      [ -n "$path_entry" ] || continue
+      for protected in "$path_entry" "$path_entry/opencode"; do
+        canonical_protected="$(canonicalize_path "$protected")" \
+          || die "refusing to $action because global OpenCode path cannot be resolved: $protected"
+        if path_is_same_or_descendant "$canonical_root" "$canonical_protected" \
+          || path_is_same_or_descendant "$canonical_protected" "$canonical_root"; then
+          die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (overlaps global OpenCode path $protected)"
+        fi
+      done
+    done
+  done
+
+  # OPENCODE_CONFIG and OPENCODE_DB are file overrides. canonicalize_path
+  # resolves symlinked directories but deliberately preserves a final file
+  # symlink (including a dangling one), so its lexical path may not overlap a
+  # sandbox that contains the symlink target. Reset removes the whole sandbox;
+  # reject these final symlinks before canonical-path overlap checks can miss
+  # an in-sandbox target. This is intentionally conservative and avoids having
+  # to interpret absolute, relative, or dot-dot symlink targets here.
+  if [ "$action" = reset ]; then
+    for protected in "${OPENCODE_CONFIG:-}" "${OPENCODE_DB:-}"; do
+      [ -n "$protected" ] || continue
+      [ ! -L "$protected" ] \
+        || die "refusing to reset because OpenCode file override is a symbolic link: $protected"
+    done
+  fi
+
+  for protected in \
+    "$HOME/.config/opencode" "$HOME/.opencode" \
+    "$config_home/opencode" "$data_home/opencode" \
+    "$state_home/opencode" "$cache_home/opencode" \
+    "${OPENCODE_CONFIG_DIR:-}" "${OPENCODE_DATA_DIR:-}" \
+    "${OPENCODE_STATE_DIR:-}" "${OPENCODE_CACHE_DIR:-}" "${OPENCODE_STORAGE_PATH:-}" \
+    "${OPENCODE_CONFIG:-}" "${OPENCODE_DB:-}"; do
+    [ -n "$protected" ] || continue
+    canonical_protected="$(canonicalize_path "$protected")" \
+      || die "refusing to $action because global OpenCode path cannot be resolved: $protected"
+    if path_is_same_or_descendant "$canonical_root" "$canonical_protected" \
+      || path_is_same_or_descendant "$canonical_protected" "$canonical_root"; then
+      die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (overlaps global OpenCode path $protected)"
+    fi
+  done
 
   for protected in "$REPO_DIR" "${PANTHEON_REPO:-}"; do
     [ -n "$protected" ] || continue
-    canonical_protected="$(canonicalize_path "$protected")" \
-      || die "refusing to reset because protected repo path cannot be canonicalized: $protected"
+    canonical_protected="$(canonicalize_existing_directory "$protected")" \
+      || die "refusing to $action sandbox because protected repo path is missing or cannot be resolved: $protected"
     if path_is_same_or_descendant "$canonical_root" "$canonical_protected"; then
-      die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is equal to or inside the repo $protected)"
+      die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (it is equal to or inside the repo $protected)"
     fi
     if path_is_same_or_descendant "$canonical_protected" "$canonical_root"; then
-      die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of the repo $protected)"
+      die "refusing to $action unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of the repo $protected)"
     fi
   done
+}
+
+cmd_reset() {
+  guard_sandbox_root reset
   log "Resetting sandbox: $SANDBOX_ROOT"
-  rm -rf "$SANDBOX_ROOT"
+  rm -rf -- "$SANDBOX_ROOT"
   log "Sandbox removed."
 }
 
 install_binaries() {
   log "--- Installing pantheon-opencode (from repo tarball) ---"
-  cd "$REPO_DIR"
-  npm pack --ignore-scripts 2>/dev/null || die "npm pack failed"
-  local tgz
-  tgz=$(ls -t pantheon-opencode-*.tgz | head -1)
+  local pack_dir pack_json filename tgz
+  pack_dir="$(mktemp -d "$SANDBOX_ROOT/.pantheon-npm-pack.XXXXXX")" \
+    || die "cannot create isolated npm pack directory"
+  pack_json="$pack_dir/pack.json"
+  if ! (cd "$REPO_DIR" && npm pack --ignore-scripts --json --pack-destination "$pack_dir") > "$pack_json"; then
+    find "$pack_dir" -maxdepth 1 -type f -name 'pantheon-opencode-*.tgz' -delete
+    rm -f -- "$pack_json"
+    rmdir -- "$pack_dir" 2>/dev/null || true
+    die "npm pack failed"
+  fi
+  if ! filename="$(node -e 'const p=JSON.parse(require("fs").readFileSync(0,"utf8")); if (!Array.isArray(p) || p.length !== 1 || typeof p[0].filename !== "string") process.exit(1); process.stdout.write(p[0].filename)' < "$pack_json")" \
+    || [[ "$filename" != pantheon-opencode-*.tgz || "$filename" == */* || ! -f "$pack_dir/$filename" ]]; then
+    find "$pack_dir" -maxdepth 1 -type f -name 'pantheon-opencode-*.tgz' -delete
+    rm -f -- "$pack_json"
+    rmdir -- "$pack_dir" 2>/dev/null || true
+    die "npm pack returned an invalid tarball filename"
+  fi
+  tgz="$pack_dir/$filename"
   npm rm -g pantheon-opencode 2>/dev/null || true
-  npm install -g "$REPO_DIR/$tgz" || die "install of $tgz failed"
-  if ! git -C "$REPO_DIR" ls-files --error-unmatch -- "$tgz" >/dev/null 2>&1; then rm -f -- "$tgz"; fi
+  if ! npm install -g "$tgz"; then
+    rm -f -- "$tgz" "$pack_json"
+    rmdir -- "$pack_dir" 2>/dev/null || true
+    die "install of isolated tarball failed: $tgz"
+  fi
+  rm -f -- "$tgz" "$pack_json"
+  rmdir -- "$pack_dir" || die "could not clean isolated npm pack directory: $pack_dir"
   log "--- Installing OpenCode V2 ($OPENCODE_V2_SPEC) ---"
   npm install -g "$OPENCODE_V2_SPEC" || die "install of $OPENCODE_V2_SPEC failed"
 }
 
 prepare_project() {
   local dir pan
+  canonicalize_sandbox_root
   dir="$(project_dir)"
-  mkdir -p "$dir"
+  sandbox_path_guard "$dir" dir-create
+  sandbox_path_guard "$V2_CONFIG" file-allow-missing-parent \
+    || die "unsafe project config path: $V2_CONFIG"
   pan="$(sandbox_bin_for "pantheon-opencode")" \
     || die "pantheon-opencode not installed in sandbox prefix — run $0 --prepare first"
   log "--- Regenerating config in $dir ---"
@@ -997,8 +1694,11 @@ prepare_project() {
 # point at a different sandbox or host. Rewrite the managed entries after the
 # merge and validate the complete shape before any OpenCode process starts.
 rewrite_v2_mcp_config() {
+  canonicalize_sandbox_root
   local runtime_dir="$(project_dir)/.opencode"
   local python_bin="$(project_dir)/.venv/bin/python3"
+  sandbox_path_guard "$V2_CONFIG" file-check \
+    || die "V2 config path is missing or unsafe: $V2_CONFIG"
   [ -f "$V2_CONFIG" ] || die "V2 config was not generated: $V2_CONFIG"
   [ -x "$python_bin" ] || die "V2 MCP Python is missing: $python_bin"
 
@@ -1006,7 +1706,9 @@ rewrite_v2_mcp_config() {
     python3 - <<'PY'
 import json
 import os
+import stat
 import sys
+import tempfile
 from pathlib import Path
 
 config_path = Path(os.environ["CONFIG_PATH"])
@@ -1045,15 +1747,22 @@ for name, script in managed.items():
     )
     mcp[name] = entry
 
-tmp_path = config_path.with_name(config_path.name + ".sandbox-tmp")
+tmp_path = None
 try:
-    tmp_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    temp_fd, temp_name = tempfile.mkstemp(
+        prefix=f".{config_path.name}.", suffix=".tmp", dir=config_path.parent
+    )
+    tmp_path = Path(temp_name)
+    with os.fdopen(temp_fd, "w", encoding="utf-8") as stream:
+        stream.write(json.dumps(config, indent=2) + "\n")
+    os.chmod(tmp_path, stat.S_IMODE(config_path.stat().st_mode))
     os.replace(tmp_path, config_path)
 except OSError as exc:
-    try:
-        tmp_path.unlink()
-    except OSError:
-        pass
+    if tmp_path is not None:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
     raise SystemExit(f"cannot rewrite V2 config {config_path}: {exc}")
 
 try:
@@ -1078,9 +1787,13 @@ PY
 }
 
 cmd_prepare() {
-  mkdir -p "$SANDBOX_HOME" "$NPM_PREFIX"
-  write_run_test_sh
+  validate_v2_port
+  guard_sandbox_root use
+  canonicalize_sandbox_root
   sandbox_env
+  cleanup_sandbox_tmp
+  write_run_test_sh
+  write_sandbox_entrypoints
   install_binaries
   local pan
   pan="$(sandbox_bin_for "pantheon-opencode")" \
@@ -1097,7 +1810,14 @@ cmd_prepare() {
 # ── JSON text extraction (schema-agnostic) ────────────────────────────────────
 
 write_extract_py() {
-  cat > "$EXTRACT_PY" <<'PYEOF'
+  canonicalize_sandbox_root
+  mkdir -p -- "$SANDBOX_ROOT"
+  sandbox_path_guard "$SANDBOX_ROOT" dir-check
+  sandbox_path_guard "$EXTRACT_PY" replace-file
+  local extract_tmp
+  extract_tmp="$(mktemp "$SANDBOX_ROOT/.prompt-extract-json.py.XXXXXX")" \
+    || die "cannot create temporary prompt extractor"
+  if ! cat > "$extract_tmp" <<'PYEOF'
 """Collect every string value from opencode run --format json output."""
 import json
 import sys
@@ -1129,6 +1849,12 @@ except Exception:
             chunks.append(line)
 print("\n".join(chunks))
 PYEOF
+  then
+    rm -f -- "$extract_tmp"
+    die "cannot write temporary prompt extractor"
+  fi
+  atomic_replace_file "$extract_tmp" "$EXTRACT_PY" 0644 \
+    || die "cannot atomically replace prompt extractor"
 }
 
 # ── Prompt battery ────────────────────────────────────────────────────────────
@@ -1146,7 +1872,7 @@ add_prompt() { # id marker ignored verify text
 }
 
 build_battery() {
-  local v="$1"
+  local v="$1" probe_file probe_shell_arg
   PROMPT_IDS=()
   PROMPT_TEXTS=()
   PROMPT_MARKERS=()
@@ -1157,9 +1883,11 @@ build_battery() {
     "Use the pantheon-memory memory_store tool to store this exact entry: namespace 'default', key 'pantheon-sandbox-probe-$v', value 'alive'. Then reply with exactly: MEMORY-STORE-OK"
   add_prompt "memory-recall" "MEMORY-RECALL-OK" "" "" \
     "Use the pantheon-memory memory_recall tool (or memory_search) to look up key 'pantheon-sandbox-probe-$v' in namespace 'default'. If the stored value is 'alive', reply with exactly: MEMORY-RECALL-OK"
+  probe_file="$SANDBOX_ROOT/pantheon-sandbox-probe-$v.txt"
+  printf -v probe_shell_arg '%q' "$probe_file"
   add_prompt "tmp-write-read" "TMP-OK" "" \
-    "${TMPDIR:-/tmp}/pantheon-sandbox-probe-$v.txt::TMP-OK" \
-    "Using the bash tool, run a python3 -c command that writes the text TMP-OK to the file ${TMPDIR:-/tmp}/pantheon-sandbox-probe-$v.txt (overwrite it), then run another python3 -c command to read that file back. Do not use any other tool or command to write or read the file — only python3 -c. If what you read back is exactly TMP-OK, reply with exactly: TMP-OK"
+    "$probe_file::TMP-OK" \
+    "Using the bash tool, run a python3 -c command that writes the text TMP-OK to the file at $probe_shell_arg (overwrite it), then run another python3 -c command to read that file back. Do not use any other tool or command to write or read the file — only python3 -c. If what you read back is exactly TMP-OK, reply with exactly: TMP-OK"
   add_prompt "delegation" "DELEGATION-OK" "" "" \
     "Delegate a tiny task to the @talos agent via the task tool: ask it to reply with the single word PONG. If the delegated response contains PONG, reply with exactly: DELEGATION-OK. If you cannot delegate to agents in this context, reply with exactly: DELEGATION-UNAVAILABLE"
 }
@@ -1222,6 +1950,9 @@ run_prompt_attempt() { # v idx current_bin — sets ATTEMPT_RESULT / ATTEMPT_DET
   else
     ATTEMPT_RESULT="FAIL"
     ATTEMPT_DETAIL="marker $marker absent; rc=$rc; snippet: $(printf '%s' "$raw" | cut -c1-160)"
+  fi
+  if [ -n "$verify" ]; then
+    rm -f "${verify%%::*}"
   fi
 }
 
@@ -1682,6 +2413,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$MODE_RESET" -eq 1 ]; then
+  resolve_harness_repo
   cmd_reset
   exit 0
 fi
@@ -1691,6 +2423,8 @@ if [ "$MODE_PREPARE" -eq 0 ] && [ -z "$RUN_VERSION" ] \
   && [ "$MODE_REHYDRATE" -eq 0 ] && [ "$MODE_HOOKS" -eq 0 ]; then
   usage
 fi
+
+resolve_harness_repo
 
 if [ "$MODE_PREPARE" -eq 1 ]; then
   cmd_prepare

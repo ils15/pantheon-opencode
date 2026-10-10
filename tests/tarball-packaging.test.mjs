@@ -25,6 +25,9 @@ const executableForbidden = new RegExp(
   `(?:${escapedRoot}|\\/home\\/|\\/workspace\\/|pantheon[\\\\/]src[\\\\/])`,
   'i',
 )
+// Reject an absolute Unix temp directory, but allow sandbox-relative paths
+// such as `$SANDBOX_ROOT/tmp/...` which are not machine-specific.
+const absoluteTemporaryPath = /(?<![A-Za-z0-9_$}])\/tmp\//i
 const privateUrl =
   /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|[^/\s"]+\.(?:local|internal|corp))(?:[:/]|$)/i
 
@@ -153,7 +156,7 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
       )
         continue
       assert.doesNotMatch(text, forbidden, `forbidden path in ${file}`)
-      assert.doesNotMatch(text, /\/tmp\//i, `temporary machine path in ${file}`)
+      assert.doesNotMatch(text, absoluteTemporaryPath, `absolute temporary machine path in ${file}`)
       assert.doesNotMatch(text, privateUrl, `private URL in ${file}`)
     }
     for (const file of ['package/scripts/doctor.mjs', 'package/src/plugins/pantheon-hooks.ts']) {
@@ -193,6 +196,11 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     rmSync(work, { recursive: true, force: true })
     rmSync(join(ROOT, tarball), { force: true })
   }
+})
+
+test('temporary path guard distinguishes absolute paths from sandbox-relative tmp paths', () => {
+  assert.match('probe=/tmp/pantheon-probe', absoluteTemporaryPath)
+  assert.doesNotMatch('$SANDBOX_ROOT/tmp/pantheon-probe', absoluteTemporaryPath)
 })
 
 test('installed package resolves hooks to its installed absolute path', () => {

@@ -1,6 +1,6 @@
-# Pantheon Installation Guide — v1.6.0-beta.1 (OpenCode 2)
+# Pantheon Installation Guide — v1.6.0 (OpenCode 2)
 
-Pantheon v1.6.0-beta.1 is **OpenCode 2-compatible**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. As tabelas de preset são derivadas de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
+Pantheon v1.6.0 is **OpenCode 2-compatible**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. As tabelas de preset são derivadas de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
 
 ## TL;DR (Quick Start)
 
@@ -175,7 +175,7 @@ The full policy, including the verification table, is in the
 
 ### Escolha de geração
 
-Pantheon 1.6.0-beta.1 does not load both Pantheon plugin generations in one
+Pantheon 1.6.0 does not load both Pantheon plugin generations in one
 installation. The ordinary OpenCode settings may be merged, but the installer
 removes Pantheon references from both config shapes before registering only the
 selected generation:
@@ -183,7 +183,7 @@ selected generation:
 | Selection | OpenCode key | Pantheon registration | Contract |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: `hashline_edit` + goal/cost/model tools, board lifecycle, V1 events/tool hooks and V1 compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks, a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| `v2` | plural `plugins` | Exact npm package `pantheon-opencode@<version>` (package root exports `src/plugin-v2.ts`) | V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks, read-only and caller/target permission hooks, plus configuration transforms |
 
 The V2 plugin is now a **full orchestration plugin** — not just a configuration
 adapter. It registers 3 tools via `ctx.tool.transform()`, subscribes to 5
@@ -229,17 +229,15 @@ Exemplo de `opencode.json` V2:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["<installed>/src/plugin-v2"],
+  "plugins": ["pantheon-opencode@1.6.0"],
   "providers": {
     "opencode": {
       "baseURL": "https://opencode.ai/zen/v1"
     }
   },
   "permissions": [
-    {
-      "tool": "task",
-      "allow": ["zeus", "athena"]
-    }
+    { "action": "subagent", "resource": "*", "effect": "deny" },
+    { "action": "subagent", "resource": "apollo", "effect": "allow" }
   ],
   "mcp": {
     "servers": {
@@ -250,7 +248,9 @@ Exemplo de `opencode.json` V2:
 }
 ```
 
-Contrato: a entrada V2 é o diretório `<installed>/src/plugin-v2` (cujo `index.ts` re-exporta `src/plugin-v2.ts`) — o loader beta exige diretório, não spec npm nem path de arquivo. O TUI é registro separado via `npm run setup` (`tui.json` → `plugins/pantheon-tui`), alinhado a `@opentui/core`/`solid` 0.5.x.
+Contrato: a entrada V2 é um spec npm versionado (`pantheon-opencode@<version>`); o export da raiz do pacote carrega `src/plugin-v2.ts`. Isso evita gravar na config o caminho absoluto que varia entre prefixos globais e caches `npx`. As regras `permissions` usam `action`, `resource` e `effect`; a última regra correspondente vence. O hook do Pantheon mantém sua própria matriz de delegação para agentes Pantheon e não concede `allow` ao host. O TUI é registro separado via `npm run setup` (`tui.json` → `plugins/pantheon-tui`), alinhado a `@opentui/core`/`solid` 0.5.x.
+
+Bootstrap do pin: o spec aponta para a versão **corrente** do pacote. Rodando o installer a partir de um checkout do repositório (fora de `node_modules`) — ou entre um bump de versão e o publish — o pin pode nomear uma versão ainda não publicada no registry. Nesse caso o install emite um aviso (não falha) informando que o OpenCode só passa a resolver o pin depois que a versão for publicada; instalações via npm (global/npx) não emitem o aviso, pois a versão instalada é, por construção, a publicada.
 
 Diferenças do V1:
 
@@ -663,12 +663,33 @@ opencode
 npm run doctor
 ```
 
-**Instalação global isolada:** para testar o pacote instalado em um sandbox
-isolado (sem contaminar o ambiente de dev, que mistura várias instalações), use
-`~/pantheon-sandbox/` — rode `bash ~/pantheon-sandbox/run-test.sh` (mcp list 5/5
-+ doctor + TUI isolado). Esse gate cobre o sandbox preparado; não é uma alegação
-de suporte para todo host real. Descarte com `rm -rf ~/pantheon-sandbox`; detalhes
-em `~/pantheon-sandbox/README.md`.
+**Instalação global isolada:** prepare o sandbox fora do ambiente de dev (que
+mistura várias instalações):
+
+```bash
+bash scripts/test-opencode-v2-sandbox.sh --prepare
+bash ~/pantheon-sandbox/run-test.sh
+# or open the isolated TUI
+bash ~/pantheon-sandbox/start-pantheon.sh
+```
+
+O runner verifica mcp list 5/5 + doctor. O `--prepare` gera os dois entrypoints
+e `~/pantheon-sandbox/README.md`. Esse
+gate cobre o sandbox preparado; não é uma alegação de suporte para todo host
+real. Para descartar, use o reset com guardas:
+`bash scripts/test-opencode-v2-sandbox.sh --reset` — não remova o sandbox com
+`rm -rf` manualmente.
+
+Overrides disponíveis: `PANTHEON_V2_MCP_LIST_TIMEOUT` (default `15` segundos
+por chamada `mcp list`), `PANTHEON_V2_PORT` (default `49376`, somente porta
+livre; conflito falha sem parar nem reutilizar serviço existente),
+`PANTHEON_V2_HOST` (default `127.0.0.1`; somente IPv4 loopback) e
+`PANTHEON_REPO` (checkout Pantheon existente, caminho absoluto, aplicado
+consistentemente no prepare e no `run-test.sh`). O `.repo-dir` gerado é validado
+antes de empacotar; caminho ausente, dangling, relativo ou de outro pacote falha
+fechado. O preparo expira apenas arquivos hash de cache Node com mais de 30 dias
+em `tmp/node-compile-cache`; runtime e arquivos de handoff/evidência são
+preservados. Detalhes são escritos no README do sandbox.
 
 ## Troubleshooting
 

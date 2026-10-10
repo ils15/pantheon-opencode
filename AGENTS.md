@@ -38,8 +38,9 @@ Para validar a instalação global do pacote pantheon-opencode COMO UM USUÁRIO 
 
 - Rodar: `bash ~/pantheon-sandbox/run-test.sh` (opencode mcp list 5/5 connected + doctor 0 erros + abre TUI isolado)
 - Regra para agentes: ao validar instalação global (npm pack, `init`, MCPs, hooks), usar o sandbox — NUNCA testar no ambiente de dev
-- Descarte: `rm -rf ~/pantheon-sandbox`
-- Detalhes: ver `~/pantheon-sandbox/README.md`
+- Prepare/atualize com `bash scripts/test-opencode-v2-sandbox.sh --prepare`; isso gera `run-test.sh`, `start-pantheon.sh` e o README do sandbox
+- Descarte somente pelo reset com guardas: `bash scripts/test-opencode-v2-sandbox.sh --reset` (nunca use `rm -rf` manualmente)
+- Detalhes: ver `~/pantheon-sandbox/README.md` após o prepare
 
 ## Conventions
 
@@ -64,7 +65,7 @@ are rendered into only the matching installed agent prompts.
 
 # Agent Return Format
 
-All implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) MUST return results to Zeus in this format:
+Implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) return:
 
 ## subtask_summary
 **files_changed:** [list of file paths, one per line]
@@ -75,59 +76,13 @@ All implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) M
 **status:** complete | partial (reason) | escalated (reason)
 **blockers:** [list any blockers or null]
 
-For investigation agents (Apollo, Athena), return structured findings with:
+Investigation agents (Apollo, Athena) return structured findings with:
 - Key findings as bullet points
 - File paths with line numbers
 - Relevant code snippets (max 3 lines each)
 
-## Council Specialist Response Format
-
-When responding to a `/pantheon` council synthesis invocation, specialists MUST return this structured format:
-
-```
-## specialist_response
-**position:** <clear one-sentence position answering the question>
-**reasoning:** <2-4 sentences with logical chain>
-**trade_offs:** <what's gained vs lost, specific>
-**risks:** <what could go wrong, max 3 items>
-**confidence:** High | Medium | Low
-**agreement_signals:** agree:@agent1 on <issue>, agree:@agent2 on <issue> | disagree:@agent3 on <issue>
-**specific_claims:** <count of specific factual claims in response>
-```
-
-### Field Rules
-
-| Field | Required | Validation |
-|-------|----------|------------|
-| position | ✅ | Single sentence, must directly answer the question |
-| reasoning | ✅ | 2-4 sentences with logical chain |
-| trade_offs | ✅ | At least one gain and one loss, specific to context |
-| risks | ✅ | Max 3 bullet points |
-| confidence | ✅ | One of: High, Medium, Low |
-| agreement_signals | Optional | Format: `agree:@agent on issue \| disagree:@agent on issue`. Use only when you can reference other specialists expected positions. |
-| specific_claims | ✅ | Integer count of verifiable factual statements in the response |
-
-### Confidence Guidelines
-
-- **High**: Position backed by 3+ specific claims with evidence or direct experience
-- **Medium**: Position backed by 1-2 specific claims
-- **Low**: Position is opinion-based or speculative
-
-### Example
-```
-## specialist_response
-**position:** The BackgroundJobBoard should be used for council crash recovery
-**reasoning:** The board already supports running→completed→reconciled state machine with persistence. Registering council dispatches there adds ~50ms overhead but prevents total session loss on context crash. The WAL pattern ensures no data loss on restart.
-**trade_offs:** Gain: crash recovery for multi-minute council sessions. Lose: ~50ms registration overhead per council.
-**risks:** Board persistence failure could block council start — implement with fire-and-forget error handling
-**confidence:** High
-**agreement_signals:** agree:@themis on persist-before-notify
-**specific_claims:** 3
-```
-
 ## Memory Context
-If this agent used `memory_recall` or `memory_search`, include the relevant memory entries
-used as context for the response.
+If this agent used `memory_recall` or `memory_search`, include the relevant memory entries used as context for the response.
 
 <!-- Source: src/instructions/memory-protocol.instructions.md -->
 ## Memory Protocol
@@ -151,45 +106,6 @@ Before storing, Zeus writes `.pantheon/memory-wal/<agent>/<timestamp>.json` with
 
 ### Relevance and permanent records
 Skip `memory_search()` results below 0.3 relevance. Delegate ADR-level architecture decisions, significant trade-offs, and pattern changes to @mnemosyne; routine summaries use auto-store.
-
-## Delegation Cache Instructions
-
-Reuse the required task-start result for routing; never issue a second task FTS search. Consult KV entries, but use the same result even on a cache hit. Score > 0.85: consider the cached agent and `background_mode`. On cache miss (≤0.85), use static rules and persist with `memory_store()` and `kv_store`:
-- key: `deleg:<task_type>`; value: `JSON.stringify({agent, background, pattern})`
-- metadata: `JSON.stringify({type: "decision", score: N})`
-- Use `kv_store(namespace="deleg", key="deleg:<pattern>", value=...)` for recurring patterns and `kv_get(namespace="deleg", key="deleg:<pattern>")` to read them.
-
-Both `value` and `metadata` are JSON-encoded strings. A raw metadata object is rejected (`metadata must be a JSON object encoded as a string`); serialize it with `JSON.stringify({...})` before calling the tool.
-
-## Council Decisions Namespace
-
-Persist completed `/pantheon` decisions in `council_decisions` for precedent retrieval.
-
-### Write path
-Use `key="council:<yyyy-mm-dd>:<slug>"`; JSON-stringify both `value` and `metadata` before `memory_store()`:
-```json
-{
-  "question": "original question", "specialists": ["@agent1"],
-  "recommendation": "...", "confidence": "High|Medium|Low",
-  "agreements": ["..."], "divergences": [{"issue": "...", "resolution": "..."}],
-  "response_rate": "X of Y", "themis_audit": "approved|issues",
-  "precedent_used": false, "timestamp": "<ISO-8601>"
-}
-```
-Metadata contains `{type: "council_decision", specialist_count: N, model_tier_used: "premium|default|fast"}`. Both arguments must be serialized strings; raw objects are invalid.
-
-### Read path and maintenance
-Before a new council, make this separate search in addition to the required task-start search:
-`memory_search(query=question, top_k=2, namespace="council_decisions")`.
-
-| Score | Age | Action |
-|---|---|---|
-| > 0.85 | < 30 days | Return precedent verbatim with a re-evaluate-context warning; skip dispatch. |
-| > 0.85 | ≥ 30 days | Include warning and dispatch fresh council. |
-| 0.5–0.85 | any | Give precedent as context and dispatch. |
-| < 0.5 | any | Ignore; dispatch fresh council. |
-
-Keep decisions long-term (no TTL or 365 days). Flag entries >90 days as stale, never delete them automatically; purge only by explicit namespace cleanup when superseded by ADRs. Use `default` for routine summaries, `session` for progress, and @mnemosyne for ADRs.
 
 <!-- Source: src/instructions/yagni.instructions.md -->
 ## YAGNI Anti-overengineering

@@ -1200,22 +1200,50 @@ export function resolveMcpCwd(entry, configPath = '') {
 // ---------------------------------------------------------------------------
 
 /**
- * Prerelease-aware comparison for pantheon versions (X.Y.Z or X.Y.Z-beta.N).
- * A stable release outranks any beta of the same core version. Returns
+ * Prerelease-aware comparison for pantheon versions (X.Y.Z with an optional
+ * semver prerelease suffix: `-beta.9`, `-rc.1`, ...). A stable release
+ * outranks any prerelease of the same core version; two prereleases compare
+ * identifier by identifier, numeric identifiers numerically. Returns
  * <0, 0, >0 (a - b). The shared compareVersions/parseVersion above ignores
- * the `-beta.N` suffix (it only reads 4 numeric groups), which would make
- * every beta pair compare equal.
+ * the prerelease suffix (it only reads 4 numeric groups), which would make
+ * every prerelease pair compare equal.
  */
 function comparePantheonVersions(a, b) {
   const parse = (v) => {
     const m = String(v)
       .trim()
-      .match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
+      .match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/)
     if (!m) return null
     return {
       core: [+m[1], +m[2], +m[3]],
-      beta: m[4] === undefined ? Number.POSITIVE_INFINITY : +m[4],
+      prerelease: m[4] === undefined ? null : m[4].split('.'),
     }
+  }
+  // Per semver precedence: numeric identifiers compare numerically and rank
+  // below alphanumeric ones; a shorter identifier list ranks below a longer
+  // one sharing its prefix; a version WITHOUT a prerelease outranks any
+  // prerelease of the same core version.
+  const comparePrerelease = (pa, pb) => {
+    if (pa === null && pb === null) return 0
+    if (pa === null) return 1
+    if (pb === null) return -1
+    const length = Math.max(pa.length, pb.length)
+    for (let i = 0; i < length; i++) {
+      const x = pa[i]
+      const y = pb[i]
+      if (x === undefined) return -1
+      if (y === undefined) return 1
+      const xNumeric = /^\d+$/.test(x)
+      const yNumeric = /^\d+$/.test(y)
+      if (xNumeric && yNumeric) {
+        if (Number(x) !== Number(y)) return Number(x) < Number(y) ? -1 : 1
+      } else if (xNumeric !== yNumeric) {
+        return xNumeric ? -1 : 1
+      } else if (x !== y) {
+        return x < y ? -1 : 1
+      }
+    }
+    return 0
   }
   const pa = parse(a)
   const pb = parse(b)
@@ -1223,10 +1251,7 @@ function comparePantheonVersions(a, b) {
   for (let i = 0; i < 3; i++) {
     if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i]
   }
-  // Infinity - Infinity is NaN, which would make equal stable versions compare
-  // as drift for any caller using a strict === 0 check.
-  if (pa.beta === pb.beta) return 0
-  return pa.beta < pb.beta ? -1 : 1
+  return comparePrerelease(pa.prerelease, pb.prerelease)
 }
 
 /**
@@ -1292,8 +1317,24 @@ export function checkInstallVersionDrift(args) {
 // registered plugin points into against this package's own version. Without
 // network access the "latest" version IS the running package's version.
 
+// Single source of truth: the package name is read from package.json, the same
+// way scripts/install/opencode.mjs derives the V2 pin spec. The fallback keeps
+// the doctor usable on a broken manifest.
+const PACKAGE_MANIFEST = readJson(join(ROOT, 'package.json'))
+const PANTHEON_PACKAGE_NAME =
+  typeof PACKAGE_MANIFEST?.name === 'string' && PACKAGE_MANIFEST.name
+    ? PACKAGE_MANIFEST.name
+    : 'pantheon-opencode'
+// Matches the exact version-pinned V2 spec the installer writes
+// (`<name>@X.Y.Z` plus any semver prerelease suffix). The name is escaped
+// because package names may contain regex-significant characters (`.` in
+// unscoped names, `/` in scoped ones).
+const PINNED_PLUGIN_SPEC_PATTERN = new RegExp(
+  `^${PANTHEON_PACKAGE_NAME.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')}@(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)$`,
+)
+
 /** Locates an installed copy of this package inside a dependency tree. */
-const INSTALLED_PACKAGE_MARKER = '/node_modules/pantheon-opencode/'
+const INSTALLED_PACKAGE_MARKER = `/node_modules/${PANTHEON_PACKAGE_NAME}/`
 
 /**
  * Return the installed-package root containing a plugin path, or null when the
@@ -1362,8 +1403,10 @@ export function collectRegisteredPluginRefs(configs) {
         if (typeof ref === 'string') {
           refs.push({ path: ref, configPath: cfg.path, configLabel: cfg.label })
         } else if (ref && typeof ref === 'object') {
-          // Object-shaped entries carry their path under `path`/`source`.
-          const objectPath = ['path', 'source', 'id', 'name'].find(
+          // npm plugin entries carry their identity under `package`; local
+          // entries use `path`/`source`. Preserve either so H3 can inspect the
+          // exact pinned npm version as well as installed filesystem copies.
+          const objectPath = ['package', 'path', 'source', 'id', 'name'].find(
             (k) => typeof ref[k] === 'string',
           )
           if (objectPath) {
@@ -1374,6 +1417,20 @@ export function collectRegisteredPluginRefs(configs) {
     }
   }
   return refs
+}
+
+/**
+ * Read an exact version from the package-root plugin syntax written by the
+ * V2 installer (`pantheon-opencode@1.6.0`), including ANY semver prerelease
+ * suffix (`-beta.11`, `-rc.1`, ...). Unpinned and unrelated packages
+ * deliberately return null: H3 cannot infer their resolved npm cache version.
+ * @param {string} pluginRef
+ * @returns {string|null}
+ */
+function readPinnedPantheonPluginVersion(pluginRef) {
+  if (typeof pluginRef !== 'string') return null
+  const match = pluginRef.match(PINNED_PLUGIN_SPEC_PATTERN)
+  return match?.[1] ?? null
 }
 
 /**
@@ -1404,6 +1461,21 @@ export function checkPluginVersionDrift(args) {
   let compared = 0
   let driftReported = false
   for (const ref of refs) {
+    const pinnedNpmVersion = readPinnedPantheonPluginVersion(ref.path)
+    if (pinnedNpmVersion) {
+      const identity = `npm:${PANTHEON_PACKAGE_NAME}@${pinnedNpmVersion}`
+      if (seen.has(identity)) continue
+      seen.add(identity)
+      compared++
+
+      if (classifyPluginVersionDrift(pinnedNpmVersion, packageVersion) !== 'drift') continue
+      driftReported = true
+      warn(
+        `${ref.configLabel}: V2 plugin is pinned to ${PANTHEON_PACKAGE_NAME}@${pinnedNpmVersion}, but this package is v${packageVersion} — the registered tool surface may be stale. Run \`npx pantheon-opencode init\` to realign the pinned plugin version`,
+      )
+      continue
+    }
+
     const absolute = isAbsolute(ref.path) ? ref.path : resolve(dirname(ref.configPath), ref.path)
     const installed = readInstalledPluginVersion(absolute)
     if (!installed) continue
@@ -1442,21 +1514,29 @@ export function checkPluginVersionDrift(args) {
  * The V2 contract is the PLURAL `plugins` key; V1 is the singular `plugin` key.
  * So the key alone is not the test — a config can legitimately carry a
  * third-party entry in `plugins`. What identifies the generation is a Pantheon
- * V2 entry inside it. Matched on the `plugin-v2` marker so all three real
- * spellings are recognised: the canonical DIRECTORY (`src/plugin-v2`), an
- * absolute path to it, and the package export (`pantheon-opencode/plugin-v2`).
+ * V2 entry inside it. Recognises the canonical directory, an absolute path,
+ * the package subpath export, and the version-pinned package-root entry emitted
+ * by the installer. The exact package name is checked to avoid matching
+ * similarly named third-party plugins.
  *
  * @param {unknown} ref
  * @returns {boolean}
  */
 function isV2PluginRef(ref) {
-  const candidate =
+  const candidates =
     typeof ref === 'string'
-      ? ref
+      ? [ref]
       : ref && typeof ref === 'object'
-        ? (ref.path ?? ref.source ?? ref.id ?? ref.name)
-        : undefined
-  return typeof candidate === 'string' && candidate.includes('plugin-v2')
+        ? ['package', 'path', 'source', 'id', 'name']
+            .map((key) => ref[key])
+            .filter((value) => typeof value === 'string')
+        : []
+  return candidates.some(
+    (candidate) =>
+      candidate.includes('plugin-v2') ||
+      candidate === PANTHEON_PACKAGE_NAME ||
+      candidate.startsWith(`${PANTHEON_PACKAGE_NAME}@`),
+  )
 }
 
 /**
@@ -1832,7 +1912,9 @@ export function classifyNodeSqliteProbe(probe) {
   if (probe.available) {
     return {
       status: 'ok',
-      message: `node:sqlite available on ${probe.version} — pantheon_cost read-only backend supported`,
+      message:
+        `node:sqlite available on ${probe.version} — read-only SQLite backend prerequisite satisfied; ` +
+        'doctor does not verify pantheon_cost tool registration',
     }
   }
   return {

@@ -12,9 +12,9 @@
  * each callback. It fails if any covered hook is silently dead.
  *
  * TWO MODES (env `PANTHEON_HOOK_CANARY_MODE`):
- *   `fixture` (default) — the self-contained canary plugin. Proves the HOOK
- *     NAMES are real: every covered name is registered on a live host and the
- *     callback observably fires.
+ *   `fixture` (default) — the self-contained canary plugin. Host-backed tests
+ *     prove hook names dispatch on OpenCode; execute.before/after read lifecycle
+ *     checks use an in-process replay host so no live model is asked to comply.
  *   `real` — loads `src/plugin-v2.ts` itself (via a re-export entry point).
  *     This is the regression gate: the real plugin's lifetime proof is written
  *     by an opt-in host env var (`PANTHEON_HOOK_CANARY_LIFETIME_PROOF`) that
@@ -25,21 +25,19 @@
  *     against the prepared sandbox's V2 binary.
  *
  * COVERAGE — what runs where, stated exactly:
- *   - CI runs NEITHER behavioural mode usefully. The `npm run test:hooks` step
- *     in ci.yml sets no MODE (so it would be `fixture`) and the runner has no
- *     `opencode` V2 binary on PATH, so every host-gated test SKIPS. CI has no
- *     real-plugin coverage.
- *   - The static half — the `real plugin regression guards` test — is pure
- *     readFileSync + regex and is NOT host-gated, so it does run in CI and in
- *     `npm run test:hooks` on any machine. That is the only `real`-mode
- *     protection CI actually gets.
+ *   - CI's `npm run test:hooks` runs the deterministic local fixture replay and
+ *     static plugin guards. Host-backed fixture checks skip without an
+ *     `opencode` V2 binary; `real` mode is not run in CI.
+ *   - The static `real plugin regression guards` test uses readFileSync + regex
+ *     and also runs without a host. It complements, rather than replaces, the
+ *     local replay fixture checks; CI has no live real-plugin coverage.
  *   - Full `real` mode (the real plugin loaded by a live host, its hooks
  *     observably firing) needs a prepared sandbox: `--hooks`.
  *
- * Requirements (skipped when unavailable, so `npm test` stays green on a
- * machine without a host — the static guard above is exempt):
- *   - an `opencode` binary (V2) on PATH, or PANTHEON_HOOK_CANARY_BIN
- *   - a usable model, via PANTHEON_HOOK_CANARY_MODEL (provider/model)
+ * Host-backed prompt tests require an `opencode` binary (V2) and a usable model,
+ * via PANTHEON_HOOK_CANARY_MODEL (provider/model). The local replay tests do not
+ * require a host or model and can be selected with
+ * PANTHEON_HOOK_CANARY_LOCAL_FIXTURE_ONLY=1.
  *
  * Isolation: a private `opencode serve` on a free port (never the shared
  * daemon on 49374), a throwaway project directory, and a proof file handed to
@@ -53,7 +51,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { after, before, test } from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const CANARY_SRC = join(here, '..', 'fixtures', 'opencode-v2-hook-canary', 'index.ts')
@@ -66,6 +64,7 @@ const MODEL = process.env.PANTHEON_HOOK_CANARY_MODEL ?? 'opencode-go/mimo-v2.5'
 const AGENT = process.env.PANTHEON_HOOK_CANARY_AGENT ?? 'canary'
 const MODE = process.env.PANTHEON_HOOK_CANARY_MODE ?? 'fixture'
 const IS_REAL = MODE === 'real'
+const LOCAL_FIXTURE_ONLY = process.env.PANTHEON_HOOK_CANARY_LOCAL_FIXTURE_ONLY === '1'
 const SERVER_TIMEOUT_MS = Number(process.env.PANTHEON_HOOK_CANARY_TIMEOUT_MS ?? 240000)
 
 /** Label `plugin-v2.ts` writes only when this env var is set. */
@@ -91,18 +90,13 @@ let sessionID = ''
 let blockedReadPath = ''
 let allowedReadPath = ''
 let allowedReadNonce = ''
-const skipped = BINARY_AVAILABLE ? false : `opencode binary not found on PATH (${BIN})`
+const skipped = LOCAL_FIXTURE_ONLY
+  ? 'local fixture-only run; host-backed assertions were not requested'
+  : BINARY_AVAILABLE
+    ? false
+    : `opencode binary not found on PATH (${BIN})`
 
-function fixtureOnlySkip(reason) {
-  return skipped || (IS_REAL ? reason : false)
-}
-
-/**
- * The inverse of {@link fixtureOnlySkip}: run a test ONLY in real-plugin mode.
- * The fixture plugin records hook dispatch as proof; it performs no result
- * augmentation, so a user-visible change can only be observed with the real
- * `src/plugin-v2.ts` loaded by the host.
- */
+/** Run a user-visible result assertion ONLY with the real plugin loaded by the host. */
 function realOnlySkip(reason) {
   return skipped || (IS_REAL ? false : reason)
 }
@@ -138,7 +132,7 @@ async function waitFor(fn, timeoutMs, label) {
 }
 
 before(async () => {
-  if (!BINARY_AVAILABLE) return
+  if (!BINARY_AVAILABLE || LOCAL_FIXTURE_ONLY) return
 
   projectDir = mkdtempSync(join(tmpdir(), 'pantheon-hook-canary-'))
   proofFile = join(projectDir, 'canary-proof.log')
@@ -164,23 +158,16 @@ before(async () => {
 
   // A self-contained read-enabled agent so this canary does not depend on
   // which host agents happen to allow the exact file-read action.
-  writeFileSync(
-    join(projectDir, 'opencode.json'),
-    JSON.stringify(
-      {
-        $schema: 'https://opencode.ai/config.json',
-        agent: {
-          [AGENT]: {
-            mode: 'primary',
-            tools: { bash: false, read: true, shell: false, execute: false },
-            permission: { read: 'allow' },
-          },
-        },
+  const config = {
+    $schema: 'https://opencode.ai/config.json',
+    agents: {
+      [AGENT]: {
+        mode: 'primary',
+        permissions: [{ action: 'read', resource: '*', effect: 'allow' }],
       },
-      null,
-      2,
-    ),
-  )
+    },
+  }
+  writeFileSync(join(projectDir, 'opencode.json'), JSON.stringify(config, null, 2))
 
   const port = await freePort()
   server = spawn(
@@ -233,7 +220,11 @@ before(async () => {
       signal: AbortSignal.timeout(SERVER_TIMEOUT_MS),
     })
     if (!response.ok) {
-      throw new Error(`${method} ${path} -> HTTP ${response.status}: ${await response.text()}`)
+      const error = new Error(
+        `${method} ${path} -> HTTP ${response.status}: ${await response.text()}`,
+      )
+      error.status = response.status
+      throw error
     }
     const text = await response.text()
     return text === '' ? undefined : JSON.parse(text)
@@ -267,9 +258,19 @@ after(async () => {
   if (projectDir) rmSync(projectDir, { recursive: true, force: true })
 })
 
+/** Use the current V2 route, with the 2.0.25-era route as a 404-only fallback. */
+async function waitForPromptCompletion(requestFn, targetSessionID) {
+  try {
+    return await requestFn('POST', `/api/session/${targetSessionID}/wait`)
+  } catch (error) {
+    if (error?.status !== 404) throw error
+    return requestFn('POST', `/api/experimental/session/${targetSessionID}/wait`)
+  }
+}
+
 async function prompt(text) {
   await request('POST', `/api/session/${sessionID}/prompt`, { text })
-  await request('POST', `/api/experimental/session/${sessionID}/wait`)
+  await waitForPromptCompletion(request, sessionID)
 }
 
 async function messagesText() {
@@ -538,6 +539,53 @@ test('read-result assertion rejects a nonce present only in prompt text', () => 
   assert.throws(() => findCompletedReadCall(messages, filePath, nonce), /no read tool-call part/i)
 })
 
+test('session completion uses the current V2 wait route', async () => {
+  const calls = []
+  const requestStub = async (_method, path) => {
+    calls.push(path)
+    return { ok: true }
+  }
+
+  const result = await waitForPromptCompletion(requestStub, 'ses-current')
+
+  assert.deepEqual(calls, ['/api/session/ses-current/wait'])
+  assert.deepEqual(result, { ok: true })
+})
+
+test('session completion falls back to the legacy route only on 404', async () => {
+  const calls = []
+  const requestStub = async (_method, path) => {
+    calls.push(path)
+    if (path === '/api/session/ses-legacy/wait') {
+      const error = new Error('not found')
+      error.status = 404
+      throw error
+    }
+    return { ok: true }
+  }
+
+  const result = await waitForPromptCompletion(requestStub, 'ses-legacy')
+
+  assert.deepEqual(calls, [
+    '/api/session/ses-legacy/wait',
+    '/api/experimental/session/ses-legacy/wait',
+  ])
+  assert.deepEqual(result, { ok: true })
+})
+
+test('session completion does not hide non-404 host errors', async () => {
+  const calls = []
+  const requestStub = async (_method, path) => {
+    calls.push(path)
+    const error = new Error('unauthorized')
+    error.status = 401
+    throw error
+  }
+
+  await assert.rejects(() => waitForPromptCompletion(requestStub, 'ses-error'), /unauthorized/)
+  assert.deepEqual(calls, ['/api/session/ses-error/wait'])
+})
+
 test('execute.after assertion ignores stale execute.before from the blocked read', () => {
   const blockedRead = `tool.hook:execute.before ${JSON.stringify({
     tool: 'read',
@@ -793,59 +841,138 @@ test('real plugin context hook exposes context marker', {
   }
 })
 
-test('fixture canary execute.before blocks its synthetic read', {
-  skip: fixtureOnlySkip(
-    'S5b real-plugin execute.before enforcement is not implemented; this synthetic fixture guard is not Pantheon security coverage (deferred to S6)',
-  ),
-}, async () => {
-  // This is deliberately fixture-only: its synthetic blocker does not prove
-  // that Pantheon enforces execute.before security.
-  const proofBefore = readProof()
-  await prompt(
-    `Use only the read tool to read this exact file path: ${blockedReadPath}. Do not use other tools. Then reply with exactly: CANARY-BLOCKED-READ-DONE`,
-  )
+/**
+ * Register the real fixture plugin against a deterministic in-process host.
+ * This drives the same callback with explicit tool input and does not ask a
+ * live model to comply with a tool-use instruction. Separate tests above/below
+ * continue to exercise callbacks through the real V2 host.
+ */
+async function createFixtureHookHost(proofPath, blockedPath, targetSessionID) {
+  const previousProof = process.env.PANTHEON_HOOK_CANARY_PROOF
+  const previousBlockedPath = process.env.PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH
+  process.env.PANTHEON_HOOK_CANARY_PROOF = proofPath
+  process.env.PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH = blockedPath
 
-  // The visible consequence: the `read` tool call itself is recorded as an
-  // error carrying the canary message. A silent no-op would leave the call
-  // completed. (Asserting on the read call, not on reachability of the file:
-  // an agent may route around a blocked tool with another tool.)
-  const messages = JSON.parse(await messagesText()).data ?? []
-  const readError = findToolCallForPath(messages, 'read', blockedReadPath)
-  assert.equal(readError.state?.status, 'error', 'the blocked read tool call did not fail')
-  assert.match(
-    JSON.stringify(readError.state?.error),
-    /CANARY_BLOCKED_READ/,
-    'the read failed for a different reason than the canary guard',
-  )
-  const proofAfter = readProof()
-  const blockedBefore = assertExecuteBeforeForCall(proofBefore, proofAfter, readError)
-  assert.equal(
-    blockedBefore.filePath,
-    blockedReadPath,
-    'execute.before was not for the blocked path',
-  )
+  let plugin
+  try {
+    const moduleURL = `${pathToFileURL(CANARY_SRC).href}?fixture=${Date.now()}-${Math.random()}`
+    plugin = (await import(moduleURL)).default
+  } finally {
+    if (previousProof === undefined) delete process.env.PANTHEON_HOOK_CANARY_PROOF
+    else process.env.PANTHEON_HOOK_CANARY_PROOF = previousProof
+    if (previousBlockedPath === undefined) delete process.env.PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH
+    else process.env.PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH = previousBlockedPath
+  }
+
+  const callbacks = new Map()
+  await plugin.setup({
+    session: { hook: async (name, callback) => callbacks.set(`session.${name}`, callback) },
+    tool: { hook: async (name, callback) => callbacks.set(`tool.${name}`, callback) },
+    permission: {
+      hook: async (name, callback) => callbacks.set(`permission.${name}`, callback),
+    },
+  })
+
+  return {
+    proof: () => readFileSync(proofPath, 'utf8'),
+    async read(filePath, callID) {
+      const event = { tool: 'read', input: { filePath }, id: callID, sessionID: targetSessionID }
+      await callbacks.get('permission.evaluate')({ action: 'read', sessionID: targetSessionID })
+      const previousBlockedPath = process.env.PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH
+      process.env.PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH = blockedPath
+      try {
+        await callbacks.get('tool.execute.before')(event)
+      } catch (error) {
+        return {
+          status: 'error',
+          input: event.input,
+          error: { message: error instanceof Error ? error.message : String(error) },
+          executorCalled: false,
+        }
+      } finally {
+        if (previousBlockedPath === undefined)
+          delete process.env.PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH
+        else process.env.PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH = previousBlockedPath
+      }
+
+      const output = readFileSync(filePath, 'utf8')
+      await callbacks.get('tool.execute.after')({ ...event, status: 'completed', output })
+      return { status: 'completed', input: event.input, output, executorCalled: true }
+    },
+  }
+}
+
+test('fixture canary execute.before deterministically blocks a read without returning its body', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-hook-fixture-blocked-'))
+  const proofPath = join(root, 'proof.log')
+  const blockedPath = join(root, 'blocked.txt')
+  const session = 'ses-fixture-blocked'
+  const callID = 'call-fixture-blocked'
+  writeFileSync(blockedPath, 'CANARY-BLOCKED-READ-FILE-secret-body\n')
+  try {
+    const host = await createFixtureHookHost(proofPath, blockedPath, session)
+    const proofBefore = host.proof()
+    const result = await host.read(blockedPath, callID)
+    const messages = {
+      data: [
+        {
+          parts: [
+            {
+              type: 'tool',
+              tool: 'read',
+              callID,
+              state: { status: result.status, input: result.input, error: result.error },
+            },
+          ],
+        },
+      ],
+    }
+    const readError = findToolCallForPath(messages, 'read', blockedPath)
+    assert.equal(readError.state?.status, 'error', 'the blocked read tool call did not fail')
+    assert.match(JSON.stringify(readError.state?.error), /CANARY_BLOCKED_READ/)
+    assert.equal(result.executorCalled, false, 'the prohibited file body reached the read executor')
+    assert.doesNotMatch(JSON.stringify(readError.state), /CANARY-BLOCKED-READ-FILE-secret-body/)
+    const blockedBefore = assertExecuteBeforeForCall(proofBefore, host.proof(), readError)
+    assert.equal(blockedBefore.filePath, blockedPath)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
-test('fixture canary allows a read and correlates execute.after to its completed result', {
-  skip: fixtureOnlySkip(
-    'S5b real-plugin execute/permission callback effects are unproven; this fixture-only read lifecycle is not Pantheon behavior coverage',
-  ),
-}, async () => {
-  const proofBefore = readProof()
-  await prompt(
-    `Use only the read tool to read this exact file path: ${allowedReadPath}. Do not use any other tool. Wait for the read result, then reply with exactly: CANARY-ALLOWED-READ-DONE`,
-  )
-
-  const messages = JSON.parse(await messagesText())
-  const readCall = findCompletedReadCall(messages, allowedReadPath, allowedReadNonce)
-  const proofAfter = readProof()
-  const readAfter = assertExecuteAfterForCall(proofBefore, proofAfter, readCall)
-  assert.equal(
-    readAfter.filePath,
-    allowedReadPath,
-    'execute.after was not for the allowed read path',
-  )
-  assertReadPermissionObserved(proofBefore, proofAfter, sessionID)
+test('fixture canary deterministically correlates allowed read with execute.after', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-hook-fixture-allowed-'))
+  const proofPath = join(root, 'proof.log')
+  const allowedPath = join(root, 'allowed.txt')
+  const nonce = 'CANARY-READ-ALLOWED-fixture'
+  const session = 'ses-fixture-allowed'
+  const callID = 'call-fixture-allowed'
+  writeFileSync(allowedPath, `${nonce}\n`)
+  try {
+    const host = await createFixtureHookHost(proofPath, join(root, 'blocked.txt'), session)
+    const proofBefore = host.proof()
+    const result = await host.read(allowedPath, callID)
+    const messages = {
+      data: [
+        {
+          parts: [
+            {
+              type: 'tool',
+              tool: 'read',
+              callID,
+              state: { status: result.status, input: result.input, output: result.output },
+            },
+          ],
+        },
+      ],
+    }
+    const readCall = findCompletedReadCall(messages, allowedPath, nonce)
+    const readAfter = assertExecuteAfterForCall(proofBefore, host.proof(), readCall)
+    assert.equal(readAfter.filePath, allowedPath)
+    assert.equal(result.executorCalled, true)
+    assertReadPermissionObserved(proofBefore, host.proof(), session)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('real plugin execute.after exposes a hashline-tagged read result', {
@@ -862,6 +989,21 @@ test('real plugin execute.after exposes a hashline-tagged read result', {
   const messages = JSON.parse(await messagesText())
   const readCall = findCompletedReadCall(messages, allowedReadPath, allowedReadNonce)
   assertHashlineTaggedRead(completedToolOutput(readCall.state), allowedReadNonce)
+})
+
+test('fixture session.hook("prompt") fires on a host-backed prompt admission', {
+  skip: skipped || IS_REAL,
+}, async () => {
+  const proofBefore = readProof()
+  await request('POST', `/api/session/${sessionID}/prompt`, {
+    text: 'CANARY-HOOK-ADMISSION-ONLY; no tool is required',
+  })
+  await waitFor(
+    () => readProof() !== proofBefore && readProof().includes('session.hook:prompt'),
+    10000,
+    'fixture session.hook("prompt") after host prompt admission',
+  )
+  assert.match(readProof(), /^session\.hook:prompt$/m)
 })
 
 test('session.hook("compaction") fires on compaction', { skip: skipped }, async () => {
@@ -989,16 +1131,26 @@ test('real plugin regression guards: honest transform support claims and correct
   )
 })
 
-test('real mode explicitly skips fixture-only execute/permission behavior', () => {
+test('fixture read lifecycle assertions are deterministic and independent of model use', () => {
   const source = readFileSync(TEST_SRC, 'utf8')
-  assert.equal(
-    (source.match(/skip: fixtureOnlySkip\(/g) ?? []).length,
-    2,
-    'both fixture-only read lifecycle tests must use explicit mode-aware skips',
+  const testMarker =
+    "\ntest('fixture read lifecycle assertions are deterministic and independent of model use'"
+  const testStart = source.indexOf(testMarker)
+  assert.notEqual(testStart, -1, 'lifecycle assertions test must be present')
+  const canaryImplementation = source.slice(0, testStart)
+  assert.match(
+    canaryImplementation,
+    /createFixtureHookHost/,
+    'read lifecycle must be replayed without a model',
   )
   assert.doesNotMatch(
-    source,
+    canaryImplementation,
+    /fixtureOnlySkip/,
+    'model-dependent fixture skips must be removed',
+  )
+  assert.doesNotMatch(
+    canaryImplementation,
     /if \(IS_REAL\) return/,
-    'real mode must not silently pass by returning',
+    'real mode must not silently pass by returning from an assertion',
   )
 })

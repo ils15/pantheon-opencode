@@ -53,6 +53,7 @@ test('V2 export loads from a clean production-only consumer', () => {
       readJson(join(ROOT, 'package.json')).dependencies['@opencode-ai/plugin'],
     )
     assert.equal(installedManifest.devDependencies?.['@opencode-ai/plugin'], undefined)
+    assert.equal(installedManifest.exports['.'], './src/plugin-v2.ts')
     assert.equal(installedManifest.exports['./plugin'], './src/plugin.ts')
     assert.equal(installedManifest.exports['./plugin-v2'], './src/plugin-v2.ts')
 
@@ -66,8 +67,10 @@ test('V2 export loads from a clean production-only consumer', () => {
       [
         "import v2Plugin from 'pantheon-opencode/plugin-v2'",
         "import v1Plugin from 'pantheon-opencode/plugin'",
+        "import rootPlugin from 'pantheon-opencode'",
         "if (v2Plugin.id !== 'pantheon-opencode-v2') throw new Error('invalid V2 default export')",
         "if (typeof v2Plugin.setup !== 'function') throw new Error('V2 setup is not callable')",
+        "if (rootPlugin.id !== v2Plugin.id || typeof rootPlugin.setup !== 'function') throw new Error('root package entry is not V2-loadable')",
         "if (typeof v1Plugin !== 'function') throw new Error('V1 export changed')",
         "console.log('V2 and V1 exports loaded')",
         '',
