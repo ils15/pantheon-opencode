@@ -130,6 +130,41 @@ test('V2 npm-shorthand and legacy refs share the directory identity', () => {
   assert.equal(pluginReferenceIdentity(dir), 'src/plugin-v2')
 })
 
+test('versioned Pantheon package refs are managed during V2 migration', async () => {
+  for (const ref of [
+    'pantheon-opencode',
+    'pantheon-opencode@beta',
+    'pantheon-opencode@1.6.0-beta.7',
+    { package: 'pantheon-opencode@1.6.0-beta.7' },
+  ]) {
+    assert.equal(
+      pluginReferenceIdentity(ref),
+      'src/plugin-v2',
+      `Pantheon package ref should map to the managed V2 plugin: ${JSON.stringify(ref)}`,
+    )
+  }
+
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-stale-package-ref-'))
+  try {
+    const thirdParty = 'npm:@acme/my-plugin'
+    const config = await runInstall(
+      target,
+      {
+        plugins: [
+          'pantheon-opencode@1.6.0-beta.7',
+          { package: 'pantheon-opencode@beta' },
+          thirdParty,
+        ],
+      },
+      'v2',
+    )
+
+    assert.deepEqual(config.plugins, [thirdParty, join(ROOT, 'src', 'plugin-v2')])
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
 test('resolveInstalledPlugin preserves a third-party plugin-v2 file path', () => {
   const thirdParty = '/tmp/vendor/pantheon-opencode/src/plugin-v2.ts'
   assert.equal(resolveInstalledPlugin(thirdParty), thirdParty)

@@ -103,6 +103,50 @@ test('runner is V2-only: no V1 leg, no sibling-repo inference', () => {
   )
 })
 
+test('MCP startup failures retain and print the mcp-list diagnostic output', () => {
+  const src = readFileSync(RUNNER, 'utf8')
+  assert.equal(
+    (src.match(/mcp list output \(preserved at \$list_file\)/g) ?? []).length,
+    2,
+    'both MCP registration and handshake failures must print captured output',
+  )
+  assert.equal(
+    (src.match(/cat "\$list_file" >&2 \|\| true/g) ?? []).length,
+    2,
+    'both failure paths must include the original mcp list response',
+  )
+})
+
+test('generated run-test.sh defines its mcp-list timeout under nounset', () => {
+  const src = readFileSync(RUNNER, 'utf8')
+  assert.match(
+    src,
+    /V2_MCP_LIST_TIMEOUT="\$\{PANTHEON_V2_MCP_LIST_TIMEOUT:-15\}"/,
+    'the generated script must define the timeout consumed by `timeout`',
+  )
+})
+
+test('prepare generates an interactive launcher isolated to the sandbox beta', (t) => {
+  const workDir = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-launcher-'))
+  t.after(() => rmSync(workDir, { recursive: true, force: true }))
+  const repoDir = join(workDir, 'repo')
+  const sandboxRoot = join(workDir, 'sandbox')
+  mkdirSync(repoDir, { recursive: true })
+
+  generate(repoDir, sandboxRoot, join(workDir, 'runner-definitions.sh'))
+  const launcher = join(sandboxRoot, 'start-pantheon.sh')
+  assert.ok(existsSync(launcher), 'prepare must create the launcher it advertises')
+  assert.ok(statSync(launcher).mode & 0o111, 'launcher must be executable')
+  const syntax = spawnSync('bash', ['-n', launcher], { encoding: 'utf8' })
+  assert.equal(syntax.status, 0, `launcher has invalid bash syntax:\n${syntax.stderr}`)
+
+  const src = readFileSync(launcher, 'utf8')
+  assert.match(src, /export HOME="\$SANDBOX_HOME"/)
+  assert.match(src, /export OPENCODE_CONFIG_DIR="\$SANDBOX_DIR\/project-v2"/)
+  assert.match(src, /opencode-v2\.db/)
+  assert.match(src, /exec "\$NPM_PREFIX\/bin\/opencode2" "\$@"/)
+})
+
 test('the generated run-test.sh echoes the repo dir byte-for-byte (adversarial paths)', (t) => {
   // The generator used to bake REPO_DIR into the generated file as a
   // `__PANTHEON_REPO_DIR__` placeholder and substitute it with `sed`. That
