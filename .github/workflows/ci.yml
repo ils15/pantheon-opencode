@@ -175,10 +175,50 @@ jobs:
       #
       # Two steps, because the file holds two different claims:
       #   1. two cases that need no host at all — they run unconditionally;
-      #   2. the host-backed cases, which need an `opencode` binary and are
-      #      unavailable on this runner. That unavailability is announced in the
-      #      log on purpose: "no binary" and "never tested" must not look the
-      #      same in the run summary.
+      #   2. the host-backed cases, which need a real `opencode`/`opencode2`
+      #      binary. The step below installs one, so these RUN here rather than
+      #      skip. They used to be announced-and-skipped: the log said "no binary"
+      #      and the step still exited 0, so the run summary could not tell a
+      #      checked gate from an unchecked one. A gate that cannot run is now a
+      #      FAILURE — "no binary" and "never tested" no longer look the same,
+      #      because neither of them is green.
+      #
+      # The canary FILE stays skip-tolerant (it must, so `npm test` works on a
+      # machine with no host); the fail-closed contract lives in the CI step,
+      # which installs the host, re-verifies it, and rejects a summary that
+      # skipped anything. `tests/ci-workflow-fail-closed.test.mjs` exercises all
+      # three failure paths.
+      #
+      # TESTED HOST VERSION — what this gate actually proves
+      # ----------------------------------------------------
+      # The canary is written against ONE host generation, and it is NOT the
+      # host this job installs. The two disagree, and that disagreement is the
+      # whole story of this gate:
+      #
+      #   canary written against : opencode v2.0.22
+      #   host installed below    : @opencode-ai/cli@0.0.0-beta-19271
+      #                             (binary `opencode2 v0.0.0-beta-19271`)
+      #
+      # On v2.0.22 the canary drives `POST /api/experimental/session/{id}/wait`
+      # and reads `ctx.tool.list()`. On the installed beta BOTH are gone: `/wait`
+      # was promoted out of `/experimental` to `POST /api/session/{id}/wait`
+      # (the `/experimental` path answers 404), and `ctx.tool.list` is absent.
+      # That is why the canary fails 12/12 here. It is a host-generation
+      # mismatch, NOT a plugin regression: with the route renamed, 10/12 pass on
+      # this same beta, including the edit actually being applied and the mutant
+      # still being caught.
+      #
+      # So the install is PINNED rather than tracking `@beta`, and the pin is
+      # deliberately NOT a floating tag: a tag makes this gate's verdict change
+      # under the branch with no diff to review. The `npm view` drift annotation
+      # in the install step below is what makes the pin's age visible.
+      #
+      # Do NOT "fix" this step by relaxing a canary assertion, by dropping the
+      # skip check, or by re-pointing the canary at a beta it has not been
+      # verified against. Migrating the canary to the newer host is a separate,
+      # reviewed change tracked as issue #216; until then this gate's honest
+      # output is RED, and the fail-closed guarantee below is what keeps it from
+      # lying.
       - name: V2 tool canary (host-free guards)
         env:
           # The host-free cases are host-free by construction, so this step
@@ -192,15 +232,149 @@ jobs:
           --test-name-pattern='the host environment is redirected into the sandbox|the mutation really removes output from draft.add'
           tests/canary/plugin-v2-tool-canary.test.mjs
 
+      # The host for the step below. This exists because a canary with no host
+      # is not a canary: the runner image ships no `opencode` at all, and the
+      # gate used to `exit 0` in exactly that case, so it reported success while
+      # verifying nothing. Missing binary, failed install and unresolved check
+      # are now all hard failures (see the negative cases in
+      # tests/ci-workflow-fail-closed.test.mjs).
+      #
+      # Two deliberate choices here:
+      #
+      # 1. Installed into a prefix PRIVATE to this step, never appended to PATH.
+      #    A global `opencode2` would also be visible to the V2 sandbox step at
+      #    the end of this job, whose `sandbox_bin_for` deliberately requires the
+      #    binary to resolve INSIDE its own sandbox prefix. A second copy on PATH
+      #    could let that gate validate a binary it never installed — the same
+      #    false green, one step over. `PANTHEON_CANARY_CLI` is an absolute path,
+      #    so the consumer below needs no PATH change at all.
+      #
+      # 2. `npm install` here, not `npm ci`, and that is not a lockfile
+      #    regression. The OpenCode CLI is the HOST UNDER TEST, not a dependency
+      #    of this package — scripts/test-opencode-v2-sandbox.sh says the same of
+      #    its own install ("this is an install spec only — it is not a dependency
+      #    of this package, and no code imports it"). Locking the thing you are
+      #    testing would make the test prove only that the lock is unchanged. The
+      #    project dependencies still come from the single `npm ci` above; the
+      #    workflow-text guard in tests/ci-workflow-fail-closed.test.mjs allows
+      #    exactly this one shape and no other.
+      # 3. The spec is an EXACT version, not `@beta`. `@beta` resolved to
+      #    0.0.0-beta-19271 on 2026-10-05 and is a moving target: every beta
+      #    release can change what this gate proves, with no diff on the branch
+      #    to review and no way to tell a plugin regression from a host change.
+      #    An exact pin makes the gate's verdict reproducible; the drift
+      #    annotation below makes the pin's age visible instead of silent.
+      - name: Install the OpenCode host CLI for the tool canary
+        env:
+          OPENCODE_CANARY_CLI_SPEC: '@opencode-ai/cli@0.0.0-beta-19271'
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/pantheon-canary-cli"
+          npm install --global --prefix "$prefix" --no-fund --no-audit "$OPENCODE_CANARY_CLI_SPEC"
+          # `npm install` exiting 0 is not evidence that a binary exists, and a
+          # binary existing is not evidence that it RUNS. Both names are probed
+          # by EXACT name — never an `opencode*` glob, which would equally match
+          # a broken `opencode-broken` and paper over a genuinely missing host.
+          #
+          # Both names are checked because a host can be reachable under either,
+          # but they are NOT interchangeable and must not be treated as one. The
+          # npm package ships a real `opencode2` binary (its `bin` map has
+          # exactly one entry, `opencode2`), and that binary is a DIFFERENT host
+          # from the `opencode` a normal install provides — it is not a shim onto
+          # it. This comment previously claimed the two "are the same host in
+          # practice", on the strength of scripts/install/opencode-version.mjs,
+          # which observed a 47-byte local `opencode2` shim execing a local
+          # `opencode`. That is true of one developer's install directory and
+          # false of what this step installs. Believing it is what let a host
+          # whose API had moved on be validated as though it were the host the
+          # canary was written against. See the TESTED HOST VERSION block above.
+          cli=''
+          for name in opencode opencode2; do
+            candidate="$prefix/bin/$name"
+            if [ -x "$candidate" ] && "$candidate" --version >/dev/null 2>&1; then
+              cli="$candidate"
+              break
+            fi
+          done
+          if [ -z "$cli" ]; then
+            echo "::error title=Tool canary host CLI unusable::$OPENCODE_CANARY_CLI_SPEC installed nothing runnable under $prefix/bin as 'opencode' or 'opencode2'. The host-backed tool canary cannot run, and a gate that cannot run must FAIL, not pass."
+            if [ -d "$prefix/bin" ]; then ls -la "$prefix/bin" >&2; fi
+            exit 1
+          fi
+          echo "Tool canary host: $cli ($("$cli" --version 2>&1 | head -1))"
+          echo "PANTHEON_CANARY_CLI=$cli" >> "$GITHUB_ENV"
+
+          # DRIFT VISIBILITY — the smallest thing that stops the pin rotting
+          # quietly. The pin above is what this gate proves; the `beta` dist-tag
+          # is what an unpinned run would have installed. When they differ, the
+          # canary's verdict no longer speaks for the host a fresh install gives.
+          #
+          # This ANNOTATES rather than fails, deliberately. Failing on drift
+          # would turn every beta release into a red run that has nothing to do
+          # with this branch, and that is exactly the noise that gets a gate
+          # switched off. The gate below keeps testing the pinned host it
+          # documents; this line is what tells a reader that host is no longer
+          # the newest one.
+          #
+          # The re-point procedure is documented in the canary file header
+          # ("TESTED HOST VERSION"): re-verify the canary against the candidate
+          # host locally FIRST, then bump this spec in the SAME commit as any
+          # canary change, so the pin and what it proves can never disagree.
+          pin="${OPENCODE_CANARY_CLI_SPEC##*@}"
+          if current_beta="$(npm view @opencode-ai/cli dist-tags.beta 2>/dev/null)"; then
+            if [ "$current_beta" != "$pin" ]; then
+              echo "::warning title=Tool canary host pin is behind beta::This run proved the plugin against $OPENCODE_CANARY_CLI_SPEC, but the beta dist-tag now resolves to $current_beta, so the pinned host is no longer what a fresh install gives. Re-point per the procedure in tests/canary/plugin-v2-tool-canary.test.mjs — and re-verify the canary against the new host before pinning it."
+            fi
+          else
+            echo "::warning title=Tool canary beta lookup unresolved::Could not read the @opencode-ai/cli beta dist-tag, so pin drift is UNKNOWN for this run. Only the pinned host was proven."
+          fi
+
       - name: V2 tool canary (full host run)
         run: |
           set -euo pipefail
-          if ! command -v "${PANTHEON_TOOL_CANARY_BIN:-opencode}" >/dev/null 2>&1; then
-            echo "::notice title=Tool canary SKIPPED::no 'opencode' binary on PATH — the host-backed tool canary did NOT run here. The host-free guards in the previous step DID run."
-            echo "SKIPPED (visible): no 'opencode' binary on PATH, so src/plugin-v2.ts was NOT driven through a live host in this job."
-            exit 0
+          # Fail closed, three ways. Each one of these used to be a green run:
+          #   - no binary        -> the step used to `exit 0` (the P0);
+          #   - a broken binary  -> never detected, the canary file just skipped;
+          #   - a canary that
+          #     skipped itself  -> also a green run, because node --test exits 0
+          #                         on a skipped case. The file stays
+          #                         skip-tolerant so `npm test` works on a machine
+          #                         with no host; the GATE must not be. So the
+          #                         summary is checked for skips below.
+          if [ -z "${PANTHEON_CANARY_CLI:-}" ] \
+            || [ ! -x "$PANTHEON_CANARY_CLI" ] \
+            || ! "$PANTHEON_CANARY_CLI" --version >/dev/null 2>&1; then
+            echo "::error title=Tool canary did not run::No usable OpenCode host for the host-backed tool canary (PANTHEON_CANARY_CLI='${PANTHEON_CANARY_CLI:-<unset>}'). The previous step installs and pins it; this step must not pass without it. src/plugin-v2.ts was NOT driven through a live host."
+            exit 1
           fi
-          npm run test:tool-canary
+          echo "Driving src/plugin-v2.ts through $PANTHEON_CANARY_CLI"
+          log="$(mktemp)"
+          if ! PANTHEON_TOOL_CANARY_BIN="$PANTHEON_CANARY_CLI" \
+            npm run test:tool-canary >"$log" 2>&1; then
+            cat "$log"
+            exit 1
+          fi
+          cat "$log"
+          # The skip count is read from the summary line, NOT from `# SKIP`
+          # markers: node's default reporter here is `spec`, which prints
+          # skipped cases as `﹣ name (…) # reason` and carries no `# SKIP`
+          # marker at all, so a grep for that string passes vacuously on a
+          # canary that skipped everything. Both reporters end their summary
+          # with `skipped <n>` (`# skipped 0` in tap, `ℹ skipped 0` in spec), so
+          # the count is read from whichever ran.
+          # Read the count in an `if` first: under `set -e` a `grep` that matches
+          # nothing aborts the step, so testing for the line before extracting it
+          # is what turns "unresolved" into a NAMED failure instead of a silent
+          # non-zero exit with no explanation.
+          if ! grep -qE 'skipped [0-9]+' "$log"; then
+            echo "::error title=Tool canary check unresolved::The canary ran but its summary reported no skip count, so 'did it actually run any host-backed check?' cannot be answered. An unresolved check is a failure, not a pass."
+            exit 1
+          fi
+          skips="$(grep -oE 'skipped [0-9]+' "$log" | tail -n 1 | grep -oE '[0-9]+')"
+          if [ "$skips" -ne 0 ]; then
+            echo "::error title=Tool canary ran no host-backed check::The canary exited 0 but skipped $skips case(s). A canary that did not run cannot pass."
+            exit 1
+          fi
 
       - name: Security audit
         run: |
