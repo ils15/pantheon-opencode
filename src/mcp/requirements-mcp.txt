@@ -5,8 +5,8 @@
 # with the vector pipeline — the server no longer imports either.
 mcp==2.2.0
 fastmcp==4.0.10
-pydantic==2.12.5
-pydantic-settings==2.14.2
+pydantic==2.13.5
+pydantic-settings==2.15.0
 pyyaml==6.0.3
 # Vision imports httpx; MCP 2.2.0 provides httpx2, a different package.
 httpx==0.28.1
