@@ -623,18 +623,16 @@ conta e não do repositório (ver P1-5).
 **P2-10 — O secret scanner não protege contra a leitura de um arquivo de
 credencial cujo caminho o agente já sabe.**
 **Status: OPEN.**
-`scan-secrets.sh` casa **valores** de secret no input da tool call — as expressões
-de `HIGH_CONFIDENCE_PATTERNS` e `LOW_CONFIDENCE_PATTERNS`,
-`scripts/hooks/scan-secrets.sh:19-38` — e o hook dispara em
-`tool.execute.before` (`src/plugins/pantheon-hooks.ts:1172`, payload montado de
-`output.args` em `:1183`), ou seja, sobre **argumentos**, nunca sobre acesso ao
-sistema de arquivos. O input de uma chamada `read` é um **caminho de arquivo**, e
-um caminho não casa com nenhum padrão de valor. O hook **não tem capacidade de
-gating por leitura**: um agente que já sabe o caminho lê o arquivo sem que nada
-intervenha, e a documentação de plugins do host mostra o caminho oposto como
-idiomático — o exemplo de `.env protection` intercepta `input.tool === "read"` e
-inspeciona `output.args.filePath`. Auditoria datada da documentação do host,
-2026-10-03.
+`scanSecretPayload` em `src/pantheon/secret-scanner.ts` examina o input serializado
+da tool call. O call site V1 é `tool.execute.before` em
+`src/plugins/pantheon-hooks.ts:1170-1186` (usa `output.args`, com fallback para
+`input.args`); o V2 fica em `src/plugin-v2.ts:1042-1059` (usa `output.args`). Em
+ambos, o scanner recebe **argumentos da ferramenta**, não controla acesso ao
+sistema de arquivos nem restringe leituras por caminho. Assim, saber o caminho de
+um arquivo de credencial ainda permite tentar lê-lo; a documentação de plugins do
+host mostra o caminho oposto como idiomático — o exemplo de `.env protection`
+intercepta `input.tool === "read"` e inspeciona `output.args.filePath`. Auditoria
+datada da documentação do host, 2026-10-03.
 
 **Onde a correção pertence.** Qualquer modelo de permissão que queira restringir
 **leituras** tem de viver nos grants de `permission` que o installer semeia —
