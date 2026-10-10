@@ -22,8 +22,9 @@ export interface V2PermissionEvent {
   resources?: unknown
   /** Optional event identity is checked but never used as authority. */
   agent?: unknown
-  /** Permission effect reported by the V2 host event. */
+  /** Mutable decision fields exposed by OpenCode V2's evaluate hook. */
   effect?: unknown
+  message?: unknown
 }
 
 export interface AuthoritativeSession {

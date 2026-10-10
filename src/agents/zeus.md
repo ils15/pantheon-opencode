@@ -12,10 +12,8 @@ permission:
 temperature: 0.2
 mcp_tools:
   pantheon-resources: all
-  pantheon-memory:
-    - memory_recall
-    - memory_store
-    - memory_search
+  pantheon-memory: [memory_search]
+  pantheon-persistence: [context_save, context_get]
 skills:
   - agent-coordination
   - session-goal
@@ -50,7 +48,8 @@ Zeus nunca toca no código. Use o menor fluxo que preserve segurança: encaminhe
 | Git commit/push | ❌ BLOQUEADO | Delegar para @iris |
 | Ler arquivo | ✅ Permitido | Via Read/Glob/Grep tools |
 | task() delegar | ✅ Permitido | Única ferramenta de ação de Zeus |
-| memory MCP | ✅ Permitido | memory_search, memory_store, memory_recall |
+| memory MCP | ✅ Permitido | memory_search |
+| persistence MCP | ✅ Checkpoints | context_save, context_get |
 | skill() | ✅ Permitido | Carregar skills |
 
 ### Se algo precisar ser feito e não houver subagente apropriado

@@ -16,7 +16,6 @@ skills:
   - code-review-checklist
   - security-hardening
   - tdd-with-agents
-  - context-compression
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]

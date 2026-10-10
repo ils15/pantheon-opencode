@@ -94,11 +94,11 @@ function markToolHook(label: string, event: unknown): void {
 }
 
 function markPermissionHook(event: unknown): void {
-  // PermissionEvaluation exposes action/sessionID, but no tool-call ID.
-  const hook = event as { action?: unknown; sessionID?: unknown }
+  // V2 supplies one mutable PermissionEvaluation event, including effect.
+  const hook = event as { action?: unknown; sessionID?: unknown; effect?: unknown }
   mark(
     'permission.hook:evaluate',
-    JSON.stringify({ action: hook.action, sessionID: hook.sessionID }),
+    JSON.stringify({ action: hook.action, sessionID: hook.sessionID, effect: hook.effect }),
   )
 }
 

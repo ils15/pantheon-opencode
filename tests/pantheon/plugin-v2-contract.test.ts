@@ -450,7 +450,7 @@ async function main(): Promise<void> {
   }
 
   test('permission hook denies disallowed V2 delegation using authoritative session identity', async () => {
-    let permissionHandler: ((event: unknown, output?: unknown) => void | Promise<void>) | undefined
+    let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
     const bodyCalls: string[] = []
     await plugin.setup(
       makeBaseContext({
@@ -471,64 +471,79 @@ async function main(): Promise<void> {
 
     assert.equal(typeof permissionHandler, 'function')
     const handler = permissionHandler
-    const denied = { status: 'ask' }
-    await handler?.({ sessionID: 'root', agent: 'zeus', resources: ['demeter'] }, denied)
+    const denied = {
+      sessionID: 'root',
+      agent: 'zeus',
+      resources: ['demeter'],
+      effect: 'ask',
+    }
+    await handler?.(denied)
     assert.equal(
-      denied.status,
+      denied.effect,
       'deny',
       'forged event identity cannot widen the authoritative caller',
     )
+    assert.match(String(denied.message), /Pantheon delegation denied/i)
 
-    const allowed = { status: 'ask' }
-    await handler?.({ sessionID: 'root', agent: 'athena', resources: ['apollo'] }, allowed)
+    const allowed = {
+      sessionID: 'root',
+      agent: 'athena',
+      resources: ['apollo'],
+      effect: 'ask',
+    }
+    await handler?.(allowed)
     assert.equal(
-      allowed.status,
+      allowed.effect,
       'ask',
       'allowed matrix edge must not be converted into an allow grant',
     )
-    if (allowed.status !== 'deny') bodyCalls.push('apollo')
+    if (allowed.effect !== 'deny') bodyCalls.push('apollo')
 
-    const invalid = { status: 'ask' }
-    await handler?.({ sessionID: 'invalid', resources: ['apollo'] }, invalid)
-    assert.equal(invalid.status, 'deny', 'invalid session lookup fails closed')
-    if (invalid.status !== 'deny') bodyCalls.push('invalid')
+    const invalid = { sessionID: 'invalid', resources: ['apollo'], effect: 'ask' }
+    await handler?.(invalid)
+    assert.equal(invalid.effect, 'deny', 'invalid session lookup fails closed')
+    if (invalid.effect !== 'deny') bodyCalls.push('invalid')
 
-    await assert.rejects(
-      () => handler?.({ sessionID: 'root', resources: ['demeter'] }),
-      /permission output is unavailable/i,
-      'a denied V2 delegation must fail closed if the host omits the mutable output argument',
-    )
+    const malformed = { sessionID: 'root', effect: 'ask' }
+    await handler?.(malformed)
+    assert.equal(malformed.effect, 'deny', 'a missing resource list fails closed in the event')
+    assert.match(String(malformed.message), /resources are missing or malformed/i)
 
-    const explicitDeny = { status: 'deny' }
-    await handler?.({ sessionID: 'root', resources: ['apollo'] }, explicitDeny)
-    assert.equal(explicitDeny.status, 'deny', 'configured host denial remains final')
+    const explicitDeny = { sessionID: 'root', resources: ['apollo'], effect: 'deny' }
+    await handler?.(explicitDeny)
+    assert.equal(explicitDeny.effect, 'deny', 'configured host denial remains final')
 
-    const native = { status: 'ask' }
-    await handler?.({ sessionID: 'invalid', resources: ['explore'] }, native)
-    assert.equal(native.status, 'ask', 'native target keeps host permission behavior')
+    const native = { sessionID: 'invalid', resources: ['explore'], effect: 'ask' }
+    await handler?.(native)
+    assert.equal(native.effect, 'ask', 'native target keeps host permission behavior')
 
-    const nativeFirstPantheonSecond = { status: 'ask' }
-    await handler?.(
-      { sessionID: 'root', resources: ['explore', 'demeter'] },
-      nativeFirstPantheonSecond,
-    )
+    const nativeFirstPantheonSecond = {
+      sessionID: 'root',
+      resources: ['explore', 'demeter'],
+      effect: 'ask',
+    }
+    await handler?.(nativeFirstPantheonSecond)
     assert.equal(
-      nativeFirstPantheonSecond.status,
+      nativeFirstPantheonSecond.effect,
       'deny',
       'native-first V2 resources cannot bypass a later Pantheon target',
     )
 
-    const multiplePantheonTargets = { status: 'ask' }
-    await handler?.({ sessionID: 'root', resources: ['apollo', 'hermes'] }, multiplePantheonTargets)
+    const multiplePantheonTargets = {
+      sessionID: 'root',
+      resources: ['apollo', 'hermes'],
+      effect: 'ask',
+    }
+    await handler?.(multiplePantheonTargets)
     assert.equal(
-      multiplePantheonTargets.status,
+      multiplePantheonTargets.effect,
       'deny',
       'all Pantheon targets must be explicitly allowed for the authoritative caller',
     )
 
-    const unknownResource = { status: 'ask' }
-    await handler?.({ sessionID: 'root', resources: ['apollo', null] }, unknownResource)
-    assert.equal(unknownResource.status, 'deny', 'unknown resource values fail closed')
+    const unknownResource = { sessionID: 'root', resources: ['apollo', null], effect: 'ask' }
+    await handler?.(unknownResource)
+    assert.equal(unknownResource.effect, 'deny', 'unknown resource values fail closed')
     assert.deepEqual(bodyCalls, ['apollo'], 'only allowed delegation proceeds to its body')
   })
 

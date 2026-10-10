@@ -34,7 +34,8 @@ test('memory retrieval and storage are selective rather than automatic', () => {
   )
   assert.match(zeusMemoryOps, /JSON-stringify both `value` and[\s\S]*`metadata`/i)
   assert.doesNotMatch(zeusMemoryOps, /kv_(?:get|store|search)/)
-  assert.doesNotMatch(zeus, /pantheon-persistence|kv_(?:get|store|search)/i)
+  assert.match(zeus, /pantheon-persistence:\s*\[context_save, context_get\]/i)
+  assert.doesNotMatch(zeus, /kv_(?:get|store|search)/i)
   assert.match(zeus, /Não use KV compartilhado para contar profundidade/i)
   assert.doesNotMatch(mnemosyne, /Called automatically by Zeus when any agent returns/i)
   assert.match(mnemosyne, /Never auto-index a `subtask_summary`/i)
@@ -77,8 +78,11 @@ test('checkpoint use avoids a redundant read after successful save', () => {
     /only for long-running or multi-phase work when `context_save` and `context_get` are available/i,
   )
   assert.match(zeusAntiStall, /Do not retrieve it after every dispatch/i)
-  assert.match(contextCompression, /não usa o persistence MCP/i)
-  assert.match(contextCompression, /sem integração com os hooks de compactação/i)
+  assert.match(
+    contextCompression,
+    /does not create an automatic compression, memory, or checkpoint workflow/i,
+  )
+  assert.match(contextCompression, /Create a persistence checkpoint only when the user asks/i)
 })
 
 test('memory documentation describes the current low-call policy and current API', () => {

@@ -61,6 +61,7 @@ const V1_CONFIG = {
   permission: {
     skill: { '*': 'allow' },
     websearch: 'deny',
+    task: { '*': 'allow' },
     bash: {
       'git *': 'allow',
       'npm *': 'allow',
@@ -113,7 +114,7 @@ const V1_WITH_VARIANT = {
  * Expected V2 output of migrateV1toV2(V1_CONFIG).
  *
  * Permission order follows V1 object key iteration:
- * skill → websearch → bash (shell entries).
+ * skill → websearch → subagent → bash (shell entries).
  * MCP has no timeout since V1 had none.
  */
 const V2_EXPECTED = {
@@ -134,6 +135,7 @@ const V2_EXPECTED = {
   permissions: [
     { action: 'skill', resource: '*', effect: 'allow' },
     { action: 'websearch', resource: '*', effect: 'deny' },
+    { action: 'subagent', resource: '*', effect: 'allow' },
     { action: 'shell', resource: 'git *', effect: 'allow' },
     { action: 'shell', resource: 'npm *', effect: 'allow' },
     { action: 'shell', resource: 'npx *', effect: 'allow' },
@@ -199,6 +201,8 @@ describe('config-migration', () => {
       // websearch
       const wsPerm = v2.permissions.find((p) => p.action === 'websearch')
       assert.deepEqual(wsPerm, { action: 'websearch', resource: '*', effect: 'deny' })
+      const subagentPerm = v2.permissions.find((p) => p.action === 'subagent')
+      assert.deepEqual(subagentPerm, { action: 'subagent', resource: '*', effect: 'allow' })
     })
 
     it('should convert agent permissions (nested)', () => {
@@ -570,6 +574,7 @@ describe('config-migration', () => {
       assert.equal(v1.permission.skill, 'allow')
       // websearch with only * resource → scalar
       assert.equal(v1.permission.websearch, 'deny')
+      assert.equal(v1.permission.task, 'allow')
     })
 
     it('should convert agent permissions back to nested object', () => {
@@ -670,8 +675,8 @@ describe('config-migration', () => {
       assert.ok(Array.isArray(v2.permissions))
       assert.ok(v2.mcp.bifrost)
       assert.ok(v2.agents)
-      // Permission count: 7 shell + 1 skill + 1 websearch = 9
-      assert.equal(v2.permissions.length, 9)
+      // Permission count: 7 shell + 1 skill + 1 websearch + 1 subagent = 10
+      assert.equal(v2.permissions.length, 10)
       // Agent permission count: 6 edit + 2 shell = 8
       assert.equal(v2.agents.talos.permissions.length, 8)
       // MCP disabled

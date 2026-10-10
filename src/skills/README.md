@@ -23,8 +23,8 @@ There are **20 skills** divided into **5 domains**.
    - Used by: Zeus, Apollo, Hephaestus, Nyx, Gaia
 
 4. **context-compression** — `context-compression/SKILL.md`
-   - Level 2 — Pantheon-native context compression with priority scoring, semantic summarization, budget allocation, and cross-references.
-   - Used by: Zeus, Mnemosyne, Themis
+   - Native compaction guidance and explicit checkpoint rules; no automatic compression MCP calls.
+   - Used by: Zeus, Mnemosyne
 
 5. **memory-bank** — `memory-bank/SKILL.md`
    - Memory bank rules, structure, and optimization — complete guide to Pantheon memory management.
@@ -124,7 +124,7 @@ The `SKILL.md` file contains YAML frontmatter with `name`, `description`, and pl
 | 1 | agent-coordination | Orchestration & Workflow | Zeus |
 | 2 | artifact-management | Orchestration & Workflow | Zeus, Mnemosyne, Iris |
 | 3 | auto-continue | Orchestration & Workflow | Zeus, Apollo, Hephaestus, Nyx, Gaia |
-| 4 | context-compression | Orchestration & Workflow | Zeus, Mnemosyne, Themis |
+| 4 | context-compression | Orchestration & Workflow | Zeus, Mnemosyne |
 | 5 | memory-bank | Orchestration & Workflow | Mnemosyne, Athena |
 | 6 | session-goal | Orchestration & Workflow | Zeus, Mnemosyne |
 | 7 | clonedeps | Development Tools | Hermes, Hephaestus |

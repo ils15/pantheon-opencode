@@ -29,9 +29,10 @@ function deepClone(obj) {
 // V1 → V2 helpers
 // ---------------------------------------------------------------------------
 
-/** Action name mapping for permissions (V1 key → V2 action) */
+/** Action name mapping for permissions (V1 key → V2 action), including task → subagent. */
 const V1_PERMISSION_TO_ACTION = {
   bash: 'shell',
+  task: 'subagent',
   skill: 'skill',
   edit: 'edit',
   websearch: 'websearch',

@@ -54,6 +54,9 @@ project-local installation, or non-interactive setup, see the
 [installation guide](docs/INSTALLATION.md).
 The bundled Python MCP servers use the pinned MCP SDK 2.2.0 and standalone
 FastMCP 4.0.10 runtime; see the [MCP guide](docs/MCP.md).
+The installer also turns each agent's `mcp_tools` allowlist into native
+per-agent permissions for OpenCode V1 and V2; see the
+[agent MCP reference](docs/AGENT-MCP.md).
 
 ## A simple example
 

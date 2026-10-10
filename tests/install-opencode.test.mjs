@@ -26,6 +26,7 @@ import { test } from 'node:test'
 import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
 import {
   applyContextSandboxToV2Plugins,
+  deriveNativeMcpPermissions,
   installOpenCode,
   isGlobalConfigDir,
   MANAGED_FIELDS,
@@ -40,6 +41,42 @@ const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 const THIRD_PARTY_HOOKS = '/tmp/pantheon-opencode-vendor/src/plugins/pantheon-hooks.ts'
 const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
 const THIRD_PARTY_PANTHEON_PLUGIN = '/tmp/vendor/pantheon/src/plugin.ts'
+
+test('mcp_tools metadata becomes fail-closed per-server V1 permission rules', () => {
+  const permissions = deriveNativeMcpPermissions({
+    'pantheon-memory': ['memory_search'],
+    'pantheon-code-mode': [],
+  })
+
+  assert.equal(permissions['pantheon-memory_*'], 'deny')
+  assert.equal(permissions.pantheon_memory_memory_search, 'allow')
+  assert.equal(permissions.pantheon_memory_memory_store, undefined)
+  assert.equal(permissions.pantheon_code_mode_execute_code_script, undefined)
+  assert.equal(permissions['pantheon_code_mode_*'], 'deny')
+  assert.equal(permissions['pantheon-persistence_*'], 'deny')
+  assert.equal(permissions['pantheon-vision_*'], 'deny')
+})
+
+test('mcp_tools all and checkpoint allowlists map to V1 and V2 MCP names', () => {
+  const permissions = deriveNativeMcpPermissions({
+    'pantheon-resources': 'all',
+    'pantheon-persistence': ['context_save', 'context_get'],
+  })
+
+  assert.equal(permissions['pantheon-resources_*'], 'allow')
+  assert.equal(permissions['pantheon_resources_*'], 'allow')
+  assert.equal(permissions['pantheon-persistence_*'], 'deny')
+  assert.equal(permissions.pantheon_persistence_context_save, 'allow')
+  assert.equal(permissions.pantheon_persistence_context_get, 'allow')
+  assert.equal(permissions.pantheon_persistence_context_list, undefined)
+})
+
+test('mcp_tools rejects invalid permission metadata instead of widening access', () => {
+  assert.throws(
+    () => deriveNativeMcpPermissions({ 'pantheon-memory': true }),
+    /must be "all" or an array of tool names/i,
+  )
+})
 
 test('resolveInstalledPlugin maps the exact relative root plugin into the installed package', () => {
   const result = resolveInstalledPlugin('src/plugin.ts')

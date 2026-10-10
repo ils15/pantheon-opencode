@@ -135,6 +135,74 @@ export const MANAGED_FIELDS = Object.freeze([
   'disable_model_invocation',
 ])
 
+const PANTHEON_MCP_SERVERS = Object.freeze([
+  'pantheon-resources',
+  'pantheon-memory',
+  'pantheon-code-mode',
+  'pantheon-persistence',
+  'pantheon-vision',
+])
+
+function normalizeMcpPermissionSegment(value) {
+  return value.replace(/[^a-zA-Z0-9_]/g, '_')
+}
+
+/**
+ * Translate an agent's `mcp_tools` frontmatter into per-tool native
+ * permissions. V1 matches the original server-tool names; V2 normalizes
+ * punctuation to underscores. Emitting both spellings keeps the same source
+ * metadata valid for either host. Unlisted bundled Pantheon servers default to
+ * deny; unrelated user MCP servers are not touched.
+ *
+ * @param {Record<string, 'all' | string[]>} mcpTools
+ * @returns {Record<string, 'allow' | 'deny'>}
+ */
+export function deriveNativeMcpPermissions(mcpTools) {
+  if (mcpTools === null || typeof mcpTools !== 'object' || Array.isArray(mcpTools)) {
+    throw new TypeError('mcp_tools must be an object keyed by MCP server name')
+  }
+
+  const servers = new Set([...PANTHEON_MCP_SERVERS, ...Object.keys(mcpTools)])
+  const permissions = {}
+
+  for (const server of servers) {
+    if (!/^[a-zA-Z0-9._-]+$/.test(server)) {
+      throw new TypeError(`mcp_tools server name is invalid: ${server}`)
+    }
+    const tools = Object.hasOwn(mcpTools, server) ? mcpTools[server] : []
+    if (
+      tools !== 'all' &&
+      (!Array.isArray(tools) ||
+        tools.some((tool) => typeof tool !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(tool)))
+    ) {
+      throw new TypeError(`mcp_tools.${server} must be "all" or an array of tool names`)
+    }
+
+    const serverAliases = new Set([server, normalizeMcpPermissionSegment(server)])
+    for (const alias of serverAliases) permissions[`${alias}_*`] = 'deny'
+  }
+
+  for (const server of servers) {
+    const tools = Object.hasOwn(mcpTools, server) ? mcpTools[server] : []
+    const serverAliases = new Set([server, normalizeMcpPermissionSegment(server)])
+    if (tools === 'all') {
+      for (const alias of serverAliases) permissions[`${alias}_*`] = 'allow'
+      continue
+    }
+
+    for (const tool of tools) {
+      const toolAliases = new Set([tool, normalizeMcpPermissionSegment(tool)])
+      for (const serverAlias of serverAliases) {
+        for (const toolAlias of toolAliases) {
+          permissions[`${serverAlias}_${toolAlias}`] = 'allow'
+        }
+      }
+    }
+  }
+
+  return permissions
+}
+
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
 }
@@ -1139,6 +1207,12 @@ export async function installOpenCode(
       // Build permission from frontmatter
       if (fm.permission) {
         agent.permission = JSON.parse(JSON.stringify(fm.permission))
+      }
+      if (fm.mcp_tools !== undefined) {
+        agent.permission = {
+          ...(agent.permission ?? {}),
+          ...deriveNativeMcpPermissions(fm.mcp_tools),
+        }
       }
 
       config[name] = agent

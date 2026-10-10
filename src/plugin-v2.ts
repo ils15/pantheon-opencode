@@ -1151,6 +1151,8 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
  *
  * The V2 permission.hook API (when available) provides:
  *   ctx.permission.hook("evaluate", handler) — host permission evaluation
+ * The handler receives one mutable PermissionEvaluation event; decisions are
+ * written to event.effect/event.message (there is no separate V1-style output).
  *
  * Returns true if the hook was registered.
  */
@@ -1164,14 +1166,10 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
   }
 
   try {
-    await permCtx.hook('evaluate', async (rawEvent: unknown, rawOutput?: unknown) => {
+    await permCtx.hook('evaluate', async (rawEvent: unknown) => {
       const event = rawEvent as V2PermissionEvent | null
-      const output =
-        rawOutput !== null && typeof rawOutput === 'object'
-          ? (rawOutput as { status?: unknown })
-          : undefined
-      const statusBefore = output?.status
-      const writeProof = (statusAfter: unknown): void => {
+      const effectBefore = event?.effect
+      const writeProof = (): void => {
         const proofPath = process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF
         if (!proofPath || !event || !Array.isArray(event.resources)) return
         try {
@@ -1182,38 +1180,49 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
               agent: event.agent,
               sessionID: event.sessionID,
               effect: event.effect,
+              message: event.message,
               eventFields: ['resources', 'agent', 'sessionID', 'effect'].filter((key) =>
                 Object.hasOwn(event, key),
               ),
-              outputPresent: output !== undefined,
-              statusBefore: statusBefore ?? null,
-              statusAfter: statusAfter ?? null,
+              effectBefore: effectBefore ?? null,
+              effectAfter: event.effect ?? null,
             })}\n`,
           )
         } catch {
           // Instrumentation is best-effort and must not affect permission flow.
         }
       }
-      const deny = (): void => {
-        if (!output) {
-          writeProof(undefined)
-          throw new Error('permission output is unavailable; denying V2 permission evaluation')
+      const deny = (reason: string): void => {
+        if (event === null || typeof event !== 'object') {
+          throw new Error(
+            `permission event is unavailable; denying V2 permission evaluation (${reason})`,
+          )
         }
-        output.status = 'deny'
-        writeProof(output.status)
+        event.effect = 'deny'
+        event.message = `Pantheon delegation denied: ${reason}`
+        if (event.effect !== 'deny') {
+          throw new Error(
+            `permission event is not mutable; denying V2 permission evaluation (${reason})`,
+          )
+        }
+        writeProof()
       }
 
-      if (output?.status === 'deny') {
-        writeProof(output.status)
+      if (event?.effect === 'deny') {
+        writeProof()
         return // explicit host deny is final
       }
-      if (event == null || !Array.isArray(event.resources)) {
-        deny()
+      if (event == null) {
+        deny('permission event is missing')
+        return
+      }
+      if (!Array.isArray(event.resources) || event.resources.length === 0) {
+        deny('permission resources are missing or malformed')
         return
       }
       const targets = event.resources.map(v2ResourceTarget)
       if (targets.some((target) => target === undefined)) {
-        deny()
+        deny('permission resource target is malformed')
         return
       }
       const hasPantheonTarget = targets.some((target) => PANTHEON_AGENTS.has(target ?? ''))
@@ -1227,16 +1236,16 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
             throw new Error('invalid session')
           session = retrieved as AuthoritativeSession
         } catch {
-          deny()
+          deny('authoritative caller session is unavailable')
           return
         }
       }
 
       // Native-only resources remain under host policy. If a Pantheon target
       // appears anywhere, the shared policy evaluates the complete resource set.
-      const decision = evaluateV2Delegation(event, session, output?.status)
-      if (decision === 'deny') deny()
-      else writeProof(output?.status)
+      const decision = evaluateV2Delegation(event, session, event.effect)
+      if (decision === 'deny') deny('caller or target is not allowed by delegation policy')
+      else writeProof()
     })
     return true
   } catch {
