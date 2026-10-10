@@ -139,7 +139,10 @@ test('doctor recognises the absolute and package-export forms of the V2 entry', 
     'src/plugin-v2',
     '/opt/pantheon/src/plugin-v2',
     'pantheon-opencode/plugin-v2',
+    'pantheon-opencode@1.6.0',
     { path: '/opt/pantheon/src/plugin-v2' },
+    { package: 'pantheon-opencode@1.6.0', options: {} },
+    { package: 'pantheon-opencode/plugin-v2' },
   ]) {
     assert.deepEqual(
       collectV2UnsupportedFeatures([config('project root', { plugins: [ref] })]),
@@ -147,6 +150,15 @@ test('doctor recognises the absolute and package-export forms of the V2 entry', 
       `doctor must treat ${JSON.stringify(ref)} as a V2 registration`,
     )
   }
+})
+
+test('doctor does not classify similarly named third-party packages as Pantheon V2', () => {
+  assert.equal(
+    isV2GenerationRegistered([
+      config('project root', { plugins: ['pantheon-opencode-fork@1.6.0'] }),
+    ]),
+    false,
+  )
 })
 
 test('doctor collects nothing for a V1-registered config', () => {

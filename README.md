@@ -135,18 +135,19 @@ host is an unsupported mixed/wrong-generation configuration, not a supported mod
 
 ### What the OpenCode 2 path is — and is not
 
-**Not inert.** The V2 path (`src/plugin-v2`, registered as a directory because
-the V2 loader rejects bare file paths) registers real tools with real
-`input`/`output` schemas via `ctx.tool.transform()`, 5 event subscriptions,
-session hooks and tool/permission hooks that enforce read-only sessions and the
-caller→target delegation matrix. The matrix applies only to Pantheon-managed
-targets: Zeus may delegate to any registered agent; Athena and Hermes may target
-Apollo only; other Pantheon callers and unknown callers are denied. Child
-sessions cannot delegate to Pantheon agents. Calls between native/custom agents
-remain under host permissions. The V2 path never adds an allow grant or
-overrides an explicit host deny; missing or mismatched identity fails closed
-for the attempted Pantheon delegation. The 3 goal tools remain unsupported and
-are reported as `goal-tools`.
+**Not inert.** V2 registers the version-pinned npm package
+`pantheon-opencode@<version>` (pinned to the installed Pantheon version); its
+package-root export points to `src/plugin-v2.ts`.
+It registers real tools with `input`/`output` schemas via
+`ctx.tool.transform()`, five event subscriptions, session hooks, and tool/
+permission hooks for read-only enforcement and the Pantheon caller→target
+delegation matrix. For Pantheon-managed targets, Zeus may delegate to any
+registered agent; Athena and Hermes may target Apollo only; other Pantheon
+callers and unknown callers are denied. Child sessions cannot delegate to
+Pantheon agents. Native/custom targets remain under host permissions. V2 never
+adds an allow grant or overrides an explicit host deny; missing or mismatched
+identity fails closed for a Pantheon delegation. The three goal tools remain
+unsupported and are reported as `goal-tools`.
 
 **Not complete either, and the V2 support claim is currently narrowed.** Two
 facts, both recorded in this repository rather than smoothed over:
@@ -292,7 +293,7 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 | | V1 | V2 |
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
-| Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) |
+| Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | Version-pinned npm package `pantheon-opencode@<version>` (root export loads V2) |
 | Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | V2 plugin: 3 Pantheon tools when required enforcement registers, 5 event subscriptions, session hooks (`prompt`, `context`), a read-only and secret-scanning `execute.before` hook, plus configuration transforms |
 | V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 
@@ -331,6 +332,12 @@ every call. Unsupported V2 features are `legacy-hooks` (the V1-specific hook
 surface), `catalog-transform`, `integration-transform`, `skill-transform` and
 `goal-tools`.
 
+When `init --opencode-version v2` migrates a V1-shaped permission config, it
+translates `task` to the V2 `subagent` action and `write` to `edit` (which also
+covers host `write`/`patch`). If legacy `edit` and `write` rules collide on a
+resource, migration keeps the stricter effect. Hand-edited V2 configs should
+use the native top-level `permissions` array and action/resource/effect form.
+
 ### Runtime secret-scanning limit
 
 V1 and V2 use the same in-process scanner on their tool `execute.before` paths.
@@ -355,14 +362,11 @@ preflight/serialization and host-hook overhead, is not a historical or
 Bash-versus-TypeScript comparison, and makes no speedup claim. It does not print
 scan input.
 
-The package exposes both contracts as importable exports: `pantheon-opencode/plugin`
-(V1), `pantheon-opencode/plugin-v2` (V2) and `pantheon-opencode/v2-bridge`
-(optional interop), so a host can load either contract explicitly.
-
-The V1→V2 bridge (`src/pantheon/v2-bridge.ts`) enables optional interop:
-V1 infrastructure singletons (BackgroundJobBoard, GoalStore,
-TodoEnforcer, VisionHandler) are passed through V2 `ctx.options`. The bridge is
-optional — V2 works standalone with graceful degradation.
+The package exposes both contracts as importable exports: the package root and
+`pantheon-opencode/plugin-v2` load V2; `pantheon-opencode/plugin` loads V1.
+`pantheon-opencode/v2-bridge` is currently an importable utility only:
+production setup does not wire it into the V2 plugin, so it does not provide
+runtime interoperability or restore V1 goal/board features.
 
 Select the contract explicitly when installing:
 
@@ -379,8 +383,8 @@ the host in this order: an explicit `OPENCODE_VERSION=v1|v2` wins; otherwise an
 binary is asked for its `--version` and a major of 2 or more selects V2. Every
 other case — an unreadable probe, an unparseable banner, or a banner whose
 version-like tokens contradict each other with no tool name to break the tie —
-warns once and falls back to V1, because a plural `plugins` directory entry on
-an unknown 1.x host loses the plugin entirely.
+warns once and falls back to V1, because the V2-only package export is not a
+valid V1 runtime contract on an unknown 1.x host.
 
 The probe prefers the token that follows the tool name, so a runtime token
 ahead of it (`node v22.1.0 (opencode 1.18.33)`) or a trailing build date
@@ -444,8 +448,9 @@ Key order does not matter.
 One command keeps an existing installation current:
 
 ```bash
-# Without a global install, ALWAYS pin the dist-tag — plain `npx
-# pantheon-opencode` resolves `latest`, which is the stable release (1.4.3):
+# Without a global install, pin the intended npm dist-tag. The `latest` tag
+# reflects the most recently published stable release, not an unpublished
+# release candidate:
 npx pantheon-opencode@beta update            # npm beta channel + config refresh
 npx pantheon-opencode@beta update --stable   # stable channel instead
 

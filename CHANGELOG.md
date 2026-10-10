@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
-## [v1.6.0] - 2026-10-09
+## [v1.6.0] - 2026-10-10
 
 This stable candidate consolidates the beta.1–beta.6 changes. The original beta
 entries remain below as historical records so release detail is not discarded.
@@ -35,6 +35,12 @@ entries remain below as historical records so release detail is not discarded.
   README during `--prepare`.
 - **Dependency and TUI maintenance:** synchronized release manifests, updated
   dependency/security overrides, and TUI/runtime consistency checks.
+- **Simpler agent dispatch path:** no-change questions can be answered directly;
+  bounded fixes route to one specialist; council guidance is loaded on demand;
+  and default routing no longer makes per-task KV/cache lookups. Synthetic
+  timeout/session behavior unsupported by the host was removed. These changes
+  simplify the prompt and dispatch path; this release makes no measured token,
+  cost, or latency improvement claim.
 
 ## 🐞 Fixed
 
@@ -50,6 +56,24 @@ entries remain below as historical records so release detail is not discarded.
 - Sandbox `tmp/` is not blanket-deleted: prepare only expires hash-named Node
   compile-cache files owned by the current user and older than 30 days. Runtime
   state, unknown entries, and handoff/evidence files remain untouched.
+- **V2 plugin registration is stable across install locations.** `init` now
+  writes the exact `pantheon-opencode@<version>` npm entry and the package root
+  exports the V2 plugin. This replaces absolute paths into a global prefix or
+  transient `npx` cache; `doctor` recognizes the pinned package and reports
+  version drift. A clean production-only package consumer test covers the root
+  export.
+- **V1-to-V2 permissions preserve their intended actions.** Migration maps
+  `task` to V2 `subagent` and `write` to the `edit` action that also governs
+  `write`/`patch`. If V1 `edit` and `write` rules collide on one resource, the
+  more restrictive effect wins. Tests cover global and nested agent rules.
+- **`doctor` distinguishes SQLite readiness from tool registration.** The
+  `node:sqlite` check now says it verifies only the backend prerequisite, not
+  whether `pantheon_cost` registered on the active host.
+- **Release documentation was reconciled with current code.** The V2 caller /
+  target matrix is enforced by `permission.evaluate`; the bridge export is an
+  importable utility but is not wired into production; the V2 event count and
+  package registration format are corrected in both READMEs and the install /
+  upgrade guides.
 
 ## ⚠️ Known Issues
 
@@ -61,6 +85,16 @@ entries remain below as historical records so release detail is not discarded.
   `opencode 2.0.22`; the installable CLI has drifted from that canary contract
   (tracked in issue #216). See the README compatibility table for the measured
   evidence and limitations.
+- **Release validation is not complete.** Live provider E2E returned HTTP 403,
+  the interactive V2 TUI/model-backed turn has not been verified, and the
+  previously observed within-session tool-catalog oscillation (P0-4) still has
+  no reproduced cause. This candidate must not be published until the host
+  validation gates are resolved or explicitly waived.
+- **V2 init from an unpublished source checkout cannot bootstrap its own npm
+  pin.** It writes the exact package version and emits a warning; OpenCode
+  cannot resolve that version until it is published. This is limited to
+  running the installer from the repository checkout. After publication, use
+  the npm-installed or `npx` installer for the supported consumer path.
 
 ## [v1.6.0-beta.6] - 2026-10-05
 

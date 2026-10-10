@@ -925,41 +925,11 @@ interface V2ToolExecuteBeforeEvent {
  * tool — `hashline_edit` and `pantheon_model` are denied here for exactly the
  * reason they are denied in V1.
  *
- * Deliberately NOT passed `getSessionAgent` / `isRootSession` / `isChildSession`.
- * There are TWO distinct reasons, and conflating them is what produced a wrong
- * causal chain here once already — keep them apart:
- *
- * 1. MISSING `getSessionAgent` (wiring). This is what would deny every
- *    `task()` call. V2 learns the active agent from the `execute.before` event
- *    itself and keeps no session→agent map, so there is no lookup to hand the
- *    guard. The guard would call `isDelegationAllowed(undefined, target)`,
- *    which returns `false`, and throw "caller agent is unavailable" — for
- *    every caller, including Zeus. Note what is NOT happening: an unseeded
- *    `isRootSession` would *pass* the root gate (`isRoot` reports `true` for an
- *    unknown session), so the hierarchy is not what denies here.
- *
- * 2. UNWIRED HIERARCHY (design). `SessionHierarchyRegistry` is what gates
- *    exactly two things, and nothing else: the depth-2 child deny
- *    (`isChildSession`) and the root-session gate (`isRootSession`). Left
- *    unseeded, `isChild` is `false` for every session, so depth-2 would never
- *    fire on a genuine child — a hierarchy that cannot tell a child from a root
- *    is not a trustworthy input to either check.
- *
- *    "Unwired", not "impossible": the V2 `session.created` event carries
- *    `properties.info: Session` including `parentID?`, the same field V1 seeds
- *    from on the same event, so one line in `onSessionCreated` would seed live
- *    sessions (see its docstring). What has no V2 equivalent is V1's SECOND
- *    source, the `client.session.list()` startup seed — V2's `PluginContext`
- *    exposes no `client`. Whether a live 2.0.22 host populates `info.parentID`
- *    is UNVERIFIED; no canary reads an event payload. So the correct summary is
- *    "seeded for nothing", not "unseedable", and the guard's omission is right
- *    today for the weaker reason that nothing seeds it at all.
- *
- * Omitting all three skips the branch wholesale: the guard only enters it when
- * `options?.isRootSession !== undefined`. `task` is still denied inside a
- * read-only session via the blocked-tool list, so depth-2 holds for
- * apollo/gaia; the caller/target matrix itself is NOT enforced on V2. That is
- * a known gap, not a covered case.
+ * Caller/target delegation authorization is separate: V2's
+ * `permission.evaluate` hook resolves the authoritative caller from the host
+ * session and applies the matrix in `v2-delegation-enforce.ts`. Keeping the
+ * responsibilities separate avoids treating this mutating-tool deny list as
+ * the delegation policy.
  */
 const v2EnforcementGuard = createEnforcementGuard({
   getReadOnlySessions: () => readOnlyRegistry.sessionIDs(),
