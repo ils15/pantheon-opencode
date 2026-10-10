@@ -1,6 +1,6 @@
-# Pantheon Installation Guide — v1.6.0-beta.1 (OpenCode 2)
+# Pantheon Installation Guide — v1.6.0 (OpenCode 2)
 
-Pantheon v1.6.0-beta.1 is **OpenCode 2-compatible**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. As tabelas de preset são derivadas de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
+Pantheon v1.6.0 is **OpenCode 2-compatible**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. As tabelas de preset são derivadas de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
 
 ## TL;DR (Quick Start)
 
@@ -175,7 +175,7 @@ The full policy, including the verification table, is in the
 
 ### Escolha de geração
 
-Pantheon 1.6.0-beta.1 does not load both Pantheon plugin generations in one
+Pantheon 1.6.0 does not load both Pantheon plugin generations in one
 installation. The ordinary OpenCode settings may be merged, but the installer
 removes Pantheon references from both config shapes before registering only the
 selected generation:
