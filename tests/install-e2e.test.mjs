@@ -299,6 +299,25 @@ test('V1 fresh install has agent as singular object (not agents)', async () => {
   }
 })
 
+test('V1 agent MCP permissions follow mcp_tools allowlists', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-mcp-perms-'))
+  try {
+    const config = await runInstall(target, 'v1')
+    const zeus = config.agent.zeus.permission
+    const gaia = config.agent.gaia.permission
+    assert.equal(zeus['pantheon-memory_*'], 'deny')
+    assert.equal(zeus.pantheon_memory_memory_search, 'allow')
+    assert.equal(zeus.pantheon_memory_memory_store, undefined)
+    assert.equal(zeus.task['*'], 'allow')
+    assert.equal(zeus.pantheon_persistence_context_save, 'allow')
+    assert.equal(zeus.pantheon_persistence_context_list, undefined)
+    assert.equal(gaia.pantheon_vision_vision_analyze, 'allow')
+    assert.equal(zeus['pantheon_vision_*'], 'deny')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
 test('V1 removes todoContinuation (rejected by recent OpenCode)', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-todo-'))
   try {
@@ -502,6 +521,30 @@ test('V2 fresh install has agents as named object with array permissions', async
         }
       }
     }
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 agent MCP permissions follow mcp_tools allowlists', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-mcp-perms-'))
+  try {
+    const config = await runInstall(target, 'v2')
+    const rules = config.agents.zeus.permissions
+    const effect = (action) => rules.findLast((rule) => rule.action === action)?.effect
+    assert.equal(effect('subagent'), 'allow')
+    assert.equal(effect('task'), undefined)
+    assert.equal(effect('pantheon_memory_*'), 'deny')
+    assert.equal(effect('pantheon_memory_memory_search'), 'allow')
+    assert.equal(effect('pantheon_memory_memory_store'), undefined)
+    assert.equal(effect('pantheon_persistence_context_save'), 'allow')
+    assert.equal(effect('pantheon_persistence_context_list'), undefined)
+    assert.equal(
+      config.agents.gaia.permissions.findLast(
+        (rule) => rule.action === 'pantheon_vision_vision_analyze',
+      )?.effect,
+      'allow',
+    )
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

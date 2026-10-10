@@ -22,6 +22,7 @@ mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_recall]
   pantheon-code-mode: []
+  pantheon-vision: [vision_describe, vision_ocr, vision_analyze]
 ---
 
 ## Core Capabilities

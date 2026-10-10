@@ -23,6 +23,7 @@ mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
+  pantheon-vision: [vision_describe, vision_ocr, vision_analyze]
 ---
 
 ##  When NOT to Use Aphrodite
@@ -104,15 +105,6 @@ After implementing UI components:
 - Stop for required Themis review on sensitive/material changes
 - Do NOT auto-continue on visual regression — stop and diagnose
 - Partial results NOT allowed — must complete or fail
-
-## Inline Compression
-
-Compress working context with the `context-compression` skill (L1, Pantheon-native) when:
-- > Inline compression: See `skill: context-compression` (C8, C9, C11)
-
-**How**: call `execute_code_script("compress-inline.py", args=["compress", "--text", "<content>"])`. Use `score` to preview priority, `batch` for multiple files. See the `context-compression` skill for the full protocol.
-
-**Note**: scrubbing is automatic in the MCP layer; never embed raw secrets in the `--text` argument beyond what the tool scrubs.
 
 ## Skills
 Frontend: `tdd-with-agents`, `visual-review-pipeline`, `incremental-implementation`

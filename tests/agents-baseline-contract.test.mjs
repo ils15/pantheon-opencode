@@ -14,6 +14,7 @@ const timeoutRetry = read('../src/instructions/zeus-timeout-retry.instructions.m
 const returnContract = read('../src/instructions/agent-return-format.instructions.md')
 const routing = read('../src/routing.yml')
 const subtaskPrompt = read('../prompts/subtask.prompt.md')
+const contextCompression = read('../src/skills/context-compression/SKILL.md')
 
 function instructionBody(source) {
   return source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim()
@@ -86,4 +87,20 @@ test('subtask prompt preserves the canonical required return contract', () => {
     /If memory affected the result, state the takeaway briefly[\s\S]*do not repeat the entry/i,
   )
   assert.doesNotMatch(subtaskPrompt, /\*\*tokens:\*\*[^\n]*optional/i)
+})
+
+test('context compression relies on native compaction and explicit checkpoints', () => {
+  assert.match(contextCompression, /native compaction/i)
+  assert.match(contextCompression, /only when the user asks/i)
+  assert.match(contextCompression, /context_save/)
+  assert.match(contextCompression, /context_get/)
+  assert.doesNotMatch(
+    contextCompression,
+    /compress-inline\.py|execute_code_script|priority scoring/i,
+  )
+
+  for (const agent of ['aphrodite', 'demeter', 'hephaestus', 'hermes', 'prometheus']) {
+    const source = read(`../src/agents/${agent}.md`)
+    assert.doesNotMatch(source, /compress-inline\.py|Inline Compression/)
+  }
 })

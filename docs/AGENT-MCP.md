@@ -5,28 +5,36 @@ pantheon-persistence and pantheon-vision) plus the optional third-party servers.
 
 ---
 
-## Overview Matrix
+## Native Per-Agent Allowlist
 
-| Agent | Resources | Code-Mode | Memory | context7 | playwright |
-|-------|-----------|-----------|--------|----------|------------|
-| **zeus** | ✅ routing, deepwork | ✅ orchestration | ✅ recall | — | — |
-| **athena** | ✅ agents, routing | ✅ research | ✅ recall | ✅ | — |
-| **apollo** | ✅ agents, skills | ✅ — | ✅ search | ✅ | — |
-| **hermes** | ✅ agents, skills | ✅ build/test | ✅ store, recall | ✅ | ✅ |
-| **aphrodite** | ✅ memory-bank | ✅ build | ✅ store, recall | ✅ | ✅ |
-| **demeter** | ✅ agents, routing | ✅ — | ✅ store, recall | ✅ | — |
-| **themis** | ✅ agents | ✅ lint checks | ✅ search | ✅ | ✅ |
-| **prometheus** | ✅ agents, routing | ✅ deploy scripts | ✅ store, recall | ✅ | — |
-| **hephaestus** | ✅ agents, skills | ✅ — | ✅ search | ✅ | — |
-| **nyx** | ✅ routing | ✅ — | ✅ stats | ✅ | — |
-| **gaia** | ✅ agents | — | minimal | ✅ | — |
-| **iris** | ✅ agents | — | minimal | — | — |
-| **mnemosyne** | ✅ memory-bank | ✅ — | ✅ store, recall, search, forget | — | — |
-| **talos** | ✅ agents, skills | ✅ hotfix scripts | ✅ recall | ✅ | — |
+The installer reads `mcp_tools` from each canonical file in `src/agents/` and
+generates native per-agent permissions for OpenCode V1 and V2. For each
+Pantheon MCP server it denies the wildcard first, then allows the declared
+tools. Undeclared Pantheon servers default to deny; unrelated user MCP servers
+are untouched. In V2, per-agent rules hide tools from that agent without
+disconnecting the MCP server.
 
-`pantheon-vision` is installed for the runtime, but is not automatically bound
-to every agent. Agents that need image analysis should request its tools
-explicitly and use the `ask` permission tier.
+| Agent | Resources | Code-mode | Memory | Persistence | Vision |
+|-------|-----------|-----------|--------|-------------|--------|
+| **zeus** | all | — | search | save/get checkpoint | — |
+| **athena** | all | — | search | — | — |
+| **apollo** | all | — | search | — | — |
+| **hermes** | all | execute script | search | — | — |
+| **aphrodite** | all | execute script | search | — | describe/OCR/analyze |
+| **demeter** | all | execute script | search | — | — |
+| **themis** | all | execute script | search | — | — |
+| **prometheus** | all | execute script | search | — | — |
+| **hephaestus** | all | execute script | search | — | — |
+| **nyx** | all | execute script | search | — | — |
+| **gaia** | all | — | recall | — | describe/OCR/analyze |
+| **iris** | all | — | recall | — | — |
+| **mnemosyne** | all | execute script | explicit memory tools | — | — |
+| **talos** | all | execute script | recall | — | — |
+
+`pantheon-vision` remains connected for the host but is available only to agents
+that handle image workflows. Checkpoints are limited to `context_save` and
+`context_get` on Zeus; native compaction remains OpenCode's context-pressure
+path.
 
 ---
 
@@ -55,19 +63,21 @@ explicitly and use the `ask` permission tier.
 
 | Agent | Use Case | When |
 |-------|----------|------|
-| **zeus** | Run orchestration sequences — build, test, deploy automation | Multi-phase orchestration |
-| **athena** | Run research automation scripts | During planning phase |
-| **apollo** | Execute automated codebase scanners | Discovery phase |
+| **zeus** | — | Delegates script work to an implementation agent |
+| **athena** | — | Planning and research |
+| **apollo** | — | Read-only discovery |
 | **hermes** | Run `pytest`, `ruff check`, `ruff format` | After implementation, before handoff to Themis |
 | **aphrodite** | Run `npm test`, `biome check` | After implementation, before handoff |
 | **demeter** | Run `pytest` on migration tests | After migration implementation |
 | **themis** | Run lint/quality check scripts during review | Code review phase |
 | **prometheus** | Deploy scripts, Docker builds, CI triggers | Infrastructure phase |
 | **hephaestus** | Run evaluation scripts for AI pipelines | Post-implementation |
+| **nyx** | Run observability scripts | Monitoring work |
+| **mnemosyne** | Run approved memory scripts | Explicit memory tasks |
 | **talos** | Automated hotfix sequences, batch fixes | Rapid repair |
 
-Agents not listed (**gaia**, **iris**, **nyx**, **mnemosyne**) typically do not
-need script execution for their core workflows.
+Agents not listed (**gaia**, **iris**) do not receive `pantheon-code-mode`
+tools from the installed per-agent configuration.
 
 ---
 
@@ -119,38 +129,25 @@ Used by **3 agents**:
 
 ---
 
-## MCP Config in Agent Frontmatter
+## Source Metadata
 
-Each agent template (`agents/*.agent.md`) declares its MCP bindings in YAML
-frontmatter:
+Each canonical agent file declares Pantheon tool access in `mcp_tools`:
 
 ```yaml
----
-mcpServers:
-  - name: pantheon-resources
-    tools:
-      - read_mcp_resource
-    when: "reading agent/skills/routing info"
-  - name: pantheon-memory
-    tools:
-      - memory_recall
-      - memory_store
-      - memory_search
-    when: "persistent memory access"
-  - name: context7
-    tools:
-      - context7_resolve-library-id
-      - context7_query-docs
-    when: "resolving library documentation"
----
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_search]
+  pantheon-persistence: [context_save, context_get]
 ```
 
 ### Rules
 
-- Maximum 5 MCPs per agent
-- `tools` lists the specific MCP tools the agent can access
-- `when` describes the activation condition
-- Third-party MCPs require explicit `env` config with `${VAR}` interpolation
+- `all` allows every tool from that named Pantheon server.
+- A list allows only those tool names; an empty list denies every tool there.
+- A server omitted from an agent's metadata is denied for that agent.
+- These rules are generated into V1 `permission` objects and V2 `permissions` arrays.
+- V1 `permission.task` rules are translated to V2's native `subagent` action.
+- Third-party MCP permissions remain the user's configuration.
 
 ---
 

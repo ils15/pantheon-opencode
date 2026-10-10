@@ -80,6 +80,13 @@ In `opencode.json`, set auto-approve levels:
 - **pantheon-persistence** → `allow` (namespaced local key-value storage)
 - **pantheon-vision** → `ask` (sends image data or URLs to the configured vision gateway)
 
+The installer also reads each canonical agent's `mcp_tools` frontmatter and
+writes native per-agent tool rules for both OpenCode generations. It denies
+undeclared tools from Pantheon's five MCP servers, then allows only the listed
+tools; unrelated user MCP servers are left alone. OpenCode V2 can hide those
+tools from an agent while keeping the MCP server connected. See the
+[per-agent MCP reference](AGENT-MCP.md) for the current allowlists.
+
 ---
 
 ## pantheon-resources

@@ -94,14 +94,5 @@ Use supplied ADR/memory context when relevant. For every schema/data migration, 
 - Always test both upgrade AND downgrade before marking complete
 - Partial results NOT allowed — must complete or fail
 
-## Inline Compression
-
-Compress working context with the `context-compression` skill (L1, Pantheon-native) when:
-- > Inline compression: See `skill: context-compression` (C8, C9, C11)
-
-**How**: call `execute_code_script("compress-inline.py", args=["compress", "--text", "<content>"])`. Use `score` to preview priority, `batch` for multiple files. See the `context-compression` skill for the full protocol.
-
-**Note**: scrubbing is automatic in the MCP layer; never embed raw secrets in the `--text` argument beyond what the tool scrubs.
-
 ## Skills
 `tdd-with-agents`, `incremental-implementation`

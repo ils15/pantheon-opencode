@@ -496,25 +496,24 @@ function assertLiveDelegationDeny(beforeProof, afterProof, toolCall) {
   )
   assert.ok(
     targetRecord,
-    'OpenCode V2.0.25 did not provide permission.evaluate resources[] containing target demeter',
+    'OpenCode V2 did not provide permission.evaluate resources[] containing target demeter',
   )
   for (const field of ['resources', 'agent', 'sessionID', 'effect']) {
     assert.ok(
       targetRecord.eventFields?.includes(field),
-      `OpenCode V2.0.25 permission.evaluate event did not expose ${field}`,
+      `OpenCode V2 permission.evaluate event did not expose ${field}`,
     )
   }
-  assert.equal(targetRecord.outputPresent, true, 'permission hook output argument was absent')
   assert.equal(
-    targetRecord.statusBefore,
+    targetRecord.effectBefore,
     'ask',
-    'permission hook did not receive an undecided output',
+    'permission hook did not receive an undecided mutable event',
   )
-  assert.equal(targetRecord.statusAfter, 'deny', 'Pantheon hook did not force a deny for demeter')
+  assert.equal(targetRecord.effectAfter, 'deny', 'Pantheon hook did not force a deny for demeter')
   assert.notEqual(
-    targetRecord.statusBefore,
-    targetRecord.statusAfter,
-    'canary proof must show a real output mutation, not infer deny from policy',
+    targetRecord.effectBefore,
+    targetRecord.effectAfter,
+    'canary proof must show a real event mutation, not infer deny from policy',
   )
   assert.equal(
     toolCall?.state?.status,
@@ -705,7 +704,7 @@ test('permission.evaluate assertion requires a new read action for this session'
 test('live delegation assertion requires resources target, forced deny, and blocked body', () => {
   const before = ''
   const eventFields = ['resources', 'agent', 'sessionID', 'effect']
-  const proof = `permission.evaluate ${JSON.stringify({ resources: ['demeter'], eventFields, outputPresent: true, statusBefore: 'ask', statusAfter: 'deny' })}\n`
+  const proof = `permission.evaluate ${JSON.stringify({ resources: ['demeter'], eventFields, effectBefore: 'ask', effectAfter: 'deny' })}\n`
   assert.doesNotThrow(() =>
     assertLiveDelegationDeny(before, proof, { state: { status: 'error', output: '' } }),
   )
@@ -713,7 +712,7 @@ test('live delegation assertion requires resources target, forced deny, and bloc
     () =>
       assertLiveDelegationDeny(
         before,
-        `permission.evaluate ${JSON.stringify({ resources: ['explore'], eventFields, outputPresent: true, statusBefore: 'ask', statusAfter: 'deny' })}\n`,
+        `permission.evaluate ${JSON.stringify({ resources: ['explore'], eventFields, effectBefore: 'ask', effectAfter: 'deny' })}\n`,
         { state: { status: 'error' } },
       ),
     /resources\[\] containing target demeter/,
@@ -722,11 +721,11 @@ test('live delegation assertion requires resources target, forced deny, and bloc
     () =>
       assertLiveDelegationDeny(
         before,
-        `permission.evaluate ${JSON.stringify({ resources: ['demeter'], eventFields, outputPresent: false, statusBefore: 'ask', statusAfter: 'ask' })}\n`,
+        `permission.evaluate ${JSON.stringify({ resources: ['demeter'], eventFields, effectBefore: 'ask', effectAfter: 'ask' })}\n`,
         { state: { status: 'error', output: '' } },
       ),
-    /output argument was absent/,
-    'missing callback output must not be treated as an enforced deny',
+    /Pantheon hook did not force a deny/,
+    'an unchanged permission event must not be treated as an enforced deny',
   )
   assert.throws(
     () =>
