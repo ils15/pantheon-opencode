@@ -20,11 +20,11 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "1.18.33",
+    "@opencode-ai/plugin": "1.18.34",
     "@opencode-ai/sdk": "1.18.33",
-    "@opentui/core": "0.5.10",
-    "@opentui/solid": "0.5.10",
-    "solid-js": "1.9.12"
+    "@opentui/core": "0.5.14",
+    "@opentui/solid": "0.5.14",
+    "solid-js": "1.9.15"
   },
   "devDependencies": {
     "rolldown-plugin-solid": "0.2.1",
@@ -33,14 +33,14 @@
   "overrides": {
     "@babel/core": "7.29.7",
     "seroval": "1.6.8",
-    "solid-js": "1.9.12",
+    "solid-js": "1.9.15",
     "rolldown": "1.2.7"
   },
   "//overrides": "TUI production advisory fixes: Babel >=7.29.6 and Seroval >=1.6.3; Solid stays at 1.9.12 to satisfy OpenTUI's exact peer. Remove only after upstream ranges include fixed versions; Seroval compatibility is covered by the Solid serializer regression test.",
   "dependencies": {
-    "@opencode-ai/plugin": "1.18.33",
-    "@opentui/core": "0.5.10",
-    "@opentui/solid": "0.5.10",
-    "solid-js": "1.9.12"
+    "@opencode-ai/plugin": "1.18.34",
+    "@opentui/core": "0.5.14",
+    "@opentui/solid": "0.5.14",
+    "solid-js": "1.9.15"
   }
 }
