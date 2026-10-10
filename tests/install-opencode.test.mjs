@@ -3,7 +3,7 @@
  * scripts/install/opencode.mjs (resolveInstalledPlugin).
  *
  * Validates the packaging fix for PR #45 (delegation plugin at package root):
- *  - exact managed refs resolve to <ROOT>/src/* inside the installed package
+ *  - V1 managed refs resolve to package paths while V2 resolves to an exact npm version
  *  - absolute third-party refs with the same basename remain untouched
  *  - non-src plugin refs (npm specs, etc.) pass through unchanged
  *
@@ -40,6 +40,8 @@ const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 const THIRD_PARTY_HOOKS = '/tmp/pantheon-opencode-vendor/src/plugins/pantheon-hooks.ts'
 const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
 const THIRD_PARTY_PANTHEON_PLUGIN = '/tmp/vendor/pantheon/src/plugin.ts'
+const PACKAGE_VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+const V2_PACKAGE_SPEC = `pantheon-opencode@${PACKAGE_VERSION}`
 
 test('resolveInstalledPlugin maps the exact relative root plugin into the installed package', () => {
   const result = resolveInstalledPlugin('src/plugin.ts')
@@ -72,22 +74,19 @@ test('resolveInstalledPlugin maps the exact relative hooks plugin into the insta
   assert.equal(result, join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'))
 })
 
-test('resolveInstalledPlugin maps the V2 plugin directory into the installed package', () => {
+test('resolveInstalledPlugin maps the V2 plugin directory to its versioned npm package', () => {
   const result = resolveInstalledPlugin('src/plugin-v2')
-  assert.equal(result, join(ROOT, 'src', 'plugin-v2'))
+  assert.equal(result, V2_PACKAGE_SPEC)
 })
 
-test('resolveInstalledPlugin migrates the legacy V2 file ref to the plugin directory', () => {
-  assert.equal(resolveInstalledPlugin('src/plugin-v2.ts'), join(ROOT, 'src', 'plugin-v2'))
-  assert.equal(
-    resolveInstalledPlugin(join(ROOT, 'src', 'plugin-v2.ts')),
-    join(ROOT, 'src', 'plugin-v2'),
-  )
+test('resolveInstalledPlugin migrates the legacy V2 file ref to the versioned package', () => {
+  assert.equal(resolveInstalledPlugin('src/plugin-v2.ts'), V2_PACKAGE_SPEC)
+  assert.equal(resolveInstalledPlugin(join(ROOT, 'src', 'plugin-v2.ts')), V2_PACKAGE_SPEC)
 })
 
 test('V2 npm-shorthand and legacy refs share the directory identity', () => {
   const dir = join(ROOT, 'src', 'plugin-v2')
-  for (const ref of ['pantheon-opencode/plugin-v2', 'src/plugin-v2.ts']) {
+  for (const ref of [V2_PACKAGE_SPEC, 'pantheon-opencode/plugin-v2', 'src/plugin-v2.ts']) {
     assert.equal(pluginReferenceIdentity(ref), 'src/plugin-v2')
   }
   assert.equal(pluginReferenceIdentity(dir), 'src/plugin-v2')
@@ -109,12 +108,13 @@ test('resolveInstalledPlugin recognizes only exact installed paths as managed', 
   }
 })
 
-test('resolved plugin paths exist inside the package (ROOT-derived, not stale refs)', () => {
-  for (const ref of ['src/plugin.ts', 'src/plugins/pantheon-hooks.ts', 'src/plugin-v2']) {
+test('V1 plugin paths stay ROOT-derived while the V2 registration is a versioned npm package', () => {
+  for (const ref of ['src/plugin.ts', 'src/plugins/pantheon-hooks.ts']) {
     const result = resolveInstalledPlugin(ref)
     assert.ok(result.startsWith(join(ROOT, 'src')), `expected ROOT-derived path, got ${result}`)
     assert.ok(existsSync(result), `resolved path does not exist in package: ${result}`)
   }
+  assert.equal(resolveInstalledPlugin('src/plugin-v2'), V2_PACKAGE_SPEC)
 })
 
 test('resolveInstalledPlugin passes through non-src plugin refs unchanged', () => {
@@ -196,6 +196,40 @@ test('sync realigns a stale node_modules plugin path onto the current package (i
     assert.ok(
       config.plugin.every((ref) => !String(ref).includes(staleRoot)),
       `stale node_modules copy still registered: ${JSON.stringify(config.plugin)}`,
+    )
+    assert.ok(
+      config.plugins.every((ref) => !String(ref).includes(staleRoot)),
+      `stale V2 node_modules copy still registered: ${JSON.stringify(config.plugins)}`,
+    )
+    // This test runs in V1 mode (runInstall default): the stale V2 ref is
+    // PRUNED from the legacy `plugins` list, not replaced by an npm pin — the
+    // versioned `pantheon-opencode@<version>` registration is V2-only and is
+    // covered by the V2 test below.
+    assert.ok(
+      config.plugins.every((ref) => !String(ref).startsWith('pantheon-opencode@')),
+      `V1 must not register the versioned npm pin: ${JSON.stringify(config.plugins)}`,
+    )
+    assert.ok(config.plugin.includes(THIRD_PARTY_PLUGIN), 'third-party plugin must be preserved')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 sync realigns a stale node_modules plugin path onto the pinned npm package (issue #158)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-drift-v2-'))
+  try {
+    const staleRoot = '/home/admin/node_modules/pantheon-opencode'
+    const config = await runInstall(
+      target,
+      {
+        plugin: [join(staleRoot, 'src', 'plugin.ts'), THIRD_PARTY_PLUGIN],
+        plugins: [join(staleRoot, 'src', 'plugin-v2')],
+      },
+      'v2',
+    )
+    assert.ok(
+      config.plugins.includes(V2_PACKAGE_SPEC),
+      `stale V2 ref was not replaced by ${V2_PACKAGE_SPEC}: ${JSON.stringify(config.plugins)}`,
     )
     assert.ok(
       config.plugins.every((ref) => !String(ref).includes(staleRoot)),
@@ -357,12 +391,10 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
       'v2',
     )
     assert.equal(config.plugin, undefined)
-    // V2 registers the plugin DIRECTORY inside the installed package
-    // (<pkg>/src/plugin-v2, whose index.ts shim re-exports the real entry):
-    // the beta loader rejects file paths ("must be a directory") and resolves
-    // `a/b` shorthands via npm install (NpmInstallFailedError) — never the V1
-    // local-file paths, which stay V1-only.
-    assert.deepEqual(config.plugins, [userPlugin, join(ROOT, 'src', 'plugin-v2')])
+    // A versioned npm entry resolves through OpenCode's own stable plugin
+    // cache; it cannot point at a transient `npx` package tree. The package root
+    // export is the V2 plugin, while V1 retains its separate file registration.
+    assert.deepEqual(config.plugins, [userPlugin, V2_PACKAGE_SPEC])
     assert.equal(config.theme, 'user-theme')
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -935,7 +967,7 @@ test('V2 install duplicates a V1 top-level context_sandbox into the Pantheon plu
     // The exact Pantheon V2 entry carries the same value under options.
     const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
     assert.equal(typeof entry, 'object', 'the Pantheon V2 entry becomes an options object')
-    assert.equal(entry.package, join(ROOT, 'src', 'plugin-v2'))
+    assert.equal(entry.package, V2_PACKAGE_SPEC)
     assert.deepEqual(entry.options.context_sandbox, legacy)
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -951,7 +983,7 @@ test('an explicit V2 plugin option wins per leaf over the legacy top-level block
         context_sandbox: { enabled: false, limits: { read: { maxLines: 5, keepTail: 2 } } },
         plugins: [
           {
-            package: join(ROOT, 'src', 'plugin-v2'),
+            package: V2_PACKAGE_SPEC,
             options: { context_sandbox: { limits: { read: { maxLines: 99 } } } },
           },
         ],
@@ -1114,7 +1146,7 @@ test('a V2 plugin entry with no managed option stays a no-op string entry', asyn
   try {
     const first = await runInstall(target, null, 'v2')
     const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
-    assert.equal(entry, join(ROOT, 'src', 'plugin-v2'), 'no options object without legacy input')
+    assert.equal(entry, V2_PACKAGE_SPEC, 'no options object without legacy input')
 
     const second = await runInstall(target, first, 'v2')
     assert.deepEqual(second, first, 'absent legacy + absent V2 options stays idempotent')

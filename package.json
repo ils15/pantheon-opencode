@@ -11,6 +11,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "exports": {
+    ".": "./src/plugin-v2.ts",
     "./plugin": "./src/plugin.ts",
     "./plugin-v2": "./src/plugin-v2.ts",
     "./v2-bridge": "./src/pantheon/v2-bridge.ts"

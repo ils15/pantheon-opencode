@@ -183,7 +183,7 @@ selected generation:
 | Selection | OpenCode key | Pantheon registration | Contract |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: `hashline_edit` + goal/cost/model tools, board lifecycle, V1 events/tool hooks and V1 compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks, a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| `v2` | plural `plugins` | Exact npm package `pantheon-opencode@<version>` (package root exports `src/plugin-v2.ts`) | V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks, read-only and caller/target permission hooks, plus configuration transforms |
 
 The V2 plugin is now a **full orchestration plugin** — not just a configuration
 adapter. It registers 3 tools via `ctx.tool.transform()`, subscribes to 5
@@ -229,17 +229,15 @@ Exemplo de `opencode.json` V2:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["<installed>/src/plugin-v2"],
+  "plugins": ["pantheon-opencode@1.6.0"],
   "providers": {
     "opencode": {
       "baseURL": "https://opencode.ai/zen/v1"
     }
   },
   "permissions": [
-    {
-      "tool": "task",
-      "allow": ["zeus", "athena"]
-    }
+    { "action": "subagent", "resource": "*", "effect": "deny" },
+    { "action": "subagent", "resource": "apollo", "effect": "allow" }
   ],
   "mcp": {
     "servers": {
@@ -250,7 +248,9 @@ Exemplo de `opencode.json` V2:
 }
 ```
 
-Contrato: a entrada V2 é o diretório `<installed>/src/plugin-v2` (cujo `index.ts` re-exporta `src/plugin-v2.ts`) — o loader beta exige diretório, não spec npm nem path de arquivo. O TUI é registro separado via `npm run setup` (`tui.json` → `plugins/pantheon-tui`), alinhado a `@opentui/core`/`solid` 0.5.x.
+Contrato: a entrada V2 é um spec npm versionado (`pantheon-opencode@<version>`); o export da raiz do pacote carrega `src/plugin-v2.ts`. Isso evita gravar na config o caminho absoluto que varia entre prefixos globais e caches `npx`. As regras `permissions` usam `action`, `resource` e `effect`; a última regra correspondente vence. O hook do Pantheon mantém sua própria matriz de delegação para agentes Pantheon e não concede `allow` ao host. O TUI é registro separado via `npm run setup` (`tui.json` → `plugins/pantheon-tui`), alinhado a `@opentui/core`/`solid` 0.5.x.
+
+Bootstrap do pin: o spec aponta para a versão **corrente** do pacote. Rodando o installer a partir de um checkout do repositório (fora de `node_modules`) — ou entre um bump de versão e o publish — o pin pode nomear uma versão ainda não publicada no registry. Nesse caso o install emite um aviso (não falha) informando que o OpenCode só passa a resolver o pin depois que a versão for publicada; instalações via npm (global/npx) não emitem o aviso, pois a versão instalada é, por construção, a publicada.
 
 Diferenças do V1:
 
