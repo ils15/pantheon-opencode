@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.6.0-beta.6",
+  "version": "1.6.0-beta.7",
   "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [

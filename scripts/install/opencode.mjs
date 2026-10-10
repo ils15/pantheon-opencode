@@ -332,6 +332,7 @@ const PANTHEON_V2_PLUGIN = 'src/plugin-v2'
 const PANTHEON_V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const PANTHEON_V1_EXPORT = 'pantheon-opencode/plugin'
 const PANTHEON_V2_EXPORT = 'pantheon-opencode/plugin-v2'
+const PANTHEON_PACKAGE_REF = /^pantheon-opencode(?:@[^/]+)?(?:\/(plugin|plugin-v2))?$/
 const PANTHEON_PLUGIN_IDENTITIES = new Set([
   PANTHEON_V1_PLUGIN,
   PANTHEON_V1_HOOKS,
@@ -359,6 +360,17 @@ function pluginMetadataReferences(ref) {
 function managedPluginIdentity(ref) {
   const normalized = normalizePluginRef(ref)
   if (typeof normalized !== 'string') return null
+
+  // Older installs registered the package root itself (often pinned to a
+  // beta version) in OpenCode's plural `plugins` list. Treat all exact npm
+  // specs for this package as managed so an update removes the old cached
+  // copy before registering the current package path. Do not match similarly
+  // named third-party packages such as `pantheon-opencode-fork`.
+  const packageRef = normalized.match(PANTHEON_PACKAGE_REF)
+  if (packageRef !== null) {
+    if (packageRef[1] === 'plugin') return PANTHEON_V1_PLUGIN
+    return PANTHEON_V2_PLUGIN
+  }
 
   if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return normalized
   if (normalized === PANTHEON_V2_LEGACY_FILE) return PANTHEON_V2_PLUGIN

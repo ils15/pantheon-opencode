@@ -190,15 +190,18 @@ there is no Pantheon-specific delegation tool surface to configure. See
 [ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md) for the
 historical engine contract.
 
-This beta.6 candidate combines package and dependency updates, security advisory
-overrides, lint and inventory coverage, TUI restoration and state-refresh work,
-and memory/delegation prompt deduplication. The Zeus prompt reuses one
-task-start memory-search result for task context and delegation routing,
-including on a KV hit; automatic subtask-summary storage and delegation
-safeguards remain in place. Runtime call counts and latency have not been
-measured. Checkpoint/session bootstrap and effective Zeus `context_save`/`context_get`
-access are blocked, unverified follow-up work—not fixed features in this
-candidate.
+This beta.7 candidate combines native per-agent MCP permissions for OpenCode V1
+and V2, V2 delegation-permission alignment, simpler memory/compression
+instructions, and a sandbox check that proves the installed package matches
+this checkout instead of silently accepting stale npm-cached code. The isolated
+sandbox launcher also pins the OpenCode background service to its dedicated
+loopback port, rather than colliding with another OpenCode installation. The Zeus
+prompt reuses one task-start memory-search result for context and routing;
+runtime call counts and latency have not been measured. A manual V2
+`HERMES-PONG` dispatch previously returned
+`Pantheon delegation denied: authoritative caller session is unavailable`, so
+real delegation remains an explicit sandbox verification target, not a
+confirmed fix.
 
 Delegated tasks get at most one retry after an initial timeout or failure. If
 that retry fails, the configured fallback or escalation chain applies.
@@ -533,6 +536,7 @@ single leg.
 
 ```bash
 scripts/test-opencode-v2-sandbox.sh --prepare     # tarball + install + init in the sandbox
+~/pantheon-sandbox/start-pantheon.sh              # interactive TUI in that isolated beta sandbox
 scripts/test-opencode-v2-sandbox.sh --run v2      # base validation only
 scripts/test-opencode-v2-sandbox.sh --prompts     # base validation + prompt battery
 scripts/test-opencode-v2-sandbox.sh --rehydrate   # offline context rehydration/session-summary probe

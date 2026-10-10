@@ -18,6 +18,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.7] - 2026-10-10
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Permissões MCP nativas por agente no OpenCode V1 e V2.** O instalador
+  converte a allowlist `mcp_tools` de cada agente em regras nativas: nega por
+  padrão os servidores Pantheon omitidos, libera apenas as ferramentas
+  declaradas e preserva MCPs de terceiros. O V2 mantém os servidores
+  conectados; as regras limitam quais ferramentas cada agente vê.
+- **Guarda V2 de delegação alinhada ao contrato de permissões.** Os hooks de
+  permissão e de sessão aplicam as restrições de sessão somente-leitura e a
+  matriz caller→target sem conceder acesso além do configurado pelo host.
+- **Menos chamadas automáticas de memória e compressão.** A busca de contexto
+  do Zeus reutiliza o resultado de início de tarefa, e o protocolo de
+  compressão deixa de recomendar pipelines automáticos extensos.
+- **Prova de identidade da instalação do sandbox.** O teste global compara a
+  versão e arquivos do pacote instalado com este checkout e rejeita referências
+  npm antigas nas configurações ativas antes de validar o runtime.
+- O `--prepare` agora gera `start-pantheon.sh` para abrir o TUI interativo com o
+  beta instalado e HOME, configuração XDG, projeto e banco de dados isolados do
+  sandbox. O launcher fixa a porta do serviço gerenciado em `49376` e falha sem
+  parar serviços existentes se a porta dedicada já estiver ocupada.
+
+## 🐞 Fixed
+
+- Referências versionadas/alias do pacote Pantheon que sobravam na lista
+  `plugins` agora são reconhecidas pelo instalador e substituídas pelo caminho
+  do plugin local correto, sem afetar plugins de terceiros com nomes parecidos.
+- A suíte CI foi separada do caminho crítico de instalação/empacotamento para
+  reduzir o tempo até o resultado das verificações do pacote.
+- O `run-test.sh` gerado agora define seu timeout do `mcp list` antes do uso
+  sob `set -u`; antes, a variável ausente interrompia o teste antes de chamar
+  o CLI. A saída do comando também fica disponível quando o gate falha.
+
+## ⚠️ Known Issues
+
+- **A delegação real ainda precisa de confirmação nesta beta.** O teste manual
+  anterior de `HERMES-PONG` foi negado com
+  `Pantheon delegation denied: authoritative caller session is unavailable`;
+  a correção de permissões e a instalação isolada precisam ser verificadas no
+  TUI OpenCode V2 antes de considerar a delegação validada.
 ## [v1.6.0-beta.6] - 2026-10-05
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
