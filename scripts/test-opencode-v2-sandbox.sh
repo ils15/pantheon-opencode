@@ -1580,6 +1580,22 @@ guard_sandbox_root() {
       done
     done
   done
+
+  # OPENCODE_CONFIG and OPENCODE_DB are file overrides. canonicalize_path
+  # resolves symlinked directories but deliberately preserves a final file
+  # symlink (including a dangling one), so its lexical path may not overlap a
+  # sandbox that contains the symlink target. Reset removes the whole sandbox;
+  # reject these final symlinks before canonical-path overlap checks can miss
+  # an in-sandbox target. This is intentionally conservative and avoids having
+  # to interpret absolute, relative, or dot-dot symlink targets here.
+  if [ "$action" = reset ]; then
+    for protected in "${OPENCODE_CONFIG:-}" "${OPENCODE_DB:-}"; do
+      [ -n "$protected" ] || continue
+      [ ! -L "$protected" ] \
+        || die "refusing to reset because OpenCode file override is a symbolic link: $protected"
+    done
+  fi
+
   for protected in \
     "$HOME/.config/opencode" "$HOME/.opencode" \
     "$config_home/opencode" "$data_home/opencode" \
