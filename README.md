@@ -80,6 +80,13 @@ clear handoff between stages of work.
 - Project memory that helps preserve relevant context between sessions.
 - Optional integrations for common development tasks.
 
+Memory is used selectively: the coordinator searches once only when project
+history could affect a task, then passes relevant results to specialists. Store
+one concise, reusable outcome at task completion when it will matter later;
+routine child summaries and phase updates stay in the current handoff. The
+session-checkpoint tools are separate, optional persistence APIs and are not
+called automatically by compaction hooks. See [Memory usage](docs/MEMORY.md).
+
 ## Status
 
 Candidate version: the manifests in this checkout express the version being

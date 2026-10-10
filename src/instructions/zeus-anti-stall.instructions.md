@@ -49,15 +49,13 @@ For long-running or multi-phase tasks expected to run > 5 turns only:
 
 ## Heartbeat & Checkpoint Integration
 
-Use **pantheon-persistence** (`checkpoint:<slug>`, 4h TTL), not checkpoint files/scripts.
-
-Check a heartbeat for stale state during long sessions; save one after anti-stall recovery.
+Use checkpoints only for long-running or multi-phase work when `context_save` and `context_get` are available. Never add persistence calls for a bounded task.
 
 ### Checkpoint / Pre-Compaction
-Checkpoint only long-running or multi-phase work, when context loss is plausible; never add it for a one-off command or bounded fix. Save current phase and remaining tasks before a consequential dispatch and before compaction. Use `context_save` with `content` = `JSON.stringify` of an object whose nested `phase`/`goal`/`delegations`/`heartbeat` values are objects and whose `tail` is an array; omit an unset `goal` rather than passing a string. See `skill: auto-continue` for the payload. Checkpoints expire after 4h.
+Checkpoint only when context loss is plausible and both checkpoint tools are present. Save once at a meaningful boundary using `content=JSON.stringify(state)` and an explicit session ID; `state` must be an object with object-valued `phase`/`goal`/`delegations`/`heartbeat` fields and an array `tail`, and omit an unset `goal`. A successful save needs no immediate read. Checkpoints expire after 4h.
 
 ### Context Retrieval
-For a real next phase, retrieve the latest checkpoint and apply remaining tasks/gotchas; do not create checkpoints just to retrieve context for a bounded task.
+Read a checkpoint only when resuming a workflow with a known session ID. Do not retrieve it after every dispatch; carry ordinary handoffs in the task context.
 
 ### Long-Session Progress
 For long-lived multi-phase work, update an existing/requested progress record every 5 turns with completed and pending work and blockers. Do not create STATUS.md for a bounded task.

@@ -73,44 +73,15 @@ need script execution for their core workflows.
 
 ## pantheon-memory Usage by Agent
 
-| Agent | Key Tools | When | Why |
-|-------|-----------|------|-----|
-| **zeus** | `memory_recall` | Session start | Recall context about active sprint and decisions |
-| **athena** | `memory_recall` | Planning | Recall past architecture decisions and plans |
-| **apollo** | `memory_search` | Discovery | Search for existing patterns and related files |
-| **hermes** | `memory_store`, `memory_recall`, `memory_search` | Throughout | Store implementation decisions, recall backend patterns |
-| **aphrodite** | `memory_store`, `memory_recall`, `memory_search` | Throughout | Store UI decisions, recall component patterns |
-| **demeter** | `memory_store`, `memory_recall` | Throughout | Store schema decisions, recall migration patterns |
-| **themis** | `memory_search` | Review | Search for past review findings |
-| **prometheus** | `memory_store`, `memory_recall` | Throughout | Store infra decisions, recall deployment patterns |
-| **hephaestus** | `memory_search` | Throughout | Search for relevant RAG patterns and AI pipeline decisions |
-| **nyx** | `memory_stats` | Monitoring | Inspect memory totals and disk usage |
-| **gaia** | `memory_recall` | Session start | Recall analysis context from previous sessions |
-| **iris** | `memory_recall` | Session start | Recall PR/release context |
-| **mnemosyne** | All 9 pantheon-memory tools | Documentation | Memory management — store, recall, list, inspect (plus 3 `code_*` codemap tools) |
-| **talos** | `memory_recall` | Session start | Recall hotfix context for rapid fixes |
+Memory is opportunistic, not a per-agent startup checklist. Zeus searches once
+only when prior project context could change the task, then passes useful hits
+to the selected specialist. A specialist searches separately only when no
+relevant result was handed off and historical context is needed. Zeus stores at
+most one concise, reusable top-level outcome; routine child results and phase
+updates are not persisted. Mnemosyne handles explicit memory maintenance.
 
-### Recommended Tool Sequences by Agent
-
-**Zeus** (orchestration):
-```
-memory_recall(key="current-sprint") → start orchestration
-memory_search(query="planning user auth feature") → delegate to Athena
-```
-
-**Hermes** (backend implementation):
-```
-memory_search(query="implementing JWT authentication") → recall prior decisions
-...implement...
-memory_store(value="JWT uses refresh token rotation", key="jwt-refresh")
-```
-
-**Mnemosyne** (memory steward):
-```
-memory_recall(key="sprint-close") → check active context
-memory_search(query="sprint close decisions") → find related entries
-memory_store(value="Sprint close decision", key="sprint-close") → preserve the result
-```
+For actual signatures and the separation between durable memory, TTL KV, and
+session checkpoints, see [Memory](MEMORY.md) and [Persistence MCP](persistence-mcp.md).
 
 ---
 

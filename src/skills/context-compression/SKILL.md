@@ -895,6 +895,6 @@ Camada P0 do Deepwork Plan "Context Window Optimization" (council 2026-08-25, 3/
 ```
 Desabilitar: `"enabled": false` (plugin vira no-op, sem throw).
 
-**Session Memory (P1 — já existe, só conectado):** `pantheon-persistence` KV com TTL 4h já fornece `context_save`/`context_get`. Auto-save antes de compactar (`experimental.session.compacting` → `buildCompactionContext` + `todoPreserver.capture`) e recovery pós-compactação (`session.compacted` → `todoPreserver.onCompacted` + `reassertAfterCompaction`) preservam estado sem novo MCP. Testado em `todo-preserve.test.ts`.
+**Session Memory:** `todoPreserver` mantém o snapshot de TODO apenas em memória do processo (TTL de 60s); não usa o persistence MCP e não sobrevive ao encerramento. As ferramentas `context_*` são checkpoints manuais, sem integração com os hooks de compactação.
 
 **Fora de escopo v1 (YAGNI):** tiktoken counting, LLM summarization, budget dashboard — só se medição provar necessidade.

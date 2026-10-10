@@ -113,9 +113,9 @@ Mnemosyne executes the expanded compression pipeline. When Zeus delegates compre
    - Append new entries to `_xref/index.md`
    - Increment `_xref/_next_id.json`
 
-7. **Auto-index memory**: Store the new entries with the `memory_store` MCP tool (namespace `memory-bank`) so `memory_search` can find them. Search is FTS5 (BM25) keyword retrieval — there is no embedding step to run or report on.
+7. **Optional durable memory**: Only when explicitly requested and the result is reusable across sessions, store one concise top-level decision/fact. Do not index every compressed entry, phase result, or artifact.
 
-8. **Report**: Return summary: "Compressed. 2 CRITICAL, 1 HIGH, 3 STANDARD. Budget: 15/20 lines. Cross-refs: +2 entities, +1 decision. Indexed X new, skipped Y duplicates."
+8. **Report**: Return the compression summary and any unresolved items; do not report memory-index counts unless an explicit store was requested.
 
 ### Write Protocol
 - Atomic write: .tmp → fsync → validate → rename
@@ -145,61 +145,33 @@ Mnemosyne recalls stored entries with the `memory_search` MCP tool:
 ```
 
 **Integration with compress_context:**
-After each `compress_context` run, store the new entries with `memory_store`:
-1. Store each new entry with namespace `memory-bank` and a `memory-bank/<id>` key
-2. Report: "Indexed X new memories, skipped Y duplicates"
+Do not store each compressed entry automatically. Persist only one concise, reusable outcome when explicitly requested.
 
 **Integration with Close sprint:**
-When `Close sprint` is called, before wiping .tmp/:
-1. Store the final batch of entries
-2. Report final index stats
+When `Close sprint` is called, do not create a durable-memory copy of temporary artifacts unless explicitly requested.
 
 ## Invocation Rules
 - Never invoked automatically after phases
 - Called explicitly by @zeus for memory tasks
-- Called by any agent for artifact creation
+- Called by another agent only when an artifact/memory task is explicitly requested
 
-##  Quick-Index Handler (Tier 1 — Background Agent Results)
+## Explicit Memory Store
 
-Called automatically by Zeus when any agent returns a subtask_summary
-(background or foreground). Persists results via the `memory_store` MCP tool
-immediately, no Themis needed.
+Use this only when the user or Zeus explicitly asks to preserve a reusable result. Never auto-index a `subtask_summary` or background-agent result.
 
-**Trigger patterns:**
-- Background agent completes → Zeus calls Mnemosyne Quick-index
-- Apollo returns discovery results → auto-indexed
-- Any agent returns subtask_summary → auto-indexed
+**Use only for an explicit request to preserve one reusable result.** Background completion, Apollo discovery, and `subtask_summary` return are not triggers for durable storage.
 
-**Command:** `@mnemosyne Quick-index <subtask_summary_json>`
+**Command:** `@mnemosyne Store <concise reusable result>`
 
 **What it does:**
-1. Calls `memory_store` with the summary fields
-2. Stores under a `type/agent` namespace and a `<type>:<agent>:<date>` key
-3. Reports: "Indexed: {type} from @{agent} (namespace {namespace})"
-
-**Parameters (from subtask_summary):**
-| Field | Source | Required |
-|-------|--------|----------|
-| `summary` | subtask_summary.summary | [OK] |
-| `agent` | Agent name | [OK] |
-| `files_changed` | subtask_summary.files_changed | [FAIL] (optional) |
-| `status` | subtask_summary.status | [FAIL] (default: complete) |
-| `source_type` | Context: subtask_summary / impl_artifact / discovery | [FAIL] (default: subtask_summary) |
-| `tags` | Comma-separated | [FAIL] (auto-generated) |
-
-**Idempotency:** content_hash dedup — calling twice with same summary is a no-op.
-
-**Safety:**
-- [OK] Safe to call on partial results (indexes what's available)
-- [OK] Safe to call multiple times (idempotent)
-- [OK] Works with no embedding backend (FTS5 keyword search only)
-- [FAIL] Does NOT generate ZZ artifact (that's Tier 2)
-- [FAIL] Does NOT update 01-active-context.md (that's Tier 2)
+1. Check whether the fact/decision is already present if duplication matters
+2. Store one concise result with an appropriate namespace and stable key
+3. Confirm success; never claim a failed or unavailable store was persisted
 
 ##  Auto-Continue (Embedded: Memory)
 
-- Auto-continue through memory initialization and Quick-index operations
-- No checkpoint needed (all operations are idempotent)
+- Continue through explicitly requested memory-bank tasks
+- Do not start Quick-index or persistence operations automatically
 -  Stop before destructive memory operations (delete, cleanup, compress with force)
 - For context compression pipeline: auto-continue through all 8 steps
 - For Sprint close: auto-continue through final index → wipe .tmp/ → update progress

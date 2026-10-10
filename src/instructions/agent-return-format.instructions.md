@@ -68,5 +68,4 @@ When responding to a `/pantheon` council synthesis invocation, specialists MUST 
 ```
 
 ## Memory Context
-If this agent used `memory_recall` or `memory_search`, include the relevant memory entries
-used as context for the response.
+If memory affected the result, state the takeaway briefly; do not repeat the entry or task context.

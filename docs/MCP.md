@@ -223,7 +223,8 @@ Provides 9 tools (6 `memory_*` plus 3 `code_*`) and 2 resources.
 
 ### Full Documentation
 
-See `docs/MEMORY.md` for complete usage guide with examples for all 9 tools.
+See [MCP tools](mcp-tools.md) for the full tool catalog and [Memory](MEMORY.md)
+for the usage policy and store boundaries.
 
 ---
 
