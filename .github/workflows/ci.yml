@@ -258,11 +258,14 @@ jobs:
           python3 -m pip install --quiet -r src/mcp/requirements-vision.txt
           npm ci --ignore-scripts
 
-      # The offline T1 benchmark tests use `git archive` on this immutable
-      # baseline. Fetch just that snapshot: this job otherwise uses checkout's
-      # depth-one history, and cloning the full repository here would add avoidable CI time.
+      # The offline T1 benchmark tests use `git archive` on these immutable
+      # snapshots. Fetch only those commits: this job otherwise uses checkout's
+      # depth-one history, and cloning the full repository here adds avoidable CI time.
       - name: Fetch T1 benchmark baseline snapshot
-        run: git fetch --no-tags --depth=1 origin 850191c2fffee112386cc16fd983e6073f7884d8
+        run: >-
+          git fetch --no-tags --depth=1 origin
+          850191c2fffee112386cc16fd983e6073f7884d8
+          18adb64c05b42bcfe4f614dbcfa6ed127dc7678e
 
       # Keep the full test suite off the packaging, audit, and live-sandbox
       # validation critical path. Coverage runs pytest once, replacing the old
