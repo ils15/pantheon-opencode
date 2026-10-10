@@ -327,15 +327,23 @@ V1 and V2 use the same in-process scanner on their tool `execute.before` paths.
 The scanner accepts up to **5 MiB (5,242,880 UTF-8 bytes) of serialized hook
 payload**. Larger or malformed payloads are denied fail-closed; the rejected
 payload is not written to the scanner log. This bound applies to the complete
-serialized hook payload, not just one argument field.
+serialized hook payload, not just one argument field. Before calling
+`JSON.stringify`, the scanner iteratively preflights compact JSON byte size,
+including UTF-8 and JSON escapes, and stops as soon as the limit is exceeded.
+It rejects cycles, enumerable accessors and `toJSON` hooks, proxies, excessive
+nesting, and non-JSON values without serializing or logging them.
 
 V2 registers its required enforcement hook before registering Pantheon tools.
 If the host rejects that hook, startup reports `secret-scan-hook` and
 `pantheon-tools-disabled`, and Pantheon V2 tools are not registered. This does
 not disable or claim scanner coverage for native host built-in tools; those may
-remain available under the host's own policies. The opt-in scanner-only timing
-harness is reproducible with `npx tsx scripts/bench-secret-scanner.ts` and does
-not print scan input.
+remain available under the host's own policies. The opt-in timing harness is
+reproducible with `npx tsx scripts/bench-secret-scanner.ts`: it runs 3 warmups
+and 15 measured calls per size, reporting median timings for the current
+`scanSecretText` implementation on safe ASCII strings only. It excludes payload
+preflight/serialization and host-hook overhead, is not a historical or
+Bash-versus-TypeScript comparison, and makes no speedup claim. It does not print
+scan input.
 
 The package exposes both contracts as importable exports: `pantheon-opencode/plugin`
 (V1), `pantheon-opencode/plugin-v2` (V2) and `pantheon-opencode/v2-bridge`
