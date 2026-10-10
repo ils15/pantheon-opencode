@@ -1,9 +1,12 @@
 /**
- * Opt-in scanner-only microbenchmark. Run with:
+ * Opt-in, current-implementation-only microbenchmark. Run with:
  *   npx tsx scripts/bench-secret-scanner.ts
  *
- * Each measured call is only scanSecretText(safe ASCII input); serialization,
- * hook dispatch, logging, and host execution are deliberately excluded.
+ * Uses 3 warmups and 15 measured samples per size, reporting the median. Each
+ * call measures only scanSecretText(safe ASCII input); payload preflight,
+ * serialization, hook dispatch, logging, and host execution are excluded. This
+ * is not an old-vs-new or Bash-vs-TypeScript comparison and makes no speedup
+ * claim.
  */
 import { performance } from 'node:perf_hooks'
 
@@ -18,8 +21,9 @@ function median(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)] ?? 0
 }
 
-console.log(`Secret scanner benchmark: warmups=${WARMUPS}, samples=${SAMPLES}, scanner-only`)
-console.log('size_bytes,median_ms')
+console.log('Secret scanner benchmark: current implementation only; no baseline comparison')
+console.log(`method: warmups=${WARMUPS}, samples=${SAMPLES}, median of scanSecretText calls`)
+console.log('size_bytes,median_scanSecretText_ms')
 
 for (const size of SIZES) {
   const input = 'a'.repeat(size)

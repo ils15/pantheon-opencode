@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  MAX_SECRET_SCAN_INPUT_BYTES,
   SECRET_SCAN_PATTERN_COUNT,
   scanSecretPayload,
   scanSecretText,
@@ -175,6 +176,144 @@ test('uses UTF-8 byte size for the 5 MiB scanner boundary', () => {
 })
 
 test('serialized payloads above 5 MiB fail closed', () => {
-  const result = scanSecretPayload({ tool_input: { content: 'a'.repeat(5_242_880) } })
+  const result = scanSecretPayload({
+    tool_input: { content: 'a'.repeat(MAX_SECRET_SCAN_INPUT_BYTES) },
+  })
   assert.deepEqual(result, { status: 'invalid' })
+})
+
+test('rejects oversized payloads before calling JSON.stringify', () => {
+  const payloads = [
+    { tool_input: {}, extra: 'a'.repeat(MAX_SECRET_SCAN_INPUT_BYTES + 1) },
+    {
+      tool_input: {
+        batches: Array.from({ length: 5_200 }, () => 'a'.repeat(1_024)),
+      },
+    },
+  ]
+
+  for (const payload of payloads) {
+    const stringify = JSON.stringify
+    let stringifyCalls = 0
+    JSON.stringify = ((value: unknown) => {
+      stringifyCalls++
+      return stringify(value)
+    }) as typeof JSON.stringify
+    try {
+      assert.deepEqual(scanSecretPayload(payload), { status: 'invalid' })
+      assert.equal(stringifyCalls, 0, 'oversized data must be rejected before serialization')
+    } finally {
+      JSON.stringify = stringify
+    }
+  }
+})
+
+test('accepts an exactly-at-limit serialized payload and rejects one byte over', () => {
+  const emptyPayload = { tool_input: { content: '' } }
+  const fixedBytes = Buffer.byteLength(JSON.stringify(emptyPayload), 'utf8')
+  const contentBytes = MAX_SECRET_SCAN_INPUT_BYTES - fixedBytes
+  const exact = { tool_input: { content: 'a'.repeat(contentBytes) } }
+  assert.equal(Buffer.byteLength(JSON.stringify(exact), 'utf8'), MAX_SECRET_SCAN_INPUT_BYTES)
+  assert.equal(scanSecretPayload(exact).status, 'clean')
+
+  const over = { tool_input: { content: `${'a'.repeat(contentBytes)}a` } }
+  assert.deepEqual(scanSecretPayload(over), { status: 'invalid' })
+})
+
+test('counts escaped UTF-8 object keys and compact array values at the exact limit', () => {
+  const emptyKeyPayload = { tool_input: { '': [3, false, ''] } }
+  const fixedBytes = Buffer.byteLength(JSON.stringify(emptyKeyPayload), 'utf8') - 2
+  const availableBytes = MAX_SECRET_SCAN_INPUT_BYTES - fixedBytes - 2
+  const keyPattern = 'é\n"'
+  const patternBytes = Buffer.byteLength(JSON.stringify(keyPattern), 'utf8') - 2
+  const key = `${keyPattern.repeat(Math.floor(availableBytes / patternBytes))}${'a'.repeat(availableBytes % patternBytes)}`
+  const exact = { tool_input: { [key]: [3, false, ''] } }
+  assert.equal(Buffer.byteLength(JSON.stringify(exact), 'utf8'), MAX_SECRET_SCAN_INPUT_BYTES)
+  assert.equal(scanSecretPayload(exact).status, 'clean')
+})
+
+test('counts escaped and multibyte JSON strings without invoking accessors', () => {
+  const payload = { tool_input: { content: `${'é'.repeat(20)}\n\u0000"\\` } }
+  assert.equal(scanSecretPayload(payload).status, 'clean')
+
+  const fixedBytes = Buffer.byteLength(JSON.stringify({ tool_input: { content: '' } }), 'utf8')
+  const availableBytes = MAX_SECRET_SCAN_INPUT_BYTES - fixedBytes
+  const escapedPattern = 'é\n"\\'
+  const patternBytes = Buffer.byteLength(JSON.stringify(escapedPattern), 'utf8') - 2
+  const content = `${escapedPattern.repeat(Math.floor(availableBytes / patternBytes))}${'a'.repeat(availableBytes % patternBytes)}`
+  const exactEscapedPayload = { tool_input: { content } }
+  assert.equal(
+    Buffer.byteLength(JSON.stringify(exactEscapedPayload), 'utf8'),
+    MAX_SECRET_SCAN_INPUT_BYTES,
+  )
+  assert.equal(scanSecretPayload(exactEscapedPayload).status, 'clean')
+
+  let getterCalls = 0
+  const withGetter = { tool_input: {} } as { tool_input: object; get extra(): string }
+  Object.defineProperty(withGetter, 'extra', {
+    enumerable: true,
+    get() {
+      getterCalls++
+      return 'should not be read'
+    },
+  })
+  assert.deepEqual(scanSecretPayload(withGetter), { status: 'invalid' })
+  assert.equal(getterCalls, 0)
+})
+
+test('fails closed for proxies, BigInt, serialization hooks, and excessive depth', () => {
+  let proxyTraps = 0
+  const proxied = new Proxy(
+    { tool_input: {} },
+    {
+      getPrototypeOf() {
+        proxyTraps++
+        return Object.prototype
+      },
+    },
+  )
+  assert.deepEqual(scanSecretPayload(proxied), { status: 'invalid' })
+  assert.equal(proxyTraps, 0)
+
+  const nestedProxy = new Proxy(
+    {},
+    {
+      getPrototypeOf() {
+        proxyTraps++
+        return Object.prototype
+      },
+    },
+  )
+  assert.deepEqual(scanSecretPayload({ tool_input: { nested: nestedProxy } }), {
+    status: 'invalid',
+  })
+  assert.equal(proxyTraps, 0)
+  assert.deepEqual(scanSecretPayload({ tool_input: { count: 1n } }), { status: 'invalid' })
+
+  let toJSONCalls = 0
+  const withToJSON = { tool_input: {} } as { tool_input: object; toJSON(): object }
+  Object.defineProperty(withToJSON, 'toJSON', {
+    value() {
+      toJSONCalls++
+      return {}
+    },
+  })
+  assert.deepEqual(scanSecretPayload(withToJSON), { status: 'invalid' })
+  assert.equal(toJSONCalls, 0)
+
+  let deeplyNested: unknown = 'safe'
+  for (let index = 0; index < 600; index++) deeplyNested = { child: deeplyNested }
+  assert.deepEqual(scanSecretPayload({ tool_input: { nested: deeplyNested } }), {
+    status: 'invalid',
+  })
+
+  const stringify = JSON.stringify
+  JSON.stringify = (() => {
+    throw new Error('serialization details must not escape')
+  }) as typeof JSON.stringify
+  try {
+    assert.deepEqual(scanSecretPayload({ tool_input: {} }), { status: 'invalid' })
+  } finally {
+    JSON.stringify = stringify
+  }
 })
