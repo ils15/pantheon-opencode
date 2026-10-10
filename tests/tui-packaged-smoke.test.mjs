@@ -227,3 +227,139 @@ test('packaged TUI bundle registers its sidebar, handles a task event, and dispo
     rmSync(project, { recursive: true, force: true })
   }
 })
+
+test('packaged TUI usage timers start after slot registration and dispose during an in-flight poll', async () => {
+  const { default: plugin } = await import(
+    pathToFileURL(join(root, 'src/plugins/tui/dist/tui.js')).href
+  )
+  const project = mkdtempSync(join(tmpdir(), 'pantheon-tui-timer-smoke-'))
+  const originalBun = globalThis.Bun
+  const originalUsageApiKey = process.env.PANTHEON_OPENCODE_API_KEY
+  const originalTimers = {
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+    fetch: globalThis.fetch,
+  }
+  const originalPluginRegistry = globalThis.__pantheonPluginsLoaded
+  const originalPluginKeys =
+    originalPluginRegistry instanceof Set ? [...originalPluginRegistry] : null
+  const activeIntervals = new Set()
+  const activeTimeouts = new Set()
+  const disposers = []
+  const registrations = []
+  let timeoutSchedules = 0
+  let providerFetches = 0
+  let resolveProviderResponse
+  const providerResponse = new Promise((resolve) => {
+    resolveProviderResponse = resolve
+  })
+  let configWasParsed
+  const parsedConfig = new Promise((resolve) => {
+    configWasParsed = resolve
+  })
+  const api = {
+    state: { path: { worktree: project, directory: project, config: project, state: project } },
+    client: {
+      file: { read: async () => ({ data: { content: '' } }) },
+      process: { exec: async () => ({ stdout: '' }) },
+    },
+    event: { on: () => () => {} },
+    lifecycle: { onDispose: (dispose) => disposers.push(dispose) },
+    slots: { register: (registration) => registrations.push(registration) },
+    kv: { get: () => undefined, set: () => {} },
+  }
+
+  try {
+    // The preceding failure-path test invokes the plugin once in this process.
+    // Temporarily clear only its once-guard entry to exercise a fresh TUI boot.
+    if (globalThis.__pantheonPluginsLoaded instanceof Set)
+      globalThis.__pantheonPluginsLoaded.delete('pantheon:tui')
+
+    globalThis.setInterval = (callback) => {
+      const timer = { callback }
+      activeIntervals.add(timer)
+      return timer
+    }
+    globalThis.clearInterval = (timer) => activeIntervals.delete(timer)
+    globalThis.setTimeout = (callback) => {
+      timeoutSchedules += 1
+      const timer = { callback }
+      activeTimeouts.add(timer)
+      return timer
+    }
+    globalThis.clearTimeout = (timer) => activeTimeouts.delete(timer)
+    globalThis.fetch = () => {
+      providerFetches += 1
+      return providerResponse
+    }
+    process.env.PANTHEON_OPENCODE_API_KEY = 'tui-smoke-test-key'
+    globalThis.Bun = {
+      TOML: {
+        parse: () => {
+          configWasParsed()
+          return {
+            ui: { show_status: false },
+            anthropic: {
+              enabled: true,
+              credentials_path: join(project, 'missing-credentials.json'),
+            },
+            openai: { enabled: false },
+            opencodego: { enabled: true },
+          }
+        },
+      },
+    }
+    writeFileSync(join(project, 'usage-bar.toml'), '')
+
+    await plugin.setup()
+    plugin.tui(api)
+    await parsedConfig
+    await delay(25)
+
+    assert.ok(
+      registrations.some((registration) => registration.order === 60),
+      'successful optional usage-slot registration is accepted',
+    )
+    assert.equal(activeIntervals.size, 1, 'the usage refresh interval actually starts')
+    assert.equal(providerFetches, 1, 'an enabled provider poll is in flight before disposal')
+    assert.ok(activeTimeouts.size > 0, 'the failed provider poll schedules its retry timeout')
+
+    const scheduledTimeoutsBeforeDispose = timeoutSchedules
+    for (const dispose of disposers) dispose()
+
+    assert.equal(activeIntervals.size, 0, 'dispose cancels the active usage refresh interval')
+    assert.equal(activeTimeouts.size, 0, 'dispose cancels the already-scheduled provider retry')
+
+    resolveProviderResponse({ ok: false })
+    await delay(25)
+    assert.equal(
+      timeoutSchedules,
+      scheduledTimeoutsBeforeDispose,
+      'the in-flight provider poll does not schedule a follow-up after disposal',
+    )
+    assert.equal(activeTimeouts.size, 0, 'no follow-up poll timeout remains active')
+  } finally {
+    for (const dispose of disposers) dispose()
+    resolveProviderResponse({ ok: false })
+    await delay(0)
+    activeIntervals.clear()
+    activeTimeouts.clear()
+    globalThis.setInterval = originalTimers.setInterval
+    globalThis.clearInterval = originalTimers.clearInterval
+    globalThis.setTimeout = originalTimers.setTimeout
+    globalThis.clearTimeout = originalTimers.clearTimeout
+    globalThis.fetch = originalTimers.fetch
+    if (originalUsageApiKey === undefined) delete process.env.PANTHEON_OPENCODE_API_KEY
+    else process.env.PANTHEON_OPENCODE_API_KEY = originalUsageApiKey
+    if (originalBun === undefined) delete globalThis.Bun
+    else globalThis.Bun = originalBun
+    if (originalPluginRegistry === undefined) delete globalThis.__pantheonPluginsLoaded
+    else if (originalPluginKeys !== null) {
+      originalPluginRegistry.clear()
+      for (const key of originalPluginKeys) originalPluginRegistry.add(key)
+    }
+    rmSync(project, { recursive: true, force: true })
+  }
+})
