@@ -84,12 +84,13 @@ verificações repetíveis e passagens claras entre etapas do trabalho.
 
 ## Status
 
-Versão candidata neste checkout: **v1.6.0 estável** (manifestos preparados;
-publicação ainda não confirmada). O histórico das betas permanece no
-[changelog](CHANGELOG.md). O Pantheon foi feito para OpenCode e depende da
-disponibilidade e da configuração do OpenCode e dos serviços opcionais que você
-escolher. Veja as [releases](https://github.com/ils15/pantheon-opencode/releases)
-e o [changelog](CHANGELOG.md) para acompanhar as mudanças publicadas.
+Versão candidata neste checkout: **v1.6.0-beta.7** (manifestos preparados;
+publicação ainda não confirmada). Para verificar a beta publicada, consulte a
+dist-tag `beta` do npm. O histórico permanece no [changelog](CHANGELOG.md). O
+Pantheon foi feito para OpenCode e depende da disponibilidade e da configuração
+do OpenCode e dos serviços opcionais que você escolher. Veja as
+[releases](https://github.com/ils15/pantheon-opencode/releases) e o
+[changelog](CHANGELOG.md) para acompanhar as mudanças publicadas.
 
 
 ## Execução code-mode (opt-in explícito)

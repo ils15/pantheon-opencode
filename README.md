@@ -89,10 +89,10 @@ clear handoff between stages of work.
 
 ## Status
 
-Candidate version: **1.6.0 stable**. The manifests in this checkout express the
-release candidate, not a confirmed publication; publication happens only after
-the Release workflow completes successfully. To check the published version,
-consult the npm `latest` dist-tag. Pantheon is designed for OpenCode
+Candidate version: **1.6.0-beta.7**. The manifests in this checkout express a
+beta candidate, not a confirmed publication; beta publication happens only
+after the explicit Release workflow completes successfully. To check the
+published beta, consult the npm `beta` dist-tag. Pantheon is designed for OpenCode
 and depends on the availability and configuration of OpenCode and any optional
 services you choose to use. Check the
 [releases](https://github.com/ils15/pantheon-opencode/releases) and
@@ -188,17 +188,13 @@ there is no Pantheon-specific delegation tool surface to configure. See
 [ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md) for the
 historical engine contract.
 
-This 1.6.0 stable candidate consolidates beta.1–beta.6, including package and
-dependency updates, security advisory overrides, lint and inventory coverage,
-TUI restoration and state-refresh work, and memory/delegation prompt
-deduplication. The Zeus fast path answers no-change questions directly and
-routes bounded fixes once; the council procedure is loaded only for a council.
-Routing uses static agent descriptions without per-task KV/cache calls. Stale
-beta-era operational history and synthetic timeout/session
-instructions were removed. Runtime call counts and latency have not been
-measured; V2 TUI startup and clean exit were verified in the isolated sandbox,
-but a model-backed interactive turn remains unverified and is not claimed by
-this candidate.
+This 1.6.0-beta.7 candidate consolidates the final beta.6 follow-ups: safer
+V2 installation and permission migration, bounded in-process secret scanning,
+sandbox hardening, TUI lifecycle fixes, and a simpler agent dispatch path.
+Zeus answers no-change questions directly and routes bounded fixes once; the
+council procedure is loaded only for a council, without per-task KV/cache
+lookups. Runtime call counts and latency have not been measured. Live provider
+E2E and a model-backed interactive V2 TUI turn remain unverified.
 
 Transient delegation dispatch failures get at most one retry. A refusal or
 failed check is not repeated; after the retry fails, the configured fallback

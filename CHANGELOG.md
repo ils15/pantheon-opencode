@@ -18,6 +18,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.7] - 2026-10-10
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Simpler agent dispatch:** answer no-change questions directly, send bounded
+  fixes to one specialist, load council instructions on demand, and remove
+  routine per-task KV/cache routing. No token, cost, or latency savings are
+  claimed without live measurements.
+- **V2 install and permissions:** use a versioned package-root plugin pin and
+  migrate V1 `task`/`write` permissions to V2 `subagent`/`edit`, retaining the
+  stricter effect when rules collide.
+- **Release and runtime hardening:** bounded in-process secret scanning,
+  fail-closed V2 registration, TUI timer disposal, truthful doctor reporting,
+  and guarded V2 sandbox prepare/reset.
+
+## 🐞 Fixed
+
+- TUI usage polling now starts only after its optional slot registers and all
+  refresh timers are disposed on shutdown.
+- Doctor detects version drift in string and object V2 package pins, including
+  prerelease versions; checkout installs warn when their exact npm pin is not
+  published yet.
+- V2 permission migration maps `task → subagent` and `write → edit` and
+  preserves the stricter conflicting rule.
+
+## ⚠️ Known Issues
+
+- Live provider E2E is blocked by HTTP 403; an interactive model-backed V2 TUI
+  turn remains unverified.
+- The V2 tool canary targets OpenCode 2.0.22 while the installable CLI differs
+  (issue #216); V1 host end-to-end validation is also deferred.
+- The observed P0-4 tool-catalog oscillation has no reproduced cause; its
+  reproduction harness remains follow-up work.
+- V2 `init` from an unpublished source checkout writes a versioned npm pin that
+  cannot resolve until that version is published; the installer warns.
 ## [v1.6.0] - 2026-10-10
 
 This stable candidate consolidates the beta.1–beta.6 changes. The original beta
