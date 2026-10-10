@@ -21,6 +21,8 @@ test('packaged TUI bundle registers its sidebar, handles a task event, and dispo
   const activeIntervals = new Set()
   const activeTimeouts = new Set()
   const handlers = new Map()
+  const originalUsageApiKey = process.env.PANTHEON_OPENCODE_API_KEY
+  let providerFetches = 0
   const originalTimers = {
     setInterval: globalThis.setInterval,
     clearInterval: globalThis.clearInterval,
@@ -76,7 +78,11 @@ test('packaged TUI bundle registers its sidebar, handles a task event, and dispo
       return timer
     }
     globalThis.clearTimeout = (timer) => activeTimeouts.delete(timer)
-    globalThis.fetch = async () => ({ ok: false })
+    process.env.PANTHEON_OPENCODE_API_KEY = 'tui-smoke-test-key'
+    globalThis.fetch = async () => {
+      providerFetches += 1
+      return { ok: false }
+    }
     process.on('unhandledRejection', onUnhandledRejection)
     globalThis.Bun = {
       TOML: {
@@ -110,8 +116,13 @@ test('packaged TUI bundle registers its sidebar, handles a task event, and dispo
 
     assert.equal(
       activeIntervals.size,
-      1,
-      'the optional usage refresh timer starts after config I/O',
+      0,
+      'a failed optional usage-slot registration leaves no refresh interval',
+    )
+    assert.equal(
+      providerFetches,
+      0,
+      'a failed optional usage-slot registration does not start provider polling',
     )
     assert.equal(
       unhandledRejections.length,
@@ -209,6 +220,8 @@ test('packaged TUI bundle registers its sidebar, handles a task event, and dispo
     globalThis.setTimeout = originalTimers.setTimeout
     globalThis.clearTimeout = originalTimers.clearTimeout
     globalThis.fetch = originalTimers.fetch
+    if (originalUsageApiKey === undefined) delete process.env.PANTHEON_OPENCODE_API_KEY
+    else process.env.PANTHEON_OPENCODE_API_KEY = originalUsageApiKey
     if (originalBun === undefined) delete globalThis.Bun
     else globalThis.Bun = originalBun
     rmSync(project, { recursive: true, force: true })

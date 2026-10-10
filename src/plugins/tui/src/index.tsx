@@ -740,8 +740,8 @@ async function loadConfig(configPath: string | undefined): Promise<UsageBarConfi
   }
 }
 
-/** Vendored usage-bar plugin init: reads config, seeds the kv cache, starts
- *  the poll loop and registers the `app_bottom` slot. Skips everything (and
+/** Vendored usage-bar plugin init: reads config, seeds the kv cache, registers
+ *  the `app_bottom` slot, then starts the poll loop. Skips everything (and
  *  registers nothing) when no provider is enabled — mirrors the standalone
  *  plugin's early return. */
 async function setupUsageBar(api: TuiPluginApi) {
@@ -776,43 +776,6 @@ async function setupUsageBar(api: TuiPluginApi) {
   // short-lived, and the first poll lands seconds after startup anyway.
   const [byStatus, setByStatus] = createSignal<Record<string, StatusIndicator>>({})
   const [now, setNow] = createSignal(Date.now())
-
-  clockInterval = setInterval(() => setNow(Date.now()), 1_000)
-
-  const schedulePoll = (run: () => void, delay: number) => {
-    if (disposed) return
-    const timeout = setTimeout(() => {
-      pollTimeouts.delete(timeout)
-      if (!disposed) run()
-    }, delay)
-    pollTimeouts.add(timeout)
-  }
-
-  for (const p of enabled) {
-    const cfg = config.providers[p.id]
-    const poll = async () => {
-      if (disposed) return
-      // Fetch usage and status concurrently; status pages are CDN-backed and
-      // never throttle, so we poll them on the same cadence as usage.
-      const statusP = config.showStatus && p.statusUrl ? fetchStatus(p.statusUrl) : null
-      const [all, status] = await Promise.all([p.fetchUsage(cfg), statusP])
-      if (disposed) return
-      if (all) {
-        const windows = all.filter((w) => cfg.show[w.category] && w.resetsAt > Date.now())
-        setByProvider((prev) => ({ ...prev, [p.id]: windows }))
-        api.kv.set(`usage-bar.${p.id}.windows`, windows)
-      }
-      // `null` means the status fetch failed — keep the last known indicator.
-      if (status !== null) setByStatus((prev) => ({ ...prev, [p.id]: status }))
-      // Back off when the usage fetch failed (e.g. 429 — these endpoints throttle).
-      schedulePoll(runPoll, all ? POLL_MS : POLL_MS * 3)
-    }
-    const runPoll = () => {
-      if (disposed) return
-      void poll().catch(() => schedulePoll(runPoll, POLL_MS * 3))
-    }
-    runPoll()
-  }
 
   api.slots.register({
     order: 60,
@@ -901,6 +864,46 @@ async function setupUsageBar(api: TuiPluginApi) {
       },
     },
   })
+
+  // Start background work only once the optional UI slot was accepted. If
+  // registration fails, the outer fail-open handler can suppress it without
+  // leaving a timer or provider request running in the background.
+  clockInterval = setInterval(() => setNow(Date.now()), 1_000)
+
+  const schedulePoll = (run: () => void, delay: number) => {
+    if (disposed) return
+    const timeout = setTimeout(() => {
+      pollTimeouts.delete(timeout)
+      if (!disposed) run()
+    }, delay)
+    pollTimeouts.add(timeout)
+  }
+
+  for (const p of enabled) {
+    const cfg = config.providers[p.id]
+    const poll = async () => {
+      if (disposed) return
+      // Fetch usage and status concurrently; status pages are CDN-backed and
+      // never throttle, so we poll them on the same cadence as usage.
+      const statusP = config.showStatus && p.statusUrl ? fetchStatus(p.statusUrl) : null
+      const [all, status] = await Promise.all([p.fetchUsage(cfg), statusP])
+      if (disposed) return
+      if (all) {
+        const windows = all.filter((w) => cfg.show[w.category] && w.resetsAt > Date.now())
+        setByProvider((prev) => ({ ...prev, [p.id]: windows }))
+        api.kv.set(`usage-bar.${p.id}.windows`, windows)
+      }
+      // `null` means the status fetch failed — keep the last known indicator.
+      if (status !== null) setByStatus((prev) => ({ ...prev, [p.id]: status }))
+      // Back off when the usage fetch failed (e.g. 429 — these endpoints throttle).
+      schedulePoll(runPoll, all ? POLL_MS : POLL_MS * 3)
+    }
+    const runPoll = () => {
+      if (disposed) return
+      void poll().catch(() => schedulePoll(runPoll, POLL_MS * 3))
+    }
+    runPoll()
+  }
 }
 
 /* ─── Delegations (real-time panel) ────────────────────────
