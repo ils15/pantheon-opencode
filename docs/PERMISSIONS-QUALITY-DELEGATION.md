@@ -95,7 +95,7 @@ failing-closed gates, but they are not the reviewer:
 |---|---|---|
 | Read-only sessions may not mutate | `tool.execute.before` throws | `src/pantheon/delegation-enforce.ts:181` (blocked-tool set), `src/plugin.ts:101` |
 | A child session may not delegate again | same guard, child-session branch | `src/pantheon/delegation-enforce.ts:353` |
-| Caller/target delegation matrix | same guard, `isDelegationAllowed` | `src/pantheon/delegation-enforce.ts:138` |
+| Caller/target delegation matrix | V1 tool guard; V2 `permission.evaluate` policy backed by the host session lookup | `src/pantheon/delegation-enforce.ts:138`, `src/pantheon/v2-delegation-enforce.ts:54`, `src/plugin-v2.ts:1134` |
 | The orchestrator may not read source | `zeusReadGuard` throws | `src/pantheon/delegation-enforce.ts:221` |
 | Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:138` |
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
@@ -526,28 +526,26 @@ guarantee — it depends on the model making the call.
 
 ### 3.2 Who may delegate to whom
 
-Three layers again, and this time they do not all agree.
+Three layers again. The prompt/config layers describe intent; the runtime
+matrix is the load-bearing authorization check on both plugin generations.
 
 | Layer | Says | Enforced by |
 |---|---|---|
 | Frontmatter `permission.task` | Orchestrator: `"*": allow`. `hermes`/`athena`: `"*": deny, apollo: allow`. All others: `"*": deny`. | The host, from the installed config. It reaches the config (verified, [§2.4](#24-layer-3-the-config-the-installer-seeds)); whether the host applies last-match-wins glob semantics to a `task` key is **UNVERIFIED** — see [§5](#5-unverified-and-the-evidence-that-would-settle-it) |
 | Routing matrix (`agents.<a>.subagent_can_delegate_to`) | Same intent, per agent. Enforced as a consistency invariant by the repo validator (`scripts/validate-routing.mjs:236`) and `can_delegate` by `scripts/validate-routing.mjs:214`. | The validator, not the runtime |
-| Runtime matrix (`isDelegationAllowed`) | Orchestrator → anyone; `athena`/`hermes` → `apollo` only; **everything else denied** (`src/pantheon/delegation-enforce.ts:138`) | **The plugin's tool hook** |
+| Runtime matrix | Orchestrator → anyone; `athena`/`hermes` → `apollo` only; **everything else denied** | V1 tool hook (`isDelegationAllowed`); V2 `permission.evaluate` (`evaluateV2Delegation`) |
 
 The runtime matrix is a hard-coded two-line function, not a table read from
 `routing.yml`. Its glob gate is dead in the plugin: the guard is constructed without
 the option that supplies the globs (`src/plugin.ts:101`), so the glob check
 short-circuits on its fail-open branch (`src/pantheon/permission-globs.ts:60`).
 
-**Where the two execution paths stand.** The native path and the board path do not
-share a permission source. The native path consults the runtime matrix; the board path
-consults a concurrency count. They produce the same answer today — but only because
-the orchestrator is the only caller either admits, and because the matrix allows the
-orchestrator anything. **A caller that could reach the board without going through the
-native path would face a concurrency cap and no permission check at all.** This is the
-disagreement worth knowing about: the routing matrix is enforced by exactly one of the
-two paths, and that path is the one that depends on the host supporting native
-delegation.
+**Where the V1 execution paths stand.** The native path and the V1 board mirror do
+not share a permission source. The native path consults the runtime matrix; the board
+path consults a concurrency count. The board is post-hoc bookkeeping, not a dispatch
+API, so normal native delegation is checked before the board mirror observes it. A
+caller that somehow reached the board mirror without the native path would face only a
+concurrency cap, not a second authorization check. V2 does not load the V1 board.
 
 ### 3.3 The fallback chain
 
@@ -603,7 +601,7 @@ plain-`.mjs` module so the plugin, the installer and `doctor` all read the same
 strings (`src/pantheon/v2-unsupported.mjs:55`). Two of those entries decide what a
 planner may rely on.
 
-#### Delegation: available on both contracts, but with a different enforcement floor
+#### Delegation: available on both contracts, with generation-specific enforcement
 
 Native delegation is available on both contracts — it is the host's engine.
 
@@ -611,52 +609,24 @@ Native delegation is available on both contracts — it is the host's engine.
 |---|---|---|
 | Native delegation available | Yes | Yes |
 | Read-only agents blocked from mutating tools | Yes | Yes |
-| Depth-2 for read-only agents | Yes | Yes |
-| **Caller/target matrix enforced** | **Yes** | **No** |
+| Child sessions blocked from delegating to Pantheon agents | Yes | Yes; `session.get()` parent metadata is checked |
+| **Caller/target matrix enforced** | **Yes** | **Yes; `permission.evaluate` hook** |
 
-The V2 adapter builds its guard without `getSessionAgent`, `isRootSession` or
-`isChildSession` (`src/plugin-v2.ts:870`), for **two** independent reasons that are
-easy to conflate. Keeping them apart matters, because the one that sounds structural
-is not the one that denies:
+V1 uses the tool execution guard and its session registry. V2 uses a separate
+permission hook: for Pantheon targets it fetches the host's authoritative session
+(`session.get()`), validates its ID and agent against any event identity, rejects
+child sessions, and applies the same matrix in
+`src/pantheon/v2-delegation-enforce.ts`. Zeus may target any Pantheon agent;
+Athena and Hermes may target Apollo only; other callers are denied. Native-only
+targets pass through to host policy. The hook only preserves or denies the
+host's permission status; it does not grant permission itself. Missing session,
+malformed targets, identity mismatches, and a missing mutable output fail closed.
 
-1. **Missing `getSessionAgent` — wiring.** This is what would deny **every** `task()`
-   call in **every** session. V2 learns the active agent from the `execute.before`
-   event itself and keeps no session→agent map, so there is no lookup to hand the
-   guard: it would call `isDelegationAllowed(undefined, target)`, which returns `false`
-   for an undefined caller (`src/pantheon/delegation-enforce.ts:145`) and throw *caller
-   agent is unavailable*.
-2. **Unwired hierarchy — design.** `SessionHierarchyRegistry` gates exactly two
-   things, and nothing else: the depth-2 child deny and the root-session gate. Left
-   unseeded, `isChild` is `false` for every session, so depth-2 would never fire on a
-   genuine child, and a registry that cannot tell a child from a root is not
-   trustworthy input to either check.
-
-**The inference that is easy to get backwards.** The registry does report an unseeded
-session as a *root*, and `true` **passes** the root gate
-(`src/pantheon/delegation-enforce.ts:110`) — it does not deny. The deny in case 1 comes
-from the absent caller identity, not from the hierarchy.
-
-**Unwired, not impossible.** The V2 `session.created` event carries
-`properties.info: Session`, and `Session` declares `parentID?: string` — the same field
-V1 seeds from on that exact event, a superset of the two fields V1 reads there — so
-seeding V2's live sessions is one line in `onSessionCreated`
-(`src/plugin-v2.ts:513`). The real asymmetry is V1's *second* source: the fail-open
-`client.session.list()` startup seed covering sessions that predate plugin load, which
-has no V2 equivalent at all because the V2 `PluginContext` exposes no `client`
-(`src/plugin-v2.ts:531`). Whether a live host actually populates `info.parentID` on
-that event is **UNVERIFIED** — no measurement reads an event payload.
-
-Omitting all three predicates skips the branch entirely; the guard only enters it when
-`isRootSession` is defined. The consequence is stated plainly in the source: the
-caller/target matrix itself is **not** enforced on V2, and this is a known gap, not a
-covered case (`src/plugin-v2.ts:867`). The upgrade guide documents the same limitation
-from the user's side — see [Known limitation](UPGRADING.md).
-
-**What this means for planning:** on the V2 contract, the restriction "only the
-orchestrator and the two read-only scouts may delegate" is a **convention you are
-relying on other agents to honour, not a control**. The only delegation restriction
-still enforced is on the two read-only agents, and it holds only because the
-delegation tool is itself in their blocked-tool list.
+The main regression coverage is in `tests/pantheon/v2-delegation-enforce.test.ts`
+and the plugin-hook integration case in
+`tests/pantheon/plugin-v2-contract.test.ts`. The live-host hook canary is a
+separate compatibility check; it does not turn a passing source-level contract
+test into a claim that every current OpenCode build was verified.
 
 #### The board: available on V1, absent on V2
 

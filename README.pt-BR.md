@@ -53,6 +53,19 @@ Com o OpenCode em execução, descreva o resultado que você quer:
 ```
 
 O Pantheon ajuda a transformar esse pedido em um plano e em etapas revisadas.
+Perguntas sem mudança no repositório são respondidas diretamente; correções
+pequenas usam uma única delegação. Discovery, planejamento, paralelismo e
+revisão em council ficam para quando o escopo ou o risco justificarem.
+
+Para uma correção pequena e bem delimitada, chame `@talos` diretamente (por
+exemplo, `@talos corrija este typo`). Assim você pula a chamada de orquestração
+do Zeus; use `/pantheon` para planejamento, delegação, mudanças em vários
+arquivos ou gates de qualidade.
+
+O procedimento completo de council só é carregado em `/pantheon` ou quando uma
+decisão material realmente exige perspectivas distintas. Falhas de dispatch
+podem ser tentadas novamente uma vez; testes reprovados e recusas não são
+repetidos automaticamente.
 
 ## Para quem é?
 
@@ -71,8 +84,9 @@ verificações repetíveis e passagens claras entre etapas do trabalho.
 
 ## Status
 
-Versão operacional neste checkout: **v1.6.0-beta.1** (primeira beta compatível
-com OpenCode 2; esta página não afirma publicação). O Pantheon foi feito para OpenCode e depende da
+Versão candidata neste checkout: **v1.6.0 estável** (manifestos preparados;
+publicação ainda não confirmada). O histórico das betas permanece no
+[changelog](CHANGELOG.md). O Pantheon foi feito para OpenCode e depende da
 disponibilidade e da configuração do OpenCode e dos serviços opcionais que você
 escolher. Veja as [releases](https://github.com/ils15/pantheon-opencode/releases)
 e o [changelog](CHANGELOG.md) para acompanhar as mudanças publicadas.
@@ -121,13 +135,13 @@ registrados juntos.
 | | V1 | V2 |
 |---|---|---|
 | Chave de config do OpenCode | `plugin` singular | `plugins` plural |
-| Registro Pantheon | `src/plugin.ts` mais `src/plugins/pantheon-hooks.ts` | `pantheon-opencode/plugin-v2` (`src/plugin-v2.ts`) |
-| Contrato de runtime | Plugin Pantheon V1: 6 ferramentas (`hashline_edit`, as 3 ferramentas de goal, `pantheon_cost`, `pantheon_model`), hooks de evento/ferramenta e tratamento de compactação V1 | Plugin V2 completo: 3 ferramentas (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 4 assinaturas de eventos, session hooks (`prompt`, `context`), um hook de ferramenta `execute.before` que impõe sessões somente-leitura, além de transforms de configuração |
+| Registro Pantheon | `src/plugin.ts` mais `src/plugins/pantheon-hooks.ts` | pacote npm `pantheon-opencode@<versão>` fixado à versão instalada (export raiz aponta para `src/plugin-v2.ts`) |
+| Contrato de runtime | Plugin Pantheon V1: 6 ferramentas (`hashline_edit`, as 3 ferramentas de goal, `pantheon_cost`, `pantheon_model`), hooks de evento/ferramenta e tratamento de compactação V1 | Plugin V2: 3 ferramentas (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 assinaturas de eventos, session hooks (`prompt`, `context`), hooks de execução/permissão e transforms de configuração |
 | APIs V1 | Registradas | Definições próprias de ferramentas via `ctx.tool.transform()` — não pelo caminho do plugin V1 |
 
 O plugin V2 fornece 3 ferramentas de orquestração (`hashline_edit`,
-`pantheon_cost`, `pantheon_model`), 4 assinaturas de eventos (`session.created`,
-`session.idle`, `session.error`, `session.compacted`), session hooks (`prompt`,
+`pantheon_cost`, `pantheon_model`), 5 assinaturas de eventos (`session.created`,
+`session.idle`, `session.deleted`, `session.error`, `session.compacted`), session hooks (`prompt`,
 `context`) e um hook de ferramenta `execute.before` que impõe sessões
 somente-leitura. As 3 ferramentas de goal **não** são
 registradas no V2: o goal loop precisa de um `GoalStore`, de um
@@ -159,15 +173,18 @@ toda chamada. Os recursos V2 sem suporte são `legacy-hooks` (a superfície de
 hooks específica do V1), `catalog-transform`, `integration-transform`,
 `skill-transform` e `goal-tools`.
 
-O pacote expõe os dois contratos como exports importáveis:
-`pantheon-opencode/plugin` (V1), `pantheon-opencode/plugin-v2` (V2) e
-`pantheon-opencode/v2-bridge` (interop opcional), para que o host carregue
-explicitamente o contrato desejado.
+Ao migrar uma config V1 com `init --opencode-version v2`, o instalador traduz
+`task` para a ação V2 `subagent` e `write` para `edit` (que também cobre as
+tools host `write`/`patch`). Se regras legadas `edit` e `write` colidirem no
+mesmo recurso, a migração preserva o efeito mais restritivo. Configs V2
+editadas manualmente devem usar o array nativo `permissions` com
+`action`/`resource`/`effect`.
 
-A ponte V1→V2 (`src/pantheon/v2-bridge.ts`) habilita interop opcional:
-singletons de infraestrutura V1 (BackgroundJobBoard,
-GoalStore, TodoEnforcer, VisionHandler) são repassados via `ctx.options` do V2.
-A ponte é opcional — o V2 funciona standalone com degradação graciosa.
+O pacote expõe os dois contratos: a raiz e `pantheon-opencode/plugin-v2`
+carregam V2; `pantheon-opencode/plugin` carrega V1. `pantheon-opencode/v2-bridge`
+é atualmente apenas uma utility importável: o setup de produção não a conecta
+ao plugin V2, então ela não fornece interoperabilidade em runtime nem restaura
+as ferramentas de goal/board do V1.
 
 Selecione o contrato explicitamente na instalação:
 
@@ -244,8 +261,8 @@ pontos. A ordem das chaves não muda o resultado.
 Um comando mantém uma instalação existente em dia:
 
 ```bash
-# Sem instalação global, SEMPRE fixe o dist-tag — `npx pantheon-opencode`
-# puro resolve a tag `latest`, que é o release estável (1.4.3):
+# Sem instalação global, fixe o dist-tag desejado. `latest` aponta para a
+# release estável publicada mais recente, não para um candidato não publicado:
 npx pantheon-opencode@beta update            # canal beta do npm + refresh do config
 npx pantheon-opencode@beta update --stable   # canal estável
 

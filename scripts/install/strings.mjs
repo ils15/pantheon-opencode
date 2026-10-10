@@ -47,6 +47,10 @@ const TABLE = {
     prereqMissing:
       'runtime prerequisites missing — install the tools above, or re-run with --no-mcp to install without Python MCP servers',
     v2Migrating: 'Migrating config to V2 native format...',
+    v2UnpublishedPin: (spec) =>
+      `V2 plugin is pinned to ${spec}, but this installer is running from a source checkout — ` +
+      'that version may not be published to npm yet, so OpenCode cannot resolve the pin until it is. ' +
+      'Run the installer from the published package (npx pantheon-opencode init) to avoid this.',
     // summary (printSummary)
     summaryInstalled: (target) => `OpenCode installed in ${target}`,
     summaryWithErrors: (target) => `Installation finished WITH ERRORS in ${target}`,
@@ -95,6 +99,10 @@ const TABLE = {
     prereqMissing:
       'pré-requisitos do runtime ausentes — instale as ferramentas acima, ou rode de novo com --no-mcp para instalar sem os MCPs Python',
     v2Migrating: 'Migrando config para o formato nativo V2...',
+    v2UnpublishedPin: (spec) =>
+      `Plugin V2 fixado em ${spec}, mas este installer está rodando de um checkout do código-fonte — ` +
+      'essa versão pode ainda não estar publicada no npm, então o OpenCode não resolve o pin até a publicação. ' +
+      'Rode o installer pelo pacote publicado (npx pantheon-opencode init) para evitar isso.',
     // summary (printSummary)
     summaryInstalled: (target) => `OpenCode instalado em ${target}`,
     summaryWithErrors: (target) => `Instalação concluída COM ERROS em ${target}`,

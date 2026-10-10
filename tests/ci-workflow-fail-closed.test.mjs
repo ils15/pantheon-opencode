@@ -204,9 +204,10 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
     sandboxStep[0],
     /PANTHEON_SANDBOX_ROOT:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2/,
   )
-  assert.match(
+  assert.doesNotMatch(
     sandboxStep[0],
-    /OPENCODE_DB:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2\/opencode-v2\.db/,
+    /OPENCODE_DB:\s+/,
+    'the sandbox harness owns OPENCODE_DB and sets it only after path guards run',
   )
   assert.doesNotMatch(
     sandboxStep[0],
@@ -246,8 +247,8 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
         /unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE/g,
       ) ?? []
     ).length,
-    2,
-    'both environments must clear inherited OPENCODE_CONFIG contamination',
+    3,
+    'the main runner, generated runner, and launcher must clear inherited OPENCODE_CONFIG contamination',
   )
   assert.doesNotMatch(
     harness,

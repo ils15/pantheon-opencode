@@ -201,6 +201,35 @@ describe('config-migration', () => {
       assert.deepEqual(wsPerm, { action: 'websearch', resource: '*', effect: 'deny' })
     })
 
+    it('maps legacy task/write permission names to V2 actions without weakening conflicts', () => {
+      const v2 = migrateV1toV2({
+        permission: {
+          task: { '*': 'deny' },
+          write: { 'src/**': 'allow', 'src/secrets/**': 'deny' },
+          edit: { 'src/**': 'deny' },
+        },
+        agent: {
+          mnemosyne: {
+            permission: {
+              task: { '*': 'deny' },
+              write: { '.pantheon/**': 'allow' },
+              edit: { '.pantheon/**': 'deny' },
+            },
+          },
+        },
+      })
+
+      assert.deepEqual(v2.permissions, [
+        { action: 'subagent', resource: '*', effect: 'deny' },
+        { action: 'edit', resource: 'src/**', effect: 'deny' },
+        { action: 'edit', resource: 'src/secrets/**', effect: 'deny' },
+      ])
+      assert.deepEqual(v2.agents.mnemosyne.permissions, [
+        { action: 'subagent', resource: '*', effect: 'deny' },
+        { action: 'edit', resource: '.pantheon/**', effect: 'deny' },
+      ])
+    })
+
     it('should convert agent permissions (nested)', () => {
       const v2 = migrateV1toV2(V1_CONFIG)
       const talos = v2.agents.talos

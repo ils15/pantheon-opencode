@@ -34,8 +34,20 @@ const V1_PERMISSION_TO_ACTION = {
   bash: 'shell',
   skill: 'skill',
   edit: 'edit',
+  // V2 folds V1's `write` tool permission into the `edit` action, which also
+  // governs write and patch tools. Keep `edit` as the canonical reverse name.
+  write: 'edit',
+  task: 'subagent',
   websearch: 'websearch',
   // passthrough unknowns
+}
+
+const V2_ACTION_TO_V1_PERMISSION = {
+  shell: 'bash',
+  skill: 'skill',
+  edit: 'edit',
+  subagent: 'task',
+  websearch: 'websearch',
 }
 
 /**
@@ -49,15 +61,41 @@ const V1_PERMISSION_TO_ACTION = {
  */
 function convertPermissionsV1toV2(permObj) {
   const result = []
+  const resultIndices = new Map()
+  const effectRank = { allow: 0, ask: 1, deny: 2 }
+
+  const appendPermission = (action, resource, effect) => {
+    const key = JSON.stringify([action, resource])
+    const previousIndex = resultIndices.get(key)
+    if (previousIndex === undefined) {
+      resultIndices.set(key, result.length)
+      result.push({ action, resource, effect })
+      return
+    }
+
+    const previous = result[previousIndex]
+    if (previous.effect === effect) return
+
+    // V1 keeps `edit` and `write` as separate permission keys; V2's `edit`
+    // action covers both. If their rules collide on one resource, retain the
+    // stricter effect rather than letting object order turn a deny into allow.
+    console.warn(
+      `[config-migration] Conflicting V1 permission aliases for ${action}:${resource}; keeping the more restrictive effect`,
+    )
+    if ((effectRank[effect] ?? 0) > (effectRank[previous.effect] ?? 0)) {
+      previous.effect = effect
+    }
+  }
+
   for (const [key, value] of Object.entries(permObj)) {
     const action = V1_PERMISSION_TO_ACTION[key] || key
     if (typeof value === 'string') {
       // Simple: { edit: "allow" } → [{ action: "edit", resource: "*", effect: "allow" }]
-      result.push({ action, resource: '*', effect: value })
+      appendPermission(action, '*', value)
     } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       // Nested: { bash: { "git *": "allow" } } → [{ action: "shell", resource: "git *", effect: "allow" }]
       for (const [resource, effect] of Object.entries(value)) {
-        result.push({ action, resource, effect })
+        appendPermission(action, resource, effect)
       }
     } else {
       console.warn(`[config-migration] Unexpected permission value for "${key}":`, value)
@@ -71,13 +109,9 @@ function convertPermissionsV1toV2(permObj) {
  */
 function convertPermissionsV2toV1(permArray) {
   const result = {}
-  // Reverse action mapping: V2 action → V1 key
-  const ACTION_TO_V1 = Object.fromEntries(
-    Object.entries(V1_PERMISSION_TO_ACTION).map(([k, v]) => [v, k]),
-  )
 
   for (const { action, resource, effect } of permArray) {
-    const v1Key = ACTION_TO_V1[action] || action
+    const v1Key = V2_ACTION_TO_V1_PERMISSION[action] || action
     if (resource === '*') {
       result[v1Key] = effect
     } else {

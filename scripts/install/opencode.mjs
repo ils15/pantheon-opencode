@@ -226,23 +226,26 @@ function mergeMissing(target, source) {
 }
 
 /**
- * Resolve a plugin ref from the repository-root opencode.json to a path INSIDE
- * the installed package.
+ * Resolve a plugin ref from the repository-root opencode.json to its stable
+ * installed form.
  *
  * Only exact Pantheon plugin identities are resolved into the installed
  * package. In particular, a third-party absolute path ending in
  * `src/plugin.ts` or `src/plugins/pantheon-hooks.ts` is not evidence that the
- * plugin belongs to Pantheon and must be preserved verbatim.
+ * plugin belongs to Pantheon and must be preserved verbatim. V1 remains a pair
+ * of package-local paths; V2 uses an exact npm version so it is independent of
+ * the installer's global prefix or transient npx cache.
  */
 export function resolveInstalledPlugin(plugin) {
   if (typeof plugin !== 'string') return plugin
   const normalized = normalizePluginRef(plugin)
+  if (normalized === PANTHEON_V2_PLUGIN || normalized === PANTHEON_V2_LEGACY_FILE) {
+    return PANTHEON_V2_PACKAGE_SPEC
+  }
   if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return join(ROOT, normalized)
-  // Legacy V2 file ref (pre-directory-contract): migrate to the installed
-  // plugin directory so the beta loader accepts the entry.
-  if (normalized === PANTHEON_V2_LEGACY_FILE) return join(ROOT, PANTHEON_V2_PLUGIN)
   const identity = managedPluginIdentity(plugin)
   if (identity !== null && isAbsolute(normalized)) {
+    if (identity === PANTHEON_V2_PLUGIN) return PANTHEON_V2_PACKAGE_SPEC
     return INSTALLED_PANTHEON_PLUGIN_PATHS.get(identity) ?? plugin
   }
   return plugin
@@ -264,6 +267,14 @@ const PANTHEON_V2_PLUGIN = 'src/plugin-v2'
 const PANTHEON_V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const PANTHEON_V1_EXPORT = 'pantheon-opencode/plugin'
 const PANTHEON_V2_EXPORT = 'pantheon-opencode/plugin-v2'
+const PACKAGE_MANIFEST = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+const PANTHEON_V2_PACKAGE_SPEC = `${PACKAGE_MANIFEST.name}@${PACKAGE_MANIFEST.version}`
+// Installation origin probe: npm copies (global prefix, npx cache) always live
+// under a `node_modules` directory; a repo checkout does not. From a checkout —
+// or between a version bump and its publish — the V2 pin above names a version
+// that may not exist on the npm registry yet, and the host cannot resolve it
+// until publish. Advisory only: the install itself is structurally correct.
+const RUNNING_FROM_NPM_INSTALL = import.meta.url.includes('/node_modules/')
 const PANTHEON_PLUGIN_IDENTITIES = new Set([
   PANTHEON_V1_PLUGIN,
   PANTHEON_V1_HOOKS,
@@ -296,6 +307,9 @@ function managedPluginIdentity(ref) {
   if (normalized === PANTHEON_V2_LEGACY_FILE) return PANTHEON_V2_PLUGIN
   if (normalized === PANTHEON_V1_EXPORT || normalized.startsWith(`${PANTHEON_V1_EXPORT}@`)) {
     return PANTHEON_V1_PLUGIN
+  }
+  if (normalized === PACKAGE_MANIFEST.name || normalized.startsWith(`${PACKAGE_MANIFEST.name}@`)) {
+    return PANTHEON_V2_PLUGIN
   }
   if (normalized === PANTHEON_V2_EXPORT || normalized.startsWith(`${PANTHEON_V2_EXPORT}@`)) {
     return PANTHEON_V2_PLUGIN
@@ -1252,16 +1266,12 @@ export async function installOpenCode(
   // --------------------------------------------------------------------
   // B.5.1 Hermetic plugin resolution (packaging fix)
   // --------------------------------------------------------------------
-  // A developer running from a checkout has a repository-root opencode.json
-  // that may reference plugins via developer-machine absolute paths (e.g.
-  // <dev>/pantheon/.../src/plugin.ts or
-  // <dev>/pantheon/.../src/plugins/pantheon-hooks.ts). Copying those
-  // verbatim into the user's config would break every global install on any
-  // other machine. resolveInstalledPlugin() rewrites each entry to the plugin
-  // file inside the INSTALLED package (derived from ROOT — never hardcoded),
-  // so both dev and global installs resolve to a path that actually exists.
-  // The source opencode.json keeps its dev path for local development; the
-  // transform happens at install/sync time only.
+  // A developer running from a checkout may have a repository-root
+  // opencode.json with machine-specific plugin paths. V1 rewrites its two
+  // managed entries to paths under the installed package. V2 instead writes
+  // the exact package-root npm spec so it survives global-prefix and npx-cache
+  // changes; a source-checkout V2 install warns that the version may not yet
+  // exist on npm. Third-party paths remain untouched in either generation.
 
   if (version === 'v1') {
     // V1 loads the singular `plugin` list. Remove every Pantheon V2 entry from
@@ -1322,18 +1332,13 @@ export async function installOpenCode(
         }
       }
     }
-    // The beta resolves every `plugins` entry through npm install, so an
-    // `a/b` shorthand (e.g. the published `pantheon-opencode/plugin-v2`
-    // export) is treated as a GitHub repo and dies with NpmInstallFailedError
-    // (beta log evidence). The beta loader additionally requires each entry
-    // to be a DIRECTORY with a real index.js/index.ts — a file path warns
-    // "must be a directory" and a symlink is ignored (sandbox probe
-    // evidence). Register the V2 plugin DIRECTORY inside the INSTALLED
-    // package — exactly like V1's ensurePantheonPlugin, but pointing at
-    // src/plugin-v2 whose index.ts shim re-exports the real entry.
-    // Legacy refs (npm shorthand, the old src/plugin-v2.ts file path) are
-    // recognized via managedPluginIdentity and already stripped above, so
-    // they migrate here.
+    // V2 plugin entries are resolved by OpenCode as npm packages. Pin the
+    // exact current version and use the package-root export, which is the V2
+    // default plugin. Unlike an absolute path into ROOT, this survives moving
+    // between a global install and an npx cache; unlike an unpinned package,
+    // it cannot silently change underneath an existing config. Legacy local
+    // directory/file refs are recognized via managedPluginIdentity and are
+    // replaced here.
     const resolvedV2 = resolveInstalledPlugin(PANTHEON_V2_PLUGIN)
     config.plugins = config.plugins.filter(
       (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedV2),
@@ -1517,6 +1522,16 @@ export async function installOpenCode(
       configToWrite.plugins,
       config.context_sandbox,
     )
+
+    // Bootstrap chicken-and-egg: the pin names the CURRENT package version,
+    // which exists on the registry only after publish. From an npm install
+    // (global prefix / npx cache) that is the published version by
+    // construction; from a repo checkout the pin may point at an unpublished
+    // version the host cannot resolve. Warn instead of failing — the config is
+    // structurally correct and the pin realigns once the version is out.
+    if (!RUNNING_FROM_NPM_INSTALL) {
+      warning(S.v2UnpublishedPin(PANTHEON_V2_PACKAGE_SPEC))
+    }
   }
 
   const configContent = `${JSON.stringify(configToWrite, null, 2)}\n`

@@ -133,7 +133,7 @@ agents:
     - artifact-management
     - context-compression
     - auto-continue
-    - incremental-implementation
+    - council-synthesis
   athena:
     role: Strategic planner
     reasoning_effort: high
@@ -188,8 +188,6 @@ agents:
     - pantheon_code_mode
     skills:
     - tdd-with-agents
-    - file-prompts
-    - streaming-patterns
     - git-workflow-and-versioning
     - incremental-implementation
   aphrodite:
@@ -211,7 +209,7 @@ agents:
     skills:
     - tdd-with-agents
     - visual-review-pipeline
-    - file-prompts
+    - incremental-implementation
   demeter:
     role: Database specialist
     reasoning_effort: medium

@@ -4,14 +4,13 @@
  * Re-created per Council Synthesis 2026-08-05 (P0): the previous hook plugin
  * was removed on 24-25/07 because it used the Bun Shell `$` from the plugin
  * API, whose interface has NO `.timeout()` method — every hook crashed with
- * `TypeError: $.quiet().nothrow().timeout is not a function`. The 10 functional
+ * `TypeError: $.quiet().nothrow().timeout is not a function`. The remaining
  * scripts in scripts/hooks/ (gitleaks covers only staged files, NOT tool
  * calls) were left orphaned. This plugin wires them back into the opencode
  * runtime via `node:child_process` (version-proof — see hook-runner.ts).
  *
- * Hook mapping (Claude Code protocol payload {tool_name, tool_input,
- * agent_id, session_id} delivered on the script stdin):
- *   - tool.execute.before → validate-talos-scope.sh, scan-secrets.sh,
+ * Hook mapping:
+ *   - tool.execute.before → in-process secret scan, validate-talos-scope.sh,
  *     validate-tool-safety.sh + on-subagent-delegation-start.sh (only when the
  *     tool is a delegation tool such as `task`, to keep the audit log honest)
  *   - tool.execute.after  → format-multi-language.sh, log-session-start.sh +
@@ -23,7 +22,7 @@
  *     ({tool, sessionID, callID}). P0-4 (2026-08-06): a `chat.params` hook
  *     records the active agent per session (sessionAgent map), so payloadFor()
  *     now resolves the real agent_id — validate-talos-scope.sh enforces the
- *     Talos file-count boundary; the agent-agnostic scan-secrets and
+ *     Talos file-count boundary; the agent-agnostic secret scanner and
  *     validate-tool-safety protections remain fully active.
  *   - tool.execute.before CAN hard-deny — the old "cannot hard-deny" claim
  *     below this line is OUTDATED for 1.18.x (verified 2026-08-06 on the
@@ -34,15 +33,15 @@
  *     the tool body runs (the docs' .env-protection example relies on this).
  *     The permission system remains the primary deny path, but a thrown
  *     hook error is now a supported hard block (hybrid blocking, Fix 2
- *     2026-08-06): scan-secrets.sh exits 2 on high-confidence token matches
- *     → the plugin logs via reportFailure (non-TUI channels) and THEN throws
+ *     2026-08-06): high-confidence token matches → the plugin logs via
+ *     reportFailure (non-TUI channels) and THEN throws
  *     the DELIBERATE block error — the ONLY throw in this plugin. Exit 1
  *     (low-confidence header/KEY names) stays advisory: toast + logs, no
  *     block.
  *   - Logging policy (P0 fix 2026-08-06): NON-ZERO exit → NEVER console.
  *     `console.error` in a plugin writes to the process stderr, which the
  *     opencode TUI renders directly into the terminal — that polluted the
- *     chat with `[pantheon-hooks:scan-secrets.sh] exit 1: [SECRET SCAN]...`
+ *     chat with noisy nonzero hook output
  *     spam on every tool call. Non-zero exits now go to THREE non-TUI channels:
  *       1. client.tui.showToast() — one short, deduped TUI toast (per
  *          (script, exit code, masked match) per session) so the user gets a
@@ -60,8 +59,8 @@
  *   - Hooks NEVER throw: every body is try/catch'd and only logs. All three
  *     reporting channels (toast, app.log, file append) are individually
  *     try/catch'd so a failure in one can never take down the session.
- *     EXCEPTION (Fix 2, 2026-08-06): the deliberate scan-secrets high-
- *     confidence block — when scan-secrets.sh exits 2, the hook awaits
+ *     EXCEPTION (Fix 2, 2026-08-06): the deliberate high-confidence secret
+ *     block — when the in-process scanner finds a token, the hook awaits
  *     reportFailure FIRST (app.log + hooks.log) and only then throws. The
  *     throw is deliberately NOT swallowed by the surrounding try/catch
  *     (handled via a blockError variable thrown after it), because that
@@ -177,6 +176,7 @@ import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import { pantheonPluginOnce } from '../pantheon/plugin-once.ts'
+import { scanSecretPayload } from '../pantheon/secret-scanner.ts'
 import { getSharedBoard } from '../pantheon/shared-board.ts'
 import { type HookPayload, type HookResult, runHook } from './hook-runner.ts'
 
@@ -320,8 +320,7 @@ const sessionAgent = new Map<string, { agent: string; at: number }>()
 const RISKY_PATH_RE = /migration|schema\.sql|alembic|models\/|auth|password|token|secret/i
 
 /**
- * Fix 1 (2026-08-06): high-confidence secret token formats — mirrors
- * scripts/hooks/scan-secrets.sh HIGH_CONFIDENCE_PATTERNS. Used by maskSecret()
+ * Fix 1 (2026-08-06): high-confidence secret token formats. Used by maskSecret()
  * to REDACT secret VALUES from any plugin log line: the talos-guard must
  * never write a raw credential to hooks.log (a real `sk-bf-...` token leaked
  * in plain text there on 2026-08-06). Header/KEY names (the Bifrost header alone,
@@ -341,8 +340,8 @@ function maskSecret(text: string): string {
 }
 
 /**
- * Fix 2 (2026-08-06): message thrown when scan-secrets.sh exits 2
- * (HIGH_CONFIDENCE token match). This is the ONLY deliberate throw in the
+ * Fix 2 (2026-08-06): message thrown on a high-confidence token match.
+ * This is the ONLY deliberate throw in the
  * plugin — it is thrown AFTER reportFailure so the log channels always write
  * first, and it is NOT swallowed by the hook's try/catch: opencode's
  * Plugin.trigger has no catch around hook invocations, so the rejection
@@ -1093,9 +1092,8 @@ function flushIdleReminders(ctx: HookContext): void {
  *               (echo routed to structured log + hooks.log, never the TUI).
  * No console.error / console.log anywhere in this path — the TUI stays clean.
  *
- * Returns the underlying HookResult (or null on unexpected failure) so the
- * tool.execute.before handler can inspect scan-secrets.sh's exit code for the
- * Fix-2 hybrid block (code 2 = high-confidence token → throw after logging).
+ * Returns the underlying HookResult (or null on unexpected failure) for the
+ * non-scanner script hooks.
  */
 async function safeRun(
   ctx: HookContext,
@@ -1177,15 +1175,26 @@ const plugin: Plugin = async ({ client, directory }) => {
       // catch: opencode propagates the rejection to fail the tool call.
       let blockError: Error | null = null
       try {
-        const hooks = ['validate-talos-scope.sh', 'scan-secrets.sh', 'validate-tool-safety.sh']
+        const hooks = ['validate-talos-scope.sh', 'validate-tool-safety.sh']
         // P0-2: the delegation record must exist BEFORE the payload is built
         // so the start hook receives the delegation_id the stop hook joins on.
-        let payload = payloadFor(input, output?.args ?? {})
-        if (DELEGATION_TOOL_RE.test(input.tool)) {
+        const args = output?.args ?? (input as { args?: unknown }).args
+        let payload = payloadFor(input, args)
+        // Validate and scan before touching delegation args or launching any
+        // hook subprocess. The shared scanner catches malformed serialization
+        // and returns a fixed fail-closed result.
+        const scan = scanSecretPayload({ ...payload, tool_input: args })
+        if (scan.status === 'invalid') {
+          blockError = new Error(
+            '[pantheon-hooks] Bloqueado: o scanner de segredos não validou a entrada da ferramenta (fail-closed)',
+          )
+        } else if (scan.status === 'block') {
+          blockError = new Error(SECRET_BLOCK_MESSAGE)
+        }
+        if (blockError === null && DELEGATION_TOOL_RE.test(input.tool)) {
           hooks.push('on-subagent-delegation-start.sh')
           // tool.execute.before carries args on `output` (typed); `input.args`
           // also exists at runtime — read from whichever is present.
-          const args = output?.args ?? (input as { args?: unknown }).args
           const start: DelegationStart = {
             delegation_id: crypto.randomUUID(),
             agent: delegationAgent(input.tool, args),
@@ -1222,7 +1231,7 @@ const plugin: Plugin = async ({ client, directory }) => {
         const isWriteIntent =
           WRITE_INTENT_TOOLS.has(input.tool) ||
           (input.tool === 'bash' && BASH_WRITE_INTENT_RE.test(bashCommand))
-        if (isWriteIntent) {
+        if (blockError === null && isWriteIntent) {
           try {
             const values: string[] = []
             const scan = (v: unknown): void => {
@@ -1273,25 +1282,63 @@ const plugin: Plugin = async ({ client, directory }) => {
             // Advisory only — a failure here must never take down the hook.
           }
         }
-        // Fix 2 hybrid blocking: safeRun returns each script's HookResult;
-        // scan-secrets.sh exits 2 on HIGH_CONFIDENCE token matches
-        // (sk-bf-*, AKIA..., ghp_..., glpat-..., JWT, bearer...) → BLOCK the
-        // tool call. Exit 1 (low-confidence header/KEY names) stays advisory
-        // — safeRun already logged + toasted it, no block. The toast for
-        // code 1/2 fires inside safeRun BEFORE we reach the throw, and the
-        // reportFailure below is awaited first — log channels always write.
-        const results = await Promise.all(
-          hooks.map(async (script) => ({ script, result: await safeRun(ctx, script, payload) })),
-        )
-        const scan = results.find((r) => r.script === 'scan-secrets.sh')
-        if (scan?.result?.code === 2) {
+        // Scan the same serialized hook payload the removed stdin protocol
+        // delivered, but in-process and without logging untrusted input.
+        if (scan.status === 'invalid') {
+          const message =
+            '[pantheon-hooks] Bloqueado: o scanner de segredos não validou a entrada da ferramenta (fail-closed)'
+          await reportFailure(
+            ctx,
+            message,
+            { script: 'secret-scan', tool: input.tool, blocked: true, reason: 'invalid-input' },
+            'error',
+          )
+          blockError = new Error(message)
+        } else if (scan.status === 'block') {
+          for (const finding of scan.findings) {
+            await reportFailure(
+              ctx,
+              `[SECRET SCAN] High-confidence secret detected: ${finding.masked} (pattern: ${finding.pattern})`,
+              { script: 'secret-scan', tool: input.tool, pattern: finding.pattern },
+              'error',
+            )
+          }
           await reportFailure(
             ctx,
             SECRET_BLOCK_MESSAGE,
-            { script: 'scan-secrets', tool: input.tool, blocked: true, code: 2 },
+            { script: 'secret-scan', tool: input.tool, blocked: true },
             'error',
           )
+          void notifyToast(ctx, {
+            title: 'Pantheon Hook',
+            message: '⚠️ High-confidence secret detected — tool call blocked',
+            variant: 'error',
+            duration: 4000,
+            category: 'errors',
+            dedupeKey: `secret-scan|block|${input.sessionID}`,
+          })
           blockError = new Error(SECRET_BLOCK_MESSAGE)
+        } else if (scan.status === 'advisory') {
+          for (const finding of scan.findings) {
+            await reportFailure(
+              ctx,
+              `[SECRET SCAN] Potential secret detected (low confidence): ${finding.masked} (pattern: ${finding.pattern})`,
+              { script: 'secret-scan', tool: input.tool, pattern: finding.pattern },
+              'warn',
+            )
+          }
+          void notifyToast(ctx, {
+            title: 'Pantheon Hook',
+            message: '⚠️ Possible secret detected — see log',
+            variant: 'warning',
+            duration: 4000,
+            category: 'errors',
+            dedupeKey: `secret-scan|advisory|${input.sessionID}`,
+          })
+        }
+
+        if (blockError === null) {
+          await Promise.all(hooks.map(async (script) => safeRun(ctx, script, payload)))
         }
       } catch {
         // Never let a hook take down the opencode session — except the

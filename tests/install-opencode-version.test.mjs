@@ -15,10 +15,10 @@ import {
 import { ROOT } from '../scripts/install/shared.mjs'
 
 const NO_COMPONENTS = []
-// Canonical V2 entry: the plugin directory inside the installed package.
-// V2_EXPORT / V2_LEGACY_FILE are pre-directory-contract refs the installer
-// migrates into V2_PLUGIN.
-const V2_PLUGIN = join(ROOT, 'src', 'plugin-v2')
+// The installer emits a versioned npm package spec. Existing absolute plugin
+// paths remain valid inputs and are migrated to that durable package ref.
+const V2_PLUGIN_DIR = join(ROOT, 'src', 'plugin-v2')
+const V2_PLUGIN = `pantheon-opencode@${JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version}`
 const V2_EXPORT = 'pantheon-opencode/plugin-v2'
 const _V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
@@ -159,7 +159,7 @@ test('auto selects V2 and V1 during migrations without mixing Pantheon refs', as
     const v2 = await installConfig(
       {
         plugin: [THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN, 'third-party-v1'],
-        plugins: [V2_PLUGIN, 'third-party-v2'],
+        plugins: [V2_PLUGIN_DIR, 'third-party-v2'],
       },
       'auto',
     )
@@ -231,7 +231,7 @@ test('plugin deduplication uses Pantheon identity or full path, never basename',
 
 // ─── Host-version gate ──────────────────────────────────────────────────────
 
-test('default resolution on a 2.x host registers the V2 directory, never .ts file paths', async () => {
+test('default resolution on a 2.x host registers a versioned V2 package, never local paths', async () => {
   // Reproduces the shipped bug: on an OpenCode 2.x host the default gate used to
   // resolve V1, whose branch writes .ts FILE paths into the singular `plugin`
   // key. A 2.x host rejects those ("configured plugin path must be a directory")
@@ -243,13 +243,9 @@ test('default resolution on a 2.x host registers the V2 directory, never .ts fil
     warn: silentWarn,
   })
 
-  assert.deepEqual(
-    {
-      hasV2Directory: config.plugins.includes(V2_PLUGIN),
-      tsFilePaths: config.plugin.filter((entry) => entry.endsWith('.ts')).length,
-    },
-    { hasV2Directory: true, tsFilePaths: 0 },
-  )
+  assert.ok(config.plugins.includes(V2_PLUGIN), 'the versioned npm plugin is registered')
+  assert.ok(!config.plugins.includes(V2_PLUGIN_DIR), 'transient source path is not persisted')
+  assert.equal(config.plugin.filter((entry) => entry.endsWith('.ts')).length, 0)
 })
 
 test('the default gate follows the host probe, with explicit > env > basename > probe precedence', () => {
@@ -548,7 +544,7 @@ test('the probe reads stdout first and only falls back to stderr', () => {
   assert.equal(warnings.length, 1, 'an empty probe on both streams must warn')
 })
 
-test('an explicit v1 install removes a registered V2 directory entry from config.plugins', async () => {
+test('an explicit v1 install removes a registered V2 package entry from config.plugins', async () => {
   // Coverage gap: the adjacent migration test already asserts this through
   // `auto` + OPENCODE_VERSION=v1, so the explicit-argument path was never
   // asserted on its own.
@@ -558,7 +554,7 @@ test('an explicit v1 install removes a registered V2 directory entry from config
   assert.ok(config.plugins.includes('third-party-v2'), 'user entries must survive')
 })
 
-test('a corrupted install is repaired: V2 directory registered, both .ts paths purged', async () => {
+test('a corrupted install is repaired: V2 package registered, both .ts paths purged', async () => {
   // Exact field state left behind by a V1 default run against a 2.x host: two
   // .ts file paths in the singular key, and nothing in the plural key.
   const config = await installConfig({ plugin: V1_TS_PATHS, plugins: [] }, undefined, {
@@ -567,7 +563,7 @@ test('a corrupted install is repaired: V2 directory registered, both .ts paths p
     warn: silentWarn,
   })
 
-  assert.ok(config.plugins.includes(V2_PLUGIN), 'the V2 directory must be registered')
+  assert.ok(config.plugins.includes(V2_PLUGIN), 'the V2 package must be registered')
   for (const tsPath of V1_TS_PATHS) {
     assert.ok(!config.plugin.includes(tsPath), `stale V1 path must be purged: ${tsPath}`)
   }
