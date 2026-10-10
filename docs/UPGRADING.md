@@ -223,6 +223,11 @@ Key changes:
 
 **No manual migration needed.** The protocol is enforced at the agent instruction level.
 
+> **Superseded:** the mandatory per-agent recall/store rules above are historical
+> and are not the current policy. New work searches only when project history is
+> relevant, reuses coordinator results across delegation, and stores only a
+> reusable top-level outcome. See [MEMORY.md](MEMORY.md).
+
 ### Previous historical upgrades
 
 For upgrading from versions before v3.19.0, see the CHANGELOG for version-specific changes.

@@ -64,6 +64,11 @@ Principais mudanças:
 
 **Nenhuma migração manual é necessária.** O protocolo é aplicado no nível das instruções dos agentes.
 
+> **Substituído:** as regras históricas de consulta e gravação obrigatórias por
+> agente não são a política atual. Busque somente quando o histórico do projeto
+> for relevante, reutilize o resultado do coordenador nas delegações e grave
+> apenas um resultado reutilizável no nível da tarefa. Veja [MEMORY.md](MEMORY.md).
+
 ### Atualizações anteriores
 
 Para atualizar de versões anteriores à v3.19.0, consulte o CHANGELOG para as mudanças específicas de cada versão.

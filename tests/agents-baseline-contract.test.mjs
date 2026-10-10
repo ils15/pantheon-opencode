@@ -49,7 +49,7 @@ test('generated line counts use LF boundaries without assuming a final newline',
   assert.equal(logicalLineCount('one\ntwo'), 2)
   assert.equal(logicalLineCount('one'), 1)
   assert.equal(logicalLineCount(''), 0)
-  assert.equal(logicalLineCount(generated), 227)
+  assert.equal(logicalLineCount(generated), 186)
 })
 
 test('delegation retry guidance uses one retry before protected fallbacks', () => {
@@ -80,10 +80,10 @@ test('subtask prompt preserves the canonical required return contract', () => {
     assert.match(subtaskPrompt, new RegExp(`\\*\\*${field}:\\*\\*`))
   }
 
-  assert.match(returnContract, /If this agent used `memory_recall` or `memory_search`/)
+  assert.match(returnContract, /If memory affected the result, state the takeaway briefly/i)
   assert.match(
     subtaskPrompt,
-    /If you used `memory_recall` or `memory_search`[\s\S]*relevant.*memory.*context/i,
+    /If memory affected the result, state the takeaway briefly[\s\S]*do not repeat the entry/i,
   )
   assert.doesNotMatch(subtaskPrompt, /\*\*tokens:\*\*[^\n]*optional/i)
 })

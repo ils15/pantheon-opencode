@@ -71,7 +71,7 @@ Every worker MUST end with this canonical return contract. All listed fields are
 **blockers:** [list any blockers or null]
 ```
 
-If you used `memory_recall` or `memory_search`, include the relevant entries as memory context; omit this only when no memory tool was used.
+If memory affected the result, state the takeaway briefly; do not repeat the entry or task context.
 
 ---
 

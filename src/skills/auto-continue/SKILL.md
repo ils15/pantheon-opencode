@@ -52,8 +52,6 @@ Full-auto may continue only within a task and scope the user explicitly authoriz
 
 ---
 
----
-
 ## Implementation Pattern
 
 ```
@@ -168,21 +166,25 @@ Should I now run the migration tests? [waiting]
 Session state is **not** file-based. It lives in **pantheon-persistence** under the
 `checkpoint:<slug>` namespace and is cleaned up automatically by a 4h TTL.
 
-Write state with `context_save(slug=slug, key=key, content=JSON.stringify(state), session_id=...)` and read it back with
-`context_get(slug=slug, key="latest", session_id=...)`. Capture `session_id` from the first `context_save`
-of the session and reuse it for the rest of the session, so the `latest` pointer survives
-compaction. `state` must be an object — never pass a bare string as `content`: its
+Use checkpoints only when `context_save` and `context_get` are explicitly
+present in the active session's tool list. If unavailable, do not attempt a
+checkpoint or guess a session ID; carry the handoff in the normal response.
+
+When available, call `context_save` with `content=JSON.stringify(state)` and an
+explicit `session_id`. A successful save needs no immediate `context_get`; read
+only when resuming or when the save result is uncertain. Reuse the same session
+ID so the `latest` pointer survives compaction. `state` must be an object — never pass a bare string as `content`: its
 `goal`/`phase`/`delegations`/`heartbeat` values are objects and `tail` is an array.
 `goal` is optional; when unset, omit the key rather than passing a string placeholder.
 
 ### Heartbeat Check
-- If `context_get(slug=slug, key="heartbeat", session_id=...)` returns a checkin older than 300s, log a stall warning and resume
-- Write a heartbeat after every anti-stall recovery action
+- Check heartbeat only when checkpoint tools are available and the workflow needs a durable resume.
+- Write a heartbeat after anti-stall recovery only when the current session exposes checkpoint tools.
 
 ### Checkpoint Rules
-1. Save checkpoints for long-running/multi-phase work, context-loss risk, or substantive parallel work — not a one-off command or bounded fix
+1. Save checkpoints only for long-running/multi-phase work, context-loss risk, or substantive parallel work — not a one-off command or bounded fix
 2. Include current phase and remaining tasks when a checkpoint is warranted
-3. On resume: `context_get(slug=slug, key="latest", session_id=...)` restores the most recent checkpoint
+3. On resume, read the latest checkpoint only with a known session ID; otherwise request the missing handoff context.
 
 > Do not create `heartbeat.json`, `checkpoint-<N>.json`, or `session.json` under
 > `.pantheon/deepwork/`. That file-based mechanism is retired — TTL handles cleanup, and reading

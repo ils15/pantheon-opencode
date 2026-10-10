@@ -16,10 +16,6 @@ mcp_tools:
     - memory_recall
     - memory_store
     - memory_search
-  pantheon-persistence:
-    - kv_get
-    - kv_store
-    - kv_search
 skills:
   - agent-coordination
   - session-goal
@@ -150,20 +146,9 @@ Wave N — revisão somente quando exigida pelo risco; Themis síncrono
 Anuncie waves somente quando houver trabalho independente que as justifique; uma tarefa unitária não precisa de anúncio. Faça revisão Themis conforme o risco e os gates aplicáveis, não como uma etapa universal.
 
 
-## Depth Control (Previne Recursao Infinita)
+## Limite de delegação
 
-Limite maximo de 2 niveis de nesting: Zeus -> subagente -> sub-subagente.
-
-```
-depth = kv_get(namespace="deleg", key="deleg:depth") ?? 0
-if depth >= 2 → NAO delegar, ESCALAR para o usuario
-else → kv_store(namespace="deleg", key="deleg:depth", value=String(depth + 1))
-
-Quando subagente retornar:
-  kv_store(namespace="deleg", key="deleg:depth", value=String(max(0, depth - 1)))
-```
-
-Zeus (nivel 0) -> Apollo/Hermes (nivel 1) -> sub-subagente (nivel 2 max).
+Limite o fluxo a Zeus → especialista → no máximo um especialista auxiliar, quando necessário e permitido. Não use KV compartilhado para contar profundidade: é estado global, pode sofrer corrida entre tarefas e não é necessário para impor esse limite.
 
 ## MCP Tools
 

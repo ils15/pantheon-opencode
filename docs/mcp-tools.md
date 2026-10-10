@@ -44,22 +44,28 @@ Lexical memory with SQLite FTS5 (BM25). **9 tools**: 6 `memory_*` for storing, s
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
-| `memory_store` | `(value, namespace?: "default", key?, metadata?: "{}")` | Store a memory entry (FTS5 index updated by trigger) | Implementers: hermes, aphrodite, demeter, prometheus, hephaestus, nyx, mnemosyne, zeus |
-| `memory_search` | `(query, namespace?, top_k?: 5, decay_days?)` | FTS5 BM25 keyword search (stopwords dropped, 4+ char terms prefix-matched); optional freshness decay via `decay_days` (default off) | apollo, themis, mnemosyne |
-| `memory_recall` | `(key, namespace?: "default")` | Exact recall of an entry by key within a namespace | ALL agents — session continuity |
+| `memory_store` | `(value, namespace?: "default", key?, metadata?: "{}")` | Store a reusable memory entry (FTS5 index updated by trigger); metadata is a JSON string | Zeus, Mnemosyne when durable context is warranted |
+| `memory_search` | `(query, namespace?, top_k?: 5, decay_days?)` | FTS5 BM25 keyword search (stopwords dropped, 4+ char terms prefix-matched); optional freshness decay via `decay_days` (default off) | Coordinator or specialist only when prior project context is relevant |
+| `memory_recall` | `(key, namespace?: "default")` | Exact recall of an entry by key within a namespace | Exact-key lookup when needed |
 | `memory_forget` | `(id?, key?, namespace?: "default")` | Delete an entry by ID or key (FTS index cleaned via trigger) | mnemosyne only |
-| `memory_list` | `(namespace?, prefix?, limit?: 50)` | List entries chronologically with namespace and key-prefix filters | apollo, zeus — discovery |
-| `memory_stats` | `()` | Database statistics: totals, namespaces, disk usage | nyx, zeus — maintenance |
+| `memory_list` | `(namespace?, prefix?, limit?: 50)` | List entries chronologically with namespace and key-prefix filters | Mnemosyne — explicit maintenance |
+| `memory_stats` | `()` | Database statistics: totals, namespaces, disk usage | Mnemosyne — explicit maintenance |
 | `code_index` | `(path?, force?)` | Index codebase files into a knowledge graph (hash-based skip) | apollo, athena, zeus |
 | `code_query` | `(query, type?, limit?: 10)` | Search code entities via FTS5 | apollo, athena |
 | `code_neighbors` | `(entity_id, depth?: 1)` | Graph neighbors of a code entity (BFS depth 1-3) | apollo, athena |
 
-**Call pattern:**
+**Lean call pattern:**
 ```
-memory_store(value="Decided to use refresh token rotation", key="decision-42")
-memory_search(query="existing auth patterns", top_k=5)
-memory_recall(key="decision-42")
+# Only when prior history can change the work; pass useful hits to child agents.
+memory_search(query="existing auth patterns", top_k=2)
+
+# Store once at the top level only if the result is reusable in a later session.
+memory_store(value="Refresh tokens rotate on every use", key="decision-42")
 ```
+
+Do not search at every agent start, repeat a task-level search in each child, or
+store routine phase/test summaries. Use `memory_recall` only when an exact key
+is already known; do not search and then immediately recall the same entry.
 
 ---
 
@@ -69,19 +75,23 @@ Lightweight key-value store with SQLite FTS5, TTL-based expiration, and namespac
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
-| `kv_store` | `(namespace, key, value, ttl?, scope?)` | Store a key-value pair with optional TTL (seconds) | ALL agents — cache, session state |
-| `kv_get` | `(namespace, key, scope?)` | Retrieve a value by namespace + key (auto-filters expired) | ALL agents — read cached data |
-| `kv_delete` | `(namespace, key, scope?)` | Remove a key-value pair | zeus, talos — cleanup tasks |
-| `kv_list` | `(namespace, prefix?, scope?, limit?)` | List keys in a namespace with optional prefix filter | apollo, zeus — discovery |
-| `kv_search` | `(query, namespace?, scope?, limit?)` | FTS5 full-text search with BM25 ranking | mnemosyne, zeus — find across namespaces |
-| `purge_expired` | `(scope?, dry_run?)` | Purge expired TTL entries with deletelog audit trail | mnemosyne, zeus — maintenance |
+| `kv_store` | `(namespace, key, value, ttl?, scope?)` | Store temporary key-value data with optional TTL (seconds) | Explicit workflows that need shared, expiring state |
+| `kv_get` | `(namespace, key, scope?)` | Retrieve a value by namespace + key (auto-filters expired) | Read known temporary state when resuming |
+| `kv_delete` | `(namespace, key, scope?)` | Remove a key-value pair | Explicit cleanup |
+| `kv_list` | `(namespace, prefix?, scope?, limit?)` | List keys in a namespace with optional prefix filter | Explicit inspection/maintenance |
+| `kv_search` | `(query, namespace?, scope?, limit?)` | FTS5 full-text search with BM25 ranking | Explicit discovery across stored KV data |
+| `purge_expired` | `(scope?, dry_run?)` | Purge expired TTL entries with deletelog audit trail | Explicit maintenance; writes already purge opportunistically |
 
-**Call pattern:**
+Use persistence only when temporary or session-scoped state is needed; it is
+not the default cache for agent handoffs. Avoid an immediate read-after-write:
+successful stores already return a status. For long-running checkpoint workflows,
+save once at a meaningful boundary and read only when resuming.
+
+**Example — state that must outlive the current handoff:**
 ```
-kv_store(namespace="cache-apollo", key="api-response", value="...", ttl=3600)
-kv_get(namespace="cache-apollo", key="api-response")
-kv_search(query="auth token refresh")
-purge_expired(scope="project", dry_run=True)
+kv_store(namespace="deepwork-42", key="phase", value="review", ttl=14400)
+# Later, when resuming that workflow:
+kv_get(namespace="deepwork-42", key="phase")
 ```
 
 ---
