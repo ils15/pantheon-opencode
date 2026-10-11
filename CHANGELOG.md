@@ -18,6 +18,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.8] - 2026-10-11
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🐞 Fixed
+
+- **opencode-v2** — repair session lookup and beta sandbox reuse
+- **scripts** — isolate beta background service port
 ## [v1.6.0-beta.7] - 2026-10-10
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

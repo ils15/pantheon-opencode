@@ -190,24 +190,24 @@ there is no Pantheon-specific delegation tool surface to configure. See
 [ADR-0011](.pantheon/memory-bank/adr/0011-delegation-engine-contract.md) for the
 historical engine contract.
 
-This beta.7 candidate combines native per-agent MCP permissions for OpenCode V1
+This beta.8 candidate combines native per-agent MCP permissions for OpenCode V1
 and V2, V2 delegation-permission alignment, simpler memory/compression
 instructions, and a sandbox check that proves the installed package matches
 this checkout instead of silently accepting stale npm-cached code. The isolated
 sandbox launcher also pins the OpenCode background service to its dedicated
 loopback port, rather than colliding with another OpenCode installation. The Zeus
 prompt reuses one task-start memory-search result for context and routing;
-runtime call counts and latency have not been measured. A manual V2
-`HERMES-PONG` dispatch returned
-`Pantheon delegation denied: authoritative caller session is unavailable`.
-Investigation found the permission hook passed a bare string to `ctx.session.get`
-instead of the V2 input object `{ sessionID }`; the local fix and contract test
-now use the documented signature. Real delegation remains an explicit sandbox
-verification target, so the runtime fix is not yet confirmed end to end. The
-same report includes a separate `GET /api/session/{id}/permission` 404; the
-session ID exists in the beta7-candidate database but not the default global
-database. Both OpenCode services were running, so the 404 in the global log may
-come from the other instance; this remains an end-to-end verification item.
+runtime call counts and latency have not been measured. A beta.7 V2 dispatch
+failed because the permission hook passed a bare string to `ctx.session.get`
+instead of the V2 input object `{ sessionID }`; beta.8 corrects the call and
+adds contract tests for the success and failure cases. The user subsequently
+reported a successful Hermes liveness delegation in the active session, but
+freshly restarting and testing the beta.8 sandbox remains the end-to-end gate.
+The original report also included a separate `GET /api/session/{id}/permission`
+404; the session ID exists in the beta7-candidate database but not the default
+global database. Both OpenCode services were running, so the 404 in the global
+log may come from the other instance; this remains an end-to-end verification
+item.
 
 Delegated tasks get at most one retry after an initial timeout or failure. If
 that retry fails, the configured fallback or escalation chain applies.
