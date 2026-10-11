@@ -198,10 +198,16 @@ sandbox launcher also pins the OpenCode background service to its dedicated
 loopback port, rather than colliding with another OpenCode installation. The Zeus
 prompt reuses one task-start memory-search result for context and routing;
 runtime call counts and latency have not been measured. A manual V2
-`HERMES-PONG` dispatch previously returned
-`Pantheon delegation denied: authoritative caller session is unavailable`, so
-real delegation remains an explicit sandbox verification target, not a
-confirmed fix.
+`HERMES-PONG` dispatch returned
+`Pantheon delegation denied: authoritative caller session is unavailable`.
+Investigation found the permission hook passed a bare string to `ctx.session.get`
+instead of the V2 input object `{ sessionID }`; the local fix and contract test
+now use the documented signature. Real delegation remains an explicit sandbox
+verification target, so the runtime fix is not yet confirmed end to end. The
+same report includes a separate `GET /api/session/{id}/permission` 404; the
+session ID exists in the beta7-candidate database but not the default global
+database. Both OpenCode services were running, so the 404 in the global log may
+come from the other instance; this remains an end-to-end verification item.
 
 Delegated tasks get at most one retry after an initial timeout or failure. If
 that retry fails, the configured fallback or escalation chain applies.
@@ -525,6 +531,11 @@ agent delegation. The gate is fail-closed: every required check must return an
 explicit PASS; timeouts, auth/network/provider failures and missing
 prerequisites block the run.
 
+The runner defaults to the current stable `@opencode/cli` package and its
+`opencode2` alias; set `OPENCODE_V2_SPEC` only when a test needs a different
+host build. This keeps Pantheon beta testing separate from the OpenCode CLI
+release channel.
+
 "V2" here refers only to the hook canary observed against an OpenCode v2.0.18
 host, where at least one tested hook callback fired; it does not establish
 compatibility with the stable `@opencode/plugin@2.0.18` SDK or full 2.x
@@ -575,7 +586,7 @@ Env overrides:
 |----------|---------|---------|
 | `PANTHEON_SANDBOX_ROOT` | `~/pantheon-sandbox` | Sandbox root (refused if unsafe for `--reset`) |
 | `OPENCODE_V1_SPEC` | `opencode-ai@1.18.18` | Configures the V1 plugin only; the V2-only sandbox runner does not consume or support it |
-| `OPENCODE_V2_SPEC` | `@opencode-ai/cli@beta` | npm spec providing the `opencode2` binary |
+| `OPENCODE_V2_SPEC` | `@opencode/cli@latest` | npm spec providing the `opencode2` binary |
 | `PANTHEON_SANDBOX_MODEL` | `opencode-go/mimo-v2.5` | Model used by init and prompts |
 | `PANTHEON_PROMPT_TIMEOUT` | `300` | Per-prompt timeout in seconds |
 

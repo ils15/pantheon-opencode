@@ -34,7 +34,7 @@
 # Env overrides:
 #   PANTHEON_SANDBOX_ROOT    Sandbox root (default: ~/pantheon-sandbox)
 #   OPENCODE_V2_SPEC         npm spec providing the V2 binary
-#                            (default: @opencode-ai/cli@beta). NOTE: this is an
+#                            (default: @opencode/cli@latest). NOTE: this is an
 #                            install spec only — it is not a dependency of this
 #                            package, and no code imports it.
 #   PANTHEON_REPO            Repository the sandbox is built from (default: the
@@ -63,7 +63,7 @@ SANDBOX_ROOT="${PANTHEON_SANDBOX_ROOT:-$HOME/pantheon-sandbox}"
 SANDBOX_HOME="$SANDBOX_ROOT/home"
 NPM_PREFIX="$SANDBOX_HOME/.npm-global"
 
-OPENCODE_V2_SPEC="${OPENCODE_V2_SPEC:-@opencode-ai/cli@beta}"
+OPENCODE_V2_SPEC="${OPENCODE_V2_SPEC:-@opencode/cli@latest}"
 PANTHEON_SANDBOX_MODEL="${PANTHEON_SANDBOX_MODEL:-opencode-go/mimo-v2.5}"
 PANTHEON_PROMPT_TIMEOUT="${PANTHEON_PROMPT_TIMEOUT:-300}"
 
@@ -900,17 +900,92 @@ if [ "$V2_PORT" -lt 1 ] || [ "$V2_PORT" -gt 65535 ]; then
   echo "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')" >&2
   exit 1
 fi
-if ! python3 - "$V2_PORT" <<'CHECKPORT'
+if ! python3 - "$V2_PORT" "$NPM_PREFIX" <<'CHECKPORT'
+import errno
+import os
 import socket
 import sys
+from urllib.request import urlopen
 
 port = int(sys.argv[1])
+cli_prefix = os.path.realpath(
+    os.path.join(sys.argv[2], "lib", "node_modules", "@opencode", "cli")
+)
 try:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        # A just-stopped service can leave a harmless TIME_WAIT socket behind.
+        # SO_REUSEADDR permits the new service to bind that port without
+        # masking a live listener or an unrelated server.
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind(("127.0.0.1", port))
 except OSError as exc:
-    print(f"ERROR: dedicated V2 port 127.0.0.1:{port} is already in use or unavailable; no service was stopped: {exc}", file=sys.stderr)
-    raise SystemExit(1)
+    if exc.errno != errno.EADDRINUSE:
+        print(f"ERROR: cannot reserve dedicated V2 port 127.0.0.1:{port}: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+
+    # OpenCode intentionally keeps its managed service alive after the TUI exits.
+    # Reuse it only when /proc proves the listener is this sandbox's CLI binary.
+    inodes = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table, encoding="ascii") as entries:
+                next(entries, None)
+                for line in entries:
+                    fields = line.split()
+                    if len(fields) >= 10 and int(fields[1].rsplit(":", 1)[1], 16) == port and fields[3] == "0A":
+                        inodes.add(fields[9])
+        except OSError:
+            pass
+
+    listener_pids = set()
+    for pid in (entry for entry in os.listdir("/proc") if entry.isdigit()):
+        fd_dir = f"/proc/{pid}/fd"
+        try:
+            for fd in os.listdir(fd_dir):
+                try:
+                    target = os.readlink(os.path.join(fd_dir, fd))
+                except OSError:
+                    continue
+                if target.startswith("socket:[") and target[8:-1] in inodes:
+                    listener_pids.add(pid)
+                    break
+        except OSError:
+            continue
+
+    owns_listener = False
+    for pid in listener_pids:
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as command_line:
+                args = [arg.decode(errors="replace") for arg in command_line.read().split(b"\0") if arg]
+        except OSError:
+            continue
+        executable = os.path.realpath(args[0]) if args else ""
+        if (
+            executable.startswith(cli_prefix + os.sep)
+            and "serve" in args
+            and "--service" in args
+            and len(listener_pids) == 1
+        ):
+            owns_listener = True
+            break
+
+    healthy = False
+    if owns_listener:
+        try:
+            scheme = "http"
+            loopback = ".".join(("127", "0", "0", "1"))
+            with urlopen(f"{scheme}://{loopback}:{port}/global/health", timeout=2) as response:
+                healthy = response.status == 200
+        except Exception:
+            pass
+
+    if not healthy:
+        print(
+            f"ERROR: dedicated V2 port 127.0.0.1:{port} is occupied by a different or unverifiable service; no service was stopped",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    print(f"Reusing the existing beta sandbox OpenCode service on 127.0.0.1:{port} (PID {next(iter(listener_pids))}).")
 CHECKPORT
 then
   exit 1

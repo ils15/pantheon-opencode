@@ -452,6 +452,7 @@ async function main(): Promise<void> {
   test('permission hook denies disallowed V2 delegation using authoritative session identity', async () => {
     let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
     const bodyCalls: string[] = []
+    const sessionLookups: string[] = []
     await plugin.setup(
       makeBaseContext({
         permission: {
@@ -461,8 +462,11 @@ async function main(): Promise<void> {
           },
         },
         session: {
-          get: async (sessionID: string) => {
+          get: async ({ sessionID }: { sessionID: string }) => {
+            sessionLookups.push(sessionID)
             if (sessionID === 'invalid') throw new Error('unknown session')
+            if (sessionID === 'missing') return null
+            if (sessionID === 'malformed') return 'not-a-session'
             return { id: sessionID, agent: 'athena' }
           },
         },
@@ -498,11 +502,34 @@ async function main(): Promise<void> {
       'allowed matrix edge must not be converted into an allow grant',
     )
     if (allowed.effect !== 'deny') bodyCalls.push('apollo')
+    assert.equal(sessionLookups[0], 'root', 'session.get receives its documented input object')
 
     const invalid = { sessionID: 'invalid', resources: ['apollo'], effect: 'ask' }
     await handler?.(invalid)
     assert.equal(invalid.effect, 'deny', 'invalid session lookup fails closed')
+    assert.match(String(invalid.message), /caller session lookup failed/i)
     if (invalid.effect !== 'deny') bodyCalls.push('invalid')
+
+    const missingRecord = { sessionID: 'missing', resources: ['apollo'], effect: 'ask' }
+    await handler?.(missingRecord)
+    assert.equal(missingRecord.effect, 'deny', 'missing session record fails closed')
+    assert.match(String(missingRecord.message), /caller session was not found/i)
+
+    const malformedRecord = { sessionID: 'malformed', resources: ['apollo'], effect: 'ask' }
+    await handler?.(malformedRecord)
+    assert.equal(malformedRecord.effect, 'deny', 'malformed session record fails closed')
+    assert.match(String(malformedRecord.message), /caller session lookup returned invalid data/i)
+
+    const missingSessionID = { resources: ['apollo'], effect: 'ask' }
+    const lookupsBeforeMissingID = sessionLookups.length
+    await handler?.(missingSessionID)
+    assert.equal(missingSessionID.effect, 'deny', 'missing caller session ID fails closed')
+    assert.match(String(missingSessionID.message), /caller session ID is missing/i)
+    assert.equal(
+      sessionLookups.length,
+      lookupsBeforeMissingID,
+      'missing ID skips the session lookup',
+    )
 
     const malformed = { sessionID: 'root', effect: 'ask' }
     await handler?.(malformed)
@@ -545,6 +572,25 @@ async function main(): Promise<void> {
     await handler?.(unknownResource)
     assert.equal(unknownResource.effect, 'deny', 'unknown resource values fail closed')
     assert.deepEqual(bodyCalls, ['apollo'], 'only allowed delegation proceeds to its body')
+  })
+
+  test('permission hook identifies an unavailable session lookup API', async () => {
+    let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        permission: {
+          hook: async (_name: string, handler: typeof permissionHandler) => {
+            permissionHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+
+    const event = { sessionID: 'root', resources: ['apollo'], effect: 'ask' }
+    await permissionHandler?.(event)
+    assert.equal(event.effect, 'deny', 'missing session lookup API fails closed')
+    assert.match(String(event.message), /session lookup API is unavailable/i)
   })
 
   // Case 1: agent draft without `list` (beta 19192) — setup must resolve.

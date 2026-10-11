@@ -76,8 +76,8 @@ test('runner script exists and is executable, with valid bash syntax', () => {
 
 test('runner is V2-only: no V1 leg, no sibling-repo inference', () => {
   const src = readFileSync(RUNNER, 'utf8')
-  // The V1 install spec and binary are gone. `@opencode-ai/cli` was only ever
-  // an install spec, never a dependency of this package.
+  // The V1 install spec and binary are gone. `@opencode/cli` is only an
+  // install spec, never a dependency of this package.
   assert.doesNotMatch(
     src,
     /OPENCODE_V1_SPEC|opencode-ai@1\.18\.18/,
@@ -85,6 +85,11 @@ test('runner is V2-only: no V1 leg, no sibling-repo inference', () => {
   )
   assert.doesNotMatch(src, /check_binary "V1/, 'generated script still probes a V1 binary')
   assert.doesNotMatch(src, /prepare_project v1/, 'still generates a project-v1')
+  assert.match(
+    src,
+    /OPENCODE_V2_SPEC="\$\{OPENCODE_V2_SPEC:-@opencode\/cli@latest\}"/,
+    'sandbox should default to the current stable OpenCode CLI package',
+  )
   // `--run v1` must fail loudly rather than silently testing the wrong leg.
   assert.match(src, /the V1 leg was removed/, '--run v1 must be rejected explicitly')
 
@@ -147,6 +152,10 @@ test('prepare generates an interactive launcher isolated to the sandbox beta', (
   assert.match(src, /export OPENCODE_CONFIG_DIR="\$SANDBOX_DIR\/project-v2"/)
   assert.match(src, /service set port "\$V2_PORT"/)
   assert.match(src, /PANTHEON_V2_PORT:-49376/)
+  assert.match(src, /probe\.setsockopt\(socket\.SOL_SOCKET, socket\.SO_REUSEADDR, 1\)/)
+  assert.match(src, /Reusing the existing beta sandbox OpenCode service/)
+  assert.match(src, /dedicated V2 port .* occupied by a different or unverifiable service/)
+  assert.match(src, /"@opencode", "cli"/)
   assert.match(src, /opencode-v2\.db/)
   assert.ok(
     src.indexOf('service set port') < src.indexOf('exec "$NPM_PREFIX/bin/opencode2"'),

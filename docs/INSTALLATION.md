@@ -667,7 +667,9 @@ npm run doctor
 isolado (sem contaminar o ambiente de dev, que mistura várias instalações), use
 `~/pantheon-sandbox/` — rode `bash ~/pantheon-sandbox/run-test.sh` (mcp list 5/5
 + doctor + TUI isolado). Esse gate cobre o sandbox preparado; não é uma alegação
-de suporte para todo host real. Descarte com `rm -rf ~/pantheon-sandbox`; detalhes
+de suporte para todo host real. O runner instala o CLI estável atual de
+`@opencode/cli` por padrão; `OPENCODE_V2_SPEC` permite selecionar outro build.
+Descarte com `rm -rf ~/pantheon-sandbox`; detalhes
 em `~/pantheon-sandbox/README.md`.
 
 ## Troubleshooting

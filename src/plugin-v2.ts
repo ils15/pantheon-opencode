@@ -240,15 +240,14 @@ interface V2PermissionDomain {
 }
 
 /**
- * The minimal shape of `ctx.session`.
- *
- * Only `hook(name, handler)`. The host accepts any string and silently drops an
- * unknown one — which is why the hook names below were a live defect once and
- * why the host-backed hook canary exists.
+ * The minimal shape of `ctx.session` used by this module. `get` follows the V2
+ * Promise API's object input (`{ sessionID }`); session hooks accept any string
+ * and silently drop an unknown one, which is why the host-backed hook canary
+ * exists.
  */
 interface V2SessionDomain {
   hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
-  get?: (sessionID: string) => Promise<unknown>
+  get?: (input: { sessionID: string }) => Promise<unknown>
 }
 
 /** `PluginContext` plus the four domains 1.18.x omits. See the module header. */
@@ -1228,17 +1227,34 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
       const hasPantheonTarget = targets.some((target) => PANTHEON_AGENTS.has(target ?? ''))
       let session: AuthoritativeSession | undefined
       if (hasPantheonTarget) {
-        try {
-          const sessionID = typeof event.sessionID === 'string' ? event.sessionID : ''
-          if (!sessionID || !domains.session?.get) throw new Error('session lookup unavailable')
-          const retrieved = await domains.session.get(sessionID)
-          if (retrieved === null || typeof retrieved !== 'object')
-            throw new Error('invalid session')
-          session = retrieved as AuthoritativeSession
-        } catch {
-          deny('authoritative caller session is unavailable')
+        const sessionID = typeof event.sessionID === 'string' ? event.sessionID.trim() : ''
+        if (!sessionID) {
+          deny('caller session ID is missing')
           return
         }
+
+        const sessionDomain = domains.session
+        if (!sessionDomain || typeof sessionDomain.get !== 'function') {
+          deny('session lookup API is unavailable')
+          return
+        }
+
+        let retrieved: unknown
+        try {
+          retrieved = await sessionDomain.get({ sessionID })
+        } catch {
+          deny('caller session lookup failed')
+          return
+        }
+        if (retrieved === null || retrieved === undefined) {
+          deny('caller session was not found')
+          return
+        }
+        if (typeof retrieved !== 'object' || Array.isArray(retrieved)) {
+          deny('caller session lookup returned invalid data')
+          return
+        }
+        session = retrieved as AuthoritativeSession
       }
 
       // Native-only resources remain under host policy. If a Pantheon target
