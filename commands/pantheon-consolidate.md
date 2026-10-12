@@ -1,6 +1,6 @@
 ---
 description: "Merge and consolidate memory entries"
-agent: zeus
+agent: mnemosyne
 ---
 
 Merge related memory entries and consolidate duplicates:

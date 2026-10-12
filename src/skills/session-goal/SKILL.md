@@ -14,10 +14,10 @@ Use this skill to pin a session objective at the start of a long or complex sess
 
 ## Usage
 
-Invoke via the `/focus` command:
+Invoke via the `/pantheon-focus` command (a conversation-only goal anchor):
 
 ```
-/focus Implement JWT authentication with refresh token rotation
+/pantheon-focus Implement JWT authentication with refresh token rotation
 ```
 
 Or state it explicitly at the start of a session:
@@ -70,9 +70,18 @@ Before each major delegation or decision, run this quick check:
 
 ---
 
-## Cross-Session Persistence
+## Cross-Session Continuity
 
-For goals that span multiple sessions, write the goal to `/memories/session/`:
+V2 does not provide durable goal tools. `/pantheon-focus` only anchors the current
+conversation and must not be described as surviving compaction or a new
+session. For multi-phase work that needs persistent checkpoints, use
+`/pantheon-deepwork`; otherwise ask before writing a goal to a project file.
+
+In V1, use the implemented goal tools when they are available and explicitly
+authorized. Do not infer that their presence in one host generation means they
+exist in V2.
+
+Historical path example (not a V2 runtime command):
 
 ```
 /memories/session/current-goal.md
@@ -84,7 +93,7 @@ Status: Phase 2 of 3 (backend done, frontend in progress)
 Next: POST /auth/refresh endpoint
 ```
 
-This ensures the goal survives context compaction and session restarts.
+This file-based approach requires explicit authorization and is not automatic.
 
 ---
 

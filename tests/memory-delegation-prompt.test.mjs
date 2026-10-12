@@ -90,3 +90,18 @@ test('memory documentation describes the current low-call policy and current API
   assert.doesNotMatch(memoryGuide, /memory_(?:compress|expand|consolidate|link|traverse)/)
   assert.match(mcpGuide, /not the default cache for agent handoffs/i)
 })
+
+test('Mnemosyne MCP allowlist names only the registered memory tools', () => {
+  const memoryTools = mnemosyne.match(/pantheon-memory:\n((?:\s+- [\w_]+\n)+)/)?.[1]
+  assert.ok(memoryTools, 'Mnemosyne must declare an explicit pantheon-memory allowlist')
+
+  const names = [...memoryTools.matchAll(/^\s+- ([\w_]+)$/gm)].map((match) => match[1])
+  assert.deepEqual(names, [
+    'memory_recall',
+    'memory_store',
+    'memory_search',
+    'memory_forget',
+    'memory_list',
+    'memory_stats',
+  ])
+})

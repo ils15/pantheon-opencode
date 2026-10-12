@@ -250,7 +250,7 @@ Exemplo de `opencode.json` V2:
 }
 ```
 
-Contrato: a entrada V2 é o diretório `<installed>/src/plugin-v2` (cujo `index.ts` re-exporta `src/plugin-v2.ts`) — o loader beta exige diretório, não spec npm nem path de arquivo. O TUI é registro separado via `npm run setup` (`tui.json` → `plugins/pantheon-tui`), alinhado a `@opentui/core`/`solid` 0.5.x.
+Contrato: a entrada V2 do servidor é o diretório `<installed>/src/plugin-v2` (cujo `index.ts` re-exporta `src/plugin-v2.ts`). O TUI é um componente separado: V1 usa `tui.json`; V2 descobre `index.ts` + `tui.ts` no diretório local e usa `@opencode/plugin/tui`.
 
 Diferenças do V1:
 
@@ -262,9 +262,9 @@ Diferenças do V1:
 | Tools | Via V1 tool hook API | Via `ctx.tool.transform()` |
 | Events | Via V1 event hook API | Via `ctx.event.subscribe()` |
 
-The TUI plugin is a separate component and a separate `tui.json` registration;
-it is not evidence that the V1 runtime was loaded. It is copied and registered
-only when the installer component set includes `plugins`.
+The TUI plugin is a separate component. Its host-specific entry is installed
+only when the installer component set includes `plugins`; the presence of the
+V2 TUI entry does not imply the V1 runtime was loaded.
 
 ## Instalação Interativa — Wizard 3 Perguntas (default = herdar do chat)
 
@@ -517,31 +517,35 @@ Pantheon v1.5.0
   `.pantheon/logs/hooks.log` (silence-by-default).
 
 The TUI plugin is installed by `npm run setup` or a selected install that
-includes the `plugins` component. Without that component, no Pantheon TUI
-registration is written. It appears in the right sidebar of OpenCode TUI when
-the host loads the separate `tui.json` registration.
+includes the `plugins` component. The installer selects a host-specific entry:
+OpenCode V1 uses the legacy `tui.json` registration and V1 plugin API; OpenCode
+V2 discovers the local plugin's `index.ts` + `tui.ts` pair and uses the native
+`@opencode/plugin/tui` API. Without the `plugins` component, neither entry is
+installed.
 
 ### TUI dev build (local development)
 
-To iterate on the TUI from a git checkout without publishing, build the bundle
-and register the **absolute repo path** (`<repo>/src/plugins/tui`) in the
-project-local `.opencode/tui.json`:
+To iterate on the TUI from a git checkout without publishing, build both host
+bundles:
 
 ```bash
 # 1. Install the root workspace (including the TUI) + build the bundle
 npm ci --ignore-scripts --no-audit --no-fund
 npm run build --prefix src/plugins/tui
 
-# 2. Register the repo path (merged into the array, not clobbered)
+# 2. For V1 only, register the repo path (merged into the array, not clobbered)
 node --input-type=module -e "import { registerPlugin } from './scripts/install/plugin.mjs'; registerPlugin('.opencode/tui.json', process.cwd() + '/src/plugins/tui')"
 ```
 
+For V2, install the built plugin into `.opencode/plugins/pantheon-tui` with the
+installer so the directory contains the V2 `index.ts` and `tui.ts` entrypoints.
 TUI plugins are loaded at process start, so restart OpenCode after each build.
 
-| Context | `tui.json` target | Written by |
-|---------|-------------------|------------|
-| Development (this repo) | `<repo>/src/plugins/tui` | manual `registerPlugin` (gitignored) |
-| Installed (user) | `<configDir>/plugins/pantheon-tui` | `npm run setup` / installer |
+| Host | Discovery | Written by |
+|------|-----------|------------|
+| OpenCode V1 | `tui.json` → `<configDir>/plugins/pantheon-tui` | installer |
+| OpenCode V2 | local plugin `index.ts` + `tui.ts` under the config plugins directory | installer |
+| V1 development | `<repo>/src/plugins/tui` in project `tui.json` | manual `registerPlugin` (gitignored) |
 
 Notes:
 

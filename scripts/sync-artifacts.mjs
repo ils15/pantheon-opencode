@@ -40,6 +40,7 @@ const MCP_SCRIPTS = {
   'pantheon_vision.py': () => join(ROOT, 'src', 'mcp', 'pantheon_vision.py'),
   'eval_store.py': () => join(ROOT, 'src', 'mcp', 'eval_store.py'),
   'scrub-secrets.py': () => join(ROOT, 'scripts', 'scrub-secrets.py'),
+  'themis_heuristic_scan.py': () => join(ROOT, 'scripts', 'themis_heuristic_scan.py'),
 }
 
 /**

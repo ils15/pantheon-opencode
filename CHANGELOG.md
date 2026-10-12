@@ -18,6 +18,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.9] - 2026-10-12
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+## 🆕 What's New
+
+- **Entry point TUI dedicado ao OpenCode V2.** O pacote agora compila e instala
+  separadamente os loaders V1/V2, e adiciona `/pantheon-focus` para foco de
+  sessão sem depender das goal-tools ausentes no host V2.
+
+## 🐞 Fixed
+
+- **Instalação V2:** agentes e slash commands de projeto são instalados nos
+  diretórios descobertos pelo host; o TUI seleciona o bundle da geração correta
+  e o estado dos componentes só é marcado como instalado após sucesso.
+- **`/pantheon-audit`:** inclui o scanner heurístico no pacote e localiza a cópia
+  instalada antes de executar a primeira camada.
+- **`/pantheon-consolidate`:** delega a consolidação ao agente Mnemosyne, dono
+  da qualidade do banco de memória.
+
+## ⚠️ Known Issues
+
+- **Sidebar V2 na sessão inicial:** a captura do TUI recém-aberto ainda não
+  mostra o conteúdo Pantheon antes do primeiro prompt; validar o render inicial
+  interativo continua sendo um gate aberto para a beta.
+- **Goal persistente no OpenCode V2:** as goal-tools não fazem parte da
+  superfície V2 suportada; `/pantheon-focus` não substitui uma goal-tool
+  persistente/removível do host.
+
 ## [v1.6.0-beta.8] - 2026-10-11
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

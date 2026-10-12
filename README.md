@@ -518,7 +518,9 @@ full `TARGET_SHA`; a second pack is not interchangeable.
 
 CI also rebuilds the TUI with `npm run build --prefix src/plugins/tui` and
 checks every packaged `dist` artifact byte-for-byte against its checked-in
-version, including final newlines.
+version, including final newlines. The build includes separate V1 and native
+OpenCode V2 TUI entrypoints; `init` selects the entrypoint and sidebar slot API
+for the host generation in use.
 
 ## Sandbox validation (V2)
 

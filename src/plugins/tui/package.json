@@ -1,19 +1,23 @@
 {
   "name": "pantheon-tui",
   "type": "module",
-  "version": "1.6.0-beta.8",
-  "description": "Pantheon TUI plugin — sidebar (version, preset, sessions, real-time delegations) + AI subscription usage gauges incl. OpenCode Go/Zen dollar limits (vendored, MIT)",
+  "version": "1.6.0-beta.9",
+  "description": "Pantheon TUI plugin — V1 rich sidebar and usage gauges; native V2 status, session and delegation sidebar",
   "license": "MIT",
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "exports": {
     "./tui": "./dist/tui.js",
+    "./tui-v2": "./dist/tui-v2.js",
     "./server": "./dist/server.js"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "tui.ts",
+    "tui-v2.ts",
+    "index-v2.ts"
   ],
   "scripts": {
     "build": "tsdown",
@@ -22,8 +26,6 @@
   "peerDependencies": {
     "@opencode-ai/plugin": "1.18.33",
     "@opencode-ai/sdk": "1.18.33",
-    "@opentui/core": "0.5.10",
-    "@opentui/solid": "0.5.10",
     "solid-js": "1.9.12"
   },
   "devDependencies": {
@@ -39,8 +41,9 @@
   "//overrides": "TUI production advisory fixes: Babel >=7.29.6 and Seroval >=1.6.3; Solid stays at 1.9.12 to satisfy OpenTUI's exact peer. Remove only after upstream ranges include fixed versions; Seroval compatibility is covered by the Solid serializer regression test.",
   "dependencies": {
     "@opencode-ai/plugin": "1.18.33",
-    "@opentui/core": "0.5.10",
-    "@opentui/solid": "0.5.10",
+    "@opencode/plugin": "2.0.26",
+    "@opentui/core": "0.5.17",
+    "@opentui/solid": "0.5.17",
     "solid-js": "1.9.12"
   }
 }

@@ -56,6 +56,7 @@ import {
   writeConfigWithBackup,
   writeIfChanged,
 } from './shared.mjs'
+import { createInitialState, hasState, readState, setComponentState, writeState } from './state.mjs'
 import { strings } from './strings.mjs'
 
 import { setupVenv, venvPythonPath } from './venv.mjs'
@@ -541,15 +542,14 @@ export function isGlobalConfigDir(target) {
  * package; the loader must NEVER be pointed at that in-package dir (a package
  * reinstall/upgrade replaces the dir under a live registration and leaves
  * diverging copies loading). Instead the installer always copies it into the
- * config dir's plugins/ dir and registers THAT copy:
+ * config dir's plugins/ dir and uses THAT copy:
  *
- *   <configDir>/plugins/pantheon-tui      (dist/ + package.json + index.tsx)
+ *   <configDir>/plugins/pantheon-tui      (tui.ts + dist/ + package manifests)
  *
- * The loader reads the copied package.json `exports` map:
- *   exports["./tui"]    → dist/tui.js     (COMPILED Solid output)
- *   exports["./server"] → dist/server.js  (no-op server() stub)
+ * V1 registers that copy through tui.json. V2 discovers the local plugin's
+ * index.ts + tui.ts pair; the V2 shim re-exports dist/tui-v2.js.
  *
- * @param {string} configDir - directory holding tui.json (target for global
+ * @param {string} configDir - OpenCode config directory (target for global
  *   installs, <target>/.opencode for project installs)
  * @returns {string} absolute path of the copied plugin directory
  */
@@ -575,23 +575,20 @@ export function tuiConfigLocations(target) {
 }
 
 /**
- * Sync the Pantheon TUI plugin registration across EVERY tui.json location
- * OpenCode reads.
+ * Sync the Pantheon TUI plugin payload and V1 registration. V2 discovers the
+ * copied local-plugin entrypoints and does not use a project tui.json.
  *
  * Contract (single source of truth):
- *   1. ALWAYS copy src/plugins/tui → <configDir>/plugins/pantheon-tui
- *      (dist/* + package.json + index.tsx) so the registered reference is a
- *      directory that exists and carries the loader contract (exports →
- *      dist/tui.js, dist/server.js). The copy is idempotent: a second run is
- *      byte-identical.
+ *   1. ALWAYS copy src/plugins/tui → <configDir>/plugins/pantheon-tui with the
+ *      selected host entrypoints and compiled bundle. The copy is idempotent.
  *   2. Clean stale Pantheon TUI refs from ALL tui.json locations OpenCode
  *      loads — ~/.opencode, $XDG_CONFIG_HOME/opencode and
  *      <target>/.opencode — covering every old reference shape: dist file
  *      paths, in-package src/plugins/tui dirs, bare plugins/pantheon-tui
  *      copies, and npx paths. A stale ref left in the non-target location
  *      would still be loaded and break the TUI.
- *   3. Register EXACTLY the copied directory in the selected target only —
- *      exactly ONE Pantheon TUI reference exists system-wide after install.
+ *   3. V1 registers the copied directory in the selected target. V2 relies on
+ *      local-plugin discovery and does not write a project tui.json entry.
  *
  * @param {string} target - install target directory
  * @param {object} [opts]
@@ -599,18 +596,19 @@ export function tuiConfigLocations(target) {
  * @param {boolean} [opts.dryRun=false]
  * @returns {'created'|'skipped'} status for the target registration
  */
-export function syncTuiRegistration(target, { isGlobal = false, dryRun = false } = {}) {
+export function syncTuiRegistration(
+  target,
+  { isGlobal = false, dryRun = false, version = 'v1' } = {},
+) {
   const configDir = isGlobal ? target : join(target, '.opencode')
   const targetTuiConfigPath = join(configDir, 'tui.json')
 
-  // 1. Always copy the single source of truth into the target config's
-  //    plugins/pantheon-tui. Registering this copied directory (never the
-  //    in-package src/plugins/tui) keeps installs hermetic and idempotent:
-  //    the ref points at a dir that exists and has dist/tui.js.
+  // 1. Copy the host-specific plugin into the target config's
+  //    plugins/pantheon-tui. This keeps the installed entry hermetic.
   const tuiSrcDir = join(ROOT, 'src', 'plugins', 'tui')
   const tuiCopyDir = resolveTuiCopyTarget(configDir)
   if (existsSync(tuiSrcDir)) {
-    copyPluginFiles(tuiSrcDir, tuiCopyDir, { dryRun })
+    copyPluginFiles(tuiSrcDir, tuiCopyDir, { dryRun, version })
   }
 
   // 2. Clean stale Pantheon TUI refs from every location OpenCode reads.
@@ -625,6 +623,11 @@ export function syncTuiRegistration(target, { isGlobal = false, dryRun = false }
       knownPantheonPaths: [ownedCopy, tuiCopyDir],
     })
   }
+
+  // OpenCode V2 discovers local plugins from the config plugins directories;
+  // its TUI plugin API is exposed by the sibling tui.ts entrypoint. V1 still
+  // requires the explicit tui.json registration.
+  if (version === 'v2') return 'skipped'
 
   // 3. Register the copied directory in the selected target only.
   return registerPlugin(targetTuiConfigPath, tuiCopyDir, { dryRun })
@@ -862,14 +865,13 @@ export async function installOpenCode(
     }
   }
 
-  // Determine layout based on install scope.
-  // Global config dir (~/.opencode or ~/.config/opencode) uses a flat layout:
-  //   agents/   skills/   commands/   plugins/
-  // Project installs use the .opencode/ sub-directory layout:
-  //   .opencode/agents/   .opencode/skills/   .opencode/commands/
+  // V1 project installs use the legacy .opencode/agents layout. OpenCode V2's
+  // active config directory is the project root and its agent loader scans
+  // <config-dir>/{agent,agents}/**, so V2 project agents must be at ./agents.
+  // Global installs are flat for both versions.
   const isGlobal = isGlobalConfigDir(target)
   const _subDir = isGlobal ? '' : '.opencode'
-  const agentPrefix = isGlobal ? 'agents' : '.opencode/agents'
+  const agentPrefix = isGlobal || version === 'v2' ? 'agents' : '.opencode/agents'
 
   configure({ dryRun })
 
@@ -888,7 +890,7 @@ export async function installOpenCode(
       stats.errors++
     } else {
       const agentStep = step(S.installingAgents)
-      const dstDir = isGlobal ? join(target, 'agents') : join(target, '.opencode', 'agents')
+      const dstDir = join(target, agentPrefix)
       if (!dryRun) mkdirSync(dstDir, { recursive: true })
       if (clean && existsSync(dstDir) && !dryRun) {
         const existing = readdirSync(dstDir)
@@ -968,9 +970,7 @@ export async function installOpenCode(
     // already-installed Pantheon agents, but must not create agents the user
     // did not install. Full agent installs do this in phase 1 above.
     if (!componentSet.has('agents')) {
-      const installedAgents = isGlobal
-        ? join(target, 'agents')
-        : join(target, '.opencode', 'agents')
+      const installedAgents = join(target, agentPrefix)
       const sourceAgents = join(ROOT, 'src', 'agents')
       if (existsSync(installedAgents) && existsSync(sourceAgents)) {
         const refreshed = copyAgentPrompts(sourceAgents, installedAgents, dryRun, true)
@@ -1000,7 +1000,11 @@ export async function installOpenCode(
   if (componentSet.has('commands')) {
     section('\u26A1 Commands')
     const srcCmds = join(ROOT, 'commands')
-    const dstCmds = isGlobal ? join(target, 'commands') : join(target, '.opencode', 'commands')
+    // V2 project sandboxes use OPENCODE_CONFIG_DIR=<project root>, so OpenCode
+    // discovers custom commands from <target>/commands. V1 project installs
+    // keep the standard .opencode/commands layout; global installs are flat.
+    const commandDir = isGlobal || version === 'v2' ? 'commands' : '.opencode/commands'
+    const dstCmds = join(target, commandDir)
     if (existsSync(srcCmds)) {
       const cmdResult = syncDir(srcCmds, dstCmds, dryRun, clean, (f) => f.endsWith('.md'))
       stats.created += cmdResult.created
@@ -1025,7 +1029,7 @@ export async function installOpenCode(
     const dstPluginDir = isGlobal
       ? join(target, 'plugins', 'pantheon-tui')
       : join(target, '.opencode', 'plugins', 'pantheon-tui')
-    const pluginStats = installPlugin(srcPluginDir, dstPluginDir, { dryRun, clean })
+    const pluginStats = installPlugin(srcPluginDir, dstPluginDir, { dryRun, clean, version })
     stats.created += pluginStats.created
     stats.skipped += pluginStats.skipped
     stats.errors += pluginStats.errors
@@ -1037,7 +1041,7 @@ export async function installOpenCode(
   if (componentSet.has('plugins')) {
     let tuiStatus
     try {
-      tuiStatus = syncTuiRegistration(target, { isGlobal, dryRun })
+      tuiStatus = syncTuiRegistration(target, { isGlobal, dryRun, version })
     } catch (cause) {
       error(`TUI plugin setup failed: ${cause.message}`)
       stats.errors++
@@ -1066,6 +1070,7 @@ export async function installOpenCode(
       'mcp_persistence.py',
       'pantheon_vision.py',
       'eval_store.py',
+      'themis_heuristic_scan.py',
     ]
     const srcScriptsDir = join(ROOT, 'scripts')
     // Canonical MCP server sources live in src/mcp/. Map them explicitly so the
@@ -1705,5 +1710,26 @@ export async function installOpenCode(
   // failed health checks) must never masquerade as a successful installation.
   if (stats.errors > 0) {
     throw new Error(`installation completed with ${stats.errors} error(s); see output above`)
+  }
+
+  // Record the component state only after the install has completed. The
+  // postinstall marker can predate `init` and start with every component
+  // pending; leaving it untouched made a healthy beta install look incomplete
+  // to `doctor` forever. Unselected components retain their previous state.
+  if (!dryRun) {
+    const packageVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+    let state = readState(target)
+    if (!state && hasState(target)) {
+      throw new Error('Installation state exists but cannot be read; refusing to replace it')
+    }
+    state ??= createInitialState(packageVersion)
+    state.pantheon_version = packageVersion
+    for (const component of ['agents', 'skills', 'plugins', 'runtime']) {
+      if (!componentSet.has(component)) continue
+      const status = component === 'runtime' && !runtimeHealthy ? 'failed' : 'installed'
+      const componentVersion = state.components?.[component]?.version ?? 1
+      setComponentState(state, component, componentVersion, status)
+    }
+    writeState(target, state)
   }
 }

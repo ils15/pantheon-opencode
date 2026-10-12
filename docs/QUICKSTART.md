@@ -63,7 +63,7 @@ echo 'export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true' >> ~/.zshrc
 - **OpenCode-only** — unified, simplified, no multi-platform fragmentation
 - **Global install** — `npx pantheon-opencode init` works from any directory
 - **Background subagents** — up to 5 agents in parallel
-- **14 commands** — all start with `/pantheon-`
+- **8 slash commands** — Pantheon workflow, model, audit, vision, and goal tools
 - **Themis 3-layer review** — heuristic scanner + deep review + verification planning
 - **Persistent MCP memory** — SQLite FTS5 (BM25) keyword search, no embeddings
 
@@ -71,19 +71,13 @@ echo 'export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true' >> ~/.zshrc
 
 | Command | Description |
 |---------|-------------|
-| `/pantheon` | Multi-perspective synthesis (Council) via inline agents |
-| `/pantheon-audit` | Code review + security audit |
-| `/pantheon-bg` | List background tasks |
-| `/pantheon-consolidate` | Consolidate memory |
-| `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints |
-| `/pantheon-doc` | Generate documentation |
-| `/pantheon-focus` | Pin a session goal |
-| `/pantheon-forget` | Compress/consolidate memories |
-| `/pantheon-hash` | Hash edit verification |
-| `/pantheon-optimize` | Context optimization & token audit |
-| `/pantheon-remember` | Store in memory |
-| `/pantheon-search` | Search memory |
-| `/pantheon-status` | Show system health and agent status |
-| `/pantheon-todo` | Create and maintain task list |
+| `/pantheon` | Multi-perspective synthesis (Council) |
+| `/pantheon-audit` | Heuristic and quality/security audit |
+| `/pantheon-consolidate` | Consolidate memory as Mnemosyne |
+| `/pantheon-deepwork` | Multi-phase task with persisted checkpoints |
+| `/pantheon-focus` | Set a conversation-only session goal |
+| `/pantheon-model` | Inspect or configure per-agent models |
+| `/pantheon-optimize` | Project context optimization |
+| `/pantheon-vision` | Vision configuration |
 
 Full details: [INSTALLATION.md](INSTALLATION.md) for setup, [ARCHITECTURE.md](ARCHITECTURE.md) for system design.

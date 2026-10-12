@@ -147,9 +147,9 @@ venv and MCP entries.
 1. Stop OpenCode before changing the plugin generation.
 2. Run `init` once with the desired selector (`v1`, `v2`, or `auto`). Do not
    copy a V1 plugin entry into a V2 `plugins` list, or vice versa.
-3. If the TUI is wanted, include the installer `plugins` component. The TUI is
-   a separate `tui.json` registration; installing V2 does not imply that the
-   TUI or V1 runtime is loaded.
+3. If the TUI is wanted, include the installer `plugins` component. V1 uses
+   `tui.json`; V2 uses its native local-plugin `index.ts` + `tui.ts` entrypoints.
+   Installing the V2 server plugin alone does not install the TUI component.
 4. Inspect the result: V1 Pantheon entries belong in `plugin`; the V2 Pantheon
    entry is the `<installed>/src/plugin-v2` directory in `plugins`.
 5. Restart OpenCode after changing configuration. This restart reloads the

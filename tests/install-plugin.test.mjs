@@ -16,7 +16,12 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { isPantheonTuiRef, staleTuiRefs, unregisterPlugin } from '../scripts/install/plugin.mjs'
+import {
+  copyPluginFiles,
+  isPantheonTuiRef,
+  staleTuiRefs,
+  unregisterPlugin,
+} from '../scripts/install/plugin.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -89,16 +94,69 @@ test('unregisterPlugin preserves unmanaged paths containing pantheon-opencode', 
   }
 })
 
-test('TUI plugin entry exposes the beta loader setup contract', () => {
-  // Beta loader contract: every `plugins` directory entry must expose a
-  // no-op `setup` so the entry loads with zero errors. The TUI boots via
-  // `tui()`; `setup` exists only to satisfy the loader.
+test('V1 TUI entry retains the legacy plugin setup contract', () => {
   const source = readFileSync(join(REPO_ROOT, 'src', 'plugins', 'tui', 'src', 'index.tsx'), 'utf8')
   assert.match(source, /setup:\s*async\s*\(\)\s*=>\s*\{\}/)
   assert.match(source, /id:\s*['"]pantheon\.tui['"]/)
   const dist = join(REPO_ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.js')
   assert.ok(existsSync(dist), `TUI dist must exist: ${dist}`)
   assert.match(readFileSync(dist, 'utf8'), /setup/)
+  const tuiEntrypoint = readFileSync(join(REPO_ROOT, 'src', 'plugins', 'tui', 'tui.ts'), 'utf8')
+  assert.match(tuiEntrypoint, /export\s+\{\s*default\s*\}\s+from\s+['"]\.\/dist\/tui\.js['"];?/)
+})
+
+test('V2 install selects the V2 TUI API and V1 reinstall removes that entrypoint', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-generation-'))
+  const source = join(REPO_ROOT, 'src', 'plugins', 'tui')
+  try {
+    copyPluginFiles(source, target, { version: 'v2' })
+    assert.equal(
+      readFileSync(join(target, 'tui.ts'), 'utf8'),
+      readFileSync(join(source, 'tui-v2.ts'), 'utf8'),
+    )
+    assert.equal(
+      readFileSync(join(target, 'index.ts'), 'utf8'),
+      readFileSync(join(source, 'index-v2.ts'), 'utf8'),
+    )
+    const v2Package = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
+    assert.equal(v2Package.exports['./tui'], './dist/tui-v2.js')
+    assert.match(readFileSync(join(target, 'dist', 'tui-v2.js'), 'utf8'), /sidebar\.content/)
+    assert.match(readFileSync(join(target, 'dist', 'tui-v2.js'), 'utf8'), /@opencode\/plugin\/tui/)
+
+    copyPluginFiles(source, target, { version: 'v1' })
+    assert.equal(existsSync(join(target, 'index.ts')), false)
+    assert.equal(
+      readFileSync(join(target, 'tui.ts'), 'utf8'),
+      readFileSync(join(source, 'tui.ts'), 'utf8'),
+    )
+    const v1Package = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
+    assert.equal(v1Package.exports['./tui'], './dist/tui.js')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('npm package tarball includes both host TUI entrypoints', () => {
+  const packageDir = join(REPO_ROOT, 'src', 'plugins', 'tui')
+  const result = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
+    cwd: packageDir,
+    encoding: 'utf8',
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  const [packed] = JSON.parse(result.stdout)
+  assert.ok(
+    packed.files.some((file) => file.path === 'tui.ts'),
+    'the published TUI package must contain the V1 tui.ts entrypoint',
+  )
+  assert.ok(
+    packed.files.some((file) => file.path === 'tui-v2.ts'),
+    'the published TUI package must contain the V2 tui-v2.ts entrypoint',
+  )
+  assert.ok(
+    packed.files.some((file) => file.path === 'index-v2.ts'),
+    'the published TUI package must contain the V2 local plugin entrypoint',
+  )
 })
 
 test('plugin installation propagates npm ci failure and never invokes npm install', () => {

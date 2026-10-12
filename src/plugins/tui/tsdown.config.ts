@@ -26,7 +26,7 @@ async function ensureDistArtifactsEndWithNewline(): Promise<void> {
 }
 
 export default defineConfig({
-  entry: { tui: 'src/index.tsx', server: 'src/server.ts' },
+  entry: { tui: 'src/index.tsx', 'tui-v2': 'src/index-v2.tsx', server: 'src/server.ts' },
   format: ['esm'],
   platform: 'node',
   outDir: 'dist',
@@ -47,7 +47,7 @@ export default defineConfig({
     }),
   ],
   deps: {
-    neverBundle: [/^@opencode-ai\//, /^@opentui\//, /^solid-js/],
+    neverBundle: [/^@opencode-ai\//, /^@opencode\//, /^@opentui\//, /^solid-js/],
   },
   onSuccess: ensureDistArtifactsEndWithNewline,
 })

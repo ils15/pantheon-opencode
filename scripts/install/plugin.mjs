@@ -8,24 +8,24 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { ROOT, writeIfChanged } from './shared.mjs'
 
 /**
- * Copy a plugin's runtime payload (the bundled dist/*, package.json and
- * package-lock.json) from source to destination. Only the bundle is copied —
- * the raw TSX source is never shipped to the destination, so the plugin can
- * be modularized without the loader needing relative imports.
+ * Copy a plugin's runtime payload (the root TUI loader, bundled dist/*,
+ * package.json and package-lock.json) from source to destination. The raw TSX
+ * implementation is never shipped to the destination; tui.ts only re-exports
+ * the host-specific bundle so the local plugin stays hermetic.
  * @param {string} srcDir - Source plugin directory (e.g. ROOT/src/plugins/tui)
  * @param {string} dstDir - Destination plugin directory
  * @param {object} [options]
  * @param {boolean} [options.dryRun=false] - If true, don't write files
+ * @param {'v1'|'v2'} [options.version='v1'] - Host plugin generation
  * @returns {{ created: number, skipped: number }}
  */
-export function copyPluginFiles(srcDir, dstDir, { dryRun = false } = {}) {
+export function copyPluginFiles(srcDir, dstDir, { dryRun = false, version = 'v1' } = {}) {
   const result = { created: 0, skipped: 0 }
 
   if (!dryRun) mkdirSync(dstDir, { recursive: true })
   if (!dryRun) mkdirSync(join(dstDir, 'dist'), { recursive: true })
 
   // Drop legacy raw copies from previous installs (root index.tsx + dist/tui.tsx).
-  // The loader consumes only the bundle, so stale raws must not linger.
   if (!dryRun) {
     rmSync(join(dstDir, 'index.tsx'), { force: true })
     rmSync(join(dstDir, 'dist', 'tui.tsx'), { force: true })
@@ -45,13 +45,43 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false } = {}) {
   // Copy package.json
   const pkgSrc = join(srcDir, 'package.json')
   if (existsSync(pkgSrc)) {
+    const packageJson = JSON.parse(readFileSync(pkgSrc, 'utf8'))
+    if (version === 'v2' && packageJson.exports?.['./tui-v2']) {
+      packageJson.exports['./tui'] = packageJson.exports['./tui-v2']
+    }
     const pkgStatus = writeIfChanged(
       join(dstDir, 'package.json'),
-      readFileSync(pkgSrc, 'utf8'),
+      `${JSON.stringify(packageJson, null, 2)}\n`,
       dryRun,
     )
     if (pkgStatus === 'created') result.created++
     else result.skipped++
+  }
+
+  // Each host generation receives its own root loader and compiled bundle.
+  const tuiEntrySrc = join(srcDir, version === 'v2' ? 'tui-v2.ts' : 'tui.ts')
+  if (existsSync(tuiEntrySrc)) {
+    const entryStatus = writeIfChanged(
+      join(dstDir, 'tui.ts'),
+      readFileSync(tuiEntrySrc, 'utf8'),
+      dryRun,
+    )
+    if (entryStatus === 'created') result.created++
+    else result.skipped++
+  }
+
+  const v2ServerEntry = join(srcDir, 'index-v2.ts')
+  const v2ServerDestination = join(dstDir, 'index.ts')
+  if (version === 'v2' && existsSync(v2ServerEntry)) {
+    const entryStatus = writeIfChanged(
+      v2ServerDestination,
+      readFileSync(v2ServerEntry, 'utf8'),
+      dryRun,
+    )
+    if (entryStatus === 'created') result.created++
+    else result.skipped++
+  } else if (!dryRun) {
+    rmSync(v2ServerDestination, { force: true })
   }
 
   // Copy the lockfile so dependency installation is reproducible. A missing
@@ -79,14 +109,18 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false } = {}) {
  * @param {boolean} [options.clean=false] - If true, remove existing before install
  * @returns {{ created: number, skipped: number, errors: number }}
  */
-export function installPlugin(srcDir, dstDir, { dryRun = false, clean = false } = {}) {
+export function installPlugin(
+  srcDir,
+  dstDir,
+  { dryRun = false, clean = false, version = 'v1' } = {},
+) {
   const result = { created: 0, skipped: 0, errors: 0 }
 
   if (clean && existsSync(dstDir) && !dryRun) {
     rmSync(dstDir, { recursive: true, force: true })
   }
 
-  const copyResult = copyPluginFiles(srcDir, dstDir, { dryRun })
+  const copyResult = copyPluginFiles(srcDir, dstDir, { dryRun, version })
   result.created += copyResult.created
   result.skipped += copyResult.skipped
 

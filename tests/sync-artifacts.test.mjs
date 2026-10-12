@@ -32,6 +32,10 @@ test('syncs copy-only artifacts into a config dir and is idempotent', () => {
     assert.ok(existsSync(join(configDir, 'commands', 'pantheon-model.md')), 'command copied')
     assert.ok(existsSync(join(configDir, 'scripts', 'code_mode.py')), 'MCP script copied')
     assert.ok(
+      existsSync(join(configDir, 'scripts', 'themis_heuristic_scan.py')),
+      'themis Layer 1 helper copied',
+    )
+    assert.ok(
       existsSync(join(configDir, '.pantheon', 'code-mode', 'manifest.json')),
       'code-mode payload (with manifest) copied',
     )
@@ -49,6 +53,10 @@ test('syncs copy-only artifacts into a config dir and is idempotent', () => {
     assert.equal(
       readFileSync(join(configDir, 'scripts', 'code_mode.py'), 'utf8'),
       readFileSync(join(ROOT, 'src', 'mcp', 'code_mode.py'), 'utf8'),
+    )
+    assert.equal(
+      readFileSync(join(configDir, 'scripts', 'themis_heuristic_scan.py'), 'utf8'),
+      readFileSync(join(ROOT, 'scripts', 'themis_heuristic_scan.py'), 'utf8'),
     )
   } finally {
     rmSync(configDir, { recursive: true, force: true })

@@ -74,6 +74,24 @@ async function runInstall(target, version, existingConfig = null) {
   return JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
 }
 
+test('fresh init records successful component states and leaves unselected components pending', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-install-state-'))
+  try {
+    await installOpenCode(target, false, false, ['agents', 'skills', 'commands'], {
+      yes: true,
+      headless: true,
+      version: 'v2',
+    })
+    const state = JSON.parse(readFileSync(join(target, '.pantheon', 'install-state.json'), 'utf8'))
+    assert.equal(state.components.agents.status, 'installed')
+    assert.equal(state.components.skills.status, 'installed')
+    assert.equal(state.components.plugins.status, 'pending')
+    assert.equal(state.components.runtime.status, 'pending')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
 // ---------------------------------------------------------------------------
 // 1. Version-generic behavior (both v1 and v2)
 // ---------------------------------------------------------------------------
@@ -100,24 +118,80 @@ for (const version of VERSIONS) {
     }
   })
 
-  test(`[${version}] registers TUI plugin in tui.json and copies it to config dir`, async () => {
+  test(`[${version}] installs Pantheon slash commands in the host project command directory`, async () => {
+    const target = mkdtempSync(join(tmpdir(), `pantheon-e2e-${version}-commands-`))
+    try {
+      await runInstall(target, version)
+      const commandDir =
+        version === 'v2' ? join(target, 'commands') : join(target, '.opencode', 'commands')
+      const misplacedDir =
+        version === 'v2' ? join(target, '.opencode', 'commands') : join(target, 'commands')
+      const installed = join(commandDir, 'pantheon-deepwork.md')
+
+      assert.ok(
+        existsSync(installed),
+        `Pantheon /pantheon-deepwork must be installed at ${installed}`,
+      )
+      assert.equal(
+        readFileSync(installed, 'utf8'),
+        readFileSync(join(ROOT, 'commands', 'pantheon-deepwork.md'), 'utf8'),
+      )
+      assert.equal(
+        existsSync(misplacedDir),
+        false,
+        `commands must not be installed at ${misplacedDir}`,
+      )
+    } finally {
+      rmSync(target, { recursive: true, force: true })
+    }
+  })
+
+  test(`[${version}] installs the host-compatible TUI plugin entry`, async () => {
     const target = mkdtempSync(join(tmpdir(), `pantheon-e2e-${version}-tui-`))
     try {
       await runInstall(target, version)
-      const tuiJsonPath = join(target, '.opencode', 'tui.json')
-      assert.ok(existsSync(tuiJsonPath), 'tui.json must exist after install')
-      const tuiConfig = JSON.parse(readFileSync(tuiJsonPath, 'utf8'))
-      const pluginList = tuiConfig.plugin || tuiConfig.plugins
-      assert.ok(pluginList !== undefined, 'tui.json must have plugin (or plugins) key')
-      assert.ok(Array.isArray(pluginList), 'tui.json plugin list must be an array')
-      assert.ok(
-        pluginList.some((p) => typeof p === 'string' && p.includes('pantheon-tui')),
-        'tui.json must register pantheon-tui plugin',
-      )
       assert.ok(
         existsSync(join(target, '.opencode', 'plugins', 'pantheon-tui')),
         'pantheon-tui copy directory must exist',
       )
+      const tuiPluginDir = join(target, '.opencode', 'plugins', 'pantheon-tui')
+      if (version === 'v1') {
+        const tuiJsonPath = join(target, '.opencode', 'tui.json')
+        assert.ok(existsSync(tuiJsonPath), 'V1 requires tui.json registration')
+        const tuiConfig = JSON.parse(readFileSync(tuiJsonPath, 'utf8'))
+        const pluginList = tuiConfig.plugin || tuiConfig.plugins
+        assert.ok(Array.isArray(pluginList), 'tui.json must contain a plugin list')
+        assert.ok(pluginList.some((p) => String(p).includes('pantheon-tui')))
+        assert.equal(existsSync(join(tuiPluginDir, 'index.ts')), false)
+      } else {
+        assert.equal(
+          existsSync(join(target, '.opencode', 'tui.json')),
+          false,
+          'V2 discovers local plugin entrypoints; it does not use project tui.json',
+        )
+        assert.equal(
+          readFileSync(join(tuiPluginDir, 'tui.ts'), 'utf8'),
+          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui-v2.ts'), 'utf8'),
+        )
+        assert.equal(
+          readFileSync(join(tuiPluginDir, 'index.ts'), 'utf8'),
+          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'index-v2.ts'), 'utf8'),
+        )
+        assert.equal(
+          JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8')).exports['./tui'],
+          './dist/tui-v2.js',
+        )
+      }
+      assert.equal(
+        readFileSync(join(tuiPluginDir, 'tui.ts'), 'utf8'),
+        readFileSync(
+          join(ROOT, 'src', 'plugins', 'tui', version === 'v2' ? 'tui-v2.ts' : 'tui.ts'),
+          'utf8',
+        ),
+        'installed TUI copy must use the entrypoint for the selected host generation',
+      )
+      const tuiPackage = JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8'))
+      assert.ok(tuiPackage.files.includes('tui.ts'), 'npm package must ship the TUI entrypoint')
     } finally {
       rmSync(target, { recursive: true, force: true })
     }
@@ -294,6 +368,19 @@ test('V1 fresh install has agent as singular object (not agents)', async () => {
         'V1 agent must be a named object',
       )
     }
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V1 project agent prompts stay in the legacy .opencode/agents directory', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-agent-files-'))
+  try {
+    const config = await runInstall(target, 'v1')
+
+    assert.ok(existsSync(join(target, '.opencode', 'agents', 'hermes.md')))
+    assert.ok(!existsSync(join(target, 'agents', 'hermes.md')))
+    assert.equal(config.agent.hermes.source, '.opencode/agents/hermes.md')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -526,6 +613,21 @@ test('V2 fresh install has agents as named object with array permissions', async
   }
 })
 
+test('V2 project agents are installed where the V2 config directory discovers them', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-agent-files-'))
+  try {
+    const config = await runInstall(target, 'v2')
+
+    assert.ok(existsSync(join(target, 'agents', 'hermes.md')))
+    assert.ok(existsSync(join(target, 'agents', 'themis.md')))
+    assert.ok(!existsSync(join(target, '.opencode', 'agents', 'hermes.md')))
+    assert.equal(config.agents.hermes.source, 'agents/hermes.md')
+    assert.equal(config.agents.themis.source, 'agents/themis.md')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
 test('V2 agent MCP permissions follow mcp_tools allowlists', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-mcp-perms-'))
   try {
@@ -544,6 +646,16 @@ test('V2 agent MCP permissions follow mcp_tools allowlists', async () => {
         (rule) => rule.action === 'pantheon_vision_vision_analyze',
       )?.effect,
       'allow',
+    )
+
+    const mnemosyneRules = config.agents.mnemosyne.permissions
+    assert.equal(
+      mnemosyneRules.findLast((rule) => rule.action === 'pantheon_memory_memory_forget')?.effect,
+      'allow',
+    )
+    assert.equal(
+      mnemosyneRules.some((rule) => rule.action === 'pantheon_memory_memory_delete'),
+      false,
     )
   } finally {
     rmSync(target, { recursive: true, force: true })

@@ -15,7 +15,13 @@ agent: "zeus"
 ## Layers
 
 ### Layer 1 — Heuristic Scan
-`python3 scripts/themis_heuristic_scan.py [--path=<dir>]`
+Resolve the installed helper first (do not assume the current project contains
+Pantheon source). Check, in order: `$OPENCODE_CONFIG_DIR/.opencode/scripts/`,
+`$OPENCODE_CONFIG_DIR/scripts/`, `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/scripts/`,
+`$HOME/.opencode/scripts/`, `.opencode/scripts/`, then
+`$(npm root -g)/pantheon-opencode/scripts/`. Resolve the first existing file to
+an absolute path and run `python3 "$helper" --path="$PWD"`; if none exists,
+report the helper as missing and stop Layer 1 rather than claiming it passed.
 Zero tokens, <2s. Checks: ruff, biome, anti-pattern slop, anti-overengineering (YAGNI), hash-anchored edits. Returns score 0-100 + APPROVED/BLOCKING.
 
 ### Layer 2 — Themis Deep Review

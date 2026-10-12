@@ -24,7 +24,7 @@ OpenCode is available in three form factors:
 | **Desktop app** | Download from [opencode.ai/download](https://opencode.ai/download) — macOS, Linux, Windows |
 | **IDE extension** | Available for VS Code, JetBrains, and Zed |
 
-The installer registers Pantheon's runtime integrations automatically. It writes the singular `plugin` configuration key for OpenCode V1 and converts it to the plural `plugins` key for OpenCode V2; do not add either key manually. The TUI integration is copied to `plugins/pantheon-tui` in the selected OpenCode config directory and registered in `tui.json`.
+The installer registers Pantheon's runtime integrations automatically. It writes the singular `plugin` configuration key for OpenCode V1 and converts it to the plural `plugins` key for OpenCode V2; do not add either key manually. The TUI integration is copied to `plugins/pantheon-tui` in the selected OpenCode config directory. V1 uses `tui.json`; V2 loads its native local-plugin `index.ts` + `tui.ts` entrypoints.
 
 The OpenCode-specific installer is the supported setup path:
 

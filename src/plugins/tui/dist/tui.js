@@ -10,9 +10,9 @@ import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount
 /**
 * pantheon-tui — Pantheon TUI plugin for opencode.
 *
-* Bundled entry: `tsdown` emits `dist/tui.js`, and the package `exports`
-* (`./tui` → ./dist/tui.js, `./server` → ./dist/server.js) is the ONLY load
-* path — no raw TSX copy is shipped. Because the bundle inlines relative
+* V1 bundle: `tsdown` emits `dist/tui.js`, re-exported by root `tui.ts`.
+* OpenCode V2 uses the separate `src/index-v2.tsx` entry and native CLI plugin
+* API. No raw TSX implementation is shipped. Because the bundle inlines relative
 * imports, this entry may be split into modules without breaking the loader.
 *
 * Slots:
@@ -167,7 +167,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.6.0-beta.8";
+	return "1.6.0-beta.9";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.

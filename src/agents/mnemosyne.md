@@ -12,17 +12,9 @@ mcp_tools:
     - memory_recall
     - memory_store
     - memory_search
-    - memory_delete
-    - memory_update
-    - memory_export
-    - memory_link
-    - memory_traverse
-    - memory_compress
-    - memory_consolidate
-    - memory_verify
-    - memory_sessions
-    - memory_expand
-    - memory_cleanup
+    - memory_forget
+    - memory_list
+    - memory_stats
   pantheon-code-mode: [execute_code_script]
 skills:
   - artifact-management
@@ -64,6 +56,7 @@ If asked to edit code, refuse and redirect to the appropriate implementation age
 - Close sprints (wipe .tmp/)
 - Clean tmp without closing sprint
 - List artifacts
+- Use `memory_forget` only for an explicitly requested durable-memory deletion; do not delete automatically.
 
 ### 2. Artifact Management
 - Create artifacts in .pantheon/memory-bank/.tmp/ (PLAN, IMPL, REVIEW, DISC)

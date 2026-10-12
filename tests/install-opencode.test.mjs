@@ -812,7 +812,7 @@ test('v2 install strips a stale steps ceiling from a managed agent', async () =>
     assert.equal(config.agents.zeus.steps, undefined)
     // Everything else about the managed agent is untouched.
     assert.equal(config.agents.zeus.mode, 'primary')
-    assert.equal(config.agents.zeus.source, '.opencode/agents/zeus.md')
+    assert.equal(config.agents.zeus.source, 'agents/zeus.md')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -943,7 +943,25 @@ test('a managed agent absent from the config is created without steps', async ()
     const zeus = config.agents.zeus
     assert.ok(zeus, 'the managed agent must be created')
     assert.equal(zeus.steps, undefined, 'a newly created agent must not gain a steps ceiling')
-    assert.equal(zeus.source, '.opencode/agents/zeus.md')
+    assert.equal(zeus.source, 'agents/zeus.md')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('v2 instructions-only install refreshes prompts in the native V2 agent directory', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-agent-refresh-'))
+  const options = { yes: true, headless: true, version: 'v2' }
+  const v2Hermes = join(target, 'agents', 'hermes.md')
+  try {
+    await installOpenCode(target, false, false, ['agents'], options)
+    writeFileSync(v2Hermes, 'STALE-ROLE')
+
+    await installOpenCode(target, false, false, ['instructions'], options)
+
+    const refreshed = readFileSync(v2Hermes, 'utf8')
+    assert.match(refreshed, /Backend specialist/)
+    assert.doesNotMatch(refreshed, /STALE-ROLE/)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -970,7 +988,7 @@ test('v2 install keeps the managed agent merge when agent and agents coexist', a
     )
     const zeus = config.agents.zeus
     // Managed fields from the V1 block survive the rename.
-    assert.equal(zeus.source, '.opencode/agents/zeus.md', 'managed source must not be discarded')
+    assert.equal(zeus.source, 'agents/zeus.md', 'managed source must not be discarded')
     assert.equal(zeus.temperature, 0.2, 'managed temperature must not be discarded')
     assert.deepEqual(
       zeus.permissions.filter((p) => p.action === 'edit'),
