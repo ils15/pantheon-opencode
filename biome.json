@@ -14,7 +14,8 @@
       "!.pantheon/deepwork/board-signals",
       "!.pantheon/goals",
       "!logs",
-      "!benchmarks/beta2/baseline-t1.json"
+      "!benchmarks/beta2/baseline-t1.json",
+      "!bench/results/*.json"
     ]
   },
   "linter": {

@@ -290,3 +290,62 @@ export function collectInstructionState(db, sessionId) {
     entries: items,
   }
 }
+
+/**
+ * First-request proxy for one session — the metric that isolates the injected
+ * instruction payload.
+ *
+ * The tree-total `tokens.input` sums every assistant turn, so it is dominated
+ * by session-length variance; the instruction payload only lands on the FIRST
+ * request. The first assistant message's prompt tokens are therefore the
+ * closest available proxy for the payload's cost:
+ *
+ *   contextTokens = tokens.input + tokens.cache.read
+ *
+ * (`input` excludes the cached prefix; the cached read is part of the same
+ * prompt.) V1/unsupported ledgers or a session with no assistant row come back
+ * as an explicit `unavailable`, never zero.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db read-only handle
+ * @param {string} sessionId root session id
+ */
+export function collectFirstRequest(db, sessionId) {
+  if (detectSchema(db).generation !== 'v2') {
+    return {
+      status: 'unavailable',
+      reason: 'first-request proxy reads the V2 session_message ledger only',
+    }
+  }
+  const row = db
+    .prepare(
+      `SELECT data FROM session_message
+        WHERE session_id = ? AND type = 'assistant' AND json_valid(data)
+        ORDER BY seq LIMIT 1`,
+    )
+    .get(sessionId)
+  if (!row) {
+    return { status: 'unavailable', reason: `no assistant row for session ${sessionId}` }
+  }
+  let data
+  try {
+    data = JSON.parse(row.data)
+  } catch {
+    return { status: 'unavailable', reason: 'first assistant row is not valid JSON' }
+  }
+  const tokens = data?.tokens
+  if (!tokens || typeof tokens !== 'object') {
+    return { status: 'unavailable', reason: 'first assistant row carries no tokens object' }
+  }
+  if (typeof tokens.input !== 'number') {
+    return { status: 'unavailable', reason: 'first assistant row carries no input token count' }
+  }
+  if (typeof tokens.cache?.read !== 'number') {
+    return {
+      status: 'unavailable',
+      reason: 'first assistant row carries no cache read token count',
+    }
+  }
+  const input = tokens.input
+  const cacheRead = tokens.cache.read
+  return { status: 'ok', input, cacheRead, contextTokens: input + cacheRead }
+}

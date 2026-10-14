@@ -719,6 +719,21 @@ spread (or demands a larger N); otherwise it is recorded as **inconclusive**.
 Prefer token medians, which are far more stable. Scenario A's wall is not a
 claim metric — it performs real web research, so network variance dominates.
 
+### First-request proxy and F1 evidence
+
+The injected instruction payload only lands on the first request, so the
+tree-total `tokens.input` (summed over every turn) is dominated by
+session-length variance. Each run also records `firstRequest` — the first
+assistant row's `tokens.input` + `tokens.cache.read` — the proxy that isolates
+the payload.
+
+Measured same-day in the `double-injection` profile (N=5/arm), the AGENTS.md
+carve drops the first-request context from 17555 to 15489 tokens
+(**−2066, −11.8%**; within-arm spread 14), matching the byte delta (control
+loaded 22350 B, candidate 13400 B). Tree-total input and wall remain
+**inconclusive**. Full table and caveats:
+`bench/results/f1-double-injection.md`.
+
 
 ## Plugin V2 TypeScript coverage
 

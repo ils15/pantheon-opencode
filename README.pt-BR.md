@@ -478,6 +478,21 @@ exige N maior); caso contrário é registrado como **inconclusivo**. Prefira
 medianas de tokens, bem mais estáveis. O wall do cenário A não é métrica de
 claim — ele faz pesquisa web real, então a variância de rede domina.
 
+### Proxy do 1º request e evidência de F1
+
+O payload de instruções injetado só incide no primeiro request, então o
+`tokens.input` total da árvore (somado em todo turno) é dominado pela variância
+de duração da sessão. Cada run também registra `firstRequest` — o
+`tokens.input` + `tokens.cache.read` da primeira linha assistant — o proxy que
+isola o payload.
+
+Medido same-day no perfil `double-injection` (N=5/braço), o carve do AGENTS.md
+derruba o contexto do 1º request de 17555 para 15489 tokens
+(**−2066, −11.8%**; spread intra-braço 14), batendo com o delta de bytes
+(controle carregou 22350 B, candidata 13400 B). Input total da árvore e wall
+seguem **inconclusivos**. Tabela completa e ressalvas:
+`bench/results/f1-double-injection.md`.
+
 
 ## Cobertura TypeScript do Plugin V2
 

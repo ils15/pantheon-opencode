@@ -24,9 +24,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-const { collectInstructionState, collectRunMetrics, detectSchema, openReadOnly } = await import(
-  '../bench/lib/collector.mjs'
-)
+const {
+  collectFirstRequest,
+  collectInstructionState,
+  collectRunMetrics,
+  detectSchema,
+  openReadOnly,
+} = await import('../bench/lib/collector.mjs')
 const { DatabaseSync } = await import('node:sqlite')
 
 // ─── fixture builder ─────────────────────────────────────────────────────
@@ -372,4 +376,56 @@ test('collectInstructionState degrades to unavailable when the session has no st
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// ─── first-request proxy ─────────────────────────────────────────────────
+
+test('collectFirstRequest reads the first assistant row and sums input + cacheRead', () => {
+  withFixture((dbPath) => {
+    const db = openReadOnly(dbPath)
+    try {
+      const first = collectFirstRequest(db, 'ses_root')
+      assert.equal(first.status, 'ok')
+      assert.equal(first.input, 100)
+      assert.equal(first.cacheRead, 55)
+      assert.equal(first.contextTokens, 155)
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test('collectFirstRequest reports unavailable when the session has no assistant row', () => {
+  withFixture((dbPath) => {
+    const db = openReadOnly(dbPath)
+    try {
+      const first = collectFirstRequest(db, 'ses_nope')
+      assert.equal(first.status, 'unavailable')
+      assert.match(first.reason, /no assistant row/)
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test('collectFirstRequest reports unavailable when cache-read tokens are absent', () => {
+  withFixture((dbPath) => {
+    const writable = new DatabaseSync(dbPath)
+    const row = writable.prepare('SELECT data FROM session_message WHERE id = ?').get('m1')
+    const data = JSON.parse(row.data)
+    delete data.tokens.cache.read
+    writable
+      .prepare('UPDATE session_message SET data = ? WHERE id = ?')
+      .run(JSON.stringify(data), 'm1')
+    writable.close()
+
+    const db = openReadOnly(dbPath)
+    try {
+      const first = collectFirstRequest(db, 'ses_root')
+      assert.equal(first.status, 'unavailable')
+      assert.match(first.reason, /cache read token count/)
+    } finally {
+      db.close()
+    }
+  })
 })

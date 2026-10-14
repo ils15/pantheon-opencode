@@ -22,6 +22,9 @@ const allowedExclusions = [
   // harness emits multi-line short arrays that Biome's JSON formatter would
   // collapse on every regeneration, so the artifact is kept out of the linter.
   '!benchmarks/beta2/baseline-t1.json',
+  // Latency bench reports: same reason — generated data written by
+  // bench/bin/bench.mjs on every run, never hand-edited source.
+  '!bench/results/*.json',
 ]
 
 function exclusionMatchesPath(pattern, filePath) {

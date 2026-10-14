@@ -44,9 +44,11 @@
     "wallIsNoise": "B walls 13793/18898/24194/38735/44873 ms (max/min 3.25x). The fastest run (13793 ms) has childrenCount=0, a deviation from the scenario B contract (expected 1). Excluding it, median 31.5s (-18%), still inside the same-day spread.",
     "gateViolated": "F-07: claims were published before the D4 fidelity proof existed and before review.",
     "supersededBy": [
-      "bench/results/f1-di-control-690e039.json",
-      "bench/results/f1-di-candidate-690e039.json"
-    ]
+      "bench/results/f1-di-control-736ebaf.json",
+      "bench/results/f1-di-candidate-736ebaf.json",
+      "bench/results/f1-double-injection.md"
+    ],
+    "supersedingOutcome": "Re-measured same-day in the double-injection profile (N=5/arm). D4 provenance proves the intended global+project artifacts were loaded (control 22350 B, candidate 13400 B). The first-request proxy (the metric that isolates the injected payload) is CONFIRMED at -2066 tokens (-11.8%, noise 14). Tree-total input and wall remain inconclusive. See bench/results/f1-double-injection.md."
   },
   "scenarios": {
     "A": "multi-step (reproduces the ~2x vs Codex CLI)",

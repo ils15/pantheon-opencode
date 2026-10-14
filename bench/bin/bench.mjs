@@ -49,7 +49,12 @@ import { join, resolve } from 'node:path'
 
 import { runIsCompleted, summarizeRuns } from '../lib/aggregate.mjs'
 import { parseBenchArgs, UsageError } from '../lib/args.mjs'
-import { collectInstructionState, collectRunMetrics, openReadOnly } from '../lib/collector.mjs'
+import {
+  collectFirstRequest,
+  collectInstructionState,
+  collectRunMetrics,
+  openReadOnly,
+} from '../lib/collector.mjs'
 import { parseBenchHookLines, summarizeHookTimings } from '../lib/hooklog.mjs'
 import { assertNoSecrets } from '../lib/redact.mjs'
 import { resolveBenchEnv, runOnce } from '../lib/runner.mjs'
@@ -236,6 +241,7 @@ function collectRunArtifacts(dbPath, runDir, sessionId) {
     childrenCount: null,
   }
   let instructions = { status: 'unavailable', reason: 'run database not available' }
+  let firstRequest = { status: 'unavailable', reason: 'run database not available' }
   let rootSession = null
   if (sessionId !== null && existsSync(dbPath)) {
     let db
@@ -248,12 +254,14 @@ function collectRunArtifacts(dbPath, runDir, sessionId) {
         toolCalls: { status: 'unavailable', reason: err.message },
       }
       instructions = { status: 'unavailable', reason: err.message }
+      firstRequest = { status: 'unavailable', reason: err.message }
       db = null
     }
     if (db !== null) {
       try {
         metrics = collectRunMetrics(db, sessionId)
         instructions = collectInstructionState(db, sessionId)
+        firstRequest = collectFirstRequest(db, sessionId)
         rootSession =
           metrics.root.status === 'ok' ? { idle_outcome: metrics.root.idle_outcome } : null
       } finally {
@@ -268,11 +276,12 @@ function collectRunArtifacts(dbPath, runDir, sessionId) {
       toolCalls: { status: 'unavailable', reason },
     }
     instructions = { status: 'unavailable', reason }
+    firstRequest = { status: 'unavailable', reason }
   }
   const hooks = existsSync(hooksLogPath)
     ? summarizeHookTimings(parseBenchHookLines(readFileSync(hooksLogPath, 'utf8')))
     : { status: 'unavailable', reason: 'hooks.log not found in the run sandbox' }
-  return { metrics, rootSession, hooks, instructions }
+  return { metrics, rootSession, hooks, instructions, firstRequest }
 }
 
 // ─── main ────────────────────────────────────────────────────────────────
@@ -386,7 +395,7 @@ async function main() {
         stderrTail: String(err?.message ?? err),
       }
     }
-    const { metrics, rootSession, hooks, instructions } = collectRunArtifacts(
+    const { metrics, rootSession, hooks, instructions, firstRequest } = collectRunArtifacts(
       dbPath,
       runDir,
       outcome.sessionId,
@@ -428,6 +437,7 @@ async function main() {
       toolCalls: toolCallsToMap(metrics.toolCalls),
       hooks,
       instructions,
+      firstRequest,
       stderrTail: outcome.stderrTail === '' ? null : outcome.stderrTail,
     }
     runs.push(record)
@@ -491,6 +501,7 @@ async function main() {
       'Tool calls counted from assistant content parts with type=tool; only the tool NAME is read, never tool inputs.',
       'Hook timings come from the [bench] lines the V2 plugin appends to .pantheon/logs/hooks.log (instrumentation-only change).',
       'Per-run `instructions` is the D4 fidelity proof: the identity (path, bytes, sha256) of every instruction file the session actually loaded, read from instruction_state/instruction_blob. Content is never copied into the report.',
+      "Per-run `firstRequest` is the proxy that isolates the injected payload: the first assistant row's tokens.input + tokens.cache.read. Tree-total input is dominated by session-length variance; the payload only lands on the first request.",
       'A metric the schema cannot provide is {status:"unavailable", reason} — never zero.',
     ],
   }
