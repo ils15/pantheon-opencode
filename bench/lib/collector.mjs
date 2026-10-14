@@ -18,6 +18,7 @@
  * @module bench/lib/collector
  */
 
+import { createHash } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -205,5 +206,87 @@ export function collectRunMetrics(db, rootId) {
     childrenCount: tree.childIds.length,
     tokens: collectTokens(db, sessionIds),
     toolCalls,
+  }
+}
+
+/**
+ * Instruction provenance for one session — the D4 fidelity proof.
+ *
+ * Reads `instruction_state.current_values['core/instructions']` (a content
+ * hash), resolves it through `instruction_blob`, and reports, per loaded
+ * instruction file: its absolute path, byte length and SHA-256. The CONTENT
+ * itself is never carried into the report — only identity and size — so the
+ * redaction scan has nothing secret to find.
+ *
+ * This is what makes a claim auditable: the report can prove exactly which
+ * global and project instruction files the measured session loaded, instead of
+ * assuming the host injected them. A schema without the instruction tables, or
+ * a session without state, is an explicit `unavailable`, never a guess.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db read-only handle
+ * @param {string} sessionId root session id
+ */
+export function collectInstructionState(db, sessionId) {
+  const names = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('instruction_state', 'instruction_blob')",
+    )
+    .all()
+    .map((r) => r.name)
+  for (const table of ['instruction_state', 'instruction_blob']) {
+    if (!names.includes(table)) {
+      return { status: 'unavailable', reason: `${table} table not present in this database` }
+    }
+  }
+
+  const state = db
+    .prepare('SELECT current_values FROM instruction_state WHERE session_id = ?')
+    .get(sessionId)
+  if (!state) {
+    return { status: 'unavailable', reason: `no instruction_state row for session ${sessionId}` }
+  }
+  let values
+  try {
+    values = JSON.parse(state.current_values)
+  } catch {
+    return { status: 'unavailable', reason: 'instruction_state.current_values is not valid JSON' }
+  }
+  const hash = values?.['core/instructions']
+  if (typeof hash !== 'string' || hash === '') {
+    return {
+      status: 'unavailable',
+      reason: 'core/instructions hash missing from instruction_state',
+    }
+  }
+
+  const blob = db.prepare('SELECT value FROM instruction_blob WHERE hash = ?').get(hash)
+  if (!blob) {
+    return { status: 'unavailable', reason: `instruction_blob ${hash} not found` }
+  }
+  let entries
+  try {
+    entries = JSON.parse(blob.value)
+  } catch {
+    return { status: 'unavailable', reason: 'instruction_blob value is not valid JSON' }
+  }
+  if (!Array.isArray(entries)) {
+    return { status: 'unavailable', reason: 'instruction_blob value is not an array' }
+  }
+
+  const items = entries.map((entry) => {
+    const content = entry?.content
+    const hasContent = typeof content === 'string'
+    return {
+      path: typeof entry?.path === 'string' ? entry.path : null,
+      bytes: hasContent ? Buffer.byteLength(content) : null,
+      sha256: hasContent ? createHash('sha256').update(content).digest('hex') : null,
+    }
+  })
+  return {
+    status: 'ok',
+    hash,
+    entryCount: items.length,
+    totalBytes: items.reduce((sum, item) => sum + (item.bytes ?? 0), 0),
+    entries: items,
   }
 }

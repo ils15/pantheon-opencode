@@ -27,6 +27,27 @@
       "scenarioAUsesRealWebResearch": true
     }
   },
+  "retraction": {
+    "status": "inconclusive",
+    "recordedAt": "2026-10-14",
+    "reason": "Measured in the host profile: every B run loaded exactly ONE instruction file (the carved global /tmp/opencode/f1-xdg/opencode/AGENTS.md, 11410 B) and no project AGENTS.md, because the bench run directories were empty. The global+project duplicate the carve removes was never loaded, so this run does not measure F1.",
+    "withdrawnClaims": [
+      "B wall median 38.5s -> 24.2s (-37%) published as a latency gain",
+      "B input median 36703 -> 34266 (-2.4k tokens, -6.6%) attributed to the carve"
+    ],
+    "byteMathNotApplicable": "The loaded global payload GREW 11175 B -> 11410 B (+235 B, the Athena Plan Handoff section). The ~10.2 KB duplicate only exists in a real repo session where the global and project AGENTS.md are both loaded.",
+    "confounders": [
+      "plugin-v2.ts changed (+291 lines) between 2575a41..112409a",
+      "different host config dir (real vs the /tmp/opencode/f1-xdg lane)",
+      "no same-day control"
+    ],
+    "wallIsNoise": "B walls 13793/18898/24194/38735/44873 ms (max/min 3.25x). The fastest run (13793 ms) has childrenCount=0, a deviation from the scenario B contract (expected 1). Excluding it, median 31.5s (-18%), still inside the same-day spread.",
+    "gateViolated": "F-07: claims were published before the D4 fidelity proof existed and before review.",
+    "supersededBy": [
+      "bench/results/f1-di-control-690e039.json",
+      "bench/results/f1-di-candidate-690e039.json"
+    ]
+  },
   "scenarios": {
     "A": "multi-step (reproduces the ~2x vs Codex CLI)",
     "B": "one-shot delimitado"

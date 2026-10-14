@@ -23,18 +23,32 @@
  *     visible in the per-run records (controlled replay is a later phase —
  *     the per-run sandbox directories are kept under /tmp/opencode for it)
  *
- * Usage: node bench/bin/bench.mjs [--runs 5]
+ * FIDELITY (D4) — every run records, read from the db, the identity of the
+ * instruction files the session actually loaded (instruction_state +
+ * instruction_blob): per-file path, byte length and sha256. A claim can only
+ * rest on a run whose provenance shows the intended global AND project
+ * artifacts were loaded.
+ *
+ * PROFILES — stated, never inferred (see bench/lib/args.mjs):
+ *   host              host global AGENTS.md only (run dirs empty)
+ *   double-injection  host (or --global-agents) + --project-agents written into
+ *                     every run directory — the profile the carve acts on
+ *
+ * Usage: node bench/bin/bench.mjs [--runs 5] [--profile host|double-injection]
+ *          [--label <name>] [--global-agents <path>] [--project-agents <path>]
  *
  * @module bench/bin/bench
  */
 
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, version as nodeVersion, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { runIsCompleted, summarizeRuns } from '../lib/aggregate.mjs'
-import { collectRunMetrics, openReadOnly } from '../lib/collector.mjs'
+import { parseBenchArgs, UsageError } from '../lib/args.mjs'
+import { collectInstructionState, collectRunMetrics, openReadOnly } from '../lib/collector.mjs'
 import { parseBenchHookLines, summarizeHookTimings } from '../lib/hooklog.mjs'
 import { assertNoSecrets } from '../lib/redact.mjs'
 import { resolveBenchEnv, runOnce } from '../lib/runner.mjs'
@@ -43,7 +57,6 @@ import { resolveBenchEnv, runOnce } from '../lib/runner.mjs'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..')
 const RESULTS_DIR = join(REPO_ROOT, 'bench', 'results')
-const RUNS_PER_SCENARIO = 5
 const RUN_TIMEOUT_MS = 20 * 60_000
 const DEFAULT_MODEL = 'opencode-go/glm-5.3-flash'
 const PLUGIN_GENERATION = 'v2'
@@ -92,7 +105,31 @@ function gitRev() {
   const dirty =
     execFileSync('git', ['status', '--porcelain'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim() !==
     ''
-  return { sha, dirty }
+  // F-11: a dirty tree must be identifiable, not just flagged. Hash the tracked
+  // diff against HEAD PLUS every untracked file except bench/results/ (results
+  // accumulate across arms, so including them would make the two same-day arms
+  // hash differently). Stable across arms; clean tree → null.
+  const diffHash = dirty ? workingTreeHash() : null
+  return { sha, dirty, diffHash }
+}
+
+/** Stable identity of the working tree at measurement start (see gitRev). */
+function workingTreeHash() {
+  const parts = [execFileSync('git', ['diff', 'HEAD'], { cwd: REPO_ROOT })]
+  const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  })
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .filter((rel) => !rel.startsWith('bench/results/'))
+    .sort()
+  for (const rel of untracked) {
+    parts.push(Buffer.from(`${rel}\0`))
+    parts.push(readFileSync(join(REPO_ROOT, rel)))
+  }
+  return createHash('sha256').update(Buffer.concat(parts)).digest('hex')
 }
 
 function opencodeVersion() {
@@ -121,8 +158,12 @@ function readHostConfig() {
  * OPENCODE_CONFIG override still loads the host's globally installed plugin,
  * and whichever copy registers first wins (plugin-once), so the instrumented
  * repo plugin could silently lose its registration.
+ *
+ * When `globalAgentsPath` is given, that file is installed as the shadow's
+ * AGENTS.md (the global instruction surface) instead of symlinking the host's,
+ * so a control and a candidate global artifact can be swapped same-day.
  */
-function buildShadowConfigDir(hostConfig, model, sandboxRoot) {
+function buildShadowConfigDir(hostConfig, model, sandboxRoot, globalAgentsPath) {
   const hostConfigDir = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config')
   const hostOpencodeDir = join(hostConfigDir, 'opencode')
   // XDG_CONFIG_HOME must point at the PARENT: opencode looks for
@@ -131,6 +172,7 @@ function buildShadowConfigDir(hostConfig, model, sandboxRoot) {
   const shadow = join(shadowHome, 'opencode')
   mkdirSync(shadow, { recursive: true })
   for (const entry of SHADOW_LINKED_ENTRIES) {
+    if (entry === 'AGENTS.md' && globalAgentsPath !== null) continue
     const source = join(hostOpencodeDir, entry)
     if (existsSync(source)) {
       try {
@@ -140,6 +182,9 @@ function buildShadowConfigDir(hostConfig, model, sandboxRoot) {
       }
     }
   }
+  if (globalAgentsPath !== null) {
+    writeFileSync(join(shadow, 'AGENTS.md'), readFileSync(globalAgentsPath, 'utf8'), 'utf8')
+  }
   const base =
     hostConfig !== null && typeof hostConfig === 'object' && !Array.isArray(hostConfig)
       ? hostConfig
@@ -147,6 +192,16 @@ function buildShadowConfigDir(hostConfig, model, sandboxRoot) {
   const benchConfig = { ...base, plugins: [PLUGIN_REF], model }
   writeFileSync(join(shadow, 'opencode.json'), `${JSON.stringify(benchConfig, null, 2)}\n`, 'utf8')
   return shadowHome
+}
+
+/** Identity (path, bytes, sha256) of a fixture file — recorded, never the content. */
+function fixtureIdentity(path) {
+  const content = readFileSync(path)
+  return {
+    path,
+    bytes: content.byteLength,
+    sha256: createHash('sha256').update(content).digest('hex'),
+  }
 }
 
 /**
@@ -179,6 +234,7 @@ function collectRunArtifacts(dbPath, runDir, sessionId) {
     toolCalls: { status: 'unavailable', reason: 'run database not available' },
     childrenCount: null,
   }
+  let instructions = { status: 'unavailable', reason: 'run database not available' }
   let rootSession = null
   if (sessionId !== null && existsSync(dbPath)) {
     let db
@@ -190,11 +246,13 @@ function collectRunArtifacts(dbPath, runDir, sessionId) {
         tokens: { status: 'unavailable', reason: err.message },
         toolCalls: { status: 'unavailable', reason: err.message },
       }
+      instructions = { status: 'unavailable', reason: err.message }
       db = null
     }
     if (db !== null) {
       try {
         metrics = collectRunMetrics(db, sessionId)
+        instructions = collectInstructionState(db, sessionId)
         rootSession =
           metrics.root.status === 'ok' ? { idle_outcome: metrics.root.idle_outcome } : null
       } finally {
@@ -208,46 +266,84 @@ function collectRunArtifacts(dbPath, runDir, sessionId) {
       tokens: { status: 'unavailable', reason },
       toolCalls: { status: 'unavailable', reason },
     }
+    instructions = { status: 'unavailable', reason }
   }
   const hooks = existsSync(hooksLogPath)
     ? summarizeHookTimings(parseBenchHookLines(readFileSync(hooksLogPath, 'utf8')))
     : { status: 'unavailable', reason: 'hooks.log not found in the run sandbox' }
-  return { metrics, rootSession, hooks }
+  return { metrics, rootSession, hooks, instructions }
 }
 
 // ─── main ────────────────────────────────────────────────────────────────
 
-function parseRunsArg(argv) {
-  const index = argv.indexOf('--runs')
-  if (index === -1) return RUNS_PER_SCENARIO
-  const value = Number(argv[index + 1])
-  if (!Number.isInteger(value) || value < 1) {
-    console.error('bench: --runs must be a positive integer')
-    process.exit(2)
-  }
-  return value
-}
-
 async function main() {
-  const runsPerScenario = parseRunsArg(process.argv.slice(2))
+  let opts
+  try {
+    opts = parseBenchArgs(process.argv.slice(2))
+  } catch (err) {
+    if (err instanceof UsageError) {
+      console.error(`bench: ${err.message}`)
+      console.error(
+        'usage: bench.mjs [--runs N] [--profile host|double-injection] [--label name] ' +
+          '[--global-agents path] [--project-agents path]',
+      )
+      process.exit(2)
+    }
+    throw err
+  }
+  const { runs: runsPerScenario, profile, label: runLabel } = opts
   const model = process.env.BENCH_MODEL ?? DEFAULT_MODEL
   const startedAtIso = new Date().toISOString()
   const rev = gitRev()
   const version = opencodeVersion()
   const hostConfig = readHostConfig()
 
+  // Fixtures must exist before anything is measured — a missing path is a
+  // caller error, not an empty measurement.
+  for (const [flag, fixture] of [
+    ['--global-agents', opts.globalAgents],
+    ['--project-agents', opts.projectAgents],
+  ]) {
+    if (fixture !== null && !existsSync(fixture)) {
+      console.error(`bench: ${flag} path not found: ${fixture}`)
+      process.exit(2)
+    }
+  }
+  const globalFixture = opts.globalAgents === null ? null : fixtureIdentity(opts.globalAgents)
+  const projectFixture = opts.projectAgents === null ? null : fixtureIdentity(opts.projectAgents)
+
+  // Never clobber an existing result: the run identity lives in the file name.
+  const resultPath = join(RESULTS_DIR, `${runLabel}-${rev.sha}.json`)
+  if (existsSync(resultPath)) {
+    console.error(
+      `bench: refusing to overwrite ${resultPath} — pick a different --label (run identity is in the file name)`,
+    )
+    process.exit(2)
+  }
+
   const sandboxRoot = join(tmpdir(), 'opencode', `bench-${Date.now()}`)
   mkdirSync(sandboxRoot, { recursive: true })
-  const shadowConfigDir = buildShadowConfigDir(hostConfig.config, model, sandboxRoot)
+  const shadowConfigDir = buildShadowConfigDir(
+    hostConfig.config,
+    model,
+    sandboxRoot,
+    opts.globalAgents,
+  )
   const dbPath = globalDbPath()
 
   console.log(
-    `bench: model=${model} runs=${runsPerScenario}/scenario timeout=${RUN_TIMEOUT_MS / 60000}min`,
+    `bench: model=${model} runs=${runsPerScenario}/scenario profile=${profile} label=${runLabel} timeout=${RUN_TIMEOUT_MS / 60000}min`,
   )
   console.log(
     `bench: opencode ${version} | git ${rev.sha}${rev.dirty ? ' (dirty)' : ''} | plugin ${PLUGIN_GENERATION} (${PLUGIN_REF})`,
   )
   console.log(`bench: sandbox ${sandboxRoot} | shadow config ${shadowConfigDir}`)
+  if (globalFixture) {
+    console.log(`bench: global AGENTS fixture ${globalFixture.path} (${globalFixture.bytes}B)`)
+  }
+  if (projectFixture) {
+    console.log(`bench: project AGENTS fixture ${projectFixture.path} (${projectFixture.bytes}B)`)
+  }
   console.log(`bench: metrics from ${dbPath} (read-only)`)
 
   const runs = []
@@ -255,19 +351,26 @@ async function main() {
   let runNumber = 0
   for (const scenario of order) {
     runNumber += 1
-    const label = `run-${String(runNumber).padStart(2, '0')}-${scenario}`
-    const runDir = join(sandboxRoot, label)
+    const runLabelDir = `run-${String(runNumber).padStart(2, '0')}-${scenario}`
+    const runDir = join(sandboxRoot, runLabelDir)
     mkdirSync(runDir, { recursive: true })
+    // Double-injection profile: the project AGENTS.md the real repo carries is
+    // materialized INSIDE the run dir, so opencode loads global + project —
+    // the exact duplicate the carve splits. Without this the run dir is empty
+    // and only the global artifact is ever injected.
+    if (opts.projectAgents !== null) {
+      writeFileSync(join(runDir, 'AGENTS.md'), readFileSync(opts.projectAgents, 'utf8'), 'utf8')
+    }
     const env = resolveBenchEnv(process.env, { configDir: shadowConfigDir, cwd: runDir })
     const startedIso = new Date().toISOString()
-    process.stdout.write(`bench: ${label} started… `)
+    process.stdout.write(`bench: ${runLabelDir} started… `)
     let outcome
     try {
       outcome = await runOnce({
         cwd: runDir,
         prompt: SCENARIOS[scenario].prompt,
         model,
-        title: `pantheon-bench-${label}`,
+        title: `pantheon-bench-${runLabelDir}`,
         timeoutMs: RUN_TIMEOUT_MS,
         env,
       })
@@ -282,7 +385,11 @@ async function main() {
         stderrTail: String(err?.message ?? err),
       }
     }
-    const { metrics, rootSession, hooks } = collectRunArtifacts(dbPath, runDir, outcome.sessionId)
+    const { metrics, rootSession, hooks, instructions } = collectRunArtifacts(
+      dbPath,
+      runDir,
+      outcome.sessionId,
+    )
     const completed = runIsCompleted({
       exitCode: outcome.exitCode,
       timedOut: outcome.timedOut,
@@ -319,6 +426,7 @@ async function main() {
           : metrics.tokens,
       toolCalls: toolCallsToMap(metrics.toolCalls),
       hooks,
+      instructions,
       stderrTail: outcome.stderrTail === '' ? null : outcome.stderrTail,
     }
     runs.push(record)
@@ -333,10 +441,11 @@ async function main() {
   const report = {
     meta: {
       kind: 'pantheon-bench-baseline',
-      reportVersion: 1,
+      reportVersion: 2,
       createdAt: startedAtIso,
       gitSha: rev.sha,
       gitDirty: rev.dirty,
+      gitDiffHash: rev.diffHash,
       opencodeVersion: version,
       nodeVersion,
       pluginGeneration: PLUGIN_GENERATION,
@@ -346,6 +455,10 @@ async function main() {
       shadowConfigDir,
       modelRequested: model,
       sandboxRoot,
+      profile,
+      label: runLabel,
+      globalAgentsFixture: globalFixture,
+      projectAgentsFixture: projectFixture,
       protocol: {
         runsPerScenario,
         interleave: 'A,B starting at A',
@@ -360,6 +473,10 @@ async function main() {
         metricDb: dbPath,
         isolatedDbPerRun: false,
         scenarioAUsesRealWebResearch: true,
+        profileDescription:
+          profile === 'double-injection'
+            ? 'global AGENTS.md + a project AGENTS.md materialized in every run dir'
+            : 'host global AGENTS.md only; run dirs stay empty',
       },
     },
     scenarios: Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [k, v.name])),
@@ -371,13 +488,13 @@ async function main() {
       'Runs share the global opencode.db (provider credentials live there), but every metric is scoped by the run root sessionID and the db is opened READ-ONLY; no db writes are ever performed.',
       'Tool calls counted from assistant content parts with type=tool; only the tool NAME is read, never tool inputs.',
       'Hook timings come from the [bench] lines the V2 plugin appends to .pantheon/logs/hooks.log (instrumentation-only change).',
+      'Per-run `instructions` is the D4 fidelity proof: the identity (path, bytes, sha256) of every instruction file the session actually loaded, read from instruction_state/instruction_blob. Content is never copied into the report.',
       'A metric the schema cannot provide is {status:"unavailable", reason} — never zero.',
     ],
   }
   assertNoSecrets(report)
 
   mkdirSync(RESULTS_DIR, { recursive: true })
-  const resultPath = join(RESULTS_DIR, `baseline-${rev.sha}.json`)
   writeFileSync(resultPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
 
   // ── console summary table ──

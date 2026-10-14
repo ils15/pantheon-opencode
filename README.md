@@ -678,10 +678,43 @@ BENCH_MODEL=opencode-go/glm-5.3-flash node bench/bin/bench.mjs   # pin a model
 node bench/bin/bench.mjs --runs 1   # smoke: one run per scenario
 ```
 
-Results land in `bench/results/baseline-<git-sha>.json` (median + p80 +
-failures per scenario). Performance PRs must attach the delta versus the
-current baseline. Scenario A performs real web research, so its variance is
+Results land in `bench/results/<label>-<git-sha>.json` (median + p80 +
+failures per scenario); the label defaults to `baseline` and the harness
+refuses to overwrite an existing result, so the run identity lives in the file
+name. Scenario A performs real web research, so its variance is
 network-dependent and recorded per run.
+
+### Measurement profiles (explicit, never inferred)
+
+Instructions are injected from two surfaces: the global config dir and the
+project directory. The harness states which one it exercises, because a
+result only means anything in the profile where the change acts:
+
+| `--profile` | Global `AGENTS.md` | Project `AGENTS.md` | Use |
+|---|---|---|---|
+| `host` (default) | host config dir (or `--global-agents`) | none — run dirs stay empty | the host's real, unmodified injection |
+| `double-injection` | host config dir (or `--global-agents`) | `--project-agents`, written into every run dir | the in-repo profile where global+project overlap |
+
+```bash
+# candidate arm: the carved global artifact + the carved project artifact
+node bench/bin/bench.mjs --profile double-injection \
+  --global-agents AGENTS.global.md --project-agents AGENTS.md --label f1-candidate
+```
+
+Each arm records, per run and read from the db, the identity (path, bytes,
+sha256) of every instruction file the session actually loaded
+(`instruction_state` + `instruction_blob`) — the fidelity proof that what was
+measured is what was generated. A claim may only rest on a run whose
+provenance shows the intended global **and** project artifacts were loaded.
+
+### Signal vs noise
+
+Wall time is a lead, not a criterion: same-day spread reaches ~8× in scenario
+A and ~13× in B. An effect is **confirmed** only when it exceeds the same-day
+spread (or demands a larger N); otherwise it is recorded as **inconclusive**.
+Prefer token medians, which are far more stable. Scenario A's wall is not a
+claim metric — it performs real web research, so network variance dominates.
+
 
 ## Plugin V2 TypeScript coverage
 

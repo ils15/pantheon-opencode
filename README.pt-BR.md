@@ -436,10 +436,44 @@ BENCH_MODEL=opencode-go/glm-5.3-flash node bench/bin/bench.mjs   # fixar modelo
 node bench/bin/bench.mjs --runs 1   # smoke: um run por cenário
 ```
 
-Os resultados vão para `bench/results/baseline-<git-sha>.json` (mediana +
-p80 + falhas por cenário). PRs de performance devem anexar o delta contra o
-baseline vigente. O cenário A faz pesquisa web real, então a variância de rede
-é registrada por run.
+Os resultados vão para `bench/results/<label>-<git-sha>.json` (mediana +
+p80 + falhas por cenário); o label padrão é `baseline` e o harness recusa
+sobrescrever um resultado existente, então a identidade do run fica no nome do
+arquivo. O cenário A faz pesquisa web real, então a variância de rede é
+registrada por run.
+
+### Perfis de medição (explícitos, nunca inferidos)
+
+As instruções são injetadas por duas superfícies: o diretório de config global
+e o diretório do projeto. O harness declara qual delas exercita, porque um
+resultado só significa algo no perfil onde a mudança atua:
+
+| `--profile` | `AGENTS.md` global | `AGENTS.md` de projeto | Uso |
+|---|---|---|---|
+| `host` (padrão) | diretório de config do host (ou `--global-agents`) | nenhum — run dirs ficam vazios | a injeção real do host, sem alteração |
+| `double-injection` | diretório de config do host (ou `--global-agents`) | `--project-agents`, escrito em cada run dir | o perfil no repo onde global+projeto se sobrepõem |
+
+```bash
+# braço candidato: artefato global carveado + artefato de projeto carveado
+node bench/bin/bench.mjs --profile double-injection \
+  --global-agents AGENTS.global.md --project-agents AGENTS.md --label f1-candidate
+```
+
+Cada braço registra, por run e lido do banco, a identidade (caminho, bytes,
+sha256) de cada arquivo de instrução que a sessão de fato carregou
+(`instruction_state` + `instruction_blob`) — a prova de fidelidade de que o
+que foi medido é o que foi gerado. Um claim só pode se apoiar num run cuja
+provenance mostre que os artefatos global **e** de projeto pretendidos foram
+carregados.
+
+### Sinal vs ruído
+
+Wall time é pista, não critério: o spread same-day chega a ~8× no cenário A e
+~13× no B. Um efeito só é **confirmado** quando excede o spread same-day (ou
+exige N maior); caso contrário é registrado como **inconclusivo**. Prefira
+medianas de tokens, bem mais estáveis. O wall do cenário A não é métrica de
+claim — ele faz pesquisa web real, então a variância de rede domina.
+
 
 ## Cobertura TypeScript do Plugin V2
 

@@ -24,7 +24,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-const { collectRunMetrics, detectSchema, openReadOnly } = await import('../bench/lib/collector.mjs')
+const { collectInstructionState, collectRunMetrics, detectSchema, openReadOnly } = await import(
+  '../bench/lib/collector.mjs'
+)
 const { DatabaseSync } = await import('node:sqlite')
 
 // ─── fixture builder ─────────────────────────────────────────────────────
@@ -278,4 +280,96 @@ test('a root id absent from the db yields unavailable metrics with a reason', ()
       db.close()
     }
   })
+})
+
+// ─── instruction provenance (D4 fidelity proof) ──────────────────────────
+
+/** Fixture with the real instruction_state/instruction_blob shape. */
+function buildInstructionFixture(dbPath) {
+  const db = new DatabaseSync(dbPath)
+  db.exec(`
+    CREATE TABLE instruction_state (
+      session_id TEXT, epoch_start INTEGER, through_seq INTEGER,
+      initial_values TEXT, current_values TEXT
+    );
+    CREATE TABLE instruction_blob (hash TEXT, value TEXT);
+  `)
+  const global = '# global rules\n'.repeat(3)
+  const project = '# project rules\n'
+  const blob = JSON.stringify([
+    { path: '/host/.config/opencode/AGENTS.md', content: global },
+    { path: '/repo/AGENTS.md', content: project },
+  ])
+  const hash = createHash('sha256').update(blob).digest('hex')
+  db.prepare('INSERT INTO instruction_blob (hash, value) VALUES (?, ?)').run(hash, blob)
+  db.prepare(
+    'INSERT INTO instruction_state (session_id, epoch_start, through_seq, initial_values, current_values) VALUES (?, ?, ?, ?, ?)',
+  ).run(
+    'ses_root',
+    3,
+    3,
+    JSON.stringify({ 'core/instructions': hash }),
+    JSON.stringify({ 'core/instructions': hash }),
+  )
+  db.close()
+}
+
+test('collectInstructionState reports the identity of every loaded instruction file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bench-instr-'))
+  const dbPath = join(dir, 'opencode.db')
+  try {
+    buildInstructionFixture(dbPath)
+    const db = openReadOnly(dbPath)
+    try {
+      const provenance = collectInstructionState(db, 'ses_root')
+      assert.equal(provenance.status, 'ok')
+      assert.equal(provenance.entryCount, 2)
+      assert.equal(provenance.totalBytes, 3 * 15 + 16)
+      assert.deepEqual(
+        provenance.entries.map((e) => e.path),
+        ['/host/.config/opencode/AGENTS.md', '/repo/AGENTS.md'],
+      )
+      for (const entry of provenance.entries) {
+        assert.match(entry.sha256, /^[0-9a-f]{64}$/)
+        assert.ok(entry.bytes > 0)
+      }
+      // content must never ride along in the report
+      assert.equal(JSON.stringify(provenance).includes('global rules'), false)
+    } finally {
+      db.close()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('collectInstructionState degrades to unavailable when the tables are absent', () => {
+  withFixture((dbPath) => {
+    const db = openReadOnly(dbPath)
+    try {
+      const provenance = collectInstructionState(db, 'ses_root')
+      assert.equal(provenance.status, 'unavailable')
+      assert.match(provenance.reason, /instruction_state/)
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test('collectInstructionState degrades to unavailable when the session has no state', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bench-instr-'))
+  const dbPath = join(dir, 'opencode.db')
+  try {
+    buildInstructionFixture(dbPath)
+    const db = openReadOnly(dbPath)
+    try {
+      const provenance = collectInstructionState(db, 'ses_missing')
+      assert.equal(provenance.status, 'unavailable')
+      assert.match(provenance.reason, /no instruction_state row/)
+    } finally {
+      db.close()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
