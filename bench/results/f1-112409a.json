@@ -52,9 +52,21 @@
       "bench/results/f1-di-v229-clean-candidate-20261014-c05f2d8.json",
       "bench/results/f1-double-injection.md",
       "bench/results/f1-di-v229-preliminary-2026-10-14.md",
-      "bench/results/f1-di-v229-clean-2026-10-14.md"
+      "bench/results/f1-di-v229-clean-2026-10-14.md",
+      "bench/results/f1-di-v229-interleaved-oracle-2026-10-14.md",
+      "bench/results/f1-di-v229-interleaved-2026-10-14.md",
+      "bench/results/f1-di-v229-interleaved-control-01-fb8585a.json",
+      "bench/results/f1-di-v229-interleaved-control-02-fb8585a.json",
+      "bench/results/f1-di-v229-interleaved-control-03-fb8585a.json",
+      "bench/results/f1-di-v229-interleaved-control-04-fb8585a.json",
+      "bench/results/f1-di-v229-interleaved-control-05-fb8585a.json",
+      "bench/results/f1-di-v229-interleaved-candidate-01-fb8585a.json",
+      "bench/results/f1-di-v229-interleaved-candidate-02-fb8585a.json",
+      "bench/results/f1-di-v229-interleaved-candidate-03-fb8585a.json",
+      "bench/results/f1-di-v229-interleaved-candidate-04-fb8585a.json",
+      "bench/results/f1-di-v229-interleaved-candidate-05-fb8585a.json"
     ],
-    "supersedingOutcome": "A clean but non-interleaved sequential OpenCode v2.0.29 pair (N=5/arm) has D4 proof in every run and passes the pre-registered correctness oracle 5/5 per arm. It observed first-request context 17,555 control vs 15,503 candidate (-2,052; -11.7%), but Themis BLOCKED it for violating the §9 arm-interleaving protocol and missing config identity hashes. Treat it as supporting-only evidence; do not close F1. Tree-total input and wall are inconclusive. Rerun the arms interleaved, record config/source identity, then request Themis review."
+    "supersedingOutcome": "The earlier host-profile F1 measurements remain retracted because they did not load the global+project duplicate. The clean sequential v2.0.29 pair is preserved as supporting-only because Themis blocked its non-interleaved protocol. The replacement interleaved C1/K1…C5/K5 pair (OpenCode v2.0.29, N=5/arm) has stable config/source fingerprints, D4 in 10/10 runs, and passes the preregistered correctness oracle 5/5 per arm. Loaded instruction bytes fall from 22,350 to 13,400 (-8,950 B; -40.0%). First-request context median falls 17,555 to 15,489 (-2,066; -11.8%), confirmed against within-arm spread. Tree-total input and wall are inconclusive; candidate median tree input is 38,253, so the ≤30k hypothesis is not met. No wall-time or monetary-cost gain is claimed. Final F1 acceptance awaits Themis re-review of the interleaved evidence."
   },
   "scenarios": {
     "A": "multi-step (reproduces the ~2x vs Codex CLI)",

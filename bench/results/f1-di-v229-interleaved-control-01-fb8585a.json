@@ -1,0 +1,177 @@
+{
+  "meta": {
+    "kind": "pantheon-bench-baseline",
+    "reportVersion": 2,
+    "createdAt": "2026-10-14T22:26:28.220Z",
+    "gitSha": "fb8585a",
+    "gitDirty": false,
+    "gitDiffHash": null,
+    "opencodeVersion": "opencode v2.0.29",
+    "pluginGeneration": "v2",
+    "pluginRef": "/home/ils15/pantheon/src/plugin-v2",
+    "hostConfigPath": "/home/ils15/.config/opencode/opencode.json",
+    "hostConfigUsed": true,
+    "shadowConfigDir": "/tmp/opencode/bench-1792016788293/shadow-config",
+    "modelRequested": "opencode-go/glm-5.3-flash",
+    "sandboxRoot": "/tmp/opencode/bench-1792016788293",
+    "profile": "double-injection",
+    "label": "f1-di-v229-interleaved-control-01",
+    "globalAgentsFixture": {
+      "path": "bench/fixtures/f1-pre-carve-agents.md",
+      "bytes": 11175,
+      "sha256": "425b7338b11563203a2e4a773cf88bddbaee216d22ceae6ea63bef26cb95ab1e"
+    },
+    "projectAgentsFixture": {
+      "path": "bench/fixtures/f1-pre-carve-agents.md",
+      "bytes": 11175,
+      "sha256": "425b7338b11563203a2e4a773cf88bddbaee216d22ceae6ea63bef26cb95ab1e"
+    },
+    "protocol": {
+      "runsPerScenario": 1,
+      "scenarios": [
+        "B"
+      ],
+      "interleave": "B starting at B",
+      "runTimeoutMs": 1200000,
+      "standaloneServerPerRun": true,
+      "permissionMode": "--auto (non-interactive auto-approve)",
+      "agent": "zeus (headless sessions default to agent=NULL, which the delegation policy denies; the TUI starts on the default agent)",
+      "logLevel": "debug (required for the V2 tool-hook registration to complete; protocol constant, equal across phases)",
+      "pluginSelection": "XDG_CONFIG_HOME shadow config dir; repo plugin pinned via plugins[]",
+      "metricDb": "/home/ils15/.local/share/opencode/opencode.db",
+      "isolatedDbPerRun": false,
+      "scenarioAUsesRealWebResearch": true,
+      "profileDescription": "global AGENTS.md + a project AGENTS.md materialized in every run dir"
+    }
+  },
+  "scenarios": {
+    "A": "multi-step (reproduces the ~2x vs Codex CLI)",
+    "B": "one-shot delimitado"
+  },
+  "runs": [
+    {
+      "run": 1,
+      "scenario": "B",
+      "scenarioName": "one-shot delimitado",
+      "startedAt": "2026-10-14T22:26:28.297Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 18976,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec379d2caffeT256u5YWoujQZv",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec379d2caffeT256u5YWoujQZv",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-01-B"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "input": 47594,
+        "output": 965,
+        "reasoning": 9,
+        "cacheRead": 14208,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "subagent": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 2,
+        "afterCount": 2,
+        "beforeMs": {
+          "median": 24,
+          "p80": 25,
+          "n": 2
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 2
+        },
+        "chainMs": {
+          "median": 3336,
+          "p80": 6646,
+          "n": 2
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "8f3afa47ac164c2060b97119fa30c7bd51d35062e727bda35f8c4069993d69cf",
+        "entryCount": 2,
+        "totalBytes": 22350,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792016788293/shadow-config/opencode/AGENTS.md",
+            "bytes": 11175,
+            "sha256": "425b7338b11563203a2e4a773cf88bddbaee216d22ceae6ea63bef26cb95ab1e"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792016788293/run-01-B/AGENTS.md",
+            "bytes": 11175,
+            "sha256": "425b7338b11563203a2e4a773cf88bddbaee216d22ceae6ea63bef26cb95ab1e"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 13075,
+        "cacheRead": 4480,
+        "contextTokens": 17555
+      },
+      "stderrTail": null
+    }
+  ],
+  "summary": {
+    "runs": 1,
+    "completed": 1,
+    "failures": 0,
+    "failureReasons": [],
+    "wallMs": {
+      "median": 18976,
+      "p80": 18976,
+      "n": 1
+    },
+    "tokens": {
+      "input": 47594,
+      "output": 965,
+      "cacheRead": 14208,
+      "cacheWrite": 0,
+      "perRunMedianInput": 47594,
+      "perRunMedianOutput": 965
+    },
+    "toolCalls": {
+      "subagent": 1,
+      "write": 1
+    },
+    "childrenCount": 1,
+    "perScenario": {
+      "B": {
+        "runs": 1,
+        "completed": 1,
+        "failures": 0,
+        "wallMs": {
+          "median": 18976,
+          "p80": 18976
+        }
+      }
+    }
+  },
+  "schemaNotes": [
+    "Tokens come from the V2 session_message ledger (assistant rows, data.tokens), the same source as pantheon_cost; cache read/write from data.tokens.cache.",
+    "Child sessions resolved recursively via session_v2.parent_id with a visited set — each session counted once.",
+    "Runs share the global opencode.db (provider credentials live there), but every metric is scoped by the run root sessionID and the db is opened READ-ONLY; no db writes are ever performed.",
+    "Tool calls counted from assistant content parts with type=tool; only the tool NAME is read, never tool inputs.",
+    "Hook timings come from the [bench] lines the V2 plugin appends to .pantheon/logs/hooks.log (instrumentation-only change).",
+    "Per-run `instructions` is the D4 fidelity proof: the identity (path, bytes, sha256) of every instruction file the session actually loaded, read from instruction_state/instruction_blob. Content is never copied into the report.",
+    "Per-run `firstRequest` is the proxy that isolates the injected payload: the first assistant row's tokens.input + tokens.cache.read. Tree-total input is dominated by session-length variance; the payload only lands on the first request.",
+    "A metric the schema cannot provide is {status:\"unavailable\", reason} — never zero."
+  ]
+}

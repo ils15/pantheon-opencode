@@ -727,13 +727,18 @@ session-length variance. Each run also records `firstRequest` — the first
 assistant row's `tokens.input` + `tokens.cache.read` — the proxy that isolates
 the payload.
 
-A clean sequential OpenCode v2.0.29 pair (N=5/arm) observed first-request
-context move from 17555 to 15503 tokens (**−2052, −11.7%**; within-arm spread
-0 and 14), with loaded bytes moving from 22350 to 13400. The pre-registered
-correctness oracle passed 5/5 in both arms. This is supporting evidence only:
-the arms were not interleaved as required by the measurement protocol, so F1
-acceptance awaits an interleaved rerun. Tree-total input and wall are also
-**inconclusive**; no wall-time or monetary-cost gain is claimed. Details:
+An interleaved OpenCode v2.0.29 run (C1/K1…C5/K5, N=5/arm) measured
+first-request context at 17555 tokens for control and 15489 for candidate
+(**−2066, −11.8%**; within-arm spread 14 tokens in each arm). D4 confirmed
+22350 B loaded for control and 13400 B for candidate (−8950 B, −40.0%); the
+pre-registered correctness oracle passed 5/5 in both arms. The first-request
+effect is confirmed against within-arm spread, with final F1 acceptance
+pending Themis review. Tree-total input fell from a median 47594 to 38253
+tokens, but ranges overlap and the ≤30k hypothesis was not met. Wall medians
+were 30.078 s and 24.130 s, with high spread; tree-total input and wall remain
+**inconclusive**. No wall-time or monetary-cost gain is claimed. Details and
+per-run records: `bench/results/f1-di-v229-interleaved-2026-10-14.md`.
+The earlier sequential pair remains supporting-only in
 `bench/results/f1-di-v229-clean-2026-10-14.md`. Earlier exploratory runs are
 retained separately in `bench/results/f1-double-injection.md` and
 `bench/results/f1-di-v229-preliminary-2026-10-14.md`.

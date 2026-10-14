@@ -486,15 +486,21 @@ de duração da sessão. Cada run também registra `firstRequest` — o
 `tokens.input` + `tokens.cache.read` da primeira linha assistant — o proxy que
 isola o payload.
 
-Um par sequencial limpo no OpenCode v2.0.29 (N=5/braço) observou o contexto do
-1º request cair de 17555 para 15503 tokens (**−2052, −11,7%**; spread
-intra-braço 0 e 14), com os bytes carregados passando de 22350 para 13400. O
-oráculo pré-registrado passou em 5/5 nos dois braços. Esta evidência é apenas
-de apoio: os braços não foram intercalados como exige o protocolo, então a
-aceitação de F1 aguarda uma nova rodada intercalada. Input total da árvore e
-wall também são **inconclusivos**; não há claim de ganho de wall ou custo
-monetário. Detalhes: `bench/results/f1-di-v229-clean-2026-10-14.md`. As rodadas
-exploratórias anteriores foram preservadas separadamente em
+Uma rodada intercalada no OpenCode v2.0.29 (C1/K1…C5/K5, N=5/braço) mediu o
+contexto do 1º request em 17555 tokens no controle e 15489 na candidata
+(**−2066, −11,8%**; spread intra-braço de 14 tokens em cada braço). D4 confirmou
+22350 B carregados no controle e 13400 B na candidata (−8950 B, −40,0%); o
+oráculo pré-registrado passou em 5/5 nos dois braços. O efeito no primeiro
+request está confirmado contra o spread intra-braço; a aceitação final de F1
+aguarda revisão do Themis. O input total da árvore caiu da mediana de 47594 para
+38253 tokens, mas os ranges se sobrepõem e a hipótese de ≤30k não foi atingida.
+As medianas de wall foram 30,078 s e 24,130 s, com spread alto; input total e
+wall permanecem **inconclusivos**. Não há claim de ganho de wall ou custo
+monetário. Detalhes e artefatos por run:
+`bench/results/f1-di-v229-interleaved-2026-10-14.md`. O par sequencial anterior
+permanece somente como evidência de apoio em
+`bench/results/f1-di-v229-clean-2026-10-14.md`. As rodadas exploratórias
+anteriores foram preservadas separadamente em
 `bench/results/f1-double-injection.md` e
 `bench/results/f1-di-v229-preliminary-2026-10-14.md`.
 
