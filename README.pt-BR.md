@@ -337,7 +337,15 @@ pacote. Duas garantias de freshness sustentam isso:
 - **Sync de artifacts no postinstall** — depois de qualquer `npm install`, os
   artefatos de cópia (agents, skills, AGENTS.md, commands, scripts MCP,
   payload code-mode) são atualizados automaticamente no config dir existente;
-  você nunca precisa re-rodar `init` só para atualizar arquivos.
+  você nunca precisa re-rodar `init` só para atualizar arquivos. O config dir
+  global recebe o **artefato global** agnóstico de repositório
+  (`AGENTS.global.md`: tabela de agentes + regras compartilhadas), enquanto o
+  `AGENTS.md` de cada projeto carrega apenas o setup específico do projeto —
+  os dois são esculpidos para serem disjuntos (trabalho de latência beta-10),
+  então nenhuma regra é paga duas vezes por sessão. A instalação é
+  conservadora: conteúdo fora da região gerenciada (regras próprias do
+  usuário) é preservado verbatim, um `AGENTS.md` legado totalmente gerado é
+  atualizado in place, e qualquer merge é reportado com um aviso.
 - **Detecção de drift** — o instalador grava a versão instalada em
   `.pantheon/install-state.json` e o `doctor` avisa quando o pacote é mais
   novo que o último sync, apontando para o `update`.

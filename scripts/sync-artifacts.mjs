@@ -19,7 +19,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { copyAgentPrompts } from './build-agents-md.mjs'
+import { copyAgentPrompts, writeAgentsMdManaged } from './build-agents-md.mjs'
 
 import {
   collectSkillNames,
@@ -83,15 +83,27 @@ export function syncCopyArtifacts(configDir) {
     result.errors.push(`skills: ${err.message}`)
   }
 
-  // ── instructions (AGENTS.md) ──
+  // ── instructions (global AGENTS.md artifact) ──
+  // The config dir is GLOBAL context: it receives the repo-agnostic global
+  // artifact, never the repository artifact. Managed-region writer keeps any
+  // user content around the markers intact.
   try {
-    const src = join(ROOT, 'AGENTS.md')
+    const src = join(ROOT, 'AGENTS.global.md')
     if (existsSync(src)) {
-      if (
-        writeIfChanged(join(configDir, 'AGENTS.md'), readFileSync(src, 'utf8'), false) === 'created'
-      ) {
+      const status = writeAgentsMdManaged(
+        join(configDir, 'AGENTS.md'),
+        readFileSync(src, 'utf8'),
+        false,
+      )
+      if (status === 'skipped') result.skipped++
+      else {
         result.created++
-      } else result.skipped++
+        if (status === 'merged') {
+          result.errors.push(
+            'instructions: non-generated content found in AGENTS.md — preserved around the Pantheon managed region',
+          )
+        }
+      }
     }
   } catch (err) {
     result.errors.push(`instructions: ${err.message}`)

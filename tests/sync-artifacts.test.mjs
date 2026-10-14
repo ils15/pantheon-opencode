@@ -45,10 +45,11 @@ test('syncs copy-only artifacts into a config dir and is idempotent', () => {
     assert.equal(second.created, 0, `second pass must skip all, updated ${second.created}`)
     assert.equal(second.errors.length, 0)
 
-    // Content parity with the package source.
+    // Content parity with the package source. The config dir is GLOBAL
+    // context: it mirrors AGENTS.global.md, never the project artifact.
     assert.equal(
       readFileSync(join(configDir, 'AGENTS.md'), 'utf8'),
-      readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'),
+      readFileSync(join(ROOT, 'AGENTS.global.md'), 'utf8'),
     )
     assert.equal(
       readFileSync(join(configDir, 'scripts', 'code_mode.py'), 'utf8'),

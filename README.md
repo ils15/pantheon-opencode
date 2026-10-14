@@ -527,7 +527,14 @@ Two freshness guarantees back it up:
 - **Postinstall artifact sync** — after any `npm install`, copy-only artifacts
   (agents, skills, AGENTS.md, commands, MCP scripts, code-mode payload) are
   refreshed into the existing config dir automatically; you never have to
-  re-run `init` just for file copies.
+  re-run `init` just for file copies. The global config dir receives the
+  repo-agnostic **global artifact** (`AGENTS.global.md`: agent table + shared
+  rules), while each project's own `AGENTS.md` carries only project-specific
+  setup — the two are carved to be disjoint (beta-10 latency work), so no rule
+  is paid for twice per session. Installs are conservative: content outside
+  the generated managed region (user house rules) is preserved verbatim, a
+  legacy fully-generated `AGENTS.md` upgrades in place, and any merge is
+  reported with a warning.
 - **Drift detection** — the installer stamps the installed version in
   `.pantheon/install-state.json` and `doctor` warns when the package is newer
   than the last sync, pointing at `update`. `doctor` also detects **plugin

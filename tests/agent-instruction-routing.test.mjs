@@ -6,7 +6,7 @@ import test from 'node:test'
 import {
   copyAgentPrompts,
   generateAgentPrompt,
-  generateAgentsMd,
+  generateGlobalAgentsMd,
   parseInstruction,
   readInstructions,
 } from '../scripts/build-agents-md.mjs'
@@ -28,12 +28,12 @@ test('applyTo remains a file glob and never acts as an agent selector', () => {
   assert.equal(fileOnly.applyTo, '**/*.py')
   assert.deepEqual(fileOnly.agents, [])
   assert.equal(fileOnly.appliesToAgent('hermes'), false)
-  assert.ok(!generateAgentsMd([fileOnly]).includes('Python-only example'))
+  assert.ok(!generateGlobalAgentsMd([fileOnly]).includes('Python-only example'))
   assert.ok(!generateAgentPrompt('hermes', 'Hermes prompt', [fileOnly]).includes('Rule'))
 })
 
-test('shared AGENTS baseline excludes agent-scoped and language-specific instructions', () => {
-  const baseline = generateAgentsMd(instructions)
+test('shared global baseline excludes agent-scoped and language-specific instructions', () => {
+  const baseline = generateGlobalAgentsMd(instructions)
   assert.ok(baseline.includes('YAGNI Principles'))
   assert.ok(!baseline.includes('INLINE COUNCIL SYNTHESIS'))
   assert.ok(!baseline.includes('Backend Development Standards (Hermes)'))

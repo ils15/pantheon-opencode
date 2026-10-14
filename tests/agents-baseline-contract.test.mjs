@@ -9,6 +9,7 @@ import {
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const generated = read('../AGENTS.md')
+const globalArtifact = read('../AGENTS.global.md')
 const antiStall = read('../src/instructions/zeus-anti-stall.instructions.md')
 const timeoutRetry = read('../src/instructions/zeus-timeout-retry.instructions.md')
 const returnContract = read('../src/instructions/agent-return-format.instructions.md')
@@ -40,11 +41,20 @@ test('language standards remain available only in their matching agent prompts',
   )
   assert.ok(!generated.includes('Backend Development Standards (Hermes)'))
   assert.ok(!generated.includes('Frontend Development Standards (Aphrodite)'))
+  assert.ok(!globalArtifact.includes('Backend Development Standards (Hermes)'))
+  assert.ok(!globalArtifact.includes('Frontend Development Standards (Aphrodite)'))
 })
 
-test('generated shared baseline is smaller than the prior Tier 1 byte range', () => {
+test('generated artifacts stay inside the beta-10 carved byte budget', () => {
   const bytes = Buffer.byteLength(generated, 'utf8')
-  assert.ok(bytes < 28_555, `generated AGENTS.md is ${bytes} bytes`)
+  assert.ok(bytes < 4_000, `project AGENTS.md is ${bytes} bytes (carved, want < 4KB)`)
+  const globalBytes = Buffer.byteLength(globalArtifact, 'utf8')
+  assert.ok(globalBytes < 14_000, `AGENTS.global.md is ${globalBytes} bytes (want < 14KB)`)
+  // The stale double-copy baseline was ~23.4KB across both artifacts.
+  assert.ok(
+    bytes + globalBytes < 16_000,
+    `combined artifact payload is ${bytes + globalBytes} bytes (was ~23.4KB duplicated)`,
+  )
 })
 
 test('generated line counts use LF boundaries without assuming a final newline', () => {
@@ -52,7 +62,8 @@ test('generated line counts use LF boundaries without assuming a final newline',
   assert.equal(logicalLineCount('one\ntwo'), 2)
   assert.equal(logicalLineCount('one'), 1)
   assert.equal(logicalLineCount(''), 0)
-  assert.equal(logicalLineCount(generated), 202)
+  assert.equal(logicalLineCount(generated), 36)
+  assert.equal(logicalLineCount(globalArtifact), 182)
 })
 
 test('Zeus can call the least-privilege Pantheon vision tool for diagnostics', () => {

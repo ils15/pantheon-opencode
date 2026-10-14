@@ -75,6 +75,7 @@
     "!src/agents/README.md",
     "bin/*.mjs",
     "AGENTS.md",
+    "AGENTS.global.md",
     "CHANGELOG.md",
     "src/mcp/*.py",
     "src/instructions/*.instructions.md",

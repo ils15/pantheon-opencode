@@ -21,7 +21,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } f
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { listV2UnsupportedFeatures } from '../../src/pantheon/v2-unsupported.mjs'
-import { copyAgentPrompts } from '../build-agents-md.mjs'
+import { copyAgentPrompts, writeAgentsMdManaged } from '../build-agents-md.mjs'
 import {
   bullet,
   colors,
@@ -949,22 +949,31 @@ export async function installOpenCode(
   // -----------------------------------------------------------------------
   // 2.5 Install shared instructions: AGENTS.md (--components instructions)
   // -----------------------------------------------------------------------
-  // AGENTS.md is the single instruction file both V1 and V2 load; the
-  // generated file embeds shared instructions; agent-scoped instructions are
-  // already rendered into supported agent prompt markdown during copy. The
-  // individual source fragments are NOT copied (nothing references
-  // <config>/instructions/ after the section-D merge fix — copying them would
-  // just leave stale duplicates on disk).
+  // Both AGENTS.md artifacts are managed regions (scripts/build-agents-md.mjs).
+  // A GLOBAL config dir receives the repo-agnostic global artifact (agent
+  // table + shared rules); a PROJECT layout keeps the repository artifact.
+  // writeAgentsMdManaged is conservative: content outside the managed region
+  // is never deleted, and a legacy fully-generated file upgrades in place.
   if (componentSet.has('instructions')) {
     section('\uD83D\uDCCB Instructions')
-    // AGENTS.md
-    const srcAgentsMd = join(ROOT, 'AGENTS.md')
+    const srcAgentsMd = isGlobal ? join(ROOT, 'AGENTS.global.md') : join(ROOT, 'AGENTS.md')
     const dstAgentsMd = join(target, 'AGENTS.md')
     if (existsSync(srcAgentsMd)) {
       const content = readFileSync(srcAgentsMd, 'utf8')
-      const status = writeIfChanged(dstAgentsMd, content, dryRun)
-      if (status === 'created') stats.created++
-      else stats.skipped++
+      const status = writeAgentsMdManaged(dstAgentsMd, content, dryRun)
+      if (status === 'skipped') stats.skipped++
+      else {
+        stats.created++
+        if (status === 'merged') {
+          warning(
+            `AGENTS.md had non-generated content — it was preserved around the ` +
+              `Pantheon managed region in ${dstAgentsMd}. Review and merge manually.`,
+          )
+        }
+      }
+    } else {
+      warning(`AGENTS.md artifact not found in the package: ${srcAgentsMd}`)
+      stats.errors++
     }
     // An instruction-only upgrade must also refresh selective guidance on
     // already-installed Pantheon agents, but must not create agents the user
