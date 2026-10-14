@@ -695,9 +695,13 @@ result only means anything in the profile where the change acts:
 | `host` (default) | host config dir (or `--global-agents`) | none — run dirs stay empty | the host's real, unmodified injection |
 | `double-injection` | host config dir (or `--global-agents`) | `--project-agents`, written into every run dir | the in-repo profile where global+project overlap |
 
+The default measures scenarios A and B. Use `--scenarios B` to isolate the F1
+one-shot claim; the selected scenario still runs N times (`--runs 5` by
+default).
+
 ```bash
 # candidate arm: the carved global artifact + the carved project artifact
-node bench/bin/bench.mjs --profile double-injection \
+node bench/bin/bench.mjs --runs 5 --scenarios B --profile double-injection \
   --global-agents AGENTS.global.md --project-agents AGENTS.md --label f1-candidate
 ```
 

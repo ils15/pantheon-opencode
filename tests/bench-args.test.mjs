@@ -79,3 +79,13 @@ test('--label must be filesystem-safe', () => {
   assert.throws(() => parseBenchArgs(['--label', '-x']), UsageError)
   assert.equal(parseBenchArgs(['--label', 'f1.double-injection']).label, 'f1.double-injection')
 })
+
+test('--scenarios restricts the interleave to a validated subset', () => {
+  assert.deepEqual(parseBenchArgs([]).scenarios, ['A', 'B'])
+  assert.deepEqual(parseBenchArgs(['--scenarios', 'B']).scenarios, ['B'])
+  assert.deepEqual(parseBenchArgs(['--scenarios', 'b,a']).scenarios, ['A', 'B'])
+  assert.deepEqual(parseBenchArgs(['--scenarios', 'B,A,B']).scenarios, ['A', 'B'])
+  assert.throws(() => parseBenchArgs(['--scenarios', 'C']), UsageError)
+  assert.throws(() => parseBenchArgs(['--scenarios', '']), UsageError)
+  assert.throws(() => parseBenchArgs(['--scenarios']), UsageError)
+})

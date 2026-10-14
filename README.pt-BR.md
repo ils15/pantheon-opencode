@@ -453,9 +453,13 @@ resultado só significa algo no perfil onde a mudança atua:
 | `host` (padrão) | diretório de config do host (ou `--global-agents`) | nenhum — run dirs ficam vazios | a injeção real do host, sem alteração |
 | `double-injection` | diretório de config do host (ou `--global-agents`) | `--project-agents`, escrito em cada run dir | o perfil no repo onde global+projeto se sobrepõem |
 
+O padrão mede os cenários A e B. Use `--scenarios B` para isolar o claim
+one-shot de F1; o cenário selecionado ainda roda N vezes (`--runs 5` por
+padrão).
+
 ```bash
 # braço candidato: artefato global carveado + artefato de projeto carveado
-node bench/bin/bench.mjs --profile double-injection \
+node bench/bin/bench.mjs --runs 5 --scenarios B --profile double-injection \
   --global-agents AGENTS.global.md --project-agents AGENTS.md --label f1-candidate
 ```
 

@@ -18,6 +18,10 @@
  * output. Nothing is inferred from the host, so a control and a candidate can
  * run same-day against the same host and model.
  *
+ * --scenarios restricts the interleave to a subset (default A,B) so a claim
+ * scenario (B) can be measured in a short, robust job; an omitted scenario is
+ * simply not measured, never silently folded into the other.
+ *
  * Unknown flags are REJECTED (a typo must never silently measure the wrong
  * thing). The parser is pure — it returns a descriptor or throws UsageError —
  * so the CLI shell keeps all I/O.
@@ -27,6 +31,8 @@
 
 /** Recognized profiles. */
 export const PROFILES = ['host', 'double-injection']
+/** Recognized scenarios. */
+export const SCENARIOS = ['A', 'B']
 export const DEFAULT_RUNS = 5
 export const DEFAULT_LABEL = 'baseline'
 
@@ -60,6 +66,7 @@ export function parseBenchArgs(argv) {
     runs: DEFAULT_RUNS,
     profile: 'host',
     label: DEFAULT_LABEL,
+    scenarios: [...SCENARIOS],
     globalAgents: null,
     projectAgents: null,
   }
@@ -92,6 +99,19 @@ export function parseBenchArgs(argv) {
           throw new UsageError('--label must be a filesystem-safe name (letters, digits, . _ -)')
         }
         out.label = value
+        i += 1
+        break
+      }
+      case '--scenarios': {
+        const value = readValue(argv, i, '--scenarios')
+        const list = value
+          .split(',')
+          .map((s) => s.trim().toUpperCase())
+          .filter((s) => s !== '')
+        if (list.length === 0 || list.some((s) => !SCENARIOS.includes(s))) {
+          throw new UsageError(`--scenarios must be a comma list from ${SCENARIOS.join(',')}`)
+        }
+        out.scenarios = SCENARIOS.filter((s) => list.includes(s))
         i += 1
         break
       }

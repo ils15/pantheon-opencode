@@ -34,8 +34,9 @@
  *   double-injection  host (or --global-agents) + --project-agents written into
  *                     every run directory — the profile the carve acts on
  *
- * Usage: node bench/bin/bench.mjs [--runs 5] [--profile host|double-injection]
- *          [--label <name>] [--global-agents <path>] [--project-agents <path>]
+ * Usage: node bench/bin/bench.mjs [--runs 5] [--scenarios A,B]
+ *          [--profile host|double-injection] [--label <name>]
+ *          [--global-agents <path>] [--project-agents <path>]
  *
  * @module bench/bin/bench
  */
@@ -213,10 +214,10 @@ function globalDbPath() {
   return join(dataHome, 'opencode', 'opencode.db')
 }
 
-function interleavedOrder(runsPerScenario) {
+function interleavedOrder(runsPerScenario, scenarios) {
   const order = []
   for (let i = 0; i < runsPerScenario; i++) {
-    order.push('A', 'B')
+    for (const scenario of scenarios) order.push(scenario)
   }
   return order
 }
@@ -284,14 +285,14 @@ async function main() {
     if (err instanceof UsageError) {
       console.error(`bench: ${err.message}`)
       console.error(
-        'usage: bench.mjs [--runs N] [--profile host|double-injection] [--label name] ' +
-          '[--global-agents path] [--project-agents path]',
+        'usage: bench.mjs [--runs N] [--scenarios A,B] [--profile host|double-injection] ' +
+          '[--label name] [--global-agents path] [--project-agents path]',
       )
       process.exit(2)
     }
     throw err
   }
-  const { runs: runsPerScenario, profile, label: runLabel } = opts
+  const { runs: runsPerScenario, profile, label: runLabel, scenarios } = opts
   const model = process.env.BENCH_MODEL ?? DEFAULT_MODEL
   const startedAtIso = new Date().toISOString()
   const rev = gitRev()
@@ -332,7 +333,7 @@ async function main() {
   const dbPath = globalDbPath()
 
   console.log(
-    `bench: model=${model} runs=${runsPerScenario}/scenario profile=${profile} label=${runLabel} timeout=${RUN_TIMEOUT_MS / 60000}min`,
+    `bench: model=${model} runs=${runsPerScenario}/scenario scenarios=${scenarios.join(',')} profile=${profile} label=${runLabel} timeout=${RUN_TIMEOUT_MS / 60000}min`,
   )
   console.log(
     `bench: opencode ${version} | git ${rev.sha}${rev.dirty ? ' (dirty)' : ''} | plugin ${PLUGIN_GENERATION} (${PLUGIN_REF})`,
@@ -347,7 +348,7 @@ async function main() {
   console.log(`bench: metrics from ${dbPath} (read-only)`)
 
   const runs = []
-  const order = interleavedOrder(runsPerScenario)
+  const order = interleavedOrder(runsPerScenario, scenarios)
   let runNumber = 0
   for (const scenario of order) {
     runNumber += 1
@@ -461,7 +462,8 @@ async function main() {
       projectAgentsFixture: projectFixture,
       protocol: {
         runsPerScenario,
-        interleave: 'A,B starting at A',
+        scenarios,
+        interleave: `${scenarios.join(',')} starting at ${scenarios[0]}`,
         runTimeoutMs: RUN_TIMEOUT_MS,
         standaloneServerPerRun: true,
         permissionMode: '--auto (non-interactive auto-approve)',
@@ -499,7 +501,7 @@ async function main() {
 
   // ── console summary table ──
   console.log(`\nbench: report → ${resultPath}`)
-  for (const key of ['A', 'B']) {
+  for (const key of scenarios) {
     const s = summary.perScenario[key] ?? { runs: 0, completed: 0, failures: 0 }
     const wall =
       s.wallMs && s.wallMs.median !== undefined
