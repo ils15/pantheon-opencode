@@ -727,12 +727,16 @@ session-length variance. Each run also records `firstRequest` — the first
 assistant row's `tokens.input` + `tokens.cache.read` — the proxy that isolates
 the payload.
 
-Measured same-day in the `double-injection` profile (N=5/arm), the AGENTS.md
-carve drops the first-request context from 17555 to 15489 tokens
-(**−2066, −11.8%**; within-arm spread 14), matching the byte delta (control
-loaded 22350 B, candidate 13400 B). Tree-total input and wall remain
-**inconclusive**. Full table and caveats:
-`bench/results/f1-double-injection.md`.
+A clean sequential OpenCode v2.0.29 pair (N=5/arm) observed first-request
+context move from 17555 to 15503 tokens (**−2052, −11.7%**; within-arm spread
+0 and 14), with loaded bytes moving from 22350 to 13400. The pre-registered
+correctness oracle passed 5/5 in both arms. This is supporting evidence only:
+the arms were not interleaved as required by the measurement protocol, so F1
+acceptance awaits an interleaved rerun. Tree-total input and wall are also
+**inconclusive**; no wall-time or monetary-cost gain is claimed. Details:
+`bench/results/f1-di-v229-clean-2026-10-14.md`. Earlier exploratory runs are
+retained separately in `bench/results/f1-double-injection.md` and
+`bench/results/f1-di-v229-preliminary-2026-10-14.md`.
 
 
 ## Plugin V2 TypeScript coverage

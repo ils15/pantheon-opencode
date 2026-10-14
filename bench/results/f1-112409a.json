@@ -46,9 +46,15 @@
     "supersededBy": [
       "bench/results/f1-di-control-736ebaf.json",
       "bench/results/f1-di-candidate-736ebaf.json",
-      "bench/results/f1-double-injection.md"
+      "bench/results/f1-di-v229-control-736ebaf.json",
+      "bench/results/f1-di-v229-candidate-736ebaf.json",
+      "bench/results/f1-di-v229-clean-control-20261014-c05f2d8.json",
+      "bench/results/f1-di-v229-clean-candidate-20261014-c05f2d8.json",
+      "bench/results/f1-double-injection.md",
+      "bench/results/f1-di-v229-preliminary-2026-10-14.md",
+      "bench/results/f1-di-v229-clean-2026-10-14.md"
     ],
-    "supersedingOutcome": "Re-measured same-day in the double-injection profile (N=5/arm). D4 provenance proves the intended global+project artifacts were loaded (control 22350 B, candidate 13400 B). The first-request proxy (the metric that isolates the injected payload) is CONFIRMED at -2066 tokens (-11.8%, noise 14). Tree-total input and wall remain inconclusive. See bench/results/f1-double-injection.md."
+    "supersedingOutcome": "A clean but non-interleaved sequential OpenCode v2.0.29 pair (N=5/arm) has D4 proof in every run and passes the pre-registered correctness oracle 5/5 per arm. It observed first-request context 17,555 control vs 15,503 candidate (-2,052; -11.7%), but Themis BLOCKED it for violating the §9 arm-interleaving protocol and missing config identity hashes. Treat it as supporting-only evidence; do not close F1. Tree-total input and wall are inconclusive. Rerun the arms interleaved, record config/source identity, then request Themis review."
   },
   "scenarios": {
     "A": "multi-step (reproduces the ~2x vs Codex CLI)",

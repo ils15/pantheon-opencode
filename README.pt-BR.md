@@ -486,12 +486,17 @@ de duração da sessão. Cada run também registra `firstRequest` — o
 `tokens.input` + `tokens.cache.read` da primeira linha assistant — o proxy que
 isola o payload.
 
-Medido same-day no perfil `double-injection` (N=5/braço), o carve do AGENTS.md
-derruba o contexto do 1º request de 17555 para 15489 tokens
-(**−2066, −11.8%**; spread intra-braço 14), batendo com o delta de bytes
-(controle carregou 22350 B, candidata 13400 B). Input total da árvore e wall
-seguem **inconclusivos**. Tabela completa e ressalvas:
-`bench/results/f1-double-injection.md`.
+Um par sequencial limpo no OpenCode v2.0.29 (N=5/braço) observou o contexto do
+1º request cair de 17555 para 15503 tokens (**−2052, −11,7%**; spread
+intra-braço 0 e 14), com os bytes carregados passando de 22350 para 13400. O
+oráculo pré-registrado passou em 5/5 nos dois braços. Esta evidência é apenas
+de apoio: os braços não foram intercalados como exige o protocolo, então a
+aceitação de F1 aguarda uma nova rodada intercalada. Input total da árvore e
+wall também são **inconclusivos**; não há claim de ganho de wall ou custo
+monetário. Detalhes: `bench/results/f1-di-v229-clean-2026-10-14.md`. As rodadas
+exploratórias anteriores foram preservadas separadamente em
+`bench/results/f1-double-injection.md` e
+`bench/results/f1-di-v229-preliminary-2026-10-14.md`.
 
 
 ## Cobertura TypeScript do Plugin V2

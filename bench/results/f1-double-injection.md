@@ -1,4 +1,4 @@
-# F1 evidence — double-injection profile (AGENTS.md carve)
+# F1 exploratory evidence — OpenCode v2.0.27 double-injection profile
 
 **Date:** 2026-10-14 · **Branch:** `perf/beta10-latency` · **Model:** `opencode-go/glm-5.3-flash`
 **Host:** opencode v2.0.27, repo plugin v2 · **Commit:** `736ebaf` (dirty) · **Profile:** `double-injection`
@@ -31,16 +31,15 @@ proves the intended artifacts were loaded instead of assuming the host injected 
 
 | metric | control (pre-carve) | candidate (carved) | Δ median | noise | classification |
 |---|---|---|---|---|---|
-| **first-request context tokens** (`input`+`cache.read`) | 17555 (17555–17569) | 15489 (15489–15503) | **−2066 (−11.8%)** | 14 | **confirmed** |
+| **first-request context tokens** (`input`+`cache.read`) | 17555 (17555–17569) | 15489 (15489–15503) | **−2066 (−11.8%)** | 14 | **exploratory; target v2.0.29 clean pair supersedes this result** |
 | tree-total input tokens | 49939 (34034–106746) | 28907 (22678–36261) | −21032 (−42.1%) | 84068 | inconclusive |
 | wall ms | 22881 (15225–98468, 6.47×) | 30127 (17136–42127, 2.46×) | +7246 | 83243 | inconclusive |
 
-**First-request proxy — confirmed.** The instruction payload only lands on the first request; the
-tree-total metric sums every turn and is dominated by session-length variance. The first-request
-context is the metric that isolates the payload: control 17555 vs candidate 15489, a −2066-token
-shift with a within-arm spread of 14 tokens — the effect exceeds the same-day noise by ~150×. The
-magnitude matches the byte delta (8950 B ÷ 2066 tokens ≈ 4.33 B/token) and reproduced across two
-independent measurement rounds (round 1: 17551 vs 15485).
+**First-request proxy — exploratory.** The instruction payload only lands on the first request; the
+tree-total metric sums every turn and is dominated by session-length variance. This host-v2.0.27
+pair showed a stable −2066-token shift, but it is not the target v2.0.29 run and its candidate arm
+overlapped with a separate benchmark. The clean serial v2.0.29 result is recorded in
+[`f1-di-v229-clean-2026-10-14.md`](./f1-di-v229-clean-2026-10-14.md).
 
 **Tree-total input — inconclusive.** The direction is consistent (all five control runs exceed all
 five candidate runs), but the pooled spread (84068) dwarfs the effect, and the effect is ~10× the
@@ -54,8 +53,8 @@ Wall is not a claim metric here.
 - Both arms ran at `736ebaf` (dirty) with an identical working-tree hash
   (`7a10193a0942d2e045e49a9dd99456a145b2311a0cb596c8a5fa07d61c336004`).
 - Concurrent bench activity was observed during the candidate arm (a separate process produced
-  `f1-di-v229-*`). This can inflate wall time but not the model-side first-request token counts,
-  which are the confirmed metric.
+  `f1-di-v229-*`). Treat the entire pair as exploratory; it is not used to claim target-runtime
+  performance.
 - Scenario A was not re-measured (network variance; F-13).
 
 ## Artifacts
