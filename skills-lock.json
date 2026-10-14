@@ -1,5 +1,5 @@
 {
-  "src/skills/agent-coordination/SKILL.md": "cfd040ef29e3dd0fd5e0e67773874facf7c06e3284898afe1fddba4456c3f1aa",
+  "src/skills/agent-coordination/SKILL.md": "d4bd70c18bc5726ea6784fe0a9c514446ca313e4c3ba4d658a0ff6658001aece",
   "src/skills/artifact-management/SKILL.md": "91d68c8f2d1b642725adfc6df11e55865a8491aca690dc27d02ea7c778d49d41",
   "src/skills/auto-continue/SKILL.md": "79aa1786ab62332abc45986d147ee944836e6f7a496c289e793639add4211229",
   "src/skills/clonedeps/SKILL.md": "3e0b43cf96da98c83699dc48db3fd58fbfda84b9022bb70d3747875c81c3e124",
@@ -14,7 +14,7 @@
   "src/skills/security-hardening/SKILL.md": "6d637e122421f7bc3b751f04854ad343a5a5d35249458bc8939233138fd3f20d",
   "src/skills/session-goal/SKILL.md": "3a708d15a59a6bff2dd32ff7ead6548ecccc7be8d39437fee3133ea6254b6134",
   "src/skills/simplify/SKILL.md": "aa739e9f75962a77d6574557d674ea01b5aea95e580b721d66c058753161b053",
-  "src/skills/spec-driven-development/SKILL.md": "e93b9103d6cd1848ab01328efde82c1daf564d1cabbdc2278254b346fcf55d02",
+  "src/skills/spec-driven-development/SKILL.md": "ccfbc0c32116a1d144f5c12a4187c053322ed31625a622a58c59739a57a86743",
   "src/skills/tdd-with-agents/SKILL.md": "9d20607ea34fc3e02c7e3ef5186b103d84196bd9a13aaadd55a44f41339125da",
   "src/skills/verification-planning/SKILL.md": "14186446ef51e1ba2c87b337e8d5f86e566d805156ab21fba2a75f8c4a99df3f",
   "src/skills/visual-review-pipeline/SKILL.md": "f6e65ff75a9325c38e0e9dde8e87f09b873e14e490936ef48aa80201bb68fe10",
