@@ -1,0 +1,684 @@
+{
+  "meta": {
+    "kind": "pantheon-bench-baseline",
+    "reportVersion": 1,
+    "createdAt": "2026-10-14T19:17:56.643Z",
+    "gitSha": "112409a",
+    "gitDirty": true,
+    "opencodeVersion": "opencode v2.0.27",
+    "pluginGeneration": "v2",
+    "pluginRef": "/home/ils15/pantheon/src/plugin-v2",
+    "hostConfigPath": "/tmp/opencode/f1-xdg/opencode/opencode.json",
+    "hostConfigUsed": true,
+    "shadowConfigDir": "/tmp/opencode/bench-1792005476726/shadow-config",
+    "modelRequested": "opencode-go/glm-5.3-flash",
+    "sandboxRoot": "/tmp/opencode/bench-1792005476726",
+    "protocol": {
+      "runsPerScenario": 5,
+      "interleave": "A,B starting at A",
+      "runTimeoutMs": 1200000,
+      "standaloneServerPerRun": true,
+      "permissionMode": "--auto (non-interactive auto-approve)",
+      "agent": "zeus (headless sessions default to agent=NULL, which the delegation policy denies; the TUI starts on the default agent)",
+      "logLevel": "debug (required for the V2 tool-hook registration to complete; protocol constant, equal across phases)",
+      "pluginSelection": "XDG_CONFIG_HOME shadow config dir; repo plugin pinned via plugins[]",
+      "metricDb": "/home/ils15/.local/share/opencode/opencode.db",
+      "isolatedDbPerRun": false,
+      "scenarioAUsesRealWebResearch": true
+    }
+  },
+  "scenarios": {
+    "A": "multi-step (reproduces the ~2x vs Codex CLI)",
+    "B": "one-shot delimitado"
+  },
+  "runs": [
+    {
+      "run": 1,
+      "scenario": "A",
+      "scenarioName": "multi-step (reproduces the ~2x vs Codex CLI)",
+      "startedAt": "2026-10-14T19:17:56.730Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 865783,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec4266c94ffeSe76mYfbERgWCB",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec4266c94ffeSe76mYfbERgWCB",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-01-A"
+      },
+      "childrenCount": 2,
+      "tokens": {
+        "input": 278751,
+        "output": 61848,
+        "reasoning": 484,
+        "cacheRead": 1026816,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "edit": 10,
+        "execute": 7,
+        "websearch": 7,
+        "grep": 6,
+        "shell": 5,
+        "webfetch": 4,
+        "write": 3,
+        "read": 2,
+        "subagent": 2,
+        "glob": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 47,
+        "afterCount": 47,
+        "beforeMs": {
+          "median": 27,
+          "p80": 31,
+          "n": 47
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 47
+        },
+        "chainMs": {
+          "median": 68,
+          "p80": 2471,
+          "n": 47
+        },
+        "fallbackStartIso": null
+      },
+      "stderrTail": null
+    },
+    {
+      "run": 2,
+      "scenario": "B",
+      "scenarioName": "one-shot delimitado",
+      "startedAt": "2026-10-14T19:32:22.534Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 44873,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec4193673ffeKoi86HMHw3zdF9",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec4193673ffeKoi86HMHw3zdF9",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-02-B"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "input": 35372,
+        "output": 2737,
+        "reasoning": 0,
+        "cacheRead": 49536,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "read": 1,
+        "subagent": 1,
+        "websearch": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 4,
+        "afterCount": 4,
+        "beforeMs": {
+          "median": 26,
+          "p80": 29,
+          "n": 4
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 4
+        },
+        "chainMs": {
+          "median": 1569.5,
+          "p80": 6968,
+          "n": 4
+        },
+        "fallbackStartIso": null
+      },
+      "stderrTail": null
+    },
+    {
+      "run": 3,
+      "scenario": "A",
+      "scenarioName": "multi-step (reproduces the ~2x vs Codex CLI)",
+      "startedAt": "2026-10-14T19:33:07.409Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 529052,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec4188706ffel0gldP7ipz4BnD",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec4188706ffel0gldP7ipz4BnD",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-03-A"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "input": 387847,
+        "output": 27935,
+        "reasoning": 7831,
+        "cacheRead": 761152,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "webfetch": 11,
+        "websearch": 10,
+        "shell": 9,
+        "edit": 8,
+        "execute": 4,
+        "write": 3,
+        "glob": 1,
+        "subagent": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 47,
+        "afterCount": 47,
+        "beforeMs": {
+          "median": 27,
+          "p80": 35,
+          "n": 47
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 47
+        },
+        "chainMs": {
+          "median": 333,
+          "p80": 929,
+          "n": 47
+        },
+        "fallbackStartIso": null
+      },
+      "stderrTail": null
+    },
+    {
+      "run": 4,
+      "scenario": "B",
+      "scenarioName": "one-shot delimitado",
+      "startedAt": "2026-10-14T19:41:56.466Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 24194,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec41074f6ffeZfagWU3rmrgHYJ",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec41074f6ffeZfagWU3rmrgHYJ",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-04-B"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "input": 47288,
+        "output": 1375,
+        "reasoning": 149,
+        "cacheRead": 31616,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "read": 2,
+        "subagent": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 4,
+        "afterCount": 4,
+        "beforeMs": {
+          "median": 25.5,
+          "p80": 33,
+          "n": 4
+        },
+        "afterMs": {
+          "median": 1,
+          "p80": 1,
+          "n": 4
+        },
+        "chainMs": {
+          "median": 33.5,
+          "p80": 4092,
+          "n": 4
+        },
+        "fallbackStartIso": null
+      },
+      "stderrTail": null
+    },
+    {
+      "run": 5,
+      "scenario": "A",
+      "scenarioName": "multi-step (reproduces the ~2x vs Codex CLI)",
+      "startedAt": "2026-10-14T19:42:20.663Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 423452,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec4101652ffeFxOQ2narvsd0ks",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec4101652ffeFxOQ2narvsd0ks",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-05-A"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "input": 165041,
+        "output": 27697,
+        "reasoning": 5485,
+        "cacheRead": 652416,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "execute": 8,
+        "websearch": 3,
+        "write": 3,
+        "grep": 2,
+        "shell": 2,
+        "glob": 1,
+        "read": 1,
+        "subagent": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 21,
+        "afterCount": 21,
+        "beforeMs": {
+          "median": 24,
+          "p80": 34,
+          "n": 21
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 21
+        },
+        "chainMs": {
+          "median": 854,
+          "p80": 6176,
+          "n": 21
+        },
+        "fallbackStartIso": null
+      },
+      "stderrTail": null
+    },
+    {
+      "run": 6,
+      "scenario": "B",
+      "scenarioName": "one-shot delimitado",
+      "startedAt": "2026-10-14T19:49:24.121Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 38735,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec4099edaffeHEY578WgS32I0D",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec4099edaffeHEY578WgS32I0D",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-06-B"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "input": 34266,
+        "output": 2086,
+        "reasoning": 0,
+        "cacheRead": 61184,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "read": 2,
+        "glob": 1,
+        "subagent": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 5,
+        "afterCount": 5,
+        "beforeMs": {
+          "median": 30,
+          "p80": 33,
+          "n": 5
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 1,
+          "n": 5
+        },
+        "chainMs": {
+          "median": 42,
+          "p80": 50,
+          "n": 5
+        },
+        "fallbackStartIso": null
+      },
+      "stderrTail": null
+    },
+    {
+      "run": 7,
+      "scenario": "A",
+      "scenarioName": "multi-step (reproduces the ~2x vs Codex CLI)",
+      "startedAt": "2026-10-14T19:50:02.857Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 377639,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec40908beffeubP0dwgJKVNvfO",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec40908beffeubP0dwgJKVNvfO",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-07-A"
+      },
+      "childrenCount": 3,
+      "tokens": {
+        "input": 151391,
+        "output": 13611,
+        "reasoning": 1838,
+        "cacheRead": 579840,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "execute": 9,
+        "edit": 7,
+        "shell": 5,
+        "websearch": 5,
+        "read": 4,
+        "subagent": 3,
+        "webfetch": 3,
+        "write": 3,
+        "grep": 2
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 41,
+        "afterCount": 41,
+        "beforeMs": {
+          "median": 26,
+          "p80": 31,
+          "n": 41
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 41
+        },
+        "chainMs": {
+          "median": 55,
+          "p80": 2467,
+          "n": 41
+        },
+        "fallbackStartIso": null
+      },
+      "stderrTail": null
+    },
+    {
+      "run": 8,
+      "scenario": "B",
+      "scenarioName": "one-shot delimitado",
+      "startedAt": "2026-10-14T19:56:20.500Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 13793,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec403458cffegWZGyfrltN9WQX",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec403458cffegWZGyfrltN9WQX",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-08-B"
+      },
+      "childrenCount": 0,
+      "tokens": {
+        "input": 25452,
+        "output": 424,
+        "reasoning": 24,
+        "cacheRead": 26752,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "execute": 2
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 2,
+        "afterCount": 2,
+        "beforeMs": {
+          "median": 26,
+          "p80": 27,
+          "n": 2
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 2
+        },
+        "chainMs": {
+          "median": 34.5,
+          "p80": 38,
+          "n": 2
+        },
+        "fallbackStartIso": null
+      },
+      "stderrTail": null
+    },
+    {
+      "run": 9,
+      "scenario": "A",
+      "scenarioName": "multi-step (reproduces the ~2x vs Codex CLI)",
+      "startedAt": "2026-10-14T19:56:34.295Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 572722,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec4030f6cffe3VvuJ4VH3UBaUt",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec4030f6cffe3VvuJ4VH3UBaUt",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-09-A"
+      },
+      "childrenCount": 2,
+      "tokens": {
+        "input": 151547,
+        "output": 23947,
+        "reasoning": 3495,
+        "cacheRead": 711936,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "websearch": 19,
+        "execute": 9,
+        "webfetch": 8,
+        "shell": 3,
+        "write": 3,
+        "edit": 2,
+        "subagent": 2,
+        "grep": 1,
+        "read": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 48,
+        "afterCount": 48,
+        "beforeMs": {
+          "median": 25,
+          "p80": 30,
+          "n": 48
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 48
+        },
+        "chainMs": {
+          "median": 1357.5,
+          "p80": 3889,
+          "n": 48
+        },
+        "fallbackStartIso": null
+      },
+      "stderrTail": null
+    },
+    {
+      "run": 10,
+      "scenario": "B",
+      "scenarioName": "one-shot delimitado",
+      "startedAt": "2026-10-14T20:06:07.031Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 18898,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec3fa52b2ffe6VYVNddNNEDbkL",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "root": {
+        "status": "ok",
+        "id": "ses_ec3fa52b2ffe6VYVNddNNEDbkL",
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-10-B"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "input": 33818,
+        "output": 433,
+        "reasoning": 138,
+        "cacheRead": 17024,
+        "cacheWrite": 0
+      },
+      "toolCalls": {
+        "subagent": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 2,
+        "afterCount": 2,
+        "beforeMs": {
+          "median": 24,
+          "p80": 25,
+          "n": 2
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 2
+        },
+        "chainMs": {
+          "median": 3846.5,
+          "p80": 7667,
+          "n": 2
+        },
+        "fallbackStartIso": null
+      },
+      "stderrTail": null
+    }
+  ],
+  "summary": {
+    "runs": 10,
+    "completed": 10,
+    "failures": 0,
+    "failureReasons": [],
+    "wallMs": {
+      "median": 211256,
+      "p80": 529052,
+      "n": 10
+    },
+    "tokens": {
+      "input": 1310773,
+      "output": 162093,
+      "cacheRead": 3918272,
+      "cacheWrite": 0,
+      "perRunMedianInput": 99339.5,
+      "perRunMedianOutput": 8174
+    },
+    "toolCalls": {
+      "edit": 27,
+      "execute": 39,
+      "websearch": 45,
+      "grep": 11,
+      "shell": 24,
+      "webfetch": 26,
+      "write": 19,
+      "read": 13,
+      "subagent": 13,
+      "glob": 4
+    },
+    "childrenCount": 1,
+    "perScenario": {
+      "A": {
+        "runs": 5,
+        "completed": 5,
+        "failures": 0,
+        "wallMs": {
+          "median": 529052,
+          "p80": 572722
+        }
+      },
+      "B": {
+        "runs": 5,
+        "completed": 5,
+        "failures": 0,
+        "wallMs": {
+          "median": 24194,
+          "p80": 38735
+        }
+      }
+    }
+  },
+  "schemaNotes": [
+    "Tokens come from the V2 session_message ledger (assistant rows, data.tokens), the same source as pantheon_cost; cache read/write from data.tokens.cache.",
+    "Child sessions resolved recursively via session_v2.parent_id with a visited set — each session counted once.",
+    "Runs share the global opencode.db (provider credentials live there), but every metric is scoped by the run root sessionID and the db is opened READ-ONLY; no db writes are ever performed.",
+    "Tool calls counted from assistant content parts with type=tool; only the tool NAME is read, never tool inputs.",
+    "Hook timings come from the [bench] lines the V2 plugin appends to .pantheon/logs/hooks.log (instrumentation-only change).",
+    "A metric the schema cannot provide is {status:\"unavailable\", reason} — never zero."
+  ]
+}
