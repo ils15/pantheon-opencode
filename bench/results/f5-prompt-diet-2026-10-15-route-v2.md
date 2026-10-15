@@ -80,3 +80,18 @@ comparação primária. O resultado anterior de fonte alinhada permanece
 inalterado; esta rodada também não autoriza claim global de prompt diet,
 tokens ou latência. Preservar o relatório, os dez registros e os dois
 timeouts como evidência de falha do gate.
+
+## Revisão Themis
+
+Veredito final: **BLOCK**. Os bloqueios são a paridade estrita de rota em
+2/5 pares, dois timeouts do controle sem artefato e a cobertura incompleta do
+primeiro request. O resumo N=2 de tokens está corretamente rotulado como
+exploratório; D4 e os oito artefatos existentes foram verificados.
+
+Nota baixa: os timeouts declaram 1.200.000 ms, mas `wallMs` é aproximadamente
+1.113.000 ms. O runner media elapsed time com `Date.now()`, enquanto os timers
+de timeout usam relógio monotônico; um ajuste do relógio civil pode explicar a
+diferença. Nenhuma medição elegível ou claim de latência usa esses wall times de
+timeout. Em seguida, o harness foi corrigido para medir deadline e duração com
+relógio monotônico; o resultado bruto desta rodada permanece inalterado e não
+foi recalculado.
