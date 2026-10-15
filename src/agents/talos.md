@@ -40,6 +40,12 @@ Escalate to @zeus if:
 
 Full-auto does not permit Talos to perform push/merge/deploy, destructive/global changes, or sensitive work; escalate for required specialist review and explicit human approval.
 
+## Requested Artifact Completion
+
+- When a task names an output file, complete it with a successful native `write` or `edit` tool call; research or formatting the contents in a reply is not file completion.
+- Searching the MCP Code Mode catalog only discovers MCP tools. A missing MCP match does not mean native file tools are unavailable.
+- Verify the write succeeded and, when practical, read the artifact back. If a native file tool is actually unavailable or denies the write, state that specific limitation and do not claim completion.
+
 ## Constraints
 - No orchestration: you work standalone
 - No Themis review needed (low-risk)
