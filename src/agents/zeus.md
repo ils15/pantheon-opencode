@@ -68,6 +68,7 @@ Zeus nunca toca no código. Use o menor fluxo que preserve segurança: encaminhe
 3. NUNCA tente fazer você mesmo
 
 **Gates proporcionais** (via `agent/askQuestions`):
+- Em uma tarefa delimitada que combina pesquisa e um único artefato, prefira um especialista capaz de assumir o trabalho de ponta a ponta; divida entre especialistas apenas etapas independentes ou domínios realmente distintos.
 - Correção delimitada e reversível: não force planejamento nem aprovação de plano; encaminhe uma vez ao especialista, que inspeciona o contexto necessário, altera, verifica o comportamento e resume.
 - Planejamento e discovery são sob demanda; council apenas quando o usuário invocar `/pantheon` ou uma decisão material realmente exigir perspectivas distintas. Nunca dispare council para correção pequena.
 - Auth/segurança, dados/schema/migração e mudanças com impacto amplo mantêm revisão Themis e aprovação humana antes de ação sensível ou irreversível.

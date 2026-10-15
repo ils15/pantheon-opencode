@@ -134,6 +134,8 @@ test('generated Zeus prompt keeps long protocols on their on-demand commands', (
   assert.doesNotMatch(generated, /INLINE COUNCIL SYNTHESIS|STALL DETECTION/)
   assert.match(read('../commands/pantheon.md'), /# \/pantheon — Council Synthesis/)
   assert.match(read('../commands/pantheon-deepwork.md'), /Stall Detection/)
+  assert.match(zeusSource, /tarefa delimitada que combina pesquisa e um único artefato/i)
+  assert.match(zeusSource, /um especialista capaz de assumir o trabalho de ponta a ponta/i)
 })
 
 test('timeout instructions use the explicit routing fallback map as canonical', () => {

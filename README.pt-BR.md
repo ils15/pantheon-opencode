@@ -63,6 +63,9 @@ respostas. Trabalhos longos podem usar `/pantheon-deepwork` para orientações d
 fase, recuperação e checkpoints. Zeus carrega esses fluxos detalhados quando o
 comando correspondente é usado; pedidos comuns mantêm o prompt padrão mais
 curto.
+Em uma tarefa delimitada que combina pesquisa e um artefato, Zeus prefere um
+especialista capaz de conduzir o trabalho de ponta a ponta e só divide etapas
+independentes ou domínios distintos.
 
 ## Para quem é?
 

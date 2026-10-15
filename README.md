@@ -76,6 +76,9 @@ For material decisions, `/pantheon` runs a specialist council and synthesizes
 the responses. Long-running work can use `/pantheon-deepwork` for phase,
 recovery, and checkpoint guidance. Zeus loads these detailed workflows when
 their command is used, while ordinary requests keep the shorter default prompt.
+For a bounded task that combines research with one deliverable, Zeus prefers one
+capable specialist to own the work end to end and splits only independent steps
+or distinct domains.
 
 ## Who is it for?
 
