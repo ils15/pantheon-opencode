@@ -1,0 +1,2132 @@
+{
+  "meta": {
+    "kind": "pantheon-bench-baseline",
+    "reportVersion": 3,
+    "createdAt": "2026-10-15T04:37:55.348Z",
+    "gitSha": "689f8f2",
+    "gitDirty": false,
+    "gitDiffHash": null,
+    "opencodeVersion": "opencode v2.0.29",
+    "pluginGeneration": "v2",
+    "pluginRef": "/home/ils15/pantheon/src/plugin-v2",
+    "hostConfigPath": "/home/ils15/.config/opencode/opencode.json",
+    "hostConfigUsed": true,
+    "shadowConfigDir": "/tmp/opencode/bench-1792039075446/shadow-config-candidate",
+    "controlShadowConfigDir": "/tmp/opencode/bench-1792039075446/shadow-config-control",
+    "modelRequested": "opencode-go/glm-5.3-flash",
+    "sandboxRoot": "/tmp/opencode/bench-1792039075446",
+    "profile": "double-injection",
+    "label": "f5-prompt-diet-20261015-followup",
+    "globalAgentsFixture": {
+      "path": "AGENTS.global.md",
+      "bytes": 11410,
+      "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+    },
+    "projectAgentsFixture": {
+      "path": "AGENTS.md",
+      "bytes": 1990,
+      "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+    },
+    "agentsDirFixture": {
+      "path": "/tmp/f5-agents-20261015-cca6180/candidate-agents",
+      "files": [
+        {
+          "name": "zeus",
+          "path": "/tmp/f5-agents-20261015-cca6180/candidate-agents/zeus.md",
+          "bytes": 21808,
+          "sha256": "0ba6b120c557a483cb0c364b6f2cd8ebcd264ec0b1ef519dfdf19f0888c20c8b"
+        }
+      ],
+      "sha256": "5a6a77682f6b2360ce1eeee6f3f5c0eac2c3a8670ae5e4f565162dea9fb2544f"
+    },
+    "controlAgentsDirFixture": {
+      "path": "/tmp/f5-agents-20261015-cca6180/control-agents",
+      "files": [
+        {
+          "name": "zeus",
+          "path": "/tmp/f5-agents-20261015-cca6180/control-agents/zeus.md",
+          "bytes": 29477,
+          "sha256": "11c79c4e69922bb30fba2f54e5cb39f7d83971c747502457f104fd82009d2c0b"
+        }
+      ],
+      "sha256": "4c6b9a4b0828374fdaa3a5558e68378032539eb8e58257fcc27ca9500c7cc424"
+    },
+    "skillsDirFixture": {
+      "path": "/home/ils15/pantheon/src/skills",
+      "files": [
+        {
+          "path": "agent-coordination/SKILL.md",
+          "bytes": 3146,
+          "sha256": "d4bd70c18bc5726ea6784fe0a9c514446ca313e4c3ba4d658a0ff6658001aece"
+        },
+        {
+          "path": "artifact-management/SKILL.md",
+          "bytes": 3493,
+          "sha256": "91d68c8f2d1b642725adfc6df11e55865a8491aca690dc27d02ea7c778d49d41"
+        },
+        {
+          "path": "auto-continue/SKILL.md",
+          "bytes": 10007,
+          "sha256": "79aa1786ab62332abc45986d147ee944836e6f7a496c289e793639add4211229"
+        },
+        {
+          "path": "clonedeps/SKILL.md",
+          "bytes": 1439,
+          "sha256": "3e0b43cf96da98c83699dc48db3fd58fbfda84b9022bb70d3747875c81c3e124"
+        },
+        {
+          "path": "code-review-checklist/SKILL.md",
+          "bytes": 3926,
+          "sha256": "6445513ab880efdb1005861ae13cb9a215f80b9d260f6278499f60771e07858c"
+        },
+        {
+          "path": "codemap/SKILL.md",
+          "bytes": 1636,
+          "sha256": "87af5271e1576e154cadff313eab16264b726e43d094520736b7a5b03b409a4a"
+        },
+        {
+          "path": "context-compression/SKILL.md",
+          "bytes": 2577,
+          "sha256": "346ed8697b8db42cc49403ee3dd38f9b775fe93cb55395d73c81b55cc77442d6"
+        },
+        {
+          "path": "git-workflow-and-versioning/SKILL.md",
+          "bytes": 915,
+          "sha256": "685a94041f1b4ce2a430301f517b89102055696267c369a7e8fb191606659276"
+        },
+        {
+          "path": "incremental-implementation/SKILL.md",
+          "bytes": 888,
+          "sha256": "7065ddb45da3c6b6751de07f290e92e6cb072e949a2e3aaae13ee7762f0a70fc"
+        },
+        {
+          "path": "loop-engineering/SKILL.md",
+          "bytes": 1525,
+          "sha256": "f804e545821b9cca8fe0ec517307ed902446f28c2ca8ff9194c0f987cf7229e3"
+        },
+        {
+          "path": "memory-bank/SKILL.md",
+          "bytes": 5447,
+          "sha256": "4717cf18b43550c9f02cfab810968b97a5b2584f00a15516ecba643c80cdc110"
+        },
+        {
+          "path": "README.md",
+          "bytes": 6974,
+          "sha256": "4525f4cb0b9e3b679ba9090785e868cceed554aaf9f192caca9b4313b3be2383"
+        },
+        {
+          "path": "reflect/SKILL.md",
+          "bytes": 1402,
+          "sha256": "4c7608c2a55cb8a50ac90fc0e2446bdf25e7914b1748cb7731c311d13c29dfdd"
+        },
+        {
+          "path": "security-hardening/SKILL.md",
+          "bytes": 1176,
+          "sha256": "6d637e122421f7bc3b751f04854ad343a5a5d35249458bc8939233138fd3f20d"
+        },
+        {
+          "path": "session-goal/SKILL.md",
+          "bytes": 4628,
+          "sha256": "3a708d15a59a6bff2dd32ff7ead6548ecccc7be8d39437fee3133ea6254b6134"
+        },
+        {
+          "path": "simplify/SKILL.md",
+          "bytes": 1237,
+          "sha256": "aa739e9f75962a77d6574557d674ea01b5aea95e580b721d66c058753161b053"
+        },
+        {
+          "path": "spec-driven-development/SKILL.md",
+          "bytes": 1172,
+          "sha256": "ccfbc0c32116a1d144f5c12a4187c053322ed31625a622a58c59739a57a86743"
+        },
+        {
+          "path": "tdd-with-agents/SKILL.md",
+          "bytes": 6105,
+          "sha256": "9d20607ea34fc3e02c7e3ef5186b103d84196bd9a13aaadd55a44f41339125da"
+        },
+        {
+          "path": "verification-planning/SKILL.md",
+          "bytes": 1522,
+          "sha256": "14186446ef51e1ba2c87b337e8d5f86e566d805156ab21fba2a75f8c4a99df3f"
+        },
+        {
+          "path": "visual-review-pipeline/SKILL.md",
+          "bytes": 7730,
+          "sha256": "f6e65ff75a9325c38e0e9dde8e87f09b873e14e490936ef48aa80201bb68fe10"
+        },
+        {
+          "path": "worktrees/SKILL.md",
+          "bytes": 1213,
+          "sha256": "0033c5f8a50f210f31f0256ba8cc0fd99c65674a2aabedb05d8e69447b5ec218"
+        }
+      ],
+      "sha256": "f05d9d59008013c3a0a98bf1fd9647aa9cb66d3a40683855a2215bc7b826b41b"
+    },
+    "promptFixture": {
+      "path": "bench/fixtures/f5-task-2024-un.md",
+      "bytes": 414,
+      "sha256": "e6cee2f4af984a9063d19724a74c509a7d38f04f4252b31d88671464e5b758ae"
+    },
+    "protocol": {
+      "runsPerScenario": 5,
+      "scenarios": [
+        "B"
+      ],
+      "interleave": "B starting at B",
+      "runTimeoutMs": 1200000,
+      "standaloneServerPerRun": true,
+      "permissionMode": "--auto (non-interactive auto-approve)",
+      "paired": true,
+      "routingParity": true,
+      "agent": {
+        "control": "zeus",
+        "candidate": "zeus"
+      },
+      "armOrder": "control,candidate per pair (C1,K1,…,C5,K5)",
+      "logLevel": "debug (required for the V2 tool-hook registration to complete; protocol constant, equal across phases)",
+      "pluginSelection": "XDG_CONFIG_HOME shadow config dir; repo plugin pinned via plugins[]",
+      "agentsSelection": "control and candidate shadow configs use their respective agent directories; root prompt identities are recorded per arm and per run",
+      "skillsSelection": "shadow-config/skills symlinked to --skills-dir; all source file identities recorded in skillsDirFixture",
+      "metricDb": "/home/ils15/.local/share/opencode/opencode.db",
+      "isolatedDbPerRun": false,
+      "scenarioAUsesRealWebResearch": true,
+      "profileDescription": "global AGENTS.md + a project AGENTS.md materialized in every run dir"
+    }
+  },
+  "scenarios": {
+    "A": "multi-step (reproduces the ~2x vs Codex CLI)",
+    "B": "one-shot delimitado"
+  },
+  "runs": [
+    {
+      "run": 1,
+      "scenario": "B",
+      "arm": "control",
+      "pair": 1,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-15T04:37:55.450Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 141132,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec225bf5cffe7IEnNI3brGwJFY",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "ses_ec225bf5cffe7IEnNI3brGwJFY",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "ses_ec223ccc8ffe78VMX0euB5vUnP",
+            "parentId": "ses_ec225bf5cffe7IEnNI3brGwJFY",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "/tmp/f5-agents-20261015-cca6180/control-agents/zeus.md",
+        "bytes": 29477,
+        "sha256": "11c79c4e69922bb30fba2f54e5cb39f7d83971c747502457f104fd82009d2c0b"
+      },
+      "root": {
+        "status": "ok",
+        "id": "ses_ec225bf5cffe7IEnNI3brGwJFY",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-01-B-control"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 84881,
+        "output": 5609,
+        "reasoning": 8,
+        "cacheRead": 87808,
+        "cacheWrite": 0,
+        "tokenMessages": 8,
+        "assistantMessages": 8,
+        "tokenFieldMessages": {
+          "input": 8,
+          "output": 8,
+          "reasoning": 8,
+          "cacheRead": 8,
+          "cacheWrite": 8
+        }
+      },
+      "toolCalls": {
+        "websearch": 4,
+        "webfetch": 2,
+        "read": 1,
+        "subagent": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 9,
+        "afterCount": 9,
+        "beforeMs": {
+          "median": 26,
+          "p80": 27,
+          "n": 9
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 9
+        },
+        "chainMs": {
+          "median": 957,
+          "p80": 22781,
+          "n": 9
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "f07e33384a2a8d40277e157acd096aab1e8c73a9f945ab605eee18b9be72186a",
+        "entryCount": 2,
+        "totalBytes": 13400,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792039075446/shadow-config-control/opencode/AGENTS.md",
+            "bytes": 11410,
+            "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792039075446/run-01-B-control/AGENTS.md",
+            "bytes": 1990,
+            "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 16337,
+        "cacheRead": 0,
+        "contextTokens": 16337
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "ineligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "agentRoutingAvailable": true,
+          "toolCallLedgerAvailable": true,
+          "pairedRoutingParity": false
+        }
+      },
+      "pairRoutingParity": {
+        "status": "ineligible",
+        "checks": {
+          "pairComplete": true,
+          "routeMatches": false,
+          "subagentCallsMatch": false
+        },
+        "controlRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "candidateRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "apollo"
+            },
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "controlSubagentCalls": 1,
+        "candidateSubagentCalls": 2
+      }
+    },
+    {
+      "run": 2,
+      "scenario": "B",
+      "arm": "candidate",
+      "pair": 1,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-15T04:40:16.589Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 569852,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec22398b9ffewtCEv0XlzuTWCb",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "ses_ec22398b9ffewtCEv0XlzuTWCb",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "ses_ec22308cbffe9Es7lGwj731IDl",
+            "parentId": "ses_ec22398b9ffewtCEv0XlzuTWCb",
+            "agent": "apollo"
+          },
+          {
+            "id": "ses_ec21b2226ffe0X8kGUJe5Q5AxN",
+            "parentId": "ses_ec22398b9ffewtCEv0XlzuTWCb",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "/tmp/f5-agents-20261015-cca6180/candidate-agents/zeus.md",
+        "bytes": 21808,
+        "sha256": "0ba6b120c557a483cb0c364b6f2cd8ebcd264ec0b1ef519dfdf19f0888c20c8b"
+      },
+      "root": {
+        "status": "ok",
+        "id": "ses_ec22398b9ffewtCEv0XlzuTWCb",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-02-B-candidate"
+      },
+      "childrenCount": 2,
+      "tokens": {
+        "status": "ok",
+        "input": 121250,
+        "output": 22297,
+        "reasoning": 7760,
+        "cacheRead": 389312,
+        "cacheWrite": 0,
+        "tokenMessages": 24,
+        "assistantMessages": 24,
+        "tokenFieldMessages": {
+          "input": 24,
+          "output": 24,
+          "reasoning": 24,
+          "cacheRead": 24,
+          "cacheWrite": 24
+        }
+      },
+      "toolCalls": {
+        "execute": 14,
+        "webfetch": 9,
+        "websearch": 9,
+        "subagent": 2,
+        "read": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 36,
+        "afterCount": 36,
+        "beforeMs": {
+          "median": 25,
+          "p80": 31,
+          "n": 36
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 36
+        },
+        "chainMs": {
+          "median": 810,
+          "p80": 2238,
+          "n": 36
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "ca3056c5deb17b05d31d32ebb7025e7965db7093340ecb17051bd92c273d4608",
+        "entryCount": 2,
+        "totalBytes": 13400,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792039075446/shadow-config-candidate/opencode/AGENTS.md",
+            "bytes": 11410,
+            "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792039075446/run-02-B-candidate/AGENTS.md",
+            "bytes": 1990,
+            "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 14644,
+        "cacheRead": 0,
+        "contextTokens": 14644
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "ineligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "agentRoutingAvailable": true,
+          "toolCallLedgerAvailable": true,
+          "pairedRoutingParity": false
+        }
+      },
+      "pairRoutingParity": {
+        "status": "ineligible",
+        "checks": {
+          "pairComplete": true,
+          "routeMatches": false,
+          "subagentCallsMatch": false
+        },
+        "controlRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "candidateRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "apollo"
+            },
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "controlSubagentCalls": 1,
+        "candidateSubagentCalls": 2
+      }
+    },
+    {
+      "run": 3,
+      "scenario": "B",
+      "arm": "control",
+      "pair": 2,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-15T04:49:46.444Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 20789,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec21ae69fffe6iA5KshK7Qx8NB",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "ses_ec21ae69fffe6iA5KshK7Qx8NB",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "ses_ec21ab9e4ffeJy4peIlk7TE504",
+            "parentId": "ses_ec21ae69fffe6iA5KshK7Qx8NB",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "/tmp/f5-agents-20261015-cca6180/control-agents/zeus.md",
+        "bytes": 29477,
+        "sha256": "11c79c4e69922bb30fba2f54e5cb39f7d83971c747502457f104fd82009d2c0b"
+      },
+      "root": {
+        "status": "ok",
+        "id": "ses_ec21ae69fffe6iA5KshK7Qx8NB",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-03-B-control"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 48183,
+        "output": 784,
+        "reasoning": 213,
+        "cacheRead": 53504,
+        "cacheWrite": 0,
+        "tokenMessages": 6,
+        "assistantMessages": 6,
+        "tokenFieldMessages": {
+          "input": 6,
+          "output": 6,
+          "reasoning": 6,
+          "cacheRead": 6,
+          "cacheWrite": 6
+        }
+      },
+      "toolCalls": {
+        "read": 1,
+        "subagent": 1,
+        "websearch": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 4,
+        "afterCount": 4,
+        "beforeMs": {
+          "median": 25,
+          "p80": 26,
+          "n": 4
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 1,
+          "n": 4
+        },
+        "chainMs": {
+          "median": 1261,
+          "p80": 5045,
+          "n": 4
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "999847a3cf8a2a3bccc145804826c763db6793be6cd8b9851dc6033c6bb01303",
+        "entryCount": 2,
+        "totalBytes": 13400,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792039075446/shadow-config-control/opencode/AGENTS.md",
+            "bytes": 11410,
+            "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792039075446/run-03-B-control/AGENTS.md",
+            "bytes": 1990,
+            "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 16351,
+        "cacheRead": 0,
+        "contextTokens": 16351
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "agentRoutingAvailable": true,
+          "toolCallLedgerAvailable": true,
+          "pairedRoutingParity": true
+        }
+      },
+      "pairRoutingParity": {
+        "status": "eligible",
+        "checks": {
+          "pairComplete": true,
+          "routeMatches": true,
+          "subagentCallsMatch": true
+        },
+        "controlRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "candidateRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "controlSubagentCalls": 1,
+        "candidateSubagentCalls": 1
+      }
+    },
+    {
+      "run": 4,
+      "scenario": "B",
+      "arm": "candidate",
+      "pair": 2,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-15T04:50:07.235Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 80622,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec21a957dffeye6Uxh78r6galC",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "ses_ec21a957dffeye6Uxh78r6galC",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "ses_ec2198f12ffeoh7i4j0bnMoamG",
+            "parentId": "ses_ec21a957dffeye6Uxh78r6galC",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "/tmp/f5-agents-20261015-cca6180/candidate-agents/zeus.md",
+        "bytes": 21808,
+        "sha256": "0ba6b120c557a483cb0c364b6f2cd8ebcd264ec0b1ef519dfdf19f0888c20c8b"
+      },
+      "root": {
+        "status": "ok",
+        "id": "ses_ec21a957dffeye6Uxh78r6galC",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-04-B-candidate"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 61074,
+        "output": 5169,
+        "reasoning": 9,
+        "cacheRead": 50304,
+        "cacheWrite": 0,
+        "tokenMessages": 7,
+        "assistantMessages": 7,
+        "tokenFieldMessages": {
+          "input": 7,
+          "output": 7,
+          "reasoning": 7,
+          "cacheRead": 7,
+          "cacheWrite": 7
+        }
+      },
+      "toolCalls": {
+        "read": 2,
+        "subagent": 1,
+        "websearch": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 5,
+        "afterCount": 5,
+        "beforeMs": {
+          "median": 24,
+          "p80": 24,
+          "n": 5
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 5
+        },
+        "chainMs": {
+          "median": 27,
+          "p80": 1759,
+          "n": 5
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "c99c8b74e71e0a123de7d807167ac3ffe961b3699e0e78d09be1117ecb28d5e3",
+        "entryCount": 2,
+        "totalBytes": 13400,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792039075446/shadow-config-candidate/opencode/AGENTS.md",
+            "bytes": 11410,
+            "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792039075446/run-04-B-candidate/AGENTS.md",
+            "bytes": 1990,
+            "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 14644,
+        "cacheRead": 0,
+        "contextTokens": 14644
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "agentRoutingAvailable": true,
+          "toolCallLedgerAvailable": true,
+          "pairedRoutingParity": true
+        }
+      },
+      "pairRoutingParity": {
+        "status": "eligible",
+        "checks": {
+          "pairComplete": true,
+          "routeMatches": true,
+          "subagentCallsMatch": true
+        },
+        "controlRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "candidateRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "controlSubagentCalls": 1,
+        "candidateSubagentCalls": 1
+      }
+    },
+    {
+      "run": 5,
+      "scenario": "B",
+      "arm": "control",
+      "pair": 3,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-15T04:51:27.859Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 66350,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec2195a67ffeC8BsG6b5t9b2oV",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "ses_ec2195a67ffeC8BsG6b5t9b2oV",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "ses_ec2187b0effePadVCyM3Cisn5l",
+            "parentId": "ses_ec2195a67ffeC8BsG6b5t9b2oV",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "/tmp/f5-agents-20261015-cca6180/control-agents/zeus.md",
+        "bytes": 29477,
+        "sha256": "11c79c4e69922bb30fba2f54e5cb39f7d83971c747502457f104fd82009d2c0b"
+      },
+      "root": {
+        "status": "ok",
+        "id": "ses_ec2195a67ffeC8BsG6b5t9b2oV",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-05-B-control"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 53033,
+        "output": 3240,
+        "reasoning": 50,
+        "cacheRead": 46208,
+        "cacheWrite": 0,
+        "tokenMessages": 5,
+        "assistantMessages": 5,
+        "tokenFieldMessages": {
+          "input": 5,
+          "output": 5,
+          "reasoning": 5,
+          "cacheRead": 5,
+          "cacheWrite": 5
+        }
+      },
+      "toolCalls": {
+        "websearch": 3,
+        "subagent": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 5,
+        "afterCount": 5,
+        "beforeMs": {
+          "median": 38,
+          "p80": 42,
+          "n": 5
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 5
+        },
+        "chainMs": {
+          "median": 1146,
+          "p80": 1162,
+          "n": 5
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "5f7e1fa69cf36154d59f2a6d968de10717481f215145be506a8d7abdab400caa",
+        "entryCount": 2,
+        "totalBytes": 13400,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792039075446/shadow-config-control/opencode/AGENTS.md",
+            "bytes": 11410,
+            "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792039075446/run-05-B-control/AGENTS.md",
+            "bytes": 1990,
+            "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 16337,
+        "cacheRead": 0,
+        "contextTokens": 16337
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "agentRoutingAvailable": true,
+          "toolCallLedgerAvailable": true,
+          "pairedRoutingParity": true
+        }
+      },
+      "pairRoutingParity": {
+        "status": "eligible",
+        "checks": {
+          "pairComplete": true,
+          "routeMatches": true,
+          "subagentCallsMatch": true
+        },
+        "controlRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "candidateRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "controlSubagentCalls": 1,
+        "candidateSubagentCalls": 1
+      }
+    },
+    {
+      "run": 6,
+      "scenario": "B",
+      "arm": "candidate",
+      "pair": 3,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-15T04:52:34.212Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 105017,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec218574cffeqaLWBGQpA1IcH1",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "ses_ec218574cffeqaLWBGQpA1IcH1",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "ses_ec216f511ffe7u5QNTNX6GDRAo",
+            "parentId": "ses_ec218574cffeqaLWBGQpA1IcH1",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "/tmp/f5-agents-20261015-cca6180/candidate-agents/zeus.md",
+        "bytes": 21808,
+        "sha256": "0ba6b120c557a483cb0c364b6f2cd8ebcd264ec0b1ef519dfdf19f0888c20c8b"
+      },
+      "root": {
+        "status": "ok",
+        "id": "ses_ec218574cffeqaLWBGQpA1IcH1",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-06-B-candidate"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 58789,
+        "output": 6185,
+        "reasoning": 106,
+        "cacheRead": 47424,
+        "cacheWrite": 0,
+        "tokenMessages": 6,
+        "assistantMessages": 6,
+        "tokenFieldMessages": {
+          "input": 6,
+          "output": 6,
+          "reasoning": 6,
+          "cacheRead": 6,
+          "cacheWrite": 6
+        }
+      },
+      "toolCalls": {
+        "read": 1,
+        "subagent": 1,
+        "webfetch": 1,
+        "websearch": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 5,
+        "afterCount": 5,
+        "beforeMs": {
+          "median": 25,
+          "p80": 29,
+          "n": 5
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 1,
+          "n": 5
+        },
+        "chainMs": {
+          "median": 117,
+          "p80": 1917,
+          "n": 5
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "e2edd45018796cd08a52e6adf22010cdfed277b5df487bbe1903522afdb26235",
+        "entryCount": 2,
+        "totalBytes": 13400,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792039075446/shadow-config-candidate/opencode/AGENTS.md",
+            "bytes": 11410,
+            "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792039075446/run-06-B-candidate/AGENTS.md",
+            "bytes": 1990,
+            "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 14644,
+        "cacheRead": 0,
+        "contextTokens": 14644
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "agentRoutingAvailable": true,
+          "toolCallLedgerAvailable": true,
+          "pairedRoutingParity": true
+        }
+      },
+      "pairRoutingParity": {
+        "status": "eligible",
+        "checks": {
+          "pairComplete": true,
+          "routeMatches": true,
+          "subagentCallsMatch": true
+        },
+        "controlRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "candidateRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "controlSubagentCalls": 1,
+        "candidateSubagentCalls": 1
+      }
+    },
+    {
+      "run": 7,
+      "scenario": "B",
+      "arm": "control",
+      "pair": 4,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-15T04:54:19.231Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 211434,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec216bd0fffeH56odEtfq5Cq2q",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "ses_ec216bd0fffeH56odEtfq5Cq2q",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "ses_ec213c704ffetes1BfiG8k3af8",
+            "parentId": "ses_ec216bd0fffeH56odEtfq5Cq2q",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "/tmp/f5-agents-20261015-cca6180/control-agents/zeus.md",
+        "bytes": 29477,
+        "sha256": "11c79c4e69922bb30fba2f54e5cb39f7d83971c747502457f104fd82009d2c0b"
+      },
+      "root": {
+        "status": "ok",
+        "id": "ses_ec216bd0fffeH56odEtfq5Cq2q",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-07-B-control"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 101818,
+        "output": 4659,
+        "reasoning": 3710,
+        "cacheRead": 239488,
+        "cacheWrite": 0,
+        "tokenMessages": 12,
+        "assistantMessages": 12,
+        "tokenFieldMessages": {
+          "input": 12,
+          "output": 12,
+          "reasoning": 12,
+          "cacheRead": 12,
+          "cacheWrite": 12
+        }
+      },
+      "toolCalls": {
+        "webfetch": 8,
+        "websearch": 3,
+        "read": 1,
+        "subagent": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 14,
+        "afterCount": 14,
+        "beforeMs": {
+          "median": 24.5,
+          "p80": 30,
+          "n": 14
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 14
+        },
+        "chainMs": {
+          "median": 536,
+          "p80": 8622,
+          "n": 14
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "85112d52a213585b86df83b5131ee6cdca2e7165808d517933fa62299e5833d0",
+        "entryCount": 2,
+        "totalBytes": 13400,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792039075446/shadow-config-control/opencode/AGENTS.md",
+            "bytes": 11410,
+            "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792039075446/run-07-B-control/AGENTS.md",
+            "bytes": 1990,
+            "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 16337,
+        "cacheRead": 0,
+        "contextTokens": 16337
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "agentRoutingAvailable": true,
+          "toolCallLedgerAvailable": true,
+          "pairedRoutingParity": true
+        }
+      },
+      "pairRoutingParity": {
+        "status": "eligible",
+        "checks": {
+          "pairComplete": true,
+          "routeMatches": true,
+          "subagentCallsMatch": true
+        },
+        "controlRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "candidateRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "controlSubagentCalls": 1,
+        "candidateSubagentCalls": 1
+      }
+    },
+    {
+      "run": 8,
+      "scenario": "B",
+      "arm": "candidate",
+      "pair": 4,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-15T04:57:50.668Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 89933,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec213830cffe240k7L5m1fzFpH",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "ses_ec213830cffe240k7L5m1fzFpH",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "ses_ec2126fb3ffenlGq0k08IgN97Y",
+            "parentId": "ses_ec213830cffe240k7L5m1fzFpH",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "/tmp/f5-agents-20261015-cca6180/candidate-agents/zeus.md",
+        "bytes": 21808,
+        "sha256": "0ba6b120c557a483cb0c364b6f2cd8ebcd264ec0b1ef519dfdf19f0888c20c8b"
+      },
+      "root": {
+        "status": "ok",
+        "id": "ses_ec213830cffe240k7L5m1fzFpH",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-08-B-candidate"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 41653,
+        "output": 2400,
+        "reasoning": 2256,
+        "cacheRead": 181696,
+        "cacheWrite": 0,
+        "tokenMessages": 12,
+        "assistantMessages": 12,
+        "tokenFieldMessages": {
+          "input": 12,
+          "output": 12,
+          "reasoning": 12,
+          "cacheRead": 12,
+          "cacheWrite": 12
+        }
+      },
+      "toolCalls": {
+        "execute": 4,
+        "read": 2,
+        "websearch": 2,
+        "subagent": 1,
+        "webfetch": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 11,
+        "afterCount": 11,
+        "beforeMs": {
+          "median": 23,
+          "p80": 26,
+          "n": 11
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 11
+        },
+        "chainMs": {
+          "median": 484,
+          "p80": 2409,
+          "n": 11
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "bb9d3cb65546bc3668bb03ef4159371eb894d02cdc6a93507de1a1aceb338ef5",
+        "entryCount": 2,
+        "totalBytes": 13400,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792039075446/shadow-config-candidate/opencode/AGENTS.md",
+            "bytes": 11410,
+            "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792039075446/run-08-B-candidate/AGENTS.md",
+            "bytes": 1990,
+            "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 14658,
+        "cacheRead": 0,
+        "contextTokens": 14658
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "agentRoutingAvailable": true,
+          "toolCallLedgerAvailable": true,
+          "pairedRoutingParity": true
+        }
+      },
+      "pairRoutingParity": {
+        "status": "eligible",
+        "checks": {
+          "pairComplete": true,
+          "routeMatches": true,
+          "subagentCallsMatch": true
+        },
+        "controlRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "candidateRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "controlSubagentCalls": 1,
+        "candidateSubagentCalls": 1
+      }
+    },
+    {
+      "run": 9,
+      "scenario": "B",
+      "arm": "control",
+      "pair": 5,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-15T04:59:20.604Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 83316,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec21223e0ffeJjr7q8VySqgKjf",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "ses_ec21223e0ffeJjr7q8VySqgKjf",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "ses_ec2110933ffeqglQKJhzkutQhp",
+            "parentId": "ses_ec21223e0ffeJjr7q8VySqgKjf",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "/tmp/f5-agents-20261015-cca6180/control-agents/zeus.md",
+        "bytes": 29477,
+        "sha256": "11c79c4e69922bb30fba2f54e5cb39f7d83971c747502457f104fd82009d2c0b"
+      },
+      "root": {
+        "status": "ok",
+        "id": "ses_ec21223e0ffeJjr7q8VySqgKjf",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-09-B-control"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 53827,
+        "output": 7254,
+        "reasoning": 0,
+        "cacheRead": 104320,
+        "cacheWrite": 0,
+        "tokenMessages": 7,
+        "assistantMessages": 7,
+        "tokenFieldMessages": {
+          "input": 7,
+          "output": 7,
+          "reasoning": 7,
+          "cacheRead": 7,
+          "cacheWrite": 7
+        }
+      },
+      "toolCalls": {
+        "read": 2,
+        "websearch": 2,
+        "subagent": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 6,
+        "afterCount": 6,
+        "beforeMs": {
+          "median": 24.5,
+          "p80": 26,
+          "n": 6
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 1,
+          "n": 6
+        },
+        "chainMs": {
+          "median": 473.5,
+          "p80": 1814,
+          "n": 6
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "dd7200807fca5bbafa71ea3e3f9da0cc1ba7af7b000e55277ab64ef81579c97d",
+        "entryCount": 2,
+        "totalBytes": 13400,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792039075446/shadow-config-control/opencode/AGENTS.md",
+            "bytes": 11410,
+            "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792039075446/run-09-B-control/AGENTS.md",
+            "bytes": 1990,
+            "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 16337,
+        "cacheRead": 0,
+        "contextTokens": 16337
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "agentRoutingAvailable": true,
+          "toolCallLedgerAvailable": true,
+          "pairedRoutingParity": true
+        }
+      },
+      "pairRoutingParity": {
+        "status": "eligible",
+        "checks": {
+          "pairComplete": true,
+          "routeMatches": true,
+          "subagentCallsMatch": true
+        },
+        "controlRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "candidateRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "controlSubagentCalls": 1,
+        "candidateSubagentCalls": 1
+      }
+    },
+    {
+      "run": 10,
+      "scenario": "B",
+      "arm": "candidate",
+      "pair": 5,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-15T05:00:43.923Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 343876,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "ses_ec210de56ffe6nm23plVCuy745",
+      "modelRequested": "opencode-go/glm-5.3-flash",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "ses_ec210de56ffe6nm23plVCuy745",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "ses_ec20be67affeeZXPXqwe5NPNeV",
+            "parentId": "ses_ec210de56ffe6nm23plVCuy745",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "/tmp/f5-agents-20261015-cca6180/candidate-agents/zeus.md",
+        "bytes": 21808,
+        "sha256": "0ba6b120c557a483cb0c364b6f2cd8ebcd264ec0b1ef519dfdf19f0888c20c8b"
+      },
+      "root": {
+        "status": "ok",
+        "id": "ses_ec210de56ffe6nm23plVCuy745",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"glm-5.3-flash\",\"providerID\":\"opencode-go\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-10-B-candidate"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 130982,
+        "output": 12013,
+        "reasoning": 5155,
+        "cacheRead": 1865280,
+        "cacheWrite": 0,
+        "tokenMessages": 49,
+        "assistantMessages": 49,
+        "tokenFieldMessages": {
+          "input": 49,
+          "output": 49,
+          "reasoning": 49,
+          "cacheRead": 49,
+          "cacheWrite": 49
+        }
+      },
+      "toolCalls": {
+        "execute": 43,
+        "read": 1,
+        "subagent": 1,
+        "webfetch": 1,
+        "websearch": 1,
+        "write": 1
+      },
+      "hooks": {
+        "status": "ok",
+        "beforeCount": 48,
+        "afterCount": 48,
+        "beforeMs": {
+          "median": 24,
+          "p80": 25,
+          "n": 48
+        },
+        "afterMs": {
+          "median": 0,
+          "p80": 0,
+          "n": 48
+        },
+        "chainMs": {
+          "median": 808,
+          "p80": 1081,
+          "n": 48
+        },
+        "fallbackStartIso": null
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "bddbefd861260b7157263cb89afbf181ec69cf93c5376c19344f37e383afa959",
+        "entryCount": 2,
+        "totalBytes": 13400,
+        "entries": [
+          {
+            "path": "/tmp/opencode/bench-1792039075446/shadow-config-candidate/opencode/AGENTS.md",
+            "bytes": 11410,
+            "sha256": "797fb47ef83ee8d5aafaee37f2c9fcd8a56137210d0f4333fd9b0045d5753eb3"
+          },
+          {
+            "path": "/tmp/opencode/bench-1792039075446/run-10-B-candidate/AGENTS.md",
+            "bytes": 1990,
+            "sha256": "199ae5614ad5413fc14efc9cfb585383a7ef62fd360ac91c9aa27d033b37c6b0"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 14644,
+        "cacheRead": 0,
+        "contextTokens": 14644
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "agentRoutingAvailable": true,
+          "toolCallLedgerAvailable": true,
+          "pairedRoutingParity": true
+        }
+      },
+      "pairRoutingParity": {
+        "status": "eligible",
+        "checks": {
+          "pairComplete": true,
+          "routeMatches": true,
+          "subagentCallsMatch": true
+        },
+        "controlRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "candidateRoute": {
+          "status": "ok",
+          "rootAgent": "zeus",
+          "descendants": [
+            {
+              "parentDepth": 0,
+              "agent": "talos"
+            }
+          ]
+        },
+        "controlSubagentCalls": 1,
+        "candidateSubagentCalls": 1
+      }
+    }
+  ],
+  "summary": null,
+  "summaryByArm": {
+    "control": {
+      "runs": 5,
+      "eligible": 4,
+      "ineligible": 1,
+      "unavailable": 0,
+      "metrics": {
+        "runs": 4,
+        "completed": 4,
+        "failures": 0,
+        "failureReasons": [],
+        "wallMs": {
+          "median": 74833,
+          "p80": 211434,
+          "n": 4
+        },
+        "tokens": {
+          "status": "ok",
+          "input": 256861,
+          "output": 15937,
+          "cacheRead": 443520,
+          "cacheWrite": 0,
+          "perRunMedianInput": 53430,
+          "perRunMedianOutput": 3949.5,
+          "completeRuns": 4,
+          "completedRuns": 4
+        },
+        "toolCalls": {
+          "read": 4,
+          "subagent": 4,
+          "websearch": 9,
+          "write": 4,
+          "webfetch": 8
+        },
+        "childrenCount": 1,
+        "perScenario": {
+          "B": {
+            "runs": 4,
+            "completed": 4,
+            "failures": 0,
+            "wallMs": {
+              "median": 74833,
+              "p80": 211434
+            },
+            "firstRequest": {
+              "status": "ok",
+              "contextTokens": {
+                "median": 16337,
+                "p80": 16351,
+                "n": 4
+              },
+              "input": {
+                "median": 16337,
+                "p80": 16351,
+                "n": 4
+              },
+              "cacheRead": {
+                "median": 0,
+                "p80": 0,
+                "n": 4
+              },
+              "completeRuns": 4,
+              "completedRuns": 4
+            }
+          }
+        }
+      }
+    },
+    "candidate": {
+      "runs": 5,
+      "eligible": 4,
+      "ineligible": 1,
+      "unavailable": 0,
+      "metrics": {
+        "runs": 4,
+        "completed": 4,
+        "failures": 0,
+        "failureReasons": [],
+        "wallMs": {
+          "median": 97475,
+          "p80": 343876,
+          "n": 4
+        },
+        "tokens": {
+          "status": "ok",
+          "input": 292498,
+          "output": 25767,
+          "cacheRead": 2144704,
+          "cacheWrite": 0,
+          "perRunMedianInput": 59931.5,
+          "perRunMedianOutput": 5677,
+          "completeRuns": 4,
+          "completedRuns": 4
+        },
+        "toolCalls": {
+          "read": 6,
+          "subagent": 4,
+          "websearch": 5,
+          "write": 4,
+          "webfetch": 3,
+          "execute": 47
+        },
+        "childrenCount": 1,
+        "perScenario": {
+          "B": {
+            "runs": 4,
+            "completed": 4,
+            "failures": 0,
+            "wallMs": {
+              "median": 97475,
+              "p80": 343876
+            },
+            "firstRequest": {
+              "status": "ok",
+              "contextTokens": {
+                "median": 14644,
+                "p80": 14658,
+                "n": 4
+              },
+              "input": {
+                "median": 14644,
+                "p80": 14658,
+                "n": 4
+              },
+              "cacheRead": {
+                "median": 0,
+                "p80": 0,
+                "n": 4
+              },
+              "completeRuns": 4,
+              "completedRuns": 4
+            }
+          }
+        }
+      }
+    }
+  },
+  "pairRoutingParity": {
+    "1": {
+      "status": "ineligible",
+      "checks": {
+        "pairComplete": true,
+        "routeMatches": false,
+        "subagentCallsMatch": false
+      },
+      "controlRoute": {
+        "status": "ok",
+        "rootAgent": "zeus",
+        "descendants": [
+          {
+            "parentDepth": 0,
+            "agent": "talos"
+          }
+        ]
+      },
+      "candidateRoute": {
+        "status": "ok",
+        "rootAgent": "zeus",
+        "descendants": [
+          {
+            "parentDepth": 0,
+            "agent": "apollo"
+          },
+          {
+            "parentDepth": 0,
+            "agent": "talos"
+          }
+        ]
+      },
+      "controlSubagentCalls": 1,
+      "candidateSubagentCalls": 2
+    },
+    "2": {
+      "status": "eligible",
+      "checks": {
+        "pairComplete": true,
+        "routeMatches": true,
+        "subagentCallsMatch": true
+      },
+      "controlRoute": {
+        "status": "ok",
+        "rootAgent": "zeus",
+        "descendants": [
+          {
+            "parentDepth": 0,
+            "agent": "talos"
+          }
+        ]
+      },
+      "candidateRoute": {
+        "status": "ok",
+        "rootAgent": "zeus",
+        "descendants": [
+          {
+            "parentDepth": 0,
+            "agent": "talos"
+          }
+        ]
+      },
+      "controlSubagentCalls": 1,
+      "candidateSubagentCalls": 1
+    },
+    "3": {
+      "status": "eligible",
+      "checks": {
+        "pairComplete": true,
+        "routeMatches": true,
+        "subagentCallsMatch": true
+      },
+      "controlRoute": {
+        "status": "ok",
+        "rootAgent": "zeus",
+        "descendants": [
+          {
+            "parentDepth": 0,
+            "agent": "talos"
+          }
+        ]
+      },
+      "candidateRoute": {
+        "status": "ok",
+        "rootAgent": "zeus",
+        "descendants": [
+          {
+            "parentDepth": 0,
+            "agent": "talos"
+          }
+        ]
+      },
+      "controlSubagentCalls": 1,
+      "candidateSubagentCalls": 1
+    },
+    "4": {
+      "status": "eligible",
+      "checks": {
+        "pairComplete": true,
+        "routeMatches": true,
+        "subagentCallsMatch": true
+      },
+      "controlRoute": {
+        "status": "ok",
+        "rootAgent": "zeus",
+        "descendants": [
+          {
+            "parentDepth": 0,
+            "agent": "talos"
+          }
+        ]
+      },
+      "candidateRoute": {
+        "status": "ok",
+        "rootAgent": "zeus",
+        "descendants": [
+          {
+            "parentDepth": 0,
+            "agent": "talos"
+          }
+        ]
+      },
+      "controlSubagentCalls": 1,
+      "candidateSubagentCalls": 1
+    },
+    "5": {
+      "status": "eligible",
+      "checks": {
+        "pairComplete": true,
+        "routeMatches": true,
+        "subagentCallsMatch": true
+      },
+      "controlRoute": {
+        "status": "ok",
+        "rootAgent": "zeus",
+        "descendants": [
+          {
+            "parentDepth": 0,
+            "agent": "talos"
+          }
+        ]
+      },
+      "candidateRoute": {
+        "status": "ok",
+        "rootAgent": "zeus",
+        "descendants": [
+          {
+            "parentDepth": 0,
+            "agent": "talos"
+          }
+        ]
+      },
+      "controlSubagentCalls": 1,
+      "candidateSubagentCalls": 1
+    }
+  },
+  "schemaNotes": [
+    "Tokens come from the V2 session_message ledger (assistant rows, data.tokens), the same source as pantheon_cost; cache read/write from data.tokens.cache.",
+    "Child sessions resolved recursively via session_v2.parent_id with a visited set — each session counted once.",
+    "Runs share the global opencode.db (provider credentials live there), but every metric is scoped by the run root sessionID and the db is opened READ-ONLY; no db writes are ever performed.",
+    "Tool calls counted from assistant content parts with type=tool; only the tool NAME is read, never tool inputs.",
+    "Hook timings come from the [bench] lines the V2 plugin appends to .pantheon/logs/hooks.log (instrumentation-only change).",
+    "Per-run `instructions` is the D4 fidelity proof: the identity (path, bytes, sha256) of every instruction file the session actually loaded, read from instruction_state/instruction_blob. Content is never copied into the report.",
+    "Per-run `firstRequest` is the proxy that isolates the injected payload: the first assistant row's tokens.input + tokens.cache.read. Tree-total input is dominated by session-length variance; the payload only lands on the first request.",
+    "Paired root-agent runs use --agents-dir for the candidate and --control-agents-dir for the control (defaults to --agents-dir); root prompt identities are recorded per arm and per run.",
+    "Paired root-agent runs also replace host skills with --skills-dir; every skill fixture file is content-identified in meta.skillsDirFixture.",
+    "When --prompt-file is provided, the paired task text is read once before measurement and its repo-relative path, byte count, and SHA-256 are recorded in meta.promptFixture.",
+    "Paired summary metrics include completed runs only when the requested root matches the observed root, the root has no parent, D4 proves both configured global/project instruction fixtures were loaded, and (for candidates) childrenCount is zero with an available tool ledger showing no subagent attempt. Failed and ineligible runs remain in runs with reasons.",
+    "Artifact correctness is audited outside the timed interval using the pre-registered oracle; armAcceptance does not assert artifact correctness.",
+    "A metric the schema cannot provide is {status:\"unavailable\", reason} — never zero."
+  ]
+}
