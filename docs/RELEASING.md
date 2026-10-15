@@ -38,6 +38,9 @@ node scripts/versioning.mjs apply --notes  # pre-fill the promoted entry with
 node scripts/versioning.mjs apply --beta
 node scripts/versioning.mjs beta           # alias for apply --beta
 
+# Merge pending notes into an already-promoted candidate without a version bump
+node scripts/versioning.mjs changelog 1.6.0-beta.10
+
 # Generate release notes from conventional commits (lastTag..HEAD)
 node scripts/release-notes.mjs             # stable vX.Y.Z tags only
 node scripts/release-notes.mjs --draft     # last 30 commits, no tag lookup
@@ -58,7 +61,10 @@ npm install --prefix src/plugins/tui && npm run build --prefix src/plugins/tui
 `[Unreleased]` changelog section to a versioned entry. `apply --beta` (alias
 `beta`) does the same: it syncs the manifests to the next committed
 `X.Y.Z-beta.N` **and** promotes `[Unreleased]` to `## [vX.Y.Z-beta.N]`. Do not
-edit `CHANGELOG.md` by hand. Release validation also
+edit `CHANGELOG.md` by hand. When the target version section already exists,
+`versioning.mjs changelog <version>` merges `[Unreleased]` into that section
+and resets the template without advancing the package version or duplicating
+the release heading. Release validation also
 keeps the root pair (`package.json` + `package-lock.json`) and the TUI pair
 (`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`) in the
 same versioned inventory. The TUI is a root **workspace**, so CI installs both

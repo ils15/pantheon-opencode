@@ -596,6 +596,10 @@ pushes, merges, and tags never publish anything, and every validation gate is
 fail-closed: only an explicit PASS authorizes release evidence. See
 [docs/RELEASING.md](docs/RELEASING.md) for validation and recovery details.
 
+For a candidate whose release section already exists, maintain its notes with
+`node scripts/versioning.mjs changelog <version>`; this merges `[Unreleased]`
+into that version without advancing the package version.
+
 Release validation keeps each manifest with its lockfile: the root
 `package.json` + `package-lock.json` and the TUI
 `src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`. Both use

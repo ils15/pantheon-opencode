@@ -20,9 +20,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [v1.6.0-beta.10] - 2026-10-12
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
-
 ## 🆕 What's New
 
 - **Visible plan approval:** Zeus displays Athena's complete plan in the main
@@ -30,6 +27,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **OpenCode V2 Vision:** adds `vision_describe` using the live image-capable
   model catalog and OpenCode Zen authentication; relative image paths resolve
   from the active project directory.
+
+- **Menos contexto de instruções duplicadas no OpenCode V2:** regras comuns
+  entre as instruções globais e de projeto são emitidas uma vez, preservando
+  regras exclusivas. Na medição intercalada do beta-10 com OpenCode v2.0.29, o
+  proxy de contexto do primeiro request caiu 11,8%; input total e latência de
+  parede permanecem inconclusivos.
+
+## ⚠️ Known Issues
+
+- **Admissão de subagents no OpenCode V2:** no v2.0.29, `ctx.session.get()` não
+  expõe `agent` nem `parentID`. A autorização de subagents permanece fail-closed
+  até que a identidade do caller e o estado root possam ser comprovados por uma
+  fonte V2 confiável; até uma aresta permitida pode ser recusada nesse caso.
 
 ## [v1.6.0-beta.9] - 2026-10-12
 

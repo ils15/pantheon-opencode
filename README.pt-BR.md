@@ -365,6 +365,10 @@ de PR, push, merge e tag nunca publicam nada, e todos os gates de validação s�
 fail-closed: somente um PASS explícito autoriza release evidence. Consulte
 [docs/RELEASING.md](docs/RELEASING.md) para detalhes de validação e recuperação.
 
+Se a seção de uma versão candidata já existir, atualize as notas com
+`node scripts/versioning.mjs changelog <versão>`; o comando mescla `[Unreleased]`
+na versão indicada sem avançar o número do pacote.
+
 A validação mantém cada manifest junto do seu lockfile: o root
 `package.json` + `package-lock.json` e o TUI
 `src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`. Ambos usam

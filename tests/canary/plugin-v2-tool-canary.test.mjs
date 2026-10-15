@@ -158,6 +158,7 @@ const BINARY_AVAILABLE = (() => {
 })()
 
 const skipped = BINARY_AVAILABLE ? false : `opencode binary not found on PATH (${BIN})`
+const subagentAdmissionProbeEnabled = process.env.PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION === '1'
 
 // ─── hashline ref arithmetic (test-side, not host-side) ──────────────────
 
@@ -195,6 +196,7 @@ function makeSandbox() {
     cacheHome: join(root, 'xdg-cache'),
     targetFile: join(root, 'target.txt'),
     proofFile: join(root, 'tool-list.json'),
+    permissionProofFile: join(root, 'permission-events.jsonl'),
   }
   for (const dir of [
     sandbox.home,
@@ -348,6 +350,9 @@ async function startMockModel(scripts) {
         model: 'canary-model',
       }
       const scripted = turn % 2 === 1 && index < scripts.length
+      const step = scripted ? scripts[index] : undefined
+      const toolCall =
+        typeof step === 'string' ? { name: 'execute', arguments: { code: step } } : step
       const chunks = scripted
         ? [
             {
@@ -363,8 +368,8 @@ async function startMockModel(scripts) {
                         id: `call_tool_canary_${turn}`,
                         type: 'function',
                         function: {
-                          name: 'execute',
-                          arguments: JSON.stringify({ code: scripts[index] }),
+                          name: toolCall.name,
+                          arguments: JSON.stringify(toolCall.arguments),
                         },
                       },
                     ],
@@ -464,6 +469,10 @@ async function startHost(sandbox) {
       PANTHEON_TOOL_CANARY_PROOF: sandbox.proofFile,
       PANTHEON_VISION_MODEL: 'opencode-go/mimo-v2.6-flash',
       PANTHEON_OPENCODE_API_KEY: 'canary-key',
+      PANTHEON_HOOK_CANARY_PERMISSION_PROOF: sandbox.permissionProofFile,
+      ...(subagentAdmissionProbeEnabled
+        ? { OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: 'true' }
+        : {}),
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -575,7 +584,7 @@ async function startHost(sandbox) {
  *   - the `ctx.tool.list()` dump, taken on the first `execute.after`, by which
  *     point the real plugin's `tool.transform` has already run.
  */
-function writePlugins(sandbox, pluginSource) {
+function writePlugins(sandbox, pluginSource, { permissionProbe = false } = {}) {
   writeFileSync(join(sandbox.projectDir, '.opencode', 'plugins', 'real', 'index.ts'), pluginSource)
   writeFileSync(
     join(sandbox.projectDir, '.opencode', 'plugins', 'probe', 'index.ts'),
@@ -588,6 +597,9 @@ function writePlugins(sandbox, pluginSource) {
       '    if (!proof) return',
       '    const visionRequests = []',
       '    const escapedRequests = []',
+      '    const permissionResults = []',
+      '    const permissionEvents = []',
+      '    const promptEvents = []',
       '    const originalFetch = globalThis.fetch',
       '    const isZenUrl = (url) => url.includes("opencode.ai/zen/")',
       '    const isLoopback = (url) => url.includes("//127.0.0.1:") || url.includes("//localhost:") || url.includes("//[::1]:")',
@@ -620,12 +632,16 @@ function writePlugins(sandbox, pluginSource) {
       '        list: kind(ctx.tool && ctx.tool.list),',
       '      },',
       '      event: { subscribe: kind(ctx.event && ctx.event.subscribe) },',
-      '      permission: { hook: kind(ctx.permission && ctx.permission.hook) },',
+      '      permission: {',
+      '        hook: kind(ctx.permission && ctx.permission.hook),',
+      '        assert: kind(ctx.permission && ctx.permission.assert),',
+      '      },',
       '      session: {',
       '        hook: kind(ctx.session && ctx.session.hook),',
       '        create: kind(ctx.session && ctx.session.create),',
       '        generate: kind(ctx.session && ctx.session.generate),',
       '        remove: kind(ctx.session && ctx.session.remove),',
+      '        get: kind(ctx.session && ctx.session.get),',
       '      },',
       '      model: { list: kind(ctx.model && ctx.model.list) },',
       '      aisdk: {',
@@ -635,12 +651,76 @@ function writePlugins(sandbox, pluginSource) {
       '      generate: { text: kind(ctx.generate && ctx.generate.text) },',
       '      catalog: kind(ctx.catalog),',
       '    }',
+      "    await ctx.session.hook('prompt', async (event) => {",
+      '      promptEvents.push({',
+      '        keys: Object.keys(event ?? {}).sort(),',
+      '        sessionID: event?.sessionID,',
+      '        agent: event?.agent,',
+      '        parentID: event?.parentID,',
+      '      })',
+      '    })',
+      ...(permissionProbe
+        ? [
+            "    await ctx.permission.hook('evaluate', async (event) => {",
+            '      const permissionSession = typeof ctx.session?.get === "function" && typeof event.sessionID === "string"',
+            '        ? await ctx.session.get({ sessionID: event.sessionID })',
+            '        : null',
+            '      permissionEvents.push({',
+            '        sessionID: event.sessionID,',
+            '        agent: event.agent,',
+            '        resources: event.resources,',
+            '        effect: event.effect,',
+            '        message: event.message,',
+            '        session: permissionSession && {',
+            '          id: permissionSession.id,',
+            '          agent: permissionSession.agent,',
+            '          parentID: permissionSession.parentID,',
+            '          keys: Object.keys(permissionSession),',
+            '        },',
+            '      })',
+            '    })',
+            '    await ctx.tool.transform((draft) => {',
+            '      draft.add({',
+            "        name: 'permission_probe',",
+            "        description: 'Canary for the host permission assertion API',",
+            "        input: { type: 'object', properties: {}, additionalProperties: false },",
+            "        output: { type: 'object', properties: { output: { type: 'string' } }, required: ['output'], additionalProperties: false },",
+            '        async execute(_input, toolContext) {',
+            '          const source = { type: "tool", messageID: toolContext.messageID, id: toolContext.id }',
+            '          const session = await ctx.session.get({ sessionID: toolContext.sessionID })',
+            '          const sessionSummary = session && {',
+            '            id: session.id,',
+            '            agent: session.agent,',
+            '            parentID: session.parentID,',
+            '            keys: Object.keys(session),',
+            '          }',
+            '          const request = {',
+            '            sessionID: toolContext.sessionID,',
+            '            agent: toolContext.agent,',
+            '            action: "shell",',
+            '            resources: ["echo pantheon-permission-canary"],',
+            '            source,',
+            '          }',
+            '          try {',
+            '            await ctx.permission.assert(request)',
+            '            permissionResults.push({ decision: "allow", request, session: sessionSummary })',
+            '            return { output: JSON.stringify({ decision: "allow" }) }',
+            '          } catch (error) {',
+            '            const result = { decision: "reject", error: String(error?.message ?? error), request, session: sessionSummary }',
+            '            permissionResults.push(result)',
+            '            return { output: JSON.stringify(result) }',
+            '          }',
+            '        },',
+            '      })',
+            '    })',
+          ]
+        : []),
       "    await ctx.tool.hook('execute.after', async () => {",
       '      let toolList',
       '      try {',
       '        toolList = await ctx.tool.list()',
       '      } catch (err) {',
-      '        writeFileSync(proof, JSON.stringify({ domains, visionRequests, escapedRequests, listError: String(err) }, null, 2))',
+      '        writeFileSync(proof, JSON.stringify({ domains, visionRequests, escapedRequests, permissionResults, permissionEvents, promptEvents, listError: String(err) }, null, 2))',
       '        return',
       '      }',
       '      let models',
@@ -657,6 +737,9 @@ function writePlugins(sandbox, pluginSource) {
       '            domains,',
       '            visionRequests,',
       '            escapedRequests,',
+      '            permissionResults,',
+      '            permissionEvents,',
+      '            promptEvents,',
       '            models: Array.isArray(models)',
       '              ? models.map((model) => ({',
       '                  id: model.id,',
@@ -684,7 +767,16 @@ function writePlugins(sandbox, pluginSource) {
   )
 }
 
-function writeProjectConfig(sandbox, modelBaseURL) {
+function writeProjectConfig(
+  sandbox,
+  modelBaseURL,
+  {
+    permissionProbe = false,
+    subagentAdmissionProbe = false,
+    subagentCaller = 'athena',
+    subagentTarget = 'demeter',
+  } = {},
+) {
   writeFileSync(
     join(sandbox.projectDir, 'opencode.json'),
     JSON.stringify(
@@ -692,6 +784,44 @@ function writeProjectConfig(sandbox, modelBaseURL) {
         $schema: 'https://opencode.ai/config.json',
         // Each entry must be a DIRECTORY holding a real index.ts on 2.0.22.
         plugins: ['./.opencode/plugins/real', './.opencode/plugins/probe'],
+        ...(permissionProbe
+          ? {
+              policies: [
+                { action: 'tool.use', resource: 'shell:*', effect: 'allow' },
+                ...(subagentAdmissionProbe
+                  ? [
+                      { action: 'tool.use', resource: 'task:*', effect: 'allow' },
+                      { action: 'tool.use', resource: 'subagent:*', effect: 'allow' },
+                    ]
+                  : []),
+              ],
+            }
+          : {}),
+        ...(subagentAdmissionProbe
+          ? {
+              default_agent: subagentCaller,
+              permissions: [
+                { action: 'task', resource: '*', effect: 'allow' },
+                { action: 'subagent', resource: '*', effect: 'allow' },
+              ],
+              agents: {
+                [subagentCaller]: {
+                  mode: 'primary',
+                  system: 'Use the native subagent dispatch tool only for an authorized agent.',
+                  permissions: [
+                    { action: 'task', resource: '*', effect: 'allow' },
+                    { action: 'subagent', resource: '*', effect: 'allow' },
+                  ],
+                },
+                [subagentTarget]: {
+                  mode: 'subagent',
+                  description: `Isolated admission canary target ${subagentTarget}`,
+                  system: `Reply with ${subagentTarget.toUpperCase()}-CANARY-CHILD if you are started.`,
+                  permissions: [{ action: 'tool.use', resource: 'execute', effect: 'deny' }],
+                },
+              },
+            }
+          : {}),
         provider: {
           opencode: {
             npm: '@ai-sdk/openai-compatible',
@@ -851,6 +981,15 @@ function executeTexts(transcript) {
     )
 }
 
+/** Return host-rendered calls for one native tool. */
+function toolParts(transcript, toolName) {
+  const parsed = JSON.parse(transcript)
+  const messages = Array.isArray(parsed) ? parsed : (parsed?.data ?? [])
+  return messages
+    .flatMap((message) => message?.parts ?? message?.content ?? [])
+    .filter((part) => part?.type === 'tool' && (part.tool ?? part.name) === toolName)
+}
+
 /** Parse the JSON a Code Mode script returned. */
 function parseScriptResult(text) {
   const line = text.trim().split('\n').filter(Boolean).at(-1) ?? ''
@@ -885,7 +1024,15 @@ function visionExecuteText(transcript) {
  * and native Vision — so
  * the target file can be observed between the two calls.
  */
-async function runCanary(pluginSource) {
+async function runCanary(
+  pluginSource,
+  {
+    permissionProbe = false,
+    subagentAdmissionProbe = false,
+    subagentCaller = 'athena',
+    subagentTarget = 'demeter',
+  } = {},
+) {
   const sandbox = makeSandbox()
   writeFileSync(sandbox.targetFile, TARGET_BODY)
   const scripts = [
@@ -893,10 +1040,30 @@ async function runCanary(pluginSource) {
     badRefScript(sandbox.targetFile),
     goodRefScript(sandbox.targetFile),
     visionScript,
+    ...(permissionProbe
+      ? ['const result = await tools.permission_probe({});\nreturn JSON.stringify({ result });']
+      : []),
+    ...(subagentAdmissionProbe
+      ? [
+          {
+            name: 'subagent',
+            arguments: {
+              description: `V2 ${subagentCaller} to ${subagentTarget} admission canary`,
+              prompt: `Return ${subagentTarget.toUpperCase()}-CANARY-CHILD only.`,
+              agent: subagentTarget,
+            },
+          },
+        ]
+      : []),
   ]
   const model = await startMockModel(scripts)
-  writePlugins(sandbox, pluginSource)
-  writeProjectConfig(sandbox, model.baseURL)
+  writePlugins(sandbox, pluginSource, { permissionProbe })
+  writeProjectConfig(sandbox, model.baseURL, {
+    permissionProbe,
+    subagentAdmissionProbe,
+    subagentCaller,
+    subagentTarget,
+  })
 
   const observation = { sandbox }
   const host = await startHost(sandbox)
@@ -955,13 +1122,35 @@ async function runCanary(pluginSource) {
     observation.visionText = visionExecuteText(await host.transcript())
     observation.vision = parseScriptResult(observation.visionText)
 
+    if (permissionProbe) {
+      await host.prompt('exercise the V2 permission assertion canary')
+      observation.permissionText = executeTexts(await host.transcript()).at(-1) ?? ''
+      observation.permission = parseScriptResult(observation.permissionText)
+    }
+
+    if (subagentAdmissionProbe) {
+      await host.prompt(`dispatch a native subagent call to ${subagentTarget}`)
+      observation.taskTranscript = await host.transcript()
+      observation.subagentCalls = toolParts(observation.taskTranscript, 'subagent')
+    }
+
     observation.transcript = await host.transcript()
     observation.turns = model.turns()
     observation.modelRequests = model.requestSummary()
     observation.sessions = await host.sessions()
+    const sessionRows = Array.isArray(observation.sessions)
+      ? observation.sessions
+      : (observation.sessions?.data ?? [])
+    observation.childSessions = sessionRows.filter(
+      (session) => session?.parentID === host.sessionID,
+    )
     observation.observation = existsSync(sandbox.proofFile)
       ? JSON.parse(readFileSync(sandbox.proofFile, 'utf8'))
       : null
+    observation.rootSessionID = host.sessionID
+    observation.permissionProof = existsSync(sandbox.permissionProofFile)
+      ? readFileSync(sandbox.permissionProofFile, 'utf8')
+      : ''
   } finally {
     host.stop()
     model.close()
@@ -973,16 +1162,33 @@ async function runCanary(pluginSource) {
 
 let live = null
 let mutant = null
+let permissionLive = null
+let identityGapLive = null
 let rootsBefore = null
+const permissionProbeEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_PROBE === '1'
 
 before(async () => {
   rootsBefore = snapshotRealConfigRoots()
   if (skipped) return
   live = await runCanary(realPluginShim())
+  if (permissionProbeEnabled) {
+    permissionLive = await runCanary(realPluginShim(), {
+      permissionProbe: true,
+      subagentAdmissionProbe: process.env.PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION === '1',
+    })
+    if (process.env.PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION === '1') {
+      identityGapLive = await runCanary(realPluginShim(), {
+        permissionProbe: true,
+        subagentAdmissionProbe: true,
+        subagentCaller: 'zeus',
+        subagentTarget: 'apollo',
+      })
+    }
+  }
 })
 
 after(() => {
-  for (const observation of [live, mutant]) {
+  for (const observation of [live, mutant, permissionLive, identityGapLive]) {
     if (observation?.sandbox) rmSync(observation.sandbox.root, { recursive: true, force: true })
   }
 })
@@ -1039,6 +1245,7 @@ test('the host context exposes the V2 model and session APIs Pantheon needs', {
   assert.equal(domains.tool.list, 'function')
   assert.equal(domains.event.subscribe, 'function')
   assert.equal(domains.permission.hook, 'function')
+  assert.equal(domains.permission.assert, 'function')
   assert.equal(domains.session.hook, 'function')
   assert.equal(domains.model.list, 'function', 'native model catalog API is required for V2 Vision')
   assert.equal(domains.session.create, 'function')
@@ -1078,6 +1285,128 @@ test('the host context exposes the V2 model and session APIs Pantheon needs', {
       ? paidVisionModel.input.includes('image')
       : paidVisionModel.input?.image === true,
     `the live catalog did not mark Go MiMo as image-capable: ${JSON.stringify(paidVisionModel)}`,
+  )
+})
+
+test('ctx.permission.assert evaluates a real tool-origin request against host policies', {
+  skip: skipped || !permissionProbeEnabled,
+}, () => {
+  assert.ok(
+    permissionLive?.observation,
+    `no permission probe dump was written: ${permissionLive?.diagnose?.() ?? 'probe did not run'}`,
+  )
+  const result = permissionLive.observation.permissionResults?.at(-1)
+  assert.ok(result, 'permission_probe did not call ctx.permission.assert')
+  const expectedDecision = process.env.PANTHEON_TOOL_CANARY_PERMISSION_EXPECTED ?? 'reject'
+  assert.equal(
+    result.decision,
+    expectedDecision,
+    `host permission decision differed from ${expectedDecision}: ${JSON.stringify(result)}`,
+  )
+  if (expectedDecision === 'reject') {
+    assert.match(result.error, /Blocked by configuration policy/i)
+  } else {
+    assert.equal(result.error, undefined, 'an allowed request returned a rejection reason')
+  }
+  assert.equal(result.request.action, 'shell')
+  assert.deepEqual(result.request.resources, ['echo pantheon-permission-canary'])
+  assert.ok(result.request.sessionID, 'assert request omitted the live session ID')
+  assert.equal(typeof result.request.agent, 'string')
+  assert.equal(result.request.source.type, 'tool')
+  assert.equal(typeof result.request.source.messageID, 'string')
+  assert.equal(typeof result.request.source.id, 'string')
+})
+
+test('F4A rejects a disallowed V2 subagent dispatch without a persisted child or extra model request', {
+  skip: skipped || !permissionProbeEnabled || !subagentAdmissionProbeEnabled,
+}, () => {
+  const permissionRows = (permissionLive?.permissionProof ?? '')
+    .split('\n')
+    .filter((line) => line.startsWith('permission.evaluate '))
+    .map((line) => JSON.parse(line.slice('permission.evaluate '.length)))
+  const demeterDecisions = permissionRows.filter((event) =>
+    (Array.isArray(event.resources) ? event.resources : []).includes('demeter'),
+  )
+  const subagentCall = permissionLive.subagentCalls?.at(-1)
+  assert.ok(subagentCall, 'the host transcript did not contain the native subagent call')
+  assert.equal(subagentCall.state?.input?.agent, 'demeter', JSON.stringify(subagentCall))
+  assert.equal(subagentCall.state?.status, 'error', JSON.stringify(subagentCall))
+  assert.match(
+    String(subagentCall.state?.error?.message ?? ''),
+    /Pantheon delegation denied/i,
+    JSON.stringify(subagentCall),
+  )
+  assert.equal(demeterDecisions.length, 1, JSON.stringify(demeterDecisions))
+  const taskDecision = demeterDecisions[0]
+  assert.equal(taskDecision.agent, 'athena', JSON.stringify(taskDecision))
+  assert.equal(taskDecision.sessionID, permissionLive.rootSessionID, JSON.stringify(taskDecision))
+  assert.equal(taskDecision.effectBefore, 'allow', JSON.stringify(taskDecision))
+  assert.equal(taskDecision.effectAfter, 'deny', JSON.stringify(taskDecision))
+  assert.match(String(taskDecision.message), /^Pantheon delegation denied:/i)
+  const sessions = Array.isArray(permissionLive.sessions)
+    ? permissionLive.sessions
+    : (permissionLive.sessions?.data ?? [])
+  const sessionIDs = sessions.map((session) => session?.id ?? session?.sessionID)
+  assert.deepEqual(sessionIDs, [permissionLive.rootSessionID])
+  assert.equal(
+    permissionLive.turns,
+    12,
+    'denied subagent dispatch triggered an extra model request',
+  )
+})
+
+test('F4A fails closed when V2 session lookup omits authoritative delegation identity', {
+  skip: skipped || !subagentAdmissionProbeEnabled,
+}, () => {
+  assert.ok(identityGapLive, 'the identity-gap host run did not execute')
+  const probe = identityGapLive.observation?.permissionResults?.at(-1)
+  assert.ok(probe, 'permission_probe did not record the live session lookup')
+  assert.equal(probe.decision, 'allow', JSON.stringify(probe))
+  assert.equal(probe.request.agent, 'zeus')
+  assert.equal(probe.request.sessionID, identityGapLive.rootSessionID)
+  assert.equal(probe.session?.id, identityGapLive.rootSessionID)
+  assert.equal(probe.session?.agent, undefined)
+  assert.equal(probe.session?.parentID, undefined)
+  assert.ok(!probe.session?.keys?.includes('agent'), JSON.stringify(probe.session))
+  assert.ok(!probe.session?.keys?.includes('parentID'), JSON.stringify(probe.session))
+  const rootPromptEvents = (identityGapLive.observation?.promptEvents ?? []).filter(
+    (event) => event.sessionID === identityGapLive.rootSessionID,
+  )
+  assert.ok(rootPromptEvents.length > 0, 'session.hook(prompt) did not report the root session')
+  assert.equal(rootPromptEvents.at(-1)?.agent, undefined)
+  assert.equal(rootPromptEvents.at(-1)?.parentID, undefined)
+  assert.ok(!rootPromptEvents.at(-1)?.keys?.includes('agent'))
+  assert.ok(!rootPromptEvents.at(-1)?.keys?.includes('parentID'))
+
+  const permissionRows = (identityGapLive.permissionProof ?? '')
+    .split('\n')
+    .filter((line) => line.startsWith('permission.evaluate '))
+    .map((line) => JSON.parse(line.slice('permission.evaluate '.length)))
+  const apolloDecisions = permissionRows.filter((event) =>
+    (Array.isArray(event.resources) ? event.resources : []).includes('apollo'),
+  )
+  assert.equal(apolloDecisions.length, 1, JSON.stringify(apolloDecisions))
+  assert.equal(apolloDecisions[0].agent, 'zeus', JSON.stringify(apolloDecisions[0]))
+  assert.equal(apolloDecisions[0].sessionID, identityGapLive.rootSessionID)
+  assert.equal(apolloDecisions[0].effectBefore, 'allow')
+  assert.equal(apolloDecisions[0].effectAfter, 'deny')
+  assert.match(String(apolloDecisions[0].message), /^Pantheon delegation denied:/i)
+
+  const call = identityGapLive.subagentCalls?.at(-1)
+  assert.ok(call, 'the host transcript did not contain the native subagent call')
+  assert.equal(call.state?.input?.agent, 'apollo', JSON.stringify(call))
+  assert.equal(call.state?.status, 'error', JSON.stringify(call))
+  assert.match(String(call.state?.error?.message ?? ''), /Pantheon delegation denied/i)
+  const sessions = Array.isArray(identityGapLive.sessions)
+    ? identityGapLive.sessions
+    : (identityGapLive.sessions?.data ?? [])
+  const sessionIDs = sessions.map((session) => session?.id ?? session?.sessionID)
+  assert.deepEqual(sessionIDs, [identityGapLive.rootSessionID])
+  assert.equal(identityGapLive.childSessions.length, 0)
+  assert.equal(
+    identityGapLive.turns,
+    12,
+    'denied subagent dispatch triggered an extra model request',
   )
 })
 

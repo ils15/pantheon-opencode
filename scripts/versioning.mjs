@@ -24,6 +24,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { mergeUnreleasedIntoVersion } from './changelog-merge.mjs'
 import {
   commitPreparedUpdates,
   prepareInventoryVersion,
@@ -471,6 +472,17 @@ switch (command) {
   case 'changelog': {
     const version = arg || getCurrentVersion()
     const date = new Date().toISOString().slice(0, 10)
+    const currentChangelog = readFileSync(CHANGELOG_PATH, 'utf-8')
+    const mergePlan = mergeUnreleasedIntoVersion(currentChangelog, version)
+    if (mergePlan) {
+      if (mergePlan.changed) {
+        commitPreparedUpdates([{ path: CHANGELOG_PATH, content: mergePlan.content }])
+        console.log(`  ✓ CHANGELOG: merged [Unreleased] into existing [v${version}]`)
+      } else {
+        console.log(`  ✓ CHANGELOG: [Unreleased] is empty; [v${version}] unchanged`)
+      }
+      break
+    }
     const changelogPlan = prepareUnreleased(version, date)
     if (changelogPlan.changed) {
       commitPreparedUpdates([{ path: CHANGELOG_PATH, content: changelogPlan.content }])
@@ -492,7 +504,7 @@ Commands:
                        --beta: advance the committed X.Y.Z-beta.N line and
                        promote [Unreleased] → [vX.Y.Z-beta.N] in CHANGELOG
   beta                 Alias for 'apply --beta'
-  changelog [version]  Promote [Unreleased] → [vX.Y.Z] without bumping
+  changelog [version]  Promote [Unreleased], or merge into an existing version section
 
 Release flow (stable):
   1. node scripts/versioning.mjs apply [minor]
