@@ -139,7 +139,10 @@ test('council agreement is derived from visible responses, not first-round guess
   assert.match(councilSynthesis, /agreement_rate = agreeing_pairs \/ total_comparable_pairs/i)
   assert.match(councilSynthesis, /n\*\(n-1\)\/2/i)
   assert.match(councilSynthesis, /every unordered pair of specialists/i)
-  assert.match(councilSynthesis, /a pair agrees only when its substantive positions[\s\S]*compatible/i)
+  assert.match(
+    councilSynthesis,
+    /a pair agrees only when its substantive positions[\s\S]*compatible/i,
+  )
   assert.match(councilSynthesis, /unanimity is 100%, all pairs in divergence is 0%/i)
   assert.match(councilSynthesis, /exclude issues with fewer than two comparable positions/i)
   assert.match(
@@ -148,7 +151,10 @@ test('council agreement is derived from visible responses, not first-round guess
   )
   assert.match(councilSynthesis, /below 50%[\s\S]*only if no agent timed out[\s\S]*rebuttal/i)
   assert.match(councilSynthesis, /divergences[\s\S]*attribute each side to its agent/i)
-  assert.match(councilSynthesis, /consensus and agreements are derived by Zeus from compared substantive positions/i)
+  assert.match(
+    councilSynthesis,
+    /consensus and agreements are derived by Zeus from compared substantive positions/i,
+  )
   assert.doesNotMatch(councilSynthesis, /first-round specialists are dispatched in parallel/i)
   assert.match(returnContract, /Omit `agreement_signals` or write `none` in the first round/i)
   assert.match(returnContract, /whether dispatch is parallel or synchronous\/sequential/i)
@@ -156,7 +162,10 @@ test('council agreement is derived from visible responses, not first-round guess
   assert.doesNotMatch(returnContract, /First-round dispatches run in parallel/i)
   assert.match(returnContract, /never speculate or self-reference/i)
   assert.match(returnContract, /count alone as evidence or proof of confidence/i)
-  assert.match(returnContract, /Equal self-reported counts[\s\S]*do not by themselves prove fabrication/i)
+  assert.match(
+    returnContract,
+    /Equal self-reported counts[\s\S]*do not by themselves prove fabrication/i,
+  )
 })
 
 test('context compression relies on native compaction and explicit checkpoints', () => {
