@@ -8,8 +8,8 @@ Pantheon v1.6.0-beta.1 is **OpenCode 2-compatible**. `npx pantheon-opencode init
 # Instalar agentes Pantheon globalmente (a seleção de presets é V1 legacy)
 npx pantheon-opencode init
 
-# Headless (CI/scripts, usa defaults)
-npx pantheon-opencode init --headless
+# Headless (CI/scripts, usa defaults) — apply não-interativo exige --yes
+npx pantheon-opencode init --headless --yes
 
 # (Opcional) Servidores MCP + skills + plugin TUI
 npm run setup
@@ -302,7 +302,7 @@ V2 TUI entry does not imply the V1 runtime was loaded.
 - `inherit` (Q1) **não grava** arquivo — retorna `{preset:'inherit', scope:'project'}` e loga `Herança nativa: delegates herdam o modelo do chat pai`.
 
 ```bash
-# Interativo padrão (TTY → wizard; pipe → headless)
+# Interativo padrão (TTY → wizard; pipe → plano, exige --yes para aplicar)
 npx pantheon-opencode init
 
 # Forçar wizard mesmo em CI-like terminals
@@ -312,9 +312,9 @@ npx pantheon-opencode init --interactive
 npx pantheon-opencode init --preset go-fast
 npx pantheon-opencode init --preset openai --project
 
-# Headless (sem perguntas, usa defaults)
-npx pantheon-opencode init --headless
-npx pantheon-opencode init --headless --no-mcp  # sem Python/MCPs
+# Headless (sem perguntas, usa defaults; exige --yes para aplicar)
+npx pantheon-opencode init --headless --yes
+npx pantheon-opencode init --headless --yes --no-mcp  # sem Python/MCPs
 ```
 
 > Tabelas acima refletem `src/routing.yml` + `PRESET_PRICE` + `CAPABILITY_TABLE`.
@@ -346,7 +346,7 @@ que grava `visionModel` com o mesmo merge atômico do prompt de init.
 
 ```bash
 # 1. Install Pantheon agents globally
-npx pantheon-opencode init --headless
+npx pantheon-opencode init --headless --yes
 
 # 2. (Optional) Install MCP servers + skills + TUI plugin
 npm run setup
@@ -372,16 +372,16 @@ dispatch tool, status/cancel tools, completion tracking, or recovery.
 | Mode | Command | Installs | Time | Dependencies |
 |------|---------|----------|------|-------------|
 | **Interactive** 🎯 | `npx pantheon-opencode init` (default TTY) | seletor visual de componentes | ~variavel | Node.js 22.22.2+ |
-| **Minimal** 🟢 | `npx pantheon-opencode init --headless --no-mcp` | agents + commands | ~2s | None |
-| **Full** 🔵 | `npx pantheon-opencode init --headless` | agents + MCPs + skills + TUI | ~60s | Python 3.11+ |
+| **Minimal** 🟢 | `npx pantheon-opencode init --headless --yes --no-mcp` | agents + commands | ~2s | None |
+| **Full** 🔵 | `npx pantheon-opencode init --headless --yes` | agents + MCPs + skills + TUI | ~60s | Python 3.11+ |
 | **Runtime** 🟡 | `npm run setup` | MCP servers + venv | ~30s | Python 3.11+ |
 
 ```bash
-# Minimal — just the agent rules, no Python dependencies
-npx pantheon-opencode init --no-mcp
+# Minimal — just the agent rules, no Python dependencies (non-interactive)
+npx pantheon-opencode init --headless --yes --no-mcp
 
 # Full setup — agents + MCP servers (memory, persistence, resources, vision)
-npx pantheon-opencode init
+npx pantheon-opencode init --headless --yes
 
 # Add MCP servers to an existing minimal install
 npm run setup
@@ -706,10 +706,15 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 
 ### Headless / CI (sem TTY)
 
+> **Apply não-interativo exige `--yes`.** Sem TTY, `init` imprime o plano e
+> **não altera nada** sem `--yes` (alias `-y`). Exit codes: `0` ok/plan-only
+> (nada aplicado) · `2` apply pedido sem autorização · `3` drift (Fase 4) ·
+> `130` cancelado · `1` falha.
+
 ```bash
 # Preset explícito pula wizard (Q1/Q2/Q3)
-PANTHEON_OPENCODE_API_KEY=... npx pantheon-opencode init --headless --preset go-fast
-OPENAI_API_KEY=... npx pantheon-opencode init --headless --preset openai --project
+PANTHEON_OPENCODE_API_KEY=... npx pantheon-opencode init --headless --yes --preset go-fast
+OPENAI_API_KEY=... npx pantheon-opencode init --headless --yes --preset openai --project
 
 # Env override (vence arquivo) — útil em CI
 PANTHEON_MODEL_PRESET=go-premium opencode run "hello"

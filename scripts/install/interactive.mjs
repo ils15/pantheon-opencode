@@ -184,7 +184,7 @@ export async function promptConfirm(message, { default: def = true } = {}) {
       reject(new Error('Canceled'))
     }
 
-    function handler(_str, key) {
+    function handler(str, key) {
       if (!key) return
       if ((key.ctrl && key.name === 'c') || key.name === 'escape') {
         cancel()
@@ -206,6 +206,20 @@ export async function promptConfirm(message, { default: def = true } = {}) {
 
     process.stdin.on('keypress', handler)
   })
+}
+
+/**
+ * Apply-gate prompt. Unlike the pre-install confirm this defaults to NO, so a
+ * bare Enter never authorizes a write. In a non-TTY it returns the default
+ * (`false`) without blocking — callers that must not prompt at all should branch
+ * on TTY before calling.
+ *
+ * @param {string} planSummary e.g. "Apply these 12 changes?"
+ * @param {{ default?: boolean }} [opts]
+ * @returns {Promise<boolean>}
+ */
+export async function promptReview(planSummary, { default: def = false } = {}) {
+  return promptConfirm(planSummary, { default: def })
 }
 
 export async function promptList(options, { title = '' } = {}) {

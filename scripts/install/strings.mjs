@@ -47,6 +47,8 @@ const TABLE = {
     prereqMissing:
       'runtime prerequisites missing — install the tools above, or re-run with --no-mcp to install without Python MCP servers',
     v2Migrating: 'Migrating config to V2 native format...',
+    nothingApplied: 'Nothing applied.',
+    planOnlyNoYes: 'Plan only — re-run with --yes to apply.',
     // summary (printSummary)
     summaryInstalled: (target) => `OpenCode installed in ${target}`,
     summaryWithErrors: (target) => `Installation finished WITH ERRORS in ${target}`,
@@ -95,6 +97,8 @@ const TABLE = {
     prereqMissing:
       'pré-requisitos do runtime ausentes — instale as ferramentas acima, ou rode de novo com --no-mcp para instalar sem os MCPs Python',
     v2Migrating: 'Migrando config para o formato nativo V2...',
+    nothingApplied: 'Nada foi aplicado.',
+    planOnlyNoYes: 'Apenas o plano — rode de novo com --yes para aplicar.',
     // summary (printSummary)
     summaryInstalled: (target) => `OpenCode instalado em ${target}`,
     summaryWithErrors: (target) => `Instalação concluída COM ERROS em ${target}`,

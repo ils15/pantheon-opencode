@@ -52,6 +52,11 @@ opencode
 The installer guides you through the available setup. For optional MCP servers,
 project-local installation, or non-interactive setup, see the
 [installation guide](docs/INSTALLATION.md).
+
+A non-interactive apply requires `--yes` (alias `-y`): without a TTY and
+without `--yes`, `init` prints the change plan and applies nothing. Exit codes:
+`0` success or plan/no-apply, `1` failure, `2` apply requested without
+authorization, `3` drift (future), `130` canceled.
 The bundled Python MCP servers use the pinned MCP SDK 2.2.0 and standalone
 FastMCP 4.0.10 runtime; see the [MCP guide](docs/MCP.md).
 The installer also turns each agent's `mcp_tools` allowlist into native

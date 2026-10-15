@@ -431,3 +431,41 @@ test('cli: an idempotent runtime re-run previews manifest.json as unchanged', ()
     rmSync(xdg, { recursive: true, force: true })
   }
 })
+
+test('init without --yes (non-TTY) prints the plan, applies nothing and exits 2', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-noyes-'))
+  const home = mkdtempSync(join(tmpdir(), 'pantheon-noyes-home-'))
+  const xdg = mkdtempSync(join(tmpdir(), 'pantheon-noyes-xdg-'))
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        BIN,
+        'init',
+        '--project',
+        '--headless',
+        '--version',
+        'v1',
+        '--no-mcp',
+        '--components',
+        'agents,commands',
+      ],
+      {
+        cwd: target,
+        encoding: 'utf8',
+        timeout: 120_000,
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+      },
+    )
+    const output = `${result.stdout}\n${result.stderr}`
+    assert.equal(result.status, 2, `apply-without-authorization must exit 2:\n${output}`)
+    assert.match(output, /Change plan/, 'the plan is printed')
+    assert.match(output, /re-run with --yes/i)
+    assert.doesNotMatch(output, /installed!/, 'no success banner')
+    assert.deepEqual(readdirSync(target), [], 'nothing may be written')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true })
+    rmSync(xdg, { recursive: true, force: true })
+  }
+})

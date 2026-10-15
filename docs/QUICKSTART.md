@@ -14,16 +14,36 @@ release is **v1.6.0-beta.1**, the first beta compatible with OpenCode 2.
 # Interactive (default TTY) — component selection, progress spinners
 npx pantheon-opencode init
 
-# Headless mode — for CI and scripts
-npx pantheon-opencode init --headless
+# Headless mode — for CI and scripts (non-interactive apply requires --yes)
+npx pantheon-opencode init --headless --yes
 ```
 
 Flags:
 - `--interactive` — force interactive TUI even if piped
 - `--headless` — force non-interactive (default for CI)
-- `-y` / `--yes` — skip confirmations, use defaults
+- `-y` / `--yes` — skip confirmations, use defaults; **required for a non-interactive apply**
 - `--project` — install locally in `./.opencode/`
 - `--no-mcp` — skip Python/MCP setup
+
+### Non-interactive apply requires `--yes`
+
+Without a TTY, `init` prints the plan and **changes nothing** unless `--yes`
+(alias `-y`) is passed. It never prompts and never guesses.
+
+```bash
+npx pantheon-opencode init --headless          # prints the plan, applies nothing
+npx pantheon-opencode init --headless --yes    # applies
+```
+
+Exit codes:
+
+| Code | Meaning |
+|------|---------|
+| `0` | success, or plan-only / declined (nothing applied) |
+| `1` | failure |
+| `2` | apply requested without authorization (non-interactive, no `--yes`) |
+| `3` | drift detected (Phase 4) |
+| `130` | canceled |
 
 For MCP servers (memory, persistence) and TUI plugin:
 

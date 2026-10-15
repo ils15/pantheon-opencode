@@ -14,7 +14,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -190,6 +190,39 @@ test('install prunes Pantheon refs from stale install locations, keeps third-par
     )
     assert.ok(refs.includes('/tmp/vendor/src/plugin.ts'), 'third-party preserved')
     assert.ok(refs.includes('@scope/user-plugin'), 'user plugin preserved')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('apply gate: a declined prompt writes nothing and reports applied:false', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-gate-decline-'))
+  try {
+    const result = await installOpenCode(target, false, false, ['agents', 'commands'], {
+      headless: true,
+      version: 'v1',
+      deps: { promptReview: async () => false },
+    })
+    assert.equal(result.applied, false)
+    assert.equal(result.reason, 'declined')
+    assert.deepEqual(readdirSync(target), [], 'a declined run must write nothing')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('apply gate: an accepted prompt applies and reports applied:true', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-gate-accept-'))
+  try {
+    const result = await installOpenCode(target, false, false, ['agents', 'commands'], {
+      headless: true,
+      version: 'v1',
+      deps: { promptReview: async () => true },
+    })
+    assert.equal(result.applied, true)
+    assert.ok(existsSync(join(target, 'opencode.json')), 'an accepted run applies')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

@@ -122,9 +122,9 @@ export function pickBackupSet(configDir, from) {
  * @param {string} opts.backupDir
  * @param {boolean} [opts.dryRun]
  * @param {boolean} [opts.yes]
- * @returns {{ ok: boolean, code: number, entries?: object[] }}
+ * @returns {Promise<{ ok: boolean, code: number, entries?: object[] }>}
  */
-export function runRestore({ configDir, backupDir, dryRun = false, yes = false }) {
+export async function runRestore({ configDir, backupDir, dryRun = false, yes = false }) {
   const verify = verifyBackupSet(backupDir)
   if (!verify.ok) {
     console.error(
@@ -159,8 +159,19 @@ export function runRestore({ configDir, backupDir, dryRun = false, yes = false }
   }
 
   if (!yes) {
-    console.error('❌ Refusing to restore without authorization. Re-run with --yes.')
-    return { ok: false, code: 1 }
+    // Reuse the shared confirm semantics (default NO). An interactive TTY may
+    // authorize without --yes; a non-TTY run must never proceed silently.
+    const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY)
+    if (!tty) {
+      console.error('❌ Refusing to restore without authorization. Re-run with --yes.')
+      return { ok: false, code: 1 }
+    }
+    const { promptReview } = await import('./install/interactive.mjs')
+    const accepted = await promptReview('Restore these changes?', { default: false })
+    if (!accepted) {
+      console.log('  Nothing restored.')
+      return { ok: true, code: 0, entries: plan.entries }
+    }
   }
 
   // Reversible: snapshot the CURRENT state of exactly the affected paths first.
@@ -181,7 +192,7 @@ export function runRestore({ configDir, backupDir, dryRun = false, yes = false }
   return { ok: true, code: 0, entries: plan.entries }
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (args.help) {
     showHelp()
@@ -194,7 +205,7 @@ function main() {
     process.exitCode = 1
     return
   }
-  const result = runRestore({
+  const result = await runRestore({
     configDir,
     backupDir: backup.dir,
     dryRun: args.dryRun,
@@ -204,5 +215,8 @@ function main() {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main()
+  main().catch((err) => {
+    console.error(`❌ Restore failed: ${err instanceof Error ? err.message : String(err)}`)
+    process.exitCode = 1
+  })
 }

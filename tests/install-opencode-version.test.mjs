@@ -33,6 +33,7 @@ async function installConfig(existingConfig, version, extra = {}) {
   try {
     writeFileSync(join(target, 'opencode.json'), JSON.stringify(existingConfig, null, 2))
     await installOpenCode(target, false, false, NO_COMPONENTS, {
+      yes: true,
       headless: true,
       version,
       ...extra,
@@ -187,6 +188,7 @@ test('does not install or register TUI when the plugins component is omitted', a
   const target = mkdtempSync(join(tmpdir(), 'pantheon-no-plugins-'))
   try {
     await installOpenCode(target, false, false, NO_COMPONENTS, {
+      yes: true,
       headless: true,
       version: 'v1',
     })

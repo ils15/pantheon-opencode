@@ -76,6 +76,17 @@ function printUsage() {
   console.log('  npx pantheon-opencode uninstall --global    # Remove global artifacts safely')
   console.log('  npx pantheon-opencode --version, -v       # Print version and exit')
   console.log('  npx pantheon-opencode --help              # Show this help')
+  console.log('')
+  console.log('Apply authorization:')
+  console.log('  A non-interactive run without --yes prints the plan and applies NOTHING.')
+  console.log('  Re-run with --yes to apply; an interactive TTY run prompts (default: no).')
+  console.log('')
+  console.log('Exit codes:')
+  console.log('  0   success, or plan/no-apply (declined)')
+  console.log('  1   failure')
+  console.log('  2   apply was requested without authorization (non-interactive, no --yes)')
+  console.log('  3   drift detected (Phase 4)')
+  console.log('  130 canceled')
 }
 
 async function main() {
@@ -428,10 +439,11 @@ async function main() {
       console.log('')
     }
 
+    let result
     try {
       const { installOpenCode } = await import('../scripts/install/opencode.mjs')
       const target = isProject ? process.cwd() : undefined
-      await installOpenCode(target, isDryRun, forceReinstall, components, {
+      result = await installOpenCode(target, isDryRun, forceReinstall, components, {
         interactive: forceInteractive,
         headless: forceHeadless,
         yes: autoYes,
@@ -448,6 +460,20 @@ async function main() {
       }
       console.error(`${S.installFailed(err.message)}\n${S.failHintNoMcp}\n${S.failHintForce}`)
       process.exit(1)
+    }
+
+    // Beta 11 Setup phase 3: a run that did NOT apply (declined / unauthorized)
+    // must never print a success banner. Exit codes:
+    //   0 ok / no-apply · 2 apply-requested-without-authorization · 3 drift
+    //   (Phase 4) · 130 canceled · 1 failure.
+    if (!isDryRun && result?.applied === false) {
+      if (result.reason === 'not-authorized') process.exit(2)
+      if (result.reason === 'canceled') {
+        console.error(S.canceled)
+        process.exit(130)
+      }
+      // Declined: the gate already printed the no-apply notice.
+      process.exit(0)
     }
 
     if (runDoctor && !isDryRun) {

@@ -968,6 +968,8 @@ export async function installOpenCode(
   // Per-call baseline. `stats` is the module-level cumulative summary, so the
   // consistency guard must compare against THIS call's delta, not the total.
   const statsBefore = { created: stats.created, skipped: stats.skipped }
+  // Number of planned changes, filled by a dry plan pass (used by the gate).
+  let plannedChanges = 0
   const S = strings()
 
   // Beta 11 (Setup phase 1): a dry pass records every writer's intended change
@@ -1025,7 +1027,7 @@ export async function installOpenCode(
 
     if (!result.confirmed && !autoYes) {
       info('Installation canceled.')
-      return stats
+      return { ...stats, applied: false, reason: 'canceled' }
     }
 
     // Map target selection to actual path
@@ -1077,6 +1079,45 @@ export async function installOpenCode(
   const agentPrefix = isGlobal || version === 'v2' ? 'agents' : '.opencode/agents'
 
   configure({ dryRun })
+
+  // -----------------------------------------------------------------------
+  // Apply gate (Beta 11 Setup phase 3): applying requires explicit
+  // authorization. A declined / unauthorized run writes NOTHING and reports
+  // `{ applied: false }` so the caller never prints a success banner.
+  // -----------------------------------------------------------------------
+  const applyRequested = !dryRun
+  if (applyRequested && !autoYes) {
+    // Print the REAL plan first via a dry pass (writes nothing), then gate.
+    const savedStats = { ...stats }
+    let planned
+    try {
+      // Use the LIVE selection: the wizard above may have changed componentSet.
+      planned = await installOpenCode(target, true, clean, [...componentSet], {
+        ...opts,
+        planOnly: true,
+      })
+    } finally {
+      Object.assign(stats, savedStats)
+      // The plan pass left the UI in dry-run mode; restore this run's mode.
+      configure({ dryRun })
+    }
+    const injected = opts.deps?.promptReview
+    const canPrompt = typeof injected === 'function' || interactive
+    if (canPrompt) {
+      const { promptReview } = await import('./interactive.mjs')
+      const ask = typeof injected === 'function' ? injected : promptReview
+      const accepted = await ask(`Apply these ${planned?.planned ?? 0} changes?`, {
+        default: false,
+      })
+      if (!accepted) {
+        info(S.nothingApplied)
+        return { ...stats, applied: false, reason: 'declined' }
+      }
+    } else {
+      info(S.planOnlyNoYes)
+      return { ...stats, applied: false, reason: 'not-authorized' }
+    }
+  }
 
   // -----------------------------------------------------------------------
   // 0. Exact backup (Beta 11 Setup phase 2): preserve the CURRENT state of
@@ -1924,6 +1965,7 @@ export async function installOpenCode(
       recorder,
     )
     const plan = summarizeChanges(preview.entries)
+    plannedChanges = plan.totals.create + plan.totals.update + plan.totals.remove
     const statsDelta = {
       created: stats.created - statsBefore.created,
       skipped: stats.skipped - statsBefore.skipped,
@@ -1985,7 +2027,7 @@ export async function installOpenCode(
       `  ${colors.dim('\u2022')} Run 'opencode' to start using Pantheon agents\n`,
     )
     process.stdout.write('\n')
-  } else {
+  } else if (!opts.planOnly) {
     printSummary(target, ['opencode'], stats)
   }
 
@@ -2047,4 +2089,10 @@ export async function installOpenCode(
     }
     writeState(target, state)
   }
+
+  // Beta 11 Setup phase 3: report whether this call APPLIED, so the caller can
+  // avoid a success banner for a plan-only / unauthorized run.
+  return dryRun
+    ? { ...stats, applied: false, reason: 'plan', planned: plannedChanges }
+    : { ...stats, applied: true, reason: 'applied' }
 }
