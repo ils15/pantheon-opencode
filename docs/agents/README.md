@@ -1,26 +1,26 @@
 # Agent Reference — Pantheon
 
-This directory contains the definitions for all 14 Pantheon agents. Each agent is defined in a `.agent.md` file with YAML frontmatter specifying tools, model tier, capabilities, and delegation rules.
+This directory indexes the definitions for all 14 Pantheon agents. The canonical files live in `src/agents/` and use the `.md` extension; their frontmatter specifies tools, model tier, capabilities, and delegation rules.
 
 ## Agents
 
 | Agent | File | Role |
 |-------|------|------|
-| @zeus | [zeus.agent.md](zeus.agent.md) | Central orchestrator |
-| @athena | [athena.agent.md](athena.agent.md) | Strategic planner |
-| @apollo | [apollo.agent.md](apollo.agent.md) | Investigation scout |
-| @hermes | [hermes.agent.md](hermes.agent.md) | Backend specialist |
-| @aphrodite | [aphrodite.agent.md](aphrodite.agent.md) | Frontend specialist |
-| @demeter | [demeter.agent.md](demeter.agent.md) | Database specialist |
-| @themis | [themis.agent.md](themis.agent.md) | Quality & security gate |
-| @prometheus | [prometheus.agent.md](prometheus.agent.md) | Infrastructure specialist |
-| @hephaestus | [hephaestus.agent.md](hephaestus.agent.md) | AI pipelines |
-| @nyx | [nyx.agent.md](nyx.agent.md) | Observability |
-| @gaia | [gaia.agent.md](gaia.agent.md) | Remote sensing |
-| @iris | [iris.agent.md](iris.agent.md) | GitHub operations |
-| @mnemosyne | [mnemosyne.agent.md](mnemosyne.agent.md) | Memory bank |
-| @talos | [talos.agent.md](talos.agent.md) | Hotfix agent |
+| @zeus | [zeus.md](../../src/agents/zeus.md) | Central orchestrator |
+| @athena | [athena.md](../../src/agents/athena.md) | Strategic planner |
+| @apollo | [apollo.md](../../src/agents/apollo.md) | Investigation scout |
+| @hermes | [hermes.md](../../src/agents/hermes.md) | Backend specialist |
+| @aphrodite | [aphrodite.md](../../src/agents/aphrodite.md) | Frontend specialist |
+| @demeter | [demeter.md](../../src/agents/demeter.md) | Database specialist |
+| @themis | [themis.md](../../src/agents/themis.md) | Quality & security gate |
+| @prometheus | [prometheus.md](../../src/agents/prometheus.md) | Infrastructure specialist |
+| @hephaestus | [hephaestus.md](../../src/agents/hephaestus.md) | AI pipelines |
+| @nyx | [nyx.md](../../src/agents/nyx.md) | Observability |
+| @gaia | [gaia.md](../../src/agents/gaia.md) | Remote sensing |
+| @iris | [iris.md](../../src/agents/iris.md) | GitHub operations |
+| @mnemosyne | [mnemosyne.md](../../src/agents/mnemosyne.md) | Memory bank |
+| @talos | [talos.md](../../src/agents/talos.md) | Hotfix agent |
 
 ## Full Reference
 
-See [AGENTS.md](../../AGENTS.md) for the complete agent reference with roles, capabilities, and invocation patterns.
+See [AGENTS.global.md](../../AGENTS.global.md) for shared role summaries and the canonical files above for each agent's full contract.

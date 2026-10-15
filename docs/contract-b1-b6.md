@@ -25,7 +25,7 @@
 | **B3** | Permission shape contract | Formato canônico de permissões (`permission.task` + `read_only_agents` + schema) | `src/routing.yml`, `pantheon.schema.json` |
 | **B4** | Skills/commands metadata contract | Metadados de skills (`SKILL.md`) e commands | `src/skills/*/SKILL.md`, `commands/*.md` |
 | **B5** | Version contract | SemVer 1.x, `package.json` SSOT (cf. ADR-0007) | `package.json`, `plugin.json`, `pyproject.toml` |
-| **B6** | Quality gates contract | `planeja → implementa → checa → aprova → PR`; @themis audita cada gate | `AGENTS.md`, `src/instructions/*.instructions.md` |
+| **B6** | Quality gates contract | `planeja → implementa → checa → aprova → PR`; @themis audita cada gate | `AGENTS.md`, `AGENTS.global.md`, `src/instructions/*.instructions.md` |
 
 ## Thresholds (congelam pós-T1)
 

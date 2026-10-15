@@ -45,8 +45,9 @@ own file is the authoritative statement of the contract — read it there:
 checklist and the four verdicts](../src/agents/themis.md) are all defined in that file
 and are not repeated here.
 
-The role summary is carried in [AGENTS.md](../AGENTS.md) (generated — see
-[§2.7](#27-a-fifth-copy-the-agent-table-in-agentsmd)).
+The shared role summary is carried in [AGENTS.global.md](../AGENTS.global.md)
+(generated — see [§2.7](#27-the-agent-table-in-agentsglobalmd)). The project
+`AGENTS.md` contains repository setup only.
 
 ### 1.2 What the reviewer enforces, and what it does not
 
@@ -109,12 +110,11 @@ every pull request**, and a failing check fails the job. The residue is the trig
 list: the workflow has no `push:` trigger, so a commit pushed straight to `main` is
 ungated. Verified 2026-10-04 at `80bac52`.
 
-**Not enforced anywhere.** Everything the reviewer file asserts as a gate: the
-IntentGate comparison, the post-delegation check, layers 1–3, the coverage
-threshold, the "all tests pass" requirement, the deprecation check, and the
-verdicts themselves. Note also the inversion between the reviewer file and
-`AGENTS.md`/`biome.json`: the reviewer is told to check coverage, and the repository
-itself states that no coverage threshold is enforced.
+**Not enforced as a general review contract.** The repository has focused 80% gates
+for Python MCP code and the V2 TypeScript plugin, but they do not make the reviewer
+run or enforce every check in its prompt. The IntentGate comparison, post-delegation
+review, deprecation review, and verdict handling remain prompt-level. The broad Node
+coverage command is report-only; the focused gates are separate CI jobs.
 
 **Not enforced because it is not the reviewer's to own.** The reviewer definition
 requires the review to name a failing layer and blocks on it. Nothing in the
@@ -134,7 +134,7 @@ The project uses four verdict strings, defined in the reviewer file
 | `PASS_WITH_NOTES` | **No** | Approved, with suggested improvements. |
 
 The same four terms are reused as an output schema in the orchestrator's instructions
-(`/pantheon` command), and `PASS_WITH_NOTES`
+(`src/instructions/zeus-council-synthesis.instructions.md`), and `PASS_WITH_NOTES`
 carries the same non-blocking weight there.
 
 Two non-obvious consequences of this vocabulary:
@@ -445,36 +445,23 @@ something it should not: **`grep` for the tool name inside `permission:` in the
 agent's own file.** If it is not there, the installed config does not carry it, and
 no permission in this repository prevents the call.
 
-### 2.7 A fifth copy: the agent table in `AGENTS.md`
+### 2.7 The agent table in `AGENTS.global.md`
 
-Not one of the four, but it behaves like a layer and is more likely than any of them
-to be mistaken for the source. The agent table in `AGENTS.md` is a **hard-coded
-string literal** in the build script (`scripts/build-agents-md.mjs:39`), not a
-rendering of the agent files. Editing a `description` in `src/agents/*.md` does not
-change `AGENTS.md`, and the build check will not notice, because the table is not an
-input to the build.
+The shared role table lives in the generated [global artifact](../AGENTS.global.md),
+whose source is the static `GLOBAL_HEADER` string in
+`scripts/build-agents-md.mjs`. It is **not rendered from** `src/agents/*.md`; changing
+an agent's frontmatter or body will not change the table. The build check verifies the
+artifact against the generator, so it detects a stale generated file but does not
+compare the table with canonical agent definitions. The project `AGENTS.md` is a
+separate generated artifact for repository setup and conventions.
 
-A second-order consequence: `AGENTS.md` states a coverage minimum that no gate in
-this repository enforces.
-
-**A third generator exists, and it would drop the orchestrator.** It differs from the
-committed one on a detail that looks cosmetic and is not: `src/agents/zeus.md` is the
-**only** agent file whose frontmatter has no `name:` key. `scripts/install/agents-md.mjs`
-derives its table from agent frontmatter rather than hard-coding it, and
-`readCanonicalAgents()` pushes a file only when the parse succeeds — which is decided
-by the `!fm.name` guard (`scripts/install/agents-md.mjs:51`) and applied at the
-conditional push (`scripts/install/agents-md.mjs:94`). `zeus` is therefore dropped
-without warning, and the count interpolated into the prose
-(`scripts/install/agents-md.mjs:151`, "with ${agentCount} specialized agents") would be
-**13, with the orchestrator absent from the table** — the one agent that can delegate is
-the one erased.
-
-**The limit, stated plainly: it is CLI-only today.** No install path calls this
-generator; its only entry point is its own CLI
-(`scripts/install/agents-md.mjs:10`). The committed `AGENTS.md` is produced by the
-hard-coded builder in `scripts/build-agents-md.mjs`, which is why the committed table
-lists all 14 agents. So no user install is affected today — the defect is latent and
-becomes live the moment that generator is wired into an install.
+There is also a legacy generator, `scripts/install/agents-md.mjs`, whose dynamic
+frontmatter parser would omit Zeus because `src/agents/zeus.md` has no `name:` field.
+Repository search finds no importer or installer path for that script; it remains a
+packaged standalone script with its own CLI interface. The active build and installer use
+`scripts/build-agents-md.mjs`, which emits both project and global artifacts and keeps
+all 14 agents in the shared table. Keep the legacy CLI behavior distinct from the
+active generation path when reviewing references to agent tables.
 
 ---
 
@@ -741,11 +728,10 @@ Surfaced, not resolved. Each row names the layers and what each one says.
 | 7 | `docs/INSTALLATION.md`'s V2 config example vs the migration output | The documented example shows a rule shape keyed on the tool with an allowed-agent list (`docs/INSTALLATION.md:179`); the converter emits a shape keyed on an action with a resource and an effect (`scripts/install/config-migration.mjs:33`). One of the two is stale. |
 | 8 | `docs/INSTALLATION.md`'s V2 MCP example vs the MCP converter | The example shows the wrapper form; the converter's own comment says the host rejects that wrapper and normalises it away (`scripts/install/config-migration.mjs:243`). The example contradicts the code. |
 | 9 | Routing matrix vs board path | The matrix is enforced on the native path only. The board path enforces a concurrency cap and no permissions ([§3.2](#32-who-may-delegate-to-whom)). |
-| 10 | Orchestrator's documented wave size vs the board's concurrency cap | The instructions describe waves of up to five (`src/agents/zeus.md:154`); the board caps running jobs **per agent** at three (`src/pantheon/shared-board.ts:25`; `getRunningCount(agent)`, `src/pantheon/background-job-board.ts:512`). Above the cap, the mirror is dropped silently and the extra job is untracked. **The disagreement is real, but the documented wave pattern cannot trip it:** that example dispatches to six *distinct* agents, and council synthesis caps itself at 3 specialists (`commands/pantheon.md`), so no documented wave puts four jobs on one agent. Two things do reach the cap — four concurrent dispatches to the **same** agent, or accumulated jobs stuck in `running`, since every eviction path filters to terminal/reconciled only (`pruneExpired`, `src/pantheon/background-job-board.ts:630`; `pruneCompleted`, `:677`; `enforceEntryCap`, `:695`). A stuck job therefore holds its slot until the process restarts. |
+| 10 | Orchestrator's documented wave size vs the board's concurrency cap | The instructions describe waves of up to five (`src/agents/zeus.md:154`); the board caps running jobs **per agent** at three (`src/pantheon/shared-board.ts:25`; `getRunningCount(agent)`, `src/pantheon/background-job-board.ts:512`). Above the cap, the mirror is dropped silently and the extra job is untracked. **The disagreement is real, but the documented wave pattern cannot trip it:** that example dispatches to six *distinct* agents, and council synthesis caps itself at 3 specialists (`src/instructions/zeus-council-synthesis.instructions.md:107`), so no documented wave puts four jobs on one agent. Two things do reach the cap — four concurrent dispatches to the **same** agent, or accumulated jobs stuck in `running`, since every eviction path filters to terminal/reconciled only (`pruneExpired`, `src/pantheon/background-job-board.ts:630`; `pruneCompleted`, `:677`; `enforceEntryCap`, `:695`). A stuck job therefore holds its slot until the process restarts. |
 | 11 | Orchestrator's depth rule vs the plugin's depth rule | Two independent depth mechanisms: a key-value counter in the instructions (`src/agents/zeus.md:189`) and a parent-child session hierarchy in the plugin (`src/pantheon/delegation-enforce.ts:353`). The plugin's is the enforced one. |
-| 12 | `AGENTS.md` agent table vs the agent files | Hard-coded literal, not generated from the files ([§2.7](#27-a-fifth-copy-the-agent-table-in-agentsmd)). |
-| 13 | `AGENTS.md` coverage minimum vs the coverage script | `AGENTS.md` states a minimum; the repository's own coverage script states that no threshold is enforced. |
-| 14 | Agent-file index links vs the files on disk | The agent reference index links each agent to a `.agent.md` filename, resolved relative to itself (`docs/agents/README.md:9`); the canonical files carry the plain `.md` extension and live in `src/agents/`. All 14 links are dead — no `.agent.md` file exists anywhere in the repository, and `docs/agents/` contains only its own README. **No CI job catches it:** the docs workflow triggers only on a `v*` tag push or `workflow_dispatch` (`.github/workflows/docs.yml:4`) and runs no link check, so nothing in CI or in the docs build ever resolves these targets. |
+| 12 | `AGENTS.global.md` role table vs canonical agent files | Static generator string, not rendered from canonical definitions ([§2.7](#27-the-agent-table-in-agentsglobalmd)). |
+| 13 | Broad coverage report vs focused coverage gates | `npm run coverage` is report-only; Python MCP and V2 plugin coverage each have separate 80% CI gates. |
 
 **Rows 7 and 8 name stale examples in a document this one does not fix.** Both were
 re-verified for this revision and are still stale as of `80bac52`: the `permissions`
@@ -787,12 +773,12 @@ as a dated fact: it is enforced per pull request, and ungated only for direct pu
 
 Where another document is authoritative, this one defers to it:
 
-- Agent roles, capabilities and invocation — [AGENTS.md](../AGENTS.md)
+- Shared role summary — [AGENTS.global.md](../AGENTS.global.md); canonical capabilities — [`src/agents/`](../src/agents/)
 - Reviewer contract, layers, verdicts — the reviewer agent's own file
 - Delegation engine contract and its removal — [README](README.md)
 - Install, generation pinning, background delegation setup — [INSTALLATION](INSTALLATION.md)
 - Per-generation behaviour differences and the V2 enforcement gap — [UPGRADING](UPGRADING.md)
 - Design rationale for delegation, sync and memory tiers — [ARCHITECTURE](ARCHITECTURE.md)
 - Orchestrator protocol: timeouts, fallback chains, the subtask decision tree,
-  session reuse — the orchestrator's instructions, consolidated into `AGENTS.md`
+  session reuse — the orchestrator's instructions, consolidated into `AGENTS.global.md`
 - Per-agent model routing — [reference/model-routing.md](reference/model-routing.md)

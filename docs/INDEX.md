@@ -12,7 +12,7 @@
 | **Quick start / Install** | [INSTALLATION.md](INSTALLATION.md) |
 | **Which platform to pick** | [PLATFORMS.md](PLATFORMS.md) |
 | **What is enforced, and by which layer** | [PERMISSIONS-QUALITY-DELEGATION.md](PERMISSIONS-QUALITY-DELEGATION.md) |
-| **Agent reference** | [AGENTS.md](../AGENTS.md) |
+| **Agent reference** | [AGENTS.global.md](../AGENTS.global.md), [canonical agent files](../src/agents/) |
 | **MCP tiers & tools** | [mcp-tools.md](mcp-tools.md), [mcp-user-guide.md](mcp-user-guide.md) |
 | **Release process** | [RELEASING.md](RELEASING.md) |
 | **Contributing** | [CONTRIBUTING.md](../CONTRIBUTING.md) |
