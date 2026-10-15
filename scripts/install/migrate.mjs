@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ACTIONS, recordChange, snapshot } from './plan.mjs'
 import { createInitialState, readState, writeState } from './state.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -44,10 +45,10 @@ export function detectVersion(target) {
  *
  * @param {string} target - Installation directory
  * @param {string|null} currentVersion - Detected version (null = fresh install)
- * @param {{ dryRun?: boolean }} [options]
+ * @param {{ dryRun?: boolean, recorder?: (change: object) => void }} [options]
  * @returns {{ applied: number, messages: string[] }}
  */
-export function runMigrations(target, currentVersion, { dryRun = false } = {}) {
+export function runMigrations(target, currentVersion, { dryRun = false, recorder = null } = {}) {
   const applied = []
   const semver = parseSemver(currentVersion)
 
@@ -104,28 +105,46 @@ export function runMigrations(target, currentVersion, { dryRun = false } = {}) {
   }
 
   // ── Write updated state ───────────────────────────────────────────
-  if (applied.length > 0 && !dryRun) {
-    const newVersion = formatSemver(semver)
-    let state = readState(target)
-    if (!state) state = createInitialState(newVersion)
-    state.pantheon_version = newVersion
-    for (const m of applied) {
-      state.applied_migrations.push({
-        from: m.from,
-        to: m.to,
-        applied_at: new Date().toISOString(),
-        status: 'completed',
-      })
-    }
-    if (!state.components) {
-      state.components = {
-        agents: { version: 1, status: 'installed' },
-        skills: { version: 1, status: 'installed' },
-        plugins: { version: 1, status: 'installed' },
-        runtime: { version: 1, status: 'installed' },
+  if (applied.length > 0) {
+    const statePath = join(target, '.pantheon', 'install-state.json')
+    if (dryRun) {
+      // State-only bookkeeping write: recorded so the preview is complete, but
+      // unscored because the install summary does not count it. Classified as
+      // an update — a migration that applies implies a state file existed.
+      recordChange({ path: statePath, action: ACTIONS.UPDATE, bytes: 0, scored: false }, recorder)
+    } else {
+      const newVersion = formatSemver(semver)
+      let state = readState(target)
+      const stateExisted = state !== null
+      if (!state) state = createInitialState(newVersion)
+      state.pantheon_version = newVersion
+      for (const m of applied) {
+        state.applied_migrations.push({
+          from: m.from,
+          to: m.to,
+          applied_at: new Date().toISOString(),
+          status: 'completed',
+        })
       }
+      if (!state.components) {
+        state.components = {
+          agents: { version: 1, status: 'installed' },
+          skills: { version: 1, status: 'installed' },
+          plugins: { version: 1, status: 'installed' },
+          runtime: { version: 1, status: 'installed' },
+        }
+      }
+      writeState(target, state)
+      recordChange(
+        {
+          path: statePath,
+          action: stateExisted ? ACTIONS.UPDATE : ACTIONS.CREATE,
+          bytes: snapshot(statePath).size,
+          scored: false,
+        },
+        recorder,
+      )
     }
-    writeState(target, state)
   }
 
   return {

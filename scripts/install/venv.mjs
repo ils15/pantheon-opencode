@@ -14,6 +14,8 @@ import { existsSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { ACTIONS, recordChange } from './plan.mjs'
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..', '..')
 
@@ -40,10 +42,13 @@ export function venvPythonPath(target) {
  * Set up a Python virtual environment and install MCP dependencies.
  *
  * @param {string} target - Target installation directory (e.g. ~/.config/opencode)
- * @param {{ dryRun?: boolean, skipInstall?: boolean, force?: boolean }} [options]
+ * @param {{ dryRun?: boolean, skipInstall?: boolean, force?: boolean, recorder?: (change: object) => void }} [options]
  * @returns {{ venvPath: string, python: string }}
  */
-export function setupVenv(target, { dryRun = false, skipInstall = false, force = false } = {}) {
+export function setupVenv(
+  target,
+  { dryRun = false, skipInstall = false, force = false, recorder = null } = {},
+) {
   const venvPath = join(target, '.venv')
   const pythonBin = venvPythonPath(target)
 
@@ -57,7 +62,8 @@ export function setupVenv(target, { dryRun = false, skipInstall = false, force =
   }
 
   // Step 1b: Create venv if not exists
-  if (!existsSync(pythonBin)) {
+  const venvExists = existsSync(pythonBin)
+  if (!venvExists) {
     if (!dryRun) {
       console.log('  Creating .venv...')
       const result = spawnSync('python3', ['-m', 'venv', venvPath], {
@@ -69,8 +75,12 @@ export function setupVenv(target, { dryRun = false, skipInstall = false, force =
       }
     }
     console.log('  ✅ .venv created')
+    // A single synthetic entry for the venv directory — never enumerate its
+    // thousands of files. Unscored: the install summary does not count it.
+    recordChange({ path: venvPath, action: ACTIONS.CREATE, bytes: 0, scored: false }, recorder)
   } else {
     console.log('  ⏭️  .venv already exists')
+    recordChange({ path: venvPath, action: ACTIONS.UNCHANGED, bytes: 0, scored: false }, recorder)
   }
 
   // Step 2: Install MCP dependencies

@@ -36,6 +36,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { ACTIONS, isRecording, recordChange } from './install/plan.mjs'
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 export const ROOT = join(__dirname, '..')
 const INSTRUCTIONS_DIR = join(ROOT, 'src', 'instructions')
@@ -323,16 +325,26 @@ export function generateProjectAgentsMd(git = readGitInfo()) {
  * @param {boolean} [dryRun=false] - Do not write when true
  * @returns {'created' | 'skipped' | 'updated' | 'upgraded' | 'merged'}
  */
-export function writeAgentsMdManaged(filePath, generated, dryRun = false) {
+export function writeAgentsMdManaged(filePath, generated, dryRun = false, recorder = null) {
   const existing = existsSync(filePath) ? readFileSync(filePath, 'utf8') : null
   if (existing === null) {
     if (!dryRun) {
       mkdirSync(dirname(filePath), { recursive: true })
       writeFileSync(filePath, generated, 'utf8')
     }
+    recordChange(
+      { path: filePath, action: ACTIONS.CREATE, bytes: Buffer.byteLength(generated, 'utf8') },
+      recorder,
+    )
     return 'created'
   }
-  if (existing === generated) return 'skipped'
+  if (existing === generated) {
+    recordChange(
+      { path: filePath, action: ACTIONS.UNCHANGED, bytes: Buffer.byteLength(existing, 'utf8') },
+      recorder,
+    )
+    return 'skipped'
+  }
 
   const begin = existing.indexOf(MANAGED_BEGIN)
   const end = existing.indexOf(MANAGED_END)
@@ -340,22 +352,41 @@ export function writeAgentsMdManaged(filePath, generated, dryRun = false) {
     const before = existing.slice(0, begin)
     const after = existing.slice(end + MANAGED_END.length)
     const next = `${before}${generated}${after}`
-    if (next === existing) return 'skipped'
+    if (next === existing) {
+      recordChange(
+        { path: filePath, action: ACTIONS.UNCHANGED, bytes: Buffer.byteLength(existing, 'utf8') },
+        recorder,
+      )
+      return 'skipped'
+    }
     if (!dryRun) writeFileSync(filePath, next, 'utf8')
+    recordChange(
+      { path: filePath, action: ACTIONS.UPDATE, bytes: Buffer.byteLength(next, 'utf8') },
+      recorder,
+    )
     return before.trim() === '' && after.trim() === '' ? 'updated' : 'merged'
   }
 
   if (existing.startsWith(GENERATED_BY)) {
     // Legacy format: the header declares the whole file machine-generated.
     if (!dryRun) writeFileSync(filePath, generated, 'utf8')
+    recordChange(
+      { path: filePath, action: ACTIONS.UPDATE, bytes: Buffer.byteLength(generated, 'utf8') },
+      recorder,
+    )
     return 'upgraded'
   }
 
   // Foreign content: preserve it verbatim and append the managed region.
+  const separator = existing.endsWith('\n') ? '\n' : '\n\n'
+  const payload = `${existing}${separator}${generated}`
   if (!dryRun) {
-    const separator = existing.endsWith('\n') ? '\n' : '\n\n'
-    writeFileSync(filePath, `${existing}${separator}${generated}`, 'utf8')
+    writeFileSync(filePath, payload, 'utf8')
   }
+  recordChange(
+    { path: filePath, action: ACTIONS.UPDATE, bytes: Buffer.byteLength(payload, 'utf8') },
+    recorder,
+  )
   return 'merged'
 }
 
@@ -423,9 +454,16 @@ export function generateAgentPrompt(agentName, prompt, instructions = readInstru
  * @param {string} targetDir - OpenCode agents directory
  * @param {boolean} dryRun - Do not write when true
  * @param {boolean} existingOnly - Refresh installed prompts without adding missing agents
+ * @param {(change: object) => void} [recorder] - optional change recorder for --dry-run preview
  * @returns {{ created: number, skipped: number }}
  */
-export function copyAgentPrompts(sourceDir, targetDir, dryRun = false, existingOnly = false) {
+export function copyAgentPrompts(
+  sourceDir,
+  targetDir,
+  dryRun = false,
+  existingOnly = false,
+  recorder = null,
+) {
   const instructions = readInstructions()
   if (!dryRun && !existingOnly) mkdirSync(targetDir, { recursive: true })
   let created = 0
@@ -443,9 +481,25 @@ export function copyAgentPrompts(sourceDir, targetDir, dryRun = false, existingO
     const existing = existsSync(targetPath) ? readFileSync(targetPath, 'utf8') : null
     if (existing === output) {
       skipped++
+      if (isRecording(recorder)) {
+        recordChange(
+          { path: targetPath, action: ACTIONS.UNCHANGED, bytes: Buffer.byteLength(output, 'utf8') },
+          recorder,
+        )
+      }
     } else {
       if (!dryRun) writeFileSync(targetPath, output, 'utf8')
       created++
+      if (isRecording(recorder)) {
+        recordChange(
+          {
+            path: targetPath,
+            action: existing === null ? ACTIONS.CREATE : ACTIONS.UPDATE,
+            bytes: Buffer.byteLength(output, 'utf8'),
+          },
+          recorder,
+        )
+      }
     }
   }
   return { created, skipped }

@@ -27,6 +27,8 @@ if (parseInt(process.versions.node.split('.')[0], 10) < REQUIRED_NODE_MAJOR) {
 
 import { dump, load } from 'js-yaml'
 
+import { ACTIONS, isRecording, recordChange } from './plan.mjs'
+
 export const __dirname = dirname(fileURLToPath(import.meta.url))
 export const ROOT = join(__dirname, '..', '..')
 export const AGENTS_DIR = join(ROOT, 'src', 'agents')
@@ -311,10 +313,18 @@ function readFileOrNull(filePath) {
  * @param {(existing: string|null) => void} [options.beforeSwap] - runs after the
  *   expected-content checks pass and immediately before the rename, so side
  *   effects that must not fire on a conflict (e.g. the `.bak` copy) live here.
+ * @param {(change: object) => void} [options.recorder] - optional change
+ *   recorder. When supplied, the outcome is recorded (path + action + byte
+ *   size only) so `--dry-run` can print the real per-file plan. Defaults to
+ *   the module-level no-op singleton, so an uninstrumented caller is
+ *   byte-identical to before.
+ * @param {boolean} [options.scored] - set `false` when this write is not part
+ *   of the install summary (e.g. stale-ref cleanup), so it is shown in the plan
+ *   but excluded from the consistency guard.
  * @returns {'created'|'skipped'|'conflict'}
  */
 export function writeIfChanged(filePath, content, dryRun, options = {}) {
-  const { expectedContent, beforeSwap, beforeRecheck } = options
+  const { expectedContent, beforeSwap, beforeRecheck, recorder, scored } = options
 
   // Refuse to write through/over a symlink. A dangling symlink is invisible to
   // existsSync, and rename-over-link would replace the link rather than its
@@ -325,12 +335,29 @@ export function writeIfChanged(filePath, content, dryRun, options = {}) {
   }
 
   const existing = stat === null ? null : readFileOrNull(filePath)
+  const record = (outcome) => {
+    if (!isRecording(recorder)) return
+    const action =
+      outcome === 'conflict'
+        ? ACTIONS.CONFLICT
+        : outcome === 'skipped'
+          ? ACTIONS.UNCHANGED
+          : existing === null
+            ? ACTIONS.CREATE
+            : ACTIONS.UPDATE
+    recordChange(
+      { path: filePath, action, bytes: Buffer.byteLength(content, 'utf8'), scored },
+      recorder,
+    )
+  }
   if (existing === content) {
+    record('skipped')
     return 'skipped'
   }
   if (expectedContent !== undefined && existing !== expectedContent) {
     // The file changed since the caller read it (or appeared/disappeared).
     // Do not clobber the newer content; the caller decides how to react.
+    record('conflict')
     return 'conflict'
   }
   if (!dryRun) {
@@ -352,6 +379,7 @@ export function writeIfChanged(filePath, content, dryRun, options = {}) {
       const current = readFileOrNull(filePath)
       if (current !== expectedContent) {
         rmSync(tmpPath, { force: true })
+        record('conflict')
         return 'conflict'
       }
     }
@@ -359,6 +387,7 @@ export function writeIfChanged(filePath, content, dryRun, options = {}) {
     if (typeof beforeSwap === 'function') beforeSwap(existing)
     renameSync(tmpPath, filePath)
   }
+  record('created')
   return 'created'
 }
 
@@ -382,6 +411,7 @@ export function writeConfigWithBackup(filePath, content, dryRun, options = {}) {
   return writeIfChanged(filePath, content, dryRun, {
     expectedContent: options.expectedContent,
     beforeRecheck: options.beforeRecheck,
+    recorder: options.recorder,
     beforeSwap: (existing) => {
       if (existing === null) return
       try {
@@ -455,7 +485,7 @@ export function serializeFm(fm) {
   })
 }
 
-export function installSkills(skills, target, dryRun, subDir = '.opencode') {
+export function installSkills(skills, target, dryRun, subDir = '.opencode', recorder = null) {
   const srcSkillsDir = join(ROOT, 'src', 'skills')
   const dstSkillsDir = join(target, subDir, 'skills')
 
@@ -481,9 +511,29 @@ export function installSkills(skills, target, dryRun, subDir = '.opencode') {
           const existing = existsSync(dstPath) ? readFileSync(dstPath, 'utf8') : null
           if (existing === content) {
             skipped++
+            if (isRecording(recorder)) {
+              recordChange(
+                {
+                  path: dstPath,
+                  action: ACTIONS.UNCHANGED,
+                  bytes: Buffer.byteLength(content, 'utf8'),
+                },
+                recorder,
+              )
+            }
           } else {
             if (!dryRun) writeFileSync(dstPath, content, 'utf8')
             created++
+            if (isRecording(recorder)) {
+              recordChange(
+                {
+                  path: dstPath,
+                  action: existing === null ? ACTIONS.CREATE : ACTIONS.UPDATE,
+                  bytes: Buffer.byteLength(content, 'utf8'),
+                },
+                recorder,
+              )
+            }
           }
         }
       }
@@ -504,6 +554,9 @@ export function installSkills(skills, target, dryRun, subDir = '.opencode') {
           console.log(`    🗑️  Removed stale skill: ${entry}`)
         }
         created++
+        // A stale removal increments `created` (a change), so it must also be
+        // recorded or the preview would under-report on a non-fresh target.
+        recordChange({ path: dstPath, action: ACTIONS.REMOVE, bytes: 0 }, recorder)
       }
     }
   }
@@ -511,7 +564,7 @@ export function installSkills(skills, target, dryRun, subDir = '.opencode') {
   return { created, skipped }
 }
 
-export function syncDir(src, dst, dryRun, clean = false, filter = null) {
+export function syncDir(src, dst, dryRun, clean = false, filter = null, recorder = null) {
   if (!existsSync(src)) return { created: 0, skipped: 0 }
   let created = 0
   let skipped = 0
@@ -530,7 +583,7 @@ export function syncDir(src, dst, dryRun, clean = false, filter = null) {
     const srcPath = join(src, entry)
     const dstPath = join(dst, entry)
     if (statSync(srcPath).isDirectory()) {
-      const sub = syncDir(srcPath, dstPath, dryRun, false, filter)
+      const sub = syncDir(srcPath, dstPath, dryRun, false, filter, recorder)
       created += sub.created
       skipped += sub.skipped
     } else {
@@ -538,9 +591,25 @@ export function syncDir(src, dst, dryRun, clean = false, filter = null) {
       const existing = existsSync(dstPath) ? readFileSync(dstPath, 'utf8') : null
       if (existing === content) {
         skipped++
+        if (isRecording(recorder)) {
+          recordChange(
+            { path: dstPath, action: ACTIONS.UNCHANGED, bytes: Buffer.byteLength(content, 'utf8') },
+            recorder,
+          )
+        }
       } else {
         if (!dryRun) writeFileSync(dstPath, content, 'utf8')
         created++
+        if (isRecording(recorder)) {
+          recordChange(
+            {
+              path: dstPath,
+              action: existing === null ? ACTIONS.CREATE : ACTIONS.UPDATE,
+              bytes: Buffer.byteLength(content, 'utf8'),
+            },
+            recorder,
+          )
+        }
       }
     }
   }

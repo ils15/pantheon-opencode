@@ -17,9 +17,14 @@ import { ROOT, writeIfChanged } from './shared.mjs'
  * @param {object} [options]
  * @param {boolean} [options.dryRun=false] - If true, don't write files
  * @param {'v1'|'v2'} [options.version='v1'] - Host plugin generation
+ * @param {(change: object) => void} [options.recorder] - optional change recorder for preview
  * @returns {{ created: number, skipped: number }}
  */
-export function copyPluginFiles(srcDir, dstDir, { dryRun = false, version = 'v1' } = {}) {
+export function copyPluginFiles(
+  srcDir,
+  dstDir,
+  { dryRun = false, version = 'v1', recorder = null } = {},
+) {
   const result = { created: 0, skipped: 0 }
 
   if (!dryRun) mkdirSync(dstDir, { recursive: true })
@@ -36,7 +41,7 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false, version = 'v1'
   if (existsSync(distSrc)) {
     for (const f of readdirSync(distSrc)) {
       const c = readFileSync(join(distSrc, f), 'utf8')
-      const status = writeIfChanged(join(dstDir, 'dist', f), c, dryRun)
+      const status = writeIfChanged(join(dstDir, 'dist', f), c, dryRun, { recorder })
       if (status === 'created') result.created++
       else result.skipped++
     }
@@ -53,6 +58,7 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false, version = 'v1'
       join(dstDir, 'package.json'),
       `${JSON.stringify(packageJson, null, 2)}\n`,
       dryRun,
+      { recorder },
     )
     if (pkgStatus === 'created') result.created++
     else result.skipped++
@@ -65,6 +71,7 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false, version = 'v1'
       join(dstDir, 'tui.ts'),
       readFileSync(tuiEntrySrc, 'utf8'),
       dryRun,
+      { recorder },
     )
     if (entryStatus === 'created') result.created++
     else result.skipped++
@@ -77,6 +84,7 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false, version = 'v1'
       v2ServerDestination,
       readFileSync(v2ServerEntry, 'utf8'),
       dryRun,
+      { recorder },
     )
     if (entryStatus === 'created') result.created++
     else result.skipped++
@@ -92,6 +100,7 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false, version = 'v1'
       join(dstDir, 'package-lock.json'),
       readFileSync(lockSrc, 'utf8'),
       dryRun,
+      { recorder },
     )
     if (lockStatus === 'created') result.created++
     else result.skipped++
@@ -107,12 +116,13 @@ export function copyPluginFiles(srcDir, dstDir, { dryRun = false, version = 'v1'
  * @param {object} [options]
  * @param {boolean} [options.dryRun=false] - If true, don't write files
  * @param {boolean} [options.clean=false] - If true, remove existing before install
+ * @param {(change: object) => void} [options.recorder] - optional change recorder for preview
  * @returns {{ created: number, skipped: number, errors: number }}
  */
 export function installPlugin(
   srcDir,
   dstDir,
-  { dryRun = false, clean = false, version = 'v1' } = {},
+  { dryRun = false, clean = false, version = 'v1', recorder = null } = {},
 ) {
   const result = { created: 0, skipped: 0, errors: 0 }
 
@@ -120,7 +130,7 @@ export function installPlugin(
     rmSync(dstDir, { recursive: true, force: true })
   }
 
-  const copyResult = copyPluginFiles(srcDir, dstDir, { dryRun, version })
+  const copyResult = copyPluginFiles(srcDir, dstDir, { dryRun, version, recorder })
   result.created += copyResult.created
   result.skipped += copyResult.skipped
 
@@ -150,9 +160,10 @@ export function installPluginDependencies(pluginDir, { dryRun = false } = {}) {
  * @param {string} pluginId - Plugin identifier string
  * @param {object} [options]
  * @param {boolean} [options.dryRun=false]
+ * @param {(change: object) => void} [options.recorder] - optional change recorder for preview
  * @returns {'created'|'skipped'}
  */
-export function registerPlugin(tuiJsonPath, pluginId, { dryRun = false } = {}) {
+export function registerPlugin(tuiJsonPath, pluginId, { dryRun = false, recorder = null } = {}) {
   let tuiConfig = { plugin: [] }
   if (existsSync(tuiJsonPath)) {
     try {
@@ -168,7 +179,7 @@ export function registerPlugin(tuiJsonPath, pluginId, { dryRun = false } = {}) {
     tuiConfig.plugin.push(pluginId)
   }
   const tuiContent = `${JSON.stringify(tuiConfig, null, 2)}\n`
-  return writeIfChanged(tuiJsonPath, tuiContent, dryRun)
+  return writeIfChanged(tuiJsonPath, tuiContent, dryRun, { recorder })
 }
 
 /**
@@ -256,12 +267,14 @@ export function staleTuiRefs(pluginArray, knownPantheonPaths = []) {
  * @param {string} pluginId - Plugin to unregister
  * @param {object} [options]
  * @param {boolean} [options.dryRun=false]
+ * @param {string[]} [options.knownPantheonPaths=[]]
+ * @param {(change: object) => void} [options.recorder] - optional change recorder for preview
  * @returns {'created'|'skipped'}
  */
 export function unregisterPlugin(
   tuiJsonPath,
   pluginId,
-  { dryRun = false, knownPantheonPaths = [] } = {},
+  { dryRun = false, knownPantheonPaths = [], recorder = null } = {},
 ) {
   if (!existsSync(tuiJsonPath)) {
     // Nothing to clean — and never create an empty tui.json in a location
@@ -292,5 +305,6 @@ export function unregisterPlugin(
     return !isPantheonTuiRef(ref, knownPantheonPaths)
   })
   const tuiContent = `${JSON.stringify(tuiConfig, null, 2)}\n`
-  return writeIfChanged(tuiJsonPath, tuiContent, dryRun)
+  // Stale-ref cleanup is not part of the install summary, so record it unscored.
+  return writeIfChanged(tuiJsonPath, tuiContent, dryRun, { recorder, scored: false })
 }

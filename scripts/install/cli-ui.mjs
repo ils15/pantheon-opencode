@@ -33,7 +33,12 @@ export function configure(opts = {}) {
   if (opts.dryRun !== undefined) _dryRun = opts.dryRun
 }
 
-function tag(msg) {
+/**
+ * Prefix a message with the `[DRY-RUN]` marker while a dry run is configured.
+ * Exported so callers that print through raw `console.log` (e.g. the per-file
+ * change plan) stay consistent with every other dry-run line.
+ */
+export function tag(msg) {
   return _dryRun ? `[DRY-RUN] ${msg}` : msg
 }
 

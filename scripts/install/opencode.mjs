@@ -33,6 +33,7 @@ import {
   spinner,
   step,
   success,
+  tag,
   warning,
 } from './cli-ui.mjs'
 import {
@@ -43,6 +44,16 @@ import {
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
 import { resolveOpenCodeVersion } from './opencode-version.mjs'
+import {
+  ACTIONS,
+  createRecorder,
+  formatChangePlan,
+  isRecording,
+  NOOP_RECORDER,
+  planStatsMismatch,
+  recordChange,
+  summarizeChanges,
+} from './plan.mjs'
 import { copyPluginFiles, installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
 import {
   checkRuntimePrerequisites,
@@ -210,30 +221,40 @@ function deepClone(value) {
 
 /**
  * (Re)generate the code-mode manifest with SHA-256 digests for every bundled
- * script. This is the explicit installation opt-in: the MCP server only
- * executes scripts listed here whose on-disk hash matches. Missing or empty
- * directories approve nothing (0) — execution is never implicit.
+ * script, and write it to the destination. This is the explicit installation
+ * opt-in: the MCP server only executes scripts listed here whose on-disk hash
+ * matches. Missing or empty source approves nothing — execution is never
+ * implicit.
+ *
+ * This function is the SINGLE owner of `manifest.json`: `syncDir` deliberately
+ * excludes it (see the runtime block), so exactly one writer and one stats
+ * count exist for that path. The payload is derived from the SOURCE scripts
+ * (what will be installed), then compared against the CURRENT installed
+ * manifest, so the preview action matches what apply writes — including on a
+ * script upgrade, where the installed manifest is stale.
+ *
+ * @returns {{ approved: number, status: 'created'|'skipped'|'conflict'|null }}
  */
-function writeCodeModeManifest(dir, dryRun) {
-  if (!existsSync(dir)) return 0
+function writeCodeModeManifest(srcDir, dstDir, dryRun, recorder = null) {
+  if (!existsSync(srcDir)) return { approved: 0, status: null }
   let names
   try {
-    names = readdirSync(dir)
+    names = readdirSync(srcDir)
       .filter((name) => /\.(sh|py)$/i.test(name) && !name.startsWith('.'))
       .sort()
   } catch {
-    return 0
+    return { approved: 0, status: null }
   }
-  if (names.length === 0) return 0
+  if (names.length === 0) return { approved: 0, status: null }
   const scripts = {}
   for (const name of names) {
     scripts[name] = createHash('sha256')
-      .update(readFileSync(join(dir, name)))
+      .update(readFileSync(join(srcDir, name)))
       .digest('hex')
   }
   const payload = `${JSON.stringify({ version: 1, scripts }, null, 2)}\n`
-  writeIfChanged(join(dir, 'manifest.json'), payload, dryRun)
-  return names.length
+  const status = writeIfChanged(join(dstDir, 'manifest.json'), payload, dryRun, { recorder })
+  return { approved: names.length, status }
 }
 
 function readJsonConfig(filePath) {
@@ -594,11 +615,12 @@ export function tuiConfigLocations(target) {
  * @param {object} [opts]
  * @param {boolean} [opts.isGlobal=false] - flat global layout vs .opencode/
  * @param {boolean} [opts.dryRun=false]
+ * @param {(change: object) => void} [opts.recorder] - optional change recorder for preview
  * @returns {'created'|'skipped'} status for the target registration
  */
 export function syncTuiRegistration(
   target,
-  { isGlobal = false, dryRun = false, version = 'v1' } = {},
+  { isGlobal = false, dryRun = false, version = 'v1', recorder = null } = {},
 ) {
   const configDir = isGlobal ? target : join(target, '.opencode')
   const targetTuiConfigPath = join(configDir, 'tui.json')
@@ -608,7 +630,7 @@ export function syncTuiRegistration(
   const tuiSrcDir = join(ROOT, 'src', 'plugins', 'tui')
   const tuiCopyDir = resolveTuiCopyTarget(configDir)
   if (existsSync(tuiSrcDir)) {
-    copyPluginFiles(tuiSrcDir, tuiCopyDir, { dryRun, version })
+    copyPluginFiles(tuiSrcDir, tuiCopyDir, { dryRun, version, recorder })
   }
 
   // 2. Clean stale Pantheon TUI refs from every location OpenCode reads.
@@ -621,6 +643,7 @@ export function syncTuiRegistration(
     unregisterPlugin(tuiConfigPath, 'plugins/pantheon-tui', {
       dryRun,
       knownPantheonPaths: [ownedCopy, tuiCopyDir],
+      recorder,
     })
   }
 
@@ -630,7 +653,7 @@ export function syncTuiRegistration(
   if (version === 'v2') return 'skipped'
 
   // 3. Register the copied directory in the selected target only.
-  return registerPlugin(targetTuiConfigPath, tuiCopyDir, { dryRun })
+  return registerPlugin(targetTuiConfigPath, tuiCopyDir, { dryRun, recorder })
 }
 
 /**
@@ -639,13 +662,18 @@ export function syncTuiRegistration(
  * MCP entries from the config (entries pointing at a missing venv would
  * make every MCP fail to launch). `deps` is injectable for tests.
  */
-export function setupRuntimePhase(target, { dryRun, clean, isGlobal }, stats, deps = {}) {
+export function setupRuntimePhase(
+  target,
+  { dryRun, clean, isGlobal, recorder = null },
+  stats,
+  deps = {},
+) {
   const S = strings()
   const setup = deps.setupVenv ?? setupVenv
   const check = deps.healthCheck ?? healthCheck
   try {
     const venvSpinner = spinner(S.settingUpRuntime)
-    setup(target, { dryRun, force: clean })
+    setup(target, { dryRun, force: clean, recorder })
     venvSpinner(true)
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
     const health = check(runtimeTarget, { dryRun, pythonTarget: target })
@@ -772,7 +800,17 @@ export async function installOpenCode(
 
   const componentSet = new Set(components)
   const stats = summary.opencode
+  // Per-call baseline. `stats` is the module-level cumulative summary, so the
+  // consistency guard must compare against THIS call's delta, not the total.
+  const statsBefore = { created: stats.created, skipped: stats.skipped }
   const S = strings()
+
+  // Beta 11 (Setup phase 1): a dry pass records every writer's intended change
+  // so we can print the REAL per-file plan without writing anything. The
+  // recorder defaults to a module-level no-op, so a non-dry run (and any
+  // uninstrumented caller) stays byte-identical.
+  const preview = dryRun && !opts.recorder ? createRecorder() : null
+  const recorder = opts.recorder ?? preview?.recorder ?? NOOP_RECORDER
 
   // V1/V2 dual-version awareness (Phase 3): the installer builds a unified
   // config, then applies V2-native migration (migrateV1toV2) when
@@ -898,7 +936,7 @@ export async function installOpenCode(
           rmSync(join(dstDir, f), { recursive: true, force: true })
         }
       }
-      const { created, skipped } = copyAgentPrompts(srcDir, dstDir, dryRun)
+      const { created, skipped } = copyAgentPrompts(srcDir, dstDir, dryRun, false, recorder)
       stats.created += created
       stats.skipped += skipped
       agentStep(true)
@@ -912,7 +950,9 @@ export async function installOpenCode(
     const srcRouting = join(ROOT, 'src', 'routing.yml')
     const dstRouting = join(target, 'routing.yml')
     if (existsSync(srcRouting)) {
-      const routingStatus = writeIfChanged(dstRouting, readFileSync(srcRouting, 'utf8'), dryRun)
+      const routingStatus = writeIfChanged(dstRouting, readFileSync(srcRouting, 'utf8'), dryRun, {
+        recorder,
+      })
       if (routingStatus === 'created') stats.created++
       else stats.skipped++
     }
@@ -939,6 +979,7 @@ export async function installOpenCode(
         target,
         dryRun,
         installSubDir,
+        recorder,
       )
       stats.created += sCreated
       stats.skipped += sSkipped
@@ -960,7 +1001,7 @@ export async function installOpenCode(
     const dstAgentsMd = join(target, 'AGENTS.md')
     if (existsSync(srcAgentsMd)) {
       const content = readFileSync(srcAgentsMd, 'utf8')
-      const status = writeAgentsMdManaged(dstAgentsMd, content, dryRun)
+      const status = writeAgentsMdManaged(dstAgentsMd, content, dryRun, recorder)
       if (status === 'skipped') stats.skipped++
       else {
         stats.created++
@@ -982,7 +1023,7 @@ export async function installOpenCode(
       const installedAgents = join(target, agentPrefix)
       const sourceAgents = join(ROOT, 'src', 'agents')
       if (existsSync(installedAgents) && existsSync(sourceAgents)) {
-        const refreshed = copyAgentPrompts(sourceAgents, installedAgents, dryRun, true)
+        const refreshed = copyAgentPrompts(sourceAgents, installedAgents, dryRun, true, recorder)
         stats.created += refreshed.created
         stats.skipped += refreshed.skipped
       }
@@ -997,7 +1038,7 @@ export async function installOpenCode(
     const srcPrompts = join(ROOT, 'prompts')
     const dstPrompts = join(target, 'prompts')
     if (existsSync(srcPrompts)) {
-      const promptsResult = syncDir(srcPrompts, dstPrompts, dryRun, clean)
+      const promptsResult = syncDir(srcPrompts, dstPrompts, dryRun, clean, null, recorder)
       stats.created += promptsResult.created
       stats.skipped += promptsResult.skipped
     }
@@ -1015,7 +1056,7 @@ export async function installOpenCode(
     const commandDir = isGlobal || version === 'v2' ? 'commands' : '.opencode/commands'
     const dstCmds = join(target, commandDir)
     if (existsSync(srcCmds)) {
-      const cmdResult = syncDir(srcCmds, dstCmds, dryRun, clean, (f) => f.endsWith('.md'))
+      const cmdResult = syncDir(srcCmds, dstCmds, dryRun, clean, (f) => f.endsWith('.md'), recorder)
       stats.created += cmdResult.created
       stats.skipped += cmdResult.skipped
     }
@@ -1038,7 +1079,12 @@ export async function installOpenCode(
     const dstPluginDir = isGlobal
       ? join(target, 'plugins', 'pantheon-tui')
       : join(target, '.opencode', 'plugins', 'pantheon-tui')
-    const pluginStats = installPlugin(srcPluginDir, dstPluginDir, { dryRun, clean, version })
+    const pluginStats = installPlugin(srcPluginDir, dstPluginDir, {
+      dryRun,
+      clean,
+      version,
+      recorder,
+    })
     stats.created += pluginStats.created
     stats.skipped += pluginStats.skipped
     stats.errors += pluginStats.errors
@@ -1050,7 +1096,7 @@ export async function installOpenCode(
   if (componentSet.has('plugins')) {
     let tuiStatus
     try {
-      tuiStatus = syncTuiRegistration(target, { isGlobal, dryRun, version })
+      tuiStatus = syncTuiRegistration(target, { isGlobal, dryRun, version, recorder })
     } catch (cause) {
       error(`TUI plugin setup failed: ${cause.message}`)
       stats.errors++
@@ -1108,7 +1154,7 @@ export async function installOpenCode(
       }
       const content = readFileSync(src, 'utf8')
       const dst = join(dstScriptsDir, script)
-      const status = writeIfChanged(dst, content, dryRun)
+      const status = writeIfChanged(dst, content, dryRun, { recorder })
       if (status === 'created') {
         stats.created++
         // Make executable
@@ -1126,7 +1172,9 @@ export async function installOpenCode(
     const visionRequirements = join(ROOT, 'src', 'mcp', 'requirements-vision.txt')
     if (existsSync(visionRequirements)) {
       const destination = join(runtimeTarget, 'requirements-vision.txt')
-      const status = writeIfChanged(destination, readFileSync(visionRequirements, 'utf8'), dryRun)
+      const status = writeIfChanged(destination, readFileSync(visionRequirements, 'utf8'), dryRun, {
+        recorder,
+      })
       if (status === 'created') stats.created++
       else stats.skipped++
     } else {
@@ -1138,7 +1186,17 @@ export async function installOpenCode(
     const srcCodeModeDir = join(ROOT, '.pantheon', 'code-mode')
     const dstCodeModeDir = join(runtimeTarget, '.pantheon', 'code-mode')
     if (existsSync(srcCodeModeDir)) {
-      const cmResult = syncDir(srcCodeModeDir, dstCodeModeDir, dryRun, clean)
+      // manifest.json is owned by writeCodeModeManifest (below), not by the dir
+      // sync. Excluding it here keeps exactly ONE writer/count for that path,
+      // so the preview action and the install summary can never diverge.
+      const cmResult = syncDir(
+        srcCodeModeDir,
+        dstCodeModeDir,
+        dryRun,
+        clean,
+        (f) => f !== 'manifest.json',
+        recorder,
+      )
       stats.created += cmResult.created
       stats.skipped += cmResult.skipped
     } else {
@@ -1149,13 +1207,18 @@ export async function installOpenCode(
       warning(`Code-mode source not found: ${srcCodeModeDir} — creating empty ${dstCodeModeDir}`)
       if (!dryRun) mkdirSync(dstCodeModeDir, { recursive: true })
       stats.created++
+      // The empty runtime dir is a real create counted by `stats.created`, so
+      // record it too (or the preview under-reports on this fallback path).
+      recordChange({ path: dstCodeModeDir, action: ACTIONS.CREATE, bytes: 0 }, recorder)
     }
 
     // B3-08: explicit installation mode — seed the manifest with SHA-256
     // digests so the server never executes a script implicitly.
-    const approvedScripts = writeCodeModeManifest(dstCodeModeDir, dryRun)
-    if (approvedScripts > 0) {
-      info(`Code-mode manifest: ${approvedScripts} script(s) approved`)
+    const manifest = writeCodeModeManifest(srcCodeModeDir, dstCodeModeDir, dryRun, recorder)
+    if (manifest.status === 'created') stats.created++
+    else if (manifest.status === 'skipped') stats.skipped++
+    if (manifest.approved > 0) {
+      info(`Code-mode manifest: ${manifest.approved} script(s) approved`)
     }
 
     // ── tiers.json ──
@@ -1163,7 +1226,7 @@ export async function installOpenCode(
     const dstTiers = join(runtimeTarget, '.pantheon', 'tiers.json')
     if (existsSync(srcTiers)) {
       const content = readFileSync(srcTiers, 'utf8')
-      const status = writeIfChanged(dstTiers, content, dryRun)
+      const status = writeIfChanged(dstTiers, content, dryRun, { recorder })
       if (status === 'created') stats.created++
       else stats.skipped++
     }
@@ -1177,7 +1240,7 @@ export async function installOpenCode(
   // -----------------------------------------------------------------------
   let runtimeHealthy = !componentSet.has('runtime')
   if (componentSet.has('runtime')) {
-    runtimeHealthy = setupRuntimePhase(target, { dryRun, clean, isGlobal }, stats)
+    runtimeHealthy = setupRuntimePhase(target, { dryRun, clean, isGlobal, recorder }, stats)
   }
 
   // -----------------------------------------------------------------------
@@ -1625,6 +1688,7 @@ export async function installOpenCode(
     // Test seam: lets a test simulate a concurrent writer landing between the
     // initial config read and the pre-swap recheck. Absent in production.
     beforeRecheck: opts.deps?.beforeRecheck,
+    recorder,
   })
   if (status === 'conflict') {
     // The user's config changed under the installer between the read and the
@@ -1640,13 +1704,30 @@ export async function installOpenCode(
   if (status === 'created') stats.created++
   else stats.skipped++
 
+  // writeConfigWithBackup snapshots an EXISTING config to `<config>.bak` on the
+  // same code path that rewrites the config, but only when the config actually
+  // changes. Record it (unscored: the summary does not count it) so the preview
+  // does not omit a file apply writes. Nothing to record when the config is
+  // unchanged (the `.bak` copy never runs) or absent (no previous content).
+  if (status === 'created' && configRaw !== null && isRecording(recorder)) {
+    recordChange(
+      {
+        path: `${targetConfigPath}.bak`,
+        action: ACTIONS.CREATE,
+        bytes: Buffer.byteLength(configRaw, 'utf8'),
+        scored: false,
+      },
+      recorder,
+    )
+  }
+
   // -----------------------------------------------------------------------
   // 3.5 Run migrations (--components runtime)
   // -----------------------------------------------------------------------
   if (componentSet.has('runtime')) {
     const currentVersion = detectVersion(target)
     if (currentVersion) {
-      const migration = runMigrations(target, currentVersion, { dryRun })
+      const migration = runMigrations(target, currentVersion, { dryRun, recorder })
       if (migration.applied > 0) {
         success(`Applied ${migration.applied} migration(s)`)
         for (const msg of migration.messages) {
@@ -1654,6 +1735,47 @@ export async function installOpenCode(
         }
       }
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // 3.75 Preview summary (Beta 11 Setup phase 1): print the REAL per-file
+  //      change set this same pass would apply. Paths + action + byte size
+  //      ONLY — never file contents or hashes. Nothing was written.
+  // -----------------------------------------------------------------------
+  if (preview) {
+    // Apply always writes the install-state file (terminal step); record the
+    // planned state-only write here so the printed plan is complete. Unscored:
+    // it is bookkeeping, not part of the install summary.
+    recordChange(
+      {
+        path: join(target, '.pantheon', 'install-state.json'),
+        action: hasState(target) ? ACTIONS.UPDATE : ACTIONS.CREATE,
+        bytes: 0,
+        scored: false,
+      },
+      recorder,
+    )
+    const plan = summarizeChanges(preview.entries)
+    const statsDelta = {
+      created: stats.created - statsBefore.created,
+      skipped: stats.skipped - statsBefore.skipped,
+    }
+    const mismatch = planStatsMismatch(plan, statsDelta)
+    if (mismatch) {
+      // Development safety net: a writer that incremented THIS call's install
+      // stats but never recorded a change would otherwise make the preview
+      // silently incomplete. Surface it loudly instead of hiding it.
+      warning(
+        `Change-plan consistency mismatch: plan reports ${mismatch.changed} changed / ` +
+          `${mismatch.unchanged} unchanged vs stats ${mismatch.recordedChanged}/${mismatch.recordedUnchanged}`,
+      )
+    }
+    // Tag the plan like every other dry-run line so the output reads uniformly.
+    console.log('')
+    for (const line of formatChangePlan(target, plan).split('\n')) {
+      console.log(tag(line))
+    }
+    console.log('')
   }
 
   // -----------------------------------------------------------------------
