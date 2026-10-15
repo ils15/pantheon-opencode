@@ -40,7 +40,7 @@ the complete plan in the current conversation before requesting approval.
 
 ## Council Specialist Response Format
 
-When responding to a `/pantheon` council synthesis invocation, specialists MUST return this structured format:
+When responding to a `/pantheon` council synthesis invocation, specialists MUST return this structured format. First-round specialists receive independent prompts without peer responses, whether dispatch is parallel or synchronous/sequential; they therefore cannot know actual peer positions. Do not guess them, claim agreement/disagreement with unseen peers, or self-reference in agreement signals. Omit `agreement_signals` or write `none` in the first round. In a rebuttal round, signals may reference only peer responses included in that round's prompt. Zeus derives agreement and disagreement during synthesis by comparing actual responses.
 
 ```
 ## specialist_response
@@ -49,8 +49,8 @@ When responding to a `/pantheon` council synthesis invocation, specialists MUST 
 **trade_offs:** <what's gained vs lost, specific>
 **risks:** <what could go wrong, max 3 items>
 **confidence:** High | Medium | Low
-**agreement_signals:** agree:@agent1 on <issue>, agree:@agent2 on <issue> | disagree:@agent3 on <issue>
-**specific_claims:** <count of specific factual claims in response>
+**agreement_signals:** <omit or `none` in first round; rebuttal may cite only visible peer responses>
+**specific_claims:** <optional self-reported count; advisory only, not evidence>
 ```
 
 ### Field Rules
@@ -62,26 +62,28 @@ When responding to a `/pantheon` council synthesis invocation, specialists MUST 
 | trade_offs | ✅ | At least one gain and one loss, specific to context |
 | risks | ✅ | Max 3 bullet points |
 | confidence | ✅ | One of: High, Medium, Low |
-| agreement_signals | Optional | Format: `agree:@agent on issue \| disagree:@agent on issue`. Use only when you can reference other specialists expected positions. |
-| specific_claims | ✅ | Integer count of verifiable factual statements in the response |
+| agreement_signals | Optional | Omit or use `none` in the first round. In rebuttal, reference only peer responses visible in the prompt; never speculate or self-reference. Zeus derives synthesis positions from actual responses, not these signals. |
+| specific_claims | Optional | Self-reported integer count only; advisory and not independently validated. Do not treat the count alone as evidence or proof of confidence. |
 
 ### Confidence Guidelines
 
-- **High**: Position backed by 3+ specific claims with evidence or direct experience
-- **Medium**: Position backed by 1-2 specific claims
+- **High**: Position backed by at least 3 verifiable claims supported by evidence in the response; a self-reported count alone does not qualify
+- **Medium**: Position backed by at least 1 verifiable claim supported by evidence in the response
 - **Low**: Position is opinion-based or speculative
+
+Equal self-reported counts (for example, several specialists each reporting 7) do not by themselves prove fabrication; assess whether the actual response contains verifiable, supported claims.
 
 ### Example
 ```
 ## specialist_response
-**position:** The BackgroundJobBoard should be used for council crash recovery
-**reasoning:** The board already supports running→completed→reconciled state machine with persistence. Registering council dispatches there adds ~50ms overhead but prevents total session loss on context crash. The WAL pattern ensures no data loss on restart.
-**trade_offs:** Gain: crash recovery for multi-minute council sessions. Lose: ~50ms registration overhead per council.
-**risks:** Board persistence failure could block council start — implement with fire-and-forget error handling
-**confidence:** High
-**agreement_signals:** agree:@themis on persist-before-notify
-**specific_claims:** 3
+**position:** Use a bounded local cache for the read-heavy endpoint.
+**reasoning:** The endpoint repeatedly reads the same reference data. A bounded cache reduces repeated lookups, while a short TTL limits staleness.
+**trade_offs:** Gain: fewer repeated reads. Lose: results may remain stale until the TTL expires.
+**risks:** Cache invalidation may lag after updates.
+**confidence:** Medium
+**agreement_signals:** none
+**specific_claims:** 2 (self-reported; advisory)
 ```
 
 ## Memory Context
-If memory affected the result, state the takeaway briefly; do not repeat the entry or task context.
+If memory affected the result, state the takeaway briefly; do not repeat the entry or task context. If persistence was expected but no write tool was exposed or a write failed, state that it was not persisted; never imply a successful store without confirmation.

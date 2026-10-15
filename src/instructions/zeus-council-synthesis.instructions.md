@@ -13,19 +13,18 @@ Use an inline specialist council for material trade-offs, architecture/security 
 
 1. **Precedent:** Run the separate `council_decisions` search defined in `## Memory Protocol`. Apply its age/score rules; if no fast-path decision applies, continue.
 2. **Research (optional):** For `/pantheon --research <question>`, ask @apollo for a 30s pre-scan and pass findings as `shared_context` to every specialist.
-3. **Register:** Before dispatch, call `board.registerLaunch` with a council task ID, parent session, Zeus, question, and synthesis objective. This enables crash recovery.
-4. **Select and dispatch:** Choose at most 3 agents using the domain map below. Send all `task()` calls in one message. Each prompt includes the question, shared context, required response format, and role timeout (120s reviewers; 60s explorers/implementers).
-5. **Collect:** Wait for all responses and note timeouts. Partial responses are acceptable only from read-only @apollo or @gaia.
-6. **Validate confidence:** High requires at least 3 verifiable claims; otherwise downgrade to Medium and state why. Medium requires at least 1 claim; Low needs no minimum. Opinions alone are not specific claims.
-7. **Resolve divergence:** Compute agreement rate as `min(agreements, divergences) / total_points` from structured `agreement_signals`. Below 50%, and only if no agent timed out, run one rebuttal round with all responses and the current synthesis draft. Treat revised responses as final. If disagreement remains below 50%, research factual divergence points with official docs, benchmarks, or issues (max 3 searches; seek 2 independent sources per point when possible). Skip research for subjective-only disagreements. Send responses and a cited evidence brief to @themis as moderator; request verdicts, overall direction, confidence, and unresolved issues. Low confidence or unresolved points remain explicit in the synthesis. Moderator and audit roles are separate.
-8. **Synthesize and audit:** Use the output format below, then ask @themis to compare raw responses with the synthesis. Check representation of every specialist, preserved divergences, accurate attribution, and confidence specificity. Fix any issue before delivery.
-9. **Persist:** Store the decision using the `council_decisions` write format in `## Memory Protocol`, then call `board.markReconciled(task_id)`.
+3. **Select and dispatch:** Choose at most 3 agents using the domain map below. Dispatch through the root `subagent` tool observed in the Beta 10 runtime. `task()` is host/API terminology; signature, background mode, and parallel dispatch depend on the active runtime schema. Keep first-round prompts independent: do not include other specialists' responses. Dispatch in parallel when the observed tool/runtime supports it; synchronous or sequential dispatch is also valid if each first-round prompt excludes prior first-round responses. Specialists therefore cannot know actual peer positions in the first round: do not ask them to guess, signal agreement/disagreement, or refer to themselves/peers speculatively. First-round `agreement_signals` must be omitted or set to `none`.
+4. **Collect:** Use returned subagent results or host-provided completion notifications. Do not call `task_status` or claim job tracking/recovery when unavailable. Note timeouts and missing responses explicitly. Partial responses are acceptable only from read-only @apollo or @gaia.
+5. **Validate confidence:** High requires at least 3 verifiable claims; otherwise downgrade to Medium and state why. Medium requires at least 1 claim; Low needs no minimum. Opinions alone are not specific claims. Assess the claims and evidence actually present in each response; a self-reported `specific_claims` count is advisory, not evidence or proof of confidence.
+6. **Resolve divergence:** After all initial responses arrive, Zeus groups their actual substantive positions by issue and derives agreement from those positions, not from speculative or self-reported `agreement_signals`. For each comparable issue, compare every unordered pair of specialists who provided a comparable substantive position on that issue. A pair agrees only when its substantive positions are compatible; every pair whose positions are not aligned counts as divergent. For an issue with `n` specialists providing comparable positions, include `n*(n-1)/2` pairs in `total_comparable_pairs`; sum this across included issues. Exclude issues with fewer than two comparable positions and state that they were excluded. Calculate `agreement_rate = agreeing_pairs / total_comparable_pairs`: unanimity is 100%, all pairs in divergence is 0%, and non-aligned pairs are divergences. If the denominator is zero, the rate is indeterminate/has no basis; never substitute an artificial zero or trigger rebuttal from an undefined rate. Below 50%, and only if no agent timed out, run one rebuttal round with all responses and the current synthesis draft. In that round, signals may refer only to peer responses visible in the rebuttal prompt; treat revised responses as final and recompute the rate from their actual positions. If the defined rate remains below 50%, research factual divergence points with official docs, benchmarks, or issues (max 3 searches; seek 2 independent sources per point when possible). Skip research for subjective-only disagreements. Send responses and a cited evidence brief to @themis as moderator; request verdicts, overall direction, confidence, and unresolved issues. Low confidence or unresolved points remain explicit in the synthesis. Moderator and audit roles are separate.
+7. **Synthesize and audit:** Use the output format below, then ask @themis to compare raw responses with the synthesis. Check representation of every specialist, preserved divergences, accurate attribution, and confidence specificity. Fix any issue before delivery.
+8. **Persist (conditional):** Store the decision only if a memory-write tool is explicitly exposed and permitted in the active root tool list; require its success result before saying it was saved. Otherwise say the decision was not persisted. The `BackgroundJobBoard` is internal and has no root-callable board tool in the reported runtime.
 
-If context is lost, use `board.recoverRunningJobs()` and `board.formatForPrompt()` to find unreconciled work. Re-dispatch a crashed council with the same question and label it as a retry.
+The `BackgroundJobBoard` is internal bookkeeping, not a tool available to Zeus root; do not call `board.registerLaunch`, `markReconciled`, `recoverRunningJobs`, or `formatForPrompt`, and do not assume crash recovery. If context is lost, continue only from results still present in the conversation or a host handoff; otherwise report the missing context and ask how to proceed.
 
 ## Specialist Response Format
 
-Require `## specialist_response` from `## Agent Return Format`: `position`, `reasoning`, `trade_offs`, `risks`, `confidence`, `agreement_signals`, and `specific_claims`.
+Require `## specialist_response` from `## Agent Return Format`. The first round must not prompt specialists to infer other agents' views; agreement signals are omitted or `none` until actual peer responses are visible.
 
 ## Domain Map
 
@@ -53,7 +52,7 @@ Question / date / response rate / timed-out agents / precedent / research contex
 - Points shared by multiple specialists
 
 ### Divergences
-| Issue | Sides | Resolution |
+| Issue | Specialist positions (attribute each side to its agent) | Resolution |
 
 ### Evidence & Moderation (when used)
 Research points, evidence, moderator verdict, cited sources, unresolved issues
@@ -68,4 +67,4 @@ Themis approved, or issues corrected
 Confidence adjusted for response rate
 ```
 
-The user invokes this flow with `/pantheon <question>`; `--research` enables the Apollo pre-scan. Preserve actual specialist timeout or unresolved-tie details in the response.
+Initial agreement signals remain omitted/`none`; consensus and agreements are derived by Zeus from compared substantive positions and presented in the synthesis. Preserve actual specialist timeout or unresolved-tie details in the response. The user invokes this flow with `/pantheon <question>`; `--research` enables the Apollo pre-scan.

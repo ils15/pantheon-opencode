@@ -13,6 +13,7 @@ const globalArtifact = read('../AGENTS.global.md')
 const antiStall = read('../src/instructions/zeus-anti-stall.instructions.md')
 const timeoutRetry = read('../src/instructions/zeus-timeout-retry.instructions.md')
 const returnContract = read('../src/instructions/agent-return-format.instructions.md')
+const councilSynthesis = read('../src/instructions/zeus-council-synthesis.instructions.md')
 const routing = read('../src/routing.yml')
 const subtaskPrompt = read('../prompts/subtask.prompt.md')
 const contextCompression = read('../src/skills/context-compression/SKILL.md')
@@ -63,7 +64,7 @@ test('generated line counts use LF boundaries without assuming a final newline',
   assert.equal(logicalLineCount('one'), 1)
   assert.equal(logicalLineCount(''), 0)
   assert.equal(logicalLineCount(generated), 36)
-  assert.equal(logicalLineCount(globalArtifact), 182)
+  assert.equal(logicalLineCount(globalArtifact), 185)
 })
 
 test('Zeus can call the least-privilege Pantheon vision tool for diagnostics', () => {
@@ -76,7 +77,7 @@ test('Zeus can call the least-privilege Pantheon vision tool for diagnostics', (
 test('Zeus forwards visual context to implementation agents without discarding unrelated work', () => {
   assert.match(zeusPrompt, /image|screenshot/i)
   assert.match(zeusPrompt, /vision_describe/)
-  assert.match(zeusPrompt, /Aphrodite/)
+  assert.match(zeusPrompt, /For UI work, delegate to @aphrodite and include the image reference/i)
   assert.match(zeusPrompt, /include[\s\S]*image[\s\S]*delegat/i)
   assert.match(zeusPrompt, /preserv[\s\S]*(?:unrelated|existing)[\s\S]*(?:change|work)/i)
   assert.match(zeusPrompt, /not[\s\S]*(?:authorize|permission)[\s\S]*delete/i)
@@ -118,6 +119,44 @@ test('subtask prompt preserves the canonical required return contract', () => {
     /If memory affected the result, state the takeaway briefly[\s\S]*do not repeat the entry/i,
   )
   assert.doesNotMatch(subtaskPrompt, /\*\*tokens:\*\*[^\n]*optional/i)
+})
+
+test('council agreement is derived from visible responses, not first-round guesses', () => {
+  assert.match(
+    councilSynthesis,
+    /dispatch in parallel when the observed tool\/runtime supports it/i,
+  )
+  assert.match(councilSynthesis, /synchronous or sequential dispatch is also valid/i)
+  assert.match(
+    councilSynthesis,
+    /first-round prompts independent[\s\S]*do not include other specialists' responses/i,
+  )
+  assert.match(councilSynthesis, /Zeus groups their actual substantive positions by issue/i)
+  assert.match(
+    councilSynthesis,
+    /agreement from those positions, not from speculative or self-reported `agreement_signals`/i,
+  )
+  assert.match(councilSynthesis, /agreement_rate = agreeing_pairs \/ total_comparable_pairs/i)
+  assert.match(councilSynthesis, /n\*\(n-1\)\/2/i)
+  assert.match(councilSynthesis, /every unordered pair of specialists/i)
+  assert.match(councilSynthesis, /a pair agrees only when its substantive positions[\s\S]*compatible/i)
+  assert.match(councilSynthesis, /unanimity is 100%, all pairs in divergence is 0%/i)
+  assert.match(councilSynthesis, /exclude issues with fewer than two comparable positions/i)
+  assert.match(
+    councilSynthesis,
+    /denominator is zero[\s\S]*indeterminate[\s\S]*(?:never|do not)[\s\S]*trigger rebuttal/i,
+  )
+  assert.match(councilSynthesis, /below 50%[\s\S]*only if no agent timed out[\s\S]*rebuttal/i)
+  assert.match(councilSynthesis, /divergences[\s\S]*attribute each side to its agent/i)
+  assert.match(councilSynthesis, /consensus and agreements are derived by Zeus from compared substantive positions/i)
+  assert.doesNotMatch(councilSynthesis, /first-round specialists are dispatched in parallel/i)
+  assert.match(returnContract, /Omit `agreement_signals` or write `none` in the first round/i)
+  assert.match(returnContract, /whether dispatch is parallel or synchronous\/sequential/i)
+  assert.match(returnContract, /without peer responses/i)
+  assert.doesNotMatch(returnContract, /First-round dispatches run in parallel/i)
+  assert.match(returnContract, /never speculate or self-reference/i)
+  assert.match(returnContract, /count alone as evidence or proof of confidence/i)
+  assert.match(returnContract, /Equal self-reported counts[\s\S]*do not by themselves prove fabrication/i)
 })
 
 test('context compression relies on native compaction and explicit checkpoints', () => {

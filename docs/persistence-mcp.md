@@ -124,7 +124,16 @@ revision while holding the write lock. This is last-writer-wins for callers
 that omit revisions; the schema has no separate CAS column and no migration is
 performed.
 
-Content is bounded to 64 KiB. `content` is a JSON-encoded string, not a raw
+On save, the UTF-8 encoded `content` string is limited to 65,536 bytes. An
+optional `tail` may contain at most 100 strings, each at most 4,096 UTF-8 bytes,
+with at most 65,536 UTF-8 bytes in aggregate across the tail strings. These
+save-side bounds are validated before writing; over-limit content or tail data
+is rejected with the failed limit and allowed bound. Tail entries are never
+automatically truncated or dropped: shorten/remove entries or omit the optional
+`tail` field when appropriate. A host or UI may wrap the tool error text, so
+inspect the returned tool error for the specific limit.
+
+`content` is a JSON-encoded string, not a raw
 object: callers pass `JSON.stringify(state)`, and the decoded top level must be
 an object. Inside it, `goal`, `phase`, `delegations` (with `in_flight`), and
 `heartbeat` are objects and `tail` is an array — passing one of them as a bare
@@ -145,13 +154,19 @@ Save a context checkpoint for a session/phase.
 - `key`: checkpoint key (e.g. "phase:3", "latest", "heartbeat")
 - `content`: JSON-serializable string (`JSON.stringify` of an object whose
   `goal`/`phase`/`delegations`/`heartbeat` values are objects and `tail` is an
-  array; omit an unset optional `goal` rather than passing a string)
+  array; at most 65,536 UTF-8 bytes total; an included `tail` has at most 100
+  strings, at most 4,096 UTF-8 bytes per string, and at most 65,536 UTF-8 bytes
+  across all strings; omit an unset optional `goal` rather than passing a
+  string)
 - `session_id`: required opaque session identifier
 - `ttl`: optional integer from 1 to 31,536,000 seconds; omitted values default
   to heartbeat 300s and 14,400s for latest, tail, and other context keys
 - `revision`: optional positive monotonic revision for stale-write rejection
 - Updates `latest` for checkpoint keys, but not operational `heartbeat`/`tail`
 - Returns status, namespace, session_id, ttl, and revision
+- Over-limit content/tail values are rejected, not truncated. Error details
+  identify the actual value and allowed bound; shorten/remove tail entries or
+  omit the optional `tail` field when it is the relevant limit
 
 ### context_get
 Retrieve a context checkpoint by slug and key.

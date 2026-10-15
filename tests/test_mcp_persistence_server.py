@@ -1319,7 +1319,7 @@ class TestContextCheckpoints:
                 "session_id": "limits-session",
                 **invalid,
             }
-            with pytest.raises(ToolError, match="limit"):
+            with pytest.raises(ToolError, match=r"maximum|limit"):
                 await server.call_tool("context_save", args)
 
     async def test_context_saves_concurrent_same_session_keep_complete_latest(
@@ -1816,6 +1816,112 @@ class TestValidationReporting:
         message = await self._save(server, json.dumps({"tail": "not-a-list"}))
         assert "content.tail must be an array (got string)" in message
 
+    async def test_context_save_content_byte_limit_is_actionable(
+        self, server: FastMCP
+    ) -> None:
+        """The serialized-content limit accepts its boundary and explains overflow."""
+        await server.call_tool(
+            "context_save",
+            {
+                "slug": "validation",
+                "key": "phase:1",
+                "content": "x" * (64 * 1024),
+                "session_id": "validation-session",
+            },
+        )
+
+        message = await self._save(server, "x" * (64 * 1024 + 1))
+        assert "content is 65,537 UTF-8 bytes; maximum is 65,536 bytes" in message
+        assert "reduce content" in message.lower()
+        assert "omit optional tail" in message
+
+    async def test_tail_item_count_boundary_and_actionable_error(
+        self, server: FastMCP
+    ) -> None:
+        """The 100-item boundary is accepted; the next item is named and bounded."""
+        await server.call_tool(
+            "context_save",
+            {
+                "slug": "validation",
+                "key": "phase:1",
+                "content": json.dumps({"tail": [""] * 100}),
+                "session_id": "validation-session",
+            },
+        )
+
+        message = await self._save(server, json.dumps({"tail": [""] * 101}))
+        assert "content.tail has 101 items; maximum is 100" in message
+        assert "remove tail entries or omit tail" in message
+
+        separate_tail_message = await self._save(
+            server, json.dumps([""] * 101), key="tail"
+        )
+        assert "content.tail has 101 items; maximum is 100" in separate_tail_message
+
+    async def test_tail_line_byte_boundary_and_actionable_error(
+        self, server: FastMCP
+    ) -> None:
+        """Each tail line accepts 4,096 UTF-8 bytes and rejects 4,097."""
+        await server.call_tool(
+            "context_save",
+            {
+                "slug": "validation",
+                "key": "phase:1",
+                "content": json.dumps({"tail": ["x" * 4096]}),
+                "session_id": "validation-session",
+            },
+        )
+
+        message = await self._save(server, json.dumps({"tail": ["x" * 4097]}))
+        assert "content.tail entries are 4,097 UTF-8 bytes; maximum is 4,096" in message
+        assert "remove or shorten tail entries, or omit tail" in message
+
+        separate_tail_message = await self._save(
+            server, json.dumps(["x" * 4097]), key="tail"
+        )
+        assert "content.tail entries are 4,097 UTF-8 bytes; maximum is 4,096" in (
+            separate_tail_message
+        )
+
+    async def test_tail_line_utf8_limit_counts_multibyte_characters(
+        self, server: FastMCP, module: Any
+    ) -> None:
+        """The 4,096-byte line limit measures UTF-8 bytes, not characters."""
+        assert module.MAX_TAIL_LINE_LENGTH == 4096
+        at_limit = "é" * 2048
+        assert len(at_limit) == 2048
+        assert len(at_limit.encode("utf-8")) == module.MAX_TAIL_LINE_LENGTH
+
+        await server.call_tool(
+            "context_save",
+            {
+                "slug": "validation",
+                "key": "phase:utf8-boundary",
+                "content": json.dumps({"tail": [at_limit]}),
+                "session_id": "validation-session",
+            },
+        )
+
+        over_limit = "é" * 2049
+        assert len(over_limit) == 2049
+        assert len(over_limit.encode("utf-8")) == 4098
+        message = await self._save(server, json.dumps({"tail": [over_limit]}))
+        assert "content.tail entries are 4,098 UTF-8 bytes; maximum is 4,096" in message
+        assert "remove or shorten tail entries, or omit tail" in message
+
+    async def test_tail_aggregate_byte_boundary(self, module) -> None:
+        """Tail strings collectively accept 65,536 bytes and report exact overflow."""
+        exact_limit = ["x" * 4096] * 16
+        assert module._validate_tail(exact_limit) == exact_limit
+
+        over_limit = [*exact_limit, "x"]
+        with pytest.raises(ValueError) as excinfo:
+            module._validate_tail(over_limit)
+        message = str(excinfo.value)
+        assert "tail contains 65,537 UTF-8 bytes across strings" in message
+        assert "maximum is 65,536 bytes" in message
+        assert "remove tail entries or omit tail" in message
+
     async def test_non_object_content_reports_received_type(
         self, server: FastMCP
     ) -> None:
@@ -1834,6 +1940,10 @@ class TestValidationReporting:
         description = tools["context_save"].description or ""
         assert "must each be JSON OBJECTS" in description
         assert "'tail' must be a JSON ARRAY" in description
+        assert "65,536 UTF-8 bytes" in description
+        assert "at most 100 strings" in description
+        assert "each at most 4,096 UTF-8 bytes" in description
+        assert "omit optional tail" in description
         # 'phase' is disambiguated in one clause without renaming the field.
         assert "NOT a phase counter" in description
         assert "All sections are optional" in description
@@ -1848,6 +1958,9 @@ class TestValidationReporting:
 
         assert "'phase', 'delegations' and 'heartbeat' must be objects" in description
         assert "'tail' must be an array" in description
+        assert "65,536 UTF-8 bytes" in description
+        assert "at most 100 strings" in description
+        assert "each at most 4,096 UTF-8 bytes" in description
         assert "not a counter" in description
         # The declared JSON type stays a string: content is a JSON string.
         assert content_schema["type"] == "string"

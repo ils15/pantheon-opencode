@@ -914,15 +914,35 @@ def _validate_delegations(delegations: object) -> None:
 
 def _validate_tail(tail: object, payload_bytes: int | None = None) -> list[str]:
     """Validate bounded serialized tail lines."""
-    if not isinstance(tail, list) or len(tail) > MAX_TAIL_ITEMS:
-        raise ValueError("tail exceeds its size limit")
+    if not isinstance(tail, list):
+        raise ValueError("tail must be an array")
+    if len(tail) > MAX_TAIL_ITEMS:
+        raise ValueError(
+            f"tail has {len(tail)} items; maximum is {MAX_TAIL_ITEMS}; "
+            "remove tail entries or omit tail"
+        )
     for line in tail:
-        if not isinstance(line, str) or len(line.encode()) > MAX_TAIL_LINE_LENGTH:
-            raise ValueError("tail entries exceed their size limit")
+        if not isinstance(line, str):
+            raise ValueError("tail entries must be strings")
+        line_bytes = len(line.encode())
+        if line_bytes > MAX_TAIL_LINE_LENGTH:
+            raise ValueError(
+                f"tail entries are {line_bytes:,} UTF-8 bytes; maximum is "
+                f"{MAX_TAIL_LINE_LENGTH:,}; remove or shorten tail entries, "
+                "or omit tail"
+            )
     if payload_bytes is not None and payload_bytes > MAX_CONTEXT_CONTENT_BYTES:
-        raise ValueError("tail payload exceeds its size limit")
-    if sum(len(line.encode()) for line in tail) > MAX_CONTEXT_CONTENT_BYTES:
-        raise ValueError("tail payload exceeds its size limit")
+        raise ValueError(
+            f"tail payload is {payload_bytes:,} UTF-8 bytes; maximum is "
+            f"{MAX_CONTEXT_CONTENT_BYTES:,}; remove tail entries or omit tail"
+        )
+    tail_bytes = sum(len(line.encode()) for line in tail)
+    if tail_bytes > MAX_CONTEXT_CONTENT_BYTES:
+        raise ValueError(
+            f"tail contains {tail_bytes:,} UTF-8 bytes across strings; maximum "
+            f"is {MAX_CONTEXT_CONTENT_BYTES:,} bytes; remove tail entries or "
+            "omit tail"
+        )
     return tail
 
 
@@ -1020,8 +1040,14 @@ def _collect_context_content_errors(
     if not isinstance(content, str):
         errors.shape(prefix, "a string", content)
         return
-    if len(content.encode()) > MAX_CONTEXT_CONTENT_BYTES:
-        errors.add(prefix, f"exceeds the {MAX_CONTEXT_CONTENT_BYTES}-byte limit")
+    content_bytes = len(content.encode())
+    if content_bytes > MAX_CONTEXT_CONTENT_BYTES:
+        errors.add(
+            prefix,
+            f"is {content_bytes:,} UTF-8 bytes; maximum is "
+            f"{MAX_CONTEXT_CONTENT_BYTES:,} bytes. Reduce content or omit "
+            "optional tail if it contributes",
+        )
         return
     try:
         parsed = json.loads(content)
@@ -1030,11 +1056,10 @@ def _collect_context_content_errors(
         # it as a checkpoint. It is still bounded above.
         return
     if isinstance(parsed, list) and key == "tail":
-        if len(parsed) > MAX_TAIL_ITEMS or any(
-            not isinstance(line, str) or len(line.encode()) > MAX_TAIL_LINE_LENGTH
-            for line in parsed
-        ):
-            errors.add(f"{prefix}.tail", "exceeds its size limit")
+        try:
+            _validate_tail(parsed)
+        except ValueError as exc:
+            errors.reroot(prefix, str(exc))
         return
     if not isinstance(parsed, dict):
         # The message already names 'content': do not prepend the path again.
@@ -1164,6 +1189,11 @@ def _upsert_context_entry(
     name="context_save",
     description="Save a context checkpoint for a session/phase. "
     "Stores structured JSON in persistence KV with a key-specific TTL. "
+    "The serialized content is limited to 65,536 UTF-8 bytes. An included "
+    "tail may contain at most 100 strings, each at most 4,096 UTF-8 bytes, "
+    "with at most 65,536 UTF-8 bytes across all tail strings. Oversized "
+    "content or tail is rejected, never truncated; remove or omit optional "
+    "tail data when applicable. "
     "content is a JSON STRING; when it parses to an object, 'goal', 'phase', "
     "'delegations' and 'heartbeat' must each be JSON OBJECTS and 'tail' must "
     "be a JSON ARRAY. 'phase' is an object {current,total,name} — NOT a phase "
@@ -1180,7 +1210,12 @@ async def context_save(
         str,
         Field(
             description=(
-                "JSON checkpoint string. When it parses to an object, 'goal', "
+                "JSON checkpoint string, limited to 65,536 UTF-8 bytes. An "
+                "included 'tail' may contain at most 100 strings, each at "
+                "most 4,096 UTF-8 bytes, with at most 65,536 UTF-8 bytes "
+                "across all tail strings. Oversized input is rejected, never "
+                "truncated; remove or omit optional 'tail' when applicable. "
+                "When it parses to an object, 'goal', "
                 "'phase', 'delegations' and 'heartbeat' must be objects and "
                 "'tail' must be an array; all are optional. 'phase' is an "
                 "object {current,total,name}, not a counter. Example: "
