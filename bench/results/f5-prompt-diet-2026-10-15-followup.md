@@ -26,6 +26,9 @@ Dados brutos:
 
 A métrica é `tokens.input + tokens.cache.read` do primeiro request do root.
 Todas as dez runs têm os campos completos; cache-read foi zero nas duas arms.
+As cinco observações por arm estão listadas abaixo. O agregador de aceitação
+exclui o par 1 porque sua rota divergiu; entre os quatro pares elegíveis, as
+medianas e ranges permanecem os mesmos mostrados na tabela.
 
 | Arm | Input/contexto: runs | Mediana | Range |
 |---|---|---:|---:|
