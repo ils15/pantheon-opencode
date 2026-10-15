@@ -46,11 +46,19 @@ Evidência de F1 e F4A: `bench/results/f1-di-v229-interleaved-2026-10-14.md` e
 `bench/results/f4a-v229-admission-identity-2026-10-14.md`. O resultado de
 latência total e wall de F1 segue inconclusivo.
 
-- **Resultado medido de execução V2-first:** no cenário one-shot B, Talos iniciado
-  explicitamente como agente root produziu o artefato correto sem child em 5/5
-  runs. O input mediano observado foi 51,4% menor que Zeus neste par de braços;
-  wall ficou inconclusivo e não há claim de economia monetária ou roteamento
-  geral. Evidência e limites: `bench/results/f3a-root-paired-2026-10-14.md`.
+- **Especialista explícito como root no V2 (F3a):** no cenário one-shot B,
+  Talos iniciado explicitamente como agente root produziu o artefato correto
+  sem child em 5/5 runs na amostra inicial. Um recheck de integração posterior
+  encontrou 4/5; a instrução de Talos passou a exigir que arquivos pedidos
+  sejam realmente gravados com a ferramenta nativa. Uma nova coorte
+  pré-registrada passou em 5/5, sem children nem chamadas `subagent`. Nessa
+  coorte, o proxy de contexto do primeiro request foi 9.675 tokens para Talos
+  e 13.009 para Zeus (−25,6%, confirmado contra o spread intra-braço). Input
+  total e wall permanecem sem claim de ganho; não há claim de economia
+  monetária ou roteamento geral. O primeiro recheck e o follow-up são mantidos
+  separadamente em `bench/results/beta10-final-integration-2026-10-15.md` e
+  `bench/results/beta10-final-integration-followup-2026-10-15.md`; a evidência
+  inicial está em `bench/results/f3a-root-paired-2026-10-14.md`.
 
 - **Leitura bounded no OpenCode V2:** adiciona `pantheon_bounded_read` para
   sessões root do Zeus, com aprovação nativa por arquivo, sem grant persistente,

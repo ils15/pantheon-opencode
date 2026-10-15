@@ -763,6 +763,18 @@ savings claim. Wall time is inconclusive: medians were 30.347 s and 31.893 s,
 the ranges overlap widely, and Talos had the higher p80. No automatic
 LLM-selected root routing is introduced by this result.
 
+A final integration check after F4A/F3b initially completed 4/5 Talos artifacts.
+Talos's prompt now says to finish named files with native `write`/`edit` tools
+and not confuse MCP tool discovery with the host's native tool catalog. The
+failure remains recorded in
+[`beta10-final-integration-2026-10-15.md`](bench/results/beta10-final-integration-2026-10-15.md).
+A new pre-registered cohort on that prompt passed the artifact oracle in 5/5
+Talos runs with zero children or `subagent` calls. Its first-request context
+proxy was 9,675 tokens versus 13,009 for Zeus (−25.6%, confirmed against the
+same-arm spread). Tree-total input is descriptive, and wall time remains
+inconclusive. See the [follow-up report](bench/results/beta10-final-integration-followup-2026-10-15.md)
+and [raw run record](bench/results/beta10-final-integration-followup-20261015.json).
+
 The v2.0.29 harness requires explicit agent and fixture selection, and proves
 global plus project instruction provenance for each run:
 
