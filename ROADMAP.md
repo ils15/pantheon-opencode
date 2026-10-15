@@ -531,7 +531,7 @@ aplicado em `:892`) é rejeitado acima do teto por
 `tests/test_mcp_persistence_server.py:1306` (257 chars via `context_save`),
 mas nada testa o lado **aceitar**: nenhum caso usa exatamente 256 e nenhum
 teste referencia a constante. Alterar o limite não quebra suíte. A doc F5
-(`commands/pantheon-deepwork.md`) já declara o teto,
+(`src/instructions/zeus-anti-stall.instructions.md:75`) já declara o teto,
 portanto o guard e a doc concordam — falta só o teste de fronteira.
 
 **P2-3 — `memory_search` deve expor que é lexical.**

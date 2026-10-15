@@ -53,22 +53,19 @@ test('agent prompts get only their explicit instructions and a safe shared fallb
   assert.ok(!aphrodite.includes('Backend Development Standards (Hermes)'))
 
   const zeus = generateAgentPrompt('zeus', '## Zeus prompt', instructions)
-  assert.ok(!zeus.includes('INLINE COUNCIL SYNTHESIS'))
-  assert.ok(!zeus.includes('STALL DETECTION'))
+  assert.ok(zeus.includes('INLINE COUNCIL SYNTHESIS'))
+  assert.ok(zeus.includes('STALL DETECTION'))
   assert.ok(zeus.includes('Fallback Chain Definitions'))
   assert.ok(zeus.includes('one retry after the initial attempt'))
   assert.equal((zeus.match(/DelegationCacheDecision/g) ?? []).length, 1)
   assert.ok(!zeus.includes('Backend Development Standards (Hermes)'))
   assert.doesNotMatch(zeus, /GoalLoop/)
 
-  const antiStall = read('../commands/pantheon-deepwork.md')
-  const council = read('../commands/pantheon.md')
+  const antiStall = read('../src/instructions/zeus-anti-stall.instructions.md')
   const frontend = read('../src/instructions/frontend-standards.instructions.md')
   const timeout = read('../src/instructions/zeus-timeout-retry.instructions.md')
   const themis = read('../src/agents/themis.md')
-  assert.match(antiStall, /For work expected to exceed five turns/)
-  assert.match(council, /# \/pantheon — Council Synthesis/)
-  assert.match(council, /Validate confidence/)
+  assert.match(antiStall, /long-running or multi-phase tasks expected to run > 5 turns only/)
   assert.match(frontend, /Strict mode always/)
   assert.match(frontend, /Keyboard navigation support/)
   assert.match(frontend, /Test changed behavior proportionally/)
@@ -98,9 +95,8 @@ test('agent-specific instructions are present in the actual installed agent prom
     assert.ok(installedHermes.includes('Backend Development Standards (Hermes)'))
     assert.ok(installedHermes.includes('Apply only when a target workspace file matches `**/*.py`'))
     assert.ok(!installedHermes.includes('INLINE COUNCIL SYNTHESIS'))
-    assert.ok(!installedZeus.includes('INLINE COUNCIL SYNTHESIS'))
+    assert.ok(installedZeus.includes('INLINE COUNCIL SYNTHESIS'))
     assert.ok(installedZeus.includes('Fallback Chain Definitions'))
-    assert.ok(installedZeus.includes('complete dispatch, rebuttal'))
     assert.ok(!installedZeus.includes('Backend Development Standards (Hermes)'))
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -124,18 +120,12 @@ test('instruction-only refresh updates existing agents without creating missing 
   }
 })
 
-test('generated Zeus prompt keeps long protocols on their on-demand commands', () => {
+test('generated Zeus prompt avoids duplicating canonical memory and stall protocols', () => {
   const zeusSource = read('../src/agents/zeus.md')
   assert.doesNotMatch(zeusSource, /^## Memory Protocol$/m)
   assert.doesNotMatch(zeusSource, /^## TODO Enforcer \(Auto-Retry\)$/m)
   assert.doesNotMatch(zeusSource, /^## Delegation Cache Instructions$/m)
   assert.doesNotMatch(zeusSource, /DelegationCacheDecision/)
-  const generated = generateAgentPrompt('zeus', zeusSource, instructions)
-  assert.doesNotMatch(generated, /INLINE COUNCIL SYNTHESIS|STALL DETECTION/)
-  assert.match(read('../commands/pantheon.md'), /# \/pantheon — Council Synthesis/)
-  assert.match(read('../commands/pantheon-deepwork.md'), /Stall Detection/)
-  assert.match(zeusSource, /tarefa delimitada que combina pesquisa e um único artefato/i)
-  assert.match(zeusSource, /um especialista capaz de assumir o trabalho de ponta a ponta/i)
 })
 
 test('timeout instructions use the explicit routing fallback map as canonical', () => {
@@ -152,7 +142,7 @@ test('context_save guidance documents the object content contract', () => {
   // rejected by the persistence server as an invalid checkpoint shape. The
   // guidance must say so, and must tell callers to OMIT an unset optional
   // `goal` instead of sending a string placeholder.
-  const antiStall = read('../commands/pantheon-deepwork.md')
+  const antiStall = read('../src/instructions/zeus-anti-stall.instructions.md')
   assert.match(antiStall, /JSON\.stringify/)
   assert.match(antiStall, /omit an unset `goal`/)
 

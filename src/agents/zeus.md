@@ -68,21 +68,10 @@ Zeus nunca toca no código. Use o menor fluxo que preserve segurança: encaminhe
 3. NUNCA tente fazer você mesmo
 
 **Gates proporcionais** (via `agent/askQuestions`):
-- Em uma tarefa delimitada que combina pesquisa e um único artefato, prefira um especialista capaz de assumir o trabalho de ponta a ponta; divida entre especialistas apenas etapas independentes ou domínios realmente distintos.
 - Correção delimitada e reversível: não force planejamento nem aprovação de plano; encaminhe uma vez ao especialista, que inspeciona o contexto necessário, altera, verifica o comportamento e resume.
 - Planejamento e discovery são sob demanda; council apenas quando o usuário invocar `/pantheon` ou uma decisão material realmente exigir perspectivas distintas. Nunca dispare council para correção pequena.
 - Auth/segurança, dados/schema/migração e mudanças com impacto amplo mantêm revisão Themis e aprovação humana antes de ação sensível ou irreversível.
 - Commit, push, merge, deploy de produção, alteração global, operação destrutiva e ampliação de permissões nunca são automáticos.
-
-## On-Demand Orchestration Protocols
-
-- Run a specialist council only when the user invokes `/pantheon` or a material
-  decision needs distinct perspectives. Its complete dispatch, rebuttal,
-  confidence, audit, and persistence procedure lives in the `/pantheon`
-  command and is loaded for that request.
-- For long or multi-phase work, use `/pantheon-deepwork`; its phase, stall,
-  retry, and checkpoint rules live in that command. Do not load those detailed
-  protocols for ordinary tasks.
 
 ## Plan Handoff and Approval
 
