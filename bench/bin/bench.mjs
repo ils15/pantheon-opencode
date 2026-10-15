@@ -46,7 +46,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, version as nodeVersion, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-
+import { agentFixtureIdentity, contentDirectoryIdentity } from '../lib/agent-fixture.mjs'
 import { runIsCompleted, summarizeRuns } from '../lib/aggregate.mjs'
 import { parseBenchArgs, UsageError } from '../lib/args.mjs'
 import {
@@ -56,7 +56,9 @@ import {
   openReadOnly,
 } from '../lib/collector.mjs'
 import { parseBenchHookLines, summarizeHookTimings } from '../lib/hooklog.mjs'
+import { assessPairedRun, summarizePairedRunsByArm } from '../lib/paired-acceptance.mjs'
 import { assertNoSecrets } from '../lib/redact.mjs'
+import { buildRunPlan } from '../lib/run-plan.mjs'
 import { resolveBenchEnv, runOnce } from '../lib/runner.mjs'
 
 // ─── fixed protocol constants ────────────────────────────────────────────
@@ -169,7 +171,14 @@ function readHostConfig() {
  * AGENTS.md (the global instruction surface) instead of symlinking the host's,
  * so a control and a candidate global artifact can be swapped same-day.
  */
-function buildShadowConfigDir(hostConfig, model, sandboxRoot, globalAgentsPath) {
+function buildShadowConfigDir(
+  hostConfig,
+  model,
+  sandboxRoot,
+  globalAgentsPath,
+  agentsDirPath,
+  skillsDirPath,
+) {
   const hostConfigDir = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config')
   const hostOpencodeDir = join(hostConfigDir, 'opencode')
   // XDG_CONFIG_HOME must point at the PARENT: opencode looks for
@@ -179,6 +188,8 @@ function buildShadowConfigDir(hostConfig, model, sandboxRoot, globalAgentsPath) 
   mkdirSync(shadow, { recursive: true })
   for (const entry of SHADOW_LINKED_ENTRIES) {
     if (entry === 'AGENTS.md' && globalAgentsPath !== null) continue
+    if (entry === 'agents' && agentsDirPath !== null) continue
+    if (entry === 'skills' && skillsDirPath !== null) continue
     const source = join(hostOpencodeDir, entry)
     if (existsSync(source)) {
       try {
@@ -191,6 +202,8 @@ function buildShadowConfigDir(hostConfig, model, sandboxRoot, globalAgentsPath) 
   if (globalAgentsPath !== null) {
     writeFileSync(join(shadow, 'AGENTS.md'), readFileSync(globalAgentsPath, 'utf8'), 'utf8')
   }
+  if (agentsDirPath !== null) symlinkSync(agentsDirPath, join(shadow, 'agents'))
+  if (skillsDirPath !== null) symlinkSync(skillsDirPath, join(shadow, 'skills'))
   const base =
     hostConfig !== null && typeof hostConfig === 'object' && !Array.isArray(hostConfig)
       ? hostConfig
@@ -217,14 +230,6 @@ function fixtureIdentity(path) {
 function globalDbPath() {
   const dataHome = process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share')
   return join(dataHome, 'opencode', 'opencode.db')
-}
-
-function interleavedOrder(runsPerScenario, scenarios) {
-  const order = []
-  for (let i = 0; i < runsPerScenario; i++) {
-    for (const scenario of scenarios) order.push(scenario)
-  }
-  return order
 }
 
 function toolCallsToMap(toolCalls) {
@@ -263,7 +268,13 @@ function collectRunArtifacts(dbPath, runDir, sessionId) {
         instructions = collectInstructionState(db, sessionId)
         firstRequest = collectFirstRequest(db, sessionId)
         rootSession =
-          metrics.root.status === 'ok' ? { idle_outcome: metrics.root.idle_outcome } : null
+          metrics.root.status === 'ok'
+            ? {
+                idle_outcome: metrics.root.idle_outcome,
+                agent: metrics.root.agent,
+                parent_id: metrics.root.parent_id,
+              }
+            : null
       } finally {
         db.close()
       }
@@ -295,13 +306,26 @@ async function main() {
       console.error(`bench: ${err.message}`)
       console.error(
         'usage: bench.mjs [--runs N] [--scenarios A,B] [--profile host|double-injection] ' +
-          '[--label name] [--global-agents path] [--project-agents path]',
+          '[--label name] [--global-agents path] [--project-agents path] ' +
+          '[--agents-dir path] [--skills-dir path] ' +
+          '[--scenario B --root-agent talos --control-root-agent zeus --paired --out bench/results/file.json]',
       )
       process.exit(2)
     }
     throw err
   }
-  const { runs: runsPerScenario, profile, label: runLabel, scenarios } = opts
+  const {
+    runs: runsPerScenario,
+    profile,
+    label: requestedLabel,
+    scenarios,
+    paired,
+    rootAgent,
+    controlRootAgent,
+    out,
+  } = opts
+  const runLabel =
+    out === null ? requestedLabel : out.slice('bench/results/'.length, -'.json'.length)
   const model = process.env.BENCH_MODEL ?? DEFAULT_MODEL
   const startedAtIso = new Date().toISOString()
   const rev = gitRev()
@@ -321,9 +345,28 @@ async function main() {
   }
   const globalFixture = opts.globalAgents === null ? null : fixtureIdentity(opts.globalAgents)
   const projectFixture = opts.projectAgents === null ? null : fixtureIdentity(opts.projectAgents)
+  let agentsFixture = null
+  if (opts.agentsDir !== null) {
+    try {
+      agentsFixture = agentFixtureIdentity(opts.agentsDir, [controlRootAgent, rootAgent])
+    } catch (err) {
+      console.error(`bench: invalid --agents-dir fixture: ${err.message}`)
+      process.exit(2)
+    }
+  }
+  let skillsFixture = null
+  if (opts.skillsDir !== null) {
+    try {
+      skillsFixture = contentDirectoryIdentity(opts.skillsDir)
+    } catch (err) {
+      console.error(`bench: invalid --skills-dir fixture: ${err.message}`)
+      process.exit(2)
+    }
+  }
 
   // Never clobber an existing result: the run identity lives in the file name.
-  const resultPath = join(RESULTS_DIR, `${runLabel}-${rev.sha}.json`)
+  const resultPath =
+    out === null ? join(RESULTS_DIR, `${runLabel}-${rev.sha}.json`) : resolve(REPO_ROOT, out)
   if (existsSync(resultPath)) {
     console.error(
       `bench: refusing to overwrite ${resultPath} — pick a different --label (run identity is in the file name)`,
@@ -338,11 +381,13 @@ async function main() {
     model,
     sandboxRoot,
     opts.globalAgents,
+    agentsFixture?.path ?? null,
+    skillsFixture?.path ?? null,
   )
   const dbPath = globalDbPath()
 
   console.log(
-    `bench: model=${model} runs=${runsPerScenario}/scenario scenarios=${scenarios.join(',')} profile=${profile} label=${runLabel} timeout=${RUN_TIMEOUT_MS / 60000}min`,
+    `bench: model=${model} runs=${runsPerScenario}/scenario scenarios=${scenarios.join(',')} profile=${profile} label=${runLabel} timeout=${RUN_TIMEOUT_MS / 60000}min${paired ? ` paired=${controlRootAgent}→${rootAgent}` : ''}`,
   )
   console.log(
     `bench: opencode ${version} | git ${rev.sha}${rev.dirty ? ' (dirty)' : ''} | plugin ${PLUGIN_GENERATION} (${PLUGIN_REF})`,
@@ -354,14 +399,29 @@ async function main() {
   if (projectFixture) {
     console.log(`bench: project AGENTS fixture ${projectFixture.path} (${projectFixture.bytes}B)`)
   }
+  if (agentsFixture) {
+    console.log(
+      `bench: agent definitions ${agentsFixture.files.map((file) => `${file.name}:${file.sha256.slice(0, 12)}`).join(', ')} (${agentsFixture.path})`,
+    )
+  }
+  if (skillsFixture) {
+    console.log(
+      `bench: skill definitions ${skillsFixture.files.length} files sha256=${skillsFixture.sha256} (${skillsFixture.path})`,
+    )
+  }
   console.log(`bench: metrics from ${dbPath} (read-only)`)
 
   const runs = []
-  const order = interleavedOrder(runsPerScenario, scenarios)
+  const order = buildRunPlan(
+    runsPerScenario,
+    scenarios,
+    paired ? { rootAgent, controlRootAgent } : null,
+  )
   let runNumber = 0
-  for (const scenario of order) {
+  for (const item of order) {
     runNumber += 1
-    const runLabelDir = `run-${String(runNumber).padStart(2, '0')}-${scenario}`
+    const { scenario, arm, agent, pair } = item
+    const runLabelDir = `run-${String(runNumber).padStart(2, '0')}-${scenario}${arm === null ? '' : `-${arm}`}`
     const runDir = join(sandboxRoot, runLabelDir)
     mkdirSync(runDir, { recursive: true })
     // Double-injection profile: the project AGENTS.md the real repo carries is
@@ -383,6 +443,7 @@ async function main() {
         title: `pantheon-bench-${runLabelDir}`,
         timeoutMs: RUN_TIMEOUT_MS,
         env,
+        agent,
       })
     } catch (err) {
       outcome = {
@@ -413,7 +474,10 @@ async function main() {
     const record = {
       run: runNumber,
       scenario,
+      arm,
+      pair,
       scenarioName: SCENARIOS[scenario].name,
+      rootAgentRequested: agent,
       startedAt: startedIso,
       status: completed ? 'completed' : 'failed',
       failureReason,
@@ -422,16 +486,22 @@ async function main() {
       timedOut: outcome.timedOut,
       sessionId: outcome.sessionId,
       modelRequested: model,
+      rootAgentObserved: metrics.root.status === 'ok' ? metrics.root.agent : null,
+      rootParentId: metrics.root.status === 'ok' ? metrics.root.parent_id : null,
       root: metrics.root,
       childrenCount: metrics.childrenCount,
       tokens:
         metrics.tokens.status === 'ok'
           ? {
+              status: 'ok',
               input: metrics.tokens.input,
               output: metrics.tokens.output,
               reasoning: metrics.tokens.reasoning,
               cacheRead: metrics.tokens.cacheRead,
               cacheWrite: metrics.tokens.cacheWrite,
+              tokenMessages: metrics.tokens.tokenMessages,
+              assistantMessages: metrics.tokens.assistantMessages,
+              tokenFieldMessages: metrics.tokens.tokenFieldMessages,
             }
           : metrics.tokens,
       toolCalls: toolCallsToMap(metrics.toolCalls),
@@ -440,6 +510,21 @@ async function main() {
       firstRequest,
       stderrTail: outcome.stderrTail === '' ? null : outcome.stderrTail,
     }
+    record.armAcceptance = paired
+      ? assessPairedRun({
+          arm,
+          completed,
+          requestedAgent: agent,
+          observedAgent: record.rootAgentObserved,
+          rootAvailable: metrics.root.status === 'ok',
+          rootParentId: record.rootParentId,
+          childrenCount: metrics.childrenCount,
+          toolCalls: record.toolCalls,
+          instructions,
+          globalInstructionFixture: globalFixture,
+          projectInstructionFixture: projectFixture,
+        })
+      : null
     runs.push(record)
     console.log(
       completed
@@ -448,11 +533,12 @@ async function main() {
     )
   }
 
-  const summary = summarizeRuns(runs)
+  const summary = paired ? null : summarizeRuns(runs)
+  const summaryByArm = paired ? summarizePairedRunsByArm(runs) : null
   const report = {
     meta: {
       kind: 'pantheon-bench-baseline',
-      reportVersion: 2,
+      reportVersion: 3,
       createdAt: startedAtIso,
       gitSha: rev.sha,
       gitDirty: rev.dirty,
@@ -470,6 +556,10 @@ async function main() {
       label: runLabel,
       globalAgentsFixture: globalFixture,
       projectAgentsFixture: projectFixture,
+      agentsDirFixture: agentsFixture
+        ? { path: agentsFixture.path, files: agentsFixture.files, sha256: agentsFixture.sha256 }
+        : null,
+      skillsDirFixture: skillsFixture,
       protocol: {
         runsPerScenario,
         scenarios,
@@ -477,11 +567,20 @@ async function main() {
         runTimeoutMs: RUN_TIMEOUT_MS,
         standaloneServerPerRun: true,
         permissionMode: '--auto (non-interactive auto-approve)',
-        agent:
-          'zeus (headless sessions default to agent=NULL, which the delegation policy denies; the TUI starts on the default agent)',
+        paired,
+        agent: paired
+          ? { control: controlRootAgent, candidate: rootAgent }
+          : 'zeus (headless sessions default to agent=NULL, which the delegation policy denies; the TUI starts on the default agent)',
+        armOrder: paired ? 'control,candidate per pair (C1,K1,…,C5,K5)' : null,
         logLevel:
           'debug (required for the V2 tool-hook registration to complete; protocol constant, equal across phases)',
         pluginSelection: 'XDG_CONFIG_HOME shadow config dir; repo plugin pinned via plugins[]',
+        agentsSelection: paired
+          ? 'shadow-config/agents symlinked to --agents-dir; requested agent markdown identities recorded in agentsDirFixture'
+          : 'host config agents symlinked into shadow config',
+        skillsSelection: paired
+          ? 'shadow-config/skills symlinked to --skills-dir; all source file identities recorded in skillsDirFixture'
+          : 'host config skills symlinked into shadow config',
         metricDb: dbPath,
         isolatedDbPerRun: false,
         scenarioAUsesRealWebResearch: true,
@@ -494,6 +593,7 @@ async function main() {
     scenarios: Object.fromEntries(Object.entries(SCENARIOS).map(([k, v]) => [k, v.name])),
     runs,
     summary,
+    summaryByArm,
     schemaNotes: [
       'Tokens come from the V2 session_message ledger (assistant rows, data.tokens), the same source as pantheon_cost; cache read/write from data.tokens.cache.',
       'Child sessions resolved recursively via session_v2.parent_id with a visited set — each session counted once.',
@@ -502,6 +602,10 @@ async function main() {
       'Hook timings come from the [bench] lines the V2 plugin appends to .pantheon/logs/hooks.log (instrumentation-only change).',
       'Per-run `instructions` is the D4 fidelity proof: the identity (path, bytes, sha256) of every instruction file the session actually loaded, read from instruction_state/instruction_blob. Content is never copied into the report.',
       "Per-run `firstRequest` is the proxy that isolates the injected payload: the first assistant row's tokens.input + tokens.cache.read. Tree-total input is dominated by session-length variance; the payload only lands on the first request.",
+      'Paired root-agent runs replace the host agents directory with the explicit --agents-dir fixture; requested agent files are content-identified in meta.agentsDirFixture.',
+      'Paired root-agent runs also replace host skills with --skills-dir; every skill fixture file is content-identified in meta.skillsDirFixture.',
+      'Paired summary metrics include completed runs only when the requested root matches the observed root, the root has no parent, D4 proves both configured global/project instruction fixtures were loaded, and (for candidates) childrenCount is zero with an available tool ledger showing no subagent attempt. Failed and ineligible runs remain in runs with reasons.',
+      'Artifact correctness is audited outside the timed interval using the pre-registered oracle; armAcceptance does not assert artifact correctness.',
       'A metric the schema cannot provide is {status:"unavailable", reason} — never zero.',
     ],
   }
@@ -512,13 +616,29 @@ async function main() {
 
   // ── console summary table ──
   console.log(`\nbench: report → ${resultPath}`)
-  for (const key of scenarios) {
-    const s = summary.perScenario[key] ?? { runs: 0, completed: 0, failures: 0 }
-    const wall =
-      s.wallMs && s.wallMs.median !== undefined
-        ? `${(s.wallMs.median / 1000).toFixed(1)}s median / ${(s.wallMs.p80 / 1000).toFixed(1)}s p80`
-        : 'wall-time unavailable'
-    console.log(`  ${key}: ${s.completed}/${s.runs} completed, ${s.failures} failures — ${wall}`)
+  if (paired) {
+    for (const arm of ['control', 'candidate']) {
+      const armSummary = summaryByArm[arm]
+      for (const key of scenarios) {
+        const s = armSummary.metrics.perScenario[key] ?? { runs: 0, completed: 0, failures: 0 }
+        const wall =
+          s.wallMs && s.wallMs.median !== undefined
+            ? `${(s.wallMs.median / 1000).toFixed(1)}s median / ${(s.wallMs.p80 / 1000).toFixed(1)}s p80`
+            : 'wall-time unavailable'
+        console.log(
+          `  ${arm}/${key}: ${armSummary.eligible}/${armSummary.runs} acceptance-eligible, ${s.completed} runtime-completed — ${wall}`,
+        )
+      }
+    }
+  } else {
+    for (const key of scenarios) {
+      const s = summary.perScenario[key] ?? { runs: 0, completed: 0, failures: 0 }
+      const wall =
+        s.wallMs && s.wallMs.median !== undefined
+          ? `${(s.wallMs.median / 1000).toFixed(1)}s median / ${(s.wallMs.p80 / 1000).toFixed(1)}s p80`
+          : 'wall-time unavailable'
+      console.log(`  ${key}: ${s.completed}/${s.runs} completed, ${s.failures} failures — ${wall}`)
+    }
   }
 }
 

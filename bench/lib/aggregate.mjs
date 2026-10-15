@@ -184,17 +184,37 @@ export function summarizeRuns(runs) {
     delete bucket.wallMsValues
   }
 
-  const completedTokens = completed.map((r) => r.tokens).filter((t) => t && typeof t === 'object')
-  const tokens = completedTokens.length
-    ? {
-        input: completedTokens.reduce((a, t) => a + (t.input ?? 0), 0),
-        output: completedTokens.reduce((a, t) => a + (t.output ?? 0), 0),
-        cacheRead: completedTokens.reduce((a, t) => a + (t.cacheRead ?? 0), 0),
-        cacheWrite: completedTokens.reduce((a, t) => a + (t.cacheWrite ?? 0), 0),
-        perRunMedianInput: median(completedTokens.map((t) => t.input ?? 0)),
-        perRunMedianOutput: median(completedTokens.map((t) => t.output ?? 0)),
-      }
-    : { status: 'unavailable', reason: 'no completed runs in this sample' }
+  const tokenFields = ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite']
+  const completedTokens = completed.map((r) => r.tokens)
+  const completeTokenRecords = completedTokens.filter(
+    (tokens) =>
+      tokens &&
+      typeof tokens === 'object' &&
+      tokens.status === 'ok' &&
+      tokenFields.every((field) => typeof tokens[field] === 'number'),
+  )
+  const tokens =
+    completed.length > 0 && completeTokenRecords.length === completed.length
+      ? {
+          status: 'ok',
+          input: completeTokenRecords.reduce((a, t) => a + t.input, 0),
+          output: completeTokenRecords.reduce((a, t) => a + t.output, 0),
+          cacheRead: completeTokenRecords.reduce((a, t) => a + t.cacheRead, 0),
+          cacheWrite: completeTokenRecords.reduce((a, t) => a + t.cacheWrite, 0),
+          perRunMedianInput: median(completeTokenRecords.map((t) => t.input)),
+          perRunMedianOutput: median(completeTokenRecords.map((t) => t.output)),
+          completeRuns: completeTokenRecords.length,
+          completedRuns: completed.length,
+        }
+      : {
+          status: 'unavailable',
+          reason:
+            completed.length === 0
+              ? 'no completed runs in this sample'
+              : 'token fields unavailable or incomplete for one or more completed runs',
+          completeRuns: completeTokenRecords.length,
+          completedRuns: completed.length,
+        }
 
   return {
     runs: runs.length,
@@ -213,4 +233,12 @@ export function summarizeRuns(runs) {
         : null,
     perScenario,
   }
+}
+
+/** Summarize paired arms independently so control and candidate never mix. */
+export function summarizeRunsByArm(runs) {
+  const arms = [...new Set(runs.map((run) => run.arm).filter((arm) => typeof arm === 'string'))]
+  return Object.fromEntries(
+    arms.map((arm) => [arm, summarizeRuns(runs.filter((run) => run.arm === arm))]),
+  )
 }

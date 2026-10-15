@@ -4,7 +4,7 @@
  *
  * Contract highlights (locked by tests/bench-runner.test.mjs):
  *   - the child is spawned NON-interactively: `opencode run --format json
- *     --standalone --auto --log-level debug --agent zeus --title … --model
+ *     --standalone --auto --log-level debug --agent <selected> --title … --model
  *     <model> <prompt>` — no shell, the prompt rides as the final positional
  *     argument. Two flags are REQUIRED, not cosmetic:
  *       · `--log-level debug` — observed on opencode 2.0.27, the V2 tool-hook
@@ -137,7 +137,16 @@ function spawnAndWait({ cmd, args, cwd, env, timeoutMs }) {
  * {stdout, stderr, exitCode, killed, onKill?} whose completion is polled up
  * to timeoutMs (stub path — onKill fires instead of a real signal).
  */
-export async function runOnce({ cwd, prompt, model, title, timeoutMs, env, spawn }) {
+export async function runOnce({
+  cwd,
+  prompt,
+  model,
+  title,
+  timeoutMs,
+  env,
+  spawn,
+  agent = 'zeus',
+}) {
   const args = [
     'run',
     '--format',
@@ -147,7 +156,7 @@ export async function runOnce({ cwd, prompt, model, title, timeoutMs, env, spawn
     '--log-level',
     'debug',
     '--agent',
-    'zeus',
+    agent,
     '--title',
     title ?? 'pantheon-bench',
     '--model',

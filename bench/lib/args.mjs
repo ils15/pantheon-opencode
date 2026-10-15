@@ -45,6 +45,8 @@ export class UsageError extends Error {
 }
 
 const LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const AGENT_RE = /^[a-z][a-z0-9-]{0,63}$/
+const RESULT_PATH_RE = /^bench\/results\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/
 
 function readValue(argv, index, flag) {
   const value = argv[index + 1]
@@ -57,7 +59,8 @@ function readValue(argv, index, flag) {
 /**
  * Parse the bench CLI argv (already sliced past `node script`).
  *
- * Returns { runs, profile, label, globalAgents, projectAgents }.
+ * Returns { runs, profile, label, globalAgents, projectAgents, agentsDir,
+ * skillsDir, paired, rootAgent, controlRootAgent, out }.
  * Throws UsageError on an unknown flag, a missing value, an invalid profile, or
  * a `--project-agents` that would never be injected (host profile).
  */
@@ -69,6 +72,12 @@ export function parseBenchArgs(argv) {
     scenarios: [...SCENARIOS],
     globalAgents: null,
     projectAgents: null,
+    agentsDir: null,
+    skillsDir: null,
+    paired: false,
+    rootAgent: null,
+    controlRootAgent: null,
+    out: null,
   }
 
   for (let i = 0; i < argv.length; i++) {
@@ -102,8 +111,10 @@ export function parseBenchArgs(argv) {
         i += 1
         break
       }
+      case '--scenario':
       case '--scenarios': {
-        const value = readValue(argv, i, '--scenarios')
+        const flag = arg
+        const value = readValue(argv, i, flag)
         const list = value
           .split(',')
           .map((s) => s.trim().toUpperCase())
@@ -111,7 +122,32 @@ export function parseBenchArgs(argv) {
         if (list.length === 0 || list.some((s) => !SCENARIOS.includes(s))) {
           throw new UsageError(`--scenarios must be a comma list from ${SCENARIOS.join(',')}`)
         }
+        if (flag === '--scenario' && list.length !== 1) {
+          throw new UsageError('--scenario accepts exactly one scenario')
+        }
         out.scenarios = SCENARIOS.filter((s) => list.includes(s))
+        i += 1
+        break
+      }
+      case '--root-agent':
+      case '--control-root-agent': {
+        const value = readValue(argv, i, arg)
+        if (!AGENT_RE.test(value)) throw new UsageError(`${arg} must be a lowercase agent id`)
+        if (arg === '--root-agent') out.rootAgent = value
+        else out.controlRootAgent = value
+        i += 1
+        break
+      }
+      case '--paired': {
+        out.paired = true
+        break
+      }
+      case '--out': {
+        const value = readValue(argv, i, '--out')
+        if (!RESULT_PATH_RE.test(value)) {
+          throw new UsageError('--out must be a filename under bench/results ending in .json')
+        }
+        out.out = value
         i += 1
         break
       }
@@ -122,6 +158,16 @@ export function parseBenchArgs(argv) {
       }
       case '--project-agents': {
         out.projectAgents = readValue(argv, i, '--project-agents')
+        i += 1
+        break
+      }
+      case '--agents-dir': {
+        out.agentsDir = readValue(argv, i, '--agents-dir')
+        i += 1
+        break
+      }
+      case '--skills-dir': {
+        out.skillsDir = readValue(argv, i, '--skills-dir')
         i += 1
         break
       }
@@ -138,6 +184,36 @@ export function parseBenchArgs(argv) {
   }
   if (out.profile === 'double-injection' && out.projectAgents === null) {
     throw new UsageError('--profile double-injection requires --project-agents <path>')
+  }
+  if (out.paired) {
+    if (out.scenarios.length !== 1 || out.scenarios[0] !== 'B') {
+      throw new UsageError('--paired root-agent comparison requires scenario B only')
+    }
+    if (out.rootAgent === null || out.controlRootAgent === null) {
+      throw new UsageError('--paired requires --root-agent and --control-root-agent')
+    }
+    if (out.agentsDir === null) throw new UsageError('--paired requires --agents-dir <path>')
+    if (out.skillsDir === null) throw new UsageError('--paired requires --skills-dir <path>')
+    if (out.out === null) throw new UsageError('--paired requires --out <bench/results/file.json>')
+    if (out.profile !== 'double-injection') {
+      throw new UsageError('--paired requires --profile double-injection for D4 fidelity')
+    }
+    if (out.globalAgents === null) {
+      throw new UsageError('--paired requires --global-agents <path> for D4 fidelity')
+    }
+    if (out.projectAgents === null) {
+      throw new UsageError('--paired requires --project-agents <path> for D4 fidelity')
+    }
+  } else if (
+    out.rootAgent !== null ||
+    out.controlRootAgent !== null ||
+    out.out !== null ||
+    out.agentsDir !== null ||
+    out.skillsDir !== null
+  ) {
+    throw new UsageError(
+      '--root-agent, --control-root-agent, --agents-dir, --skills-dir, and --out require --paired',
+    )
   }
 
   return out

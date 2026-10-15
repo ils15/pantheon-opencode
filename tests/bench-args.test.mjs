@@ -25,6 +25,12 @@ test('defaults are the fixed protocol: 5 runs, host profile, baseline label', ()
   assert.equal(opts.label, DEFAULT_LABEL)
   assert.equal(opts.globalAgents, null)
   assert.equal(opts.projectAgents, null)
+  assert.equal(opts.agentsDir, null)
+  assert.equal(opts.skillsDir, null)
+  assert.equal(opts.paired, false)
+  assert.equal(opts.rootAgent, null)
+  assert.equal(opts.controlRootAgent, null)
+  assert.equal(opts.out, null)
   assert.deepEqual(PROFILES, ['host', 'double-injection'])
 })
 
@@ -88,4 +94,129 @@ test('--scenarios restricts the interleave to a validated subset', () => {
   assert.throws(() => parseBenchArgs(['--scenarios', 'C']), UsageError)
   assert.throws(() => parseBenchArgs(['--scenarios', '']), UsageError)
   assert.throws(() => parseBenchArgs(['--scenarios']), UsageError)
+})
+
+test('paired root-agent runs require scenario B, both agents, and a safe output path', () => {
+  const opts = parseBenchArgs([
+    '--scenario',
+    'B',
+    '--runs',
+    '5',
+    '--profile',
+    'double-injection',
+    '--global-agents',
+    'AGENTS.global.md',
+    '--project-agents',
+    'AGENTS.md',
+    '--root-agent',
+    'talos',
+    '--control-root-agent',
+    'zeus',
+    '--agents-dir',
+    'src/agents',
+    '--skills-dir',
+    'src/skills',
+    '--paired',
+    '--out',
+    'bench/results/phase3-root-paired-20261014.json',
+  ])
+  assert.equal(opts.paired, true)
+  assert.equal(opts.rootAgent, 'talos')
+  assert.equal(opts.controlRootAgent, 'zeus')
+  assert.equal(opts.agentsDir, 'src/agents')
+  assert.equal(opts.skillsDir, 'src/skills')
+  assert.equal(opts.out, 'bench/results/phase3-root-paired-20261014.json')
+  assert.deepEqual(opts.scenarios, ['B'])
+
+  assert.throws(() => parseBenchArgs(['--paired']), UsageError)
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        '--paired',
+        '--root-agent',
+        'talos',
+        '--control-root-agent',
+        'zeus',
+        '--profile',
+        'double-injection',
+        '--global-agents',
+        'AGENTS.global.md',
+        '--project-agents',
+        'AGENTS.md',
+        '--agents-dir',
+        'src/agents',
+        '--skills-dir',
+        'src/skills',
+        '--out',
+        'bench/results/paired.json',
+      ]),
+    /scenario B/i,
+  )
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        '--paired',
+        '--scenario',
+        'B',
+        '--root-agent',
+        'talos',
+        '--control-root-agent',
+        'zeus',
+        '--profile',
+        'double-injection',
+        '--global-agents',
+        'AGENTS.global.md',
+        '--project-agents',
+        'AGENTS.md',
+        '--skills-dir',
+        'src/skills',
+        '--out',
+        'bench/results/paired.json',
+      ]),
+    /agents-dir/i,
+  )
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        '--paired',
+        '--scenario',
+        'B',
+        '--root-agent',
+        'talos',
+        '--control-root-agent',
+        'zeus',
+        '--profile',
+        'double-injection',
+        '--global-agents',
+        'AGENTS.global.md',
+        '--project-agents',
+        'AGENTS.md',
+        '--agents-dir',
+        'src/agents',
+        '--skills-dir',
+        'src/skills',
+        '--out',
+        '../paired.json',
+      ]),
+    /bench\/results/i,
+  )
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        '--paired',
+        '--scenario',
+        'B',
+        '--root-agent',
+        'talos',
+        '--control-root-agent',
+        'zeus',
+        '--agents-dir',
+        'src/agents',
+        '--skills-dir',
+        'src/skills',
+        '--out',
+        'bench/results/paired.json',
+      ]),
+    /double-injection/i,
+  )
 })

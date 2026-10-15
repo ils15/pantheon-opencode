@@ -15,9 +15,14 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 
-const { aggregateSessionTree, median, percentile, runIsCompleted, summarizeRuns } = await import(
-  '../bench/lib/aggregate.mjs'
-)
+const {
+  aggregateSessionTree,
+  median,
+  percentile,
+  runIsCompleted,
+  summarizeRuns,
+  summarizeRunsByArm,
+} = await import('../bench/lib/aggregate.mjs')
 
 // ─── median / percentile ─────────────────────────────────────────────────
 
@@ -44,6 +49,20 @@ test('percentile(0.8) uses nearest-rank over the sorted sample', () => {
   assert.equal(percentile([50, 10, 30, 20, 40], 0.8), 40)
   // sorted: [1..10] → ceil(8)=8 → 8th value = 8
   assert.equal(percentile([10, 5, 3, 8, 1, 9, 2, 4, 7, 6], 0.8), 8)
+})
+
+test('paired arm summaries keep candidate and control samples separate', () => {
+  const summaries = summarizeRunsByArm([
+    { arm: 'control', scenario: 'B', status: 'completed', wallMs: 200, childrenCount: 1 },
+    { arm: 'candidate', scenario: 'B', status: 'completed', wallMs: 100, childrenCount: 0 },
+    { arm: 'candidate', scenario: 'B', status: 'failed', wallMs: 300, childrenCount: null },
+  ])
+  assert.equal(summaries.control.runs, 1)
+  assert.equal(summaries.control.wallMs.median, 200)
+  assert.equal(summaries.candidate.runs, 2)
+  assert.equal(summaries.candidate.completed, 1)
+  assert.equal(summaries.candidate.failures, 1)
+  assert.equal(summaries.candidate.wallMs.median, 100)
 })
 
 // ─── runIsCompleted ──────────────────────────────────────────────────────
@@ -171,7 +190,14 @@ function run(overrides) {
     scenario: 'A',
     status: 'completed',
     wallMs: 1000,
-    tokens: { input: 100, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+    tokens: {
+      status: 'ok',
+      input: 100,
+      output: 10,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
     toolCalls: { shell: 3 },
     childrenCount: 1,
     failureReason: null,
@@ -191,6 +217,8 @@ test('summarizeRuns reports median + p80 over completed runs only', () => {
   assert.equal(summary.failures, 1)
   assert.equal(summary.wallMs.median, 2000)
   assert.equal(summary.wallMs.p80, 3000)
+  assert.equal(summary.tokens.status, 'ok')
+  assert.equal(summary.tokens.completeRuns, 3)
 })
 
 test('summarizeRuns keeps per-name tool call totals over completed runs', () => {
@@ -207,6 +235,37 @@ test('summarizeRuns of zero completed runs yields unavailable metrics, not zeros
   assert.equal(summary.wallMs.status, 'unavailable')
   assert.ok(summary.wallMs.reason.length > 0)
   assert.equal(summary.tokens.status, 'unavailable')
+})
+
+test('unavailable or incomplete token records never become numeric zero totals', () => {
+  const summary = summarizeRuns([
+    run({ tokens: { status: 'unavailable', reason: 'ledger missing' } }),
+    run({ tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0 } }),
+  ])
+  assert.equal(summary.completed, 2)
+  assert.equal(summary.tokens.status, 'unavailable')
+})
+
+test('mixed complete and incomplete token runs make the whole total unavailable', () => {
+  const summary = summarizeRuns([
+    run({
+      tokens: { status: 'ok', input: 100, output: 10, reasoning: 0, cacheRead: 3, cacheWrite: 0 },
+    }),
+    run({
+      tokens: {
+        status: 'unavailable',
+        reason: 'incomplete token fields: cacheRead',
+        tokenMessages: 2,
+        tokenFieldMessages: { input: 2, output: 2, reasoning: 2, cacheRead: 1, cacheWrite: 2 },
+      },
+    }),
+  ])
+  assert.deepEqual(summary.tokens, {
+    status: 'unavailable',
+    reason: 'token fields unavailable or incomplete for one or more completed runs',
+    completeRuns: 1,
+    completedRuns: 2,
+  })
 })
 
 test('summarizeRuns splits per scenario', () => {

@@ -237,6 +237,67 @@ test('collectRunMetrics sums tokens over root + children exactly once (assistant
       assert.equal(metrics.tokens.input, 200)
       assert.equal(metrics.tokens.output, 20)
       assert.equal(metrics.tokens.cacheRead, 71)
+      assert.equal(metrics.tokens.tokenMessages, 4)
+      assert.equal(metrics.tokens.assistantMessages, 4)
+      assert.deepEqual(metrics.tokens.tokenFieldMessages, {
+        input: 4,
+        output: 4,
+        reasoning: 4,
+        cacheRead: 4,
+        cacheWrite: 4,
+      })
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test('collectTokens reports incomplete fields as unavailable instead of zero-filling them', () => {
+  withFixture((dbPath) => {
+    const writable = new DatabaseSync(dbPath)
+    const row = writable.prepare('SELECT data FROM session_message WHERE id = ?').get('m4')
+    const data = JSON.parse(row.data)
+    delete data.tokens.cache.read
+    writable
+      .prepare('UPDATE session_message SET data = ? WHERE id = ?')
+      .run(JSON.stringify(data), 'm4')
+    writable.close()
+
+    const db = openReadOnly(dbPath)
+    try {
+      const metrics = collectRunMetrics(db, 'ses_root')
+      assert.equal(metrics.tokens.status, 'unavailable')
+      assert.match(metrics.tokens.reason, /cacheRead/)
+      assert.equal(metrics.tokens.tokenMessages, 4)
+      assert.equal(metrics.tokens.assistantMessages, 4)
+      assert.equal(metrics.tokens.tokenFieldMessages.cacheRead, 3)
+      assert.equal('input' in metrics.tokens, false, 'partial totals are not exposed')
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test('collectTokens reports a tokenless assistant message as incomplete coverage', () => {
+  withFixture((dbPath) => {
+    const writable = new DatabaseSync(dbPath)
+    const row = writable.prepare('SELECT data FROM session_message WHERE id = ?').get('m4')
+    const data = JSON.parse(row.data)
+    delete data.tokens
+    writable
+      .prepare('UPDATE session_message SET data = ? WHERE id = ?')
+      .run(JSON.stringify(data), 'm4')
+    writable.close()
+
+    const db = openReadOnly(dbPath)
+    try {
+      const metrics = collectRunMetrics(db, 'ses_root')
+      assert.equal(metrics.tokens.status, 'unavailable')
+      assert.match(metrics.tokens.reason, /input.*output.*reasoning.*cacheRead.*cacheWrite/)
+      assert.equal(metrics.tokens.tokenMessages, 3)
+      assert.equal(metrics.tokens.assistantMessages, 4)
+      assert.equal(metrics.tokens.tokenFieldMessages.input, 3)
+      assert.equal('input' in metrics.tokens, false, 'partial totals are not exposed')
     } finally {
       db.close()
     }
@@ -265,6 +326,8 @@ test('collectRunMetrics carries the root session outcome and model', () => {
     try {
       const metrics = collectRunMetrics(db, 'ses_root')
       assert.equal(metrics.root.idle_outcome, 'succeeded')
+      assert.equal(metrics.root.agent, 'zeus')
+      assert.equal(metrics.root.parent_id, null)
       assert.ok(typeof metrics.root.model === 'string' && metrics.root.model.includes('m1'))
     } finally {
       db.close()

@@ -100,6 +100,24 @@ test('runOnce spawns opencode run non-interactively with json format, auto-appro
   assert.ok(result.wallMs >= 0)
 })
 
+test('runOnce honors the explicitly selected specialist root agent', async () => {
+  let argsSeen
+  await runOnce({
+    cwd: '/sandbox/run-talos',
+    prompt: 'hello',
+    model: 'p/m',
+    agent: 'talos',
+    timeoutMs: 5_000,
+    spawn: (_cmd, args) => {
+      argsSeen = args
+      return { stdout: '', stderr: '', exitCode: 0, killed: false }
+    },
+  })
+  const agentIndex = argsSeen.indexOf('--agent')
+  assert.notEqual(agentIndex, -1)
+  assert.equal(argsSeen[agentIndex + 1], 'talos')
+})
+
 test('runOnce parses NDJSON events and extractSessionId picks the first sessionID', async () => {
   const result = await runOnce({
     cwd: '/sandbox/run-2',

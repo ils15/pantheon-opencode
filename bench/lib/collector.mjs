@@ -117,10 +117,12 @@ export function collectTokens(db, sessionIds) {
   const placeholders = sessionIds.map(() => '?').join(', ')
   const rows = db
     .prepare(
-      `SELECT data FROM session_message WHERE session_id IN (${placeholders}) AND type = 'assistant' AND json_valid(data)`,
+      `SELECT data FROM session_message WHERE session_id IN (${placeholders}) AND type = 'assistant'`,
     )
     .all(...sessionIds)
-  const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+  const tokenFields = ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite']
+  const tokens = Object.fromEntries(tokenFields.map((field) => [field, 0]))
+  const fieldMessages = Object.fromEntries(tokenFields.map((field) => [field, 0]))
   let counted = 0
   for (const row of rows) {
     let data
@@ -132,18 +134,49 @@ export function collectTokens(db, sessionIds) {
     const t = data?.tokens
     if (!t || typeof t !== 'object') continue
     counted += 1
-    if (typeof t.input === 'number') tokens.input += t.input
-    if (typeof t.output === 'number') tokens.output += t.output
-    if (typeof t.reasoning === 'number') tokens.reasoning += t.reasoning
+    if (typeof t.input === 'number') {
+      tokens.input += t.input
+      fieldMessages.input += 1
+    }
+    if (typeof t.output === 'number') {
+      tokens.output += t.output
+      fieldMessages.output += 1
+    }
+    if (typeof t.reasoning === 'number') {
+      tokens.reasoning += t.reasoning
+      fieldMessages.reasoning += 1
+    }
     if (t.cache && typeof t.cache === 'object') {
-      if (typeof t.cache.read === 'number') tokens.cacheRead += t.cache.read
-      if (typeof t.cache.write === 'number') tokens.cacheWrite += t.cache.write
+      if (typeof t.cache.read === 'number') {
+        tokens.cacheRead += t.cache.read
+        fieldMessages.cacheRead += 1
+      }
+      if (typeof t.cache.write === 'number') {
+        tokens.cacheWrite += t.cache.write
+        fieldMessages.cacheWrite += 1
+      }
     }
   }
-  if (counted === 0) {
-    return { status: 'unavailable', reason: 'no assistant rows with a tokens object in the tree' }
+  if (rows.length === 0) {
+    return { status: 'unavailable', reason: 'no assistant rows in the session tree' }
   }
-  return { status: 'ok', ...tokens, tokenMessages: counted }
+  const missingFields = tokenFields.filter((field) => fieldMessages[field] !== rows.length)
+  if (missingFields.length > 0) {
+    return {
+      status: 'unavailable',
+      reason: `incomplete token fields: ${missingFields.join(', ')}`,
+      tokenMessages: counted,
+      assistantMessages: rows.length,
+      tokenFieldMessages: fieldMessages,
+    }
+  }
+  return {
+    status: 'ok',
+    ...tokens,
+    tokenMessages: counted,
+    assistantMessages: rows.length,
+    tokenFieldMessages: fieldMessages,
+  }
 }
 
 /**
@@ -197,6 +230,7 @@ export function collectRunMetrics(db, rootId) {
     root: {
       status: 'ok',
       id: root.id,
+      parent_id: root.parent_id ?? null,
       idle_outcome: root.idle_outcome ?? null,
       model: root.model ?? null,
       agent: root.agent ?? null,
