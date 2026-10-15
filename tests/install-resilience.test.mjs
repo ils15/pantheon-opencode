@@ -222,6 +222,7 @@ test('apply gate: an accepted prompt applies and reports applied:true', async ()
       deps: { promptReview: async () => true },
     })
     assert.equal(result.applied, true)
+    assert.equal(result.reason, 'applied', 'a clean apply has no drift')
     assert.ok(existsSync(join(target, 'opencode.json')), 'an accepted run applies')
   } finally {
     rmSync(target, { recursive: true, force: true })

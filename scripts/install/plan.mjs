@@ -192,7 +192,7 @@ function formatBytes(bytes) {
 }
 
 /** Path shown in the plan: relative to the target when it lives inside it. */
-function displayPath(target, filePath) {
+export function displayPath(target, filePath) {
   if (!target) return filePath
   const rel = relative(target, filePath)
   if (rel === '') return '.'

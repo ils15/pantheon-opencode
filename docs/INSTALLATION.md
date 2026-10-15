@@ -708,8 +708,10 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 
 > **Apply não-interativo exige `--yes`.** Sem TTY, `init` imprime o plano e
 > **não altera nada** sem `--yes` (alias `-y`). Exit codes: `0` ok/plan-only
-> (nada aplicado) · `2` apply pedido sem autorização · `3` drift (Fase 4) ·
-> `130` cancelado · `1` falha.
+> (nada aplicado) · `2` apply pedido sem autorização · `3` drift (um alvo
+> planejado mudou entre o plano e o apply) · `130` cancelado · `1` falha.
+> O drift é verificado **dentro de uma única execução** (plano → apply); não é
+> detectável entre duas invocações separadas do CLI (nenhum plano é persistido).
 
 ```bash
 # Preset explícito pula wizard (Q1/Q2/Q3)

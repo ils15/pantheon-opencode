@@ -49,6 +49,8 @@ const TABLE = {
     v2Migrating: 'Migrating config to V2 native format...',
     nothingApplied: 'Nothing applied.',
     planOnlyNoYes: 'Plan only — re-run with --yes to apply.',
+    driftHeader: 'State changed since preview — aborting before any write:',
+    driftAbort: 'No files were written. Re-run to re-review.',
     // summary (printSummary)
     summaryInstalled: (target) => `OpenCode installed in ${target}`,
     summaryWithErrors: (target) => `Installation finished WITH ERRORS in ${target}`,
@@ -99,6 +101,8 @@ const TABLE = {
     v2Migrating: 'Migrando config para o formato nativo V2...',
     nothingApplied: 'Nada foi aplicado.',
     planOnlyNoYes: 'Apenas o plano — rode de novo com --yes para aplicar.',
+    driftHeader: 'O estado mudou desde o preview — abortando antes de qualquer escrita:',
+    driftAbort: 'Nenhum arquivo foi escrito. Rode de novo para revisar.',
     // summary (printSummary)
     summaryInstalled: (target) => `OpenCode instalado em ${target}`,
     summaryWithErrors: (target) => `Instalação concluída COM ERROS em ${target}`,

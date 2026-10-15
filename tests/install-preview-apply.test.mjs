@@ -38,7 +38,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { test } from 'node:test'
-
+import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
 import {
   createRecorder,
   formatChangePlan,
@@ -254,6 +254,7 @@ test('init --dry-run: prints the real plan and writes nothing', () => {
     assert.match(output, /agents\/zeus\.md/)
     assert.match(output, /\bupdate\b/)
     assert.match(output, /No files were written\./)
+    assert.match(output, /\[DRY-RUN\]/, 'a genuine dry run stays [DRY-RUN]-tagged')
 
     // The consistency guard is ADD-only (Scoped Plan+Stats) — a fresh preview
     // must NOT emit a mismatch warning.
@@ -463,6 +464,135 @@ test('init without --yes (non-TTY) prints the plan, applies nothing and exits 2'
     assert.match(output, /re-run with --yes/i)
     assert.doesNotMatch(output, /installed!/, 'no success banner')
     assert.deepEqual(readdirSync(target), [], 'nothing may be written')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true })
+    rmSync(xdg, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Phase 4 — drift detection (plan pass vs apply)
+// ---------------------------------------------------------------------------
+
+const driftOpts = (betweenPlanAndApply) => ({
+  yes: true,
+  headless: true,
+  version: 'v1',
+  deps: { betweenPlanAndApply },
+})
+
+test('drift: a planned file changed between plan and apply aborts with no writes', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-drift-file-'))
+  try {
+    mkdirSync(join(target, '.opencode', 'agents'), { recursive: true })
+    writeFileSync(join(target, '.opencode', 'agents', 'hermes.md'), 'STALE\n')
+    const result = await installOpenCode(
+      target,
+      false,
+      false,
+      ['agents', 'commands'],
+      driftOpts(() => writeFileSync(join(target, '.opencode', 'agents', 'hermes.md'), 'MUTATED\n')),
+    )
+    assert.equal(result.applied, false)
+    assert.equal(result.reason, 'drift')
+    assert.deepEqual(result.drift, ['.opencode/agents/hermes.md'])
+    assert.equal(
+      readFileSync(join(target, '.opencode', 'agents', 'hermes.md'), 'utf8'),
+      'MUTATED\n',
+    )
+    assert.equal(existsSync(join(target, '.pantheon')), false, 'no backup/state written')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('drift: opencode.json changed between plan and apply aborts with no writes', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-drift-config-'))
+  try {
+    writeFileSync(join(target, 'opencode.json'), '{"theme":"seed"}\n')
+    const result = await installOpenCode(
+      target,
+      false,
+      false,
+      ['agents'],
+      driftOpts(() => writeFileSync(join(target, 'opencode.json'), '{"theme":"mutated"}\n')),
+    )
+    assert.equal(result.reason, 'drift')
+    assert.deepEqual(result.drift, ['opencode.json'])
+    assert.equal(existsSync(join(target, '.opencode')), false, 'no agents written')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('drift: a planned-new file appearing before apply is drift', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-drift-new-'))
+  try {
+    const result = await installOpenCode(
+      target,
+      false,
+      false,
+      ['agents'],
+      driftOpts(() => {
+        mkdirSync(join(target, '.opencode', 'agents'), { recursive: true })
+        writeFileSync(join(target, '.opencode', 'agents', 'zeus.md'), 'SNEAKED\n')
+      }),
+    )
+    assert.equal(result.reason, 'drift')
+    assert.deepEqual(result.drift, ['.opencode/agents/zeus.md'])
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('exit code mapping: drift -> 3, not-authorized -> 2, canceled -> 130, else 0', () => {
+  assert.equal(resolveInstallExitCode({ applied: false, reason: 'drift' }, false), 3)
+  assert.equal(resolveInstallExitCode({ applied: false, reason: 'not-authorized' }, false), 2)
+  assert.equal(resolveInstallExitCode({ applied: false, reason: 'canceled' }, false), 130)
+  assert.equal(resolveInstallExitCode({ applied: false, reason: 'declined' }, false), 0)
+  assert.equal(resolveInstallExitCode({ applied: true, reason: 'applied' }, false), 0)
+  assert.equal(resolveInstallExitCode({ applied: false, reason: 'plan' }, true), 0)
+})
+
+test('authorized apply (--yes) emits no [DRY-RUN] plan block and writes for real', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-apply-quiet-'))
+  const home = mkdtempSync(join(tmpdir(), 'pantheon-apply-quiet-home-'))
+  const xdg = mkdtempSync(join(tmpdir(), 'pantheon-apply-quiet-xdg-'))
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        BIN,
+        'init',
+        '--project',
+        '--yes',
+        '--headless',
+        '--version',
+        'v1',
+        '--no-mcp',
+        '--components',
+        'agents,commands',
+      ],
+      {
+        cwd: target,
+        encoding: 'utf8',
+        timeout: 120_000,
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+      },
+    )
+    const output = `${result.stdout}\n${result.stderr}`
+    assert.equal(result.status, 0, `authorized apply must exit 0:\n${output}`)
+    assert.doesNotMatch(output, /\[DRY-RUN\]/, 'a real apply is not dry-run tagged')
+    assert.doesNotMatch(
+      output,
+      /No files were written\./,
+      'a real apply must not claim it wrote nothing',
+    )
+    assert.ok(existsSync(join(target, 'opencode.json')), 'the apply actually wrote')
   } finally {
     rmSync(target, { recursive: true, force: true })
     rmSync(home, { recursive: true, force: true })

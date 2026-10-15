@@ -21,6 +21,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 
@@ -85,7 +87,7 @@ function printUsage() {
   console.log('  0   success, or plan/no-apply (declined)')
   console.log('  1   failure')
   console.log('  2   apply was requested without authorization (non-interactive, no --yes)')
-  console.log('  3   drift detected (Phase 4)')
+  console.log('  3   drift detected (a planned file changed after the plan)')
   console.log('  130 canceled')
 }
 
@@ -462,18 +464,13 @@ async function main() {
       process.exit(1)
     }
 
-    // Beta 11 Setup phase 3: a run that did NOT apply (declined / unauthorized)
-    // must never print a success banner. Exit codes:
+    // Beta 11 Setup phases 3-4: a run that did NOT apply (declined /
+    // unauthorized / drift) must never print a success banner. Exit codes:
     //   0 ok / no-apply · 2 apply-requested-without-authorization · 3 drift
-    //   (Phase 4) · 130 canceled · 1 failure.
+    //   130 canceled · 1 failure (thrown above).
     if (!isDryRun && result?.applied === false) {
-      if (result.reason === 'not-authorized') process.exit(2)
-      if (result.reason === 'canceled') {
-        console.error(S.canceled)
-        process.exit(130)
-      }
-      // Declined: the gate already printed the no-apply notice.
-      process.exit(0)
+      if (result.reason === 'canceled') console.error(S.canceled)
+      process.exit(resolveInstallExitCode(result, isDryRun))
     }
 
     if (runDoctor && !isDryRun) {

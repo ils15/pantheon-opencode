@@ -48,11 +48,13 @@ import { resolveOpenCodeVersion } from './opencode-version.mjs'
 import {
   ACTIONS,
   createRecorder,
+  displayPath,
   formatChangePlan,
   isRecording,
   NOOP_RECORDER,
   planStatsMismatch,
   recordChange,
+  snapshot,
   summarizeChanges,
 } from './plan.mjs'
 import { copyPluginFiles, installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
@@ -951,6 +953,30 @@ export function applyMcpServerEntries(config, { runtimeTarget, venvPython }) {
   return { healed }
 }
 
+/**
+ * Phase 4 drift detection: the planned targets whose on-disk state changed
+ * between the plan pass (snapshots) and the apply pass. A path counts as drifted
+ * when its existence, content hash, size, or mode differs — which includes a
+ * planned-NEW path that now exists. Returns the absolute paths (empty = no
+ * drift); callers print only these paths, never contents or hashes.
+ */
+function detectSnapshotDrift(snapshots) {
+  if (!Array.isArray(snapshots)) return []
+  const changed = []
+  for (const before of snapshots) {
+    const now = snapshot(before.path)
+    if (
+      now.exists !== before.exists ||
+      now.sha256 !== before.sha256 ||
+      now.size !== before.size ||
+      now.mode !== before.mode
+    ) {
+      changed.push(before.path)
+    }
+  }
+  return changed
+}
+
 export async function installOpenCode(
   target,
   dryRun = false,
@@ -970,6 +996,8 @@ export async function installOpenCode(
   const statsBefore = { created: stats.created, skipped: stats.skipped }
   // Number of planned changes, filled by a dry plan pass (used by the gate).
   let plannedChanges = 0
+  // Phase 4: planned-target snapshots from the plan pass, used for drift checks.
+  let plannedSnapshots = null
   const S = strings()
 
   // Beta 11 (Setup phase 1): a dry pass records every writer's intended change
@@ -1078,44 +1106,74 @@ export async function installOpenCode(
   const _subDir = isGlobal ? '' : '.opencode'
   const agentPrefix = isGlobal || version === 'v2' ? 'agents' : '.opencode/agents'
 
-  configure({ dryRun })
+  configure({ dryRun, quiet: opts.quiet === true })
 
   // -----------------------------------------------------------------------
-  // Apply gate (Beta 11 Setup phase 3): applying requires explicit
-  // authorization. A declined / unauthorized run writes NOTHING and reports
-  // `{ applied: false }` so the caller never prints a success banner.
+  // Plan pass + apply gate + drift check (Beta 11 Setup phases 3-4).
+  //   * the plan pass (a dry run — writes nothing) prints the plan and
+  //     snapshots every planned target;
+  //   * applying requires explicit authorization (Phase 3): a declined or
+  //     unauthorized run writes NOTHING;
+  //   * drift (Phase 4) aborts BEFORE any write if a planned target changed
+  //     between the plan pass and now.
+  // A result with `applied: false` means the caller must not print success.
   // -----------------------------------------------------------------------
   const applyRequested = !dryRun
-  if (applyRequested && !autoYes) {
-    // Print the REAL plan first via a dry pass (writes nothing), then gate.
+  if (applyRequested) {
     const savedStats = { ...stats }
     let planned
     try {
       // Use the LIVE selection: the wizard above may have changed componentSet.
+      // An AUTHORIZED apply (`--yes`) is not a preview: compute the plan +
+      // snapshots but stay silent. The gate path (no `--yes`) still prints the
+      // plan for the review / decline preview.
       planned = await installOpenCode(target, true, clean, [...componentSet], {
         ...opts,
         planOnly: true,
+        quiet: autoYes,
+        quietPlan: autoYes,
       })
     } finally {
       Object.assign(stats, savedStats)
       // The plan pass left the UI in dry-run mode; restore this run's mode.
-      configure({ dryRun })
+      configure({ dryRun, quiet: opts.quiet === true })
     }
-    const injected = opts.deps?.promptReview
-    const canPrompt = typeof injected === 'function' || interactive
-    if (canPrompt) {
-      const { promptReview } = await import('./interactive.mjs')
-      const ask = typeof injected === 'function' ? injected : promptReview
-      const accepted = await ask(`Apply these ${planned?.planned ?? 0} changes?`, {
-        default: false,
-      })
-      if (!accepted) {
-        info(S.nothingApplied)
-        return { ...stats, applied: false, reason: 'declined' }
+    plannedSnapshots = planned?.snapshots ?? null
+
+    if (!autoYes) {
+      const injected = opts.deps?.promptReview
+      const canPrompt = typeof injected === 'function' || interactive
+      if (canPrompt) {
+        const { promptReview } = await import('./interactive.mjs')
+        const ask = typeof injected === 'function' ? injected : promptReview
+        const accepted = await ask(`Apply these ${planned?.planned ?? 0} changes?`, {
+          default: false,
+        })
+        if (!accepted) {
+          info(S.nothingApplied)
+          return { ...stats, applied: false, reason: 'declined' }
+        }
+      } else {
+        info(S.planOnlyNoYes)
+        return { ...stats, applied: false, reason: 'not-authorized' }
       }
-    } else {
-      info(S.planOnlyNoYes)
-      return { ...stats, applied: false, reason: 'not-authorized' }
+    }
+
+    // Test seam: mutate a target between the plan/authorization and the drift
+    // check. Absent in production callers.
+    if (typeof opts.deps?.betweenPlanAndApply === 'function') opts.deps.betweenPlanAndApply()
+
+    const drifted = detectSnapshotDrift(plannedSnapshots)
+    if (drifted.length > 0) {
+      warning(S.driftHeader)
+      for (const p of drifted) warning(`  ${displayPath(target, p)}`)
+      warning(S.driftAbort)
+      return {
+        ...stats,
+        applied: false,
+        reason: 'drift',
+        drift: drifted.map((p) => displayPath(target, p)),
+      }
     }
   }
 
@@ -1966,6 +2024,9 @@ export async function installOpenCode(
     )
     const plan = summarizeChanges(preview.entries)
     plannedChanges = plan.totals.create + plan.totals.update + plan.totals.remove
+    // Phase 4: snapshot each planned target now, so the apply pass can detect
+    // any change between plan and apply (drift) before the first write.
+    plannedSnapshots = plan.files.map((f) => ({ path: f.path, ...snapshot(f.path) }))
     const statsDelta = {
       created: stats.created - statsBefore.created,
       skipped: stats.skipped - statsBefore.skipped,
@@ -1981,11 +2042,16 @@ export async function installOpenCode(
       )
     }
     // Tag the plan like every other dry-run line so the output reads uniformly.
-    console.log('')
-    for (const line of formatChangePlan(target, plan).split('\n')) {
-      console.log(tag(line))
+    // An internal snapshot pass on the apply path (`quietPlan`, e.g. an
+    // authorized `--yes` run) computes the plan and snapshots but must NOT echo
+    // it — a real apply is not a dry run.
+    if (!opts.quietPlan) {
+      console.log('')
+      for (const line of formatChangePlan(target, plan).split('\n')) {
+        console.log(tag(line))
+      }
+      console.log('')
     }
-    console.log('')
   }
 
   // -----------------------------------------------------------------------
@@ -2091,8 +2157,15 @@ export async function installOpenCode(
   }
 
   // Beta 11 Setup phase 3: report whether this call APPLIED, so the caller can
-  // avoid a success banner for a plan-only / unauthorized run.
+  // avoid a success banner for a plan-only / unauthorized run. The dry pass also
+  // returns the planned-target snapshots for the apply pass's drift check.
   return dryRun
-    ? { ...stats, applied: false, reason: 'plan', planned: plannedChanges }
+    ? {
+        ...stats,
+        applied: false,
+        reason: 'plan',
+        planned: plannedChanges,
+        snapshots: plannedSnapshots,
+      }
     : { ...stats, applied: true, reason: 'applied' }
 }
