@@ -16,7 +16,7 @@
  * The write mirrors the `/pantheon-vision` command: atomic, `.bak` backup,
  * and a MERGE — existing keys are never overwritten.
  */
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { writeConfigWithBackup } from './shared.mjs'
@@ -81,6 +81,16 @@ export function mergeVisionModel(
   const status = writeConfigWithBackup(configPath, content, false, {
     expectedContent: existingRaw,
     beforeRecheck,
+    // This file is GLOBAL and lives outside the config dir, so the target-scoped
+    // exact backup set never captures it. Keep its own `<file>.bak` recovery.
+    beforeSwap: (existing) => {
+      if (existing === null) return
+      try {
+        copyFileSync(configPath, `${configPath}.bak`)
+      } catch {
+        // Best-effort: a backup failure must not block the write.
+      }
+    },
   })
   return { path: configPath, wrote: status === 'created', reason: status }
 }

@@ -28,8 +28,10 @@ exclusivamente no OpenCode.
    config, venv e entradas MCP com o pacote novo. Com instalação global,
    `pantheon-opencode update` (sem npx) faz o mesmo.
 3. Se a atualização for interrompida, rode `init` de novo — cada passo de
-   cópia é idempotente (byte-compare) e a escrita do config deixa um
-   `opencode.json.bak` com o conteúdo anterior.
+   cópia é idempotente (byte-compare) e o config é preservado num conjunto de
+   backup exato (`.pantheon/backups/<timestamp>/`) que
+   `pantheon-opencode restore` reverte. O sidecar `opencode.json.bak` antigo
+   não existe mais.
 4. Abra o OpenCode e confirme com `npx pantheon-opencode doctor` (ele compara
    o marker de versão instalada com o pacote e avisa em caso de drift).
 

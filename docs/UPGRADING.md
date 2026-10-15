@@ -143,8 +143,9 @@ still not what you expect, `--opencode-version v1|v2` overrides it outright and
    merges, the Python venv and MCP entries match the new package. With a
    global install, `pantheon-opencode update` (no npx) does the same.
 3. If the update was interrupted, just run `init` again — every copy step is
-   byte-compare idempotent and the config write leaves an
-   `opencode.json.bak` of the previous content.
+   byte-compare idempotent and the config is preserved in an exact backup set
+   (`.pantheon/backups/<timestamp>/`) that `pantheon-opencode restore` reverts.
+   The old `opencode.json.bak` sidecar is gone.
 4. Start OpenCode and optionally confirm with `npx pantheon-opencode doctor`
    (it compares the installed-version marker against the package and warns on
    drift).

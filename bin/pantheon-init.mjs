@@ -69,6 +69,9 @@ function printUsage() {
   console.log('  npx pantheon-opencode prune               # List legacy artifacts (dry-run)')
   console.log('  npx pantheon-opencode prune --apply       # Remove stale backups')
   console.log('  npx pantheon-opencode doctor [--profile]  # Run health check')
+  console.log(
+    '  npx pantheon-opencode restore [--project] [--yes]  # Restore an exact installer backup',
+  )
   console.log('  npx pantheon-opencode uninstall --project   # Remove project artifacts safely')
   console.log('  npx pantheon-opencode uninstall --global    # Remove global artifacts safely')
   console.log('  npx pantheon-opencode --version, -v       # Print version and exit')
@@ -103,6 +106,17 @@ async function main() {
     const { spawnSync } = await import('node:child_process')
     const uninstallScript = path.join(ROOT, 'scripts', 'uninstall.mjs')
     const result = spawnSync(process.execPath, [uninstallScript, ...args.slice(1)], {
+      stdio: 'inherit',
+      cwd: process.cwd(),
+    })
+    process.exit(result.status ?? 1)
+  }
+
+  // restore delegates to scripts/restore.mjs (same spawnSync pattern as prune).
+  if (command === 'restore') {
+    const { spawnSync } = await import('node:child_process')
+    const restoreScript = path.join(ROOT, 'scripts', 'restore.mjs')
+    const result = spawnSync(process.execPath, [restoreScript, ...args.slice(1)], {
       stdio: 'inherit',
       cwd: process.cwd(),
     })

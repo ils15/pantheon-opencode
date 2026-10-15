@@ -18,10 +18,10 @@
  *
  * "Scored" vs "unscored": writers that increment the install summary
  * (`stats.created`) alongside a genuine change are SCORED. Artifacts that are
- * not part of that summary (the synthetic `.venv` directory entry, the
- * state-only `.pantheon/install-state.json` write, `.bak` snapshots, and the
- * TUI stale-ref cleanup) are recorded UNSCORED so they still appear in the
- * printed plan but never affect the consistency guard.
+ * not part of that summary (the synthetic `.venv` entry, the state-only
+ * `.pantheon/install-state.json` write, the backup-set manifest, and the TUI
+ * stale-ref cleanup) are recorded UNSCORED so they still appear in the printed
+ * plan but never affect the consistency guard.
  *
  * Security: the recorder, the summary and the formatter deal in paths, actions
  * and byte sizes ONLY. File contents and hashes stay internal — hashes are kept

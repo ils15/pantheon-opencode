@@ -19,9 +19,10 @@
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { listV2UnsupportedFeatures } from '../../src/pantheon/v2-unsupported.mjs'
 import { copyAgentPrompts, writeAgentsMdManaged } from '../build-agents-md.mjs'
+import { backupSetPath, backupWarning, createBackupSet, nextBackupName } from './backup.mjs'
 import {
   bullet,
   colors,
@@ -81,6 +82,170 @@ const COMPONENT_NAMES = [
   'plugins',
   'runtime',
 ]
+
+/**
+ * MCP server scripts the runtime component installs. Hoisted so the backup-set
+ * enumeration and the runtime writer share one source of truth.
+ */
+const MCP_SCRIPTS = [
+  'mcp_resources.py',
+  'code_mode.py',
+  'memory_mcp.py',
+  'scrub-secrets.py',
+  '_pantheon_paths.py',
+  'mcp_codemap_module.py',
+  'mcp_persistence.py',
+  'pantheon_vision.py',
+  'eval_store.py',
+  'themis_heuristic_scan.py',
+]
+
+/** Recursively list regular files under `root`, relative to `root`. */
+function walkFiles(root, base = root, out = []) {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const full = join(root, entry.name)
+    if (entry.isDirectory()) walkFiles(full, base, out)
+    else if (entry.isFile()) out.push(relative(base, full))
+  }
+  return out
+}
+
+/**
+ * Enumerate what the backup set must preserve, derived from the selected
+ * components. It returns:
+ *   - `entries`: paths (relative to `target`) the run can CREATE/UPDATE/REMOVE.
+ *     For every managed destination tree we take the UNION of the files that
+ *     already exist there (so a `--clean`, a stale removal, or an
+ *     instructions-only refresh is captured) and the source-derived destination
+ *     paths (so a file that will be created is recorded as absent). The union is
+ *     a superset of the plan's changes — unchanged files are backed up too.
+ *   - `notRevertible`: paths the run may delete or write but whose byte-for-byte
+ *     copy is not feasible or is out of the config dir (bulk `.venv` / plugin
+ *     `node_modules`, the global `tui.json` copies and the global vision config).
+ *     These are recorded explicitly in the manifest rather than silently ignored.
+ * It never reads file contents.
+ *
+ * @param {string} target
+ * @param {Set<string>} componentSet
+ * @param {string} version
+ * @param {boolean} isGlobal
+ * @returns {{ entries: string[], notRevertible: string[] }}
+ */
+function collectInstallBackupEntries(target, componentSet, version, isGlobal) {
+  const entries = []
+  const notRevertible = []
+  const rel = (abs) => relative(target, abs)
+  const addFile = (abs) => entries.push(rel(abs))
+  // Existing files under an in-target tree (covers removals / clean / refresh).
+  // `skipDirNames` prunes bulk subdirectories (e.g. plugin `node_modules`) so the
+  // walk stays cheap while everything else — including legacy files a clean pass
+  // deletes — is captured.
+  const addExisting = (dir, skipDirNames = null) => {
+    if (!existsSync(dir)) return
+    const walk = (base) => {
+      for (const entry of readdirSync(base, { withFileTypes: true })) {
+        if (skipDirNames && entry.isDirectory() && skipDirNames.has(entry.name)) continue
+        const full = join(base, entry.name)
+        if (entry.isDirectory()) walk(full)
+        else if (entry.isFile()) addFile(full)
+      }
+    }
+    walk(dir)
+  }
+  // Destination paths derived from a source tree (covers files to be created).
+  const addSource = (srcDir, dstDir, filter = null) => {
+    if (!existsSync(srcDir)) return
+    for (const r of walkFiles(srcDir)) {
+      if (filter && !filter(r)) continue
+      addFile(join(dstDir, r))
+    }
+  }
+
+  const baseDir = isGlobal ? target : join(target, '.opencode')
+  const agentPrefix = isGlobal || version === 'v2' ? 'agents' : '.opencode/agents'
+  const agentDir = join(target, agentPrefix)
+
+  // Always touched.
+  addFile(join(target, 'opencode.json'))
+  addFile(join(target, '.pantheon', 'install-state.json'))
+  addFile(join(baseDir, 'opencode-vision.json'))
+  // The active-preset writer (writeActivePreset(target, …)) lives at
+  // <target>/.pantheon, NOT under <baseDir>, for both project and global scope.
+  addFile(join(target, '.pantheon', 'active-preset.json'))
+  addFile(join(target, '.pantheon', 'active-preset.json.bak'))
+
+  // The agent prompt dir is refreshed (existing-only) by an instructions-only
+  // run too, so enumerate it whenever EITHER component can write it.
+  if (componentSet.has('agents') || componentSet.has('instructions')) {
+    addExisting(agentDir)
+  }
+  if (componentSet.has('agents')) {
+    addFile(join(target, 'routing.yml'))
+    addSource(
+      join(ROOT, 'src', 'agents'),
+      agentDir,
+      (r) => r.endsWith('.md') && r.toLowerCase() !== 'readme.md',
+    )
+  }
+  if (componentSet.has('skills')) {
+    addExisting(join(baseDir, 'skills'))
+    addSource(join(ROOT, 'src', 'skills'), join(baseDir, 'skills'))
+  }
+  if (componentSet.has('instructions')) addFile(join(target, 'AGENTS.md'))
+  if (componentSet.has('prompts')) {
+    addExisting(join(target, 'prompts'))
+    addSource(join(ROOT, 'prompts'), join(target, 'prompts'))
+  }
+  if (componentSet.has('commands')) {
+    const commandDir = isGlobal || version === 'v2' ? 'commands' : '.opencode/commands'
+    addExisting(join(target, commandDir))
+    addSource(join(ROOT, 'commands'), join(target, commandDir), (r) => r.endsWith('.md'))
+  }
+  if (componentSet.has('plugins')) {
+    const dstPluginDir = isGlobal
+      ? join(target, 'plugins', 'pantheon-tui')
+      : join(target, '.opencode', 'plugins', 'pantheon-tui')
+    // Existing files under the installed plugin dir (legacy `index.tsx` /
+    // `dist/tui.tsx` and any extras a `--clean` run deletes) are captured, like
+    // every sibling tree — EXCEPT the bulk `node_modules`, which is regenerated
+    // by `npm ci` and listed as not revertible.
+    addExisting(dstPluginDir, new Set(['node_modules']))
+    addSource(join(ROOT, 'src', 'plugins', 'tui', 'dist'), join(dstPluginDir, 'dist'))
+    addFile(join(dstPluginDir, 'package.json'))
+    addFile(join(dstPluginDir, 'package-lock.json'))
+    addFile(join(dstPluginDir, 'tui.ts'))
+    addFile(join(dstPluginDir, 'index.ts'))
+    notRevertible.push(rel(join(dstPluginDir, 'node_modules')))
+    if (version === 'v1') {
+      const projectTui = join(baseDir, 'tui.json')
+      addFile(projectTui)
+      // Cross-location cleanup touches copies OUTSIDE the config dir.
+      for (const loc of tuiConfigLocations(target)) {
+        if (resolve(loc) !== resolve(projectTui)) notRevertible.push(loc)
+      }
+    }
+  }
+  if (componentSet.has('runtime')) {
+    const runtimeTarget = isGlobal ? target : join(target, '.opencode')
+    addExisting(join(runtimeTarget, 'scripts'))
+    for (const script of MCP_SCRIPTS) addFile(join(runtimeTarget, 'scripts', script))
+    addFile(join(runtimeTarget, 'requirements-vision.txt'))
+    addSource(join(ROOT, '.pantheon', 'code-mode'), join(runtimeTarget, '.pantheon', 'code-mode'))
+    addExisting(join(runtimeTarget, '.pantheon', 'code-mode'))
+    addFile(join(runtimeTarget, '.pantheon', 'tiers.json'))
+    // `--force` recreates the venv from scratch: bulk, not copied.
+    notRevertible.push(rel(join(target, '.venv')))
+  }
+
+  // The vision config is written GLOBALLY (outside the config dir).
+  const xdg = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
+  const globalVision = join(xdg, 'opencode', 'opencode-vision.json')
+  if (resolve(globalVision) !== resolve(join(baseDir, 'opencode-vision.json'))) {
+    notRevertible.push(globalVision)
+  }
+
+  return { entries, notRevertible }
+}
 
 /**
  * The product defaults an install seeds into the user's `opencode.json`.
@@ -913,6 +1078,37 @@ export async function installOpenCode(
 
   configure({ dryRun })
 
+  // -----------------------------------------------------------------------
+  // 0. Exact backup (Beta 11 Setup phase 2): preserve the CURRENT state of
+  //    every regular file this run can modify/remove INSIDE the config dir,
+  //    byte-for-byte, BEFORE the first modifying write. Bulk directories and
+  //    out-of-target global files are recorded in the manifest as
+  //    `notRevertible`. A dry run records the planned backup-manifest path only.
+  // -----------------------------------------------------------------------
+  const backupManifestPath = join(
+    backupSetPath(target, nextBackupName(target, new Date())),
+    'manifest.json',
+  )
+  if (dryRun) {
+    if (isRecording(recorder)) {
+      recordChange(
+        { path: backupManifestPath, action: ACTIONS.CREATE, bytes: 0, scored: false },
+        recorder,
+      )
+    }
+  } else {
+    const backupPlan = collectInstallBackupEntries(target, componentSet, version, isGlobal)
+    const pkgVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+    const { dir: backupDir } = createBackupSet({
+      configDir: target,
+      entries: backupPlan.entries,
+      notRevertible: backupPlan.notRevertible,
+      packageVersion: pkgVersion,
+    })
+    // Secret-safe: the path only. The exact wording is fixed (once per apply).
+    console.warn(backupWarning(backupDir))
+  }
+
   if (isGlobal) {
     info(S.globalLayout)
   }
@@ -1115,18 +1311,7 @@ export async function installOpenCode(
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
 
     // ── MCP server scripts ──
-    const mcpScripts = [
-      'mcp_resources.py',
-      'code_mode.py',
-      'memory_mcp.py',
-      'scrub-secrets.py',
-      '_pantheon_paths.py',
-      'mcp_codemap_module.py',
-      'mcp_persistence.py',
-      'pantheon_vision.py',
-      'eval_store.py',
-      'themis_heuristic_scan.py',
-    ]
+    const mcpScripts = MCP_SCRIPTS
     const srcScriptsDir = join(ROOT, 'scripts')
     // Canonical MCP server sources live in src/mcp/. Map them explicitly so the
     // sync always copies from the canonical source, never from the stale root
@@ -1694,7 +1879,7 @@ export async function installOpenCode(
     // The user's config changed under the installer between the read and the
     // swap. Treating this as an ordinary skipped write would report a
     // successful install over a file we never actually updated — fail loudly
-    // and leave the target and its `.bak` byte-identical instead.
+    // and leave the target byte-identical instead.
     throw new Error(
       `Installation aborted: ${targetConfigPath} changed on disk during install ` +
         '(it no longer matches the content that was read); refusing to overwrite it. ' +
@@ -1703,23 +1888,6 @@ export async function installOpenCode(
   }
   if (status === 'created') stats.created++
   else stats.skipped++
-
-  // writeConfigWithBackup snapshots an EXISTING config to `<config>.bak` on the
-  // same code path that rewrites the config, but only when the config actually
-  // changes. Record it (unscored: the summary does not count it) so the preview
-  // does not omit a file apply writes. Nothing to record when the config is
-  // unchanged (the `.bak` copy never runs) or absent (no previous content).
-  if (status === 'created' && configRaw !== null && isRecording(recorder)) {
-    recordChange(
-      {
-        path: `${targetConfigPath}.bak`,
-        action: ACTIONS.CREATE,
-        bytes: Buffer.byteLength(configRaw, 'utf8'),
-        scored: false,
-      },
-      recorder,
-    )
-  }
 
   // -----------------------------------------------------------------------
   // 3.5 Run migrations (--components runtime)

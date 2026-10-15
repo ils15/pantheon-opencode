@@ -3,8 +3,8 @@
  *
  * 1. Preflight: a missing python3/npm fails BEFORE any file is written
  *    (child-process run with a stripped PATH).
- * 2. Config backup: rewriting opencode.json leaves the previous content
- *    in opencode.json.bak.
+ * 2. Config backup: rewriting opencode.json preserves the previous content
+ *    byte-for-byte in the exact backup set (`.pantheon/backups/<ts>/`).
  * 3. Runtime phase is non-fatal: a venv failure returns false (MCP entries
  *    must then be omitted) and never throws.
  * 4. CLI flag contracts: --opencode-version auto accepted, --components
@@ -61,8 +61,9 @@ test('checkRuntimePrerequisites reports both missing tools on a stripped PATH', 
   assert.ok(problems[1].startsWith('npm'))
 })
 
-test('config rewrite leaves the previous content in opencode.json.bak', async () => {
+test('config rewrite is preserved byte-for-byte in the exact backup set', async () => {
   const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const { listBackupSets } = await import('../scripts/install/backup.mjs')
   const target = mkdtempSync(join(tmpdir(), 'pantheon-bak-'))
   try {
     await installOpenCode(target, false, false, ['agents'], {
@@ -72,11 +73,10 @@ test('config rewrite leaves the previous content in opencode.json.bak', async ()
     })
     const first = readFileSync(join(target, 'opencode.json'), 'utf8')
 
-    // User edits the config between installs; the next write must back it up.
-    const edited = `${first.trimEnd()}\n// user edit\n`.replace('// user edit\n', '')
+    // User edits the config between installs; the next run must preserve the
+    // previous bytes in the exact backup set (replacing the old `.bak` sidecar).
     const custom = JSON.stringify({ ...JSON.parse(first), theme: 'user-custom' }, null, 2)
     writeFileSync(join(target, 'opencode.json'), custom)
-    assert.notEqual(custom, first)
 
     await installOpenCode(target, false, false, ['agents'], {
       yes: true,
@@ -84,10 +84,20 @@ test('config rewrite leaves the previous content in opencode.json.bak', async ()
       version: 'v1',
     })
 
-    assert.ok(existsSync(join(target, 'opencode.json.bak')), 'opencode.json.bak must exist')
-    const bak = JSON.parse(readFileSync(join(target, 'opencode.json.bak'), 'utf8'))
-    assert.equal(bak.theme, 'user-custom', 'bak must hold the PREVIOUS (edited) content')
-    assert.notEqual(edited, '')
+    const withConfig = listBackupSets(target).filter((s) =>
+      existsSync(join(s.dir, 'opencode.json')),
+    )
+    assert.ok(withConfig.length >= 1, 'a backup set holding opencode.json must exist')
+    assert.equal(
+      readFileSync(join(withConfig[0].dir, 'opencode.json'), 'utf8'),
+      custom,
+      'backup must hold the PREVIOUS content byte-for-byte',
+    )
+    assert.equal(
+      existsSync(join(target, 'opencode.json.bak')),
+      false,
+      'the legacy .bak sidecar must no longer be written',
+    )
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

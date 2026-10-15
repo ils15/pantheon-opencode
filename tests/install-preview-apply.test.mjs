@@ -368,8 +368,10 @@ test('cli: a re-run on an applied target previews as unchanged with no warning',
     assert.equal(preview.status, 0, `idempotent preview must exit 0:\n${output}`)
     assert.doesNotMatch(output, /consistency mismatch/i)
     assert.match(output, /Change plan/)
-    // Nothing new on a re-run; the TUI toggle must net to unchanged, not update.
-    assert.match(output, /0 create/)
+    // A re-run still creates a FRESH backup set (recorded unscored), but no new
+    // content files; the TUI toggle must net to unchanged, not update.
+    assert.match(output, /create\s+\.pantheon\/backups\//)
+    assert.doesNotMatch(output, /create\s+\.opencode\//)
     assert.doesNotMatch(output, /update\s+\.opencode\/tui\.json/)
     assert.match(output, /unchanged\s+\.opencode\/tui\.json/)
   } finally {

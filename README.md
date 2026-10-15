@@ -561,12 +561,21 @@ Two freshness guarantees back it up:
   current package.
 
 `init` also gained `--components agents,skills,...` (narrow install),
-`--clean` (alias of `--force`), `--opencode-version auto`, atomic config
-writes with an `opencode.json.bak` backup, preflight checks for python3/npm
-before any file is written, and a non-fatal Python runtime: if the venv fails,
-the install completes but MCP entries are omitted (with a warning) instead of
-pointing at a broken interpreter. Installer messages auto-detect pt-BR via
-`LANG`/`LC_ALL`.
+`--clean` (alias of `--force`), `--opencode-version auto`, preflight checks for
+python3/npm before any file is written, and a non-fatal Python runtime: if the
+venv fails, the install completes but MCP entries are omitted (with a warning)
+instead of pointing at a broken interpreter. Before the first modifying write,
+`init` preserves, byte-for-byte, every regular file it can modify or remove
+inside the config dir (including files a `--clean` run deletes) under
+`.pantheon/backups/<timestamp>/` (directory `0700`, files `0600`, kept 5 deep);
+bulk directories
+(`.venv`, the plugin's `node_modules`) and out-of-target global files
+(`tui.json` copies elsewhere, the global `opencode-vision.json`) are listed in
+the manifest as `notRevertible` rather than silently omitted. The exact-set
+warning is printed once and never echoes file contents. Restore with
+`pantheon-opencode restore [--project] [--yes]` (the old `opencode.json.bak`
+sidecar is gone; the global vision config keeps its own `.bak`). Installer
+messages auto-detect pt-BR via `LANG`/`LC_ALL`.
 
 ## Migrating to 1.5.x (from 1.4.x)
 

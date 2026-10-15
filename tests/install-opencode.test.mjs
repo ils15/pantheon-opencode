@@ -1244,8 +1244,8 @@ test('writeIfChanged reports a conflict and leaves newer on-disk content alone',
   }
 })
 
-test('writeConfigWithBackup preserves the previous backup when a late conflict is observed', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pantheon-bak-conflict-'))
+test('writeConfigWithBackup writes atomically with no legacy .bak sidecar', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-nobak-'))
   try {
     const target = join(dir, 'opencode.json')
     writeFileSync(target, '{"v":1}\n')
@@ -1253,17 +1253,18 @@ test('writeConfigWithBackup preserves the previous backup when a late conflict i
       writeConfigWithBackup(target, '{"v":2}\n', false, { expectedContent: '{"v":1}\n' }),
       'created',
     )
-    assert.equal(readFileSync(`${target}.bak`, 'utf8'), '{"v":1}\n')
+    assert.equal(readFileSync(target, 'utf8'), '{"v":2}\n')
+    assert.equal(existsSync(`${target}.bak`), false, 'the legacy .bak sidecar is gone')
 
     // A later write whose expected content no longer matches must not clobber
-    // the last known-good backup.
+    // the newer on-disk content.
     writeFileSync(target, '{"v":3}\n')
     assert.equal(
       writeConfigWithBackup(target, '{"v":4}\n', false, { expectedContent: '{"stale":true}\n' }),
       'conflict',
     )
     assert.equal(readFileSync(target, 'utf8'), '{"v":3}\n')
-    assert.equal(readFileSync(`${target}.bak`, 'utf8'), '{"v":1}\n')
+    assert.equal(existsSync(`${target}.bak`), false)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -4,8 +4,6 @@
 
 import { spawnSync } from 'node:child_process'
 import {
-  copyFileSync,
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -16,7 +14,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REQUIRED_NODE_MAJOR = 18
@@ -141,33 +139,6 @@ export function resolveTarget(target) {
   if (target.startsWith('/')) return target
   // If it's relative, resolve from cwd
   return join(process.cwd(), target)
-}
-
-export function createBackup(target) {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  const backupDir = join(target, '..', `.pantheon-bak-${basename(target)}-${timestamp}`)
-
-  console.log(`\n  💾 Creating backup: ${backupDir}`)
-  mkdirSync(backupDir, { recursive: true })
-
-  // Copy only relevant Pantheon directories/files
-  const items = ['agents', 'skills', 'commands', 'instructions', 'opencode.json', 'tui.json']
-  let count = 0
-  for (const item of items) {
-    const src = join(target, item)
-    try {
-      cpSync(src, join(backupDir, item), {
-        recursive: true,
-        errorOnExist: false,
-      })
-      count++
-    } catch {
-      // File or directory doesn't exist in target — skip silently
-    }
-  }
-
-  console.log(`  ✅ Backed up ${count} items to: ${backupDir}`)
-  return backupDir
 }
 
 export function detectAndReport(target) {
@@ -304,15 +275,15 @@ function readFileOrNull(filePath) {
  *   filesystem CAS: the final re-read and the rename are still two syscalls, so
  *   a writer that lands between them is not prevented. What it does close is
  *   the window the installer actually races with — a config the caller parsed
- *   going stale during the same run — and it keeps the target and the `.bak`
- *   consistent with the bytes that were checked.
+ *   going stale during the same run — and it keeps the target consistent with
+ *   the bytes that were checked.
  * @param {(existing: string|null) => void} [options.beforeRecheck] - runs after
  *   the initial content check and before the last-moment re-read. Injection
  *   point so tests can simulate a concurrent writer landing in the window;
  *   production callers omit it (undefined is a no-op).
  * @param {(existing: string|null) => void} [options.beforeSwap] - runs after the
- *   expected-content checks pass and immediately before the rename, so side
- *   effects that must not fire on a conflict (e.g. the `.bak` copy) live here.
+ *   expected-content checks pass and immediately before the rename, for side
+ *   effects that must not fire on a conflict.
  * @param {(change: object) => void} [options.recorder] - optional change
  *   recorder. When supplied, the outcome is recorded (path + action + byte
  *   size only) so `--dry-run` can print the real per-file plan. Defaults to
@@ -374,7 +345,7 @@ export function writeIfChanged(filePath, content, dryRun, options = {}) {
     // Last-moment re-read. The initial compare and this rename are separate
     // syscalls, so a concurrent writer can land in between; re-check the
     // expected bytes immediately before the swap. On a mismatch, drop the temp
-    // and leave the target AND any existing `.bak` byte-identical.
+    // and leave the target byte-identical.
     if (expectedContent !== undefined) {
       const current = readFileOrNull(filePath)
       if (current !== expectedContent) {
@@ -392,15 +363,15 @@ export function writeIfChanged(filePath, content, dryRun, options = {}) {
 }
 
 /**
- * beta.5: write the user's opencode.json with a same-directory backup of the
- * previous content. The installer rewrites the whole config; a `.bak` gives
- * the user a one-step recovery if a merge ever goes wrong.
+ * Write a config file atomically, honoring the compare-before-write guard.
+ * This used to always keep a `<config>.bak` sidecar; the main `opencode.json`
+ * no longer does — the target-scoped exact backup set
+ * (scripts/install/backup.mjs) preserves it byte-for-byte and
+ * `pantheon-opencode restore` reverts it.
  *
- * The backup is created INSIDE the `beforeSwap` hook, so it fires only after
- * both expected-content checks pass (the initial compare and the last-moment
- * re-read before the rename). A conflict observed at either point leaves the
- * target AND any pre-existing `.bak` untouched, rather than overwriting the
- * user's last known-good backup with a stale copy on a no-op write.
+ * A caller may still supply `beforeSwap` for a file the exact set does NOT
+ * cover: the GLOBAL `opencode-vision.json` lives outside the config dir, so
+ * vision-prompt passes a `beforeSwap` that keeps its `<file>.bak` recovery.
  *
  * @param {string} filePath
  * @param {string} content
@@ -411,15 +382,9 @@ export function writeConfigWithBackup(filePath, content, dryRun, options = {}) {
   return writeIfChanged(filePath, content, dryRun, {
     expectedContent: options.expectedContent,
     beforeRecheck: options.beforeRecheck,
+    beforeSwap: options.beforeSwap,
     recorder: options.recorder,
-    beforeSwap: (existing) => {
-      if (existing === null) return
-      try {
-        copyFileSync(filePath, `${filePath}.bak`)
-      } catch {
-        // Best-effort: a backup failure must not block the install.
-      }
-    },
+    scored: options.scored,
   })
 }
 

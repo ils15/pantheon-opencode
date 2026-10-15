@@ -9,7 +9,10 @@
  * SAFETY: prune NEVER touches the active config, the active venv, the package
  * repo, or the installed package. It only:
  *   - lists old global `pantheon` installs (suggests `npm uninstall -g pantheon`)
- *   - removes stale `opencode.json.bak*` backups (age > threshold) with --apply
+ *   - removes stale LEGACY `opencode.json.bak*` backups (age > threshold) with
+ *     --apply. The modern installer no longer writes that sidecar — it creates an
+ *     exact backup set under `.pantheon/backups/` (retained by the installer, not
+ *     pruned here) — so this scan only cleans up pre-phase-2 installs.
  *   - lists legacy directories whose opencode.json references dead/relative
  *     paths (removal requires --apply --remove-dirs as explicit confirmation)
  *
@@ -102,8 +105,11 @@ export function findLegacyGlobalInstalls() {
 }
 
 // ---------------------------------------------------------------------------
-// (b) Stale opencode.json.bak* backups (age > threshold) in the config dir
-//     → removable with --apply. Fresh backups are listed as kept.
+// (b) Stale LEGACY opencode.json.bak* backups (age > threshold) in the config
+//     dir → removable with --apply. Fresh backups are listed as kept. The
+//     current installer does not create this sidecar (it keeps an exact,
+//     self-retaining backup set under .pantheon/backups/), so this only cleans
+//     up installs from before phase 2.
 // ---------------------------------------------------------------------------
 
 export function findStaleBackups(configDir, maxAgeDays = DEFAULT_BACKUP_AGE_DAYS) {
