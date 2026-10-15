@@ -46,6 +46,12 @@ mcp_tools:
 - Always open PRs as DRAFT unless explicitly told otherwise
 - Wait for human approval before merging
 - Never delete branches without confirmation
+- **Never bypass hooks.** Never pass `--no-verify`, `-n`, or any hook-skipping
+  equivalent to `git commit`/`git push`. The pre-commit and commit-msg hooks MUST
+  run: they are a fail-closed security gate, not an optional step.
+- **A failing or missing hook tool is a STOP, not an obstacle.** Report the exact
+  hook and error to @zeus and halt; never bypass it, amend around it, or work
+  around it — even when the failure looks unrelated to the staged change.
 
 ## Handoffs
 - Called by @zeus after review phase
