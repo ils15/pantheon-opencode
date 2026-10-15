@@ -265,7 +265,10 @@ for record in records:
     if command != python_bin or cwd != runtime_dir or script not in expected:
         raise SystemExit(1)
     registered.add(script)
-if len(records) != len(expected) or registered != expected:
+# OpenCode can initialize the same configured workspace more than once during
+# service startup and `mcp list`. Count the logical server set here; the later
+# `mcp list` assertion still requires exactly five connected MCP names.
+if registered != expected:
     raise SystemExit(1)
 PY
     then
