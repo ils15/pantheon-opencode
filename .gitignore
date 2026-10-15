@@ -49,3 +49,5 @@ logs/
 
 # ZCode session artifacts
 .zcode/
+.playwright-mcp/
+bench-run-A/
