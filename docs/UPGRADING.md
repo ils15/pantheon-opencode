@@ -56,16 +56,28 @@ Three further V2 fixes ship alongside it:
 
 ### V2 delegation and hook behavior
 
-V2 enforces the caller/target matrix for Pantheon-managed targets across every
-entry in `permission.evaluate`'s `resources` array. Native-only resources pass
-through unchanged to OpenCode; mixed native/Pantheon and multi-target requests
-are denied unless every Pantheon target is explicitly allowed for the
-authoritative caller. Explicit host denies remain final, and malformed or
-unknown resource data fails closed. The V2.0.25 sandbox probe observed
-`resources`, `agent`, `sessionID`, and `effect` on the permission event, with a
-mutable output argument. If that output argument is absent, a policy denial
-throws an error rather than silently relying on a status mutation that cannot
-occur.
+When the host registers the V2 permission hook, V2 enforces the caller/target
+matrix for Pantheon-managed native `subagent` requests. If the host lacks that
+hook or registration fails, the matrix is unavailable and the host remains in
+control. Native-only resources pass through unchanged to OpenCode; mixed or
+multi-target requests are denied. A Pantheon request is considered only when
+its session, message and tool-call IDs in `permission.evaluate.source` match a
+short-lived record from the host's `tool.execute.before` event. The captured
+host caller is cross-checked against `permission.evaluate.agent`; that field is
+not trusted by itself because `ctx.permission.assert` accepts a caller-supplied
+agent. The session lookup must match the same session ID and have no
+`parentID`. OpenCode v2.0.29's `Session.Info` makes `parentID` optional for
+roots and populates it for children. Missing, stale, replayed or mismatched
+origin data fails closed. Explicit host denies remain final, and malformed or
+unknown resource data fails closed.
+
+The v2.0.29 runtime canary proves both sides: an allowed Zeus→Apollo root
+dispatch creates a child after the permission event, while a matrix-valid
+Athena→Apollo call from an Athena child is denied and creates no grandchild.
+An invalid Athena→Demeter root dispatch is denied without a child or extra
+model request. See
+[`bench/results/f4a-v229-admission-identity-2026-10-14.md`](../bench/results/f4a-v229-admission-identity-2026-10-14.md)
+and reproduce with `bash tests/canary/run-v2-permission-proof.sh`.
 
 V2 `execute.after` runs the completed-result parity chain in this order:
 `task-result-guard` → `context-sandbox` → `read-enhancer`. The `session.prompt`

@@ -493,12 +493,19 @@ async function main(): Promise<void> {
     )
   })
 
-  test('permission hook denies disallowed V2 delegation using authoritative session identity', async () => {
+  test('permission hook matches host subagent origin, denies disallowed edges, and preserves asks', async () => {
     let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+    let toolBeforeHandler: ((event: unknown) => void | Promise<void>) | undefined
     const bodyCalls: string[] = []
     const sessionLookups: string[] = []
     await plugin.setup(
       makeBaseContext({
+        tool: {
+          hook: async (name: string, handler: typeof toolBeforeHandler) => {
+            if (name === 'execute.before') toolBeforeHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
         permission: {
           hook: async (_name: string, handler: typeof permissionHandler) => {
             permissionHandler = handler
@@ -519,17 +526,38 @@ async function main(): Promise<void> {
 
     assert.equal(typeof permissionHandler, 'function')
     const handler = permissionHandler
+    let callNumber = 0
+    const invoke = async (event: Record<string, unknown>): Promise<void> => {
+      const resources = Array.isArray(event.resources) ? event.resources : []
+      const target = resources.find((resource) => resource === 'apollo' || resource === 'demeter')
+      if (typeof event.sessionID === 'string' && typeof target === 'string') {
+        const messageID = `msg_contract_${callNumber}`
+        const callID = `call_contract_${callNumber}`
+        callNumber += 1
+        await toolBeforeHandler?.({
+          tool: 'subagent',
+          sessionID: event.sessionID,
+          agent: 'athena',
+          messageID,
+          id: callID,
+          input: { agent: target },
+        })
+        event.action = 'subagent'
+        event.source = { type: 'tool', messageID, id: callID }
+      }
+      await handler?.(event)
+    }
     const denied = {
       sessionID: 'root',
       agent: 'zeus',
       resources: ['demeter'],
       effect: 'ask',
     }
-    await handler?.(denied)
+    await invoke(denied)
     assert.equal(
       denied.effect,
       'deny',
-      'forged event identity cannot widen the authoritative caller',
+      'a mismatched event agent cannot widen the correlated host caller',
     )
     assert.match(String(denied.message), /Pantheon delegation denied/i)
 
@@ -539,36 +567,37 @@ async function main(): Promise<void> {
       resources: ['apollo'],
       effect: 'ask',
     }
-    await handler?.(allowed)
+    await invoke(allowed)
     assert.equal(
       allowed.effect,
       'ask',
       'allowed matrix edge must not be converted into an allow grant',
     )
-    if (allowed.effect !== 'deny') bodyCalls.push('apollo')
+    if (allowed.effect === 'allow') bodyCalls.push('apollo')
+    assert.deepEqual(bodyCalls, [], 'a pending host ask does not execute the tool body')
     assert.equal(sessionLookups[0], 'root', 'session.get receives its documented input object')
 
     const invalid = { sessionID: 'invalid', resources: ['apollo'], effect: 'ask' }
-    await handler?.(invalid)
+    await invoke(invalid)
     assert.equal(invalid.effect, 'deny', 'invalid session lookup fails closed')
     assert.match(String(invalid.message), /caller session lookup failed/i)
     if (invalid.effect !== 'deny') bodyCalls.push('invalid')
 
     const missingRecord = { sessionID: 'missing', resources: ['apollo'], effect: 'ask' }
-    await handler?.(missingRecord)
+    await invoke(missingRecord)
     assert.equal(missingRecord.effect, 'deny', 'missing session record fails closed')
     assert.match(String(missingRecord.message), /caller session was not found/i)
 
     const malformedRecord = { sessionID: 'malformed', resources: ['apollo'], effect: 'ask' }
-    await handler?.(malformedRecord)
+    await invoke(malformedRecord)
     assert.equal(malformedRecord.effect, 'deny', 'malformed session record fails closed')
     assert.match(String(malformedRecord.message), /caller session lookup returned invalid data/i)
 
     const missingSessionID = { resources: ['apollo'], effect: 'ask' }
     const lookupsBeforeMissingID = sessionLookups.length
-    await handler?.(missingSessionID)
+    await invoke(missingSessionID)
     assert.equal(missingSessionID.effect, 'deny', 'missing caller session ID fails closed')
-    assert.match(String(missingSessionID.message), /caller session ID is missing/i)
+    assert.match(String(missingSessionID.message), /matching host subagent tool origin/i)
     assert.equal(
       sessionLookups.length,
       lookupsBeforeMissingID,
@@ -576,16 +605,16 @@ async function main(): Promise<void> {
     )
 
     const malformed = { sessionID: 'root', effect: 'ask' }
-    await handler?.(malformed)
+    await invoke(malformed)
     assert.equal(malformed.effect, 'deny', 'a missing resource list fails closed in the event')
     assert.match(String(malformed.message), /resources are missing or malformed/i)
 
     const explicitDeny = { sessionID: 'root', resources: ['apollo'], effect: 'deny' }
-    await handler?.(explicitDeny)
+    await invoke(explicitDeny)
     assert.equal(explicitDeny.effect, 'deny', 'configured host denial remains final')
 
     const native = { sessionID: 'invalid', resources: ['explore'], effect: 'ask' }
-    await handler?.(native)
+    await invoke(native)
     assert.equal(native.effect, 'ask', 'native target keeps host permission behavior')
 
     const nativeFirstPantheonSecond = {
@@ -593,7 +622,7 @@ async function main(): Promise<void> {
       resources: ['explore', 'demeter'],
       effect: 'ask',
     }
-    await handler?.(nativeFirstPantheonSecond)
+    await invoke(nativeFirstPantheonSecond)
     assert.equal(
       nativeFirstPantheonSecond.effect,
       'deny',
@@ -605,7 +634,7 @@ async function main(): Promise<void> {
       resources: ['apollo', 'hermes'],
       effect: 'ask',
     }
-    await handler?.(multiplePantheonTargets)
+    await invoke(multiplePantheonTargets)
     assert.equal(
       multiplePantheonTargets.effect,
       'deny',
@@ -613,15 +642,26 @@ async function main(): Promise<void> {
     )
 
     const unknownResource = { sessionID: 'root', resources: ['apollo', null], effect: 'ask' }
-    await handler?.(unknownResource)
+    await invoke(unknownResource)
     assert.equal(unknownResource.effect, 'deny', 'unknown resource values fail closed')
-    assert.deepEqual(bodyCalls, ['apollo'], 'only allowed delegation proceeds to its body')
+    assert.deepEqual(
+      bodyCalls,
+      [],
+      'an ask remains pending until the host replies; no tool body has executed yet',
+    )
   })
 
   test('permission hook identifies an unavailable session lookup API', async () => {
     let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+    let toolBeforeHandler: ((event: unknown) => void | Promise<void>) | undefined
     await plugin.setup(
       makeBaseContext({
+        tool: {
+          hook: async (name: string, handler: typeof toolBeforeHandler) => {
+            if (name === 'execute.before') toolBeforeHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
         permission: {
           hook: async (_name: string, handler: typeof permissionHandler) => {
             permissionHandler = handler
@@ -631,7 +671,25 @@ async function main(): Promise<void> {
       }) as never,
     )
 
-    const event = { sessionID: 'root', resources: ['apollo'], effect: 'ask' }
+    const event: Record<string, unknown> = {
+      sessionID: 'root',
+      resources: ['apollo'],
+      effect: 'ask',
+    }
+    await toolBeforeHandler?.({
+      tool: 'subagent',
+      sessionID: 'root',
+      agent: 'athena',
+      messageID: 'msg_lookup_unavailable',
+      id: 'call_lookup_unavailable',
+      input: { agent: 'apollo' },
+    })
+    event.action = 'subagent'
+    event.source = {
+      type: 'tool',
+      messageID: 'msg_lookup_unavailable',
+      id: 'call_lookup_unavailable',
+    }
     await permissionHandler?.(event)
     assert.equal(event.effect, 'deny', 'missing session lookup API fails closed')
     assert.match(String(event.message), /session lookup API is unavailable/i)
@@ -1643,6 +1701,11 @@ async function main(): Promise<void> {
     after?: (event: unknown) => void | Promise<void>
   }
 
+  interface CapturedPermissionHooks {
+    toolBefore?: (event: unknown) => void | Promise<void>
+    evaluate?: (event: unknown) => void | Promise<void>
+  }
+
   /** Run plugin.setup against a host mock that records tools and tool hooks. */
   async function setupCapturingToolHooks(
     contextOverrides: Record<string, unknown> = {},
@@ -1685,6 +1748,30 @@ async function main(): Promise<void> {
     return captured
   }
 
+  async function setupCapturingPermissionHooks(): Promise<CapturedPermissionHooks> {
+    const captured: CapturedPermissionHooks = {}
+    await plugin.setup(
+      makeBaseContext({
+        tool: {
+          hook: async (name: string, handler: (event: unknown) => void | Promise<void>) => {
+            if (name === 'execute.before') captured.toolBefore = handler
+            return { dispose: async () => {} }
+          },
+        },
+        permission: {
+          hook: async (name: string, handler: (event: unknown) => void | Promise<void>) => {
+            if (name === 'evaluate') captured.evaluate = handler
+            return { dispose: async () => {} }
+          },
+        },
+        session: {
+          get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID }),
+        },
+      }) as never,
+    )
+    return captured
+  }
+
   /**
    * Drive the captured `execute.before` handler with the host's event shape.
    * Throwing from this handler is what DENIES the call, so the returned message
@@ -1710,6 +1797,32 @@ async function main(): Promise<void> {
   }
 
   const apolloCaptured = await setupCapturingToolHooks()
+
+  test('the registered permission hook preserves a host ask for an allowed target', async () => {
+    const captured = await setupCapturingPermissionHooks()
+    assert.equal(typeof captured.toolBefore, 'function')
+    assert.equal(typeof captured.evaluate, 'function')
+    await captured.toolBefore?.({
+      tool: 'subagent',
+      sessionID: 'ses_v2_ask',
+      agent: 'zeus',
+      messageID: 'msg_v2_ask',
+      id: 'call_v2_ask',
+      input: { agent: 'apollo' },
+    })
+    const permissionEvent = {
+      action: 'subagent',
+      resources: ['apollo'],
+      sessionID: 'ses_v2_ask',
+      agent: 'zeus',
+      source: { type: 'tool', messageID: 'msg_v2_ask', id: 'call_v2_ask' },
+      effect: 'ask',
+      message: 'host approval required',
+    }
+    await captured.evaluate?.(permissionEvent)
+    assert.equal(permissionEvent.effect, 'ask')
+    assert.equal(permissionEvent.message, 'host approval required')
+  })
 
   test('V2 registers a tool execute.before handler that enforces (not a no-op)', () => {
     assert.equal(

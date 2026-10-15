@@ -309,6 +309,7 @@ function treeDiff(before, after) {
  */
 async function startMockModel(scripts) {
   let turn = 0
+  let nestedAthenaChildCalled = false
   const requestBodies = []
   const server = createServer((req, res) => {
     let requestBody = ''
@@ -339,6 +340,9 @@ async function startMockModel(scripts) {
         return
       }
       turn += 1
+      const nestedAthenaChild =
+        !nestedAthenaChildCalled && requestBody.includes('ATHENA-CANARY-TRY-NESTED')
+      if (nestedAthenaChild) nestedAthenaChildCalled = true
       // Alternating: every ODD turn is the scripted tool call, every EVEN turn
       // is the closing message that lets the session go idle. One script per
       // tool call, so the Nth chat prompt runs script N-1.
@@ -349,8 +353,19 @@ async function startMockModel(scripts) {
         created: 1_700_000_000,
         model: 'canary-model',
       }
-      const scripted = turn % 2 === 1 && index < scripts.length
-      const step = scripted ? scripts[index] : undefined
+      const scripted = nestedAthenaChild || (turn % 2 === 1 && index < scripts.length)
+      const step = nestedAthenaChild
+        ? {
+            name: 'subagent',
+            arguments: {
+              description: 'V2 child boundary canary',
+              prompt: 'Reply with APOLLO-NESTED-CANARY only.',
+              agent: 'apollo',
+            },
+          }
+        : scripted
+          ? scripts[index]
+          : undefined
       const toolCall =
         typeof step === 'string' ? { name: 'execute', arguments: { code: step } } : step
       const chunks = scripted
@@ -800,11 +815,23 @@ function writeProjectConfig(
         ...(subagentAdmissionProbe
           ? {
               default_agent: subagentCaller,
+              experimental: { subagent_depth: 2 },
               permissions: [
                 { action: 'task', resource: '*', effect: 'allow' },
                 { action: 'subagent', resource: '*', effect: 'allow' },
               ],
               agents: {
+                ...Object.fromEntries(
+                  [...new Set([subagentTarget, 'apollo', 'demeter'])].map((agent) => [
+                    agent,
+                    {
+                      mode: 'subagent',
+                      description: `Isolated admission canary target ${agent}`,
+                      system: `Reply with ${agent.toUpperCase()}-CANARY-CHILD if you are started.`,
+                      permissions: [{ action: 'tool.use', resource: 'execute', effect: 'deny' }],
+                    },
+                  ]),
+                ),
                 [subagentCaller]: {
                   mode: 'primary',
                   system: 'Use the native subagent dispatch tool only for an authorized agent.',
@@ -812,12 +839,6 @@ function writeProjectConfig(
                     { action: 'task', resource: '*', effect: 'allow' },
                     { action: 'subagent', resource: '*', effect: 'allow' },
                   ],
-                },
-                [subagentTarget]: {
-                  mode: 'subagent',
-                  description: `Isolated admission canary target ${subagentTarget}`,
-                  system: `Reply with ${subagentTarget.toUpperCase()}-CANARY-CHILD if you are started.`,
-                  permissions: [{ action: 'tool.use', resource: 'execute', effect: 'deny' }],
                 },
               },
             }
@@ -1049,7 +1070,10 @@ async function runCanary(
             name: 'subagent',
             arguments: {
               description: `V2 ${subagentCaller} to ${subagentTarget} admission canary`,
-              prompt: `Return ${subagentTarget.toUpperCase()}-CANARY-CHILD only.`,
+              prompt:
+                subagentTarget === 'athena'
+                  ? 'Return ATHENA-CANARY-TRY-NESTED only.'
+                  : `Return ${subagentTarget.toUpperCase()}-CANARY-CHILD only.`,
               agent: subagentTarget,
             },
           },
@@ -1144,6 +1168,11 @@ async function runCanary(
     observation.childSessions = sessionRows.filter(
       (session) => session?.parentID === host.sessionID,
     )
+    const childSession = observation.childSessions[0]
+    if (childSession?.id) {
+      observation.childTranscript = JSON.stringify(await host.messages(childSession.id))
+      observation.childSubagentCalls = toolParts(observation.childTranscript, 'subagent')
+    }
     observation.observation = existsSync(sandbox.proofFile)
       ? JSON.parse(readFileSync(sandbox.proofFile, 'utf8'))
       : null
@@ -1164,31 +1193,41 @@ let live = null
 let mutant = null
 let permissionLive = null
 let identityGapLive = null
+let childBoundaryLive = null
 let rootsBefore = null
 const permissionProbeEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_PROBE === '1'
 
-before(async () => {
-  rootsBefore = snapshotRealConfigRoots()
-  if (skipped) return
-  live = await runCanary(realPluginShim())
-  if (permissionProbeEnabled) {
-    permissionLive = await runCanary(realPluginShim(), {
-      permissionProbe: true,
-      subagentAdmissionProbe: process.env.PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION === '1',
-    })
-    if (process.env.PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION === '1') {
-      identityGapLive = await runCanary(realPluginShim(), {
+before(
+  async () => {
+    rootsBefore = snapshotRealConfigRoots()
+    if (skipped) return
+    live = await runCanary(realPluginShim())
+    if (permissionProbeEnabled) {
+      permissionLive = await runCanary(realPluginShim(), {
         permissionProbe: true,
-        subagentAdmissionProbe: true,
-        subagentCaller: 'zeus',
-        subagentTarget: 'apollo',
+        subagentAdmissionProbe: process.env.PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION === '1',
       })
+      if (process.env.PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION === '1') {
+        identityGapLive = await runCanary(realPluginShim(), {
+          permissionProbe: true,
+          subagentAdmissionProbe: true,
+          subagentCaller: 'zeus',
+          subagentTarget: 'apollo',
+        })
+        childBoundaryLive = await runCanary(realPluginShim(), {
+          permissionProbe: true,
+          subagentAdmissionProbe: true,
+          subagentCaller: 'zeus',
+          subagentTarget: 'athena',
+        })
+      }
     }
-  }
-})
+  },
+  { timeout: 60_000 },
+)
 
 after(() => {
-  for (const observation of [live, mutant, permissionLive, identityGapLive]) {
+  for (const observation of [live, mutant, permissionLive, identityGapLive, childBoundaryLive]) {
     if (observation?.sandbox) rmSync(observation.sandbox.root, { recursive: true, force: true })
   }
 })
@@ -1338,8 +1377,22 @@ test('F4A rejects a disallowed V2 subagent dispatch without a persisted child or
   )
   assert.equal(demeterDecisions.length, 1, JSON.stringify(demeterDecisions))
   const taskDecision = demeterDecisions[0]
+  assert.equal(taskDecision.action, 'subagent', JSON.stringify(taskDecision))
   assert.equal(taskDecision.agent, 'athena', JSON.stringify(taskDecision))
   assert.equal(taskDecision.sessionID, permissionLive.rootSessionID, JSON.stringify(taskDecision))
+  assert.deepEqual(taskDecision.source, {
+    type: 'tool',
+    messageID: taskDecision.matchedOrigin?.messageID,
+    id: taskDecision.matchedOrigin?.callID,
+  })
+  assert.deepEqual(taskDecision.matchedOrigin, {
+    sessionID: permissionLive.rootSessionID,
+    messageID: taskDecision.source.messageID,
+    callID: taskDecision.source.id,
+    caller: 'athena',
+    target: 'demeter',
+  })
+  assert.equal(taskDecision.decision, 'deny')
   assert.equal(taskDecision.effectBefore, 'allow', JSON.stringify(taskDecision))
   assert.equal(taskDecision.effectAfter, 'deny', JSON.stringify(taskDecision))
   assert.match(String(taskDecision.message), /^Pantheon delegation denied:/i)
@@ -1353,9 +1406,27 @@ test('F4A rejects a disallowed V2 subagent dispatch without a persisted child or
     12,
     'denied subagent dispatch triggered an extra model request',
   )
+  const lifecycle = (permissionLive.permissionProof ?? '').split('\n')
+  const beforeIndex = lifecycle.findIndex((line) => line.startsWith('tool.execute.before '))
+  const permissionIndex = lifecycle.findIndex((line) => {
+    if (!line.startsWith('permission.evaluate ')) return false
+    const evaluation = JSON.parse(line.slice('permission.evaluate '.length))
+    return (Array.isArray(evaluation.resources) ? evaluation.resources : []).includes('demeter')
+  })
+  assert.ok(beforeIndex >= 0, 'host tool.execute.before origin was not recorded')
+  assert.ok(permissionIndex > beforeIndex, 'permission evaluation did not follow execute.before')
+  assert.equal(
+    lifecycle.some(
+      (line) =>
+        line.startsWith('session.created ') &&
+        JSON.parse(line.slice('session.created '.length)).parentID === permissionLive.rootSessionID,
+    ),
+    false,
+    'denied admission created a child session',
+  )
 })
 
-test('F4A fails closed when V2 session lookup omits authoritative delegation identity', {
+test('F4A admits an allowed root dispatch using the matched host tool identity', {
   skip: skipped || !subagentAdmissionProbeEnabled,
 }, () => {
   assert.ok(identityGapLive, 'the identity-gap host run did not execute')
@@ -1387,26 +1458,110 @@ test('F4A fails closed when V2 session lookup omits authoritative delegation ide
   )
   assert.equal(apolloDecisions.length, 1, JSON.stringify(apolloDecisions))
   assert.equal(apolloDecisions[0].agent, 'zeus', JSON.stringify(apolloDecisions[0]))
+  assert.equal(apolloDecisions[0].action, 'subagent')
   assert.equal(apolloDecisions[0].sessionID, identityGapLive.rootSessionID)
   assert.equal(apolloDecisions[0].effectBefore, 'allow')
-  assert.equal(apolloDecisions[0].effectAfter, 'deny')
-  assert.match(String(apolloDecisions[0].message), /^Pantheon delegation denied:/i)
+  assert.equal(apolloDecisions[0].effectAfter, 'allow')
+  assert.equal(apolloDecisions[0].decision, 'allow')
+  assert.deepEqual(apolloDecisions[0].matchedOrigin, {
+    sessionID: identityGapLive.rootSessionID,
+    messageID: apolloDecisions[0].source.messageID,
+    callID: apolloDecisions[0].source.id,
+    caller: 'zeus',
+    target: 'apollo',
+  })
 
   const call = identityGapLive.subagentCalls?.at(-1)
   assert.ok(call, 'the host transcript did not contain the native subagent call')
   assert.equal(call.state?.input?.agent, 'apollo', JSON.stringify(call))
-  assert.equal(call.state?.status, 'error', JSON.stringify(call))
-  assert.match(String(call.state?.error?.message ?? ''), /Pantheon delegation denied/i)
+  assert.notEqual(call.state?.status, 'error', JSON.stringify(call))
   const sessions = Array.isArray(identityGapLive.sessions)
     ? identityGapLive.sessions
     : (identityGapLive.sessions?.data ?? [])
-  const sessionIDs = sessions.map((session) => session?.id ?? session?.sessionID)
-  assert.deepEqual(sessionIDs, [identityGapLive.rootSessionID])
-  assert.equal(identityGapLive.childSessions.length, 0)
+  assert.equal(identityGapLive.childSessions.length, 1, JSON.stringify(sessions))
+  const child = identityGapLive.childSessions[0]
+  assert.equal(child.parentID, identityGapLive.rootSessionID, JSON.stringify(child))
+  assert.equal(child.agent, 'apollo', JSON.stringify(child))
+  const lifecycle = (identityGapLive.permissionProof ?? '').split('\n')
+  const beforeIndex = lifecycle.findIndex((line) => line.startsWith('tool.execute.before '))
+  const permissionIndex = lifecycle.findIndex((line) => {
+    if (!line.startsWith('permission.evaluate ')) return false
+    const evaluation = JSON.parse(line.slice('permission.evaluate '.length))
+    return (Array.isArray(evaluation.resources) ? evaluation.resources : []).includes('apollo')
+  })
+  const childCreateIndex = lifecycle.findIndex((line) => {
+    if (!line.startsWith('session.created ')) return false
+    const created = JSON.parse(line.slice('session.created '.length))
+    return created.id === child.id
+  })
+  assert.ok(beforeIndex >= 0, 'host tool.execute.before origin was not recorded')
+  assert.ok(permissionIndex > beforeIndex, 'permission evaluation did not follow execute.before')
+  assert.ok(
+    childCreateIndex > permissionIndex,
+    `child session was created before admission: ${JSON.stringify({ child, lifecycle })}`,
+  )
+  assert.equal(identityGapLive.turns > 12, true, 'the admitted child did not run a model request')
   assert.equal(
-    identityGapLive.turns,
-    12,
-    'denied subagent dispatch triggered an extra model request',
+    lifecycle.some(
+      (line) =>
+        line.startsWith('session.created ') &&
+        JSON.parse(line.slice('session.created '.length)).parentID ===
+          identityGapLive.rootSessionID,
+    ),
+    true,
+    'the event stream did not expose the created child parentID',
+  )
+})
+
+test('F4A rejects an otherwise allowed dispatch from a child session', {
+  skip: skipped || !subagentAdmissionProbeEnabled,
+}, () => {
+  assert.ok(childBoundaryLive, 'the child-boundary host run did not execute')
+  const rootCall = childBoundaryLive.subagentCalls?.at(-1)
+  assert.ok(rootCall, 'the root session did not dispatch its subagent')
+  assert.equal(rootCall.state?.input?.agent, 'athena', JSON.stringify(rootCall))
+  assert.notEqual(rootCall.state?.status, 'error', JSON.stringify(rootCall))
+  assert.equal(childBoundaryLive.childSessions.length, 1)
+  const child = childBoundaryLive.childSessions[0]
+  assert.equal(child.agent, 'athena', JSON.stringify(child))
+  assert.equal(child.parentID, childBoundaryLive.rootSessionID, JSON.stringify(child))
+
+  const nestedCall = childBoundaryLive.childSubagentCalls?.at(-1)
+  assert.ok(nestedCall, 'the child model did not attempt its nested native subagent call')
+  assert.equal(nestedCall.state?.input?.agent, 'apollo', JSON.stringify(nestedCall))
+  assert.equal(nestedCall.state?.status, 'error', JSON.stringify(nestedCall))
+  assert.match(
+    String(nestedCall.state?.error?.message ?? ''),
+    /Pantheon delegation denied/i,
+    JSON.stringify(nestedCall),
+  )
+
+  const rows = (childBoundaryLive.permissionProof ?? '')
+    .split('\n')
+    .filter((line) => line.startsWith('permission.evaluate '))
+    .map((line) => JSON.parse(line.slice('permission.evaluate '.length)))
+  const nestedDecision = rows.find(
+    (row) =>
+      row.sessionID === child.id &&
+      (Array.isArray(row.resources) ? row.resources : []).includes('apollo'),
+  )
+  assert.ok(nestedDecision, 'no permission decision was recorded for the child dispatch')
+  assert.equal(nestedDecision.action, 'subagent')
+  assert.equal(nestedDecision.agent, 'athena')
+  assert.equal(nestedDecision.callerSessionParentID, childBoundaryLive.rootSessionID)
+  assert.equal(nestedDecision.decision, 'deny')
+  assert.equal(nestedDecision.effectBefore, 'allow')
+  assert.equal(nestedDecision.effectAfter, 'deny')
+  assert.equal(nestedDecision.matchedOrigin.caller, 'athena')
+  assert.equal(nestedDecision.matchedOrigin.target, 'apollo')
+
+  const sessionRows = Array.isArray(childBoundaryLive.sessions)
+    ? childBoundaryLive.sessions
+    : (childBoundaryLive.sessions?.data ?? [])
+  assert.equal(
+    sessionRows.some((session) => session?.parentID === child.id),
+    false,
+    'the rejected child dispatch persisted a grandchild session',
   )
 })
 

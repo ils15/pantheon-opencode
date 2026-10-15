@@ -100,6 +100,7 @@ import {
   evaluateV2Delegation,
   PANTHEON_AGENTS,
   type V2PermissionEvent,
+  V2SubagentOriginRegistry,
   v2ResourceTarget,
 } from './pantheon/v2-delegation-enforce.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/v2-execute-after.ts'
@@ -534,48 +535,39 @@ async function handleV2SessionEvent(event: V2SessionEvent): Promise<void> {
 }
 
 /**
- * Session-created handler: currently a no-op on the V2-only surface.
- *
- * V1 seeds session state here — `sessionHierarchy.register(info)` plus the
- * root-session set — from the full session metadata carried by its own event.
- *
- * THE V2 EVENT CARRIES THE SAME METADATA, so this is an UNWIRED seed, not an
- * impossible one. The V2 SDK types `session.created` as
- * `{ sessionID: string; info: Session }`, and `Session` declares
- * `parentID?: string` (`@opencode-ai/sdk` v2 `gen/types.gen.d.ts`) — a superset
- * of the two fields V1 reads on this exact event. Seeding here would be a copy
- * of V1's line. An earlier revision of this comment claimed the metadata was
- * absent from the V2 event; the SDK types refute that, so do not restore it.
- *
- * WHAT IS NOT MEASURED, in either direction: whether a live 2.0.22 host
- * populates `info.parentID` on this event. The tool canary records
- * `Object.keys(ctx)` from inside the host, not event payloads, so host
- * population is UNVERIFIED. What is proven is only that the type carries the
- * field and that no code path here reads it.
- *
- * The real asymmetry is the OTHER of V1's two seed sources. Besides this event,
- * V1 runs a fail-open startup seed from `client.session.list()`
- * (`seedRootSessionsInBackground`, `src/plugin.ts`) to cover sessions that
- * predate plugin load, because opencode does not replay `session.created` for
- * them. V2's `PluginContext` exposes no `client` at all — `options`, `agent`,
- * `aisdk`, `catalog`, `command`, `integration`, `plugin`, `reference`, `skill`,
- * and nothing else — so that enumeration has NO V2 EQUIVALENT. Wiring this
- * handler would recover live sessions only, never resumed ones.
- *
- * And — more to the point — V1 is a separate plugin instance that is not loaded
- * when only `plugin-v2` is configured, so on a V2-only install nothing seeds
- * the hierarchy at all. Do not read the bridge check below as coverage: a
- * non-null bridge means a host process that ALSO loaded V1, and V1 does the
- * seeding itself.
- *
- * The unwired hierarchy seed is ONE of the two reasons the V2 enforcement guard
- * is built without `isRootSession` / `isChildSession`; the other — and the one
- * that would actually deny every `task()` call — is the absent
- * `getSessionAgent`. See the `v2EnforcementGuard` comment below for both, and
- * `docs/UPGRADING.md`, "Known limitation — V2 enforcement covers the
- * blocked-tool list, not the V1 delegation matrix".
+ * Record the v2.0.29 lifecycle event in the opt-in F4A canary. Runtime events
+ * use a `{ id, created, type, data }` envelope; the child data carries
+ * `sessionID`, `parentID` and `agent`. Admission itself does not depend on this
+ * subscription: it checks the current permission source and `ctx.session.get`
+ * synchronously, so resumed roots and children use the same path.
  */
-async function onSessionCreated(_event: V2SessionEvent): Promise<void> {
+async function onSessionCreated(event: V2SessionEvent): Promise<void> {
+  const payload = event as V2SessionEvent & Record<string, unknown>
+  const properties = event.properties ?? {}
+  const data =
+    event.data !== null && typeof event.data === 'object'
+      ? (event.data as Record<string, unknown>)
+      : {}
+  const info = properties.info ?? data.info
+  const sessionInfo =
+    info !== null && typeof info === 'object' ? (info as Record<string, unknown>) : {}
+  writeV2AdmissionProof('session.created', {
+    eventKeys: Object.keys(payload),
+    propertyKeys: Object.keys(properties),
+    dataKeys: Object.keys(data),
+    infoKeys: Object.keys(sessionInfo),
+    id:
+      sessionInfo.id ??
+      sessionInfo.sessionID ??
+      data.id ??
+      data.sessionID ??
+      properties.id ??
+      properties.sessionID ??
+      payload.sessionID ??
+      null,
+    parentID: sessionInfo.parentID ?? data.parentID ?? properties.parentID ?? null,
+    agent: sessionInfo.agent ?? data.agent ?? properties.agent ?? null,
+  })
   const _bridge = resolveBridge()
   if (_bridge?.board != null) {
     // Bridge present ⇒ this process also loaded V1, whose own event hook owns
@@ -1081,6 +1073,7 @@ export function setV2SecretScanRunnerForTests(runner: SecretScanRunner | null): 
 interface V2ToolExecuteBeforeEvent {
   tool?: unknown
   sessionID?: unknown
+  messageID?: unknown
   agent?: unknown
   id?: unknown
   input?: unknown
@@ -1177,7 +1170,10 @@ function adaptV2ExecuteBeforeEvent(event: unknown): {
  *
  * Returns true if any hooks were registered.
  */
-async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
+async function registerV2ToolHooks(
+  context: PluginContext,
+  subagentOrigins: V2SubagentOriginRegistry,
+): Promise<boolean> {
   const toolCtx = hostDomains(context).tool
 
   if (!toolCtx?.hook) {
@@ -1257,6 +1253,10 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
           blockError = new Error(SECRET_SCAN_UNAVAILABLE_MESSAGE)
         }
         if (blockError !== null) throw blockError
+        const origin = subagentOrigins.capture(event)
+        if (origin !== undefined) {
+          writeV2AdmissionProof('tool.execute.before', { ...origin })
+        }
       } finally {
         // BENCH instrumentation — observation only; runs on the deny paths too.
         logBenchHookTiming('before', event, benchStartedAt)
@@ -1283,6 +1283,7 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
     await toolCtx.hook('execute.after', async (event: unknown) => {
       const benchStartedAt = Date.now()
       try {
+        subagentOrigins.forget(event)
         await v2ExecuteAfter(event)
       } finally {
         // BENCH instrumentation — observation only; the awaited call means the
@@ -1310,7 +1311,10 @@ async function registerV2ToolHooks(context: PluginContext): Promise<boolean> {
  *
  * Returns true if the hook was registered.
  */
-async function registerV2PermissionHook(context: PluginContext): Promise<boolean> {
+async function registerV2PermissionHook(
+  context: PluginContext,
+  subagentOrigins: V2SubagentOriginRegistry,
+): Promise<boolean> {
   const domains = hostDomains(context)
   const permCtx = domains.permission
 
@@ -1323,6 +1327,9 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
     await permCtx.hook('evaluate', async (rawEvent: unknown) => {
       const event = rawEvent as V2PermissionEvent | null
       const effectBefore = event?.effect
+      let origin: ReturnType<V2SubagentOriginRegistry['consume']>
+      let decision: string | null = null
+      let callerSessionParentID: unknown
       const writeProof = (): void => {
         const proofPath = process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF
         if (!proofPath || !event || !Array.isArray(event.resources)) return
@@ -1330,13 +1337,18 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
           appendFileSync(
             proofPath,
             `permission.evaluate ${JSON.stringify({
+              action: event.action,
               resources: event.resources,
               agent: event.agent,
               sessionID: event.sessionID,
+              callerSessionParentID: callerSessionParentID ?? null,
+              source: event.source,
+              matchedOrigin: origin ?? null,
+              decision,
               effect: event.effect,
               message: event.message,
-              eventFields: ['resources', 'agent', 'sessionID', 'effect'].filter((key) =>
-                Object.hasOwn(event, key),
+              eventFields: ['action', 'resources', 'agent', 'sessionID', 'source', 'effect'].filter(
+                (key) => Object.hasOwn(event, key),
               ),
               effectBefore: effectBefore ?? null,
               effectAfter: event.effect ?? null,
@@ -1382,6 +1394,11 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
       const hasPantheonTarget = targets.some((target) => PANTHEON_AGENTS.has(target ?? ''))
       let session: AuthoritativeSession | undefined
       if (hasPantheonTarget) {
+        origin = subagentOrigins.consume(event)
+        if (origin === undefined) {
+          deny('matching host subagent tool origin is missing or stale')
+          return
+        }
         const sessionID = typeof event.sessionID === 'string' ? event.sessionID.trim() : ''
         if (!sessionID) {
           deny('caller session ID is missing')
@@ -1410,11 +1427,12 @@ async function registerV2PermissionHook(context: PluginContext): Promise<boolean
           return
         }
         session = retrieved as AuthoritativeSession
+        callerSessionParentID = session.parentID
       }
 
       // Native-only resources remain under host policy. If a Pantheon target
       // appears anywhere, the shared policy evaluates the complete resource set.
-      const decision = evaluateV2Delegation(event, session, event.effect)
+      decision = evaluateV2Delegation(event, session, event.effect, origin)
       if (decision === 'deny') deny('caller or target is not allowed by delegation policy')
       else writeProof()
     })
@@ -1457,6 +1475,18 @@ export type { V2ToolDef, V2ToolResult } from './pantheon/v2-tools.ts'
 interface V2SessionEvent {
   type: string
   properties?: Record<string, unknown>
+  data?: unknown
+}
+
+/** Opt-in trace used by the isolated F4A canary; never logs prompts or inputs. */
+function writeV2AdmissionProof(label: string, detail: Record<string, unknown>): void {
+  const proofPath = process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF
+  if (!proofPath) return
+  try {
+    appendFileSync(proofPath, `${label} ${JSON.stringify(detail)}\n`)
+  } catch {
+    // Proof is best-effort and must not affect admission behavior.
+  }
 }
 
 /** Cleanup function type. */
@@ -1526,13 +1556,16 @@ export const plugin = define({
     }
 
     // ─── Phase 5: V2 Tool Hooks (best-effort) ────────────────────────
-    const toolHooksRegistered = await registerV2ToolHooks(context).catch(() => false)
+    const subagentOrigins = new V2SubagentOriginRegistry()
+    const toolHooksRegistered = await registerV2ToolHooks(context, subagentOrigins).catch(
+      () => false,
+    )
     if (!toolHooksRegistered) {
       markUnsupported('tool-execute-hooks')
     }
 
     // ─── Phase 6: V2 Permission Hook (best-effort) ───────────────────
-    await registerV2PermissionHook(context).catch(() => false)
+    await registerV2PermissionHook(context, subagentOrigins).catch(() => false)
 
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────
     const compactionCtx = hostDomains(context).session

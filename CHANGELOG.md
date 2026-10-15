@@ -34,12 +34,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   proxy de contexto do primeiro request caiu 11,8%; input total e latência de
   parede permanecem inconclusivos.
 
-## ⚠️ Known Issues
+- **Admissão segura de subagents no OpenCode V2:** quando o host registra o
+  hook de permissões, Pantheon correlaciona o
+  agente, a sessão e o alvo do evento nativo `subagent` com o `source` da
+  avaliação de permissão, antes da criação da sessão filha. A matriz permite
+  Zeus→Apollo em uma sessão root e nega dispatches fora da matriz ou originados
+  em uma sessão filha. A canary isolada passou em 18/18 verificações no
+  OpenCode v2.0.29.
 
-- **Admissão de subagents no OpenCode V2:** no v2.0.29, `ctx.session.get()` não
-  expõe `agent` nem `parentID`. A autorização de subagents permanece fail-closed
-  até que a identidade do caller e o estado root possam ser comprovados por uma
-  fonte V2 confiável; até uma aresta permitida pode ser recusada nesse caso.
+Evidência de F1 e F4A: `bench/results/f1-di-v229-interleaved-2026-10-14.md` e
+`bench/results/f4a-v229-admission-identity-2026-10-14.md`. O resultado de
+latência total e wall de F1 segue inconclusivo.
 
 ## [v1.6.0-beta.9] - 2026-10-12
 

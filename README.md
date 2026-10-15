@@ -155,34 +155,31 @@ overrides an explicit host deny; missing or mismatched identity fails closed
 for the attempted Pantheon delegation. The 3 goal tools remain unsupported and
 are reported as `goal-tools`.
 
-**Not complete either, and the V2 support claim is currently narrowed.** Two
-facts, both recorded in this repository rather than smoothed over:
+When the host successfully registers V2's permission hook, Pantheon does not
+trust `permission.evaluate.agent` by itself for a Pantheon target. It matches
+the permission source's session, message and tool-call IDs to a short-lived
+record from the host's `tool.execute.before` event, then requires the host
+session to have no `parentID` before applying the matrix. This admits valid
+root dispatches and denies child-session dispatches; missing, stale, replayed
+or mismatched origins are denied. OpenCode v2.0.29 runtime evidence is in
+[`bench/results/f4a-v229-admission-identity-2026-10-14.md`](bench/results/f4a-v229-admission-identity-2026-10-14.md).
 
-- **The host-backed V2 gate is red on the installable OpenCode CLI.** The V2 tool
-  canary (`tests/canary/plugin-v2-tool-canary.test.mjs`) was written against
-  `opencode 2.0.22`, which no npm channel publishes. Against the installable
-  `@opencode-ai/cli` host, `/api/experimental/session/{id}/wait` has been
-  promoted to `/api/session/{id}/wait` (the old path 404s) and `ctx.tool.list`
-  is absent, so the canary fails 12/12 there. That is a canary/host-generation
-  mismatch, not a measured plugin regression — with only the route renamed, 10/12
-  pass on the same host, including the edit being applied and the mutant still
-  caught. Tracked as [issue
-  #216](https://github.com/ils15/pantheon-opencode/issues/216); the fail-closed
-  CI change is [PR #213](https://github.com/ils15/pantheon-opencode/pull/213).
-- **The 2.x host claims in `src/plugin-v2.ts` are measured against `2.0.22`
-  specifically**, not against the current installable CLI. Re-measurement
-  against the current host is outstanding and is tracked in the same issue.
-
-Treat the 1.6 line's OpenCode 2 support as **real but partial**, and do not read
-the 1.6.x row as "OpenCode 2 is finished".
+**Partial, with the exercised host version made explicit.** The V2 tool canary
+started against `opencode 2.0.22`, a version that no npm channel publishes.
+The current F4A rerun now uses the installable **OpenCode v2.0.29** binary and
+passes 18/18 checks with permission probes: the real plugin registers and runs
+its tools, admits the valid Zeus→Apollo root dispatch, rejects an invalid edge
+before child creation, and rejects a matrix-valid dispatch from a child. The
+remaining V2 surface still has unsupported goal tools and registration-only
+session/compaction hooks, so the 1.6 line is not full V2 feature parity.
 
 ### Verified against which OpenCode versions
 
 | What | Verified against | How |
 |---|---|---|
 | V1 plugin + generation gate | The OpenCode 1.18.x line. This package pins `@opencode-ai/plugin` and `@opencode-ai/sdk` to `1.18.33`; the highest published `opencode-ai` host package (the one shipping the `opencode` binary) is `1.18.34` | Dependency pin (`package.json`); generation-gate unit tests over injected host banners; installer end-to-end tests asserting the emitted `opencode.json` shape |
-| V2 plugin tool surface | `opencode 2.0.22` (the host the canary was written against) | `tests/canary/plugin-v2-tool-canary.test.mjs`, driving `hashline_edit` through a real `opencode serve` |
-| V2 against the current installable CLI | **Not verified.** Canary fails 12/12; see issue #216 | — |
+| V2 plugin tool surface | OpenCode v2.0.29 | `tests/canary/plugin-v2-tool-canary.test.mjs`, driving the real plugin through `opencode serve`; F4A permission canary passes 18/18 |
+| V2 native subagent admission | OpenCode v2.0.29 | `tests/canary/run-v2-permission-proof.sh`; identity, root/child checks and permission-before-child ordering are recorded in [`bench/results/f4a-v229-admission-identity-2026-10-14.md`](bench/results/f4a-v229-admission-identity-2026-10-14.md) |
 | Exact 1.X host version the 1.6 line is exercised against end-to-end | **Unverified.** No V1 host leg exists: the sandbox runner is V2-only and `--run v1` is rejected | — |
 
 ## Delegation (native `task()`)
@@ -403,15 +400,23 @@ surface: the host includes the active agent on the event, a read-only agent
 `createEnforcementGuard` throws to deny `edit`, `write`, `bash`, `task`,
 `hashline_edit` and `pantheon_model`. It does **not** rely on the V1
 `tool.execute.before` hook, which lives in `src/plugin.ts` and is not loaded
-when only `plugin-v2` is configured. The `permission.evaluate` hook enforces
-the V2 caller/target matrix for Pantheon-managed targets across every entry in
-the host's `resources` array. Native-only resources pass through unchanged to
-OpenCode's permission policy; mixed native/Pantheon requests and multi-target
-requests are denied unless every Pantheon target is explicitly allowed for the
-authoritative caller. Explicit host denies remain final, and missing or
-unknown resource data fails closed. If a denied evaluation has no mutable host
-output argument, the hook throws to fail closed rather than silently omitting
-the denial. V2 `execute.after` runs the completed-result chain:
+when only `plugin-v2` is configured. When the host registers the
+`permission.evaluate` hook, it enforces the V2 caller/target matrix for
+Pantheon-managed native `subagent` requests. If hook registration is
+unavailable, the matrix is unavailable and the host remains in control.
+Native-only resources pass through unchanged to OpenCode's permission policy;
+mixed native/Pantheon and multi-target requests are denied. Pantheon matches
+the permission source's session, message and tool-call IDs to a short-lived
+record from `tool.execute.before`, cross-checks the captured host caller against
+`permission.evaluate.agent`, and confirms the session has no `parentID`.
+`permission.evaluate.agent` alone is not trusted because
+`ctx.permission.assert` accepts a caller-supplied agent. Missing, stale,
+replayed or mismatched origins fail closed, and explicit host denies remain
+final. On OpenCode v2.0.29, a runtime canary admits Zeus→Apollo from a root,
+denies a matrix-valid Athena→Apollo call from a child and rejects an invalid
+edge before child creation; see the
+[`F4A evidence`](bench/results/f4a-v229-admission-identity-2026-10-14.md).
+V2 `execute.after` runs the completed-result chain:
 `task-result-guard` → `context-sandbox` → `read-enhancer`.
 
 Every V2 tool declares an `output` schema. OpenCode 2.0.x requires the

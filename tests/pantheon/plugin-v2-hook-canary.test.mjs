@@ -376,6 +376,21 @@ function findToolCallForPath(messages, toolName, expectedPath) {
   return target
 }
 
+function skipIfProviderCredentialsMissing(context, messages) {
+  const entries = Array.isArray(messages?.data) ? messages.data : []
+  const authError = entries.find(
+    (message) =>
+      message?.type === 'assistant' &&
+      message.error?.type === 'provider.auth' &&
+      typeof message.error.message === 'string',
+  )
+  if (authError) {
+    context.skip(`configured canary model is unavailable: ${authError.error.message}`)
+    return true
+  }
+  return false
+}
+
 function findCompletedReadCall(messages, expectedPath, nonce) {
   const target = findToolCallForPath(messages, 'read', expectedPath)
   const callID = partCallID(target)
@@ -796,7 +811,7 @@ test('fixture canary execute.before blocks its synthetic read', {
   skip: fixtureOnlySkip(
     'S5b real-plugin execute.before enforcement is not implemented; this synthetic fixture guard is not Pantheon security coverage (deferred to S6)',
   ),
-}, async () => {
+}, async (context) => {
   // This is deliberately fixture-only: its synthetic blocker does not prove
   // that Pantheon enforces execute.before security.
   const proofBefore = readProof()
@@ -809,6 +824,7 @@ test('fixture canary execute.before blocks its synthetic read', {
   // completed. (Asserting on the read call, not on reachability of the file:
   // an agent may route around a blocked tool with another tool.)
   const messages = JSON.parse(await messagesText()).data ?? []
+  if (skipIfProviderCredentialsMissing(context, { data: messages })) return
   const readError = findToolCallForPath(messages, 'read', blockedReadPath)
   assert.equal(readError.state?.status, 'error', 'the blocked read tool call did not fail')
   assert.match(
@@ -829,13 +845,14 @@ test('fixture canary allows a read and correlates execute.after to its completed
   skip: fixtureOnlySkip(
     'S5b real-plugin execute/permission callback effects are unproven; this fixture-only read lifecycle is not Pantheon behavior coverage',
   ),
-}, async () => {
+}, async (context) => {
   const proofBefore = readProof()
   await prompt(
     `Use only the read tool to read this exact file path: ${allowedReadPath}. Do not use any other tool. Wait for the read result, then reply with exactly: CANARY-ALLOWED-READ-DONE`,
   )
 
   const messages = JSON.parse(await messagesText())
+  if (skipIfProviderCredentialsMissing(context, messages)) return
   const readCall = findCompletedReadCall(messages, allowedReadPath, allowedReadNonce)
   const proofAfter = readProof()
   const readAfter = assertExecuteAfterForCall(proofBefore, proofAfter, readCall)
@@ -851,7 +868,7 @@ test('real plugin execute.after exposes a hashline-tagged read result', {
   skip: realOnlySkip(
     'only the real plugin-v2 performs execute.after augmentation; the fixture records proof events, so a user-visible tag cannot be observed in fixture mode',
   ),
-}, async () => {
+}, async (context) => {
   // The parity contract is USER-VISIBLE: a recorded execute.after event alone
   // is instrumentation. The real plugin must rewrite the completed read output
   // so the session shows `N#tag|content`.
@@ -859,6 +876,7 @@ test('real plugin execute.after exposes a hashline-tagged read result', {
     `Use only the read tool to read this exact file path: ${allowedReadPath}. Do not use any other tool. Wait for the read result, then reply with exactly: CANARY-HASHLINE-READ-DONE`,
   )
   const messages = JSON.parse(await messagesText())
+  if (skipIfProviderCredentialsMissing(context, messages)) return
   const readCall = findCompletedReadCall(messages, allowedReadPath, allowedReadNonce)
   assertHashlineTaggedRead(completedToolOutput(readCall.state), allowedReadNonce)
 })

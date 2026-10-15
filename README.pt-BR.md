@@ -217,14 +217,22 @@ dessa superfície: o host inclui o agente ativo no evento, um agente somente-lei
 compartilhado lança para negar `edit`, `write`, `bash`, `task`,
 `hashline_edit` e `pantheon_model`. Ele **não** depende do hook
 `tool.execute.before` do V1, que vive em `src/plugin.ts` e não é carregado
-quando apenas `plugin-v2` está configurado. O hook `permission.evaluate`
-aplica no V2 a matriz caller/target para destinos gerenciados pelo Pantheon,
-considerando todos os itens do array `resources` do host. Recursos
-exclusivamente nativos são repassados sem alteração à política de permissões do
-OpenCode; pedidos mistos (nativos/Pantheon) e com vários destinos são negados,
-a menos que todos os destinos Pantheon sejam explicitamente permitidos para o
-chamador autoritativo. Uma negação explícita do host é final, e dados de
-recursos ausentes ou desconhecidos são negados por padrão. O `execute.after` do
+quando apenas `plugin-v2` está configurado. Quando o host registra o hook
+`permission.evaluate`, ele aplica no V2 a matriz caller/target a todos os itens
+do array `resources` do host para destinos gerenciados pelo Pantheon. Sem o
+registro do hook, a matriz não fica disponível e o host mantém o controle.
+Recursos exclusivamente nativos são repassados sem alteração à política de
+permissões do OpenCode; pedidos mistos (nativos/Pantheon) ou com vários destinos
+são negados.
+Para destinos Pantheon, a política exige uma chamada nativa `subagent` cujo
+session ID, message ID e tool-call ID no `source` coincidam com o evento do host
+`tool.execute.before`; também confirma que a sessão não tem `parentID`. O campo
+`permission.evaluate.agent`, sozinho, não identifica o chamador. Origins
+ausentes, expirados, repetidos ou incompatíveis são negados. A canary no
+OpenCode v2.0.29 admite Zeus→Apollo na raiz e nega dispatches inválidos ou
+originados em uma filha; veja o [relatório de F4A](bench/results/f4a-v229-admission-identity-2026-10-14.md).
+Uma negação explícita do host é final, e dados de recursos ausentes ou
+desconhecidos são negados por padrão. O `execute.after` do
 V2 executa a cadeia de resultados concluídos `task-result-guard` →
 `context-sandbox` → `read-enhancer`; eventos de erro permanecem inalterados.
 
