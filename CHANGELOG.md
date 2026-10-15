@@ -46,6 +46,12 @@ Evidência de F1 e F4A: `bench/results/f1-di-v229-interleaved-2026-10-14.md` e
 `bench/results/f4a-v229-admission-identity-2026-10-14.md`. O resultado de
 latência total e wall de F1 segue inconclusivo.
 
+- **Resultado medido de execução V2-first:** no cenário one-shot B, Talos iniciado
+  explicitamente como agente root produziu o artefato correto sem child em 5/5
+  runs. O input mediano observado foi 51,4% menor que Zeus neste par de braços;
+  wall ficou inconclusivo e não há claim de economia monetária ou roteamento
+  geral. Evidência e limites: `bench/results/f3a-root-paired-2026-10-14.md`.
+
 ## [v1.6.0-beta.9] - 2026-10-12
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

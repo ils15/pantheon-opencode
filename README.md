@@ -740,9 +740,9 @@ An interleaved OpenCode v2.0.29 run (C1/K1…C5/K5, N=5/arm) measured
 first-request context at 17555 tokens for control and 15489 for candidate
 (**−2066, −11.8%**; within-arm spread 14 tokens in each arm). D4 confirmed
 22350 B loaded for control and 13400 B for candidate (−8950 B, −40.0%); the
-pre-registered correctness oracle passed 5/5 in both arms. The first-request
-effect is confirmed against within-arm spread, with final F1 acceptance
-pending Themis review. Tree-total input fell from a median 47594 to 38253
+pre-registered correctness oracle passed 5/5 in both arms. Themis accepted F1
+with **PASS_WITH_NOTES**. The first-request effect is confirmed against
+within-arm spread. Tree-total input fell from a median 47594 to 38253
 tokens, but ranges overlap and the ≤30k hypothesis was not met. Wall medians
 were 30.078 s and 24.130 s, with high spread; tree-total input and wall remain
 **inconclusive**. No wall-time or monetary-cost gain is claimed. Details and
@@ -751,6 +751,34 @@ The earlier sequential pair remains supporting-only in
 `bench/results/f1-di-v229-clean-2026-10-14.md`. Earlier exploratory runs are
 retained separately in `bench/results/f1-double-injection.md` and
 `bench/results/f1-di-v229-preliminary-2026-10-14.md`.
+
+### Explicit root specialist result (F3a)
+
+For the bounded one-shot scenario B, explicitly starting Talos as the root
+produced the oracle-passing artifact in 5/5 runs with no child session or
+`subagent` call. In the same-day paired sample, Talos used 16,171 median input
+tokens per run versus 33,301 for Zeus (−51.4%); this is a descriptive result
+for this task, model, and configuration, not a general routing or monetary
+savings claim. Wall time is inconclusive: medians were 30.347 s and 31.893 s,
+the ranges overlap widely, and Talos had the higher p80. No automatic
+LLM-selected root routing is introduced by this result.
+
+The v2.0.29 harness requires explicit agent and fixture selection, and proves
+global plus project instruction provenance for each run:
+
+```bash
+BENCH_MODEL=opencode-go/glm-5.3-flash node bench/bin/bench.mjs \
+  --scenario B --runs 5 --profile double-injection \
+  --global-agents AGENTS.global.md --project-agents AGENTS.md \
+  --agents-dir src/agents --skills-dir src/skills \
+  --root-agent talos --control-root-agent zeus --paired \
+  --out bench/results/phase3-root-paired-20261014.json
+```
+
+Themis reviewed the harness and evidence (**PASS_WITH_NOTES**). Full method,
+oracle audit, limitations, and per-run data are in
+`bench/results/f3a-root-paired-2026-10-14.md` and
+`bench/results/phase3-root-paired-20261014.json`.
 
 
 ## Plugin V2 TypeScript coverage
