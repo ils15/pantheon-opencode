@@ -1,5 +1,4 @@
 import { Accessor } from "solid-js";
-import { Plugin } from "@opencode/plugin/tui";
 import { Context } from "@opencode/plugin/tui/context";
 //#region src/index-v2.d.ts
 /** Running delegations rendered before the "… +N more" line (V1 parity). */
@@ -146,7 +145,10 @@ export type SidebarModel = {
  *  typed (the host API only exists at runtime) but the refresh event names are
  *  narrowed to the V2 union at the subscription site. */
 export declare function createSidebarModel(context: any, sessionID: () => string | undefined): SidebarModel;
-declare const plugin: Plugin.Definition;
+declare const plugin: {
+  id: string;
+  setup(context: Context): (() => void) | undefined;
+};
 //#endregion
 export { plugin as default };
 //# sourceMappingURL=tui-v2.d.ts.map
