@@ -129,7 +129,7 @@ const costArgs = {
     .min(1)
     .max(365)
     .optional()
-    .describe('Number of days of delegation history to include (default 7).'),
+    .describe('Number of rolling 24-hour days of history to include (default 7).'),
 } satisfies z.ZodRawShape
 
 /** The XDG state directory every real host installation writes its ledger to. */
@@ -459,6 +459,9 @@ function renderMarkdown(query: CostQuery, days: number): string {
   const header = `## Token usage by agent and phase (last ${days} days)`
   const footer = [
     formatCoverage(coverage, days),
+    'Window: rolling 24-hour days from query time (not calendar days or session boundaries).',
+    'Aggregation: per agent and phase; phase may be unknown on V2.',
+    'Limits: not grouped by session, task, model, or provider; tokens only (no dollar costs), so this cannot establish model-specific savings or deltas.',
     `Source: opencode.db (read-only) — table families: ${coverage.sources.join(' + ')} — ${coverage.assistantRows} assistant row(s) scanned`,
   ].join('\n')
   if (rows.length === 0) {
@@ -823,7 +826,7 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
   return {
     pantheon_cost: {
       description:
-        'Report input, output, and total token usage by agent and phase over the last N days, read from opencode.db (read-only, no monetary values). The report states the coverage window it actually covers.',
+        'Report input, output, and total token usage by agent and phase in a rolling N × 24-hour window from query time (read-only, no monetary values). It is not grouped by session, task, model, or provider; phase may be unknown on V2, so it cannot establish model-specific savings or deltas. The report states the coverage window it actually covers.',
       args: costArgs,
       execute,
     },

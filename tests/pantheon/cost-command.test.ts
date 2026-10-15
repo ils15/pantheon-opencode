@@ -647,6 +647,28 @@ async function main() {
     }
   })
 
+  await testAsync('pantheon_cost output explains its time and aggregation limits', async () => {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'v2.db')
+      createV2Db(dbPath, [{ type: 'assistant', agent: 'nyx', tokens: { input: 9, output: 9 } }])
+      const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
+        { days: 1 },
+        { sessionID: 'ses_root' },
+      )
+      assert.match(output, /rolling 24-hour days from query time/i)
+      assert.match(output, /not calendar days or session boundaries/i)
+      assert.match(output, /per agent and phase/i)
+      assert.match(output, /phase may be unknown on V2/i)
+      assert.match(output, /not grouped by session, task, model, or provider/i)
+      assert.match(output, /tokens only.*no dollar costs/i)
+      assert.match(output, /cannot establish model-specific savings or deltas/i)
+      assert.match(output, /\| nyx \| unknown \|/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   await testAsync(
     'explicit dbPath takes precedence over environment override and version',
     async () => {
