@@ -388,6 +388,32 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
     mkdirSync(join(configDir, '.venv', 'bin'), { recursive: true })
     writeFileSync(join(configDir, '.venv', 'bin', 'python3'), '')
 
+    // Preview (real dry run) must not leak the secret either.
+    const preview = spawnSync(
+      process.execPath,
+      [
+        BIN,
+        'init',
+        '--project',
+        '--dry-run',
+        '--yes',
+        '--headless',
+        '--version',
+        'v1',
+        '--no-mcp',
+        '--components',
+        'agents,commands',
+      ],
+      {
+        cwd: configDir,
+        encoding: 'utf8',
+        timeout: 120_000,
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+      },
+    )
+    assert.equal(preview.status, 0, `preview must exit 0:\n${preview.stdout}\n${preview.stderr}`)
+    assert.deepEqual(scanText(`${preview.stdout}\n${preview.stderr}`), [], 'preview must not leak')
+
     const result = spawnSync(
       process.execPath,
       [
@@ -433,6 +459,20 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
     // is 0600 under a 0700 dir.
     assert.ok(scanText(readFileSync(backedUpConfig, 'utf8')).length >= 1, 'backup holds the canary')
 
+    // Restore rewrites the config from the backup and must not leak it either.
+    const restored = spawnSync(process.execPath, [RESTORE, '--project', '--yes'], {
+      cwd: configDir,
+      encoding: 'utf8',
+      timeout: 60_000,
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+    })
+    assert.equal(restored.status, 0, `restore must exit 0:\n${restored.stdout}\n${restored.stderr}`)
+    assert.deepEqual(
+      scanText(`${restored.stdout}\n${restored.stderr}`),
+      [],
+      'restore must not leak',
+    )
+
     // F3: the bulk dir and the out-of-target global files are recorded honestly
     // (not copied) rather than silently omitted.
     const manifest = JSON.parse(readFileSync(join(backupDir, 'manifest.json'), 'utf8'))
@@ -465,6 +505,53 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
     rmSync(home, { recursive: true, force: true })
     rmSync(xdg, { recursive: true, force: true })
   }
+})
+
+test('canary: drift-abort and failure paths never leak the secret', {
+  skip: canRunInstaller ? false : 'js-yaml not installed (run under the shim)',
+}, async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const run = async (makeDeps) => {
+    const target = mkdtempSync(join(tmpdir(), 'pantheon-canary-path-'))
+    writeFileSync(join(target, 'opencode.json'), `{"apiKey":"${CANARY}"}\n`)
+    let out = ''
+    const ow = process.stdout.write.bind(process.stdout)
+    const ew = process.stderr.write.bind(process.stderr)
+    process.stdout.write = (c) => {
+      out += String(c)
+      return true
+    }
+    process.stderr.write = (c) => {
+      out += String(c)
+      return true
+    }
+    let result = null
+    try {
+      result = await installOpenCode(target, false, false, ['agents', 'commands'], {
+        yes: true,
+        headless: true,
+        version: 'v1',
+        deps: makeDeps(target),
+      })
+    } catch {
+      result = null
+    } finally {
+      process.stdout.write = ow
+      process.stderr.write = ew
+    }
+    rmSync(target, { recursive: true, force: true })
+    return { out, result }
+  }
+
+  const drift = await run((target) => ({
+    betweenPlanAndApply: () => writeFileSync(join(target, 'opencode.json'), '{"mutated":true}\n'),
+  }))
+  assert.equal(drift.result?.reason, 'drift')
+  assert.deepEqual(scanText(drift.out), [], 'drift-abort must not leak')
+
+  const failure = await run(() => ({ failAfter: 2 }))
+  assert.equal(failure.result, null, 'the injected failure must throw')
+  assert.deepEqual(scanText(failure.out), [], 'failure must not leak')
 })
 
 // ---------------------------------------------------------------------------

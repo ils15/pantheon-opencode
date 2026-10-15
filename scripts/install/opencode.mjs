@@ -51,7 +51,6 @@ import {
   displayPath,
   formatChangePlan,
   isRecording,
-  NOOP_RECORDER,
   planStatsMismatch,
   recordChange,
   snapshot,
@@ -977,7 +976,91 @@ function detectSnapshotDrift(snapshots) {
   return changed
 }
 
+/**
+ * Remove lingering atomic-write temp siblings (`<file>.tmp-<pid>`) left behind
+ * when a writer aborted mid-write. Best-effort; skips the bulk dirs so a failure
+ * path stays cheap.
+ */
+/**
+ * Remove lingering atomic-write temp siblings (`<file>.tmp-<pid>`) left when a
+ * writer aborted mid-write. Only files matching the installer's own temp
+ * pattern are removed, and the bulk/foreign dirs are skipped so a failure path
+ * stays cheap and never touches unrelated files.
+ */
+function cleanupTempSiblings(root) {
+  if (!root) return
+  const suffix = `.tmp-${process.pid}`
+  const skip = new Set(['.git', '.pantheon', 'node_modules', '.venv'])
+  const walk = (dir) => {
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (skip.has(entry.name)) continue
+        walk(join(dir, entry.name))
+      } else if (entry.isFile() && entry.name.endsWith(suffix)) {
+        try {
+          rmSync(join(dir, entry.name), { force: true })
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    }
+  }
+  walk(root)
+}
+
+/**
+ * Phase 5 failure semantics. `installPass` is the whole installer; this thin
+ * wrapper reports a mid-apply failure HONESTLY: it aborts the remaining writes
+ * (the throw), cleans up any lingering atomic-write temp siblings, reports the
+ * PATHS already applied (never contents), prints the recovery path, and
+ * re-throws so the CLI exits non-zero. There is NO automatic rollback — the
+ * exact backup set + `pantheon-opencode restore` is the recovery.
+ *
+ * Progress is tracked in `_lastRun` (set only by a non-dry pass, so the nested
+ * dry plan pass never clobbers it). The RESOLVED target is read back from
+ * `_lastRun.target` so the report and the sweep work when the caller passed
+ * `undefined` (the default global install resolves to `~/.config/opencode`).
+ */
+let _lastRun = null
+
 export async function installOpenCode(
+  target,
+  dryRun = false,
+  clean = false,
+  components = ['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime'],
+  opts = {},
+) {
+  // Reset per-call so a stale run can never leak into a fresh failure report.
+  if (!dryRun) _lastRun = null
+  try {
+    return await installPass(target, dryRun, clean, components, opts)
+  } catch (err) {
+    const run = dryRun ? null : _lastRun
+    if (run) {
+      const S = strings()
+      const paths = summarizeChanges(run.entries ?? [])
+        .files.filter((f) => f.action !== ACTIONS.UNCHANGED && f.action !== ACTIONS.CONFLICT)
+        .map((f) => displayPath(run.target, f.path))
+      error(S.applyFailed(err instanceof Error ? err.message : String(err)))
+      if (paths.length > 0) {
+        warning(S.alreadyApplied)
+        for (const p of paths) warning(`  ${p}`)
+      }
+      warning(run.backupDir ? S.restoreRecoveryHint(run.backupDir) : S.restoreNoBackup)
+      // Sweep only on the failure path (never a full walk on a clean apply).
+      cleanupTempSiblings(run.target)
+    }
+    throw err
+  }
+}
+
+async function installPass(
   target,
   dryRun = false,
   clean = false,
@@ -1001,11 +1084,28 @@ export async function installOpenCode(
   const S = strings()
 
   // Beta 11 (Setup phase 1): a dry pass records every writer's intended change
-  // so we can print the REAL per-file plan without writing anything. The
-  // recorder defaults to a module-level no-op, so a non-dry run (and any
-  // uninstrumented caller) stays byte-identical.
-  const preview = dryRun && !opts.recorder ? createRecorder() : null
-  const recorder = opts.recorder ?? preview?.recorder ?? NOOP_RECORDER
+  // so we can print the REAL per-file plan without writing anything. A recorder
+  // ALWAYS runs now: a dry pass builds the preview/plan from it, and an apply
+  // pass uses it to report which PATHS were already written if a writer throws
+  // (Phase 5 failure semantics). The default is the module-level no-op recorder,
+  // so an uninstrumented caller stays byte-identical.
+  const ownRecorder = opts.recorder ? null : createRecorder()
+  const preview = dryRun && ownRecorder ? ownRecorder : null
+  let recorder = opts.recorder ?? ownRecorder.recorder
+  // Test-only failure seam: throw after N recorded writes so the failure path is
+  // deterministic. Never reachable from production callers (opts.deps is not a
+  // CLI flag) and never applied to the internal dry plan pass.
+  if (!dryRun && typeof opts.deps?.failAfter === 'number') {
+    const base = recorder
+    const limit = opts.deps.failAfter
+    let applied = 0
+    recorder = (change) => {
+      base(change)
+      if (++applied >= limit) throw new Error('injected failure (test-only failAfter seam)')
+    }
+  }
+  // Track this apply so the wrapper can report the paths written on a failure.
+  if (!dryRun) _lastRun = { target, entries: ownRecorder?.entries ?? [], backupDir: null }
 
   // V1/V2 dual-version awareness (Phase 3): the installer builds a unified
   // config, then applies V2-native migration (migrateV1toV2) when
@@ -1204,6 +1304,7 @@ export async function installOpenCode(
       notRevertible: backupPlan.notRevertible,
       packageVersion: pkgVersion,
     })
+    if (_lastRun && _lastRun.target === target) _lastRun.backupDir = backupDir
     // Secret-safe: the path only. The exact wording is fixed (once per apply).
     console.warn(backupWarning(backupDir))
   }

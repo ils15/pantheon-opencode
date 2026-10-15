@@ -42,6 +42,20 @@ test('--help documents version flags without mutating the cwd', () => {
   }
 })
 
+test('--help documents the apply-gate flags and the restore command', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-help-flags-'))
+  try {
+    const result = run(['--help'], cwd)
+    assert.equal(result.status, 0)
+    const help = result.stdout
+    for (const needle of ['--yes', '-y', '--dry-run', '--headless', ' restore ', 'Exit codes']) {
+      assert.ok(help.includes(needle), `help text must mention ${needle}`)
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
 test('uninstall command is exposed with project and global scope options', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-uninstall-'))
   try {

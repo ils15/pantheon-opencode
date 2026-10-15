@@ -51,6 +51,12 @@ const TABLE = {
     planOnlyNoYes: 'Plan only — re-run with --yes to apply.',
     driftHeader: 'State changed since preview — aborting before any write:',
     driftAbort: 'No files were written. Re-run to re-review.',
+    applyFailed: (msg) => `❌ Apply failed: ${msg}`,
+    alreadyApplied: 'Paths already applied — no automatic rollback:',
+    restoreRecoveryHint: (dir) => `Recover with: pantheon-opencode restore  (backup at ${dir})`,
+    restoreNoBackup:
+      'No backup was created (the failure occurred before the first write); the target is unchanged.',
+    dryRunNothingWritten: 'Preview only — no files were written.',
     // summary (printSummary)
     summaryInstalled: (target) => `OpenCode installed in ${target}`,
     summaryWithErrors: (target) => `Installation finished WITH ERRORS in ${target}`,
@@ -103,6 +109,12 @@ const TABLE = {
     planOnlyNoYes: 'Apenas o plano — rode de novo com --yes para aplicar.',
     driftHeader: 'O estado mudou desde o preview — abortando antes de qualquer escrita:',
     driftAbort: 'Nenhum arquivo foi escrito. Rode de novo para revisar.',
+    applyFailed: (msg) => `❌ Falha ao aplicar: ${msg}`,
+    alreadyApplied: 'Caminhos já aplicados — sem rollback automático:',
+    restoreRecoveryHint: (dir) => `Recupere com: pantheon-opencode restore  (backup em ${dir})`,
+    restoreNoBackup:
+      'Nenhum backup foi criado (a falha ocorreu antes da primeira escrita); o alvo está intacto.',
+    dryRunNothingWritten: 'Somente prévia — nenhum arquivo foi escrito.',
     // summary (printSummary)
     summaryInstalled: (target) => `OpenCode instalado em ${target}`,
     summaryWithErrors: (target) => `Instalação concluída COM ERROS em ${target}`,

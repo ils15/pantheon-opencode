@@ -59,6 +59,16 @@ without `--yes`, `init` prints the change plan and applies nothing. Exit codes:
 authorization, `3` drift (a planned target changed between plan and apply),
 `130` canceled. Drift is checked within a single run (plan → apply); it cannot
 be detected across two separate CLI invocations (no plan is persisted).
+
+Preview without writing anything with `init --dry-run`. Before the first write,
+`init` saves an exact backup set under `.pantheon/backups/<timestamp>/`
+(directory `0700`, files `0600`, the 5 most recent kept); it is a byte-for-byte
+copy and therefore also contains any API keys or tokens already present in your
+files — it is never printed. Recover with
+`pantheon-opencode restore [--project] [--yes]` (there is no automatic
+rollback; an interrupted apply is recoverable the same way). The
+`postinstall`/`sync-tui` step only refreshes TUI artifacts and is deliberately
+outside this approval flow — no prompt is possible there.
 The bundled Python MCP servers use the pinned MCP SDK 2.2.0 and standalone
 FastMCP 4.0.10 runtime; see the [MCP guide](docs/MCP.md).
 The installer also turns each agent's `mcp_tools` allowlist into native

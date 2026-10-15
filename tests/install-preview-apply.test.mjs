@@ -51,6 +51,9 @@ import {
 
 const ROOT = process.cwd()
 const BIN = join(ROOT, 'bin', 'pantheon-init.mjs')
+// Deterministic English strings for message assertions (strings() caches locale).
+process.env.LANG = 'C'
+process.env.LC_ALL = 'C'
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex')
 
@@ -556,6 +559,103 @@ test('exit code mapping: drift -> 3, not-authorized -> 2, canceled -> 130, else 
   assert.equal(resolveInstallExitCode({ applied: false, reason: 'declined' }, false), 0)
   assert.equal(resolveInstallExitCode({ applied: true, reason: 'applied' }, false), 0)
   assert.equal(resolveInstallExitCode({ applied: false, reason: 'plan' }, true), 0)
+})
+
+test('failure: a mid-apply throw reports applied paths, cleans temp siblings, no success', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-fail-'))
+  try {
+    const tmpSibling = join(target, `leftover.txt.tmp-${process.pid}`)
+    writeFileSync(tmpSibling, 'x')
+    let out = ''
+    const ow = process.stdout.write.bind(process.stdout)
+    const ew = process.stderr.write.bind(process.stderr)
+    process.stdout.write = (c) => {
+      out += String(c)
+      return true
+    }
+    process.stderr.write = (c) => {
+      out += String(c)
+      return true
+    }
+    let threw = false
+    try {
+      await installOpenCode(target, false, false, ['agents', 'commands'], {
+        yes: true,
+        headless: true,
+        version: 'v1',
+        deps: { failAfter: 3 },
+      })
+    } catch {
+      threw = true
+    } finally {
+      process.stdout.write = ow
+      process.stderr.write = ew
+    }
+    assert.equal(threw, true, 'the injected failure must propagate')
+    assert.match(out, /Apply failed/)
+    assert.match(out, /already applied/)
+    assert.match(out, /pantheon-opencode restore/)
+    assert.doesNotMatch(out, /\[DRY-RUN\]/, 'a failure is not a dry run')
+    assert.equal(existsSync(tmpSibling), false, 'lingering temp sibling must be cleaned up')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('failure (default global target): report + temp cleanup work with target=undefined', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const home = mkdtempSync(join(tmpdir(), 'pantheon-fail-global-'))
+  const prevHome = process.env.HOME
+  const prevXdg = process.env.XDG_CONFIG_HOME
+  process.env.HOME = home
+  process.env.XDG_CONFIG_HOME = join(home, '.config')
+  try {
+    const target = join(home, '.config', 'opencode')
+    mkdirSync(target, { recursive: true })
+    const tmpSibling = join(target, `leftover.md.tmp-${process.pid}`)
+    writeFileSync(tmpSibling, 'x')
+    let out = ''
+    const ow = process.stdout.write.bind(process.stdout)
+    const ew = process.stderr.write.bind(process.stderr)
+    process.stdout.write = (c) => {
+      out += String(c)
+      return true
+    }
+    process.stderr.write = (c) => {
+      out += String(c)
+      return true
+    }
+    let threw = false
+    try {
+      await installOpenCode(undefined, false, false, ['agents', 'commands'], {
+        yes: true,
+        headless: true,
+        version: 'v1',
+        deps: { failAfter: 2 },
+      })
+    } catch {
+      threw = true
+    } finally {
+      process.stdout.write = ow
+      process.stderr.write = ew
+    }
+    assert.equal(threw, true, 'the injected failure must propagate')
+    assert.match(out, /Apply failed/, 'the failure report must print for the default global target')
+    assert.match(out, /already applied/)
+    assert.match(out, /pantheon-opencode restore/)
+    assert.equal(
+      existsSync(tmpSibling),
+      false,
+      'temp sibling must be cleaned for the global target',
+    )
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = prevXdg
+    rmSync(home, { recursive: true, force: true })
+  }
 })
 
 test('authorized apply (--yes) emits no [DRY-RUN] plan block and writes for real', () => {

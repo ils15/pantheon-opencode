@@ -468,9 +468,15 @@ async function main() {
     // unauthorized / drift) must never print a success banner. Exit codes:
     //   0 ok / no-apply · 2 apply-requested-without-authorization · 3 drift
     //   130 canceled · 1 failure (thrown above).
-    if (!isDryRun && result?.applied === false) {
-      if (result.reason === 'canceled') console.error(S.canceled)
-      process.exit(resolveInstallExitCode(result, isDryRun))
+    if (result?.applied === false) {
+      if (!isDryRun) {
+        if (result.reason === 'canceled') console.error(S.canceled)
+        process.exit(resolveInstallExitCode(result, isDryRun))
+      }
+      // Dry-run preview: report honestly instead of the "installed!" banner.
+      console.log('')
+      console.log(`  ${S.dryRunNothingWritten}`)
+      return
     }
 
     if (runDoctor && !isDryRun) {

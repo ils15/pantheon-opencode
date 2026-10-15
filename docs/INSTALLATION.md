@@ -713,6 +713,26 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 > O drift é verificado **dentro de uma única execução** (plano → apply); não é
 > detectável entre duas invocações separadas do CLI (nenhum plano é persistido).
 
+#### Backup, restore e fluxo de aprovação
+
+- **Preview**: `init --dry-run` imprime o plano e **não escreve nada**.
+- **Backup exato**: antes da primeira escrita, `init` salva um conjunto exato em
+  `.pantheon/backups/<timestamp>/` (diretório `0700`, arquivos e manifest `0600`;
+  mantém os **5** mais recentes). É uma cópia byte-a-byte e, portanto, **também
+  contém quaisquer API keys/tokens já presentes nos seus arquivos** — por isso
+  nunca é impresso (nem seus hashes).
+- **Restore**: `pantheon-opencode restore [--project] [--from <dir>] [--dry-run] [--yes]`.
+  Verifica a integridade do manifest e se recusa a restaurar um conjunto
+  adulterado; faz um backup do estado atual antes de reverter. Exige `--yes` num
+  TTY não-interativo; num TTY pergunta (default **não**).
+- **Falha no meio do apply**: aborta as escritas restantes, limpa arquivos
+  temporários (`<arquivo>.tmp-<pid>`), lista os caminhos já aplicados (sem
+  conteúdo) e imprime a instrução de recuperação. **Não há rollback automático** —
+  o backup exato + `restore` é o caminho de recuperação (um apply interrompido é
+  recuperável do mesmo modo).
+- **Fora do fluxo de aprovação**: `postinstall`/`sync-tui` apenas ressincroniza
+  artefatos da TUI; não faz prompt nem passa pelo gate de `--yes`.
+
 ```bash
 # Preset explícito pula wizard (Q1/Q2/Q3)
 PANTHEON_OPENCODE_API_KEY=... npx pantheon-opencode init --headless --yes --preset go-fast
