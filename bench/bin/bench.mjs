@@ -43,9 +43,17 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir, version as nodeVersion, tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { agentFixtureIdentity, contentDirectoryIdentity } from '../lib/agent-fixture.mjs'
 import { runIsCompleted, summarizeRuns } from '../lib/aggregate.mjs'
 import { parseBenchArgs, UsageError } from '../lib/args.mjs'
@@ -313,6 +321,7 @@ async function main() {
         'usage: bench.mjs [--runs N] [--scenarios A,B] [--profile host|double-injection] ' +
           '[--label name] [--global-agents path] [--project-agents path] ' +
           '[--agents-dir path] [--control-agents-dir path] [--skills-dir path] ' +
+          '[--prompt-file path] ' +
           '[--scenario B --root-agent talos --control-root-agent zeus --paired --out bench/results/file.json]',
       )
       process.exit(2)
@@ -350,6 +359,49 @@ async function main() {
   }
   const globalFixture = opts.globalAgents === null ? null : fixtureIdentity(opts.globalAgents)
   const projectFixture = opts.projectAgents === null ? null : fixtureIdentity(opts.projectAgents)
+  let taskPrompt = null
+  let promptFixture = null
+  if (opts.promptFile !== null) {
+    const promptPath = resolve(REPO_ROOT, opts.promptFile)
+    let promptRealPath
+    try {
+      promptRealPath = realpathSync(promptPath)
+    } catch (err) {
+      console.error(`bench: invalid --prompt-file path: ${err.message}`)
+      process.exit(2)
+    }
+    const promptRelativePath = relative(REPO_ROOT, promptRealPath)
+    if (
+      promptRelativePath === '' ||
+      promptRelativePath === '..' ||
+      promptRelativePath.startsWith(`..${sep}`) ||
+      isAbsolute(promptRelativePath)
+    ) {
+      console.error('bench: --prompt-file must resolve to a file inside the repository')
+      process.exit(2)
+    }
+    let stat
+    try {
+      stat = lstatSync(promptPath)
+    } catch (err) {
+      console.error(`bench: invalid --prompt-file path: ${err.message}`)
+      process.exit(2)
+    }
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      console.error('bench: --prompt-file must be a regular, non-symlink file')
+      process.exit(2)
+    }
+    const bytes = readFileSync(promptRealPath)
+    taskPrompt = bytes.toString('utf8')
+    if (!Buffer.from(taskPrompt, 'utf8').equals(bytes) || taskPrompt.trim() === '') {
+      console.error('bench: --prompt-file must contain non-empty valid UTF-8 text')
+      process.exit(2)
+    }
+    promptFixture = {
+      ...fixtureIdentity(promptRealPath),
+      path: promptRelativePath,
+    }
+  }
   let agentsFixture = null
   if (opts.agentsDir !== null) {
     try {
@@ -446,6 +498,11 @@ async function main() {
       `bench: skill definitions ${skillsFixture.files.length} files sha256=${skillsFixture.sha256} (${skillsFixture.path})`,
     )
   }
+  if (promptFixture) {
+    console.log(
+      `bench: task prompt fixture ${promptFixture.path} (${promptFixture.bytes}B, sha256=${promptFixture.sha256})`,
+    )
+  }
   console.log(`bench: metrics from ${dbPath} (read-only)`)
 
   const runs = []
@@ -476,7 +533,7 @@ async function main() {
     try {
       outcome = await runOnce({
         cwd: runDir,
-        prompt: SCENARIOS[scenario].prompt,
+        prompt: taskPrompt ?? SCENARIOS[scenario].prompt,
         model,
         title: `pantheon-bench-${runLabelDir}`,
         timeoutMs: RUN_TIMEOUT_MS,
@@ -630,6 +687,7 @@ async function main() {
           }
         : null,
       skillsDirFixture: skillsFixture,
+      promptFixture,
       protocol: {
         runsPerScenario,
         scenarios,
@@ -676,6 +734,7 @@ async function main() {
       "Per-run `firstRequest` is the proxy that isolates the injected payload: the first assistant row's tokens.input + tokens.cache.read. Tree-total input is dominated by session-length variance; the payload only lands on the first request.",
       'Paired root-agent runs use --agents-dir for the candidate and --control-agents-dir for the control (defaults to --agents-dir); root prompt identities are recorded per arm and per run.',
       'Paired root-agent runs also replace host skills with --skills-dir; every skill fixture file is content-identified in meta.skillsDirFixture.',
+      'When --prompt-file is provided, the paired task text is read once before measurement and its repo-relative path, byte count, and SHA-256 are recorded in meta.promptFixture.',
       'Paired summary metrics include completed runs only when the requested root matches the observed root, the root has no parent, D4 proves both configured global/project instruction fixtures were loaded, and (for candidates) childrenCount is zero with an available tool ledger showing no subagent attempt. Failed and ineligible runs remain in runs with reasons.',
       'Artifact correctness is audited outside the timed interval using the pre-registered oracle; armAcceptance does not assert artifact correctness.',
       'A metric the schema cannot provide is {status:"unavailable", reason} — never zero.',

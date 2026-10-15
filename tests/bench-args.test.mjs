@@ -28,6 +28,7 @@ test('defaults are the fixed protocol: 5 runs, host profile, baseline label', ()
   assert.equal(opts.agentsDir, null)
   assert.equal(opts.controlAgentsDir, null)
   assert.equal(opts.skillsDir, null)
+  assert.equal(opts.promptFile, null)
   assert.equal(opts.paired, false)
   assert.equal(opts.rootAgent, null)
   assert.equal(opts.controlRootAgent, null)
@@ -257,4 +258,33 @@ test('paired runs can give control and candidate separate agent prompt directori
     /require --paired/,
   )
   assert.throws(() => parseBenchArgs(['--routing-parity']), /require --paired/)
+})
+
+test('a task prompt fixture is available only in paired runs', () => {
+  const opts = parseBenchArgs([
+    '--scenario',
+    'B',
+    '--profile',
+    'double-injection',
+    '--global-agents',
+    'global.md',
+    '--project-agents',
+    'project.md',
+    '--root-agent',
+    'zeus',
+    '--control-root-agent',
+    'zeus',
+    '--agents-dir',
+    'candidate-agents',
+    '--skills-dir',
+    'skills',
+    '--paired',
+    '--prompt-file',
+    'bench/fixtures/task.md',
+    '--out',
+    'bench/results/f5-followup.json',
+  ])
+  assert.equal(opts.promptFile, 'bench/fixtures/task.md')
+  assert.throws(() => parseBenchArgs(['--prompt-file', 'task.md']), /require --paired/)
+  assert.throws(() => parseBenchArgs(['--paired', '--prompt-file']), /requires a value/)
 })

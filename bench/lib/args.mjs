@@ -76,6 +76,7 @@ export function parseBenchArgs(argv) {
     agentsDir: null,
     controlAgentsDir: null,
     skillsDir: null,
+    promptFile: null,
     paired: false,
     routingParity: false,
     rootAgent: null,
@@ -183,6 +184,11 @@ export function parseBenchArgs(argv) {
         i += 1
         break
       }
+      case '--prompt-file': {
+        out.promptFile = readValue(argv, i, '--prompt-file')
+        i += 1
+        break
+      }
       default:
         throw new UsageError(`unknown argument: ${arg}`)
     }
@@ -220,13 +226,14 @@ export function parseBenchArgs(argv) {
     out.rootAgent !== null ||
     out.controlRootAgent !== null ||
     out.controlAgentsDir !== null ||
+    out.promptFile !== null ||
     out.routingParity ||
     out.out !== null ||
     out.agentsDir !== null ||
     out.skillsDir !== null
   ) {
     throw new UsageError(
-      '--root-agent, --control-root-agent, --agents-dir, --control-agents-dir, --routing-parity, --skills-dir, and --out require --paired',
+      '--root-agent, --control-root-agent, --agents-dir, --control-agents-dir, --routing-parity, --skills-dir, --prompt-file, and --out require --paired',
     )
   }
 
