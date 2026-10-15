@@ -67,7 +67,8 @@ opencode
 
 - **OpenCode-only** — unified, simplified, no multi-platform fragmentation
 - **Global install** — `npx pantheon-opencode init` works from any directory
-- **Background subagents** — up to 5 agents in parallel
+- **Delegation waves** — Pantheon's workflow may organize up to 5 agents per
+  wave; this is an organizational policy, not an OpenCode API concurrency guarantee
 - **8 slash commands** — Pantheon workflow, model, audit, vision, and goal tools
 - **Themis 3-layer review** — heuristic scanner + deep review + verification planning
 - **Persistent MCP memory** — SQLite FTS5 (BM25) keyword search, no embeddings

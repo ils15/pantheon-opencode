@@ -721,6 +721,27 @@ recorded as observations of specific host builds rather than as guarantees:
 caller/target restriction, establish which contract the target install resolved. All
 three are safe on V1; none of the three is available on V2.
 
+### 3.6 Proportionality and overhead evaluation
+
+For a clear, bounded, reversible, low-uncertainty, non-sensitive task, route to one
+correct domain specialist when delegation is needed. That specialist inspects the
+necessary local context, implements and verifies the change. Do not add a routine
+plan, separate discovery pass, council, or Themis review. Keep applicable planning,
+review, and human-approval gates for broad/material or high-uncertainty work, auth or
+security, data/schema, destructive operations, and user-visible API changes. The
+operational rules are in [`src/agents/zeus.md`](../src/agents/zeus.md) and
+[`src/instructions/zeus-timeout-retry.instructions.md`](../src/instructions/zeus-timeout-retry.instructions.md).
+Specialist roles remain available on demand; a single task is not evidence to remove
+an agent.
+
+When evaluating orchestration overhead, compare multiple similar tasks with similar
+scope, risk, and acceptance criteria. Record observed elapsed time, tokens per
+phase/agent when available, number of handoffs, and rework/quality signals (such as
+verification failures or corrections needed). Mark unavailable measures as unknown;
+do not add telemetry or tool APIs for this comparison. Do not set thresholds or infer
+that a single task proves or disproves YAGNI; use the observations as evidence for a
+later policy decision, alongside whether the work met its acceptance criteria.
+
 ---
 
 ## 4. Disagreements between layers

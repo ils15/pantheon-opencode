@@ -28,7 +28,10 @@ test('Zeus shows Athena’s full plan in the main conversation before asking for
   assert.match(section, /publish the \*\*entire returned plan as a normal assistant message/i)
   assert.match(section, /visible in the conversation before you trigger any\s+approval UI/i)
   assert.match(section, /do not summarize|without summarizing/i)
-  assert.match(section, /agent\/askQuestions/)
+  // The slice reworded the handoff to the observed Beta-10 `subagent` dispatch;
+  // the equivalent guarantee is that Zeus, not the child session, owns the
+  // user-facing approval gate.
+  assert.match(section, /Zeus owns the user-facing approval gate/)
   const approval = section.indexOf('After the plan has been published')
   assert.ok(
     section.indexOf('normal assistant message') < approval,

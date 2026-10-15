@@ -76,18 +76,22 @@ Use the lightest path that safely meets the request. A multi-file but bounded lo
 ### Subtask Decision Tree (run BEFORE every delegation)
 
 ```
-□ Is the scope clear, bounded, and reversible?                 [YES→continue | NO→clarify/plan]
-□ Does it avoid auth/security, data/schema, and destructive risk? [YES→continue | NO→full review/gates]
-□ Is there no required Themis/audit handoff for this change?     [YES→continue | NO→preserve that review]
+□ Is the scope clear, bounded, reversible, and low-uncertainty?  [YES→continue | NO→clarify/plan]
+□ Does it avoid auth/security, data/schema, destructive, broad/material, and user-visible API risk? [YES→continue | NO→relevant gates]
+□ Is there no required Themis/audit handoff for this change?      [YES→continue | NO→preserve that review]
 
-ALL YES → direct/lightweight execution; no routine plan or artifact
+ALL YES → one correct domain specialist; they inspect needed context, implement, and verify; no routine plan/artifact, separate discovery, council, or review
 ANY NO  → add only the planning, artifact, specialist review, and approval gates the risk requires
 ```
 
 ### Safety Rules
 1. **Bounded scope** — can be a small multi-file change or a read-only investigation
-2. **Low risk** — no security implications, no data loss, no breaking changes
+2. **Low risk and uncertainty** — no security implications, data loss, breaking/user-visible API impact, broad material scope, or unresolved high uncertainty
 3. **No required Themis dependency** — sensitive/material output retains its review gate
+
+The selected specialist, not a routine Apollo discovery pass, inspects the relevant
+local context for a lightweight implementation. Keep specialist roles available for
+on-demand routing; do not remove an agent based on one task or one overhead observation.
 
 ## Subtask Return Format
 Return the required `## subtask_summary` fields defined in `## Agent Return Format`; include `memory_context` when memory was used.

@@ -403,7 +403,7 @@ This installs to `.opencode/agents/` in the current project directory.
 
 No caminho de instalação V1 desde **v1.5.0**, o instalador **não cria** `model`/`small_model` top-level em `opencode.json` e o plugin/wizard **não grava** `active-preset.json` quando o usuário escolhe `0`/`inherit` (default da Q1). O fluxo V2 não ativa presets. Comportamento V1:
 
-- **Sem preset = herança nativa**: `resolveActivePreset()` retorna `null`; `loadRoutingAgentModels()` retorna `{}`; nenhum modelo é imposto aos filhos — o `task()` nativo herda o modelo do chat pai. `small_model` nunca é usado.
+- **Sem preset = herança nativa**: `resolveActivePreset()` retorna `null`; `loadRoutingAgentModels()` retorna `{}`; nenhum modelo é imposto aos filhos — o dispatch nativo do host (por exemplo, `task()` onde exposto) herda o modelo do chat pai conforme a semântica desse host. `small_model` nunca é usado.
 - **Ordem de resolução do modelo filho** (fontes sem hardcode de segredos, só nomes):
   1. `overrides.agents[agent].model` em `.pantheon/active-preset.json` (via `/pantheon-model set --agent`)
   2. `presets.<active>.agents[agent].model` (via `loadRoutingAgentModels`)

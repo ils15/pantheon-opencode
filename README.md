@@ -239,7 +239,7 @@ available.
 |----------|---------|---------|
 | `PANTHEON_NODE` | `node` from `PATH` | Path to a Node.js >= 22.5 binary used by the CLI fallback; an explicit path must exist and be executable, otherwise the tool fails fast instead of ignoring the override |
 
-Tool interpretation matters: `pantheon_model status` reports configuration, not the model serving a completion. V2 manual model overrides are project-only; global override files are neither read nor applied, and global mutation is unsupported until a future surface can obtain separate explicit human authorization. V2 ignores static presets and applies only explicit per-agent project model/variant overrides, leaving the host default unchanged otherwise; V1 preset behavior remains legacy pending compatibility decisions.
+Tool interpretation matters: `pantheon_model status` reports configuration, not the model serving a completion. V2 manual model overrides are project-only; global override files are neither read nor applied, and global mutation is unsupported until a future surface can obtain separate explicit human authorization. V2 ignores static presets and applies only explicit per-agent project model/variant overrides, leaving the host default unchanged otherwise; V1 preset behavior remains legacy pending compatibility decisions. `pantheon_cost` is a rolling token aggregate, not a session-level or monetary cost report. See the [OpenCode plugin tool notes](docs/mcp-tools.md#opencode-plugin-tools) for details and measurement limits.
 
 
 ## Code-mode execution (explicit opt-in)

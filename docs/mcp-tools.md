@@ -158,8 +158,15 @@ MCP servers listed above.
 | Tool | Arguments | What it reports |
 |------|-----------|-----------------|
 | `pantheon_model` | `action?: status\|show\|set\|reset`, plus action-specific agent/model/effort and optional `scope: project` | V2 manual overrides are **project-only**: status reads project configuration, and the agent transform applies only explicit project per-agent model/variant overrides; global files are neither read nor applied. `set`/`reset` reject `scope: global` and any `confirm`/`authorize_global` fields before writing. Global overrides require separate explicit human authorization in a future surface and are not supported by this tool; flags in the same tool call are not approval. V2 ignores static preset markers and `PANTHEON_MODEL_PRESET`, leaving host defaults intact otherwise. Invalid or malformed project overrides preserve the host model and expose warnings via status. The V2 server plugin has no documented toast or other proactive user-visible notification API during transform, so no toast/proactive warning is promised. V1 behavior remains legacy. |
+| `pantheon_cost` | `days?: 1..365` (default `7`) | Read-only token totals by agent and phase in a rolling `days × 24-hour` window from query time. It is not a calendar-day or session window. |
+
+`pantheon_cost` is not grouped by session, task, model, or provider; on V2 the
+phase can be `unknown`. It reports token counts, not dollars, so it cannot prove
+monetary savings or a model-specific usage delta. Its aggregate is not a
+per-session or per-task ledger.
 
 ---
+
 ## Platform Naming Conventions
 
 Each platform exposes MCP tools with different naming. The same tool `memory_recall` from server `pantheon-memory` gets different names:
