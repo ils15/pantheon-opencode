@@ -562,12 +562,67 @@ async function startHost(sandbox) {
     port,
     sessionID: created.data.id,
     diagnose,
-    async prompt(text) {
+    async createSession(title = 'pantheon-tool-canary-followup') {
+      const session = await request('POST', '/api/session', {
+        title,
+        model: { providerID: 'canary', id: 'canary-model' },
+      })
+      return session.data.id
+    },
+    async prompt(text, { agent } = {}) {
       await request('POST', `/api/session/${created.data.id}/prompt`, {
         text,
+        ...(agent ? { agent } : {}),
         model: { providerID: 'canary', id: 'canary-model' },
       })
       await request('POST', `/api/experimental/session/${created.data.id}/wait`)
+    },
+    async promptWithPermissionReply(text, reply, agent, sessionID = created.data.id) {
+      const prompt = request('POST', `/api/session/${sessionID}/prompt`, {
+        text,
+        ...(agent ? { agent } : {}),
+        model: { providerID: 'canary', id: 'canary-model' },
+      })
+      const pending = await waitFor(
+        async () => {
+          const result = await request('GET', `/api/session/${sessionID}/permission`)
+          return (result?.data ?? []).find((item) => item.action === 'read')
+        },
+        TIMEOUT_MS,
+        `native read permission request for ${reply}`,
+      ).catch(async (error) => {
+        const transcript = await request('GET', `/api/session/${sessionID}/message`).catch(
+          (cause) => ({ error: String(cause) }),
+        )
+        const rows = Array.isArray(transcript?.data) ? transcript.data : []
+        const summary = rows.slice(0, 5).map((row) => ({
+          type: row.type,
+          agent: row.agent,
+          text: row.text,
+          parts: (row.content ?? []).map((part) => ({
+            type: part.type,
+            name: part.name,
+            status: part.state?.status,
+            error: part.state?.error?.message,
+            text: part.text,
+          })),
+        }))
+        const proof = existsSync(sandbox.permissionProofFile)
+          ? readFileSync(sandbox.permissionProofFile, 'utf8')
+          : ''
+        throw new Error(
+          `${String(error)}; recentMessages=${JSON.stringify(summary)}; permissionProof=${proof.slice(-4000)}`,
+        )
+      })
+      await request('POST', `/api/session/${sessionID}/permission/${pending.id}/reply`, {
+        decision: reply,
+      })
+      await prompt
+      await request('POST', `/api/experimental/session/${sessionID}/wait`)
+      return pending
+    },
+    async savedPermissions() {
+      return request('GET', '/api/permission/saved')
     },
     async transcript() {
       return JSON.stringify(await request('GET', `/api/session/${created.data.id}/message`))
@@ -599,12 +654,16 @@ async function startHost(sandbox) {
  *   - the `ctx.tool.list()` dump, taken on the first `execute.after`, by which
  *     point the real plugin's `tool.transform` has already run.
  */
-function writePlugins(sandbox, pluginSource, { permissionProbe = false } = {}) {
+function writePlugins(
+  sandbox,
+  pluginSource,
+  { permissionProbe = false, permissionAskProbe = false } = {},
+) {
   writeFileSync(join(sandbox.projectDir, '.opencode', 'plugins', 'real', 'index.ts'), pluginSource)
   writeFileSync(
     join(sandbox.projectDir, '.opencode', 'plugins', 'probe', 'index.ts'),
     [
-      "import { writeFileSync } from 'node:fs'",
+      "import { readFileSync, writeFileSync } from 'node:fs'",
       'export default {',
       "  id: 'pantheon-tool-canary-probe',",
       '  async setup(ctx) {',
@@ -613,6 +672,7 @@ function writePlugins(sandbox, pluginSource, { permissionProbe = false } = {}) {
       '    const visionRequests = []',
       '    const escapedRequests = []',
       '    const permissionResults = []',
+      '    const permissionAskResults = []',
       '    const permissionEvents = []',
       '    const promptEvents = []',
       '    const originalFetch = globalThis.fetch',
@@ -651,6 +711,11 @@ function writePlugins(sandbox, pluginSource, { permissionProbe = false } = {}) {
       '        hook: kind(ctx.permission && ctx.permission.hook),',
       '        assert: kind(ctx.permission && ctx.permission.assert),',
       '      },',
+      '      location: {',
+      '        type: kind(ctx.location),',
+      '        keys: Object.keys(ctx.location ?? {}).sort(),',
+      '        entries: Object.fromEntries(Object.keys(ctx.location ?? {}).map((key) => [key, kind(ctx.location[key])])),',
+      '      },',
       '      session: {',
       '        hook: kind(ctx.session && ctx.session.hook),',
       '        create: kind(ctx.session && ctx.session.create),',
@@ -683,15 +748,19 @@ function writePlugins(sandbox, pluginSource, { permissionProbe = false } = {}) {
             '      permissionEvents.push({',
             '        sessionID: event.sessionID,',
             '        agent: event.agent,',
+            '        action: event.action,',
             '        resources: event.resources,',
+            '        source: event.source,',
             '        effect: event.effect,',
             '        message: event.message,',
             '        session: permissionSession && {',
             '          id: permissionSession.id,',
+            '          projectID: permissionSession.projectID,',
             '          agent: permissionSession.agent,',
             '          parentID: permissionSession.parentID,',
             '          keys: Object.keys(permissionSession),',
             '        },',
+            '        locationProjectID: ctx.location?.project?.id,',
             '      })',
             '    })',
             '    await ctx.tool.transform((draft) => {',
@@ -730,12 +799,38 @@ function writePlugins(sandbox, pluginSource, { permissionProbe = false } = {}) {
             '    })',
           ]
         : []),
+      ...(permissionAskProbe
+        ? [
+            '    await ctx.tool.transform((draft) => {',
+            '      draft.add({',
+            "        name: 'permission_ask_probe',",
+            "        description: 'Live ask/reply and non-persistent permission canary',",
+            "        input: { type: 'object', properties: {}, additionalProperties: false },",
+            "        output: { type: 'object', properties: { output: { type: 'string' } }, required: ['output'], additionalProperties: false },",
+            '        async execute(_input, toolContext) {',
+            '          const request = {',
+            '            sessionID: toolContext.sessionID,',
+            '            agent: toolContext.agent,',
+            '            action: "read",',
+            `            resources: [${JSON.stringify(sandbox.targetFile)}],`,
+            '            save: [],',
+            '            source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id },',
+            '          }',
+            '          await ctx.permission.assert(request)',
+            '          const session = await ctx.session.get({ sessionID: request.sessionID })',
+            '          permissionAskResults.push({ sessionID: request.sessionID, agent: request.agent, source: request.source, session: session && { id: session.id, parentID: session.parentID, projectID: session.projectID, workspaceID: session.workspaceID, directory: session.directory, keys: Object.keys(session).sort() }, locationDirectory: ctx.location?.directory, locationProjectID: ctx.location?.project?.id, locationProjectKeys: Object.keys(ctx.location?.project ?? {}).sort(), contextKeys: Object.keys(toolContext).sort() })',
+            `          return { output: readFileSync(${JSON.stringify(sandbox.targetFile)}, 'utf8') }`,
+            '        },',
+            '      })',
+            '    })',
+          ]
+        : []),
       "    await ctx.tool.hook('execute.after', async () => {",
       '      let toolList',
       '      try {',
       '        toolList = await ctx.tool.list()',
       '      } catch (err) {',
-      '        writeFileSync(proof, JSON.stringify({ domains, visionRequests, escapedRequests, permissionResults, permissionEvents, promptEvents, listError: String(err) }, null, 2))',
+      '        writeFileSync(proof, JSON.stringify({ domains, visionRequests, escapedRequests, permissionResults, permissionAskResults, permissionEvents, promptEvents, listError: String(err) }, null, 2))',
       '        return',
       '      }',
       '      let models',
@@ -753,6 +848,7 @@ function writePlugins(sandbox, pluginSource, { permissionProbe = false } = {}) {
       '            visionRequests,',
       '            escapedRequests,',
       '            permissionResults,',
+      '            permissionAskResults,',
       '            permissionEvents,',
       '            promptEvents,',
       '            models: Array.isArray(models)',
@@ -787,6 +883,9 @@ function writeProjectConfig(
   modelBaseURL,
   {
     permissionProbe = false,
+    permissionAskProbe = false,
+    boundedReadProbe = false,
+    boundedReadDenyProbe = false,
     subagentAdmissionProbe = false,
     subagentCaller = 'athena',
     subagentTarget = 'demeter',
@@ -810,6 +909,28 @@ function writeProjectConfig(
                     ]
                   : []),
               ],
+            }
+          : {}),
+        ...(permissionAskProbe || boundedReadProbe || boundedReadDenyProbe
+          ? {
+              permissions: [
+                {
+                  action: 'read',
+                  resource: '*',
+                  effect: boundedReadDenyProbe ? 'deny' : 'ask',
+                },
+              ],
+            }
+          : {}),
+        ...(boundedReadProbe || boundedReadDenyProbe
+          ? {
+              default_agent: 'zeus',
+              agents: {
+                zeus: {
+                  mode: 'primary',
+                  system: 'Use the dedicated bounded file reader for the live canary request.',
+                },
+              },
             }
           : {}),
         ...(subagentAdmissionProbe
@@ -980,6 +1101,11 @@ const result = await tools.vision_describe({
 return JSON.stringify({ result });
 `.trim()
 
+const boundedReadScript = `
+const result = await tools.pantheon_bounded_read({ path: 'bounded.txt', offset: 1, limit: 2 });
+return JSON.stringify({ result });
+`.trim()
+
 /**
  * The rendered text of every `execute` tool call, oldest first.
  *
@@ -1049,6 +1175,9 @@ async function runCanary(
   pluginSource,
   {
     permissionProbe = false,
+    permissionAskProbe = false,
+    boundedReadProbe = false,
+    boundedReadDenyProbe = false,
     subagentAdmissionProbe = false,
     subagentCaller = 'athena',
     subagentTarget = 'demeter',
@@ -1056,6 +1185,9 @@ async function runCanary(
 ) {
   const sandbox = makeSandbox()
   writeFileSync(sandbox.targetFile, TARGET_BODY)
+  if (boundedReadProbe || boundedReadDenyProbe) {
+    writeFileSync(join(sandbox.projectDir, 'bounded.txt'), TARGET_BODY)
+  }
   const scripts = [
     CATALOG_SCRIPT,
     badRefScript(sandbox.targetFile),
@@ -1064,6 +1196,14 @@ async function runCanary(
     ...(permissionProbe
       ? ['const result = await tools.permission_probe({});\nreturn JSON.stringify({ result });']
       : []),
+    ...(permissionAskProbe
+      ? [
+          'return await tools.permission_ask_probe({});',
+          'return await tools.permission_ask_probe({});',
+        ]
+      : []),
+    ...(boundedReadProbe ? [boundedReadScript, boundedReadScript, boundedReadScript] : []),
+    ...(boundedReadDenyProbe ? [boundedReadScript] : []),
     ...(subagentAdmissionProbe
       ? [
           {
@@ -1081,9 +1221,15 @@ async function runCanary(
       : []),
   ]
   const model = await startMockModel(scripts)
-  writePlugins(sandbox, pluginSource, { permissionProbe })
+  writePlugins(sandbox, pluginSource, {
+    permissionProbe: permissionProbe || boundedReadProbe || boundedReadDenyProbe,
+    permissionAskProbe,
+  })
   writeProjectConfig(sandbox, model.baseURL, {
     permissionProbe,
+    permissionAskProbe,
+    boundedReadProbe,
+    boundedReadDenyProbe,
     subagentAdmissionProbe,
     subagentCaller,
     subagentTarget,
@@ -1152,6 +1298,54 @@ async function runCanary(
       observation.permission = parseScriptResult(observation.permissionText)
     }
 
+    if (permissionAskProbe) {
+      const savedBefore = await host.savedPermissions()
+      observation.askRequests = []
+      for (const reply of ['always', 'once']) {
+        const pending = await host.promptWithPermissionReply(
+          `exercise native read ask and answer ${reply}`,
+          reply,
+        )
+        observation.askRequests.push({
+          action: pending.action,
+          resources: pending.resources,
+          save: pending.save,
+          reply,
+          output: executeTexts(await host.transcript()).at(-1) ?? '',
+        })
+      }
+      observation.savedBefore = savedBefore?.data ?? []
+      observation.savedAfter = (await host.savedPermissions())?.data ?? []
+    }
+
+    if (boundedReadProbe) {
+      observation.boundedReadSavedBefore = (await host.savedPermissions())?.data ?? []
+      observation.boundedReadRequests = []
+      for (const [index, reply] of ['once', 'once', 'once'].entries()) {
+        const sessionID = index < 2 ? host.sessionID : await host.createSession()
+        const pending = await host.promptWithPermissionReply(
+          `exercise Pantheon bounded read and answer ${reply}`,
+          reply,
+          'zeus',
+          sessionID,
+        )
+        observation.boundedReadRequests.push({
+          sessionID,
+          action: pending.action,
+          resources: pending.resources,
+          save: pending.save,
+          reply,
+          output: executeTexts(await host.transcript()).at(-1) ?? '',
+        })
+      }
+      observation.boundedReadSavedAfter = (await host.savedPermissions())?.data ?? []
+    }
+
+    if (boundedReadDenyProbe) {
+      await host.prompt('exercise Pantheon bounded read under host deny', { agent: 'zeus' })
+      observation.boundedReadDenyOutput = executeTexts(await host.transcript()).at(-1) ?? ''
+    }
+
     if (subagentAdmissionProbe) {
       await host.prompt(`dispatch a native subagent call to ${subagentTarget}`)
       observation.taskTranscript = await host.transcript()
@@ -1192,10 +1386,16 @@ async function runCanary(
 let live = null
 let mutant = null
 let permissionLive = null
+let permissionAskLive = null
+let boundedReadLive = null
+let boundedReadDenyLive = null
 let identityGapLive = null
 let childBoundaryLive = null
 let rootsBefore = null
 const permissionProbeEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_PROBE === '1'
+const permissionAskProbeEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_ASK === '1'
+const boundedReadProbeEnabled = process.env.PANTHEON_TOOL_CANARY_BOUNDED_READ === '1'
+const boundedReadDenyProbeEnabled = process.env.PANTHEON_TOOL_CANARY_BOUNDED_READ_DENY === '1'
 
 before(
   async () => {
@@ -1222,12 +1422,33 @@ before(
         })
       }
     }
+    if (permissionAskProbeEnabled) {
+      permissionAskLive = await runCanary(realPluginShim(), {
+        permissionProbe: true,
+        permissionAskProbe: true,
+      })
+    }
+    if (boundedReadProbeEnabled) {
+      boundedReadLive = await runCanary(realPluginShim(), { boundedReadProbe: true })
+    }
+    if (boundedReadDenyProbeEnabled) {
+      boundedReadDenyLive = await runCanary(realPluginShim(), { boundedReadDenyProbe: true })
+    }
   },
   { timeout: 60_000 },
 )
 
 after(() => {
-  for (const observation of [live, mutant, permissionLive, identityGapLive, childBoundaryLive]) {
+  for (const observation of [
+    live,
+    mutant,
+    permissionLive,
+    permissionAskLive,
+    boundedReadLive,
+    boundedReadDenyLive,
+    identityGapLive,
+    childBoundaryLive,
+  ]) {
     if (observation?.sandbox) rmSync(observation.sandbox.root, { recursive: true, force: true })
   }
 })
@@ -1354,6 +1575,130 @@ test('ctx.permission.assert evaluates a real tool-origin request against host po
   assert.equal(result.request.source.type, 'tool')
   assert.equal(typeof result.request.source.messageID, 'string')
   assert.equal(typeof result.request.source.id, 'string')
+})
+
+test('V2 native ask/reply works and an empty save scope does not persist an always reply', {
+  skip: skipped || !permissionAskProbeEnabled,
+}, () => {
+  assert.ok(
+    permissionAskLive?.observation,
+    `no ask/reply probe dump was written: ${permissionAskLive?.diagnose?.() ?? 'probe did not run'}`,
+  )
+  const { askRequests, savedBefore, savedAfter } = permissionAskLive
+  assert.equal(askRequests?.length, 2, 'the two bounded reads did not each produce a native ask')
+  for (const [index, reply] of ['always', 'once'].entries()) {
+    const request = askRequests[index]
+    assert.equal(request.reply, reply)
+    assert.equal(request.action, 'read')
+    assert.deepEqual(request.resources, [permissionAskLive.sandbox.targetFile])
+    assert.deepEqual(request.save ?? [], [], 'the host request was given a persistence scope')
+    assert.match(request.output, /CANARY-ALPHA-LINE/)
+  }
+  assert.deepEqual(savedAfter, savedBefore, 'an empty save scope created a persisted permission')
+
+  const rows = permissionAskLive.observation.permissionEvents.filter(
+    (event) => event.action === 'read' && event.sessionID === permissionAskLive.rootSessionID,
+  )
+  assert.equal(rows.length, 2, `expected two root permission evaluations, got ${rows.length}`)
+  for (const event of rows) {
+    assert.equal(event.effect, 'ask')
+    assert.equal(event.source?.type, 'tool')
+    assert.equal(typeof event.source?.messageID, 'string')
+    assert.equal(typeof event.source?.id, 'string')
+  }
+  const executions = permissionAskLive.observation.permissionAskResults
+  assert.equal(executions.length, 2)
+  for (const execution of executions) {
+    assert.equal(execution.sessionID, permissionAskLive.rootSessionID)
+    assert.equal(execution.session?.id, permissionAskLive.rootSessionID)
+    assert.equal(execution.locationDirectory, permissionAskLive.sandbox.projectDir)
+    assert.equal(execution.session?.parentID, undefined)
+    assert.ok(!execution.session?.keys?.includes('parentID'))
+    assert.ok(execution.session?.projectID, JSON.stringify(execution.session))
+    assert.equal(execution.session.projectID, execution.locationProjectID)
+    assert.equal(execution.source?.type, 'tool')
+    assert.equal(typeof execution.source.messageID, 'string')
+    assert.equal(typeof execution.source.id, 'string')
+  }
+})
+
+test('Pantheon bounded read is registered, asks per call, and returns only its bounded text window', {
+  skip: skipped || !boundedReadProbeEnabled,
+}, () => {
+  assert.ok(
+    boundedReadLive?.observation,
+    `no bounded-read host probe dump was written: ${boundedReadLive?.diagnose?.() ?? 'probe did not run'}`,
+  )
+  const tool = boundedReadLive.observation.toolList.find(
+    (entry) => entry.name === 'pantheon_bounded_read',
+  )
+  assert.ok(
+    tool?.hasOutput,
+    'the real host did not register the bounded reader with its output schema',
+  )
+
+  const requests = boundedReadLive.boundedReadRequests
+  assert.equal(requests.length, 3)
+  for (const [index, reply] of ['once', 'once', 'once'].entries()) {
+    const request = requests[index]
+    assert.equal(request.reply, reply)
+    assert.equal(request.action, 'read')
+    assert.deepEqual(request.resources, [join(boundedReadLive.sandbox.projectDir, 'bounded.txt')])
+    assert.deepEqual(request.save ?? [], [], 'bounded reader requested a persistent permission')
+    assert.ok(request.output.includes('CANARY-ALPHA-LINE'))
+    assert.ok(request.output.includes('CANARY-BETA-LINE'))
+    assert.equal(request.output.includes('CANARY-GAMMA-LINE'), false)
+  }
+  assert.deepEqual(
+    boundedReadLive.boundedReadSavedAfter,
+    boundedReadLive.boundedReadSavedBefore,
+    'an always reply with an empty save scope persisted permission',
+  )
+
+  const proofLines = boundedReadLive.permissionProof.split('\n').filter(Boolean)
+  const origins = proofLines
+    .filter((line) => line.startsWith('tool.execute.before bounded-read '))
+    .map((line) => JSON.parse(line.slice('tool.execute.before bounded-read '.length)))
+  const boundedSessionIDs = new Set(requests.map((request) => request.sessionID))
+  const rows = boundedReadLive.observation.permissionEvents.filter(
+    (event) =>
+      event.action === 'read' &&
+      boundedSessionIDs.has(event.sessionID) &&
+      (event.resources ?? []).includes(join(boundedReadLive.sandbox.projectDir, 'bounded.txt')),
+  )
+  assert.equal(origins.length, 3, JSON.stringify(origins))
+  assert.equal(rows.length, 3, JSON.stringify(rows))
+  for (const origin of origins) {
+    const event = rows.find((row) => row.source?.id === origin.callID)
+    assert.ok(event, `permission source did not match tool origin ${origin.callID}`)
+    assert.equal(origin.sessionID, event.sessionID)
+    assert.ok(boundedSessionIDs.has(origin.sessionID))
+    assert.equal(origin.agent, 'zeus')
+    assert.equal(event.effect, 'ask')
+    assert.equal(event.source?.type, 'tool')
+    assert.equal(event.source.messageID, origin.messageID)
+    assert.equal(event.session?.id, event.sessionID)
+    assert.equal(event.session?.parentID, undefined)
+    assert.ok(!event.session?.keys?.includes('parentID'))
+    assert.equal(event.session?.projectID, event.locationProjectID)
+  }
+})
+
+test('Pantheon bounded read returns no content when the host denies its exact file permission', {
+  skip: skipped || !boundedReadDenyProbeEnabled,
+}, () => {
+  assert.ok(boundedReadDenyLive?.observation, 'the denied bounded-read host probe did not run')
+  assert.ok(boundedReadDenyLive.boundedReadDenyOutput.includes('TOOL_DENIED'))
+  assert.equal(boundedReadDenyLive.boundedReadDenyOutput.includes('CANARY-ALPHA-LINE'), false)
+  assert.equal(boundedReadDenyLive.boundedReadDenyOutput.includes('CANARY-BETA-LINE'), false)
+
+  const origin = boundedReadDenyLive.permissionProof
+    .split('\n')
+    .filter((line) => line.startsWith('tool.execute.before bounded-read '))
+    .map((line) => JSON.parse(line.slice('tool.execute.before bounded-read '.length)))
+  assert.equal(origin.length, 1, JSON.stringify(origin))
+  assert.equal(origin[0].sessionID, boundedReadDenyLive.rootSessionID)
+  assert.equal(origin[0].agent, 'zeus')
 })
 
 test('F4A rejects a disallowed V2 subagent dispatch without a persisted child or extra model request', {

@@ -236,6 +236,21 @@ desconhecidos são negados por padrão. O `execute.after` do
 V2 executa a cadeia de resultados concluídos `task-result-guard` →
 `context-sandbox` → `read-enhancer`; eventos de erro permanecem inalterados.
 
+#### Leitura bounded do workspace (F3b)
+
+No OpenCode v2.0.29, o plugin V2 pode registrar `pantheon_bounded_read` quando
+o host oferece as APIs nativas de permissão e sessão. Só uma sessão root do
+Zeus pode usá-la. Cada chamada pede ao host permissão `read` para um arquivo
+relativo exato do workspace, com escopo de persistência vazio; o conteúdo só é
+lido após aprovação e passa pelo scanner de segredos fail-closed existente.
+Os limites são duas chamadas e dois arquivos distintos, 400 linhas e 32 KiB
+por mensagem do assistant. Travessia de diretórios, symlinks, diretórios,
+escopos sensíveis, formatos binários/mídia reconhecidos e falhas do scanner são
+negados. O escopo suportado é um workspace local sem escritores concorrentes;
+isso não promete isolamento contra filesystem adversarial nem classificação
+binária do arquivo inteiro. Evidência host-backed:
+[`bench/results/f3b-v229-bounded-read-2026-10-15.md`](bench/results/f3b-v229-bounded-read-2026-10-15.md).
+
 Toda ferramenta V2 declara um schema `output`. O OpenCode 2.0.x exige que a
 declaração e o resultado resolvido concordem nos dois sentidos, então uma
 ferramenta sem declaração — ou que retorne `output` sem declará-lo — falha em

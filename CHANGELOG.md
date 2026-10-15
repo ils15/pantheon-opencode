@@ -52,6 +52,12 @@ latência total e wall de F1 segue inconclusivo.
   wall ficou inconclusivo e não há claim de economia monetária ou roteamento
   geral. Evidência e limites: `bench/results/f3a-root-paired-2026-10-14.md`.
 
+- **Leitura bounded no OpenCode V2:** adiciona `pantheon_bounded_read` para
+  sessões root do Zeus, com aprovação nativa por arquivo, sem grant persistente,
+  limites de chamadas/arquivos/linhas/bytes e scanner de segredos fail-closed.
+  Validado no OpenCode v2.0.29; detalhes e limitações em
+  `bench/results/f3b-v229-bounded-read-2026-10-15.md`.
+
 ## [v1.6.0-beta.9] - 2026-10-12
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

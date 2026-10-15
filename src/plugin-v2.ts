@@ -74,6 +74,7 @@
  */
 
 import { appendFileSync, mkdirSync } from 'node:fs'
+import { realpath as realpathAsync } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type {
@@ -90,6 +91,11 @@ import {
   type ToolExecuteBeforeInput,
   type ToolExecuteBeforeOutput,
 } from './pantheon/delegation-enforce.ts'
+import {
+  BOUNDED_READ_TOOL,
+  createV2BoundedReadTool,
+  type V2BoundedReadOriginRegistry,
+} from './pantheon/v2-bounded-read.ts'
 import {
   getV2BridgeFromContext,
   type PantheonV2Bridge,
@@ -237,6 +243,7 @@ interface V2EventDomain {
  * domain and the host may evolve independently.
  */
 interface V2PermissionDomain {
+  assert?: (input: Record<string, unknown>) => Promise<unknown>
   hook?: (
     name: string,
     handler: (event: unknown, output?: unknown) => void | Promise<void>,
@@ -252,6 +259,11 @@ interface V2PermissionDomain {
 interface V2SessionDomain {
   hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
   get?: (input: { sessionID: string }) => Promise<unknown>
+}
+
+interface V2LocationDomain {
+  directory?: string
+  project?: { id?: string }
 }
 
 interface V2ModelDomain {
@@ -270,6 +282,7 @@ interface HostPluginContext extends PluginContext {
   session?: V2SessionDomain
   model?: V2ModelDomain
   generate?: V2GenerateDomain
+  location?: V2LocationDomain
 }
 
 /**
@@ -429,7 +442,10 @@ function transformReferences(draft: ReferenceDraft): void {
  *
  * Returns true if tools were registered, false if the API is unavailable.
  */
-async function registerV2Tools(context: PluginContext): Promise<boolean> {
+async function registerV2Tools(
+  context: PluginContext,
+  boundedRead?: ReturnType<typeof createV2BoundedReadTool>['definition'],
+): Promise<boolean> {
   const host = hostDomains(context)
   const toolCtx = host.tool
 
@@ -446,6 +462,7 @@ async function registerV2Tools(context: PluginContext): Promise<boolean> {
     if (!visionReady) markUnsupported('vision-tool')
     const visionRuntime = visionReady ? ({ model } as V2VisionRuntime) : undefined
     const toolDefs = createV2ToolDefinitions(visionRuntime)
+    if (boundedRead !== undefined) toolDefs.push(boundedRead)
 
     await toolCtx.transform((draft: V2ToolDraft) => {
       // Catalog grouping only. The host computes a tool's registration id as
@@ -485,7 +502,10 @@ async function registerV2Tools(context: PluginContext): Promise<boolean> {
  *
  * Returns a cleanup function, or undefined if the API is unavailable.
  */
-function subscribeV2Events(context: PluginContext): (() => void) | undefined {
+function subscribeV2Events(
+  context: PluginContext,
+  onTurnEnd?: (sessionID: string) => void,
+): (() => void) | undefined {
   const eventCtx = hostDomains(context).event
 
   if (!eventCtx?.subscribe) {
@@ -498,6 +518,19 @@ function subscribeV2Events(context: PluginContext): (() => void) | undefined {
       // biome-ignore lint/style/noNonNullAssertion: subscribe guaranteed by guard above
       for await (const event of eventCtx.subscribe!({ signal: controller.signal })) {
         await handleV2SessionEvent(event)
+        if (event.type === 'session.idle' || event.type === 'session.deleted') {
+          const properties = event.properties ?? {}
+          const info = properties.info
+          const infoID =
+            info !== null && typeof info === 'object' ? (info as { id?: unknown }).id : undefined
+          const sessionID =
+            typeof properties.sessionID === 'string'
+              ? properties.sessionID
+              : typeof infoID === 'string'
+                ? infoID
+                : undefined
+          if (sessionID) onTurnEnd?.(sessionID)
+        }
       }
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return
@@ -1173,14 +1206,16 @@ function adaptV2ExecuteBeforeEvent(event: unknown): {
 async function registerV2ToolHooks(
   context: PluginContext,
   subagentOrigins: V2SubagentOriginRegistry,
-): Promise<boolean> {
+  boundedReadOrigins?: V2BoundedReadOriginRegistry,
+): Promise<{ registered: boolean; beforeRegistered: boolean }> {
   const toolCtx = hostDomains(context).tool
 
   if (!toolCtx?.hook) {
-    return false
+    return { registered: false, beforeRegistered: false }
   }
 
   let registered = false
+  let beforeRegistered = false
 
   try {
     // "execute.before" — read-only enforcement. Throwing from this handler
@@ -1253,6 +1288,19 @@ async function registerV2ToolHooks(
           blockError = new Error(SECRET_SCAN_UNAVAILABLE_MESSAGE)
         }
         if (blockError !== null) throw blockError
+        const boundedReadOrigin = boundedReadOrigins?.capture(event)
+        const eventTool = (event as V2ToolExecuteBeforeEvent | null)?.tool
+        if (eventTool === BOUNDED_READ_TOOL && boundedReadOrigin === undefined) {
+          throw new Error('BOUND_READ_UNAUTHORIZED')
+        }
+        if (boundedReadOrigin !== undefined) {
+          writeV2AdmissionProof('tool.execute.before bounded-read', {
+            sessionID: boundedReadOrigin.sessionID,
+            messageID: boundedReadOrigin.messageID,
+            callID: boundedReadOrigin.callID,
+            agent: boundedReadOrigin.agent,
+          })
+        }
         const origin = subagentOrigins.capture(event)
         if (origin !== undefined) {
           writeV2AdmissionProof('tool.execute.before', { ...origin })
@@ -1263,6 +1311,7 @@ async function registerV2ToolHooks(
       }
     })
     registered = true
+    beforeRegistered = true
   } catch {
     // Tool before-hook not supported
   }
@@ -1284,6 +1333,7 @@ async function registerV2ToolHooks(
       const benchStartedAt = Date.now()
       try {
         subagentOrigins.forget(event)
+        boundedReadOrigins?.forget(event)
         await v2ExecuteAfter(event)
       } finally {
         // BENCH instrumentation — observation only; the awaited call means the
@@ -1296,7 +1346,7 @@ async function registerV2ToolHooks(
     // Tool after-hook not supported
   }
 
-  return registered
+  return { registered, beforeRegistered }
 }
 
 // ─── V2 Permission Hook ─────────────────────────────────────────────────
@@ -1489,6 +1539,71 @@ function writeV2AdmissionProof(label: string, detail: Record<string, unknown>): 
   }
 }
 
+async function prepareV2BoundedRead(
+  context: PluginContext,
+): Promise<ReturnType<typeof createV2BoundedReadTool> | undefined> {
+  const host = hostDomains(context)
+  const directory = host.location?.directory
+  const projectID = host.location?.project?.id
+  const session = host.session
+  const permission = host.permission
+  if (
+    typeof directory !== 'string' ||
+    directory.trim() === '' ||
+    typeof projectID !== 'string' ||
+    projectID.trim() === '' ||
+    typeof session?.get !== 'function' ||
+    typeof permission?.assert !== 'function' ||
+    typeof host.event?.subscribe !== 'function' ||
+    typeof host.tool?.transform !== 'function' ||
+    typeof host.tool?.hook !== 'function'
+  ) {
+    markUnsupported('bounded-read')
+    return undefined
+  }
+
+  const rootDirectory = await realpathAsync(directory).catch(() => undefined)
+  if (rootDirectory === undefined) {
+    markUnsupported('bounded-read')
+    return undefined
+  }
+
+  return createV2BoundedReadTool({
+    rootDirectory,
+    projectID,
+    getSession: (sessionID) => {
+      if (typeof session.get !== 'function') throw new Error('session lookup unavailable')
+      return session.get.call(session, { sessionID })
+    },
+    assertPermission: (request) => {
+      if (typeof permission.assert !== 'function') throw new Error('permission API unavailable')
+      return permission.assert.call(permission, request)
+    },
+    scanContent: async ({ content, agent, sessionID, callID }) => {
+      try {
+        const scan = await secretScanRunner({
+          tool_name: BOUNDED_READ_TOOL,
+          tool_input: { content },
+          agent_id: agent,
+          session_id: sessionID,
+        })
+        const decision = evaluateSecretScanResult(scan)
+        if (decision.action === 'allow') return 'allow'
+        const reason = decision.action === 'fail-closed' ? decision.reason : 'content-match'
+        appendV2HookLog(
+          `[SECRET SCAN] bounded read withheld session=${sessionID} callID=${callID} reason=${reason}`,
+        )
+        return decision.action === 'fail-closed' ? 'unavailable' : 'deny'
+      } catch {
+        appendV2HookLog(
+          `[SECRET SCAN] bounded read withheld session=${sessionID} callID=${callID} reason=scanner-failure`,
+        )
+        return 'unavailable'
+      }
+    },
+  })
+}
+
 /** Cleanup function type. */
 type CleanupFn = () => void
 
@@ -1535,34 +1650,43 @@ export const plugin = define({
       }
     })
 
-    // ─── Phase 2: V2 Tool Registration (best-effort) ─────────────────
-    const toolsRegistered = await registerV2Tools(context).catch(() => false)
-    if (!toolsRegistered) {
-      markUnsupported('tool-transform')
-    }
+    const subagentOrigins = new V2SubagentOriginRegistry()
+    const boundedRead = await prepareV2BoundedRead(context).catch(() => undefined)
+    if (boundedRead === undefined) markUnsupported('bounded-read')
 
-    // ─── Phase 3: V2 Event Subscription (best-effort) ────────────────
-    const eventCleanup = subscribeV2Events(context)
+    // ─── Phase 2: V2 Event Subscription (best-effort) ────────────────
+    const eventCleanup = subscribeV2Events(context, boundedRead?.clearSession)
     if (eventCleanup) {
       activeCleanups.push(eventCleanup)
     } else {
       markUnsupported('event-stream')
     }
 
-    // ─── Phase 4: V2 Session Hooks (best-effort) ─────────────────────
+    // ─── Phase 3: V2 Session Hooks (best-effort) ─────────────────────
     const sessionHooksRegistered = await registerV2SessionHooks(context).catch(() => false)
     if (!sessionHooksRegistered) {
       markUnsupported('session-hooks')
     }
 
-    // ─── Phase 5: V2 Tool Hooks (best-effort) ────────────────────────
-    const subagentOrigins = new V2SubagentOriginRegistry()
-    const toolHooksRegistered = await registerV2ToolHooks(context, subagentOrigins).catch(
-      () => false,
-    )
-    if (!toolHooksRegistered) {
+    // ─── Phase 4: V2 Tool Hooks (best-effort) ────────────────────────
+    const toolHookResult = await registerV2ToolHooks(
+      context,
+      subagentOrigins,
+      boundedRead?.origins,
+    ).catch(() => ({ registered: false, beforeRegistered: false }))
+    if (!toolHookResult.registered) {
       markUnsupported('tool-execute-hooks')
     }
+
+    // ─── Phase 5: V2 Tool Registration (best-effort) ─────────────────
+    const boundedReadDefinition = toolHookResult.beforeRegistered
+      ? boundedRead?.definition
+      : undefined
+    if (boundedRead !== undefined && boundedReadDefinition === undefined) {
+      markUnsupported('bounded-read')
+    }
+    const toolsRegistered = await registerV2Tools(context, boundedReadDefinition).catch(() => false)
+    if (!toolsRegistered) markUnsupported('tool-transform')
 
     // ─── Phase 6: V2 Permission Hook (best-effort) ───────────────────
     await registerV2PermissionHook(context, subagentOrigins).catch(() => false)

@@ -292,12 +292,13 @@ async function main(): Promise<void> {
     // anonymous casts it replaced do not come back.
     assert.match(pluginSource, /interface HostPluginContext extends PluginContext/)
     assert.match(pluginSource, /function hostDomains\(context: PluginContext\): HostPluginContext/)
-    // Six call sites: registerV2Tools, subscribeV2Events, registerV2SessionHooks,
-    // registerV2ToolHooks, registerV2PermissionHook, and Phase 7's compaction
-    // hook. One more means a new phase bypassed the declaration.
+    // Seven call sites: registerV2Tools, subscribeV2Events,
+    // registerV2SessionHooks, registerV2ToolHooks, registerV2PermissionHook,
+    // bounded-read preparation, and Phase 7's compaction hook. New host-domain
+    // reads must continue to use this declaration.
     assert.equal(
       (pluginSource.match(/hostDomains\(context\)/g) ?? []).length,
-      6,
+      7,
       'every host-domain read must go through hostDomains(context)',
     )
     assert.doesNotMatch(
@@ -314,12 +315,15 @@ async function main(): Promise<void> {
     }
     // The declaration must not erase the definition checks. Each of these is the
     // guard that turns an absent domain into a marked-unsupported feature rather
-    // than a silent no-op — and the host-backed tool canary is what proves the
-    // domains are present on a real 2.0.22 host in the first place.
+    // than a silent no-op — the host-backed canaries prove the domains that
+    // matter are present on the supported v2.0.29 runtime.
     assert.match(pluginSource, /if \(!toolCtx\?\.transform\) \{\s*\n\s*return false/)
     assert.match(pluginSource, /if \(!eventCtx\?\.subscribe\) \{\s*\n\s*return undefined/)
     assert.match(pluginSource, /if \(!sessionCtx\?\.hook\) \{\s*\n\s*return false/)
-    assert.match(pluginSource, /if \(!toolCtx\?\.hook\) \{\s*\n\s*return false/)
+    assert.match(
+      pluginSource,
+      /if \(!toolCtx\?\.hook\) \{\s*\n\s*return \{ registered: false, beforeRegistered: false \}/,
+    )
     assert.match(pluginSource, /if \(!permCtx\?\.hook\) \{/)
   })
 

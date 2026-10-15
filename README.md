@@ -780,6 +780,20 @@ oracle audit, limitations, and per-run data are in
 `bench/results/f3a-root-paired-2026-10-14.md` and
 `bench/results/phase3-root-paired-20261014.json`.
 
+### Bounded workspace reads (F3b)
+
+On OpenCode v2.0.29, the V2 plugin can expose `pantheon_bounded_read` when the
+host provides its native permission and session APIs. Only a root Zeus session
+can use it. Each call asks the host for `read` permission to one exact
+workspace-relative file, with an empty save scope; content is read only after
+approval and is scanned by the existing fail-closed secret scanner. Limits are
+two calls and two distinct files, 400 lines and 32 KiB per assistant message.
+Traversal, symlinks, directories, sensitive scopes, recognized binary/media
+formats, and scanner failures are rejected. This is scoped to a local workspace
+without concurrent writers; it does not claim adversarial filesystem isolation
+or whole-file binary classification. The host-backed evidence is in
+[`bench/results/f3b-v229-bounded-read-2026-10-15.md`](bench/results/f3b-v229-bounded-read-2026-10-15.md).
+
 
 ## Plugin V2 TypeScript coverage
 
