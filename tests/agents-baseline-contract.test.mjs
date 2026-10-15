@@ -10,7 +10,7 @@ import {
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const generated = read('../AGENTS.md')
 const globalArtifact = read('../AGENTS.global.md')
-const antiStall = read('../src/instructions/zeus-anti-stall.instructions.md')
+const antiStall = read('../commands/pantheon-deepwork.md')
 const timeoutRetry = read('../src/instructions/zeus-timeout-retry.instructions.md')
 const returnContract = read('../src/instructions/agent-return-format.instructions.md')
 const routing = read('../src/routing.yml')
@@ -86,7 +86,7 @@ test('Zeus forwards visual context to implementation agents without discarding u
 
 test('delegation retry guidance uses one retry before protected fallbacks', () => {
   assert.match(routing, /background_delegation:[\s\S]*?retry_count:\s*1\b/)
-  assert.match(antiStall, /at most one corrected retry per\s+agent\/task/i)
+  assert.match(antiStall, /at most one corrected retry per agent\/task/i)
   assert.match(antiStall, /transient dispatch failure/i)
   assert.match(timeoutRetry, /one retry after the initial attempt/i)
   assert.doesNotMatch(timeoutRetry, /\b[2-9] retries\b/i)

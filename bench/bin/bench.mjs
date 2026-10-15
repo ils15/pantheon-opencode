@@ -56,7 +56,11 @@ import {
   openReadOnly,
 } from '../lib/collector.mjs'
 import { parseBenchHookLines, summarizeHookTimings } from '../lib/hooklog.mjs'
-import { assessPairedRun, summarizePairedRunsByArm } from '../lib/paired-acceptance.mjs'
+import {
+  assessPairedRoutingParity,
+  assessPairedRun,
+  summarizePairedRunsByArm,
+} from '../lib/paired-acceptance.mjs'
 import { assertNoSecrets } from '../lib/redact.mjs'
 import { buildRunPlan } from '../lib/run-plan.mjs'
 import { resolveBenchEnv, runOnce } from '../lib/runner.mjs'
@@ -178,12 +182,13 @@ function buildShadowConfigDir(
   globalAgentsPath,
   agentsDirPath,
   skillsDirPath,
+  configName = 'shadow-config',
 ) {
   const hostConfigDir = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config')
   const hostOpencodeDir = join(hostConfigDir, 'opencode')
   // XDG_CONFIG_HOME must point at the PARENT: opencode looks for
   // <XDG_CONFIG_HOME>/opencode/opencode.json.
-  const shadowHome = join(sandboxRoot, 'shadow-config')
+  const shadowHome = join(sandboxRoot, configName)
   const shadow = join(shadowHome, 'opencode')
   mkdirSync(shadow, { recursive: true })
   for (const entry of SHADOW_LINKED_ENTRIES) {
@@ -307,7 +312,7 @@ async function main() {
       console.error(
         'usage: bench.mjs [--runs N] [--scenarios A,B] [--profile host|double-injection] ' +
           '[--label name] [--global-agents path] [--project-agents path] ' +
-          '[--agents-dir path] [--skills-dir path] ' +
+          '[--agents-dir path] [--control-agents-dir path] [--skills-dir path] ' +
           '[--scenario B --root-agent talos --control-root-agent zeus --paired --out bench/results/file.json]',
       )
       process.exit(2)
@@ -348,9 +353,22 @@ async function main() {
   let agentsFixture = null
   if (opts.agentsDir !== null) {
     try {
-      agentsFixture = agentFixtureIdentity(opts.agentsDir, [controlRootAgent, rootAgent])
+      agentsFixture = agentFixtureIdentity(
+        opts.agentsDir,
+        opts.controlAgentsDir === null ? [controlRootAgent, rootAgent] : [rootAgent],
+      )
     } catch (err) {
       console.error(`bench: invalid --agents-dir fixture: ${err.message}`)
+      process.exit(2)
+    }
+  }
+  let controlAgentsFixture = null
+  if (opts.paired) {
+    const controlPath = opts.controlAgentsDir ?? opts.agentsDir
+    try {
+      controlAgentsFixture = agentFixtureIdentity(controlPath, [controlRootAgent])
+    } catch (err) {
+      console.error(`bench: invalid --control-agents-dir fixture: ${err.message}`)
       process.exit(2)
     }
   }
@@ -376,14 +394,28 @@ async function main() {
 
   const sandboxRoot = join(tmpdir(), 'opencode', `bench-${Date.now()}`)
   mkdirSync(sandboxRoot, { recursive: true })
-  const shadowConfigDir = buildShadowConfigDir(
+  const candidateShadowConfigDir = buildShadowConfigDir(
     hostConfig.config,
     model,
     sandboxRoot,
     opts.globalAgents,
     agentsFixture?.path ?? null,
     skillsFixture?.path ?? null,
+    paired ? 'shadow-config-candidate' : 'shadow-config',
   )
+  const controlShadowConfigDir =
+    paired && controlAgentsFixture !== null
+      ? buildShadowConfigDir(
+          hostConfig.config,
+          model,
+          sandboxRoot,
+          opts.globalAgents,
+          controlAgentsFixture.path,
+          skillsFixture?.path ?? null,
+          'shadow-config-control',
+        )
+      : candidateShadowConfigDir
+  const shadowConfigDir = candidateShadowConfigDir
   const dbPath = globalDbPath()
 
   console.log(
@@ -402,6 +434,11 @@ async function main() {
   if (agentsFixture) {
     console.log(
       `bench: agent definitions ${agentsFixture.files.map((file) => `${file.name}:${file.sha256.slice(0, 12)}`).join(', ')} (${agentsFixture.path})`,
+    )
+  }
+  if (controlAgentsFixture && controlAgentsFixture.path !== agentsFixture?.path) {
+    console.log(
+      `bench: control agent definitions ${controlAgentsFixture.files.map((file) => `${file.name}:${file.sha256.slice(0, 12)}`).join(', ')} (${controlAgentsFixture.path})`,
     )
   }
   if (skillsFixture) {
@@ -431,7 +468,8 @@ async function main() {
     if (opts.projectAgents !== null) {
       writeFileSync(join(runDir, 'AGENTS.md'), readFileSync(opts.projectAgents, 'utf8'), 'utf8')
     }
-    const env = resolveBenchEnv(process.env, { configDir: shadowConfigDir, cwd: runDir })
+    const runShadowConfigDir = arm === 'control' ? controlShadowConfigDir : candidateShadowConfigDir
+    const env = resolveBenchEnv(process.env, { configDir: runShadowConfigDir, cwd: runDir })
     const startedIso = new Date().toISOString()
     process.stdout.write(`bench: ${runLabelDir} started… `)
     let outcome
@@ -488,6 +526,13 @@ async function main() {
       modelRequested: model,
       rootAgentObserved: metrics.root.status === 'ok' ? metrics.root.agent : null,
       rootParentId: metrics.root.status === 'ok' ? metrics.root.parent_id : null,
+      agentRouting: metrics.agentRouting,
+      agentPromptFixture:
+        paired && (arm === 'control' ? controlAgentsFixture : agentsFixture)
+          ? ((arm === 'control' ? controlAgentsFixture : agentsFixture).files.find(
+              (file) => file.name === agent,
+            ) ?? null)
+          : null,
       root: metrics.root,
       childrenCount: metrics.childrenCount,
       tokens:
@@ -520,6 +565,8 @@ async function main() {
           rootParentId: record.rootParentId,
           childrenCount: metrics.childrenCount,
           toolCalls: record.toolCalls,
+          agentRouting: metrics.agentRouting,
+          routingParity: opts.routingParity,
           instructions,
           globalInstructionFixture: globalFixture,
           projectInstructionFixture: projectFixture,
@@ -533,6 +580,21 @@ async function main() {
     )
   }
 
+  const pairRoutingParity = paired && opts.routingParity ? assessPairedRoutingParity(runs) : null
+  if (pairRoutingParity !== null) {
+    for (const record of runs) {
+      const pairResult = pairRoutingParity[String(record.pair)] ?? null
+      record.pairRoutingParity = pairResult
+      if (record.armAcceptance !== null) {
+        const passed = pairResult?.status === 'eligible'
+        const unavailable = pairResult?.status === 'unavailable'
+        record.armAcceptance.checks.pairedRoutingParity = passed ? true : unavailable ? null : false
+        if (record.armAcceptance.status === 'eligible' && !passed) {
+          record.armAcceptance.status = unavailable ? 'unavailable' : 'ineligible'
+        }
+      }
+    }
+  }
   const summary = paired ? null : summarizeRuns(runs)
   const summaryByArm = paired ? summarizePairedRunsByArm(runs) : null
   const report = {
@@ -550,6 +612,7 @@ async function main() {
       hostConfigPath: hostConfig.path,
       hostConfigUsed: hostConfig.config !== null,
       shadowConfigDir,
+      controlShadowConfigDir: paired ? controlShadowConfigDir : null,
       modelRequested: model,
       sandboxRoot,
       profile,
@@ -558,6 +621,13 @@ async function main() {
       projectAgentsFixture: projectFixture,
       agentsDirFixture: agentsFixture
         ? { path: agentsFixture.path, files: agentsFixture.files, sha256: agentsFixture.sha256 }
+        : null,
+      controlAgentsDirFixture: controlAgentsFixture
+        ? {
+            path: controlAgentsFixture.path,
+            files: controlAgentsFixture.files,
+            sha256: controlAgentsFixture.sha256,
+          }
         : null,
       skillsDirFixture: skillsFixture,
       protocol: {
@@ -568,6 +638,7 @@ async function main() {
         standaloneServerPerRun: true,
         permissionMode: '--auto (non-interactive auto-approve)',
         paired,
+        routingParity: opts.routingParity,
         agent: paired
           ? { control: controlRootAgent, candidate: rootAgent }
           : 'zeus (headless sessions default to agent=NULL, which the delegation policy denies; the TUI starts on the default agent)',
@@ -576,7 +647,7 @@ async function main() {
           'debug (required for the V2 tool-hook registration to complete; protocol constant, equal across phases)',
         pluginSelection: 'XDG_CONFIG_HOME shadow config dir; repo plugin pinned via plugins[]',
         agentsSelection: paired
-          ? 'shadow-config/agents symlinked to --agents-dir; requested agent markdown identities recorded in agentsDirFixture'
+          ? 'control and candidate shadow configs use their respective agent directories; root prompt identities are recorded per arm and per run'
           : 'host config agents symlinked into shadow config',
         skillsSelection: paired
           ? 'shadow-config/skills symlinked to --skills-dir; all source file identities recorded in skillsDirFixture'
@@ -594,6 +665,7 @@ async function main() {
     runs,
     summary,
     summaryByArm,
+    pairRoutingParity,
     schemaNotes: [
       'Tokens come from the V2 session_message ledger (assistant rows, data.tokens), the same source as pantheon_cost; cache read/write from data.tokens.cache.',
       'Child sessions resolved recursively via session_v2.parent_id with a visited set — each session counted once.',
@@ -602,7 +674,7 @@ async function main() {
       'Hook timings come from the [bench] lines the V2 plugin appends to .pantheon/logs/hooks.log (instrumentation-only change).',
       'Per-run `instructions` is the D4 fidelity proof: the identity (path, bytes, sha256) of every instruction file the session actually loaded, read from instruction_state/instruction_blob. Content is never copied into the report.',
       "Per-run `firstRequest` is the proxy that isolates the injected payload: the first assistant row's tokens.input + tokens.cache.read. Tree-total input is dominated by session-length variance; the payload only lands on the first request.",
-      'Paired root-agent runs replace the host agents directory with the explicit --agents-dir fixture; requested agent files are content-identified in meta.agentsDirFixture.',
+      'Paired root-agent runs use --agents-dir for the candidate and --control-agents-dir for the control (defaults to --agents-dir); root prompt identities are recorded per arm and per run.',
       'Paired root-agent runs also replace host skills with --skills-dir; every skill fixture file is content-identified in meta.skillsDirFixture.',
       'Paired summary metrics include completed runs only when the requested root matches the observed root, the root has no parent, D4 proves both configured global/project instruction fixtures were loaded, and (for candidates) childrenCount is zero with an available tool ledger showing no subagent attempt. Failed and ineligible runs remain in runs with reasons.',
       'Artifact correctness is audited outside the timed interval using the pre-registered oracle; armAcceptance does not assert artifact correctness.',

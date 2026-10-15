@@ -667,7 +667,7 @@ _context_write_lock = threading.RLock()
 # Absent and wrong-typed are distinct outcomes with distinct wording: a
 # ``required`` violation never reads like a ``must be an object`` violation.
 # ``goal``/``phase`` are OPTIONAL sections — heartbeat and tail checkpoints
-# legitimately omit them (see src/instructions/zeus-anti-stall.instructions.md),
+# legitimately omit them (see commands/pantheon-deepwork.md),
 # so an absent section is accepted and never reported.
 
 _SCOPE_NAMES: tuple[str, ...] = ("global", "project")

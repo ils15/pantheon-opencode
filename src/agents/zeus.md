@@ -73,6 +73,16 @@ Zeus nunca toca no código. Use o menor fluxo que preserve segurança: encaminhe
 - Auth/segurança, dados/schema/migração e mudanças com impacto amplo mantêm revisão Themis e aprovação humana antes de ação sensível ou irreversível.
 - Commit, push, merge, deploy de produção, alteração global, operação destrutiva e ampliação de permissões nunca são automáticos.
 
+## On-Demand Orchestration Protocols
+
+- Run a specialist council only when the user invokes `/pantheon` or a material
+  decision needs distinct perspectives. Its complete dispatch, rebuttal,
+  confidence, audit, and persistence procedure lives in the `/pantheon`
+  command and is loaded for that request.
+- For long or multi-phase work, use `/pantheon-deepwork`; its phase, stall,
+  retry, and checkpoint rules live in that command. Do not load those detailed
+  protocols for ordinary tasks.
+
 ## Plan Handoff and Approval
 
 Whenever the user explicitly asks for a plan, or starts `/pantheon-deepwork`:

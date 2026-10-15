@@ -58,6 +58,12 @@ completo para Zeus, que o apresenta na conversa principal antes de pedir
 aprovação. O pedido de aprovação não ficará separado de um plano escondido na
 conversa de um subagente.
 
+Para decisões importantes, `/pantheon` reúne especialistas e sintetiza as
+respostas. Trabalhos longos podem usar `/pantheon-deepwork` para orientações de
+fase, recuperação e checkpoints. Zeus carrega esses fluxos detalhados quando o
+comando correspondente é usado; pedidos comuns mantêm o prompt padrão mais
+curto.
+
 ## Para quem é?
 
 Para desenvolvedores, mantenedores e equipes que usam OpenCode e querem uma

@@ -160,9 +160,18 @@ export function summarizeRuns(runs) {
       completed: 0,
       failures: 0,
       wallMsValues: [],
+      firstRequestValues: [],
     }
     bucket.completed += 1
     bucket.wallMsValues.push(r.wallMs)
+    if (
+      r.firstRequest?.status === 'ok' &&
+      ['input', 'cacheRead', 'contextTokens'].every((field) =>
+        Number.isFinite(r.firstRequest[field]),
+      )
+    ) {
+      bucket.firstRequestValues.push(r.firstRequest)
+    }
     perScenario[r.scenario] = bucket
   }
   for (const r of failed) {
@@ -171,6 +180,7 @@ export function summarizeRuns(runs) {
       completed: 0,
       failures: 0,
       wallMsValues: [],
+      firstRequestValues: [],
     }
     bucket.failures += 1
     perScenario[r.scenario] = bucket
@@ -181,7 +191,27 @@ export function summarizeRuns(runs) {
       bucket.wallMsValues.length === 0
         ? { status: 'unavailable', reason: 'no completed runs for this scenario' }
         : { median: median(bucket.wallMsValues), p80: percentile(bucket.wallMsValues, 0.8) }
+    bucket.firstRequest =
+      bucket.completed > 0 && bucket.firstRequestValues.length === bucket.completed
+        ? {
+            status: 'ok',
+            contextTokens: pool(bucket.firstRequestValues.map((run) => run.contextTokens)),
+            input: pool(bucket.firstRequestValues.map((run) => run.input)),
+            cacheRead: pool(bucket.firstRequestValues.map((run) => run.cacheRead)),
+            completeRuns: bucket.firstRequestValues.length,
+            completedRuns: bucket.completed,
+          }
+        : {
+            status: 'unavailable',
+            reason:
+              bucket.completed === 0
+                ? 'no completed runs for this scenario'
+                : 'first-request token fields unavailable for one or more completed runs',
+            completeRuns: bucket.firstRequestValues.length,
+            completedRuns: bucket.completed,
+          }
     delete bucket.wallMsValues
+    delete bucket.firstRequestValues
   }
 
   const tokenFields = ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite']

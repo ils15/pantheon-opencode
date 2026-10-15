@@ -66,10 +66,60 @@ discovery or implementation. It only affects the later gates described below.
 
 ## Anti-Stall
 
-- **Stall Detection** — 3 turns no progress → escalate
-- **Phase Reminder** — continue only independent work after dispatch
-- **Progress Checkpoint** — every 5 turns, summarize completed vs remaining
-- **Delegate Retry** — failures retried once with rephrased prompt
+Use these detailed recovery rules only for this long-running or multi-phase
+workflow. Ordinary tasks do not create checkpoints or dispatch councils by
+default.
+
+### Stall Detection
+
+| Symptom | Detection rule | Recovery |
+|---|---|---|
+| Silent loop | 3+ consecutive turns with no tool call and no visible progress | Output `[STALL_DETECTED]`, re-read the task, then state the next concrete step or ask the user if blocked. |
+| Delegation black hole | No response after 2× the configured specialist timeout | Record the hang, cancel the task, then use the canonical fallback chain. |
+| Circular delegation | Same specialist is re-dispatched for the same task 2+ times without progress | Choose another configured specialist or escalate. |
+| Idle after completion | All background tasks are terminal but there is no synthesis/next step for 2+ turns | Synthesize completed work and state the next step. |
+| Context thrash | Same files are repeatedly re-read without new action | Stop rereading and proceed from the evidence already collected. |
+
+### Background Phase Reminder
+
+After dispatching background specialists:
+
+1. Do not poll running jobs or consume partial output.
+2. Do not advance dependent work until terminal results arrive.
+3. Continue only independent work while tasks run.
+4. If nothing independent remains, report the launched work and wait for its
+   terminal results.
+
+Self-check every 3 turns: confirm whether a delegate is still running, whether
+there is independent work, and whether a dependency is ready.
+
+### Delegate Retry
+
+For a transient dispatch failure (timeout, crash, or empty response), check
+known causes and allow at most one corrected retry per agent/task. Do not retry a
+scope refusal or a failed test/validation. Reroute only when the right fallback
+is clear; otherwise diagnose or escalate. After a corrected retry fails, follow
+the canonical fallback chain once and escalate rather than restarting it. See
+`## ⏱️ Timeout & Retry Enforcement`.
+
+### Progress Checkpoint
+
+For work expected to exceed five turns:
+
+- After turn 5, report completed work and remaining work.
+- After turn 10, re-evaluate progress and whether the work should be split or
+  escalated.
+- Every 5 turns on a long-lived task, update the existing progress record with
+  completed work, pending work, and blockers.
+
+Use persistence checkpoints only when both `context_save` and `context_get` are
+available and context loss is plausible. Save once at a meaningful boundary
+using `content=JSON.stringify(state)` and an explicit session ID. The decoded
+state must be an object with object-valued `phase`/`goal`/`delegations`/
+`heartbeat` fields and an array `tail`; omit an unset `goal`. A successful save
+needs no immediate read. Retrieve a checkpoint only when resuming a known
+session. Do not retrieve it after every dispatch. Do not add checkpoints to
+bounded tasks.
 
 ## Usage
 

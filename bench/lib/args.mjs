@@ -60,6 +60,7 @@ function readValue(argv, index, flag) {
  * Parse the bench CLI argv (already sliced past `node script`).
  *
  * Returns { runs, profile, label, globalAgents, projectAgents, agentsDir,
+ * controlAgentsDir,
  * skillsDir, paired, rootAgent, controlRootAgent, out }.
  * Throws UsageError on an unknown flag, a missing value, an invalid profile, or
  * a `--project-agents` that would never be injected (host profile).
@@ -73,8 +74,10 @@ export function parseBenchArgs(argv) {
     globalAgents: null,
     projectAgents: null,
     agentsDir: null,
+    controlAgentsDir: null,
     skillsDir: null,
     paired: false,
+    routingParity: false,
     rootAgent: null,
     controlRootAgent: null,
     out: null,
@@ -142,6 +145,10 @@ export function parseBenchArgs(argv) {
         out.paired = true
         break
       }
+      case '--routing-parity': {
+        out.routingParity = true
+        break
+      }
       case '--out': {
         const value = readValue(argv, i, '--out')
         if (!RESULT_PATH_RE.test(value)) {
@@ -163,6 +170,11 @@ export function parseBenchArgs(argv) {
       }
       case '--agents-dir': {
         out.agentsDir = readValue(argv, i, '--agents-dir')
+        i += 1
+        break
+      }
+      case '--control-agents-dir': {
+        out.controlAgentsDir = readValue(argv, i, '--control-agents-dir')
         i += 1
         break
       }
@@ -207,12 +219,14 @@ export function parseBenchArgs(argv) {
   } else if (
     out.rootAgent !== null ||
     out.controlRootAgent !== null ||
+    out.controlAgentsDir !== null ||
+    out.routingParity ||
     out.out !== null ||
     out.agentsDir !== null ||
     out.skillsDir !== null
   ) {
     throw new UsageError(
-      '--root-agent, --control-root-agent, --agents-dir, --skills-dir, and --out require --paired',
+      '--root-agent, --control-root-agent, --agents-dir, --control-agents-dir, --routing-parity, --skills-dir, and --out require --paired',
     )
   }
 

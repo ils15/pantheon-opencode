@@ -219,12 +219,24 @@ export function collectRunMetrics(db, rootId) {
       root: { status: 'unavailable', reason: tree.reason },
       sessions: { status: 'unavailable', reason: tree.reason },
       childrenCount: null,
+      agentRouting: { status: 'unavailable', reason: tree.reason },
       tokens: { status: 'unavailable', reason: tree.reason },
       toolCalls: { status: 'unavailable', reason: tree.reason },
     }
   }
   const sessionIds = tree.sessions.map((s) => s.id)
   const root = tree.sessions[0]
+  const routingSessions = tree.sessions.map((session) => ({
+    id: session.id,
+    parentId: session.parent_id ?? null,
+    agent: session.agent ?? null,
+  }))
+  const agentRouting = routingSessions.every(
+    (session) =>
+      typeof session.id === 'string' && typeof session.agent === 'string' && session.agent !== '',
+  )
+    ? { status: 'ok', sessions: routingSessions }
+    : { status: 'unavailable', reason: 'one or more session agent identities are missing' }
   const toolCalls = collectToolCalls(db, sessionIds)
   return {
     root: {
@@ -238,6 +250,7 @@ export function collectRunMetrics(db, rootId) {
     },
     sessions: { status: 'ok', ids: sessionIds },
     childrenCount: tree.childIds.length,
+    agentRouting,
     tokens: collectTokens(db, sessionIds),
     toolCalls,
   }

@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 
-const { assessPairedRun, summarizePairedRunsByArm } = await import(
+const { assessPairedRoutingParity, assessPairedRun, summarizePairedRunsByArm } = await import(
   '../bench/lib/paired-acceptance.mjs'
 )
 
@@ -15,6 +15,7 @@ function candidate(overrides = {}) {
     rootParentId: null,
     childrenCount: 0,
     toolCalls: {},
+    agentRouting: { status: 'ok', sessions: [{ id: 'root', parentId: null, agent: 'talos' }] },
     instructions: {
       status: 'ok',
       entryCount: 2,
@@ -63,6 +64,101 @@ test('missing identity, children, or tool-call ledger is unavailable rather than
   ]) {
     assert.equal(assessPairedRun(candidate(override)).status, 'unavailable')
   }
+})
+
+test('routing-parity mode accepts recorded children but requires routing and tool evidence', () => {
+  const evidence = candidate({
+    routingParity: true,
+    childrenCount: 1,
+    toolCalls: { subagent: 1 },
+    agentRouting: {
+      status: 'ok',
+      sessions: [
+        { id: 'root', parentId: null, agent: 'zeus' },
+        { id: 'child', parentId: 'root', agent: 'talos' },
+      ],
+    },
+  })
+  assert.deepEqual(assessPairedRun(evidence), {
+    status: 'eligible',
+    checks: {
+      runtimeCompleted: true,
+      rootAgentMatches: true,
+      rootHasNoParent: true,
+      doubleInjectionProvenance: true,
+      agentRoutingAvailable: true,
+      toolCallLedgerAvailable: true,
+    },
+  })
+  assert.equal(
+    assessPairedRun(candidate({ routingParity: true, agentRouting: { status: 'unavailable' } }))
+      .status,
+    'unavailable',
+  )
+})
+
+test('paired routing parity normalizes session IDs and checks descendant routes and subagent calls', () => {
+  const runs = [
+    {
+      pair: 1,
+      arm: 'control',
+      agentRouting: {
+        status: 'ok',
+        sessions: [
+          { id: 'control-root', parentId: null, agent: 'zeus' },
+          { id: 'control-child', parentId: 'control-root', agent: 'apollo' },
+        ],
+      },
+      toolCalls: { subagent: 1 },
+    },
+    {
+      pair: 1,
+      arm: 'candidate',
+      agentRouting: {
+        status: 'ok',
+        sessions: [
+          { id: 'candidate-root', parentId: null, agent: 'zeus' },
+          { id: 'candidate-child', parentId: 'candidate-root', agent: 'apollo' },
+        ],
+      },
+      toolCalls: { subagent: 1 },
+    },
+  ]
+  assert.equal(assessPairedRoutingParity(runs)['1'].status, 'eligible')
+
+  runs[1].agentRouting.sessions[1].agent = 'athena'
+  assert.equal(assessPairedRoutingParity(runs)['1'].checks.routeMatches, false)
+  runs[1].agentRouting.sessions[1].agent = 'apollo'
+  runs[1].toolCalls.subagent = 2
+  assert.equal(assessPairedRoutingParity(runs)['1'].checks.subagentCallsMatch, false)
+})
+
+test('paired routing parity treats missing arms, identities, or tool ledgers as unavailable', () => {
+  const control = {
+    pair: 1,
+    arm: 'control',
+    agentRouting: { status: 'ok', sessions: [{ id: 'root', parentId: null, agent: 'zeus' }] },
+    toolCalls: {},
+  }
+  assert.equal(assessPairedRoutingParity([control])['1'].status, 'unavailable')
+  assert.equal(
+    assessPairedRoutingParity([
+      control,
+      {
+        ...control,
+        arm: 'candidate',
+        agentRouting: { status: 'unavailable' },
+      },
+    ])['1'].status,
+    'unavailable',
+  )
+  assert.equal(
+    assessPairedRoutingParity([
+      control,
+      { ...control, arm: 'candidate', toolCalls: { status: 'unavailable' } },
+    ])['1'].status,
+    'unavailable',
+  )
 })
 
 test('unavailable or mismatched D4 instruction provenance cannot enter a paired summary', () => {

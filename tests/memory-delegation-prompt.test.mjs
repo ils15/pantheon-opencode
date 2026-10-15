@@ -7,7 +7,7 @@ const zeus = readPrompt('../src/agents/zeus.md')
 const mnemosyne = readPrompt('../src/agents/mnemosyne.md')
 const memoryProtocol = readPrompt('../src/instructions/memory-protocol.instructions.md')
 const zeusMemoryOps = readPrompt('../src/instructions/zeus-memory-operations.instructions.md')
-const zeusAntiStall = readPrompt('../src/instructions/zeus-anti-stall.instructions.md')
+const zeusAntiStall = readPrompt('../commands/pantheon-deepwork.md')
 const sessionAgents = ['aphrodite', 'demeter', 'hephaestus', 'hermes'].map((agent) =>
   readPrompt(`../src/agents/${agent}.md`),
 )
@@ -73,10 +73,7 @@ test('checkpoint use avoids a redundant read after successful save', () => {
   assert.match(autoContinue, /content=`?JSON\.stringify\(state\)/i)
   assert.match(autoContinue, /needs no immediate `context_get`/i)
   assert.match(autoContinue, /only when resuming or when the save result is uncertain/i)
-  assert.match(
-    zeusAntiStall,
-    /only for long-running or multi-phase work when `context_save` and `context_get` are available/i,
-  )
+  assert.match(zeusAntiStall, /only when both `context_save` and `context_get` are\s+available/i)
   assert.match(zeusAntiStall, /Do not retrieve it after every dispatch/i)
   assert.match(
     contextCompression,

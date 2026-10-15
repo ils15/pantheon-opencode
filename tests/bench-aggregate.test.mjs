@@ -221,6 +221,38 @@ test('summarizeRuns reports median + p80 over completed runs only', () => {
   assert.equal(summary.tokens.completeRuns, 3)
 })
 
+test('per-scenario first-request proxy reports medians and refuses partial coverage', () => {
+  const summary = summarizeRuns([
+    run({
+      scenario: 'B',
+      firstRequest: { status: 'ok', input: 100, cacheRead: 20, contextTokens: 120 },
+    }),
+    run({
+      scenario: 'B',
+      firstRequest: { status: 'ok', input: 90, cacheRead: 30, contextTokens: 120 },
+    }),
+  ])
+  assert.deepEqual(summary.perScenario.B.firstRequest, {
+    status: 'ok',
+    contextTokens: { median: 120, p80: 120, n: 2 },
+    input: { median: 95, p80: 100, n: 2 },
+    cacheRead: { median: 25, p80: 30, n: 2 },
+    completeRuns: 2,
+    completedRuns: 2,
+  })
+
+  const incomplete = summarizeRuns([
+    run({
+      scenario: 'B',
+      firstRequest: { status: 'ok', input: 100, cacheRead: 20, contextTokens: 120 },
+    }),
+    run({ scenario: 'B', firstRequest: { status: 'unavailable', reason: 'missing cache field' } }),
+  ])
+  assert.equal(incomplete.perScenario.B.firstRequest.status, 'unavailable')
+  assert.equal(incomplete.perScenario.B.firstRequest.completeRuns, 1)
+  assert.equal('contextTokens' in incomplete.perScenario.B.firstRequest, false)
+})
+
 test('summarizeRuns keeps per-name tool call totals over completed runs', () => {
   const summary = summarizeRuns([
     run({ toolCalls: { shell: 3, edit: 1 } }),

@@ -232,6 +232,13 @@ test('collectRunMetrics sums tokens over root + children exactly once (assistant
     try {
       const metrics = collectRunMetrics(db, 'ses_root')
       assert.equal(metrics.childrenCount, 1)
+      assert.deepEqual(metrics.agentRouting, {
+        status: 'ok',
+        sessions: [
+          { id: 'ses_root', parentId: null, agent: 'zeus' },
+          { id: 'ses_child', parentId: 'ses_root', agent: 'hermes' },
+        ],
+      })
       assert.equal(metrics.tokens.status, 'ok')
       // 100 + 30 (root assistant rows) + 50 + 20 (child) — the 9999 user row excluded
       assert.equal(metrics.tokens.input, 200)

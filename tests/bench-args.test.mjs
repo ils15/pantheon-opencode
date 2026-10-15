@@ -26,6 +26,7 @@ test('defaults are the fixed protocol: 5 runs, host profile, baseline label', ()
   assert.equal(opts.globalAgents, null)
   assert.equal(opts.projectAgents, null)
   assert.equal(opts.agentsDir, null)
+  assert.equal(opts.controlAgentsDir, null)
   assert.equal(opts.skillsDir, null)
   assert.equal(opts.paired, false)
   assert.equal(opts.rootAgent, null)
@@ -219,4 +220,41 @@ test('paired root-agent runs require scenario B, both agents, and a safe output 
       ]),
     /double-injection/i,
   )
+})
+
+test('paired runs can give control and candidate separate agent prompt directories', () => {
+  const opts = parseBenchArgs([
+    '--scenario',
+    'B',
+    '--profile',
+    'double-injection',
+    '--global-agents',
+    'global.md',
+    '--project-agents',
+    'project.md',
+    '--root-agent',
+    'zeus',
+    '--control-root-agent',
+    'zeus',
+    '--agents-dir',
+    'candidate-agents',
+    '--control-agents-dir',
+    'control-agents',
+    '--routing-parity',
+    '--skills-dir',
+    'skills',
+    '--paired',
+    '--out',
+    'bench/results/f5-paired.json',
+  ])
+  assert.equal(opts.agentsDir, 'candidate-agents')
+  assert.equal(opts.controlAgentsDir, 'control-agents')
+  assert.equal(opts.routingParity, true)
+  assert.equal(opts.rootAgent, opts.controlRootAgent)
+
+  assert.throws(
+    () => parseBenchArgs(['--control-agents-dir', 'control-agents']),
+    /require --paired/,
+  )
+  assert.throws(() => parseBenchArgs(['--routing-parity']), /require --paired/)
 })

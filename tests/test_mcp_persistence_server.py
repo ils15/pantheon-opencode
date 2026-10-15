@@ -1721,7 +1721,7 @@ class TestValidationReporting:
 
         ``goal``/``phase`` are OPTIONAL: the documented heartbeat checkpoint is
         ``{"status": "alive", "last_action": ..., "turn_count": N}`` with
-        neither section (src/instructions/zeus-anti-stall.instructions.md).
+        neither section (commands/pantheon-deepwork.md).
         Requiring them would break that pattern and would make the read path
         fail closed on already-stored checkpoints, so absence is accepted and
         the wording stays reserved for present-but-wrongly-typed values.
