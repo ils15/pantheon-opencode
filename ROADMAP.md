@@ -722,7 +722,9 @@ em `src/pantheon/cost-command.ts` está **COMMITTED — REVIEWED** em `c6f5280`
 PASS_WITH_NOTES e validação isolada: 36/36 testes, typecheck pass, Biome
 direcionado pass). Permanecem
 planejados/abertos: medição de orquestração, setup, V2/empacotamento/catalog,
-itens residuais de presets/catálogo e registry/release. A própria reconciliação
+itens residuais de presets/catálogo, economia de testes/tiers (fase 10, com a
+regra normativa entregue via `src/instructions/test-economy.instructions.md` e o
+split de scripts ainda pendente) e registry/release. A própria reconciliação
 deste ROADMAP permanece pendente/não commitada; nada nesta atualização declara
 Beta 11 nem qualquer trabalho não commitado como entregue.
 
@@ -879,6 +881,32 @@ trabalho no Pantheon.
    ambiente de desenvolvimento. **Dependências:** fases 7 e 8 para artefatos e
    catálogo finais. **Verificação planejada:** checks do pacote publicado no
    sandbox, smoke test de consumidor e confirmação do estado do tarball.
+10. **Test economy e suites em tiers — IN PROGRESS (regra normativa entregue;
+    split de scripts pendente).** Os agentes devem escrever testes menores e
+    focados e parar de produzir suítes exaustivas/repetitivas que tornam cada
+    fase lenta: um comportamento → um teste direcionado, sem duplicar a mesma
+    cobertura entre arquivos; sem E2E/full-install ou testes dependentes de rede
+    a menos que a mudança altere de fato esse caminho ponta a ponta; sem
+    asserções redundantes de cópia/formatação nem asserções que apenas
+    reafirmam a implementação ("testar o teste"). A regra normativa
+    compartilhada é `src/instructions/test-economy.instructions.md`, incluída em
+    `AGENTS.global.md` (sem `agents:` scoping) e portanto entregue a todos os
+    agentes. Suítes pesadas/lentas — hoje `tests/install-opencode.test.mjs`
+    (~12 min) e `tests/install-e2e.test.mjs` (~13 min), por realizarem
+    instalações reais (venv/pip, `npm install` em diretórios temporários) — devem
+    ser **opt-in** por script/tier separado, nunca por edição nem por fase;
+    roda-se apenas o subconjunto afetado. A regra não enfraquece gates
+    existentes: auth, segurança, integridade de dados e thresholds de cobertura
+    exigidos permanecem obrigatórios. **Verificação planejada:** o tier rápido
+    roda por default; as suítes pesadas de instalação/E2E ficam opt-in e
+    reservadas a gates de release/pré-release; a validação por fase permanece sob
+    um orçamento explícito. **Proposta de split NÃO aplicada (preserva CI):**
+    `package.json` e CI não foram alterados porque `test:all` está travado por
+    `tests/ci-workflow-fail-closed.test.mjs` para incluir `npm run test:node` (a
+    suíte completa, incluindo as suítes pesadas) e o job `test-suite` do CI roda
+    `npm run test:node` diretamente; tornar o rápido o default exigiria editar
+    esse gate test e o workflow de CI, o que está fora do escopo desta entrega.
+    Aplicar o split apenas junto da edição revisada daquele contrato e do CI.
 
 **Critérios de verificação da Beta 11.** Cada fase deve manter evidência
 reproduzível e registrar separadamente resultado, limitações e decisões. Fases
