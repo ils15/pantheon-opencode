@@ -706,26 +706,31 @@ documentação de instalação.
 
 ### Beta 11 — Runtime, governança, persistência e release
 
-**Status da Beta 11: IN PROGRESS.** Existem cinco commits de fase locais:
-`c2f5698` (contrato de ferramentas e governança runtime), `6fedf83` (council e
-claims + limites de persistência), `1d9b20a` (overrides manuais V2
-project-scoped de modelo), `2848075` (caminho enxuto/proporcional e redação de
-custo) e `c6f5280` (janela e limites de agregação do `pantheon_cost`). As fases
-1 e 2 passaram (`c2f5698`, `6fedf83`); a fase de persistência
-foi entregue em `6fedf83` com limites documentados e testes de fronteira; o
-subconjunto de overrides manuais da fase de modelo ativo está **IMPLEMENTED —
-COMMITTED — REVIEWED** em `1d9b20a` (Themis PASS_WITH_NOTES e verificação de
-dependência isolada); a documentação do caminho enxuto/proporcional foi
-entregue em `2848075`, com a medição ainda aberta; a fatia de relatório de custo
-em `src/pantheon/cost-command.ts` está **COMMITTED — REVIEWED** em `c6f5280`
-(`docs: describe pantheon_cost window and aggregation limits`; Themis
-PASS_WITH_NOTES e validação isolada: 36/36 testes, typecheck pass, Biome
-direcionado pass). Permanecem
-planejados/abertos: medição de orquestração, setup, V2/empacotamento/catalog,
-itens residuais de presets/catálogo, economia de testes/tiers (fase 10, com a
-regra normativa entregue via `src/instructions/test-economy.instructions.md` e o
-split de scripts ainda pendente) e registry/release. A própria reconciliação
-deste ROADMAP permanece pendente/não commitada; nada nesta atualização declara
+**Status da Beta 11: IN PROGRESS.** Há 14 commits locais à frente de
+`origin/main` (contagem obtida via `git log --oneline origin/main..HEAD` no
+momento desta atualização — o inventário é datado e deve ser recontado, não
+reaproveitado). Commits de fase: `c2f5698` (contrato de ferramentas e governança
+runtime), `6fedf83` (council e claims + limites de persistência), `1d9b20a`
+(overrides manuais V2 project-scoped de modelo), `2848075` (caminho
+enxuto/proporcional e redação de custo), `c6f5280` (janela e limites de agregação
+do `pantheon_cost`) e os cinco commits da fase **Setup** — `66bf918`, `2f53f01`,
+`2e4066d`, `4ae5283`, `55ecef4`. As fases 1 e 2 passaram (`c2f5698`,
+`6fedf83`); a fase de persistência foi entregue em `6fedf83` com limites
+documentados e testes de fronteira; o subconjunto de overrides manuais da fase de
+modelo ativo está **IMPLEMENTED — COMMITTED — REVIEWED** em `1d9b20a` (Themis
+PASS_WITH_NOTES e verificação de dependência isolada); a documentação do caminho
+enxuto/proporcional foi entregue em `2848075`, com a medição ainda aberta; a
+fatia de relatório de custo em `src/pantheon/cost-command.ts` está **COMMITTED —
+REVIEWED** em `c6f5280` (`docs: describe pantheon_cost window and aggregation
+limits`; Themis PASS_WITH_NOTES e validação isolada: 36/36 testes, typecheck pass,
+Biome direcionado pass); a fase **Setup** está **DELIVERED — COMMITTED —
+REVIEWED** nos cinco commits `66bf918`, `2f53f01`, `2e4066d`, `4ae5283`,
+`55ecef4` (o que foi entregue e a verificação estão na fase 6). Permanecem
+planejados/abertos: medição de orquestração, V2/empacotamento/catalog, itens
+residuais de presets/catálogo, economia de testes/tiers (fase 10, com a regra
+normativa entregue via `src/instructions/test-economy.instructions.md` e o split
+de scripts ainda pendente) e registry/release. A própria atualização deste
+ROADMAP permanece não commitada nesta árvore; nada nesta atualização declara
 Beta 11 nem qualquer trabalho não commitado como entregue.
 
 **Objetivo.** Reconciliar os contratos documentados com o runtime observado,
@@ -837,12 +842,27 @@ trabalho no Pantheon.
    `tests/agents-baseline-contract.test.mjs`. Permanece planejado capturar, para
    a mesma operação, configuração e observação runtime como campos distintos, ou
    registrar explicitamente quando o runtime não fornece esta última.
-6. **Setup — PLANNED.** Separar preview/review de apply e exigir aprovação
-   explícita antes de aplicar; criar backup restaurável, detectar drift entre
-   preview e apply e interromper para nova revisão se o estado mudou. Cobrir
-   cancelamento, falha e restore sem expor segredos. **Verificação planejada:**
-   testes de preview sem escrita, aprovação, drift, cancelamento, falha e
-   restauração; inspeção de logs/saídas para ausência de segredos.
+6. **Setup — DELIVERED — COMMITTED — REVIEWED (`66bf918`, `2f53f01`, `2e4066d`,
+   `4ae5283`, `55ecef4`).** Entrega em cinco fases commitadas: (1) `66bf918` —
+   preview **por arquivo** do change set no dry-run, com **zero escritas**;
+   (2) `2f53f01` — **conjunto de backup exato** (cópia byte-a-byte) gravado
+   **antes da primeira escrita**, em diretório `0700` com arquivos e manifest
+   `0600`, retendo os 5 conjuntos mais recentes, mais o comando `restore`, que
+   **recusa restaurar** um conjunto que falhe na verificação de integridade;
+   (3) `2e4066d` — **gate de autorização explícita `--yes`** antes do apply, com
+   cancelamento e códigos de saída `0` (ok / plan-only, nada aplicado), `1`
+   (falha), `2` (apply sem autorização), `3` (drift) e `130` (cancelado);
+   (4) `4ae5283` — **detecção de drift** entre plano e apply **dentro de uma única
+   execução** (exit `3`) — drift **entre invocações distintas não é detectável**,
+   pois nenhum plano é persistido; (5) `55ecef4` — **relatório de falha** com os
+   caminhos já aplicados e dica de recuperação via `restore` (**sem rollback
+   automático**), mais **auditoria de saída secret-safe** (canário + secret-scanner
+   sobre stdout/stderr). **Verificação:** gates do Themis, validações isoladas em
+   tiers por fase e um gate final de suíte completa (ver "Critérios de verificação"
+   e a lição do gate final em "Riscos"). **Limites:** o `restore` recupera a partir
+   do conjunto de backup e não é rollback automático; o drift cobre apenas a
+   coerência plano↔apply de uma execução; a auditoria de segredos cobre as saídas
+   do installer, não todo o repositório.
 7. **V2, empacotamento e model catalog — PLANNED.** Reconciliar o pacote atual —
    root pinado em `@opencode-ai/plugin@1.18.33` e `@opencode-ai/sdk@1.18.33`,
    exports apontando para `.ts` e sem build root — com a recomendação do council
@@ -910,14 +930,21 @@ trabalho no Pantheon.
 
 **Critérios de verificação da Beta 11.** Cada fase deve manter evidência
 reproduzível e registrar separadamente resultado, limitações e decisões. Fases
-1/2 passaram e a fase 3 foi entregue em `6fedf83`; o subconjunto de overrides
-manuais V2 (`1d9b20a`) e a documentação do caminho enxuto (`2848075`) estão
-commitados e revisados, mas mantêm itens residuais/medição abertos; os demais
-critérios continuam pendentes conforme os status acima. Validar documentação contra o runtime,
-testar limites e fluxos de falha, e verificar o artefato distribuído — não apenas
-os fontes. Manter gates de Themis para mudanças materiais, de segurança,
-permissão ou dados. Só marcar uma fase entregue após sua própria implementação
-e verificação.
+1/2 passaram e a fase 3 foi entregue em `6fedf83`; a fase 6 (Setup) foi entregue
+nos cinco commits `66bf918`/`2f53f01`/`2e4066d`/`4ae5283`/`55ecef4`; o
+subconjunto de overrides manuais V2 (`1d9b20a`) e a documentação do caminho
+enxuto (`2848075`) estão commitados e revisados, mas mantêm itens
+residuais/medição abertos; os demais critérios continuam pendentes conforme os
+status acima. Validar documentação contra o runtime, testar limites e fluxos de
+falha, e verificar o artefato distribuído — não apenas os fontes. Manter gates de
+Themis para mudanças materiais, de segurança, permissão ou dados. Só marcar uma
+fase entregue após sua própria implementação e verificação. **Gate de release
+(suíte completa):** a validação por fase em tiers não substitui o gate de
+release — `npm run test:node` (a suíte completa, incluindo as suítes pesadas)
+deve rodar antes de release/pré-release, porque regressões em suítes que a fase
+não tocou só aparecem ali (ver a lição do `c2f5698` em "Riscos"); isso é
+consistente com o orçamento de economia de testes da fase 10: o tier rápido
+serve ao ciclo por fase, não ao gate final.
 
 **Riscos.** Contratos do host podem variar entre versões; observações locais podem
 ser confundidas com garantias do pacote; erro pode surgir em camada de renderização
@@ -925,6 +952,22 @@ e não na persistência; métricas agregadas podem induzir falsa atribuição; a
 peer range, build ou migração de presets sem decisão pode quebrar consumidores ou
 instalações existentes. Evitar expansão de permissão e mudanças irreversíveis sem
 aprovação/review apropriadas.
+
+**Lição do gate final (regressão entre suítes).** A validação em tiers por fase
+pode não pegar regressões em suítes não relacionadas à fase. Caso real desta
+branch: uma regressão em `tests/memory-delegation-prompt.test.mjs`, introduzida
+por `c2f5698` (que removeu o "both" explícito de
+`src/instructions/zeus-memory-operations.instructions.md`) e corrigida em
+`1b9607c`, só apareceu no gate final de suíte completa. Guardrail: rodar
+`npm run test:node` (suíte completa) nos gates de release; o tier rápido por
+fase não o substitui — consistente com o orçamento de economia de testes da
+fase 10.
+
+**Lição de higiene de hooks (`--no-verify`).** Dois commits foram feitos com
+`--no-verify`; o conteúdo foi verificado limpo, sem segredos. O contrato do Iris
+(`src/agents/iris.md`) agora proíbe explicitamente pular hooks. Guardrail: não
+usar `--no-verify`/`-n` nem qualquer bypass de hook — o hook de segredos é um
+gate.
 
 **Decisões em aberto.** (a) V2-only ou entrada V1 separada, incluindo a
 compatibilidade que permitirá avaliar eventual migração V1 de presets; (b) peer opcional
@@ -939,11 +982,11 @@ P0-5/P0-6 somente se vínculo direto com Beta 11 for confirmado e manter os dema
 para triagem futura. F5 permanece deferred porque falhou paridade de rota; não
 declarar aceito. F2-V2/F4B/F6 não foram encontrados no repositório e não devem ser
 inventados. Não alterar o projeto React externo nem abrir trabalho Pantheon pelo
-follow-up MED de tamanho do link. Esta seção registra progresso parcial: cinco
-commits de fase locais existem (incluindo `c6f5280`, a fatia de relatório de
-custo em `src/pantheon/cost-command.ts`, agora commitada e revisada), Beta 11
-não está concluída, e a própria reconciliação deste ROADMAP permanece
-pendente/não commitada e não conta como entregue.
+follow-up MED de tamanho do link. Esta seção registra progresso parcial: 14
+commits locais existem à frente de `origin/main` (incluindo `c6f5280`, a fatia de
+relatório de custo em `src/pantheon/cost-command.ts`, agora commitada e revisada,
+e os cinco commits da fase Setup), Beta 11 não está concluída, e a própria
+atualização deste ROADMAP permanece não commitada e não conta como entregue.
 
 ---
 
