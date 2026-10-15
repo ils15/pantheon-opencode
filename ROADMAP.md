@@ -706,7 +706,7 @@ documentação de instalação.
 
 ### Beta 11 — Runtime, governança, persistência e release
 
-**Status da Beta 11: IN PROGRESS.** Há 14 commits locais à frente de
+**Status da Beta 11: IN PROGRESS.** Há 18 commits locais à frente de
 `origin/main` (contagem obtida via `git log --oneline origin/main..HEAD` no
 momento desta atualização — o inventário é datado e deve ser recontado, não
 reaproveitado). Commits de fase: `c2f5698` (contrato de ferramentas e governança
@@ -714,7 +714,9 @@ runtime), `6fedf83` (council e claims + limites de persistência), `1d9b20a`
 (overrides manuais V2 project-scoped de modelo), `2848075` (caminho
 enxuto/proporcional e redação de custo), `c6f5280` (janela e limites de agregação
 do `pantheon_cost`) e os cinco commits da fase **Setup** — `66bf918`, `2f53f01`,
-`2e4066d`, `4ae5283`, `55ecef4`. As fases 1 e 2 passaram (`c2f5698`,
+`2e4066d`, `4ae5283`, `55ecef4`, mais o commit extra de preparação de release
+`8a11282` (`chore(release): v1.6.0-beta.11`) na ponta desta branch. As fases 1 e 2
+passaram (`c2f5698`,
 `6fedf83`); a fase de persistência foi entregue em `6fedf83` com limites
 documentados e testes de fronteira; o subconjunto de overrides manuais da fase de
 modelo ativo está **IMPLEMENTED — COMMITTED — REVIEWED** em `1d9b20a` (Themis
@@ -732,8 +734,13 @@ estão realmente disponíveis para todo/background/board. Foram **decididos** ne
 rodada: V2/empacotamento/catalog (**manter como está**), presets/catálogo V1
 (**congelado**, sem migração) e economia de testes/tiers (fase 10, regra
 normativa entregue via `src/instructions/test-economy.instructions.md`, **split
-não aplicado**); registry/release segue **não autorizado** (sem
-push/tag/PR/publicação). A própria atualização deste
+não aplicado**); registry/release está **autorizado**: a preparação de release
+está commitada (`8a11282`, `chore(release): v1.6.0-beta.11`) e o PR **#241** está
+aberto para `main`; a publicação fica **pendente** de um dispatch manual do
+workflow `Release` (`release_channel=beta`, dist-tag `beta`) **após o merge e o
+CI verde**. O push de tag não publica — é o workflow que cria a tag. **Nada está
+publicado** enquanto esse workflow não rodar, e a Beta 11 não está "released" até
+a publicação concluir com sucesso. A própria atualização deste
 ROADMAP permanece não commitada nesta árvore; nada nesta atualização declara
 Beta 11 nem qualquer trabalho não commitado como entregue.
 
@@ -909,15 +916,20 @@ trabalho no Pantheon.
    inerte, override/variant manual aplicado ao agente correto e reset sem
    fallback para preset). A migração V1 dos presets e a separação do catálogo
    legado ficam **congeladas** (sem migração neste beta).
-9. **Registry e release — NÃO AUTORIZADO agora (PLANNED).** Incluir `mcpName` onde o schema exigir e
+9. **Registry e release — AUTORIZADO (preparação commitada; publicação pendente).** Incluir `mcpName` onde o schema exigir e
    validar conteúdo do tarball, exports/types/assets, frescor do build e consumer
    smoke. Validar instalação global no sandbox `~/pantheon-sandbox/`, não no
    ambiente de desenvolvimento. **Dependências:** fases 7 e 8 para artefatos e
    catálogo finais. **Verificação planejada:** checks do pacote publicado no
    sandbox, smoke test de consumidor e confirmação do estado do tarball.
-   **Decisão (Beta 11):** **não autorizado** agora — sem push, tag, PR ou
-   publicação de pacote; o release exige aprovação explícita do usuário em etapa
-   posterior.
+   **Decisão (Beta 11):** **autorizado** pelo usuário — a preparação de
+   release está commitada (`8a11282`, `chore(release): v1.6.0-beta.11`) e o PR
+   **#241** está aberto para `main`; a publicação fica **pendente** de um
+   dispatch manual do workflow `Release` (`release_channel=beta`, dist-tag
+   `beta`) **após o merge e o CI verde**. O push de tag não publica — é o
+   workflow que cria a tag. **Nada está publicado** enquanto esse workflow não
+   rodar, e a Beta 11 **não está "released"** até a publicação concluir com
+   sucesso.
 10. **Test economy e suites em tiers — IN PROGRESS (regra normativa entregue;
     DECIDED: split não aplicado — manter como está).** Os agentes devem escrever testes menores e
     focados e parar de produzir suítes exaustivas/repetitivas que tornam cada
@@ -1010,10 +1022,12 @@ P0-5/P0-6 somente se vínculo direto com Beta 11 for confirmado e manter os dema
 para triagem futura. F5 permanece deferred porque falhou paridade de rota; não
 declarar aceito. F2-V2/F4B/F6 não foram encontrados no repositório e não devem ser
 inventados. Não alterar o projeto React externo nem abrir trabalho Pantheon pelo
-follow-up MED de tamanho do link. Esta seção registra progresso parcial: 14
+follow-up MED de tamanho do link. Esta seção registra progresso parcial: 18
 commits locais existem à frente de `origin/main` (incluindo `c6f5280`, a fatia de
 relatório de custo em `src/pantheon/cost-command.ts`, agora commitada e revisada,
-e os cinco commits da fase Setup), Beta 11 não está concluída, e a própria
+e os cinco commits da fase Setup) e a preparação de release está commitada
+(`8a11282`, `chore(release): v1.6.0-beta.11`) com o PR **#241** aberto para
+`main` — porém **nada foi publicado**, Beta 11 não está concluída, e a própria
 atualização deste ROADMAP permanece não commitada e não conta como entregue.
 
 ---
