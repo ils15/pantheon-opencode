@@ -7,8 +7,10 @@
 > and optional `variant` are applied by the V2 agent transform. Legacy
 > `preset` markers in `active-preset.json` and `PANTHEON_MODEL_PRESET` are
 > ignored, not deleted, and do not activate a provider or model. V2 has no model
-> wizard or implicit model selection. V1 keeps its legacy behavior until its
-> compatibility path is decided. V2 manual overrides and status are project-only;
+> wizard or implicit model selection. The V1 legacy path is **frozen** for this
+> beta: it keeps its legacy behavior and static `routing.yml` preset IDs, and the
+> V1 preset migration is not authorized in this beta. V2 manual overrides and
+> status are project-only;
 > global override files are not read or applied. The V2 tool rejects global
 > `set`/`reset` and same-call `confirm`/`authorize_global` flags because it has no
 > independent user-approval API. Global overrides require separate explicit

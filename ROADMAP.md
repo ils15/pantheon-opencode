@@ -726,10 +726,14 @@ limits`; Themis PASS_WITH_NOTES e validação isolada: 36/36 testes, typecheck p
 Biome direcionado pass); a fase **Setup** está **DELIVERED — COMMITTED —
 REVIEWED** nos cinco commits `66bf918`, `2f53f01`, `2e4066d`, `4ae5283`,
 `55ecef4` (o que foi entregue e a verificação estão na fase 6). Permanecem
-planejados/abertos: medição de orquestração, V2/empacotamento/catalog, itens
-residuais de presets/catálogo, economia de testes/tiers (fase 10, com a regra
-normativa entregue via `src/instructions/test-economy.instructions.md` e o split
-de scripts ainda pendente) e registry/release. A própria atualização deste
+abertos: a medição de orquestração (fase 4, **bloqueada por capacidade**, não
+entregue), o tratamento de `specific_claims` (fase 2) e quais capacidades runtime
+estão realmente disponíveis para todo/background/board. Foram **decididos** nesta
+rodada: V2/empacotamento/catalog (**manter como está**), presets/catálogo V1
+(**congelado**, sem migração) e economia de testes/tiers (fase 10, regra
+normativa entregue via `src/instructions/test-economy.instructions.md`, **split
+não aplicado**); registry/release segue **não autorizado** (sem
+push/tag/PR/publicação). A própria atualização deste
 ROADMAP permanece não commitada nesta árvore; nada nesta atualização declara
 Beta 11 nem qualquer trabalho não commitado como entregue.
 
@@ -791,7 +795,7 @@ trabalho no Pantheon.
    A preservação do que já estava salvo é a semântica documentada de
    rejeitar-sem-truncar (`docs/persistence-mcp.md`), não uma alegação que estes
    testes verifiquem diretamente.
-4. **Orquestração proporcional e medição — caminho enxuto DOCUMENTED (`2848075`); medição OPEN/PLANNED.** Propor um caminho enxuto
+4. **Orquestração proporcional e medição — caminho enxuto DOCUMENTED (`2848075`); medição OPEN — BLOCKED BY CAPABILITY.** Propor um caminho enxuto
    para tarefa pequena/reversível (um especialista adequado, sem plano/council de
    rotina) e manter todos os gates para trabalho material/sensível. Medir
    overhead, resultado e risco antes de reduzir agentes; não usar `general` ou
@@ -813,6 +817,11 @@ trabalho no Pantheon.
    classificar chamadas/custos e evidência. **Verificação planejada (medição):**
    comparação com janelas e atribuição explícitas, com risco e resultado
    registrados; nenhum delta será promovido sem medição atribuível.
+   **Bloqueio de capacidade (registrado):** `pantheon_cost` agrega tokens por
+   agente/fase (V2 pode reportar `unknown`) e não isola tarefa/sessão/modelo/
+   provedor; nenhum delta atribuível foi produzido e nenhuma economia deve ser
+   alegada. A medição permanece **aberta, bloqueada por capacidade** — não
+   entregue.
 5. **Modelo ativo — subconjunto de overrides manuais V2 IMPLEMENTED — COMMITTED — REVIEWED (`1d9b20a`); itens residuais abertos.** **Decisão de política:** V2 não aplica presets
    estáticos nem `PANTHEON_MODEL_PRESET`; preserva o modelo default do host e só
    aplica overrides manuais **project-scoped** por agente (`model` e `variant`)
@@ -863,46 +872,54 @@ trabalho no Pantheon.
    do conjunto de backup e não é rollback automático; o drift cobre apenas a
    coerência plano↔apply de uma execução; a auditoria de segredos cobre as saídas
    do installer, não todo o repositório.
-7. **V2, empacotamento e model catalog — PLANNED.** Reconciliar o pacote atual —
+7. **V2, empacotamento e model catalog — PLANNED — DECIDED: keep as-is (no change this beta).** Reconciliar o pacote atual —
    root pinado em `@opencode-ai/plugin@1.18.33` e `@opencode-ai/sdk@1.18.33`,
    exports apontando para `.ts` e sem build root — com a recomendação do council
    de ESM compilado em `dist/`, exports `types`/`default`, `.d.ts`, sem pin exato,
-   peer range + runtime detection e `@opencode/plugin` 2.x. Não tratar a
-   recomendação como decisão tomada. Testar fontes, `dist/` e tarball. As
-   observações de hosts `2.0.22` e `2.0.27` não estabelecem uma versão universal.
-   **Dependência:** decidir o formato de entrada e compatibilidade antes de
-   alterar metadados/build. **Verificação planejada:** build reproduzível,
+   peer range + runtime detection e `@opencode/plugin` 2.x. A recomendação fica
+   **registrada, não aplicada**. **Decisão (Beta 11):** manter como está — root
+   pinado em `@opencode-ai/plugin@1.18.33`/`@opencode-ai/sdk@1.18.33`, exports
+   `.ts` e sem build root — para não arriscar consumidores existentes; a migração
+   será revisitada depois. Testar fontes, `dist/` e tarball quando ela for
+   reconsiderada. As observações de hosts `2.0.22` e `2.0.27` não estabelecem uma
+   versão universal. **Dependência (resolvida nesta rodada):** o formato de
+   entrada foi decidido como "manter como está"; qualquer alteração de
+   metadados/build fica adiada. **Verificação planejada:** build reproduzível,
    exports/types/assets corretos no artefato compilado e inspeção/teste de
    consumo do tarball.
-8. **Presets e catálogo — PLANNED (subconjunto de overrides manuais V2 IMPLEMENTED — COMMITTED — REVIEWED `1d9b20a`; itens residuais abertos).** **Decisão V2:** presets estáticos são
+8. **Presets e catálogo — V1 CONGELADO (subconjunto de overrides manuais V2 IMPLEMENTED — COMMITTED — REVIEWED `1d9b20a`).** **Decisão V2:** presets estáticos são
    aposentados como seleção efetiva; não haverá wizard nem ativação implícita.
    V2 usa apenas overrides manuais project-scoped por agente e deixa o default do host intacto
    quando não houver override. Arquivos globais não são lidos/aplicados; mutações
    globais não são suportadas por `pantheon_model`, pois não há API V2 de aprovação
    humana independente. Suporte futuro exigirá autorização explícita separada.
    Markers `preset` e `PANTHEON_MODEL_PRESET` são
-   legados/ignorados, sem apagar arquivos. O caminho V1 permanece inalterado até
-   decidir compatibilidade. Configuração inválida/malformada mantém o modelo do
+   legados/ignorados, sem apagar arquivos. O caminho V1 permanece **congelado**:
+   inalterado, mantendo os IDs estáticos de `routing.yml`, sem migração de
+   presets neste beta. Configuração inválida/malformada mantém o modelo do
    host, registra diagnóstico interno e expõe warning via `pantheon_model status`;
    não há toast nem notificação proativa documentada no transform V2. Essa
-   limitação foi explicitamente aprovada pelo usuário. `src/routing.yml` ainda
-   contém IDs estáticos; sua migração para V1 segue em aberto;
-   `.pantheon/tiers.json` é MCP tier. Esta fase continua PLANNED para separar o
-   catálogo legado e decidir a migração V1 dos presets (item residual aberto),
+   limitação foi explicitamente aprovada pelo usuário. `src/routing.yml` contém
+   IDs estáticos; sua migração V1 está **congelada** (não autorizada neste beta);
+   `.pantheon/tiers.json` é MCP tier. A separação do catálogo legado e a
+   migração V1 dos presets ficam **congeladas** para este beta,
    sem wizard ou validação de preset V2. **Dependência:** fase 7 para
    compatibilidade de pacote. **Verificação:** subconjunto de overrides manuais
    V2 entregue e revisado em `1d9b20a` (default host intacto, marker legado
    inerte, override/variant manual aplicado ao agente correto e reset sem
-   fallback para preset). Permanecem planejadas a decisão de migração V1 dos
-   presets e a separação do catálogo legado.
-9. **Registry e release — PLANNED.** Incluir `mcpName` onde o schema exigir e
+   fallback para preset). A migração V1 dos presets e a separação do catálogo
+   legado ficam **congeladas** (sem migração neste beta).
+9. **Registry e release — NÃO AUTORIZADO agora (PLANNED).** Incluir `mcpName` onde o schema exigir e
    validar conteúdo do tarball, exports/types/assets, frescor do build e consumer
    smoke. Validar instalação global no sandbox `~/pantheon-sandbox/`, não no
    ambiente de desenvolvimento. **Dependências:** fases 7 e 8 para artefatos e
    catálogo finais. **Verificação planejada:** checks do pacote publicado no
    sandbox, smoke test de consumidor e confirmação do estado do tarball.
+   **Decisão (Beta 11):** **não autorizado** agora — sem push, tag, PR ou
+   publicação de pacote; o release exige aprovação explícita do usuário em etapa
+   posterior.
 10. **Test economy e suites em tiers — IN PROGRESS (regra normativa entregue;
-    split de scripts pendente).** Os agentes devem escrever testes menores e
+    DECIDED: split não aplicado — manter como está).** Os agentes devem escrever testes menores e
     focados e parar de produzir suítes exaustivas/repetitivas que tornam cada
     fase lenta: um comportamento → um teste direcionado, sem duplicar a mesma
     cobertura entre arquivos; sem E2E/full-install ou testes dependentes de rede
@@ -927,6 +944,10 @@ trabalho no Pantheon.
     `npm run test:node` diretamente; tornar o rápido o default exigiria editar
     esse gate test e o workflow de CI, o que está fora do escopo desta entrega.
     Aplicar o split apenas junto da edição revisada daquele contrato e do CI.
+    **Decisão (Beta 11):** manter o **split não aplicado** — `test:node` e o CI
+    permanecem como estão (suítes pesadas incluídas); a validação por fase
+    seleciona o tier manualmente e o `npm run test:node` completo continua sendo o
+    gate de release.
 
 **Critérios de verificação da Beta 11.** Cada fase deve manter evidência
 reproduzível e registrar separadamente resultado, limitações e decisões. Fases
@@ -969,12 +990,19 @@ fase 10.
 usar `--no-verify`/`-n` nem qualquer bypass de hook — o hook de segredos é um
 gate.
 
-**Decisões em aberto.** (a) V2-only ou entrada V1 separada, incluindo a
-compatibilidade que permitirá avaliar eventual migração V1 de presets; (b) peer opcional
-`*` com compat manifest ou range verificado — range ainda não decidido e sem pin
-exato; (c) bundler/build; (d) tratamento de `specific_claims`; (e) migração V1
-dos IDs de preset após a decisão de compatibilidade; (f) quais capacidades runtime estão realmente
-disponíveis para todo/background/board. As diferenças de versão de host observadas
+**Decisões em aberto.** Decididas nesta rodada (registradas, sem alteração de
+implementação): (a) entrada V2-only ou `.ts`/`dist` — **decidida manter como
+está** (root pinado, exports `.ts`, sem build root), para não arriscar
+consumidores existentes; (b) peer range/`*` com compat manifest — **decidida
+manter o pin exato** neste beta; (c) bundler/build — **decidida não introduzir**
+neste beta; (e) migração V1 dos IDs de preset — **congelada**: V1 mantém o
+caminho legado e o `routing.yml` estático, sem migração. Continuam em aberto:
+(d) tratamento de `specific_claims`; (f) quais capacidades runtime estão
+realmente disponíveis para todo/background/board. A medição de orquestração
+(fase 4) permanece **bloqueada por capacidade**: `pantheon_cost` agrega tokens
+por agente/fase (V2 pode reportar `unknown`) e não isola
+tarefa/sessão/modelo/provedor, então nenhum delta atribuível pode ser produzido e
+nenhuma economia deve ser alegada. As diferenças de versão de host observadas
 não resolvem essas decisões.
 
 **Exclusões.** Não puxar automaticamente os 23 itens `OPEN` do roadmap; considerar
