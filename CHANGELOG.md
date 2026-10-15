@@ -18,6 +18,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0-beta.11] - 2026-10-15
+
+## 🆕 What's New
+
+- **record final Beta 11 scope decisions**
+- **record Setup delivery and final-gate lessons in roadmap**
+- **forbid hook bypass in Iris commit contract**
+- **add installer failure reporting and secret-safe output audit**
+- **detect drift between installer plan and apply**
+- **require explicit --yes authorization before installer apply**
+- **exact installer backup set with restore**
+- **add Beta 11 test-economy requirement to shared instructions**
+- **preview per-file change set in installer dry-run**
+- **reconcile Beta 11 roadmap status with completed phases**
+- **describe pantheon_cost window and aggregation limits**
+- **align lean-flow guidance and cost wording**
+- **add project-scoped V2 model overrides**
+- **align host tool and background contracts**
+
+## 🐞 Fixed
+
+- **restore explicit "both" in zeus memory operations instruction**
+- **correct council protocol and persistence bounds**
+
 ## [v1.6.0-beta.10] - 2026-10-12
 
 ## 🆕 What's New
