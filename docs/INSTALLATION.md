@@ -1,11 +1,11 @@
 # Pantheon Installation Guide — v1.6.0-beta.1 (OpenCode 2)
 
-Pantheon v1.6.0-beta.1 is **OpenCode 2-compatible**. Instalação global via `npx pantheon-opencode init` com **wizard 3 perguntas** (default = herdar do chat, sem `active-preset.json`). Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai. 4 presets: `go-free`, `go-fast`, `go-premium` (Go gateway) + `openai` puro. As tabelas de preset são derivadas de `src/routing.yml` (sem hardcodar segredos: só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` names + `baseURL`s).
+Pantheon v1.6.0-beta.1 is **OpenCode 2-compatible**. `npx pantheon-opencode init` instala a geração selecionada. A seleção interativa de perfil/preset (3 perguntas; default = herdar do chat) é o caminho legado V1, não uma rota de modelo V2. No V2, `pantheon_model` oferece somente `status`, `show`, `set` e `reset` manuais, sem wizard de presets: o default do host fica intacto sem override explícito por agente; markers `preset` e `PANTHEON_MODEL_PRESET` são ignorados e preservados. Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai no caminho V1. As tabelas dos presets abaixo são referência V1 legada e derivadas de `src/routing.yml` (sem hardcodar segredos: só nomes de variáveis e `baseURL`s).
 
 ## TL;DR (Quick Start)
 
 ```bash
-# Instalar agentes Pantheon globalmente (wizard interativo)
+# Instalar agentes Pantheon globalmente (a seleção de presets é V1 legacy)
 npx pantheon-opencode init
 
 # Headless (CI/scripts, usa defaults)
@@ -266,9 +266,15 @@ The TUI plugin is a separate component. Its host-specific entry is installed
 only when the installer component set includes `plugins`; the presence of the
 V2 TUI entry does not imply the V1 runtime was loaded.
 
-## Instalação Interativa — Wizard 3 Perguntas (default = herdar do chat)
+## Instalação Interativa — Wizard 3 Perguntas (V1 legacy; default = herdar do chat)
 
-> **Default = herdar do chat (sem `active-preset.json`)** — sem preset ativo, delegates herdam nativamente o modelo do chat pai. O wizard (`scripts/install/model-picker.mjs`) implementa exatamente 3 perguntas via `askQuestions` (ou `readline` fallback), com tabelas geradas de `src/routing.yml`:
+> **Este wizard de seleção de perfil é exclusivo do caminho legado V1.** No
+> V2, presets estáticos e `PANTHEON_MODEL_PRESET` não selecionam modelos e não
+> existe wizard de rotas; use a ferramenta `pantheon_model` com ações manuais
+> `status`/`show`/`set`/`reset`. No V1, o default é herdar do chat (sem
+> `active-preset.json`) e delegates herdam nativamente o modelo do pai. O wizard
+> (`scripts/install/model-picker.mjs`) implementa três perguntas via
+> `askQuestions` (ou fallback `readline`), com tabelas geradas de `src/routing.yml`:
 
 **Q1 — Perfil (0=herdar do chat [default])** — tabela exibida: perfil | `provider`/`baseURL`/key env | preço 2026 | modelos por papel
 
@@ -395,7 +401,7 @@ This installs to `.opencode/agents/` in the current project directory.
 
 ## Herança Nativa — sem `active-preset.json` (default)
 
-Desde **v1.5.0** o instalador **não cria** `model`/`small_model` top-level em `opencode.json` e o plugin/wizard **não grava** `active-preset.json` quando o usuário escolhe `0`/`inherit` (default da Q1). Comportamento:
+No caminho de instalação V1 desde **v1.5.0**, o instalador **não cria** `model`/`small_model` top-level em `opencode.json` e o plugin/wizard **não grava** `active-preset.json` quando o usuário escolhe `0`/`inherit` (default da Q1). O fluxo V2 não ativa presets. Comportamento V1:
 
 - **Sem preset = herança nativa**: `resolveActivePreset()` retorna `null`; `loadRoutingAgentModels()` retorna `{}`; nenhum modelo é imposto aos filhos — o `task()` nativo herda o modelo do chat pai. `small_model` nunca é usado.
 - **Ordem de resolução do modelo filho** (fontes sem hardcode de segredos, só nomes):
@@ -421,17 +427,30 @@ npx pantheon-opencode init --preset go-fast
 
 > **Nota:** A validação de `provider/model-id` usa `MODEL_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/` (em `src/pantheon/model-command.ts`, hint sem expor segredos). Model inválido → erro `model must use provider/model-id format`.
 
-## `/pantheon-model` — Per-agent Overrides em `active-preset.json`
+## `/pantheon-model` — Per-agent Overrides em `active-preset.json` (V1 legacy)
 
-> **Em v1.5.0** — opera **exclusivamente** em `active-preset.json` `overrides.agents[agent]` (project ou global). **Nunca** escreve `.env` e **nunca** injeta `model`/`small_model` top-level em `opencode.json`. No caminho V1, a delegação usa herança nativa (sem modelo → herda chat/preset); o caminho V2 não registra a API de delegação V1.
+> Os comandos `/pantheon-model` e o wizard abaixo são o caminho legado V1. V2
+> expõe a ferramenta `pantheon_model` com ações explícitas `status`, `show`,
+> `set` e `reset`, sem wizard de rotas ou presets. No V2, só overrides manuais
+> project-scoped por agente são aplicados; arquivos globais não são lidos nem
+> aplicados. `set`/`reset` rejeitam `scope=global` e flags `confirm`/
+> `authorize_global`; a mesma chamada não é aprovação humana independente. O
+> suporte global futuro exigirá autorização explícita separada e não é suportado
+> nesta ferramenta. Markers `preset` e `PANTHEON_MODEL_PRESET` são ignorados,
+> não removidos, e o default do host fica intacto sem override.
+> Ambos os caminhos gravam overrides em `active-preset.json` e nunca escrevem
+> `.env` nem injetam `model`/`small_model` top-level em `opencode.json`.
 
-O comando é determinístico (`src/pantheon/model-command.ts`) — leitura/escrita local sem resolver providers externos, backup `.bak` + rename atômico + `O_NOFOLLOW` + lock por path. Escopo default `project`; `global` exige `confirm` + `authorize_global` separados (`-y` não basta).
+No V1, a delegação usa herança nativa (sem modelo → herda chat/preset); o
+caminho V2 não registra a API de delegação V1.
+
+O comando V1 é determinístico (`src/pantheon/model-command.ts`) — leitura/escrita local sem resolver providers externos, backup `.bak` + rename atômico + `O_NOFOLLOW` + lock por path. No V1, escopo default `project`; `global` exige `confirm` + `authorize_global` separados (`-y` não basta). A ferramenta V2 aceita apenas `project` e rejeita flags de autorização.
 
 ```text
 # status — lista 14 agentes canônicos com modelo/effort/origem (preset|override|env|none), sem segredos
 /pantheon-model status          # alias: show
 
-# wizard interativo (sem args) — via askQuestions:
+# V1 legacy only: wizard interativo (sem args) — via askQuestions:
 /pantheon-model                 # agente → modelo (provider/model-id) → effort (low/medium/high) → scope (project|global)
 /pantheon-model                 # valida agente ∈ {zeus, athena, apollo, hermes, aphrodite, demeter, themis, prometheus, hephaestus, nyx, gaia, iris, mnemosyne, talos}
                                # valida modelo via CAPABILITY_TABLE capabilityEntry() + clamp via normalizeCapability()
@@ -454,14 +473,15 @@ O comando é determinístico (`src/pantheon/model-command.ts`) — leitura/escri
 - Modelo sem entrada em `CAPABILITY_TABLE` → erro de `capabilityEntry(model)` (ex.: modelo inexistente)
 - `effort` inválido → `effort must be one of low, medium, high`; se válido mas acima do teto (`maxEffort`), é **clamped** (`normalizeCapability` retorna `{variant, clamped:true}`) e loga aviso
 - `hasVision(model)` = false mas usado como visão → warning `hasVision` via logger (não bloqueia, mas avisa)
-- `--scope global` sem `--confirm --authorize-global` → `global set/reset requires explicit confirmation and separate global authorization; -y is not sufficient`
+- No V1, `--scope global` sem `--confirm --authorize-global` → `global set/reset requires explicit confirmation and separate global authorization; -y is not sufficient`
+- No V2, `scope=global`, `confirm` ou `authorize_global` → erro project-only; nenhuma escrita é feita
 - Modelo é apenas referência `provider/model-id` — provider/model disponibilidade depende de `opencode` config + credenciais (`PANTHEON_OPENCODE_API_KEY` ou `OPENAI_API_KEY`) + conta/assinatura/endpoint
 
 **Persistência:**
 
-- Lê `active-preset.json` candidatos (`project` → `global` → legacy) via `readRegularFile` + `O_NOFOLLOW` + validação JSON; inválido → equivale a ausência (log warn, sem segredos)
+- No V1, lê candidatos `active-preset.json` (`project` → `global` → legacy) via `readRegularFile` + `O_NOFOLLOW` + validação JSON; inválido → equivale a ausência (log warn, sem segredos). No V2, somente o arquivo do projeto é lido; arquivo global não contribui overrides nem warnings.
 - Escreve via `writeActivePresetAtomically(path, data, current)` — `mkdir -p`, backup `.bak` (se existia), `atomicReplace(path, JSON.stringify(data,null,2))` (`tmp`+`rename` + `fsync` dir), lock `pathLocks` por `path`, preserva `mode` (default `600`)
-- Reinicie OpenCode após sucesso (sem hot-swap). `status` nunca exibe valores de chaves.
+- No V1, reinicie OpenCode após sucesso (sem hot-swap); V2 lê overrides em um próximo configuration load. `status` nunca exibe valores de chaves.
 
 **Histórico superseded (≤1.4.1):** antes manipulava `model`/`small_model` top-level em `opencode.json`; em 1.5.0 manipula apenas `overrides.agents`. Instrução em `commands/pantheon-model.md` usa `agent: zeus` + per-agent semantics.
 
@@ -621,11 +641,18 @@ Type these in the OpenCode chat:
 | `/pantheon` | Multi-perspective council synthesis via inline agents |
 | `/pantheon-audit` | 3-layer code audit: heuristic scan → Themis deep review → OWASP Top 10 |
 | `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints and Themis review gates |
-| `/pantheon-model` (wizard) / `status\|show\|set --agent\|reset --agent` | Per-agent overrides em `active-preset.json` (`overrides.agents[agent]`); `status` lista 14 agentes (model/effort/origem `preset\|override\|env\|none`); `set --agent X --model provider/model-id [--effort low\|medium\|high] [--scope project\|global]` validado via `CAPABILITY_TABLE`+`hasVision`+clamp; `reset --agent X`; default `project`; `global` exige `confirm`+`authorize_global`; atômico `.bak`+lock; nunca escreve `.env` nem top-level `model` |
+| V1 `/pantheon-model` (wizard) e ações; V2 ferramenta `pantheon_model` (`status\|show\|set\|reset`) | Overrides manuais per-agent em `active-preset.json` (`overrides.agents[agent]`). V2: ações explícitas sem wizard de presets, project-only; `status` mostra overrides e warnings do projeto; `set` recebe `agent`, `model`, `effort` opcional e opcionalmente `scope: project`; `reset` recebe `agent` e opcionalmente `scope: project`. Arquivos globais não são lidos nem aplicados. Mutação global exige autorização humana explícita futura, indisponível nesta ferramenta; `scope=global` e flags de autorização são rejeitados. Escrita atômica `.bak`+lock; nunca escreve `.env` nem top-level `model`. O wizard sem argumentos é legado V1 apenas. |
 | `/pantheon-optimize` | Project optimization: bloat scan, deepwork archive, cache migration, token report |
 | `/pantheon-consolidate` | Merge and deduplicate memory entries through the persistence MCP server |
 
 ## Troubleshooting — Chaves e Presets
+
+> Esta seção descreve o caminho legado V1 de instalação e presets. No OpenCode
+> V2, `PANTHEON_MODEL_PRESET` e markers `preset` não ativam modelos; somente
+> overrides per-agent explícitos do projeto são aplicados, arquivos globais são
+> ignorados e sem override o modelo do host permanece intacto. Mutação global
+> requer autorização humana explícita futura e não é suportada pela ferramenta.
+> V1 continua inalterado até a decisão de compatibilidade.
 
 **Sem segredos hardcoded — só nomes de env vars + `baseURL`s abaixo.**
 
@@ -670,7 +697,7 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 | `OPENAI_API_KEY não configurada` | `openai` selecionado mas env vazia | `export OPENAI_API_KEY=...` |
 | `unknown agent "foo"` em `/pantheon-model set` | agente não canônico | Use um dos 14: `zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `prometheus`, `hephaestus`, `nyx`, `gaia`, `iris`, `mnemosyne`, `talos` |
 | `model must use provider/model-id format` | modelo sem barra ou com espaço/`..` | Use `provider/model-id` ex.: `openai/gpt-5.6-sol`, `opencode-go/kimi-k2.7-code` (valida `MODEL_REF_PATTERN`) |
-| `global set/reset requires explicit confirmation...` | `--scope global` sem confirmação | Adicione `--confirm --authorize-global` (ou use `--scope project`, default seguro) |
+| No V1, `global set/reset requires explicit confirmation...` | `--scope global` sem confirmação | No V1, adicione `--confirm --authorize-global` (ou use `--scope project`, default seguro). Na ferramenta V2, global não é suportado. |
 | `.pantheon/active-preset.json has invalid JSON` | arquivo corrompido | Apague ou corrija JSON; `readActivePresetRaw` trata como ausência + log `warn` sem segredos; `write` preserva anterior se falhar |
 | `health-check: active-preset.json verification failed` | `writeActivePreset` gravou mas `preset` mismatch | Verifique permissões (`mode` default `600`, `O_NOFOLLOW`, `fsync` dir); wizard loga warning, não expõe chave |
 | `[pantheon-delegate] no model resolved for agent "X" — omitting model...` | sem preset e sem override, herança nativa | Normal em default (herança nativa); para pinar, `npx pantheon-opencode set-tier <preset>` ou `/pantheon-model set --agent X ...` |

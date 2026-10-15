@@ -150,6 +150,16 @@ repository configuration.
 
 ---
 
+## OpenCode plugin tools
+
+These tools are provided by the OpenCode plugin, not by one of the five native
+MCP servers listed above.
+
+| Tool | Arguments | What it reports |
+|------|-----------|-----------------|
+| `pantheon_model` | `action?: status\|show\|set\|reset`, plus action-specific agent/model/effort and optional `scope: project` | V2 manual overrides are **project-only**: status reads project configuration, and the agent transform applies only explicit project per-agent model/variant overrides; global files are neither read nor applied. `set`/`reset` reject `scope: global` and any `confirm`/`authorize_global` fields before writing. Global overrides require separate explicit human authorization in a future surface and are not supported by this tool; flags in the same tool call are not approval. V2 ignores static preset markers and `PANTHEON_MODEL_PRESET`, leaving host defaults intact otherwise. Invalid or malformed project overrides preserve the host model and expose warnings via status. The V2 server plugin has no documented toast or other proactive user-visible notification API during transform, so no toast/proactive warning is promised. V1 behavior remains legacy. |
+
+---
 ## Platform Naming Conventions
 
 Each platform exposes MCP tools with different naming. The same tool `memory_recall` from server `pantheon-memory` gets different names:

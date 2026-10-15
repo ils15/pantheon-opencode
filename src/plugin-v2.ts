@@ -110,6 +110,7 @@ import {
   v2ResourceTarget,
 } from './pantheon/v2-delegation-enforce.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/v2-execute-after.ts'
+import { applyV2ModelOverrides, readV2ModelConfiguration } from './pantheon/v2-model-overrides.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.ts'
 import { V2_UNSUPPORTED_FEATURE_SEED } from './pantheon/v2-unsupported.mjs'
 import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/v2-vision.ts'
@@ -350,6 +351,18 @@ function transformAgents(draft: AgentDraft): void {
   } catch {
     markUnsupported('agent-transform-list')
     return
+  }
+  try {
+    const modelConfiguration = readV2ModelConfiguration()
+    if (modelConfiguration.warnings.length > 0) {
+      // The V2 server PluginContext has no documented user-visible notification
+      // or logging channel; preserve the degradation for status diagnostics.
+      markUnsupported('agent-model-overrides')
+    }
+    applyV2ModelOverrides(draft, modelConfiguration.overrides)
+  } catch {
+    // Model configuration is optional. Preserve host models if it cannot be read.
+    markUnsupported('agent-model-overrides')
   }
   try {
     for (const agent of agents) {

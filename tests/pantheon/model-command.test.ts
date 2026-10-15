@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert'
 import {
   chmodSync,
+  constants,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -12,12 +13,16 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
+import { open as openFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
   createModelCommand,
   KNOWN_AGENTS,
+  type ModelCommandLogger,
+  readV2ActivePresetRaw,
+  type V2PresetReadFileSystem,
   validateModelRef,
 } from '../../src/pantheon/model-command.ts'
 
@@ -37,7 +42,13 @@ function makeScope(): TestScope {
 
 function command(
   scope: TestScope,
-  opts: { env?: NodeJS.ProcessEnv; ask?: (q: unknown[]) => Promise<Record<string, unknown>> } = {},
+  opts: {
+    env?: NodeJS.ProcessEnv
+    ask?: (q: unknown[]) => Promise<Record<string, unknown>>
+    logger?: ModelCommandLogger
+    v2Mode?: boolean
+    v2PresetReadFileSystem?: V2PresetReadFileSystem
+  } = {},
 ) {
   const candidates = [
     join(scope.project, '.pantheon', 'active-preset.json'),
@@ -49,6 +60,9 @@ function command(
     activePresetCandidates: candidates,
     env: opts.env,
     ask: opts.ask,
+    logger: opts.logger,
+    v2Mode: opts.v2Mode,
+    v2PresetReadFileSystem: opts.v2PresetReadFileSystem,
   }).pantheon_model
 }
 
@@ -69,6 +83,112 @@ async function main(): Promise<void> {
   assert.equal(validateModelRef('provider/'), false)
   assert.equal(validateModelRef('provider/model with spaces'), false)
   assert.equal(KNOWN_AGENTS.length, 14)
+
+  // V2 mutation reads open nonblocking and validate the opened descriptor
+  // before reading, so a raced-in FIFO cannot stall a set/reset operation.
+  if (constants.O_NOFOLLOW && constants.O_NONBLOCK) {
+    const calls: string[] = []
+    let openedFlags = 0
+    await assert.rejects(
+      readV2ActivePresetRaw('fifo-active-preset.json', 'configuration file', {
+        open: async (_path, flags) => {
+          calls.push('open')
+          openedFlags = flags
+          return {
+            stat: async () => {
+              calls.push('fstat')
+              return { isFile: () => false, mode: 0 }
+            },
+            readFile: async () => {
+              calls.push('read')
+              return '{}'
+            },
+            close: async () => {
+              calls.push('close')
+            },
+          }
+        },
+      }),
+      /regular file.*symlink/i,
+    )
+    assert.equal(openedFlags, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    assert.deepEqual(calls, ['open', 'fstat', 'close'])
+  }
+
+  // V2 set also uses nonblocking descriptor validation for its post-write
+  // health read; a FIFO is rejected before any read and the descriptor closes.
+  if (constants.O_NOFOLLOW && constants.O_NONBLOCK) {
+    const scope = makeScope()
+    try {
+      mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
+      writeFileSync(
+        projectActive(scope),
+        JSON.stringify({ version: 1, preset: 'go-free', overrides: { agents: {} } }),
+      )
+      let openCount = 0
+      let postWriteReadCount = 0
+      const warnings: string[] = []
+      const postWriteCalls: string[] = []
+      const postWriteFlags: number[] = []
+      const fileSystem: V2PresetReadFileSystem = {
+        open: async (path, flags) => {
+          openCount += 1
+          postWriteFlags.push(flags)
+          if (openCount === 2) {
+            return {
+              stat: async () => {
+                postWriteCalls.push('fstat')
+                return { isFile: () => false, mode: 0 }
+              },
+              readFile: async () => {
+                postWriteReadCount += 1
+                return '{}'
+              },
+              close: async () => {
+                postWriteCalls.push('close')
+              },
+            }
+          }
+          const file = await openFile(path, flags)
+          return {
+            stat: async () => {
+              const stats = await file.stat()
+              return { isFile: () => stats.isFile(), mode: stats.mode }
+            },
+            readFile: (encoding) => file.readFile(encoding),
+            close: () => file.close(),
+          }
+        },
+      }
+      const tool = command(scope, {
+        v2Mode: true,
+        v2PresetReadFileSystem: fileSystem,
+        logger: { warn: (message) => warnings.push(message) },
+      })
+      const result = await tool.execute(
+        {
+          action: 'set',
+          agent: 'hermes',
+          model: 'opencode-go/kimi-k2.7-code',
+          scope: 'project',
+        },
+        { sessionID: 'root', agent: 'zeus' },
+      )
+      assert.match(result, /Model override set/)
+      assert.equal(openCount, 2)
+      const expectedFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+      assert.deepEqual(postWriteFlags, [expectedFlags, expectedFlags])
+      assert.deepEqual(postWriteCalls, ['fstat', 'close'])
+      assert.equal(postWriteReadCount, 0)
+      assert.deepEqual(warnings, ['health-check: active-preset.json verification failed'])
+      assert.equal(
+        JSON.parse(readFileSync(projectActive(scope), 'utf8')).overrides.agents.hermes.model,
+        'opencode-go/kimi-k2.7-code',
+      )
+    } finally {
+      rmSync(scope.root, { recursive: true, force: true })
+    }
+  }
 
   // 1. set per-agent writes overrides.agents[agent] with variant, .bak, atomic, mode
   {
@@ -228,9 +348,214 @@ async function main(): Promise<void> {
       const tool = command(scope, { env: {} })
       const status = await tool.execute({ action: 'status' }, { sessionID: 'root', agent: 'zeus' })
       assert.match(status, /active preset: none/)
+      assert.match(
+        status,
+        /Pantheon model configuration per-agent \(restart OpenCode after changes\):/i,
+      )
+      assert.match(status, /restart OpenCode after changes/i)
       for (const agent of KNOWN_AGENTS) {
         assert.match(status, new RegExp(`${agent}: not configured \\(origin: none`))
       }
+    } finally {
+      rmSync(scope.root, { recursive: true, force: true })
+    }
+  }
+
+  // V2: preset markers are visible as ignored legacy state, never as a route.
+  {
+    const scope = makeScope()
+    try {
+      mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
+      writeFileSync(
+        projectActive(scope),
+        JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }),
+      )
+      const status = await command(scope, { env: {}, v2Mode: true }).execute(
+        { action: 'status' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
+      assert.match(status, /legacy preset marker present in active-preset\.json .*ignored in V2/i)
+      assert.match(status, /static presets.*retired/i)
+      assert.match(status, /host default remains unchanged when no manual override is set/i)
+      assert.doesNotMatch(status, /restart OpenCode after changes/i)
+      assert.doesNotMatch(status, /go-free/)
+      assert.doesNotMatch(status, /active preset: go-free/i)
+      assert.doesNotMatch(status, /hermes: opencode\/deepseek-v4-flash-free/)
+      assert.equal(JSON.parse(readFileSync(projectActive(scope), 'utf8')).preset, 'go-free')
+    } finally {
+      rmSync(scope.root, { recursive: true, force: true })
+    }
+  }
+
+  // V2: env preset marker is ignored and only a manual per-agent override is reported.
+  {
+    const scope = makeScope()
+    try {
+      mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
+      writeFileSync(
+        projectActive(scope),
+        JSON.stringify({
+          version: 1,
+          preset: 'go-free',
+          overrides: {
+            agents: { hermes: { model: 'opencode/deepseek-v4-flash-free', variant: 'medium' } },
+          },
+        }),
+      )
+      const status = await command(scope, {
+        env: { PANTHEON_MODEL_PRESET: 'go-fast' } as NodeJS.ProcessEnv,
+        v2Mode: true,
+      }).execute({ action: 'show' }, { sessionID: 'root', agent: 'zeus' })
+      assert.match(status, /legacy preset marker present in PANTHEON_MODEL_PRESET .*ignored in V2/i)
+      assert.doesNotMatch(status, /go-fast|go-free/)
+      assert.match(
+        status,
+        /hermes: opencode\/deepseek-v4-flash-free \(origin: override, effort: medium/,
+      )
+      assert.match(status, /zeus: not configured \(origin: none/)
+      assert.doesNotMatch(status, /origin: preset|origin: env/)
+    } finally {
+      rmSync(scope.root, { recursive: true, force: true })
+    }
+  }
+
+  // V2: invalid project config is actionable in status and fails closed instead
+  // of partially inheriting an otherwise-valid global override.
+  {
+    const scope = makeScope()
+    try {
+      mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
+      mkdirSync(join(scope.global, '.pantheon'), { recursive: true })
+      writeFileSync(projectActive(scope), '{"private":"must-not-leak"')
+      writeFileSync(
+        globalActive(scope),
+        JSON.stringify({
+          version: 1,
+          overrides: { agents: { hermes: { model: 'openai/gpt-5.6' } } },
+        }),
+      )
+      const status = await command(scope, { env: {}, v2Mode: true }).execute(
+        { action: 'status' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
+      assert.match(status, /warning: .*invalid JSON/i)
+      assert.match(status, /manual overrides were not applied/i)
+      assert.match(status, /hermes: not configured \(origin: none/)
+      assert.doesNotMatch(status, /must-not-leak|private/)
+    } finally {
+      rmSync(scope.root, { recursive: true, force: true })
+    }
+  }
+
+  // V2: a non-regular project path is visible and prevents partial fallback.
+  {
+    const scope = makeScope()
+    try {
+      mkdirSync(projectActive(scope), { recursive: true })
+      mkdirSync(join(scope.global, '.pantheon'), { recursive: true })
+      writeFileSync(
+        globalActive(scope),
+        JSON.stringify({ overrides: { agents: { hermes: { model: 'openai/gpt-5.6' } } } }),
+      )
+      const status = await command(scope, { env: {}, v2Mode: true }).execute(
+        { action: 'status' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
+      assert.match(status, /warning: .*not a regular file/i)
+      assert.match(status, /hermes: not configured \(origin: none/)
+    } finally {
+      rmSync(scope.root, { recursive: true, force: true })
+    }
+  }
+
+  // V2 status prints value-free warnings; valid project entries remain visible
+  // while a conflicting global override is ignored.
+  {
+    const scope = makeScope()
+    try {
+      mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
+      mkdirSync(join(scope.global, '.pantheon'), { recursive: true })
+      writeFileSync(
+        projectActive(scope),
+        JSON.stringify({
+          overrides: {
+            agents: {
+              hermes: null,
+              gaia: { model: 'bad-model' },
+              apollo: { model: 'opencode/deepseek-v4-flash-free', variant: 'medium' },
+            },
+          },
+        }),
+      )
+      writeFileSync(
+        globalActive(scope),
+        JSON.stringify({ overrides: { agents: { apollo: { model: 'openai/gpt-5.6' } } } }),
+      )
+      const status = await command(scope, { env: {}, v2Mode: true }).execute(
+        { action: 'status' },
+        { sessionID: 'root', agent: 'zeus' },
+      )
+      const warnings = status.split('\n').filter((line) => line.startsWith('warning:'))
+      assert.equal(warnings.length, 2)
+      assert.doesNotMatch(warnings.join('\n'), /hermes|gaia|bad-model/i)
+      assert.match(status, /apollo: opencode\/deepseek-v4-flash-free \(origin: override/i)
+      assert.doesNotMatch(status, /apollo: openai\/gpt-5\.6/)
+      assert.match(status, /host default remains unchanged/i)
+      assert.doesNotMatch(status, /bad-model/)
+    } finally {
+      rmSync(scope.root, { recursive: true, force: true })
+    }
+  }
+
+  // V2: set/reset only writes/removes the manual override; no fallback preset is created.
+  {
+    const scope = makeScope()
+    try {
+      let wizardCalls = 0
+      const tool = command(scope, {
+        env: {},
+        v2Mode: true,
+        ask: async () => {
+          wizardCalls += 1
+          return {}
+        },
+      })
+      const ctx = { sessionID: 'root', agent: 'zeus' }
+      const noArgsResult = await tool.execute({}, ctx)
+      assert.match(noArgsResult, /static presets are retired and ignored in V2/i)
+      assert.equal(wizardCalls, 0)
+
+      const setResult = await tool.execute(
+        {
+          action: 'set',
+          agent: 'hermes',
+          model: 'opencode/deepseek-v4-flash-free',
+          effort: 'medium',
+        },
+        ctx,
+      )
+      assert.match(setResult, /Model override set/)
+      const configured = JSON.parse(readFileSync(projectActive(scope), 'utf8')) as {
+        preset?: string
+        overrides?: { agents?: Record<string, { model?: string; variant?: string }> }
+      }
+      assert.equal(configured.preset, undefined)
+      assert.deepEqual(configured.overrides?.agents?.hermes, {
+        model: 'opencode/deepseek-v4-flash-free',
+        variant: 'medium',
+      })
+
+      const resetResult = await tool.execute({ action: 'reset', agent: 'hermes' }, ctx)
+      assert.match(resetResult, /Model override removed/)
+      const afterReset = JSON.parse(readFileSync(projectActive(scope), 'utf8')) as {
+        preset?: string
+        overrides?: { agents?: Record<string, unknown> }
+      }
+      assert.equal(afterReset.preset, undefined)
+      assert.equal(afterReset.overrides?.agents?.hermes, undefined)
+      const status = await tool.execute({ action: 'status' }, ctx)
+      assert.match(status, /host default remains unchanged when no manual override is set/i)
+      assert.match(status, /hermes: not configured \(origin: none/)
     } finally {
       rmSync(scope.root, { recursive: true, force: true })
     }
@@ -467,6 +792,36 @@ async function main(): Promise<void> {
       assert.match(result, /failed|symlink/i)
       assert.equal(lstatSync(p).isSymbolicLink(), true)
       assert.equal(JSON.parse(readFileSync(real, 'utf8')).overrides, undefined)
+    } finally {
+      rmSync(scope.root, { recursive: true, force: true })
+    }
+  }
+
+  // V2 set/reset reject a project symlink without changing its target.
+  {
+    const scope = makeScope()
+    try {
+      mkdirSync(join(scope.project, '.pantheon'), { recursive: true })
+      const target = join(scope.root, 'preset-target.json')
+      const original = JSON.stringify({
+        overrides: { agents: { hermes: { model: 'openai/gpt-5.6' } } },
+      })
+      writeFileSync(target, original)
+      symlinkSync(target, projectActive(scope))
+      const tool = command(scope, { v2Mode: true })
+      const ctx = { sessionID: 'root', agent: 'zeus' }
+
+      for (const args of [
+        { action: 'set', agent: 'hermes', model: 'openai/gpt-5.6' },
+        { action: 'reset', agent: 'hermes' },
+      ] as const) {
+        const result = await tool.execute(args, ctx)
+        assert.match(result, /regular file|symlink/i)
+        assert.match(result, /not changed|preserved/i)
+        assert.equal(lstatSync(projectActive(scope)).isSymbolicLink(), true)
+        assert.equal(readFileSync(target, 'utf8'), original)
+        assert.equal(existsSync(`${projectActive(scope)}.bak`), false)
+      }
     } finally {
       rmSync(scope.root, { recursive: true, force: true })
     }

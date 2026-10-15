@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import Module, { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readOnlyRegistry, syncReadOnlySession } from '../../src/pantheon/delegation-enforce.ts'
 import type { HookResult } from '../../src/plugins/hook-runner.ts'
@@ -190,6 +191,7 @@ async function main(): Promise<void> {
   const disposed: string[] = []
   const transforms: string[] = []
   const agents = [{ id: 'zeus', mode: 'subagent', system: 'existing' }]
+  let agentTransformCallback: ((draft: never) => void) | undefined
   const commands = [{ name: 'pantheon-run' }]
   const references: string[] = []
   const context = {
@@ -197,6 +199,7 @@ async function main(): Promise<void> {
     agent: {
       transform: async (callback: (draft: never) => void) => {
         transforms.push('agent')
+        agentTransformCallback = callback
         callback({
           list: () => agents,
           update: (_id: string, update: (agent: (typeof agents)[number]) => void) =>
@@ -239,7 +242,27 @@ async function main(): Promise<void> {
     },
   }
 
-  await plugin.setup(context as never)
+  const setupRoot = mkdtempSync(join(tmpdir(), 'pantheon-v2-plugin-setup-'))
+  const setupCwd = process.cwd()
+  const setupHome = process.env.HOME
+  const setupXdg = process.env.XDG_CONFIG_HOME
+  const setupPreset = process.env.PANTHEON_MODEL_PRESET
+  try {
+    process.chdir(setupRoot)
+    process.env.HOME = setupRoot
+    process.env.XDG_CONFIG_HOME = join(setupRoot, 'xdg')
+    delete process.env.PANTHEON_MODEL_PRESET
+    await plugin.setup(context as never)
+  } finally {
+    process.chdir(setupCwd)
+    if (setupHome === undefined) delete process.env.HOME
+    else process.env.HOME = setupHome
+    if (setupXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = setupXdg
+    if (setupPreset === undefined) delete process.env.PANTHEON_MODEL_PRESET
+    else process.env.PANTHEON_MODEL_PRESET = setupPreset
+    rmSync(setupRoot, { recursive: true, force: true })
+  }
 
   test('mock records Phase 1/config transform registrations for agent, command, and reference', () => {
     // This mock proves only the adapter's current registration choices. Its
@@ -343,6 +366,99 @@ async function main(): Promise<void> {
 
   test('zeus agent mode is set to primary', () => {
     assert.equal(agents[0].mode, 'primary')
+  })
+
+  test('V2 agent transform applies only manual per-agent overrides and ignores preset markers', () => {
+    assert.equal(typeof agentTransformCallback, 'function')
+    const root = mkdtempSync(join(tmpdir(), 'pantheon-v2-agent-transform-'))
+    const originalCwd = process.cwd()
+    const originalPreset = process.env.PANTHEON_MODEL_PRESET
+    const transformedAgents: Array<{
+      id: string
+      model: Record<string, unknown>
+      request?: { body: { keep: boolean } }
+      system?: string
+    }> = [
+      {
+        id: 'hermes',
+        model: { providerID: 'host-provider', id: 'host-default', variant: 'host-variant' },
+        request: { body: { keep: true } },
+        system: 'Hermes system prompt.',
+      },
+      { id: 'gaia', model: { providerID: 'host-provider', id: 'gaia-default' } },
+    ]
+    const draft = {
+      list: () => transformedAgents,
+      update: (id: string, update: (agent: (typeof transformedAgents)[number]) => void) => {
+        const agent = transformedAgents.find((item) => item.id === id)
+        if (agent) update(agent)
+      },
+    }
+    try {
+      mkdirSync(join(root, '.pantheon'), { recursive: true })
+      writeFileSync(
+        join(root, '.pantheon', 'active-preset.json'),
+        JSON.stringify({
+          version: 1,
+          preset: 'go-free',
+          overrides: { agents: { hermes: { model: 'deepseek/deepseek-v4-pro', variant: 'high' } } },
+        }),
+      )
+      process.chdir(root)
+      process.env.PANTHEON_MODEL_PRESET = 'go-fast'
+      agentTransformCallback?.(draft as never)
+
+      assert.deepEqual(transformedAgents[0]?.model, {
+        providerID: 'deepseek',
+        id: 'deepseek-v4-pro',
+        variant: 'high',
+      })
+      assert.deepEqual(transformedAgents[0]?.request, { body: { keep: true } })
+      assert.deepEqual(transformedAgents[1]?.model, {
+        providerID: 'host-provider',
+        id: 'gaia-default',
+      })
+
+      // Omitting a variant on an explicit model override clears the host's
+      // variant from the previous model rather than carrying it across.
+      writeFileSync(
+        join(root, '.pantheon', 'active-preset.json'),
+        JSON.stringify({
+          version: 1,
+          preset: 'go-free',
+          overrides: { agents: { hermes: { model: 'anthropic/claude-sonnet-4-6' } } },
+        }),
+      )
+      agentTransformCallback?.(draft as never)
+      assert.deepEqual(transformedAgents[0]?.model, {
+        providerID: 'anthropic',
+        id: 'claude-sonnet-4-6',
+      })
+
+      // A malformed config does not apply a partial/global fallback and
+      // preserves the host model. markUnsupported is internal telemetry only;
+      // V2 server transforms have no user-facing warning channel.
+      const hostModel = {
+        providerID: 'host-provider',
+        id: 'host-default',
+        variant: 'host-variant',
+      }
+      const transformedHermes = transformedAgents[0]
+      assert.ok(transformedHermes)
+      transformedHermes.model = hostModel
+      writeFileSync(join(root, '.pantheon', 'active-preset.json'), '{"private":"must-not-leak"')
+      agentTransformCallback?.(draft as never)
+      assert.deepEqual(transformedAgents[0]?.model, hostModel)
+      assert.ok(
+        getUnsupportedFeatures().includes('agent-model-overrides'),
+        'configuration degradation is retained in internal V2 diagnostics',
+      )
+    } finally {
+      process.chdir(originalCwd)
+      if (originalPreset === undefined) delete process.env.PANTHEON_MODEL_PRESET
+      else process.env.PANTHEON_MODEL_PRESET = originalPreset
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   test('zeus agent system includes Pantheon routing policy', () => {
@@ -1327,12 +1443,14 @@ async function main(): Promise<void> {
     assert.deepEqual(propertyNames(byName, 'pantheon_model'), [
       'action',
       'agent',
-      'authorize_global',
-      'confirm',
       'effort',
       'model',
       'scope',
     ])
+    const modelProperties = byName.get('pantheon_model')?.input.properties as
+      | Record<string, { enum?: string[] }>
+      | undefined
+    assert.deepEqual(modelProperties?.scope?.enum, ['project'])
   })
 
   test('draft.namespace declares the pantheon namespace (the mock used to swallow it)', async () => {

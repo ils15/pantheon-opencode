@@ -311,7 +311,7 @@ async function executeCost(
 
 // ─── pantheon_model ─────────────────────────────────────────────────────
 
-/** JSON Schema for `pantheon_model`, mirroring the V1 zod args. */
+/** JSON Schema for V2 `pantheon_model`; global scope is intentionally absent. */
 const MODEL_INPUT: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
@@ -330,39 +330,27 @@ const MODEL_INPUT: Record<string, unknown> = {
     },
     scope: {
       type: 'string',
-      enum: ['project', 'global'],
-      description: 'Scope for active-preset.json (default project).',
-    },
-    confirm: {
-      type: 'boolean',
-      description: 'Explicit confirmation for a mutating operation; required for global changes.',
-    },
-    authorize_global: {
-      type: 'boolean',
-      description: 'Separate authorization for global configuration; not implied by confirm.',
+      enum: ['project'],
+      description: 'Project scope only; global overrides are not supported in V2.',
     },
   },
 }
 
-const WIZARD_UNAVAILABLE =
-  'the interactive wizard has no user in the V2 tool surface — pass action="status" to read ' +
-  'the current overrides, or pass agent and model explicitly for action="set"'
-
-/**
- * The V1 command falls back to an interactive readline prompt when invoked
- * with no arguments. A tool call has no user at the terminal, so that fallback
- * would block the call until it timed out. `ask` is injected to refuse
- * deterministically instead, which routes through the command's own
- * `wizard canceled` error path rather than forking its logic.
- */
-const modelCommand = createModelCommand({
-  ask: () => Promise.reject(new Error(WIZARD_UNAVAILABLE)),
-})
+const modelCommand = createModelCommand({ v2Mode: true })
 
 async function executeModel(
   input: Record<string, unknown>,
   context: unknown,
 ): Promise<V2ToolResult> {
+  if (input.scope !== undefined && input.scope !== 'project') {
+    return { output: 'Error: V2 pantheon_model is project-only; global scope is not supported.' }
+  }
+  if (Object.hasOwn(input, 'confirm') || Object.hasOwn(input, 'authorize_global')) {
+    return {
+      output:
+        'Error: V2 pantheon_model does not accept authorization flags; global authorization is not supported by this tool.',
+    }
+  }
   // The V1 tool validates its own args (zod) and reports failures as text.
   const output = await modelCommand.pantheon_model.execute(
     input as Parameters<typeof modelCommand.pantheon_model.execute>[0],
@@ -415,10 +403,11 @@ export function createV2ToolDefinitions(visionRuntime?: V2VisionRuntime): V2Tool
     {
       name: 'pantheon_model',
       description:
-        'Show, set, or reset per-agent model overrides in active-preset.json (project or global). ' +
-        'Overrides win over preset; env preset wins over file. Never writes .env or top-level ' +
-        'model/small_model. Pass action="status" to read the current overrides; unlike the V1 ' +
-        'command there is no interactive wizard on this surface.',
+        'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. ' +
+        'V2 ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model ' +
+        'selection. Global overrides are not read or written in V2; future global support requires ' +
+        'separate explicit authorization. Pass action="status" to read project-scoped overrides. ' +
+        'Never writes .env or top-level model/small_model.',
       input: MODEL_INPUT,
       output: {},
       execute: executeModel,

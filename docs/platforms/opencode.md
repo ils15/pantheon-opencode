@@ -336,9 +336,9 @@ Built into every agent's workflow, the **YAGNI Ladder** prevents overengineering
 - **Step 2**: Extract only if duplication appears 3+ times
 - **Step 3**: Abstract only when the pattern is proven stable
 
-### Model Configuration — 4 Presets (gerado de `src/routing.yml`)
+### Model Configuration — 4 Presets (V1 legacy; gerado de `src/routing.yml`)
 
-> **Default = herdar do chat (sem `active-preset.json`) no caminho V1** — sem preset ativo, os filhos herdam nativamente o modelo do chat pai. O plugin V1 (`src/plugin.ts` → `resolveActivePreset`) lê `PANTHEON_MODEL_PRESET` env > primeiro `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) > **`null` (herança nativa)**. `loadRoutingAgentModels` vazio quando `null`; nenhum modelo é imposto aos filhos, então o `task()` nativo herda o modelo do chat pai. `small_model` nunca usado. O V2 adapter não aplica esta cadeia de modelo.
+> **Estas tabelas são somente o caminho legado V1; não são rotas ativas no V2.** No V1, sem preset ativo, os filhos herdam nativamente o modelo do chat pai. O plugin V1 (`src/plugin.ts` → `resolveActivePreset`) lê `PANTHEON_MODEL_PRESET` env > primeiro `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) > **`null` (herança nativa)**. `loadRoutingAgentModels` vazio quando `null`; nenhum modelo é imposto aos filhos, então o `task()` nativo herda o modelo do chat pai. `small_model` nunca usado. No V2, markers de preset e `PANTHEON_MODEL_PRESET` são ignorados; o modelo do host permanece intacto sem override manual. Apenas overrides manuais project-scoped `overrides.agents.<agent>.model` e seu `variant` opcional são aplicados no transform do agente; arquivos globais não são lidos nem aplicados. O tool V2 não aceita mutações globais ou flags de autorização na mesma chamada. Suporte global futuro exige autorização humana explícita independente e não é suportado agora. Não há wizard nem seleção implícita. O V1 permanece inalterado até decisão de compatibilidade.
 
 Tabelas abaixo derivam de [`src/routing.yml`](../../src/routing.yml) (sem hardcodar segredos — só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` nomes + `baseURL`s). Pricing 2026 verificado via `scripts/install/model-picker.mjs` (`PRESET_PRICE`).
 
@@ -424,10 +424,23 @@ Tabelas abaixo derivam de [`src/routing.yml`](../../src/routing.yml) (sem hardco
 
 #### Per-agent overrides — `/pantheon-model set --agent`
 
+> **V2:** `pantheon_model` supports only explicit `status`, `show`, `set` and
+> `reset` actions; it has no model-route wizard or static preset selection. Only
+> `overrides.agents.<agent>.model` and its optional `variant` apply through the
+> V2 agent transform. An explicit project override wins for that agent while
+> absent project keys keep the host model and variant; global files are neither
+> read nor applied. Global mutation is unsupported in this tool; future support
+> requires separate explicit human authorization, not flags in the same call.
+> File `preset` markers and `PANTHEON_MODEL_PRESET` are ignored and are never
+> deleted.
+
+The interactive route wizard and preset resolution described below are **V1
+legacy only**. They do not describe V2 behavior.
+
 Desde v1.5.0, personalização fina **por agente** sem tocar `opencode.json` top-level nem `.env`:
 
 ```bash
-# wizard interativo (agente → modelo → effort → scope)
+# V1 legacy only: wizard interativo (agente → modelo → effort → scope)
 /pantheon-model
 # status — 14 agentes com modelo/effort/origem (preset|override|env|none), sem segredos
 /pantheon-model status   # alias: show
@@ -437,10 +450,18 @@ Desde v1.5.0, personalização fina **por agente** sem tocar `opencode.json` top
 /pantheon-model reset --agent hermes --scope project
 ```
 
+No V2, use somente chamadas explícitas, por exemplo:
+
+```text
+pantheon_model(action="status")
+pantheon_model(action="set", agent="hermes", model="openai/gpt-5.6", effort="medium", scope="project")
+pantheon_model(action="reset", agent="hermes", scope="project")
+```
+
 - Valida `agent ∈ {zeus, athena, apollo, hermes, aphrodite, demeter, themis, prometheus, hephaestus, nyx, gaia, iris, mnemosyne, talos}`.
 - Valida `provider/model-id` via `MODEL_REF_PATTERN` e `capabilityEntry(model)` (sem entrada → erro); clampa `effort` via `normalizeCapability`; avisa se `hasVision(model)===false` para uso multimodal.
-- Persiste em `.pantheon/active-preset.json` em `overrides.agents[agent].model` + `variant` (mapeado para `reasoning_effort` no merge) — escrita atômica `tmp`+`rename` com `.bak` + lock por path + `O_NOFOLLOW` + health-check. Default scope `project`; `global` exige `confirm`+`authorize_global`.
-- Nunca escreve `.env` nem injeta `model`/`small_model` global — herança nativa segue: `explicit model` > `overrides.agents` > `preset agents` > nativo.
+- No fluxo legado V1, persiste em `.pantheon/active-preset.json` em `overrides.agents[agent].model` + `variant` (mapeado para `reasoning_effort` no merge) — escrita atômica `tmp`+`rename` com `.bak` + lock por path + `O_NOFOLLOW` + health-check. Default scope `project`; no V1, `global` exige `confirm`+`authorize_global`.
+- No V1, nunca escreve `.env` nem injeta `model`/`small_model` global — herança nativa segue: `explicit model` > `overrides.agents` > `preset agents` > nativo. Essa cadeia não descreve o V2, que ignora presets e arquivos globais.
 
 #### Model Value Types (legado → 1.5.0)
 

@@ -1,5 +1,27 @@
 # Pantheon Model Routing — Deep Analysis with Per-Plan Fallback Chains
 
+> **V2 runtime note (2026-10):** The static model tables and presets in this
+> document describe legacy V1 routing analysis; they do not select models in
+> OpenCode V2. V2 leaves the host's model intact unless an explicit
+> `overrides.agents.<agent>.model` is configured. Only that agent's manual model
+> and optional `variant` are applied by the V2 agent transform. Legacy
+> `preset` markers in `active-preset.json` and `PANTHEON_MODEL_PRESET` are
+> ignored, not deleted, and do not activate a provider or model. V2 has no model
+> wizard or implicit model selection. V1 keeps its legacy behavior until its
+> compatibility path is decided. V2 manual overrides and status are project-only;
+> global override files are not read or applied. The V2 tool rejects global
+> `set`/`reset` and same-call `confirm`/`authorize_global` flags because it has no
+> independent user-approval API. Global overrides require separate explicit
+> human authorization in a future surface and are not currently supported.
+> `pantheon_model status` reports configuration,
+> not which model served a completion, and is the user-accessible place to see
+> override warnings. If an override is invalid or malformed, V2 preserves the
+> host model and records an internal diagnostic; the user must call
+> `pantheon_model status` to see the warning. The V2 server plugin has no
+> documented toast or other proactive user-visible notification API during
+> transform, so no toast/proactive warning is promised. V1 behavior remains
+> legacy and unchanged.
+
 **Generated:** 2026-05-20 10:51
 **Plans analyzed:** 17
 **Agents:** 16 (4 tiers)
