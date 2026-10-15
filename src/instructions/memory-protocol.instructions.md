@@ -16,8 +16,9 @@ These rules apply to all agents; each agent file may add domain-specific rules.
 - Use a targeted query (`top_k=2`); do not search the whole prompt by default. Missing or irrelevant results never block current work.
 
 ### Persistence
-- `memory_store()` is manual, not automatic. Store at most one concise, reusable top-level result; never persist routine child summaries, phase updates, test logs, or temporary state.
-- Confirm the store succeeded before claiming persistence. There is no automatic memory WAL or recovery. Add ADRs to the memory bank only when explicitly requested.
+- A memory write is optional and conditional on a write tool being exposed and permitted in the active session. Search permission does not imply write permission; in the reported Beta 10 Zeus root, `memory_store` is not exposed/granted.
+- Store at most one concise, reusable top-level result; never persist routine child summaries, phase updates, test logs, or temporary state. Confirm a successful write before claiming persistence.
+- If no write tool is available or the write did not succeed, say that the information was not persisted. Do not imply automatic memory storage or recovery. Add ADRs to the memory bank only when explicitly requested.
 
 ### Relevance and permanent records
 Ignore weak matches; routine summaries do not belong in durable memory.

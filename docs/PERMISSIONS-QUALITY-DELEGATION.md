@@ -197,7 +197,7 @@ use, which is not always what the hatch's name suggests.
 | `PANTHEON_TODO_ENFORCER=off` | `src/pantheon/todo-enforcer.ts:80` | Session-level continuation stops. The routing-matrix mirror is explicitly *not* the switch — the env var is (`src/routing.yml:543` says so in a comment). Read once at plugin construction, so it takes effect on the next process start, not mid-session. |
 | `PANTHEON_HOOKS_LOG=1` | `src/pantheon/logger.ts:97`, `src/plugins/pantheon-hooks.ts:192` | Console echo of the file-only log. Does not change enforcement. |
 | `PANTHEON_TOASTS=off` | `src/plugins/pantheon-hooks.ts:76` | TUI notifications suppressed by category. Every suppressed toast is still written to the structured log and the hook log, so the trail stays auditable at any setting. |
-| `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` | documented in [QUICKSTART](../README.md) and [INSTALLATION](INSTALLATION.md) | Enables the host's background child sessions. Without it, background dispatch is unavailable — see [§3.1](#31-two-mechanisms-and-what-each-is-for). |
+| `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` | documented in [QUICKSTART](../README.md) and [INSTALLATION](INSTALLATION.md) | May enable background child sessions only on host versions that support and document this experimental setting; verify the active runtime rather than treating it as a general prerequisite or guarantee. In the reported Beta 10 Zeus-root inventory, `subagent` was callable but `task_status`/`cancel_task` were not exposed; no tracking or recovery guarantee follows. See [§3.1](#31-two-mechanisms-and-what-each-is-for). |
 | `--opencode-version v1\|v2`, `OPENCODE_VERSION`, `OPENCODE_BIN` | `scripts/install/opencode-version.mjs:213` | Pins the plugin generation. Precedence is argument, then env var, then an `opencode2` binary basename, then a `--version` probe, then a warned fallback to V1 (`scripts/install/opencode-version.mjs:223`, `scripts/install/opencode-version.mjs:288`). The fallback is the important one: it **warns and writes the V1 contract**, so an unrecognised 2.x host gets V1 plugins rather than none. |
 | `git commit --no-verify` | `.pre-commit-config.yaml:7` | Skips the secret gate. The config comment names this a security violation; nothing in the repo prevents it. |
 | Editing a decorative layer | see [§2.7](#27-a-fifth-copy-the-agent-table-in-agentsmd) | Silently no-ops. This is the failure mode most likely to waste someone's time, because it produces no error. |
@@ -472,14 +472,22 @@ active generation path when reviewing references to agent tables.
 There are two, they are not alternatives to each other, and only one of them
 enforces anything.
 
-**The native `task()` child-session engine.** Dispatch, child-session lifecycle and
-result retrieval all belong to the host. Pantheon ships no delegation tool; the
-repository documents this removal explicitly in the README
-([Delegation](README.md)) and in [INSTALLATION](INSTALLATION.md). Background mode
-(the default the orchestrator is instructed to use,
-`src/agents/zeus.md:132`) requires a host environment variable to be set before
-launch. **This is the mechanism that carries delegation.** Everything in
-[§3.2](#32-who-may-delegate-to-whom) is enforced here.
+**The host child-session engine.** Dispatch, child-session lifecycle and result
+retrieval belong to the host. API/implementation documentation often calls this
+`task()`, but in the user-reported Beta 10 Zeus-root tool inventory the callable
+dispatch was `subagent`; its exact signature and background support depend on
+the active runtime. Pantheon ships no separate root delegation tool. See the
+README ([Delegation](README.md)) and [INSTALLATION](INSTALLATION.md) for the
+terminology distinction. Do not infer a callable root `task()` API from code or
+documentation about the host engine. **The host mechanism carries delegation.**
+Everything in [§3.2](#32-who-may-delegate-to-whom) concerns its enforcement.
+
+**Observed root inventory (Beta 10 report, not a cross-host contract):** `subagent`
+was callable; `task_status` and a todo-write tool were not exposed. Status/todo
+capabilities are host- and runtime-dependent. Use only tools visible in the active
+root schema; without an observable status result or host completion notification,
+prefer synchronous dispatch. Keep an explicit conversation checklist when no
+todo-write tool is exposed, and do not claim native todos were updated.
 
 **The background job board.** A pure-TypeScript state machine
 (`src/pantheon/background-job-board.ts:26`) with states
@@ -504,12 +512,14 @@ Three consequences a planner needs:
    check is at `src/pantheon/background-job-board.ts:259`, reached only from the
    mirror.
 
-Most of the board's API is not called by any plugin. `waitForTerminal`,
-`markReconciled` and `formatForPrompt` have callers in the test suite and in the
-orchestrator's *instructions*, and nowhere in `src/`. That is not a defect: an
-instruction telling an agent to call a board method is a legitimate use. It does mean
-that a workflow whose correctness depends on those methods has no code-level
-guarantee — it depends on the model making the call.
+The board methods are internal APIs, not root tools. `waitForTerminal`,
+`markReconciled` and `formatForPrompt` have callers in tests and historical
+instructions, but that does not make them callable by Zeus. The reported Beta 10
+root inventory exposed no board tool; instructions must not ask Zeus to call
+`registerLaunch`, `markReconciled`, `recoverRunningJobs` or `formatForPrompt`.
+No board-based tracking or crash-recovery guarantee is available to the root
+orchestrator. The host child-session lifecycle and internal board mirror are
+separate mechanisms.
 
 ### 3.2 Who may delegate to whom
 
@@ -671,8 +681,8 @@ and two surfaces report it.
 | Dispatch mirrored onto the board | Yes | No |
 | Terminal audit log | Yes | No |
 | Periodic pruning of old jobs | Yes | No |
-| Recovery of running jobs after restart | Yes | No |
-| `markReconciled` / `formatForPrompt` / `waitForTerminal` | Callable per instructions | No |
+| Restart handling for persisted `running` records (marks errored; does not resume work) | Yes | No |
+| `markReconciled` / `formatForPrompt` / `waitForTerminal` | Internal API; no root-callable tool observed | Not applicable to the V2 plugin state described above |
 
 **Planning against the board on the V2 contract still produces no error and no failed
 dispatch** — the work runs, because the work runs on the native engine, and the
@@ -697,7 +707,7 @@ the notice arrives before you depend on the board, not when a dispatch goes unre
 Two V1-specific behaviours worth stating conditionally as well, since both are
 recorded as observations of specific host builds rather than as guarantees:
 
-- **Restart recovery.** On restart, jobs left in `running` are marked errored
+- **Restart handling (not job recovery).** On restart, jobs left in `running` are marked errored
   (`src/plugin.ts:55`). Old jobs are not resumed and child work is not restarted.
   The persisted reports remain historical records. See
   [INSTALLATION](INSTALLATION.md).
@@ -728,7 +738,7 @@ Surfaced, not resolved. Each row names the layers and what each one says.
 | 7 | `docs/INSTALLATION.md`'s V2 config example vs the migration output | The documented example shows a rule shape keyed on the tool with an allowed-agent list (`docs/INSTALLATION.md:179`); the converter emits a shape keyed on an action with a resource and an effect (`scripts/install/config-migration.mjs:33`). One of the two is stale. |
 | 8 | `docs/INSTALLATION.md`'s V2 MCP example vs the MCP converter | The example shows the wrapper form; the converter's own comment says the host rejects that wrapper and normalises it away (`scripts/install/config-migration.mjs:243`). The example contradicts the code. |
 | 9 | Routing matrix vs board path | The matrix is enforced on the native path only. The board path enforces a concurrency cap and no permissions ([§3.2](#32-who-may-delegate-to-whom)). |
-| 10 | Orchestrator's documented wave size vs the board's concurrency cap | The instructions describe waves of up to five (`src/agents/zeus.md:154`); the board caps running jobs **per agent** at three (`src/pantheon/shared-board.ts:25`; `getRunningCount(agent)`, `src/pantheon/background-job-board.ts:512`). Above the cap, the mirror is dropped silently and the extra job is untracked. **The disagreement is real, but the documented wave pattern cannot trip it:** that example dispatches to six *distinct* agents, and council synthesis caps itself at 3 specialists (`src/instructions/zeus-council-synthesis.instructions.md:107`), so no documented wave puts four jobs on one agent. Two things do reach the cap — four concurrent dispatches to the **same** agent, or accumulated jobs stuck in `running`, since every eviction path filters to terminal/reconciled only (`pruneExpired`, `src/pantheon/background-job-board.ts:630`; `pruneCompleted`, `:677`; `enforceEntryCap`, `:695`). A stuck job therefore holds its slot until the process restarts. |
+| 10 | Internal board concurrency cap vs root dispatch | The board caps mirrored running jobs **per agent** at three (`src/pantheon/shared-board.ts:25`; `getRunningCount(agent)`, `src/pantheon/background-job-board.ts:512`), and drops a mirror above the cap. The root has no board tool in the reported Beta 10 inventory, and active-runtime `subagent` concurrency is host-dependent; the internal cap is neither a root dispatch limit nor a reliable root tracker. Current Zeus instructions do not prescribe fixed-size waves or board tracking. |
 | 11 | Orchestrator's depth rule vs the plugin's depth rule | Two independent depth mechanisms: a key-value counter in the instructions (`src/agents/zeus.md:189`) and a parent-child session hierarchy in the plugin (`src/pantheon/delegation-enforce.ts:353`). The plugin's is the enforced one. |
 | 12 | `AGENTS.global.md` role table vs canonical agent files | Static generator string, not rendered from canonical definitions ([§2.7](#27-the-agent-table-in-agentsglobalmd)). |
 | 13 | Broad coverage report vs focused coverage gates | `npm run coverage` is report-only; Python MCP and V2 plugin coverage each have separate 80% CI gates. |
@@ -757,7 +767,7 @@ Each item is something this repository cannot settle, with the evidence that wou
 | 3 | Whether a 2.x host recognises the action names the converter emits (`read`, `grep`, `glob`, `task`, `webfetch`, `question`, `write`, `mcp`, …) as distinct actions | The V2 action vocabulary is not defined in this repository | The host's `permissions` schema for that generation |
 | 4 | Whether a nested glob deny and its wildcard sibling resolve last-match-wins, first-match-wins, or most-specific-wins | Ordering semantics live in the host | The host's permission resolution rules, plus a test config exercising both orders |
 | 5 | Whether the host applies the glob semantics the project assumes to a `permission.task` block — i.e. whether `"*": deny` plus one named allow actually permits only that one agent | The block reaches the installed config (verified), but the interpretation is the host's. The project's own glob implementation is real (`src/pantheon/permission-globs.ts:40`) and is **not** wired to it ([§3.2](#32-who-may-delegate-to-whom)), so it cannot be used as evidence of host behaviour | The host's `task` permission rules, or an end-to-end test: one agent whose frontmatter permits exactly one target, observed attempting a second |
-| 6 | Whether `task_status` with a blocking wait is available on each host generation | It is a host tool; this repository only documents it in the orchestrator's instructions | The host's tool registry per generation |
+| 6 | Whether the host exposes a blocking status/wait tool on a given runtime | Host tool availability cannot be inferred from the repository. The user-reported Beta 10 Zeus root did not expose `task_status`; this is an observation, not a generation-wide API claim. | Inspect the active root tool registry and verify the tool schema and behavior |
 | 7 | Whether a background child's completion is observable on a given host build | Recorded in the source as an observation of one build, not a contract | A probe against the target build: dispatch a background child, observe which events fire |
 | 8 | The number of installed configs actually affected by the incomplete translation map | The defect's shape is verified; its population is not | Enumerating installed configs and counting permission keys absent from the map |
 

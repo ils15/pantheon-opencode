@@ -44,7 +44,7 @@ Lexical memory with SQLite FTS5 (BM25). **9 tools**: 6 `memory_*` for storing, s
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
-| `memory_store` | `(value, namespace?: "default", key?, metadata?: "{}")` | Store a reusable memory entry (FTS5 index updated by trigger); metadata is a JSON string | Zeus, Mnemosyne when durable context is warranted |
+| `memory_store` | `(value, namespace?: "default", key?, metadata?: "{}")` | Store a reusable memory entry (FTS5 index updated by trigger); metadata is a JSON string | Mnemosyne when durable context is warranted and write access is granted |
 | `memory_search` | `(query, namespace?, top_k?: 5, decay_days?)` | FTS5 BM25 keyword search (stopwords dropped, 4+ char terms prefix-matched); optional freshness decay via `decay_days` (default off) | Coordinator or specialist only when prior project context is relevant |
 | `memory_recall` | `(key, namespace?: "default")` | Exact recall of an entry by key within a namespace | Exact-key lookup when needed |
 | `memory_forget` | `(id?, key?, namespace?: "default")` | Delete an entry by ID or key (FTS index cleaned via trigger) | mnemosyne only |
@@ -62,6 +62,12 @@ memory_search(query="existing auth patterns", top_k=2)
 # Store once at the top level only if the result is reusable in a later session.
 memory_store(value="Refresh tokens rotate on every use", key="decision-42")
 ```
+
+The table describes server capabilities, not per-agent grants. Zeus's canonical
+frontmatter grants `memory_search`, not `memory_store`; the Beta 10 root tool
+catalog likewise did not expose a memory-write tool. Zeus may search when
+available, but must not claim a memory decision was persisted unless a permitted
+write tool is actually exposed and confirms success.
 
 Do not search at every agent start, repeat a task-level search in each child, or
 store routine phase/test summaries. Use `memory_recall` only when an exact key

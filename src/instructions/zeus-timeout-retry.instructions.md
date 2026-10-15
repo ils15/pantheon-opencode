@@ -9,6 +9,13 @@ fallback: shared
 
 When a delegated agent does not respond in time, enforce the timeout policy from `routing.yml`.
 
+Use the root `subagent` dispatch observed in the Beta 10 runtime. `task()` is
+host/API terminology; the active runtime determines the callable schema and any
+background options. Do not assume root `task_status`, `cancel_task`, or board
+tracking/recovery tools. Prefer synchronous dispatch unless background completion
+is observable through the host, and keep any retry list in the current context
+only; do not claim persistent job tracking.
+
 ## Timeout Behavior by Agent Role
 
 | Agent Role | Timeout | Retry Policy | Partial Results OK? | Reasoning Effort |
@@ -43,14 +50,18 @@ at most once, and an exhausted chain is never restarted automatically.
 
 For a domain/scope refusal, do not retry with a rephrased prompt. Correct the
 route once only when the right specialist is clear; otherwise stop and ask.
-Record one `DelegationCacheDecision` telemetry item for the corrected route,
-including `reroute_from`, `reroute_to`, and `delegation_id` when available.
+Record one `DelegationCacheDecision` telemetry item only when telemetry recording
+is actually exposed; otherwise keep the corrected route in the current handoff
+and do not claim telemetry was persisted. Include `reroute_from`, `reroute_to`,
+and `delegation_id` when available.
 
 ### Escalation Protocol
 When all fallbacks fail, report the tried agents and errors, offer a different approach/simpler scope/manual fix, and stop. Never retry the same chain automatically.
 
 ### Session Reuse Check
-Check for a reusable session before dispatch and obey `session_max` in `routing.yml`.
+Reuse a prior specialist session only when the active host exposes that capability;
+otherwise dispatch through `subagent` with necessary context. Treat `session_max`
+as policy context, not as a claim that Zeus can enumerate sessions.
 
 ---
 
@@ -89,4 +100,8 @@ Only agents marked ✅ in the Timeout Behavior table above may return partial re
 
 # 📊 TIMEOUT TRACKING
 
-Track in-flight delegations against the Timeout Behavior table above. Log timeouts to `/memories/session/timeout-log.md` for later analysis.
+Keep only an in-context list of active delegations and already-tried agents when
+needed. Use results returned by `subagent` or host completion notifications; do
+not poll, cancel, or write a timeout log unless the corresponding tool is exposed.
+Report any timeout and the retry/fallback taken in the user-facing handoff; do
+not claim persistent tracking or recovery.

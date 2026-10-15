@@ -55,16 +55,16 @@ Full-auto may continue only within a task and scope the user explicitly authoriz
 ## Implementation Pattern
 
 ```
-1. Create todos only for multi-step work; a one-step fix needs no todo ceremony
-2. Mark first todo in_progress
-3. Complete work → mark completed immediately
-4. Mark next todo in_progress → repeat
+1. Create a checklist only for multi-step work; a one-step fix needs no todo ceremony
+2. Use native todo operations only when a todo-write tool is visible in the active session; otherwise keep the checklist explicit in the conversation
+3. Mark work complete in the available checklist as soon as it is done
+4. Do not claim that the native todo list was updated when no todo-write tool is exposed
 5. Do NOT ask "should I continue?" between clear steps
 6. Stop at any applicable risk gate; do not require a plan/review gate for a low-risk edit
 7. After gate approval, resume with next todo
 ```
 
-**Never batch-complete todos.** Mark each completed as soon as done.
+**Never batch-complete checklist items.** Mark each completed as soon as done; do not imply a tool call occurred unless it did.
 
 ---
 
@@ -107,6 +107,14 @@ Only expand to full cooldown when hitting a mandatory gate.
 
 ## Timeout & Retry Enforcement
 
+Delegate through the root `subagent` tool observed in the Beta 10 runtime. `task()` is
+host/API terminology, not an assumed root tool; call shape and background support are
+runtime-dependent. Prefer synchronous dispatch unless the active schema exposes background
+and the host provides an observable completion notification. Do not assume `task_status`,
+`cancel_task`, or board-based tracking/recovery tools are available. When no completion
+mechanism is observable, use synchronous dispatch or state the limitation; do not claim
+that jobs are being tracked or recovered.
+
 When a delegated agent does not respond in time, enforce the timeout policy defined in
 `src/instructions/zeus-timeout-retry.instructions.md`.
 
@@ -128,7 +136,7 @@ When dispatching, set the expectation explicitly:
 
 ### Timeout Tracking Table
 
-Maintain a mental table of in-flight delegations:
+Maintain an in-context (not persistent/native) checklist of delegations when needed:
 
 | Agent | Started | Timeout | Status | Partial OK? |
 |-------|---------|---------|--------|-------------|

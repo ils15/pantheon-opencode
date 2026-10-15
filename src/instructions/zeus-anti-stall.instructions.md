@@ -16,18 +16,18 @@ You MUST self-monitor for these stall conditions:
 | Symptom | Detection Rule | Recovery Action |
 |---------|---------------|-----------------|
 | Silent loop | 3+ consecutive turns with no tool call AND no visible progress | Output `[STALL_DETECTED]` and re-read your task definition. If still stuck, escalate to user with: "I appear to be stuck on [task]. Options: (1) retry with different approach, (2) delegate to specialist, (3) simplify scope." |
-| Delegation black hole | Agent dispatched but no response after 2x the timeout from routing.yml | Log the hang, cancel via `cancel_task`, then follow the fallback chain in `## ⏱️ Timeout & Retry Enforcement` |
+| Delegation black hole | No result or host completion notification after the applicable timeout | Stop dependent work; do not call an unavailable cancel/status tool. Follow `## ⏱️ Timeout & Retry Enforcement`, report uncertainty, and retry/reroute only under that policy |
 | Circular delegation | Same specialist re-dispatched for same task 2+ times without progress | Break cycle: dispatch to different specialist OR escalate to user |
 | Idle after completion | All background tasks completed but no synthesis/next step for 2+ turns | Force synthesis: summarize all completed results and propose next action |
 | Context thrash | Re-reading same files repeatedly without new action | Stop re-reading. State: "Already have context on [file]. Proceeding with [action]." |
 
 ## Phase Reminder
 
-After dispatching background specialists, you MUST:
-1. DO NOT poll running jobs or consume their partial output
-2. DO NOT advance dependent work until terminal results arrive
-3. Continue orchestration ONLY on non-overlapping independent work
-4. If nothing independent remains, briefly report what was launched and WAIT
+Use the root `subagent` dispatch observed in the Beta 10 runtime; `task()` is host/API terminology, and the exact signature/background options depend on the active runtime. Prefer synchronous delegation unless the visible schema supports background and the host exposes a way to observe completion. For asynchronous work:
+1. Do not invoke `task_status`, `cancel_task`, or board methods unless a corresponding tool is actually exposed (none was exposed in the reported Beta 10 root catalog).
+2. Do not advance dependent work until a result or host-provided completion notification arrives.
+3. Continue orchestration only on non-overlapping independent work.
+4. If nothing independent remains, briefly report what was dispatched and wait for host notification; do not claim job tracking or recovery.
 
 Self-check every 3 turns: "Am I waiting on a delegate? Have I polled without need? Is there independent work I can do?"
 

@@ -43,19 +43,24 @@ npm run doctor
 - **Python 3.11+** (optional, for MCP servers)
 
 
-## Background Subagents
+## Delegated Agents and Background Mode
 
-Pantheon dispatches agents in parallel via OpenCode's background subagent system.
-To enable, set before launching OpenCode:
+OpenCode V2 documents the native `subagent` tool. Its availability depends on
+the active host/runtime; check the tools exposed in the current session. A
+foreground call waits for the child result. With `background: true`, the call
+returns immediately, the parent is notified when the child finishes, and the
+response includes a `sessionID` that can be used to continue that child. See
+the [OpenCode V2 tools documentation](https://opencode.ai/v2/docs/tools).
+
+`OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS` is not a universal prerequisite.
+It is an experimental gate for some runtimes and is set by Pantheon's
+`npm run start` launcher; use it only when the target runtime documents and
+requires it. The setting does not make a missing tool available.
 
 ```bash
+# Only when the active runtime documents and requires this experimental gate
 export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
 opencode
-```
-
-Or add to your shell profile (`~/.zshrc` or `~/.bashrc`):
-```bash
-echo 'export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true' >> ~/.zshrc
 ```
 
 ## Highlights

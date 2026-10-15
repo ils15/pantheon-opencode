@@ -19,8 +19,7 @@ npm run doctor
 ```
 
 - Requisitos: **Node.js 22.22.2+** (ou 24.15.0+ / 26+), **OpenCode v1.18.4+**, **Python 3.11+** (opcional, MCP servers).
-- Habilite subagentes paralelos antes de abrir o OpenCode:
-  `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`.
+- Delegação e modo background dependem das ferramentas expostas pela versão/runtime do host. Na sessão Beta 10 reportada, Zeus tinha a ferramenta `subagent`, sem `task_status`/`cancel_task` ou garantia de acompanhamento/recuperação. Verifique o schema e a documentação do runtime; não presuma que `task()` ou background estejam disponíveis. A variável experimental abaixo só se aplica a hosts/versões que a documentem.
 - Passo a passo de 5 minutos: [QUICKSTART.md](QUICKSTART.md).
 
 ## Prerequisites
@@ -193,9 +192,10 @@ hook that enforces read-only sessions (`apollo`/`gaia` are denied `edit`,
 tools are
 not registered on V2 because the goal loop requires V1 infrastructure the V2
 context does not expose; `getUnsupportedFeatures()` reports this as
-`goal-tools`. Native OpenCode `task()` is an OpenCode capability, not a V2
-Pantheon delegate API. Do not add the V1 plugin beside `plugin-v2` to try to
-restore V1-specific features: that is an unsupported mixed registration.
+`goal-tools`. The host-native child-session API (called `task()` in hosts that
+expose that API) is not a V2 Pantheon delegate API. Do not add the V1 plugin
+beside `plugin-v2` to try to restore V1-specific features: that is an
+unsupported mixed registration.
 
 Choose the target explicitly when needed:
 
@@ -345,13 +345,21 @@ npx pantheon-opencode init --headless
 # 2. (Optional) Install MCP servers + skills + TUI plugin
 npm run setup
 
-# 3. Enable background subagents
-# Add to ~/.zshrc or ~/.bashrc:
-export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
-
-# 4. Launch OpenCode with background subagents
+# 3. Launch OpenCode
 opencode
 ```
+
+Only if the active OpenCode version/runtime documents support for and requires
+the experimental background setting, set it before launch (for example, in
+`~/.zshrc` or `~/.bashrc`):
+
+```bash
+export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
+opencode
+```
+
+This variable is not a general prerequisite and does not guarantee a background
+dispatch tool, status/cancel tools, completion tracking, or recovery.
 
 ## Install Modes
 
@@ -457,48 +465,72 @@ O comando é determinístico (`src/pantheon/model-command.ts`) — leitura/escri
 
 **Histórico superseded (≤1.4.1):** antes manipulava `model`/`small_model` top-level em `opencode.json`; em 1.5.0 manipula apenas `overrides.agents`. Instrução em `commands/pantheon-model.md` usa `agent: zeus` + per-agent semantics.
 
-## Background Delegation (native `task()`)
+## OpenCode V2 `subagent` Tool and Runtime Delegation
 
-Pantheon delegates through OpenCode's native `task()` child-session engine —
-there is no Pantheon-specific delegation tool surface. In background mode the
-call returns immediately and the child keeps running; the TUI Delegations panel
-follows it through `api.client.session.children` and OpenCode session events. No
-completion text is injected into the chat transcript.
+OpenCode V2 documents `subagent` as the child-session tool. It is a host tool,
+not a Pantheon-specific delegation API; verify that it is exposed in the active
+session. The following shows its V2 tool arguments, not a promise that other
+hosts or versions expose the same schema:
 
-**Requirement:** Set the environment variable before launching OpenCode:
+```json
+{
+  "agent": "apollo",
+  "description": "Find X",
+  "prompt": "Search the codebase for X."
+}
+```
+
+A foreground call waits for the child to finish and returns its result. To
+request background execution where the active tool schema supports it, add
+`"background": true`:
+
+```json
+{
+  "agent": "apollo",
+  "description": "Find X",
+  "prompt": "Search the codebase for X.",
+  "background": true
+}
+```
+
+In OpenCode V2, a background call returns immediately; its response includes a
+`sessionID` for continuing that child, and the parent is notified when the child
+finishes. The exact tool availability and behavior remain runtime-dependent.
+Some older or host-specific documentation uses `task()` to refer to native
+child-session dispatch; that name does not guarantee a root tool named `task`.
+Do not assume `task_status`, `cancel_task`, a Pantheon BackgroundJobBoard, or
+other status/recovery facilities are available in V2.
+
+The experimental environment variable below is a gate used by some supported
+runtime versions; it is not a universal prerequisite and does not install or
+guarantee a background tool. Pantheon's `npm run start` launcher sets it, but
+that launcher does not detect runtime support. Set it only when the active
+runtime documents and requires it:
 
 ```bash
 export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
 opencode
 ```
 
-Or use the provided npm script:
+The Pantheon launcher can be used for that same runtime-specific case:
 
 ```bash
 npm run start
 ```
 
-**How it works:**
+The reported Beta 10 Zeus-root toolset also exposed `subagent`; other runtimes
+may expose different tools or options. Follow the active schema and use
+background only when supported by that schema.
 
-```javascript
-// Dispatch a background child — returns immediately in background mode
-task({ subagent_type: "apollo", description: "Find X", prompt: "search the codebase" })
-// → child session ses_xxx; visible in the TUI Delegations panel
+**Suggested dispatch style (only when the active root schema supports it):**
 
-// Foreground dispatch blocks until the child finishes and returns its report
-task({ subagent_type: "hermes", description: "Implement Y", prompt: "..." })
-```
+| Agent/task kind | Preference | Why |
+|-----------------|------------|-----|
+| Independent, long-running work (e.g. discovery or implementation) | Background only if explicitly supported and completion is observable | May benefit from concurrency |
+| Short, dependent, or context-sensitive work (e.g. plan or review handoff) | Synchronous | Keeps result and dependency visible |
 
-**Which agents run in background:**
-
-| Agent | Background? | Why |
-|-------|------------|-----|
-| Apollo, Hermes, Aphrodite, Demeter, Hephaestus, Prometheus | ✅ Yes | Independent, long-running work |
-| Athena, Themis | ❌ No | Need full session context |
-| Talos, Iris, Nyx, Mnemosyne, Gaia | ❌ No | Quick operations |
-
-See the **Delegation (native `task()`)** section in the [README](../README.md)
-for the engine contract and historical notes.
+See the **Delegation (root `subagent`; host/API `task()`)** section in the
+[README](../README.md) for the runtime distinction and historical notes.
 
 V1 compaction carry-forward is implemented by
 `experimental.session.compacting`. It is not available through `plugin-v2`.
@@ -679,16 +711,22 @@ ls ~/.config/opencode/agents/
 # 2. Check MCP servers
 ls ~/.config/opencode/scripts/
 
-# 3. Launch OpenCode with background subagents
-export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
+# 3. Launch normally; use the conditional setting below only when supported.
 opencode
 
-# 4. Test background delegation
-# Type: @zeus, task(background=true, subagent_type="apollo", prompt="test")
+# 4. Test delegation with the actual tool schema shown to Zeus
+# In the reported Beta 10 runtime, dispatch through `subagent`; request
+# background only if the active schema offers it.
 
 # 5. Run health check
 npm run doctor
 ```
+
+If (and only if) the active host version/runtime documents and requires the
+experimental background setting, export
+`OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` before launching OpenCode.
+Verify delegation against the tools actually exposed to Zeus; do not infer
+completion tracking or recovery from a successful dispatch.
 
 **Instalação global isolada:** para testar o pacote instalado em um sandbox
 isolado (sem contaminar o ambiente de dev, que mistura várias instalações), use
@@ -728,7 +766,7 @@ removed from all `tui.json` locations OpenCode reads: `~/.opencode/tui.json`,
 |---------|----------|
 | Agents not found | Run `npx pantheon-opencode init` again |
 | MCP servers not starting | Check Python 3.11+, run `npm run setup` |
-| Background delegation not available | Set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` before launching OpenCode |
+| Background delegation not available | Check the active host version/runtime's tool schema and documentation. Set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` only if that version documents support and requires it; the setting does not guarantee status, completion tracking, or recovery tools. |
 | TUI sidebar not showing | Check the installed config's `tui.json` has exactly one `plugins/pantheon-tui` entry (absolute path) |
 | Plugin not loading | Ensure `<config>/plugins/pantheon-tui/dist/tui.js` exists (copied at install time) |
 | Health check fails | Run `npm run doctor` for detailed diagnostics |
@@ -811,27 +849,37 @@ flowchart LR
     C --> E["npm run setup"]
     D --> E
     E --> F["MCP servers + skills + TUI"]
-    F --> G["export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true"]
+    F --> G["Check background support; configure only if documented"]
     G --> H["opencode"]
     H --> I["🚀 Pantheon v1.5.0 ready"]
 ```
 
-## Native `task()` Delegation Flow
+## Host/API `task()` Delegation Concept
+
+This is an API-level illustration for hosts that expose the documented native
+`task()` shape and completion semantics. It is not a guarantee that Zeus has a
+root `task()` tool, that this signature is available, or that dispatch returns
+a trackable result. In the reported Beta 10 Zeus-root runtime, dispatch was via
+`subagent`; `task_status` and `cancel_task` were not exposed, and no status,
+completion-tracking, or recovery guarantee follows from this diagram. Check the
+active runtime's tool schema and documentation. Background support, the
+experimental environment variable, and completion notifications are
+version/runtime-dependent.
 
 ```mermaid
 sequenceDiagram
     participant Z as Zeus
     participant A as Apollo (child)
-    participant D as Demeter (child)
     participant H as OpenCode host
 
-    Z->>+A: task({ subagent_type: "apollo", ... })
-    Z->>+D: task({ subagent_type: "demeter", ... })
-    A-->>H: child session terminal state
-    D-->>H: child session terminal state
-    H-->>Z: task() result returned to the caller
+    Z->>H: host API dispatch (e.g. task(), if exposed)
+    H-->>A: child session starts (host-dependent)
+    A-->>H: child completion (if emitted by host)
+    opt Host exposes a result or completion notification
+        H-->>Z: host-defined result/notification
+    end
 
-    Note over Z: Native OpenCode task(); no Pantheon delegate API
+    Note over Z,H: Illustrative host API only; no Pantheon-specific delegate API
 ```
 
 ## TUI Sidebar Layout

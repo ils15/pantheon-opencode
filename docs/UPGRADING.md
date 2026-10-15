@@ -169,15 +169,19 @@ venv and MCP entries.
 
 ### Runtime differences after the upgrade
 
-- **Delegation:** neither generation registers a Pantheon delegation tool —
-  both use OpenCode's native `task()`. The former `pantheon_delegate`,
+- **Delegation:** neither generation registers a Pantheon-specific delegation
+  tool. OpenCode V2 documents the native `subagent` tool; some host/API
+  documentation uses `task()` for child-session dispatch, but that is not a
+  guaranteed root-tool name. Tool availability, signature, and background
+  support remain runtime-dependent.
+  The former `pantheon_delegate`,
   `pantheon_delegation_read` and `pantheon_delegation_list` tools were removed
   from the V1 plugin.
 - **V1:** additionally ships `hashline_edit`, the goal/cost/model tools, the
   BackgroundJobBoard lifecycle, and the hooks explicitly registered for V1.
 - **V2:** `plugin-v2` does not register the BackgroundJobBoard, V1 event/tool
-  hooks, or a Pantheon compaction hook. Native OpenCode `task()` is a host
-  capability, not a V2 Pantheon API.
+  hooks, or a Pantheon compaction hook. The native OpenCode V2 `subagent` tool
+  is a host capability, not a Pantheon-specific API.
 - **TUI:** native tasks may be followed only when OpenCode exposes explicit
   origin, parent/child and status metadata. A missing Markdown report is not
   enough to classify a child as native.
@@ -204,14 +208,20 @@ v1.0 removes all multi-platform support. Pantheon now runs exclusively on OpenCo
 ### Breaking Changes
 1. **No longer supports**: Claude Code, Cursor, Windsurf, Cline, Continue.dev, VS Code Copilot
 2. **Installation changed**: Use `npx pantheon-opencode init` instead of per-platform scripts
-3. **Background delegation**: Requires `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`
+3. **Background delegation (historical, runtime-specific note)**: Some host
+   versions use `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` as an
+   experimental gate. This is not a universal requirement; follow the active
+   runtime's documentation and tool availability.
 4. **OpenCode-only**: Multi-platform support removed. Use `npx pantheon-opencode init` for setup.
 
 ### Migration Steps
 1. Uninstall old platform-specific configs
 2. Run `npx pantheon-opencode init` to install agents globally
 3. Run `npm run setup` for MCP servers + skills + TUI
-4. Add `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` to your shell profile
+4. Only if the active host/runtime documents and requires this experimental
+   setting, set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` before
+   launch (or use Pantheon's `npm run start` launcher, which sets it). This is
+   not a general migration step.
 
 ### Rollback
 For a rollback, use the previous Pantheon release tag that matches your deployment.
@@ -229,7 +239,7 @@ Key changes:
 - All 14 agent files now have a `## 🧠 Memory Protocol` section with mandatory rules
 - Agents must call `memory_recall()` before work (top_k=3, skip if score <0.3)
 - Agents must call `memory_store()` after work (2 lines max, importance 0.4-0.9)
-- Zeus auto-stores on agent return — no extra work needed
+- Historical claim (superseded): Zeus auto-stores on agent return — this is not a current guarantee and requires a permitted write tool
 - Session-end auto-save runs at session close
 - Memory Bank is updated only at sprint close (importance ≥ 0.6 graduates)
 
@@ -238,7 +248,9 @@ Key changes:
 > **Superseded:** the mandatory per-agent recall/store rules above are historical
 > and are not the current policy. New work searches only when project history is
 > relevant, reuses coordinator results across delegation, and stores only a
-> reusable top-level outcome. See [MEMORY.md](MEMORY.md).
+> reusable top-level outcome. A write is conditional on an exposed, permitted
+> tool; the reported Beta 10 Zeus root has `memory_search` but no `memory_store`
+> grant/tool, so it must not claim that it stored a decision. See [MEMORY.md](MEMORY.md).
 
 ### Previous historical upgrades
 

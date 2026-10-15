@@ -283,7 +283,7 @@ contracts are different:
 | Concern | V1 | V2 |
 |---|---|---|
 | Agent runtime | Legacy Pantheon plugin plus OpenCode agent config | `plugin-v2` transforms agent drafts and sets Zeus to `primary` |
-| Delegation | Native OpenCode `task()`; V1 board lifecycle retained | Native OpenCode `task()`; no Pantheon delegate tool surface |
+| Delegation | Native OpenCode `task()`; V1 board lifecycle retained | Native OpenCode V2 `subagent` tool; no Pantheon-specific delegate tool |
 | Hooks/events | V1 plugin and separately registered V1 hooks | Not registered by `plugin-v2` |
 | Compaction/restart | Only the V1 paths documented below | No Pantheon compaction or auto-resume contract |
 

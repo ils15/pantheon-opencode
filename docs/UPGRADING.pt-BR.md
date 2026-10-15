@@ -10,7 +10,10 @@ exclusivamente no OpenCode.
 ### Mudanças incompatíveis
 1. **Não há mais suporte a**: Claude Code, Cursor, Windsurf, Cline, Continue.dev e VS Code Copilot
 2. **Instalação alterada**: use `npx pantheon-opencode init` em vez dos scripts específicos por plataforma
-3. **Delegação em segundo plano**: requer `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`
+3. **Delegação em segundo plano (nota histórica, específica do runtime)**:
+   algumas versões do host usam `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`
+   como gate experimental. Isso não é um requisito universal; consulte a
+   documentação do runtime ativo e verifique as ferramentas disponíveis.
 4. **Somente OpenCode**: o suporte multiplataforma foi removido. Use `npx pantheon-opencode init` para configurar.
 
 ### Atualizando entre betas (1.5.0-beta.5+)
@@ -39,7 +42,10 @@ config, venv e entradas MCP.
 1. Desinstale as configurações específicas da plataforma antiga
 2. Execute `npx pantheon-opencode init` para instalar os agentes globalmente
 3. Execute `npm run setup` para configurar servidores MCP, skills e TUI
-4. Adicione `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` ao perfil do shell
+4. Somente se o host/runtime ativo documentar e exigir essa configuração
+   experimental, defina `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` antes
+   de iniciar (ou use o launcher `npm run start` do Pantheon, que a define).
+   Esta não é uma etapa geral de migração.
 
 ### Rollback
 Para fazer rollback, use a tag da versão anterior do Pantheon compatível com sua implantação.
@@ -58,7 +64,7 @@ Principais mudanças:
 - Os 14 arquivos de agentes passaram a incluir uma seção `## 🧠 Memory Protocol` com regras obrigatórias
 - Os agentes devem chamar `memory_recall()` antes do trabalho (top_k=3, ignorando resultados abaixo de 0,3)
 - Os agentes devem chamar `memory_store()` depois do trabalho (máximo de 2 linhas, importância de 0,4 a 0,9)
-- O Zeus armazena automaticamente o retorno dos agentes — nenhuma ação extra é necessária
+- Alegação histórica substituída: Zeus armazena automaticamente o retorno dos agentes — isso não é uma garantia atual e exige uma ferramenta de escrita permitida
 - O salvamento automático de sessão é executado no encerramento da sessão
 - O Memory Bank é atualizado apenas no fechamento do sprint (importância ≥ 0,6 é promovida)
 
@@ -67,7 +73,10 @@ Principais mudanças:
 > **Substituído:** as regras históricas de consulta e gravação obrigatórias por
 > agente não são a política atual. Busque somente quando o histórico do projeto
 > for relevante, reutilize o resultado do coordenador nas delegações e grave
-> apenas um resultado reutilizável no nível da tarefa. Veja [MEMORY.md](MEMORY.md).
+> apenas um resultado reutilizável no nível da tarefa e somente se houver uma
+> ferramenta de escrita exposta e permitida. No runtime Zeus root Beta 10
+> reportado, há `memory_search`, mas não grant/ferramenta `memory_store`; Zeus
+> não deve afirmar que persistiu uma decisão. Veja [MEMORY.md](MEMORY.md).
 
 ### Atualizações anteriores
 
