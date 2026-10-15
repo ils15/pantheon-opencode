@@ -100,6 +100,19 @@ test('runOnce spawns opencode run non-interactively with json format, auto-appro
   assert.ok(result.wallMs >= 0)
 })
 
+test('runOnce measures elapsed wall time with its monotonic clock', async () => {
+  const ticks = [100, 101, 145]
+  const result = await runOnce({
+    cwd: '/sandbox/run-clock',
+    prompt: 'hello',
+    model: 'p/m',
+    timeoutMs: 5_000,
+    spawn: () => ({ stdout: '', stderr: '', exitCode: 0, killed: false }),
+    monotonicNow: () => ticks.shift(),
+  })
+  assert.equal(result.wallMs, 45)
+})
+
 test('runOnce honors the explicitly selected specialist root agent', async () => {
   let argsSeen
   await runOnce({

@@ -25,6 +25,7 @@
  */
 
 import { spawn as nodeSpawn } from 'node:child_process'
+import { performance } from 'node:perf_hooks'
 
 const TAIL_CHARS = 2000
 
@@ -146,6 +147,7 @@ export async function runOnce({
   env,
   spawn,
   agent = 'zeus',
+  monotonicNow = () => performance.now(),
 }) {
   const args = [
     'run',
@@ -163,7 +165,9 @@ export async function runOnce({
     model,
     prompt,
   ]
-  const startedAt = Date.now()
+  // setTimeout uses a monotonic clock, so elapsed time must too. Date.now can
+  // jump when the system clock is adjusted and otherwise misreports timeouts.
+  const startedAt = monotonicNow()
   let result
   if (typeof spawn === 'function') {
     const handle = spawn('opencode', args, { cwd, env })
@@ -171,8 +175,8 @@ export async function runOnce({
       result = await handle
     } else {
       // Synchronous stub handle: poll for an exit code until the timeout.
-      const deadline = Date.now() + timeoutMs
-      while (handle.exitCode === null && Date.now() < deadline) {
+      const deadline = monotonicNow() + timeoutMs
+      while (handle.exitCode === null && monotonicNow() < deadline) {
         await sleep(5)
       }
       if (handle.exitCode === null) {
@@ -188,7 +192,7 @@ export async function runOnce({
   return {
     exitCode: result.exitCode,
     timedOut: result.timedOut === true,
-    wallMs: Date.now() - startedAt,
+    wallMs: monotonicNow() - startedAt,
     events,
     sessionId: extractSessionId(events),
     stdoutTail: String(result.stdout ?? '').slice(-TAIL_CHARS),
