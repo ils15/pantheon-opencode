@@ -42,6 +42,7 @@ import {
   migrateMcpEntrypointPaths,
   migrateV1toV2,
 } from './config-migration.mjs'
+import { componentForInstalledPath, updateFileInventory } from './file-inventory.mjs'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
 import { resolveOpenCodeVersion } from './opencode-version.mjs'
@@ -1201,7 +1202,7 @@ async function installPass(
   // active config directory is the project root and its agent loader scans
   // <config-dir>/{agent,agents}/**, so V2 project agents must be at ./agents.
   // Global installs are flat for both versions.
-  const isGlobal = isGlobalConfigDir(target)
+  const isGlobal = opts.global ?? isGlobalConfigDir(target)
   const _subDir = isGlobal ? '' : '.opencode'
   const agentPrefix = isGlobal || version === 'v2' ? 'agents' : '.opencode/agents'
 
@@ -2413,6 +2414,25 @@ async function installPass(
       const componentVersion = state.components?.[component]?.version ?? 1
       setComponentState(state, component, componentVersion, status)
     }
+    const verifiedFiles = summarizeChanges(ownRecorder?.entries ?? []).files.flatMap((file) => {
+      if (!['create', 'update', 'unchanged'].includes(file.action) || !file.outputFingerprint)
+        return []
+      const owner = componentForInstalledPath(target, file.path, { isGlobal, version })
+      if (!owner) return []
+      return [
+        {
+          path: file.path,
+          sha256: file.outputFingerprint,
+          component: owner.component,
+          layout: owner.layout,
+          action: file.action,
+        },
+      ]
+    })
+    updateFileInventory(state, target, {
+      selectedComponents: [...componentSet],
+      verifiedFiles,
+    })
     writeState(target, state, { updatedAt: planTimestamp })
   }
 

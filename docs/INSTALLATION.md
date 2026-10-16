@@ -82,6 +82,47 @@ arquivo regular e um estado schema-v2 verificável. Não é uma limpeza geral de
 `.pantheon` nem remove os backups. Primeiro revise com `--dry-run`; para aplicar
 purge em modo não interativo, combine `--purge-data --force`.
 
+### Revisar drift de arquivos instalados
+
+Instalações novas mantêm um inventário versionado por arquivo regular gerenciado
+(caminho relativo exato, componente/layout, hash e modo; nenhum conteúdo é salvo).
+Use `reconcile` para identificar arquivos que saíram da fonte atual e permanecem
+idênticos à última gravação do instalador:
+
+```bash
+# Preview somente leitura; selecione --global ou --target PATH quando apropriado
+npx pantheon-opencode reconcile --project --dry-run
+npx pantheon-opencode reconcile --project --dry-run --components agents,skills
+npx pantheon-opencode reconcile --global --target /caminho/config-opencode --dry-run
+npx pantheon-opencode reconcile --target /caminho/projeto --dry-run
+
+# Plano revisável, aplicado em outra chamada com autorização explícita
+npx pantheon-opencode reconcile --project --components agents --save-plan .pantheon-reconcile.json
+npx pantheon-opencode reconcile --apply-plan .pantheon-reconcile.json --yes
+
+# Alternativa: revisar e aplicar na mesma chamada
+npx pantheon-opencode reconcile --project --apply --yes
+```
+
+O preview não grava nem remove arquivos. A aplicação revalida o inventário, os
+hashes e o conjunto exato de operações; qualquer drift cancela antes da remoção.
+Antes de apagar, cria um backup restaurável em `.pantheon/backups/`; use
+`pantheon-opencode restore` para recuperar. Somente arquivos regulares e exatos
+são removidos — diretórios nunca são apagados recursivamente. Componentes não
+selecionados permanecem fora da reconciliação.
+
+Estados v1/v2 e instalações anteriores ao inventário migram para uma lista vazia:
+seus arquivos existentes são desconhecidos/ambíguos e nunca são inferidos como
+propriedade do Pantheon nem removidos automaticamente. Arquivos alterados,
+ausentes, symlinks, caminhos inválidos ou layouts incompatíveis também são
+preservados. `doctor` diferencia arquivos previamente gerenciados que foram
+modificados ou desapareceram; quando o payload atual não está disponível, informa
+que só verificou o hash registrado. `reconcile` aceita `--project`, `--global` ou
+`--target PATH`; um alvo explícito usa o layout de projeto por padrão. Combine
+`--global --target PATH` para indicar que um alvo global explícito usa o layout
+global plano. Essa escolha não é inferida nem reinterpretada pelo caminho. Sem
+inventário legível, não há limpeza automática.
+
 ## Prerequisites
 
 - **OpenCode v1.18.4+** — [Install OpenCode](https://opencode.ai/docs/)

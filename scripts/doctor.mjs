@@ -30,6 +30,8 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
+import { classifyFileInventory } from './install/file-inventory.mjs'
+import { readState } from './install/state.mjs'
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -1908,6 +1910,107 @@ function printSummary(targetPath) {
 // Main
 // ---------------------------------------------------------------------------
 
+async function checkInstallerFileInventory(args) {
+  const state = readState(args.target)
+  if (!state) return
+  const selectedComponents = [
+    'agents',
+    'skills',
+    'instructions',
+    'prompts',
+    'commands',
+    'plugins',
+    'runtime',
+  ]
+  let desiredFiles = new Map()
+  let desiredUnavailable = true
+  let selectedLayouts = {}
+  try {
+    const { installOpenCode, isGlobalConfigDir } = await import('./install/opencode.mjs')
+    const preview = await installOpenCode(args.target, true, false, selectedComponents, {
+      version: 'auto',
+      quiet: true,
+      quietPlan: true,
+      planOnly: true,
+      headless: true,
+    })
+    desiredFiles = new Map(
+      (preview?.files ?? [])
+        .filter((file) => typeof file.outputFingerprint === 'string')
+        .map((file) => [file.path, { sha256: file.outputFingerprint }]),
+    )
+    const layout = isGlobalConfigDir(args.target)
+      ? 'global'
+      : preview?.openCodeVersion === 'v2'
+        ? 'project-v2'
+        : 'project-v1'
+    selectedLayouts = Object.fromEntries(selectedComponents.map((component) => [component, layout]))
+    desiredUnavailable = false
+  } catch {
+    // Doctor remains advisory if a source/layout preview cannot be computed.
+    // The fallback labels equal recorded hashes explicitly, never as current.
+  }
+  let report
+  try {
+    report = classifyFileInventory(args.target, state, {
+      desiredFiles,
+      desiredUnavailable,
+      selectedComponents,
+      selectedLayouts,
+    })
+  } catch {
+    warn('Installer file inventory could not be safely inspected.', {
+      code: 'installer_inventory_unreadable',
+      classification: 'ambiguous',
+    })
+    return
+  }
+  if (report.legacyAmbiguous) {
+    warn('Legacy installed files have no ownership inventory; cleanup requires manual review.', {
+      code: 'installer_inventory_legacy_unknown',
+      classification: 'ambiguous',
+    })
+  }
+  const recordedCurrent = report.entries.filter(
+    (entry) => entry.classification === 'recorded-current',
+  ).length
+  if (recordedCurrent > 0) {
+    emit(
+      'info',
+      `${recordedCurrent} inventoried file(s) match their recorded install hashes; current package payload was not compared.`,
+      { code: 'installer_file_recorded_current', classification: 'recorded-current' },
+    )
+  }
+  for (const entry of report.entries) {
+    if (entry.classification === 'modified') {
+      warn(`Installer-owned file was modified and will be preserved: ${entry.path}`, {
+        code: 'installer_file_modified',
+        classification: 'modified',
+      })
+    } else if (entry.classification === 'missing') {
+      warn(`Previously installer-owned file is missing: ${entry.path}`, {
+        code: 'installer_file_missing',
+        classification: 'missing',
+      })
+    } else if (entry.classification === 'update-drift') {
+      warn(`Installer source has a newer version of an unchanged owned file: ${entry.path}`, {
+        code: 'installer_file_update_available',
+        classification: 'update-drift',
+      })
+    } else if (entry.classification === 'stale-owned') {
+      warn(`Stale installer-owned file is eligible for reviewed cleanup: ${entry.path}`, {
+        code: 'installer_file_stale_owned',
+        classification: 'stale-owned',
+      })
+    } else if (entry.classification === 'ambiguous') {
+      warn(`Installer ownership is ambiguous for ${entry.path}; file preserved.`, {
+        code: 'installer_file_ambiguous',
+        classification: 'ambiguous',
+      })
+    }
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv)
   jsonMode = args.json
@@ -1987,6 +2090,7 @@ async function main() {
   checkCodeModeManifest(args)
   checkInstallVersionDrift(args)
   checkPluginVersionDrift(args)
+  await checkInstallerFileInventory(args)
   if (jsonMode) {
     info('MCP runtime smoke skipped to keep --json read-only')
     results.at(-1).code = 'mcp_runtime_smoke_skipped'

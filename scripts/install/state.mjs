@@ -20,16 +20,45 @@
  *       "skills": { "version": 1, "status": "installed" },
  *       "plugins": { "version": 1, "status": "installed" },
  *       "runtime": { "version": 1, "status": "installed" }
+ *     },
+ *     "file_inventory": {
+ *       "schema_version": 1, "target_root": "/absolute/target",
+ *       "legacy_unknown": false, "entries": []
  *     }
  *   }
  */
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { assertNoSymlinkAncestors, writeFileAtomically } from './verify.mjs'
 
 const STATE_FILE = 'install-state.json'
 const STATE_DIR = '.pantheon'
+
+function emptyFileInventory(legacyUnknown = true) {
+  return {
+    schema_version: 1,
+    target_root: null,
+    legacy_unknown: legacyUnknown,
+    entries: [],
+  }
+}
+
+function invalidFileInventory() {
+  return { schema_version: 0, target_root: null, legacy_unknown: true, entries: [] }
+}
+
+function normalizeFileInventory(state) {
+  if (!Object.hasOwn(state, 'file_inventory')) return emptyFileInventory(true)
+  if (
+    !state.file_inventory ||
+    typeof state.file_inventory !== 'object' ||
+    Array.isArray(state.file_inventory)
+  ) {
+    return invalidFileInventory()
+  }
+  return state.file_inventory
+}
 
 /**
  * Create a fresh v2 state object for a new install.
@@ -50,6 +79,7 @@ export function createInitialState(version, updatedAt = new Date().toISOString()
       plugins: { version: 1, status: 'pending' },
       runtime: { version: 1, status: 'pending' },
     },
+    file_inventory: emptyFileInventory(false),
   }
 }
 
@@ -105,6 +135,7 @@ export function upgradeStateV1toV2(state) {
             plugins: { version: 1, status: 'unknown' },
             runtime: { version: 1, status: 'unknown' },
           },
+    file_inventory: normalizeFileInventory(state),
   }
 }
 
@@ -129,6 +160,14 @@ function ensureV2Shape(state) {
     Array.isArray(state.components)
   ) {
     state.components = upgradeStateV1toV2(state).components
+  }
+  if (!Object.hasOwn(state, 'file_inventory')) state.file_inventory = emptyFileInventory(true)
+  else if (
+    !state.file_inventory ||
+    typeof state.file_inventory !== 'object' ||
+    Array.isArray(state.file_inventory)
+  ) {
+    state.file_inventory = invalidFileInventory()
   }
   return state
 }
@@ -160,6 +199,18 @@ export function writeState(target, state, options = {}) {
   assertNoSymlinkAncestors(stateFile)
   state.updated_at = options.updatedAt ?? new Date().toISOString()
   state.schema_version = 2
+  if (!Object.hasOwn(state, 'file_inventory')) {
+    state.file_inventory = emptyFileInventory(true)
+  } else if (
+    !state.file_inventory ||
+    typeof state.file_inventory !== 'object' ||
+    Array.isArray(state.file_inventory)
+  ) {
+    state.file_inventory = invalidFileInventory()
+  }
+  if (state.file_inventory.target_root == null) {
+    state.file_inventory.target_root = resolve(target)
+  }
   const content = `${JSON.stringify(state, null, 2)}\n`
   writeFileAtomically(stateFile, content)
 }

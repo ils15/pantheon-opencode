@@ -57,6 +57,8 @@ test('readState backfills a partial v2 marker (no applied_migrations array)', ()
     )
     assert.equal(state.applied_migrations.length, 0)
     assert.ok(state.components && typeof state.components === 'object')
+    assert.deepEqual(state.file_inventory.entries, [])
+    assert.equal(state.file_inventory.legacy_unknown, true)
   })
 })
 
@@ -96,5 +98,22 @@ test('writeState round-trips applied_migrations/components (marker-safe writes)'
     assert.equal(reread.applied_migrations.length, 1)
     assert.equal(reread.pantheon_version, '1.5.1')
     assert.ok(reread.components.agents, 'components survive a write/read cycle')
+    assert.deepEqual(reread.file_inventory.entries, [])
+    assert.equal(reread.file_inventory.legacy_unknown, false)
+  })
+})
+
+test('v1 migration initializes an empty unknown inventory instead of claiming legacy files', () => {
+  withTarget((target) => {
+    mkdirSync(join(target, '.pantheon'), { recursive: true })
+    writeFileSync(
+      join(target, '.pantheon', 'install-state.json'),
+      JSON.stringify({ version: '1.0.0', components: { agents: { status: 'installed' } } }),
+    )
+    const state = readState(target)
+    assert.equal(state.schema_version, 2)
+    assert.equal(state.file_inventory.schema_version, 1)
+    assert.equal(state.file_inventory.legacy_unknown, true)
+    assert.deepEqual(state.file_inventory.entries, [])
   })
 })

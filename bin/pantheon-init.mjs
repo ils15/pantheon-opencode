@@ -85,6 +85,7 @@ function printUsage() {
   )
   console.log('  npx pantheon-opencode uninstall --project   # Remove project artifacts safely')
   console.log('  npx pantheon-opencode uninstall --global    # Remove global artifacts safely')
+  console.log('  npx pantheon-opencode reconcile --project    # Review stale owned installer files')
   console.log('  npx pantheon-opencode --version, -v       # Print version and exit')
   console.log('  npx pantheon-opencode --help              # Show this help')
   console.log('')
@@ -144,6 +145,16 @@ async function main() {
     const { spawnSync } = await import('node:child_process')
     const uninstallScript = path.join(ROOT, 'scripts', 'uninstall.mjs')
     const result = spawnSync(process.execPath, [uninstallScript, ...args.slice(1)], {
+      stdio: 'inherit',
+      cwd: process.cwd(),
+    })
+    process.exit(result.status ?? 1)
+  }
+
+  if (command === 'reconcile') {
+    const { spawnSync } = await import('node:child_process')
+    const reconcileScript = path.join(ROOT, 'scripts', 'reconcile.mjs')
+    const result = spawnSync(process.execPath, [reconcileScript, ...args.slice(1)], {
       stdio: 'inherit',
       cwd: process.cwd(),
     })

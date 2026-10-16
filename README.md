@@ -94,6 +94,13 @@ To remove Pantheon-managed files, review with
 `pantheon-opencode uninstall --project --dry-run` (or `--global`) before applying
 with `--force`. The opt-in `--purge-data` removes only a verified install-state
 file and never removes recovery backups; see the installation guide for details.
+New installs also record a versioned per-file ownership inventory. Review stale,
+unchanged installer-owned files with `pantheon-opencode reconcile --project --dry-run`
+(or `--global --dry-run`); preview is read-only, and apply requires `--apply --yes` or a
+saved reviewed plan. Legacy files without inventory, modified files, and
+symlinks are preserved for manual review. An explicit `--target PATH` uses project
+layout; combine it with `--global` to select the flat global layout. See the
+[installation guide](docs/INSTALLATION.md).
 The bundled Python MCP servers use the pinned MCP SDK 2.2.0 and standalone
 FastMCP 4.0.10 runtime; see the [MCP guide](docs/MCP.md).
 The installer also turns each agent's `mcp_tools` allowlist into native
