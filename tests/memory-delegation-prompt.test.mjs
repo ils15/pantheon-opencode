@@ -108,7 +108,16 @@ test('memory docs and prompts state the current storage, privacy, and grant cont
 
   assert.match(mnemosyne, /automatic regex scrubbing\/redaction is not guaranteed/i)
   assert.doesNotMatch(mnemosyne, /memory_store` MCP server applies regex scrub/i)
-  assert.match(memoryProtocol, /agent- and runtime-specific/i)
+  assert.match(
+    memoryProtocol,
+    /Zeus[^\n]*`memory_search`[^\n]*no durable writes/i,
+    'Zeus must not be assumed to have Mnemosyne’s durable-memory grants',
+  )
+  assert.match(
+    memoryProtocol,
+    /Mnemosyne[^\n]*`memory_store`/i,
+    'Mnemosyne’s distinct durable-memory grant must remain explicit',
+  )
   assert.match(memoryProtocol, /Never store secrets, credentials, or tokens/i)
   assert.match(zeus, /pantheon-memory:\s*\[memory_search\]/i)
   assert.match(zeusMemoryOps, /temporary `context_save`[\s\S]*not durable memory[\s\S]*writes/i)
