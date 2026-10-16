@@ -36,7 +36,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { test } from 'node:test'
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
 import {
@@ -45,6 +45,8 @@ import {
   NOOP_RECORDER,
   planStatsMismatch,
   recordChange,
+  recordRemovalTree,
+  removeReviewedTree,
   snapshot,
   summarizeChanges,
 } from '../scripts/install/plan.mjs'
@@ -207,6 +209,124 @@ test('plan: snapshot reports exists/sha256/size/mode and is stable', () => {
     })
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('clean preview enumerates plugin, agent, and skill subtree removals with snapshots', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-clean-preview-'))
+  const extraFiles = [
+    join(target, '.opencode', 'plugins', 'pantheon-tui', 'user-extra.js'),
+    join(target, '.opencode', 'agents', 'user-agent.md'),
+    join(target, '.opencode', 'skills', 'user-skill', 'notes.txt'),
+  ]
+  try {
+    for (const file of extraFiles) {
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, 'user-owned content')
+    }
+
+    const result = await installOpenCode(target, true, true, ['plugins', 'agents', 'skills'], {
+      yes: true,
+      headless: true,
+      version: 'v1',
+    })
+
+    for (const file of extraFiles) {
+      assert.ok(result.removals.includes(file), `removal review must include ${file}`)
+      assert.ok(result.snapshots.some((item) => item.path === file && item.exists))
+    }
+    assert.ok(result.removals.includes(join(target, '.opencode', 'skills', 'user-skill')))
+    assert.ok(
+      extraFiles.every((file) => existsSync(file)),
+      'a clean preview must not delete any existing files',
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('clean apply aborts on an unreviewed subtree addition before removing reviewed paths', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-clean-drift-'))
+  const pluginDir = join(target, '.opencode', 'plugins', 'pantheon-tui')
+  const reviewedFile = join(pluginDir, 'user-extra.js')
+  const unreviewedFile = join(pluginDir, 'added-after-preview.js')
+  try {
+    mkdirSync(pluginDir, { recursive: true })
+    writeFileSync(reviewedFile, 'reviewed content')
+
+    const result = await installOpenCode(target, false, true, ['plugins'], {
+      yes: true,
+      headless: true,
+      version: 'v1',
+      deps: {
+        betweenPlanAndApply: () => writeFileSync(unreviewedFile, 'unreviewed content'),
+      },
+    })
+
+    assert.equal(result.applied, false)
+    assert.equal(result.reason, 'drift')
+    assert.equal(readFileSync(reviewedFile, 'utf8'), 'reviewed content')
+    assert.equal(readFileSync(unreviewedFile, 'utf8'), 'unreviewed content')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('clean apply removes reviewed agent and skill extras and reinstalls managed assets', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-clean-apply-'))
+  const extraAgent = join(target, '.opencode', 'agents', 'user-agent.md')
+  const extraSkill = join(target, '.opencode', 'skills', 'user-skill', 'notes.txt')
+  try {
+    mkdirSync(dirname(extraAgent), { recursive: true })
+    mkdirSync(dirname(extraSkill), { recursive: true })
+    writeFileSync(extraAgent, 'user agent')
+    writeFileSync(extraSkill, 'user skill data')
+
+    let result
+    await captureOutput(async () => {
+      result = await installOpenCode(target, false, true, ['agents', 'skills'], {
+        yes: true,
+        headless: true,
+        version: 'v1',
+      })
+    })
+
+    assert.equal(result.applied, true)
+    assert.equal(existsSync(extraAgent), false)
+    assert.equal(existsSync(join(target, '.opencode', 'skills', 'user-skill')), false)
+    assert.equal(existsSync(join(target, '.opencode', 'agents', 'zeus.md')), true)
+    assert.equal(
+      existsSync(join(target, '.opencode', 'skills', 'agent-coordination', 'SKILL.md')),
+      true,
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('reviewed cleanup never recursively removes a path added after its exact-set check', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-reviewed-removal-'))
+  const reviewedFile = join(root, 'reviewed.txt')
+  const unreviewedFile = join(root, 'unreviewed.txt')
+  try {
+    writeFileSync(reviewedFile, 'reviewed')
+    const { recorder } = createRecorder()
+    const reviewedTree = recordRemovalTree(root, recorder)
+    const reviewedRemovals = new Set(reviewedTree.map((entry) => entry.path))
+    const reviewedSnapshots = new Map(reviewedTree.map((entry) => [entry.path, entry.snapshot]))
+    writeFileSync(unreviewedFile, 'must survive')
+
+    assert.throws(
+      () => removeReviewedTree(root, reviewedRemovals, reviewedSnapshots),
+      /Removal set changed after review/,
+    )
+    assert.equal(readFileSync(reviewedFile, 'utf8'), 'reviewed')
+    assert.equal(readFileSync(unreviewedFile, 'utf8'), 'must survive')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 
@@ -561,7 +681,7 @@ test('exit code mapping: drift -> 3, not-authorized -> 2, canceled -> 130, else 
   assert.equal(resolveInstallExitCode({ applied: false, reason: 'plan' }, true), 0)
 })
 
-test('failure: a mid-apply throw reports applied paths, cleans temp siblings, no success', async () => {
+test('failure: a mid-apply throw reports applied paths and preserves unrelated temp-like files', async () => {
   const { installOpenCode } = await import('../scripts/install/opencode.mjs')
   const target = mkdtempSync(join(tmpdir(), 'pantheon-fail-'))
   try {
@@ -597,13 +717,17 @@ test('failure: a mid-apply throw reports applied paths, cleans temp siblings, no
     assert.match(out, /already applied/)
     assert.match(out, /pantheon-opencode restore/)
     assert.doesNotMatch(out, /\[DRY-RUN\]/, 'a failure is not a dry run')
-    assert.equal(existsSync(tmpSibling), false, 'lingering temp sibling must be cleaned up')
+    assert.equal(
+      readFileSync(tmpSibling, 'utf8'),
+      'x',
+      'failure handling must preserve a pre-existing temp-like user file',
+    )
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
 })
 
-test('failure (default global target): report + temp cleanup work with target=undefined', async () => {
+test('failure (default global target): report preserves unrelated temp-like file with target=undefined', async () => {
   const { installOpenCode } = await import('../scripts/install/opencode.mjs')
   const home = mkdtempSync(join(tmpdir(), 'pantheon-fail-global-'))
   const prevHome = process.env.HOME
@@ -645,9 +769,9 @@ test('failure (default global target): report + temp cleanup work with target=un
     assert.match(out, /already applied/)
     assert.match(out, /pantheon-opencode restore/)
     assert.equal(
-      existsSync(tmpSibling),
-      false,
-      'temp sibling must be cleaned for the global target',
+      readFileSync(tmpSibling, 'utf8'),
+      'x',
+      'failure handling must preserve a pre-existing temp-like global file',
     )
   } finally {
     if (prevHome === undefined) delete process.env.HOME

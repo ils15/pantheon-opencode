@@ -30,8 +30,14 @@
  */
 
 import { createHash } from 'node:crypto'
-import { lstatSync, readFileSync } from 'node:fs'
-import { isAbsolute, relative } from 'node:path'
+import { lstatSync, readdirSync, readFileSync, rmdirSync, unlinkSync } from 'node:fs'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
+import {
+  assertNoSymlinkAncestors,
+  assertPathWithin,
+  assertSafeRemoval,
+  verifyPathRemoved,
+} from './verify.mjs'
 
 /** The action vocabulary shared by the recorder, the summary and the formatter. */
 export const ACTIONS = Object.freeze({
@@ -86,6 +92,8 @@ function normalizeChange(change) {
     path: String(change?.path ?? ''),
     action,
     bytes: Number.isFinite(change?.bytes) ? change.bytes : 0,
+    outputFingerprint:
+      typeof change?.outputFingerprint === 'string' ? change.outputFingerprint : null,
     // Scored by default: most writers feed the install summary. Synthetic and
     // state-only entries opt out explicitly with `scored: false`.
     scored: !(change && change.scored === false),
@@ -116,6 +124,11 @@ export function createRecorder() {
 export function recordChange(change, recorder = NOOP_RECORDER) {
   if (!isRecording(recorder)) return
   recorder(normalizeChange(change))
+}
+
+/** Return the non-displayed SHA-256 fingerprint used by reviewed plan artifacts. */
+export function fingerprintOutput(content) {
+  return createHash('sha256').update(content).digest('hex')
 }
 
 /** Sort helper: display order first, then path for determinism. */
@@ -156,7 +169,13 @@ export function summarizeChanges(entries = []) {
     const change = normalizeChange(entry)
     let record = byPath.get(change.path)
     if (!record) {
-      record = { path: change.path, action: change.action, bytes: change.bytes, scored: false }
+      record = {
+        path: change.path,
+        action: change.action,
+        bytes: change.bytes,
+        outputFingerprint: change.outputFingerprint,
+        scored: false,
+      }
       byPath.set(change.path, record)
     }
     // The LAST writer decides the net on-disk outcome. A later no-write
@@ -164,6 +183,7 @@ export function summarizeChanges(entries = []) {
     // computed a would-be update (e.g. unregister→register toggling).
     record.action = change.action
     record.bytes = change.bytes
+    record.outputFingerprint = change.outputFingerprint
     // Only a genuine change can score a path; a no-write never does.
     if (isChange(change.action) && change.scored) record.scored = true
   }
@@ -238,6 +258,28 @@ export function snapshot(filePath) {
   } catch {
     return { exists: false, sha256: null, size: 0, mode: null }
   }
+  if (stat.isDirectory()) {
+    // Directory snapshots include the direct child inventory. Descendant
+    // directories/files are snapshotted separately by collectRemovalTree().
+    const entries = readdirSync(filePath, { withFileTypes: true })
+      .map((entry) => [
+        entry.name,
+        entry.isDirectory()
+          ? 'directory'
+          : entry.isFile()
+            ? 'file'
+            : entry.isSymbolicLink()
+              ? 'symlink'
+              : 'other',
+      ])
+      .sort(([left], [right]) => left.localeCompare(right))
+    return {
+      exists: true,
+      sha256: createHash('sha256').update(JSON.stringify(entries)).digest('hex'),
+      size: stat.size,
+      mode: stat.mode,
+    }
+  }
   if (!stat.isFile()) {
     return { exists: true, sha256: null, size: stat.size, mode: stat.mode }
   }
@@ -253,6 +295,126 @@ export function snapshot(filePath) {
     size: buffer.length,
     mode: stat.mode,
   }
+}
+
+/**
+ * Enumerate a path and its complete subtree as removal operations with
+ * pre-apply snapshots. Symlinks are treated as leaf entries and never followed.
+ *
+ * @param {string} rootPath
+ * @returns {{path: string, snapshot: object}[]}
+ */
+export function collectRemovalTree(rootPath) {
+  const entries = []
+  const visit = (filePath, allowMissing = false) => {
+    let stat
+    try {
+      stat = lstatSync(filePath)
+    } catch (error) {
+      if (allowMissing && error?.code === 'ENOENT') return
+      throw error
+    }
+    entries.push({ path: filePath, snapshot: snapshot(filePath) })
+    if (stat.isDirectory()) {
+      for (const name of readdirSync(filePath).sort()) visit(`${filePath}${sep}${name}`)
+    }
+  }
+  visit(rootPath, true)
+  return entries
+}
+
+/** Record every path that a recursive removal will delete. */
+export function recordRemovalTree(rootPath, recorder, { scored = false } = {}) {
+  const entries = collectRemovalTree(rootPath)
+  for (const entry of entries) {
+    recordChange({ path: entry.path, action: ACTIONS.REMOVE, bytes: 0, scored }, recorder)
+  }
+  return entries
+}
+
+/**
+ * Fail closed unless the exact reviewed subtree and its snapshots still match.
+ *
+ * @param {string} rootPath
+ * @param {Set<string>|null} reviewedRemovals
+ * @param {Map<string, object>|null} reviewedSnapshots
+ */
+export function validateRemovalTree(rootPath, reviewedRemovals, reviewedSnapshots) {
+  if (!reviewedRemovals || !reviewedSnapshots) {
+    throw new Error(`Refusing destructive removal without a reviewed snapshot: ${rootPath}`)
+  }
+  const root = resolve(rootPath)
+  const isWithinRoot = (filePath) => {
+    const rel = relative(root, resolve(filePath))
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+  }
+  const expected = new Set(
+    [...reviewedRemovals].filter(isWithinRoot).map((filePath) => resolve(filePath)),
+  )
+  const current = collectRemovalTree(rootPath)
+  const actual = new Set(current.map((entry) => resolve(entry.path)))
+  if (actual.size !== expected.size || [...actual].some((filePath) => !expected.has(filePath))) {
+    throw new Error(`Removal set changed after review: ${rootPath}`)
+  }
+  for (const entry of current) {
+    const filePath = resolve(entry.path)
+    const before = reviewedSnapshots.get(filePath)
+    const now = entry.snapshot
+    if (
+      !before ||
+      before.exists !== now.exists ||
+      before.sha256 !== now.sha256 ||
+      before.size !== now.size ||
+      before.mode !== now.mode
+    ) {
+      throw new Error(`Removal target drifted after review: ${entry.path}`)
+    }
+  }
+  return true
+}
+
+/**
+ * Remove only the reviewed entries, without recursive deletion that could
+ * consume a path added after preflight. Directory removal uses rmdir, which
+ * fails closed if any unreviewed entry appears during cleanup.
+ */
+export function removeReviewedTree(rootPath, reviewedRemovals, reviewedSnapshots) {
+  validateRemovalTree(rootPath, reviewedRemovals, reviewedSnapshots)
+  const entries = collectRemovalTree(rootPath)
+  for (const entry of entries.reverse()) {
+    const info = lstatSync(entry.path)
+    if (info.isDirectory()) {
+      assertSafeRemoval(rootPath, entry.path)
+      try {
+        rmdirSync(entry.path)
+      } catch (error) {
+        if (error?.code === 'ENOTEMPTY' || error?.code === 'EEXIST') {
+          throw new Error(`Removal set changed after review: ${entry.path}`, { cause: error })
+        }
+        throw error
+      }
+    } else {
+      // Unlinking a reviewed symlink leaf is safe and preserves historical
+      // cleanup behavior; reject linked ancestors so the parent is never
+      // redirected outside the reviewed root.
+      assertPathWithin(rootPath, entry.path)
+      assertNoSymlinkAncestors(entry.path, { includeLeaf: false })
+      const before = reviewedSnapshots?.get(resolve(entry.path))
+      const now = snapshot(entry.path)
+      if (
+        !before ||
+        before.exists !== now.exists ||
+        before.sha256 !== now.sha256 ||
+        before.size !== now.size ||
+        before.mode !== now.mode
+      ) {
+        throw new Error(`Removal target drifted after review: ${entry.path}`)
+      }
+      unlinkSync(entry.path)
+    }
+    verifyPathRemoved(entry.path)
+  }
+  return true
 }
 
 /**

@@ -56,19 +56,44 @@ project-local installation, or non-interactive setup, see the
 A non-interactive apply requires `--yes` (alias `-y`): without a TTY and
 without `--yes`, `init` prints the change plan and applies nothing. Exit codes:
 `0` success or plan/no-apply, `1` failure, `2` apply requested without
-authorization, `3` drift (a planned target changed between plan and apply),
-`130` canceled. Drift is checked within a single run (plan → apply); it cannot
-be detected across two separate CLI invocations (no plan is persisted).
+authorization, `3` drift (a planned target changed before apply), `130` canceled.
 
-Preview without writing anything with `init --dry-run`. Before the first write,
-`init` saves an exact backup set under `.pantheon/backups/<timestamp>/`
-(directory `0700`, files `0600`, the 5 most recent kept); it is a byte-for-byte
-copy and therefore also contains any API keys or tokens already present in your
-files — it is never printed. Recover with
-`pantheon-opencode restore [--project] [--yes]` (there is no automatic
-rollback; an interrupted apply is recoverable the same way). The
-`postinstall`/`sync-tui` step only refreshes TUI artifacts and is deliberately
-outside this approval flow — no prompt is possible there.
+Preview with `init --dry-run`. To review and apply across separate invocations,
+save a versioned plan and then explicitly authorize it:
+
+```bash
+npx pantheon-opencode init --dry-run --project --no-mcp --components agents \
+  --save-plan .pantheon-install-plan.json
+npx pantheon-opencode init --apply-plan .pantheon-install-plan.json --yes
+npx pantheon-opencode init --dry-run --json  # machine-readable preview on stdout
+```
+
+Saved plans use mode `0600`, contain operation metadata and fingerprints rather
+than generated file contents, and are bound to their original target and plan
+file path. Applying rechecks the package source and destination snapshots; drift
+aborts before writes. Saved plans do not support `--force`/`--clean`, and
+machine-readable previews reject those options because clean performs bulk removal.
+A dry-run skips probing the OpenCode host to avoid host-side writes; when no version hint
+is configured, it assumes V1 and reports that advisory. Pass
+`--opencode-version v1|v2` to preview a specific generation.
+Saving an artifact is supported on Linux, Darwin, FreeBSD, OpenBSD, and NetBSD
+when the required descriptor paths and filesystem flags are usable. Cross-platform
+behavior has not been fully tested; unsupported platforms fail closed rather
+than risk writing through a replaced parent directory.
+Previews describe managed-file operations, not every bulk or external effect
+(such as Python environment setup). The `postinstall`/`sync-tui` step also only
+refreshes TUI artifacts and is outside this approval flow.
+
+Before the first managed-file write, `init` saves an exact backup set under
+`.pantheon/backups/<timestamp>/` (directory `0700`, files `0600`, the 5 most
+recent kept); it is a byte-for-byte copy and therefore also contains any API
+keys or tokens already present in your files — it is never printed. Recover with
+`pantheon-opencode restore [--project] [--yes]`. There is no automatic rollback;
+an interrupted apply is recoverable from the backup in the same way.
+To remove Pantheon-managed files, review with
+`pantheon-opencode uninstall --project --dry-run` (or `--global`) before applying
+with `--force`. The opt-in `--purge-data` removes only a verified install-state
+file and never removes recovery backups; see the installation guide for details.
 The bundled Python MCP servers use the pinned MCP SDK 2.2.0 and standalone
 FastMCP 4.0.10 runtime; see the [MCP guide](docs/MCP.md).
 The installer also turns each agent's `mcp_tools` allowlist into native
@@ -543,13 +568,10 @@ Key order does not matter.
 One command keeps an existing installation current:
 
 ```bash
-# Without a global install, ALWAYS pin the dist-tag — plain `npx
-# pantheon-opencode` resolves `latest`, which is the stable release (1.4.3):
-npx pantheon-opencode@beta update            # npm beta channel + config refresh
-npx pantheon-opencode@beta update --stable   # stable channel instead
-
-# With a global install, use the global bin (defaults to the beta channel):
-pantheon-opencode update
+# Install globally first; update refuses local, workspace, and npx copies.
+npm install -g pantheon-opencode@beta
+pantheon-opencode update            # npm beta channel + config refresh
+pantheon-opencode update --stable   # stable channel instead
 ```
 
 `update` compares your installed version with the npm dist-tag, runs

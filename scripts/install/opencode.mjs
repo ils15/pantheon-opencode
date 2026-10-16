@@ -17,12 +17,12 @@
  */
 
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { listV2UnsupportedFeatures } from '../../src/pantheon/v2-unsupported.mjs'
 import { copyAgentPrompts, writeAgentsMdManaged } from '../build-agents-md.mjs'
-import { backupSetPath, backupWarning, createBackupSet, nextBackupName } from './backup.mjs'
+import { backupWarning, createBackupSet, previewBackupSet } from './backup.mjs'
 import {
   bullet,
   colors,
@@ -49,13 +49,17 @@ import {
   ACTIONS,
   createRecorder,
   displayPath,
+  fingerprintOutput,
   formatChangePlan,
   isRecording,
   planStatsMismatch,
   recordChange,
+  recordRemovalTree,
+  removeReviewedTree,
   snapshot,
   summarizeChanges,
 } from './plan.mjs'
+import { findPlanDrift } from './plan-artifact.mjs'
 import { copyPluginFiles, installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
 import {
   checkRuntimePrerequisites,
@@ -73,6 +77,7 @@ import { createInitialState, hasState, readState, setComponentState, writeState 
 import { strings } from './strings.mjs'
 
 import { setupVenv, venvPythonPath } from './venv.mjs'
+import { assertNoSymlinkAncestors, assertPathWithin, assertSafeRemoval } from './verify.mjs'
 
 const COMPONENT_NAMES = [
   'agents',
@@ -786,7 +791,14 @@ export function tuiConfigLocations(target) {
  */
 export function syncTuiRegistration(
   target,
-  { isGlobal = false, dryRun = false, version = 'v1', recorder = null } = {},
+  {
+    isGlobal = false,
+    dryRun = false,
+    version = 'v1',
+    recorder = null,
+    reviewedRemovals = null,
+    reviewedSnapshots = null,
+  } = {},
 ) {
   const configDir = isGlobal ? target : join(target, '.opencode')
   const targetTuiConfigPath = join(configDir, 'tui.json')
@@ -796,7 +808,13 @@ export function syncTuiRegistration(
   const tuiSrcDir = join(ROOT, 'src', 'plugins', 'tui')
   const tuiCopyDir = resolveTuiCopyTarget(configDir)
   if (existsSync(tuiSrcDir)) {
-    copyPluginFiles(tuiSrcDir, tuiCopyDir, { dryRun, version, recorder })
+    copyPluginFiles(tuiSrcDir, tuiCopyDir, {
+      dryRun,
+      version,
+      recorder,
+      reviewedRemovals,
+      reviewedSnapshots,
+    })
   }
 
   // 2. Clean stale Pantheon TUI refs from every location OpenCode reads.
@@ -830,7 +848,7 @@ export function syncTuiRegistration(
  */
 export function setupRuntimePhase(
   target,
-  { dryRun, clean, isGlobal, recorder = null },
+  { dryRun, clean, isGlobal, recorder = null, reviewedRemovals = null, reviewedSnapshots = null },
   stats,
   deps = {},
 ) {
@@ -839,7 +857,13 @@ export function setupRuntimePhase(
   const check = deps.healthCheck ?? healthCheck
   try {
     const venvSpinner = spinner(S.settingUpRuntime)
-    setup(target, { dryRun, force: clean, recorder })
+    setup(target, {
+      dryRun,
+      force: clean,
+      recorder,
+      reviewedRemovals,
+      reviewedSnapshots,
+    })
     venvSpinner(true)
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
     const health = check(runtimeTarget, { dryRun, pythonTarget: target })
@@ -977,49 +1001,11 @@ function detectSnapshotDrift(snapshots) {
 }
 
 /**
- * Remove lingering atomic-write temp siblings (`<file>.tmp-<pid>`) left behind
- * when a writer aborted mid-write. Best-effort; skips the bulk dirs so a failure
- * path stays cheap.
- */
-/**
- * Remove lingering atomic-write temp siblings (`<file>.tmp-<pid>`) left when a
- * writer aborted mid-write. Only files matching the installer's own temp
- * pattern are removed, and the bulk/foreign dirs are skipped so a failure path
- * stays cheap and never touches unrelated files.
- */
-function cleanupTempSiblings(root) {
-  if (!root) return
-  const suffix = `.tmp-${process.pid}`
-  const skip = new Set(['.git', '.pantheon', 'node_modules', '.venv'])
-  const walk = (dir) => {
-    let entries
-    try {
-      entries = readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        if (skip.has(entry.name)) continue
-        walk(join(dir, entry.name))
-      } else if (entry.isFile() && entry.name.endsWith(suffix)) {
-        try {
-          rmSync(join(dir, entry.name), { force: true })
-        } catch {
-          // best-effort cleanup
-        }
-      }
-    }
-  }
-  walk(root)
-}
-
-/**
  * Phase 5 failure semantics. `installPass` is the whole installer; this thin
  * wrapper reports a mid-apply failure HONESTLY: it aborts the remaining writes
- * (the throw), cleans up any lingering atomic-write temp siblings, reports the
- * PATHS already applied (never contents), prints the recovery path, and
- * re-throws so the CLI exits non-zero. There is NO automatic rollback — the
+ * (the throw), relies on each writer to clean up only its own temporary file,
+ * reports the PATHS already applied (never contents), prints the recovery
+ * path, and re-throws so the CLI exits non-zero. There is NO automatic rollback — the
  * exact backup set + `pantheon-opencode restore` is the recovery.
  *
  * Progress is tracked in `_lastRun` (set only by a non-dry pass, so the nested
@@ -1053,8 +1039,6 @@ export async function installOpenCode(
         for (const p of paths) warning(`  ${p}`)
       }
       warning(run.backupDir ? S.restoreRecoveryHint(run.backupDir) : S.restoreNoBackup)
-      // Sweep only on the failure path (never a full walk on a clean apply).
-      cleanupTempSiblings(run.target)
     }
     throw err
   }
@@ -1079,8 +1063,14 @@ async function installPass(
   const statsBefore = { created: stats.created, skipped: stats.skipped }
   // Number of planned changes, filled by a dry plan pass (used by the gate).
   let plannedChanges = 0
+  let planFiles = []
+  let removalPaths = []
+  const planTimestamp = opts.planTimestamp ?? new Date().toISOString()
+  let projectedState = null
   // Phase 4: planned-target snapshots from the plan pass, used for drift checks.
   let plannedSnapshots = null
+  let reviewedRemovals = null
+  let reviewedSnapshots = null
   const S = strings()
 
   // Beta 11 (Setup phase 1): a dry pass records every writer's intended change
@@ -1117,7 +1107,16 @@ async function installPass(
   // the V1 branch writes .ts file paths that a 2.x host drops from the config.
   // `opts` is forwarded as the resolver's options bag so a caller (and CI) can
   // pin env/probe instead of spawning a real host binary.
-  const version = resolveOpenCodeVersion(opts.version ?? 'auto', opts)
+  const version = resolveOpenCodeVersion(opts.version ?? 'auto', {
+    ...opts,
+    skipProbe: dryRun,
+  })
+  const versionAssumed =
+    dryRun &&
+    (opts.version ?? 'auto') === 'auto' &&
+    process.env.OPENCODE_VERSION !== 'v1' &&
+    process.env.OPENCODE_VERSION !== 'v2' &&
+    !/(?:^|[\\/])opencode2(?:\.exe)?$/i.test(process.env.OPENCODE_BIN ?? '')
   if (version === 'v2') {
     info(
       'OpenCode V2 target — shared config; state isolated via OPENCODE_DB ' +
@@ -1229,6 +1228,7 @@ async function installPass(
       // plan for the review / decline preview.
       planned = await installOpenCode(target, true, clean, [...componentSet], {
         ...opts,
+        planTimestamp,
         planOnly: true,
         quiet: autoYes,
         quietPlan: autoYes,
@@ -1239,6 +1239,22 @@ async function installPass(
       configure({ dryRun, quiet: opts.quiet === true })
     }
     plannedSnapshots = planned?.snapshots ?? null
+
+    if (opts.expectedPlan) {
+      const packageVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+      const drift = findPlanDrift(opts.expectedPlan, {
+        target,
+        packageRoot: ROOT,
+        packageVersion,
+        files: planned?.files ?? [],
+        snapshots: planned?.snapshots ?? [],
+      })
+      if (drift.length > 0) {
+        warning('Reviewed install plan drifted; no files were written.')
+        for (const item of drift) warning(`  ${item}`)
+        return { ...stats, applied: false, reason: 'drift', drift }
+      }
+    }
 
     if (!autoYes) {
       const injected = opts.deps?.promptReview
@@ -1275,6 +1291,10 @@ async function installPass(
         drift: drifted.map((p) => displayPath(target, p)),
       }
     }
+    reviewedRemovals = new Set((planned?.removals ?? []).map((filePath) => resolve(filePath)))
+    reviewedSnapshots = new Map(
+      (plannedSnapshots ?? []).map((before) => [resolve(before.path), before]),
+    )
   }
 
   // -----------------------------------------------------------------------
@@ -1284,25 +1304,57 @@ async function installPass(
   //    out-of-target global files are recorded in the manifest as
   //    `notRevertible`. A dry run records the planned backup-manifest path only.
   // -----------------------------------------------------------------------
-  const backupManifestPath = join(
-    backupSetPath(target, nextBackupName(target, new Date())),
-    'manifest.json',
-  )
+  if (componentSet.has('agents')) {
+    const agentTarget = join(target, agentPrefix)
+    assertPathWithin(target, agentTarget)
+    assertNoSymlinkAncestors(agentTarget)
+  }
+  if (componentSet.has('skills')) {
+    const skillsTarget = isGlobal ? join(target, 'skills') : join(target, '.opencode', 'skills')
+    assertPathWithin(target, skillsTarget)
+    assertNoSymlinkAncestors(skillsTarget)
+  }
+  const backupPlan = collectInstallBackupEntries(target, componentSet, version, isGlobal)
+  const pkgVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
   if (dryRun) {
+    const preview = previewBackupSet({
+      configDir: target,
+      entries: backupPlan.entries,
+      notRevertible: backupPlan.notRevertible,
+      packageVersion: pkgVersion,
+      clock: () => new Date(planTimestamp),
+    })
     if (isRecording(recorder)) {
+      for (const file of preview.files) {
+        recordChange(
+          {
+            path: file.path,
+            action: ACTIONS.CREATE,
+            bytes: file.bytes,
+            outputFingerprint: file.outputFingerprint,
+            scored: false,
+          },
+          recorder,
+        )
+      }
       recordChange(
-        { path: backupManifestPath, action: ACTIONS.CREATE, bytes: 0, scored: false },
+        {
+          path: preview.manifestPath,
+          action: ACTIONS.CREATE,
+          bytes: preview.manifestBytes,
+          outputFingerprint: preview.manifestFingerprint,
+          scored: false,
+        },
         recorder,
       )
     }
   } else {
-    const backupPlan = collectInstallBackupEntries(target, componentSet, version, isGlobal)
-    const pkgVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
     const { dir: backupDir } = createBackupSet({
       configDir: target,
       entries: backupPlan.entries,
       notRevertible: backupPlan.notRevertible,
       packageVersion: pkgVersion,
+      clock: () => new Date(planTimestamp),
     })
     if (_lastRun && _lastRun.target === target) _lastRun.backupDir = backupDir
     // Secret-safe: the path only. The exact wording is fixed (once per apply).
@@ -1325,11 +1377,23 @@ async function installPass(
     } else {
       const agentStep = step(S.installingAgents)
       const dstDir = join(target, agentPrefix)
-      if (!dryRun) mkdirSync(dstDir, { recursive: true })
-      if (clean && existsSync(dstDir) && !dryRun) {
+      assertPathWithin(target, dstDir)
+      assertNoSymlinkAncestors(dstDir)
+      if (!dryRun) {
+        mkdirSync(dstDir, { recursive: true })
+        assertNoSymlinkAncestors(dstDir)
+      }
+      if (clean && existsSync(dstDir)) {
+        assertNoSymlinkAncestors(dstDir)
         const existing = readdirSync(dstDir)
         for (const f of existing) {
-          rmSync(join(dstDir, f), { recursive: true, force: true })
+          const agentPath = join(dstDir, f)
+          assertSafeRemoval(dstDir, agentPath)
+          if (dryRun) {
+            recordRemovalTree(agentPath, recorder)
+          } else {
+            removeReviewedTree(agentPath, reviewedRemovals, reviewedSnapshots)
+          }
         }
       }
       const { created, skipped } = copyAgentPrompts(srcDir, dstDir, dryRun, false, recorder)
@@ -1363,10 +1427,19 @@ async function installPass(
     if (skillNames.length > 0) {
       const skillStep = step(`Installing ${skillNames.length} skills`)
       const dstSkillsDir = isGlobal ? join(target, 'skills') : join(target, '.opencode', 'skills')
-      if (clean && existsSync(dstSkillsDir) && !dryRun) {
+      assertPathWithin(target, dstSkillsDir)
+      assertNoSymlinkAncestors(dstSkillsDir)
+      if (clean && existsSync(dstSkillsDir)) {
+        assertNoSymlinkAncestors(dstSkillsDir)
         const existing = readdirSync(dstSkillsDir)
         for (const s of existing) {
-          rmSync(join(dstSkillsDir, s), { recursive: true, force: true })
+          const skillPath = join(dstSkillsDir, s)
+          assertSafeRemoval(dstSkillsDir, skillPath)
+          if (dryRun) {
+            recordRemovalTree(skillPath, recorder)
+          } else {
+            removeReviewedTree(skillPath, reviewedRemovals, reviewedSnapshots)
+          }
         }
       }
       const installSubDir = isGlobal ? '' : '.opencode'
@@ -1376,6 +1449,9 @@ async function installPass(
         dryRun,
         installSubDir,
         recorder,
+        reviewedRemovals,
+        reviewedSnapshots,
+        clean,
       )
       stats.created += sCreated
       stats.skipped += sSkipped
@@ -1434,7 +1510,16 @@ async function installPass(
     const srcPrompts = join(ROOT, 'prompts')
     const dstPrompts = join(target, 'prompts')
     if (existsSync(srcPrompts)) {
-      const promptsResult = syncDir(srcPrompts, dstPrompts, dryRun, clean, null, recorder)
+      const promptsResult = syncDir(
+        srcPrompts,
+        dstPrompts,
+        dryRun,
+        clean,
+        null,
+        recorder,
+        reviewedRemovals,
+        reviewedSnapshots,
+      )
       stats.created += promptsResult.created
       stats.skipped += promptsResult.skipped
     }
@@ -1452,7 +1537,16 @@ async function installPass(
     const commandDir = isGlobal || version === 'v2' ? 'commands' : '.opencode/commands'
     const dstCmds = join(target, commandDir)
     if (existsSync(srcCmds)) {
-      const cmdResult = syncDir(srcCmds, dstCmds, dryRun, clean, (f) => f.endsWith('.md'), recorder)
+      const cmdResult = syncDir(
+        srcCmds,
+        dstCmds,
+        dryRun,
+        clean,
+        (f) => f.endsWith('.md'),
+        recorder,
+        reviewedRemovals,
+        reviewedSnapshots,
+      )
       stats.created += cmdResult.created
       stats.skipped += cmdResult.skipped
     }
@@ -1480,6 +1574,8 @@ async function installPass(
       clean,
       version,
       recorder,
+      reviewedRemovals,
+      reviewedSnapshots,
     })
     stats.created += pluginStats.created
     stats.skipped += pluginStats.skipped
@@ -1492,7 +1588,14 @@ async function installPass(
   if (componentSet.has('plugins')) {
     let tuiStatus
     try {
-      tuiStatus = syncTuiRegistration(target, { isGlobal, dryRun, version, recorder })
+      tuiStatus = syncTuiRegistration(target, {
+        isGlobal,
+        dryRun,
+        version,
+        recorder,
+        reviewedRemovals,
+        reviewedSnapshots,
+      })
     } catch (cause) {
       error(`TUI plugin setup failed: ${cause.message}`)
       stats.errors++
@@ -1581,6 +1684,8 @@ async function installPass(
         clean,
         (f) => f !== 'manifest.json',
         recorder,
+        reviewedRemovals,
+        reviewedSnapshots,
       )
       stats.created += cmResult.created
       stats.skipped += cmResult.skipped
@@ -1625,7 +1730,11 @@ async function installPass(
   // -----------------------------------------------------------------------
   let runtimeHealthy = !componentSet.has('runtime')
   if (componentSet.has('runtime')) {
-    runtimeHealthy = setupRuntimePhase(target, { dryRun, clean, isGlobal, recorder }, stats)
+    runtimeHealthy = setupRuntimePhase(
+      target,
+      { dryRun, clean, isGlobal, recorder, reviewedRemovals, reviewedSnapshots },
+      stats,
+    )
   }
 
   // -----------------------------------------------------------------------
@@ -2095,7 +2204,12 @@ async function installPass(
   if (componentSet.has('runtime')) {
     const currentVersion = detectVersion(target)
     if (currentVersion) {
-      const migration = runMigrations(target, currentVersion, { dryRun, recorder })
+      const migration = runMigrations(target, currentVersion, {
+        dryRun,
+        recorder,
+        updatedAt: planTimestamp,
+      })
+      if (migration.plannedState) projectedState = migration.plannedState
       if (migration.applied > 0) {
         success(`Applied ${migration.applied} migration(s)`)
         for (const msg of migration.messages) {
@@ -2105,29 +2219,66 @@ async function installPass(
     }
   }
 
+  if (opts.preset && dryRun) {
+    const { writeActivePreset } = await import('./model-picker.mjs')
+    writeActivePreset(target, opts.preset, {
+      dryRun: true,
+      source: 'cli',
+      updatedAt: planTimestamp,
+      recorder,
+      logger: { log() {} },
+    })
+  }
+
   // -----------------------------------------------------------------------
   // 3.75 Preview summary (Beta 11 Setup phase 1): print the REAL per-file
   //      change set this same pass would apply. Paths + action + byte size
   //      ONLY — never file contents or hashes. Nothing was written.
   // -----------------------------------------------------------------------
   if (preview) {
-    // Apply always writes the install-state file (terminal step); record the
-    // planned state-only write here so the printed plan is complete. Unscored:
-    // it is bookkeeping, not part of the install summary.
+    // Project the terminal state write using the plan's stable timestamp so
+    // saved-plan apply can validate its exact output fingerprint.
+    const packageVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+    let state = projectedState ?? readState(target)
+    if (!state) state = createInitialState(packageVersion, planTimestamp)
+    state.pantheon_version = packageVersion
+    state.updated_at = planTimestamp
+    state.schema_version = 2
+    for (const component of ['agents', 'skills', 'plugins', 'runtime']) {
+      if (!componentSet.has(component)) continue
+      const componentStatus = component === 'runtime' && !runtimeHealthy ? 'failed' : 'installed'
+      const componentVersion = state.components?.[component]?.version ?? 1
+      setComponentState(state, component, componentVersion, componentStatus)
+    }
+    const stateContent = `${JSON.stringify(state, null, 2)}\n`
     recordChange(
       {
         path: join(target, '.pantheon', 'install-state.json'),
         action: hasState(target) ? ACTIONS.UPDATE : ACTIONS.CREATE,
-        bytes: 0,
+        bytes: Buffer.byteLength(stateContent, 'utf8'),
+        outputFingerprint: fingerprintOutput(stateContent),
         scored: false,
       },
       recorder,
     )
     const plan = summarizeChanges(preview.entries)
+    planFiles = plan.files
     plannedChanges = plan.totals.create + plan.totals.update + plan.totals.remove
-    // Phase 4: snapshot each planned target now, so the apply pass can detect
-    // any change between plan and apply (drift) before the first write.
-    plannedSnapshots = plan.files.map((f) => ({ path: f.path, ...snapshot(f.path) }))
+    removalPaths = [
+      ...new Set(
+        preview.entries
+          .filter((entry) => entry.action === ACTIONS.REMOVE)
+          .map((entry) => resolve(entry.path)),
+      ),
+    ].sort()
+    // Snapshot both net changes and every raw removal target. A later write can
+    // make a removal path look unchanged in the net plan, but it still needs
+    // review before the clean operation deletes and recreates it.
+    const snapshotPaths = new Set([...plan.files.map((file) => file.path), ...removalPaths])
+    plannedSnapshots = [...snapshotPaths].map((filePath) => ({
+      path: filePath,
+      ...snapshot(filePath),
+    }))
     const statsDelta = {
       created: stats.created - statsBefore.created,
       skipped: stats.skipped - statsBefore.skipped,
@@ -2148,6 +2299,13 @@ async function installPass(
     // it — a real apply is not a dry run.
     if (!opts.quietPlan) {
       console.log('')
+      if (removalPaths.length > 0) {
+        console.log(tag(`Removal review — ${removalPaths.length} path(s):`))
+        for (const filePath of removalPaths) {
+          console.log(tag(`  remove    ${displayPath(target, filePath)}`))
+        }
+        console.log('')
+      }
       for (const line of formatChangePlan(target, plan).split('\n')) {
         console.log(tag(line))
       }
@@ -2211,7 +2369,7 @@ async function installPass(
 
   if (opts.preset && !dryRun) {
     const { writeActivePreset } = await import('./model-picker.mjs')
-    writeActivePreset(target, opts.preset, { source: 'cli' })
+    writeActivePreset(target, opts.preset, { source: 'cli', updatedAt: planTimestamp, recorder })
   }
 
   // -----------------------------------------------------------------------
@@ -2242,19 +2400,20 @@ async function installPass(
   // to `doctor` forever. Unselected components retain their previous state.
   if (!dryRun) {
     const packageVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
-    let state = readState(target)
+    let state = projectedState ?? readState(target)
     if (!state && hasState(target)) {
       throw new Error('Installation state exists but cannot be read; refusing to replace it')
     }
-    state ??= createInitialState(packageVersion)
+    state ??= createInitialState(packageVersion, planTimestamp)
     state.pantheon_version = packageVersion
+    state.updated_at = planTimestamp
     for (const component of ['agents', 'skills', 'plugins', 'runtime']) {
       if (!componentSet.has(component)) continue
       const status = component === 'runtime' && !runtimeHealthy ? 'failed' : 'installed'
       const componentVersion = state.components?.[component]?.version ?? 1
       setComponentState(state, component, componentVersion, status)
     }
-    writeState(target, state)
+    writeState(target, state, { updatedAt: planTimestamp })
   }
 
   // Beta 11 Setup phase 3: report whether this call APPLIED, so the caller can
@@ -2267,6 +2426,11 @@ async function installPass(
         reason: 'plan',
         planned: plannedChanges,
         snapshots: plannedSnapshots,
+        files: planFiles,
+        removals: removalPaths,
+        target,
+        openCodeVersion: version,
+        versionAssumed,
       }
     : { ...stats, applied: true, reason: 'applied' }
 }

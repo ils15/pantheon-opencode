@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -131,6 +132,53 @@ test('V2 install selects the V2 TUI API and V1 reinstall removes that entrypoint
     )
     const v1Package = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
     assert.equal(v1Package.exports['./tui'], './dist/tui.js')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('plugin legacy cleanup rejects a symlinked destination parent without touching outside files', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-plugin-linked-parent-'))
+  const outside = join(target, 'outside')
+  const linkedPlugins = join(target, 'plugins')
+  const pluginDir = join(linkedPlugins, 'pantheon-tui')
+  const sentinel = join(outside, 'pantheon-tui', 'index.tsx')
+  const before = 'outside legacy plugin source'
+  mkdirSync(join(outside, 'pantheon-tui'), { recursive: true })
+  writeFileSync(sentinel, before)
+  symlinkSync(outside, linkedPlugins, 'dir')
+
+  try {
+    assert.throws(() => copyPluginFiles(join(ROOT, 'src', 'plugins', 'tui'), pluginDir), /symlink/i)
+    assert.equal(readFileSync(sentinel, 'utf8'), before)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('force plugin cleanup rejects a symlinked destination parent without deleting outside data', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-plugin-force-linked-'))
+  const bin = join(target, 'bin')
+  const outside = join(target, 'outside')
+  const linkedPlugins = join(target, 'plugins')
+  const pluginDir = join(linkedPlugins, 'pantheon-tui')
+  const sentinel = join(outside, 'pantheon-tui', 'user-data')
+  const before = 'preserve outside plugin data'
+  mkdirSync(bin)
+  mkdirSync(join(outside, 'pantheon-tui'), { recursive: true })
+  writeFileSync(sentinel, before)
+  writeFileSync(join(bin, 'npm'), '#!/bin/sh\nexit 0\n')
+  chmodSync(join(bin, 'npm'), 0o755)
+  symlinkSync(outside, linkedPlugins, 'dir')
+
+  try {
+    const code = `import { installPlugin } from ${JSON.stringify(new URL('../scripts/install/plugin.mjs', import.meta.url).href)}; installPlugin(${JSON.stringify(join(ROOT, 'src', 'plugins', 'tui'))}, ${JSON.stringify(pluginDir)}, { clean: true });`
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', code], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` },
+    })
+    assert.notEqual(result.status, 0, result.stdout + result.stderr)
+    assert.equal(readFileSync(sentinel, 'utf8'), before)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

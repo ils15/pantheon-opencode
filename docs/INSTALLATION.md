@@ -22,6 +22,66 @@ npm run doctor
 - Delegação e modo background dependem das ferramentas expostas pela versão/runtime do host. Na sessão Beta 10 reportada, Zeus tinha a ferramenta `subagent`, sem `task_status`/`cancel_task` ou garantia de acompanhamento/recuperação. Verifique o schema e a documentação do runtime; não presuma que `task()` ou background estejam disponíveis. A variável experimental abaixo só se aplica a hosts/versões que a documentem.
 - Passo a passo de 5 minutos: [QUICKSTART.md](QUICKSTART.md).
 
+## Revisão, autorização e recuperação do instalador
+
+`init --dry-run` mostra as operações de arquivos gerenciados sem aplicá-las. Para
+revisar em uma execução e autorizar em outra, salve um plano versionado:
+
+```bash
+# Preview legível ou JSON (somente no stdout)
+npx pantheon-opencode init --project --no-mcp --components agents --dry-run
+npx pantheon-opencode init --project --no-mcp --components agents --dry-run --json
+
+# Salvar e aplicar o plano revisado; sem --yes, uma sessão TTY pergunta
+npx pantheon-opencode init --project --no-mcp --components agents --dry-run \
+  --save-plan .pantheon-install-plan.json
+npx pantheon-opencode init --apply-plan .pantheon-install-plan.json --yes
+```
+
+O artefato é JSON versionado, gravado atomicamente com permissões `0600`; guarda
+identidades, opções, snapshots/fingerprints e operações, não o conteúdo dos
+arquivos gerados. Ele fica vinculado ao caminho original do artefato, ao alvo e
+à identidade do pacote. Na aplicação, o instalador recalcula o plano e compara a
+origem e os destinos; se houver drift, aborta antes de escrever (código de saída
+`3`). `--apply-plan` aceita somente o caminho do plano e autorização (`--yes`/
+`-y` ou prompt TTY). Planos salvos com `--force`/`--clean` não são suportados.
+
+Para manter o preview livre de efeitos colaterais no host, `--dry-run` não
+executa `opencode --version`: sem um hint de versão configurado, assume V1 e
+informa isso como advisory. Use `--opencode-version v1` ou
+`--opencode-version v2` para selecionar a geração do preview e do plano salvo.
+O plano descreve operações de
+arquivos gerenciados; não representa integralmente efeitos em lote ou externos,
+como criar/atualizar um ambiente Python. `postinstall`/`sync-tui` também fica
+fora do fluxo de aprovação do `init` e pode atualizar artefatos TUI sem prompt.
+Não trate o preview como transação nem como promessa de rollback automático.
+
+Antes das primeiras gravações gerenciadas, `init` cria um backup exato em
+`.pantheon/backups/<timestamp>/` (diretório `0700`, arquivos `0600`, retenção das
+5 cópias mais recentes). Como o backup é byte a byte, pode conter credenciais já
+presentes nos arquivos; não o compartilhe. Para recuperar, use
+`npx pantheon-opencode restore [--project] [--yes]`. Uma falha/interrupção pode
+deixar alterações parciais; a recuperação é manual pelo comando `restore`, não
+um rollback automático.
+
+### Remoção e purge
+
+O desinstalador também pode ser revisado antes de aplicar:
+
+```bash
+npx pantheon-opencode uninstall --project --dry-run
+npx pantheon-opencode uninstall --project --force
+```
+
+Sem `--force`, a aplicação pede confirmação em TTY e falha fechada em ambiente
+não interativo. O desinstalador remove apenas itens identificados como do
+Pantheon, preserva symlinks e cria backup dos arquivos regulares que serão
+alterados/removidos; os backups não são apagados pelo uninstall. `--purge-data`
+é mais restrito: só permite remover `.pantheon/install-state.json` quando for um
+arquivo regular e um estado schema-v2 verificável. Não é uma limpeza geral de
+`.pantheon` nem remove os backups. Primeiro revise com `--dry-run`; para aplicar
+purge em modo não interativo, combine `--purge-data --force`.
+
 ## Prerequisites
 
 - **OpenCode v1.18.4+** — [Install OpenCode](https://opencode.ai/docs/)
@@ -710,12 +770,24 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 > **não altera nada** sem `--yes` (alias `-y`). Exit codes: `0` ok/plan-only
 > (nada aplicado) · `2` apply pedido sem autorização · `3` drift (um alvo
 > planejado mudou entre o plano e o apply) · `130` cancelado · `1` falha.
-> O drift é verificado **dentro de uma única execução** (plano → apply); não é
-> detectável entre duas invocações separadas do CLI (nenhum plano é persistido).
 
 #### Backup, restore e fluxo de aprovação
 
-- **Preview**: `init --dry-run` imprime o plano e **não escreve nada**.
+- **Preview**: `init --dry-run` imprime o plano e **não grava no alvo**. Para
+  revisão entre execuções, use `--save-plan <arquivo>`; para aplicar o artefato
+  revisado, use `--apply-plan <arquivo> --yes` (ou confirme no TTY). O plano
+  versionado é gravado com modo `0600`, inclui metadados/fingerprints e não
+  inclui conteúdo gerado. Está vinculado ao caminho original, alvo e pacote; o
+  apply recalcula operações e snapshots e aborta com código `3` se houver drift.
+  Planos salvos com `--force`/`--clean` não são aceitos.
+- **Geração OpenCode no preview**: para evitar efeitos colaterais, o dry-run não
+  executa `opencode --version`; sem um hint de versão configurado, assume V1 e
+  emite um aviso advisory. Passe `--opencode-version v1` ou `v2` para fixar a
+  geração.
+- **Limites do preview**: o plano representa operações de arquivos gerenciados,
+  não todos os efeitos em lote ou externos, como setup do ambiente Python.
+  `postinstall`/`sync-tui` fica fora do fluxo de aprovação. Não é uma transação
+  nem garante rollback automático.
 - **Backup exato**: antes da primeira escrita, `init` salva um conjunto exato em
   `.pantheon/backups/<timestamp>/` (diretório `0700`, arquivos e manifest `0600`;
   mantém os **5** mais recentes). É uma cópia byte-a-byte e, portanto, **também
@@ -723,8 +795,8 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
   nunca é impresso (nem seus hashes).
 - **Restore**: `pantheon-opencode restore [--project] [--from <dir>] [--dry-run] [--yes]`.
   Verifica a integridade do manifest e se recusa a restaurar um conjunto
-  adulterado; faz um backup do estado atual antes de reverter. Exige `--yes` num
-  TTY não-interativo; num TTY pergunta (default **não**).
+  adulterado; faz um backup do estado atual antes de reverter. Em execução não
+  interativa, exige `--yes`; num TTY pergunta (default **não**).
 - **Falha no meio do apply**: aborta as escritas restantes, limpa arquivos
   temporários (`<arquivo>.tmp-<pid>`), lista os caminhos já aplicados (sem
   conteúdo) e imprime a instrução de recuperação. **Não há rollback automático** —

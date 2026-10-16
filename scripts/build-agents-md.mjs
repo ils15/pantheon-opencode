@@ -35,8 +35,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-
-import { ACTIONS, isRecording, recordChange } from './install/plan.mjs'
+import { ACTIONS, fingerprintOutput, isRecording, recordChange } from './install/plan.mjs'
+import { assertNoSymlinkAncestors, assertPathWithin, verifyRegularFile } from './install/verify.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 export const ROOT = join(__dirname, '..')
@@ -326,21 +326,36 @@ export function generateProjectAgentsMd(git = readGitInfo()) {
  * @returns {'created' | 'skipped' | 'updated' | 'upgraded' | 'merged'}
  */
 export function writeAgentsMdManaged(filePath, generated, dryRun = false, recorder = null) {
+  assertPathWithin(dirname(filePath), filePath)
+  assertNoSymlinkAncestors(filePath)
   const existing = existsSync(filePath) ? readFileSync(filePath, 'utf8') : null
   if (existing === null) {
     if (!dryRun) {
+      assertNoSymlinkAncestors(dirname(filePath))
       mkdirSync(dirname(filePath), { recursive: true })
+      assertNoSymlinkAncestors(filePath)
       writeFileSync(filePath, generated, 'utf8')
+      verifyRegularFile(filePath, generated)
     }
     recordChange(
-      { path: filePath, action: ACTIONS.CREATE, bytes: Buffer.byteLength(generated, 'utf8') },
+      {
+        path: filePath,
+        action: ACTIONS.CREATE,
+        bytes: Buffer.byteLength(generated, 'utf8'),
+        outputFingerprint: fingerprintOutput(generated),
+      },
       recorder,
     )
     return 'created'
   }
   if (existing === generated) {
     recordChange(
-      { path: filePath, action: ACTIONS.UNCHANGED, bytes: Buffer.byteLength(existing, 'utf8') },
+      {
+        path: filePath,
+        action: ACTIONS.UNCHANGED,
+        bytes: Buffer.byteLength(existing, 'utf8'),
+        outputFingerprint: fingerprintOutput(existing),
+      },
       recorder,
     )
     return 'skipped'
@@ -354,14 +369,28 @@ export function writeAgentsMdManaged(filePath, generated, dryRun = false, record
     const next = `${before}${generated}${after}`
     if (next === existing) {
       recordChange(
-        { path: filePath, action: ACTIONS.UNCHANGED, bytes: Buffer.byteLength(existing, 'utf8') },
+        {
+          path: filePath,
+          action: ACTIONS.UNCHANGED,
+          bytes: Buffer.byteLength(existing, 'utf8'),
+          outputFingerprint: fingerprintOutput(existing),
+        },
         recorder,
       )
       return 'skipped'
     }
-    if (!dryRun) writeFileSync(filePath, next, 'utf8')
+    if (!dryRun) {
+      assertNoSymlinkAncestors(filePath)
+      writeFileSync(filePath, next, 'utf8')
+      verifyRegularFile(filePath, next)
+    }
     recordChange(
-      { path: filePath, action: ACTIONS.UPDATE, bytes: Buffer.byteLength(next, 'utf8') },
+      {
+        path: filePath,
+        action: ACTIONS.UPDATE,
+        bytes: Buffer.byteLength(next, 'utf8'),
+        outputFingerprint: fingerprintOutput(next),
+      },
       recorder,
     )
     return before.trim() === '' && after.trim() === '' ? 'updated' : 'merged'
@@ -369,9 +398,18 @@ export function writeAgentsMdManaged(filePath, generated, dryRun = false, record
 
   if (existing.startsWith(GENERATED_BY)) {
     // Legacy format: the header declares the whole file machine-generated.
-    if (!dryRun) writeFileSync(filePath, generated, 'utf8')
+    if (!dryRun) {
+      assertNoSymlinkAncestors(filePath)
+      writeFileSync(filePath, generated, 'utf8')
+      verifyRegularFile(filePath, generated)
+    }
     recordChange(
-      { path: filePath, action: ACTIONS.UPDATE, bytes: Buffer.byteLength(generated, 'utf8') },
+      {
+        path: filePath,
+        action: ACTIONS.UPDATE,
+        bytes: Buffer.byteLength(generated, 'utf8'),
+        outputFingerprint: fingerprintOutput(generated),
+      },
       recorder,
     )
     return 'upgraded'
@@ -381,10 +419,17 @@ export function writeAgentsMdManaged(filePath, generated, dryRun = false, record
   const separator = existing.endsWith('\n') ? '\n' : '\n\n'
   const payload = `${existing}${separator}${generated}`
   if (!dryRun) {
+    assertNoSymlinkAncestors(filePath)
     writeFileSync(filePath, payload, 'utf8')
+    verifyRegularFile(filePath, payload)
   }
   recordChange(
-    { path: filePath, action: ACTIONS.UPDATE, bytes: Buffer.byteLength(payload, 'utf8') },
+    {
+      path: filePath,
+      action: ACTIONS.UPDATE,
+      bytes: Buffer.byteLength(payload, 'utf8'),
+      outputFingerprint: fingerprintOutput(payload),
+    },
     recorder,
   )
   return 'merged'
@@ -464,8 +509,13 @@ export function copyAgentPrompts(
   existingOnly = false,
   recorder = null,
 ) {
+  assertNoSymlinkAncestors(targetDir)
   const instructions = readInstructions()
-  if (!dryRun && !existingOnly) mkdirSync(targetDir, { recursive: true })
+  if (!dryRun && !existingOnly) {
+    assertNoSymlinkAncestors(targetDir)
+    mkdirSync(targetDir, { recursive: true })
+    assertNoSymlinkAncestors(targetDir)
+  }
   let created = 0
   let skipped = 0
   for (const file of readdirSync(sourceDir)
@@ -477,18 +527,29 @@ export function copyAgentPrompts(
     const agentName = file.replace(/\.md$/, '')
     const output = generateAgentPrompt(agentName, readFileSync(sourcePath, 'utf8'), instructions)
     const targetPath = join(targetDir, file)
+    assertPathWithin(targetDir, targetPath)
+    assertNoSymlinkAncestors(targetPath)
     if (existingOnly && !existsSync(targetPath)) continue
     const existing = existsSync(targetPath) ? readFileSync(targetPath, 'utf8') : null
     if (existing === output) {
       skipped++
       if (isRecording(recorder)) {
         recordChange(
-          { path: targetPath, action: ACTIONS.UNCHANGED, bytes: Buffer.byteLength(output, 'utf8') },
+          {
+            path: targetPath,
+            action: ACTIONS.UNCHANGED,
+            bytes: Buffer.byteLength(output, 'utf8'),
+            outputFingerprint: fingerprintOutput(output),
+          },
           recorder,
         )
       }
     } else {
-      if (!dryRun) writeFileSync(targetPath, output, 'utf8')
+      if (!dryRun) {
+        assertNoSymlinkAncestors(targetPath)
+        writeFileSync(targetPath, output, 'utf8')
+        verifyRegularFile(targetPath, output)
+      }
       created++
       if (isRecording(recorder)) {
         recordChange(
@@ -496,6 +557,7 @@ export function copyAgentPrompts(
             path: targetPath,
             action: existing === null ? ACTIONS.CREATE : ACTIONS.UPDATE,
             bytes: Buffer.byteLength(output, 'utf8'),
+            outputFingerprint: fingerprintOutput(output),
           },
           recorder,
         )
@@ -558,6 +620,8 @@ function main() {
 
   writeFileSync(AGENTS_GLOBAL_MD_PATH, global, 'utf8')
   writeFileSync(AGENTS_MD_PATH, project, 'utf8')
+  verifyRegularFile(AGENTS_GLOBAL_MD_PATH, global)
+  verifyRegularFile(AGENTS_MD_PATH, project)
   console.log(
     `✅ Generated AGENTS.md (${logicalLineCount(project)} lines) + AGENTS.global.md ` +
       `(${logicalLineCount(global)} lines, ${sharedCount} shared instruction sections)`,

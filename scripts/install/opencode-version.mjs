@@ -220,10 +220,18 @@ export function resolveOpenCodeVersion(requested = 'auto', options = {}) {
     return env.OPENCODE_VERSION
   }
   const binary = options.binary ?? env.OPENCODE_BIN ?? ''
+  const warn = options.warn ?? warning
   if (/(?:^|[\\/])opencode2(?:\.exe)?$/i.test(binary)) return 'v2'
 
+  if (options.skipProbe) {
+    warn(
+      'Dry-run skipped the OpenCode host version probe to avoid host-side writes; assuming V1. ' +
+        'Pass --opencode-version v2 (or v1) to review a specific generation.',
+    )
+    return 'v1'
+  }
+
   const probe = options.probe ?? (() => probeHostVersion(binary || 'opencode'))
-  const warn = options.warn ?? warning
   let raw
   try {
     raw = probe()

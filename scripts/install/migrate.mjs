@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ACTIONS, recordChange, snapshot } from './plan.mjs'
+import { ACTIONS, fingerprintOutput, recordChange } from './plan.mjs'
 import { createInitialState, readState, writeState } from './state.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -48,7 +48,11 @@ export function detectVersion(target) {
  * @param {{ dryRun?: boolean, recorder?: (change: object) => void }} [options]
  * @returns {{ applied: number, messages: string[] }}
  */
-export function runMigrations(target, currentVersion, { dryRun = false, recorder = null } = {}) {
+export function runMigrations(
+  target,
+  currentVersion,
+  { dryRun = false, recorder = null, updatedAt = new Date().toISOString() } = {},
+) {
   const applied = []
   const semver = parseSemver(currentVersion)
 
@@ -107,49 +111,52 @@ export function runMigrations(target, currentVersion, { dryRun = false, recorder
   // ── Write updated state ───────────────────────────────────────────
   if (applied.length > 0) {
     const statePath = join(target, '.pantheon', 'install-state.json')
-    if (dryRun) {
-      // State-only bookkeeping write: recorded so the preview is complete, but
-      // unscored because the install summary does not count it. Classified as
-      // an update — a migration that applies implies a state file existed.
-      recordChange({ path: statePath, action: ACTIONS.UPDATE, bytes: 0, scored: false }, recorder)
-    } else {
-      const newVersion = formatSemver(semver)
-      let state = readState(target)
-      const stateExisted = state !== null
-      if (!state) state = createInitialState(newVersion)
-      state.pantheon_version = newVersion
-      for (const m of applied) {
-        state.applied_migrations.push({
-          from: m.from,
-          to: m.to,
-          applied_at: new Date().toISOString(),
-          status: 'completed',
-        })
+    const newVersion = formatSemver(semver)
+    let state = readState(target)
+    const stateExisted = state !== null
+    if (!state) state = createInitialState(newVersion, updatedAt)
+    state.pantheon_version = newVersion
+    for (const m of applied) {
+      state.applied_migrations.push({
+        from: m.from,
+        to: m.to,
+        applied_at: updatedAt,
+        status: 'completed',
+      })
+    }
+    if (!state.components) {
+      state.components = {
+        agents: { version: 1, status: 'installed' },
+        skills: { version: 1, status: 'installed' },
+        plugins: { version: 1, status: 'installed' },
+        runtime: { version: 1, status: 'installed' },
       }
-      if (!state.components) {
-        state.components = {
-          agents: { version: 1, status: 'installed' },
-          skills: { version: 1, status: 'installed' },
-          plugins: { version: 1, status: 'installed' },
-          runtime: { version: 1, status: 'installed' },
-        }
-      }
-      writeState(target, state)
-      recordChange(
-        {
-          path: statePath,
-          action: stateExisted ? ACTIONS.UPDATE : ACTIONS.CREATE,
-          bytes: snapshot(statePath).size,
-          scored: false,
-        },
-        recorder,
-      )
+    }
+    state.updated_at = updatedAt
+    state.schema_version = 2
+    const stateContent = `${JSON.stringify(state, null, 2)}\n`
+    if (!dryRun) writeState(target, state, { updatedAt })
+    recordChange(
+      {
+        path: statePath,
+        action: stateExisted ? ACTIONS.UPDATE : ACTIONS.CREATE,
+        bytes: Buffer.byteLength(stateContent, 'utf8'),
+        outputFingerprint: fingerprintOutput(stateContent),
+        scored: false,
+      },
+      recorder,
+    )
+    return {
+      applied: applied.length,
+      messages: applied.map((m) => `${m.from} → ${m.to}: ${m.description}`),
+      plannedState: state,
     }
   }
 
   return {
     applied: applied.length,
     messages: applied.map((m) => `${m.from} → ${m.to}: ${m.description}`),
+    plannedState: null,
   }
 }
 

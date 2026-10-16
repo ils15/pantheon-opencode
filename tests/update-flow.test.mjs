@@ -9,15 +9,25 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { checkInstallVersionDrift } from '../scripts/doctor.mjs'
+import { runUpdate } from '../scripts/update.mjs'
 
 const ROOT = process.cwd()
 const BIN = join(ROOT, 'bin', 'pantheon-init.mjs')
+const DOCTOR = join(ROOT, 'scripts', 'doctor.mjs')
 
 test('doctor warns when the package is newer than the installation marker', () => {
   const home = mkdtempSync(join(tmpdir(), 'pantheon-drift-'))
@@ -79,7 +89,57 @@ test('doctor reports in-sync when the marker matches the package version', () =>
   }
 })
 
-test('update on an unreachable registry fails with exit 1 and a clear message', () => {
+test('doctor --json emits versioned JSON and classifies version drift as advisory', () => {
+  const home = mkdtempSync(join(tmpdir(), 'pantheon-doctor-json-'))
+  const configDir = join(home, '.config', 'opencode')
+  try {
+    mkdirSync(join(configDir, '.pantheon'), { recursive: true })
+    writeFileSync(
+      join(configDir, '.pantheon', 'install-state.json'),
+      JSON.stringify({ schema_version: 2, pantheon_version: '1.0.0', components: {} }),
+    )
+    const result = spawnSync(
+      process.execPath,
+      [DOCTOR, '--json', '--target', ROOT, '--profile', 'lite'],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config') },
+      },
+    )
+    const report = JSON.parse(result.stdout)
+    assert.equal(report.schema_version, 1)
+    assert.equal(report.command, 'doctor')
+    assert.ok(
+      report.findings.some(
+        (finding) =>
+          finding.code === 'install_version_drift' && finding.classification === 'advisory',
+      ),
+    )
+    assert.equal(readdirSync(home).includes('.cache'), false)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('doctor --json --fix is rejected before performing checks or writes', () => {
+  const home = mkdtempSync(join(tmpdir(), 'pantheon-doctor-json-fix-'))
+  try {
+    const before = readdirSync(home)
+    const result = spawnSync(process.execPath, [DOCTOR, '--json', '--fix', '--target', home], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config') },
+    })
+    assert.notEqual(result.status, 0)
+    const report = JSON.parse(result.stdout)
+    assert.equal(report.status, 'error')
+    assert.ok(report.findings.some((finding) => finding.code === 'json_fix_unsupported'))
+    assert.deepEqual(readdirSync(home), before)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('update refuses a local checkout before registry access', () => {
   const result = spawnSync(process.execPath, [BIN, 'update'], {
     encoding: 'utf8',
     timeout: 60_000,
@@ -91,7 +151,166 @@ test('update on an unreachable registry fails with exit 1 and a clear message', 
     },
   })
   assert.notEqual(result.status, 0)
-  assert.match(`${result.stderr}${result.stdout}`, /Could not reach the npm registry/)
+  assert.match(`${result.stderr}${result.stdout}`, /only from the global Pantheon installation/)
+  assert.doesNotMatch(`${result.stderr}${result.stdout}`, /Could not reach the npm registry/)
+})
+
+test('authorized global update verifies the refreshed version before config refresh', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-update-global-'))
+  const globalRoot = join(root, 'npm-global')
+  const packageRoot = join(globalRoot, 'pantheon-opencode')
+  const script = join(packageRoot, 'bin', 'pantheon-init.mjs')
+  try {
+    mkdirSync(join(packageRoot, 'bin'), { recursive: true })
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '1.6.0-beta.11' }))
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    let refreshes = 0
+    const spawnSyncImpl = (_command, args) => {
+      if (args[0] === 'root') return { status: 0, stdout: `${globalRoot}\n`, stderr: '' }
+      if (args[0] === 'view') return { status: 0, stdout: '1.6.0-beta.12\n', stderr: '' }
+      if (args[0] === 'install') {
+        writeFileSync(
+          join(packageRoot, 'package.json'),
+          JSON.stringify({ version: '1.6.0-beta.12' }),
+        )
+        return { status: 0, stdout: '', stderr: '' }
+      }
+      throw new Error(`Unexpected command: ${args.join(' ')}`)
+    }
+    const status = await runUpdate([], {
+      root: packageRoot,
+      currentVersion: '1.6.0-beta.11',
+      runningScript: script,
+      spawnSync: spawnSyncImpl,
+      refresh: () => {
+        refreshes += 1
+        return { status: 0 }
+      },
+    })
+    assert.equal(status, 0)
+    assert.equal(refreshes, 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('update refuses a global package symlink into a workspace before registry access', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-update-global-symlink-'))
+  const globalRoot = join(root, 'npm-global')
+  const workspaceRoot = join(root, 'workspace', 'pantheon-opencode')
+  const script = join(workspaceRoot, 'bin', 'pantheon-init.mjs')
+  const globalEntry = join(globalRoot, 'pantheon-opencode')
+  try {
+    mkdirSync(join(workspaceRoot, 'bin'), { recursive: true })
+    mkdirSync(globalRoot)
+    writeFileSync(join(workspaceRoot, 'package.json'), JSON.stringify({ version: '1.6.0-beta.11' }))
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    symlinkSync(workspaceRoot, globalEntry, 'dir')
+
+    const calls = []
+    const originalError = console.error
+    console.error = () => {}
+    let status
+    try {
+      status = await runUpdate([], {
+        root: workspaceRoot,
+        currentVersion: '1.6.0-beta.11',
+        runningScript: script,
+        spawnSync: (_command, args) => {
+          calls.push(args[0])
+          if (args[0] === 'root') return { status: 0, stdout: `${globalRoot}\n`, stderr: '' }
+          throw new Error(`Unexpected command: ${args.join(' ')}`)
+        },
+      })
+    } finally {
+      console.error = originalError
+    }
+
+    assert.equal(status, 1)
+    assert.deepEqual(calls, ['root'], 'must refuse before npm registry access or install')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('update refuses a symlinked npm global-root ancestor before registry or refresh', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-update-global-ancestor-link-'))
+  const actualParent = join(root, 'actual-parent')
+  const actualGlobalRoot = join(actualParent, 'npm-global')
+  const linkedParent = join(root, 'linked-parent')
+  const packageRoot = join(actualGlobalRoot, 'pantheon-opencode')
+  const script = join(packageRoot, 'bin', 'pantheon-init.mjs')
+  try {
+    mkdirSync(join(packageRoot, 'bin'), { recursive: true })
+    symlinkSync(actualParent, linkedParent, 'dir')
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '1.6.0-beta.11' }))
+    writeFileSync(script, '#!/usr/bin/env node\n')
+
+    const calls = []
+    let refreshes = 0
+    const originalError = console.error
+    console.error = () => {}
+    let status
+    try {
+      status = await runUpdate([], {
+        root: packageRoot,
+        currentVersion: '1.6.0-beta.11',
+        runningScript: script,
+        spawnSync: (_command, args) => {
+          calls.push(args[0])
+          if (args[0] === 'root') {
+            return { status: 0, stdout: `${join(linkedParent, 'npm-global')}\n`, stderr: '' }
+          }
+          throw new Error(`Unexpected command: ${args.join(' ')}`)
+        },
+        refresh: () => {
+          refreshes += 1
+          return { status: 0 }
+        },
+      })
+    } finally {
+      console.error = originalError
+    }
+
+    assert.equal(status, 1)
+    assert.deepEqual(calls, ['root'], 'must refuse before npm view/install')
+    assert.equal(refreshes, 0, 'must not refresh config after a linked global root')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('global update suppresses config refresh when refreshed package version mismatches', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-update-mismatch-'))
+  const globalRoot = join(root, 'npm-global')
+  const packageRoot = join(globalRoot, 'pantheon-opencode')
+  const script = join(packageRoot, 'bin', 'pantheon-init.mjs')
+  try {
+    mkdirSync(join(packageRoot, 'bin'), { recursive: true })
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '1.6.0-beta.11' }))
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    let refreshes = 0
+    const spawnSyncImpl = (_command, args) => {
+      if (args[0] === 'root') return { status: 0, stdout: `${globalRoot}\n`, stderr: '' }
+      if (args[0] === 'view') return { status: 0, stdout: '1.6.0-beta.12\n', stderr: '' }
+      if (args[0] === 'install') return { status: 0, stdout: '', stderr: '' }
+      throw new Error(`Unexpected command: ${args.join(' ')}`)
+    }
+    const status = await runUpdate([], {
+      root: packageRoot,
+      currentVersion: '1.6.0-beta.11',
+      runningScript: script,
+      spawnSync: spawnSyncImpl,
+      refresh: () => {
+        refreshes += 1
+        return { status: 0 }
+      },
+    })
+    assert.equal(status, 1)
+    assert.equal(refreshes, 0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('update binary exists in usage output', () => {

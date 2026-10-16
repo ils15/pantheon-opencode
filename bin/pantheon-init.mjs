@@ -22,6 +22,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
+import {
+  createPlanArtifact,
+  loadPlanArtifact,
+  savePlanArtifact,
+} from '../scripts/install/plan-artifact.mjs'
+import { runUpdate } from '../scripts/update.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
@@ -49,6 +55,9 @@ function printUsage() {
   console.log('  npx pantheon-opencode init              # Install globally')
   console.log('  npx pantheon-opencode init --project    # Install in project')
   console.log('  npx pantheon-opencode init --dry-run    # Preview only')
+  console.log('  npx pantheon-opencode init --dry-run --save-plan <file> # Save reviewed plan')
+  console.log('  npx pantheon-opencode init --apply-plan <file> [--yes] # Apply reviewed plan')
+  console.log('  npx pantheon-opencode init --dry-run --json # Versioned JSON preview')
   console.log('  npx pantheon-opencode init --no-mcp       # Skip MCP + venv')
   console.log('  npx pantheon-opencode init --force        # Overwrite + recreate venv')
   console.log('  npx pantheon-opencode init --doctor       # Run health check after install')
@@ -89,6 +98,22 @@ function printUsage() {
   console.log('  2   apply was requested without authorization (non-interactive, no --yes)')
   console.log('  3   drift detected (a planned file changed after the plan)')
   console.log('  130 canceled')
+}
+
+async function authorizeReviewedPlan(plan) {
+  const operations = plan.operations.filter((operation) => operation.action !== 'unchanged')
+  console.log(`Reviewed plan: ${plan.target.path} (${operations.length} change(s))`)
+  for (const operation of operations) {
+    console.log(`  ${operation.action.padEnd(9)} ${operation.path}`)
+  }
+  const readline = await import('node:readline/promises')
+  const prompt = readline.createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    const answer = await prompt.question('Apply this reviewed plan? [y/N] ')
+    return ['y', 'yes'].includes(answer.trim().toLowerCase())
+  } finally {
+    prompt.close()
+  }
 }
 
 async function main() {
@@ -152,72 +177,12 @@ async function main() {
   // beta.5: one-command update — check npm dist-tag, install, re-init.
   // Default channel is `beta` (the prerelease line); `--stable` uses `latest`.
   if (command === 'update') {
-    const channel = args.includes('--stable') ? 'latest' : 'beta'
-    const current = readVersion()
-    const { spawnSync } = await import('node:child_process')
-    const _S = (await import('../scripts/install/strings.mjs')).strings()
-
-    console.log(`Pantheon OpenCode v${current} — checking the "${channel}" channel...`)
-    const view = spawnSync('npm', ['view', `pantheon-opencode@${channel}`, 'version'], {
-      encoding: 'utf8',
-      timeout: 30_000,
+    const status = runUpdate(args, {
+      root: ROOT,
+      currentVersion: readVersion(),
+      runningScript: process.argv[1],
     })
-    const latest = (view.stdout || '').trim().split('\n').filter(Boolean).pop()
-    if (view.status !== 0 || !latest) {
-      console.error(
-        `❌ Could not reach the npm registry: ${(view.stderr || view.stdout || '').trim() || 'no version returned'}`,
-      )
-      process.exit(1)
-    }
-
-    // Prerelease-aware compare: core (major.minor.patch) first, then the
-    // beta counter; a stable release outranks any beta of the same core.
-    const parsePantheonVersion = (v) => {
-      const m = String(v)
-        .trim()
-        .match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
-      if (!m) return null
-      return {
-        core: [+m[1], +m[2], +m[3]],
-        beta: m[4] === undefined ? Number.POSITIVE_INFINITY : +m[4],
-      }
-    }
-    const cmp = (a, b) => {
-      const pa = parsePantheonVersion(a)
-      const pb = parsePantheonVersion(b)
-      if (!pa || !pb) return 0
-      for (let i = 0; i < 3; i++) {
-        if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i]
-      }
-      return pa.beta - pb.beta
-    }
-    if (cmp(latest, current) <= 0) {
-      console.log(`✅ Already up to date (installed v${current}; ${channel} channel: v${latest}).`)
-      return
-    }
-
-    console.log(`Updating v${current} → v${latest} (channel: ${channel})...`)
-    const install = spawnSync('npm', ['install', '-g', `pantheon-opencode@${channel}`], {
-      stdio: 'inherit',
-    })
-    if (install.status !== 0) {
-      console.error('❌ npm install failed — the previous installation is untouched.')
-      process.exit(install.status ?? 1)
-    }
-
-    // Refresh config/venv/MCP entries with the NEW package (resolved via
-    // PATH — the freshly installed global bin).
-    const init = spawnSync('pantheon-opencode', ['init', '--yes', '--headless'], {
-      stdio: 'inherit',
-      shell: process.platform === 'win32',
-    })
-    if (init.status !== 0 || init.error) {
-      console.error(
-        '⚠️  Updated, but the config refresh did not complete — run `npx pantheon-opencode init` manually.',
-      )
-      process.exit(init.status ?? 1)
-    }
-    console.log(`✅ Updated to v${latest}.`)
+    if (status !== 0) process.exit(status)
     return
   }
 
@@ -301,15 +266,89 @@ async function main() {
   }
 
   if (command === 'init' || !command) {
-    const isProject = args.includes('--project')
-    const isDryRun = args.includes('--dry-run')
+    const applyPlanIndex = args.indexOf('--apply-plan')
+    const inlineApplyPlan = args.find((arg) => arg.startsWith('--apply-plan='))
+    const applyPlanPath =
+      applyPlanIndex >= 0
+        ? (args[applyPlanIndex + 1] ?? null)
+        : (inlineApplyPlan?.split('=', 2)[1] ?? null)
+    if (applyPlanIndex >= 0 && !applyPlanPath) {
+      console.error('❌ --apply-plan requires a plan file path')
+      process.exit(1)
+    }
+    let reviewedPlan = null
+    if (applyPlanPath !== null) {
+      const allowed = new Set(['init', '--apply-plan', applyPlanPath, '--yes', '-y', '--headless'])
+      const normalized = args.map((value) =>
+        value.startsWith('--apply-plan=') ? '--apply-plan' : value,
+      )
+      if (normalized.some((value) => !allowed.has(value))) {
+        console.error('❌ --apply-plan accepts only the plan path and fresh authorization flags')
+        process.exit(1)
+      }
+      reviewedPlan = loadPlanArtifact(applyPlanPath)
+      if (
+        reviewedPlan.artifact_path &&
+        path.resolve(applyPlanPath) !== reviewedPlan.artifact_path
+      ) {
+        console.error('❌ The reviewed plan artifact was moved; use its original path')
+        process.exit(1)
+      }
+      const options = reviewedPlan.options
+      if (
+        !Array.isArray(options.components) ||
+        options.components.some(
+          (component) =>
+            !['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime'].includes(
+              component,
+            ),
+        ) ||
+        options.clean !== false ||
+        !['v1', 'v2', 'auto'].includes(options.version) ||
+        typeof options.isProject !== 'boolean'
+      ) {
+        console.error('❌ Install-plan options are invalid or unsupported')
+        process.exit(1)
+      }
+    }
+    const isProject = reviewedPlan ? reviewedPlan.options.isProject : args.includes('--project')
+    const isDryRun = reviewedPlan ? false : args.includes('--dry-run')
     const skipMCP = args.includes('--no-mcp')
     // --clean is an alias of --force (both wipe component dirs + recreate venv).
-    const forceReinstall = args.includes('--force') || args.includes('--clean')
-    const runDoctor = args.includes('--doctor')
-    const forceInteractive = args.includes('--interactive')
+    const forceReinstall = reviewedPlan
+      ? reviewedPlan.options.clean
+      : args.includes('--force') || args.includes('--clean')
+    const runDoctor = !reviewedPlan && args.includes('--doctor')
+    const forceInteractive = !reviewedPlan && args.includes('--interactive')
     const forceHeadless = args.includes('--headless')
-    const autoYes = args.includes('--yes') || args.includes('-y')
+    let autoYes = args.includes('--yes') || args.includes('-y')
+    const isJson = args.includes('--json')
+    const savePlanIndex = args.indexOf('--save-plan')
+    const inlineSavePlan = args.find((arg) => arg.startsWith('--save-plan='))
+    const savePlanPath =
+      savePlanIndex >= 0
+        ? (args[savePlanIndex + 1] ?? null)
+        : (inlineSavePlan?.split('=', 2)[1] ?? null)
+    if (savePlanIndex >= 0 && !savePlanPath) {
+      console.error('❌ --save-plan requires a plan file path')
+      process.exit(1)
+    }
+    if (savePlanPath !== null && (!isDryRun || reviewedPlan)) {
+      console.error('❌ --save-plan is available only with init --dry-run')
+      process.exit(1)
+    }
+    if (savePlanPath !== null && forceReinstall) {
+      console.error('❌ Saving a reviewed plan with --force/--clean is not supported safely')
+      process.exit(1)
+    }
+    if (isJson && (!isDryRun || reviewedPlan)) {
+      console.error('❌ --json is supported only with init --dry-run')
+      process.exit(1)
+    }
+    if (isJson && forceReinstall) {
+      console.error('❌ --force/--clean cleanup is not supported with --json')
+      process.exit(1)
+    }
 
     // beta.5: warn on unrecognized flags instead of silently ignoring them.
     const VALUE_FLAGS = new Set([
@@ -320,6 +359,8 @@ async function main() {
       '--opencode-version',
       '--components',
       '--merge-dev-config',
+      '--apply-plan',
+      '--save-plan',
     ])
     for (let i = 1; i < args.length; i++) {
       const arg = args[i]
@@ -342,6 +383,7 @@ async function main() {
           '--headless',
           '--yes',
           '-y',
+          '--json',
         ].includes(bare)
       ) {
         console.error(`⚠️  Unknown option ignored: ${arg}`)
@@ -349,20 +391,33 @@ async function main() {
     }
 
     const presetIndex = args.indexOf('--preset')
-    const presetOpt = presetIndex >= 0 ? (args[presetIndex + 1] ?? null) : null
+    const presetOpt = reviewedPlan
+      ? (reviewedPlan.options.preset ?? null)
+      : presetIndex >= 0
+        ? (args[presetIndex + 1] ?? null)
+        : null
     // Explicit top-level model overrides for the generated config.
     const modelIndex = args.indexOf('--model')
-    const modelOpt = modelIndex >= 0 ? (args[modelIndex + 1] ?? null) : null
+    const modelOpt = reviewedPlan
+      ? (reviewedPlan.options.model ?? null)
+      : modelIndex >= 0
+        ? (args[modelIndex + 1] ?? null)
+        : null
     const smallModelIndex = args.indexOf('--small-model')
-    const smallModelOpt = smallModelIndex >= 0 ? (args[smallModelIndex + 1] ?? null) : null
+    const smallModelOpt = reviewedPlan
+      ? (reviewedPlan.options.smallModel ?? null)
+      : smallModelIndex >= 0
+        ? (args[smallModelIndex + 1] ?? null)
+        : null
     // --version v1|v2|auto labels the install target. `auto` resolves the
     // generation from the opencode binary at install time (see
     // scripts/install/opencode-version.mjs). Invalid values fail fast.
     const versionIndex = args.indexOf('--version')
     const legacyVersionIndex = args.indexOf('--opencode-version')
     const inlineVersion = args.find((arg) => arg.startsWith('--opencode-version='))
-    const versionOpt =
-      versionIndex >= 0
+    const versionOpt = reviewedPlan
+      ? reviewedPlan.options.version
+      : versionIndex >= 0
         ? (args[versionIndex + 1] ?? null)
         : legacyVersionIndex >= 0
           ? (args[legacyVersionIndex + 1] ?? null)
@@ -386,8 +441,8 @@ async function main() {
       componentsIndex >= 0
         ? (args[componentsIndex + 1] ?? null)
         : (inlineComponents?.split('=', 2)[1] ?? null)
-    let requestedComponents = null
-    if (componentsOpt !== null) {
+    let requestedComponents = reviewedPlan ? [...reviewedPlan.options.components] : null
+    if (!reviewedPlan && componentsOpt !== null) {
       requestedComponents = componentsOpt
         .split(',')
         .map((c) => c.trim())
@@ -408,8 +463,9 @@ async function main() {
     // from the installer code, never from a dev checkout).
     const mergeDevConfigIndex = args.indexOf('--merge-dev-config')
     const inlineMergeDevConfig = args.find((arg) => arg.startsWith('--merge-dev-config='))
-    const mergeDevConfigOpt =
-      mergeDevConfigIndex >= 0
+    const mergeDevConfigOpt = reviewedPlan
+      ? (reviewedPlan.options.mergeDevConfig ?? null)
+      : mergeDevConfigIndex >= 0
         ? (args[mergeDevConfigIndex + 1] ?? null)
         : (inlineMergeDevConfig?.split('=', 2)[1] ?? null)
     if (mergeDevConfigIndex >= 0 && mergeDevConfigOpt === null) {
@@ -417,15 +473,24 @@ async function main() {
       process.exit(1)
     }
 
-    const components = requestedComponents ?? [
-      'agents',
-      'skills',
-      'instructions',
-      'commands',
-      'plugins',
-    ]
-    if (!skipMCP && !components.includes('runtime')) components.push('runtime')
-    if (skipMCP) {
+    if (reviewedPlan && !autoYes) {
+      if (!forceHeadless && process.stdin.isTTY && process.stdout.isTTY) {
+        if (!(await authorizeReviewedPlan(reviewedPlan))) {
+          console.log('❌ Install canceled; no files were written.')
+          return
+        }
+      } else {
+        console.error('❌ Applying a reviewed plan requires --yes or an interactive TTY prompt.')
+        process.exit(2)
+      }
+      autoYes = true
+    }
+
+    const components = reviewedPlan
+      ? requestedComponents
+      : (requestedComponents ?? ['agents', 'skills', 'instructions', 'commands', 'plugins'])
+    if (!reviewedPlan && !skipMCP && !components.includes('runtime')) components.push('runtime')
+    if (!reviewedPlan && skipMCP) {
       const runtimeIndex = components.indexOf('runtime')
       if (runtimeIndex >= 0) components.splice(runtimeIndex, 1)
     }
@@ -435,33 +500,131 @@ async function main() {
     const { strings } = await import('../scripts/install/strings.mjs')
     const S = strings()
 
-    console.log('')
-    if (!forceInteractive || isDryRun) {
-      console.log(`Pantheon OpenCode v${version} — ${isDryRun ? S.dryRun : S.installing}`)
+    const planTimestamp = reviewedPlan?.planned_at ?? new Date().toISOString()
+    const stdoutWrite = process.stdout.write
+    if (isJson) process.stdout.write = () => true
+    if (!isJson) {
       console.log('')
+      if (!forceInteractive || isDryRun) {
+        console.log(`Pantheon OpenCode v${version} — ${isDryRun ? S.dryRun : S.installing}`)
+        console.log('')
+      }
     }
 
     let result
+    let installError = null
     try {
       const { installOpenCode } = await import('../scripts/install/opencode.mjs')
-      const target = isProject ? process.cwd() : undefined
+      const target = reviewedPlan ? reviewedPlan.target.path : isProject ? process.cwd() : undefined
       result = await installOpenCode(target, isDryRun, forceReinstall, components, {
         interactive: forceInteractive,
-        headless: forceHeadless,
+        headless: reviewedPlan ? true : forceHeadless,
         yes: autoYes,
         model: modelOpt,
         smallModel: smallModelOpt,
         preset: presetOpt,
         version: versionOpt ?? 'auto',
         mergeDevConfig: mergeDevConfigOpt,
+        expectedPlan: reviewedPlan,
+        planTimestamp,
+        quiet: isJson,
       })
     } catch (err) {
-      if (err?.message === 'Canceled') {
+      installError = err
+    } finally {
+      if (isJson) process.stdout.write = stdoutWrite
+    }
+    if (installError) {
+      if (isJson) {
+        process.stdout.write(
+          `${JSON.stringify({
+            schema_version: 1,
+            command: 'init',
+            mode: 'dry-run',
+            status: 'error',
+            error: installError.message,
+          })}\n`,
+        )
+        console.error(`❌ Init dry-run failed: ${installError.message}`)
+      } else if (installError?.message === 'Canceled') {
         console.error(S.canceled)
         process.exit(130)
+      } else {
+        console.error(
+          `${S.installFailed(installError.message)}\n${S.failHintNoMcp}\n${S.failHintForce}`,
+        )
       }
-      console.error(`${S.installFailed(err.message)}\n${S.failHintNoMcp}\n${S.failHintForce}`)
-      process.exit(1)
+      process.exitCode = 1
+      return
+    }
+
+    if (savePlanPath !== null && result?.reason === 'plan') {
+      try {
+        const artifact = createPlanArtifact({
+          target: result.target,
+          packageRoot: ROOT,
+          packageVersion: version,
+          plannedAt: planTimestamp,
+          artifactPath: savePlanPath,
+          options: {
+            clean: forceReinstall,
+            components,
+            version: result.openCodeVersion,
+            isProject,
+            model: modelOpt,
+            smallModel: smallModelOpt,
+            preset: presetOpt,
+            mergeDevConfig: mergeDevConfigOpt,
+          },
+          files: result.files,
+          snapshots: result.snapshots,
+        })
+        savePlanArtifact(savePlanPath, artifact)
+      } catch (error) {
+        if (!isJson) throw error
+        process.stdout.write(
+          `${JSON.stringify({
+            schema_version: 1,
+            command: 'init',
+            mode: 'dry-run',
+            status: 'error',
+            error: error.message,
+          })}\n`,
+        )
+        console.error(`❌ Could not save reviewed install plan: ${error.message}`)
+        process.exitCode = 1
+        return
+      }
+      if (!isJson) console.log(`Reviewed plan saved to ${path.resolve(savePlanPath)} (mode 0600).`)
+    }
+
+    if (isJson) {
+      const files = result.files ?? []
+      const totals = { create: 0, update: 0, remove: 0, unchanged: 0, conflict: 0 }
+      for (const file of files) {
+        if (Object.hasOwn(totals, file.action)) totals[file.action] += 1
+      }
+      process.stdout.write(
+        `${JSON.stringify({
+          schema_version: 1,
+          command: 'init',
+          mode: 'dry-run',
+          status: 'planned',
+          target: result.target,
+          open_code_version: result.openCodeVersion,
+          advisories: result.versionAssumed
+            ? ['OpenCode host probe skipped to keep dry-run write-free; V1 was assumed.']
+            : [],
+          totals,
+          files: files.map(({ path: filePath, action, bytes }) => ({
+            path: path.relative(result.target, filePath) || '.',
+            action,
+            bytes,
+          })),
+          saved_plan: savePlanPath ? path.resolve(savePlanPath) : null,
+        })}\n`,
+      )
+      return
     }
 
     // Beta 11 Setup phases 3-4: a run that did NOT apply (declined /

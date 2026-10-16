@@ -24,8 +24,9 @@
  *   }
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { assertNoSymlinkAncestors, writeFileAtomically } from './verify.mjs'
 
 const STATE_FILE = 'install-state.json'
 const STATE_DIR = '.pantheon'
@@ -35,12 +36,12 @@ const STATE_DIR = '.pantheon'
  * @param {string} version - Pantheon version string
  * @returns {object} v2 state
  */
-export function createInitialState(version) {
+export function createInitialState(version, updatedAt = new Date().toISOString()) {
   return {
     schema_version: 2,
     pantheon_version: version || '0.0.0',
     previous_version: null,
-    updated_at: new Date().toISOString(),
+    updated_at: updatedAt,
     migration_checkpoint: null,
     applied_migrations: [],
     components: {
@@ -149,15 +150,18 @@ function normalizeState(state) {
  * @param {string} target - Installation directory
  * @param {object} state - v2 state object
  */
-export function writeState(target, state) {
+export function writeState(target, state, options = {}) {
   const stateDir = join(target, STATE_DIR)
+  const stateFile = join(stateDir, STATE_FILE)
+  assertNoSymlinkAncestors(stateFile)
   if (!existsSync(stateDir)) {
     mkdirSync(stateDir, { recursive: true })
   }
-  const stateFile = join(stateDir, STATE_FILE)
-  state.updated_at = new Date().toISOString()
+  assertNoSymlinkAncestors(stateFile)
+  state.updated_at = options.updatedAt ?? new Date().toISOString()
   state.schema_version = 2
-  writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+  const content = `${JSON.stringify(state, null, 2)}\n`
+  writeFileAtomically(stateFile, content)
 }
 
 /**
