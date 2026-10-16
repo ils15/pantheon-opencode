@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -229,11 +230,176 @@ test('dry-run reports OpenCode-only behavior without deleting files', () => {
     const result = runUninstall(target, '--dry-run')
     assert.equal(result.status, 0, result.stderr)
     assert.match(result.stdout, /OpenCode\/Pantheon only/)
-    assert.match(result.stdout, /Would remove/)
+    assert.match(result.stdout, /REMOVE .*zeus\.md/)
     assert.equal(
       readFileSync(join(target, '.opencode', 'agents', 'zeus.md'), 'utf8'),
       '# Pantheon Agent System\n',
     )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('non-TTY uninstall fails closed without explicit force authorization', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-auth-'))
+  const owned = join(target, '.opencode', 'agents', 'zeus.md')
+  try {
+    mkdirSync(join(target, '.opencode', 'agents'), { recursive: true })
+    writeFileSync(owned, '# Pantheon Agent System\n')
+    const result = spawnSync(process.execPath, [script, '--target', target], { encoding: 'utf8' })
+    assert.equal(result.status, 2)
+    assert.match(result.stderr, /requires explicit --force authorization/)
+    assert.equal(existsSync(owned), true)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('uninstall keeps installation state by default and backs up touched managed files', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-backup-'))
+  const owned = join(target, '.opencode', 'agents', 'zeus.md')
+  const state = join(target, '.pantheon', 'install-state.json')
+  try {
+    mkdirSync(join(target, '.opencode', 'agents'), { recursive: true })
+    mkdirSync(join(target, '.pantheon'), { recursive: true })
+    writeFileSync(owned, '# Pantheon Agent System\n')
+    writeFileSync(
+      state,
+      JSON.stringify({ schema_version: 2, pantheon_version: '1.6.0-beta.12', components: {} }),
+    )
+    const result = runUninstall(target)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(existsSync(owned), false)
+    assert.equal(existsSync(state), true)
+    const backups = join(target, '.pantheon', 'backups')
+    const backupName = readdirSync(backups)[0]
+    assert.equal(
+      readFileSync(join(backups, backupName, '.opencode', 'agents', 'zeus.md'), 'utf8'),
+      '# Pantheon Agent System\n',
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('flat global uninstall keeps the target root while preserving its recovery backup', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-flat-owned-'))
+  const owned = join(target, 'agents', 'zeus.md')
+  try {
+    mkdirSync(join(target, 'agents'), { recursive: true })
+    writeFileSync(owned, '# Pantheon Agent System\n')
+
+    const result = runUninstall(target)
+
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(existsSync(target), true)
+    assert.equal(existsSync(owned), false)
+    const backups = join(target, '.pantheon', 'backups')
+    const backupName = readdirSync(backups)[0]
+    assert.equal(
+      readFileSync(join(backups, backupName, 'agents', 'zeus.md'), 'utf8'),
+      '# Pantheon Agent System\n',
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('purge-data dry-run lists only verified install state; apply preserves its backup', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-purge-'))
+  const statePath = join(target, '.pantheon', 'install-state.json')
+  try {
+    mkdirSync(join(target, '.pantheon'), { recursive: true })
+    const state = JSON.stringify({
+      schema_version: 2,
+      pantheon_version: '1.6.0-beta.12',
+      components: {},
+    })
+    writeFileSync(statePath, state)
+    const preview = runUninstall(target, '--purge-data', '--dry-run')
+    assert.equal(preview.status, 0, preview.stderr)
+    assert.ok(preview.stdout.includes(`PURGE DATA ${statePath}`))
+    assert.equal(existsSync(statePath), true)
+
+    const applied = runUninstall(target, '--purge-data')
+    assert.equal(applied.status, 0, applied.stderr)
+    assert.equal(existsSync(statePath), false)
+    const backupRoot = join(target, '.pantheon', 'backups')
+    const backupName = readdirSync(backupRoot)[0]
+    assert.equal(
+      readFileSync(join(backupRoot, backupName, '.pantheon', 'install-state.json'), 'utf8'),
+      state,
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('purge-data rejects a symlinked .pantheon ancestor before backup or removal', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-purge-link-'))
+  const outside = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-purge-outside-'))
+  try {
+    mkdirSync(join(target, '.opencode', 'agents'), { recursive: true })
+    const owned = join(target, '.opencode', 'agents', 'zeus.md')
+    writeFileSync(owned, '<!-- managed-by: pantheon-opencode -->\n')
+    writeFileSync(
+      join(outside, 'install-state.json'),
+      JSON.stringify({ schema_version: 2, pantheon_version: '1.6.0-beta.12', components: {} }),
+    )
+    symlinkSync(outside, join(target, '.pantheon'), 'dir')
+
+    const result = runUninstall(target, '--purge-data')
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /symlink/i)
+    assert.equal(readFileSync(owned, 'utf8'), '<!-- managed-by: pantheon-opencode -->\n')
+    assert.equal(existsSync(join(outside, 'install-state.json')), true)
+    assert.deepEqual(readdirSync(outside), ['install-state.json'])
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test('uninstall rejects a selected target behind a symlinked ancestor before removing directories', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-parent-'))
+  const outside = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-linked-outside-'))
+  const linkedParent = join(parent, 'linked')
+  const target = join(linkedParent, 'project')
+  const agents = join(target, '.opencode', 'agents')
+  try {
+    mkdirSync(join(outside, 'project', '.opencode', 'agents'), { recursive: true })
+    symlinkSync(outside, linkedParent, 'dir')
+
+    const result = runUninstall(target)
+
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /symlink/i)
+    assert.equal(existsSync(agents), true)
+    assert.equal(existsSync(join(target, '.opencode')), true)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test('uninstall refuses operation-set drift before backing up or deleting new owned files', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-reviewed-set-'))
+  try {
+    const agents = join(target, '.opencode', 'agents')
+    mkdirSync(agents, { recursive: true })
+    const reviewedFile = join(agents, 'zeus.md')
+    writeFileSync(reviewedFile, '<!-- managed-by: pantheon-opencode -->\n')
+    const reviewedPlan = uninstallOpenCode(target, true)
+    const unreviewedFile = join(agents, 'themis.md')
+    writeFileSync(unreviewedFile, '<!-- managed-by: pantheon-opencode -->\n')
+
+    assert.throws(
+      () => uninstallOpenCode(target, false, { reviewedPlan }),
+      /operation set|plan drift/i,
+    )
+    assert.equal(existsSync(reviewedFile), true)
+    assert.equal(existsSync(unreviewedFile), true)
+    assert.equal(existsSync(join(target, '.pantheon', 'backups')), false)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

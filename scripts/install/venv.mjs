@@ -10,11 +10,11 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { ACTIONS, recordChange } from './plan.mjs'
+import { ACTIONS, recordChange, recordRemovalTree, removeReviewedTree } from './plan.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..', '..')
@@ -42,21 +42,30 @@ export function venvPythonPath(target) {
  * Set up a Python virtual environment and install MCP dependencies.
  *
  * @param {string} target - Target installation directory (e.g. ~/.config/opencode)
- * @param {{ dryRun?: boolean, skipInstall?: boolean, force?: boolean, recorder?: (change: object) => void }} [options]
+ * @param {{ dryRun?: boolean, skipInstall?: boolean, force?: boolean, recorder?: (change: object) => void, reviewedRemovals?: Set<string>|null, reviewedSnapshots?: Map<string, object>|null }} [options]
  * @returns {{ venvPath: string, python: string }}
  */
 export function setupVenv(
   target,
-  { dryRun = false, skipInstall = false, force = false, recorder = null } = {},
+  {
+    dryRun = false,
+    skipInstall = false,
+    force = false,
+    recorder = null,
+    reviewedRemovals = null,
+    reviewedSnapshots = null,
+  } = {},
 ) {
   const venvPath = join(target, '.venv')
   const pythonBin = venvPythonPath(target)
 
   // Step 1: Force recreate venv if --force
   if (force && existsSync(venvPath)) {
-    if (!dryRun) {
+    if (dryRun) {
+      recordRemovalTree(venvPath, recorder)
+    } else {
       console.log('  Removing existing .venv (--force)...')
-      rmSync(venvPath, { recursive: true })
+      removeReviewedTree(venvPath, reviewedRemovals, reviewedSnapshots)
     }
     console.log('  ✅ .venv removed')
   }

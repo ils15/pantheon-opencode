@@ -14,18 +14,13 @@
  * "herdar do chat" (inherit) é o default da Q1: não grava active-preset.json,
  * então os delegates herdam o modelo do chat pai (herança nativa, sem preset).
  */
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from 'node:fs'
+import { lstatSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { loadPresetDefs } from '../../src/pantheon/presets.mjs'
+import { ACTIONS, fingerprintOutput, recordChange, snapshot } from './plan.mjs'
+import { assertNoSymlinkAncestors, writeFileAtomically } from './verify.mjs'
 
 /** Preset pricing table (2026 verified). */
 export const PRESET_PRICE = {
@@ -176,12 +171,16 @@ export function buildInitQuestions(presetDefs) {
  * @param {string} [source] 'cli' | 'interactive'
  * @returns {{version: number, preset: string, source: string, updated_at: string}}
  */
-export function buildActivePresetFile(presetName, source = 'cli') {
+export function buildActivePresetFile(
+  presetName,
+  source = 'cli',
+  updatedAt = new Date().toISOString(),
+) {
   return {
     version: 1,
     preset: presetName,
     source,
-    updated_at: new Date().toISOString(),
+    updated_at: updatedAt,
   }
 }
 
@@ -197,28 +196,70 @@ export function buildActivePresetFile(presetName, source = 'cli') {
 export function writeActivePreset(
   presetDir,
   presetName,
-  { dryRun = false, source = 'cli', logger = console } = {},
+  { dryRun = false, source = 'cli', logger = console, updatedAt, recorder = null } = {},
 ) {
   const dir = join(presetDir, '.pantheon')
   const filePath = join(dir, 'active-preset.json')
   const backupPath = join(dir, 'active-preset.json.bak')
 
+  const content = `${JSON.stringify(buildActivePresetFile(presetName, source, updatedAt), null, 2)}\n`
+  assertNoSymlinkAncestors(filePath)
+  assertNoSymlinkAncestors(backupPath)
+  assertNoSymlinkAncestors(`${filePath}.tmp-${process.pid}`)
+  assertNoSymlinkAncestors(`${backupPath}.tmp-${process.pid}`)
+  let current = null
+  try {
+    const info = lstatSync(filePath)
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new Error(`Refusing to write through non-regular file: ${filePath}`)
+    }
+    current = readFileSync(filePath)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+  if (current !== null) {
+    const backupSnapshot = snapshot(backupPath)
+    recordChange(
+      {
+        path: backupPath,
+        action: !backupSnapshot.exists
+          ? ACTIONS.CREATE
+          : backupSnapshot.sha256 === fingerprintOutput(current)
+            ? ACTIONS.UNCHANGED
+            : ACTIONS.UPDATE,
+        bytes: current.length,
+        outputFingerprint: fingerprintOutput(current),
+        scored: false,
+      },
+      recorder,
+    )
+    if (!dryRun && backupSnapshot.sha256 !== fingerprintOutput(current)) {
+      writeFileAtomically(backupPath, current)
+    }
+  }
+  const before = snapshot(filePath)
+  recordChange(
+    {
+      path: filePath,
+      action: !before.exists
+        ? ACTIONS.CREATE
+        : current?.toString('utf8') === content
+          ? ACTIONS.UNCHANGED
+          : ACTIONS.UPDATE,
+      bytes: Buffer.byteLength(content, 'utf8'),
+      outputFingerprint: fingerprintOutput(content),
+    },
+    recorder,
+  )
   if (dryRun) {
     logger.log?.(`[dry-run] Would write model preset "${presetName}" to ${filePath}`)
     return { written: false, path: filePath, backupPath: null }
   }
 
   mkdirSync(dir, { recursive: true })
-  let backupMade = false
-  if (existsSync(filePath)) {
-    copyFileSync(filePath, backupPath)
-    backupMade = true
-  }
-  writeFileSync(
-    `${filePath}.tmp-${process.pid}`,
-    `${JSON.stringify(buildActivePresetFile(presetName, source), null, 2)}\n`,
-  )
-  renameSync(`${filePath}.tmp-${process.pid}`, filePath)
+  assertNoSymlinkAncestors(filePath)
+  assertNoSymlinkAncestors(backupPath)
+  writeFileAtomically(filePath, content)
   // health-check: verify file is readable and valid JSON with preset
   try {
     const content = readFileSync(filePath, 'utf8')
@@ -227,7 +268,7 @@ export function writeActivePreset(
   } catch (err) {
     logger.warn?.(`health-check: active-preset.json verification failed: ${err.message}`)
   }
-  return { written: true, path: filePath, backupPath: backupMade ? backupPath : null }
+  return { written: true, path: filePath, backupPath: current !== null ? backupPath : null }
 }
 
 /**

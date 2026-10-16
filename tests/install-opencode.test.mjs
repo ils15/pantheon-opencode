@@ -247,6 +247,66 @@ test('fresh install registers BOTH pantheon plugins (plugin.ts + pantheon-hooks.
   }
 })
 
+test('agent clean aborts on a symlinked destination parent without changing outside data', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-agent-clean-symlink-'))
+  const outside = join(target, 'outside')
+  const sentinel = join(outside, 'user-data.txt')
+  const before = 'outside agent data'
+  mkdirSync(outside)
+  writeFileSync(sentinel, before)
+
+  try {
+    await assert.rejects(
+      installOpenCode(target, false, true, ['agents'], {
+        yes: true,
+        headless: true,
+        version: 'v1',
+        deps: {
+          betweenPlanAndApply() {
+            const agentDir = join(target, '.opencode', 'agents')
+            mkdirSync(join(target, '.opencode'), { recursive: true })
+            symlinkSync(outside, agentDir, 'dir')
+          },
+        },
+      }),
+      /symlink/i,
+    )
+    assert.equal(readFileSync(sentinel, 'utf8'), before)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('skill clean aborts on a symlinked destination parent without changing outside data', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-skill-clean-symlink-'))
+  const outside = join(target, 'outside')
+  const sentinel = join(outside, 'stale-skill', 'user-data.txt')
+  const before = 'outside skill data'
+  mkdirSync(join(outside, 'stale-skill'), { recursive: true })
+  writeFileSync(sentinel, before)
+
+  try {
+    await assert.rejects(
+      installOpenCode(target, false, true, ['skills'], {
+        yes: true,
+        headless: true,
+        version: 'v1',
+        deps: {
+          betweenPlanAndApply() {
+            const skillsDir = join(target, '.opencode', 'skills')
+            mkdirSync(join(target, '.opencode'), { recursive: true })
+            symlinkSync(outside, skillsDir, 'dir')
+          },
+        },
+      }),
+      /symlink/i,
+    )
+    assert.equal(readFileSync(sentinel, 'utf8'), before)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
 // issue #158: an opencode.json left pointing at a lockfile-pinned older
 // install (e.g. node_modules/pantheon-opencode@1.4.1, which still ships the
 // removed pantheon_delegate tool) must be realigned onto the current package
@@ -1228,6 +1288,20 @@ test('writeIfChanged refuses to write through a symlink (including dangling)', (
   }
 })
 
+test('writeIfChanged refuses symlinked parent directories before writing outside target', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-symlink-parent-'))
+  const outside = mkdtempSync(join(tmpdir(), 'pantheon-symlink-outside-'))
+  try {
+    symlinkSync(outside, join(root, 'redirect'), 'dir')
+    const destination = join(root, 'redirect', 'managed.json')
+    assert.throws(() => writeIfChanged(destination, '{"managed":true}\n', false), /symlink/i)
+    assert.equal(existsSync(join(outside, 'managed.json')), false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
 test('writeIfChanged reports a conflict and leaves newer on-disk content alone', () => {
   const dir = mkdtempSync(join(tmpdir(), 'pantheon-conflict-'))
   try {
@@ -1311,12 +1385,14 @@ test('a config race during install aborts the install instead of reporting succe
   const target = mkdtempSync(join(tmpdir(), 'pantheon-install-race-'))
   const configPath = join(target, 'opencode.json')
   const backupPath = `${configPath}.bak`
+  const preexistingTempLikeFile = join(target, `user-owned.tmp-${process.pid}`)
   const priorBackup = '{"v":0}\n'
   const concurrent = '{"concurrent":true}\n'
   try {
     mkdirSync(target, { recursive: true })
     writeFileSync(configPath, JSON.stringify({ $schema: 'https://opencode.ai/config.json' }))
     writeFileSync(backupPath, priorBackup)
+    writeFileSync(preexistingTempLikeFile, 'pre-existing user data')
 
     await assert.rejects(
       () =>
@@ -1331,9 +1407,14 @@ test('a config race during install aborts the install instead of reporting succe
     assert.equal(readFileSync(configPath, 'utf8'), concurrent, 'config not clobbered')
     assert.equal(readFileSync(backupPath, 'utf8'), priorBackup, 'prior .bak untouched')
     assert.equal(
+      readFileSync(preexistingTempLikeFile, 'utf8'),
+      'pre-existing user data',
+      'failure cleanup must preserve a pre-existing temp-like user file',
+    )
+    assert.equal(
       existsSync(`${configPath}.tmp-${process.pid}`),
       false,
-      'temp sibling cleaned up after the aborted install',
+      'this run’s temp sibling is cleaned up after the aborted install',
     )
   } finally {
     rmSync(target, { recursive: true, force: true })

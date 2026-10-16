@@ -20,6 +20,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { writeConfigWithBackup } from './shared.mjs'
+import { verifyRegularFile } from './verify.mjs'
 
 const CONFIG_FILENAME = 'opencode-vision.json'
 /** `provider/model` — exactly one slash, no surrounding whitespace. */
@@ -87,6 +88,7 @@ export function mergeVisionModel(
       if (existing === null) return
       try {
         copyFileSync(configPath, `${configPath}.bak`)
+        verifyRegularFile(`${configPath}.bak`, readFileSync(configPath))
       } catch {
         // Best-effort: a backup failure must not block the write.
       }

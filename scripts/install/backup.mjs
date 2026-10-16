@@ -41,11 +41,13 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { assertNoSymlinkAncestors, verifyRegularFile, writeFileAtomically } from './verify.mjs'
 
 /** Directory (relative to the config dir) that holds the backup sets. */
 export const BACKUP_SUBDIR = join('.pantheon', 'backups')
@@ -179,13 +181,37 @@ function chmodBestEffort(path, mode) {
  * the exact backup (see `notRevertible`).
  */
 function ensureDir(path, mode) {
-  if (existsSync(path)) return
+  assertNoSymlinkAncestors(path)
+  let info = null
   try {
-    mkdirSync(path, { recursive: true, mode })
-    chmodBestEffort(path, mode)
-  } catch {
-    // A concurrent creator won the race; leave it untouched.
+    info = lstatSync(path)
+  } catch (error) {
+    if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error
   }
+  if (info) {
+    if (!info.isDirectory()) throw new Error(`Backup path is not a directory: ${path}`)
+    return
+  }
+  mkdirSync(path, { recursive: true, mode })
+  assertNoSymlinkAncestors(path)
+  info = lstatSync(path)
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error(`Backup path is not a regular directory: ${path}`)
+  }
+  chmodBestEffort(path, mode)
+}
+
+function assertBackupEntry(configDir, relativePath) {
+  const rel = String(relativePath)
+  if (!rel || isAbsolute(rel) || rel.split(/[\\/]/).some((part) => part === '..' || part === '')) {
+    throw new Error(`Unsafe backup entry path: ${rel}`)
+  }
+  const source = resolve(configDir, rel)
+  const fromRoot = relative(resolve(configDir), source)
+  if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
+    throw new Error(`Backup entry escapes config directory: ${rel}`)
+  }
+  return { rel, source }
 }
 
 /**
@@ -216,6 +242,7 @@ export function createBackupSet({
   clock = () => new Date(),
   keep = DEFAULT_KEEP,
 } = {}) {
+  assertNoSymlinkAncestors(configDir)
   const base = clock()
   const name = nextBackupName(configDir, base)
   const dir = backupSetPath(configDir, name)
@@ -225,10 +252,10 @@ export function createBackupSet({
   const seen = new Set()
   const manifestEntries = []
   for (const relativePath of entries ?? []) {
-    const rel = String(relativePath)
+    const { rel, source } = assertBackupEntry(configDir, relativePath)
     if (rel === '' || seen.has(rel)) continue
     seen.add(rel)
-    const source = join(configDir, rel)
+    assertNoSymlinkAncestors(source, { includeLeaf: false })
     let stat = null
     try {
       stat = lstatSync(source)
@@ -239,8 +266,10 @@ export function createBackupSet({
       const buffer = readFileSync(source)
       const dest = join(dir, rel)
       ensureDir(dirname(dest), 0o700)
-      writeFileSync(dest, buffer, { mode: 0o600 })
+      assertNoSymlinkAncestors(dest)
+      writeFileSync(dest, buffer, { mode: 0o600, flag: 'wx' })
       chmodBestEffort(dest, 0o600)
+      verifyRegularFile(dest, buffer)
       manifestEntries.push({
         relativePath: rel,
         existed: true,
@@ -267,11 +296,80 @@ export function createBackupSet({
     entries: manifestEntries,
   }
   const manifestPath = join(dir, 'manifest.json')
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 })
+  assertNoSymlinkAncestors(manifestPath)
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+    mode: 0o600,
+    flag: 'wx',
+  })
   chmodBestEffort(manifestPath, 0o600)
+  verifyRegularFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 
   const pruned = keep > 0 ? pruneBackups(configDir, keep) : { removed: [], failures: [] }
   return { dir, name, manifest, pruned }
+}
+
+/** Build the exact backup outputs without writing files. */
+export function previewBackupSet({
+  configDir,
+  entries,
+  notRevertible = [],
+  packageVersion = 'unknown',
+  clock = () => new Date(),
+} = {}) {
+  const base = clock()
+  const name = nextBackupName(configDir, base)
+  const dir = backupSetPath(configDir, name)
+  const seen = new Set()
+  const manifestEntries = []
+  const files = []
+  for (const relativePath of entries ?? []) {
+    const rel = String(relativePath)
+    if (rel === '' || seen.has(rel)) continue
+    seen.add(rel)
+    const source = join(configDir, rel)
+    let stat = null
+    try {
+      stat = lstatSync(source)
+    } catch {}
+    if (stat?.isFile()) {
+      const buffer = readFileSync(source)
+      files.push({
+        path: join(dir, rel),
+        bytes: buffer.length,
+        outputFingerprint: sha256(buffer),
+      })
+      manifestEntries.push({
+        relativePath: rel,
+        existed: true,
+        sha256: sha256(buffer),
+        bytes: buffer.length,
+        mode: stat.mode & 0o777,
+      })
+    } else {
+      manifestEntries.push({
+        relativePath: rel,
+        existed: false,
+        sha256: null,
+        bytes: 0,
+        mode: null,
+      })
+    }
+  }
+  const manifest = {
+    createdAt: base.toISOString(),
+    packageVersion,
+    configDir,
+    notRevertible: [...new Set((notRevertible ?? []).map(String))],
+    entries: manifestEntries,
+  }
+  const manifestContent = `${JSON.stringify(manifest, null, 2)}\n`
+  return {
+    dir,
+    files,
+    manifestPath: join(dir, 'manifest.json'),
+    manifestBytes: Buffer.byteLength(manifestContent, 'utf8'),
+    manifestFingerprint: sha256(Buffer.from(manifestContent)),
+  }
 }
 
 /**
@@ -285,7 +383,52 @@ export function createBackupSet({
 function isSafeRelativePath(rel) {
   if (typeof rel !== 'string' || rel === '') return false
   if (isAbsolute(rel)) return false
-  return !rel.split(/[\\/]/).includes('..')
+  return !rel.split(/[\\/]/).some((part) => part === '' || part === '.' || part === '..')
+}
+
+function assertRestoreRoot(configDir) {
+  const root = resolve(configDir)
+  assertNoSymlinkAncestors(root)
+  const info = lstatSync(root)
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error('Restore config root is not a regular directory')
+  }
+  return { root, canonicalRoot: realpathSync(root) }
+}
+
+function assertRestoreTarget(root, canonicalRoot, relativePath) {
+  if (!isSafeRelativePath(relativePath)) throw new Error('Unsafe restore target path')
+  const target = resolve(root, relativePath)
+  const lexical = relative(root, target)
+  if (!lexical || lexical === '..' || lexical.startsWith(`..${sep}`) || isAbsolute(lexical)) {
+    throw new Error('Restore target escapes config directory')
+  }
+
+  assertNoSymlinkAncestors(target)
+
+  let existing = target
+  let canonicalExisting
+  while (true) {
+    try {
+      canonicalExisting = realpathSync(existing)
+      break
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error
+      const parent = dirname(existing)
+      if (parent === existing) throw error
+      existing = parent
+    }
+  }
+  const canonicalTarget = resolve(canonicalExisting, relative(existing, target))
+  const canonicalRelative = relative(canonicalRoot, canonicalTarget)
+  if (
+    canonicalRelative === '..' ||
+    canonicalRelative.startsWith(`..${sep}`) ||
+    isAbsolute(canonicalRelative)
+  ) {
+    throw new Error('Restore target escapes config directory')
+  }
+  return target
 }
 
 /**
@@ -359,19 +502,35 @@ function restoreOrder(a, b) {
  * @returns {{ entries: Array<{relativePath: string, action: string}>, manifest: object } | { error: string }}
  */
 export function planRestore(dir, configDir) {
+  let root
+  let canonicalRoot
+  try {
+    ;({ root, canonicalRoot } = assertRestoreRoot(configDir))
+  } catch {
+    return { error: 'unsafe-target-root' }
+  }
   const read = readManifest(dir)
   if (!read.ok) return { error: read.reason }
   const verify = verifyBackupSet(dir)
   if (!verify.ok) return { error: verify.reason ?? 'integrity', mismatches: verify.mismatches }
 
+  try {
+    for (const entry of read.manifest.entries) {
+      assertRestoreTarget(root, canonicalRoot, entry.relativePath)
+    }
+  } catch {
+    return { error: 'unsafe-target-path' }
+  }
+
   const entries = []
   for (const entry of [...read.manifest.entries].sort(restoreOrder)) {
-    const target = join(configDir, entry.relativePath)
+    const target = assertRestoreTarget(root, canonicalRoot, entry.relativePath)
     if (entry.existed) {
       let action = 'create'
       try {
         const st = lstatSync(target)
         if (st.isFile()) {
+          assertRestoreTarget(root, canonicalRoot, entry.relativePath)
           const current = readFileSync(target)
           action = sha256(current) === entry.sha256 ? 'unchanged' : 'update'
         } else {
@@ -382,6 +541,7 @@ export function planRestore(dir, configDir) {
       }
       entries.push({ relativePath: entry.relativePath, action })
     } else {
+      assertRestoreTarget(root, canonicalRoot, entry.relativePath)
       const exists = existsSync(target)
       entries.push({ relativePath: entry.relativePath, action: exists ? 'remove' : 'unchanged' })
     }
@@ -404,34 +564,47 @@ export function restoreBackupSet(dir, configDir, { dryRun = false } = {}) {
     const detail = plan.mismatches?.length ? ` (${plan.mismatches.length} mismatch(es))` : ''
     throw new Error(`Backup is not restorable: ${plan.error}${detail}`)
   }
+  const { root, canonicalRoot } = assertRestoreRoot(configDir)
+  for (const item of plan.entries) {
+    assertRestoreTarget(root, canonicalRoot, item.relativePath)
+  }
   if (dryRun) return { entries: plan.entries }
 
   for (const item of plan.entries) {
     const backUpFile = join(dir, item.relativePath)
-    const target = join(configDir, item.relativePath)
+    const target = assertRestoreTarget(root, canonicalRoot, item.relativePath)
     if (item.action === 'unchanged') continue
 
-    // Refuse to write through/over a symlink (mirrors writeIfChanged).
     let linkStat = null
     try {
       linkStat = lstatSync(target)
     } catch {
       linkStat = null
     }
-    if (linkStat?.isSymbolicLink()) {
+    if (linkStat?.isSymbolicLink())
       throw new Error(`Refusing to restore through symlink: ${item.relativePath}`)
-    }
 
     if (item.action === 'remove') {
-      if (linkStat?.isFile()) rmSync(target, { force: true })
+      if (linkStat?.isFile()) {
+        assertRestoreTarget(root, canonicalRoot, item.relativePath)
+        const current = lstatSync(target)
+        if (current.isSymbolicLink()) {
+          throw new Error(`Refusing to restore through symlink: ${item.relativePath}`)
+        }
+        if (current.isFile()) rmSync(target, { force: true })
+      }
       continue
     }
 
     const buffer = readFileSync(backUpFile)
     ensureDir(dirname(target), 0o700)
-    writeFileSync(target, buffer, { mode: 0o600 })
+    assertRestoreTarget(root, canonicalRoot, item.relativePath)
+    writeFileAtomically(target, buffer)
     const recorded = plan.manifest.entries.find((e) => e.relativePath === item.relativePath)
-    if (recorded && recorded.mode !== null) chmodBestEffort(target, recorded.mode)
+    if (recorded && recorded.mode !== null) {
+      assertRestoreTarget(root, canonicalRoot, item.relativePath)
+      chmodBestEffort(target, recorded.mode)
+    }
   }
   return { entries: plan.entries }
 }

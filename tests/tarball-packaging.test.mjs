@@ -28,17 +28,22 @@ const executableForbidden = new RegExp(
 const privateUrl =
   /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|[^/\s"]+\.(?:local|internal|corp))(?:[:/]|$)/i
 
-function pack() {
+function pack(destination) {
   // Do not bypass prepack: the published archive is the artifact under test.
   // --json emits the full manifest + file listing (>1MB once the tarball
   // carries every runtime input); the default 1MB child buffer would blow
-  // up with ENOBUFS, so raise it explicitly.
-  const result = execFileSync('npm', ['pack', '--json'], {
+  // up with ENOBUFS, so raise it explicitly. Keep the archive out of the
+  // source tree so it cannot race with install-plan source fingerprints.
+  // HUSKY=0 prevents prepare from rewriting shared hook files in parallel.
+  const result = execFileSync('npm', ['pack', '--json', '--pack-destination', destination], {
     cwd: ROOT,
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
+    env: { ...process.env, HUSKY: '0' },
   })
-  return JSON.parse(result)[0].filename
+  const jsonStart = result.indexOf('[\n')
+  if (jsonStart < 0) throw new Error('npm pack did not return JSON metadata')
+  return join(destination, JSON.parse(result.slice(jsonStart))[0].filename)
 }
 
 function textFiles(root) {
@@ -73,17 +78,17 @@ function assertExecutableConfigIsPathFree(packageRoot) {
 }
 
 test('tarball contains no machine paths and ships the runtime inputs', () => {
-  const tarball = pack()
   const work = mkdtempSync(join(tmpdir(), 'pantheon-tarball-'))
   try {
-    const listing = execFileSync('tar', ['-tzf', join(ROOT, tarball)], { encoding: 'utf8' })
+    const tarball = pack(work)
+    const listing = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' })
     assert.doesNotMatch(listing, forbidden)
     assert.doesNotMatch(listing, /(?:^|\/)logs(?:\/|$)|\.log$/i)
     // Python bytecode/build dirs must never ship — the `files` whitelist in
     // package.json carries explicit `!**/__pycache__/**` / `!**/*.pyc`
     // negations because .npmignore is overridden by a files whitelist.
     assert.doesNotMatch(listing, /(?:^|\/)__pycache__(?:\/|$)|\.pyc$/)
-    execFileSync('tar', ['-xzf', join(ROOT, tarball), '-C', work])
+    execFileSync('tar', ['-xzf', tarball, '-C', work])
     const packageRoot = join(work, 'package')
     const actualSkills = textFiles(join(packageRoot, 'src', 'skills'))
       .map((file) => relative(packageRoot, file).split('\\').join('/'))
@@ -183,7 +188,7 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
 
     const redaction = spawnSync(
       process.execPath,
-      [join(ROOT, 'scripts', 'redaction-gate.mjs'), join(ROOT, tarball)],
+      [join(ROOT, 'scripts', 'redaction-gate.mjs'), tarball],
       {
         encoding: 'utf8',
       },
@@ -191,16 +196,15 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     assert.equal(redaction.status, 0, redaction.stderr || redaction.stdout)
   } finally {
     rmSync(work, { recursive: true, force: true })
-    rmSync(join(ROOT, tarball), { force: true })
   }
 })
 
 test('installed package resolves hooks to its installed absolute path', () => {
-  const tarball = pack()
   const work = mkdtempSync(join(tmpdir(), 'pantheon-prefix-'))
   const project = join(work, 'project')
   mkdirSync(project)
   try {
+    const tarball = pack(work)
     // Install the tarball with a redirected OpenCode config dir. Installing our
     // own tarball runs its `postinstall` (`postinstall.mjs && sync-tui.mjs`), and
     // sync-tui resolves the developer's REAL config dir: $XDG_CONFIG_HOME/
@@ -213,7 +217,7 @@ test('installed package resolves hooks to its installed absolute path', () => {
     // falls through to the real ~/.opencode when the XDG path is absent.
     const sandboxConfig = join(work, 'sandbox-config')
     mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true })
-    execFileSync('npm', ['install', '--prefix', work, join(ROOT, tarball)], {
+    execFileSync('npm', ['install', '--prefix', work, tarball], {
       encoding: 'utf8',
       env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
     })
@@ -306,7 +310,6 @@ test('installed package resolves hooks to its installed absolute path', () => {
       false,
     )
   } finally {
-    rmSync(join(ROOT, tarball), { force: true })
     rmSync(work, { recursive: true, force: true })
   }
 })
@@ -316,14 +319,14 @@ test('installed package leaves an explicit permission.skill choice alone', () =>
   // (runInstall(target, existingConfig) in install-opencode.test.mjs): write the
   // user's own opencode.json into the target, then install over it. This one
   // does it against the real tarball, because the bug is in shipped code.
-  const tarball = pack()
   const work = mkdtempSync(join(tmpdir(), 'pantheon-prefix-skill-'))
   const project = join(work, 'project')
   mkdirSync(project)
   try {
+    const tarball = pack(work)
     const sandboxConfig = join(work, 'sandbox-config')
     mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true })
-    execFileSync('npm', ['install', '--prefix', work, join(ROOT, tarball)], {
+    execFileSync('npm', ['install', '--prefix', work, tarball], {
       encoding: 'utf8',
       env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
     })
@@ -361,7 +364,6 @@ test('installed package leaves an explicit permission.skill choice alone', () =>
     assert.equal(config.theme, 'user-theme')
     assert.equal(config.default_agent, 'zeus', 'unrelated defaults are still seeded')
   } finally {
-    rmSync(join(ROOT, tarball), { force: true })
     rmSync(work, { recursive: true, force: true })
   }
 })

@@ -30,6 +30,8 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
+import { classifyFileInventory } from './install/file-inventory.mjs'
+import { readState } from './install/state.mjs'
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -47,6 +49,9 @@ const counts = { pass: 0, warn: 0, error: 0, info: 0 }
 
 const results = []
 let exitCode = 0
+let jsonMode = false
+let jsonOriginalWrite = null
+let jsonArgs = null
 
 // ---------------------------------------------------------------------------
 // CLI arg parsing
@@ -58,6 +63,7 @@ function parseArgs(argv) {
     platform: null,
     fix: false,
     verbose: false,
+    json: false,
     help: false,
     profile: process.env.PANTHEON_PROFILE ?? 'auto',
   }
@@ -72,6 +78,9 @@ function parseArgs(argv) {
         break
       case '--verbose':
         args.verbose = true
+        break
+      case '--json':
+        args.json = true
         break
       case '--profile':
         args.profile = argv[++i] ?? 'auto'
@@ -123,9 +132,9 @@ const ICON = {
   info: '\u2139\uFE0F', // ℹ️
 }
 
-function emit(category, message) {
+function emit(category, message, metadata = {}) {
   counts[category]++
-  results.push({ category, message })
+  results.push({ category, message, ...metadata })
   if (category === 'pass' && !process.argv.includes('--verbose')) return
   const prefix = ICON[category] ?? category
   console.log(`  ${prefix} ${message}`)
@@ -134,8 +143,8 @@ function emit(category, message) {
 function pass(msg) {
   emit('pass', msg)
 }
-function warn(msg) {
-  emit('warn', msg)
+function warn(msg, metadata = {}) {
+  emit('warn', msg, metadata)
 }
 function error(msg) {
   emit('error', msg)
@@ -159,7 +168,8 @@ function showHelp() {
    node scripts/doctor.mjs                              auto-detect, cwd
    node scripts/doctor.mjs --target /path/to/project     target project
    node scripts/doctor.mjs --profile global|lite|sandbox profile policy
-   node scripts/doctor.mjs --fix                         attempt auto-fixes
+  node scripts/doctor.mjs --fix                         attempt auto-fixes
+  node scripts/doctor.mjs --json                        read-only JSON report
    node scripts/doctor.mjs --verbose                     detailed output
    node scripts/doctor.mjs --help                        show this help
 
@@ -1265,6 +1275,7 @@ export function checkInstallVersionDrift(args) {
     warn(
       `Package v${pkgVersion} is newer than the last-synced installation (v${installed}) — ` +
         'run `npx pantheon-opencode update` (or re-run init) to refresh config, venv and MCP entries',
+      { code: 'install_version_drift', classification: 'advisory' },
     )
     return 'package-newer'
   }
@@ -1272,6 +1283,7 @@ export function checkInstallVersionDrift(args) {
     warn(
       `Installation marker (v${installed}) is newer than this package (v${pkgVersion}) — ` +
         'the doctor is running from a different install than the last sync',
+      { code: 'install_version_drift', classification: 'advisory' },
     )
     return 'install-newer'
   }
@@ -1898,22 +1910,156 @@ function printSummary(targetPath) {
 // Main
 // ---------------------------------------------------------------------------
 
+async function checkInstallerFileInventory(args) {
+  const state = readState(args.target)
+  if (!state) return
+  const selectedComponents = [
+    'agents',
+    'skills',
+    'instructions',
+    'prompts',
+    'commands',
+    'plugins',
+    'runtime',
+  ]
+  let desiredFiles = new Map()
+  let desiredUnavailable = true
+  let selectedLayouts = {}
+  try {
+    const { installOpenCode, isGlobalConfigDir } = await import('./install/opencode.mjs')
+    const preview = await installOpenCode(args.target, true, false, selectedComponents, {
+      version: 'auto',
+      quiet: true,
+      quietPlan: true,
+      planOnly: true,
+      headless: true,
+    })
+    desiredFiles = new Map(
+      (preview?.files ?? [])
+        .filter((file) => typeof file.outputFingerprint === 'string')
+        .map((file) => [file.path, { sha256: file.outputFingerprint }]),
+    )
+    const layout = isGlobalConfigDir(args.target)
+      ? 'global'
+      : preview?.openCodeVersion === 'v2'
+        ? 'project-v2'
+        : 'project-v1'
+    selectedLayouts = Object.fromEntries(selectedComponents.map((component) => [component, layout]))
+    desiredUnavailable = false
+  } catch {
+    // Doctor remains advisory if a source/layout preview cannot be computed.
+    // The fallback labels equal recorded hashes explicitly, never as current.
+  }
+  let report
+  try {
+    report = classifyFileInventory(args.target, state, {
+      desiredFiles,
+      desiredUnavailable,
+      selectedComponents,
+      selectedLayouts,
+    })
+  } catch {
+    warn('Installer file inventory could not be safely inspected.', {
+      code: 'installer_inventory_unreadable',
+      classification: 'ambiguous',
+    })
+    return
+  }
+  if (report.legacyAmbiguous) {
+    warn('Legacy installed files have no ownership inventory; cleanup requires manual review.', {
+      code: 'installer_inventory_legacy_unknown',
+      classification: 'ambiguous',
+    })
+  }
+  const recordedCurrent = report.entries.filter(
+    (entry) => entry.classification === 'recorded-current',
+  ).length
+  if (recordedCurrent > 0) {
+    emit(
+      'info',
+      `${recordedCurrent} inventoried file(s) match their recorded install hashes; current package payload was not compared.`,
+      { code: 'installer_file_recorded_current', classification: 'recorded-current' },
+    )
+  }
+  for (const entry of report.entries) {
+    if (entry.classification === 'modified') {
+      warn(`Installer-owned file was modified and will be preserved: ${entry.path}`, {
+        code: 'installer_file_modified',
+        classification: 'modified',
+      })
+    } else if (entry.classification === 'missing') {
+      warn(`Previously installer-owned file is missing: ${entry.path}`, {
+        code: 'installer_file_missing',
+        classification: 'missing',
+      })
+    } else if (entry.classification === 'update-drift') {
+      warn(`Installer source has a newer version of an unchanged owned file: ${entry.path}`, {
+        code: 'installer_file_update_available',
+        classification: 'update-drift',
+      })
+    } else if (entry.classification === 'stale-owned') {
+      warn(`Stale installer-owned file is eligible for reviewed cleanup: ${entry.path}`, {
+        code: 'installer_file_stale_owned',
+        classification: 'stale-owned',
+      })
+    } else if (entry.classification === 'ambiguous') {
+      warn(`Installer ownership is ambiguous for ${entry.path}; file preserved.`, {
+        code: 'installer_file_ambiguous',
+        classification: 'ambiguous',
+      })
+    }
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv)
+  jsonMode = args.json
+  jsonArgs = args
+  if (jsonMode) {
+    jsonOriginalWrite = process.stdout.write
+    process.stdout.write = () => true
+  }
 
   if (args.help) {
+    if (jsonMode) {
+      process.stdout.write = jsonOriginalWrite
+      jsonOriginalWrite = null
+    }
     showHelp()
-    process.exit(0)
+    process.exitCode = 0
+    return
+  }
+
+  if (args.json && args.fix) {
+    writeDoctorJson(
+      {
+        schema_version: 1,
+        command: 'doctor',
+        status: 'error',
+        target: resolve(args.target),
+        profile: args.profile,
+        summary: { ...counts, exit_code: 1 },
+        findings: [{ category: 'error', code: 'json_fix_unsupported', classification: 'usage' }],
+      },
+      1,
+    )
+    return
   }
 
   // Report the resolved validation profile up front (auto → global/sandbox)
   // so callers — including the `doctor` CLI wrapper — can see which policy
   // gate applied before any check output.
-  console.log(`Validation profile: ${args.profile}`)
+  if (!jsonMode) console.log(`Validation profile: ${args.profile}`)
 
   if (!existsSync(args.target)) {
-    console.error(`❌ Target directory does not exist: ${args.target}`)
-    process.exit(2)
+    if (jsonMode) {
+      error(`Target directory does not exist: ${args.target}`)
+      writeDoctorJson(createDoctorJsonReport(args), exitCode)
+    } else {
+      console.error(`❌ Target directory does not exist: ${args.target}`)
+      process.exitCode = 2
+    }
+    return
   }
 
   // Verify it looks like a Pantheon project or an OpenCode install target.
@@ -1944,7 +2090,14 @@ async function main() {
   checkCodeModeManifest(args)
   checkInstallVersionDrift(args)
   checkPluginVersionDrift(args)
-  await checkMcpRuntimeSmoke(args)
+  await checkInstallerFileInventory(args)
+  if (jsonMode) {
+    info('MCP runtime smoke skipped to keep --json read-only')
+    results.at(-1).code = 'mcp_runtime_smoke_skipped'
+    results.at(-1).classification = 'not_run'
+  } else {
+    await checkMcpRuntimeSmoke(args)
+  }
   checkPermissionMismatches(args)
   checkSyncStatus(args)
   checkGitStatus(args)
@@ -1954,13 +2107,48 @@ async function main() {
   checkV2UnsupportedFeatures(args)
 
   printSummary(args.target)
+  if (jsonMode) writeDoctorJson(createDoctorJsonReport(args), exitCode)
+  else process.exitCode = exitCode
+}
 
-  process.exit(exitCode)
+function createDoctorJsonReport(args) {
+  return {
+    schema_version: 1,
+    command: 'doctor',
+    status: exitCode === 2 ? 'error' : counts.warn > 0 ? 'warning' : 'ok',
+    target: resolve(args.target),
+    profile: args.profile,
+    summary: { ...counts, exit_code: exitCode },
+    findings: results,
+  }
+}
+
+function writeDoctorJson(report, code) {
+  const writer = jsonOriginalWrite ?? process.stdout.write
+  process.stdout.write = writer
+  jsonOriginalWrite = null
+  writer.call(process.stdout, `${JSON.stringify(report)}\n`)
+  process.exitCode = code
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((err) => {
-    console.error(`❌ Doctor crashed: ${err.stack ?? err.message}`)
-    process.exit(2)
+    if (jsonMode) {
+      writeDoctorJson(
+        {
+          schema_version: 1,
+          command: 'doctor',
+          status: 'error',
+          target: jsonArgs ? resolve(jsonArgs.target) : null,
+          profile: jsonArgs?.profile ?? null,
+          summary: { ...counts, exit_code: 2 },
+          findings: [{ category: 'error', code: 'doctor_failure', classification: 'error' }],
+        },
+        2,
+      )
+    } else {
+      console.error(`❌ Doctor crashed: ${err.stack ?? err.message}`)
+      process.exitCode = 2
+    }
   })
 }

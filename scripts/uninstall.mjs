@@ -6,6 +6,13 @@ import { homedir } from 'node:os'
 import { basename, join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { isatty } from 'node:tty'
+import { backupWarning, createBackupSet } from './install/backup.mjs'
+import { snapshot } from './install/plan.mjs'
+import {
+  assertNoSymlinkAncestors,
+  verifyPathRemoved,
+  verifyRegularFile,
+} from './install/verify.mjs'
 
 const AGENT_NAMES = new Set([
   'zeus',
@@ -26,12 +33,14 @@ const AGENT_NAMES = new Set([
 const OWNERSHIP_MARKER =
   /(?:pantheon-opencode|pantheon[- ]agent system|managed[- ]by[: ]+pantheon|pantheon-(?:resources|memory|persistence|code-mode|tui|hooks))/i
 const stats = { removed: 0, skipped: 0, errors: 0 }
+let touchedPaths = new Set()
+let quietPreview = false
 
 function showHelp() {
   console.log(`
 
 Usage:
-  node scripts/uninstall.mjs [--project|--global] [--target /path] [--dry-run] [--force]
+  node scripts/uninstall.mjs [--project|--global] [--target /path] [--dry-run] [--force] [--purge-data]
 
 Target may be a project directory (containing .opencode), or a flat global
 OpenCode directory (~/.config/opencode or ~/.opencode). Symlinks are rejected.
@@ -39,7 +48,14 @@ OpenCode directory (~/.config/opencode or ~/.opencode). Symlinks are rejected.
 }
 
 function parseArgs(argv) {
-  const args = { target: process.cwd(), dryRun: false, force: false, help: false, scope: 'project' }
+  const args = {
+    target: process.cwd(),
+    dryRun: false,
+    force: false,
+    purgeData: false,
+    help: false,
+    scope: 'project',
+  }
   let explicitTarget = false
   for (let index = 2; index < argv.length; index += 1) {
     const option = argv[index]
@@ -55,6 +71,7 @@ function parseArgs(argv) {
       args.scope = 'global'
     } else if (option === '--dry-run') args.dryRun = true
     else if (option === '--force') args.force = true
+    else if (option === '--purge-data') args.purgeData = true
     else if (option === '--help') args.help = true
     else if (option === '--platforms')
       throw new Error('--platforms was removed; this uninstaller supports OpenCode only')
@@ -131,8 +148,19 @@ function isPantheonRouting(path) {
   }
 }
 
-function removePath(path, dryRun, root, label = path) {
-  if (!isInside(path, root) || isSymlink(path)) {
+function assertReviewedPath(path, reviewedPaths) {
+  if (reviewedPaths && !reviewedPaths.has(path)) {
+    throw new Error(`Uninstall operation set drifted; refusing unreviewed path: ${path}`)
+  }
+}
+
+function removePath(path, dryRun, root, label = path, reviewedPaths = null) {
+  if (!isInside(path, root)) {
+    stats.skipped += 1
+    return false
+  }
+  assertNoSymlinkAncestors(path, { includeLeaf: false })
+  if (isSymlink(path)) {
     stats.skipped += 1
     return false
   }
@@ -141,10 +169,15 @@ function removePath(path, dryRun, root, label = path) {
     stats.skipped += 1
     return false
   }
-  if (dryRun) console.log(`  ~ Would remove ${label}`)
-  else {
+  assertReviewedPath(path, reviewedPaths)
+  touchedPaths.add(path)
+  if (dryRun) {
+    if (!quietPreview) console.log(`  ~ Would remove ${label}`)
+  } else {
     try {
+      assertNoSymlinkAncestors(path, { includeLeaf: false })
       rmSync(path, { recursive: info.isDirectory(), force: false })
+      verifyPathRemoved(path)
     } catch (error) {
       console.error(`  ⚠️ Failed to remove ${path}: ${error.message}`)
       stats.errors += 1
@@ -155,7 +188,8 @@ function removePath(path, dryRun, root, label = path) {
   return true
 }
 
-function removeMatchingEntries(directory, predicate, dryRun, root) {
+function removeMatchingEntries(directory, predicate, dryRun, root, reviewedPaths = null) {
+  assertNoSymlinkAncestors(directory, { includeLeaf: false })
   const info = lstat(directory)
   if (!info || info.isSymbolicLink() || !info.isDirectory()) {
     stats.skipped += 1
@@ -168,12 +202,19 @@ function removeMatchingEntries(directory, predicate, dryRun, root) {
       stats.skipped += 1
       continue
     }
-    if (predicate(path, entry)) removePath(path, dryRun, root, path)
-    else if (child.isDirectory()) removeMatchingEntries(path, predicate, dryRun, root)
+    if (predicate(path, entry)) removePath(path, dryRun, root, path, reviewedPaths)
+    else if (child.isDirectory())
+      removeMatchingEntries(path, predicate, dryRun, root, reviewedPaths)
   }
   const remaining = lstat(directory)
-  if (remaining?.isDirectory() && readdirSync(directory).length === 0)
-    removePath(directory, dryRun, root, directory)
+  const scheduledRemaining = readdirSync(directory).filter(
+    (entry) => !touchedPaths.has(join(directory, entry)),
+  )
+  if (
+    remaining?.isDirectory() &&
+    (dryRun ? scheduledRemaining.length === 0 : readdirSync(directory).length === 0)
+  )
+    removePath(directory, dryRun, root, directory, reviewedPaths)
 }
 
 function readJson(path) {
@@ -214,7 +255,7 @@ function ownedMcpEntry(name, value) {
   )
 }
 
-function cleanOpenCodeConfig(target, dryRun, ownedRoot = target) {
+function cleanOpenCodeConfig(target, dryRun, ownedRoot = target, reviewedPaths = null) {
   const configPath = join(target, 'opencode.json')
   const config = readJson(configPath)
   if (!config) {
@@ -286,8 +327,16 @@ function cleanOpenCodeConfig(target, dryRun, ownedRoot = target) {
     stats.skipped += 1
     return
   }
-  if (dryRun) console.log('  ~ Would update opencode.json (remove Pantheon-owned entries)')
-  else writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  assertReviewedPath(configPath, reviewedPaths)
+  touchedPaths.add(configPath)
+  const content = `${JSON.stringify(config, null, 2)}\n`
+  if (dryRun) {
+    if (!quietPreview) console.log('  ~ Would update opencode.json (remove Pantheon-owned entries)')
+  } else {
+    assertNoSymlinkAncestors(configPath)
+    writeFileSync(configPath, content, 'utf8')
+    verifyRegularFile(configPath, content)
+  }
   stats.removed += 1
 }
 
@@ -299,9 +348,39 @@ function configDirFor(target) {
     : join(target, '.opencode')
 }
 
-function uninstallOpenCode(target, dryRun) {
+function verifiedInstallState(root) {
+  const statePath = join(root, '.pantheon', 'install-state.json')
+  assertNoSymlinkAncestors(statePath)
+  const info = lstat(statePath)
+  if (!info) return null
+  if (info.isSymbolicLink() || !info.isFile()) {
+    throw new Error('Refusing to purge install state that is not a regular file')
+  }
+  let state
+  try {
+    state = JSON.parse(readFileSync(statePath, 'utf8'))
+  } catch {
+    throw new Error('Refusing to purge unverified install state')
+  }
+  if (
+    state?.schema_version !== 2 ||
+    typeof state.pantheon_version !== 'string' ||
+    !state.components ||
+    typeof state.components !== 'object' ||
+    Array.isArray(state.components)
+  )
+    throw new Error('Refusing to purge unverified install state')
+  return statePath
+}
+
+function runUninstallPass(target, dryRun, { purgeData = false, reviewedPaths = null } = {}) {
   const root = resolve(target)
-  if (isSymlink(root)) throw new Error(`Target must not be a symlink: ${root}`)
+  assertNoSymlinkAncestors(root)
+  const rootInfo = lstat(root)
+  if (!rootInfo?.isDirectory() || rootInfo.isSymbolicLink()) {
+    throw new Error(`Target must be a directory and not a symlink: ${root}`)
+  }
+  const statePath = purgeData ? verifiedInstallState(root) : null
   const configDir = configDirFor(root)
   const configInfo = lstat(configDir)
   if (configInfo?.isSymbolicLink()) {
@@ -309,29 +388,56 @@ function uninstallOpenCode(target, dryRun) {
     return
   }
   const ownedRoot = root
-  cleanOpenCodeConfig(root, dryRun, ownedRoot)
+  cleanOpenCodeConfig(root, dryRun, ownedRoot, reviewedPaths)
   removeMatchingEntries(
     join(configDir, 'agents'),
     (_path, name) => AGENT_NAMES.has(name.replace(/\.md$/, '')) && isPantheonContent(_path),
     dryRun,
     ownedRoot,
+    reviewedPaths,
   )
   for (const directory of ['skills', 'commands', 'plugins'])
-    removeMatchingEntries(join(configDir, directory), isPantheonContent, dryRun, ownedRoot)
+    removeMatchingEntries(
+      join(configDir, directory),
+      isPantheonContent,
+      dryRun,
+      ownedRoot,
+      reviewedPaths,
+    )
   for (const file of ['package.json', 'tsconfig.json', 'routing.yml']) {
     const path = join(configDir, file)
     if (file === 'routing.yml' ? isPantheonRouting(path) : isPantheonContent(path))
-      removePath(path, dryRun, ownedRoot, path)
+      removePath(path, dryRun, ownedRoot, path, reviewedPaths)
   }
   const tui = join(configDir, 'tui.json')
-  cleanTuiConfig(tui, dryRun, ownedRoot)
+  cleanTuiConfig(tui, dryRun, ownedRoot, reviewedPaths)
   const agentsMd = join(root, 'AGENTS.md')
-  if (isPantheonContent(agentsMd)) removePath(agentsMd, dryRun, ownedRoot, agentsMd)
-  if (configInfo?.isDirectory() && readdirSync(configDir).length === 0)
-    removePath(configDir, dryRun, ownedRoot, configDir)
+  if (isPantheonContent(agentsMd)) removePath(agentsMd, dryRun, ownedRoot, agentsMd, reviewedPaths)
+  const scheduledConfigEntries = configInfo?.isDirectory()
+    ? readdirSync(configDir).filter((entry) => !touchedPaths.has(join(configDir, entry)))
+    : []
+  // A flat global target is also the backup store's config root. Keep it so
+  // backups remain discoverable/restorable after uninstall; only nested
+  // project `.opencode` directories are eligible for removal here.
+  if (
+    configInfo?.isDirectory() &&
+    resolve(configDir) !== root &&
+    (dryRun ? scheduledConfigEntries.length === 0 : readdirSync(configDir).length === 0)
+  )
+    removePath(configDir, dryRun, ownedRoot, configDir, reviewedPaths)
+  if (statePath) {
+    assertReviewedPath(statePath, reviewedPaths)
+    touchedPaths.add(statePath)
+    if (dryRun) {
+      if (!quietPreview) console.log(`  ~ Would purge verified install state ${statePath}`)
+    } else {
+      removePath(statePath, false, ownedRoot, statePath, reviewedPaths)
+    }
+  }
+  return [...touchedPaths]
 }
 
-function cleanTuiConfig(path, dryRun, root) {
+function cleanTuiConfig(path, dryRun, root, reviewedPaths = null) {
   const config = readJson(path)
   if (!config || !Array.isArray(config.plugin)) {
     stats.skipped += 1
@@ -345,9 +451,108 @@ function cleanTuiConfig(path, dryRun, root) {
     return
   }
   config.plugin = plugin
-  if (dryRun) console.log('  ~ Would update tui.json (remove Pantheon-owned plugin references)')
-  else writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  assertReviewedPath(path, reviewedPaths)
+  touchedPaths.add(path)
+  const content = `${JSON.stringify(config, null, 2)}\n`
+  if (dryRun) {
+    if (!quietPreview)
+      console.log('  ~ Would update tui.json (remove Pantheon-owned plugin references)')
+  } else {
+    assertNoSymlinkAncestors(path)
+    writeFileSync(path, content, 'utf8')
+    verifyRegularFile(path, content)
+  }
   stats.removed += 1
+}
+
+function resetRunState() {
+  stats.removed = 0
+  stats.skipped = 0
+  stats.errors = 0
+  touchedPaths = new Set()
+}
+
+function collectUninstallPlan(target, options = {}) {
+  resetRunState()
+  const previousQuiet = quietPreview
+  quietPreview = true
+  try {
+    const paths = runUninstallPass(target, true, options) ?? []
+    return {
+      paths,
+      snapshots: paths.map((path) => ({ path, ...snapshot(path) })),
+    }
+  } finally {
+    quietPreview = previousQuiet
+  }
+}
+
+function uninstallOpenCode(target, dryRun, options = {}) {
+  resetRunState()
+  if (dryRun) {
+    const paths = runUninstallPass(target, true, options) ?? []
+    return { paths, snapshots: paths.map((path) => ({ path, ...snapshot(path) })) }
+  }
+
+  const reviewed = options.reviewedPlan ?? collectUninstallPlan(target, options)
+  const root = resolve(target)
+  const reviewedPaths = new Set(reviewed.paths)
+  if (reviewedPaths.size !== reviewed.paths.length) {
+    throw new Error('Uninstall reviewed plan contains duplicate paths')
+  }
+  const reviewedSnapshotPaths = new Set(reviewed.snapshots.map((item) => item.path))
+  if (
+    reviewedSnapshotPaths.size !== reviewed.snapshots.length ||
+    reviewedSnapshotPaths.size !== reviewedPaths.size ||
+    [...reviewedPaths].some((path) => !reviewedSnapshotPaths.has(path))
+  ) {
+    throw new Error('Uninstall reviewed plan operation set is invalid')
+  }
+  const currentPlan = collectUninstallPlan(target, options)
+  const currentPaths = [...currentPlan.paths].sort()
+  const expectedPaths = [...reviewedPaths].sort()
+  if (JSON.stringify(currentPaths) !== JSON.stringify(expectedPaths)) {
+    throw new Error('Uninstall operation set drifted before backup')
+  }
+  for (const expected of reviewed.snapshots) {
+    if (!isInside(expected.path, root))
+      throw new Error(`Uninstall path escaped target: ${expected.path}`)
+    const current = { path: expected.path, ...snapshot(expected.path) }
+    if (JSON.stringify(current) !== JSON.stringify(expected)) {
+      throw new Error(`Uninstall target drifted before backup: ${expected.path}`)
+    }
+  }
+
+  const backupEntries = reviewed.paths.filter((path) => {
+    const info = lstat(path)
+    return info?.isFile() && !info.isSymbolicLink()
+  })
+  let backupDir = null
+  if (backupEntries.length > 0) {
+    const backup = createBackupSet({
+      configDir: root,
+      entries: backupEntries.map((path) => relative(root, path)),
+      packageVersion: 'uninstall',
+      keep: 0,
+    })
+    backupDir = backup.dir
+    console.warn(backupWarning(backup.dir))
+  }
+
+  const applyPlan = collectUninstallPlan(target, options)
+  if (JSON.stringify([...applyPlan.paths].sort()) !== JSON.stringify(expectedPaths)) {
+    throw new Error('Uninstall operation set drifted after backup')
+  }
+  for (const expected of reviewed.snapshots) {
+    const current = { path: expected.path, ...snapshot(expected.path) }
+    if (JSON.stringify(current) !== JSON.stringify(expected)) {
+      throw new Error(`Uninstall target drifted after backup: ${expected.path}`)
+    }
+  }
+
+  resetRunState()
+  const paths = runUninstallPass(target, false, { ...options, reviewedPaths }) ?? []
+  return { paths, backupDir }
 }
 
 function dirname(path) {
@@ -355,7 +560,7 @@ function dirname(path) {
 }
 
 async function confirmPrompt(message) {
-  if (!isatty(process.stdin.fd)) return true
+  if (!isatty(process.stdin.fd) || !isatty(process.stdout.fd)) return false
   const readline = createInterface({ input: process.stdin, output: process.stdout })
   return new Promise((answer) =>
     readline.question(message, (value) => {
@@ -371,14 +576,33 @@ async function main() {
   const info = lstat(args.target)
   if (!info?.isDirectory() || info.isSymbolicLink())
     throw new Error(`Target directory does not exist or is a symlink: ${args.target}`)
-  if (
-    !args.dryRun &&
-    !args.force &&
-    !(await confirmPrompt(`⚠️ Remove Pantheon OpenCode artifacts from ${args.target}? [y/N] `))
-  )
-    return console.log('❌ Uninstall cancelled.')
+  const reviewedPlan = collectUninstallPlan(args.target, { purgeData: args.purgeData })
+  const hasChanges = reviewedPlan.paths.length > 0
   console.log(`${args.dryRun ? '🔍 Dry-run' : '🗑️ Uninstall'}: OpenCode/Pantheon only`)
-  uninstallOpenCode(args.target, args.dryRun)
+  for (const path of reviewedPlan.paths) {
+    const purge =
+      args.purgeData && path === join(resolve(args.target), '.pantheon', 'install-state.json')
+    const update = ['opencode.json', 'tui.json'].includes(basename(path)) && !purge
+    console.log(`  ${purge ? 'PURGE DATA' : update ? 'UPDATE' : 'REMOVE'} ${path}`)
+  }
+  if (args.dryRun) {
+    console.log(
+      `✅ ${stats.removed} would change, ${stats.skipped} skipped, ${stats.errors} errors`,
+    )
+    return
+  }
+  if (hasChanges && !args.force) {
+    if (!isatty(process.stdin.fd) || !isatty(process.stdout.fd)) {
+      console.error('❌ Non-interactive uninstall requires explicit --force authorization.')
+      process.exitCode = 2
+      return
+    }
+    if (!(await confirmPrompt(`⚠️ Apply this uninstall plan for ${args.target}? [y/N] `))) {
+      console.log('❌ Uninstall cancelled; no files were changed.')
+      return
+    }
+  }
+  uninstallOpenCode(args.target, false, { purgeData: args.purgeData, reviewedPlan })
   console.log(`✅ ${stats.removed} removed, ${stats.skipped} skipped, ${stats.errors} errors`)
   if (stats.errors) process.exitCode = 1
 }

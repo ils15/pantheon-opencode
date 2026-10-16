@@ -24,9 +24,11 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -117,6 +119,20 @@ test('backup: createBackupSet preserves bytes, records absence and sets modes', 
   }
 })
 
+test('backup: refuses a symlinked backup ancestor without creating files outside configDir', () => {
+  const configDir = makeConfigDir()
+  const outside = makeConfigDir()
+  try {
+    writeFileSync(join(configDir, 'opencode.json'), '{"safe":true}\n')
+    symlinkSync(outside, join(configDir, '.pantheon'), 'dir')
+    assert.throws(() => createBackupSet({ configDir, entries: ['opencode.json'] }), /symlink/i)
+    assert.deepEqual(readdirSync(outside), [])
+  } finally {
+    rmSync(configDir, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
 test('backup: verifyBackupSet accepts a clean set and refuses a tampered one', () => {
   const configDir = makeConfigDir()
   try {
@@ -158,6 +174,41 @@ test('backup: planRestore classifies create/update/remove/unchanged by path only
     // opencode.json is planned LAST.
     assert.equal(plan.entries.at(-1).relativePath, 'opencode.json')
   } finally {
+    rmSync(configDir, { recursive: true, force: true })
+  }
+})
+
+test('backup: restore rejects a symlinked target ancestor without deleting outside files', () => {
+  const configDir = makeConfigDir()
+  const outside = makeConfigDir()
+  const externalFile = join(outside, 'gone.json')
+  try {
+    const { dir } = createBackupSet({ configDir, entries: ['nested/gone.json'] })
+    writeFileSync(externalFile, 'keep me')
+    symlinkSync(outside, join(configDir, 'nested'), 'dir')
+
+    const plan = planRestore(dir, configDir)
+    assert.equal(plan.error, 'unsafe-target-path')
+    assert.throws(() => restoreBackupSet(dir, configDir), /not restorable/i)
+    assert.equal(readFileSync(externalFile, 'utf8'), 'keep me')
+  } finally {
+    rmSync(configDir, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test('backup: restore rejects a symlinked config root', () => {
+  const configDir = makeConfigDir()
+  const aliasDir = makeConfigDir()
+  const rootAlias = join(aliasDir, 'root')
+  try {
+    const { dir } = createBackupSet({ configDir, entries: ['missing.json'] })
+    symlinkSync(configDir, rootAlias, 'dir')
+
+    assert.equal(planRestore(dir, rootAlias).error, 'unsafe-target-root')
+    assert.throws(() => restoreBackupSet(dir, rootAlias), /not restorable/i)
+  } finally {
+    rmSync(aliasDir, { recursive: true, force: true })
     rmSync(configDir, { recursive: true, force: true })
   }
 })

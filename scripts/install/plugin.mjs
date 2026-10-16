@@ -4,8 +4,15 @@
 
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
-import { isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { ACTIONS, recordChange, recordRemovalTree, removeReviewedTree, snapshot } from './plan.mjs'
 import { ROOT, writeIfChanged } from './shared.mjs'
+import {
+  assertNoSymlinkAncestors,
+  assertPathWithin,
+  assertSafeRemoval,
+  verifyPathRemoved,
+} from './verify.mjs'
 
 /**
  * Copy a plugin's runtime payload (the root TUI loader, bundled dist/*,
@@ -18,22 +25,37 @@ import { ROOT, writeIfChanged } from './shared.mjs'
  * @param {boolean} [options.dryRun=false] - If true, don't write files
  * @param {'v1'|'v2'} [options.version='v1'] - Host plugin generation
  * @param {(change: object) => void} [options.recorder] - optional change recorder for preview
+ * @param {Set<string>|null} [options.reviewedRemovals] - paths approved by the current plan
+ * @param {Map<string, object>|null} [options.reviewedSnapshots] - pre-apply path snapshots
  * @returns {{ created: number, skipped: number }}
  */
 export function copyPluginFiles(
   srcDir,
   dstDir,
-  { dryRun = false, version = 'v1', recorder = null } = {},
+  {
+    dryRun = false,
+    version = 'v1',
+    recorder = null,
+    reviewedRemovals = null,
+    reviewedSnapshots = null,
+  } = {},
 ) {
   const result = { created: 0, skipped: 0 }
+  const distDir = join(dstDir, 'dist')
 
-  if (!dryRun) mkdirSync(dstDir, { recursive: true })
-  if (!dryRun) mkdirSync(join(dstDir, 'dist'), { recursive: true })
+  if (!dryRun) {
+    assertNoSymlinkAncestors(dstDir)
+    mkdirSync(dstDir, { recursive: true })
+    assertNoSymlinkAncestors(dstDir)
+    assertPathWithin(dstDir, distDir)
+    assertNoSymlinkAncestors(distDir)
+    mkdirSync(distDir, { recursive: true })
+    assertNoSymlinkAncestors(distDir)
+  }
 
   // Drop legacy raw copies from previous installs (root index.tsx + dist/tui.tsx).
-  if (!dryRun) {
-    rmSync(join(dstDir, 'index.tsx'), { force: true })
-    rmSync(join(dstDir, 'dist', 'tui.tsx'), { force: true })
+  for (const legacyPath of [join(dstDir, 'index.tsx'), join(distDir, 'tui.tsx')]) {
+    removeLegacyFile(legacyPath, dstDir, { dryRun, recorder, reviewedRemovals, reviewedSnapshots })
   }
 
   // Copy dist/* files
@@ -41,7 +63,9 @@ export function copyPluginFiles(
   if (existsSync(distSrc)) {
     for (const f of readdirSync(distSrc)) {
       const c = readFileSync(join(distSrc, f), 'utf8')
-      const status = writeIfChanged(join(dstDir, 'dist', f), c, dryRun, { recorder })
+      const destination = join(distDir, f)
+      assertPathWithin(dstDir, destination)
+      const status = writeIfChanged(destination, c, dryRun, { recorder })
       if (status === 'created') result.created++
       else result.skipped++
     }
@@ -88,8 +112,13 @@ export function copyPluginFiles(
     )
     if (entryStatus === 'created') result.created++
     else result.skipped++
-  } else if (!dryRun) {
-    rmSync(v2ServerDestination, { force: true })
+  } else {
+    removeLegacyFile(v2ServerDestination, dstDir, {
+      dryRun,
+      recorder,
+      reviewedRemovals,
+      reviewedSnapshots,
+    })
   }
 
   // Copy the lockfile so dependency installation is reproducible. A missing
@@ -109,6 +138,49 @@ export function copyPluginFiles(
   return result
 }
 
+function removeLegacyFile(
+  filePath,
+  rootDir,
+  { dryRun, recorder, reviewedRemovals, reviewedSnapshots },
+) {
+  assertSafeRemoval(rootDir, filePath)
+  const present = existsSync(filePath)
+  if (dryRun) {
+    recordChange(
+      {
+        path: filePath,
+        action: present ? ACTIONS.REMOVE : ACTIONS.UNCHANGED,
+        bytes: 0,
+        scored: false,
+      },
+      recorder,
+    )
+    return
+  }
+  if (!present) return
+
+  const normalizedPath = resolve(filePath)
+  if (reviewedRemovals && !reviewedRemovals.has(normalizedPath)) {
+    throw new Error(`Refusing unreviewed plugin removal: ${filePath}`)
+  }
+  const expected = reviewedSnapshots?.get(normalizedPath)
+  if (reviewedSnapshots && (!expected || !sameSnapshot(snapshot(filePath), expected))) {
+    throw new Error(`Plugin removal target drifted after review: ${filePath}`)
+  }
+  rmSync(filePath, { force: true })
+  verifyPathRemoved(filePath)
+  recordChange({ path: filePath, action: ACTIONS.REMOVE, bytes: 0, scored: false }, recorder)
+}
+
+function sameSnapshot(left, right) {
+  return (
+    left.exists === right.exists &&
+    left.sha256 === right.sha256 &&
+    left.size === right.size &&
+    left.mode === right.mode
+  )
+}
+
 /**
  * Install a plugin from source to destination.
  * @param {string} srcDir - Source plugin directory (e.g. ROOT/src/plugins/tui)
@@ -122,17 +194,49 @@ export function copyPluginFiles(
 export function installPlugin(
   srcDir,
   dstDir,
-  { dryRun = false, clean = false, version = 'v1', recorder = null } = {},
+  {
+    dryRun = false,
+    clean = false,
+    version = 'v1',
+    recorder = null,
+    reviewedRemovals = null,
+    reviewedSnapshots = null,
+  } = {},
 ) {
   const result = { created: 0, skipped: 0, errors: 0 }
+  const cleanTargetExisted = clean && existsSync(dstDir)
 
-  if (clean && existsSync(dstDir) && !dryRun) {
-    rmSync(dstDir, { recursive: true, force: true })
+  assertNoSymlinkAncestors(dstDir)
+  if (cleanTargetExisted) {
+    assertSafeRemoval(dirname(dstDir), dstDir)
+    if (dryRun) {
+      recordRemovalTree(dstDir, recorder)
+    } else {
+      removeReviewedTree(dstDir, reviewedRemovals, reviewedSnapshots)
+    }
   }
 
-  const copyResult = copyPluginFiles(srcDir, dstDir, { dryRun, version, recorder })
+  const copyResult = copyPluginFiles(srcDir, dstDir, {
+    dryRun,
+    version,
+    recorder,
+    reviewedRemovals,
+    reviewedSnapshots,
+  })
   result.created += copyResult.created
   result.skipped += copyResult.skipped
+  if (cleanTargetExisted) {
+    // The clean pass removes these directories before rebuilding their files;
+    // keep the net plan truthful while the separate removal review still lists
+    // every path actually cleared.
+    recordChange({ path: dstDir, action: ACTIONS.UNCHANGED, bytes: 0, scored: false }, recorder)
+    if (existsSync(join(srcDir, 'dist'))) {
+      recordChange(
+        { path: join(dstDir, 'dist'), action: ACTIONS.UNCHANGED, bytes: 0, scored: false },
+        recorder,
+      )
+    }
+  }
 
   // Install plugin dependencies (@opentui/core, @opentui/solid, solid-js).
   // Lockfile installation is the only accepted dependency path.

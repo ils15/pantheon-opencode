@@ -4,9 +4,12 @@
 
 import { spawnSync } from 'node:child_process'
 import {
+  chmodSync,
+  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -25,7 +28,21 @@ if (parseInt(process.versions.node.split('.')[0], 10) < REQUIRED_NODE_MAJOR) {
 
 import { dump, load } from 'js-yaml'
 
-import { ACTIONS, isRecording, recordChange } from './plan.mjs'
+import {
+  ACTIONS,
+  fingerprintOutput,
+  isRecording,
+  recordChange,
+  recordRemovalTree,
+  removeReviewedTree,
+} from './plan.mjs'
+import {
+  assertNoSymlinkAncestors,
+  assertPathWithin,
+  assertSafeRemoval,
+  verifyPathRemoved,
+  verifyRegularFile,
+} from './verify.mjs'
 
 export const __dirname = dirname(fileURLToPath(import.meta.url))
 export const ROOT = join(__dirname, '..', '..')
@@ -170,6 +187,7 @@ export function sourceDirValid(dir) {
 }
 
 export function copyFiles(srcDir, dstDir, dryRun, renameMap = null, clean = false) {
+  assertNoSymlinkAncestors(dstDir)
   const entries = readdirSync(srcDir)
   let created = 0
   let skipped = 0
@@ -185,6 +203,8 @@ export function copyFiles(srcDir, dstDir, dryRun, renameMap = null, clean = fals
     dstNames.add(dstName)
 
     const dstFile = join(dstDir, dstName)
+    assertPathWithin(dstDir, dstFile)
+    assertNoSymlinkAncestors(dstFile)
 
     if (statSync(srcFile).isDirectory()) continue
     const content = readFileSync(srcFile, 'utf8')
@@ -195,14 +215,10 @@ export function copyFiles(srcDir, dstDir, dryRun, renameMap = null, clean = fals
         skipped++
         continue
       }
-      if (!dryRun) {
-        writeFileSync(dstFile, content, 'utf8')
-      }
+      writeIfChanged(dstFile, content, dryRun)
       created++
     } else {
-      if (!dryRun) {
-        writeFileSync(dstFile, content, 'utf8')
-      }
+      writeIfChanged(dstFile, content, dryRun)
       created++
     }
   }
@@ -212,17 +228,21 @@ export function copyFiles(srcDir, dstDir, dryRun, renameMap = null, clean = fals
   // (lowercase name + .md/.mdc extension), regardless of AGENT_NAMES membership.
   // This handles deleted canonical agents (e.g., agora) whose source file is gone.
   if (clean && existsSync(dstDir)) {
+    assertNoSymlinkAncestors(dstDir)
     const dstEntries = readdirSync(dstDir)
     const agentPattern = /^[a-z-]+\.(md|mdc)$/
     for (const entry of dstEntries) {
       if (dstNames.has(entry)) continue // still in source
       const dstFile = join(dstDir, entry)
+      assertSafeRemoval(dstDir, dstFile)
       if (!statSync(dstFile).isFile()) continue
       // Safety: only remove files that match agent file naming pattern
       // (user custom files with different naming patterns are untouched)
       if (!agentPattern.test(entry)) continue
       if (!dryRun) {
+        assertSafeRemoval(dstDir, dstFile)
         rmSync(dstFile, { force: true })
+        verifyPathRemoved(dstFile)
       }
       created++
     }
@@ -289,21 +309,26 @@ function readFileOrNull(filePath) {
  *   size only) so `--dry-run` can print the real per-file plan. Defaults to
  *   the module-level no-op singleton, so an uninstrumented caller is
  *   byte-identical to before.
+ * @param {number} [options.mode] - mode for a newly created file; existing
+ *   destination modes are preserved.
  * @param {boolean} [options.scored] - set `false` when this write is not part
  *   of the install summary (e.g. stale-ref cleanup), so it is shown in the plan
  *   but excluded from the consistency guard.
  * @returns {'created'|'skipped'|'conflict'}
  */
 export function writeIfChanged(filePath, content, dryRun, options = {}) {
-  const { expectedContent, beforeSwap, beforeRecheck, recorder, scored } = options
+  const { expectedContent, beforeSwap, beforeRecheck, recorder, scored, mode } = options
 
-  // Refuse to write through/over a symlink. A dangling symlink is invisible to
-  // existsSync, and rename-over-link would replace the link rather than its
-  // target — both are silent redirections the installer must not perform.
+  // A linked parent redirects both the atomic temp write and the eventual
+  // rename, so validate the full path rather than only its final component.
+  assertNoSymlinkAncestors(filePath)
   const stat = lstatOrNull(filePath)
   if (stat?.isSymbolicLink()) {
     throw new Error(`Refusing to write through symlink: ${filePath}`)
   }
+  // Preserve the destination's access mode across the atomic rename. A mode
+  // supplied by the caller is used only for a newly created destination.
+  const targetMode = stat === null ? mode : stat.mode & 0o777
 
   const existing = stat === null ? null : readFileOrNull(filePath)
   const record = (outcome) => {
@@ -317,7 +342,13 @@ export function writeIfChanged(filePath, content, dryRun, options = {}) {
             ? ACTIONS.CREATE
             : ACTIONS.UPDATE
     recordChange(
-      { path: filePath, action, bytes: Buffer.byteLength(content, 'utf8'), scored },
+      {
+        path: filePath,
+        action,
+        bytes: Buffer.byteLength(content, 'utf8'),
+        outputFingerprint: fingerprintOutput(content),
+        scored,
+      },
       recorder,
     )
   }
@@ -340,23 +371,54 @@ export function writeIfChanged(filePath, content, dryRun, options = {}) {
     // crash mid-write can never leave a truncated file behind (rename is
     // atomic within the same directory).
     const tmpPath = `${filePath}.tmp-${process.pid}`
-    writeFileSync(tmpPath, content, 'utf8')
+    assertNoSymlinkAncestors(tmpPath)
+    let fd
+    let createdTemporary = false
+    try {
+      // Exclusive creation establishes ownership. Cleanup below is limited to
+      // this exact path and only runs after this invocation opened it.
+      fd = openSync(tmpPath, 'wx', targetMode)
+      createdTemporary = true
+      writeFileSync(fd, content, { encoding: 'utf8' })
+      closeSync(fd)
+      fd = undefined
+      if (targetMode !== undefined) chmodSync(tmpPath, targetMode)
 
-    // Last-moment re-read. The initial compare and this rename are separate
-    // syscalls, so a concurrent writer can land in between; re-check the
-    // expected bytes immediately before the swap. On a mismatch, drop the temp
-    // and leave the target byte-identical.
-    if (expectedContent !== undefined) {
-      const current = readFileOrNull(filePath)
-      if (current !== expectedContent) {
-        rmSync(tmpPath, { force: true })
-        record('conflict')
-        return 'conflict'
+      // Last-moment re-read. The initial compare and this rename are separate
+      // syscalls, so a concurrent writer can land in between; re-check the
+      // expected bytes immediately before the swap. On a mismatch, leave the
+      // target byte-identical; finally removes only the temp created above.
+      if (expectedContent !== undefined) {
+        const current = readFileOrNull(filePath)
+        if (current !== expectedContent) {
+          record('conflict')
+          return 'conflict'
+        }
+      }
+
+      if (typeof beforeSwap === 'function') beforeSwap(existing)
+      assertNoSymlinkAncestors(filePath)
+      renameSync(tmpPath, filePath)
+      createdTemporary = false
+      verifyRegularFile(filePath, content)
+    } finally {
+      if (fd !== undefined) {
+        try {
+          closeSync(fd)
+        } catch {
+          // Preserve the write error; closing a failed descriptor is best-effort.
+        }
+      }
+      if (createdTemporary) {
+        try {
+          assertSafeRemoval(dirname(tmpPath), tmpPath)
+          rmSync(tmpPath, { force: true })
+          verifyPathRemoved(tmpPath)
+        } catch {
+          // Preserve the write error and never follow an unsafe temp path.
+        }
       }
     }
-
-    if (typeof beforeSwap === 'function') beforeSwap(existing)
-    renameSync(tmpPath, filePath)
   }
   record('created')
   return 'created'
@@ -372,6 +434,8 @@ export function writeIfChanged(filePath, content, dryRun, options = {}) {
  * A caller may still supply `beforeSwap` for a file the exact set does NOT
  * cover: the GLOBAL `opencode-vision.json` lives outside the config dir, so
  * vision-prompt passes a `beforeSwap` that keeps its `<file>.bak` recovery.
+ * New config files default to mode `0600`; existing destination modes survive
+ * replacement.
  *
  * @param {string} filePath
  * @param {string} content
@@ -385,6 +449,7 @@ export function writeConfigWithBackup(filePath, content, dryRun, options = {}) {
     beforeSwap: options.beforeSwap,
     recorder: options.recorder,
     scored: options.scored,
+    mode: options.mode ?? 0o600,
   })
 }
 
@@ -450,9 +515,27 @@ export function serializeFm(fm) {
   })
 }
 
-export function installSkills(skills, target, dryRun, subDir = '.opencode', recorder = null) {
+function recordDirectoryOutcomes(srcDir, dstDir, recorder) {
+  recordChange({ path: dstDir, action: ACTIONS.UNCHANGED, bytes: 0, scored: false }, recorder)
+  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    recordDirectoryOutcomes(join(srcDir, entry.name), join(dstDir, entry.name), recorder)
+  }
+}
+
+export function installSkills(
+  skills,
+  target,
+  dryRun,
+  subDir = '.opencode',
+  recorder = null,
+  reviewedRemovals = null,
+  reviewedSnapshots = null,
+  clean = false,
+) {
   const srcSkillsDir = join(ROOT, 'src', 'skills')
   const dstSkillsDir = join(target, subDir, 'skills')
+  assertNoSymlinkAncestors(dstSkillsDir)
 
   let created = 0
   let skipped = 0
@@ -461,7 +544,12 @@ export function installSkills(skills, target, dryRun, subDir = '.opencode', reco
     const src = join(srcSkillsDir, skill)
     const dst = join(dstSkillsDir, skill)
 
-    if (!dryRun) mkdirSync(dst, { recursive: true })
+    if (!dryRun) {
+      assertPathWithin(dstSkillsDir, dst)
+      assertNoSymlinkAncestors(dst)
+      mkdirSync(dst, { recursive: true })
+      assertNoSymlinkAncestors(dst)
+    }
 
     function copyDirRecursive(from, to) {
       const entries = readdirSync(from)
@@ -469,11 +557,20 @@ export function installSkills(skills, target, dryRun, subDir = '.opencode', reco
         const srcPath = join(from, entry)
         const dstPath = join(to, entry)
         if (statSync(srcPath).isDirectory()) {
-          if (!dryRun) mkdirSync(dstPath, { recursive: true })
+          if (!dryRun) {
+            assertPathWithin(dstSkillsDir, dstPath)
+            assertNoSymlinkAncestors(dstPath)
+            mkdirSync(dstPath, { recursive: true })
+            assertNoSymlinkAncestors(dstPath)
+          }
           copyDirRecursive(srcPath, dstPath)
         } else {
           const content = readFileSync(srcPath, 'utf8')
-          const existing = existsSync(dstPath) ? readFileSync(dstPath, 'utf8') : null
+          const dstStat = lstatOrNull(dstPath)
+          if (dstStat?.isSymbolicLink()) {
+            throw new Error(`Refusing to read through symlink: ${dstPath}`)
+          }
+          const existing = dstStat === null ? null : readFileSync(dstPath, 'utf8')
           if (existing === content) {
             skipped++
             if (isRecording(recorder)) {
@@ -482,40 +579,49 @@ export function installSkills(skills, target, dryRun, subDir = '.opencode', reco
                   path: dstPath,
                   action: ACTIONS.UNCHANGED,
                   bytes: Buffer.byteLength(content, 'utf8'),
+                  outputFingerprint: fingerprintOutput(content),
                 },
                 recorder,
               )
             }
           } else {
-            if (!dryRun) writeFileSync(dstPath, content, 'utf8')
-            created++
-            if (isRecording(recorder)) {
+            if (!dryRun) {
+              writeIfChanged(dstPath, content, false, { recorder })
+            } else if (isRecording(recorder)) {
               recordChange(
                 {
                   path: dstPath,
                   action: existing === null ? ACTIONS.CREATE : ACTIONS.UPDATE,
                   bytes: Buffer.byteLength(content, 'utf8'),
+                  outputFingerprint: fingerprintOutput(content),
                 },
                 recorder,
               )
             }
+            created++
           }
         }
       }
     }
 
     copyDirRecursive(src, dst)
+    if (clean && existsSync(dst)) recordDirectoryOutcomes(src, dst, recorder)
   }
 
   // Remove stale skills that exist in dst but not in skills list
   if (existsSync(dstSkillsDir)) {
+    assertNoSymlinkAncestors(dstSkillsDir)
     const dstEntries = readdirSync(dstSkillsDir)
     for (const entry of dstEntries) {
       const dstPath = join(dstSkillsDir, entry)
+      assertSafeRemoval(dstSkillsDir, dstPath)
       if (!statSync(dstPath).isDirectory()) continue
       if (!skills.includes(entry)) {
-        if (!dryRun) {
-          rmSync(dstPath, { recursive: true, force: true })
+        if (dryRun) {
+          recordRemovalTree(dstPath, recorder)
+        } else {
+          assertSafeRemoval(dstSkillsDir, dstPath)
+          removeReviewedTree(dstPath, reviewedRemovals, reviewedSnapshots)
           console.log(`    🗑️  Removed stale skill: ${entry}`)
         }
         created++
@@ -529,18 +635,35 @@ export function installSkills(skills, target, dryRun, subDir = '.opencode', reco
   return { created, skipped }
 }
 
-export function syncDir(src, dst, dryRun, clean = false, filter = null, recorder = null) {
+export function syncDir(
+  src,
+  dst,
+  dryRun,
+  clean = false,
+  filter = null,
+  recorder = null,
+  reviewedRemovals = null,
+  reviewedSnapshots = null,
+) {
   if (!existsSync(src)) return { created: 0, skipped: 0 }
   let created = 0
   let skipped = 0
+  const cleanTargetExisted = clean && existsSync(dst)
 
-  if (clean && existsSync(dst)) {
-    if (!dryRun) {
-      rmSync(dst, { recursive: true, force: true })
+  if (cleanTargetExisted) {
+    if (dryRun) {
+      recordRemovalTree(dst, recorder)
+    } else {
+      assertSafeRemoval(dirname(dst), dst)
+      removeReviewedTree(dst, reviewedRemovals, reviewedSnapshots)
     }
   }
 
-  if (!dryRun) mkdirSync(dst, { recursive: true })
+  if (!dryRun) {
+    assertNoSymlinkAncestors(dst)
+    mkdirSync(dst, { recursive: true })
+    assertNoSymlinkAncestors(dst)
+  }
 
   const entries = readdirSync(src)
   for (const entry of entries) {
@@ -548,36 +671,29 @@ export function syncDir(src, dst, dryRun, clean = false, filter = null, recorder
     const srcPath = join(src, entry)
     const dstPath = join(dst, entry)
     if (statSync(srcPath).isDirectory()) {
-      const sub = syncDir(srcPath, dstPath, dryRun, false, filter, recorder)
+      const sub = syncDir(
+        srcPath,
+        dstPath,
+        dryRun,
+        false,
+        filter,
+        recorder,
+        reviewedRemovals,
+        reviewedSnapshots,
+      )
       created += sub.created
       skipped += sub.skipped
     } else {
       const content = readFileSync(srcPath, 'utf8')
-      const existing = existsSync(dstPath) ? readFileSync(dstPath, 'utf8') : null
-      if (existing === content) {
+      const status = writeIfChanged(dstPath, content, dryRun, { recorder })
+      if (status === 'skipped') {
         skipped++
-        if (isRecording(recorder)) {
-          recordChange(
-            { path: dstPath, action: ACTIONS.UNCHANGED, bytes: Buffer.byteLength(content, 'utf8') },
-            recorder,
-          )
-        }
       } else {
-        if (!dryRun) writeFileSync(dstPath, content, 'utf8')
         created++
-        if (isRecording(recorder)) {
-          recordChange(
-            {
-              path: dstPath,
-              action: existing === null ? ACTIONS.CREATE : ACTIONS.UPDATE,
-              bytes: Buffer.byteLength(content, 'utf8'),
-            },
-            recorder,
-          )
-        }
       }
     }
   }
+  if (cleanTargetExisted) recordDirectoryOutcomes(src, dst, recorder)
   return { created, skipped }
 }
 
