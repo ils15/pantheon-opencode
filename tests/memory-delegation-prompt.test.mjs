@@ -13,8 +13,11 @@ const sessionAgents = ['aphrodite', 'demeter', 'hephaestus', 'hermes'].map((agen
 )
 const autoContinue = readPrompt('../src/skills/auto-continue/SKILL.md')
 const contextCompression = readPrompt('../src/skills/context-compression/SKILL.md')
+const architectureGuide = readPrompt('../docs/ARCHITECTURE.md')
 const memoryGuide = readPrompt('../docs/MEMORY.md')
 const mcpGuide = readPrompt('../docs/mcp-tools.md')
+const agentMcpGuide = readPrompt('../docs/AGENT-MCP.md')
+const memoryInstaller = readPrompt('../scripts/install-mcp.mjs')
 const generatedAgents = readPrompt('../AGENTS.md')
 
 test('memory retrieval and storage are selective rather than automatic', () => {
@@ -89,6 +92,35 @@ test('memory documentation describes the current low-call policy and current API
   assert.match(memoryGuide, /## Low-call policy/)
   assert.doesNotMatch(memoryGuide, /memory_(?:compress|expand|consolidate|link|traverse)/)
   assert.match(mcpGuide, /not the default cache for agent handoffs/i)
+})
+
+test('memory docs and prompts state the current storage, privacy, and grant contracts', () => {
+  assert.match(memoryGuide, /SQLite `memory\.db`[\s\S]*entries have no TTL/i)
+  assert.match(memoryGuide, /FTS5\/BM25[\s\S]*no embedding[\s\S]*model or vector search/i)
+  assert.match(memoryGuide, /session-qualified context checkpoints default to 4h/i)
+  assert.match(memoryGuide, /_tasks\/[`]? records may be Git-ignored/i)
+  assert.match(memoryGuide, /automatic secret scrubbing\/redaction is not guaranteed/i)
+  assert.match(
+    memoryGuide,
+    /Namespace is an organizational\/search filter, not an access-control boundary[\s\S]*searches without a namespace filter can return matches from any namespace/i,
+  )
+  assert.doesNotMatch(architectureGuide, /Written by:\s*Any agent, automatically/i)
+
+  assert.match(mnemosyne, /automatic regex scrubbing\/redaction is not guaranteed/i)
+  assert.doesNotMatch(mnemosyne, /memory_store` MCP server applies regex scrub/i)
+  assert.match(memoryProtocol, /agent- and runtime-specific/i)
+  assert.match(memoryProtocol, /Never store secrets, credentials, or tokens/i)
+  assert.match(zeus, /pantheon-memory:\s*\[memory_search\]/i)
+  assert.match(zeusMemoryOps, /temporary `context_save`[\s\S]*not durable memory[\s\S]*writes/i)
+  assert.match(mcpGuide, /inspect the active tool grants\/catalog/i)
+  assert.match(zeusMemoryOps, /Inspect the active tool grants\/catalog/i)
+  assert.doesNotMatch(mcpGuide, /In this session, the Zeus root exposes/i)
+  assert.doesNotMatch(zeusMemoryOps, /The Zeus root\s+in this session exposes/i)
+
+  assert.match(agentMcpGuide, /installed per-agent allowlists[\s\S]*not[\s\S]*guarantee/i)
+  assert.match(memoryInstaller, /SQLite memory with FTS5\/BM25 keyword search/i)
+  assert.match(memoryInstaller, /no embedding\/vector search/i)
+  assert.doesNotMatch(memoryInstaller, /semantic search|knowledge graph|compression|verification/i)
 })
 
 test('Mnemosyne MCP allowlist names only the registered memory tools', () => {

@@ -33,8 +33,11 @@ disconnecting the MCP server.
 
 `pantheon-vision` remains connected for the host but is available only to agents
 that handle image workflows. Checkpoints are limited to `context_save` and
-`context_get` on Zeus; native compaction remains OpenCode's context-pressure
-path.
+`context_get` on Zeus; they are session-qualified temporary persistence, not
+durable `pantheon-memory` writes. These are installed per-agent allowlists, not
+a guarantee that the root runtime exposes the same tools. Mnemosyne's canonical
+allowlist includes durable-memory write tools; always check the active tool list.
+Native compaction remains OpenCode's context-pressure path.
 
 ---
 

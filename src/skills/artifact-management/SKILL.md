@@ -23,11 +23,15 @@ All ephemeral artifacts live in `.pantheon/memory-bank/.tmp/` — gitignored and
 │   ├── IMPL-phase1-hermes.md
 │   ├── IMPL-phase1-aphrodite.md
 │   └── REVIEW-<feature>.md
-├── _notes/                ← COMMITTED — permanent ADRs
+├── _notes/                ← permanent ADRs; Git tracking follows repository policy
 │   └── ADR-<topic>.md
 ├── 01-active-context.md
 └── 02-progress-log.md
 ```
+
+Memory Bank files are not automatically versioned or shared across clones.
+Check the repository's ignore/commit policy before relying on `_tasks/` records
+or other files being tracked; `_tasks/` may be Git-ignored.
 
 ---
 

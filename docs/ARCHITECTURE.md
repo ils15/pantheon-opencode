@@ -225,27 +225,26 @@ Three tiers with distinct storage, loading policies, and update frequency:
 
 ```
 Tier 1: Native Memory (Facts)
-  Location:  /memories/repo/                ← auto-managed by
+  Location:  /memories/repo/
   Content:   Stack, test commands, directory structure, immutable truths
   Access:    ✅ Auto-loaded — zero token cost
   Updated:   Rarely (when stack changes)
-  Written by: Any agent, automatically
 
 Tier 2: Reference Memory (Narrative)
-  Location:  .pantheon/memory-bank/              ← committed to repo
+  Location:  .pantheon/memory-bank/              ← working-tree files; Git tracking follows repository policy
   Content:   Project overview (00), architecture (01), components (02),
              tech context (03), active sprint (04), progress log (05),
              ADRs (_notes/), task records (_tasks/)
+             _tasks/ may be Git-ignored; only tracked, committed files cross clones
   Access:    ❌ Loaded on demand — read cost per file
   Updated:   Sprint boundaries, decision milestones
   Written by: Mnemosyne (on explicit request)
 
 Tier 3: Session Memory (Ephemeral)
-  Location:  /memories/session/             ← auto-managed by
+  Location:  /memories/session/
   Content:   Current conversation plans, work-in-progress, temporary findings
   Access:    One read per conversation session
   Updated:   Continuously within session
-  Written by: Any agent, automatically
 ```
 
 ### Learning Routing Triple

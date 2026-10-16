@@ -63,11 +63,16 @@ memory_search(query="existing auth patterns", top_k=2)
 memory_store(value="Refresh tokens rotate on every use", key="decision-42")
 ```
 
-The table describes server capabilities, not per-agent grants. Zeus's canonical
-frontmatter grants `memory_search`, not `memory_store`; the Beta 10 root tool
-catalog likewise did not expose a memory-write tool. Zeus may search when
-available, but must not claim a memory decision was persisted unless a permitted
-write tool is actually exposed and confirms success.
+The table describes server capabilities, not per-agent grants. Agent allowlists
+and runtime tool exposure can differ; inspect the active tool grants/catalog
+before relying on a tool. Temporary `context_save`/`context_get` checkpoints are
+not durable-memory writes. Use only tools exposed and permitted in the active
+context, and never claim a memory decision was persisted unless `memory_store`
+succeeds.
+
+`memory_store` writes submitted values and metadata; automatic secret
+scrubbing/redaction is not guaranteed. Do not store secrets, credentials, or
+tokens.
 
 Do not search at every agent start, repeat a task-level search in each child, or
 store routine phase/test summaries. Use `memory_recall` only when an exact key

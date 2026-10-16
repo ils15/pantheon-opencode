@@ -16,7 +16,7 @@ Complete guide to Pantheon memory bank — structure, rules, optimization, and m
 
 | System | Where | Owner | Lifetime | Purpose |
 |--------|-------|-------|----------|---------|
-| **Memory Bank** | `.pantheon/memory-bank/` | Team | Permanent, versioned | Project context: architecture, patterns, progress |
+| **Memory Bank** | `.pantheon/memory-bank/` | Team | Files persist in the working tree; Git tracking depends on repository ignore/commit policy | Project context: architecture, patterns, progress |
 | **VS Code `/memories/`** | `.vscode/` or workspace | Agent | Session/repo scoped | Atomic facts, conversation plans |
 
 ---
@@ -38,6 +38,10 @@ Complete guide to Pantheon memory bank — structure, rules, optimization, and m
     ├── _index.md           ← Notes index
     └── NOTE0001-topic.md   ← Architectural decisions, findings
 ```
+
+Memory Bank files are not automatically synchronized across clones. In
+particular, `_tasks/` records may be Git-ignored; only files tracked and
+committed under the repository's policy are shared through Git.
 
 ### File Update Frequency
 

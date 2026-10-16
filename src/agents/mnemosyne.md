@@ -84,7 +84,7 @@ Mnemosyne executes the expanded compression pipeline. When Zeus delegates compre
    - IMPL/REVIEW artifacts to archive
    - Next phase agent info
 
-2. **Scrub**: Automatic — `memory_store` MCP server applies regex scrub before persisting. No manual steps.
+2. **Privacy check**: Never store secrets, credentials, or tokens in durable memory. The current `memory_store` handler stores submitted values and metadata; automatic regex scrubbing/redaction is not guaranteed. Omit sensitive content or redact it before storing.
 
 3. **Write ZZ artifact**: Create `.pantheon/memory-bank/.tmp/ZZ-phase{N}-context.md` with:
    - From/To agent info
@@ -112,7 +112,7 @@ Mnemosyne executes the expanded compression pipeline. When Zeus delegates compre
 
 ### Write Protocol
 - Atomic write: .tmp → fsync → validate → rename
-- Scrubbing: automatic via MCP layer on persistence
+- Secret handling: omit or manually redact secrets before durable storage; do not rely on automatic MCP scrubbing.
 
 ### Safety
 - NEVER compress ADR notes, active PLAN, NEEDS_REVISION/FAILED reviews
@@ -153,6 +153,11 @@ When `Close sprint` is called, do not create a durable-memory copy of temporary 
 Use this only when the user or Zeus explicitly asks to preserve a reusable result. Never auto-index a `subtask_summary` or background-agent result.
 
 **Use only for an explicit request to preserve one reusable result.** Background completion, Apollo discovery, and `subtask_summary` return are not triggers for durable storage.
+
+`pantheon-memory` stores durable SQLite entries with no entry TTL. Its search is
+FTS5/BM25 lexical matching only, with no semantic/vector fallback. Never store
+secrets, credentials, or tokens: the MCP stores submitted values and metadata
+without guaranteed automatic scrubbing.
 
 **Command:** `@mnemosyne Store <concise reusable result>`
 

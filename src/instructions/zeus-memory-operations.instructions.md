@@ -19,9 +19,10 @@ Use a recent, directly matching decision only after checking current context;
 otherwise treat it as background, never as authority to skip a needed review.
 
 Persist only reusable, material decisions, and only if a memory-write tool is
-explicitly exposed and permitted in the active root tool list. The reported Beta
-10 Zeus root has `memory_search` but no `memory_store` grant/tool; search access
-does not imply write access. If a write tool is available, use
+explicitly exposed and permitted. Inspect the active tool grants/catalog to
+determine availability; temporary `context_save`/`context_get` checkpoints are
+not durable memory writes. Search access does not imply write access. If a write
+tool is available and permitted, use
 `key="council:<yyyy-mm-dd>:<slug>"`, JSON-stringify both `value` and `metadata`,
 and confirm success before claiming persistence. Otherwise tell the user the
 decision was not persisted. Keep any saved record concise: question, recommendation,

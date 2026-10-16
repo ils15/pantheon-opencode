@@ -238,7 +238,7 @@ export const MCPS = {
     tier: 1,
     name: 'Pantheon Memory',
     description:
-      'Pantheon Memory MCP Server — persistent memory with semantic search, recall, knowledge graph, compression, and verification',
+      'Pantheon Memory MCP Server — persistent SQLite memory with FTS5/BM25 keyword search, exact-key recall, and explicit maintenance; no embedding/vector search',
     platforms: {
       opencode: {
         type: 'local',
