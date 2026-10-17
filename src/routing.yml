@@ -72,6 +72,51 @@ presets:
       iris:       { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
       mnemosyne:  { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
       talos:      { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
+  go-hybrid:
+    description: "OpenCode Go hybrid lineup: premium models for Zeus, Athena, Themis, and Hephaestus; the existing low-latency Go lineup for every other agent."
+    vision:
+      model: opencode-go/gpt-5.6-sol
+      reasoning_effort: high
+    providers:
+      opencode-go:
+        baseURL: https://opencode.ai/zen/go/v1
+        apiKeyEnv: PANTHEON_OPENCODE_API_KEY
+    agents:
+      zeus:       { model: opencode-go/gpt-5.6-sol,          reasoning_effort: medium }
+      athena:     { model: opencode-go/deepseek-v4-pro,      reasoning_effort: high }
+      themis:     { model: opencode-go/qwen3.8-max,          reasoning_effort: high }
+      hermes:     { model: opencode-go/deepseek-v4-flash,    reasoning_effort: medium }
+      aphrodite:  { model: opencode-go/mimo-v2.5,            reasoning_effort: low }
+      demeter:    { model: opencode-go/gpt-5.6-luna,         reasoning_effort: low }
+      prometheus: { model: opencode-go/deepseek-v4-flash,    reasoning_effort: medium }
+      hephaestus: { model: opencode-go/gpt-5.6-terra,        reasoning_effort: medium }
+      apollo:     { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
+      nyx:        { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
+      gaia:       { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
+      iris:       { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
+      mnemosyne:  { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
+      talos:      { model: opencode-go/gpt-5.6-luna-fast,    reasoning_effort: low }
+  anthropic:
+    description: "Anthropic direct provider profile using claude-sonnet-5-5 for every agent. Configure ANTHROPIC_API_KEY in your environment."
+    providers:
+      anthropic:
+        baseURL: https://api.anthropic.com/v1
+        apiKeyEnv: ANTHROPIC_API_KEY
+    agents:
+      zeus:       { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      athena:     { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      themis:     { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      hermes:     { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      aphrodite:  { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      demeter:    { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      prometheus: { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      hephaestus: { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      apollo:     { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      nyx:        { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      gaia:       { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      iris:       { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      mnemosyne:  { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
+      talos:      { model: anthropic/claude-sonnet-5-5, reasoning_effort: medium }
   openai:
     description: "Pure OpenAI provider 2026: gpt-5.6-sol planners high, gpt-5.6-luna implementers high, gpt-5.6-luna-fast scouts low (fallback to luna low). Provider openai https://api.openai.com/v1 OPENAI_API_KEY. Pricing 2026."
     vision:

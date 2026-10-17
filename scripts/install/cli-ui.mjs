@@ -1,20 +1,16 @@
 import { basename, dirname, join, resolve } from 'node:path'
+import { spinner as clackSpinner } from '@clack/prompts'
 import { strings } from './strings.mjs'
 
 export const icons = {
-  success: '\u2705',
-  warning: '\u26a0\ufe0f ',
-  error: '\u274c',
-  info: '\u2139\ufe0f ',
-  progress: '\u23f3',
-  done: '\u2705',
-  arrow: '\u2192',
-  bullet: '\u2022',
-  star: '\u2b50',
-  wrench: '\u{1F527}',
-  rocket: '\u{1F680}',
-  package: '\u{1F4E6}',
-  gear: '\u2699\ufe0f',
+  success: '[OK]',
+  warning: '[WARN]',
+  error: '[ERROR]',
+  info: '[INFO]',
+  progress: '[RUNNING]',
+  done: '[DONE]',
+  bullet: '*',
+  rocket: '[OK]',
 }
 
 export const colors = {
@@ -55,18 +51,27 @@ export function section(title) {
   console.log(tag(line))
 }
 
-export function step(message) {
-  const text = tag(`${icons.progress} ${message}...`)
-  if (!_quiet) process.stdout.write(text)
-  return (ok = true) => {
-    const icon = ok ? icons.success : icons.error
-    const doneText = tag(`${icon} ${message}`)
-    if (_quiet && !ok) {
-      console.warn(doneText)
-    } else if (!_quiet) {
-      process.stdout.write(`\r${doneText}\n`)
+function progress(message) {
+  if (tty() && !_quiet) {
+    const indicator = clackSpinner()
+    indicator.start(tag(message))
+    return (ok = true) => {
+      const doneText = tag(`${message} — ${ok ? 'complete' : 'failed'}`)
+      if (ok) indicator.stop(doneText)
+      else indicator.error(doneText)
     }
   }
+
+  if (!_quiet) console.log(tag(`${icons.progress} ${message}`))
+  return (ok = true) => {
+    const doneText = tag(`${ok ? icons.done : icons.error} ${message}`)
+    if (_quiet && !ok) console.warn(doneText)
+    else if (!_quiet) console.log(doneText)
+  }
+}
+
+export function step(message) {
+  return progress(message)
 }
 
 export function success(message) {
@@ -74,7 +79,7 @@ export function success(message) {
 }
 
 export function warning(message) {
-  console.warn(tag(`${icons.warning}${message}`))
+  console.warn(tag(`${icons.warning} ${message}`))
 }
 
 export function error(message) {
@@ -83,7 +88,7 @@ export function error(message) {
 
 export function info(message) {
   if (_quiet) return
-  console.log(tag(`${icons.info}${message}`))
+  console.log(tag(`${icons.info} ${message}`))
 }
 
 export function bullet(text, indent = 0) {
@@ -118,51 +123,7 @@ export function summaryTable(items) {
 }
 
 export function spinner(message) {
-  const frames = [
-    '\u280b',
-    '\u2819',
-    '\u2839',
-    '\u2838',
-    '\u283c',
-    '\u2834',
-    '\u2826',
-    '\u2827',
-    '\u2807',
-    '\u280f',
-  ]
-  let i = 0
-  let running = true
-
-  if (tty() && !_quiet) {
-    const interval = setInterval(() => {
-      if (!running) {
-        clearInterval(interval)
-        return
-      }
-      process.stdout.write(`\r${frames[i % frames.length]} ${tag(message)}...`)
-      i++
-    }, 80)
-    process.stdout.write(`\r${frames[0]} ${tag(message)}...`)
-
-    return (ok = true) => {
-      running = false
-      clearInterval(interval)
-      const icon = ok ? icons.success : icons.error
-      process.stdout.write(`\r${icon} ${tag(message)}\n`)
-    }
-  } else {
-    const text = tag(`${icons.progress} ${message}...`)
-    if (!_quiet) process.stdout.write(text)
-    return (ok = true) => {
-      const icon = ok ? icons.success : icons.error
-      const doneText = tag(`${icon} ${message}`)
-      if (_quiet && !ok) {
-        console.warn(doneText)
-      } else if (!_quiet) {
-        process.stdout.write(`\r${doneText}\n`)
-      }
-    }
-  }
+  return progress(message)
 }
 
 export function printSummary(target, _platforms, stats) {
@@ -192,7 +153,7 @@ export function printSummary(target, _platforms, stats) {
     console.log('')
   }
 
-  console.log(tag(`  ${icons.star} ${S.summaryNext.trim()}`))
+  console.log(tag(`  ${S.summaryNext.trim()}`))
   console.log(tag(S.summaryNextAgents))
   console.log(tag(S.summaryNextMcp))
   console.log(tag(S.summaryNextDoctor))

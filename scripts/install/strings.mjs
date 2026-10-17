@@ -16,13 +16,13 @@ const TABLE = {
     dryRun: 'DRY RUN',
     canceled: 'Installation canceled — nothing was broken; run init again anytime.',
     canceledShort: 'Installation canceled.',
-    installFailed: (msg) => `❌ Installation failed: ${msg}`,
+    installFailed: (msg) => `Installation failed: ${msg}`,
     failHintNoMcp:
       '   Run with --no-mcp to skip Python dependencies:\n     npx pantheon-opencode init --no-mcp',
     failHintForce:
       '   Or retry with --force to recreate the venv:\n     npx pantheon-opencode init --force',
     runningHealthCheck: 'Running health check...',
-    installedTitle: (v) => `✅ Pantheon OpenCode v${v} installed!`,
+    installedTitle: (v) => `Pantheon OpenCode v${v} installed.`,
     nextSteps: 'Next steps:',
     nextVerify: '1. Verify installation:\n     npx pantheon-opencode doctor',
     nextLaunch: '2. Launch OpenCode',
@@ -51,7 +51,7 @@ const TABLE = {
     planOnlyNoYes: 'Plan only — re-run with --yes to apply.',
     driftHeader: 'State changed since preview — aborting before any write:',
     driftAbort: 'No files were written. Re-run to re-review.',
-    applyFailed: (msg) => `❌ Apply failed: ${msg}`,
+    applyFailed: (msg) => `Apply failed: ${msg}`,
     alreadyApplied: 'Paths already applied — no automatic rollback:',
     restoreRecoveryHint: (dir) => `Recover with: pantheon-opencode restore  (backup at ${dir})`,
     restoreNoBackup:
@@ -74,13 +74,13 @@ const TABLE = {
     dryRun: 'SIMULAÇÃO',
     canceled: 'Instalação cancelada — nada foi quebrado; rode init de novo quando quiser.',
     canceledShort: 'Instalação cancelada.',
-    installFailed: (msg) => `❌ Instalação falhou: ${msg}`,
+    installFailed: (msg) => `Instalação falhou: ${msg}`,
     failHintNoMcp:
       '   Rode com --no-mcp para pular dependências Python:\n     npx pantheon-opencode init --no-mcp',
     failHintForce:
       '   Ou tente de novo com --force para recriar a venv:\n     npx pantheon-opencode init --force',
     runningHealthCheck: 'Rodando verificação de saúde...',
-    installedTitle: (v) => `✅ Pantheon OpenCode v${v} instalado!`,
+    installedTitle: (v) => `Pantheon OpenCode v${v} instalado.`,
     nextSteps: 'Próximos passos:',
     nextVerify: '1. Verifique a instalação:\n     npx pantheon-opencode doctor',
     nextLaunch: '2. Abra o OpenCode',
@@ -109,7 +109,7 @@ const TABLE = {
     planOnlyNoYes: 'Apenas o plano — rode de novo com --yes para aplicar.',
     driftHeader: 'O estado mudou desde o preview — abortando antes de qualquer escrita:',
     driftAbort: 'Nenhum arquivo foi escrito. Rode de novo para revisar.',
-    applyFailed: (msg) => `❌ Falha ao aplicar: ${msg}`,
+    applyFailed: (msg) => `Falha ao aplicar: ${msg}`,
     alreadyApplied: 'Caminhos já aplicados — sem rollback automático:',
     restoreRecoveryHint: (dir) => `Recupere com: pantheon-opencode restore  (backup em ${dir})`,
     restoreNoBackup:

@@ -1,6 +1,6 @@
 # Pantheon for OpenCode
 
-Complete setup and usage guide for running Pantheon **v1.6.0-beta.13** in [OpenCode](https://opencode.ai) — the open-source AI coding agent for the terminal, desktop, and IDE.
+Complete setup and usage guide for running Pantheon **v1.6.0-beta.14** in [OpenCode](https://opencode.ai) — the open-source AI coding agent for the terminal, desktop, and IDE.
 
 ---
 
@@ -348,11 +348,17 @@ Built into every agent's workflow, the **YAGNI Ladder** prevents overengineering
 - **Step 2**: Extract only if duplication appears 3+ times
 - **Step 3**: Abstract only when the pattern is proven stable
 
-### Model Configuration — 4 Presets (V1 legacy; gerado de `src/routing.yml`)
+### Model Configuration — 6 Presets (V1 legacy; gerado de `src/routing.yml`)
 
 > **Estas tabelas são somente o caminho legado V1; não são rotas ativas no V2.** No V1, sem preset ativo, os filhos herdam nativamente o modelo do chat pai. O plugin V1 (`src/plugin.ts` → `resolveActivePreset`) lê `PANTHEON_MODEL_PRESET` env > primeiro `.pantheon/active-preset.json` (project → `~/.config/opencode` → `~/.opencode`) > **`null` (herança nativa)**. `loadRoutingAgentModels` vazio quando `null`; nenhum modelo é imposto aos filhos, então o `task()` nativo herda o modelo do chat pai. `small_model` nunca usado. No V2, markers de preset e `PANTHEON_MODEL_PRESET` são ignorados; o modelo do host permanece intacto sem override manual. Apenas overrides manuais project-scoped `overrides.agents.<agent>.model` e seu `variant` opcional são aplicados no transform do agente; arquivos globais não são lidos nem aplicados. O tool V2 não aceita mutações globais ou flags de autorização na mesma chamada. Suporte global futuro exige autorização humana explícita independente e não é suportado agora. Não há wizard nem seleção implícita. O V1 permanece inalterado até decisão de compatibilidade.
 
-Tabelas abaixo derivam de [`src/routing.yml`](../../src/routing.yml) (sem hardcodar segredos — só `PANTHEON_OPENCODE_API_KEY` / `OPENAI_API_KEY` nomes + `baseURL`s). Pricing 2026 verificado via `scripts/install/model-picker.mjs` (`PRESET_PRICE`).
+O wizard TTY oferece exatamente **Inherit**, **OpenCode Go**, **OpenAI** e
+**Anthropic**. OpenCode Go persiste o ID interno `go-hybrid`; Inherit não grava
+um preset. Os legados `go-free`, `go-fast` e `go-premium` permanecem disponíveis
+para arquivos salvos e uso explícito. O wizard mostra apenas nomes de variáveis
+de ambiente, não lê nem valida chaves e não consulta catálogo/rede.
+
+Tabelas abaixo derivam de [`src/routing.yml`](../../src/routing.yml) (sem hardcodar segredos — apenas nomes de env vars e `baseURL`s). Pricing do OpenCode Go/OpenAI permanece dependente da conta; Anthropic usa o preço da conta/provedor.
 
 #### Presets — resumo (provider / BaseURL / key / pricing / vision)
 
@@ -361,7 +367,9 @@ Tabelas abaixo derivam de [`src/routing.yml`](../../src/routing.yml) (sem hardco
 | `go-free` | `opencode` `https://opencode.ai/zen/v1` (env: `PANTHEON_OPENCODE_API_KEY`) | `PANTHEON_OPENCODE_API_KEY` | Gratuito — Zen free, sem custo, quota limitada, só modelos `-free` | `opencode/mimo-v2.5-free` [low] 👁️ vision | zeus: `opencode/big-pickle` [medium]<br>athena: `opencode/nemotron-3-super-free` [high]<br>themis: `opencode/qwen3.6-plus-free` [high]<br>hermes,aphrodite,demeter,prometheus,hephaestus: `opencode/deepseek-v4-flash-free` [medium]<br>apollo,nyx,gaia,iris,mnemosyne,talos: `opencode/mimo-v2.5-free` [low] |
 | `go-fast` | `opencode-go` `https://opencode.ai/zen/go/v1` (env: `PANTHEON_OPENCODE_API_KEY`) | `PANTHEON_OPENCODE_API_KEY` | Baixo custo — Go gateway, baixa latência (kimi-k2.7-code / glm-5.3-flash) | `opencode-go/mimo-v2.5` [low] 👁️ vision | athena: `opencode-go/kimi-k2.7-code` [high]<br>themis: `opencode-go/glm-5.3-flash` [high]<br>zeus: `opencode-go/kimi-k2.7-code` [medium]<br>hermes,prometheus: `opencode-go/deepseek-v4-flash` [medium]<br>aphrodite,hephaestus: `opencode-go/mimo-v2.5` [low]<br>demeter: `opencode-go/gpt-5.6-luna` [low]<br>apollo,nyx,gaia,iris,mnemosyne,talos: `opencode-go/gpt-5.6-luna-fast` [low] |
 | `go-premium` | `opencode-go` `https://opencode.ai/zen/go/v1` (env: `PANTHEON_OPENCODE_API_KEY`) | `PANTHEON_OPENCODE_API_KEY` | Premium — Go gateway, melhor qualidade (gpt-5.6-sol / qwen3.8-max / deepseek-v4-pro) | `opencode-go/gpt-5.6-sol` [high] 👁️ vision | zeus: `opencode-go/gpt-5.6-sol` [medium]<br>athena: `opencode-go/deepseek-v4-pro` [high]<br>themis: `opencode-go/qwen3.8-max` [high]<br>hermes,demeter,hephaestus: `opencode-go/gpt-5.6-terra` [medium]<br>aphrodite,prometheus: `opencode-go/kimi-k3` [medium]<br>apollo,nyx,gaia,iris,mnemosyne,talos: `opencode-go/gpt-5.6-luna` [low] |
+| `go-hybrid` (visible: OpenCode Go) | `opencode-go` `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | Híbrido — premium para Zeus/Athena/Themis/Hephaestus; Go rápido para todos os outros | `opencode-go/gpt-5.6-sol` [high] | Zeus `gpt-5.6-sol`, Athena `deepseek-v4-pro`, Themis `qwen3.8-max`, Hephaestus `gpt-5.6-terra`; demais agentes seguem `go-fast` |
 | `openai` | `openai` `https://api.openai.com/v1` (env: `OPENAI_API_KEY`) | `OPENAI_API_KEY` | Pago (OpenAI) — Direto OpenAI, `gpt-5.6` family | `openai/gpt-5.6-sol` [high] 👁️ vision | athena,themis,zeus: `openai/gpt-5.6-sol` [high]<br>hermes,aphrodite,demeter,prometheus,hephaestus: `openai/gpt-5.6-luna` [high]<br>apollo,nyx,gaia,iris,mnemosyne,talos: `openai/gpt-5.6-luna-fast` [low] |
+| `anthropic` | `anthropic` `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` | Conforme a conta Anthropic | — | Todos os 14 agentes: `anthropic/claude-sonnet-5-5` [medium] |
 
 #### Provider / BaseURL / Key env (nomes, sem valores)
 
@@ -370,9 +378,11 @@ Tabelas abaixo derivam de [`src/routing.yml`](../../src/routing.yml) (sem hardco
 | `go-free` | `opencode` | `https://opencode.ai/zen/v1` | `PANTHEON_OPENCODE_API_KEY` |
 | `go-fast` | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` |
 | `go-premium` | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` |
+| `go-hybrid` | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` |
 | `openai` | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| `anthropic` | `anthropic` | `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` |
 
-> Alias `OPENCODE_GO_API_KEY` aceito no wizard Q2 para `go-*` (mesma chave `PANTHEON_OPENCODE_API_KEY`). Nenhum `.env` é escrito.
+> `OPENCODE_GO_API_KEY` continua aceito como alias pelo helper de compatibilidade para perfis Go. Nenhum `.env` é escrito; o wizard atual não lê nem valida chaves.
 
 #### Pricing 2026
 
@@ -381,28 +391,30 @@ Tabelas abaixo derivam de [`src/routing.yml`](../../src/routing.yml) (sem hardco
 | `go-free` | Gratuito | Zen free – sem custo, quota limitada, só modelos `-free` | `opencode` — $0 (free-tier Zen) |
 | `go-fast` | Baixo custo | Go gateway – baixa latência, kimi-k2.7-code / glm-5.3-flash | `opencode-go` — Baixo custo, baixa latência |
 | `go-premium` | Premium | Go gateway – melhor qualidade, gpt-5.6-sol / qwen3.8-max / deepseek-v4-pro | `opencode-go` — Premium, melhor qualidade |
+| `go-hybrid` | Misto | Rotas premium para quatro especialistas e rotas Go rápidas para os demais | `opencode-go` — custos dependem do modelo/conta |
 | `openai` | Pago (OpenAI) | Direto OpenAI – https://api.openai.com/v1, gpt-5.6 family | `openai` — Pago por uso |
+| `anthropic` | Pago (Anthropic) | `claude-sonnet-5-5` para todos os agentes | `anthropic` — conforme conta/provedor |
 
 *Pricing verificado 2026 via `PRESET_PRICE` + `routing.yml` descrições. Custos reais dependem de conta/assinatura.
 
-#### 14 agentes × 4 presets — modelo + effort + vision
+#### 14 agentes × 6 presets — modelo + effort + vision
 
-| Agente | `go-free` | `go-fast` | `go-premium` | `openai` |
-|---|---|---|---|---|
-| `zeus` | `opencode/big-pickle` [medium] · | `opencode-go/kimi-k2.7-code` [medium] · | `opencode-go/gpt-5.6-sol` [medium] 👁️ | `openai/gpt-5.6-sol` [high] 👁️ |
-| `athena` | `opencode/nemotron-3-super-free` [high] · | `opencode-go/kimi-k2.7-code` [high] · | `opencode-go/deepseek-v4-pro` [high] · | `openai/gpt-5.6-sol` [high] 👁️ |
-| `themis` | `opencode/qwen3.6-plus-free` [high] · | `opencode-go/glm-5.3-flash` [high] · | `opencode-go/qwen3.8-max` [high] · | `openai/gpt-5.6-sol` [high] 👁️ |
-| `hermes` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/deepseek-v4-flash` [medium] · | `opencode-go/gpt-5.6-terra` [medium] 👁️ | `openai/gpt-5.6-luna` [high] 👁️ |
-| `aphrodite` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/mimo-v2.5` [low] 👁️ | `opencode-go/kimi-k3` [medium] · | `openai/gpt-5.6-luna` [high] 👁️ |
-| `demeter` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/gpt-5.6-luna` [low] 👁️ | `opencode-go/gpt-5.6-terra` [medium] 👁️ | `openai/gpt-5.6-luna` [high] 👁️ |
-| `prometheus` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/deepseek-v4-flash` [medium] · | `opencode-go/kimi-k3` [medium] · | `openai/gpt-5.6-luna` [high] 👁️ |
-| `hephaestus` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/mimo-v2.5` [low] 👁️ | `opencode-go/gpt-5.6-terra` [medium] 👁️ | `openai/gpt-5.6-luna` [high] 👁️ |
-| `apollo` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
-| `nyx` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
-| `gaia` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
-| `iris` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
-| `mnemosyne` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
-| `talos` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ |
+| Agente | `go-free` | `go-fast` | `go-premium` | `go-hybrid` | `openai` | `anthropic` |
+|---|---|---|---|---|---|---|
+| `zeus` | `opencode/big-pickle` [medium] · | `opencode-go/kimi-k2.7-code` [medium] · | `opencode-go/gpt-5.6-sol` [medium] 👁️ | `opencode-go/gpt-5.6-sol` [medium] 👁️ | `openai/gpt-5.6-sol` [high] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `athena` | `opencode/nemotron-3-super-free` [high] · | `opencode-go/kimi-k2.7-code` [high] · | `opencode-go/deepseek-v4-pro` [high] · | `opencode-go/deepseek-v4-pro` [high] | `openai/gpt-5.6-sol` [high] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `themis` | `opencode/qwen3.6-plus-free` [high] · | `opencode-go/glm-5.3-flash` [high] · | `opencode-go/qwen3.8-max` [high] · | `opencode-go/qwen3.8-max` [high] | `openai/gpt-5.6-sol` [high] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `hermes` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/deepseek-v4-flash` [medium] · | `opencode-go/gpt-5.6-terra` [medium] 👁️ | `opencode-go/deepseek-v4-flash` [medium] | `openai/gpt-5.6-luna` [high] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `aphrodite` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/mimo-v2.5` [low] 👁️ | `opencode-go/kimi-k3` [medium] · | `opencode-go/mimo-v2.5` [low] 👁️ | `openai/gpt-5.6-luna` [high] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `demeter` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/gpt-5.6-luna` [low] 👁️ | `opencode-go/gpt-5.6-terra` [medium] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `openai/gpt-5.6-luna` [high] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `prometheus` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/deepseek-v4-flash` [medium] · | `opencode-go/kimi-k3` [medium] · | `opencode-go/deepseek-v4-flash` [medium] | `openai/gpt-5.6-luna` [high] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `hephaestus` | `opencode/deepseek-v4-flash-free` [medium] · | `opencode-go/mimo-v2.5` [low] 👁️ | `opencode-go/gpt-5.6-terra` [medium] 👁️ | `opencode-go/gpt-5.6-terra` [medium] 👁️ | `openai/gpt-5.6-luna` [high] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `apollo` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `nyx` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `gaia` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `iris` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `mnemosyne` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
+| `talos` | `opencode/mimo-v2.5-free` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `opencode-go/gpt-5.6-luna` [low] 👁️ | `opencode-go/gpt-5.6-luna-fast` [low] 👁️ | `openai/gpt-5.6-luna-fast` [low] 👁️ | `anthropic/claude-sonnet-5-5` [medium] 👁️ |
 
 `·` = text-only, `👁️` = vision (image-input) via `CAPABILITY_TABLE` (`src/pantheon/presets.mjs`). Ex.: `mimo-v2.5*` e `gpt-5.6*` são multimodais; `deepseek*`, `kimi-k2.7-code`, `glm-5.3-flash`, `qwen3.6-plus-free`, `big-pickle`, `nemotron-3-super-free` são text-only.
 
@@ -412,7 +424,7 @@ Tabelas abaixo derivam de [`src/routing.yml`](../../src/routing.yml) (sem hardco
 |---|---|---|---|---|
 | `deepseek/deepseek-v4-pro` | high | — | no | `go-premium` athena |
 | `deepseek/deepseek-v4-flash` | medium | — | no | `go-free` implementers, `go-fast` hermes/prometheus |
-| `claude` | — | 👁️ | yes | não usado nos 4 presets atuais (legado `go-claude` removido) |
+| `claude` | — | 👁️ | yes | `anthropic/claude-sonnet-5-5` (preset Anthropic) |
 | `gpt-5.6-sol` | high | 👁️ | no | `go-premium` zeus/vision, `openai` planners/vision |
 | `gpt-5.6-terra` | medium | 👁️ | no | `go-premium` implementers |
 | `gpt-5.6-luna-fast` | low | 👁️ | no | scouts `go-fast`/`openai` |
@@ -520,7 +532,7 @@ not a V2 `plugin-v2` API or a promise about OpenCode `task()` model selection.
 
 ### Model Tiers (legado → 1.5.0 presets)
 
-> **Legado superseded**: tiers `fast`/`default`/`premium` eram abstrações manuais em `opencode.json` (ex.: `gpt-4o-mini`, `gpt-4o`, `o3`). **Em 1.5.0**, tiers são **pinados via 4 presets** (`go-free`/`go-fast`/`go-premium`/`openai`) em [`src/routing.yml`](../../src/routing.yml) — cada agente recebe `model` + `reasoning_effort` concretos no caminho V1. Veja seção **Model Configuration — 4 Presets** acima para as tabelas derivadas de `src/routing.yml`. Sem preset, a herança nativa documentada aplica-se à delegação V1; o V2 adapter não registra essa API.
+> **Legado superseded**: tiers `fast`/`default`/`premium` eram abstrações manuais em `opencode.json` (ex.: `gpt-4o-mini`, `gpt-4o`, `o3`). No V1, os seis perfis de `src/routing.yml` pinam `model` + `reasoning_effort` por agente. Veja **Model Configuration — 6 Presets** acima. Sem preset, a herança nativa documentada aplica-se à delegação V1; o V2 adapter não registra essa API.
 
 ### ACP (Agent Client Protocol)
 

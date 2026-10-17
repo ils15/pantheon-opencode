@@ -20,6 +20,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
 import {
   createPlanArtifact,
@@ -320,7 +321,6 @@ async function main() {
     }
     const isProject = reviewedPlan ? reviewedPlan.options.isProject : args.includes('--project')
     const isDryRun = reviewedPlan ? false : args.includes('--dry-run')
-    const skipMCP = args.includes('--no-mcp')
     // --clean is an alias of --force (both wipe component dirs + recreate venv).
     const forceReinstall = reviewedPlan
       ? reviewedPlan.options.clean
@@ -398,11 +398,22 @@ async function main() {
     }
 
     const presetIndex = args.indexOf('--preset')
-    const presetOpt = reviewedPlan
-      ? (reviewedPlan.options.preset ?? null)
-      : presetIndex >= 0
+    const inlinePreset = args.find((arg) => arg.startsWith('--preset='))
+    const hasPresetOption = presetIndex >= 0 || inlinePreset !== undefined
+    const parsedPreset =
+      presetIndex >= 0
         ? (args[presetIndex + 1] ?? null)
-        : null
+        : (inlinePreset?.slice('--preset='.length) ?? null)
+    if (
+      hasPresetOption &&
+      (typeof parsedPreset !== 'string' ||
+        parsedPreset.trim() === '' ||
+        parsedPreset.startsWith('--'))
+    ) {
+      console.error('❌ --preset requires a non-empty value')
+      process.exit(1)
+    }
+    const presetOpt = reviewedPlan ? (reviewedPlan.options.preset ?? null) : parsedPreset
     // Explicit top-level model overrides for the generated config.
     const modelIndex = args.indexOf('--model')
     const modelOpt = reviewedPlan
@@ -439,29 +450,18 @@ async function main() {
       process.exit(1)
     }
 
-    // --components agents,skills,... narrows the install; --no-mcp drops the
-    // runtime component. Unknown component names fail fast (typo protection).
-    const KNOWN_COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime']
-    const componentsIndex = args.indexOf('--components')
-    const inlineComponents = args.find((arg) => arg.startsWith('--components='))
-    const componentsOpt =
-      componentsIndex >= 0
-        ? (args[componentsIndex + 1] ?? null)
-        : (inlineComponents?.split('=', 2)[1] ?? null)
-    let requestedComponents = reviewedPlan ? [...reviewedPlan.options.components] : null
-    if (!reviewedPlan && componentsOpt !== null) {
-      requestedComponents = componentsOpt
-        .split(',')
-        .map((c) => c.trim())
-        .filter(Boolean)
-      const unknown = requestedComponents.filter((c) => !KNOWN_COMPONENTS.includes(c))
-      if (requestedComponents.length === 0 || unknown.length > 0) {
-        console.error(
-          `❌ Invalid --components "${componentsOpt}" — expected comma-separated names from: ${KNOWN_COMPONENTS.join(', ')}`,
-        )
-        process.exit(1)
-      }
+    // Resolve the user's explicit selection separately from the defaults. An
+    // unscoped install gets runtime by default; explicit --components does not.
+    let componentSelection
+    try {
+      componentSelection = resolveComponentSelection(args, {
+        reviewedComponents: reviewedPlan?.options.components ?? null,
+      })
+    } catch (err) {
+      console.error(`❌ ${err.message}`)
+      process.exit(1)
     }
+    const { components, requestedComponentsForPrompt, noMcp: skipMCP } = componentSelection
 
     // --merge-dev-config <path> opts IN to merging a contributor's personal
     // OpenCode config into the generated one. Only third-party plugin/provider/
@@ -499,15 +499,6 @@ async function main() {
       autoYes = true
     }
 
-    const components = reviewedPlan
-      ? requestedComponents
-      : (requestedComponents ?? ['agents', 'skills', 'instructions', 'commands', 'plugins'])
-    if (!reviewedPlan && !skipMCP && !components.includes('runtime')) components.push('runtime')
-    if (!reviewedPlan && skipMCP) {
-      const runtimeIndex = components.indexOf('runtime')
-      if (runtimeIndex >= 0) components.splice(runtimeIndex, 1)
-    }
-
     // Version info
     const version = readVersion()
     const { strings } = await import('../scripts/install/strings.mjs')
@@ -539,6 +530,8 @@ async function main() {
         version: versionOpt ?? 'auto',
         mergeDevConfig: mergeDevConfigOpt,
         expectedPlan: reviewedPlan,
+        requestedComponents: requestedComponentsForPrompt,
+        noMcp: skipMCP,
         planTimestamp,
         quiet: isJson,
       })

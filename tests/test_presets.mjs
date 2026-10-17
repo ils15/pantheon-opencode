@@ -497,9 +497,9 @@ test('T12: validatePresetDefs passes on repo routing.yml presets', () => {
   const result = presets.validatePresetDefs(defs, { agents: repoAgents() })
   assert.equal(result.ok, true)
   assert.deepEqual(result.errors, [])
-  assert.equal(Object.keys(defs).length, 4)
+  assert.equal(Object.keys(defs).length, 6)
   // every surviving preset validates clean on its own
-  for (const name of ['go-free', 'go-fast', 'go-premium', 'openai']) {
+  for (const name of ['go-free', 'go-fast', 'go-premium', 'go-hybrid', 'openai', 'anthropic']) {
     const r = presets.validatePresetDefs({ [name]: defs[name] }, { agents: repoAgents() })
     assert.equal(r.ok, true, `preset "${name}" should validate clean: ${JSON.stringify(r.errors)}`)
     assert.deepEqual(r.errors, [])
@@ -711,64 +711,64 @@ await testAsync('T19: picker persists; opencode.mjs gates on autoYes/opts.preset
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).preset, 'go-fast')
 })
 
-// ─── T19b: init wizard readline — blank Q1 defaults to inherit (no write) ─
-await testAsync('T19b: init wizard blank Q1 defaults to inherit and writes nothing', async () => {
+// ─── T19b: default model choice inherits without writing ─────────────────
+await testAsync('T19b: init wizard inherit selection writes nothing', async () => {
   const picker = await import('../scripts/install/model-picker.mjs')
   const dir = makeTmp()
-  const defs = { 'go-fast': { description: 'fast' } }
-  const mockRl = { question: async () => '', close: () => {} }
+  const prompts = { select: async () => 'inherit', isCancel: () => false }
   const result = await picker.runInitWizard({
     presetDir: dir,
-    presets: defs,
+    presets: { 'go-hybrid': { description: 'Go' }, openai: {}, anthropic: {} },
     env: {},
     dryRun: false,
     logger: silent,
-    rl: mockRl,
+    prompts,
   })
   assert.equal(result.preset, 'inherit')
   assert.equal(result.scope, 'project')
   assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
 })
 
-// ─── T19c: init wizard readline — explicit 'inherit' also writes nothing ─
-await testAsync('T19c: init wizard readline explicit inherit writes nothing', async () => {
+// ─── T19c: ask path accepts the internal inherit value ──────────────────
+await testAsync('T19c: init wizard ask path inherit writes nothing', async () => {
   const picker = await import('../scripts/install/model-picker.mjs')
   const dir = makeTmp()
-  const defs = { 'go-fast': { description: 'fast' } }
-  const mockRl = { question: async () => '0', close: () => {} }
+  const ask = async () => ({ preset: 'inherit', scope: 'project' })
   const result = await picker.runInitWizard({
     presetDir: dir,
-    presets: defs,
+    presets: { 'go-hybrid': { description: 'Go' }, openai: {}, anthropic: {} },
     env: {},
     dryRun: false,
     logger: silent,
-    rl: mockRl,
+    ask,
   })
   assert.equal(result.preset, 'inherit')
   assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
 })
 
-// ─── T19d: init wizard readline — preset + key + project scope writes ───
-await testAsync('T19d: init wizard readline writes project preset with collected key', async () => {
+// ─── T19d: visible OpenCode Go maps to the internal go-hybrid ID ────────
+await testAsync('T19d: OpenCode Go label saves go-hybrid without key validation', async () => {
   const picker = await import('../scripts/install/model-picker.mjs')
   const dir = makeTmp()
-  const defs = { 'go-fast': { description: 'fast' } }
-  const answers = ['go-fast', 'sk-test-key', 'project']
-  let i = 0
-  const mockRl = { question: async () => answers[i++], close: () => {} }
+  const defs = {
+    'go-hybrid': { providers: { 'opencode-go': { apiKeyEnv: 'PANTHEON_OPENCODE_API_KEY' } } },
+    openai: {},
+    anthropic: {},
+  }
+  const ask = async () => ({ preset: 'OpenCode Go', scope: 'project' })
   const result = await picker.runInitWizard({
     presetDir: dir,
     presets: defs,
     env: {},
     dryRun: false,
     logger: silent,
-    rl: mockRl,
+    ask,
   })
-  assert.equal(result.preset, 'go-fast')
+  assert.equal(result.preset, 'go-hybrid')
   assert.equal(result.scope, 'project')
   const file = presetFile(dir)
   assert.ok(existsSync(file), 'project preset must be written')
-  assert.equal(JSON.parse(readFileSync(file, 'utf8')).preset, 'go-fast')
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).preset, 'go-hybrid')
 })
 
 // ─── T19e: init wizard ask path — global scope writes XDG global file ───
@@ -778,9 +778,13 @@ await testAsync(
     const picker = await import('../scripts/install/model-picker.mjs')
     const dir = makeTmp()
     const xdgHome = makeTmp()
-    const defs = { 'go-fast': { description: 'fast' } }
-    const ask = async () => ({ preset: 'go-fast', key: 'sk-test', scope: 'global' })
-    const env = { HOME: dir, XDG_CONFIG_HOME: xdgHome, PANTHEON_OPENCODE_API_KEY: 'sk-test' }
+    const defs = {
+      'go-hybrid': { providers: { 'opencode-go': { apiKeyEnv: 'PANTHEON_OPENCODE_API_KEY' } } },
+      openai: {},
+      anthropic: {},
+    }
+    const ask = async () => ({ preset: 'go-hybrid', scope: 'global' })
+    const env = { HOME: dir, XDG_CONFIG_HOME: xdgHome }
     const result = await picker.runInitWizard({
       presetDir: dir,
       presets: defs,
@@ -789,12 +793,12 @@ await testAsync(
       logger: silent,
       ask,
     })
-    assert.equal(result.preset, 'go-fast')
+    assert.equal(result.preset, 'go-hybrid')
     assert.equal(result.scope, 'global')
     const globalFile = join(xdgHome, 'opencode', '.pantheon', 'active-preset.json')
     assert.ok(existsSync(globalFile), 'global preset must be written to XDG_CONFIG_HOME/opencode')
     assert.ok(!existsSync(presetFile(dir)), 'project file must NOT be written for global scope')
-    assert.equal(JSON.parse(readFileSync(globalFile, 'utf8')).preset, 'go-fast')
+    assert.equal(JSON.parse(readFileSync(globalFile, 'utf8')).preset, 'go-hybrid')
   },
 )
 
@@ -802,9 +806,13 @@ await testAsync(
 await testAsync('T19f: init wizard ask path project scope writes project file', async () => {
   const picker = await import('../scripts/install/model-picker.mjs')
   const dir = makeTmp()
-  const defs = { 'go-fast': { description: 'fast' } }
-  const ask = async () => ({ preset: 'go-fast', key: 'sk-test', scope: 'project' })
-  const env = { HOME: dir, PANTHEON_OPENCODE_API_KEY: 'sk-test' }
+  const defs = {
+    'go-hybrid': { providers: { 'opencode-go': { apiKeyEnv: 'PANTHEON_OPENCODE_API_KEY' } } },
+    openai: {},
+    anthropic: {},
+  }
+  const ask = async () => ({ preset: 'go-hybrid', scope: 'project' })
+  const env = { HOME: dir }
   const result = await picker.runInitWizard({
     presetDir: dir,
     presets: defs,
@@ -813,56 +821,149 @@ await testAsync('T19f: init wizard ask path project scope writes project file', 
     logger: silent,
     ask,
   })
-  assert.equal(result.preset, 'go-fast')
+  assert.equal(result.preset, 'go-hybrid')
   assert.equal(result.scope, 'project')
   assert.ok(existsSync(presetFile(dir)), 'project preset must be written')
 })
 
-// ─── T19g: init wizard ask path — inherit writes nothing ────────────────
-await testAsync('T19g: init wizard ask path inherit writes nothing', async () => {
+// ─── T19g: canceled scope prompt does not partially write the chosen profile ─
+await testAsync('T19g: canceling scope after profile selection writes nothing', async () => {
   const picker = await import('../scripts/install/model-picker.mjs')
   const dir = makeTmp()
-  const defs = { 'go-fast': { description: 'fast' } }
-  const ask = async () => ({ preset: 'inherit', scope: 'project' })
+  const canceled = Symbol('cancel')
+  const answers = ['go-hybrid', canceled]
+  const prompts = {
+    select: async () => answers.shift(),
+    isCancel: (value) => value === canceled,
+    cancel: () => {},
+  }
   const result = await picker.runInitWizard({
     presetDir: dir,
-    presets: defs,
+    presets: { 'go-hybrid': {}, openai: {}, anthropic: {} },
     env: {},
     dryRun: false,
     logger: silent,
-    ask,
+    prompts,
   })
-  assert.equal(result.preset, 'inherit')
-  assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
+  assert.equal(result, null)
+  assert.ok(
+    !existsSync(presetFile(dir)),
+    'cancellation must not partially write active-preset.json',
+  )
 })
 
-// ─── T19h: init wizard accepts OPENCODE_GO_API_KEY alias ────────────────
-await testAsync('T19h: init wizard accepts OPENCODE_GO_API_KEY alias key', async () => {
+// Beta14: the visible installer choices are labels, not internal preset IDs.
+await testAsync('installer exposes only Inherit, OpenCode Go, OpenAI, and Anthropic', async () => {
   const picker = await import('../scripts/install/model-picker.mjs')
-  const dir = makeTmp()
-  const defs = { 'go-fast': { description: 'fast' } }
-  const ask = async () => ({ preset: 'go-fast', scope: 'project' })
-  const env = { HOME: dir, OPENCODE_GO_API_KEY: 'sk-alias' }
-  const result = await picker.runInitWizard({
-    presetDir: dir,
-    presets: defs,
-    env,
-    dryRun: false,
-    logger: silent,
-    ask,
+  const questions = picker.buildInitQuestions({
+    'go-hybrid': { description: 'hybrid Go' },
+    openai: { description: 'OpenAI' },
+    anthropic: { description: 'Anthropic' },
+    'go-free': { description: 'legacy' },
+    'go-fast': { description: 'legacy' },
+    'go-premium': { description: 'legacy' },
   })
-  assert.equal(result.preset, 'go-fast')
-  assert.ok(existsSync(presetFile(dir)), 'alias key must satisfy validation and write')
+  assert.deepEqual(
+    questions[0].options.map(({ label, value }) => [label, value]),
+    [
+      ['Inherit', 'inherit'],
+      ['OpenCode Go', 'go-hybrid'],
+      ['OpenAI', 'openai'],
+      ['Anthropic', 'anthropic'],
+    ],
+  )
+  assert.equal(questions.length, 2, 'the installer must not collect or validate API keys')
 })
 
-// ─── T20: validate-routing passes with 6 presets ───────────────────────
-test('T20: validate-routing exits 0 and reports 4 presets', () => {
+await testAsync(
+  'Anthropic selection saves its internal ID and only names its key environment variable',
+  async () => {
+    const picker = await import('../scripts/install/model-picker.mjs')
+    const dir = makeTmp()
+    const values = ['anthropic', 'project']
+    const calls = []
+    const messages = []
+    const prompts = {
+      select: async (options) => {
+        calls.push(options)
+        return values.shift()
+      },
+      isCancel: () => false,
+      cancel: () => assert.fail('prompt should not be canceled'),
+    }
+    const env = new Proxy(
+      { HOME: dir },
+      {
+        get(target, property) {
+          assert.equal(String(property).includes('API_KEY'), false, 'wizard must not inspect keys')
+          return target[property]
+        },
+      },
+    )
+    const result = await picker.runInitWizard({
+      presetDir: dir,
+      presets: {
+        'go-hybrid': { providers: { 'opencode-go': { apiKeyEnv: 'PANTHEON_OPENCODE_API_KEY' } } },
+        openai: { providers: { openai: { apiKeyEnv: 'OPENAI_API_KEY' } } },
+        anthropic: { providers: { anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY' } } },
+      },
+      env,
+      logger: {
+        log: (message) => messages.push(message),
+        warn: (message) => messages.push(message),
+      },
+      prompts,
+    })
+
+    assert.equal(result.preset, 'anthropic')
+    assert.equal(JSON.parse(readFileSync(presetFile(dir), 'utf8')).preset, 'anthropic')
+    assert.equal(calls.length, 2)
+    assert.ok(messages.some((message) => message.includes('ANTHROPIC_API_KEY')))
+  },
+)
+
+test('go-hybrid overlays premium roles on go-fast and retains legacy preset definitions', () => {
+  const routing = load(readFileSync(join(ROOT, 'src', 'routing.yml'), 'utf8'))
+  const presets = routing.presets
+  const premiumRoles = ['zeus', 'athena', 'themis', 'hephaestus']
+  assert.ok(presets['go-free'] && presets['go-fast'] && presets['go-premium'])
+  for (const agent of Object.keys(presets['go-fast'].agents)) {
+    const source = premiumRoles.includes(agent) ? presets['go-premium'] : presets['go-fast']
+    assert.deepEqual(presets['go-hybrid'].agents[agent], source.agents[agent], agent)
+  }
+  assert.ok(
+    Object.values(presets.anthropic.agents).every(
+      ({ model }) => model === 'anthropic/claude-sonnet-5-5',
+    ),
+  )
+  assert.equal(presets.anthropic.providers.anthropic.apiKeyEnv, 'ANTHROPIC_API_KEY')
+})
+
+// ─── T19h: old Go key alias helper remains compatible ──────────────────
+await testAsync(
+  'T19h: old Go key alias remains recognized by the compatibility helper',
+  async () => {
+    const picker = await import('../scripts/install/model-picker.mjs')
+    const defs = { 'go-fast': { description: 'fast' } }
+    assert.equal(
+      picker.requiredKeyEnvForPreset('go-fast', defs['go-fast']),
+      'PANTHEON_OPENCODE_API_KEY',
+    )
+    assert.equal(
+      picker.isKeyConfiguredForPreset({ OPENCODE_GO_API_KEY: 'set' }, 'go-fast', defs['go-fast']),
+      true,
+    )
+  },
+)
+
+// ─── T20: validate-routing passes with all preset definitions ──────────
+test('T20: validate-routing exits 0 and reports 6 presets', () => {
   const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'validate-routing.mjs')], {
     cwd: ROOT,
     encoding: 'utf8',
   })
   assert.equal(r.status, 0, r.stdout + r.stderr)
-  assert.ok(r.stdout.includes('Presets defined: 4'), r.stdout)
+  assert.ok(r.stdout.includes('Presets defined: 6'), r.stdout)
 })
 
 // ─── T22: applyPreset openai (repo presets) ───────────────────────────
@@ -923,6 +1024,55 @@ test('T23: applyPreset openai uses OPENAI_API_KEY (no claude strip)', () => {
   assert.equal(config.agent.athena.variant, 'high')
   assert.equal(config.agent.apollo.model, 'openai/gpt-5.6-luna-fast')
   assert.equal(config.agent.apollo.variant, 'low')
+})
+
+test('Anthropic runtime preset maps provider URL, models, and key env without logging secrets', () => {
+  const resolved = presets.resolveActivePreset({
+    env: { PANTHEON_MODEL_PRESET: 'anthropic' },
+    candidates: [],
+    logger: silent,
+  })
+  assert.ok(resolved, 'Anthropic preset should resolve')
+  assert.deepEqual(resolved.providers.anthropic, {
+    baseURL: 'https://api.anthropic.com/v1',
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+  })
+
+  // Use an injected fixture credential, never process.env or a user's secret.
+  const keyReads = []
+  const runtimeEnv = new Proxy(
+    { ANTHROPIC_API_KEY: 'fixture-not-a-real-key' },
+    {
+      get(target, property) {
+        assert.equal(property, 'ANTHROPIC_API_KEY', 'runtime should read only the declared key env')
+        keyReads.push(property)
+        return target[property]
+      },
+    },
+  )
+  const config = {}
+  const logged = []
+  const consoleMethods = ['debug', 'error', 'info', 'log', 'warn']
+  const originalConsoleMethods = Object.fromEntries(
+    consoleMethods.map((method) => [method, console[method]]),
+  )
+  try {
+    for (const method of consoleMethods) {
+      console[method] = (...args) => logged.push(args)
+    }
+    presets.applyPreset(config, resolved, { env: runtimeEnv })
+  } finally {
+    for (const method of consoleMethods) console[method] = originalConsoleMethods[method]
+  }
+
+  assert.deepEqual(config.provider.anthropic.options, {
+    baseURL: 'https://api.anthropic.com/v1',
+    apiKey: 'fixture-not-a-real-key',
+  })
+  assert.equal(config.agent.zeus.model, 'anthropic/claude-sonnet-5-5')
+  assert.equal(config.agent.hermes.model, 'anthropic/claude-sonnet-5-5')
+  assert.deepEqual(keyReads, ['ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY'])
+  assert.deepEqual(logged, [], 'runtime application must not log the fixture key')
 })
 
 // ─── T24: applyPreset go-premium (repo presets) ────────────────────────

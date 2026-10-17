@@ -269,9 +269,9 @@ function main() {
   const results = healthCheck(target, { dryRun })
 
   console.log('\n  📊 Health Check:')
-  for (const p of results.passed) console.log(`    ✅ ${p.check}: ${p.detail}`)
-  for (const w of results.warnings) console.log(`    ⚠️  ${w.check}: ${w.detail}`)
-  for (const f of results.failed) console.log(`    ❌ ${f.check}: ${f.detail}`)
+  for (const p of results.passed) console.log(`    [OK] ${p.check}: ${p.detail}`)
+  for (const w of results.warnings) console.log(`    [WARN] ${w.check}: ${w.detail}`)
+  for (const f of results.failed) console.log(`    [ERROR] ${f.check}: ${f.detail}`)
 
   console.log(
     `\n  Summary: ${results.passed.length} passed, ${results.warnings.length} warnings, ${results.failed.length} failed`,

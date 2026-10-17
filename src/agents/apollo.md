@@ -1,6 +1,6 @@
 ---
 name: apollo
-description: "Read-only investigation scout — 3-10 parallel searches across codebase, external docs, and GitHub. Called by: athena, zeus, hermes, aphrodite, demeter. No edits, no commands."
+description: "Read-only investigation scout — broad multi-query discovery when independent searches materially reduce uncertainty. Called by: athena, zeus, hermes, aphrodite, demeter. No edits, no commands."
 mode: subagent
 visible: false
 tools:
@@ -33,7 +33,7 @@ mcp_tools:
 ## Core Capabilities
 
 ### 1. Codebase Discovery
-- 3-10 parallel searches simultaneously using grep, glob, and read
+- Use direct targeted searches for straightforward questions; batch independent searches only when the discovery scope benefits from it
 - Search for files, patterns, symbols, imports
 - Generate structured summaries (not raw dumps)
 
@@ -72,7 +72,7 @@ Return structured findings with:
 
 ##  Auto-Continue (Embedded: Discovery)
 
-- Auto-continue through parallel search queries (3-10 simultaneous)
+- Continue through independent discovery queries when more evidence is needed; use only the breadth justified by the request
 - Partial results OK on timeout — return whatever is found
 - No checkpoint needed (read-only, idempotent operations)
 - If timeout occurs, return partial findings with confidence score

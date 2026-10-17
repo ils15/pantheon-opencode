@@ -208,9 +208,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     const content = generateAgentsMdForPlatform(targetDir, platformName, extraSections)
     const agentCount = (content.match(/^\| @/gm) || []).length
-    console.log(`✅ Generated AGENTS.md in ${targetDir} (${agentCount} agents)`)
+    console.log(`[OK] Generated AGENTS.md in ${targetDir} (${agentCount} agents)`)
   } catch (err) {
-    console.error(`❌ Failed to generate AGENTS.md: ${err.message}`)
+    console.error(`[ERROR] Failed to generate AGENTS.md: ${err.message}`)
     process.exit(1)
   }
 }

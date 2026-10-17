@@ -7,6 +7,28 @@ const athena = read('../src/agents/athena.md')
 const zeus = read('../src/agents/zeus.md')
 const deepwork = read('../commands/pantheon-deepwork.md')
 const coordination = read('../src/skills/agent-coordination/SKILL.md')
+const quickPlan = read('../prompts/quick-plan-large-feature.prompt.md')
+const orchestration = read('../prompts/orchestrate-with-zeus.prompt.md')
+
+test('quick-plan prompt records unknowns and leaves user approval to Zeus', () => {
+  for (const childSolicitation of [
+    /@ask-questions/i,
+    /\bask(?:ing)?\s+(?:the\s+)?user\b/i,
+    /\bask\s+for\s+(?:user\s+)?clarification\b/i,
+    /\b(?:ask|request|seek)\b.{0,40}\b(?:user|approval|clarification|decision)\b/i,
+    /\b(?:wait|pause|stop)\s+(?:for|until)\s+(?:the\s+)?user\b/i,
+    /ready\s+to\s+approve/i,
+    /user:\s*["“]yes/i,
+    /delegate\s+to\s+@apollo\?/i,
+    /plan\s+[XYZ]\s+first\?/i,
+  ]) {
+    assert.doesNotMatch(quickPlan, childSolicitation)
+  }
+
+  assert.match(quickPlan, /return the complete Markdown plan to Zeus/i)
+  assert.match(quickPlan, /document[^\n]*unknowns|open questions/i)
+  assert.match(quickPlan, /Zeus publishes[\s\S]*?main conversation[\s\S]*?user approval/i)
+})
 
 test('Athena returns the complete plan to Zeus without opening approval in the child session', () => {
   assert.match(
@@ -41,6 +63,54 @@ test('Zeus shows Athena’s full plan in the main conversation before asking for
   assert.match(section, /if the plan is missing[\s\S]*?do not ask for approval/i)
   assert.match(section, /if the user requests changes/i)
   assert.match(section, /revised plan/i)
+})
+
+test('orchestration defaults to Athena task-result plans and keeps artifacts optional', () => {
+  const athenaHandoff = orchestration.match(
+    /#### When to Delegate to Athena[\s\S]*?(?=\n#### |\n---|$)/i,
+  )?.[0]
+  const approvalGate = orchestration.match(/#### Plan approval[\s\S]*?(?=\n#### |\n---|$)/i)?.[0]
+
+  assert.ok(athenaHandoff, 'Athena delegation must describe its handoff')
+  assert.match(athenaHandoff, /complete Markdown plan in (?:its|the) final task result/i)
+  assert.match(athenaHandoff, /artifact file[\s\S]*?only when the user requests/i)
+  assert.match(athenaHandoff, /(?:do not|must not) ask the user for approval in the child session/i)
+  assert.doesNotMatch(athenaHandoff, /Wait for:\s*plans\/\[feature\]\/plan\.md/i)
+
+  assert.ok(approvalGate, 'Zeus must define plan approval requirements')
+  assert.match(
+    approvalGate,
+    /publish[\s\S]*?complete Markdown plan[\s\S]*?before asking for approval/i,
+  )
+  assert.match(approvalGate, /complete Markdown plan as a normal assistant message/i)
+})
+
+test('orchestration quick-reference covers the canonical fourteen-agent roster', () => {
+  const matrix = orchestration.match(
+    /## Quick Reference: Agent Matrix([\s\S]*?)(?=\n---|\n\*\*Version:)/i,
+  )?.[1]
+  const canonicalAgents = [
+    'Zeus',
+    'Athena',
+    'Apollo',
+    'Hermes',
+    'Aphrodite',
+    'Demeter',
+    'Themis',
+    'Prometheus',
+    'Hephaestus',
+    'Nyx',
+    'Gaia',
+    'Iris',
+    'Mnemosyne',
+    'Talos',
+  ]
+
+  assert.ok(matrix, 'quick-reference matrix must exist')
+  for (const agent of canonicalAgents) {
+    assert.match(matrix, new RegExp(`^\\| ${agent} \\|`, 'm'), `${agent} must be listed`)
+  }
+  assert.doesNotMatch(orchestration, /Authority:\*\* Delegates to 9 specialized agents/i)
 })
 
 test('/pantheon-deepwork gates discovery and implementation on the visible plan approval', () => {

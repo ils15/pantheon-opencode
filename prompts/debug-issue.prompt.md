@@ -7,9 +7,10 @@ tools: ['search', 'usages']
 
 # Debug Quickly (Apollo - Scout)
 
-## 5-10 Parallel Searches
+## Adaptive Search Strategy
 
-Apollo launches simultaneous parallel searches:
+Choose only the independent searches that fit the report. These are candidate
+angles, not a required fan-out; a focused bug may need only one or two:
 
 Search 1: Exact error message
 Search 2: Mentioned function/class

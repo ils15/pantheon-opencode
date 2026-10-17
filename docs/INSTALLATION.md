@@ -1,6 +1,6 @@
-# Pantheon Installation Guide — v1.6.0-beta.13 (OpenCode 2)
+# Pantheon Installation Guide — v1.6.0-beta.14 (OpenCode 2)
 
-Pantheon v1.6.0-beta.13 é **compatível com OpenCode 2**. `npx pantheon-opencode init` instala a geração selecionada. A seleção interativa de perfil/preset (3 perguntas; default = herdar do chat) é o caminho legado V1, não uma rota de modelo V2. No V2, `pantheon_model` oferece somente `status`, `show`, `set` e `reset` manuais, sem wizard de presets: o default do host fica intacto sem override explícito por agente; markers `preset` e `PANTHEON_MODEL_PRESET` são ignorados e preservados. Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai no caminho V1. As tabelas dos presets abaixo são referência V1 legada e derivadas de `src/routing.yml` (sem hardcodar segredos: só nomes de variáveis e `baseURL`s).
+Pantheon v1.6.0-beta.14 é **compatível com OpenCode 2**. `npx pantheon-opencode init` instala a geração selecionada. O seletor interativo V1 oferece **Inherit**, **OpenCode Go**, **OpenAI** e **Anthropic**; ele pergunta o escopo de gravação apenas para um perfil salvo e não é uma rota de modelo V2. No V2, `pantheon_model` oferece somente `status`, `show`, `set` e `reset` manuais, sem wizard de presets: o default do host fica intacto sem override explícito por agente; markers `preset` e `PANTHEON_MODEL_PRESET` são ignorados e preservados. Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai no caminho V1. As tabelas dos presets abaixo são referência V1 legada e derivadas de `src/routing.yml` (sem hardcodar segredos: só nomes de variáveis e `baseURL`s).
 
 ## TL;DR (Quick Start)
 
@@ -377,49 +377,43 @@ The TUI plugin is a separate component. Its host-specific entry is installed
 only when the installer component set includes `plugins`; the presence of the
 V2 TUI entry does not imply the V1 runtime was loaded.
 
-## Instalação Interativa — Wizard 3 Perguntas (V1 legacy; default = herdar do chat)
+## Interactive Model Setup (V1 legacy routing)
 
-> **Este wizard de seleção de perfil é exclusivo do caminho legado V1.** No
-> V2, presets estáticos e `PANTHEON_MODEL_PRESET` não selecionam modelos e não
-> existe wizard de rotas; use a ferramenta `pantheon_model` com ações manuais
-> `status`/`show`/`set`/`reset`. No V1, o default é herdar do chat (sem
-> `active-preset.json`) e delegates herdam nativamente o modelo do pai. O wizard
-> (`scripts/install/model-picker.mjs`) implementa três perguntas via
-> `askQuestions` (ou fallback `readline`), com tabelas geradas de `src/routing.yml`:
+This model selector applies to the legacy V1 preset path only. V2 ignores static
+presets and `PANTHEON_MODEL_PRESET`; use `pantheon_model` for explicit
+per-agent overrides. In V1, **Inherit** is the default and writes no
+`active-preset.json`, so delegates keep the parent chat model.
 
-**Q1 — Perfil (0=herdar do chat [default])** — tabela exibida: perfil | `provider`/`baseURL`/key env | preço 2026 | modelos por papel
+The TTY wizard uses `@clack/prompts` and offers exactly these choices:
 
-| Preset | Provider / BaseURL | Key env | Pricing 2026 | Modelos por papel (resumo) |
-|---|---|---|---|---|
-| `inherit` (0) | — | — | $0 (sem preset) | Herda modelo do chat pai — **não grava** `active-preset.json` |
-| `go-free` | `opencode` `https://opencode.ai/zen/v1` | `PANTHEON_OPENCODE_API_KEY` | Gratuito (Zen free, só `-free`, quota limitada) | zeus `big-pickle` [medium], athena `nemotron-3-super-free` [high], themis `qwen3.6-plus-free` [high], implementers `deepseek-v4-flash-free` [medium], scouts `mimo-v2.5-free` [low] |
-| `go-fast` | `opencode-go` `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` (alias `OPENCODE_GO_API_KEY`) | Baixo custo — baixa latência (`kimi-k2.7-code`/`glm-5.3-flash`) | athena `kimi-k2.7-code` [high], themis `glm-5.3-flash` [high], implementers `mimo-v2.5`/`deepseek-v4-flash`/`gpt-5.6-luna` [low/medium], scouts `gpt-5.6-luna-fast` [low] |
-| `go-premium` | `opencode-go` `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` (alias `OPENCODE_GO_API_KEY`) | Premium — melhor qualidade (`gpt-5.6-sol`/`qwen3.8-max`/`deepseek-v4-pro`) | zeus `gpt-5.6-sol` [medium], athena `deepseek-v4-pro` [high], themis `qwen3.8-max` [high], implementers `gpt-5.6-terra`/`kimi-k3` [medium], scouts `gpt-5.6-luna` [low] |
-| `openai` | `openai` `https://api.openai.com/v1` | `OPENAI_API_KEY` | Pago por uso — `gpt-5.6` family direto | planners `gpt-5.6-sol` [high], implementers `gpt-5.6-luna` [high], scouts `gpt-5.6-luna-fast` [low] |
+| Visible choice | Saved preset | Provider / model | Environment variable |
+|---|---|---|---|
+| Inherit | none | Current chat model | — |
+| OpenCode Go | `go-hybrid` | OpenCode Go; premium routes for Zeus, Athena, Themis, and Hephaestus; existing Go-fast routes for all others, including Demeter | `PANTHEON_OPENCODE_API_KEY` |
+| OpenAI | `openai` | OpenAI profile | `OPENAI_API_KEY` |
+| Anthropic | `anthropic` | `anthropic/claude-sonnet-5-5` for every agent | `ANTHROPIC_API_KEY` |
 
-- Se `askQuestions` disponível (OpenCode chat), usa `buildInitQuestions()` com `options` + `multiSelect:false` + `header`/`question`/`description`; senão fallback `node:readline/promises` com `0`/`inherit`/`none` como default, seleção por número ou nome.
-- Pricing vem de `PRESET_PRICE` em `model-picker.mjs` + `routing.yml` descrições (verificadas 2026).
-- Nenhum segredo é exibido: só nomes de env vars + `baseURL`s.
+For a saved profile, the wizard asks whether to save project-local or global;
+**Inherit** skips that question and writes no active preset. It reports the
+required environment-variable **name only**: it does not read or validate API
+keys, print secret values, write `.env`, or contact a provider/catalog. Configure
+the appropriate key in the environment yourself before using a paid profile.
 
-**Q2 — API Key (coleta mascarada, sem `.env`)** — valida `PANTHEON_OPENCODE_API_KEY` (aceita `OPENCODE_GO_API_KEY` como alias) para `go-*`; `OPENAI_API_KEY` para `openai`:
-
-- Se já configurada no `env`, loga mascarada (`maskKey`: primeiros 4 + `***` + últimos 2) e segue.
-- Senão, coleta via `questionMasked` (mascarada) / `askQuestions` `kind: password`; valida não vazia; **não escreve `.env`** — apenas seta `env[requiredEnv]=keyAnswer` na sessão e loga `maskKey` + instrução `export PANTHEON_OPENCODE_API_KEY='abcd****12' no shell`.
-- Helpers: `requiredKeyEnvForPreset(name, def)`, `isKeyConfiguredForPreset(env, presetName, def)`, `maskKey(key)` exportados e testados.
-
-**Q3 — Escopo** — `project` (`./.pantheon/active-preset.json`, seguro, **default**) ou `global` (`~/.config/opencode/.pantheon/active-preset.json`):
-
-- Gravação **atômica** via `writeActivePreset(dir, presetName, {source:'interactive'})` (`tmp`+`rename`, `.bak` do anterior) + **health-check** (lê JSON, valida `preset`, avisa se mismatch).
-- `inherit` (Q1) **não grava** arquivo — retorna `{preset:'inherit', scope:'project'}` e loga `Herança nativa: delegates herdam o modelo do chat pai`.
+The internal `go-free`, `go-fast`, and `go-premium` definitions are unchanged
+for old saved profiles and explicit CLI use, for example
+`pantheon-opencode init --preset go-fast`. The selected profile is persisted
+atomically via `writeActivePreset()` with backup and JSON health-check.
 
 ```bash
 # Interativo padrão (TTY → wizard; pipe → plano, exige --yes para aplicar)
 npx pantheon-opencode init
 
-# Forçar wizard mesmo em CI-like terminals
+# Forçar o fluxo interativo quando houver um TTY
 npx pantheon-opencode init --interactive
 
-# Pular wizard e ativar preset direto
+# Pular o seletor e ativar um preset explicitamente (V1)
+npx pantheon-opencode init --preset go-hybrid
+npx pantheon-opencode init --preset anthropic --project
 npx pantheon-opencode init --preset go-fast
 npx pantheon-opencode init --preset openai --project
 
@@ -512,25 +506,25 @@ This installs to `.opencode/agents/` in the current project directory.
 
 ## Herança Nativa — sem `active-preset.json` (default)
 
-No caminho de instalação V1 desde **v1.5.0**, o instalador **não cria** `model`/`small_model` top-level em `opencode.json` e o plugin/wizard **não grava** `active-preset.json` quando o usuário escolhe `0`/`inherit` (default da Q1). O fluxo V2 não ativa presets. Comportamento V1:
+No caminho de instalação V1 desde **v1.5.0**, o instalador **não cria** `model`/`small_model` top-level em `opencode.json` e o seletor **não grava** `active-preset.json` quando o usuário escolhe **Inherit** (default). O fluxo V2 não ativa presets. Comportamento V1:
 
 - **Sem preset = herança nativa**: `resolveActivePreset()` retorna `null`; `loadRoutingAgentModels()` retorna `{}`; nenhum modelo é imposto aos filhos — o dispatch nativo do host (por exemplo, `task()` onde exposto) herda o modelo do chat pai conforme a semântica desse host. `small_model` nunca é usado.
 - **Ordem de resolução do modelo filho** (fontes sem hardcode de segredos, só nomes):
-  1. `overrides.agents[agent].model` em `.pantheon/active-preset.json` (via `/pantheon-model set --agent`)
+  1. override per-agent em `.pantheon/active-preset.json` (via `/pantheon-model set --agent`)
   2. `presets.<active>.agents[agent].model` (via `loadRoutingAgentModels`)
   3. omitir → herança nativa (herda modelo atual da sessão pai)
 - O instalador **remove** `model`/`small_model` antigos de `config.agent[agentName]` durante `installOpencode()` (limpeza de legado), preservando apenas campos gerenciados (`MANAGED_FIELDS`). Flags `--model`/`--small-model` ainda existem para override explícito, mas **não são necessárias** para o fluxo padrão; se usadas, validam `provider/model-id` via `MODEL_REF_PATTERN` e nunca tocam o outro campo.
-- Provider/model disponibilidade **não** é inferida da string: deve existir no OpenCode e via conta/assinatura/endpoint configurado (`PANTHEON_OPENCODE_API_KEY` para `opencode`/`opencode-go`, `OPENAI_API_KEY` para `openai`).
+- Provider/model disponibilidade **não** é inferida da string: deve existir no OpenCode e via conta/assinatura/endpoint configurado (`PANTHEON_OPENCODE_API_KEY` para `opencode`/`opencode-go`, `OPENAI_API_KEY` para `openai`, `ANTHROPIC_API_KEY` para `anthropic`). O seletor só informa o nome da variável; não lê nem valida chaves.
 
 ```bash
 # Default (recomendado) — herda do chat, sem preset ativo
-npx pantheon-opencode init            # Q1 → 0 (inherit) → sem active-preset.json
+npx pantheon-opencode init            # Inherit → sem active-preset.json
 opencode
 # /model opencode-go/gpt-5.6-sol  (no chat) → delegates herdam automaticamente
 
 # Com preset (quando precisa de pinagem por agente)
 npx pantheon-opencode init --preset go-fast
-# ou interativo: Q1 → go-fast → Q2 key → Q3 scope → grava .pantheon/active-preset.json
+# ou interativo: OpenCode Go/OpenAI/Anthropic → scope → grava active-preset.json
 
 # Override explícito pontual (sem preset, ou sobre preset)
 # via comando Pantheon (ver próxima seção) — nunca via top-level opencode.json
@@ -786,26 +780,26 @@ node scripts/validate-routing.mjs
 node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePresetDefs(m.loadPresetDefs())))"
 ```
 
-### Chaves por preset
+### Environment variables por preset (nomes, sem valores)
 
-| Preset | Provider | BaseURL | Key env (nome) | Alias aceito no wizard Q2 | Quando é exigido |
+| Preset | Provider | BaseURL | Key env (nome) | Alias de compatibilidade | Quando é exigido |
 |---|---|---|---|---|---|
-| `go-free` | `opencode` | `https://opencode.ai/zen/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Sempre que `go-free` ativo |
-| `go-fast` | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Sempre que `go-fast` ativo |
-| `go-premium` | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Sempre que `go-premium` ativo |
-| `openai` | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | — | Sempre que `openai` ativo |
+| `go-free` (legacy) | `opencode` | `https://opencode.ai/zen/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Quando esse V1 profile é aplicado |
+| `go-fast` (legacy) | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Quando esse V1 profile é aplicado |
+| `go-premium` (legacy) | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Quando esse V1 profile é aplicado |
+| `go-hybrid` (OpenCode Go) | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Quando esse V1 profile é aplicado |
+| `openai` | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | — | Quando esse V1 profile é aplicado |
+| `anthropic` | `anthropic` | `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` | — | Quando esse V1 profile é aplicado |
 | (sem preset) | — | — | — | — | Herança nativa — usa modelo do chat (`/model ...`) |
 
-- O wizard Q2 coleta **mascarada** e **não escreve `.env`**. Defina no shell: `export PANTHEON_OPENCODE_API_KEY=...` ou `export OPENAI_API_KEY=...` (ou `OPENCODE_GO_API_KEY` como alias para Go).
-- Fail-fast: CLI (`model-picker.mjs`) e plugin (`presets.mjs` → `missingProviderKeyEnv`/`providerKeyConfigured`) checam presença da env **apenas** quando o preset usa o provider; faltando → `warn` + instrução, sem expor valor.
-- Se a env estiver com espaços/quebra, o wizard faz `trim()` antes de validar (`v.trim() !== ''`).
+- Configure a variável adequada no ambiente antes de usar o profile. O wizard mostra apenas o nome da variável: não coleta nem valida chaves, não imprime valores secretos e não escreve `.env`.
+- A configuração do provider no runtime V1 continua usando a variável apropriada quando o preset está ativo. Logs de instalação informam nomes/estado, nunca valores de chave.
 
 ### Erros comuns
 
 | Sintoma | Causa | Solução |
 |---|---|---|
-| `PANTHEON_OPENCODE_API_KEY não configurada` no Q2 | `go-*` selecionado mas env vazia | `export PANTHEON_OPENCODE_API_KEY=...` (ou `OPENCODE_GO_API_KEY`) antes de `init`; wizard Q2 valida via `isKeyConfiguredForPreset(env, preset, def)` |
-| `OPENAI_API_KEY não configurada` | `openai` selecionado mas env vazia | `export OPENAI_API_KEY=...` |
+| Provider sem credencial no runtime V1 | Profile Go/OpenAI/Anthropic ativo, mas a variável esperada não está disponível | Configure `PANTHEON_OPENCODE_API_KEY` (alias `OPENCODE_GO_API_KEY` para Go), `OPENAI_API_KEY` ou `ANTHROPIC_API_KEY`, conforme o profile |
 | `unknown agent "foo"` em `/pantheon-model set` | agente não canônico | Use um dos 14: `zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `prometheus`, `hephaestus`, `nyx`, `gaia`, `iris`, `mnemosyne`, `talos` |
 | `model must use provider/model-id format` | modelo sem barra ou com espaço/`..` | Use `provider/model-id` ex.: `openai/gpt-5.6-sol`, `opencode-go/kimi-k2.7-code` (valida `MODEL_REF_PATTERN`) |
 | No V1, `global set/reset requires explicit confirmation...` | `--scope global` sem confirmação | No V1, adicione `--confirm --authorize-global` (ou use `--scope project`, default seguro). Na ferramenta V2, global não é suportado. |
@@ -813,7 +807,7 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 | `health-check: active-preset.json verification failed` | `writeActivePreset` gravou mas `preset` mismatch | Verifique permissões (`mode` default `600`, `O_NOFOLLOW`, `fsync` dir); wizard loga warning, não expõe chave |
 | `[pantheon-delegate] no model resolved for agent "X" — omitting model...` | sem preset e sem override, herança nativa | Normal em default (herança nativa); para pinar, `npx pantheon-opencode set-tier <preset>` ou `/pantheon-model set --agent X ...` |
 | Modelo `text-only` com `hasVision` warning | usou `big-pickle`/`kimi-k2.7-code` etc. para visão | Troque para multimodal (`mimo-v2.5*`, `gpt-5.6*`, `minimax-m3`) ou aceite limitação (`vision:false` no `CAPABILITY_TABLE`) |
-| `Presets defined: 4` falha em `validate-routing.mjs` | `routing.yml` corrompido | `node --check src/pantheon/presets.mjs` + `yamllint src/routing.yml` |
+| `Presets defined: 6` falha em `validate-routing.mjs` | `routing.yml` corrompido | `node --check src/pantheon/presets.mjs` + `yamllint src/routing.yml` |
 
 ### Headless / CI (sem TTY)
 
@@ -857,7 +851,7 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
   artefatos da TUI; não faz prompt nem passa pelo gate de `--yes`.
 
 ```bash
-# Preset explícito pula wizard (Q1/Q2/Q3)
+# Preset explícito pula o seletor interativo
 PANTHEON_OPENCODE_API_KEY=... npx pantheon-opencode init --headless --yes --preset go-fast
 OPENAI_API_KEY=... npx pantheon-opencode init --headless --yes --preset openai --project
 

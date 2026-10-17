@@ -67,7 +67,7 @@ export function setupVenv(
       console.log('  Removing existing .venv (--force)...')
       removeReviewedTree(venvPath, reviewedRemovals, reviewedSnapshots)
     }
-    console.log('  ✅ .venv removed')
+    console.log('  [OK] .venv removed')
   }
 
   // Step 1b: Create venv if not exists
@@ -83,7 +83,7 @@ export function setupVenv(
         throw new Error('Failed to create virtual environment')
       }
     }
-    console.log('  ✅ .venv created')
+    console.log('  [OK] .venv created')
     // A single synthetic entry for the venv directory — never enumerate its
     // thousands of files. Unscored: the install summary does not count it.
     recordChange({ path: venvPath, action: ACTIONS.CREATE, bytes: 0, scored: false }, recorder)
@@ -123,7 +123,7 @@ export function setupVenv(
 
       if (r.status !== 0) {
         // Attempt 2: --break-system-packages (PEP 668 / externally-managed)
-        console.log('  ⚠️  First attempt failed, retrying with --break-system-packages...')
+        console.log('  [WARN] First attempt failed, retrying with --break-system-packages...')
         const r2 = spawnSync(pip, ['install', '-r', reqFile, '--break-system-packages'], {
           stdio: 'inherit',
           timeout: 120_000,
@@ -141,7 +141,7 @@ export function setupVenv(
         }
       }
     }
-    console.log('  ✅ MCP dependencies installed')
+    console.log('  [OK] MCP dependencies installed')
   } else {
     console.log('  ⏭️  Dependency install skipped (--skip-install)')
   }
@@ -164,7 +164,7 @@ function main() {
     const result = setupVenv(target, { dryRun, skipInstall, force })
     console.log(`  📍 Python: ${result.python}`)
   } catch (err) {
-    console.error(`\n  ❌ ${err.message}`)
+    console.error(`\n  [ERROR] ${err.message}`)
     process.exit(1)
   }
 }

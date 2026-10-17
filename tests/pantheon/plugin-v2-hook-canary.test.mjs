@@ -25,14 +25,13 @@
  *     against the prepared sandbox's V2 binary.
  *
  * COVERAGE — what runs where, stated exactly:
- *   - CI runs NEITHER behavioural mode usefully. The `npm run test:hooks` step
- *     in ci.yml sets no MODE (so it would be `fixture`) and the runner has no
- *     `opencode` V2 binary on PATH, so every host-gated test SKIPS. CI has no
- *     real-plugin coverage.
+ *   - CI's `test:node` glob runs this file with the default `fixture` mode, but
+ *     the runner has no `opencode` V2 binary on PATH, so every host-gated test
+ *     SKIPS. CI has no real-plugin coverage.
  *   - The static half — the `real plugin regression guards` test — is pure
  *     readFileSync + regex and is NOT host-gated, so it does run in CI and in
- *     `npm run test:hooks` on any machine. That is the only `real`-mode
- *     protection CI actually gets.
+ *     the focused `npm run test:hooks` command on any machine. That is the
+ *     only `real`-mode protection CI actually gets.
  *   - Full `real` mode (the real plugin loaded by a live host, its hooks
  *     observably firing) needs a prepared sandbox: `--hooks`.
  *

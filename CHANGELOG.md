@@ -5,18 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
-## [Unreleased]
+## [v1.6.0-beta.14] - Unreleased
 
-<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. -->
+_Pre-release candidate; not yet published._
 
 ## 🆕 What's New
 
+- **Installer model profiles:** choose Inherit, OpenCode Go (hybrid), OpenAI, or
+  Anthropic. Inherit leaves the active preset unset; OpenCode Go combines the
+  premium lineup for Zeus, Athena, Themis, and Hephaestus with the Go lineup for
+  other agents. Existing `go-free`, `go-fast`, and `go-premium` preset IDs remain
+  available for compatibility.
+- **Anthropic key guidance:** the profile identifies `ANTHROPIC_API_KEY` as the
+  required environment variable. The installer does not collect or inspect API
+  keys; configure the key in your environment.
+- **Modernized installer progress and terminal safety:** Clack spinners are used
+  in interactive TTYs, with readable output in headless/non-TTY runs. Canceling
+  or selecting no components stops safely without writes; `--no-mcp` continues
+  to exclude runtime, and `--yes` does not override an explicit decline.
+- **Proportional delegation guidance:** prompts now route bounded work directly
+  to the relevant specialist and call for planning, broad discovery, review, or
+  parallel work only when the request, uncertainty, dependencies, or risk
+  warrant it.
+
 ## 🐞 Fixed
 
-## ⚠️ Known Issues
-
-## ✅ Closed Issues
+- **Reduce duplicated CI work:** plugin V2 coverage now measures one focused
+  TypeScript contract test while retaining its required 80% line-coverage
+  threshold. The hook canary has one CI owner (`test:node`); its duplicate
+  standalone CI invocation was removed. This records the CI configuration
+  change, not a claim that the current CI run passed.
 
 ## [v1.6.0-beta.13] - 2026-10-17
 

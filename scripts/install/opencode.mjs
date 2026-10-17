@@ -858,8 +858,9 @@ export function setupRuntimePhase(
   const S = strings()
   const setup = deps.setupVenv ?? setupVenv
   const check = deps.healthCheck ?? healthCheck
+  let stopProgress
   try {
-    const venvSpinner = spinner(S.settingUpRuntime)
+    stopProgress = spinner(S.settingUpRuntime)
     setup(target, {
       dryRun,
       force: clean,
@@ -867,25 +868,29 @@ export function setupRuntimePhase(
       reviewedRemovals,
       reviewedSnapshots,
     })
-    venvSpinner(true)
+    stopProgress(true)
+    stopProgress = null
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
     const health = check(runtimeTarget, { dryRun, pythonTarget: target })
 
-    section(`\uD83D\uDD0D ${S.healthSection}`)
-    const healthStep = step(S.runningHealthChecks)
+    section(S.healthSection)
+    stopProgress = step(S.runningHealthChecks)
     for (const p of health.passed) success(`${p.check}: ${p.detail}`)
     for (const w of health.warnings) warning(`${w.check}: ${w.detail}`)
     for (const f of health.failed) error(`${f.check}: ${f.detail}`)
 
     if (health.failed.length > 0) {
-      healthStep(false)
+      stopProgress(false)
+      stopProgress = null
       warning(`${health.failed.length} check(s) failed — review above`)
       stats.warnings += health.failed.length
       return false
     }
-    healthStep(true)
+    stopProgress(true)
+    stopProgress = null
     return true
   } catch (err) {
+    stopProgress?.(false)
     error(S.runtimeFailed(err.message))
     warning(S.runtimeSkippedMcp)
     stats.warnings += 1
@@ -1059,7 +1064,9 @@ async function installPass(
     target = join(homedir(), '.config', 'opencode')
   }
 
-  const componentSet = new Set(components)
+  const componentSet = new Set(
+    opts.noMcp ? components.filter((component) => component !== 'runtime') : components,
+  )
   const stats = summary.opencode
   // Per-call baseline. `stats` is the module-level cumulative summary, so the
   // consistency guard must compare against THIS call's delta, not the total.
@@ -1114,6 +1121,12 @@ async function installPass(
     ...opts,
     skipProbe: dryRun,
   })
+  if (version === 'v2' && opts.preset) {
+    throw new Error(
+      '--preset is not supported for OpenCode V2 because V2 ignores the legacy active-preset marker. ' +
+        'Configure models using V2-native OpenCode configuration instead.',
+    )
+  }
   const versionAssumed =
     dryRun &&
     (opts.version ?? 'auto') === 'auto' &&
@@ -1150,9 +1163,17 @@ async function installPass(
 
   if (interactive && !dryRun) {
     const { runInteractiveInstall } = await import('./interactive.mjs')
+    const hasRequestedComponents = Array.isArray(opts.requestedComponents)
+    const promptComponents = hasRequestedComponents ? opts.requestedComponents : components
+    const promptDefaults = hasRequestedComponents
+      ? []
+      : opts.noMcp
+        ? COMPONENT_NAMES.filter((component) => component !== 'runtime')
+        : COMPONENT_NAMES
     const result = await runInteractiveInstall({
-      components,
-      defaultComponents: COMPONENT_NAMES,
+      components: promptComponents,
+      defaultComponents: promptDefaults,
+      noMcp: opts.noMcp === true,
       prompts: opts.deps?.prompts,
       isTTY: opts.deps?.isTTY,
     })
@@ -1162,13 +1183,15 @@ async function installPass(
       return { ...stats, applied: false, reason: 'canceled' }
     }
 
-    if (!result.confirmed && !autoYes) {
+    if (!result.confirmed) {
       info('Installation canceled.')
       return { ...stats, applied: false, reason: 'canceled' }
     }
 
     // Map target selection to actual path
-    const newComponents = [...result.components]
+    const newComponents = [...result.components].filter(
+      (component) => !opts.noMcp || component !== 'runtime',
+    )
     componentSet.clear()
     for (const c of newComponents) componentSet.add(c)
 
@@ -1385,7 +1408,7 @@ async function installPass(
   // 1. Install agents (--components agents)
   // -----------------------------------------------------------------------
   if (componentSet.has('agents')) {
-    section('\uD83D\uDCE6 Agents')
+    section('Agents')
     const srcDir = join(ROOT, 'src', 'agents')
     if (!sourceDirValid(srcDir)) {
       warning(`Agent source directory not found: ${srcDir}`)
@@ -1438,7 +1461,7 @@ async function installPass(
   // 2. Install skills (--components skills)
   // -----------------------------------------------------------------------
   if (componentSet.has('skills')) {
-    section('\uD83D\uDCDA Skills')
+    section('Skills')
     const skillNames = collectSkillNames()
     if (skillNames.length > 0) {
       const skillStep = step(`Installing ${skillNames.length} skills`)
@@ -1484,7 +1507,7 @@ async function installPass(
   // writeAgentsMdManaged is conservative: content outside the managed region
   // is never deleted, and a legacy fully-generated file upgrades in place.
   if (componentSet.has('instructions')) {
-    section('\uD83D\uDCCB Instructions')
+    section('Instructions')
     const srcAgentsMd = isGlobal ? join(ROOT, 'AGENTS.global.md') : join(ROOT, 'AGENTS.md')
     const dstAgentsMd = join(target, 'AGENTS.md')
     if (existsSync(srcAgentsMd)) {
@@ -1522,7 +1545,7 @@ async function installPass(
   // 2.6 Install prompts (--components prompts)
   // -----------------------------------------------------------------------
   if (componentSet.has('prompts')) {
-    section('\uD83D\uDCAC Prompts')
+    section('Prompts')
     const srcPrompts = join(ROOT, 'prompts')
     const dstPrompts = join(target, 'prompts')
     if (existsSync(srcPrompts)) {
@@ -1545,7 +1568,7 @@ async function installPass(
   // 2.7 Install commands (--components commands)
   // -----------------------------------------------------------------------
   if (componentSet.has('commands')) {
-    section('\u26A1 Commands')
+    section('Commands')
     const srcCmds = join(ROOT, 'commands')
     // V2 project sandboxes use OPENCODE_CONFIG_DIR=<project root>, so OpenCode
     // discovers custom commands from <target>/commands. V1 project installs
@@ -1580,7 +1603,7 @@ async function installPass(
   // 2.8 Install TUI plugins (--components plugins)
   // -----------------------------------------------------------------------
   if (componentSet.has('plugins')) {
-    section('\uD83D\uDD0C Plugins')
+    section('Plugins')
     const srcPluginDir = join(ROOT, 'src', 'plugins', 'tui')
     const dstPluginDir = isGlobal
       ? join(target, 'plugins', 'pantheon-tui')
@@ -1626,7 +1649,7 @@ async function installPass(
   //      MCP server scripts, code-mode scripts, tiers.json
   // -----------------------------------------------------------------------
   if (componentSet.has('runtime')) {
-    section('\u2699\uFE0F Runtime')
+    section('Runtime')
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
 
     // ── MCP server scripts ──
@@ -1750,6 +1773,7 @@ async function installPass(
       target,
       { dryRun, clean, isGlobal, recorder, reviewedRemovals, reviewedSnapshots },
       stats,
+      opts.deps,
     )
   }
 
@@ -2351,14 +2375,13 @@ async function installPass(
     process.stdout.write(
       `  ${colors.dim('\u2500'.repeat(Math.min(process.stdout.columns || 60, 60)))}\n`,
     )
-    process.stdout.write(`  ${colors.green('\u2713')} ${created} component(s) installed\n`)
+    process.stdout.write(`  [OK] ${created} component(s) installed\n`)
     if (skipped > 0)
       process.stdout.write(`  ${colors.dim('\u2014')} ${skipped} already up-to-date\n`)
-    if (errors > 0)
-      process.stdout.write(`  ${colors.yellow('\u26a0')} ${errors} error(s) encountered\n`)
+    if (errors > 0) process.stdout.write(`  [WARN] ${errors} error(s) encountered\n`)
     if (warnings > 0)
       process.stdout.write(
-        `  ${colors.yellow('\u26a0')} ${warnings} warning(s) — run 'pantheon-opencode doctor' for details\n`,
+        `  [WARN] ${warnings} warning(s) — run 'pantheon-opencode doctor' for details\n`,
       )
     process.stdout.write('\n')
     process.stdout.write(`  ${colors.bold('Next steps:')}\n`)
@@ -2374,14 +2397,15 @@ async function installPass(
   }
 
   // -----------------------------------------------------------------------
-  // 5. Model preset selection (--components agents). Interactive wizard runs
-  //    unless autoYes (use defaults) or an explicit --preset was given.
+  // 5. V1 model preset selection (--components agents). V2 ignores the legacy
+  //    active-preset marker, so it has no profile wizard or --preset support.
+  //    The V1 interactive wizard runs unless autoYes or an explicit preset was given.
   //    Q1 default "herdar do chat" (inherit) writes no active-preset.json —
   //    delegates inherit the parent chat model (native inheritance).
   // -----------------------------------------------------------------------
-  if (interactive && !dryRun && !autoYes && !opts.preset) {
+  if (interactive && stdinTTY && version === 'v1' && !dryRun && !autoYes && !opts.preset) {
     const { runInitWizard } = await import('./model-picker.mjs')
-    await runInitWizard({ presetDir: target, logger: console })
+    await runInitWizard({ presetDir: target, logger: console, prompts: opts.deps?.prompts })
   }
 
   if (opts.preset && !dryRun) {
@@ -2397,7 +2421,8 @@ async function installPass(
   //     must never fail the install: vision stays optional.
   // -----------------------------------------------------------------------
   if (interactive && !dryRun && !autoYes) {
-    const { runVisionPrompt } = await import('./vision-prompt.mjs')
+    const runVisionPrompt =
+      opts.deps?.runVisionPrompt ?? (await import('./vision-prompt.mjs')).runVisionPrompt
     try {
       await runVisionPrompt({ logger: console })
     } catch (err) {

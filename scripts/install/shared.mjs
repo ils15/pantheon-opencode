@@ -140,7 +140,7 @@ export function parseArgs(argv) {
         args.help = true
         break
       default:
-        console.warn(`⚠️  Unknown option: ${argv[i]}`)
+        console.warn(`[WARN] Unknown option: ${argv[i]}`)
         break
     }
   }
@@ -165,12 +165,12 @@ export function resolveTarget(target) {
 export function detectAndReport(target) {
   const found = detectPlatforms(target).length > 0
 
-  console.log(`\n  🔍 Pantheon Platform Detection`)
+  console.log(`\n  Pantheon Platform Detection`)
   console.log(`     Target: ${target}\n`)
 
   console.log(`  ${'Platform'.padEnd(12)} ${'Detected?'.padEnd(12)} Config file`)
   console.log(`  ${'─'.repeat(55)}`)
-  const status = (found ? '✅ YES' : '❌ no').padEnd(12)
+  const status = (found ? '[OK] yes' : '[MISSING]').padEnd(12)
   console.log(`  ${'OpenCode'.padEnd(12)} ${status} ${found ? 'opencode.json' : '(not found)'}`)
   console.log(`\n  📊 ${found ? 1 : 0} of 1 platforms detected.`)
   if (found) {
@@ -813,7 +813,7 @@ export function printSummary(target, platforms) {
     totalSkipped += stats.skipped
     totalErrors += stats.errors
 
-    const status = stats.errors > 0 ? '⚠️' : '✅'
+    const status = stats.errors > 0 ? '[WARN]' : '[OK]'
     console.log(
       ` ${status} ${label}: ${stats.created} created, ${stats.skipped} skipped${stats.errors > 0 ? `, ${stats.errors} errors` : ''}`,
     )
@@ -825,7 +825,7 @@ export function printSummary(target, platforms) {
   )
 
   if (totalErrors > 0) {
-    console.log('   ⚠️  Some platforms had errors — review warnings above.')
+    console.log('   [WARN] Some platforms had errors — review warnings above.')
   }
 
   console.log('')

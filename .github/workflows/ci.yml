@@ -137,21 +137,9 @@ jobs:
           node -e "const f=require('fs'),d='src/plugins/tui/dist/';for(const n of f.readdirSync(d)){const p=d+n,s=f.readFileSync(p);if(s.length&&s.at(-1)!==10)f.appendFileSync(p,'\n')}"
           git diff --exit-code src/plugins/tui/dist
 
-      # V2 hook canary. The parallel test-suite job already runs this file
-      # through test:node's `tests/pantheon/*.mjs` glob; this step names the
-      # gate explicitly. NOTE WHAT THIS STEP ACTUALLY COVERS: the runner has no
-      # `opencode` V2 binary on PATH, so every host-gated case SKIPS here. The
-      # one case that really runs is the static real-plugin regression guard
-      # (pure readFileSync + regex, deliberately not host-gated).
-      #
-      # To exercise the shipped plugin against a live host, MODE must be `real`:
-      #   PANTHEON_HOOK_CANARY_MODE=real npm run test:hooks
-      # or, against the prepared sandbox's V2 binary (sets MODE=real itself):
-      #   scripts/test-opencode-v2-sandbox.sh --hooks
-      # Plain `npm run test:hooks` is `fixture` mode, which only proves the
-      # hook NAMES are real, not that src/plugin-v2.ts registers them.
-      - name: V2 hook canary (static guards; host-gated cases skip without a V2 binary)
-        run: npm run test:hooks
+      # The V2 hook canary is already run by test:node's
+      # `tests/pantheon/*.mjs` glob. Keep `npm run test:hooks` as the focused
+      # local command; do not execute the same canary twice in CI.
 
       # V2 tool canary (tests/canary/plugin-v2-tool-canary.test.mjs). It is the
       # only gate that drives a Pantheon tool through a REAL host — the hook

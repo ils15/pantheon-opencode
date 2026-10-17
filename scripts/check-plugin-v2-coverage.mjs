@@ -135,8 +135,11 @@ function formatMetric(metric) {
 
 function listTypeScriptTests(repoRoot) {
   const directory = join(repoRoot, 'tests', 'pantheon')
+  // This is the only TypeScript test file that imports src/plugin-v2.ts. Its
+  // isolated measured coverage matches the full-suite baseline; `test:ts`
+  // remains the separate full TypeScript suite.
   return readdirSync(directory)
-    .filter((file) => file.endsWith('.test.ts'))
+    .filter((file) => file === 'plugin-v2-contract.test.ts')
     .sort()
     .map((file) => join(directory, file))
 }

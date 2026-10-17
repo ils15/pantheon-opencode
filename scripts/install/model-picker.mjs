@@ -6,18 +6,17 @@
  * CLI. Writes the active preset marker to <presetDir>/.pantheon/active-preset.json
  * which the plugin (src/plugin.ts) reads on startup via resolveActivePreset().
  *
- * 3-question interactive wizard (askQuestions style):
- *  1) perfil (0=herdar do chat [default], go-free/fast/premium/openai) com tabela modelos por papel + provider/baseURL/key + preço
- *  2) coleta key mascarada validando PANTHEON_OPENCODE_API_KEY alias OPENCODE_GO_API_KEY e OPENAI_API_KEY
- *  3) escopo project|global → writeActivePreset atômico .bak health-check
+ * Installer choices use display labels separate from persisted preset IDs.
+ * The wizard never reads or validates API keys; it names the required env var.
  *
- * "herdar do chat" (inherit) é o default da Q1: não grava active-preset.json,
+ * "Inherit" is the default profile choice and does not write active-preset.json,
  * então os delegates herdam o modelo do chat pai (herança nativa, sem preset).
  */
 import { lstatSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
+import * as clack from '@clack/prompts'
 import { loadPresetDefs } from '../../src/pantheon/presets.mjs'
 import { ACTIONS, fingerprintOutput, recordChange, snapshot } from './plan.mjs'
 import { assertNoSymlinkAncestors, writeFileAtomically } from './verify.mjs'
@@ -40,7 +39,23 @@ export const PRESET_PRICE = {
     label: 'Pago (OpenAI)',
     detail: 'Direto OpenAI – https://api.openai.com/v1, gpt-5.6 family',
   },
+  'go-hybrid': {
+    label: 'OpenCode Go',
+    detail: 'Premium para especialistas centrais; Go rápido para os demais agentes',
+  },
+  anthropic: {
+    label: 'Anthropic',
+    detail: 'Direto Anthropic – claude-sonnet-5-5',
+  },
 }
+
+/** Installer-facing labels and their stable internal preset identifiers. */
+export const INSTALLER_PRESET_CHOICES = [
+  { label: 'Inherit', value: 'inherit' },
+  { label: 'OpenCode Go', value: 'go-hybrid' },
+  { label: 'OpenAI', value: 'openai' },
+  { label: 'Anthropic', value: 'anthropic' },
+]
 
 /**
  * Return primary API key env var for a preset.
@@ -56,7 +71,8 @@ export function requiredKeyEnvForPreset(name, def) {
     .filter(Boolean)
   if (providerEnvs.includes('PANTHEON_OPENCODE_API_KEY')) return 'PANTHEON_OPENCODE_API_KEY'
   if (providerEnvs.includes('OPENAI_API_KEY')) return 'OPENAI_API_KEY'
-  return 'PANTHEON_OPENCODE_API_KEY'
+  if (providerEnvs.includes('ANTHROPIC_API_KEY')) return 'ANTHROPIC_API_KEY'
+  return providerEnvs[0] ?? 'PANTHEON_OPENCODE_API_KEY'
 }
 
 /**
@@ -115,48 +131,42 @@ export function buildPresetTableRow(name, def) {
 }
 
 /**
- * Build askQuestions payload for init wizard (3 perguntas).
- * Caller can pass this to agent/askQuestions or render via readline.
+ * Build the two-question askQuestions payload for model profile and save scope.
+ * Values are stable internal identifiers; labels are presentation-only.
  * @param {Record<string,object>} presetDefs
  * @returns {Array<object>}
  */
 export function buildInitQuestions(presetDefs) {
-  const names = Object.keys(presetDefs)
-  const presetOptions = [
-    {
-      label: 'inherit',
-      description: 'Herda modelo do chat pai — não grava active-preset.json (herança nativa)',
-    },
-    ...names.map((n) => ({
-      label: n,
-      description: buildPresetTableRow(n, presetDefs[n]),
-    })),
-  ]
+  const presetOptions = INSTALLER_PRESET_CHOICES.filter(
+    ({ value }) => value === 'inherit' || presetDefs[value],
+  ).map(({ label, value }) => ({
+    label,
+    value,
+    description:
+      value === 'inherit'
+        ? 'Use the model selected in the current chat; do not save an active preset.'
+        : (presetDefs[value].description ?? buildPresetTableRow(value, presetDefs[value])),
+  }))
   return [
     {
-      header: 'Perfil de modelos',
-      question:
-        'Escolha o perfil (0=herdar do chat [default], go-free/fast/premium/openai) — tabela: perfil | provider/baseURL/key | preço | modelos por papel',
+      header: 'Model profile',
+      question: 'Choose the default model profile for Pantheon agents.',
       options: presetOptions,
       multiSelect: false,
     },
     {
-      header: 'API Key',
-      question:
-        'Informe a chave (coleta mascarada). Validação: PANTHEON_OPENCODE_API_KEY (alias OPENCODE_GO_API_KEY aceito) para Go; OPENAI_API_KEY para openai. Não escreve .env.',
-      kind: 'password',
-    },
-    {
-      header: 'Escopo',
-      question: 'Onde salvar o preset ativo?',
+      header: 'Install scope',
+      question: 'Where should the active preset be saved?',
       options: [
         {
-          label: 'project',
-          description: './.pantheon/active-preset.json (escopo do projeto, seguro)',
+          label: 'Project',
+          value: 'project',
+          description: './.pantheon/active-preset.json',
         },
         {
-          label: 'global',
-          description: '~/.config/opencode/.pantheon/active-preset.json (global)',
+          label: 'Global',
+          value: 'global',
+          description: '~/.config/opencode/.pantheon/active-preset.json',
         },
       ],
       multiSelect: false,
@@ -272,18 +282,6 @@ export function writeActivePreset(
 }
 
 /**
- * Masked input helper: reads line without echoing (fallback to plain question).
- * @param {import('node:readline/promises').Interface} rli
- * @param {string} prompt
- * @returns {Promise<string>}
- */
-async function questionMasked(rli, prompt) {
-  // Node readline doesn't support masking natively; we try to use raw mode.
-  // Fallback: plain question (test env will provide mock).
-  return await rli.question(prompt)
-}
-
-/**
  * Interactive model preset picker. Asks the user to choose a preset; persists
  * the choice unless dryRun. `rl` may be injected for tests; otherwise a
  * readline/promises interface on stdin/stdout is created and closed.
@@ -346,16 +344,9 @@ export async function runModelPicker({
 }
 
 /**
- * 3-question init wizard via askQuestions (or readline fallback).
- * Steps:
- *  1) perfil (0=herdar do chat [default], go-free/fast/premium/openai) com tabela
- *  2) coleta key mascarada validando PANTHEON_OPENCODE_API_KEY alias OPENCODE_GO_API_KEY e OPENAI_API_KEY
- *  3) escopo project|global → writeActivePreset atômico .bak health-check
+ * Collect the V1 model profile and save scope, without reading API keys.
  *
- * "herdar do chat" (inherit) é o default da Q1: não grava active-preset.json,
- * então os delegates herdam o modelo do chat pai (herança nativa, sem preset).
- *
- * @param {{presetDir?: string, target?: string, presets?: object, env?: Record<string,string|undefined>, dryRun?: boolean, logger?: object, ask?: Function, rl?: object}} [opts]
+ * @param {{presetDir?: string, target?: string, presets?: object, env?: Record<string,string|undefined>, dryRun?: boolean, logger?: object, ask?: Function, prompts?: object}} [opts]
  * @returns {Promise<{preset:string, scope:string}|null>}
  */
 export async function runInitWizard({
@@ -366,19 +357,15 @@ export async function runInitWizard({
   dryRun = false,
   logger = console,
   ask,
-  rl,
+  prompts = clack,
 } = {}) {
   const defs = presets ?? loadPresetDefs()
-  const names = Object.keys(defs)
-  if (names.length === 0) {
-    logger.warn?.('Model presets: no presets defined in routing.yml')
+  const questions = buildInitQuestions(defs)
+  if (questions[0].options.length === 1) {
+    logger.warn?.('Model presets: no selectable presets defined in routing.yml')
     return null
   }
 
-  // Build questions payload for askQuestions
-  const questions = buildInitQuestions(defs)
-
-  // If ask is provided (OpenCode agent/askQuestions), use it
   let answers
   if (typeof ask === 'function') {
     try {
@@ -388,166 +375,86 @@ export async function runInitWizard({
       return null
     }
   } else {
-    // Fallback: readline 3-step wizard
-    const rli = rl ?? createInterface({ input: process.stdin, output: process.stdout })
-    const closeAfter = !rl
-    try {
-      // Q1: perfil (0 = herdar do chat, default)
-      const list = [
-        '  0) inherit — Herda modelo do chat pai (não grava active-preset.json)',
-        ...names.map((n, i) => `  ${i + 1}) ${buildPresetTableRow(n, defs[n])}`),
-      ].join('\n')
-      const a1 = await rli.question(
-        `\n[1/3] Perfil de modelos (0=herdar do chat [default], number or name):\n${list}\n> `,
-      )
-      const t1 = (a1 ?? '').trim()
-      let presetName = null
-      if (t1 === '' || t1 === '0' || t1 === 'inherit' || t1.toLowerCase() === 'none') {
-        presetName = 'inherit'
-      } else if (names.includes(t1)) {
-        presetName = t1
-      } else {
-        const idx = Number(t1)
-        if (Number.isInteger(idx) && idx >= 1 && idx <= names.length) presetName = names[idx - 1]
-      }
-      if (!presetName) {
-        logger.warn?.(`Unknown preset "${t1}" — wizard canceled.`)
+    const select = prompts.select
+    const isCancel = prompts.isCancel ?? clack.isCancel
+    const preset = await select({
+      message: questions[0].question,
+      options: questions[0].options.map(({ label, value, description }) => ({
+        label,
+        value,
+        hint: description,
+      })),
+      initialValue: 'inherit',
+    })
+    if (isCancel(preset)) {
+      prompts.cancel?.('Model selection canceled.')
+      return null
+    }
+    if (preset === 'inherit') {
+      answers = { preset, scope: 'project' }
+    } else {
+      const scope = await select({
+        message: questions[1].question,
+        options: questions[1].options.map(({ label, value, description }) => ({
+          label,
+          value,
+          hint: description,
+        })),
+        initialValue: 'project',
+      })
+      if (isCancel(scope)) {
+        prompts.cancel?.('Model selection canceled.')
         return null
       }
-      if (presetName === 'inherit') {
-        logger.log?.(
-          'Herança nativa: delegates herdam o modelo do chat pai — nenhum preset ativo gravado.',
-        )
-        return { preset: 'inherit', scope: 'project' }
-      }
-
-      // Q2: key masked
-      const requiredEnv = requiredKeyEnvForPreset(presetName, defs[presetName])
-      const aliasNote =
-        requiredEnv === 'PANTHEON_OPENCODE_API_KEY' ? ' (alias OPENCODE_GO_API_KEY aceito)' : ''
-      const envConfigured = isKeyConfiguredForPreset(env, presetName, defs[presetName])
-      let keyAnswer = ''
-      if (envConfigured) {
-        logger.log?.(
-          `Chave ${requiredEnv}${aliasNote} já configurada no ambiente (mascarada: ${maskKey(env[requiredEnv] ?? env.OPENCODE_GO_API_KEY ?? '')}).`,
-        )
-      } else {
-        // masked collection
-        const prompt = `[2/3] Informe ${requiredEnv}${aliasNote} (entrada mascarada, não escreve .env): `
-        // Use questionMasked for tests; real TTY would mask
-        keyAnswer = (await questionMasked(rli, prompt)).trim()
-        if (keyAnswer === '') {
-          logger.warn?.(
-            `Chave vazia para ${requiredEnv} — wizard canceled. Preencha env ${requiredEnv} antes de continuar.`,
-          )
-          return null
-        }
-        // validate non-empty already; optionally check length
-        if (!dryRun) {
-          // For health-check, set in current env (not .env file) for this session
-          // Prefer primary var
-          env[requiredEnv] = keyAnswer
-          logger.log?.(
-            `Chave coletada (mascarada: ${maskKey(keyAnswer)}). Defina export ${requiredEnv}='${maskKey(keyAnswer)}' no seu shell para persistir (não escrevemos .env).`,
-          )
-        }
-      }
-
-      // Q3: escopo
-      const a3 = await rli.question(`[3/3] Escopo (project|global, default project): `)
-      const scopeRaw = (a3 ?? '').trim().toLowerCase()
-      const scope = scopeRaw === 'global' ? 'global' : 'project'
-
-      answers = { preset: presetName, scope, key: keyAnswer }
-    } finally {
-      if (closeAfter) rli.close()
+      answers = { preset, scope }
     }
-    // For fallback path, we already have answers; proceed to write
-    const presetName = answers.preset
-    const scope = answers.scope ?? 'project'
-    const projectDir = presetDir ?? target ?? process.cwd()
-    const globalDir = (() => {
-      const home = env.HOME?.trim() || homedir()
-      const xdg = env.XDG_CONFIG_HOME?.trim() || join(home, '.config')
-      return join(xdg, 'opencode')
-    })()
-    const dir = scope === 'global' ? globalDir : projectDir
-    if (!dryRun) {
-      const result = writeActivePreset(dir, presetName, {
-        dryRun: false,
-        source: 'interactive',
-        logger,
-      })
-      logger.log?.(
-        `Preset ${presetName} salvo em ${scope} (${result.path})${result.backupPath ? ` backup: ${result.backupPath}` : ''}`,
-      )
-      // health-check: verify file
-      try {
-        const raw = readFileSync(result.path, 'utf8')
-        JSON.parse(raw)
-        logger.log?.('health-check: active-preset.json OK')
-      } catch (e) {
-        logger.warn?.(`health-check failed: ${e.message}`)
-      }
-    } else {
-      logger.log?.(`[dry-run] Would write preset "${presetName}" scope ${scope}`)
-    }
-    return { preset: presetName, scope }
   }
 
-  // ask path: answers expected as object with preset/scope/key or array
-  // Normalize: ask may return {answers: [...]} or direct mapping (also handles {label} objects)
-  let presetName, scope, keyAnswer
-  if (Array.isArray(answers)) {
-    const a0 = answers[0]?.answer ?? answers[0]
-    const a1 = answers[1]?.answer ?? answers[1]
-    const a2 = answers[2]?.answer ?? answers[2]
-    presetName = a0 && typeof a0 === 'object' && 'label' in a0 ? a0.label : a0
-    keyAnswer = a1 && typeof a1 === 'object' && 'answer' in a1 ? a1.answer : a1
-    if (keyAnswer && typeof keyAnswer === 'object' && 'label' in keyAnswer)
-      keyAnswer = keyAnswer.label
-    scope = a2 && typeof a2 === 'object' && 'label' in a2 ? a2.label : a2
-    if (scope && typeof scope === 'object' && 'answer' in scope) scope = scope.answer
-  } else if (answers && typeof answers === 'object') {
-    presetName = answers.preset ?? answers['0'] ?? answers.q1 ?? answers.presetName
-    keyAnswer = answers.key ?? answers['1'] ?? answers.q2
-    scope = answers.scope ?? answers['2'] ?? answers.q3
-    if (presetName && typeof presetName === 'object' && 'label' in presetName)
-      presetName = presetName.label
-    if (presetName && typeof presetName === 'object' && 'answer' in presetName)
-      presetName = presetName.answer
-    if (scope && typeof scope === 'object' && 'label' in scope) scope = scope.label
-    if (scope && typeof scope === 'object' && 'answer' in scope) scope = scope.answer
+  const unwrap = (value) => {
+    if (value && typeof value === 'object') {
+      return unwrap(value.value ?? value.answer ?? value.label)
+    }
+    return value
   }
-  if (typeof presetName === 'string') presetName = presetName.trim()
-  // Q1 default = herdar do chat: empty/0/inherit/none writes nothing (não grava active-preset.json)
-  if (!presetName || presetName === '0' || presetName === 'inherit' || presetName === 'none') {
-    logger.log?.(
-      'Herança nativa: delegates herdam o modelo do chat pai — nenhum preset ativo gravado.',
-    )
+  let presetAnswer
+  let scopeAnswer
+  const values = answers?.answers ?? answers
+  if (Array.isArray(values)) {
+    presetAnswer = unwrap(values[0])
+    scopeAnswer = unwrap(values[1])
+  } else if (values && typeof values === 'object') {
+    presetAnswer = unwrap(values.preset ?? values['0'] ?? values.q1)
+    scopeAnswer = unwrap(values.scope ?? values['1'] ?? values.q2)
+  }
+
+  const rawPreset = String(presetAnswer ?? 'inherit').trim()
+  const choice = INSTALLER_PRESET_CHOICES.find(
+    ({ label, value }) =>
+      rawPreset.toLowerCase() === value.toLowerCase() ||
+      rawPreset.toLowerCase() === label.toLowerCase(),
+  )
+  if (!choice) {
+    logger.warn?.(`Unknown model profile "${rawPreset}" — wizard canceled.`)
+    return null
+  }
+  if (choice.value === 'inherit') {
+    logger.log?.('Using the current chat model; no active preset was saved.')
     return { preset: 'inherit', scope: 'project' }
   }
-  if (!names.includes(presetName)) {
-    logger.warn?.(`Unknown preset "${presetName}" — wizard canceled.`)
+  if (!defs[choice.value]) {
+    logger.warn?.(`Model profile "${choice.label}" is not defined — wizard canceled.`)
     return null
   }
-  const requiredEnv = requiredKeyEnvForPreset(presetName, defs[presetName])
-  const envConfigured = isKeyConfiguredForPreset(
-    { ...env, ...(keyAnswer ? { [requiredEnv]: keyAnswer } : {}) },
-    presetName,
-    defs[presetName],
+
+  const scopeChoice = String(unwrap(scopeAnswer) ?? 'project')
+    .trim()
+    .toLowerCase()
+  const finalScope = scopeChoice === 'global' ? 'global' : 'project'
+  const requiredEnv = requiredKeyEnvForPreset(choice.value, defs[choice.value])
+  logger.log?.(
+    `${choice.label} expects ${requiredEnv}. Configure it in your environment; the installer does not read or validate API keys.`,
   )
-  if (!envConfigured) {
-    logger.warn?.(`Chave ${requiredEnv} não configurada — defina env antes de continuar.`)
-    return null
-  }
-  if (keyAnswer && !dryRun) {
-    env[requiredEnv] = keyAnswer
-    logger.log?.(
-      `Chave coletada (mascarada: ${maskKey(String(keyAnswer))}). Não escrevemos .env; export ${requiredEnv} no shell para persistir.`,
-    )
-  }
-  const finalScope = scope === 'global' ? 'global' : 'project'
+
   const projectDir = presetDir ?? target ?? process.cwd()
   const globalDir = (() => {
     const home = env.HOME?.trim() || homedir()
@@ -555,22 +462,22 @@ export async function runInitWizard({
     return join(xdg, 'opencode')
   })()
   const dir = finalScope === 'global' ? globalDir : projectDir
-  if (!dryRun) {
-    const result = writeActivePreset(dir, presetName, {
-      dryRun: false,
-      source: 'interactive',
-      logger,
-    })
-    logger.log?.(`Preset ${presetName} salvo em ${finalScope} (${result.path})`)
-    try {
-      const raw = readFileSync(result.path, 'utf8')
-      JSON.parse(raw)
-      logger.log?.('health-check: active-preset.json OK')
-    } catch (e) {
-      logger.warn?.(`health-check failed: ${e.message}`)
-    }
-  } else {
-    logger.log?.(`[dry-run] Would write preset "${presetName}" scope ${finalScope}`)
+  if (dryRun) {
+    logger.log?.(`[dry-run] Would write preset "${choice.value}" scope ${finalScope}`)
+    return { preset: choice.value, scope: finalScope }
   }
-  return { preset: presetName, scope: finalScope }
+
+  const result = writeActivePreset(dir, choice.value, {
+    source: 'interactive',
+    logger,
+  })
+  logger.log?.(`Preset ${choice.value} saved in ${finalScope} (${result.path})`)
+  try {
+    const parsed = JSON.parse(readFileSync(result.path, 'utf8'))
+    if (parsed.preset !== choice.value) throw new Error('preset mismatch')
+    logger.log?.('health-check: active-preset.json OK')
+  } catch (err) {
+    logger.warn?.(`health-check failed: ${err.message}`)
+  }
+  return { preset: choice.value, scope: finalScope }
 }

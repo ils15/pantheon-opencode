@@ -264,26 +264,24 @@ export function resumePendingMigration(target) {
 export function rollbackMigration(target, version) {
   const state = readState(target)
   if (!state) {
-    console.log('  \u26A0\uFE0F  No install state found — nothing to roll back')
+    console.log('  [WARN] No install state found — nothing to roll back')
     return { success: false, reason: 'No install state' }
   }
 
   const migrations = state.applied_migrations || []
   const targetMigration = migrations.find((m) => m.to === version && m.status === 'completed')
   if (!targetMigration) {
-    console.log(`  \u26A0\uFE0F  No completed migration found for version ${version}`)
+    console.log(`  [WARN] No completed migration found for version ${version}`)
     return { success: false, reason: 'Migration not found' }
   }
 
-  console.log(
-    `  \u{1F504} Rolling back migration: ${targetMigration.from} \u2192 ${targetMigration.to}`,
-  )
+  console.log(`  Rolling back migration: ${targetMigration.from} -> ${targetMigration.to}`)
 
   targetMigration.status = 'rolled_back'
   state.pantheon_version = targetMigration.from
   writeState(target, state)
 
-  console.log(`  \u2705 Rolled back to ${targetMigration.from}`)
+  console.log(`  [OK] Rolled back to ${targetMigration.from}`)
   return { success: true, migration: targetMigration }
 }
 
@@ -358,20 +356,16 @@ function main() {
   if (list) {
     const history = listAppliedMigrations(target)
     if (!history.currentVersion) {
-      console.log(`  \u2139\uFE0F  No install state found in: ${target}`)
+      console.log(`  [INFO] No install state found in: ${target}`)
       return
     }
     console.log(`  Current version: ${history.currentVersion}`)
     console.log(`  Previous version: ${history.previousVersion || 'N/A'}`)
     console.log(`  Applied migrations: ${history.migrations.length}`)
     for (const m of history.migrations) {
-      const icon =
-        m.status === 'completed'
-          ? '\u2705'
-          : m.status === 'rolled_back'
-            ? '\u{1F504}'
-            : '\u26A0\uFE0F'
-      console.log(`    ${icon} ${m.from} \u2192 ${m.to} [${m.status}] (${m.applied_at})`)
+      const status =
+        m.status === 'completed' ? '[OK]' : m.status === 'rolled_back' ? '[ROLLED BACK]' : '[WARN]'
+      console.log(`    ${status} ${m.from} -> ${m.to} [${m.status}] (${m.applied_at})`)
     }
     return
   }
@@ -387,9 +381,9 @@ function main() {
     if (!dryRun) {
       const state = createInitialState(PANTHON_VERSION)
       writeState(target, state)
-      console.log(`  \u2705 Fresh install — state written (${PANTHON_VERSION})`)
+      console.log(`  [OK] Fresh install — state written (${PANTHON_VERSION})`)
     } else {
-      console.log(`  \u2705 Fresh install — would write state (${PANTHON_VERSION})`)
+      console.log(`  [DRY-RUN] Fresh install — would write state (${PANTHON_VERSION})`)
     }
     return
   }
@@ -397,19 +391,19 @@ function main() {
   console.log(`  Current version: ${currentVersion}`)
 
   if (!force && currentVersion === PANTHON_VERSION) {
-    console.log('  \u23ED\uFE0F  Already at latest version — no migrations needed')
+    console.log('  [OK] Already at latest version — no migrations needed')
     return
   }
 
   const migration = runMigrations(target, currentVersion, { dryRun })
 
   if (migration.applied > 0) {
-    console.log(`  \u2705 Applied ${migration.applied} migration(s):`)
+    console.log(`  [OK] Applied ${migration.applied} migration(s):`)
     for (const msg of migration.messages) {
       console.log(`     \u2022 ${msg}`)
     }
   } else {
-    console.log('  \u23ED\uFE0F  No applicable migrations')
+    console.log('  [INFO] No applicable migrations')
   }
 }
 

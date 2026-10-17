@@ -35,23 +35,25 @@ export async function promptReview(
 /**
  * Collect interactive setup choices before the installer begins any writes.
  *
- * @param {{ components?: string[], defaultComponents?: string[], prompts?: typeof clack, isTTY?: boolean }} [options]
+ * @param {{ components?: string[], defaultComponents?: string[], noMcp?: boolean, prompts?: typeof clack, isTTY?: boolean }} [options]
  * @returns {Promise<{ components?: Set<string>, target?: string, confirmed?: boolean, canceled?: boolean }>}
  */
 export async function runInteractiveInstall({
   components = [],
   defaultComponents = [],
+  noMcp = false,
   prompts = clack,
   isTTY = isTerminal(),
 } = {}) {
-  const defaults = defaultComponents.length > 0 ? defaultComponents : components
+  const isAllowed = (component) => !noMcp || component !== 'runtime'
+  const defaults = (defaultComponents.length > 0 ? defaultComponents : components).filter(isAllowed)
   const defaultSet = new Set(defaults)
 
   // Preserve the prior no-TTY fallback (defaults, global target, and no apply
   // authorization) without asking a terminal prompt library to access stdin.
   if (!isTTY) return { components: defaultSet, target: 'global', confirmed: true }
 
-  process.stdout.write('\n📦 OpenCode Installer\n\n')
+  prompts.intro?.('OpenCode Installer')
 
   const componentOptions = [
     { label: 'agents', value: 'agents', hint: 'Agent configurations and routing (14 agents)' },
@@ -61,7 +63,7 @@ export async function runInteractiveInstall({
     { label: 'commands', value: 'commands', hint: 'OpenCode command shortcuts' },
     { label: 'plugins', value: 'plugins', hint: 'TUI sidebar plugin' },
     { label: 'runtime', value: 'runtime', hint: 'Python venv + MCP server scripts' },
-  ]
+  ].filter((option) => isAllowed(option.value))
   const chosen = await prompts.multiselect({
     message: 'Select components to install:',
     options: componentOptions,
@@ -70,9 +72,10 @@ export async function runInteractiveInstall({
   })
   if (cancelPrompt(prompts, chosen)) return { canceled: true }
 
-  const selectedComponents = new Set(chosen)
+  const selectedComponents = new Set(chosen.filter(isAllowed))
   if (selectedComponents.size === 0) {
-    for (const value of defaults) selectedComponents.add(value)
+    prompts.cancel?.('No components selected. Installation canceled.')
+    return { canceled: true }
   }
 
   const target = await prompts.select({

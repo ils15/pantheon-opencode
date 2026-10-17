@@ -27,6 +27,10 @@ way to plan work, make progress, check results, and keep useful project context.
   collaborators.
 - **You stay in charge:** Pantheon supports your decisions; it does not replace
   your judgment or your review of generated code.
+- **Right-sized coordination:** bounded work goes to the correct specialist;
+  planning, discovery, parallel work, and review are added when scope and risk
+  call for them. `/pantheon-deepwork` remains the checkpointed workflow for
+  heavy multi-phase work.
 
 ## Start in 2 minutes
 
@@ -68,6 +72,16 @@ global or project location before reviewing the apply. Canceling writes nothing.
 behavior. The installer guides you through the available setup. For optional MCP servers,
 project-local installation, or non-interactive setup, see the
 [installation guide](docs/INSTALLATION.md).
+
+In the interactive **V1 model setup**, the profile choices are **Inherit**,
+**OpenCode Go**, **OpenAI**, and **Anthropic**. OpenCode Go saves the internal
+`go-hybrid` profile (premium routes for Zeus, Athena, Themis, and Hephaestus;
+the existing fast Go routes for the other agents). Anthropic uses
+`anthropic/claude-sonnet-5-5`; configure `ANTHROPIC_API_KEY` in your environment
+yourself. The installer does not read or validate API keys or contact provider
+catalogs. Legacy `go-free`, `go-fast`, and `go-premium` presets remain available
+for existing saved settings and explicit `--preset` use. V2 continues to ignore
+static presets and uses explicit per-agent model overrides instead.
 
 In an interactive TTY setup summary, Pantheon recommends the persistent
 external worktree location

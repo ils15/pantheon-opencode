@@ -28,7 +28,8 @@ Planning for large sites has been slow (30+ min). This prompt ensures **5-minute
 ```
 Goal: Understand current structure (don't aim for comprehensive)
 
-Launch 1-3 parallel searches:
+Search only relevant questions; run searches in parallel when they are
+independent and the runtime supports it (otherwise sequence them):
   1. "Find main modules/routers related to [Feature]"
   2. "Find existing models/schemas for [Feature]"
   3. (OPTIONAL) "How is [similar feature] currently implemented?"
@@ -46,43 +47,50 @@ From searches, extract:
   - What pattern fits? (async? repository? caching?)
   - What are risks? (scale? complexity? performance?)
 
-⚠️ If unclear: Document as "Open Question" → ask user
+⚠️ If unclear: record the uncertainty as an "Open Question" for Zeus and
+continue with an explicit assumption or bounded alternative.
 ```
 
 ### Minute 4-5: Plan Creation
 ```
-Create 3-5 phase plan:
+Create a complete plan with 3-5 actionable phases:
 
 Format:
   📋 Plan: [Feature Name]
   🎯 Goal: [One sentence outcome]
+  📦 Scope and assumptions: [What is included; state assumptions]
+  📂 Affected files or areas: [Known paths/areas; mark unknowns]
+  🔗 Dependencies: [Required ordering or external dependencies]
 
   1️⃣ Phase: [Name] → @agent
-     - Quick description
-     - Key files: [list]
+     - Actions and expected outcome
+     - Key files/areas: [list or explicitly unknown]
+     - Depends on: [phase/dependency or none]
 
   2️⃣ Phase: [Name] → @agent
      ...
 
-  ⚠️ Risks: [ONE sentence]
-  🤔 Open Questions: [List if uncertain]
-
-  👉 Ready to approve?
+  ✅ Verification and tests: [Focused checks for each behavior]
+  ⚠️ Risks: [Risks and mitigations]
+  🤔 Open Questions / unknowns: [Unresolved facts; don't block the handoff]
+  🎯 Acceptance criteria: [Observable completion conditions]
 ```
+
+Return the complete Markdown plan to Zeus.
 
 ---
 
 ## Decision: Direct vs. Delegate
 
-At minute 2-3, decide:
+At minute 2-3, assess:
 
 ```
-Question: Do I have 80% understanding?
+Are the main risks and dependencies understood well enough to plan?
 
 YES → Create plan immediately (skip delegates)
-NO  → Check: Need pattern discovery?
-       YES → "Need @apollo to discover X. Shall I delegate?" (get approval)
-       NO  → Document unknowns as "Open Questions", plan anyway
+NO  → Check whether broad discovery would materially change the plan
+       YES → Delegate bounded discovery to @apollo if it fits the time budget
+       NO  → Document unknowns as "Open Questions" and proceed with a bounded plan
 ```
 
 ---
@@ -90,17 +98,16 @@ NO  → Check: Need pattern discovery?
 ## Red Flags (Plan is incomplete)
 
 🚩 **More than 3 open questions**
-→ Ask user for clarification before planning
+→ State the highest-impact unknowns, their consequences, and any safe assumptions in the plan.
 
 🚩 **Can't identify affected modules**
-→ Need Apollo discovery: "Unknown scope. Delegate to @apollo?"
+→ Use bounded Apollo discovery when likely to change the plan and within the time budget; otherwise mark affected areas unknown.
 
 🚩 **Risk assessment uncertain**
 → Document risk/unknowns clearly in plan
 
 🚩 **Implementation unclear**
-→ Break feature into smaller sub-features:
-"Feature too large. Recommend breaking into X, Y, Z. Plan X first?"
+→ Break the work into smaller phases or sub-features and state dependencies and scope assumptions.
 
 ---
 
@@ -125,9 +132,10 @@ Time: 2:00-4:00 - Plan:
   Phase 2: Dashboard component (@aphrodite)
   Phase 3: Data aggregation query (@demeter)
 
-  Open Question: Real-time vs. daily snapshots?
+  Unresolved unknown: Real-time vs. daily snapshots; describe the impact of each option.
 
-Time: 4:00-5:00 - Approval + handoff to Zeus
+Time: 4:00-5:00 - Return the complete plan, verification, assumptions, and open question to Zeus.
+  Zeus publishes it and handles user approval in the main conversation.
 ```
 
 ### Example 2: Multi-Tenant Architecture (High Complexity)
@@ -137,19 +145,18 @@ Time: 0:00 - User: "Plan: Make platform multi-tenant"
 Time: 0:00-2:00 - Search:
   S1: "Find all authentication/authorization code"
   S2: "Find database schema (how is organization data structured?)"
-  S3: (DELEGATE?) "How are other features accessing org context?"
+  S3: (OPTIONAL BOUNDED DISCOVERY) "How are other features accessing org context?"
 
 Time: 2:00 - Assessment:
   - Understand current auth: 70%
   - Understand DB structure: 80%
-  - Need tenant isolation strategy: UNCLEAR
+  - Tenant isolation strategy remains unknown
 
 Time: 2:15 - Decision:
-  → "This needs architecture review. Delegate to @apollo?"
-  → User: "Yes, do it"
-  → @apollo discovery (8 min) → returns findings
-  → Athena creates plan from findings (1 min)
-  → Total: 11 minutes (vs. 30+ old approach)
+  → If bounded Apollo discovery can materially reduce risk within the time budget, run it.
+  → Otherwise, record tenant isolation as an open question with its security/data-isolation impact.
+  → Athena returns the complete plan and unresolved unknowns to Zeus.
+  → Zeus publishes the plan and obtains user approval in the main conversation.
 ```
 
 ---
@@ -166,27 +173,17 @@ One cycle per request. If Zeus discovers plan gaps, that's a new planning reques
 Fast 1-2 min search, then make decisions with the knowledge you have.
 
 ✅ **Output only in chat**
-No artifact files unless explicitly asked by user.
+Return the complete plan to Zeus; do not create artifacts unless the user explicitly requested them.
 
 ---
 
-## Approval Pattern
+## Plan Handoff
 
-After plan, always ask:
-```
-@ask-questions
-- [List 1-2 open questions from plan]
-- "Approve this 3-phase plan to proceed?" (yes/no/changes)
-- If user asks for changes: "Specific phase to adjust?" (let them steer, don't re-research whole thing)
-```
-
-After approval:
-```
-Perfect! Handing off to @zeus for implementation.
-
-@zeus Implement plan: [Feature Name]
-  [Copy full plan into context]
-```
+The child session returns the complete Markdown plan to Zeus, including its
+assumptions, verification, risks, acceptance criteria, and unresolved unknowns.
+Zeus publishes the full plan in the main conversation and obtains user approval
+there before implementation. The child session ends with the plan; it does not
+open a user-facing decision or approval gate.
 
 ---
 

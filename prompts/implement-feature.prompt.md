@@ -1,6 +1,6 @@
 ---
 name: implement-feature
-description: "Implement a complete feature end-to-end with TDD, parallel execution, and quality gates"
+description: "Implement a feature with TDD and risk-based specialist routing"
 agent: zeus
 tools: ['search', 'usages', 'edit', 'runCommands', 'runTasks']
 ---
@@ -9,30 +9,31 @@ tools: ['search', 'usages', 'edit', 'runCommands', 'runTasks']
 
 See `prompts/orchestrate-with-zeus.prompt.md` for the full master orchestration workflow.
 
-## Quick Reference (5 Phases)
+## Proportional Workflow
 
-### Phase 1 — Planning
-Delegate to @athena: research architecture, create TDD plan (3-10 phases), analyze risks.
-
-### Phase 2 — Parallel Implementation
-Dispatch agents in parallel based on scope:
-- @hermes → Backend APIs (FastAPI)
-- @aphrodite → Frontend components (React/TypeScript)
-- @demeter → Database migrations (SQLAlchemy)
-
-### Phase 3 — Quality Gate
-Route to @themis: review changed files, OWASP Top 10, coverage >80%.
-
-### Phase 4 — Integration Testing
-End-to-end workflows, data consistency, performance.
-
-### Phase 5 — Deployment
-@prometheus: staging, health checks, smoke tests, production.
+- For a clear, bounded, reversible, low-risk task, dispatch once to the correct
+  specialist. The specialist inspects relevant context, implements with TDD
+  when behavior changes, verifies, and returns a concise result. Do not require
+  routine planning, separate discovery, review, or artifacts.
+- Use @athena for an explicitly requested plan or when scope, dependencies, risk,
+  or uncertainty justify one. Use @apollo only when broad/unfamiliar discovery
+  materially reduces uncertainty; straightforward searches stay with the
+  specialist who will do the work.
+- Route implementation by domain: @hermes for backend, @aphrodite for frontend,
+  @demeter for database/schema, @hephaestus for AI pipelines, and @prometheus
+  for infrastructure. Run work in parallel only when slices are independent
+  and the active runtime supports it; sequence dependent work. Do not impose a
+  fixed root-concurrency cap.
+- Use @themis for auth/security, data/schema, destructive, production-impacting,
+  material user-visible/API changes, or another required repository gate. A
+  trivial isolated edit needs no separate review phase.
+- Create durable artifacts only when requested or when following a planned
+  multi-phase workflow. `/pantheon-deepwork` remains the checkpointed workflow
+  for heavy multi-agent/multi-session tasks. Deployment is a separate requested
+  scope, not an automatic final phase.
 
 ## Success Criteria
-- Tests pass (>80% coverage)
-- Code reviewed & approved
-- No OWASP vulnerabilities
-- Performance acceptable
-- Documentation updated
-- Deployed successfully
+- Focused tests and applicable repository quality gates pass
+- Required security/data/material review is complete
+- User-facing documentation reflects any new behavior
+- Deployment happens only when explicitly in scope and authorized

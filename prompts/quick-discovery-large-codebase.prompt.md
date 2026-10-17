@@ -14,7 +14,7 @@ Discovery (Apollo) was taking 10-20+ minutes on large codebases. This prompt ens
 - Athena delegates: "Discover how authentication is currently implemented"
 - Hermes needs: "Find all API versioning patterns"
 - Aphrodite asks: "Where are reusable form components?"
-- Any discovery requiring 5+ parallel searches
+- Broad, unfamiliar discovery where multiple independent searches materially help
 
 ❌ **DO NOT USE** for:
 - Single-file location (direct search is faster)
@@ -24,9 +24,10 @@ Discovery (Apollo) was taking 10-20+ minutes on large codebases. This prompt ens
 
 ## Your Workflow (8 Minutes MAX)
 
-### Minute 0-1: Plan Searches
+### Minute 0-1: Choose Relevant Searches
 ```
-From parent agent request, identify 5-8 key search queries:
+From the parent request, identify only the independent queries needed to close
+material knowledge gaps. Do not target a fixed search count:
 
 Example: "Discover authentication patterns"
   S1: "Find all authentication routers and endpoints"
@@ -39,21 +40,19 @@ Example: "Discover authentication patterns"
   S8: (OPTIONAL) "Find error handling for auth failures"
 ```
 
-### Minute 1-4: Batch 1 (Searches 1-5)
+### Minute 1-4: Initial Search Batch
 ```
-Launch 5 parallel searches immediately.
-Gather results while you wait.
-Assess: 80% coverage?
+Run the relevant independent searches together when supported by the runtime.
+Gather their results and assess whether any material questions remain.
 
-YES → Compile findings, return (minute 4-5)
-NO  → Proceed to Batch 2
+ENOUGH EVIDENCE → Compile findings and return
+MATERIAL GAPS   → Run another focused batch if useful
 ```
 
-### Minute 4-7: Batch 2 (Searches 6-10) [OPTIONAL]
+### Minute 4-7: Follow-up Search (only if useful)
 ```
-If Batch 1 left major gaps:
-  Launch searches 6-10 (if time available)
-  Gather + synthesize into findings report
+If the initial batch left material gaps, run only targeted follow-up searches
+that can answer them. Stop when further searching is unlikely to change findings.
 
 At 7:30 → wrap up current searches
 ```
@@ -85,32 +84,27 @@ Structure findings as:
 
 ## Batch Management
 
-### Standard Batch Size: 5 parallel searches
+### Batch Size: Scope-Driven
 
 ```
-Batch 1: Core discovery (searches 1-5)
+Initial batch: core discovery
   ✓ Main concepts/files
   ✓ Entry points
   ✓ Key models/schemas
 
-Assess: 80% coverage?
+Assess: can the requested question be answered with evidence?
 
 YES → Stop here, return findings
-NO  → Continue
+NO  → Continue only for material gaps
 
-Batch 2: Pattern analysis (searches 6-10)
+Follow-up: pattern analysis
   ✓ How X is currently done
   ✓ Edge cases/error handling
   ✓ Related integrations
 
-Assess: 80% coverage?
-
-YES → Stop, return findings
-NO  → (Can do Batch 3, 4, 5 if time allows)
-
-Hard limit: 5 batches (50 searches max)
-Time limit: 8 minutes
-Convergence: 80% understanding → STOP
+Timebox broad discovery to the available task budget. No fixed batch count or
+parallel-search cap applies; stop when the answer is supported and additional
+searches are unlikely to change it.
 ```
 
 ---
@@ -265,7 +259,7 @@ Time: 4:00 - Assess: 70% coverage, need more detail on error handling
 Time: 4:00-7:00 - Batch 2 (S6-S8)
   Results: Found retry patterns, error types, logging
 
-Time: 7:00 - Assess: 80% coverage
+Time: 7:00 - Assess: enough evidence to answer the request
   → Compile + synthesize findings
 
 Time: 7:00-8:00 - Return structured findings to Athena
@@ -277,7 +271,7 @@ Time: 7:00-8:00 - Return structured findings to Athena
 
 A "good" quick discovery:
 - ✅ Takes 8 minutes (not 15+)
-- ✅ Returns 20-30 files identified
+- ✅ Identifies relevant files at a depth appropriate to the question
 - ✅ Has relationship/pattern analysis (not just lists)
 - ✅ Actionable for planner/implementer
 - ✅ <3 unknowns documented
@@ -289,11 +283,12 @@ A "good" quick discovery:
 ✅ **ALWAYS stop at 8 minutes**
 Even if incomplete. Return findings and let parent agent ask for more detail.
 
-✅ **NO sequential searches**
-Always batch searches in parallel (5-10 at a time).
+✅ **Use parallelism deliberately**
+Batch independent searches when that improves discovery; search sequentially
+when a later query depends on earlier findings. There is no fixed batch size.
 
 ✅ **Synthesis required**
 Never return raw file lists. Explain relationships and patterns.
 
 ✅ **Convergence matters**
-80% understanding → stop. Don't hunt for 100%.
+Enough evidence to answer the request → stop; do not hunt for completeness without a reason.
