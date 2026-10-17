@@ -729,6 +729,54 @@ await testAsync('T19b: init wizard inherit selection writes nothing', async () =
   assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
 })
 
+// ─── Key guidance names env vars without logging credentials ─────────────
+await testAsync('init wizard key guidance is static and never logs secrets', async () => {
+  const picker = await import('../scripts/install/model-picker.mjs')
+  const expected = {
+    'go-free': 'PANTHEON_OPENCODE_API_KEY',
+    'go-fast': 'PANTHEON_OPENCODE_API_KEY',
+    'go-premium': 'PANTHEON_OPENCODE_API_KEY',
+    'go-hybrid': 'PANTHEON_OPENCODE_API_KEY',
+    openai: 'OPENAI_API_KEY',
+    anthropic: 'ANTHROPIC_API_KEY',
+  }
+  const secrets = ['secret-from-env-fixture', 'secret-from-metadata-fixture']
+
+  for (const [preset, envName] of Object.entries(expected)) {
+    const guidance = picker.presetKeyEnvGuidance(preset)
+    assert.ok(guidance.includes(envName), `${preset} should name ${envName}`)
+    assert.ok(secrets.every((secret) => !guidance.includes(secret)))
+  }
+  assert.ok(!picker.presetKeyEnvGuidance('unknown').includes('PANTHEON_OPENCODE_API_KEY'))
+
+  for (const preset of ['go-hybrid', 'openai', 'anthropic']) {
+    const messages = []
+    await picker.runInitWizard({
+      presets: {
+        [preset]: { providers: { fixture: { apiKeyEnv: secrets[1] } } },
+      },
+      env: {
+        HOME: makeTmp(),
+        PANTHEON_OPENCODE_API_KEY: secrets[0],
+        OPENAI_API_KEY: secrets[0],
+        ANTHROPIC_API_KEY: secrets[0],
+      },
+      dryRun: true,
+      ask: async () => ({ preset, scope: 'project' }),
+      logger: {
+        log: (message) => messages.push(message),
+        warn: (message) => messages.push(message),
+      },
+    })
+    const output = messages.join('\n')
+    assert.ok(output.includes(expected[preset]), `${preset} output should name its key variable`)
+    assert.ok(
+      secrets.every((secret) => !output.includes(secret)),
+      `${preset} output leaked a secret`,
+    )
+  }
+})
+
 // ─── T19c: ask path accepts the internal inherit value ──────────────────
 await testAsync('T19c: init wizard ask path inherit writes nothing', async () => {
   const picker = await import('../scripts/install/model-picker.mjs')

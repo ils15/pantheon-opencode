@@ -57,6 +57,29 @@ export const INSTALLER_PRESET_CHOICES = [
   { label: 'Anthropic', value: 'anthropic' },
 ]
 
+/** Static, safe env-var names for installer guidance; never derive these from credentials or preset metadata. */
+const PRESET_KEY_ENV_GUIDANCE = Object.freeze({
+  'go-free': 'PANTHEON_OPENCODE_API_KEY',
+  'go-fast': 'PANTHEON_OPENCODE_API_KEY',
+  'go-premium': 'PANTHEON_OPENCODE_API_KEY',
+  'go-hybrid': 'PANTHEON_OPENCODE_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+})
+
+/**
+ * Build safe installer guidance using only the static preset-to-env-name map.
+ * @param {string} name
+ * @param {string} [label]
+ * @returns {string}
+ */
+export function presetKeyEnvGuidance(name, label = name) {
+  if (!Object.hasOwn(PRESET_KEY_ENV_GUIDANCE, name)) {
+    return 'Configure the required API key in your environment; the installer does not read or validate API keys.'
+  }
+  return `${label} expects ${PRESET_KEY_ENV_GUIDANCE[name]}. Configure it in your environment; the installer does not read or validate API keys.`
+}
+
 /**
  * Return primary API key env var for a preset.
  * @param {string} name
@@ -450,10 +473,7 @@ export async function runInitWizard({
     .trim()
     .toLowerCase()
   const finalScope = scopeChoice === 'global' ? 'global' : 'project'
-  const requiredEnv = requiredKeyEnvForPreset(choice.value, defs[choice.value])
-  logger.log?.(
-    `${choice.label} expects ${requiredEnv}. Configure it in your environment; the installer does not read or validate API keys.`,
-  )
+  logger.log?.(presetKeyEnvGuidance(choice.value, choice.label))
 
   const projectDir = presetDir ?? target ?? process.cwd()
   const globalDir = (() => {
