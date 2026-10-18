@@ -114,9 +114,47 @@ test('subtask prompt preserves the canonical required return contract', () => {
   }
 
   assert.match(returnContract, /If memory affected the result, state the takeaway briefly/i)
+  const subtaskSummarySection = subtaskPrompt
+    .split('## Subtask Summary Format\n')[1]
+    ?.split('\n---')[0]
+  assert.ok(subtaskSummarySection, 'subtask prompt must include its summary section')
+  assert.ok(
+    subtaskSummarySection.includes(
+      'If memory affected the result, state the takeaway briefly; do not repeat the entry or task context.',
+    ),
+  )
+  const returnMemoryContextField = returnContract
+    .split('\n')
+    .find((line) => line.startsWith('**memory_context:**'))
+  assert.ok(returnMemoryContextField, 'return contract must include memory_context')
+  assert.ok(returnMemoryContextField.includes('(optional;'), 'memory_context must be optional')
+  const memoryContextGuidance = returnContract.split('## Memory Context\n')[1]?.split('\n## ')[0]
+  assert.ok(memoryContextGuidance, 'return contract must include its Memory Context section')
+  assert.match(memoryContextGuidance, /optional machine-readable `memory_context`/i)
   assert.match(
-    subtaskPrompt,
-    /If memory affected the result, state the takeaway briefly[\s\S]*do not repeat the entry/i,
+    memoryContextGuidance,
+    /belongs to `## subtask_summary` only when that return format applies/i,
+  )
+  assert.match(
+    memoryContextGuidance,
+    /does not change the Apollo\/Athena structured-findings format or the council specialist-response contract/i,
+  )
+  assert.ok(
+    returnMemoryContextField.includes('"refs"') && returnMemoryContextField.includes('"takeaway"'),
+  )
+  assert.match(
+    memoryContextGuidance,
+    /omit the field entirely when memory did not affect the result/i,
+  )
+  assert.match(memoryContextGuidance, /both its refs and takeaway must be non-sensitive/i)
+  assert.match(memoryContextGuidance, /no secrets or irrelevant memory content/i)
+  const subtaskMemoryContextField = subtaskPrompt
+    .split('\n')
+    .find((line) => line.startsWith('**memory_context:**'))
+  assert.ok(subtaskMemoryContextField, 'subtask return contract must include memory_context')
+  assert.ok(
+    subtaskMemoryContextField.includes('(optional;'),
+    'subtask memory_context must be optional',
   )
   assert.doesNotMatch(subtaskPrompt, /\*\*tokens:\*\*[^\n]*optional/i)
 })
