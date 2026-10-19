@@ -25,12 +25,12 @@ For investigation agents (Apollo, Athena), return structured findings with:
 
 ### Athena Plan Handoff
 
-When Athena is delegated to create a plan, its final task result MUST contain
-the complete Markdown plan, not just a summary, artifact path, or approval
-question. Include the goal, scope and assumptions, actionable phases, affected
-files or areas, dependencies, verification, risks, open questions, and
-acceptance criteria; mark unknowns instead of guessing. When called by Zeus,
-this plan contract supersedes the generic structured-findings format above.
+When Zeus delegates Athena through the root `subagent` dispatch, its final task
+result MUST contain the complete Markdown plan, not just a summary, artifact
+path, or approval question. Include the goal, scope and assumptions, actionable
+phases, affected files or areas, dependencies, verification, risks, open
+questions, and acceptance criteria; mark unknowns instead of guessing. This
+plan contract supersedes the generic structured-findings format above.
 Athena must not call `agent/askQuestions`, pause for user input, or ask for
 approval in the child session. Zeus must publish the returned full plan as a
 normal message in the main conversation before triggering any approval UI;

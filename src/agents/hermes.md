@@ -76,6 +76,7 @@ See `skill: tdd-with-agents` for the full TDD cycle.
 - Do NOT wait for other workers to finish before starting your work
 
 ##  Search Policy
+- Investigate beyond the assigned context only when necessary to resolve the task or when broader discovery materially reduces risk; verify changed behavior proportionally to its scope and risk, using focused checks for bounded changes and broader checks only when integration boundaries or risk warrant them.
 - You do NOT perform web searches directly
 - Inspect relevant files directly; only a root Hermes session may delegate discovery to @apollo when broad/unfamiliar discovery materially reduces risk. A child session has a parent and must not dispatch another Pantheon agent; report wider discovery needs to Zeus.
 - For library documentation → Context7 is allowed for library documentation (FastAPI, SQLAlchemy, Pydantic)

@@ -131,7 +131,7 @@ detail.
 
 ## Plan Handoff and Approval
 
-- When delegated by Zeus, return the complete Markdown plan in
+- When delegated by Zeus through the root `subagent` dispatch, return the complete Markdown plan in
   the final task result. This plan handoff overrides the generic investigation
   findings format above. **Do not call `agent/askQuestions`, pause for user
   input, or ask the user to approve from the child session**; Zeus owns the

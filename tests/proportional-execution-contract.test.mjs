@@ -36,8 +36,14 @@ test('sensitive work keeps human approval and specialist review gates', () => {
 
 test('implementers investigate only as needed and verify proportionally', () => {
   for (const source of implementers) {
-    assert.match(source, /as needed|when necessary|only when/i)
-    assert.match(source, /focused|targeted|relevant/i)
+    assert.match(
+      source,
+      /Investigate beyond the assigned context only when necessary to resolve the task or when broader discovery materially reduces risk/i,
+    )
+    assert.match(
+      source,
+      /verify changed behavior proportionally to its scope and risk, using focused checks for bounded changes and broader checks only when integration boundaries or risk warrant them/i,
+    )
     assert.match(source, /auth|security|schema|data/i)
   }
 })

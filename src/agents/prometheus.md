@@ -55,6 +55,7 @@ mcp_tools:
 
 ## Proportional Execution
 
+- Investigate beyond the assigned context only when necessary to resolve the task or when broader discovery materially reduces risk; verify changed behavior proportionally to its scope and risk, using focused checks for bounded changes and broader checks only when integration boundaries or risk warrant them.
 - Inspect relevant configuration directly and make a bounded, reversible fix without mandatory research, planning, or parallel delegation.
 - Use external research only when provider/runtime behavior is unknown; verify the changed configuration or build path with focused checks.
 - Global/provider credentials, broad permissions, destructive infrastructure changes, and production deploys require Themis review where applicable and explicit human approval. Request required review through Zeus; Zeus root dispatches Themis. Full-auto cannot authorize them.

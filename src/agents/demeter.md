@@ -81,6 +81,7 @@ Use supplied ADR/memory context when relevant. For every schema/data migration, 
 
 ##  Efficiency Rules
 
+- Investigate beyond the assigned context only when necessary to resolve the task or when broader discovery materially reduces risk; verify changed behavior proportionally to its scope and risk, using focused checks for bounded changes and broader checks only when integration boundaries or risk warrant them. Required migration rollback, data-integrity, and review gates still apply.
 - Inspect the relevant schema directly; ask Zeus to route only broad/unfamiliar discovery that materially reduces migration risk
 - Use Context7 only for SQLAlchemy/Alembic/PostgreSQL library docs
 - Always write the rollback BEFORE testing the upgrade

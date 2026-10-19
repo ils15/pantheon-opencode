@@ -9,6 +9,7 @@ const deepwork = read('../commands/pantheon-deepwork.md')
 const coordination = read('../src/skills/agent-coordination/SKILL.md')
 const quickPlan = read('../prompts/quick-plan-large-feature.prompt.md')
 const orchestration = read('../prompts/orchestrate-with-zeus.prompt.md')
+const agentReturnFormat = read('../src/instructions/agent-return-format.instructions.md')
 
 test('quick-plan prompt records unknowns and leaves user approval to Zeus', () => {
   for (const childSolicitation of [
@@ -33,14 +34,25 @@ test('quick-plan prompt records unknowns and leaves user approval to Zeus', () =
 test('Athena returns the complete plan to Zeus without opening approval in the child session', () => {
   assert.match(
     athena,
-    /When invoked by Zeus through `task\(\)`[\s\S]*?Do not call `agent\/askQuestions`[\s\S]*?child session/i,
+    /When delegated by Zeus through the root `subagent` dispatch,[\s\S]*?return the complete Markdown plan[\s\S]*?final task result/i,
+  )
+  assert.match(
+    athena,
+    /Do not call `agent\/askQuestions`, pause for user\s+input, or ask the user to approve from the child session/i,
   )
   assert.match(athena, /return the complete Markdown plan in[\s\S]*?final task result/i)
   assert.match(athena, /affected files or areas/i)
   assert.match(athena, /dependencies[\s\S]*?tests[\s\S]*?risks/i)
   assert.match(athena, /assumptions[\s\S]*?open questions[\s\S]*?acceptance criteria/i)
   assert.match(athena, /overrides the generic investigation[\s\S]*?format/i)
-  assert.match(athena, /Do not call `agent\/askQuestions`, pause for user\s+input/i)
+  assert.match(
+    agentReturnFormat,
+    /When Zeus delegates Athena through the root `subagent` dispatch,[\s\S]*?final task\s+result MUST contain[\s\S]*?the complete Markdown plan/i,
+  )
+  assert.match(
+    agentReturnFormat,
+    /Athena must not call `agent\/askQuestions`, pause for user input, or ask for\s+approval in the child session/i,
+  )
 })
 
 test('Zeus shows Athena’s full plan in the main conversation before asking for approval', () => {
