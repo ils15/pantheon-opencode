@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -100,6 +101,443 @@ test('CI package validation and evidence preserve failures and remain blocking',
   }
 })
 
+/**
+ * Extract a named step's `run: |` block and dedent it, so a test can execute
+ * the step's shell exactly as the runner would instead of pattern-matching a
+ * paraphrase of it.
+ */
+function stepRunBody(stepName) {
+  const lines = workflow.split('\n')
+  const start = lines.findIndex((line) => line.trim() === `- name: ${stepName}`)
+  assert.ok(start >= 0, `workflow must define a step named ${stepName}`)
+  // A step ends at the next step (`      - `) or the next job key (`  key:`).
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^ {6}- /.test(lines[i]) || /^ {2}[A-Za-z_][A-Za-z0-9_-]*:/.test(lines[i])) {
+      end = i
+      break
+    }
+  }
+  const step = lines.slice(start, end)
+  const runAt = step.findIndex((line) => /^ {8}run: \|$/.test(line))
+  assert.ok(runAt >= 0, `step ${stepName} must use a \`run: |\` block to be executable`)
+  const script = step.slice(runAt + 1)
+  assert.ok(
+    script.some((line) => line.trim() !== ''),
+    `${stepName} must have a non-empty script`,
+  )
+  const first = script.find((line) => line.trim() !== '')
+  const indent = first.match(/^ */)[0].length
+  return script
+    .map((line) => (line.startsWith(' '.repeat(indent)) ? line.slice(indent) : line))
+    .join('\n')
+}
+
+/** Run an extracted step body with an explicit environment and a controlled PATH. */
+function runStepBody(stepName, env) {
+  return spawnSync('bash', ['-c', stepRunBody(stepName)], {
+    encoding: 'utf8',
+    env: { PATH: '/usr/bin:/bin', ...env },
+  })
+}
+
+/**
+ * The step's EXECUTABLE lines. A `#` at the start of a line is a shell comment
+ * and cannot change an exit status, so assertions about control flow must not
+ * read the prose documenting that control flow as if it were the control flow.
+ */
+function stepRunCode(stepName) {
+  return stepRunBody(stepName)
+    .split('\n')
+    .filter((line) => line.trim() !== '' && !line.trimStart().startsWith('#'))
+    .join('\n')
+}
+
+const CANARY_INSTALL_STEP = 'Install the OpenCode host CLI for the tool canary'
+const CANARY_RUN_STEP = 'V2 tool canary (full host run)'
+
+/** The host-backed canary file — the one gate that drives a Pantheon tool. */
+const CANARY_TEST = fileURLToPath(
+  new URL('./canary/plugin-v2-tool-canary.test.mjs', import.meta.url),
+)
+
+/** The `OPENCODE_CANARY_CLI_SPEC` the install step installs. */
+function canaryCliSpec() {
+  const spec = /OPENCODE_CANARY_CLI_SPEC:\s*'([^']+)'/.exec(workflow)?.[1]
+  assert.ok(spec, `the ${CANARY_INSTALL_STEP} step must declare its host spec`)
+  return spec
+}
+
+/** A sandbox with a stub `npm`, a runner temp dir and a GITHUB_ENV to inspect. */
+function canarySandbox(t, npmStub) {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-canary-gate-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, 'bin')
+  const runnerTemp = join(root, 'runner-temp')
+  const githubEnv = join(root, 'github-env')
+  mkdirSync(bin, { recursive: true })
+  mkdirSync(runnerTemp, { recursive: true })
+  writeFileSync(join(bin, 'npm'), npmStub, { mode: 0o755 })
+  writeFileSync(githubEnv, '')
+  return { root, bin, runnerTemp, githubEnv }
+}
+
+/** A stub OpenCode host that answers `--version` and nothing else. */
+function stubHost(dir) {
+  const host = join(dir, 'opencode')
+  writeFileSync(host, '#!/bin/sh\necho "opencode v2.0.22"\n', { mode: 0o755 })
+  return host
+}
+
+test('CI installs a host for the tool canary and the gate cannot pass without one', () => {
+  const installAt = workflow.indexOf(`- name: ${CANARY_INSTALL_STEP}`)
+  const runAt = workflow.indexOf(`- name: ${CANARY_RUN_STEP}`)
+  assert.ok(installAt >= 0, 'workflow must install the OpenCode host for the tool canary')
+  assert.ok(runAt > installAt, 'the host must be installed BEFORE the gate that needs it')
+  assert.ok(
+    installAt > workflow.indexOf('validate:'),
+    'the host install must live in the validate job',
+  )
+
+  // The whole point of the P0: a `run` block that cannot run must not exit 0.
+  const runCode = stepRunCode(CANARY_RUN_STEP)
+  assert.doesNotMatch(
+    runCode,
+    /\bexit 0\b/,
+    'the tool canary gate must never exit 0 on a skip — that is the P0',
+  )
+  assert.match(runCode, /\bexit 1\b/, 'the gate must have an explicit hard-failure exit')
+  assert.match(runCode, /PANTHEON_CANARY_CLI/, 'the gate must consume the installed host')
+  assert.match(runCode, /PANTHEON_TOOL_CANARY_BIN="\$PANTHEON_CANARY_CLI"/)
+  // A skipping canary exits 0, so the gate must also reject skips explicitly —
+  // and it must read the skip COUNT from the summary. Node's default reporter
+  // here is `spec`, which prints skipped cases as `﹣ name (…) # reason` and has
+  // no `# SKIP` marker, so grepping for that marker passes vacuously.
+  assert.match(
+    runCode,
+    /grep -oE 'skipped \[0-9\]\+'/,
+    'the gate must read the skip count from the summary line',
+  )
+  assert.doesNotMatch(
+    runCode,
+    /grep -q '# SKIP'/,
+    "grepping for '# SKIP' passes vacuously under the spec reporter",
+  )
+  assert.match(
+    runCode,
+    /unresolved check is a failure|An unresolved check is a failure/,
+    'an unreadable skip count must fail, not pass',
+  )
+
+  // The install step is itself fail-closed on an unusable host.
+  const installCode = stepRunCode(CANARY_INSTALL_STEP)
+  assert.doesNotMatch(installCode, /\bexit 0\b/)
+  assert.match(installCode, /npm install --global --prefix "\$prefix"/)
+  // Explicit names, never a glob: an `opencode*` glob would happily match a
+  // broken `opencode-broken` and paper over a genuinely missing host.
+  assert.match(
+    installCode,
+    /for name in opencode opencode2; do/,
+    'the host probe must name both candidate binaries explicitly, in order',
+  )
+  assert.doesNotMatch(installCode, /for \w+ in opencode\*/, 'the host probe must not glob')
+  assert.doesNotMatch(installCode, /\|\| true/)
+})
+
+test('the tool canary gate FAILS when the OpenCode host is absent', (t) => {
+  // A `npm` that would succeed if it were ever reached, plus a sentinel file, so
+  // this proves the gate failed BECAUSE the host was missing rather than
+  // because the canary happened to pass.
+  const { bin, runnerTemp, githubEnv } = canarySandbox(
+    t,
+    '#!/bin/sh\necho CALLED >> "$RUNNER_TEMP/npm-called"\nexit 0\n',
+  )
+  assert.ok(
+    !existsSync('/usr/bin/opencode') && !existsSync('/bin/opencode'),
+    'this test needs a PATH with no opencode binary in it',
+  )
+  const result = runStepBody(CANARY_RUN_STEP, {
+    PATH: `${bin}:/usr/bin:/bin`,
+    RUNNER_TEMP: runnerTemp,
+    GITHUB_ENV: githubEnv,
+    // deliberately NOT set: the install step never ran
+  })
+  assert.notEqual(
+    result.status,
+    0,
+    `a tool canary with no host must fail, not pass. Output:\n${result.stdout}\n${result.stderr}`,
+  )
+  assert.match(result.stdout + result.stderr, /Tool canary did not run/)
+  assert.ok(
+    !existsSync(join(runnerTemp, 'npm-called')),
+    'the gate must refuse before invoking the canary, not run it and pass',
+  )
+})
+
+test('the tool canary gate FAILS a host that does not run', (t) => {
+  const { bin, runnerTemp, githubEnv } = canarySandbox(t, '#!/bin/sh\nexit 0\n')
+  const host = join(bin, 'opencode')
+  writeFileSync(host, '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+  const result = runStepBody(CANARY_RUN_STEP, {
+    PATH: `${bin}:/usr/bin:/bin`,
+    RUNNER_TEMP: runnerTemp,
+    GITHUB_ENV: githubEnv,
+    PANTHEON_CANARY_CLI: host,
+  })
+  assert.notEqual(
+    result.status,
+    0,
+    `a host that exits non-zero must fail. Output:\n${result.stdout}`,
+  )
+  assert.match(result.stdout + result.stderr, /Tool canary did not run/)
+})
+
+test('the tool canary gate FAILS when the host is present but the canary skips', (t) => {
+  // `node --test` exits 0 on a skipped case, so a canary that skips itself is a
+  // green run that verified nothing — the other half of the P0.
+  //
+  // Both reporter shapes are covered on purpose. Node's default reporter here is
+  // `spec` (`﹣ name (0ms) # reason`, no `# SKIP` marker anywhere); `tap` is the
+  // other shape. A gate that only understood one of them would pass a fully
+  // skipped canary under the other, which is the bug this case exists to close.
+  const skipping = {
+    'spec reporter (no # SKIP marker at all)':
+      '﹣ the host drove every scripted turn (0.05ms) # opencode binary not found on PATH\n',
+    'tap reporter (# SKIP marker)':
+      'ok 2 - the host drove every scripted turn # SKIP opencode binary not found on PATH\n',
+  }
+  for (const [label, body] of Object.entries(skipping)) {
+    const { bin, runnerTemp, githubEnv } = canarySandbox(
+      t,
+      `#!/bin/sh\ncat <<'OUT'\nok 1 - the host environment is redirected into the sandbox\n${body}# tests 2\n# pass 2\n# skipped 1\nOUT\nexit 0\n`,
+    )
+    const result = runStepBody(CANARY_RUN_STEP, {
+      PATH: `${bin}:/usr/bin:/bin`,
+      RUNNER_TEMP: runnerTemp,
+      GITHUB_ENV: githubEnv,
+      PANTHEON_CANARY_CLI: stubHost(bin),
+    })
+    assert.notEqual(
+      result.status,
+      0,
+      `a skipped canary must fail under the ${label}. Output:\n${result.stdout}\n${result.stderr}`,
+    )
+    assert.match(result.stdout + result.stderr, /ran no host-backed check/)
+    assert.match(result.stdout + result.stderr, /skipped 1 case/)
+  }
+})
+
+test('the tool canary gate FAILS when the skip count cannot be read', (t) => {
+  // An unresolved check is a failure. If the summary carries no skip count the
+  // gate cannot prove the canary ran, so it must not pass.
+  const { bin, runnerTemp, githubEnv } = canarySandbox(
+    t,
+    '#!/bin/sh\necho "some reporter that never says skipped"\nexit 0\n',
+  )
+  const result = runStepBody(CANARY_RUN_STEP, {
+    PATH: `${bin}:/usr/bin:/bin`,
+    RUNNER_TEMP: runnerTemp,
+    GITHUB_ENV: githubEnv,
+    PANTHEON_CANARY_CLI: stubHost(bin),
+  })
+  assert.notEqual(result.status, 0, 'an unresolved skip count must fail')
+  assert.match(result.stdout + result.stderr, /check unresolved/)
+})
+
+test('the tool canary gate PASSES a real, non-skipping canary run', (t) => {
+  // The control: the gate is not "always fail". A host that works and a canary
+  // that reports zero skips must go green.
+  for (const [label, body] of Object.entries({
+    spec: '✔ the host drove every scripted turn (1382.40ms)\n',
+    tap: 'ok 2 - the host drove every scripted turn\n',
+  })) {
+    const { bin, runnerTemp, githubEnv } = canarySandbox(
+      t,
+      `#!/bin/sh\ncat <<'OUT'\nok 1 - the host environment is redirected into the sandbox\n${body}# tests 2\n# pass 2\n# skipped 0\nOUT\nexit 0\n`,
+    )
+    const result = runStepBody(CANARY_RUN_STEP, {
+      PATH: `${bin}:/usr/bin:/bin`,
+      RUNNER_TEMP: runnerTemp,
+      GITHUB_ENV: githubEnv,
+      PANTHEON_CANARY_CLI: stubHost(bin),
+    })
+    assert.equal(
+      result.status,
+      0,
+      `the gate must pass on a real run under the ${label} reporter. Output:\n${result.stdout}\n${result.stderr}`,
+    )
+  }
+})
+
+test('the host install step FAILS when npm installs nothing runnable', (t) => {
+  // A spec that installs successfully but yields no usable binary. `npm install`
+  // exiting 0 must not be mistaken for "there is a host".
+  const bin = '"$RUNNER_TEMP/pantheon-canary-cli/bin"'
+  const cases = [
+    ['nothing at all', '#!/bin/sh\nexit 0\n'],
+    ['a non-executable binary', `#!/bin/sh\nmkdir -p ${bin}\ntouch ${bin}/opencode2\nexit 0\n`],
+    [
+      'a binary that exits non-zero on --version',
+      `#!/bin/sh\nmkdir -p ${bin}\nprintf '#!/bin/sh\\nexit 1\\n' > ${bin}/opencode2\nchmod +x ${bin}/opencode2\nexit 0\n`,
+    ],
+    [
+      'only a name a glob would have matched',
+      `#!/bin/sh\nmkdir -p ${bin}\nprintf '#!/bin/sh\\necho v2\\n' > ${bin}/opencode-broken\nchmod +x ${bin}/opencode-broken\nexit 0\n`,
+    ],
+  ]
+  for (const [label, stub] of cases) {
+    const sandbox = canarySandbox(t, stub)
+    const result = runStepBody(CANARY_INSTALL_STEP, {
+      PATH: `${sandbox.bin}:/usr/bin:/bin`,
+      RUNNER_TEMP: sandbox.runnerTemp,
+      GITHUB_ENV: sandbox.githubEnv,
+      OPENCODE_CANARY_CLI_SPEC: '@opencode-ai/cli@0.0.0-beta-19271',
+    })
+    assert.notEqual(
+      result.status,
+      0,
+      `installing ${label} must fail the step. Output:\n${result.stdout}\n${result.stderr}`,
+    )
+    assert.match(
+      result.stdout + result.stderr,
+      /Tool canary host CLI unusable/,
+      `installing ${label} must name the real cause`,
+    )
+    assert.doesNotMatch(
+      readFileSync(sandbox.githubEnv, 'utf8'),
+      /PANTHEON_CANARY_CLI=/,
+      `installing ${label} must not hand a host to the gate`,
+    )
+  }
+})
+
+test('the host install step RESOLVES both opencode and the opencode2 name', (t) => {
+  // The naming discrepancy is real and is handled explicitly, not papered over:
+  // the npm CLI package ships exactly one bin, named `opencode2`, while the
+  // canary file defaults to `opencode`. Either must resolve, by exact name.
+  for (const shipped of ['opencode', 'opencode2']) {
+    const sandbox = canarySandbox(
+      t,
+      `#!/bin/sh\nmkdir -p "$RUNNER_TEMP/pantheon-canary-cli/bin"\n` +
+        `printf '#!/bin/sh\\necho "opencode v2.0.22"\\n' > "$RUNNER_TEMP/pantheon-canary-cli/bin/${shipped}"\n` +
+        `chmod +x "$RUNNER_TEMP/pantheon-canary-cli/bin/${shipped}"\nexit 0\n`,
+    )
+    const result = runStepBody(CANARY_INSTALL_STEP, {
+      PATH: `${sandbox.bin}:/usr/bin:/bin`,
+      RUNNER_TEMP: sandbox.runnerTemp,
+      GITHUB_ENV: sandbox.githubEnv,
+      OPENCODE_CANARY_CLI_SPEC: '@opencode-ai/cli@0.0.0-beta-19271',
+    })
+    assert.equal(
+      result.status,
+      0,
+      `a working '${shipped}' must resolve. Output:\n${result.stdout}\n${result.stderr}`,
+    )
+    const exported = /^PANTHEON_CANARY_CLI=(.+)$/m.exec(readFileSync(sandbox.githubEnv, 'utf8'))
+    assert.ok(exported, `the step must export the resolved host path for '${shipped}'`)
+    assert.equal(
+      exported[1],
+      join(sandbox.runnerTemp, 'pantheon-canary-cli', 'bin', shipped),
+      `the resolved host for '${shipped}' must be that exact binary, by name`,
+    )
+  }
+})
+
+test('the tool canary host CLI is pinned to an EXACT version, never a floating tag', () => {
+  // `@beta` is the failure this pins. It resolved to 0.0.0-beta-19271 on
+  // 2026-10-05 and moves on every beta release, so the gate's verdict could
+  // change with no diff on the branch to review and no way to tell a plugin
+  // regression from a host change. A range has the same defect.
+  const spec = canaryCliSpec()
+  assert.match(
+    spec,
+    /^@opencode-ai\/cli@\d+\.\d+\.\d+-[\w.-]+$/,
+    `the tool canary host must be pinned to one exact version, got ${spec}`,
+  )
+  for (const floating of ['@beta', '@latest', '@next', '@dev', '^', '~', '*', '>=', '>']) {
+    assert.ok(
+      !spec.includes(floating),
+      `the tool canary host spec must not float (${floating}): ${spec}`,
+    )
+  }
+})
+
+test('the pinned host, the canary it drives, and the docs cannot silently disagree', () => {
+  // A pin nobody re-reads is how a gate becomes a comforting lie: the number in
+  // ci.yml stops matching the host the canary was actually verified against, and
+  // both files still look authoritative. So the pin has to be visible in BOTH
+  // files, and the canary has to name the host generation it was written against.
+  const pinned = canaryCliSpec().split('@').pop()
+  // Must be a CONCRETE version, not a tag. Without this, a floating spec makes
+  // the two checks below pass vacuously: "beta" occurs in prose in both files,
+  // so the doc-sync assertion would be satisfied by the word, not by a version.
+  assert.match(
+    pinned,
+    /^\d+\.\d+\.\d+-[\w.-]+$/,
+    `the host spec must resolve to a concrete version to be worth documenting, got ${pinned}`,
+  )
+  const canary = readFileSync(CANARY_TEST, 'utf8')
+
+  const testedHost = /TESTED_HOST_VERSION\s*=\s*'([^']+)'/.exec(canary)?.[1]
+  assert.ok(
+    testedHost,
+    `${CANARY_TEST} must declare TESTED_HOST_VERSION: a reader has to know which host the canary proves`,
+  )
+  assert.match(
+    testedHost,
+    /^opencode v\d+\.\d+\.\d+$/,
+    `TESTED_HOST_VERSION must name one concrete host version, got ${testedHost}`,
+  )
+
+  // The installed host must be named where the threat model is written, and in
+  // the canary that will be migrated onto it — otherwise the "what does this
+  // gate prove" answer lives in only one of the two files that matter.
+  assert.match(
+    workflow,
+    /TESTED HOST VERSION/,
+    'ci.yml must document the tested host version in its threat-model section',
+  )
+  assert.ok(
+    workflow.includes(pinned),
+    `ci.yml must name the pinned host version (${pinned}) so the pin is auditable`,
+  )
+  assert.ok(
+    canary.includes(pinned),
+    `${CANARY_TEST} must name the installed host version (${pinned}) so the canary and the pin cannot drift apart`,
+  )
+})
+
+test('the tool canary install step makes pin drift VISIBLE', () => {
+  // The smallest thing that stops a pin rotting quietly: every run says whether
+  // the pinned host is still what an unpinned install would give.
+  //
+  // It annotates rather than fails, on purpose. A red-on-drift gate would go red
+  // on every beta release regardless of the branch under test, which is the noise
+  // that gets a gate switched off — and the gate must keep testing the pinned
+  // host it documents either way.
+  const installCode = stepRunCode(CANARY_INSTALL_STEP)
+  assert.match(
+    installCode,
+    /npm view @opencode-ai\/cli dist-tags\.beta/,
+    'the install step must read the current beta dist-tag to detect drift',
+  )
+  assert.match(
+    installCode,
+    /::warning title=Tool canary host pin is behind beta/,
+    'drift between the pin and beta must be annotated',
+  )
+  assert.match(
+    installCode,
+    /::warning title=Tool canary beta lookup unresolved/,
+    'an unreadable beta dist-tag is UNKNOWN drift, not zero drift — it must say so',
+  )
+  assert.doesNotMatch(
+    installCode,
+    /\|\| true/,
+    'a failed beta lookup must not be swallowed into a silent pass',
+  )
+})
+
 test('CI validates YAML and installs locked dependencies only', () => {
   assert.match(workflow, /python3 scripts\/ci-validate-yaml\.py/)
   assert.match(workflow, /npm ci --ignore-scripts/)
@@ -171,7 +609,24 @@ test('CI validates YAML and installs locked dependencies only', () => {
     workflow.indexOf('requirements-vision.txt') < testGate,
     'Locked vision pip install must run BEFORE the pytest gate',
   )
-  assert.doesNotMatch(workflow, /npm install(?!.*--dry-run)/)
+  // Every DEPENDENCY must come from the committed lock via `npm ci`. The one
+  // `npm install` this workflow is allowed to run installs the OpenCode CLI
+  // that hosts the tool canary — the thing UNDER TEST, not a dependency of
+  // this package (scripts/test-opencode-v2-sandbox.sh documents the same for its
+  // own install). Locking the host would make the gate prove only that the lock
+  // is unchanged, so it is deliberately installed from a spec. That makes this
+  // a WHITELIST of exactly that one command rather than a loosened blacklist:
+  // any second `npm install`, in any workflow step, fails here.
+  const npmInstalls = workflow
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('#') && /(^|[\s;&|(])npm install\b/.test(line))
+  assert.deepEqual(
+    npmInstalls.map((line) => line.trim()),
+    ['npm install --global --prefix "$prefix" --no-fund --no-audit "$OPENCODE_CANARY_CLI_SPEC"'],
+    'workflow dependencies must come from `npm ci` alone; the only permitted ' +
+      '`npm install` is the OpenCode host CLI for the tool canary',
+  )
+  assert.doesNotMatch(workflow, /npm install[^\n]*--dry-run/)
   assert.doesNotMatch(workflow, /\|\| true/)
   assert.doesNotMatch(workflow, /echo ["']?(?:test|audit) warnings/i)
   assert.match(workflow, /PANTHEON_PYTHON: python3/)
