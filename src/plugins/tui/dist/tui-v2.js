@@ -477,7 +477,7 @@ function Sidebar(props) {
 		setProp(_el$, "width", "100%");
 		setProp(_el$, "padding", 1);
 		setProp(_el$2, "attributes", 1);
-		insert(_el$2, `Pantheon v1.6.0-beta.14`);
+		insert(_el$2, `Pantheon v1.6.0-beta.15`);
 		insertNode(_el$3, createTextNode(`OpenCode V2 · plugin TUI ativo`));
 		insert(_el$, createComponent(Show, {
 			get when() {
@@ -623,7 +623,7 @@ function HomeStatus(props) {
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
 	return (() => {
 		var _el$20 = createElement("text");
-		insert(_el$20, () => `Pantheon v1.6.0-beta.14${preset().name ? ` ⚡ ${preset().name}` : ""}`);
+		insert(_el$20, () => `Pantheon v1.6.0-beta.15${preset().name ? ` ⚡ ${preset().name}` : ""}`);
 		effect((_$p) => setProp(_el$20, "fg", muted(), _$p));
 		return _el$20;
 	})();

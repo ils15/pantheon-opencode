@@ -5,9 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
-## [v1.6.0-beta.14] - Unreleased
+## [Unreleased]
 
-_Pre-release candidate; not yet published._
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## 🆕 What's New
+
+## 🐞 Fixed
+
+## ⚠️ Known Issues
+
+## ✅ Closed Issues
+
+## [v1.6.0-beta.15] - 2026-10-19
+
+## 🆕 What's New
+
+- **Safe memory handoffs and agent contracts:** delegation briefs can pass
+  minimized, non-sensitive memory references and takeaways as untrusted context;
+  return formats and discovery/review routing are clarified across agent roles.
+- **Optional per-session token breakdowns:** benchmark reports can show root and
+  descendant usage when session data is complete; incomplete data remains
+  unavailable rather than being zero-filled.
+
+## 🐞 Fixed
+
+- **Empty task/subagent results:** empty child-dispatch results are surfaced as
+  explicit errors while non-empty structured results remain intact.
+
+## [v1.6.0-beta.14] - 2026-10-17
+
+_Published manually to npm on 2026-10-17; source commit and tag unknown._
 
 ## 🆕 What's New
 
