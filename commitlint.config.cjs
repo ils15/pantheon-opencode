@@ -30,6 +30,7 @@ module.exports = {
       'always',
       [
         'agents',
+        'agent-flow',
         'skills',
         'scripts',
         'docs',
