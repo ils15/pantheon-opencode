@@ -1,6 +1,6 @@
 /**
- * Tests for the Task Result Guard — detects empty task() results from native
- * opencode subagent calls and converts them to explicit errors.
+ * Tests for the Task Result Guard — accepts empty `task` and `subagent` tool
+ * labels and converts their empty results to explicit errors.
  *
  * Bug context (reproduced 2026-09-10): task() native creates a child session
  * that inherits the parent transcript. When the payload exceeds the provider's
@@ -48,6 +48,19 @@ async function main() {
   await testAsync('task tool with empty string output → replaced with error', async () => {
     const guard = createTaskResultGuard()
     const input: TaskGuardInput = { tool: 'task', sessionID: 'ses_test1', callID: 'c1', args: {} }
+    const output: TaskGuardOutput = { output: '' }
+    await guard(input, output)
+    assert.equal(output.output, EMPTY_TASK_ERROR)
+  })
+
+  await testAsync('subagent tool with empty output → replaced with explicit error', async () => {
+    const guard = createTaskResultGuard()
+    const input: TaskGuardInput = {
+      tool: 'subagent',
+      sessionID: 'ses_subagent_empty',
+      callID: 'c_subagent_empty',
+      args: {},
+    }
     const output: TaskGuardOutput = { output: '' }
     await guard(input, output)
     assert.equal(output.output, EMPTY_TASK_ERROR)
@@ -115,6 +128,19 @@ async function main() {
     const output: TaskGuardOutput = { output: 'done' }
     await guard(input, output)
     assert.equal(output.output, 'done')
+  })
+
+  await testAsync('subagent tool with real content → NOT modified', async () => {
+    const guard = createTaskResultGuard()
+    const input: TaskGuardInput = {
+      tool: 'subagent',
+      sessionID: 'ses_subagent_content',
+      callID: 'c_subagent_content',
+      args: {},
+    }
+    const output: TaskGuardOutput = { output: 'Discovery findings' }
+    await guard(input, output)
+    assert.equal(output.output, 'Discovery findings')
   })
 
   // ── Edge cases ──────────────────────────────────────────────────────

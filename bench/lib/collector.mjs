@@ -106,7 +106,8 @@ export function collectSessionTree(db, rootId) {
  * same rows pantheon_cost reads. V1 ledgers are reported unavailable (the V2
  * bench never produces them).
  */
-export function collectTokens(db, sessionIds) {
+export function collectTokens(db, requestedSessionIds, rootId = requestedSessionIds[0]) {
+  const sessionIds = [...new Set(requestedSessionIds)]
   const schema = detectSchema(db)
   if (schema.generation !== 'v2') {
     return {
@@ -114,68 +115,131 @@ export function collectTokens(db, sessionIds) {
       reason: `token ledger is ${schema.generation}; the bench collector reads the V2 session_message ledger only`,
     }
   }
+  if (sessionIds.length === 0) {
+    return { status: 'unavailable', reason: 'no sessions supplied to the token collector' }
+  }
   const placeholders = sessionIds.map(() => '?').join(', ')
   const rows = db
     .prepare(
-      `SELECT data FROM session_message WHERE session_id IN (${placeholders}) AND type = 'assistant'`,
+      `SELECT session_id, data FROM session_message WHERE session_id IN (${placeholders}) AND type = 'assistant'`,
     )
     .all(...sessionIds)
   const tokenFields = ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite']
-  const tokens = Object.fromEntries(tokenFields.map((field) => [field, 0]))
-  const fieldMessages = Object.fromEntries(tokenFields.map((field) => [field, 0]))
-  let counted = 0
+  const emptyUsage = () => ({
+    tokens: Object.fromEntries(tokenFields.map((field) => [field, 0])),
+    fieldMessages: Object.fromEntries(tokenFields.map((field) => [field, 0])),
+    tokenMessages: 0,
+    assistantMessages: 0,
+  })
+  const totalUsage = emptyUsage()
+  const perSession = new Map(sessionIds.map((sessionId) => [sessionId, emptyUsage()]))
   for (const row of rows) {
-    let data
-    try {
-      data = JSON.parse(row.data)
-    } catch {
-      continue
-    }
-    const t = data?.tokens
-    if (!t || typeof t !== 'object') continue
-    counted += 1
-    if (typeof t.input === 'number') {
-      tokens.input += t.input
-      fieldMessages.input += 1
-    }
-    if (typeof t.output === 'number') {
-      tokens.output += t.output
-      fieldMessages.output += 1
-    }
-    if (typeof t.reasoning === 'number') {
-      tokens.reasoning += t.reasoning
-      fieldMessages.reasoning += 1
-    }
-    if (t.cache && typeof t.cache === 'object') {
-      if (typeof t.cache.read === 'number') {
-        tokens.cacheRead += t.cache.read
-        fieldMessages.cacheRead += 1
-      }
-      if (typeof t.cache.write === 'number') {
-        tokens.cacheWrite += t.cache.write
-        fieldMessages.cacheWrite += 1
-      }
-    }
+    addAssistantUsage(totalUsage, row.data)
+    addAssistantUsage(perSession.get(row.session_id), row.data)
   }
   if (rows.length === 0) {
-    return { status: 'unavailable', reason: 'no assistant rows in the session tree' }
+    const reason = 'no assistant rows in the session tree'
+    return {
+      status: 'unavailable',
+      reason,
+      sessionBreakdown: { status: 'unavailable', reason },
+    }
   }
-  const missingFields = tokenFields.filter((field) => fieldMessages[field] !== rows.length)
+  const missingFields = tokenFields.filter(
+    (field) => totalUsage.fieldMessages[field] !== rows.length,
+  )
+  const sessionCoverageMissing = sessionIds.find((sessionId) => {
+    const usage = perSession.get(sessionId)
+    return (
+      usage.assistantMessages === 0 ||
+      tokenFields.some((field) => usage.fieldMessages[field] !== usage.assistantMessages)
+    )
+  })
+  const breakdownReason =
+    missingFields.length > 0
+      ? `incomplete token fields: ${missingFields.join(', ')}`
+      : sessionCoverageMissing
+        ? `incomplete assistant usage for session ${sessionCoverageMissing}`
+        : !sessionIds.includes(rootId)
+          ? 'root session is absent from the token session set'
+          : null
+  const sessionBreakdown = breakdownReason
+    ? { status: 'unavailable', reason: breakdownReason }
+    : buildSessionBreakdown(sessionIds, rootId, perSession)
   if (missingFields.length > 0) {
     return {
       status: 'unavailable',
       reason: `incomplete token fields: ${missingFields.join(', ')}`,
-      tokenMessages: counted,
+      tokenMessages: totalUsage.tokenMessages,
       assistantMessages: rows.length,
-      tokenFieldMessages: fieldMessages,
+      tokenFieldMessages: totalUsage.fieldMessages,
+      sessionBreakdown,
     }
   }
   return {
     status: 'ok',
-    ...tokens,
-    tokenMessages: counted,
+    ...totalUsage.tokens,
+    tokenMessages: totalUsage.tokenMessages,
     assistantMessages: rows.length,
-    tokenFieldMessages: fieldMessages,
+    tokenFieldMessages: totalUsage.fieldMessages,
+    sessionBreakdown,
+  }
+}
+
+function addAssistantUsage(usage, rawData) {
+  if (!usage) return
+  usage.assistantMessages += 1
+  let data
+  try {
+    data = JSON.parse(rawData)
+  } catch {
+    return
+  }
+  const tokens = data?.tokens
+  if (!tokens || typeof tokens !== 'object') return
+  usage.tokenMessages += 1
+  for (const field of ['input', 'output', 'reasoning']) {
+    if (typeof tokens[field] === 'number') {
+      usage.tokens[field] += tokens[field]
+      usage.fieldMessages[field] += 1
+    }
+  }
+  if (tokens.cache && typeof tokens.cache === 'object') {
+    if (typeof tokens.cache.read === 'number') {
+      usage.tokens.cacheRead += tokens.cache.read
+      usage.fieldMessages.cacheRead += 1
+    }
+    if (typeof tokens.cache.write === 'number') {
+      usage.tokens.cacheWrite += tokens.cache.write
+      usage.fieldMessages.cacheWrite += 1
+    }
+  }
+}
+
+function buildSessionBreakdown(sessionIds, rootId, perSession) {
+  const sessions = sessionIds.map((sessionId) => {
+    const { tokens } = perSession.get(sessionId)
+    return {
+      sessionId,
+      input: tokens.input,
+      output: tokens.output,
+      total: tokens.input + tokens.output,
+    }
+  })
+  const root = sessions.find((session) => session.sessionId === rootId)
+  const descendants = sessions.filter((session) => session.sessionId !== rootId)
+  const input = descendants.reduce((sum, session) => sum + session.input, 0)
+  const output = descendants.reduce((sum, session) => sum + session.output, 0)
+  return {
+    status: 'ok',
+    root,
+    descendants: {
+      input,
+      output,
+      total: input + output,
+      sessionCount: descendants.length,
+    },
+    sessions,
   }
 }
 

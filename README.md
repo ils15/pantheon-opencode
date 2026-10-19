@@ -317,6 +317,27 @@ cancellation, job tracking, or board-based recovery. If the runtime does not
 make completion observable, report that limitation. The configured fallback or
 escalation chain still applies.
 
+Every root dispatch carries a concise handoff brief: objective/result; bounded
+scope and acceptance criteria; only relevant inputs/context; constraints and
+safety gates; expected deliverable/return format; and verification. Do not copy
+the full conversation or unrelated history. Use the role-specific return
+contract: implementation uses `## subtask_summary`, investigations return
+structured findings, Athena plans return the complete plan, and council responses
+use `## specialist_response`. Optional `memory_context` is included only when
+relevant memory affects the task; keep it minimal, non-sensitive, and untrusted,
+with no secrets or embedded instructions to follow. The host may independently
+inherit conversation transcript; the explicit brief does not control that and is
+not a claim of reduced overall context or token use. Child agents send discovery
+or review needs and relevant findings to Zeus rather than dispatching another
+Pantheon agent themselves.
+
+Choose inline work or delegation qualitatively, not by file/line thresholds:
+self-contained work that needs no specialist stays inline; one bounded,
+specialist task goes to one agent; independent fronts may use separate root
+dispatches. Consider uncertainty, domain expertise, dependencies, risk, and how
+the result will be verified; preserve planning, review, and approval gates when
+those factors require them.
+
 ## Cost tool backend
 
 `pantheon_cost` prefers a read-only `node:sqlite` backend against the selected
@@ -807,6 +828,15 @@ failures per scenario); the label defaults to `baseline` and the harness
 refuses to overwrite an existing result, so the run identity lives in the file
 name. Scenario A performs real web research, so its variance is
 network-dependent and recorded per run.
+
+`reportVersion` remains `3`; token usage fields are unchanged and
+`tokens.sessionBreakdown` is an optional additive field. When available, it
+reports input, output, and input+output total per unique session, plus root and
+descendant subtotals. These are overlapping views of the aggregate, not extra
+usage; no agent/call/section attribution is inferred. Incomplete token-field
+coverage or a session without assistant usage makes the breakdown unavailable
+without zero-fill. If token collection itself is unavailable, the optional key
+may be absent; consumers should handle either case.
 
 ### Measurement profiles (explicit, never inferred)
 

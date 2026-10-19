@@ -1,6 +1,7 @@
 # 🗺️ Pantheon Roadmap
 
-> **Last updated:** v1.6.0-beta.4 (2026-10-05)
+> **Charter updated:** 2026-10-19
+> **Previous header/status snapshot:** v1.6.0-beta.4 / 2026-10-05 — superseded by later entries in the body; current readiness remains unreconciled.
 >
 > **Roadmap reativado.** O plano havia sido zerado em 2026-09-12 a partir de
 > validação de código. A validação runtime de 2026-10-04 provou que a
@@ -33,6 +34,46 @@
 > P0-1**, que descreve o estado **pré-#202** (`80bac52^`) e está marcado como
 > tal.
 
+## Road to Stable — charter
+
+Este `ROADMAP.md` é a única fonte-mestre Road-to-Stable: **um charter com três
+workstreams, não três roadmaps concorrentes**. O charter não reclassifica nem
+revalida os itens históricos abaixo.
+
+**Base de decisão (council de 2026-10-19):** 3/3 especialistas recomendaram
+três workstreams; houve divergência sobre quantos arquivos de plano separados
+deveriam existir. A resolução foi manter um charter mestre com três seções e
+criar planos executivos detalhados somente quando necessários.
+
+1. **Product & Agent-Workflow Contract** — definir o contrato do produto e do
+   fluxo de agentes. [PR #248](https://github.com/ils15/pantheon-opencode/pull/248)
+   é uma feature lane; não constitui evidência de release readiness.
+2. **Runtime & Distribution Validation** — provar que pacote, installer,
+   plugins e MCPs cumprem o contrato na matriz explicitamente suportada de
+   hosts. A matriz de compatibilidade e uma identidade única do candidato
+   conectam este trabalho ao restante.
+3. **Stable Release & Evidence Gate** — após congelar um candidato SHA exato e
+   obter evidência dos workstreams 1 e 2, validar testes, compatibilidade,
+   instalação, pacote, changelog e metadados; considerar release somente quando
+   todos os gates aplicáveis estiverem explicitamente `PASS`.
+
+Os workstreams 1 e 2 podem avançar em paralelo quando independentes; o 3 depende
+do candidato congelado e da evidência dos dois primeiros. O objetivo é um
+artefato stable reproduzível, vinculado ao `TARGET_SHA` completo e ao SHA-256 do
+tarball, com `PASS` em cada gate aplicável. Evidência ausente ou marcada
+`NOT_TESTED`, `WARN`, `SKIP` ou `AMBIENTAL` não é `PASS`; riscos não resolvidos
+são blockers ou precisam ser aceitos explicitamente, nunca aprovados em silêncio.
+
+**Readiness atual: `UNKNOWN / NOT RECONCILED`.** O NO-GO da alegação de prontidão
+stable com base no relatório beta.6 é precedente histórico; este charter não
+declara o estado atual como fail nem pass. Os contratos existentes em
+[docs/RELEASE.md](docs/RELEASE.md),
+[docs/RELEASING.md](docs/RELEASING.md) e
+[docs/INSTALLATION.md](docs/INSTALLATION.md) continuam referenciados. Planos
+executivos detalhados só serão criados quando um workstream ativo precisar
+deles, com links para evitar duplicar requisitos. O modelo permanece um master
+com três seções/workstreams; nenhum número de planos adicionais é presumido.
+
 ---
 
 ## ✅ Contrato atual — entregue e suportado
@@ -63,6 +104,8 @@
   podem ser ampliadas depois de um contrato do host ser demonstrado e testado.
 - `plugin-v2` não é um adapter de paridade do runtime V1 e não adiciona hooks
   Pantheon, Board ou auto-resume.
+> **Reconciliação de 2026-10-19:** o limite acima descreve o estado anterior ao
+> source wiring pós-#248; veja a reconciliação de P2-12 abaixo.
 
 ### Validação de orquestração — evidência positiva
 
@@ -704,6 +747,22 @@ leitor pode planejar contra é enganosa se ele ler "5 event subscriptions" como
 "5 behaviours"; falta ou decidir a paridade ou declarar a cadeia fora de escopo na
 documentação de instalação.
 
+**Reconciliação de 2026-10-19 — estado pós-#248; status preservado.** Em
+`origin/main` pós-#248 (`81f9f2e`, 2026-10-19), `src/plugin-v2.ts` importa
+`createV2ExecuteAfter` e registra `toolCtx.hook('execute.after', ...)`, cujo
+handler chama o adapter em `src/pantheon/v2-execute-after.ts`. Portanto, a
+afirmação histórica de que o hook está vazio/ausente está superada quanto ao
+source wiring; o registro acima permanece intacto como histórico. Isso não
+valida o contrato do live host: comportamento para o `tool` (label) e o formato
+de `result` efetivamente fornecidos pelo host ainda não tem validação runtime /
+host-e2e. As alterações adicionais do follow-up nesta branch continuam dirty e
+não merged; não são evidência de comportamento entregue nem base para fechar o
+item. O escopo original de P2-12 permanece incerto: se exigia apenas o registro
+e a ligação do hook, essa parcela está coberta no source pós-#248; se exigia
+paridade comportamental end-to-end no V2, a validação live-host continua
+pendente. **Status permanece OPEN** até que o escopo e a evidência apropriada
+resolvam essa incerteza.
+
 ### Beta 11 — Runtime, governança, persistência e release
 
 **Status da Beta 11: IN PROGRESS.** Há 18 commits locais à frente de
@@ -1049,6 +1108,7 @@ atualização deste ROADMAP permanece não commitada e não conta como entregue.
 
 | Data | Mudança |
 |------|---------|
+| 2026-10-19 | O council estabeleceu o charter Road to Stable com três workstreams; readiness permanece **`UNKNOWN / NOT RECONCILED`**. |
 | 2026-10-05 | **Reconciliação de P0-1 contra o PR #202: 29 itens, 2 fechados.** O PR #202 (`80bac52`, 2026-10-04) corrigiu os três defaults `'v1'` do seletor de geração para `'auto'` (`bin/pantheon-init.mjs:427`, `scripts/install/opencode.mjs:528`, assinatura em `scripts/install/opencode-version.mjs:213`) e adicionou um probe de `--version` do host (`scripts/install/opencode-version.mjs:44-55`; precedência `explícito > OPENCODE_VERSION > basename opencode2 > probe > warn-and-fallback-v1`). Fechou **P0-1** — cujo corpo fica preservado como **registro histórico pré-#202** — e **P1-6**, cuja premissa era o default `v1` deixar `pantheon_cost` desregistrada. **Legenda estendida** com `CLOSED (code)`: `CLOSED (doc)` é estritamente *documentação corrigida por reescrita* e não expressa um defeito fechado por PR de código. Contrato, "Limites", P0-3, P0-5, P0-6 e âncoras de arquivo único (sem diretório) reconciliados com o código atual. Nota: P1-3, antes fechado como "indisponível", teve a premissa desfeita por #202 — `pantheon_cost` volta à superfície. Contagem: 29 itens (4 `CLOSED (doc)`, 2 `CLOSED (code)`, 23 `OPEN`) + 1 tombstone `WITHDRAWN` (P0-2). |
 | 2026-10-05 | **Reconciliação pós-PR #204: 26 → 29 itens, nenhum fechado.** #204 entregou três fatias de paridade — relato da redução V2 no install (`scripts/install/opencode.mjs:546`) e no `doctor` como achado H4 (`scripts/doctor.mjs:1560`), correção da cadeia causal invertida atrás da matriz de delegação não replicada, e poda do registro read-only em `session.deleted` (`src/plugin-v2.ts:493`) — e **nenhuma delas tinha item neste backlog**, então **nenhum `Status:` foi virado**: os três itens abertos são o que #204 deixou de fora, não o que ele entregou. **Três itens novos, todos `OPEN`:** **P1-12** (a matriz caller/target não é replicada no V2 — bloqueado numa observação que só uma run beta pode fazer, se o `agent` de `execute.before` é o delegante no meio do handoff; nada no repositório mede payloads de evento, o canary registra só `Object.keys(ctx)`), **P2-11** (board e goal tools ausentes no V2, com a bridge `createV2Bridge` nunca ligada — o que #204 mudou foi o *relato*, não a capacidade), **P2-12** (a cadeia `execute.after` no V2 é ponto de registro vazio, e o mesmo vale para `permission.evaluate`, `session.prompt` e compaction). Cada um remete para §3.5 de [PERMISSIONS-QUALITY-DELEGATION.md](docs/PERMISSIONS-QUALITY-DELEGATION.md) em vez de repetir o mapa. **Falso pressuposto de contagem registrado:** a legenda trata `CLOSED (doc)` como *documentação* corrigida por reescrita, e nenhum dos quatro já fechados se aplica a estas fatias de código — por isso a rodada **abre** e não fecha. Contagem e markers reconciliados: 29 itens vivos (4 `CLOSED (doc)`, 25 `OPEN`) mais 1 tombstone `WITHDRAWN` (P0-2). |
 | 2026-10-04 | **Três correções factuais em P0-1, sem mudança de escopo.** (1) A alegação de que "a capacidade de detectar a geração existe e não é consultada" era **falsa**: `detectVersion` (`scripts/install/migrate.mjs:36-40`) devolve a versão do **próprio pacote** Pantheon, e **não existe detector de versão do host em nenhum lugar do pacote** — há seletor, não detector. (2) O local do defeito estava **incompleto**: o default que chega ao usuário é `bin/pantheon-init.mjs:425`, e ele curto-circuita em `scripts/install/opencode-version.mjs:40` antes de `scripts/install/opencode.mjs:518` — mudar **só** um dos dois é inerte. (3) Acrescentado o **limite do conserto**: um gate resolvido devolve **3** tools, não as 6, e não devolve o Board — as `pantheon_goal_*` são **V1-only por desenho**. Registrada a **auto-cura** (o ramo `v2` já remove os refs `.ts` da chave singular e o casamento por identidade cobre in-tree e cache `node_modules`, então **não há migração nova**) com a ressalva de que **`postinstall` não roda `init`** — material de release note. Enquadramento, severidade e todos os `Status:` preservados; **nenhuma contagem mudou**. |

@@ -8,7 +8,12 @@ const mnemosyne = readPrompt('../src/agents/mnemosyne.md')
 const memoryProtocol = readPrompt('../src/instructions/memory-protocol.instructions.md')
 const zeusMemoryOps = readPrompt('../src/instructions/zeus-memory-operations.instructions.md')
 const zeusAntiStall = readPrompt('../src/instructions/zeus-anti-stall.instructions.md')
+const zeusTimeoutRetry = readPrompt('../src/instructions/zeus-timeout-retry.instructions.md')
 const subtaskPrompt = readPrompt('../prompts/subtask.prompt.md')
+const returnContract = readPrompt('../src/instructions/agent-return-format.instructions.md')
+const delegationQuality = readPrompt('../docs/PERMISSIONS-QUALITY-DELEGATION.md')
+const readme = readPrompt('../README.md')
+const councilSynthesis = readPrompt('../src/instructions/zeus-council-synthesis.instructions.md')
 const sessionAgents = ['aphrodite', 'demeter', 'hephaestus', 'hermes'].map((agent) =>
   readPrompt(`../src/agents/${agent}.md`),
 )
@@ -20,6 +25,18 @@ const mcpGuide = readPrompt('../docs/mcp-tools.md')
 const agentMcpGuide = readPrompt('../docs/AGENT-MCP.md')
 const memoryInstaller = readPrompt('../scripts/install-mcp.mjs')
 const generatedAgents = readPrompt('../AGENTS.md')
+const delegationRoleDocs = Object.fromEntries(
+  ['athena', 'hermes', 'demeter', 'hephaestus'].map((agent) => [
+    agent,
+    readPrompt(`../src/agents/${agent}.md`),
+  ]),
+)
+const discoveryRoleDocs = Object.fromEntries(
+  ['aphrodite', 'nyx', 'prometheus'].map((agent) => [
+    agent,
+    readPrompt(`../src/agents/${agent}.md`),
+  ]),
+)
 
 test('memory retrieval and storage are selective rather than automatic', () => {
   assert.match(memoryProtocol, /Search only when prior project history could change the outcome/i)
@@ -205,4 +222,88 @@ test('Mnemosyne MCP allowlist names only the registered memory tools', () => {
     'memory_list',
     'memory_stats',
   ])
+})
+
+test('every Zeus dispatch uses a concise, safe, role-specific handoff brief', () => {
+  const handoffBrief = zeus.split('## Handoff Brief (every delegation)\n')[1]?.split('\n## ')[0]
+  assert.ok(handoffBrief, 'Zeus must define a handoff brief for every dispatch')
+  for (const required of [
+    /objective|goal/i,
+    /scope/i,
+    /acceptance/i,
+    /relevant\s+(?:inputs|context)/i,
+    /constraints|safety/i,
+    /deliverable|return/i,
+    /verification|verify/i,
+  ]) {
+    assert.match(handoffBrief, required)
+  }
+  assert.match(handoffBrief, /memory_context[\s\S]*optional[\s\S]*untrusted/i)
+  assert.match(handoffBrief, /no secrets/i)
+  assert.match(handoffBrief, /host may independently inherit|host can inherit/i)
+  assert.doesNotMatch(handoffBrief, /reduces? (?:all )?(?:context|tokens?)/i)
+  assert.match(
+    councilSynthesis,
+    /Every dispatch—including Apollo discovery, specialist rounds, and Themis audit—gets a concise brief/i,
+  )
+  assert.match(councilSynthesis, /minimal, non-sensitive, and untrusted/i)
+})
+
+test('delegation complexity uses qualitative routing rather than fixed size thresholds', () => {
+  assert.match(delegationQuality, /self-contained[\s\S]*do not delegate/i)
+  assert.match(delegationQuality, /bounded[\s\S]*specialist/i)
+  assert.match(delegationQuality, /independent fronts[\s\S]*separate root dispatches/i)
+  for (const factor of [/uncertainty/i, /domain/i, /dependenc/i, /risk/i, /verif/i]) {
+    assert.match(delegationQuality, factor)
+  }
+  assert.doesNotMatch(delegationQuality, /at most 2 files and at most 10 lines/i)
+  assert.match(readme, /handoff brief[\s\S]*qualitative/i)
+})
+
+test('delegated return contracts stay specific to implementation, discovery, planning, and council', () => {
+  assert.match(subtaskPrompt, /Implementation agents use[\s\S]{0,30}`## subtask_summary`/i)
+  assert.match(subtaskPrompt, /Apollo[\s\S]*structured findings/i)
+  assert.match(subtaskPrompt, /Athena[\s\S]*complete Markdown plan/i)
+  assert.match(subtaskPrompt, /council[\s\S]*`## specialist_response`/i)
+  assert.doesNotMatch(subtaskPrompt, /Every worker MUST end with this canonical return contract/i)
+  assert.match(
+    returnContract,
+    /For investigation agents \(Apollo, Athena\), return structured findings/i,
+  )
+  assert.match(returnContract, /Athena Plan Handoff/)
+  assert.match(returnContract, /Council Specialist Response Format/)
+  assert.match(zeusTimeoutRetry, /Implementation agents use[\s\S]{0,30}`## subtask_summary`/i)
+  assert.match(
+    zeusTimeoutRetry,
+    /investigations, plans, and council responses keep their role-specific formats/i,
+  )
+})
+
+test('child agents route discovery and review requests to Zeus root', () => {
+  assert.match(
+    delegationRoleDocs.athena,
+    /Only an Athena root session may delegate discovery to @apollo/i,
+  )
+  assert.match(
+    delegationRoleDocs.hermes,
+    /Only a root Hermes session may delegate discovery to @apollo/i,
+  )
+  assert.match(
+    delegationRoleDocs.demeter,
+    /ask Zeus to route any needed broad discovery to @apollo/i,
+  )
+  assert.match(
+    delegationRoleDocs.hephaestus,
+    /ask Zeus to route any needed broad discovery to @apollo/i,
+  )
+  for (const roleDoc of Object.values(delegationRoleDocs)) {
+    assert.match(roleDoc, /child session[\s\S]*must not dispatch another Pantheon agent/i)
+  }
+  for (const roleDoc of Object.values(discoveryRoleDocs)) {
+    assert.match(roleDoc, /Only root Athena\/Hermes sessions may call @apollo directly/i)
+    assert.match(roleDoc, /send discovery needs and any findings to Zeus/i)
+    assert.match(roleDoc, /child sessions must not dispatch another Pantheon agent/i)
+    assert.match(roleDoc, /Zeus root decides and dispatches Themis/i)
+    assert.match(roleDoc, /child sessions must not dispatch Themis/i)
+  }
 })

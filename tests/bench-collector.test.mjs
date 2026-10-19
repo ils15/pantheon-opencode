@@ -28,6 +28,7 @@ const {
   collectFirstRequest,
   collectInstructionState,
   collectRunMetrics,
+  collectTokens,
   detectSchema,
   openReadOnly,
 } = await import('../bench/lib/collector.mjs')
@@ -253,6 +254,53 @@ test('collectRunMetrics sums tokens over root + children exactly once (assistant
         cacheRead: 4,
         cacheWrite: 4,
       })
+      assert.deepEqual(metrics.tokens.sessionBreakdown, {
+        status: 'ok',
+        root: { sessionId: 'ses_root', input: 130, output: 13, total: 143 },
+        descendants: { input: 70, output: 7, total: 77, sessionCount: 1 },
+        sessions: [
+          { sessionId: 'ses_root', input: 130, output: 13, total: 143 },
+          { sessionId: 'ses_child', input: 70, output: 7, total: 77 },
+        ],
+      })
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test('session breakdown remains unavailable when a child has no assistant usage', () => {
+  withFixture((dbPath) => {
+    const writable = new DatabaseSync(dbPath)
+    writable.prepare('DELETE FROM session_message WHERE session_id = ?').run('ses_child')
+    writable.close()
+
+    const db = openReadOnly(dbPath)
+    try {
+      const tokens = collectRunMetrics(db, 'ses_root').tokens
+      assert.equal(tokens.status, 'ok')
+      assert.equal(tokens.input, 130)
+      assert.deepEqual(tokens.sessionBreakdown, {
+        status: 'unavailable',
+        reason: 'incomplete assistant usage for session ses_child',
+      })
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test('collectTokens de-duplicates repeated session ids in session breakdowns', () => {
+  withFixture((dbPath) => {
+    const db = openReadOnly(dbPath)
+    try {
+      const tokens = collectTokens(db, ['ses_root', 'ses_root', 'ses_child'], 'ses_root')
+      assert.equal(tokens.status, 'ok')
+      assert.equal(tokens.input, 200)
+      assert.deepEqual(
+        tokens.sessionBreakdown.sessions.map((session) => session.sessionId),
+        ['ses_root', 'ses_child'],
+      )
     } finally {
       db.close()
     }
@@ -279,6 +327,8 @@ test('collectTokens reports incomplete fields as unavailable instead of zero-fil
       assert.equal(metrics.tokens.assistantMessages, 4)
       assert.equal(metrics.tokens.tokenFieldMessages.cacheRead, 3)
       assert.equal('input' in metrics.tokens, false, 'partial totals are not exposed')
+      assert.equal(metrics.tokens.sessionBreakdown.status, 'unavailable')
+      assert.equal('input' in metrics.tokens.sessionBreakdown, false)
     } finally {
       db.close()
     }

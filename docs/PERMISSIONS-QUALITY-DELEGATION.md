@@ -155,36 +155,30 @@ continuation and is unrelated to review verdicts: the injected "pending todos
 remain" prompt (`src/pantheon/todo-enforcer.ts:65`). Do not read it as a review
 outcome.
 
-### 1.4 Full task versus subtask: the decision that decides whether a reviewer exists
+### 1.4 Full task versus subtask: a qualitative risk decision
 
-The reviewer is not always in the loop, and the decision that removes it lives in
-exactly one place: the subtask decision tree in the orchestrator's instructions
-(`src/instructions/zeus-timeout-retry.instructions.md:89`). Five criteria, all of
-which must hold; any one failing forces a full task:
+The current decision is in the orchestrator's instructions
+(`src/instructions/zeus-timeout-retry.instructions.md:76`). It has no file-count or
+line-count threshold. Choose the lightest route that safely meets the request by
+considering uncertainty, specialist domain, dependencies, risk, and verification:
 
-| # | Criterion |
+| Situation | Route |
 |---|---|
-| 1 | Scope: at most 2 files and at most 10 lines changed |
-| 2 | Risk: no schema change, no security impact |
-| 3 | Auth: no authentication or authorization logic |
-| 4 | Data: no data-loss risk, no migration |
-| 5 | Review: the output does not feed into a review |
+| Self-contained work that needs no specialist | Do it inline; do not delegate merely to move it elsewhere |
+| One bounded task needing a specific domain | One correct specialist, with relevant context and focused verification |
+| Independent fronts that can proceed separately | Zeus may make separate root dispatches; dependent work stays ordered |
+| Unclear, broad/material, sensitive, destructive, or high-uncertainty work | Add only the planning, review, artifact, and approval gates the risk requires |
 
-The first four are objectively checkable. **The fifth is the load-bearing one and it
-is the least objective**: it is a statement about the *orchestrator's own intent*.
-Classifying a change as a subtask is the move that removes the reviewer, so the
-fifth criterion is the one doing all the work, and it is the one that cannot be
-mechanically checked by anything outside the orchestrator's judgement.
+Auth/security, data/schema, destructive or material changes, and uncertainty that
+prevents safe execution retain their applicable gates. A bounded multi-file change
+is not automatically a full task, and a one-line change is not automatically safe.
 
-The gold rule stated above the tree is a bias toward the expensive path: when in
-doubt, use a full task.
-
-**What a subtask skips** (from the same file): the implementation artifact, and the
-reviewer. Those are the only two things. The orchestrator still receives a
-`subtask_summary`; the return format is identical
-(`src/instructions/zeus-timeout-retry.instructions.md:129`), so a reader of the transcript
-cannot distinguish a reviewed task from an unreviewed subtask by its shape — only by
-whether a review verdict appears earlier in the session.
+**What lightweight subtask mode skips** (from the same instructions): routine
+planning/artifact work, separate discovery, council, and review when no such gate is
+required. It does not remove required Themis or other risk-based gates. The result
+format depends on the role: implementation work uses `## subtask_summary`, while
+investigations, Athena plans, and council responses keep their own contracts in
+`src/instructions/agent-return-format.instructions.md`.
 
 ### 1.5 Escape hatches, and what happens when they are used
 

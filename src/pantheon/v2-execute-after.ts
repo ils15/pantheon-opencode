@@ -4,7 +4,7 @@
  *
  * V1 (`src/plugin.ts`) wires a single `tool.execute.after` handler that runs,
  * in order:
- *   1. task-result-guard — an empty native `task()` result becomes an explicit
+ *   1. task-result-guard — an empty child-dispatch result becomes an explicit
  *      error so the parent LLM cannot read silence as success;
  *   2. context-sandbox   — oversized read/grep/glob/webfetch output is truncated
  *      with a marker + metadata;
@@ -74,17 +74,19 @@ type TextField = 'output' | 'content' | 'content-array'
 /**
  * Extract the mutable text from a `Tool.Result`.
  *
- * Preference order mirrors what a session renders: a declared string `output`
- * first, then a string `content`, then the concatenation of `content` text
- * parts. A `content` array containing non-text (file) parts is deliberately NOT
- * enhanced — replacing it would corrupt the structured payload, so it is
- * reported as unextractable and the whole event becomes a no-op.
+ * Prefer non-empty `output`, then `content`, and use an empty `output` only as
+ * a fallback. A content array containing non-text (file) parts is deliberately
+ * not enhanced because replacing it would corrupt the structured payload.
  *
  * @returns `{ text, field }` or `null` when there is nothing to enhance.
  */
 function extractText(result: V2ToolResult): { text: string; field: TextField } | null {
-  if (typeof result.output === 'string') return { text: result.output, field: 'output' }
-  if (typeof result.content === 'string') return { text: result.content, field: 'content' }
+  if (typeof result.output === 'string' && result.output.trim() !== '') {
+    return { text: result.output, field: 'output' }
+  }
+  if (typeof result.content === 'string' && result.content.trim() !== '') {
+    return { text: result.content, field: 'content' }
+  }
   if (Array.isArray(result.content)) {
     const parts = result.content
     const allText = parts.every(
@@ -94,8 +96,9 @@ function extractText(result: V2ToolResult): { text: string; field: TextField } |
     const text = parts
       .map((part) => (typeof part === 'string' ? part : ((part as { text?: string }).text ?? '')))
       .join('\n')
-    return { text, field: 'content-array' }
+    if (text.trim() !== '') return { text, field: 'content-array' }
   }
+  if (typeof result.output === 'string') return { text: result.output, field: 'output' }
   return null
 }
 
@@ -142,10 +145,21 @@ export function createV2ExecuteAfter(
       const callID = typeof payload.id === 'string' ? payload.id : ''
 
       const extracted = extractText(result as V2ToolResult)
-      // A `task` result may carry no text at all — that IS the empty-result
-      // failure the guard exists to surface, so synthesize an empty string and
-      // let the guard replace it. Other tools with no text are a no-op.
-      if (extracted === null && tool !== 'task') return
+      // Preserve non-empty structured payloads that are intentionally not
+      // editable as text; they are not empty child results.
+      const resultContent = (result as V2ToolResult).content
+      if (
+        extracted === null &&
+        ((Array.isArray(resultContent) && resultContent.length > 0) ||
+          (resultContent !== null &&
+            typeof resultContent === 'object' &&
+            Object.keys(resultContent).length > 0))
+      ) {
+        return
+      }
+      // Child-dispatch results with no text or structured payload are empty;
+      // other tools with no text remain a no-op.
+      if (extracted === null && tool !== 'task' && tool !== 'subagent') return
       const original = extracted === null ? { text: '', field: 'output' as TextField } : extracted
 
       const input = { tool, sessionID, callID, args: payload.input }

@@ -173,6 +173,50 @@ async function main() {
     assert.equal((event.result as { output: string }).output, 'real answer')
   })
 
+  await testAsync('empty V2 subagent result becomes an explicit error', async () => {
+    const event = completedEvent({ tool: 'subagent', result: { output: ' \n ' } })
+    await handler(event)
+    assert.match(
+      (event.result as { output: string }).output,
+      /ERROR: task\(\) returned empty output/,
+    )
+  })
+
+  await testAsync('V2 subagent result with no text field becomes an explicit error', async () => {
+    const event = completedEvent({ tool: 'subagent', result: {} })
+    await handler(event)
+    assert.match(
+      (event.result as { output: string }).output,
+      /ERROR: task\(\) returned empty output/,
+    )
+  })
+
+  await testAsync('non-empty V2 subagent result is untouched', async () => {
+    const event = completedEvent({
+      tool: 'subagent',
+      result: { output: 'root discovery result' },
+    })
+    await handler(event)
+    assert.equal((event.result as { output: string }).output, 'root discovery result')
+  })
+
+  await testAsync(
+    'V2 subagent structured file content is not treated as empty output',
+    async () => {
+      const content = [{ type: 'file', uri: 'file:///tmp/result.txt', mime: 'text/plain' }]
+      const event = completedEvent({ tool: 'subagent', result: { content } })
+      await handler(event)
+      assert.deepEqual(event.result, { content })
+    },
+  )
+
+  await testAsync('empty output with structured V2 subagent content is preserved', async () => {
+    const content = [{ type: 'file', uri: 'file:///tmp/result.txt', mime: 'text/plain' }]
+    const event = completedEvent({ tool: 'subagent', result: { output: '', content } })
+    await handler(event)
+    assert.deepEqual(event.result, { output: '', content })
+  })
+
   // ── no-op / fail-safe shapes ───────────────────────────────────────────
   await testAsync('an error-status event is never modified (no after-on-error claim)', async () => {
     const event = {

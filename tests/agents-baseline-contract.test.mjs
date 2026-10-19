@@ -64,7 +64,7 @@ test('generated line counts use LF boundaries without assuming a final newline',
   assert.equal(logicalLineCount('one'), 1)
   assert.equal(logicalLineCount(''), 0)
   assert.equal(logicalLineCount(generated), 36)
-  assert.equal(logicalLineCount(globalArtifact), 206)
+  assert.equal(logicalLineCount(globalArtifact), 204)
 })
 
 test('Zeus can call the least-privilege Pantheon vision tool for diagnostics', () => {
@@ -113,41 +113,26 @@ test('subtask prompt preserves the canonical required return contract', () => {
     assert.match(subtaskPrompt, new RegExp(`\\*\\*${field}:\\*\\*`))
   }
 
-  assert.match(returnContract, /If memory affected the result, state the takeaway briefly/i)
-  const subtaskSummarySection = subtaskPrompt
-    .split('## Subtask Summary Format\n')[1]
-    ?.split('\n---')[0]
-  assert.ok(subtaskSummarySection, 'subtask prompt must include its summary section')
-  assert.ok(
-    subtaskSummarySection.includes(
-      'If memory affected the result, state the takeaway briefly; do not repeat the entry or task context.',
-    ),
-  )
-  const returnMemoryContextField = returnContract
+  const generatedSubtaskSummary = globalArtifact
+    .split('## subtask_summary\n')[1]
+    ?.split('\nFor investigation agents')[0]
+  assert.ok(generatedSubtaskSummary, 'generated return contract must include its subtask summary')
+  const generatedMemoryContextField = generatedSubtaskSummary
     .split('\n')
     .find((line) => line.startsWith('**memory_context:**'))
-  assert.ok(returnMemoryContextField, 'return contract must include memory_context')
-  assert.ok(returnMemoryContextField.includes('(optional;'), 'memory_context must be optional')
-  const memoryContextGuidance = returnContract.split('## Memory Context\n')[1]?.split('\n## ')[0]
-  assert.ok(memoryContextGuidance, 'return contract must include its Memory Context section')
-  assert.match(memoryContextGuidance, /optional machine-readable `memory_context`/i)
+  assert.ok(generatedMemoryContextField, 'generated subtask summary must include memory_context')
+  assert.match(generatedMemoryContextField, /"refs".*"takeaway"/)
+  assert.match(generatedMemoryContextField, /optional only if memory affected/i)
+  assert.match(generatedMemoryContextField, /non-sensitive.*no secrets.*copied memory/i)
   assert.match(
-    memoryContextGuidance,
-    /belongs to `## subtask_summary` only when that return format applies/i,
+    generatedMemoryContextField,
+    /only in this summary, not Apollo\/Athena or council formats/i,
   )
-  assert.match(
-    memoryContextGuidance,
-    /does not change the Apollo\/Athena structured-findings format or the council specialist-response contract/i,
+  assert.equal(
+    (globalArtifact.match(/^\*\*memory_context:\*/gm) ?? []).length,
+    1,
+    'memory_context must be declared only under subtask_summary',
   )
-  assert.ok(
-    returnMemoryContextField.includes('"refs"') && returnMemoryContextField.includes('"takeaway"'),
-  )
-  assert.match(
-    memoryContextGuidance,
-    /omit the field entirely when memory did not affect the result/i,
-  )
-  assert.match(memoryContextGuidance, /both its refs and takeaway must be non-sensitive/i)
-  assert.match(memoryContextGuidance, /no secrets or irrelevant memory content/i)
   const subtaskMemoryContextField = subtaskPrompt
     .split('\n')
     .find((line) => line.startsWith('**memory_context:**'))

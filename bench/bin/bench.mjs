@@ -592,20 +592,8 @@ async function main() {
           : null,
       root: metrics.root,
       childrenCount: metrics.childrenCount,
-      tokens:
-        metrics.tokens.status === 'ok'
-          ? {
-              status: 'ok',
-              input: metrics.tokens.input,
-              output: metrics.tokens.output,
-              reasoning: metrics.tokens.reasoning,
-              cacheRead: metrics.tokens.cacheRead,
-              cacheWrite: metrics.tokens.cacheWrite,
-              tokenMessages: metrics.tokens.tokenMessages,
-              assistantMessages: metrics.tokens.assistantMessages,
-              tokenFieldMessages: metrics.tokens.tokenFieldMessages,
-            }
-          : metrics.tokens,
+      // Keep additions to the collector's session-level report contract intact.
+      tokens: metrics.tokens,
       toolCalls: toolCallsToMap(metrics.toolCalls),
       hooks,
       instructions,
@@ -727,6 +715,7 @@ async function main() {
     schemaNotes: [
       'Tokens come from the V2 session_message ledger (assistant rows, data.tokens), the same source as pantheon_cost; cache read/write from data.tokens.cache.',
       'Child sessions resolved recursively via session_v2.parent_id with a visited set — each session counted once.',
+      'tokens.sessionBreakdown is an optional additive report field: when complete, it gives input, output, and input+output total per unique session plus root/descendant subtotals. These are overlapping views of the existing tokens totals, not extra usage; incomplete fields or a session without assistant usage makes the breakdown unavailable without zero-fill.',
       'Runs share the global opencode.db (provider credentials live there), but every metric is scoped by the run root sessionID and the db is opened READ-ONLY; no db writes are ever performed.',
       'Tool calls counted from assistant content parts with type=tool; only the tool NAME is read, never tool inputs.',
       'Hook timings come from the [bench] lines the V2 plugin appends to .pantheon/logs/hooks.log (instrumentation-only change).',
