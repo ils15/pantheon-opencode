@@ -2,10 +2,12 @@
  * Pantheon V2 Plugin — full orchestration plugin for OpenCode V2.
  *
  * Registers:
- * - 3 self-sufficient tools via V2 tool.transform (hashline_edit,
- *   pantheon_cost, pantheon_model) plus native `vision_describe` when the host
- *   exposes the V2 model catalog; Vision resolves OpenCode Zen auth and sends
- *   images directly to the selected multimodal model.
+ * - 3 unconditional self-sufficient tools via V2 tool.transform (hashline_edit,
+ *   pantheon_cost, pantheon_model) plus up to 2 host-dependent ones: native
+ *   `vision_describe` when the host exposes the V2 model catalog (it resolves
+ *   OpenCode Zen auth and sends images directly to the selected multimodal
+ *   model), and `pantheon_bounded_read` when the host exposes its permission
+ *   and session APIs (root Zeus sessions only).
  *   The goal tools need V1 infrastructure and are absent from this surface.
  * - 5 event subscriptions (session.created, idle, deleted, error, compacted)
  * - Session hooks (prompt, context, compaction)

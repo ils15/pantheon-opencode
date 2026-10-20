@@ -22,6 +22,7 @@ import { strict as assert } from 'node:assert'
 import {
   createTaskResultGuard,
   EMPTY_TASK_ERROR,
+  HOST_EMPTY_RESULT_TEXT,
   type TaskGuardInput,
   type TaskGuardOutput,
 } from '../../src/pantheon/task-result-guard.ts'
@@ -141,6 +142,98 @@ async function main() {
     const output: TaskGuardOutput = { output: 'Discovery findings' }
     await guard(input, output)
     assert.equal(output.output, 'Discovery findings')
+  })
+
+  // ── Host placeholder (the host's own "no child text" sentinel) ───────
+
+  await testAsync('host placeholder is pinned to the measured host literal', async () => {
+    assert.equal(HOST_EMPTY_RESULT_TEXT, 'Subagent completed without a text response.')
+  })
+
+  await testAsync('task tool with the host placeholder output → replaced with error', async () => {
+    const guard = createTaskResultGuard()
+    const input: TaskGuardInput = { tool: 'task', sessionID: 'ses_host1', callID: 'ch1', args: {} }
+    const output: TaskGuardOutput = { output: HOST_EMPTY_RESULT_TEXT }
+    await guard(input, output)
+    assert.equal(output.output, EMPTY_TASK_ERROR)
+  })
+
+  await testAsync(
+    'subagent tool with the host placeholder output → replaced with error',
+    async () => {
+      const guard = createTaskResultGuard()
+      const input: TaskGuardInput = {
+        tool: 'subagent',
+        sessionID: 'ses_host2',
+        callID: 'ch2',
+        args: {},
+      }
+      const output: TaskGuardOutput = { output: HOST_EMPTY_RESULT_TEXT }
+      await guard(input, output)
+      assert.equal(output.output, EMPTY_TASK_ERROR)
+    },
+  )
+
+  await testAsync(
+    'host placeholder with surrounding whitespace → replaced with error',
+    async () => {
+      const guard = createTaskResultGuard()
+      const input: TaskGuardInput = {
+        tool: 'subagent',
+        sessionID: 'ses_host3',
+        callID: 'ch3',
+        args: {},
+      }
+      const output: TaskGuardOutput = { output: `  ${HOST_EMPTY_RESULT_TEXT}\n` }
+      await guard(input, output)
+      assert.equal(output.output, EMPTY_TASK_ERROR)
+    },
+  )
+
+  await testAsync(
+    'task output that mentions the host placeholder inside a sentence → NOT modified',
+    async () => {
+      const guard = createTaskResultGuard()
+      const input: TaskGuardInput = {
+        tool: 'task',
+        sessionID: 'ses_host4',
+        callID: 'ch4',
+        args: {},
+      }
+      const message = `The host printed "${HOST_EMPTY_RESULT_TEXT}" but the child did answer.`
+      const output: TaskGuardOutput = { output: message }
+      await guard(input, output)
+      assert.equal(
+        output.output,
+        message,
+        'the placeholder is matched exactly — a quoted mention must survive',
+      )
+    },
+  )
+
+  await testAsync(
+    'subagent output that mentions the host placeholder inside a sentence → NOT modified',
+    async () => {
+      const guard = createTaskResultGuard()
+      const input: TaskGuardInput = {
+        tool: 'subagent',
+        sessionID: 'ses_host5',
+        callID: 'ch5',
+        args: {},
+      }
+      const message = `Quoting the host: ${HOST_EMPTY_RESULT_TEXT}`
+      const output: TaskGuardOutput = { output: message }
+      await guard(input, output)
+      assert.equal(output.output, message)
+    },
+  )
+
+  await testAsync('read tool with the host placeholder output → NOT modified', async () => {
+    const guard = createTaskResultGuard()
+    const input: TaskGuardInput = { tool: 'read', sessionID: 'ses_host6', callID: 'ch6', args: {} }
+    const output: TaskGuardOutput = { output: HOST_EMPTY_RESULT_TEXT }
+    await guard(input, output)
+    assert.equal(output.output, HOST_EMPTY_RESULT_TEXT, 'only child-dispatch labels are guarded')
   })
 
   // ── Edge cases ──────────────────────────────────────────────────────

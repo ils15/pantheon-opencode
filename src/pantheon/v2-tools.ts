@@ -2,7 +2,7 @@
  * V2 tool surface — the Pantheon tools that are self-sufficient on the
  * OpenCode V2 host, declared for `ctx.tool.transform`'s `draft.add`.
  *
- * ## Why only three tools
+ * ## Why only three unconditional tools
  *
  * A V2 tool can only be served here when it needs no V1 infrastructure. The
  * three goal tools (`pantheon_goal_create`, `pantheon_goal_get`,
@@ -17,6 +17,15 @@
  * `hashline_edit` (pure filesystem), `pantheon_cost` (reads `opencode.db`) and
  * `pantheon_model` (reads/writes `active-preset.json`) need none of that, so
  * they are wired to their real V1 implementations.
+ *
+ * ## Three unconditional tools, up to two host-dependent ones
+ *
+ * The three above are always built. Two more exist on the V2 host and are
+ * conditional: `vision_describe` is added here when the caller supplies a
+ * vision runtime (the host model catalog), and `pantheon_bounded_read` is
+ * appended by the plugin when the host exposes its permission and session APIs
+ * (root Zeus sessions only). The effective count is therefore 3 unconditional
+ * plus up to 2 host-dependent — never a flat 3.
  *
  * ## The output declaration is mandatory
  *

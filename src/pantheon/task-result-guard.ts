@@ -66,15 +66,51 @@ export const EMPTY_TASK_ERROR =
   'or the child session crashed before producing any response. ' +
   'Consider splitting the work into a smaller task. No retry is automatic; investigate before retrying manually.'
 
+/**
+ * The placeholder text the HOST substitutes into a child-dispatch tool result
+ * when the child produced no assistant text.
+ *
+ * Field-measured on an OpenCode V2 host: the host binary contains the literal
+ * `Subagent completed without a text response.` and injects it into the tool
+ * result, so the parent sees a success-looking string instead of silence.
+ *
+ * This MUST be re-confirmed against each host build — if a host changes the
+ * wording, this branch silently stops firing again.
+ */
+export const HOST_EMPTY_RESULT_TEXT = 'Subagent completed without a text response.'
+
+/**
+ * Whether a tool label is a child dispatch the guard must inspect.
+ *
+ * The accepted labels are `task` and `subagent`. Exported so the V2 adapter's
+ * pre-guard early return uses the SAME set: a label the guard handles must
+ * never be dropped before the guard sees it.
+ *
+ * @param tool - the tool label reported by the host
+ * @returns `true` for `task` and `subagent`
+ */
+export function isChildDispatchTool(tool: string): boolean {
+  return tool === 'task' || tool === 'subagent'
+}
+
 // ─── Implementation ────────────────────────────────────────────────────
 
 /**
  * Whether a result carries any text content (whitespace-only counts as empty).
+ *
+ * The host placeholder ({@link HOST_EMPTY_RESULT_TEXT}) also counts as empty:
+ * it means "no child text", not "the child answered".
+ *
+ * The host placeholder is matched EXACTLY (after trimming). Substring or
+ * prefix matching would rewrite legitimate agent messages that merely quote
+ * the phrase, which is worse than the defect being fixed.
  */
 function isEmptyOutput(output: unknown): boolean {
   if (output == null) return true
   if (typeof output !== 'string') return true
-  return output.trim() === ''
+  const trimmed = output.trim()
+  if (trimmed === '') return true
+  return trimmed === HOST_EMPTY_RESULT_TEXT
 }
 
 /**
@@ -91,7 +127,7 @@ export function createTaskResultGuard(options?: TaskResultGuardOptions): TaskRes
 
   return async (input: TaskGuardInput, output: TaskGuardOutput): Promise<void> => {
     // Accept both labels without claiming which one a live host emits.
-    if (input.tool !== 'task' && input.tool !== 'subagent') return
+    if (!isChildDispatchTool(input.tool)) return
 
     // Only flag truly empty results — non-empty content is the happy path.
     if (!isEmptyOutput(output.output)) return

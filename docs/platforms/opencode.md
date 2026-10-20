@@ -157,6 +157,13 @@ OpenCode uses `opencode.json` (or `opencode.jsonc`) in your project root. See th
 | `agent` | Maps agent names to their `.md` definition files in `.opencode/agents/` |
 | `default_agent` | Sets which primary agent is used by default (e.g., `"build"`, `"zeus"`) |
 
+Pantheon registers its plugin in `opencode.json`; the installer never writes
+`opencode.jsonc`. The host loads a sibling `opencode.jsonc` from the same config
+directory when one exists, and merges it with `opencode.json`: scalars from
+`.jsonc` win, and arrays are unioned. A `plugin`/`plugins` entry in `.jsonc`
+therefore changes the effective plugin set instead of being ignored. The merge
+is silent, so a host can load a plugin that appears only in `.jsonc`.
+
 ### Default Agent
 
 The `default_agent` option in `opencode.json` controls which primary agent OpenCode uses when starting a session:

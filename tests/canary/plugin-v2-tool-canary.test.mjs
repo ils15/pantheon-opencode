@@ -307,9 +307,10 @@ function treeDiff(before, after) {
  * script is its own chat turn, which is what lets the test observe the target
  * file BETWEEN the rejected call and the accepted one.
  */
-async function startMockModel(scripts) {
+async function startMockModel(scripts, { emptySubagentResultProbe = false } = {}) {
   let turn = 0
   let nestedAthenaChildCalled = false
+  let emptyChildResponseRequests = 0
   const requestBodies = []
   const server = createServer((req, res) => {
     let requestBody = ''
@@ -337,6 +338,44 @@ async function startMockModel(scripts) {
             ],
           }),
         )
+        return
+      }
+      let request
+      try {
+        request = JSON.parse(requestBody)
+      } catch {
+        request = {}
+      }
+      const systemText = (Array.isArray(request.messages) ? request.messages : [])
+        .filter((message) => message?.role === 'system')
+        .flatMap((message) =>
+          Array.isArray(message?.content)
+            ? message.content.map((part) => part?.text ?? '')
+            : [message?.content ?? ''],
+        )
+        .join('\n')
+      const emptyChildRequest =
+        emptySubagentResultProbe && systemText.includes(EMPTY_SUBAGENT_SYSTEM_MARKER)
+      if (emptyChildRequest) {
+        turn += 1
+        emptyChildResponseRequests += 1
+        const base = {
+          id: `chatcmpl-tool-canary-${turn}`,
+          object: 'chat.completion.chunk',
+          created: 1_700_000_000,
+          model: 'canary-model',
+        }
+        const chunks = [
+          {
+            ...base,
+            choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+          },
+          { ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+        ]
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        for (const chunk of chunks) res.write(`data: ${JSON.stringify(chunk)}\n\n`)
+        res.write('data: [DONE]\n\n')
+        res.end()
         return
       }
       turn += 1
@@ -418,6 +457,7 @@ async function startMockModel(scripts) {
   return {
     baseURL: `http://127.0.0.1:${server.address().port}/v1`,
     turns: () => turn,
+    emptyChildResponseRequests: () => emptyChildResponseRequests,
     requestSummary: () =>
       requestBodies.map((body) => {
         let parsed
@@ -887,6 +927,7 @@ function writeProjectConfig(
     boundedReadProbe = false,
     boundedReadDenyProbe = false,
     subagentAdmissionProbe = false,
+    emptySubagentResultProbe = false,
     subagentCaller = 'athena',
     subagentTarget = 'demeter',
   } = {},
@@ -948,7 +989,10 @@ function writeProjectConfig(
                     {
                       mode: 'subagent',
                       description: `Isolated admission canary target ${agent}`,
-                      system: `Reply with ${agent.toUpperCase()}-CANARY-CHILD if you are started.`,
+                      system:
+                        emptySubagentResultProbe && agent === subagentTarget
+                          ? `${EMPTY_SUBAGENT_SYSTEM_MARKER}: deliberately produce no assistant text.`
+                          : `Reply with ${agent.toUpperCase()}-CANARY-CHILD if you are started.`,
                       permissions: [{ action: 'tool.use', resource: 'execute', effect: 'deny' }],
                     },
                   ]),
@@ -1015,7 +1059,91 @@ function writeProjectConfig(
 
 /** The re-export shim that makes the host load `src/plugin-v2.ts` itself. */
 function realPluginShim() {
-  return `export { default } from ${JSON.stringify(REAL_PLUGIN_SRC)}\n`
+  const source = readFileSync(REAL_PLUGIN_SRC, 'utf8')
+  const packageJSON = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'))
+  const identity = {
+    packageName: packageJSON.name,
+    packageVersion: packageJSON.version,
+    sourcePath: REAL_PLUGIN_SRC,
+    sourceSHA256: createHash('sha256').update(source).digest('hex'),
+  }
+
+  // Instrument the actual candidate handler at its registration boundary.
+  // The wrapper delegates setup and every hook call to the unmodified candidate
+  // source; it only records registration plus the event/result before and after
+  // that handler runs. This distinguishes a missing hook from an adapter bug.
+  return `
+import candidate from ${JSON.stringify(REAL_PLUGIN_SRC)}
+import { appendFileSync } from 'node:fs'
+const identity = ${JSON.stringify(identity)}
+const evidenceFile = () => {
+  const proofFile = process.env.PANTHEON_TOOL_CANARY_PROOF
+  return proofFile ? proofFile + '.execute-after.jsonl' : null
+}
+const describe = (value, depth = 0) => {
+  if (value === null || value === undefined || typeof value !== 'object') {
+    return typeof value === 'string' ? value.slice(0, 2000) : value
+  }
+  if (depth > 3) return { type: Array.isArray(value) ? 'array' : 'object' }
+  if (Array.isArray(value)) return value.map((item) => describe(item, depth + 1))
+  const summary = { keys: Object.keys(value).sort() }
+  for (const key of ['type', 'text', 'output', 'content', 'metadata']) {
+    if (Object.hasOwn(value, key)) summary[key] = describe(value[key], depth + 1)
+  }
+  return summary
+}
+const record = (entry) => {
+  const path = evidenceFile()
+  if (path && path !== '.execute-after.jsonl') {
+    appendFileSync(path, JSON.stringify({ ...identity, ...entry }) + '\\n')
+  }
+}
+export default {
+  id: 'pantheon-candidate-instrumented',
+  async setup(context) {
+    record({ phase: 'setup' })
+    const tool = context.tool
+    const wrappedTool = new Proxy(tool, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target)
+        if (property !== 'hook' || typeof value !== 'function') {
+          return typeof value === 'function' ? value.bind(target) : value
+        }
+        return async (name, handler) => {
+          const observed = name === 'execute.after'
+            ? async (event) => {
+                const snapshot = (phase) => ({
+                  phase,
+                  tool: event?.tool,
+                  status: event?.status,
+                  sessionID: event?.sessionID,
+                  id: event?.id,
+                  eventKeys: Object.keys(event ?? {}).sort(),
+                  result: describe(event?.result),
+                })
+                record(snapshot('before'))
+                try {
+                  return await handler(event)
+                } finally {
+                  record(snapshot('after'))
+                }
+              }
+            : handler
+          const registered = await Reflect.apply(value, target, [name, observed])
+          record({ phase: 'registration', hook: name, success: true })
+          return registered
+        }
+      },
+    })
+    const wrappedContext = new Proxy(context, {
+      get(target, property) {
+        return property === 'tool' ? wrappedTool : Reflect.get(target, property, target)
+      },
+    })
+    return candidate.setup(wrappedContext)
+  },
+}
+`
 }
 
 /**
@@ -1053,6 +1181,7 @@ function mutantPluginShim() {
 const TARGET_LINES = ['CANARY-ALPHA-LINE', 'CANARY-BETA-LINE', 'CANARY-GAMMA-LINE']
 const TARGET_BODY = `${TARGET_LINES.join('\n')}\n`
 const BETA_REF = `2#${hashTag(TARGET_LINES[1] ?? '', 2)}`
+const EMPTY_SUBAGENT_SYSTEM_MARKER = 'PANTHEON-EMPTY-SUBAGENT-CANARY-CHILD'
 
 /** Code Mode script: is `hashline_edit` reachable at all? */
 const CATALOG_SCRIPT = `
@@ -1137,6 +1266,18 @@ function toolParts(transcript, toolName) {
     .filter((part) => part?.type === 'tool' && (part.tool ?? part.name) === toolName)
 }
 
+/** Read the text returned by a completed native tool call from its host transcript. */
+function toolResultText(part) {
+  const state = part?.state
+  const output = state?.output ?? state?.result?.output ?? state?.content ?? state?.result?.content
+  if (typeof output === 'string') return output
+  if (Array.isArray(output)) {
+    return output.map((item) => (typeof item === 'string' ? item : (item?.text ?? ''))).join('\n')
+  }
+  if (typeof output?.output === 'string') return output.output
+  return ''
+}
+
 /** Parse the JSON a Code Mode script returned. */
 function parseScriptResult(text) {
   const line = text.trim().split('\n').filter(Boolean).at(-1) ?? ''
@@ -1179,6 +1320,7 @@ async function runCanary(
     boundedReadProbe = false,
     boundedReadDenyProbe = false,
     subagentAdmissionProbe = false,
+    emptySubagentResultProbe = false,
     subagentCaller = 'athena',
     subagentTarget = 'demeter',
   } = {},
@@ -1210,8 +1352,9 @@ async function runCanary(
             name: 'subagent',
             arguments: {
               description: `V2 ${subagentCaller} to ${subagentTarget} admission canary`,
-              prompt:
-                subagentTarget === 'athena'
+              prompt: emptySubagentResultProbe
+                ? 'Produce no assistant text in response to this child task.'
+                : subagentTarget === 'athena'
                   ? 'Return ATHENA-CANARY-TRY-NESTED only.'
                   : `Return ${subagentTarget.toUpperCase()}-CANARY-CHILD only.`,
               agent: subagentTarget,
@@ -1220,7 +1363,7 @@ async function runCanary(
         ]
       : []),
   ]
-  const model = await startMockModel(scripts)
+  const model = await startMockModel(scripts, { emptySubagentResultProbe })
   writePlugins(sandbox, pluginSource, {
     permissionProbe: permissionProbe || boundedReadProbe || boundedReadDenyProbe,
     permissionAskProbe,
@@ -1231,6 +1374,7 @@ async function runCanary(
     boundedReadProbe,
     boundedReadDenyProbe,
     subagentAdmissionProbe,
+    emptySubagentResultProbe,
     subagentCaller,
     subagentTarget,
   })
@@ -1354,6 +1498,7 @@ async function runCanary(
 
     observation.transcript = await host.transcript()
     observation.turns = model.turns()
+    observation.emptyChildResponseRequests = model.emptyChildResponseRequests()
     observation.modelRequests = model.requestSummary()
     observation.sessions = await host.sessions()
     const sessionRows = Array.isArray(observation.sessions)
@@ -1370,6 +1515,13 @@ async function runCanary(
     observation.observation = existsSync(sandbox.proofFile)
       ? JSON.parse(readFileSync(sandbox.proofFile, 'utf8'))
       : null
+    const executeAfterEvidencePath = `${sandbox.proofFile}.execute-after.jsonl`
+    observation.executeAfterEvidence = existsSync(executeAfterEvidencePath)
+      ? readFileSync(executeAfterEvidencePath, 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+      : []
     observation.rootSessionID = host.sessionID
     observation.permissionProof = existsSync(sandbox.permissionProofFile)
       ? readFileSync(sandbox.permissionProofFile, 'utf8')
@@ -1391,6 +1543,7 @@ let boundedReadLive = null
 let boundedReadDenyLive = null
 let identityGapLive = null
 let childBoundaryLive = null
+let emptyChildLive = null
 let rootsBefore = null
 const permissionProbeEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_PROBE === '1'
 const permissionAskProbeEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_ASK === '1'
@@ -1422,6 +1575,15 @@ before(
         })
       }
     }
+    if (subagentAdmissionProbeEnabled) {
+      emptyChildLive = await runCanary(realPluginShim(), {
+        permissionProbe: true,
+        subagentAdmissionProbe: true,
+        emptySubagentResultProbe: true,
+        subagentCaller: 'zeus',
+        subagentTarget: 'demeter',
+      })
+    }
     if (permissionAskProbeEnabled) {
       permissionAskLive = await runCanary(realPluginShim(), {
         permissionProbe: true,
@@ -1448,6 +1610,7 @@ after(() => {
     boundedReadDenyLive,
     identityGapLive,
     childBoundaryLive,
+    emptyChildLive,
   ]) {
     if (observation?.sandbox) rmSync(observation.sandbox.root, { recursive: true, force: true })
   }
@@ -1771,6 +1934,82 @@ test('F4A rejects a disallowed V2 subagent dispatch without a persisted child or
   )
 })
 
+test('V2 host replaces a no-text child result with an error and preserves completed status', {
+  skip: skipped || !subagentAdmissionProbeEnabled,
+}, () => {
+  assert.ok(emptyChildLive, 'the no-text child host probe did not run')
+  assert.equal(
+    emptyChildLive.emptyChildResponseRequests,
+    1,
+    `the local provider did not serve exactly one empty child response: ${JSON.stringify({ childSessions: emptyChildLive.childSessions, childTranscript: emptyChildLive.childTranscript, modelRequests: emptyChildLive.modelRequests })}`,
+  )
+  assert.equal(emptyChildLive.childSessions.length, 1, 'the native child session did not run')
+  const expectedSource = readFileSync(REAL_PLUGIN_SRC, 'utf8')
+  const sourceSHA256 = createHash('sha256').update(expectedSource).digest('hex')
+  const candidatePackage = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'))
+  const hookEvidence = emptyChildLive.executeAfterEvidence ?? []
+  assert.ok(
+    hookEvidence.some(
+      (entry) =>
+        entry.phase === 'setup' &&
+        entry.packageName === candidatePackage.name &&
+        entry.packageVersion === candidatePackage.version &&
+        entry.sourcePath === REAL_PLUGIN_SRC &&
+        entry.sourceSHA256 === sourceSHA256,
+    ),
+    `the canary did not load this candidate source: ${JSON.stringify(hookEvidence)}`,
+  )
+  assert.ok(
+    hookEvidence.some((entry) => entry.phase === 'registration' && entry.hook === 'execute.after'),
+    `the candidate did not register execute.after: ${JSON.stringify(hookEvidence)}`,
+  )
+  const childAfterEvent = hookEvidence.find(
+    (entry) => entry.phase === 'before' && entry.tool === 'subagent',
+  )
+  assert.ok(
+    childAfterEvent,
+    `the candidate execute.after handler did not receive the native child event: ${JSON.stringify(hookEvidence)}`,
+  )
+  assert.equal(
+    childAfterEvent.status,
+    'completed',
+    `the host child event had an unexpected status: ${JSON.stringify(childAfterEvent)}`,
+  )
+  assert.equal(
+    childAfterEvent.result?.output?.output,
+    'Subagent completed without a text response.',
+    `the native event result shape differed from the measured placeholder: ${JSON.stringify(childAfterEvent)}`,
+  )
+  const childAfterHook = hookEvidence.find(
+    (entry) =>
+      entry.phase === 'after' && entry.tool === 'subagent' && entry.id === childAfterEvent.id,
+  )
+  assert.ok(
+    childAfterHook,
+    `the registered candidate handler did not return from the child event: ${JSON.stringify(hookEvidence)}`,
+  )
+  assert.match(
+    childAfterHook.result?.output?.output ?? '',
+    /^ERROR: task\(\) returned empty output — child session produced no assistant or tool output\./,
+    `the candidate handler did not rewrite the host-consumed nested output field: ${JSON.stringify({ before: childAfterEvent, after: childAfterHook })}`,
+  )
+  assert.match(
+    childAfterHook.result?.content?.[0]?.text ?? '',
+    /^ERROR: task\(\) returned empty output — child session produced no assistant or tool output\./,
+    `the candidate handler did not rewrite the parent-visible content mirror: ${JSON.stringify(childAfterHook)}`,
+  )
+  const subagentCall = emptyChildLive.subagentCalls?.at(-1)
+  assert.ok(subagentCall, 'the parent transcript has no native subagent result')
+  assert.equal(subagentCall.state?.input?.agent, 'demeter', JSON.stringify(subagentCall))
+  assert.equal(subagentCall.state?.status, 'completed', JSON.stringify(subagentCall))
+  const parentVisibleResult = toolResultText(subagentCall)
+  assert.match(
+    parentVisibleResult,
+    /^ERROR: task\(\) returned empty output — child session produced no assistant or tool output\./,
+    `the completed parent-visible result was not replaced by the task guard: ${JSON.stringify(subagentCall)}`,
+  )
+})
+
 test('F4A admits an allowed root dispatch using the matched host tool identity', {
   skip: skipped || !subagentAdmissionProbeEnabled,
 }, () => {
@@ -1820,6 +2059,11 @@ test('F4A admits an allowed root dispatch using the matched host tool identity',
   assert.ok(call, 'the host transcript did not contain the native subagent call')
   assert.equal(call.state?.input?.agent, 'apollo', JSON.stringify(call))
   assert.notEqual(call.state?.status, 'error', JSON.stringify(call))
+  assert.match(
+    toolResultText(call),
+    /TOOL-CANARY-DONE/,
+    `a non-empty child result was modified or lost: ${JSON.stringify(call)}`,
+  )
   const sessions = Array.isArray(identityGapLive.sessions)
     ? identityGapLive.sessions
     : (identityGapLive.sessions?.data ?? [])

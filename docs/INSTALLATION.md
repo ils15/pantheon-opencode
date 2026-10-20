@@ -256,7 +256,8 @@ The two 1.6.x cells are different claims. The 1.X cell is the V1 plugin
 (`src/plugin.ts` + `src/plugins/pantheon-hooks.ts` under the singular `plugin`
 key, 6 tools including the goal tools, board lifecycle, V1 hooks and the V1
 compaction path). The OpenCode 2 cell is the V2 plugin, which is a real
-orchestration surface and a **narrower** one: 3 tools, no goal tools, no V1
+orchestration surface and a **narrower** one: 3 unconditional tools plus up to
+2 host-dependent ones, no goal tools, no V1
 caller→target delegation matrix. Neither generation is ever registered together
 with the other.
 
@@ -293,10 +294,13 @@ selected generation:
 | Selection | OpenCode key | Pantheon registration | Contract |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: `hashline_edit` + goal/cost/model tools, board lifecycle, V1 events/tool hooks and V1 compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks, a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 unconditional tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`) plus up to 2 host-dependent ones (`vision_describe` when the host exposes its model catalog, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks, a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
 
 The V2 plugin is now a **full orchestration plugin** — not just a configuration
-adapter. It registers 3 tools via `ctx.tool.transform()`, subscribes to 5
+adapter. It registers 3 unconditional tools via `ctx.tool.transform()` plus up
+to 2 host-dependent ones — `vision_describe` when the host exposes its model
+catalog, and `pantheon_bounded_read` when the host exposes its permission and
+session APIs (root Zeus sessions only) — subscribes to 5
 session lifecycle events, and wires session hooks plus a tool `execute.before`
 hook that enforces read-only sessions (`apollo`/`gaia` are denied `edit`,
 `write`, `bash`, `task`, `hashline_edit` and `pantheon_model`). The 3 goal

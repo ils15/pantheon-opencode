@@ -1,7 +1,7 @@
 # 🗺️ Pantheon Roadmap
 
-> **Charter updated:** 2026-10-19
-> **Previous header/status snapshot:** v1.6.0-beta.4 / 2026-10-05 — superseded by later entries in the body; current readiness remains unreconciled.
+> **Charter updated:** 2026-10-20
+> **Previous header/status snapshot:** v1.6.0-beta.4 / 2026-10-05 — superseded by later entries in the body; the current readiness was reconciled on 2026-10-20 (beta.15 published and field-tested; beta.16 branch open).
 >
 > **Roadmap reativado.** O plano havia sido zerado em 2026-09-12 a partir de
 > validação de código. A validação runtime de 2026-10-04 provou que a
@@ -64,9 +64,15 @@ tarball, com `PASS` em cada gate aplicável. Evidência ausente ou marcada
 `NOT_TESTED`, `WARN`, `SKIP` ou `AMBIENTAL` não é `PASS`; riscos não resolvidos
 são blockers ou precisam ser aceitos explicitamente, nunca aprovados em silêncio.
 
-**Readiness atual: `UNKNOWN / NOT RECONCILED`.** O NO-GO da alegação de prontidão
-stable com base no relatório beta.6 é precedente histórico; este charter não
-declara o estado atual como fail nem pass. Os contratos existentes em
+**Readiness atual: `beta.15` PUBLICADA; `beta.16` aberta, com source/docs e
+validação local final concluídos, mas `PR CI` pendente.** O NO-GO da alegação de
+prontidão stable com base no relatório beta.6 é precedente histórico; esta
+atualização não declara prontidão para release. A `v1.6.0-beta.15` (`fd22b0c`)
+está publicada e foi testada em campo contra `opencode v2.0.30`; a branch
+`feat-v1.6.0-beta.16` está aberta sobre ela, com as seis alterações de
+source/docs descritas na seção **Beta 16** concluídas. A validação final local
+passou sob Node `26.4.0` / npm `11.17.0`; a CI do PR continua pendente. O
+candidato beta.16 não está publicado nem é release-ready. Os contratos existentes em
 [docs/RELEASE.md](docs/RELEASE.md),
 [docs/RELEASING.md](docs/RELEASING.md) e
 [docs/INSTALLATION.md](docs/INSTALLATION.md) continuam referenciados. Planos
@@ -152,7 +158,7 @@ marcador `Status:` próprio — nenhum precisa ser inferido.
 **Legenda de status.** `CLOSED (doc)` — o defeito era de documentação e foi
 corrigido por esta reescrita; nada além do próprio texto depende dele.
 `CLOSED (code)` — o defeito foi resolvido por um **PR de código já mergeado**,
-não por esta reescrita; a referência nomeia o PR e é datada. `OPEN` — o defeito
+não por esta reescrita; a referência nomeia o PR e é datada. `CLOSED (runtime)` — canary local passou; `OPEN` — o defeito
 persiste e o item continua vivo. `WITHDRAWN` — a alegação do registro foi
 falsificada por auditoria posterior: o registro vira **tombstone**, preserva o
 id e o histórico, e não descreve mais defeito nenhum.
@@ -732,43 +738,33 @@ replicar board/goal tools no V2 ou declarar a redução como permanente. Mapeado
 [PERMISSIONS-QUALITY-DELEGATION.md](docs/PERMISSIONS-QUALITY-DELEGATION.md) §3.5 e em
 [UPGRADING.md](docs/UPGRADING.md).
 
-**P2-12 — `execute.after` no V2 é um ponto de registro vazio.**
-**Status: OPEN.**
-`toolCtx.hook('execute.after', …)` é registrado com um handler intencionalmente
-vazio (`src/plugin-v2.ts:994`): o hashline read-enhance e o context sandbox vivem no
-caminho V1 (`src/plugins/pantheon-hooks.ts` + `src/pantheon/context-sandbox.ts`), uma
-instância de plugin separada que não é carregada numa instalação só-V2. O mesmo
-vale para `permission.evaluate` (`src/plugin-v2.ts:1024`), para `session.prompt`
-(`src/plugin-v2.ts:705`) e para o hook de compaction
-(`src/plugin-v2.ts:1156`) — todos pontos de registro, nenhum com comportamento
-V2-side. **Não é regressão:** é a forma como o adapter foi escrito, e o PR #204
-(2026-10-04) não tocou nesta cadeia. O item existe porque a lista de hooks que um
-leitor pode planejar contra é enganosa se ele ler "5 event subscriptions" como
-"5 behaviours"; falta ou decidir a paridade ou declarar a cadeia fora de escopo na
-documentação de instalação.
+**P2-12 — `execute.after` no V2: guard de resultado vazio e dispatch filho verificados ao vivo. Status: CLOSED (runtime canary).**
+**Reconciliação de 2026-10-20.** A descrição anterior dizia que o hook V2 não
+tinha comportamento próprio, e a revisão seguinte dizia incorretamente que o
+guard não reconhecia o placeholder do host e que havia lacunas de código no
+adapter. O adapter atual cria o guard (`src/pantheon/v2-execute-after.ts:156-160`),
+preserva payload estruturado significativo sem texto e deixa conteúdo textual
+vazio chegar ao guard (`src/pantheon/v2-execute-after.ts:184-188`), e executa a
+cadeia do guard/sandbox/read enhancer
+(`src/pantheon/v2-execute-after.ts:203-205`). O comportamento de guard e as
+regressões correspondentes estão implementados e os testes passam; não há
+alteração de código pendente neste item. O canary scripted-provider local no host exato
+OpenCode `v2.0.30` (`V2 host replaces a no-text child result with an error and preserves completed status`, `tests/canary/plugin-v2-tool-canary.test.mjs`) passou: 19 passed, 0 failed, 3 optional skipped; filho sem texto → `EMPTY_TASK_ERROR`, status da tool do pai `completed`. Sem credenciais/chamadas reais de provedor; sem alegação de isolamento abrangente de egress.
 
-**Reconciliação de 2026-10-19 — estado pós-#248; status preservado.** Em
-`origin/main` pós-#248 (`81f9f2e`, 2026-10-19), `src/plugin-v2.ts` importa
-`createV2ExecuteAfter` e registra `toolCtx.hook('execute.after', ...)`, cujo
-handler chama o adapter em `src/pantheon/v2-execute-after.ts`. Portanto, a
-afirmação histórica de que o hook está vazio/ausente está superada quanto ao
-source wiring; o registro acima permanece intacto como histórico. Isso não
-valida o contrato do live host: comportamento para o `tool` (label) e o formato
-de `result` efetivamente fornecidos pelo host ainda não tem validação runtime /
-host-e2e. As alterações adicionais do follow-up nesta branch continuam dirty e
-não merged; não são evidência de comportamento entregue nem base para fechar o
-item. O escopo original de P2-12 permanece incerto: se exigia apenas o registro
-e a ligação do hook, essa parcela está coberta no source pós-#248; se exigia
-paridade comportamental end-to-end no V2, a validação live-host continua
-pendente. **Status permanece OPEN** até que o escopo e a evidência apropriada
-resolvam essa incerteza.
+As cadeias restantes — `permission.evaluate`, `session.prompt` e compaction —
+seguem **fora de escopo**, declaradas em
+[PERMISSIONS-QUALITY-DELEGATION.md](docs/PERMISSIONS-QUALITY-DELEGATION.md) §3.5 e
+em [UPGRADING.md](docs/UPGRADING.md).
 
 ### Beta 11 — Runtime, governança, persistência e release
 
-**Status da Beta 11: IN PROGRESS.** Há 18 commits locais à frente de
-`origin/main` (contagem obtida via `git log --oneline origin/main..HEAD` no
-momento desta atualização — o inventário é datado e deve ser recontado, não
-reaproveitado). Commits de fase: `c2f5698` (contrato de ferramentas e governança
+**Status da Beta 11: ENTREGUE E PUBLICADA — superada pela beta.15.**
+**Inventário reconciliado em 2026-10-20:** `main` == `origin/main` ==
+`v1.6.0-beta.15` (`fd22b0c`); a branch `feat/v1.6.0-beta.16` está **aberta**
+sobre ela. A contagem de "18 commits locais à frente de `origin/main`" que esta
+seção citava era **datada** e **não** descreve mais o estado do repositório —
+não reaproveitar. O registro de fases abaixo é **histórico** e permanece como
+está. Commits de fase: `c2f5698` (contrato de ferramentas e governança
 runtime), `6fedf83` (council e claims + limites de persistência), `1d9b20a`
 (overrides manuais V2 project-scoped de modelo), `2848075` (caminho
 enxuto/proporcional e redação de custo), `c6f5280` (janela e limites de agregação
@@ -867,10 +863,18 @@ trabalho no Pantheon.
    overhead, resultado e risco antes de reduzir agentes; não usar `general` ou
    `explore` e não remover agentes com base em uma tarefa. O baseline citado de
    ~10M tokens / nominal 24h abrangia cerca de 20 dias de sessões, não uma tarefa.
-   `pantheon_cost` agrega tokens por agente/fase (V2 pode reportar `unknown`),
-   não por sessão/modelo/provedor nem USD; `days=1` é janela móvel, não
-   isolamento de tarefa. Registrar timestamps e janelas; não alegar savings ou
-   delta específico sem atribuição. **Entregue em `2848075`:** a orientação do
+   A tool publicada `pantheon_cost` agrega tokens **por agente** — por agente
+   **e fase** no ramo V1, e por agente com a fase reportada como o literal
+   `'unknown'` no ramo V2 — e **não** tem dimensão de sessão, modelo, provedor
+   nem USD; `days=1` é janela móvel, não isolamento de tarefa. A agregação
+   **por sessão existe apenas no harness `bench/`**
+   (`bench/lib/aggregate.mjs` → `aggregateSessionTree`, com o
+   `sessionBreakdown` por sessão introduzido na beta.15 em
+   `bench/lib/collector.mjs`), e `bench/` **não é publicado** de propósito (sem
+   entrada `bench` em `files` no `package.json`) — portanto ela **não** é uma
+   capacidade da tool entregue. Registrar timestamps e janelas; não alegar
+   savings ou delta específico sem atribuição. **Entregue em `2848075`:** a
+   orientação do
    caminho enxuto/proporcional e a redação de custo/modelo
    (`docs/PERMISSIONS-QUALITY-DELEGATION.md` §3.6, `src/agents/zeus.md`,
    `src/instructions/zeus-timeout-retry.instructions.md`, `docs/QUICKSTART.md`,
@@ -883,11 +887,15 @@ trabalho no Pantheon.
    classificar chamadas/custos e evidência. **Verificação planejada (medição):**
    comparação com janelas e atribuição explícitas, com risco e resultado
    registrados; nenhum delta será promovido sem medição atribuível.
-   **Bloqueio de capacidade (registrado):** `pantheon_cost` agrega tokens por
-   agente/fase (V2 pode reportar `unknown`) e não isola tarefa/sessão/modelo/
-   provedor; nenhum delta atribuível foi produzido e nenhuma economia deve ser
-   alegada. A medição permanece **aberta, bloqueada por capacidade** — não
-   entregue.
+   **Bloqueio de capacidade (registrado):** a tool publicada `pantheon_cost`
+   agrega tokens **por agente** — por agente **e fase** no ramo V1, e por agente
+   com a fase reportada como o literal `'unknown'` no ramo V2 — e **não** isola
+   tarefa/sessão/modelo/provedor nem produz USD. A agregação **por sessão só
+   existe no harness `bench/`**, que **não é publicado**
+   (`bench/lib/aggregate.mjs` → `aggregateSessionTree`; `sessionBreakdown` por
+   sessão introduzido na beta.15 em `bench/lib/collector.mjs`), logo nenhum
+   delta atribuível foi produzido e nenhuma economia deve ser alegada. A
+   medição permanece **aberta, bloqueada por capacidade** — não entregue.
 5. **Modelo ativo — subconjunto de overrides manuais V2 IMPLEMENTED — COMMITTED — REVIEWED (`1d9b20a`); itens residuais abertos.** **Decisão de política:** V2 não aplica presets
    estáticos nem `PANTHEON_MODEL_PRESET`; preserva o modelo default do host e só
    aplica overrides manuais **project-scoped** por agente (`model` e `variant`)
@@ -1070,24 +1078,133 @@ neste beta; (e) migração V1 dos IDs de preset — **congelada**: V1 mantém o
 caminho legado e o `routing.yml` estático, sem migração. Continuam em aberto:
 (d) tratamento de `specific_claims`; (f) quais capacidades runtime estão
 realmente disponíveis para todo/background/board. A medição de orquestração
-(fase 4) permanece **bloqueada por capacidade**: `pantheon_cost` agrega tokens
-por agente/fase (V2 pode reportar `unknown`) e não isola
-tarefa/sessão/modelo/provedor, então nenhum delta atribuível pode ser produzido e
-nenhuma economia deve ser alegada. As diferenças de versão de host observadas
-não resolvem essas decisões.
+(fase 4) permanece **bloqueada por capacidade**: a tool publicada
+`pantheon_cost` agrega tokens **por agente** — por agente **e fase** no ramo
+V1, e por agente com a fase reportada como o literal `'unknown'` no ramo V2 — e
+**não** isola tarefa/sessão/modelo/provedor nem produz USD. A agregação por
+sessão existe **apenas no harness `bench/`**, que **não é publicado**
+(`bench/lib/aggregate.mjs` → `aggregateSessionTree`; `sessionBreakdown` por
+sessão introduzido na beta.15 em `bench/lib/collector.mjs`), então nenhum delta
+atribuível pode ser produzido e nenhuma economia deve ser alegada. As
+diferenças de versão de host observadas não resolvem essas decisões.
 
 **Exclusões.** Não puxar automaticamente os 23 itens `OPEN` do roadmap; considerar
 P0-5/P0-6 somente se vínculo direto com Beta 11 for confirmado e manter os demais
 para triagem futura. F5 permanece deferred porque falhou paridade de rota; não
 declarar aceito. F2-V2/F4B/F6 não foram encontrados no repositório e não devem ser
 inventados. Não alterar o projeto React externo nem abrir trabalho Pantheon pelo
-follow-up MED de tamanho do link. Esta seção registra progresso parcial: 18
-commits locais existem à frente de `origin/main` (incluindo `c6f5280`, a fatia de
-relatório de custo em `src/pantheon/cost-command.ts`, agora commitada e revisada,
-e os cinco commits da fase Setup) e a preparação de release está commitada
-(`8a11282`, `chore(release): v1.6.0-beta.11`) com o PR **#241** aberto para
-`main` — porém **nada foi publicado**, Beta 11 não está concluída, e a própria
-atualização deste ROADMAP permanece não commitada e não conta como entregue.
+follow-up MED de tamanho do link. Esta seção registra o progresso **histórico**
+da Beta 11: a preparação de release estava commitada (`8a11282`,
+`chore(release): v1.6.0-beta.11`) com o PR **#241**
+aberto para `main`, e a fatia de relatório de custo em
+`src/pantheon/cost-command.ts` estava commitada e revisada (`c6f5280`) junto com
+os cinco commits da fase Setup. **Esse inventário foi recontado em 2026-10-20**
+(ver o status no topo desta seção): a Beta 11 foi **publicada** e **superada** —
+hoje `main` == `origin/main` == `v1.6.0-beta.15` (`fd22b0c`) e a branch
+`feat/v1.6.0-beta.16` está aberta. A contagem de commits locais que esta seção
+citava era datada e **não** deve ser reaproveitada.
+
+### Beta 16 — Resultado vazio de dispatch, contrato verdadeiro e piso de runtime
+
+**Status da Beta 16: SOURCE/DOCS concluídos; validação local final aprovada; PR CI
+pendente — branch `feat-v1.6.0-beta.16` aberta sobre `v1.6.0-beta.15`
+(`fd22b0c`).** A beta.15 está **publicada** e foi testada em campo contra o host
+`opencode v2.0.30`; esta beta parte do relatório de campo e implementa/documenta
+as correções escopadas. A execução preliminar do Themis sob Node `v24.15.0` era
+abaixo do piso `>=26.4.0` e foi supersedida pela validação final sob Node
+`26.4.0` / npm `11.17.0` (detalhes em **Verificação**). Os testes locais, o
+sandbox e a validação do tarball passaram; a CI do PR continua pendente. **Nada
+aqui está publicado ou release-ready.** O canary local de dispatch filho também
+passou; ver P2-12.
+
+**Objetivo.** Fazer o resultado vazio de um dispatch filho aparecer como **erro
+explícito** em hosts OpenCode V2 — em vez de silêncio lido como sucesso — e
+tornar a documentação **verdadeira** sobre o catálogo de tools V2, a ferramenta
+de custo, o merge de configuração do host e o piso de runtime Node.
+
+**Escopo concluído no source/docs (seis itens).**
+
+1. **Guard e placeholder do host — implementados e cobertos por regressões.**
+   O host `opencode v2.0.30` usa `Subagent completed without a text response.`
+   para dispatch filho sem texto; o guard reconhece esse placeholder por
+   correspondência exata após `trim` e o transforma em erro explícito. Os
+   testes de regressão passam; o canary scripted-provider live em OpenCode `v2.0.30` confirmou a conversão do resultado sem texto; ver P2-12.
+2. **Rótulos e payload estruturado no adapter — implementados e cobertos por
+   regressões.** O adapter encaminha `task` e `subagent` ao guard e preserva
+   payload estruturado significativo, enquanto conteúdo textual vazio chega ao
+   guard (`src/pantheon/v2-execute-after.ts:184-188`). Os testes passam; não há
+   lacuna de implementação restante neste item.
+3. **Catálogo de tools V2 — documentação corrigida para "3 + até 2", não "3".**
+   O adapter registra **3 tools incondicionais** — `hashline_edit`,
+   `pantheon_cost`, `pantheon_model`
+   (`src/pantheon/v2-tools.ts:380-416`) — e **até 2 tools dependentes do host**:
+   `vision_describe`, que só existe quando o host expõe o catálogo de modelos
+   (`host.model.list`, com gate em `src/plugin-v2.ts:475-480`; caso contrário
+   o marker `vision-tool` é marcado), e `pantheon_bounded_read`, que só é
+   registrada quando o hook `execute.before` foi registrado
+   (`src/plugin-v2.ts:1697-1704`; marker `bounded-read`). A
+   documentação agora distingue as 3 tools incondicionais e as 2 condicionais
+   dependentes do host.
+4. **Granularidade do `pantheon_cost` — documentação corrigida nos três pontos.**
+   A tool publicada agrega tokens **por agente** — por agente **e fase**
+   no ramo V1, e por agente com a fase reportada como o literal `'unknown'` no
+   ramo V2 — e **não** tem dimensão de sessão, modelo, provedor nem USD. A
+   agregação **por sessão existe apenas no harness `bench/`**
+   (`bench/lib/aggregate.mjs` → `aggregateSessionTree`, com o
+   `sessionBreakdown` por sessão introduzido na beta.15 em
+   `bench/lib/collector.mjs`), e `bench/` **não é publicado** de propósito (sem
+   entrada `bench` em `files` no `package.json`) — logo ela **não** é
+   capacidade da tool entregue; essa distinção está registrada nos três blocos
+   de capacidade.
+5. **Merge de configuração do host — documentação corrigida.** O
+   installer escreve `opencode.json`; o host **lê também** um `opencode.jsonc`
+   irmão e o mescla — escalares do `.jsonc` **vencem**, arrays são **unidos**.
+   Uma entrada de usuário no `.jsonc` pode, portanto, mudar o **conjunto
+   efetivo de plugins** que o host carrega, mesmo com o `opencode.json` do
+   installer correto; o texto de instalação registra esse comportamento.
+6. **Política de piso de Node — documentação corrigida.**
+   `engines.node >= 26.4.0` é a **política de alinhamento do próprio pacote**
+   com o build Node oficial do OpenCode — o CI fixa **exatamente** `26.4.0`
+   (`.github/workflows/ci.yml:60`, `:242`, `:279`) — e **não** um requisito
+   derivado do host. Abaixo do piso o `postinstall` **avisa e pula** o sync de
+   TUI/configuração (`scripts/postinstall.mjs:14-17` e
+   `scripts/sync-tui.mjs:261-267`). `node:sqlite`, que o backend opcional do
+   `pantheon_cost` usa, é uma garantia **separada**: disponível só a partir de
+   **Node >= 22.5** (`src/pantheon/cost-command.ts:7`) — e esse limiar de
+   capacidade **não** derruba o piso de suporte do pacote.
+
+**Fora de escopo (explícito).** Publicar no npm; mudar o piso de
+`engines.node`; implementar quebra por sessão **dentro** da tool `pantheon_cost`
+publicada (a granularidade por sessão permanece exclusiva do `bench/` não
+publicado); mudar comportamento do host; qualquer alteração nos artefatos de
+render/proof (`src/plugins/tui/dist/`, `.pantheon/code-mode/`).
+
+**Verificação final local (Node `26.4.0`, npm `11.17.0`).** `test:ts` passou;
+`test:node`: 893 passed, 0 failed, 7 skipped; `test:ci`: 501 passed, 1 skipped;
+`test:tool-canary`: 14 passed, 0 failed, 8 skipped; `test:hooks`: 14 passed,
+0 failed, 7 skipped. Lint verificou 258 arquivos; typecheck, `version:check`,
+`package:validate` e `secret-scan` terminaram com exit code 0.
+
+A validação final do pacote no sandbox isolado passou (exit 0): `git diff --binary -- src`
+(SHA-256 somente fontes) `77fa26fe9148ef4fd0ffd3098f9db4b6a27f850da00f2785bfd21c2f11a7f1ec`;
+tarball SHA-256 `387b062937bb1510e3ca5ce3e539da66daa221701c6d6f09e406ae0892d35fea`; todos os 53
+arquivos `src/**/*.ts` empacotados corresponderam ao worktree. Binário copiado do host exato
+OpenCode `v2.0.30` verificado; cinco MCPs conectaram; `doctor` passou; `Base validation v2: PASS`.
+O npm avisou que lifecycle hooks não estavam allowlisted, mas a instalação/validação-base passou;
+o manifesto ainda informa beta15, embora o conteúdo validado seja o candidato beta16.
+
+O canary scripted-provider em host exato OpenCode `v2.0.30` passou: 19 passed,
+0 failed, 3 optional skipped. Demonstrou que resultado vazio de child vira
+`EMPTY_TASK_ERROR` e o status permanece `completed`; não usou credenciais nem
+chamadas reais de provedor, e não demonstra isolamento abrangente de egress.
+**A CI do PR continua pendente; estes resultados não tornam a beta release-ready.**
+
+**Decisão aberta para o mantenedor — política de piso de Node.** Manter
+`>=26.4.0` como política de alinhamento (**recomendado**) ou passar a suportar
+hosts em Node 24. Registrar que a lacuna atual é que um runtime de host **não
+suportado degrada em silêncio** em vez de falhar alto: o `postinstall` apenas
+avisa, e o `init`/`doctor` só detectam o desvio quando são executados de fato
+(`bin/pantheon-init.mjs:40`, `scripts/doctor.mjs:1859`).
 
 ---
 
@@ -1108,6 +1225,8 @@ atualização deste ROADMAP permanece não commitada e não conta como entregue.
 
 | Data | Mudança |
 |------|---------|
+| 2026-10-20 | **Reconciliação de inventário: beta.15 publicada, beta.16 aberta; P2-12 e `pantheon_cost` reconciliados.** O inventário datado foi recontado: `main` == `origin/main` == `v1.6.0-beta.15` (`fd22b0c`), branch `feat/v1.6.0-beta.16` aberta; a seção Beta 11 deixou de descrever "IN PROGRESS / 18 commits locais à frente de `origin/main`" e passa a registrar a Beta 11 como **publicada e superada**. **P2-12:** a afirmação original de que `execute.after` no V2 não tinha comportamento próprio era falsa; uma reconciliação posterior também descreveu incorretamente o guard do placeholder e lacunas do adapter como pendentes. O código atual cria o guard (`src/pantheon/v2-execute-after.ts:156-160`), trata payload estruturado (`:184-188`) e executa a cadeia (`:203-205`); o comportamento e as regressões estão implementados e os testes passam. **P2-12 permanece `OPEN` somente para a verificação live de dispatch filho em OpenCode `v2.0.30`.** **Blocos de capacidade do `pantheon_cost` corrigidos nos três pontos:** a tool publicada agrega tokens **por agente** (V1 também por fase; ramo V2 reporta o literal `'unknown'`) e **não** tem dimensão de sessão/modelo/provedor/USD — a agregação por sessão existe **apenas no harness `bench/`** (`bench/lib/aggregate.mjs` → `aggregateSessionTree`; `sessionBreakdown` por sessão introduzido na beta.15), que **não é publicado**. Readiness deixou de ser `UNKNOWN / NOT RECONCILED`; nenhuma contagem de item mudou. |
+| 2026-10-20 | **Reconciliação final posterior ao snapshot acima.** O canary scripted-provider no host exato OpenCode `v2.0.30` passou (19 passed, 0 failed, 3 optional skipped), confirmou `EMPTY_TASK_ERROR` com status `completed` e fechou **P2-12** (`CLOSED (runtime canary)`). A validação local final sob Node `26.4.0` / npm `11.17.0`, o sandbox e o tarball passaram; detalhes, contagens e SHAs constam na seção **Beta 16**, em **Verificação final local**. A CI do PR permanece pendente: candidato beta.16 não publicado nem release-ready.
 | 2026-10-19 | O council estabeleceu o charter Road to Stable com três workstreams; readiness permanece **`UNKNOWN / NOT RECONCILED`**. |
 | 2026-10-05 | **Reconciliação de P0-1 contra o PR #202: 29 itens, 2 fechados.** O PR #202 (`80bac52`, 2026-10-04) corrigiu os três defaults `'v1'` do seletor de geração para `'auto'` (`bin/pantheon-init.mjs:427`, `scripts/install/opencode.mjs:528`, assinatura em `scripts/install/opencode-version.mjs:213`) e adicionou um probe de `--version` do host (`scripts/install/opencode-version.mjs:44-55`; precedência `explícito > OPENCODE_VERSION > basename opencode2 > probe > warn-and-fallback-v1`). Fechou **P0-1** — cujo corpo fica preservado como **registro histórico pré-#202** — e **P1-6**, cuja premissa era o default `v1` deixar `pantheon_cost` desregistrada. **Legenda estendida** com `CLOSED (code)`: `CLOSED (doc)` é estritamente *documentação corrigida por reescrita* e não expressa um defeito fechado por PR de código. Contrato, "Limites", P0-3, P0-5, P0-6 e âncoras de arquivo único (sem diretório) reconciliados com o código atual. Nota: P1-3, antes fechado como "indisponível", teve a premissa desfeita por #202 — `pantheon_cost` volta à superfície. Contagem: 29 itens (4 `CLOSED (doc)`, 2 `CLOSED (code)`, 23 `OPEN`) + 1 tombstone `WITHDRAWN` (P0-2). |
 | 2026-10-05 | **Reconciliação pós-PR #204: 26 → 29 itens, nenhum fechado.** #204 entregou três fatias de paridade — relato da redução V2 no install (`scripts/install/opencode.mjs:546`) e no `doctor` como achado H4 (`scripts/doctor.mjs:1560`), correção da cadeia causal invertida atrás da matriz de delegação não replicada, e poda do registro read-only em `session.deleted` (`src/plugin-v2.ts:493`) — e **nenhuma delas tinha item neste backlog**, então **nenhum `Status:` foi virado**: os três itens abertos são o que #204 deixou de fora, não o que ele entregou. **Três itens novos, todos `OPEN`:** **P1-12** (a matriz caller/target não é replicada no V2 — bloqueado numa observação que só uma run beta pode fazer, se o `agent` de `execute.before` é o delegante no meio do handoff; nada no repositório mede payloads de evento, o canary registra só `Object.keys(ctx)`), **P2-11** (board e goal tools ausentes no V2, com a bridge `createV2Bridge` nunca ligada — o que #204 mudou foi o *relato*, não a capacidade), **P2-12** (a cadeia `execute.after` no V2 é ponto de registro vazio, e o mesmo vale para `permission.evaluate`, `session.prompt` e compaction). Cada um remete para §3.5 de [PERMISSIONS-QUALITY-DELEGATION.md](docs/PERMISSIONS-QUALITY-DELEGATION.md) em vez de repetir o mapa. **Falso pressuposto de contagem registrado:** a legenda trata `CLOSED (doc)` como *documentação* corrigida por reescrita, e nenhum dos quatro já fechados se aplica a estas fatias de código — por isso a rodada **abre** e não fecha. Contagem e markers reconciliados: 29 itens vivos (4 `CLOSED (doc)`, 25 `OPEN`) mais 1 tombstone `WITHDRAWN` (P0-2). |

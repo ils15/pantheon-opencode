@@ -14,7 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🐞 Fixed
 
+- **Empty child-dispatch result is an explicit error:** an empty result returned by a child dispatch is now surfaced as an error instead of being passed through as a normal result.
+
 ## ⚠️ Known Issues
+
+- **`pantheon_cost` aggregates by agent and phase:** V1 reports both dimensions; V2 reports the literal phase `unknown`. The shipped tool has no per-session, per-model, per-provider or USD dimension; per-session aggregation exists only in the unpublished benchmark harness.
+- **An empty child result can arrive as a completed call:** the host supplies the placeholder `Subagent completed without a text response.`; Pantheon’s guard replaces the payload with its explicit error text, while the host’s completed status remains unchanged.
+- **A user `opencode.jsonc` can change the effective plugin set:** the host merges `opencode.json` with a sibling `opencode.jsonc` (scalars from `.jsonc` win, arrays are unioned), and Pantheon registers its plugin only in `opencode.json`.
 
 ## ✅ Closed Issues
 

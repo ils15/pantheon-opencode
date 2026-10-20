@@ -10,6 +10,7 @@
  */
 import { strict as assert } from 'node:assert'
 import { DEFAULT_CONFIG, resolveSandboxConfig } from '../../src/pantheon/context-sandbox.ts'
+import { EMPTY_TASK_ERROR, HOST_EMPTY_RESULT_TEXT } from '../../src/pantheon/task-result-guard.ts'
 import {
   createV2ExecuteAfter,
   resolveV2SandboxConfig,
@@ -191,6 +192,48 @@ async function main() {
     )
   })
 
+  await testAsync('empty text-only array content becomes an explicit task error', async () => {
+    const event = completedEvent({
+      tool: 'task',
+      result: { content: [{ type: 'text', text: '' }] },
+    })
+    await handler(event)
+    assert.equal((event.result as { output: string }).output, EMPTY_TASK_ERROR)
+  })
+
+  await testAsync(
+    'whitespace text-only array content becomes an explicit subagent error',
+    async () => {
+      const event = completedEvent({
+        tool: 'subagent',
+        result: { content: [{ type: 'text', text: ' \n\t ' }] },
+      })
+      await handler(event)
+      assert.equal((event.result as { output: string }).output, EMPTY_TASK_ERROR)
+    },
+  )
+
+  await testAsync('empty object-form text content becomes an explicit task error', async () => {
+    const event = completedEvent({
+      tool: 'task',
+      result: { content: { type: 'text', text: '' } },
+    })
+    await handler(event)
+    assert.equal((event.result as { output: string }).output, EMPTY_TASK_ERROR)
+  })
+
+  await testAsync(
+    'whitespace object-form text content becomes an explicit subagent error',
+    async () => {
+      const event = completedEvent({
+        tool: 'subagent',
+        result: { content: { type: 'text', text: ' \t ' } },
+      })
+      await handler(event)
+      assert.equal((event.result as { output: string }).output, EMPTY_TASK_ERROR)
+    },
+  )
+
   await testAsync('non-empty V2 subagent result is untouched', async () => {
     const event = completedEvent({
       tool: 'subagent',
@@ -215,6 +258,72 @@ async function main() {
     const event = completedEvent({ tool: 'subagent', result: { output: '', content } })
     await handler(event)
     assert.deepEqual(event.result, { output: '', content })
+  })
+
+  await testAsync(
+    'V2 subagent result with no text field but metadata becomes an error',
+    async () => {
+      const event = completedEvent({ tool: 'subagent', result: { metadata: { note: 'no text' } } })
+      await handler(event)
+      const out = (event.result as { output: string }).output
+      assert.match(out, /ERROR: task\(\) returned empty output/)
+      const meta = (event.result as { metadata?: Record<string, unknown> }).metadata
+      assert.equal(meta?.note, 'no text', 'existing metadata is preserved')
+    },
+  )
+
+  await testAsync('V2 subagent result carrying the host placeholder becomes an error', async () => {
+    const event = completedEvent({ tool: 'subagent', result: { output: HOST_EMPTY_RESULT_TEXT } })
+    await handler(event)
+    const out = (event.result as { output: string }).output
+    assert.match(out, /ERROR: task\(\) returned empty output/)
+  })
+
+  await testAsync(
+    'host subagent result envelope rewrites its output and preserves wrapper fields',
+    async () => {
+      const content = [
+        {
+          type: 'text',
+          text: '<subagent sessionID="ses_child" state="completed">Subagent completed without a text response.</subagent>',
+        },
+        { type: 'file', uri: 'file:///tmp/result.txt', mime: 'text/plain' },
+      ]
+      const result = {
+        output: {
+          output: HOST_EMPTY_RESULT_TEXT,
+          sessionID: 'ses_child',
+          status: 'completed',
+        },
+        content,
+        metadata: { sessionID: 'ses_child', status: 'completed' },
+      }
+      const event = completedEvent({ tool: 'subagent', result })
+
+      await handler(event)
+
+      assert.equal(result.output.output, EMPTY_TASK_ERROR)
+      assert.equal(result.output.sessionID, 'ses_child')
+      assert.equal(result.output.status, 'completed')
+      assert.equal(result.content[0]?.type, 'text')
+      assert.equal(result.content[0]?.text, EMPTY_TASK_ERROR)
+      assert.deepEqual(result.content[1], content[1], 'the structured attachment must be preserved')
+      assert.deepEqual(result.metadata, { sessionID: 'ses_child', status: 'completed' })
+    },
+  )
+
+  await testAsync('V2 subagent result quoting the host placeholder is untouched', async () => {
+    const message = `The child said: ${HOST_EMPTY_RESULT_TEXT} — but it also answered.`
+    const event = completedEvent({ tool: 'subagent', result: { output: message } })
+    await handler(event)
+    assert.equal((event.result as { output: string }).output, message)
+  })
+
+  await testAsync('V2 task result carrying the host placeholder becomes an error', async () => {
+    const event = completedEvent({ tool: 'task', result: { output: HOST_EMPTY_RESULT_TEXT } })
+    await handler(event)
+    const out = (event.result as { output: string }).output
+    assert.match(out, /ERROR: task\(\) returned empty output/)
   })
 
   // ── no-op / fail-safe shapes ───────────────────────────────────────────

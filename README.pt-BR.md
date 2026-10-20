@@ -37,6 +37,8 @@ Com a configuração padrão do npm, versões incompatíveis podem gerar um avis
 
 Esse requisito do pacote não significa que todo host OpenCode execute Node: o OpenCode V2.0.31 oficial oferece um caminho de runtime Bun e um build Node separado fixado em Node 26.4.0. Não há aqui um requisito mínimo para Bun. O backend SQLite opcional de `pantheon_cost` tem um limite de capacidade distinto (`node:sqlite` requer Node >=22.5), que não reduz o requisito de suporte do pacote.
 
+O piso `>=26.4.0` é a política de alinhamento do próprio pacote com o build Node oficial do OpenCode, que a CI fixa exatamente em 26.4.0; não é uma afirmação sobre o runtime do host.
+
 No projeto em que você quer usar o Pantheon:
 
 ```bash
@@ -129,12 +131,15 @@ registrados juntos.
 |---|---|---|
 | Chave de config do OpenCode | `plugin` singular | `plugins` plural |
 | Registro Pantheon | `src/plugin.ts` mais `src/plugins/pantheon-hooks.ts` | `pantheon-opencode/plugin-v2` (`src/plugin-v2.ts`) |
-| Contrato de runtime | Plugin Pantheon V1: 6 ferramentas (`hashline_edit`, as 3 ferramentas de goal, `pantheon_cost`, `pantheon_model`), hooks de evento/ferramenta e tratamento de compactação V1 | Plugin V2 completo: 3 ferramentas de orquestração mais `vision_describe` quando o catálogo de modelos está disponível, 5 assinaturas de eventos, session hooks (`prompt`, `context`), um hook `execute.before` que impõe sessões somente-leitura, além de transforms de configuração |
+| Contrato de runtime | Plugin Pantheon V1: 6 ferramentas (`hashline_edit`, as 3 ferramentas de goal, `pantheon_cost`, `pantheon_model`), hooks de evento/ferramenta e tratamento de compactação V1 | Plugin V2 completo: 3 ferramentas de orquestração incondicionais mais até 2 dependentes do host (`vision_describe` quando o catálogo de modelos está disponível, `pantheon_bounded_read` quando o host expõe suas APIs de permissão e sessão), 5 assinaturas de eventos, session hooks (`prompt`, `context`), um hook `execute.before` que impõe sessões somente-leitura, além de transforms de configuração |
 | APIs V1 | Registradas | Definições próprias de ferramentas via `ctx.tool.transform()` — não pelo caminho do plugin V1 |
 
-O plugin V2 fornece 3 ferramentas de orquestração (`hashline_edit`,
-`pantheon_cost`, `pantheon_model`), 4 assinaturas de eventos (`session.created`,
-`session.idle`, `session.error`, `session.compacted`), session hooks (`prompt`,
+O plugin V2 fornece 3 ferramentas de orquestração incondicionais
+(`hashline_edit`, `pantheon_cost`, `pantheon_model`) mais até 2 dependentes do
+host — `vision_describe` quando o host expõe seu catálogo de modelos, e
+`pantheon_bounded_read` quando o host expõe suas APIs de permissão e sessão
+(apenas sessões root do Zeus) — 5 assinaturas de eventos (`session.created`,
+`session.idle`, `session.deleted`, `session.error`, `session.compacted`), session hooks (`prompt`,
 `context`) e um hook de ferramenta `execute.before` que impõe sessões
 somente-leitura. As 3 ferramentas de goal **não** são
 registradas no V2: o goal loop precisa de um `GoalStore`, de um

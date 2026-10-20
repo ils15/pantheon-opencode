@@ -20,9 +20,10 @@ upgrading, choose the contract that matches the OpenCode host you will run:
 | Selector | Config key | Pantheon entry | Scope |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and the V1 `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), board lifecycle, V1 hooks and implemented compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 unconditional tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`) plus up to 2 host-dependent ones (`vision_describe` when the host exposes its model catalog, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
 
-**Changed in 1.6.0 — the V2 tool surface is 3 tools, not 6.** The three goal
+**Changed in 1.6.0 — the V2 tool surface is 3 unconditional tools, not 6.** The
+three goal
 tools (`pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`) are
 **not registered on the V2 contract**. The goal loop requires a `GoalStore`, a
 `GoalLoopClient` and a `BackgroundJobBoard`, none of which the V2
@@ -33,6 +34,12 @@ but on OpenCode 2.0.x such a tool fails on **every** call with
 ran usefully. They are now absent instead. `getUnsupportedFeatures()` reports
 the gap as the `goal-tools` marker. Use the V1 contract if you need the goal
 loop.
+
+Two further tools are registered only when the host allows it:
+`vision_describe` when the host exposes its model catalog, and
+`pantheon_bounded_read` when the host exposes its permission and session APIs
+(root Zeus sessions only). The V2 surface is therefore 3 unconditional tools
+plus up to 2 host-dependent ones.
 
 Three further V2 fixes ship alongside it:
 

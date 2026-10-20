@@ -218,6 +218,26 @@ Both columns of the 1.6.x row are real, and they are not the same claim. Read
 [the plugin contract](#opencode-v1v2--dual-version-160-beta1) for what each
 generation actually registers.
 
+### Node runtime floor
+
+`engines.node` is `>=26.4.0`: Pantheon's own alignment policy with the official
+OpenCode Node build, which CI pins to exactly 26.4.0 — not a claim about the
+host runtime. Below the floor the package still installs, but `postinstall`
+only warns and skips the TUI and config sync, and the CLI stops with an
+explicit version message before any setup write. The `node:sqlite` threshold
+(Node >= 22.5) is a separate, lower capability bound for the optional
+`pantheon_cost` SQLite backend.
+
+### Config registration and the host's config merge
+
+Pantheon registers its plugin in `opencode.json`; the installer never writes
+`opencode.jsonc`. The OpenCode V2 host also loads a sibling `opencode.jsonc`
+from the same config directory when one exists, and merges the two files:
+scalars from `.jsonc` win, and arrays are unioned. A `plugin`/`plugins` entry
+in `.jsonc` therefore joins the effective plugin set instead of replacing the
+registration Pantheon wrote. The merge is silent, so a host can load a plugin
+that appears only in `.jsonc`.
+
 ### What "supported on OpenCode 1.X" concretely means
 
 On the 1.6 line, an OpenCode 1.X host gets the **V1 plugin**:
@@ -430,11 +450,16 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
 | Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) |
-| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 3 orchestration tools plus `vision_describe` when the model catalog is available, 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 3 unconditional orchestration tools plus up to 2 host-dependent ones (`vision_describe` when the model catalog is available, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
 | V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 
-The V2 plugin provides 3 orchestration tools (`hashline_edit`, `pantheon_cost`,
-`pantheon_model`), 5 event subscriptions (`session.created`, `session.idle`,
+The V2 plugin provides 3 unconditional orchestration tools (`hashline_edit`,
+`pantheon_cost`, `pantheon_model`) plus up to 2 host-dependent ones —
+`vision_describe` when the host exposes its model catalog, and
+`pantheon_bounded_read` when the host exposes its permission and session APIs
+(root Zeus sessions only, see
+[Bounded workspace reads](#bounded-workspace-reads-f3b)) — 5 event
+subscriptions (`session.created`, `session.idle`,
 `session.deleted`, `session.error`, `session.compacted`), session hooks
 (`prompt`, `context`),
 and a tool `execute.before` hook that enforces read-only sessions. The 3 goal
@@ -830,8 +855,11 @@ name. Scenario A performs real web research, so its variance is
 network-dependent and recorded per run.
 
 `reportVersion` remains `3`; token usage fields are unchanged and
-`tokens.sessionBreakdown` is an optional additive field. When available, it
-reports input, output, and input+output total per unique session, plus root and
+`tokens.sessionBreakdown` is an optional additive field. It belongs to the
+benchmark report in the unpublished `bench/` harness, not to the shipped
+`pantheon_cost` tool. That tool aggregates by agent and phase in V1; V2 reports
+the phase as the literal `unknown`. When available, `sessionBreakdown` reports
+input, output, and input+output total per unique session, plus root and
 descendant subtotals. These are overlapping views of the aggregate, not extra
 usage; no agent/call/section attribution is inferred. Incomplete token-field
 coverage or a session without assistant usage makes the breakdown unavailable

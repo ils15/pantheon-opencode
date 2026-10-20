@@ -40,7 +40,11 @@ import {
   DEFAULT_CONFIG as SANDBOX_DEFAULT_CONFIG,
 } from './context-sandbox.ts'
 import { createReadEnhancer } from './hashline/read-enhancer.ts'
-import { createTaskResultGuard } from './task-result-guard.ts'
+import {
+  createTaskResultGuard,
+  HOST_EMPTY_RESULT_TEXT,
+  isChildDispatchTool,
+} from './task-result-guard.ts'
 
 /** The `Tool.Result` fields this adapter reads and writes back. */
 export interface V2ToolResult {
@@ -69,7 +73,7 @@ export interface V2ExecuteAfterOptions {
 }
 
 /** Which `Tool.Result` field carries the (mutable) text this adapter enhances. */
-type TextField = 'output' | 'content' | 'content-array'
+type TextField = 'output' | 'content' | 'content-array' | 'child-output-envelope'
 
 /**
  * Extract the mutable text from a `Tool.Result`.
@@ -80,7 +84,24 @@ type TextField = 'output' | 'content' | 'content-array'
  *
  * @returns `{ text, field }` or `null` when there is nothing to enhance.
  */
-function extractText(result: V2ToolResult): { text: string; field: TextField } | null {
+function extractText(
+  result: V2ToolResult,
+  tool: string,
+): { text: string; field: TextField } | null {
+  // OpenCode 2.0.30's native `subagent` result wraps the effective output in
+  // result.output.output, while result.content also carries a display wrapper.
+  // Prefer that child-only envelope over the non-empty wrapper text, otherwise
+  // the exact host empty-result sentinel is hidden from the task guard.
+  const childOutput =
+    isChildDispatchTool(tool) &&
+    result.output !== null &&
+    typeof result.output === 'object' &&
+    !Array.isArray(result.output)
+      ? (result.output as { output?: unknown }).output
+      : undefined
+  if (typeof childOutput === 'string' && childOutput.trim() !== '') {
+    return { text: childOutput, field: 'child-output-envelope' }
+  }
   if (typeof result.output === 'string' && result.output.trim() !== '') {
     return { text: result.output, field: 'output' }
   }
@@ -99,20 +120,95 @@ function extractText(result: V2ToolResult): { text: string; field: TextField } |
     if (text.trim() !== '') return { text, field: 'content-array' }
   }
   if (typeof result.output === 'string') return { text: result.output, field: 'output' }
+  if (typeof childOutput === 'string') {
+    return { text: childOutput, field: 'child-output-envelope' }
+  }
   return null
 }
 
-/**
- * Write enhanced text back into the SAME field it came from, preserving the
- * result's other fields.
- */
-function writeText(result: V2ToolResult, field: TextField, text: string): void {
+/** Whether content includes an attachment or meaningful object-form text. */
+function hasMeaningfulStructuredContent(content: unknown): boolean {
+  if (Array.isArray(content)) {
+    return content.some((part) => {
+      if (typeof part === 'string') return false
+      return (
+        part === null || typeof part !== 'object' || (part as { type?: unknown }).type !== 'text'
+      )
+    })
+  }
+
+  if (content !== null && typeof content === 'object') {
+    const part = content as { type?: unknown; text?: unknown }
+    return part.type === 'text'
+      ? typeof part.text === 'string' && part.text.trim() !== ''
+      : Object.keys(content).length > 0
+  }
+
+  return false
+}
+
+/** Keep the duplicate child content view synchronized without changing attachments. */
+function rewriteChildContentMirror(
+  content: unknown,
+  originalText: string,
+  replacement: string,
+): unknown {
+  const isHostPlaceholder = originalText.trim() === HOST_EMPTY_RESULT_TEXT
+  const matches = (value: unknown): value is string =>
+    typeof value === 'string' &&
+    (isHostPlaceholder
+      ? value.includes(HOST_EMPTY_RESULT_TEXT)
+      : originalText.trim() === '' && value.trim() === '')
+
+  if (typeof content === 'string') return matches(content) ? replacement : content
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (typeof part === 'string') return matches(part) ? replacement : part
+      if (
+        part !== null &&
+        typeof part === 'object' &&
+        (part as { type?: unknown }).type === 'text' &&
+        matches((part as { text?: unknown }).text)
+      ) {
+        return { ...part, text: replacement }
+      }
+      return part
+    })
+  }
+  if (
+    content !== null &&
+    typeof content === 'object' &&
+    (content as { type?: unknown }).type === 'text' &&
+    matches((content as { text?: unknown }).text)
+  ) {
+    return { ...content, text: replacement }
+  }
+  return content
+}
+
+/** Write enhanced text back into its original result field. */
+function writeText(
+  result: V2ToolResult,
+  field: TextField,
+  text: string,
+  originalText: string,
+  tool: string,
+): void {
   if (field === 'output') {
     result.output = text
   } else if (field === 'content') {
     result.content = text
-  } else {
+  } else if (field === 'content-array') {
     result.content = [{ type: 'text', text }]
+  } else {
+    const envelope = result.output as { output?: unknown }
+    envelope.output = text
+  }
+  // Native subagent results expose both an output envelope and display content.
+  // Keep the parent-visible text aligned, replacing only blank text or text
+  // containing the exact known host sentinel; all non-text parts are preserved.
+  if (isChildDispatchTool(tool) && field !== 'content' && field !== 'content-array') {
+    result.content = rewriteChildContentMirror(result.content, originalText, text)
   }
 }
 
@@ -144,22 +240,23 @@ export function createV2ExecuteAfter(
       const sessionID = typeof payload.sessionID === 'string' ? payload.sessionID : ''
       const callID = typeof payload.id === 'string' ? payload.id : ''
 
-      const extracted = extractText(result as V2ToolResult)
-      // Preserve non-empty structured payloads that are intentionally not
-      // editable as text; they are not empty child results.
+      const extracted = extractText(result as V2ToolResult, tool)
+      // Preserve meaningful non-text structured payloads (file/image/etc.) and
+      // non-empty object-form text parts. Empty text-only content, whether an
+      // array of text parts or a single object-form text part, must reach the
+      // child-dispatch guard below instead of bypassing it.
       const resultContent = (result as V2ToolResult).content
       if (
-        extracted === null &&
-        ((Array.isArray(resultContent) && resultContent.length > 0) ||
-          (resultContent !== null &&
-            typeof resultContent === 'object' &&
-            Object.keys(resultContent).length > 0))
+        hasMeaningfulStructuredContent(resultContent) &&
+        (extracted === null || extracted.text.trim() === '')
       ) {
         return
       }
       // Child-dispatch results with no text or structured payload are empty;
-      // other tools with no text remain a no-op.
-      if (extracted === null && tool !== 'task' && tool !== 'subagent') return
+      // other tools with no text remain a no-op. The label set is the guard's
+      // own set, so a label the guard handles cannot be dropped before the
+      // guard sees it.
+      if (extracted === null && !isChildDispatchTool(tool)) return
       const original = extracted === null ? { text: '', field: 'output' as TextField } : extracted
 
       const input = { tool, sessionID, callID, args: payload.input }
@@ -173,7 +270,7 @@ export function createV2ExecuteAfter(
       await readEnhancer(input, output)
 
       if (output.output !== original.text) {
-        writeText(result as V2ToolResult, original.field, output.output)
+        writeText(result as V2ToolResult, original.field, output.output, original.text, tool)
       }
       // Surface sandbox metadata onto the result (merge, never replace). It is
       // only present when the sandbox actually truncated something.
