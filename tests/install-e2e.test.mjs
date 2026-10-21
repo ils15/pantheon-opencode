@@ -662,6 +662,164 @@ test('V2 agent MCP permissions follow mcp_tools allowlists', async () => {
   }
 })
 
+test('manual goal tools have exact per-agent grants in generated V1 and V2 configs', async () => {
+  const goalTools = ['goal_create', 'goal_get', 'goal_update', 'goal_done']
+  const expectedFor = (agent) => {
+    if (agent === 'zeus') return new Set(goalTools)
+    if (agent === 'athena' || agent === 'themis') return new Set(['goal_get'])
+    return new Set()
+  }
+
+  for (const generation of ['v1', 'v2']) {
+    const target = mkdtempSync(join(tmpdir(), `pantheon-goal-grants-${generation}-`))
+    try {
+      const config = await runInstall(target, generation)
+      const agents = generation === 'v1' ? config.agent : config.agents
+      assert.ok(agents.zeus && agents.athena && agents.themis)
+      for (const [agentName, agent] of Object.entries(agents)) {
+        const expected = expectedFor(agentName)
+        if (generation === 'v1') {
+          const permissions = agent.permission
+          assert.equal(permissions['pantheon_persistence_*'], 'deny', agentName)
+          for (const tool of goalTools) {
+            assert.equal(
+              permissions[`pantheon_persistence_${tool}`],
+              expected.has(tool) ? 'allow' : undefined,
+              `${generation}/${agentName}/${tool}`,
+            )
+          }
+          continue
+        }
+
+        const rules = agent.permissions
+        const exactRule = (tool) =>
+          rules.findLast((rule) => rule.action === `pantheon_persistence_${tool}`)
+        const serverDeny = rules.findLast(
+          (rule) => rule.action === 'pantheon_persistence_*',
+        )
+        assert.equal(serverDeny?.effect, 'deny', `${generation}/${agentName} default deny`)
+        for (const tool of goalTools) {
+          assert.equal(
+            exactRule(tool)?.effect,
+            expected.has(tool) ? 'allow' : undefined,
+            `${generation}/${agentName}/${tool}`,
+          )
+        }
+      }
+    } finally {
+      rmSync(target, { recursive: true, force: true })
+    }
+  }
+})
+
+test('read-only codemap grants are limited to Apollo and Athena; indexing remains denied', async () => {
+  const codeTools = ['code_query', 'code_neighbors']
+  const otherMemoryTools = [
+    'memory_store',
+    'memory_recall',
+    'memory_forget',
+    'memory_list',
+    'memory_stats',
+  ]
+  const expectedAgents = new Set(['apollo', 'athena'])
+
+  for (const generation of ['v1', 'v2']) {
+    const target = mkdtempSync(join(tmpdir(), `pantheon-codemap-grants-${generation}-`))
+    try {
+      const config = await runInstall(target, generation)
+      const agents = generation === 'v1' ? config.agent : config.agents
+      assert.ok(agents.apollo && agents.athena && agents.zeus)
+
+      for (const [agentName, agent] of Object.entries(agents)) {
+        const expected = expectedAgents.has(agentName)
+        if (generation === 'v1') {
+          const permissions = agent.permission
+          assert.equal(permissions['pantheon_memory_*'], 'deny', `${agentName} Memory default deny`)
+          assert.equal(
+            permissions.pantheon_memory_code_index,
+            undefined,
+            `${generation}/${agentName}/code_index must remain denied`,
+          )
+          for (const tool of codeTools) {
+            assert.equal(
+              permissions[`pantheon_memory_${tool}`],
+              expected ? 'allow' : undefined,
+              `${generation}/${agentName}/${tool}`,
+            )
+          }
+          if (expected) {
+            assert.equal(
+              permissions.pantheon_memory_memory_search,
+              'allow',
+              `${agentName} memory_search`,
+            )
+            for (const tool of otherMemoryTools) {
+              assert.equal(
+                permissions[`pantheon_memory_${tool}`],
+                undefined,
+                `${generation}/${agentName}/${tool} must remain ungranted`,
+              )
+            }
+          }
+          if (expected) {
+            assert.equal(permissions['pantheon_code_mode_*'], 'deny', `${agentName} Code Mode deny`)
+            assert.equal(permissions.pantheon_code_mode_execute_code_script, undefined)
+          }
+          if (agentName === 'mnemosyne') {
+            assert.equal(permissions.pantheon_memory_memory_search, 'allow')
+            for (const tool of otherMemoryTools) {
+              assert.equal(permissions[`pantheon_memory_${tool}`], 'allow')
+            }
+          }
+          continue
+        }
+
+        const rules = agent.permissions
+        const effect = (action) => rules.findLast((rule) => rule.action === action)?.effect
+        assert.equal(effect('pantheon_memory_*'), 'deny', `${agentName} Memory default deny`)
+        assert.equal(
+          effect('pantheon_memory_code_index'),
+          undefined,
+          `${generation}/${agentName}/code_index must remain denied`,
+        )
+        for (const tool of codeTools) {
+          assert.equal(
+            effect(`pantheon_memory_${tool}`),
+            expected ? 'allow' : undefined,
+            `${generation}/${agentName}/${tool}`,
+          )
+        }
+        if (expected) {
+          assert.equal(
+            effect('pantheon_memory_memory_search'),
+            'allow',
+            `${agentName} memory_search`,
+          )
+          for (const tool of otherMemoryTools) {
+            assert.equal(
+              effect(`pantheon_memory_${tool}`),
+              undefined,
+              `${generation}/${agentName}/${tool} must remain ungranted`,
+            )
+          }
+        }
+        if (expected) {
+          assert.equal(effect('pantheon_code_mode_*'), 'deny', `${agentName} Code Mode deny`)
+          assert.equal(effect('pantheon_code_mode_execute_code_script'), undefined)
+        }
+        if (agentName === 'mnemosyne') {
+          assert.equal(effect('pantheon_memory_memory_search'), 'allow')
+          for (const tool of otherMemoryTools) {
+            assert.equal(effect(`pantheon_memory_${tool}`), 'allow')
+          }
+        }
+      }
+    } finally {
+      rmSync(target, { recursive: true, force: true })
+    }
+  }
+})
+
 test('V2 preserves todoContinuation (not rewritten for V2)', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-todo-'))
   try {

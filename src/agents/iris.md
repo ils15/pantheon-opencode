@@ -21,7 +21,6 @@ skills:
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_recall]
-  pantheon-code-mode: []
 ---
 
 ## Core Capabilities

@@ -14,7 +14,7 @@ temperature: 0.2
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
-  pantheon-persistence: [context_save, context_get]
+  pantheon-persistence: [context_save, context_get, goal_create, goal_get, goal_update, goal_done]
   pantheon-vision: [vision_describe]
 skills:
   - agent-coordination
