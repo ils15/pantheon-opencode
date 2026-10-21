@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sqlite3
 from pathlib import Path
 
@@ -180,6 +181,73 @@ class TestIncremental:
         p.write_bytes(b"x" * (512 * 1024 + 1))
         r = codemap.code_index(conn, path=p, project_root=tmp_path)
         assert r["large_skipped"] == 1
+
+
+class TestIndexConfinement:
+    @pytest.mark.parametrize(
+        ("project_root", "message"),
+        [
+            (None, "Trusted project root unavailable"),
+            ("relative-project", "Trusted project root must be absolute"),
+            ("{missing}", "Trusted project root is missing or invalid"),
+            ("/", "Trusted project root must be a directory"),
+        ],
+    )
+    def test_code_index_fails_closed_for_invalid_trusted_roots(
+        self,
+        conn: sqlite3.Connection,
+        tmp_path: Path,
+        project_root: str | None,
+        message: str,
+    ) -> None:
+        root = (
+            project_root.format(missing=tmp_path / "missing-project")
+            if project_root is not None
+            else None
+        )
+
+        result = codemap.code_index(conn, project_root=root)
+
+        assert message in result["error"]
+        assert conn.execute("SELECT COUNT(*) FROM code_files").fetchone()[0] == 0
+
+    @pytest.mark.parametrize(
+        ("target_kind", "message"),
+        [
+            ("traversal", "must not contain parent traversal"),
+            ("missing", "does not exist or is invalid"),
+            ("outside", "must resolve within the trusted project root"),
+            ("fifo", "must be a file or directory"),
+        ],
+    )
+    def test_code_index_rejects_targets_outside_supported_scope(
+        self,
+        conn: sqlite3.Connection,
+        tmp_path: Path,
+        target_kind: str,
+        message: str,
+    ) -> None:
+        project = tmp_path / "trusted-project"
+        project.mkdir()
+        outside = tmp_path / "outside.py"
+        outside.write_text("class OutsideOnly:\n    pass\n", encoding="utf-8")
+        if target_kind == "traversal":
+            target: str | Path = "../outside.py"
+        elif target_kind == "missing":
+            target = "missing.py"
+        elif target_kind == "fifo":
+            target = project / "pipe.py"
+            try:
+                os.mkfifo(target)
+            except (AttributeError, NotImplementedError, OSError) as exc:
+                pytest.skip(f"FIFO unavailable: {exc}")
+        else:
+            target = outside
+
+        result = codemap.code_index(conn, path=target, project_root=project)
+
+        assert message in result["error"]
+        assert conn.execute("SELECT COUNT(*) FROM code_files").fetchone()[0] == 0
 
 
 class TestEdge:

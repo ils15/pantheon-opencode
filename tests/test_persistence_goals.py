@@ -66,6 +66,28 @@ def _load_isolated_module(alias: str, global_db: Path, project_db: Path):
     return module
 
 
+def _run_isolated_cli(
+    alias: str, global_db: Path, project_db: Path, *arguments: str
+) -> int:
+    """Execute the module CLI in-process so coverage observes its exit paths."""
+    source = Path(__file__).resolve().parents[1] / "src/mcp/mcp_persistence.py"
+    spec = importlib.util.spec_from_file_location(alias, source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[alias] = module
+    argv = [
+        "mcp_persistence",
+        "--global-db",
+        str(global_db),
+        "--project-db",
+        str(project_db),
+        *arguments,
+    ]
+    with patch.object(sys, "argv", argv), pytest.raises(SystemExit) as exit_info:
+        spec.loader.exec_module(module)
+    return int(exit_info.value.code)
+
+
 @pytest.fixture
 def persistence(tmp_path: Path) -> Iterator[tuple[ModuleType, Path]]:
     with tempfile.TemporaryDirectory(prefix="goal-db-", dir=tmp_path) as temp_dir:
@@ -355,6 +377,207 @@ def test_backup_verification_compares_kv_and_sentinel_row_counts(
 
         with pytest.raises(module.GoalStorageError, match="row-count verification"):
             module._verify_goal_backup(source, backup_path, version)
+
+
+def test_backup_verification_rejects_wrong_version_and_non_persistence_store(
+    tmp_path: Path,
+) -> None:
+    fixture_dir = tmp_path / "backup-version-guard"
+    fixture_dir.mkdir()
+    module = _load_isolated_module(
+        "persistence_backup_version_guard",
+        fixture_dir / "global.db",
+        fixture_dir / "project.db",
+    )
+    source = module._project_db
+    assert source is not None
+
+    object_mismatch_path = fixture_dir / "object-mismatch.sqlite3"
+    module._copy_goal_backup(source, object_mismatch_path)
+    changed_backup = sqlite3.connect(object_mismatch_path)
+    changed_backup.execute("ALTER TABLE kv_store RENAME TO renamed_kv_store")
+    changed_backup.commit()
+    changed_backup.close()
+    with pytest.raises(module.GoalStorageError, match="object-name verification"):
+        module._verify_goal_backup(source, object_mismatch_path, expected_version=0)
+
+    backup_path = fixture_dir / "version-mismatch.sqlite3"
+    module._copy_goal_backup(source, backup_path)
+    with pytest.raises(module.GoalStorageError, match="version verification"):
+        module._verify_goal_backup(source, backup_path, expected_version=1)
+
+    plain_source_path = fixture_dir / "plain-source.sqlite3"
+    plain_backup_path = fixture_dir / "plain-backup.sqlite3"
+    plain_source = sqlite3.connect(plain_source_path)
+    plain_source.execute("CREATE TABLE unrelated (value TEXT)")
+    plain_source.commit()
+    module._copy_goal_backup(plain_source, plain_backup_path)
+    try:
+        with pytest.raises(
+            module.GoalSchemaNotInitializedError, match="kv_store is missing"
+        ):
+            module._verify_goal_backup(plain_source, plain_backup_path, 0)
+    finally:
+        plain_source.close()
+
+
+@pytest.mark.parametrize(
+    ("shape", "message"),
+    [
+        ("goals-without-history", "without goal schema migration history"),
+        ("unrecorded-version", "without a recorded schema version"),
+        ("missing-index", "required indexes are missing"),
+        ("older-version", "older than supported"),
+    ],
+)
+def test_goal_schema_version_guard_rejects_inconsistent_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    shape: str,
+    message: str,
+) -> None:
+    fixture_dir = tmp_path / f"schema-guard-{shape}"
+    fixture_dir.mkdir()
+    module = _load_isolated_module(
+        f"persistence_schema_guard_{shape}",
+        fixture_dir / "global.db",
+        fixture_dir / "project.db",
+    )
+    conn = sqlite3.connect(":memory:")
+    if shape in {"goals-without-history", "unrecorded-version"}:
+        conn.execute("CREATE TABLE pantheon_goals (goal_id TEXT)")
+    if shape in {"unrecorded-version", "missing-index", "older-version"}:
+        conn.execute("CREATE TABLE pantheon_goal_schema_migrations (version INTEGER)")
+    if shape in {"missing-index", "older-version"}:
+        conn.execute("INSERT INTO pantheon_goal_schema_migrations(version) VALUES (1)")
+    if shape == "missing-index":
+        conn.execute("CREATE TABLE pantheon_goals (goal_id TEXT)")
+        conn.execute(
+            "CREATE INDEX uq_pantheon_goals_active_session ON pantheon_goals(goal_id)"
+        )
+    if shape == "older-version":
+        # Simulate a later binary that supports v2 while encountering a v1 DB.
+        monkeypatch.setattr(module, "GOAL_SCHEMA_VERSION", 2)
+
+    try:
+        with pytest.raises(module.GoalSchemaVersionError, match=message):
+            module._inspect_goal_schema_version(conn)
+    finally:
+        conn.close()
+
+
+def test_migrate_goals_cli_exit_codes_cover_success_failure_and_dry_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project_db = tmp_path / "synthetic-project.db"
+    original = sqlite3.connect(project_db)
+    original.execute("CREATE TABLE kv_store (value TEXT)")
+    original.commit()
+    original.close()
+
+    success = _run_isolated_cli(
+        "persistence_cli_success",
+        tmp_path / "global.db",
+        project_db,
+        "--migrate-goals",
+    )
+    output = capsys.readouterr().out
+    assert success == 0
+    assert "Goal schema version: 1" in output
+    assert "Backup:" in output
+
+    missing_db = tmp_path / "not-created.db"
+    dry_run = _run_isolated_cli(
+        "persistence_cli_dry_run",
+        tmp_path / "dry-run-global.db",
+        missing_db,
+        "--migrate-goals",
+        "--dry-run",
+    )
+    dry_run_output = capsys.readouterr().out
+    assert dry_run == 0
+    assert "Exists: no" in dry_run_output
+    assert not missing_db.exists()
+
+    invalid_dry_run = _run_isolated_cli(
+        "persistence_cli_invalid_dry_run",
+        tmp_path / "invalid-global.db",
+        missing_db,
+        "--dry-run",
+    )
+    assert invalid_dry_run == EXPECTED_UNKNOWN_DRY_RUN_STATUS
+
+    failed = _run_isolated_cli(
+        "persistence_cli_missing_target",
+        tmp_path / "failure-global.db",
+        missing_db,
+        "--migrate-goals",
+    )
+    failure_output = capsys.readouterr().err
+    assert failed == 1
+    assert "Goal schema migration failed" in failure_output
+    assert not missing_db.exists()
+
+
+def test_dry_run_unknown_file_state_returns_status_two(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fixture_dir = tmp_path / "dry-run-unknown"
+    fixture_dir.mkdir()
+    module = _load_isolated_module(
+        "persistence_dry_run_unknown",
+        fixture_dir / "global.db",
+        fixture_dir / "project.db",
+    )
+
+    def metadata_unavailable(_path: Path) -> tuple[None, None, None]:
+        raise OSError("synthetic stat failure")
+
+    monkeypatch.setattr(module, "_goal_dry_run_file_metadata", metadata_unavailable)
+
+    assert (
+        module._print_goal_migration_dry_run(fixture_dir / "project.db")
+        == EXPECTED_UNKNOWN_DRY_RUN_STATUS
+    )
+    assert "Dry-run state is unknown" in capsys.readouterr().err
+
+
+def test_goal_error_mapping_keeps_public_errors_actionable_and_storage_private(
+    tmp_path: Path,
+) -> None:
+    fixture_dir = tmp_path / "goal-error-mapping"
+    fixture_dir.mkdir()
+    module = _load_isolated_module(
+        "persistence_goal_error_mapping",
+        fixture_dir / "global.db",
+        fixture_dir / "project.db",
+    )
+
+    cases = (
+        (module.ActiveGoalExistsError("duplicate"), "already has an active goal"),
+        (module.GoalNotFoundError("private query detail"), "No goal with that ID"),
+        (
+            module.GoalVersionConflictError("stale write"),
+            "Call goal_get and retry",
+        ),
+        (module.GoalValidationError("bad title"), "Invalid goal request: bad title"),
+        (
+            module.GoalSchemaVersionError("schema 99"),
+            "schema 99",
+        ),
+        (
+            module.GoalStorageError("/private/project.db: locked"),
+            "Goal storage is unavailable",
+        ),
+    )
+
+    for error, expected in cases:
+        message = str(module._goal_tool_error(error))
+        assert expected in message
+        if isinstance(error, module.GoalStorageError):
+            assert "/private/project.db" not in message
 
 
 def test_migrate_goals_cli_backs_up_wal_and_preserves_existing_rows(

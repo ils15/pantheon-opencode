@@ -9,9 +9,11 @@ from unittest.mock import patch
 import pytest
 
 from src.mcp._pantheon_paths import (
+    _is_valid_logical_cwd,
     has_symlink_component,
     pantheon_home,
     pantheon_project,
+    trusted_project_root,
 )
 
 
@@ -105,3 +107,64 @@ def test_pantheon_project_returns_none_without_a_working_directory() -> None:
         patch("src.mcp._pantheon_paths.os.getcwd", return_value=""),
     ):
         assert pantheon_project() is None
+
+
+def test_trusted_project_root_uses_only_absolute_host_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Code-index trust must not fall back to the runtime cwd or launcher PWD."""
+    project = tmp_path / "bound-project"
+    runtime_cwd = tmp_path / "runtime-cwd"
+    project.mkdir()
+    runtime_cwd.mkdir()
+    monkeypatch.chdir(runtime_cwd)
+    monkeypatch.setenv("PWD", str(runtime_cwd))
+
+    monkeypatch.setenv("PANTHEON_PROJECT", str(project))
+    assert trusted_project_root() == project.resolve()
+
+    monkeypatch.delenv("PANTHEON_PROJECT")
+    assert trusted_project_root() is None
+
+
+def test_trusted_project_root_rejects_relative_missing_file_and_root_bindings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only an existing non-root directory is a valid confinement boundary."""
+    not_a_directory = tmp_path / "project-file"
+    not_a_directory.write_text("synthetic", encoding="utf-8")
+    invalid_bindings = (
+        "relative-project",
+        str(tmp_path / "missing-project"),
+        str(not_a_directory),
+        "/",
+    )
+
+    for binding in invalid_bindings:
+        monkeypatch.setenv("PANTHEON_PROJECT", binding)
+        assert trusted_project_root() is None, binding
+
+
+def test_trusted_project_root_rejects_symlink_loops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cyclic host binding must fail closed when strict resolution fails."""
+    loop = tmp_path / "project-loop"
+    loop.symlink_to(loop)
+    monkeypatch.setenv("PANTHEON_PROJECT", str(loop))
+
+    assert trusted_project_root() is None
+
+
+def test_logical_pwd_validation_rejects_forged_and_uncheckable_paths(
+    tmp_path: Path,
+) -> None:
+    """PWD is accepted only when it names the actual physical cwd inode."""
+    logical = tmp_path / "logical"
+    physical = tmp_path / "physical"
+    logical.mkdir()
+    physical.mkdir()
+
+    assert not _is_valid_logical_cwd(str(logical), str(physical))
+    assert not _is_valid_logical_cwd("relative", str(physical))
+    assert not _is_valid_logical_cwd(str(logical), "")

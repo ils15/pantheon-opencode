@@ -204,6 +204,29 @@ class TestContextCheckpoints:
             == "legacy-value"
         )
 
+    @pytest.mark.parametrize(
+        ("slug", "key", "session_id"),
+        [
+            ("bad\nslug", "phase:1", "lookup-session"),
+            ("lookup", "bad\nkey", "lookup-session"),
+            ("lookup", "phase:1", " "),
+        ],
+    )
+    async def test_context_get_invalid_identifiers_fail_closed(
+        self,
+        server: FastMCP,
+        slug: str,
+        key: str,
+        session_id: str,
+    ) -> None:
+        """Invalid namespace components cannot return a stored checkpoint."""
+        result = await server.call_tool(
+            "context_get",
+            {"slug": slug, "key": key, "session_id": session_id},
+        )
+
+        assert _json(result) is None
+
     async def test_context_sessions_and_scopes_are_isolated(
         self, server: FastMCP
     ) -> None:
@@ -811,6 +834,68 @@ class TestValidationReporting:
         """A non-array tail is reported as an array violation, not a size one."""
         message = await self._save(server, json.dumps({"tail": "not-a-list"}))
         assert "content.tail must be an array (got string)" in message
+
+    @pytest.mark.parametrize(
+        ("in_flight", "message"),
+        [
+            ("not-an-array", "delegations.in_flight exceeds its size limit"),
+            ([17], "delegations.in_flight entries must be objects"),
+            (
+                [{"alias": "x" * 257}],
+                "content.delegations.in_flight.alias exceeds its size limit",
+            ),
+        ],
+    )
+    async def test_invalid_delegations_are_rejected_before_checkpoint_write(
+        self, server: FastMCP, module: Any, in_flight: object, message: str
+    ) -> None:
+        """Malformed delegated-job metadata cannot enter saved checkpoints."""
+        error = await self._save(
+            server, json.dumps({"delegations": {"in_flight": in_flight}})
+        )
+
+        assert message in error
+        row = (
+            module._db("project")
+            .execute(
+                "SELECT 1 FROM kv_store WHERE namespace = ? AND key = ?",
+                ("checkpoint:validation:validation-session", "phase:1"),
+            )
+            .fetchone()
+        )
+        assert row is None
+
+    async def test_context_save_accepts_null_and_valid_delegation_queues(
+        self, server: FastMCP
+    ) -> None:
+        """Optional/valid delegation metadata remains round-trippable."""
+        queues = (
+            None,
+            [{"alias": "@hermes", "agent": "hermes", "task_id": "job-1"}],
+        )
+        for index, queue in enumerate(queues):
+            content = json.dumps({"delegations": {"in_flight": queue}})
+            saved = _json(
+                await server.call_tool(
+                    "context_save",
+                    {
+                        "slug": "delegation-roundtrip",
+                        "key": f"phase:{index}",
+                        "content": content,
+                        "session_id": "delegation-session",
+                    },
+                )
+            )
+            assert saved["status"] == "stored"
+            restored = await server.call_tool(
+                "context_get",
+                {
+                    "slug": "delegation-roundtrip",
+                    "key": f"phase:{index}",
+                    "session_id": "delegation-session",
+                },
+            )
+            assert _json(restored) == content
 
     async def test_context_save_content_byte_limit_is_actionable(
         self, server: FastMCP
