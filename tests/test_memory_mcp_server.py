@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -366,6 +367,87 @@ class TestMemoryStore:
 class TestMemorySearch:
     """Tests for memory_search tool."""
 
+    async def test_search_description_distinguishes_empty_results_from_errors(
+        self, server: FastMCP
+    ) -> None:
+        """The tool description explains the empty-result/error contract."""
+        tools = {tool.name: tool for tool in await server.list_tools()}
+        description = (tools["memory_search"].description or "").lower()
+
+        assert "empty result means nothing matched" in description
+        assert "error means the memory store could not be read" in description
+
+    @pytest.mark.parametrize("query", ["", "   ", "the and of"])
+    async def test_empty_or_stopword_query_returns_no_results_without_db_access(
+        self,
+        query: str,
+        server: FastMCP,
+        module,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Empty and stopword-only queries are not store failures."""
+
+        def fail_if_opened() -> sqlite3.Connection:
+            raise AssertionError("empty searches must not open the database")
+
+        monkeypatch.setattr(module, "_get_conn", fail_if_opened)
+        result = await server.call_tool("memory_search", {"query": query})
+
+        text = _text_from_tool(result)
+        data = json.loads(text) if text else []
+        assert data == []
+
+    async def test_search_database_open_failure_returns_typed_error(
+        self,
+        server: FastMCP,
+        module,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Opening a broken store must not be reported as an empty search."""
+
+        def fail_to_open() -> sqlite3.Connection:
+            raise sqlite3.OperationalError("/private/memory.db is not readable")
+
+        monkeypatch.setattr(module, "_get_conn", fail_to_open)
+        result = await server.call_tool("memory_search", {"query": "checkpoint"})
+        data = json.loads(_text_from_tool(result))
+
+        assert result.is_error is False
+        assert data["error"]["type"] == "DatabaseUnavailableError"
+        assert "memory database" in data["error"]["message"].lower()
+        assert "/private/memory.db" not in str(data)
+        assert "not readable" not in str(data)
+        assert (
+            "memory_search failed: memory database could not be opened" in caplog.text
+        )
+        assert "/private/memory.db" not in caplog.text
+
+    async def test_search_fts_failure_returns_typed_error(
+        self,
+        server: FastMCP,
+        module,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An FTS/query failure is distinguishable from no matching rows."""
+        broken_db = sqlite3.connect(tmp_path / "missing_fts.db")
+        broken_db.row_factory = sqlite3.Row
+        monkeypatch.setattr(module, "_get_conn", lambda: broken_db)
+        try:
+            result = await server.call_tool("memory_search", {"query": "checkpoint"})
+        finally:
+            broken_db.close()
+        data = json.loads(_text_from_tool(result))
+
+        assert result.is_error is False
+        assert data["error"]["type"] == "MemorySearchError"
+        assert "fts" in data["error"]["message"].lower()
+        assert "no such table" not in str(data).lower()
+        assert "memory_search failed: FTS or stored-entry read failed" in caplog.text
+        assert "no such table" not in caplog.text.lower()
+
     async def test_search_returns_results(self, server: FastMCP) -> None:
         """Search should return stored entries ranked by relevance."""
         # Store some test data
@@ -704,12 +786,13 @@ class TestMemoryForget:
 class TestMemoryList:
     """Tests for memory_list tool."""
 
-    async def test_list_empty(self, module, server: FastMCP) -> None:
+    async def test_list_empty(self, module, server: FastMCP, tmp_path: Path) -> None:
         """Empty database should return an empty list."""
         module._reset_test_state()
         import importlib
 
         importlib.reload(module)
+        module._set_memory_dir(tmp_path / "memory")
         result = await server.call_tool(
             "memory_list",
             {},
@@ -893,15 +976,9 @@ class TestBuildFtsQuery:
         assert module._build_fts_query("conf") == '"conf"*'
         assert module._build_fts_query("con") == '"con"'
 
-    def test_all_stopword_query_falls_back_to_exact_match(self, module) -> None:
-        """A stopword-only query degrades to a literal lookup, not to nothing.
-
-        Returning "" would silently produce zero results for a query the old
-        implementation answered.
-        """
-        expr = module._build_fts_query("the and of")
-        assert expr == '"the" OR "and" OR "of"'
-        assert all("*" not in term for term in expr.split(" OR "))
+    def test_all_stopword_query_has_no_search_expression(self, module) -> None:
+        """Stopword-only input is an empty query, not an FTS failure."""
+        assert module._build_fts_query("the and of") == ""
 
     def test_empty_and_whitespace_only_input(self, module) -> None:
         """No tokens means no expression; memory_search returns [] before use."""

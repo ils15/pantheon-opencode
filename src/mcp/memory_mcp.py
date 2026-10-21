@@ -17,6 +17,9 @@ Tools:
     memory_forget  — Delete by ID or key
     memory_list    — Chronological listing
     memory_stats   — DB statistics
+    code_index     — Index code entities
+    code_query     — Search indexed code entities
+    code_neighbors — Find related code entities
 
 Usage:
     python scripts/memory_mcp.py
@@ -27,11 +30,12 @@ from __future__ import annotations
 import contextlib
 import functools
 import json
+import logging
 import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, TypedDict
 
 from _pantheon_paths import pantheon_home, trusted_project_root
 from fastmcp import FastMCP
@@ -119,6 +123,20 @@ mcp = FastMCP(
         "index, so a query must share a token with the stored text to match."
     ),
 )
+_LOGGER = logging.getLogger(__name__)
+
+
+class MemorySearchErrorDetail(TypedDict):
+    """Safe, typed error detail returned when a memory search cannot run."""
+
+    type: Literal["DatabaseUnavailableError", "MemorySearchError"]
+    message: str
+
+
+class MemorySearchError(TypedDict):
+    """Structured error envelope for ``memory_search``."""
+
+    error: MemorySearchErrorDetail
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -304,22 +322,21 @@ def _build_fts_query(query: str) -> str:
 
     Tokens surviving both filters are still prefix-matched, so a query term
     retrieves documents containing a longer word that starts with it. If every
-    token is a stopword the unfiltered tokens are matched exactly, so an
-    all-stopword query degrades to a literal lookup rather than to no results.
+    token is a stopword, the query is empty and returns no results.
 
     Args:
         query: Raw, user-supplied search text.
 
     Returns:
-        An FTS5 expression (terms joined with ``OR``), or ``""`` for an empty
-        query.
+        An FTS5 expression (terms joined with ``OR``), or ``""`` when there are
+        no searchable terms.
     """
     words = [word for word in query.split() if word]
     if not words:
         return ""
     content = [word for word in words if word.lower() not in _STOPWORDS]
     if not content:
-        content = words
+        return ""
     return " OR ".join(
         f'"{word}"*' if len(word) >= _MIN_PREFIX_LEN else f'"{word}"'
         for word in content
@@ -376,20 +393,17 @@ def _fetch_created_at_map(db: sqlite3.Connection, ids: list[int]) -> dict[int, s
         ids: Memory row IDs to look up.
 
     Returns:
-        Mapping of id -> created_at ISO string. Empty on failure.
+        Mapping of id -> created_at ISO string.
     """
     created_at_map: dict[int, str] = {}
     if not ids:
         return created_at_map
-    try:
-        placeholders = ",".join("?" * len(ids))
-        rows = db.execute(
-            f"SELECT id, created_at FROM memories WHERE id IN ({placeholders})",
-            ids,
-        ).fetchall()
-        created_at_map = {r["id"]: r["created_at"] for r in rows}
-    except Exception:
-        created_at_map = {}
+    placeholders = ",".join("?" * len(ids))
+    rows = db.execute(
+        f"SELECT id, created_at FROM memories WHERE id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    created_at_map = {r["id"]: r["created_at"] for r in rows}
     return created_at_map
 
 
@@ -584,14 +598,15 @@ def memory_store(
     "prefix-matched, so a query must share a token with the stored text — "
     "there is no semantic/vector retrieval. Optional decay_days applies a "
     "freshness half-life (2^(-days/decay_days)) so recent entries rank "
-    "higher; default None keeps the raw BM25 order.",
+    "higher; default None keeps the raw BM25 order. An empty result means "
+    "nothing matched; an error means the memory store could not be read.",
 )
 def memory_search(
     query: str,
     namespace: str | None = None,
     top_k: int = 5,
     decay_days: float | None = None,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, Any]] | MemorySearchError:
     """Search memories with FTS5 BM25.
 
     Args:
@@ -604,16 +619,30 @@ def memory_search(
 
     Returns:
         List of memory entries with a ``score`` (BM25, higher is better,
-        freshness-decayed when ``decay_days`` is set) and parsed metadata.
+        freshness-decayed when ``decay_days`` is set) and parsed metadata, or a
+        typed error when the memory store cannot be read.
     """
     if not query or not query.strip():
         return []
 
-    top_k = max(1, min(50, int(top_k)))
-    db = _get_conn()
     fts_query = _build_fts_query(query)
     if not fts_query:
         return []
+
+    top_k = max(1, min(50, int(top_k)))
+    try:
+        db = _get_conn()
+    except Exception:
+        _LOGGER.warning("memory_search failed: memory database could not be opened")
+        return {
+            "error": {
+                "type": "DatabaseUnavailableError",
+                "message": (
+                    "Memory database could not be opened. Check its configured "
+                    "location and permissions, then retry."
+                ),
+            }
+        }
 
     try:
         params: list[Any] = [fts_query]
@@ -634,46 +663,51 @@ def memory_search(
             params,
         ).fetchall()
         hits = [(r["rowid"], r["bm25"]) for r in rows]
-    except Exception:
-        return []
+        if not hits:
+            return []
 
-    if not hits:
-        return []
+        candidate_ids = [doc_id for doc_id, _ in hits]
+        created_at_map = (
+            _fetch_created_at_map(db, candidate_ids)
+            if decay_days is not None and decay_days > 0
+            else {}
+        )
+        ranked = _score_hits(hits, top_k, created_at_map, decay_days)
 
-    candidate_ids = [doc_id for doc_id, _ in hits]
-    created_at_map = (
-        _fetch_created_at_map(db, candidate_ids)
-        if decay_days is not None and decay_days > 0
-        else {}
-    )
-    ranked = _score_hits(hits, top_k, created_at_map, decay_days)
-
-    results: list[dict[str, Any]] = []
-    if ranked:
-        # 5. Fetch full entries
-        id_list = [doc_id for doc_id, _ in ranked]
-        score_map = {doc_id: score for doc_id, score in ranked}
-
-        try:
+        results: list[dict[str, Any]] = []
+        if ranked:
+            # 5. Fetch full entries
+            id_list = [doc_id for doc_id, _ in ranked]
+            score_map = {doc_id: score for doc_id, score in ranked}
             placeholders = ",".join("?" * len(id_list))
             rows = db.execute(
                 f"""SELECT id, namespace, key, value, metadata, created_at
                     FROM memories WHERE id IN ({placeholders})""",
                 id_list,
             ).fetchall()
-        except Exception:
-            return []
 
-        # Preserve ranking order
-        row_map = {r["id"]: r for r in rows}
-        for doc_id in id_list:
-            row = row_map.get(doc_id)
-            if row is None:
-                continue
-            entry = dict(row)
-            entry = _parse_metadata(entry)
-            entry["score"] = round(score_map.get(doc_id, 0.0), 4)
-            results.append(entry)
+            # Preserve ranking order
+            row_map = {r["id"]: r for r in rows}
+            for doc_id in id_list:
+                row = row_map.get(doc_id)
+                if row is None:
+                    continue
+                entry = dict(row)
+                entry = _parse_metadata(entry)
+                entry["score"] = round(score_map.get(doc_id, 0.0), 4)
+                results.append(entry)
+    except Exception:
+        _LOGGER.warning("memory_search failed: FTS or stored-entry read failed")
+        return {
+            "error": {
+                "type": "MemorySearchError",
+                "message": (
+                    "Memory search failed while reading the SQLite FTS index "
+                    "or stored entries. Check the memory store and FTS index, "
+                    "then retry."
+                ),
+            }
+        }
 
     return results
 
