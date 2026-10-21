@@ -1,17 +1,6 @@
-"""Gate (a): detect desync between shipped scripts/ and canonical src/mcp/ files.
+"""Detect shipped MCP copies that drift from their canonical sources."""
 
-The MCP installer resolves the Persistence server to ``scripts/mcp_persistence.py``
-(``scripts/install-mcp.mjs``), while ``src/mcp/`` is the canonical maintained
-copy. Historical copies in ``scripts/`` must stay byte-identical; drift between
-the two locations previously propagated bugs (e.g. missing ``import uuid`` in
-``mcp_persistence.py``).
-
-The memory MCP server is the exception: the standalone ``scripts/`` copy keeps
-the lightweight memory contract, while ``src/mcp/`` also exposes codemap tools.
-Those copies are checked for their respective contracts instead of being
-treated as a synchronization pair.
-"""
-
+import asyncio
 import filecmp
 import importlib
 import os
@@ -43,29 +32,6 @@ BYTE_IDENTICAL_PAIRS = REQUIRED_BYTE_IDENTICAL_PAIRS + [
     if all((REPO_ROOT / path).is_file() for path in pair)
 ]
 
-INTENTIONALLY_DIVERGENT_PAIRS = [
-    ("scripts/memory_mcp.py", "src/mcp/memory_mcp.py"),
-]
-
-MEMORY_SCRIPT_CONTRACT_MARKERS = (
-    "def _set_memory_dir(path: str | Path) -> None:",
-    "def memory_store(",
-    "def memory_search(",
-    "def memory_recall(",
-    "def memory_forget(",
-    "def memory_list(",
-    "def memory_stats(",
-)
-
-MEMORY_SOURCE_CONTRACT_MARKERS = (
-    "import contextlib",
-    "import mcp_codemap_module as _codemap",
-    "# ── Codemap Tools",
-    "def code_index(",
-    "def code_query(",
-    "def code_neighbors(",
-)
-
 MCP_SERVER_PATHS = (
     "src/mcp/mcp_persistence.py",
     "src/mcp/mcp_resources.py",
@@ -75,7 +41,6 @@ MCP_SERVER_PATHS = (
     "scripts/mcp_persistence.py",
     "scripts/mcp_resources.py",
     "scripts/code_mode.py",
-    "scripts/memory_mcp.py",
 )
 
 
@@ -101,50 +66,21 @@ def test_byte_identical_mcp_pairs(
     )
 
 
-@pytest.mark.parametrize(
-    ("scripts_path", "canonical_path"),
-    INTENTIONALLY_DIVERGENT_PAIRS,
-    ids=[pair[0].split("/")[-1] for pair in INTENTIONALLY_DIVERGENT_PAIRS],
-)
-def test_memory_mcp_copies_keep_distinct_contracts(
-    scripts_path: str,
-    canonical_path: str,
-) -> None:
-    scripts_file = REPO_ROOT / scripts_path
-    canonical_file = REPO_ROOT / canonical_path
+def test_memory_mcp_script_shim_exposes_canonical_tool_list() -> None:
+    """The scripts entrypoint delegates to the complete canonical server."""
+    script_path = REPO_ROOT / "scripts/memory_mcp.py"
+    spec = importlib.util.spec_from_file_location("shipped_memory_mcp", script_path)
+    assert spec is not None and spec.loader is not None
+    shipped = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(shipped)
 
-    assert scripts_file.is_file(), f"missing file: {scripts_path}"
-    assert canonical_file.is_file(), f"missing canonical file: {canonical_path}"
+    canonical = importlib.import_module("src.mcp.memory_mcp")
+    shipped_tools = asyncio.run(shipped.mcp.list_tools())
+    canonical_tools = asyncio.run(canonical.mcp.list_tools())
 
-    scripts_text = scripts_file.read_text(encoding="utf-8")
-    canonical_text = canonical_file.read_text(encoding="utf-8")
-
-    missing_script_markers = [
-        marker
-        for marker in MEMORY_SCRIPT_CONTRACT_MARKERS
-        if marker not in scripts_text
-    ]
-    missing_source_markers = [
-        marker
-        for marker in MEMORY_SOURCE_CONTRACT_MARKERS
-        if marker not in canonical_text
-    ]
-
-    assert not missing_script_markers, (
-        f"{scripts_path} is missing its memory-server contract markers: "
-        f"{missing_script_markers}"
-    )
-    assert not missing_source_markers, (
-        f"{canonical_path} is missing its codemap contract markers: "
-        f"{missing_source_markers}"
-    )
-    assert "def code_index(" not in scripts_text, (
-        f"{scripts_path} unexpectedly contains the src-only codemap contract"
-    )
-    assert scripts_text != canonical_text, (
-        "memory MCP copies are intentionally divergent: the src/mcp copy must "
-        "retain its codemap contract without being copied into scripts/"
-    )
+    assert {tool.name for tool in shipped_tools} == {
+        tool.name for tool in canonical_tools
+    }
 
 
 @pytest.mark.parametrize("server_path", MCP_SERVER_PATHS)
