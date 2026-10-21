@@ -125,6 +125,10 @@ class TestTools:
             "context_stats",
             "context_rehydrate",
             "context_session_summary",
+            "goal_create",
+            "goal_get",
+            "goal_update",
+            "goal_done",
         ]
         for name in expected:
             assert name in names, f"Missing tool: {name}"

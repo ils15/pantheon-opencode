@@ -1,9 +1,10 @@
-"""Gate (a): detect desync between scripts/ and src/mcp/ shared Python files.
+"""Gate (a): detect desync between shipped scripts/ and canonical src/mcp/ files.
 
-The installer (scripts/install/opencode.mjs) always copies MCP server scripts
-from the canonical ``src/mcp/`` directory. Historical copies in ``scripts/``
-must stay byte-identical; drift between the two locations previously
-propagated bugs (e.g. missing ``import uuid`` in mcp_persistence.py).
+The MCP installer resolves the Persistence server to ``scripts/mcp_persistence.py``
+(``scripts/install-mcp.mjs``), while ``src/mcp/`` is the canonical maintained
+copy. Historical copies in ``scripts/`` must stay byte-identical; drift between
+the two locations previously propagated bugs (e.g. missing ``import uuid`` in
+``mcp_persistence.py``).
 
 The memory MCP server is the exception: the standalone ``scripts/`` copy keeps
 the lightweight memory contract, while ``src/mcp/`` also exposes codemap tools.
@@ -151,7 +152,12 @@ def test_mcp_servers_use_standalone_fastmcp_api(server_path: str) -> None:
     server_file = REPO_ROOT / server_path
     server_text = server_file.read_text(encoding="utf-8")
 
-    assert "from fastmcp import FastMCP" in server_text, (
+    fastmcp_imports = [
+        line
+        for line in server_text.splitlines()
+        if line.startswith("from fastmcp import ")
+    ]
+    assert any("FastMCP" in line for line in fastmcp_imports), (
         f"{server_path} must import FastMCP from the standalone fastmcp package"
     )
     assert "mcp.server.fastmcp" not in server_text, (
