@@ -94,7 +94,7 @@ function toolFailure(prefix: string, err: unknown): string {
 // ─── Args schemas ──────────────────────────────────────────────────────
 
 const goalCreateArgs = {
-  objective: z.string().min(1).describe('The goal objective the session keeps working toward.'),
+  objective: z.string().min(1).describe('The objective recorded in this legacy session goal.'),
 } satisfies z.ZodRawShape
 
 const goalUpdateArgs = {
@@ -245,7 +245,7 @@ export class GoalLoop {
     return {
       pantheon_goal_create: {
         description:
-          'Create the single active goal for this session. The goal loop then continues the session automatically on idle until the goal is marked done.',
+          'Deprecated legacy V1 tool. Create and store the single active goal for this session. Goals are stored but are not automatically continued in the current build. For durable manual goals, use the Persistence MCP `goal_*` tools available in this branch.',
         args: goalCreateArgs,
         execute: async (args, ctx) => {
           try {
@@ -272,7 +272,7 @@ export class GoalLoop {
       },
       pantheon_goal_update: {
         description:
-          'Update the active goal: set status (pending/in_progress/done) and/or rewrite the objective. Setting status to done stops all further continuations.',
+          'Deprecated legacy V1 tool. Update the stored active goal: set status (pending/in_progress/done) and/or rewrite the objective. Goal records are not automatically continued in the current build. For durable manual goals, use the Persistence MCP `goal_*` tools available in this branch.',
         args: goalUpdateArgs,
         execute: async (args, ctx) => {
           try {
@@ -294,7 +294,8 @@ export class GoalLoop {
         },
       },
       pantheon_goal_get: {
-        description: 'Return the active goal for this session (status, objective, continuations).',
+        description:
+          'Deprecated legacy V1 tool. Return the stored active V1 goal (status, objective, continuation count). Goals are not automatically continued in the current build. For durable manual goals, use the Persistence MCP `goal_*` tools available in this branch.',
         args: goalGetArgs,
         execute: async (_args, ctx) => {
           try {

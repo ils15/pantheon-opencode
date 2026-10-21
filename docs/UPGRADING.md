@@ -32,8 +32,19 @@ were previously registered as placeholders that returned an explanatory string â
 but on OpenCode 2.0.x such a tool fails on **every** call with
 `Tool result declared output without an output schema`, so the placeholder never
 ran usefully. They are now absent instead. `getUnsupportedFeatures()` reports
-the gap as the `goal-tools` marker. Use the V1 contract if you need the goal
-loop.
+the gap as the `goal-tools` marker. Use the V1 contract to access the legacy
+goal tools; they do not automatically continue the session in the current build.
+
+### V1 goal tools are deprecated (soft deprecation)
+
+The V1 `pantheon_goal_create`, `pantheon_goal_update`, and `pantheon_goal_get`
+tools remain available with unchanged behavior, but are deprecated: they only
+create, update, and read legacy V1 goal records. A stored goal is not
+automatically continued in the current build. The durable manual goal surface
+is the Persistence MCP `goal_*` tools, available in this branch; this note does
+not announce a release. No tool is removed in this change. Hard removal or a
+structured disabled-build error is deferred to a future release and requires
+explicit human approval.
 
 Two further tools are registered only when the host allows it:
 `vision_describe` when the host exposes its model catalog, and

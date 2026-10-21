@@ -12,8 +12,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🆕 What's New
 
+- **V1 goal tools soft-deprecated:** `pantheon_goal_create`,
+  `pantheon_goal_update`, and `pantheon_goal_get` remain available with
+  unchanged behavior, but stored legacy goals are not automatically continued
+  in the current build. The durable manual replacement is the Persistence MCP
+  `goal_*` surface available in this branch. Tool removal is deferred to a
+  future release and requires explicit human approval.
+
 ## 🐞 Fixed
 
+- **Disabled goal loop does not suppress idle enforcement:** `hasActiveGoal`
+  now returns false while the loop is disabled, so stored legacy goals do not
+  prevent the todo enforcer from receiving idle events.
 - **Empty child-dispatch result is an explicit error:** an empty result returned by a child dispatch is now surfaced as an error instead of being passed through as a normal result.
 
 ## ⚠️ Known Issues
@@ -1240,7 +1250,7 @@ latência total e wall de F1 segue inconclusivo.
 
 - **Todo continuation enforcer**: auto-continues sessions with incomplete todos on `session.idle` (4 guards: board-running, in-flight, exponential cooldown, max-failures cap) + kill-switch `PANTHEON_TODO_ENFORCER=off`
 - **Hashline hash-anchored edits**: `hashline_edit` tool with sha256-truncated line tags, additive read enhancer, validate-before-write with `>>>` mismatch hints + Did-you-mean suggestions; blocked in read-only sessions
-- **Full-auto goal loop** (opt-in `full_auto.enabled: false`): `pantheon_goal_create/update/get` tools, atomic GoalStore, priority idle dispatcher (goal suppresses enforcer), max 25 continuations
+- **Full-auto goal loop:** `pantheon_goal_create/update/get` tools, atomic GoalStore, priority idle dispatcher (active goal suppresses enforcer), max 25 continuations. The loop is disabled by the hard-coded plugin defaults; `routing.yml` documents defaults and guards but does not enable it.
 - **Dispatch retry-on-empty**: classifies empty results (mode 1: 0 tokens; mode 2: reasoning without text) with cap-1 automatic retry
 - **Cost tracking**: JSONL ledger + `pantheon_cost` command reading opencode.db (zero-dep, node:sqlite → scripts/cost.mjs fallback)
 - **Themis phase reviews** route to deepseek-v4-flash (pro reserved for final release gate); Athena stays premium (council red-line)

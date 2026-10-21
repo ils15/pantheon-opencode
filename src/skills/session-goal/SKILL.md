@@ -72,28 +72,18 @@ Before each major delegation or decision, run this quick check:
 
 ## Cross-Session Continuity
 
-V2 does not provide durable goal tools. `/pantheon-focus` only anchors the current
-conversation and must not be described as surviving compaction or a new
-session. For multi-phase work that needs persistent checkpoints, use
-`/pantheon-deepwork`; otherwise ask before writing a goal to a project file.
+The V2 plugin does not register the V1 `pantheon_goal_*` tools. `/pantheon-focus`
+only anchors the current conversation and must not be described as surviving
+compaction or a new session. For multi-phase work that needs persistent
+checkpoints, use `/pantheon-deepwork`; otherwise ask before writing a goal to a
+project file.
 
-In V1, use the implemented goal tools when they are available and explicitly
-authorized. Do not infer that their presence in one host generation means they
-exist in V2.
-
-Historical path example (not a V2 runtime command):
-
-```
-/memories/session/current-goal.md
-
-# Active Session Goal
-Goal: Implement JWT authentication
-Started: 2026-05-15
-Status: Phase 2 of 3 (backend done, frontend in progress)
-Next: POST /auth/refresh endpoint
-```
-
-This file-based approach requires explicit authorization and is not automatic.
+Pantheon does not implement a `/memories/session/` filesystem store. The V1
+goal tools are deprecated legacy manual record tools: stored goals are not
+automatically continued in the current build. Durable manual goals are
+available through the separate Persistence MCP `goal_*` surface in this branch;
+do not present it as released or as part of the V2 plugin. `/pantheon-focus`
+remains a non-persistent conversation anchor.
 
 ---
 
