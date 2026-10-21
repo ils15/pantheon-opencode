@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [v1.6.0-beta.17] - 2026-10-21
+
 - **Persistence MCP reduced to six registered tools:** only `context_save`,
   `context_get`, and the four `goal_*` tools remain exposed; the twelve KV and
   context-management tools were unregistered while internal SQLite KV helpers
@@ -21,9 +23,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Phase 8 — Memory MCP packaging:** `scripts/memory_mcp.py` is now a thin shim
   delegating to canonical `src/mcp/memory_mcp.py`, removing the stale divergent
   copy; the sync test now asserts that their registered tool lists are equal.
-
-<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. -->
 
 ## 🆕 What's New
 
