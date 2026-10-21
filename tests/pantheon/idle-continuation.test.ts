@@ -12,8 +12,12 @@
  * Run with: npx tsx tests/pantheon/idle-continuation.test.ts
  */
 import { strict as assert } from 'node:assert'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { BackgroundJobBoard } from '../../src/pantheon/background-job-board.ts'
+import { GoalLoop, GoalStore } from '../../src/pantheon/goal-loop.ts'
 import { createIdleDispatcher } from '../../src/pantheon/idle-continuation.ts'
 import { TodoEnforcer } from '../../src/pantheon/todo-enforcer.ts'
 
@@ -78,6 +82,51 @@ async function main() {
 
     assert.deepEqual(goalLoopCalls, [ROOT], 'goal loop owns the idle')
     assert.deepEqual(enforcerCalls, [], 'todo enforcer is NOT invoked while a goal is active')
+  })
+
+  await testAsync('disabled goal loop + stored active goal → todo enforcer gets idle', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pantheon-idle-continuation-'))
+    try {
+      const store = new GoalStore({ dir })
+      await store.save({
+        id: 'goal-1',
+        sessionID: ROOT,
+        objective: 'finish task',
+        status: 'in_progress',
+        createdAt: 1,
+        updatedAt: 1,
+        continuationCount: 0,
+      })
+      const loop = new GoalLoop({
+        store,
+        client: { session: { messages: async () => [], promptAsync: async () => ({}) } },
+        board: new BackgroundJobBoard(),
+        options: { enabled: false },
+      })
+      const goalLoopCalls: string[] = []
+      const enforcerCalls: string[] = []
+      const dispatcher = createIdleDispatcher({
+        goalLoop: {
+          hasActiveGoal: (id: string) => loop.hasActiveGoal(id),
+          onIdle: async (id: string) => {
+            goalLoopCalls.push(id)
+            await loop.onIdle(id)
+          },
+        },
+        todoEnforcer: {
+          onIdle: async (id: string) => {
+            enforcerCalls.push(id)
+          },
+        },
+      })
+
+      await dispatcher.onIdle(ROOT)
+
+      assert.deepEqual(goalLoopCalls, [], 'disabled goal loop does not receive the idle')
+      assert.deepEqual(enforcerCalls, [ROOT], 'todo enforcer receives the idle')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   await testAsync('no goal + enforcer enabled → todoEnforcer.onIdle called', async () => {

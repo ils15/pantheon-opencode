@@ -1,5 +1,5 @@
 /**
- * Full-auto Goal Loop (Wave 3, PR #46) — one active goal per session,
+ * Goal Loop (Wave 3, PR #46) — when enabled, one active goal per session is
  * continued automatically while idle. `pantheon_goal_create` starts a goal;
  * `pantheon_goal_update` moves it pending → in_progress → done; while
  * active, `GoalLoop.onIdle` re-injects the continuation prompt (objective
@@ -7,7 +7,8 @@
  * completion-audit prompt — the state machine is the source of truth.
  *
  * Persistence: FILE-based GoalStore (`.pantheon/goals/<sessionID>.json`,
- * atomic tmp+rename). Opt-in `full_auto.enabled: false` default. Guards:
+ * atomic tmp+rename). The plugin uses hard-coded defaults; no runtime config
+ * enables the loop in this build. Guards:
  * board-running skip, in-flight Set, cooldown, max_continuations cap (25).
  * Injectable now() clock. Pure TypeScript — zero runtime deps.
  *
@@ -35,7 +36,7 @@ export { GoalStore }
 /** Continuation text injected into idle sessions. `{objective}` is substituted. */
 export const GOAL_CONTINUATION_PROMPT = 'Continue goal: {objective}'
 
-/** Defaults matching routing.yml `full_auto`. */
+/** Hard-coded runtime defaults; routing.yml is documentation-only. */
 export const GOAL_LOOP_DEFAULTS = {
   enabled: false,
   cooldownMs: 5000,
@@ -149,8 +150,9 @@ export class GoalLoop {
     this.warn = deps.logger?.warn ?? ((message: string) => log.warn(message))
   }
 
-  /** True when the session has an active (non-done) goal. Used by the idle dispatcher. */
+  /** True when the enabled loop can own idle for this session. */
   async hasActiveGoal(sessionID: string): Promise<boolean> {
+    if (!this.options.enabled) return false
     return this.store.hasActive(sessionID)
   }
 

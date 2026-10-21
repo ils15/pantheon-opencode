@@ -300,8 +300,9 @@ const plugin: Plugin = async (input: PluginInput) => {
     client: adaptTodoEnforcerClient(input.client),
   })
 
-  // Wave 3 (PR #46): full-auto goal loop — opt-in (`full_auto.enabled:
-  // false` default, mirrored by GOAL_LOOP_DEFAULTS). File-based GoalStore
+  // Wave 3 (PR #46): goal loop. The plugin uses hard-coded GOAL_LOOP_DEFAULTS;
+  // routing.yml documents defaults/guards but no runtime config enables the
+  // loop in this build. File-based GoalStore
   // (`.pantheon/goals/<sessionID>.json` — the plugin layer cannot reach MCP
   // KV). Idle routing: an active goal owns the idle (goal loop); otherwise
   // the todo enforcer gets it (see idle-continuation.ts).

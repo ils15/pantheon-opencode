@@ -596,12 +596,12 @@ hashline:
   # with per-line sha256 tags (12#XJ|content); hashline_edit anchors edits to
   # those refs. Documentation mirror — the plugin resolves behavior in code.
 full_auto:
-  enabled: false                 # opt-in: goal continuations are OFF by default
-  max_continuations: 25          # hard cap on goal continuations per session
+  enabled: false                 # Documentation only; no runtime config enables the loop in this build.
+  max_continuations: 25          # Documented hard cap; routing.yml is not loaded for loop settings.
   # Full-auto only continues a task/scope explicitly authorized by the user.
   # It never authorizes auth/security gates, risky data/schema or destructive
   # operations, global config, broad permissions, production deploy, push, or merge.
   # Low-risk execution is proportional: no forced plan/discovery/council/artifact
-  # for a bounded fix; use focused verification. Documentation mirror — runtime
-  # behavior is implemented in the plugin (GOAL_LOOP_DEFAULTS).
+  # for a bounded fix; use focused verification. This section documents guards
+  # and defaults only; the plugin uses GOAL_LOOP_DEFAULTS directly.
   # Wave 3 (PR #46): one active goal per session (pending → in_progress → done).
