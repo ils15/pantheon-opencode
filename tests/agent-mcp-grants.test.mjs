@@ -24,8 +24,8 @@ const SERVER_SOURCES = {
 
 // Exact grants by bundled agent. Arrays are tool-name sets; `all` is retained
 // for the resource-only server so changing that declaration is also reviewed.
-// Keep this matrix branch-specific: beta17 intentionally grants Persistence
-// goal tools to Athena, Themis, and Zeus.
+// Keep this matrix branch-specific: only Zeus can use Persistence goal tools,
+// because goals are scoped to the caller's session and cannot cross sessions.
 const EXPECTED_AGENT_MCP_GRANTS = {
   aphrodite: {
     'pantheon-code-mode': ['execute_code_script'],
@@ -39,7 +39,6 @@ const EXPECTED_AGENT_MCP_GRANTS = {
   },
   athena: {
     'pantheon-memory': ['code_neighbors', 'code_query', 'memory_search'],
-    'pantheon-persistence': ['goal_get'],
     'pantheon-resources': 'all',
   },
   demeter: {
@@ -96,7 +95,6 @@ const EXPECTED_AGENT_MCP_GRANTS = {
   themis: {
     'pantheon-code-mode': ['execute_code_script'],
     'pantheon-memory': ['memory_search'],
-    'pantheon-persistence': ['goal_get'],
     'pantheon-resources': 'all',
   },
   zeus: {
@@ -119,20 +117,6 @@ const EXPECTED_AGENT_MCP_GRANTS = {
 const UNREACHABLE_BY_ANY_AGENT = {
   'pantheon-code-mode': ['approve_code_script'],
   'pantheon-memory': ['code_index'],
-  'pantheon-persistence': [
-    'context_list',
-    'context_rehydrate',
-    'context_session_summary',
-    'context_stats',
-    'kv_delete',
-    'kv_delete_namespace',
-    'kv_get',
-    'kv_list',
-    'kv_search',
-    'kv_stats',
-    'kv_store',
-    'purge_expired',
-  ],
 }
 
 const PYTHON_REGISTRATION_SCANNER = `

@@ -9,7 +9,6 @@ reasoning_effort: high
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search, code_query, code_neighbors]
-  pantheon-persistence: [goal_get]
 skills:
   - spec-driven-development
   - memory-bank

@@ -90,10 +90,13 @@ def persistence(tmp_path: Path) -> Iterator[tuple[ModuleType, Path]]:
             module = importlib.reload(module)
         project = module._project_db
         assert project is not None
-        assert project.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-            "AND name = 'pantheon_goals'"
-        ).fetchone() is None
+        assert (
+            project.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'pantheon_goals'"
+            ).fetchone()
+            is None
+        )
         module.upgrade_goal_schema(project)
         try:
             yield module, fixture_dir
@@ -198,14 +201,22 @@ def test_startup_keeps_goal_schema_absent_and_goal_operation_fails_closed(
     )
     project = module._project_db
     assert project is not None
-    assert project.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-        "AND name = 'pantheon_goal_schema_migrations'"
-    ).fetchone() is None
+    assert (
+        project.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'pantheon_goal_schema_migrations'"
+        ).fetchone()
+        is None
+    )
 
     async def verify_non_goal_tool() -> None:
-        await module.kv_store("startup", "key", "value")
-        assert await module.kv_get("startup", "key") == "value"
+        await module.context_save(
+            "startup", "key", "value", session_id="startup-session"
+        )
+        assert (
+            await module.context_get("startup", "key", session_id="startup-session")
+            == "value"
+        )
 
     asyncio.run(verify_non_goal_tool())
     with pytest.raises(module.GoalSchemaNotInitializedError) as error:
@@ -267,10 +278,13 @@ def test_real_backup_verification_failure_cleans_backup_and_sidecars(
         module.migrate_goal_schema_with_backup(project_db)
     project = module._project_db
     assert project is not None
-    assert project.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' "
-        "AND name='pantheon_goal_schema_migrations'"
-    ).fetchone() is None
+    assert (
+        project.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='pantheon_goal_schema_migrations'"
+        ).fetchone()
+        is None
+    )
     assert list(fixture_dir.glob("*.goal-backup-*.sqlite3*")) == []
 
 
@@ -402,9 +416,13 @@ def test_migrate_goals_cli_backs_up_wal_and_preserves_existing_rows(
     backup = sqlite3.connect(f"file:{backup_path}?mode=ro&immutable=1", uri=True)
     try:
         assert backup.execute("PRAGMA quick_check").fetchone()[0] == "ok"
-        assert backup.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pantheon_goals'"
-        ).fetchone() is None
+        assert (
+            backup.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='pantheon_goals'"
+            ).fetchone()
+            is None
+        )
         assert backup.execute("SELECT value FROM existing_rows").fetchone() == (
             "preserve-me",
         )
@@ -491,9 +509,10 @@ def test_migrate_goals_resolution_matches_runtime_root_and_ignores_cwd(
 
     env_project = tmp_path / "env-project"
     monkeypatch.setenv("PANTHEON_PROJECT", str(env_project))
-    assert module._resolve_project_db_path() == (
-        env_project / ".pantheon" / "persistence" / "project.db"
-    ).resolve()
+    assert (
+        module._resolve_project_db_path()
+        == (env_project / ".pantheon" / "persistence" / "project.db").resolve()
+    )
 
 
 def test_server_project_db_flag_overrides_pantheon_project(

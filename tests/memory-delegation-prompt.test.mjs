@@ -55,7 +55,10 @@ test('memory retrieval and storage are selective rather than automatic', () => {
   )
   assert.match(zeusMemoryOps, /JSON-stringify both `value` and[\s\S]*`metadata`/i)
   assert.doesNotMatch(zeusMemoryOps, /kv_(?:get|store|search)/)
-  assert.match(zeus, /pantheon-persistence:\s*\[context_save, context_get\]/i)
+  assert.match(
+    zeus,
+    /pantheon-persistence:\s*\[context_save, context_get, goal_create, goal_get, goal_update, goal_done\]/i,
+  )
   assert.doesNotMatch(zeus, /kv_(?:get|store|search)/i)
   assert.match(zeus, /Não use KV compartilhado para contar profundidade/i)
   assert.doesNotMatch(mnemosyne, /Called automatically by Zeus when any agent returns/i)
@@ -126,7 +129,10 @@ test('useful memory hits are minimized into an optional, untrusted subtask hando
     /`memory_search` is lexical keyword search, while `memory_recall` is only for an already-known exact key, not generic discovery/i,
   )
   assert.match(zeus, /^ {2}pantheon-memory: \[memory_search\]$/m)
-  assert.match(zeus, /^ {2}pantheon-persistence: \[context_save, context_get\]$/m)
+  assert.match(
+    zeus,
+    /^ {2}pantheon-persistence: \[context_save, context_get, goal_create, goal_get, goal_update, goal_done\]$/m,
+  )
 })
 
 test('prompts avoid unsupported token-savings claims', () => {

@@ -20,7 +20,6 @@ mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
   pantheon-code-mode: [execute_code_script]
-  pantheon-persistence: [goal_get]
 ---
 
 ## ⚠️ ABSOLUTE CONSTRAINT

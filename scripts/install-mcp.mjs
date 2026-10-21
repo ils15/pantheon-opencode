@@ -259,7 +259,7 @@ export const MCPS = {
     tier: 1,
     name: 'Pantheon Persistence',
     description:
-      'Pantheon Persistence MCP Server — key-value store with FTS5 full-text search, TTL-based expiration, and namespace isolation',
+      'Pantheon Persistence MCP Server — operational-state checkpoints via context_save/context_get and four manual session-scoped goal tools',
     env: [],
     platforms: {
       opencode: {

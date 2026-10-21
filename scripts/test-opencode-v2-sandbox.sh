@@ -15,7 +15,7 @@
 # `@opencode/plugin@2.0.18` SDK contract or compatibility across the full 2.x
 # line. This project is V2-exclusive, so there is a single host leg to validate.
 #
-# Modes (combinable):
+# Modes (run sequentially; a failure stops later checks):
 #   --prepare        Build tarball, install pantheon-opencode + the OpenCode V2
 #                    binary in the sandbox prefix, headless init, and generate
 #                    the project config and sandbox run-test.sh.
@@ -23,7 +23,6 @@
 #                    regenerated first).
 #   --prompts        Prompt battery via `opencode run --format json`.
 #   --cost           Offline pantheon_cost probe.
-#   --rehydrate      Offline context_rehydrate + context_session_summary probe.
 #   --hooks          V2 hook canary: proves hook callbacks FIRE through the
 #                    sandbox's V2 binary (not merely that a plugin loaded).
 #                    This does not test transform callback effects or Pantheon
@@ -88,14 +87,12 @@ TARGET_VERSION="v2"
 
 REPORT_FILE="$SANDBOX_ROOT/prompts-report.md"
 COST_REPORT_FILE="$SANDBOX_ROOT/pantheon-cost-report.md"
-REHYDRATE_REPORT_FILE="$SANDBOX_ROOT/context-rehydrate-report.md"
 EXTRACT_PY="$SANDBOX_ROOT/.prompt-extract-json.py"
 
 MODE_PREPARE=0
 MODE_RESET=0
 MODE_PROMPTS=0
 MODE_COST=0
-MODE_REHYDRATE=0
 MODE_HOOKS=0
 RUN_VERSION=""
 
@@ -1538,45 +1535,6 @@ run_cost_probe() { # v
   record "$v" "pantheon-cost" "$status" "$detail"
 }
 
-run_rehydrate_probe() { # v
-  local v="$1" package_root probe raw status detail
-  if ! package_root="$(installed_package_root)"; then
-    record "$v" "context-rehydrate" "FAIL" "sandbox package is not installed"
-    return 0
-  fi
-  probe="$package_root/scripts/probe-context-rehydrate.mjs"
-  if [ ! -f "$probe" ]; then
-    record "$v" "context-rehydrate" "FAIL" "installed package has no offline context probe"
-    return 0
-  fi
-  if ! command -v node >/dev/null 2>&1; then
-    record "$v" "context-rehydrate" "FAIL" "node runtime is not available"
-    return 0
-  fi
-  set +e
-  raw="$(timeout 30 node "$probe" --version "$v" --json 2>&1)"
-  local rc=$?
-  set -e
-  case "$raw" in
-    *'"status":"PASS"'*) status="PASS" ;;
-    *'"status":"NOT_TESTED"'*) status="FAIL" ;;
-    *'"status":"AMBIENTAL"'*) status="FAIL" ;;
-    *) status="FAIL" ;;
-  esac
-  detail="$(printf '%s' "$raw" | tr '\n' ' ' | cut -c1-400)"
-  if [ "$rc" -eq 124 ]; then
-    status="FAIL"
-    detail="context probe timed out after 30s"
-  elif [ "$rc" -ne 0 ] && [ "$status" = "PASS" ]; then
-    # A non-zero probe exit must never be reported as PASS.
-    status="FAIL"
-    detail="$detail (probe exit $rc)"
-  elif [ "$rc" -ne 0 ] && [ "$status" != "FAIL" ]; then
-    detail="$detail (probe exit $rc)"
-  fi
-  record "$v" "context-rehydrate" "$status" "$detail"
-}
-
 run_version_prompts() { # v
   local v="$1" bin
   if ! bin="$(sandbox_bin)"; then
@@ -1669,31 +1627,6 @@ write_cost_report() { # versions...
   log "Cost probe report written to $COST_REPORT_FILE"
 }
 
-write_rehydrate_report() { # versions...
-  local versions=("$@") total_fail=0 total_pass=0
-  {
-    printf '# Pantheon Context Rehydration Probe Report\n\n'
-    printf -- '- **Date:** %s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')"
-    printf -- '- **Sandbox:** %s\n\n' "$SANDBOX_ROOT"
-    printf '| Version | Probe | Result | Detail |\n|---|---|---|---|\n'
-    local v result
-    for v in "${versions[@]}"; do
-      result="${RESULTS["$v:context-rehydrate"]:-NOT_TESTED}"
-      case "$result" in
-        PASS) total_pass=$((total_pass + 1)) ;;
-        *) total_fail=$((total_fail + 1)) ;;
-      esac
-      printf '| %s | context_rehydrate + context_session_summary | %s | %s |\n' \
-        "$v" "$result" "${DETAILS["$v:context-rehydrate"]:-—}"
-    done
-    printf '\n## Summary\n\n'
-    printf -- '- PASS: %d\n- Not PASS (blocking): %d\n\n' \
-      "$total_pass" "$total_fail"
-    printf '**Verdict: %s**\n' "$(probe_verdict "$total_pass" "$((total_pass + total_fail))")"
-  } > "$REHYDRATE_REPORT_FILE"
-  log "Context probe report written to $REHYDRATE_REPORT_FILE"
-}
-
 run_cost() { # versions...
   local versions=("$@") v fail=0
   mkdir -p "$SANDBOX_ROOT"
@@ -1711,25 +1644,6 @@ run_cost() { # versions...
     exit 1
   fi
   log "Cost probe: PASS."
-}
-
-run_rehydrate() { # versions...
-  local versions=("$@") v fail=0
-  mkdir -p "$SANDBOX_ROOT"
-  for v in "${versions[@]}"; do
-    log "[$v] context_rehydrate/session_summary offline probe ..."
-    run_rehydrate_probe "$v"
-    log "[$v] context probe → ${RESULTS["$v:context-rehydrate"]}"
-  done
-  write_rehydrate_report "${versions[@]}"
-  for v in "${versions[@]}"; do
-    [ "${RESULTS["$v:context-rehydrate"]:-}" = "PASS" ] || fail=$((fail + 1))
-  done
-  if [ "$fail" -gt 0 ]; then
-    log "Context probe: $fail check(s) without explicit PASS."
-    exit 1
-  fi
-  log "Context probe: PASS."
 }
 
 # ── Hook canary (proves callbacks FIRE, not just that a plugin loaded) ────────
@@ -1816,7 +1730,6 @@ while [ $# -gt 0 ]; do
     --reset) MODE_RESET=1 ;;
     --prompts) MODE_PROMPTS=1 ;;
     --cost) MODE_COST=1 ;;
-    --rehydrate) MODE_REHYDRATE=1 ;;
     --hooks) MODE_HOOKS=1 ;;
     --run)
       shift
@@ -1842,7 +1755,7 @@ fi
 
 if [ "$MODE_PREPARE" -eq 0 ] && [ -z "$RUN_VERSION" ] \
   && [ "$MODE_PROMPTS" -eq 0 ] && [ "$MODE_COST" -eq 0 ] \
-  && [ "$MODE_REHYDRATE" -eq 0 ] && [ "$MODE_HOOKS" -eq 0 ]; then
+  && [ "$MODE_HOOKS" -eq 0 ]; then
   usage
 fi
 
@@ -1862,10 +1775,6 @@ if [ -n "$RUN_VERSION" ]; then
     sandbox_env
     run_cost "$RUN_VERSION"
   fi
-  if [ "$MODE_REHYDRATE" -eq 1 ]; then
-    sandbox_env
-    run_rehydrate "$RUN_VERSION"
-  fi
   if [ "$MODE_HOOKS" -eq 1 ]; then
     sandbox_env
     run_hooks
@@ -1876,36 +1785,14 @@ elif [ "$MODE_PROMPTS" -eq 1 ]; then
   if [ "$MODE_COST" -eq 1 ]; then
     run_cost "$TARGET_VERSION"
   fi
-  if [ "$MODE_REHYDRATE" -eq 1 ]; then
-    run_rehydrate "$TARGET_VERSION"
-  fi
   if [ "$MODE_HOOKS" -eq 1 ]; then
     run_hooks
   fi
 elif [ "$MODE_COST" -eq 1 ]; then
   sandbox_env
   run_cost "$TARGET_VERSION"
-  if [ "$MODE_REHYDRATE" -eq 1 ]; then
-    run_rehydrate "$TARGET_VERSION"
-  fi
   if [ "$MODE_HOOKS" -eq 1 ]; then
     run_hooks
-  fi
-elif [ "$MODE_REHYDRATE" -eq 1 ]; then
-  sandbox_env
-  rehydrate_status=0
-  # run_rehydrate exits when its check fails; isolate it so the separately
-  # requested hook canary still runs, then return a failing status afterward.
-  (run_rehydrate "$TARGET_VERSION") || rehydrate_status=$?
-  hooks_status=0
-  if [ "$MODE_HOOKS" -eq 1 ]; then
-    (run_hooks) || hooks_status=$?
-  fi
-  if [ "$rehydrate_status" -ne 0 ]; then
-    exit "$rehydrate_status"
-  fi
-  if [ "$hooks_status" -ne 0 ]; then
-    exit "$hooks_status"
   fi
 elif [ "$MODE_HOOKS" -eq 1 ]; then
   sandbox_env

@@ -666,7 +666,6 @@ test('manual goal tools have exact per-agent grants in generated V1 and V2 confi
   const goalTools = ['goal_create', 'goal_get', 'goal_update', 'goal_done']
   const expectedFor = (agent) => {
     if (agent === 'zeus') return new Set(goalTools)
-    if (agent === 'athena' || agent === 'themis') return new Set(['goal_get'])
     return new Set()
   }
 
@@ -694,9 +693,7 @@ test('manual goal tools have exact per-agent grants in generated V1 and V2 confi
         const rules = agent.permissions
         const exactRule = (tool) =>
           rules.findLast((rule) => rule.action === `pantheon_persistence_${tool}`)
-        const serverDeny = rules.findLast(
-          (rule) => rule.action === 'pantheon_persistence_*',
-        )
+        const serverDeny = rules.findLast((rule) => rule.action === 'pantheon_persistence_*')
         assert.equal(serverDeny?.effect, 'deny', `${generation}/${agentName} default deny`)
         for (const tool of goalTools) {
           assert.equal(
