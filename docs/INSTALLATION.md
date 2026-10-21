@@ -1,6 +1,6 @@
-# Pantheon Installation Guide — v1.6.0-beta.15 (OpenCode 2)
+# Pantheon Installation Guide — v1.6.0-beta.17 (OpenCode 2)
 
-Pantheon v1.6.0-beta.15 é **compatível com OpenCode 2**. `npx pantheon-opencode init` instala a geração selecionada. O seletor interativo V1 oferece **Inherit**, **OpenCode Go**, **OpenAI** e **Anthropic**; ele pergunta o escopo de gravação apenas para um perfil salvo e não é uma rota de modelo V2. No V2, `pantheon_model` oferece somente `status`, `show`, `set` e `reset` manuais, sem wizard de presets: o default do host fica intacto sem override explícito por agente; markers `preset` e `PANTHEON_MODEL_PRESET` são ignorados e preservados. Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai no caminho V1. As tabelas dos presets abaixo são referência V1 legada e derivadas de `src/routing.yml` (sem hardcodar segredos: só nomes de variáveis e `baseURL`s).
+Pantheon v1.6.0-beta.17 é **compatível com OpenCode 2**. `npx pantheon-opencode init` instala a geração selecionada. O seletor interativo V1 oferece **Inherit**, **OpenCode Go**, **OpenAI** e **Anthropic**; ele pergunta o escopo de gravação apenas para um perfil salvo e não é uma rota de modelo V2. No V2, `pantheon_model` oferece somente `status`, `show`, `set` e `reset` manuais, sem wizard de presets: o default do host fica intacto sem override explícito por agente; markers `preset` e `PANTHEON_MODEL_PRESET` são ignorados e preservados. Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai no caminho V1. As tabelas dos presets abaixo são referência V1 legada e derivadas de `src/routing.yml` (sem hardcodar segredos: só nomes de variáveis e `baseURL`s).
 
 ## TL;DR (Quick Start)
 
@@ -946,15 +946,14 @@ removed from all `tui.json` locations OpenCode reads: `~/.opencode/tui.json`,
 | Plugin not loading | Ensure `<config>/plugins/pantheon-tui/dist/tui.js` exists (copied at install time) |
 | Health check fails | Run `npm run doctor` for detailed diagnostics |
 
-### Intentional memory MCP copies
+### Memory MCP packaging
 
-`scripts/memory_mcp.py` and `src/mcp/memory_mcp.py` are
-intentionally divergent, not a failed synchronization. The standalone
-`scripts/` copy keeps the lightweight `memory_*` contract; the installed
-`src/mcp/` copy additionally wires the optional codemap schema and
-`code_index`/`code_query`/`code_neighbors` tools. The other shared MCP copies
-remain byte-identical. `tests/test_mcp_scripts_sync.py` tests both rules and
-their contract markers, so do not overwrite one memory copy with the other.
+`src/mcp/memory_mcp.py` is the canonical Memory MCP server. The source-tree
+`scripts/memory_mcp.py` entrypoint delegates to it, and the runtime installer
+copies the canonical source into the installed scripts directory.
+`install-mcp.mjs` first resolves that installed copy and falls back to the
+source-tree entrypoint when running from a checkout. The script-sync test checks
+that both entrypoints expose the same tool list.
 
 ### MCP servers e falha de spawn (ENOENT)
 

@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **Persistence MCP reduced to six registered tools:** only `context_save`,
+  `context_get`, and the four `goal_*` tools remain exposed; the twelve KV and
+  context-management tools were unregistered while internal SQLite KV helpers
+  remain for checkpoint storage. Goal tools are Zeus-only because goals are
+  session-scoped and cannot be read across sessions, so Athena/Themis cannot
+  read Zeus's goal or create one in their own root session.
+- **Phase 7 — Memory search error contract:** `memory_search` now returns a
+  typed, sanitized error when the memory store cannot be read instead of an
+  empty list; an empty result now means nothing matched. All-stopword queries
+  previously fell back to a literal FTS match and now return no results, making
+  the behavior uniform with queries whose stopwords are dropped.
+- **Phase 8 — Memory MCP packaging:** `scripts/memory_mcp.py` is now a thin shim
+  delegating to canonical `src/mcp/memory_mcp.py`, removing the stale divergent
+  copy; the sync test now asserts that their registered tool lists are equal.
+
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 

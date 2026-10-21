@@ -81,7 +81,7 @@ verificações repetíveis e passagens claras entre etapas do trabalho.
 
 ## Status
 
-Versão operacional neste checkout: **v1.6.0-beta.15** (esta página não afirma publicação). O Pantheon foi feito para OpenCode e depende da
+Versão operacional neste checkout: **v1.6.0-beta.17** (esta página não afirma publicação). O Pantheon foi feito para OpenCode e depende da
 disponibilidade e da configuração do OpenCode e dos serviços opcionais que você
 escolher. Veja as [releases](https://github.com/ils15/pantheon-opencode/releases)
 e o [changelog](CHANGELOG.md) para acompanhar as mudanças publicadas.
@@ -433,21 +433,16 @@ exclusivo V2, portanto há uma única perna.
 scripts/test-opencode-v2-sandbox.sh --prepare     # tarball + install + init no sandbox
 scripts/test-opencode-v2-sandbox.sh --run v2      # apenas validação base
 scripts/test-opencode-v2-sandbox.sh --prompts     # validação base + bateria de prompts
-scripts/test-opencode-v2-sandbox.sh --rehydrate   # sondas offline de rehydration/summary de sessão
 scripts/test-opencode-v2-sandbox.sh --hooks       # canário de callbacks de hooks V2
-scripts/test-opencode-v2-sandbox.sh --rehydrate --hooks # executa os dois canários
 scripts/test-opencode-v2-sandbox.sh --reset       # limpa a raiz do sandbox
 ```
 
-Os modos são combináveis (ex.: `--prepare --run v2 --prompts`). `--rehydrate`
-executa sondas offline de `context_rehydrate` e `context_session_summary`.
-`--hooks` executa um canário de hooks V2 com o binário do sandbox para verificar
+Os modos são combináveis (ex.: `--prepare --run v2 --prompts`). `--hooks` executa
+um canário de hooks V2 com o binário do sandbox para verificar
 se os callbacks de hooks são disparados; ele não testa os efeitos dos callbacks
 de transform nem comprova o enforcement de segurança `execute.before` do
-Pantheon. Com o par de sondas `--rehydrate --hooks` (sem `--run`, `--prompts` ou
-`--cost`), o canário de hooks ainda é executado se a rehydration falhar, e o
-comando retorna falha em seguida. Esses canários de teste/sandbox não são prova
-de enforcement de segurança do Pantheon. Os binários são resolvidos estritamente
+Pantheon. Esses canários de teste/sandbox não são prova de enforcement de
+segurança do Pantheon. Os binários são resolvidos estritamente
 dentro do prefix npm do sandbox — um sandbox não preparado falha rápido em vez
 de testar silenciosamente a instalação do host.
 

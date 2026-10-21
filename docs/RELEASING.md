@@ -256,16 +256,13 @@ The release evidence is fail-closed and has one artifact identity:
 Any `npm ci` failure blocks the run. There is no `npm install` fallback, and
 `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` is not part of the current contract.
 
-### Intentional MCP source divergence
+### Memory MCP packaging
 
-`scripts/memory_mcp.py` and `src/mcp/memory_mcp.py` are
-intentionally divergent. The standalone `scripts/` copy preserves the
-lightweight `memory_*` server contract; the installed `src/mcp/` copy also
-loads the optional codemap schema and exposes `code_index`, `code_query`, and
-`code_neighbors`. The other shared MCP copies remain byte-identical. The
-separate behavior and required markers are tested by
-`tests/test_mcp_scripts_sync.py`; do not resolve this pair by copying one file
-over the other.
+`src/mcp/memory_mcp.py` is the canonical Memory MCP server. The
+`scripts/memory_mcp.py` source-tree entrypoint delegates to it, and the runtime
+installer copies the canonical source into the installed scripts directory.
+`tests/test_mcp_scripts_sync.py` checks that the compatibility entrypoint exposes
+the same tool list as the canonical server.
 
 ---
 

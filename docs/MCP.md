@@ -19,8 +19,8 @@ manifest in `src/mcp/`.
 |--------|-------|-----------|---------|
 | **pantheon-resources** | — | 4 static + 6 templates | Agent discovery, skills, routing, deepwork plans, memory-bank files, plugin eval reports |
 | **pantheon-code-mode** | 1 | 1 static + 1 template | Confined script execution from `.pantheon/code-mode/` |
-| **pantheon-memory** | 9 canonical / 6 fallback | — | Persistent memory with FTS5 keyword search, recall, knowledge graph (6 `memory_*` + 3 `code_*`; standalone fallback exposes the 6 `memory_*` tools only) |
-| **pantheon-persistence** | 18 | — | Namespaced key-value storage, FTS5, TTL, checkpoints, and 4 manual session-goal tools (8 KV + 6 context + 4 goals) |
+| **pantheon-memory** | 9 | — | Persistent memory with FTS5 keyword search, recall, and knowledge graph (6 `memory_*` + 3 `code_*`; the source-tree scripts entrypoint delegates to the canonical server) |
+| **pantheon-persistence** | 6 | — | Session checkpoints and four manual session-goal tools; goal tools are Zeus-only |
 | **pantheon-vision** | 3 | — | Image description, OCR, and structured analysis through OpenCode, with a deterministic local fallback |
 
 ---
@@ -210,10 +210,13 @@ execute_code_script("deploy.sh")
 Persistent, lightweight memory server using **SQLite FTS5 (BM25)** for lexical
 keyword search. No embedding model and no vector index: recall is purely
 lexical, so a query must share a token with the stored text to match it.
-The installed canonical source (`src/mcp/memory_mcp.py`) provides 9 tools:
-6 `memory_*` tools and 3 `code_*` codemap tools. The standalone fallback
-(`scripts/memory_mcp.py`) provides only the 6 `memory_*` tools; it registers no
-resources. Its database is `~/.config/opencode/memory/memory.db` by default,
+The canonical source (`src/mcp/memory_mcp.py`) provides 9 tools: 6 `memory_*`
+tools and 3 `code_*` codemap tools. In the source tree, `scripts/memory_mcp.py`
+is a compatibility entrypoint that delegates to the canonical source. The
+runtime installer copies that canonical source into the installed scripts
+directory; `install-mcp.mjs` prefers the installed copy and falls back to the
+source-tree entrypoint when no installed copy is available. The server registers
+no resources. Its database is `~/.config/opencode/memory/memory.db` by default,
 with `PANTHEON_HOME` and `XDG_CONFIG_HOME` overrides.
 
 ### Tools (9)
@@ -221,7 +224,7 @@ with `PANTHEON_HOME` and `XDG_CONFIG_HOME` overrides.
 | Tool | Description |
 |------|-------------|
 | `memory_store` | Store a memory entry (FTS5 index updated by trigger) |
-| `memory_search` | FTS5 BM25 keyword search; stopwords dropped, terms of 4+ chars prefix-matched; optional `decay_days` freshness half-life (default off) |
+| `memory_search` | FTS5 BM25 keyword search; stopwords dropped, terms of 4+ chars prefix-matched; optional `decay_days` freshness half-life (default off). Empty results mean nothing matched; a structured error means the memory store could not be read. |
 | `memory_recall` | Exact recall of an entry by key within a namespace |
 | `memory_forget` | Delete an entry by ID or key (FTS index cleaned via trigger) |
 | `memory_list` | List entries chronologically with namespace and key-prefix filters |
@@ -229,6 +232,25 @@ with `PANTHEON_HOME` and `XDG_CONFIG_HOME` overrides.
 | `code_index` | Index codebase files into a knowledge graph (hash-based skip) |
 | `code_query` | Search code entities via FTS5 |
 | `code_neighbors` | Graph neighbors of a code entity (BFS depth 1-3) |
+
+### `memory_search` result and error contract
+
+A successful search returns an array; no matches (including an empty or
+all-stopword query) return `[]`. A failure to open or read the memory store
+returns this JSON object as normal tool result content:
+
+```json
+{"error":{"type":"MemorySearchError","message":"Memory search failed while reading the SQLite FTS index or stored entries. Check the memory store and FTS index, then retry."}}
+```
+
+The `type` is `DatabaseUnavailableError` when the database cannot be opened or
+`MemorySearchError` when search reads fail. The `message` is sanitized and does
+not contain filesystem paths, SQL, or raw exception text. MCP `isError` remains
+`false` because this is a returned data envelope, not a protocol-level tool
+exception. Callers should parse the returned JSON content and distinguish an
+array (including `[]`, a successful search) from an object with an `error` key
+(a failed search); do not use `isError` or an empty array alone to detect this
+failure.
 
 ### Tech Stack
 
@@ -250,8 +272,12 @@ for the usage policy and store boundaries.
 
 **Script:** `scripts/mcp_persistence.py`
 
-Namespaced local key-value storage with FTS5 search, TTL expiration, and scope
-isolation. See `docs/persistence-mcp.md` for the complete tool reference.
+The MCP surface is exactly `context_save`, `context_get`, `goal_create`,
+`goal_get`, `goal_update`, and `goal_done`. The KV table is internal checkpoint
+storage; former KV, context-list/statistics, rehydration, and summary operations
+are not registered. Goal tools are Zeus-only because session-scoped goals cannot
+be read across sessions. See `docs/persistence-mcp.md` for the complete tool
+reference.
 
 ---
 

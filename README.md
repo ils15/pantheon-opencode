@@ -295,15 +295,22 @@ session/compaction hooks, so the 1.6 line is not full V2 feature parity.
 
 ### Manual goals are Persistence MCP tools, not V2 plugin tools
 
+The Persistence MCP exposes exactly six tools: `context_save`, `context_get`,
+`goal_create`, `goal_get`, `goal_update`, and `goal_done`. The KV table remains
+internal checkpoint storage; the former KV management/search and context
+list/statistics/rehydration/summary operations are not registered.
+
 The existing `pantheon-persistence` server provides manual `goal_create`,
 `goal_get`, `goal_update`, and `goal_done` tools for the current OpenCode
-session. Goals are partitioned by OpenCode session ID in the Persistence
+session. The four goal tools are granted only to Zeus. Goals are partitioned by OpenCode session ID in the Persistence
 deployment database; the session ID is a correlation key, not authentication.
 In a global install, different projects share this database. The
 supported boundary is OpenCode v2.0.30 local stdio, not independent clients or
 HTTP. Same-user clients that bypass OpenCode, host bypasses, and compromised
-OpenCode configuration are outside the trust model. Zeus has CRUD; Athena and
-Themis can only read; all other agents are denied. Grant changes come from
+OpenCode configuration are outside the trust model. Athena and Themis do not
+receive `goal_get`: a child session cannot read Zeus's goal, and as root they
+cannot create a goal in their own session because only Zeus has `goal_create`.
+All other agents are also denied. Grant changes come from
 canonical agent frontmatter and take effect through controlled init/restart
 plus effective-permission verification, not promised hot reload.
 
@@ -875,20 +882,14 @@ scripts/test-opencode-v2-sandbox.sh --prepare     # tarball + install + init in 
 ~/pantheon-sandbox/start-pantheon.sh              # interactive TUI in that isolated beta sandbox
 scripts/test-opencode-v2-sandbox.sh --run v2      # base validation only
 scripts/test-opencode-v2-sandbox.sh --prompts     # base validation + prompt battery
-scripts/test-opencode-v2-sandbox.sh --rehydrate   # offline context rehydration/session-summary probe
 scripts/test-opencode-v2-sandbox.sh --hooks       # V2 hook callback canary
-scripts/test-opencode-v2-sandbox.sh --rehydrate --hooks # run both canaries
 scripts/test-opencode-v2-sandbox.sh --reset       # wipe the sandbox root
 ```
 
-Modes are combinable (e.g. `--prepare --run v2 --prompts`). `--rehydrate` runs
-offline `context_rehydrate` and `context_session_summary` probes. `--hooks` runs
-a V2 hook canary against the sandbox binary to check that hook callbacks fire;
-it does not test transform callback effects or prove Pantheon's
-`execute.before` security enforcement. With the probe-only `--rehydrate --hooks`
-pair (without `--run`, `--prompts`, or `--cost`), the hooks canary still runs if
-rehydration fails, and the command returns a failing status afterward. These
-are test/sandbox canaries, not proof of Pantheon security enforcement. Binaries
+Modes are combinable (e.g. `--prepare --run v2 --prompts`). `--hooks` runs a V2
+hook canary against the sandbox binary to check that hook callbacks fire; it does
+not test transform callback effects or prove Pantheon's `execute.before` security
+enforcement. These are test/sandbox canaries, not proof of Pantheon security enforcement. Binaries
 are resolved strictly inside the sandbox npm prefix — a non-prepared sandbox
 fails fast instead of silently testing the host installation. The sandbox is
 always built from the checkout this script lives in; it never infers a
@@ -1066,14 +1067,14 @@ Env overrides:
 Exit codes: `0` no real failures · `1` real failure (see `prompts-report.md`
 in the sandbox root) · `2` usage error · `3` sandbox not prepared.
 
-### Intentional memory MCP divergence
+### Memory MCP source of truth
 
-`scripts/memory_mcp.py` and `src/mcp/memory_mcp.py` are
-intentionally different. The standalone `scripts/` copy keeps the lightweight
-`memory_*` contract; the installed `src/mcp/` copy additionally exposes the
-optional codemap schema and `code_index`, `code_query`, and `code_neighbors`.
-The other shared MCP copies remain identical. Do not overwrite one memory copy
-with the other.
+`src/mcp/memory_mcp.py` is the canonical Memory MCP server and exposes the six
+`memory_*` tools plus three `code_*` codemap tools. `scripts/memory_mcp.py` is a
+source-tree compatibility entrypoint that delegates to it. The runtime installer
+copies the canonical source into the installed scripts directory, while
+`install-mcp.mjs` prefers that installed copy and falls back to the source-tree
+entrypoint when running from a checkout.
 
 ### Task-result guard
 

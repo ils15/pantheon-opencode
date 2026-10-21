@@ -17,12 +17,12 @@ disconnecting the MCP server.
 | Agent | Resources | Code-mode | Memory | Persistence | Vision |
 |-------|-----------|-----------|--------|-------------|--------|
 | **zeus** | all | — | search | context_save, context_get, goal_create, goal_get, goal_update, goal_done | — |
-| **athena** | all | — | search, code_query, code_neighbors | goal_get | — |
+| **athena** | all | — | search, code_query, code_neighbors | — | — |
 | **apollo** | all | — | search, code_query, code_neighbors | — | — |
 | **hermes** | all | execute script | search | — | — |
 | **aphrodite** | all | execute script | search | — | describe/OCR/analyze |
 | **demeter** | all | execute script | search | — | — |
-| **themis** | all | execute script | search | goal_get | — |
+| **themis** | all | execute script | search | — | — |
 | **prometheus** | all | execute script | search | — | — |
 | **hephaestus** | all | execute script | search | — | — |
 | **nyx** | all | execute script | search | — | — |
@@ -43,8 +43,10 @@ a guarantee that the root runtime exposes the same tools. Mnemosyne's canonical
 allowlist includes durable-memory write tools; always check the active tool list.
 Native compaction remains OpenCode's context-pressure path.
 
-Goal scope is the caller's own OpenCode session: a subagent with only `goal_get`
-can read only a goal created in its own session (typically none).
+Persistence goal tools are Zeus-only. Goals are scoped to the caller's OpenCode
+session and cannot be read across sessions: Athena and Themis run as child sessions
+and cannot read Zeus's goal, while as root they cannot create a goal in their own
+session because only Zeus receives `goal_create`.
 
 ---
 
