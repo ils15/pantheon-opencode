@@ -333,7 +333,10 @@ function checkMcpConfig(args) {
   section('B. MCP Configuration')
 
   const configs = collectMcpConfigs(args)
-  const requiredMcpNames = args.profile === 'lite' ? [] : ['pantheon-memory', 'pantheon-resources']
+  // This required-server check tests config-entry presence only. It does not
+  // verify enabled state, command/transport usability, connectivity, or health.
+  const requiredMcpNames =
+    args.profile === 'lite' ? [] : ['pantheon-memory', 'pantheon-resources', 'pantheon-persistence']
 
   if (configs.length === 0) {
     if (requiredMcpNames.length > 0) {
@@ -447,7 +450,9 @@ function checkMcpConfig(args) {
     const configured = new Set(configs.flatMap((cfg) => Object.keys(cfg.data.mcp ?? {})))
     for (const required of requiredMcpNames) {
       if (configured.has(required))
-        pass(`Required MCP "${required}" configured in an available config`)
+        pass(
+          `Required MCP "${required}" entry is present (presence check only; this check does not verify enabled state, command/transport usability, connectivity, or health)`,
+        )
       else error(`Required MCP "${required}" not configured in any available config`)
     }
   }

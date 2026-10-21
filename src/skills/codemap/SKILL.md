@@ -50,5 +50,5 @@ Generate a hierarchical map of the codebase to understand its structure, key mod
 Antes de glob/grep manual, tente `code_query`:
 - `code_query("MyClass")` → busca FTS5 por entidade
 - Fallback para glob/grep se não indexado ou query vazia
-- `code_index("src/")` para indexação incremental (hash-based, skip se não mudou, force=true para re-index)
+- `code_index` não está disponível sob os grants atuais: nenhum agente recebeu essa permissão. Os resultados de consulta dependem de um índice já existente.
 - `code_neighbors(entity_id, depth=2)` para grafo de imports/calls

@@ -211,53 +211,24 @@ Both execute simultaneously. Wave 3 starts after both complete.
 
 ---
 
-## 4. Two-Tier Memory Strategy
+## 4. Memory and Persistence
 
-### Problem
+Pantheon has distinct context stores; it does not implement OpenCode-style
+`/memories/repo/` or `/memories/session/` stores and does not auto-load facts from
+those paths.
 
-Project memory was a single bucket: everything went into `.pantheon/memory-bank/`. But not all
-knowledge has the same access pattern. Permanent facts (stack, commands) should always be
-available at zero token cost. Sprint narratives should be read only when needed.
+| Store | Lifetime and access | Appropriate use |
+|---|---|---|
+| `pantheon-memory` MCP | Durable SQLite entries with no TTL; read/write through granted `memory_*` tools | Reusable facts and decisions that are worth retaining |
+| `pantheon-persistence` MCP | Separate optional checkpoint/KV database; checkpoint entries may expire | Explicit session/workflow checkpoints and temporary state |
+| `.pantheon/memory-bank/` | Project files in the working tree; read on demand, including through `pantheon://memory-bank/{path}` | Human-reviewed project context, progress records, and ADRs |
+| Skills and instructions | Repository files loaded by the applicable agent/runtime | Reusable procedures and conventions |
 
-### Solution
-
-Three tiers with distinct storage, loading policies, and update frequency:
-
-```
-Tier 1: Native Memory (Facts)
-  Location:  /memories/repo/
-  Content:   Stack, test commands, directory structure, immutable truths
-  Access:    ✅ Auto-loaded — zero token cost
-  Updated:   Rarely (when stack changes)
-
-Tier 2: Reference Memory (Narrative)
-  Location:  .pantheon/memory-bank/              ← working-tree files; Git tracking follows repository policy
-  Content:   Project overview (00), architecture (01), components (02),
-             tech context (03), active sprint (04), progress log (05),
-             ADRs (_notes/), task records (_tasks/)
-             _tasks/ may be Git-ignored; only tracked, committed files cross clones
-  Access:    ❌ Loaded on demand — read cost per file
-  Updated:   Sprint boundaries, decision milestones
-  Written by: Mnemosyne (on explicit request)
-
-Tier 3: Session Memory (Ephemeral)
-  Location:  /memories/session/
-  Content:   Current conversation plans, work-in-progress, temporary findings
-  Access:    One read per conversation session
-  Updated:   Continuously within session
-```
-
-### Learning Routing Triple
-
-Knowledge is categorized to prevent duplication:
-
-| Category | Where | Auto-loaded? | Example |
-|----------|-------|-------------|---------|
-| **Facts** | `/memories/repo/` | ✅ Yes | "Project uses FastAPI + SQLAlchemy" |
-| **Patterns** | `skills/` | ❌ On demand | "How to create a new API endpoint with TDD" |
-| **Conventions** | `.github/-instructions.md` | ✅ Yes | "Use snake_case for Python" |
-
-**Rule:** If content belongs in a different category, **move it — don't duplicate**.
+These stores are not synchronized. MCP tool availability depends on the active
+agent's grants; Memory namespaces are organizational filters, not access-control
+boundaries. Project Memory Bank resources are read on demand, not automatically
+loaded. See [Memory](MEMORY.md) for the operating policy and
+[MCP tools](mcp-tools.md) for the resource and tool catalogs.
 
 ---
 

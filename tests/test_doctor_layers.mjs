@@ -1,6 +1,7 @@
 /** Behavioral tests for the layered doctor healthcheck (issue #18). */
 
 import { strict as assert } from 'node:assert'
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -125,6 +126,59 @@ try {
   )
 } finally {
   rmSync(sandboxHome, { recursive: true, force: true })
+}
+
+// Global and sandbox profiles require the core MCPs, while lite intentionally
+// keeps the MCP layer optional.
+const mcpProfileFixture = mkdtempSync(join(tmpdir(), 'pantheon-doctor-mcp-profile-'))
+try {
+  writeFileSync(join(mcpProfileFixture, 'opencode.json'), JSON.stringify({ mcp: {} }))
+  const configHome = join(mcpProfileFixture, 'config')
+  const env = {
+    ...process.env,
+    HOME: mcpProfileFixture,
+    XDG_CONFIG_HOME: configHome,
+    PANTHEON_HOME: join(configHome, 'opencode'),
+  }
+  const doctor = join(ROOT, 'scripts', 'doctor.mjs')
+  const requiredProfile = spawnSync(
+    process.execPath,
+    [doctor, '--target', mcpProfileFixture, '--profile', 'global'],
+    { encoding: 'utf8', env },
+  )
+  assert.match(
+    `${requiredProfile.stdout}\n${requiredProfile.stderr}`,
+    /Required MCP "pantheon-persistence" not configured/,
+    'global doctor profile requires pantheon-persistence',
+  )
+
+  writeFileSync(
+    join(mcpProfileFixture, 'opencode.json'),
+    JSON.stringify({ mcp: { 'pantheon-persistence': { enabled: false, type: 'remote' } } }),
+  )
+  const presenceOnlyProfile = spawnSync(
+    process.execPath,
+    [doctor, '--target', mcpProfileFixture, '--profile', 'global', '--verbose'],
+    { encoding: 'utf8', env },
+  )
+  assert.match(
+    `${presenceOnlyProfile.stdout}\n${presenceOnlyProfile.stderr}`,
+    /Required MCP "pantheon-persistence" entry is present \(presence check only; this check does not verify enabled state, command\/transport usability, connectivity, or health\)/,
+    'required MCP check reports presence without asserting enabled or usable transport',
+  )
+
+  const liteProfile = spawnSync(
+    process.execPath,
+    [doctor, '--target', mcpProfileFixture, '--profile', 'lite'],
+    { encoding: 'utf8', env },
+  )
+  assert.doesNotMatch(
+    `${liteProfile.stdout}\n${liteProfile.stderr}`,
+    /Required MCP ".*" not configured/,
+    'lite doctor profile leaves all MCPs optional',
+  )
+} finally {
+  rmSync(mcpProfileFixture, { recursive: true, force: true })
 }
 
 // B3 installer/doctor checks: installed agents are derived from config source

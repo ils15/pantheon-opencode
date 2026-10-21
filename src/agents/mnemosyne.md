@@ -64,8 +64,9 @@ If asked to edit code, refuse and redirect to the appropriate implementation age
 - Write task records to .pantheon/memory-bank/_tasks/
 
 ### 3. Documentation Standards
-- Plans go to session memory (/memories/session/), not files
-- Facts go to /memories/repo/ (auto-loaded)
+- Durable facts and decisions go to `pantheon-memory` with `memory_store` only when retention is warranted; this is not auto-loaded.
+- Project context and plans that should be reviewable as files go under `.pantheon/memory-bank/` on explicit request.
+- Project Memory Bank files can be read on demand through `pantheon://memory-bank/{path}`; `/memories/repo/` and `/memories/session/` are not implemented Pantheon stores.
 - ADRs only for significant decisions
 - Never create .md files outside .pantheon/memory-bank/
 

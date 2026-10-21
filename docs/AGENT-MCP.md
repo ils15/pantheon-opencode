@@ -16,13 +16,13 @@ disconnecting the MCP server.
 
 | Agent | Resources | Code-mode | Memory | Persistence | Vision |
 |-------|-----------|-----------|--------|-------------|--------|
-| **zeus** | all | — | search | save/get checkpoint | — |
-| **athena** | all | — | search | — | — |
-| **apollo** | all | — | search | — | — |
+| **zeus** | all | — | search | context_save, context_get, goal_create, goal_get, goal_update, goal_done | — |
+| **athena** | all | — | search, code_query, code_neighbors | goal_get | — |
+| **apollo** | all | — | search, code_query, code_neighbors | — | — |
 | **hermes** | all | execute script | search | — | — |
 | **aphrodite** | all | execute script | search | — | describe/OCR/analyze |
 | **demeter** | all | execute script | search | — | — |
-| **themis** | all | execute script | search | — | — |
+| **themis** | all | execute script | search | goal_get | — |
 | **prometheus** | all | execute script | search | — | — |
 | **hephaestus** | all | execute script | search | — | — |
 | **nyx** | all | execute script | search | — | — |
@@ -31,6 +31,10 @@ disconnecting the MCP server.
 | **mnemosyne** | all | execute script | explicit memory tools | — | — |
 | **talos** | all | execute script | recall | — | — |
 
+The Apollo/Athena `code_query` and `code_neighbors` grants are the
+user-approved read-only code-map choice; `code_index` and per-project binding
+were not selected.
+
 `pantheon-vision` remains connected for the host but is available only to agents
 that handle image workflows. Checkpoints are limited to `context_save` and
 `context_get` on Zeus; they are session-qualified temporary persistence, not
@@ -38,6 +42,9 @@ durable `pantheon-memory` writes. These are installed per-agent allowlists, not
 a guarantee that the root runtime exposes the same tools. Mnemosyne's canonical
 allowlist includes durable-memory write tools; always check the active tool list.
 Native compaction remains OpenCode's context-pressure path.
+
+Goal scope is the caller's own OpenCode session: a subagent with only `goal_get`
+can read only a goal created in its own session (typically none).
 
 ---
 
@@ -160,7 +167,7 @@ mcp_tools:
 |--------|-----------|-------|
 | **pantheon-resources** | Low | Read-only. Same trust boundary as repository |
 | **pantheon-code-mode** | Medium | Executes scripts. Permission: `ask` (user confirms each execution) |
-| **pantheon-memory** | Low | Read/write within agent sandbox. No system access |
+| **pantheon-memory** | Medium | Per-agent grants limit callable tools; data and indexes use the global Memory DB, not an OS sandbox |
 | **pantheon-persistence** | Low | Namespaced local SQLite KV with FTS5 and TTL |
 | **pantheon-vision** | Medium | Sends image data or URLs to the configured OpenCode vision gateway; permission: `ask` |
 | **context7** | Low | Read-only library documentation. No auth needed |

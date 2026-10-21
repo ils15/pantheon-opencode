@@ -138,7 +138,7 @@ See `skill: tdd-with-agents` for the full TDD cycle.
 
 ## Project Context
 
-> **Adopt this agent for your product:** Replace this section with your project's specific routers, services, and models. Store that context in `/memories/repo/` (auto-loaded at zero token cost) or reference `.pantheon/memory-bank/`.
+> **Adopt this agent for your product:** Replace this section with your project's specific routers, services, and models. Store durable reusable facts through `pantheon-memory` when warranted and when the tool is granted, or reference project documentation under `.pantheon/memory-bank/`, which is read on demand rather than auto-loaded.
 
 ## Implementation Process
 

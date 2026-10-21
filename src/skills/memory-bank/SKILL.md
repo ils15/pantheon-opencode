@@ -12,12 +12,19 @@ Complete guide to Pantheon memory bank — structure, rules, optimization, and m
 
 ---
 
-## Two-System Model
+## Actual Storage Model
 
 | System | Where | Owner | Lifetime | Purpose |
 |--------|-------|-------|----------|---------|
-| **Memory Bank** | `.pantheon/memory-bank/` | Team | Files persist in the working tree; Git tracking depends on repository ignore/commit policy | Project context: architecture, patterns, progress |
-| **VS Code `/memories/`** | `.vscode/` or workspace | Agent | Session/repo scoped | Atomic facts, conversation plans |
+| **Durable Memory** | `pantheon-memory` MCP (SQLite `memory.db`) | Agents with the relevant tool grant | No entry TTL; retained until explicitly forgotten | Reusable facts and decisions |
+| **Persistence** | `pantheon-persistence` MCP | Agents with the relevant tool grant | Optional, separate checkpoint/KV store; checkpoint TTLs apply | Explicit session/workflow checkpoints and temporary state |
+| **Memory Bank** | `.pantheon/memory-bank/` | Team | Files persist in the working tree; Git tracking depends on repository ignore/commit policy | Project context: architecture, patterns, progress, ADRs |
+
+Pantheon does not implement `/memories/repo/` or `/memories/session/` stores.
+Memory Bank files are read explicitly or on demand through
+`pantheon://memory-bank/{path}` from `pantheon-resources`; they are not
+auto-loaded. Memory namespaces are organizational filters, not access-control
+boundaries, and tools are available only when the active agent is granted them.
 
 ---
 
@@ -68,13 +75,9 @@ committed under the repository's policy are shared through Git.
 
 ---
 
-## Session → Active Context Graduation
+## Session → Project Context Graduation
 
 ```
-During sprint:
-  Athena writes plan → /memories/session/sprint-plan.md   (ephemeral)
-  Agents track wip   → /memories/session/wip.md            (ephemeral)
-
 At sprint close:
   @mnemosyne consolidates → .pantheon/memory-bank/01-active-context.md
                           → .pantheon/memory-bank/02-progress-log.md (appended)
@@ -91,8 +94,9 @@ At sprint close:
 | Milestone completions | Any agent | `02-progress-log.md` (append) |
 | Task records | Mnemosyne (on request) | `_tasks/TASK000X-*.md` |
 | Architecture decisions | Mnemosyne (on request) | `_notes/NOTE000X-*.md` |
-| Atomic facts | Any agent | `/memories/repo/` |
-| Conversation plans | Athena / any agent | `/memories/session/` |
+| Reusable durable fact or decision | Agent with explicit `memory_store` grant, when retention is warranted | `pantheon-memory` |
+| Conversation-only goal | Current session instructions / `/pantheon-focus` | Not durable; no `/memories/session/` store |
+| Project narrative and ADRs | Mnemosyne on explicit request | `.pantheon/memory-bank/` |
 
 ---
 
@@ -147,10 +151,10 @@ At sprint close → explicit @mnemosyne invocation
 
 ### ❌ Duplicating information
 ```
-# Wrong: Stack in 00-project.md AND /memories/repo/stack.json
+# Wrong: duplicate the same fact in both durable Memory and a project document
 
-# Right: Atomic facts → /memories/repo/ (auto-loaded)
-         Narrative context → 00-project.md (explicit read)
+# Right: Durable reusable fact → pantheon-memory (when warranted and granted)
+         Narrative context → 00-project.md (read on demand)
 ```
 
 ---

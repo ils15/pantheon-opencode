@@ -17,10 +17,10 @@ manifest in `src/mcp/`.
 
 | Server | Tools | Resources | Purpose |
 |--------|-------|-----------|---------|
-| **pantheon-resources** | — | 3 static + 5 templates | Agent discovery, skills, routing, deepwork plans, memory-bank |
+| **pantheon-resources** | — | 4 static + 6 templates | Agent discovery, skills, routing, deepwork plans, memory-bank files, plugin eval reports |
 | **pantheon-code-mode** | 1 | 1 static + 1 template | Confined script execution from `.pantheon/code-mode/` |
-| **pantheon-memory** | 9 | 2 static | Persistent memory with FTS5 keyword search, recall, knowledge graph (6 `memory_*` + 3 `code_*`) |
-| **pantheon-persistence** | 14 | — | Namespaced key-value storage with FTS5 search and TTL (8 `kv_*`/`purge_*` + 6 `context_*`) |
+| **pantheon-memory** | 9 canonical / 6 fallback | — | Persistent memory with FTS5 keyword search, recall, knowledge graph (6 `memory_*` + 3 `code_*`; standalone fallback exposes the 6 `memory_*` tools only) |
+| **pantheon-persistence** | 18 | — | Namespaced key-value storage, FTS5, TTL, checkpoints, and 4 manual session-goal tools (8 KV + 6 context + 4 goals) |
 | **pantheon-vision** | 3 | — | Image description, OCR, and structured analysis through OpenCode, with a deterministic local fallback |
 
 ---
@@ -67,7 +67,6 @@ In `opencode.json`, set auto-approve levels:
   "mcp": {
     "pantheon-resources": "allow",
     "pantheon-code-mode": "ask",
-    "pantheon-memory": "allow",
     "pantheon-persistence": "allow",
     "pantheon-vision": "ask"
   }
@@ -76,7 +75,12 @@ In `opencode.json`, set auto-approve levels:
 
 - **pantheon-resources** → `allow` (read-only, same trust boundary as repo)
 - **pantheon-code-mode** → `ask` (script execution needs explicit confirmation)
-- **pantheon-memory** → `allow` (read/write within agent sandbox)
+- **pantheon-memory** → use the exact per-agent grants in [the MCP tool reference](mcp-tools.md#pantheon-memory-persistent-storage):
+  - Apollo/Athena: `[memory_search, code_query, code_neighbors]`
+  - Mnemosyne: `[memory_recall, memory_store, memory_search, memory_forget, memory_list, memory_stats]`
+  - Aphrodite, Demeter, Hephaestus, Hermes, Nyx, Prometheus, Themis, and Zeus: `[memory_search]`
+  - Gaia, Iris, and Talos: `[memory_recall]`
+  No agent is granted `code_index`.
 - **pantheon-persistence** → `allow` (namespaced local key-value storage)
 - **pantheon-vision** → `ask` (sends image data or URLs to the configured vision gateway)
 
@@ -103,6 +107,7 @@ resources and resource templates accessible via `pantheon://` URIs.
 | `pantheon://routing` | Full content of `routing.yml` — canonical delegation rules, handoff contracts, agent registry |
 | `pantheon://agents` | List of all 14 Pantheon agents with roles from YAML frontmatter |
 | `pantheon://skills` | List of all Pantheon skills with descriptions |
+| `pantheon://eval` | Latest plugin/skill certification scores, read from the `plugin_eval` namespace |
 
 ### Resource Templates (Parameterized URIs)
 
@@ -113,6 +118,7 @@ resources and resource templates accessible via `pantheon://` URIs.
 | `pantheon://deepwork/{slug}/status` | `STATUS.md` content for a deepwork task (or default IN_PROGRESS) |
 | `pantheon://memory-bank/{path}` | Content of a file within `.pantheon/memory-bank/` by relative path (path traversal blocked) |
 | `pantheon://skills/{name}` | Content of a skill's `SKILL.md` file by name |
+| `pantheon://eval/{plugin}` | Latest certification report for one plugin/skill, read from the `plugin_eval` namespace |
 
 ### Usage
 
@@ -130,6 +136,14 @@ read_mcp_resource(server="pantheon-resources", uri="pantheon://skills/hermes")
 - Loading skill instructions on demand
 - Checking deepwork plan status
 - Reading memory-bank files by path
+
+`pantheon://memory-bank/{path}` reads project documentation on demand; these
+files are not automatically loaded. The plugin-evaluation resources read the
+global Memory SQLite database (`PANTHEON_HOME` / `XDG_CONFIG_HOME` override the
+default `~/.config/opencode/memory/memory.db`) in the `plugin_eval` namespace.
+The namespace is an organizational filter, not an access-control boundary:
+clients with access to the resources server can read these reports, and a
+Memory search without a namespace filter can also match them.
 
 ---
 
@@ -196,7 +210,11 @@ execute_code_script("deploy.sh")
 Persistent, lightweight memory server using **SQLite FTS5 (BM25)** for lexical
 keyword search. No embedding model and no vector index: recall is purely
 lexical, so a query must share a token with the stored text to match it.
-Provides 9 tools (6 `memory_*` plus 3 `code_*`) and 2 resources.
+The installed canonical source (`src/mcp/memory_mcp.py`) provides 9 tools:
+6 `memory_*` tools and 3 `code_*` codemap tools. The standalone fallback
+(`scripts/memory_mcp.py`) provides only the 6 `memory_*` tools; it registers no
+resources. Its database is `~/.config/opencode/memory/memory.db` by default,
+with `PANTHEON_HOME` and `XDG_CONFIG_HOME` overrides.
 
 ### Tools (9)
 
@@ -212,18 +230,11 @@ Provides 9 tools (6 `memory_*` plus 3 `code_*`) and 2 resources.
 | `code_query` | Search code entities via FTS5 |
 | `code_neighbors` | Graph neighbors of a code entity (BFS depth 1-3) |
 
-### Resources
-
-| URI | Description |
-|-----|-------------|
-| `pantheon://memory/sessions` | List all sessions with entry counts and timestamps |
-| `pantheon://memory/status` | Memory server statistics: total entries, session count, disk usage |
-
 ### Tech Stack
 
 | Component | Implementation |
 |-----------|---------------|
-| Database | SQLite (stdlib) + FTS5 → `~/.pantheon/memory/memory.db` |
+| Database | SQLite (stdlib) + FTS5 → `~/.config/opencode/memory/memory.db` by default |
 | Search | FTS5 BM25 ranking, no external dependency |
 | Freshness decay | Opt-in via `decay_days` on `memory_search` (30-day half-life, default off) |
 | Ranking | BM25 relevance, optionally multiplied by the freshness factor |

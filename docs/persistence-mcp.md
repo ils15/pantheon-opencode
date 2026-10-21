@@ -5,7 +5,16 @@
 **Dependencies:** `mcp==2.2.0`, standalone `fastmcp==4.0.10`, and project path
 helpers; SQLite/FTS5 storage uses the Python standard library.
 
-A lightweight key-value store with SQLite + FTS5, TTL, and namespaces.
+The installer launches `scripts/mcp_persistence.py`; it is kept byte-identical
+to the canonical `src/mcp/mcp_persistence.py` and gated by
+`tests/test_mcp_scripts_sync.py`. There is no `.pantheon/mcp-registry.yml` in
+this checkout or installer path. The human-readable registry is
+[`mcp-tools.md`](mcp-tools.md); actual tool availability comes from server
+registration, while per-agent grants are derived from canonical agent
+`mcp_tools` frontmatter by `scripts/install/opencode.mjs`.
+
+A lightweight key-value store with SQLite + FTS5, TTL, and namespaces, plus
+manual session-scoped goal tools.
 Separate from `pantheon-memory` (which is also FTS5-backed, without TTL).
 
 ## Purpose
@@ -23,13 +32,27 @@ pantheon-persistence MCP
 └── Project DB: .pantheon/persistence/project.db
 ```
 
+Resolution precedence: explicit `--project-db`, then `PANTHEON_PROJECT`, then
+the runtime target directory (the parent of the installed `scripts/` directory).
+An explicit relative `--project-db` is resolved against the runtime root;
+when `PANTHEON_PROJECT` is used, it must be absolute and a relative value is
+rejected.
+Without either override, the database is
+`<runtime>/.pantheon/persistence/project.db` for a global install or
+`<project>/.opencode/.pantheon/persistence/project.db` for a project install.
+With `PANTHEON_PROJECT`, it is `<PANTHEON_PROJECT>/.pantheon/persistence/project.db`.
+Timestamped migration backups live beside the selected DB. For the runtime
+default, uninstall/reinstall may replace that runtime target directory, so move
+any backup you need outside it first.
+
 - **Global**: dados cross-projeto (cache de agentes, preferências)
 - **Project**: dados específicos do projeto atual
 
-## Tools (14)
+## Tools (18)
 
-The server exposes these 14 MCP tools. `scope` defaults to `"project"`; use
-`"global"` for the global database.
+The server exposes these 18 MCP tools. `scope` defaults to `"project"`; use
+`"global"` for the existing key-value and checkpoint APIs only. Manual goal
+tools have no scope or project argument and use the Persistence deployment DB.
 
 | Tool | Signature | Description / return value |
 |---|---|---|
@@ -47,6 +70,110 @@ The server exposes these 14 MCP tools. `scope` defaults to `"project"`; use
 | `context_stats` | `context_stats(slug, session_id?, legacy?, scope?)` | Returns context counts, expired entries, active bytes, and latest TTL remaining. |
 | `context_rehydrate` | `context_rehydrate(slug, session_id, scope?)` | Rebuilds deterministic mission, phase, delegation, and tail blocks from the exact session checkpoint. |
 | `context_session_summary` | `context_session_summary(slug, session_id, scope?)` | Builds a deterministic Tier 2 session-end summary for the exact session. |
+| `goal_create` | `goal_create(title, description?)` | Creates the single active manual goal for the current OpenCode session. |
+| `goal_get` | `goal_get(goal_id?)` | Reads that session's active goal or, if none is active, its latest completed goal. |
+| `goal_update` | `goal_update(goal_id, expected_version, title?, description?, clear_description?)` | Edits user fields with optimistic version checking; status and timestamps are server-owned. |
+| `goal_done` | `goal_done(goal_id, expected_version)` | Marks the current-session goal done; repeated completion is idempotent. |
+
+## Manual Session Goals
+
+These four tools are a direct, manual feature of the existing
+`pantheon-persistence` MCP server. They do not add a native V2 plugin proxy or
+another goal database. Goals are partitioned by OpenCode session ID inside the
+Persistence deployment database; in a global install, projects share this same
+database. Goal operations never accept a project path, session ID, generic scope,
+or global-scope selector from model tool arguments.
+
+FastMCP 4.0.10 handlers read the current session ID from request
+`Context.request_context.meta["ai.opencode/sessionID"]`. Missing, malformed, or
+invalid metadata fails closed. The session ID is only a correlation/scope key,
+not authentication. The supported trust boundary is OpenCode v2.0.30-mediated
+local stdio. Same-user independent clients that bypass OpenCode, host bypasses,
+or compromised OpenCode configuration are outside this trust model; do not
+expose this server over HTTP or another network transport.
+
+There is one active goal per session. A completed goal stays in history, and a
+new goal can be created after completion. Titles and optional descriptions are
+editable; use `clear_description=true` to clear a description. Status,
+timestamps, and monotonically increasing version are server-owned. `goal_get`
+returns the version to pass as `expected_version` to update/done; stale writes
+return a conflict instructing the caller to refresh. `goal_done` cannot reopen a
+goal and repeated completion is idempotent. Outputs contain only the goal ID,
+editable text, status, timestamps, and version—not the session ID, database
+path, or SQL.
+
+### Goal permissions and configuration changes
+
+The canonical agent frontmatter is the source of agent MCP grants. Zeus receives
+`goal_create`, `goal_get`, `goal_update`, and `goal_done`; Athena and Themis
+receive only `goal_get`; all other agents are denied these tools. The installer
+derives exact native per-tool permissions and defaults undeclared bundled MCP
+tools to deny. Run the controlled installer/init flow and restart the host to
+apply changed grants, then verify the effective generated permissions; grants
+are not promised to hot-reload. The generated V1 and V2 fixture configurations
+are covered by installer tests. No real global configuration was changed for
+this implementation.
+
+### V1/V2 separation and migration status
+
+`src/pantheon/goal-store.ts` remains the V1 automatic goal-loop authority and
+its behavior is unchanged. These Persistence MCP goals are an independent
+manual record: there is no migration/import from V1, dual-write, automatic
+continuation, prompt reinjection, evaluator, loop, board, TUI/RPC integration,
+or `ctx.storage` use. The V2 plugin's own goal tools remain unsupported; this
+manual MCP surface is not V2 plugin parity.
+
+The goal schema is versioned and additive. Persistence startup creates the
+database file and bootstraps the existing KV schema, but performs **no
+goal-table DDL**. If the goal schema is absent, other Persistence tools remain
+available and goal operations fail closed until an explicit migration. Stop
+the Persistence MCP server before the authoritative dry-run and keep it stopped
+for the entire migration. A concurrent writer that interferes with backup or
+safety verification causes the check to abort; it does not proceed on uncertain
+state. Before opening SQLite, the dry-run reports the resolved DB path,
+existence, size (including WAL bytes), and whether `-wal`/`-shm` sidecars exist.
+If either sidecar already exists, it opens with plain read-only mode so committed
+WAL state is visible. If neither exists, it uses `immutable=1` so it cannot
+create sidecars beside the inspected DB, including when its directory is
+read-only. If it cannot determine the goal-table state, it prints `unknown`,
+exits with status 2, and says to stop and investigate; `unknown` is not a healthy
+result. The dry-run also warns to stop the server for an authoritative check.
+
+The command directory and interpreter depend on installation type. Preview a
+global install with
+`<runtime>/.venv/bin/python3 <runtime>/scripts/mcp_persistence.py --migrate-goals --dry-run`;
+preview a project install with
+`<project>/.venv/bin/python3 <project>/.opencode/scripts/mcp_persistence.py --migrate-goals --dry-run`.
+Remove `--dry-run` only after human approval. The simplest reliable source of
+truth for the interpreter is `command[0]` in `opencode.json` for
+`pantheon-persistence`. Relative `--project-db` paths are resolved against the
+runtime root; resolution precedence is explicit `--project-db`, then
+`PANTHEON_PROJECT`, then the runtime target directory, never the operator's
+shell cwd. The CLI cannot independently witness the server process's database
+binding, so the human must confirm the target (for example, by comparing it with
+the DB open in the server process) before approval. Stop the server before the
+authoritative dry-run and keep it stopped for the entire migration.
+
+Before changing schema, the command creates an adjacent, timestamped full copy
+of the Persistence DB using SQLite's backup API (including WAL state and all KV
+data), sets mode `0600`, flushes it, then compares it read-only with the source
+before applying DDL transactionally. An already-current schema creates no
+backup. Verification remains structural (SQLite integrity, page count, object
+names, row counts, and schema version); content-digest verification and backup
+retention automation are explicitly deferred. Until retention automation is
+implemented, the operator must prune backups manually. If a migration-history
+row exists but `pantheon_goals` is missing, stop the server and preserve the
+current DB. A human operator should
+restore a verified backup or recover the missing schema, reconcile any newer KV
+writes if needed, and only then approve rerunning the migration. The tests use
+synthetic temporary databases only; no real database was migrated. The schema
+downgrade helper refuses to drop populated goal data; preserve/export goals
+before any external teardown. An empty goal schema remains reversible.
+
+The `tests/test_persistence_goals.py` suite requires the pinned
+`fastmcp==4.0.10` and `mcp==2.2.0` runtime versions. Install those test
+dependencies from `src/mcp/requirements-mcp.txt`; the suite fails with this
+action when FastMCP is older rather than reporting confusing transport errors.
 
 ### kv_stats
 Return storage statistics with total entries, expired count, per-namespace breakdown, and DB file size.

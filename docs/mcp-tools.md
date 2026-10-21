@@ -24,12 +24,18 @@ Read-only resource server. No tools — read resources directly via `pantheon://
 | `pantheon://deepwork/{slug}` | Deepwork `PLAN.md` |
 | `pantheon://deepwork/{slug}/status` | Deepwork `STATUS.md` (defaults to IN_PROGRESS) |
 | `pantheon://memory-bank/{path}` | Any file under `.pantheon/memory-bank/` (path traversal blocked) |
-| `pantheon://code-mode/scripts` | List all available code-mode scripts |
-| `pantheon://code-mode/scripts/{name}` | View script content by name |
-| `pantheon://memory/sessions` | List all memory sessions with counts and timestamps |
-| `pantheon://memory/status` | Memory server stats: entries, sessions, disk usage |
+| `pantheon://eval` | Latest plugin/skill certification scores from the `plugin_eval` namespace |
+| `pantheon://eval/{plugin}` | Latest certification report for one plugin/skill |
 
-**Used by:** ALL agents. Common reads: `routing` (zeus, athena), `agents/{name}` (any), `skills/{name}` (implementers), `memory-bank/{path}` (aphrodite, mnemosyne).
+**Used by:** ALL agents. Common reads: `routing` (zeus, athena), `agents/{name}` (any), `skills/{name}` (implementers), `memory-bank/{path}` (aphrodite, mnemosyne), and eval reports when needed.
+
+`pantheon://memory-bank/{path}` reads project files on demand; it does not
+auto-load them. The eval resources are registered by this server and read the
+global Memory SQLite database (`PANTHEON_HOME` / `XDG_CONFIG_HOME` override the
+default `~/.config/opencode/memory/memory.db`) in the `plugin_eval` namespace.
+This namespace is not an access-control boundary: clients that can read the
+resources server can read the reports, and unfiltered `memory_search` calls can
+match entries from `plugin_eval` too.
 
 **Call pattern:**
 ```
@@ -40,7 +46,14 @@ read_mcp_resource(server="pantheon-resources", uri="pantheon://routing")
 
 ### pantheon-memory (persistent storage)
 
-Lexical memory with SQLite FTS5 (BM25). **9 tools**: 6 `memory_*` for storing, searching, recalling, forgetting, listing, and inspecting memories across namespaces, plus 3 `code_*` codemap tools. Keyword retrieval only — no embedding or vector index.
+Lexical memory with SQLite FTS5 (BM25). The installed canonical source,
+`src/mcp/memory_mcp.py`, registers **9 tools**: 6 `memory_*` tools for storing,
+searching, recalling, forgetting, listing, and inspecting entries, plus 3
+`code_*` codemap operations. The standalone fallback, `scripts/memory_mcp.py`, exposes
+exactly `memory_store`, `memory_search`, `memory_recall`, `memory_forget`,
+`memory_list`, and `memory_stats`. The canonical source adds `code_index`,
+`code_query`, and `code_neighbors`. Keyword retrieval only — no embedding or
+vector index. Neither Memory server source registers resources.
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
@@ -50,9 +63,27 @@ Lexical memory with SQLite FTS5 (BM25). **9 tools**: 6 `memory_*` for storing, s
 | `memory_forget` | `(id?, key?, namespace?: "default")` | Delete an entry by ID or key (FTS index cleaned via trigger) | mnemosyne only |
 | `memory_list` | `(namespace?, prefix?, limit?: 50)` | List entries chronologically with namespace and key-prefix filters | Mnemosyne — explicit maintenance |
 | `memory_stats` | `()` | Database statistics: totals, namespaces, disk usage | Mnemosyne — explicit maintenance |
-| `code_index` | `(path?, force?)` | Index codebase files into a knowledge graph (hash-based skip) | apollo, athena, zeus |
+| `code_index` | `(path?, force?)` | Index codebase files into a knowledge graph (hash-based skip) | No agent — blocked by design |
 | `code_query` | `(query, type?, limit?: 10)` | Search code entities via FTS5 | apollo, athena |
 | `code_neighbors` | `(entity_id, depth?: 1)` | Graph neighbors of a code entity (BFS depth 1-3) | apollo, athena |
+
+Apollo and Athena receive only the read-only code map operations
+(`code_query`, `code_neighbors`). No agent is granted `code_index`; its
+server-side path-confinement guard remains defense in depth.
+
+These are exact per-agent `mcp_tools.pantheon-memory` frontmatter grants:
+
+| Agent(s) | Exact `pantheon-memory` grant |
+|----------|-------------------------------|
+| Apollo, Athena | `[memory_search, code_query, code_neighbors]` |
+| Mnemosyne | `[memory_recall, memory_store, memory_search, memory_forget, memory_list, memory_stats]` |
+| Aphrodite, Demeter, Hephaestus, Hermes, Nyx, Prometheus, Themis, Zeus | `[memory_search]` |
+| Gaia, Iris, Talos | `[memory_recall]` |
+
+Only Apollo and Athena receive `code_query` and `code_neighbors`; no agent
+receives any other `code_*` tool, including `code_index`. Zeus and all other
+agents receive no `code_*` tools. These are tools on `pantheon-memory`, not Code
+Mode, and do not include `execute_code_script`.
 
 **Lean call pattern:**
 ```
@@ -62,6 +93,12 @@ memory_search(query="existing auth patterns", top_k=2)
 # Store once at the top level only if the result is reusable in a later session.
 memory_store(value="Refresh tokens rotate on every use", key="decision-42")
 ```
+
+The `plugin_eval` namespace shares this Memory database. Eval scripts write
+certification entries there; the `pantheon-resources` server exposes them via
+`pantheon://eval` and `pantheon://eval/{plugin}`. Namespaces organize queries
+but do not enforce access: unfiltered Memory searches can include eval entries,
+and access to the resource URIs follows access to the resources server.
 
 The table describes server capabilities, not per-agent grants. Agent allowlists
 and runtime tool exposure can differ; inspect the active tool grants/catalog
@@ -82,7 +119,7 @@ is already known; do not search and then immediately recall the same entry.
 
 ### pantheon-persistence (KV store + FTS5 search)
 
-Lightweight key-value store with SQLite FTS5, TTL-based expiration, and namespace isolation. Zero external dependencies (stdlib only). **14 tools**: 8 `kv_*`/`purge_*` key-value tools plus 6 `context_*` checkpoint tools (`context_save`, `context_get`, `context_list`, `context_stats`, `context_rehydrate`, `context_session_summary`). The table below lists the `kv_*` subset; see [persistence-mcp.md](persistence-mcp.md) for the `context_*` reference.
+Lightweight key-value store with SQLite FTS5, TTL-based expiration, and namespace isolation. Zero external dependencies (stdlib only). **18 tools**: 8 `kv_*`/`purge_*` key-value tools, 6 `context_*` checkpoint tools, and 4 manual session-goal tools. The table below lists the `kv_*` subset; see [persistence-mcp.md](persistence-mcp.md) for the checkpoint and goal references.
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
@@ -98,6 +135,14 @@ not the default cache for agent handoffs. Avoid an immediate read-after-write:
 successful stores already return a status. For long-running checkpoint workflows,
 save once at a meaningful boundary and read only when resuming.
 
+The four manual goal tools (`goal_create`, `goal_get`, `goal_update`,
+`goal_done`) partition records by current OpenCode session ID in the Persistence
+deployment database; a global install shares that database across projects.
+Zeus has CRUD; Athena and Themis have read-only access; all other agents are
+denied. They do not enable automatic continuation and do not replace
+the V1 `GoalStore`. See [Persistence MCP](persistence-mcp.md#manual-session-goals)
+for the trust boundary, exact contract, and migration gate.
+
 **Example — state that must outlive the current handoff:**
 ```
 kv_store(namespace="deepwork-42", key="phase", value="review", ttl=14400)
@@ -110,6 +155,10 @@ kv_get(namespace="deepwork-42", key="phase")
 ### pantheon-code-mode (script execution)
 
 Confined automation scripts from `.pantheon/code-mode/`. One tool, 30s timeout, `.sh` and `.py` only.
+
+The server also registers `pantheon://code-mode/scripts` and
+`pantheon://code-mode/scripts/{name}` resources; these are not part of
+`pantheon-resources`.
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
@@ -144,9 +193,9 @@ explicit `PANTHEON_VISION_TOOL` or `imageAnalysisTool` setting.
 
 | Tool | Signature | Description |
 |------|-----------|-------------|
-| `vision_describe` | `(path: str, prompt?: str)` | Describe image content, visible text, layout, and objects |
-| `vision_ocr` | `(path: str)` | Extract visible text while preserving line formatting |
-| `vision_analyze` | `(path: str)` | Return image metadata, description, and OCR as JSON |
+| `vision_describe` | `(path: str, prompt?: str, session_id?: str)` | Describe image content, visible text, layout, and objects |
+| `vision_ocr` | `(path: str, session_id?: str)` | Extract visible text while preserving line formatting |
+| `vision_analyze` | `(path: str, session_id?: str)` | Return image metadata, description, and OCR as JSON |
 
 **Permission:** `ask` is recommended because images or remote URLs are sent to
 the configured gateway. The server reads `PANTHEON_OPENCODE_API_KEY` or
@@ -187,7 +236,7 @@ Each platform exposes MCP tools with different naming. The same tool `memory_rec
 | ** ** | Original name | `memory_recall` (injected via schema) |
 
 > **In the Code Mode `execute` sandbox the visible catalog is a subset, not the
-> registry above.** For `pantheon-persistence`, only 5 of its 14 tools appear; the
+> registry above.** For `pantheon-persistence`, only 5 of its 18 tools appear; the
 > rest are reachable but unlisted. Resolve a hidden tool by calling `search()` for its
 > exact path and then invoking that path **literally** — passing the whole path string
 > as a single key fails even though `search()` returned it, and the error names the
@@ -197,12 +246,31 @@ Each platform exposes MCP tools with different naming. The same tool `memory_rec
 
 ## Permission Tiers
 
+OpenCode MCP tool grants authorize an agent to call the server tools exposed to
+it. They are not an OS-level sandbox and do not constrain the MCP process's
+permissions under the host user's OS account. The API/data boundary is therefore
+not limited to the repository: granted `pantheon-memory` tools operate on the
+user's global Memory database (`~/.config/opencode/memory/memory.db` by default;
+`PANTHEON_HOME` / `XDG_CONFIG_HOME` can override the root). `code_query` and
+`code_neighbors` read that global database's code index. Its `code_files` table
+has no project column, so results can include entities from any project
+previously indexed on this machine; these grants do not provide per-project
+isolation. No agent is granted `code_index`; its server-side path-confinement
+guard is defense in depth, not a project-isolation boundary for query results.
+Granted `pantheon-persistence` KV/checkpoint tools can operate on the
+user's global database (`~/.config/opencode/persistence/global.db` by default)
+or the active project database (`.pantheon/persistence/project.db`), according
+to the scopes exposed by those tools. Manual goal tools use the Persistence
+deployment database and partition by session ID; a global install shares it
+across projects. Grants gate calls to registered MCP operations; they do not
+restrict the process's underlying OS permissions.
+
 | Server | Recommended Tier | Rationale |
 |--------|-----------------|-----------|
 | pantheon-resources | `allow` | Read-only, same trust boundary as repo |
 | pantheon-code-mode | `ask` | Executes scripts — needs user confirmation |
-| pantheon-memory | `allow` | Read/write within agent sandbox, no system access |
-| pantheon-persistence | `allow` | SQLite KV, same trust boundary as repo |
+| pantheon-memory | Per-agent exact `mcp_tools` lists above | Host grants authorize only each listed tool; they are not an OS sandbox, and Memory data/index records use the user-global database |
+| pantheon-persistence | per-agent exact tools | Granted KV/checkpoint tools can use the user-global or project database; manual goals are session-scoped in the deployment database, shared across projects in a global install |
 | pantheon-vision | `ask` | Sends image input to the configured vision gateway |
 
 ---
@@ -211,8 +279,18 @@ Each platform exposes MCP tools with different naming. The same tool `memory_rec
 
 - **pantheon-resources** — path traversal protection on `memory-bank/{path}`
 - **pantheon-code-mode** — only `.sh`/`.py` in `.pantheon/code-mode/`, 30s timeout, no `../` escape
-- **pantheon-memory** — all data in `~/.pantheon/memory/memory.db`, no system-level access
-- **pantheon-persistence** — SQLite KV in `~/.pantheon/persistence/`, TTL auto-purge, namespace isolation
+- **pantheon-memory** — SQLite data in `~/.config/opencode/memory/memory.db` by default (`PANTHEON_HOME` / `XDG_CONFIG_HOME` can override it); agent tool grants determine which tools are available
+- **pantheon-persistence** — global SQLite KV in `~/.config/opencode/persistence/global.db` by default; project scope uses `.pantheon/persistence/project.db`. `PANTHEON_HOME` / `XDG_CONFIG_HOME` override the global root; TTL auto-purge and namespace isolation apply.
 - **pantheon-vision** — 25 MB image cap, supported-format validation, safe errors, and API-key redaction
 
 See `skill: mcp-security` for complete rules.
+
+## Unreachable by any agent
+
+These tools are registered by the runtime sources but no bundled agent grants them. This is intentional pending a future evidence-based grant; the list is verified against the MCP decorators and agent frontmatter by `tests/agent-mcp-grants.test.mjs`.
+
+| Server | Exposed tools with no agent grant |
+|--------|-----------------------------------|
+| pantheon-code-mode | `approve_code_script` |
+| pantheon-memory | `code_index` |
+| pantheon-persistence | `context_list`, `context_rehydrate`, `context_session_summary`, `context_stats`, `kv_delete`, `kv_delete_namespace`, `kv_get`, `kv_list`, `kv_search`, `kv_stats`, `kv_store`, `purge_expired` |

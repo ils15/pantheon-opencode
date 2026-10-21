@@ -15,6 +15,13 @@ compaction hooks. They are separate from durable `pantheon-memory` entries:
 checkpoint namespaces include the session ID, with the defaults shown above.
 See the [persistence reference](persistence-mcp.md).
 
+Pantheon does not implement OpenCode-style `/memories/repo/` or
+`/memories/session/` stores or automatic loading from those paths. Durable
+entries are stored through the `pantheon-memory` MCP tools. Project documents
+under `.pantheon/memory-bank/` remain files and are read explicitly, including
+through `pantheon://memory-bank/{path}` from `pantheon-resources`; that resource
+is on-demand, not auto-loaded.
+
 ## Memory MCP
 
 The server stores entries in SQLite and indexes them with FTS5/BM25. Retrieval
