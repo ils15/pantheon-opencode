@@ -415,65 +415,133 @@ def _insert_entities_and_relations(
             )
 
 
+def _resolve_trusted_project_root(
+    project_root: str | Path | None,
+) -> tuple[Path | None, str | None]:
+    """Resolve and validate the trusted root used by code indexing."""
+    if project_root is None:
+        return None, "Trusted project root unavailable; code_index is disabled"
+
+    root_candidate = Path(project_root)
+    if not root_candidate.is_absolute():
+        return None, "Trusted project root must be absolute"
+    try:
+        root = root_candidate.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None, "Trusted project root is missing or invalid"
+    if not root.is_dir() or root == Path(root.anchor):
+        return None, "Trusted project root must be a directory"
+    return root, None
+
+
+def _resolve_index_target(
+    root: Path, path: str | Path | None
+) -> tuple[Path | None, str | None]:
+    """Resolve an index target and require canonical containment in its root."""
+    target = root if path is None else Path(path)
+    if ".." in target.parts:
+        return None, "Index path must not contain parent traversal"
+    candidate = target if target.is_absolute() else root / target
+    try:
+        base = candidate.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None, "Index path does not exist or is invalid"
+    if not base.is_relative_to(root):
+        return None, "Index path must resolve within the trusted project root"
+    if not base.is_file() and not base.is_dir():
+        return None, "Index path must be a file or directory"
+    return base, None
+
+
+def _resolve_index_base(
+    project_root: str | Path | None, path: str | Path | None
+) -> tuple[Path | None, Path | None, str | None]:
+    """Resolve an index target under its validated project root."""
+    root, error = _resolve_trusted_project_root(project_root)
+    if error or root is None:
+        return root, None, error
+    base, error = _resolve_index_target(root, path)
+    return root, base, error
+
+
 def code_index(  # noqa: C901, PLR0912, PLR0915
-    conn: sqlite3.Connection, path: str | Path | None = None, force: bool = False
+    conn: sqlite3.Connection,
+    path: str | Path | None = None,
+    force: bool = False,
+    *,
+    project_root: str | Path | None = None,
 ) -> dict[str, Any]:
+    root, base, error = _resolve_index_base(project_root, path)
+    if error or root is None or base is None:
+        return {
+            "error": error or "Index path is invalid",
+            "indexed": 0,
+            "skipped": 0,
+        }
+
     ensure_codemap_schema(conn)
-    base = Path(path) if path else Path.cwd()
-    if not base.exists():
-        return {"error": f"Path not found: {base}", "indexed": 0, "skipped": 0}
     files: list[Path] = (
         [base]
         if base.is_file()
         else [p for ext in SUPPORTED_EXTS for p in base.rglob(f"*{ext}")]
     )
     indexed = skipped = errors = large_skipped = unsupported = 0
-    for f in files:
+    for candidate in files:
+        try:
+            file_path = candidate.resolve(strict=True)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if not file_path.is_relative_to(root):
+            continue
         if (
-            any(p.startswith(".") for p in f.parts)
-            and ".pantheon" not in str(f)
-            and (".git" in f.parts or "__pycache__" in f.parts)
+            any(p.startswith(".") for p in file_path.parts)
+            and ".pantheon" not in str(file_path)
+            and (".git" in file_path.parts or "__pycache__" in file_path.parts)
         ):
             continue
-        if "node_modules" in f.parts or ".venv" in f.parts or "venv" in f.parts:
+        if (
+            "node_modules" in file_path.parts
+            or ".venv" in file_path.parts
+            or "venv" in file_path.parts
+        ):
             continue
-        ext = f.suffix.lower()
+        ext = file_path.suffix.lower()
         lang = SUPPORTED_EXTS.get(ext)
         if not lang:
             unsupported += 1
             continue
         try:
-            if f.stat().st_size > LARGE_FILE_THRESHOLD:
+            if file_path.stat().st_size > LARGE_FILE_THRESHOLD:
                 large_skipped += 1
                 continue
-            content = f.read_text(encoding="utf-8", errors="ignore")
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
             if not content.strip():
                 h = _hash_content(content)
                 conn.execute(
                     "INSERT OR REPLACE INTO code_files "
                     "(path, hash, language) VALUES (?,?,?)",
-                    [str(f), h, lang],
+                    [str(file_path), h, lang],
                 )
                 conn.commit()
                 skipped += 1
                 continue
             h = _hash_content(content)
             row = conn.execute(
-                "SELECT hash FROM code_files WHERE path=?", [str(f)]
+                "SELECT hash FROM code_files WHERE path=?", [str(file_path)]
             ).fetchone()
             if row and row[0] == h and not force:
                 skipped += 1
                 continue
             ents, rels = (
-                _parse_python_entities(str(f), content)
+                _parse_python_entities(str(file_path), content)
                 if lang == "python"
-                else _parse_typescript_entities(str(f), content)
+                else _parse_typescript_entities(str(file_path), content)
             )
             if not ents and not rels:
                 conn.execute(
                     "INSERT OR REPLACE INTO code_files "
                     "(path, hash, language) VALUES (?,?,?)",
-                    [str(f), h, lang],
+                    [str(file_path), h, lang],
                 )
                 conn.commit()
                 try:
@@ -486,7 +554,7 @@ def code_index(  # noqa: C901, PLR0912, PLR0915
             _insert_entities_and_relations(conn, ents, rels)
             conn.execute(
                 "INSERT OR REPLACE INTO code_files (path,hash,language) VALUES (?,?,?)",
-                [str(f), h, lang],
+                [str(file_path), h, lang],
             )
             conn.commit()
             indexed += 1

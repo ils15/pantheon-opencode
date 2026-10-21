@@ -8,7 +8,7 @@ reasoning_effort: high
 
 mcp_tools:
   pantheon-resources: all
-  pantheon-memory: [memory_search]
+  pantheon-memory: [memory_search, code_query, code_neighbors]
   pantheon-code-mode: []
 skills:
   - spec-driven-development

@@ -21,8 +21,7 @@ skills:
   - auto-continue
 mcp_tools:
   pantheon-resources: all
-  pantheon-memory: [memory_search]
-  pantheon-code-mode: []
+  pantheon-memory: [memory_search, code_query, code_neighbors]
 ---
 
 ##  When NOT to Use Apollo

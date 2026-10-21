@@ -72,6 +72,30 @@ def pantheon_project() -> Path | None:
     return None
 
 
+def trusted_project_root() -> Path | None:
+    """Return an explicitly host-bound project root, or ``None``.
+
+    The globally launched Memory MCP commonly runs with its working directory
+    set to the installed runtime, not the active project. Therefore this
+    security-sensitive lookup deliberately accepts only an absolute
+    ``PANTHEON_PROJECT`` binding and never falls back to ``PWD`` or cwd.
+    """
+    configured_root = os.environ.get("PANTHEON_PROJECT")
+    if not configured_root:
+        return None
+
+    candidate = Path(configured_root)
+    if not candidate.is_absolute():
+        return None
+    try:
+        root = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if not root.is_dir() or root == Path(root.anchor):
+        return None
+    return root
+
+
 def _is_valid_logical_cwd(logical_cwd: str, physical_cwd: str) -> bool:
     """Validate a launcher-provided logical cwd without resolving its result.
 

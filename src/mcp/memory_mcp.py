@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from _pantheon_paths import pantheon_home
+from _pantheon_paths import pantheon_home, trusted_project_root
 from fastmcp import FastMCP
 from pydantic import BeforeValidator, Field
 
@@ -870,8 +870,8 @@ def memory_stats() -> dict[str, Any]:
 
 
 @mcp.tool(
-    description="Index codebase files incrementally (hash-based skip). "
-    "Parses Python (ast) and TypeScript (regex) to build knowledge graph.",
+    description="Index supported files inside the host-bound project root only. "
+    "Parses Python (ast) and TypeScript (regex) into the shared Memory DB.",
 )
 def code_index(
     path: str | None = None,
@@ -880,7 +880,7 @@ def code_index(
     """Index code files into knowledge graph.
 
     Args:
-        path: File or directory to index; None = cwd.
+        path: File or directory within the trusted project root; None = project root.
         force: Re-parse even if hash unchanged.
 
     Returns:
@@ -888,8 +888,18 @@ def code_index(
     """
     if _codemap is None:
         return {"error": "codemap module not available"}
+    project_root = trusted_project_root()
+    if project_root is None:
+        return {
+            "error": (
+                "Trusted project root unavailable; code_index requires the MCP "
+                "host to set PANTHEON_PROJECT to an absolute project directory"
+            ),
+            "indexed": 0,
+            "skipped": 0,
+        }
     db = _get_conn()
-    return _codemap.code_index(db, path, force)
+    return _codemap.code_index(db, path, force, project_root=project_root)
 
 
 @mcp.tool(
