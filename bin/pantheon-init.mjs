@@ -20,6 +20,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { configure as configureUi, tag } from '../scripts/install/cli-ui.mjs'
 import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
 import {
@@ -248,7 +249,8 @@ async function main() {
 
     if (name === 'none') {
       if (isDryRun) {
-        console.log('[dry-run] Would clear model preset')
+        configureUi({ dryRun: true })
+        console.log(tag('Would clear model preset'))
       } else {
         if (fs.existsSync(filePath)) {
           fs.mkdirSync(path.dirname(bakPath), { recursive: true })
@@ -651,12 +653,23 @@ async function main() {
     if (runDoctor && !isDryRun) {
       console.log('')
       console.log(`  ${S.runningHealthCheck}`)
-      try {
-        const { spawnSync } = await import('node:child_process')
-        const doctorScript = path.join(ROOT, 'scripts', 'doctor.mjs')
-        spawnSync(process.execPath, [doctorScript], { stdio: 'inherit', cwd: ROOT })
-      } catch {
-        console.log('  ⚠️  Could not run doctor.mjs')
+      const doctorStartedAt = Date.now()
+      const { spawnSync } = await import('node:child_process')
+      const doctorScript = path.join(ROOT, 'scripts', 'doctor.mjs')
+      const doctor = spawnSync(process.execPath, [doctorScript], { stdio: 'inherit', cwd: ROOT })
+      const doctorSeconds = ((Date.now() - doctorStartedAt) / 1000).toFixed(1)
+      // Never leave "Running health check..." as the last word: report the
+      // outcome and duration, and propagate the child's exit code so CI sees
+      // the failure instead of a silent zero.
+      if (doctor.error) {
+        console.error(`  ⚠️  Could not run doctor.mjs: ${doctor.error.message}`)
+        process.exitCode = 1
+      } else if (doctor.status === 0) {
+        console.log(`  ${S.healthCheckFinished(doctorSeconds, 0)}`)
+      } else {
+        const status = doctor.status ?? 1
+        console.error(`  ${S.healthCheckExit(doctorSeconds, status)}`)
+        process.exitCode = status
       }
     }
 

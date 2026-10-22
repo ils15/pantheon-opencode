@@ -11,6 +11,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { ROOT } from './shared.mjs'
 
 /**
  * Run health checks against a Pantheon installation target.
@@ -23,8 +24,16 @@ import { join } from 'node:path'
  */
 export function healthCheck(target, { dryRun = false, pythonTarget = target } = {}) {
   const results = { passed: [], failed: [], warnings: [] }
+
+  // A dry run writes nothing, so it can OBSERVE nothing either: every check
+  // below inspects files the apply has not created yet. Reporting the
+  // pre-install state as "NOT FOUND" claimed a defect that does not exist and
+  // flipped runtimeHealthy=false on the plan pass, which then omitted the MCP
+  // entries the real apply writes. Verify after apply instead.
+  if (dryRun) return results
+
   const python = findPython(pythonTarget)
-  const visionServer = resolveVisionServer(target)
+  const visionServer = resolveVisionServer()
 
   // Check 1: Critical runtime scripts exist
   const scripts = ['mcp_persistence.py', '_pantheon_paths.py']
@@ -45,12 +54,10 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
       detail: visionServer.detail,
     })
     const installedVisionServer = join(target, 'scripts', 'pantheon_vision.py')
-    const canonicalVisionServer = join(target, 'src', 'mcp', 'pantheon_vision.py')
-    if (existsSync(installedVisionServer) && existsSync(canonicalVisionServer)) {
+    if (existsSync(installedVisionServer)) {
       try {
         if (
-          readFileSync(installedVisionServer, 'utf8') !==
-          readFileSync(canonicalVisionServer, 'utf8')
+          readFileSync(installedVisionServer, 'utf8') !== readFileSync(visionServer.path, 'utf8')
         ) {
           results.failed.push({
             check: 'pantheon-vision source drift',
@@ -218,25 +225,24 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
 }
 
 /**
- * Resolve the canonical source when checking the repository, or the generated
- * runtime copy when checking an installed target.
- * @param {string} target
+ * Resolve the canonical vision server source in the PACKAGE root.
+ *
+ * The installer deploys this file to <target>/scripts/pantheon_vision.py
+ * (see opencode.mjs canonicalMcpScripts), so resolving it against the target
+ * made every project/global target look broken ("NOT FOUND") and made the
+ * drift comparison below unreachable — neither <target>/src/mcp nor a second
+ * target-side copy has ever existed.
+ *
  * @returns {{path: string, check: string, detail: string}|null}
  */
-function resolveVisionServer(target) {
-  const candidates = [
-    {
-      path: join(target, 'src', 'mcp', 'pantheon_vision.py'),
-      check: 'src/mcp/pantheon_vision.py',
-      detail: 'canonical source exists',
-    },
-    {
-      path: join(target, 'scripts', 'pantheon_vision.py'),
-      check: 'scripts/pantheon_vision.py',
-      detail: 'installed copy exists (deployed from src/mcp)',
-    },
-  ]
-  return candidates.find(({ path }) => existsSync(path)) ?? null
+function resolveVisionServer() {
+  const canonical = join(ROOT, 'src', 'mcp', 'pantheon_vision.py')
+  if (!existsSync(canonical)) return null
+  return {
+    path: canonical,
+    check: 'src/mcp/pantheon_vision.py',
+    detail: 'canonical source exists in the package',
+  }
 }
 
 /**

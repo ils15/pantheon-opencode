@@ -19,6 +19,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
   copyPluginFiles,
+  installPlugin,
   isPantheonTuiRef,
   staleTuiRefs,
   unregisterPlugin,
@@ -234,5 +235,214 @@ test('plugin installation propagates npm ci failure and never invokes npm instal
     assert.doesNotMatch(calls[0], /install/)
   } finally {
     rmSync(target, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// The TUI payload must be verifiable end-to-end and must fail closed when the
+// packaged bundle is absent (a `tui.ts` that re-exports nothing is not an
+// install, it is a plugin the host loads and then cannot resolve).
+// ---------------------------------------------------------------------------
+
+/** Run `fn` with a temp HOME/XDG so no real user config is read or written. */
+async function withIsolatedHome(fn) {
+  const home = mkdtempSync(join(tmpdir(), 'pantheon-tui-home-'))
+  const xdg = mkdtempSync(join(tmpdir(), 'pantheon-tui-xdg-'))
+  const previous = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME }
+  process.env.HOME = home
+  process.env.XDG_CONFIG_HOME = xdg
+  try {
+    return await fn({ home, xdg })
+  } finally {
+    if (previous.HOME === undefined) delete process.env.HOME
+    else process.env.HOME = previous.HOME
+    if (previous.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previous.XDG_CONFIG_HOME
+  }
+}
+
+/**
+ * Run `fn` with a no-op `npm` first on PATH: the installer's dependency step is
+ * an npm ci with a network cost, and the behavior under test is the payload and
+ * its registration, not the registry.
+ */
+async function withFakeNpm(fn) {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-npm-'))
+  const bin = join(root, 'bin')
+  mkdirSync(bin)
+  const npm = join(bin, 'npm')
+  writeFileSync(npm, '#!/bin/sh\nexit 0\n')
+  chmodSync(npm, 0o755)
+  const previousPath = process.env.PATH
+  process.env.PATH = `${bin}${delimiter}${previousPath}`
+  try {
+    return await fn({ root })
+  } finally {
+    process.env.PATH = previousPath
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+test('copyPluginFiles refuses to write an entrypoint for a missing bundle', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-nobundle-'))
+  const src = join(root, 'src')
+  const dst = join(root, 'dst')
+  try {
+    mkdirSync(join(src, 'dist'), { recursive: true })
+    writeFileSync(join(src, 'package.json'), JSON.stringify({ name: 'pantheon-tui' }))
+    writeFileSync(join(src, 'tui.ts'), "export { default } from './dist/tui.js'\n")
+
+    const result = copyPluginFiles(src, dst, { version: 'v1' })
+
+    assert.equal(result.errors, 1, 'a missing bundle is an error, never a silent skip')
+    assert.match(result.problems[0], /bundle not found/i)
+    assert.equal(
+      existsSync(join(dst, 'tui.ts')),
+      false,
+      'the re-export that points at a missing bundle must not be written',
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('installPlugin reports a missing bundle as an error instead of a partial install', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-nobundle-install-'))
+  const src = join(root, 'src')
+  const dst = join(root, 'dst')
+  try {
+    mkdirSync(src, { recursive: true })
+    writeFileSync(join(src, 'package.json'), JSON.stringify({ name: 'pantheon-tui' }))
+    writeFileSync(join(src, 'tui.ts'), "export { default } from './dist/tui.js'\n")
+
+    const result = installPlugin(src, dst, { version: 'v1', dryRun: true })
+
+    assert.equal(result.errors, 1)
+    assert.equal(existsSync(join(dst, 'tui.ts')), false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('installOpenCode with the plugins component installs the TUI payload and registers it (V1)', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-install-v1-'))
+  try {
+    await withIsolatedHome(() =>
+      withFakeNpm(async () => {
+        const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+        const result = await installOpenCode(target, false, false, ['plugins'], {
+          yes: true,
+          headless: true,
+          version: 'v1',
+          quiet: true,
+        })
+        assert.equal(result.applied, true)
+
+        const configDir = join(target, '.opencode')
+        const copyDir = join(configDir, 'plugins', 'pantheon-tui')
+        assert.ok(existsSync(join(copyDir, 'dist', 'tui.js')), 'the compiled V1 bundle is copied')
+        assert.ok(existsSync(join(copyDir, 'tui.ts')), 'the V1 loader is copied')
+
+        const tuiJson = JSON.parse(readFileSync(join(configDir, 'tui.json'), 'utf8'))
+        assert.deepEqual(tuiJson.plugin, [copyDir], 'V1 registers the copied directory')
+      }),
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('installOpenCode with the plugins component writes the V2 discovery files', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-install-v2-'))
+  try {
+    await withIsolatedHome(() =>
+      withFakeNpm(async () => {
+        const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+        await installOpenCode(target, false, false, ['plugins'], {
+          yes: true,
+          headless: true,
+          version: 'v2',
+          quiet: true,
+        })
+
+        const configDir = join(target, '.opencode')
+        const copyDir = join(configDir, 'plugins', 'pantheon-tui')
+        assert.ok(existsSync(join(copyDir, 'dist', 'tui-v2.js')), 'the V2 bundle is copied')
+        assert.ok(existsSync(join(copyDir, 'index.ts')), 'the V2 local-plugin entrypoint is copied')
+        const pkg = JSON.parse(readFileSync(join(copyDir, 'package.json'), 'utf8'))
+        assert.equal(pkg.exports['./tui'], './dist/tui-v2.js')
+        assert.equal(
+          existsSync(join(configDir, 'tui.json')),
+          false,
+          'V2 discovers local plugins and must not add a project tui.json',
+        )
+      }),
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('runNpmCi sanitizes the npm environment and bounds the call', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-npm-ci-'))
+  const bin = join(root, 'bin')
+  const log = join(root, 'npm.log')
+  mkdirSync(bin)
+  const npm = join(bin, 'npm')
+  writeFileSync(
+    npm,
+    [
+      '#!/usr/bin/env bash',
+      'printf "args=%s\\n" "$*" >> "$FAKE_NPM_LOG"',
+      'g=$(printenv npm_config_global) || g=unset',
+      'printf "global=%s\\n" "$g" >> "$FAKE_NPM_LOG"',
+      'p=$(printenv npm_config_prefix) || p=unset',
+      'printf "prefix=%s\\n" "$p" >> "$FAKE_NPM_LOG"',
+      'exit 0',
+      '',
+    ].join('\n'),
+  )
+  chmodSync(npm, 0o755)
+  const previous = {
+    PATH: process.env.PATH,
+    npm_config_global: process.env.npm_config_global,
+    npm_config_prefix: process.env.npm_config_prefix,
+    FAKE_NPM_LOG: process.env.FAKE_NPM_LOG,
+  }
+  process.env.PATH = `${bin}${delimiter}${previous.PATH}`
+  process.env.npm_config_global = 'true'
+  process.env.npm_config_prefix = '/usr/local'
+  process.env.FAKE_NPM_LOG = log
+  try {
+    const { runNpmCi } = await import('../scripts/install/plugin.mjs')
+    runNpmCi(root)
+    const recorded = readFileSync(log, 'utf8')
+    assert.match(recorded, /args=ci --omit=dev --no-audit --no-fund/)
+    assert.match(recorded, /global=unset/, 'a global npm context must not leak into npm ci')
+    assert.match(recorded, /prefix=unset/, 'a global prefix must not leak into npm ci')
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runNpmCi reports a timeout with an actionable error instead of hanging', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-npm-timeout-'))
+  const bin = join(root, 'bin')
+  mkdirSync(bin)
+  const npm = join(bin, 'npm')
+  writeFileSync(npm, '#!/bin/sh\nsleep 5\n')
+  chmodSync(npm, 0o755)
+  const previousPath = process.env.PATH
+  process.env.PATH = `${bin}${delimiter}${previousPath}`
+  try {
+    const { runNpmCi } = await import('../scripts/install/plugin.mjs')
+    assert.throws(() => runNpmCi(root, { timeoutMs: 200 }), /timed out after/i)
+  } finally {
+    process.env.PATH = previousPath
+    rmSync(root, { recursive: true, force: true })
   }
 })

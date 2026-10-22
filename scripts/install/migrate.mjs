@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { configure as configureUi, tag } from './cli-ui.mjs'
 import { ACTIONS, fingerprintOutput, recordChange } from './plan.mjs'
 import { createInitialState, readState, writeState } from './state.mjs'
 
@@ -352,6 +353,9 @@ function main() {
   const dryRun = args.includes('--dry-run')
   const force = args.includes('--force')
   const list = args.includes('--list')
+  // One dry-run marker for the whole CLI: cli-ui's tag(). This file used to
+  // hardcode its own `[DRY-RUN]` prefix while other CLIs printed `[dry-run]`.
+  configureUi({ dryRun })
 
   if (list) {
     const history = listAppliedMigrations(target)
@@ -383,7 +387,7 @@ function main() {
       writeState(target, state)
       console.log(`  [OK] Fresh install — state written (${PANTHON_VERSION})`)
     } else {
-      console.log(`  [DRY-RUN] Fresh install — would write state (${PANTHON_VERSION})`)
+      console.log(`  ${tag(`Fresh install — would write state (${PANTHON_VERSION})`)}`)
     }
     return
   }

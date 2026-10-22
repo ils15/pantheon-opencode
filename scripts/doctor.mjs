@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url'
 
 import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
 import { classifyFileInventory } from './install/file-inventory.mjs'
+import { staleTuiRefs } from './install/plugin.mjs'
 import { readState } from './install/state.mjs'
 import { isSupportedNodeVersion, MIN_SUPPORTED_NODE_VERSION } from './node-engine-policy.mjs'
 
@@ -133,10 +134,31 @@ const ICON = {
   info: '\u2139\uFE0F', // ℹ️
 }
 
+// Per-section tally of PASS checks. Without --verbose the individual passing
+// lines are suppressed, so a section used to print its header and then nothing
+// — indistinguishable from a check that never ran. The tally is flushed when
+// the next section starts (and before the summary) so every section accounts
+// for itself.
+let sectionPasses = 0
+
+function verboseOutput() {
+  return process.argv.includes('--verbose')
+}
+
+function flushSectionPasses() {
+  const passed = sectionPasses
+  sectionPasses = 0
+  if (passed === 0 || verboseOutput()) return
+  console.log(`  ${ICON.pass} ${passed} ${passed === 1 ? 'check' : 'checks'} passed`)
+}
+
 function emit(category, message, metadata = {}) {
   counts[category]++
   results.push({ category, message, ...metadata })
-  if (category === 'pass' && !process.argv.includes('--verbose')) return
+  if (category === 'pass' && !verboseOutput()) {
+    sectionPasses++
+    return
+  }
   const prefix = ICON[category] ?? category
   console.log(`  ${prefix} ${message}`)
 }
@@ -156,6 +178,7 @@ function info(msg, metadata = {}) {
 }
 
 function section(title) {
+  flushSectionPasses()
   console.log(`\n${'='.repeat(60)}`)
   console.log(`  ${title}`)
   console.log(`${'='.repeat(60)}`)
@@ -184,6 +207,7 @@ function showHelp() {
    E. Git Status           — uncommitted changes
     F. Runtime Layer        — runtime Python + pinned pip dependencies
    H3. Plugin Drift        — registered plugin version vs this package
+   H5. TUI Plugin          — copied TUI payload + host registration (fail-closed)
    K. Node Runtime         — node:sqlite availability for pantheon_cost
 
  Exit codes:
@@ -1686,6 +1710,126 @@ export function checkV2UnsupportedFeatures(args) {
   return verdict.status
 }
 
+/**
+ * Where the TUI checker must look for a config dir's plugin payload.
+ *
+ * Mirrors the installer's own layout rule (`isGlobalConfigDir` + flat global
+ * layout vs `.opencode/` project layout) through the installer exports rather
+ * than re-deriving it, so the check cannot drift from what init writes.
+ *
+ * @param {{target: string}} args
+ * @returns {Promise<{isGlobal: boolean, configDir: string, copyDir: string, tuiJsonPath: string}>}
+ */
+export async function resolveTuiInstallPaths(args) {
+  const { isGlobalConfigDir, resolveTuiCopyTarget } = await import('./install/opencode.mjs')
+  const isGlobal = isGlobalConfigDir(args.target)
+  const configDir = isGlobal ? args.target : join(args.target, '.opencode')
+  return {
+    isGlobal,
+    configDir,
+    copyDir: resolveTuiCopyTarget(configDir),
+    tuiJsonPath: join(configDir, 'tui.json'),
+  }
+}
+
+/** Resolve the module a copied TUI package.json advertises for its host. */
+function tuiExportTarget(pluginDir) {
+  const pkg = readJson(join(pluginDir, 'package.json'))
+  const exported = pkg?.exports?.['./tui'] ?? pkg?.main
+  if (typeof exported !== 'string') return null
+  const targetPath = isAbsolute(exported) ? exported : join(pluginDir, exported)
+  return existsSync(targetPath) ? targetPath : null
+}
+
+function samePath(left, right) {
+  if (typeof left !== 'string') return false
+  return resolve(left) === resolve(right)
+}
+
+/**
+ * Check H5: the installed TUI plugin (fail-closed).
+ *
+ * The TUI is the one component whose failure is silent: a missing payload or a
+ * stale `tui.json` entry leaves the host loading nothing, with no error
+ * anywhere. Every defect here gets its own `code` so a report can be acted on.
+ *
+ * Detection reuses the installer's own classifiers — `isPantheonTuiRef` /
+ * `staleTuiRefs` for ownership — instead of a second, weaker notion of "looks
+ * like our plugin".
+ *
+ * @param {{target:string, env?:object}} args
+ * @returns {Promise<'not-installed'|'missing-dir'|'missing-dist'|'unregistered'|'stale-ref'|'ok'>}
+ */
+export async function checkTuiPlugin(args) {
+  section('H5. TUI Plugin')
+
+  const state = readState(args.target)
+  const { copyDir, tuiJsonPath } = await resolveTuiInstallPaths(args)
+  const pluginsInstalled = state?.components?.plugins?.status === 'installed'
+
+  if (!pluginsInstalled && !existsSync(copyDir) && !existsSync(tuiJsonPath)) {
+    info('TUI plugin is not installed for this target — check skipped')
+    return 'not-installed'
+  }
+
+  if (!existsSync(copyDir)) {
+    error(
+      `TUI plugin directory is missing: ${copyDir} — the plugins component is recorded as ` +
+        'installed but its payload is absent. Run `npx pantheon-opencode init` to restore it.',
+      { code: 'tui_plugin_dir_missing', classification: 'missing' },
+    )
+    return 'missing-dir'
+  }
+
+  const v1Bundle = join(copyDir, 'dist', 'tui.js')
+  const v2Bundle = join(copyDir, 'dist', 'tui-v2.js')
+  if (!existsSync(v1Bundle) && !existsSync(v2Bundle)) {
+    error(
+      `TUI bundle is missing under ${join(copyDir, 'dist')} — the copied plugin cannot be ` +
+        'loaded by either host. Run `npx pantheon-opencode init` to reinstall it.',
+      { code: 'tui_plugin_dist_missing', classification: 'missing' },
+    )
+    return 'missing-dist'
+  }
+
+  const tuiConfig = readJson(tuiJsonPath)
+  const pluginRefs = Array.isArray(tuiConfig?.plugin) ? tuiConfig.plugin : []
+  const registered = pluginRefs.some((ref) => samePath(ref, copyDir))
+  // V2 discovers local plugins from the plugins directory instead of tui.json;
+  // its payload is identified by the sibling index.ts server entrypoint plus a
+  // package export that resolves to the compiled V2 bundle.
+  const v2Target = tuiExportTarget(copyDir)
+  const v2Discovered =
+    existsSync(join(copyDir, 'index.ts')) &&
+    typeof v2Target === 'string' &&
+    v2Target.endsWith('tui-v2.js')
+
+  if (!registered && !v2Discovered) {
+    error(
+      `TUI plugin is copied to ${copyDir} but no host discovery finds it: ` +
+        `${tuiJsonPath} does not reference it and the V2 discovery files are incomplete. ` +
+        'Run `npx pantheon-opencode init` to re-register it.',
+      { code: 'tui_plugin_not_registered', classification: 'ambiguous' },
+    )
+    return 'unregistered'
+  }
+
+  // Anything our classifier still owns that is NOT the current registration is
+  // a leftover the host would also load — stale copies accumulate per init run.
+  const stale = staleTuiRefs(pluginRefs, [copyDir]).filter((ref) => !samePath(ref, copyDir))
+  if (stale.length > 0) {
+    error(
+      `tui.json still registers ${stale.length} stale Pantheon TUI reference(s): ` +
+        `${stale.join(', ')} — run \`npx pantheon-opencode init\` to clean them.`,
+      { code: 'tui_plugin_stale_ref', classification: 'ambiguous' },
+    )
+    return 'stale-ref'
+  }
+
+  pass(`TUI plugin installed at ${copyDir} and discoverable by the host`)
+  return 'ok'
+}
+
 // ---------------------------------------------------------------------------
 // Check G: AGENTS.md freshness
 // ---------------------------------------------------------------------------
@@ -2345,6 +2489,7 @@ export function summaryMessage(summaryCounts, summaryExitCode) {
 }
 
 function printSummary(targetPath) {
+  flushSectionPasses()
   console.log(`\n${'='.repeat(60)}`)
   console.log('  Summary')
   console.log(`${'='.repeat(60)}`)
@@ -2544,6 +2689,7 @@ async function main() {
   checkCodeModeManifest(args)
   checkInstallVersionDrift(args)
   checkPluginVersionDrift(args)
+  await checkTuiPlugin(args)
   await checkInstallerFileInventory(args)
   if (jsonMode) {
     info('MCP runtime smoke skipped to keep --json read-only')

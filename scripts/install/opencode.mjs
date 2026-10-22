@@ -810,14 +810,26 @@ export function syncTuiRegistration(
   //    plugins/pantheon-tui. This keeps the installed entry hermetic.
   const tuiSrcDir = join(ROOT, 'src', 'plugins', 'tui')
   const tuiCopyDir = resolveTuiCopyTarget(configDir)
-  if (existsSync(tuiSrcDir)) {
-    copyPluginFiles(tuiSrcDir, tuiCopyDir, {
-      dryRun,
-      version,
-      recorder,
-      reviewedRemovals,
-      reviewedSnapshots,
-    })
+  // Fail closed: silently skipping the copy left `plugins` "installed" with no
+  // payload — the host then loads a tui.json entry that points at nothing.
+  if (!existsSync(tuiSrcDir)) {
+    throw new Error(
+      `Pantheon TUI plugin source not found: ${tuiSrcDir}. The package payload is ` +
+        'incomplete — reinstall pantheon-opencode (the published tarball must ship ' +
+        'src/plugins/tui), then re-run init.',
+    )
+  }
+  const copyResult = copyPluginFiles(tuiSrcDir, tuiCopyDir, {
+    dryRun,
+    version,
+    recorder,
+    reviewedRemovals,
+    reviewedSnapshots,
+  })
+  if (copyResult.errors > 0) {
+    throw new Error(
+      `${copyResult.problems[0] ?? `TUI plugin payload could not be copied to ${tuiCopyDir}.`}`,
+    )
   }
 
   // 2. Clean stale Pantheon TUI refs from every location OpenCode reads.
@@ -870,6 +882,17 @@ export function setupRuntimePhase(
     })
     stopProgress(true)
     stopProgress = null
+
+    // A dry run creates no venv and installs no dependencies, so there is
+    // nothing to verify yet. Running the health check here reported the
+    // PRE-install target as broken and flipped runtimeHealthy=false, which
+    // silently dropped every MCP entry from the previewed plan while the real
+    // apply wrote them. Say what will happen instead of probing.
+    if (dryRun) {
+      info(S.runtimeVerifiedAfterApply)
+      return true
+    }
+
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
     const health = check(runtimeTarget, { dryRun, pythonTarget: target })
 
@@ -1104,6 +1127,12 @@ async function installPass(
   let reviewedSnapshots = null
   const S = strings()
 
+  // Configure the UI channel BEFORE any output: the version resolver below
+  // warns when a dry run skips the host probe, and a quiet preview (doctor's
+  // internal preflight, --json) must not print it. Quiet used to be applied
+  // much later, so that one warning escaped every silent preview.
+  configure({ dryRun, quiet: opts.quiet === true })
+
   // Beta 11 (Setup phase 1): a dry pass records every writer's intended change
   // so we can print the REAL per-file plan without writing anything. A recorder
   // ALWAYS runs now: a dry pass builds the preview/plan from it, and an apply
@@ -1259,8 +1288,6 @@ async function installPass(
   const _subDir = isGlobal ? '' : '.opencode'
   const agentPrefix = isGlobal || version === 'v2' ? 'agents' : '.opencode/agents'
 
-  configure({ dryRun, quiet: opts.quiet === true })
-
   // -----------------------------------------------------------------------
   // Plan pass + apply gate + drift check (Beta 11 Setup phases 3-4).
   //   * the plan pass (a dry run — writes nothing) prints the plan and
@@ -1409,6 +1436,7 @@ async function installPass(
       )
     }
   } else {
+    const backupStep = step(S.creatingBackup)
     const { dir: backupDir } = createBackupSet({
       configDir: target,
       entries: backupPlan.entries,
@@ -1416,6 +1444,7 @@ async function installPass(
       packageVersion: pkgVersion,
       clock: () => new Date(planTimestamp),
     })
+    backupStep(true)
     if (_lastRun && _lastRun.target === target) _lastRun.backupDir = backupDir
     // Secret-safe: the path only. The exact wording is fixed (once per apply).
     console.warn(backupWarning(backupDir))
@@ -1640,6 +1669,7 @@ async function installPass(
     stats.created += pluginStats.created
     stats.skipped += pluginStats.skipped
     stats.errors += pluginStats.errors
+    for (const problem of pluginStats.problems ?? []) error(problem)
   }
 
   // -----------------------------------------------------------------------
@@ -2246,6 +2276,7 @@ async function installPass(
   }
 
   const configContent = `${JSON.stringify(configToWrite, null, 2)}\n`
+  const configStep = step(S.writingConfig)
   const status = writeConfigWithBackup(targetConfigPath, configContent, dryRun, {
     expectedContent: configRaw,
     // Test seam: lets a test simulate a concurrent writer landing between the
@@ -2254,6 +2285,7 @@ async function installPass(
     recorder,
   })
   if (status === 'conflict') {
+    configStep(false)
     // The user's config changed under the installer between the read and the
     // swap. Treating this as an ordinary skipped write would report a
     // successful install over a file we never actually updated — fail loudly
@@ -2264,6 +2296,7 @@ async function installPass(
         'Re-run the installer once the file is stable.',
     )
   }
+  configStep(true)
   if (status === 'created') stats.created++
   else stats.skipped++
 
@@ -2273,11 +2306,13 @@ async function installPass(
   if (componentSet.has('runtime')) {
     const currentVersion = detectVersion(target)
     if (currentVersion) {
+      const migrationStep = step(S.runningMigrations)
       const migration = runMigrations(target, currentVersion, {
         dryRun,
         recorder,
         updatedAt: planTimestamp,
       })
+      migrationStep(true)
       if (migration.plannedState) projectedState = migration.plannedState
       if (migration.applied > 0) {
         success(`Applied ${migration.applied} migration(s)`)
@@ -2499,11 +2534,13 @@ async function installPass(
         },
       ]
     })
+    const stateStep = step(S.recordingState)
     updateFileInventory(state, target, {
       selectedComponents: [...componentSet],
       verifiedFiles,
     })
     writeState(target, state, { updatedAt: planTimestamp })
+    stateStep(true)
   }
 
   // Beta 11 Setup phase 3: report whether this call APPLIED, so the caller can

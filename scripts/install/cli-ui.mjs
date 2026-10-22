@@ -52,11 +52,14 @@ export function section(title) {
 }
 
 function progress(message) {
+  const startedAt = Date.now()
+  const elapsed = () => `${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+
   if (tty() && !_quiet) {
     const indicator = clackSpinner()
     indicator.start(tag(message))
     return (ok = true) => {
-      const doneText = tag(`${message} — ${ok ? 'complete' : 'failed'}`)
+      const doneText = tag(`${message} — ${ok ? 'complete' : 'failed'} in ${elapsed()}`)
       if (ok) indicator.stop(doneText)
       else indicator.error(doneText)
     }
@@ -64,7 +67,9 @@ function progress(message) {
 
   if (!_quiet) console.log(tag(`${icons.progress} ${message}`))
   return (ok = true) => {
-    const doneText = tag(`${ok ? icons.done : icons.error} ${message}`)
+    const doneText = tag(
+      `${ok ? icons.done : icons.error} ${message} — ${ok ? 'complete' : 'failed'} in ${elapsed()}`,
+    )
     if (_quiet && !ok) console.warn(doneText)
     else if (!_quiet) console.log(doneText)
   }
@@ -75,14 +80,17 @@ export function step(message) {
 }
 
 export function success(message) {
+  if (_quiet) return
   console.log(tag(`${icons.success} ${message}`))
 }
 
 export function warning(message) {
+  if (_quiet) return
   console.warn(tag(`${icons.warning} ${message}`))
 }
 
 export function error(message) {
+  if (_quiet) return
   console.error(tag(`${icons.error} ${message}`))
 }
 

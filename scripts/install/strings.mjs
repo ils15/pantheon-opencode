@@ -22,6 +22,10 @@ const TABLE = {
     failHintForce:
       '   Or retry with --force to recreate the venv:\n     npx pantheon-opencode init --force',
     runningHealthCheck: 'Running health check...',
+    healthCheckFinished: (seconds, status) =>
+      `Health check finished in ${seconds}s (exit ${status})`,
+    healthCheckExit: (seconds, status) =>
+      `Health check finished in ${seconds}s and reported problems (exit ${status}); the installation itself completed`,
     installedTitle: (v) => `Pantheon OpenCode v${v} installed.`,
     nextSteps: 'Next steps:',
     nextVerify: '1. Verify installation:\n     npx pantheon-opencode doctor',
@@ -37,7 +41,13 @@ const TABLE = {
     installingPrompts: 'Installing prompts',
     installingCommands: 'Installing commands',
     installingPlugins: 'Installing plugins',
+    installingTuiDeps: 'Installing TUI dependencies',
+    creatingBackup: 'Creating exact backup set',
+    writingConfig: 'Writing opencode.json',
+    runningMigrations: 'Running migrations',
+    recordingState: 'Recording install state',
     settingUpRuntime: 'Setting up Python virtual environment',
+    runtimeVerifiedAfterApply: 'Python runtime will be verified after apply',
     healthSection: 'Health Check',
     runningHealthChecks: 'Running health checks',
     runtimeFailed: (msg) => `Python runtime setup failed: ${msg}`,
@@ -84,6 +94,10 @@ const TABLE = {
     failHintForce:
       '   Ou tente de novo com --force para recriar a venv:\n     npx pantheon-opencode init --force',
     runningHealthCheck: 'Rodando verificação de saúde...',
+    healthCheckFinished: (seconds, status) =>
+      `Verificação de saúde concluída em ${seconds}s (exit ${status})`,
+    healthCheckExit: (seconds, status) =>
+      `Verificação de saúde concluída em ${seconds}s e reportou problemas (exit ${status}); a instalação em si foi concluída`,
     installedTitle: (v) => `Pantheon OpenCode v${v} instalado.`,
     nextSteps: 'Próximos passos:',
     nextVerify: '1. Verifique a instalação:\n     npx pantheon-opencode doctor',
@@ -99,7 +113,13 @@ const TABLE = {
     installingPrompts: 'Instalando prompts',
     installingCommands: 'Instalando comandos',
     installingPlugins: 'Instalando plugins',
+    installingTuiDeps: 'Instalando dependências da TUI',
+    creatingBackup: 'Criando conjunto de backup exato',
+    writingConfig: 'Escrevendo opencode.json',
+    runningMigrations: 'Executando migrações',
+    recordingState: 'Registrando estado da instalação',
     settingUpRuntime: 'Configurando ambiente virtual Python',
+    runtimeVerifiedAfterApply: 'O runtime Python será verificado após a aplicação',
     healthSection: 'Verificação de saúde',
     runningHealthChecks: 'Rodando verificações de saúde',
     runtimeFailed: (msg) => `Falha ao configurar o runtime Python: ${msg}`,

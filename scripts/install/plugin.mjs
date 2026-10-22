@@ -5,14 +5,60 @@
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { sanitizeNpmEnv } from '../sync-tui.mjs'
+import { step } from './cli-ui.mjs'
 import { ACTIONS, recordChange, recordRemovalTree, removeReviewedTree, snapshot } from './plan.mjs'
 import { ROOT, writeIfChanged } from './shared.mjs'
+import { strings } from './strings.mjs'
 import {
   assertNoSymlinkAncestors,
   assertPathWithin,
   assertSafeRemoval,
   verifyPathRemoved,
 } from './verify.mjs'
+
+/**
+ * Upper bound for the copied plugin's `npm ci`. Dependency installation is a
+ * bounded operation; without a timeout a hung registry leaves `init` blocked
+ * forever with no output to explain it.
+ */
+export const NPM_CI_TIMEOUT_MS = 180_000
+
+/**
+ * Run `npm ci` for a copied plugin directory.
+ *
+ * Two guarantees the install path needs and a bare `execSync` does not give:
+ *  - the npm environment is sanitized. When Pantheon itself is installed with
+ *    `npm install -g`, npm injects `npm_config_global`/`npm_config_prefix` into
+ *    the lifecycle env and a nested `npm ci` aborts with ECIGLOBAL;
+ *  - the call is bounded by {@link NPM_CI_TIMEOUT_MS} and reports a timeout as
+ *    an actionable error instead of a silent hang.
+ *
+ * @param {string} cwd - directory holding the copied package.json + lockfile
+ * @param {{ timeoutMs?: number, env?: NodeJS.ProcessEnv }} [options]
+ */
+export function runNpmCi(cwd, { timeoutMs = NPM_CI_TIMEOUT_MS, env = sanitizeNpmEnv() } = {}) {
+  try {
+    execSync('npm ci --omit=dev --no-audit --no-fund', {
+      cwd,
+      stdio: 'pipe',
+      env,
+      timeout: timeoutMs,
+    })
+  } catch (err) {
+    if (err?.signal || err?.code === 'ETIMEDOUT') {
+      throw new Error(
+        `TUI dependency install timed out after ${Math.round(timeoutMs / 1000)}s in ${cwd}. ` +
+          'Run `npm ci --omit=dev` there manually and re-run init.',
+        { cause: err },
+      )
+    }
+    const detail = err?.stderr?.toString?.().trim()
+    throw new Error(`TUI dependency install failed in ${cwd}${detail ? `: ${detail}` : ''}`, {
+      cause: err,
+    })
+  }
+}
 
 /**
  * Copy a plugin's runtime payload (the root TUI loader, bundled dist/*,
@@ -27,7 +73,7 @@ import {
  * @param {(change: object) => void} [options.recorder] - optional change recorder for preview
  * @param {Set<string>|null} [options.reviewedRemovals] - paths approved by the current plan
  * @param {Map<string, object>|null} [options.reviewedSnapshots] - pre-apply path snapshots
- * @returns {{ created: number, skipped: number }}
+ * @returns {{ created: number, skipped: number, errors: number, problems: string[] }}
  */
 export function copyPluginFiles(
   srcDir,
@@ -40,8 +86,20 @@ export function copyPluginFiles(
     reviewedSnapshots = null,
   } = {},
 ) {
-  const result = { created: 0, skipped: 0 }
+  const result = { created: 0, skipped: 0, errors: 0, problems: [] }
   const distDir = join(dstDir, 'dist')
+  // The root loader (tui.ts / tui-v2.ts) is only a re-export of the compiled
+  // bundle. Writing it while the bundle is missing installs a plugin the host
+  // loads and then fails to resolve — a silent broken install, so refuse.
+  const requiredBundle = join(srcDir, 'dist', version === 'v2' ? 'tui-v2.js' : 'tui.js')
+  const bundleAvailable = existsSync(requiredBundle)
+  if (!bundleAvailable) {
+    result.errors++
+    result.problems.push(
+      `TUI bundle not found in the package: ${requiredBundle} — refusing to install a ` +
+        'plugin entrypoint that re-exports a missing bundle. Reinstall pantheon-opencode.',
+    )
+  }
 
   if (!dryRun) {
     assertNoSymlinkAncestors(dstDir)
@@ -90,7 +148,12 @@ export function copyPluginFiles(
 
   // Each host generation receives its own root loader and compiled bundle.
   const tuiEntrySrc = join(srcDir, version === 'v2' ? 'tui-v2.ts' : 'tui.ts')
-  if (existsSync(tuiEntrySrc)) {
+  if (!existsSync(tuiEntrySrc)) {
+    result.errors++
+    result.problems.push(
+      `TUI entrypoint not found in the package: ${tuiEntrySrc} — reinstall pantheon-opencode.`,
+    )
+  } else if (bundleAvailable) {
     const entryStatus = writeIfChanged(
       join(dstDir, 'tui.ts'),
       readFileSync(tuiEntrySrc, 'utf8'),
@@ -189,7 +252,7 @@ function sameSnapshot(left, right) {
  * @param {boolean} [options.dryRun=false] - If true, don't write files
  * @param {boolean} [options.clean=false] - If true, remove existing before install
  * @param {(change: object) => void} [options.recorder] - optional change recorder for preview
- * @returns {{ created: number, skipped: number, errors: number }}
+ * @returns {{ created: number, skipped: number, errors: number, problems: string[] }}
  */
 export function installPlugin(
   srcDir,
@@ -203,7 +266,7 @@ export function installPlugin(
     reviewedSnapshots = null,
   } = {},
 ) {
-  const result = { created: 0, skipped: 0, errors: 0 }
+  const result = { created: 0, skipped: 0, errors: 0, problems: [] }
   const cleanTargetExisted = clean && existsSync(dstDir)
 
   assertNoSymlinkAncestors(dstDir)
@@ -225,6 +288,8 @@ export function installPlugin(
   })
   result.created += copyResult.created
   result.skipped += copyResult.skipped
+  result.errors += copyResult.errors
+  result.problems.push(...copyResult.problems)
   if (cleanTargetExisted) {
     // The clean pass removes these directories before rebuilding their files;
     // keep the net plan truthful while the separate removal review still lists
@@ -239,9 +304,17 @@ export function installPlugin(
   }
 
   // Install plugin dependencies (@opentui/core, @opentui/solid, solid-js).
-  // Lockfile installation is the only accepted dependency path.
-  if (!dryRun) {
-    execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: dstDir, stdio: 'pipe' })
+  // Lockfile installation is the only accepted dependency path. A copy that
+  // already failed its bundle check is not worth installing dependencies for.
+  if (!dryRun && result.errors === 0) {
+    const depsStep = step(strings().installingTuiDeps)
+    try {
+      runNpmCi(dstDir)
+    } catch (err) {
+      depsStep(false)
+      throw err
+    }
+    depsStep(true)
   }
 
   return result
@@ -255,7 +328,7 @@ export function installPlugin(
  */
 export function installPluginDependencies(pluginDir, { dryRun = false } = {}) {
   if (dryRun) return
-  execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: pluginDir, stdio: 'pipe' })
+  runNpmCi(pluginDir)
 }
 
 /**
