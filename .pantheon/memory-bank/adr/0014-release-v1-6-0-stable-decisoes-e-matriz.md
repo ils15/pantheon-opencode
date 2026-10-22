@@ -167,3 +167,298 @@ decisão do usuário** (R9), ou NO-GO.
 - Issue **#198** — entrypoints MCP compartilhando o token `server.py` (P2-8)
 - ADR-0007 (padronização de release, semver 1.x + SSOT), ADR-0011 (delegation engine
   contract), ADR-0012 (SemVer 1.6 = dual)
+
+---
+
+## Amendment 1 — 2026-10-22
+
+**Aditivo e datado.** O **Status: Accepted** do cabeçalho, o texto de Q1–Q7, a tabela
+"Matriz de host alvo", a lista de Known Issues de Q5, a estrutura de 6 fases e as
+`## References` acima **permanecem como escritos** — nada é reescrito nem apagado. Esta
+emenda registra decisões tomadas em **2026-10-22** depois da redação original e a
+**evidência de runtime** produzida nesse dia, e prevalece apenas onde a colisão for
+explícita (A1.1, A1.2, A1.3).
+
+**Evidência primária desta emenda (artefato externo ao repositório, não copiado):**
+`/home/ils15/pantheon-sandbox/p05-hosts-20261022/evidence/EVIDENCE-P05.md` (doravante
+`EVIDENCE-P05.md`), com os `*.log` e `*.exitcode` no mesmo diretório e o registro de
+instalação em `/home/ils15/pantheon-sandbox/p05-hosts-20261022/INSTALL-RECORD.md`
+(doravante `INSTALL-RECORD.md`). O conjunto cobre **cinco** hosts instalados em prefixos e
+`HOME`/XDG isolados: `1.19.4`, `2.0.22`, `2.0.30`, `2.1.0`, `2.1.2`
+(`EVIDENCE-P05.md:12-20`, `INSTALL-RECORD.md:12-16`); `2.0.29` **não** foi instalado
+(`EVIDENCE-P05.md:183`). Nenhum host do `PATH` foi usado como evidência
+(`EVIDENCE-P05.md:20`).
+
+### A1.1 — OpenCode `2.0.22` removido da matriz: **não suportado**
+
+Decisão do usuário (2026-10-22). A linha `2.0.22` deixa de ser "Suportado — a testar"
+e passa a **não suportado** — não é mais o caso de "sem evidência", é reprovação
+verificada em runtime:
+
+| Fato verificado em runtime | Evidência |
+|---|---|
+| `ctx.permission.assert` **ausente só na 2.0.22**; presentes em 2.0.30/2.1.0/2.1.2 | `EVIDENCE-P05.md:100-104`; linha bruta `assert-unavailable` em `EVIDENCE-P05.md:87` |
+| Células de ordenação (C1–C5) ficam `NOT_APPLICABLE` na 2.0.22 porque o "reject" é erro de disponibilidade de API, não decisão de política | `EVIDENCE-P05.md:63-64`, `:75-79`, `:124` |
+| O relatório do harness ainda imprime ✔ e classifica `deny-precedence` na 2.0.22 — **falso verde** | `EVIDENCE-P05.md:101-104` |
+| Teste de contexto V2 falha: o host não expõe `worktree_*` nem `pantheon_bounded_read` no catálogo de tools | `EVIDENCE-P05.md:113-116` |
+| Run da 2.0.22 termina com exit 1 e 3 falhas de harness (26/16/3/7) | `EVIDENCE-P05.md:166` |
+| A2 reprovado na 2.0.22 (mesma falha estrutural dos demais V2) | `EVIDENCE-P05.md:69`, `:94-97`, `:122` |
+
+Consequência para Q4 (bloqueio absoluto de segurança): numa versão que não expõe
+`ctx.permission.assert`, a verificação de ordem de regras não é observável, então a
+2.0.22 não pode sustentar "comportamento de permissões demonstrável no host". Ela sai da
+matriz em vez de entrar como exceção.
+
+### A1.2 — A célula `2.1.0` passa a ser a linha `2.1.x` (`>=2.1.0 <2.2`)
+
+Decisão do usuário (2026-10-22): a matriz cobre a **linha** `2.1.x`, não um patch. Prova
+obrigatória em **duas** versões por release:
+
+1. **`2.1.0` — piso:** medido no pré-fix com A1/A3/A4, B, C e D em `PASS` e A2 reprovado
+   então (`EVIDENCE-P05.md:68-81`, `:121-125`, `:89`), e remedido no pós-fix com A2 `PASS`
+   (`:265`, `:291`).
+2. **Patch mais novo disponível:** `@opencode/cli@2.1.3` — o `latest` do registro no
+   momento do congelamento — foi instalado em sandbox isolado e medido: A2 **PASS**
+   (`EVIDENCE-P05.md:224`, `:265`, `:293`, `:307-310`, checksum em `:327`). A `2.1.2`
+   segue medida com o mesmo resultado (`INSTALL-RECORD.md:16`, `EVIDENCE-P05.md:90`,
+   `:125`).
+
+A célula `2.1.x` está fechada com as **duas** provas exigidas: piso `2.1.0` e patch mais
+novo `2.1.3`, ambas com A2 PASS e sem nenhuma célula `FAIL`
+(`EVIDENCE-P05.md:262-281`, `:289-294`). A regra do "patch mais novo" é a **do momento do
+congelamento**: se o registro publicar outro `2.1.x` antes da Fase 5, a linha é medida de
+novo contra o patch publicado e a evidência é re-arquivada. Este ADR **não** fixa `2.1.3`
+como teto permanente da linha.
+
+### A1.3 — Matriz de host final desta release
+
+Substitui, **para fins de gate**, a tabela "Matriz de host alvo" da decisão original. As
+linhas antigas permanecem no texto como registro histórico do estado em que a decisão foi
+tomada.
+
+| Host | Estado nesta release | Evidência |
+|---|---|---|
+| `1.19.x` (V1) | **Suportado — PASS por enforcement de config** (não por hook); read-only provado no `1.19.4` (ver A1.6) | `evidence/v1-permission/v1.19.4.log:9`, `v1.19.4.evidence.json:6`, `:144-229` |
+| `2.0.29` | **Suportado — PASS** pós-fix em A/B/C1–C2/D; é o host do bench histórico F4A | `EVIDENCE-P05.md:200`, `:223`, `:264-277`, `:289`; `docs/PERMISSIONS-QUALITY-DELEGATION.md:647`; `README.md:307`, `:359` |
+| `2.0.30` | **Suportado — PASS** pós-fix; A2 corrigido no tradutor (A1.4) | `EVIDENCE-P05.md:265`, `:290`, `:279` |
+| `2.1.x` (`>=2.1.0 <2.2`) | **Suportado — PASS** com as duas provas: piso `2.1.0` e patch mais novo `2.1.3` (ver A1.2) | `EVIDENCE-P05.md:265`, `:291-293`, `:279` |
+| `2.0.22` | **NÃO suportado** (A1.1) — o log pós-fix arquivado mantém as células de ordem `NOT_APPLICABLE` | `EVIDENCE-P05.md:100-104`, `:113-116`, `:166`, `:300-301` |
+| `2.0.31` | **NÃO suportado** — sem evidência; mantido da decisão original (linha `2.0.31` da tabela acima) e reafirmado por `docs/INSTALLATION.md:21` | decisão original + `docs/INSTALLATION.md:21` |
+
+**Node:** `>=26.4.0` — mantido sem alteração (`package.json:143`).
+**Python:** `>=3.11` (`docs/INSTALLATION.md:21`, `:140`) — requisito de MCP servers, não de
+host; registrado aqui porque a matriz de ambiente do pacote de GO pede versões explícitas.
+
+### A1.4 — P0-5: evidência observada e correção aplicada
+
+**Defeito (pré-correção), reproduzido em todos os hosts V2 medidos:** a tool `write` é
+avaliada pelo host sob a ação **`edit`**, enquanto o tradutor do repositório emitia a ação
+`write`. Como a regra emitida não é a regra que decide a chamada, `permission.write: deny`
+**não bloqueava escrita**.
+
+| Host | Ação observada para a tool `write` | Status pré-correção | Evidência |
+|---|---|---|---|
+| `2.0.22` | `edit` | FAIL | `EVIDENCE-P05.md:69`, `:87` |
+| `2.0.30` | `edit` | FAIL | `EVIDENCE-P05.md:69`, `:88` |
+| `2.1.0` | `edit` | FAIL | `EVIDENCE-P05.md:69`, `:89` |
+| `2.1.2` | `edit` | FAIL | `EVIDENCE-P05.md:69`, `:90` |
+
+Texto de falha idêntico nos quatro hosts: "translator emits \"write\" for permission.write
+but the host evaluated \"edit\"" (`EVIDENCE-P05.md:94-97`); a escrita executava
+(`sideEffects.write === true`, `EVIDENCE-P05.md:98-99`, com A4 "ran" em `:71`), isto é, o
+host **permitia** sob o nome `edit`.
+`bash → shell` e `task → subagent` já estavam corretos e não mudaram
+(`EVIDENCE-P05.md:68`, `:80-81`).
+
+**Correção aplicada** — `scripts/install/config-migration.mjs`:
+
+- `write: 'edit'` no mapa V1→ação, com `edit: 'edit'` listado **antes** dele para que o
+  mapa reverso resolva `edit` para a chave canônica: `scripts/install/config-migration.mjs:49-59`
+  (comentário de evidência em `:36-47`).
+- Colisão resolvida por **restritividade** `deny > ask > allow`
+  (`EFFECT_RESTRICTIVENESS` em `scripts/install/config-migration.mjs:65`; merge em
+  `pushPermission`, `:81-107`), nunca por ordem de iteração.
+- Mapa reverso com "primeira chave vence" preservando `edit` canônico:
+  `scripts/install/config-migration.mjs:138-149`.
+
+**Teste de regressão** — `tests/install-config-migration.test.mjs`:
+
+- `permission.write` → ação `edit` (`:223-230`);
+- `permission.write` no nível de agente → `edit` (`:232-239`);
+- colisão `write`+`edit` resolvida por restritividade em 7 ordens de chave (`:241-263`);
+- regras `write`/`edit` com recursos distintos preservadas separadas (`:265-273`).
+
+**Re-execução pós-correção — comprovada, com artefato arquivado.** A rodada pós-fix existe
+em `evidence/rerun-postfix/`, com `SHA256SUMS` para os dois conjuntos (matriz fresca e a
+cópia byte-idêntica de `/tmp/p05-rerun`); janela `12:23–12:26 -03:00` para a matriz fresca
+e `11:36–11:38` para a rodada de `/tmp` (`EVIDENCE-P05.md:185-204`, `:317-340`).
+
+- Hosts medidos: `2.0.29`, `2.0.30`, `2.1.0`, `2.1.2`, `2.1.3` — **zero célula `FAIL`**
+  (`EVIDENCE-P05.md:262-281`; afirmação explícita em `:279`).
+- **A2 `PASS` em todos os cinco**, com `translator.entries.write = "edit"` e
+  `actionNames.evaluations = shell/edit/read` (`EVIDENCE-P05.md:265`, `:287-294`).
+- Perfil read-only com `sideEffects = {"shell":false,"write":false}` nos cinco
+  (`EVIDENCE-P05.md:289-294`).
+- Prova de que o log é pós-fix: `"write":"edit"` 3×, `✔` do P0-5 3×, 0 linhas `✖` e exit 0
+  por host (`EVIDENCE-P05.md:303-315`).
+- A rodada antiga de `/tmp/p05-rerun` foi arquivada **byte-idêntica** em
+  `evidence/archived-tmp-20261022/`, conferida com `cmp` no momento do arquivamento
+  (`EVIDENCE-P05.md:196-204`, `:330-340`).
+- Os logs em `evidence/*.log` (`v1.19.4`, `v2.0.22`, `v2.0.30`, `v2.1.0`, `v2.1.2`)
+  continuam sendo a rodada **pré-fix** e permanecem como histórico; qualquer afirmação de
+  A2 nesta emenda **substitui** aquele `FAIL` (`EVIDENCE-P05.md:206-209`).
+- `EVIDENCE-P05.md` passa a ter a seção `## Post-fix re-run (2026-10-22)` com as tabelas e
+  os dois conjuntos de checksums (`:185`, `:319-338`).
+
+### A1.5 — Ordem de resolução de permissão: `last-match-wins` (observação datada)
+
+Classificado por probe como **`last-match-wins`** em `2.0.30`, `2.1.0` e `2.1.2`
+(`EVIDENCE-P05.md:79`, `:105-108`; linhas brutas em `:88-90`), com o controle fora do glob
+de allow negado nas duas ordens. Na `2.0.22` o mesmo probe é **não observável** por falta de
+`ctx.permission.assert` (`EVIDENCE-P05.md:79`, `:100-104`).
+
+**Escopo desta afirmação:** é observação de runtime **datada de 2026-10-22**, não contrato
+estável do host nem garantia de versões futuras da linha `2.1.x`. Não deve ser tratada como
+semântica documentada pelo host; o único uso autorizado é o de descrever o que foi medido
+nessas três versões.
+
+### A1.6 — Evidência V1 (`1.19.x`) — PASS por enforcement de config
+
+**Critério do PASS (decisão do usuário, 2026-10-22):** enforcement **por config**, isto é,
+o perfil read-only aplicado pelo próprio host — `bash`/`write`/`edit` negados, `read`
+permitido, **zero side effects**. O critério **não** é hook, e `permission.ask` **não pode**
+ser o critério porque o mecanismo não existe na versão.
+
+**O hook `permission.ask` não dispara no `1.19.4` — zero invocações.** O probe dedicado
+registra `mechanism: "absent"` e `hookFired: false` nos três cenários, com `hookInput: null`
+(`evidence/v1-permission/v1.19.4.evidence.json:6`, `:24`, `:118`, `:153`), e os três casos
+que dependiam do hook saem como `NOT_APPLICABLE` — skip explícito, nunca `PASS`
+(`evidence/v1-permission/v1.19.4.log:6-8`). A string exata do nome do hook **não ocorre em
+nenhum dos dois binários** (`1.19.4` e `2.0.30`): o que distingue as gerações é o
+**mecanismo**, não a presença da string. No V1 o pedido de permissão vai ao **cliente**
+(`permission.asked` + `GET /permission` + `POST /permission/{id}/reply`, ver abaixo); no V2 a
+decisão passa por `permission.evaluate`, provado pela matriz (A1.4, A1.5).
+
+> **Retificação de 2026-10-22:** a contagem comparativa de strings por binário que constava
+> aqui foi **retirada por não ser reproduzível** (número era artefato de método de busca, não
+> um fato do host). Não reintroduzir essa contagem citando este ADR.
+
+**Como o host decide:** o pedido de permissão vai ao **cliente**. Os eventos observados são
+`permission.asked`/`permission.replied` (`v1.19.4.evidence.json:63-68`); o `GET /permission`
+retorna entradas com `id`, `sessionID`, `permission`, `patterns`, `metadata`, `always` e
+`tool` (`:26-61`); e `POST /permission/{id}/reply {reply:"reject"}` **bloqueia de fato** — a
+tool volta com erro de permissão e nenhum side effect acontece (`:71-100`, `:106-109`).
+
+**O hook está fora do caminho de decisão:** no cenário `permission.bash: "allow"` com hook
+`deny` e `hookFired: false`, o comando **executou** (`sideEffects.shell: true`,
+`v1.19.4.evidence.json:113-142`). Um `deny` de hook que não dispara não veta nada.
+
+**O enforcement por config funciona:** no cenário `bash/write/edit: deny` + `read: allow`,
+`bash` e `write` voltam como tools indisponíveis, `sideEffects = {"shell":false,
+"write":false}` e `read` devolve o conteúdo do arquivo
+(`v1.19.4.evidence.json:144-229`); o harness fecha com `✔ V1 read-only profile: bash and
+write blocked, read allowed`, 10 testes, 7 pass, 0 fail, 3 skip
+(`evidence/v1-permission/v1.19.4.log:9`, `:13-19`).
+
+**Write é governado por `edit` também no V1:** `permissionKeyObserved.write = ["edit"]`
+(`v1.19.4.evidence.json:7-14`) e a ask pendente da escrita veio com `permission: "edit"`
+(`:44-61`) — a mesma ação observada nos hosts V2, corroborando o fix do P0-5 (A1.4) nas duas
+gerações.
+
+**Escopo do PASS:** medido no **`1.19.4`** (host instalado e probe executado). Outros patches
+da linha `1.19.x` — **não medidos**; a célula declara PASS para `1.19.x` com a evidência do
+`1.19.4` e a restrição de que o mecanismo medido é config, não hook.
+
+### A1.7 — Known Issue nova (extensão de Q5): chaves de permissão não verificadas
+
+Nenhum host medido expôs ação de permissão para as chaves **`skill`, `websearch`,
+`webfetch` e `mcp`**. As avaliações de ação observadas cobrem apenas `shell`, `edit` e
+`read` (`EVIDENCE-P05.md:87-90`, `:68-70`), e o tradutor registra que entradas de
+identidade (`skill`, `websearch`, `edit`) e chaves fora da tabela (`webfetch`, `mcp`, …)
+**não têm ação de host observada** e ficam como passthrough em vez de serem renomeadas por
+suposição (`scripts/install/config-migration.mjs:43-47`).
+
+Estado: **não verificadas** — não são `PASS`, não são falha, e não são um defeito
+declarado. Entram no pacote de GO como limitação conhecida nominal, junto dos 11 P2 de Q5,
+sem alterar o status de nenhum deles.
+
+### A1.7b — Known Issues V1 (documentadas, não corrigidas)
+
+**KI-V1-1 — o tipo V1 declara `permission.ask`; o runtime `1.19.x` nunca o invoca.** O tipo
+pinado `@opencode-ai/plugin@1.18.33` (`package.json:103`) declara
+`"permission.ask"?: (input: Permission, output: { status: "ask"|"deny"|"allow" }) => Promise<void>`
+em `dist/index.d.ts:225-227`, e o probe registra o hook exatamente nessa forma
+(`tests/canary/v1-permission-canary.test.mjs:9-10`, `:342`). No host `1.19.4` o hook **não
+dispara**: `hookFired: false` nos três cenários e `mechanism: "absent"`
+(`evidence/v1-permission/v1.19.4.evidence.json:6`, `:24`, `:118`, `:153`). A proteção
+read-only do produto vem da **config** (A1.6), não do hook. Registro de escopo: o plugin V1
+**entregue** pelo repositório (`src/plugin.ts`) **não** declara `permission.ask` — quem
+declara é o tipo do SDK e o arquivo de probe; não existe hook de produção a remover nem bug
+a corrigir, apenas a expectativa do tipo a documentar.
+
+**KI-V1-2 — divergência entre o tipo pinado e o runtime V1.** O tipo `Permission` de
+`@opencode-ai/sdk@1.18.33` (`package.json:104`) é `{ id, type: string, pattern?: string |
+string[], sessionID, messageID, callID?, title, metadata, time }`
+(`dist/gen/types.gen.d.ts:369-372`), enquanto o runtime `1.19.4` entrega `permission` +
+`patterns` (`evidence/v1-permission/v1.19.4.evidence.json:26-61`). **O tipo não corresponde
+ao runtime**: um plug-in escrito contra o tipo lê campos que não existem no payload real.
+Não há correção de código nesta release; fica conhecido e nominal.
+
+> Nota de verificação: o `node_modules` local de `@opencode-ai/plugin` só traz
+> `package.json` (sem `dist/`), então as linhas do `.d.ts` foram conferidas no conteúdo
+> publicado da versão pinada, não em disco.
+
+### A1.8 — Efeito no pacote de GO
+
+Nada do exposto acima emite GO. **Bloqueio do pacote no escopo P0-5: 0.**
+
+**Bloqueia (0) no escopo P0-5.**
+
+O P0-5 deixa de bloquear o pacote: as duas gerações estão cobertas — V2 pela matriz
+pós-fix com `SHA256SUMS` e zero `FAIL` (A1.4), V1 pelo PASS por enforcement de config no
+`1.19.4` (A1.6). **Ressalva explícita:** a revisão de segurança do `@themis` **ainda não
+ocorreu**. Ela é **gate de GO** por Q4/ADR (`ROADMAP.md:404` — o P0-5 está ali hoje; a
+faixa `:384-425` citada na decisão original deixou de apontar para ele conforme o
+`ROADMAP.md` andou, e o corpo original não é reescrito por esta emenda; `docs/RELEASE.md:106-108`),
+não um item de evidência em aberto desta emenda: nenhuma célula da matriz fica pendente por
+causa dela, mas o GO não é emitido antes do parecer.
+
+**Fechados nesta emenda — não bloqueiam mais (3):**
+
+1. **Evidência V2 do P0-5** — matriz pós-fix com `SHA256SUMS`, zero `FAIL`, A2 `PASS` nos
+   cinco hosts (A1.4; `EVIDENCE-P05.md:185-204`, `:262-281`, `:317-340`).
+2. **Evidência V1 do P0-5** — PASS por config no `1.19.4` (A1.6;
+   `evidence/v1-permission/v1.19.4.log:9`, `v1.19.4.evidence.json:144-229`).
+3. **`2.1.3` sem evidência** e **`2.0.29` sem status** — resolvidos: `2.1.3` medido com A2
+   `PASS` (`EVIDENCE-P05.md:265`, `:293`, `:327`) e `2.0.29` medida e reintegrada à matriz
+   (A1.3; `EVIDENCE-P05.md:200`, `:223`, `:289`).
+
+**Não bloqueiam, mas vão no pacote (4):**
+
+4. **Falso verde do harness na 2.0.22** — a versão saiu da matriz (A1.1), mas o relatório
+   ainda imprime ✔ e classifica `deny-precedence` onde não houve decisão de política
+   (`EVIDENCE-P05.md:101-104`, `:300-301`); é defeito de relatório a corrigir.
+5. **Limites do que a evidência prova** — não prova que um `deny` só de `write` (sem `edit`
+   pareado) bloqueie escrita, porque o PASS read-only usa perfil que nega os dois
+   (`EVIDENCE-P05.md:181-182`, `:359-360`); os probes de ordem passam `action: "write"`
+   explícito e exercitam o casamento do host, não o mapa do tradutor (`:357-358`); não foi
+   scriptada uma chamada real de `edit` (`:180`); e o log arquivado da 2.0.22 não tem
+   `.exitcode` (`:362-363`).
+6. **Patch futuro da linha `2.1.x`** — se o registro publicar outro patch antes da Fase 5,
+   mede-se de novo (A1.2).
+7. **Known Issues V1 (A1.7b)** — tipo declara hook que o runtime não invoca e divergência
+   `type`/`pattern` × `permission`/`patterns`; documentadas, não corrigidas.
+
+### Referências da emenda
+
+- `EVIDENCE-P05.md` (artefato externo): hosts `:12-20`; V1 sem caminho `:35-58`, `:179`;
+  matriz consolidada `:66-81`; decisões brutas `:85-90`; divergências `:94-116`; status por
+  célula `:120-126`; logs e exit codes `:163-169`; limites `:177-183`.
+- `INSTALL-RECORD.md:12-16` (instalação por versão) e `:22` (todas as versões pedidas
+  existiam no registro).
+- Registro npm `@opencode/cli`, consultado em `2026-10-22T15:20Z`: `latest = 2.1.3`,
+  publicada em `2026-10-22T12:44:20Z`.
+- `scripts/install/config-migration.mjs:36-59`, `:65`, `:81-107`, `:138-149`.
+- `tests/install-config-migration.test.mjs:223-273`.
+- `package.json:143` (Node `>=26.4.0`); `docs/INSTALLATION.md:21`, `:140` (Python `3.11+`).
+- Regra dura de evidência: `ROADMAP.md:63-65`; `docs/RELEASE.md:106-108`.
