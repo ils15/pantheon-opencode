@@ -34,18 +34,21 @@ way to plan work, make progress, check results, and keep useful project context.
 
 ## Start in 2 minutes
 
-Requirements: [OpenCode 1.18.4+](https://opencode.ai/docs/) and Node.js
-26.4.0+ for the Pantheon CLI, installer, and Node-based tooling. For which
-OpenCode generation each Pantheon release line supports, see
-[Compatibility and support policy](#compatibility-and-support-policy).
+Requirements: [OpenCode](https://opencode.ai/docs/) **1.19.x**, or
+**2.0.22 / 2.0.29 / 2.0.30 / 2.1.0** — **2.0.31 is not supported**. Node.js
+**>=26.4.0** for the Pantheon CLI, installer, and Node-based tooling (Node 22,
+24, and 26.0–26.3 are outside the matrix); Python **>=3.11** for the optional
+MCP servers. For which OpenCode generation each Pantheon release line supports,
+see [Compatibility and support policy](#compatibility-and-support-policy).
 
 Pantheon declares `engines.node` as `>=26.4.0`; Node 22, Node 24, and Node
 26.0–26.3 are not supported by this release. This package floor does not imply
-that every OpenCode host runs on Node: official OpenCode V2.0.31 has a Bun
-runtime path and a separate Node build pinned to Node 26.4.0. No Bun minimum is
-asserted here. The optional `pantheon_cost` SQLite backend has its own capability
-threshold, `node:sqlite` on Node >= 22.5; that feature threshold does not lower
-Pantheon's package or CLI support floor.
+that every OpenCode host runs on Node: official OpenCode V2.0.31 (not in this
+release's supported matrix) has a Bun runtime path and a separate Node build
+pinned to Node 26.4.0. No Bun minimum is asserted here. The optional
+`pantheon_cost` SQLite backend has its own capability threshold, `node:sqlite`
+on Node >= 22.5; that feature threshold does not lower Pantheon's package or CLI
+support floor.
 
 With npm's default configuration, an unsupported Node version may produce an
 `EBADENGINE` warning during install. Pantheon's postinstall then skips Node-based
@@ -207,21 +210,31 @@ services you choose to use. Check the
 
 ## Compatibility and support policy
 
-> ### ⚠️ 1.6.x is the LAST line that supports OpenCode 1.X
+> ### ⚠️ 1.6.x is the LAST line that supports OpenCode 1.X — and the first that supports 2.1
 >
-> **OpenCode 1.X support ends after the 1.6 line.** From **1.7 onward, every
-> release is a breaking change targeting OpenCode 2.** A 1.6.x install is the
-> last one that runs on an OpenCode 1.X host; do not plan an upgrade across the
-> 1.6 → 1.7 boundary while your host is still on OpenCode 1.X.
+> **Supported hosts for the 1.6.x line:** OpenCode **1.19.x** (V1 plugin) and
+> OpenCode **2.0.22, 2.0.29, 2.0.30 and 2.1.0** (V2 plugin). **OpenCode 2.0.31 is
+> not supported**: there is no runtime evidence for it, and it is not part of the
+> matrix. Node **>=26.4.0** is the single package floor (Node 22, 24 and
+> 26.0–26.3 are outside the matrix); Python **>=3.11** is required for the
+> optional MCP servers.
+>
+> **OpenCode 1.X support ends after the 1.6 line.** From **1.7 onward** the line
+> drops the V1 contract and targets OpenCode 2 only — a Pantheon support
+> boundary, not a claim that 1.6 lacks OpenCode 2 support. OpenCode 2.1.0 is
+> already supported on 1.6.x through its own adoption/validation phase
+> (ADR-0014 Q2).
 
-| Pantheon line | OpenCode 1.X host | OpenCode 2 host |
-|---|---|---|
-| **1.6.x** (current line) | **Supported.** V1 plugin contract | Supported, reduced surface — V2 contract |
-| **1.7 and later** | **Not supported.** Breaking change | Target of the 1.7+ work |
+| Pantheon line | OpenCode 1.19.x | OpenCode 2.0.22 / 2.0.29 / 2.0.30 | OpenCode 2.1.0 | OpenCode 2.0.31 |
+|---|---|---|---|---|
+| **1.6.x** (current line) | **Supported — evidence pending (Phase 5).** V1 plugin contract | **Supported.** V2 contract | **Supported.** V2 contract, own validation phase | **Not supported.** No runtime evidence |
+| **1.7 and later** | **Not supported.** Breaking change | **Target of the 1.7+ work.** V2 only | **Target of the 1.7+ work.** V2 only | **Not supported** unless added by evidence |
 
-Both columns of the 1.6.x row are real, and they are not the same claim. Read
-[the plugin contract](#opencode-v1v2--dual-version-160-beta1) for what each
-generation actually registers.
+Every 1.6.x host cell above is **supported and to test** in this release; a
+`WARN`, `SKIP`, `NOT_TESTED` or `AMBIENTAL` result is not a `PASS`
+([ROADMAP charter](ROADMAP.md#road-to-stable--charter)). The 1.6.x cells are
+different claims: read [the plugin contract](#opencode-v1v2--dual-version-160-beta1)
+for what each generation actually registers.
 
 ### Node runtime floor
 
@@ -243,9 +256,9 @@ in `.jsonc` therefore joins the effective plugin set instead of replacing the
 registration Pantheon wrote. The merge is silent, so a host can load a plugin
 that appears only in `.jsonc`.
 
-### What "supported on OpenCode 1.X" concretely means
+### What "supported on OpenCode 1.19.x" concretely means
 
-On the 1.6 line, an OpenCode 1.X host gets the **V1 plugin**:
+On the 1.6 line, an OpenCode 1.19.x host gets the **V1 plugin**:
 `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts`, registered under the
 singular `plugin` config key. That surface registers 6 tools
 (`hashline_edit`, the 3 `pantheon_goal_*` tools, `pantheon_cost`,
@@ -265,23 +278,28 @@ host is an unsupported mixed/wrong-generation configuration, not a supported mod
 **Not inert.** The V2 path (`src/plugin-v2`, registered as a directory because
 the V2 loader rejects bare file paths) registers real tools with real
 `input`/`output` schemas via `ctx.tool.transform()`, 5 event subscriptions,
-session hooks and tool/permission hooks that enforce read-only sessions and the
-caller→target delegation matrix. The matrix applies only to Pantheon-managed
-targets: Zeus may delegate to any registered agent; Athena and Hermes may target
-Apollo only; other Pantheon callers and unknown callers are denied. Child
-sessions cannot delegate to Pantheon agents. Calls between native/custom agents
-remain under host permissions. The V2 path never adds an allow grant or
-overrides an explicit host deny; missing or mismatched identity fails closed
-for the attempted Pantheon delegation. The 3 goal tools remain unsupported and
-are reported as `goal-tools`.
+session hooks, a read-only-enforcing tool `execute.before` hook, and — when the
+host exposes `ctx.permission.hook` — a `permission.evaluate` hook that enforces
+the caller→target delegation matrix. The matrix applies only to
+Pantheon-managed targets: Zeus may delegate to any registered agent; Athena and
+Hermes may target Apollo only; other Pantheon callers and unknown callers are
+denied. Child sessions cannot delegate to Pantheon agents. Calls between
+native/custom agents remain under host permissions. The V2 path never adds an
+allow grant or overrides an explicit host deny; missing or mismatched identity
+fails closed for the attempted Pantheon delegation. The 3 goal tools remain
+unsupported and are reported as `goal-tools`.
 
-When the host successfully registers V2's permission hook, Pantheon does not
-trust `permission.evaluate.agent` by itself for a Pantheon target. It matches
-the permission source's session, message and tool-call IDs to a short-lived
-record from the host's `tool.execute.before` event, then requires the host
-session to have no `parentID` before applying the matrix. This admits valid
-root dispatches and denies child-session dispatches; missing, stale, replayed
-or mismatched origins are denied. OpenCode v2.0.29 runtime evidence is in
+When the host successfully registers V2's permission hook, Pantheon enforces
+the caller→target matrix. It does not trust `permission.evaluate.agent` by
+itself for a Pantheon target: it matches the permission source's session,
+message and tool-call IDs to a short-lived record from the host's
+`tool.execute.before` event, then requires the host session to have no
+`parentID` before applying the matrix. This admits valid root dispatches and
+denies child-session dispatches; missing, stale, replayed or mismatched origins
+are denied. **If the host lacks `ctx.permission.hook` or registration fails,
+the matrix is unavailable and host permissions remain in control**; the
+read-only `execute.before` guard still denies mutating tools in read-only
+sessions. OpenCode v2.0.29 runtime evidence is in
 [`bench/results/f4a-v229-admission-identity-2026-10-14.md`](bench/results/f4a-v229-admission-identity-2026-10-14.md).
 
 **Partial, with the exercised host version made explicit.** The V2 tool canary
@@ -337,10 +355,10 @@ procedure.
 
 | What | Verified against | How |
 |---|---|---|
-| V1 plugin + generation gate | The OpenCode 1.18.x line. This package pins `@opencode-ai/plugin` and `@opencode-ai/sdk` to `1.18.33`; the highest published `opencode-ai` host package (the one shipping the `opencode` binary) is `1.18.34` | Dependency pin (`package.json`); generation-gate unit tests over injected host banners; installer end-to-end tests asserting the emitted `opencode.json` shape |
+| V1 plugin + generation gate | The OpenCode **1.19.x** line (supported and to test in this release). This package pins `@opencode-ai/plugin` and `@opencode-ai/sdk` to `1.18.33`; the highest published `opencode-ai` host package (the one shipping the `opencode` binary) is `1.19.4` (dist-tag `latest`, verified 2026-10-22) | Dependency pin (`package.json`); generation-gate unit tests over injected host banners; installer end-to-end tests asserting the emitted `opencode.json` shape |
 | V2 plugin tool surface | OpenCode v2.0.29 | `tests/canary/plugin-v2-tool-canary.test.mjs`, driving the real plugin through `opencode serve`; F4A permission canary passes 18/18 |
 | V2 native subagent admission | OpenCode v2.0.29 | `tests/canary/run-v2-permission-proof.sh`; identity, root/child checks and permission-before-child ordering are recorded in [`bench/results/f4a-v229-admission-identity-2026-10-14.md`](bench/results/f4a-v229-admission-identity-2026-10-14.md) |
-| Exact 1.X host version the 1.6 line is exercised against end-to-end | **Unverified.** No V1 host leg exists: the sandbox runner is V2-only and `--run v1` is rejected | — |
+| OpenCode 1.19.x runtime evidence | **Not yet measured.** No V1 host leg exists: the sandbox runner is V2-only and `--run v1` is rejected. `1.19.x` is therefore supported **and to test**, not a line with historical evidence | Fase 5 host leg required; a missing row is not a `PASS` |
 
 ## Delegation (root `subagent`; host/API `task()`)
 
@@ -495,7 +513,7 @@ per installation; V1 and V2 Pantheon plugins must never be registered together.
 |---|---|---|
 | OpenCode config key | singular `plugin` | plural `plugins` |
 | Pantheon registration | `src/plugin.ts` plus `src/plugins/pantheon-hooks.ts` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) |
-| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 3 unconditional orchestration tools plus up to 2 host-dependent ones (`vision_describe` when the model catalog is available, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| Runtime contract | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), event/tool hooks and V1 compaction handling | Full V2 plugin: 3 unconditional orchestration tools plus up to 2 host-dependent ones (`vision_describe` when the model catalog is available, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, a `permission.evaluate` delegation-matrix hook when the host exposes it, plus configuration transforms |
 | V1 APIs | Registered | Own tool definitions via `ctx.tool.transform()` — not the V1 plugin path |
 
 The V2 plugin provides 3 unconditional orchestration tools (`hashline_edit`,
@@ -708,8 +726,10 @@ Key order does not matter.
 
 > **Read [Compatibility and support policy](#compatibility-and-support-policy)
 > before upgrading across a line boundary.** 1.6.x is the last line that
-> supports an OpenCode 1.X host; 1.7+ is breaking-change territory targeting
-> OpenCode 2. Within the 1.6 line, `update` is the supported path.
+> supports an OpenCode 1.X host (**1.19.x**); it also supports OpenCode
+> **2.0.22, 2.0.29, 2.0.30 and 2.1.0** (2.0.31 is not supported). From 1.7
+> onward the line drops the V1 contract and targets OpenCode 2 only. Within the
+> 1.6 line, `update` is the supported path.
 
 One command keeps an existing installation current:
 

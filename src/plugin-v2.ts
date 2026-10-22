@@ -35,9 +35,11 @@
  * `@opencode-ai/plugin` 1.18.33 types `PluginContext` as exactly:
  *   options · agent · aisdk · catalog · command · integration · plugin ·
  *   reference · skill
- * — no `tool`, `event`, `permission` or `session`. 1.18.34 (`latest`) is the
- * same, so following the stable SDK line does not resolve this: it is a
- * STRUCTURAL DECLARATION task, not a pin reconciliation.
+ * — no `tool`, `event`, `permission` or `session`. The pin does not carry
+ * them, and the `latest` release (`1.19.4`, 2026-10-22) restructures the
+ * package instead of typing them, so following the newest SDK release does
+ * not resolve this: it is a STRUCTURAL DECLARATION task, not a pin
+ * reconciliation.
  *
  * A live opencode 2.0.22+ host DOES have these domains, with the shapes this module
  * uses. Measured by `tests/canary/plugin-v2-tool-canary.test.mjs`, which loads

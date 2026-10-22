@@ -4,10 +4,16 @@
 
 > ### ⚠️ Before you upgrade: check the line boundary
 >
-> **1.6.x is the last Pantheon line that supports an OpenCode 1.X host. From
-> 1.7 onward every release is a breaking change targeting OpenCode 2.** Upgrading
-> from any 1.6.x release to 1.7+ therefore crosses both a Pantheon support
-> boundary and an OpenCode major boundary at once. The policy, its support
+> **1.6.x is the last Pantheon line that supports an OpenCode 1.X host.** The
+> 1.6.x line supports OpenCode **1.19.x** (V1 plugin) and OpenCode **2.0.22,
+> 2.0.29, 2.0.30 and 2.1.0** (V2 plugin); **OpenCode 2.0.31 is not supported**
+> (no runtime evidence). Node **>=26.4.0** is the package floor and Python
+> **>=3.11** is required for the optional MCP servers.
+>
+> From **1.7 onward** the line drops the V1 contract and targets OpenCode 2
+> only. Upgrading from 1.6.x to 1.7+ therefore crosses a Pantheon support
+> boundary (1.X removed); OpenCode 2 support itself is already present in 1.6.x,
+> including 2.1.0 through its own validation phase. The policy, its support
 > matrix and what is verified against which host are in the
 > [README compatibility section](../README.md#compatibility-and-support-policy)
 > and, in more detail, in
@@ -20,7 +26,7 @@ upgrading, choose the contract that matches the OpenCode host you will run:
 | Selector | Config key | Pantheon entry | Scope |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and the V1 `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), board lifecycle, V1 hooks and implemented compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 unconditional tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`) plus up to 2 host-dependent ones (`vision_describe` when the host exposes its model catalog, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 unconditional tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`) plus up to 2 host-dependent ones (`vision_describe` when the host exposes its model catalog, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, a `permission.evaluate` delegation-matrix hook when the host exposes it, plus configuration transforms |
 
 **Changed in 1.6.0 — the V2 tool surface is 3 unconditional tools, not 6.** The
 three goal
@@ -75,19 +81,23 @@ Three further V2 fixes ship alongside it:
 ### V2 delegation and hook behavior
 
 When the host registers the V2 permission hook, V2 enforces the caller/target
-matrix for Pantheon-managed native `subagent` requests. If the host lacks that
-hook or registration fails, the matrix is unavailable and the host remains in
-control. Native-only resources pass through unchanged to OpenCode; mixed or
-multi-target requests are denied. A Pantheon request is considered only when
-its session, message and tool-call IDs in `permission.evaluate.source` match a
-short-lived record from the host's `tool.execute.before` event. The captured
-host caller is cross-checked against `permission.evaluate.agent`; that field is
-not trusted by itself because `ctx.permission.assert` accepts a caller-supplied
-agent. The session lookup must match the same session ID and have no
-`parentID`. OpenCode v2.0.29's `Session.Info` makes `parentID` optional for
-roots and populates it for children. Missing, stale, replayed or mismatched
-origin data fails closed. Explicit host denies remain final, and malformed or
-unknown resource data fails closed.
+matrix for Pantheon-managed native `subagent` requests
+(`src/plugin-v2.ts:1379-1509`; decision in
+`src/pantheon/v2-delegation-enforce.ts:170-213`). If the host lacks that hook or
+registration fails, the matrix is unavailable and the host remains in control;
+the read-only `execute.before` guard is a separate control and enforces
+read-only sessions, not the matrix (`src/plugin-v2.ts:1138-1176`). Native-only
+resources pass through unchanged to OpenCode; mixed or multi-target requests
+are denied. A Pantheon request is considered only when its session, message and
+tool-call IDs in `permission.evaluate.source` match a short-lived record from
+the host's `tool.execute.before` event. The captured host caller is
+cross-checked against `permission.evaluate.agent`; that field is not trusted by
+itself because `ctx.permission.assert` accepts a caller-supplied agent. The
+session lookup must match the same session ID and have no `parentID`. OpenCode
+v2.0.29's `Session.Info` makes `parentID` optional for roots and populates it
+for children. Missing, stale, replayed or mismatched origin data fails closed.
+Explicit host denies remain final, and malformed or unknown resource data fails
+closed.
 
 The v2.0.29 runtime canary proves both sides: an allowed Zeus→Apollo root
 dispatch creates a child after the permission event, while a matrix-valid

@@ -18,7 +18,7 @@ npm run setup
 npm run doctor
 ```
 
-- Requisitos: **Node.js >=26.4.0** para a CLI/instalador/ferramentas Node do Pantheon, **OpenCode v1.18.4+**, **Python 3.11+** (opcional, MCP servers). Node 22, Node 24 e Node 26.0–26.3 não são compatíveis com Beta 13.
+- Requisitos: **Node.js >=26.4.0** para a CLI/instalador/ferramentas Node do Pantheon, **Python 3.11+** (opcional, MCP servers), e um host da matriz: **OpenCode 1.19.x** (contrato V1) ou **OpenCode 2.0.22 / 2.0.29 / 2.0.30 / 2.1.0** (contrato V2). **OpenCode 2.0.31 não é suportado** — não há evidência de runtime. Node 22, Node 24 e Node 26.0–26.3 estão fora da matriz.
 - Com a configuração padrão do npm, versões incompatíveis podem gerar `EBADENGINE` como aviso durante a instalação. O postinstall do Pantheon então pula a sincronização Node/config e permite que o pacote termine de instalar; a CLI bloqueia a configuração com uma mensagem explícita antes de gravar arquivos. `engine-strict=true` pode fazer o próprio npm interromper a instalação. Para atualizar sem instalação global/system-wide, use um gerenciador de Node do usuário:
 
   ```bash
@@ -26,7 +26,7 @@ npm run doctor
   # ou: fnm install 26.4.0 && fnm use 26.4.0
   # ou: volta install node@26.4.0
   ```
-- Isso não pressupõe um runtime Node universal para o host OpenCode: o OpenCode V2.0.31 oficial tem um caminho de runtime Bun e um build Node separado fixado em Node 26.4.0; nenhum mínimo de Bun é declarado. `node:sqlite` >=22.5 é apenas um limite de capacidade do backend opcional `pantheon_cost`, não o requisito de suporte do pacote.
+- Isso não pressupõe um runtime Node universal para o host OpenCode: o OpenCode V2.0.31 oficial tem um caminho de runtime Bun e um build Node separado fixado em Node 26.4.0; **2.0.31 não está na matriz suportada desta release**. Nenhum mínimo de Bun é declarado. `node:sqlite` >=22.5 é apenas um limite de capacidade do backend opcional `pantheon_cost`, não o requisito de suporte do pacote.
 - No resumo de uma configuração interativa em TTY, o instalador recomenda um local persistente externo para futuros worktrees: `<project-parent>/.pantheon-worktrees/<exact-repository-directory-basename>/<task>` (por exemplo, `/home/user/.pantheon-worktrees/My Project/feature-name`). Use o nome exato do diretório do projeto, incluindo espaços; não o normalize como slug. A recomendação é apenas orientação para agentes; o Pantheon não cria worktrees Git nem diretórios automaticamente.
 - A configuração interativa em TTY usa prompts Clack para selecionar componentes, escolher instalação global/projeto e confirmar a revisão antes de aplicar. Cancelar não altera a configuração. `--yes`, `--headless`, `--dry-run` e os caminhos sem TTY mantêm seus comportamentos.
 - Delegação e modo background dependem das ferramentas expostas pela versão/runtime do host. Na sessão Beta 10 reportada, Zeus tinha a ferramenta `subagent`, sem `task_status`/`cancel_task` ou garantia de acompanhamento/recuperação. Verifique o schema e a documentação do runtime; não presuma que `task()` ou background estejam disponíveis. A variável experimental abaixo só se aplica a hosts/versões que a documentem.
@@ -135,8 +135,8 @@ inventário legível, não há limpeza automática.
 
 ## Prerequisites
 
-- **OpenCode v1.18.4+** — [Install OpenCode](https://opencode.ai/docs/)
-- **Node.js >=26.4.0** — for `npx pantheon-opencode init` and Node-based Pantheon tooling (`engines.node` = `>=26.4.0`). Node 22, Node 24, and Node 26.0–26.3 are unsupported. The optional `pantheon_cost` backend separately needs `node:sqlite` (Node >=22.5); this capability threshold does not lower package support. Official OpenCode V2.0.31 has a Bun runtime path and a separate Node build pinned to 26.4.0; no Bun minimum is implied.
+- **OpenCode 1.19.x**, or **2.0.22 / 2.0.29 / 2.0.30 / 2.1.0** — [Install OpenCode](https://opencode.ai/docs/). **OpenCode 2.0.31 is not supported** (no runtime evidence).
+- **Node.js >=26.4.0** — for `npx pantheon-opencode init` and Node-based Pantheon tooling (`engines.node` = `>=26.4.0`). Node 22, Node 24, and Node 26.0–26.3 are unsupported. The optional `pantheon_cost` backend separately needs `node:sqlite` (Node >=22.5); this capability threshold does not lower package support. Official OpenCode V2.0.31 (not in this release's supported matrix) has a Bun runtime path and a separate Node build pinned to 26.4.0; no Bun minimum is implied.
 - **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
 
@@ -243,23 +243,33 @@ JavaScript coverage at all. Python coverage additionally requires
 
 ### Support boundary — 1.6.x is the last OpenCode 1.X line
 
-> **OpenCode 1.X support ends after the 1.6 line.** From 1.7 onward every
-> release is a breaking change targeting OpenCode 2. Read this before
-> installing or upgrading across the 1.6 → 1.7 boundary.
+> **OpenCode 1.X support ends after the 1.6 line.** The 1.6.x line supports
+> OpenCode **1.19.x** (V1 plugin) and OpenCode **2.0.22, 2.0.29, 2.0.30 and
+> 2.1.0** (V2 plugin); **OpenCode 2.0.31 is not supported** (no runtime
+> evidence). From 1.7 onward the line drops the V1 contract and targets
+> OpenCode 2 only. Read this before installing or upgrading across the
+> 1.6 → 1.7 boundary.
 
-| Pantheon line | OpenCode 1.X host | OpenCode 2 host |
-|---|---|---|
-| **1.6.x** | **Supported** — V1 contract, selected automatically | Supported with a reduced surface — V2 contract |
-| **1.7 and later** | **Not supported** — breaking change | Target of the 1.7+ work |
+| Linha Pantheon | OpenCode 1.19.x | OpenCode 2.0.22 / 2.0.29 / 2.0.30 | OpenCode 2.1.0 | OpenCode 2.0.31 |
+|---|---|---|---|---|
+| **1.6.x** | **Suportado — evidência pendente (Fase 5).** V1, selecionado automaticamente | **Suportado** — V2, superfície reduzida | **Suportado** — V2, com fase própria de validação | **Não suportado** — sem evidência de runtime |
+| **1.7 and later** | **Não suportado** — breaking change | **Alvo do trabalho 1.7+** — V2 only | **Alvo do trabalho 1.7+** — V2 only | **Não suportado** até haver evidência |
 
-The two 1.6.x cells are different claims. The 1.X cell is the V1 plugin
+Todas as cinco linhas da matriz (`1.19.x`, `2.0.22`, `2.0.29`, `2.0.30`,
+`2.1.0`) estão **suportadas e a testar**; a evidência é por host e um resultado
+`WARN`, `SKIP` ou `NOT_TESTED` não conta como `PASS`.
+
+The 1.6.x row carries different claims. The 1.19.x cell is the V1 plugin
 (`src/plugin.ts` + `src/plugins/pantheon-hooks.ts` under the singular `plugin`
 key, 6 tools including the goal tools, board lifecycle, V1 hooks and the V1
-compaction path). The OpenCode 2 cell is the V2 plugin, which is a real
+compaction path). The OpenCode 2 cells are the V2 plugin, which is a real
 orchestration surface and a **narrower** one: 3 unconditional tools plus up to
-2 host-dependent ones, no goal tools, no V1
-caller→target delegation matrix. Neither generation is ever registered together
-with the other.
+2 host-dependent ones, no goal tools. The caller→target delegation matrix is
+enforced by the V2 permission hook **only when the host exposes
+`ctx.permission.hook`**; if the hook is absent or registration fails, the matrix
+is unavailable and host permissions remain in control (decision in
+`src/pantheon/v2-delegation-enforce.ts:170-213`). Neither generation is ever
+registered together with the other.
 
 **OpenCode 2 support on the 1.6 line is real but partial — do not read the
 table as "OpenCode 2 is done":**
@@ -267,19 +277,27 @@ table as "OpenCode 2 is done":**
 - The V2 tool surface ships real `input`/`output` schemas and real enforcement
   (`ctx.tool.transform()`, a read-only-enforcing `execute.before`), verified
   against `opencode 2.0.22` by `tests/canary/plugin-v2-tool-canary.test.mjs`.
-- That host version is **not published on any npm channel**. Against the
-  installable `@opencode-ai/cli` the same canary fails 12/12, because
+- The v2.0.29 permission canary proves the matrix on both sides: an allowed
+  Zeus→Apollo root dispatch is admitted, while an Athena→Apollo call from a
+  child and an invalid Athena→Demeter root dispatch are denied
+  (`bench/results/f4a-v229-admission-identity-2026-10-14.md`).
+- `2.0.22` is **not published on any npm channel**. Against the installable
+  `@opencode-ai/cli` the tool canary fails 12/12, because
   `/api/experimental/session/{id}/wait` was promoted to
   `/api/session/{id}/wait` (old path → 404) and `ctx.tool.list` is absent. With
   only the route corrected, 10/12 pass on that host — so this is a
   canary/host-generation mismatch, not a measured plugin regression. Tracked in
   issue #216; the fail-closed CI step is PR #213.
-- **No V1 host leg exists for end-to-end validation.** The sandbox runner
+- **No V1 host leg exists yet for end-to-end validation.** The sandbox runner
   (`scripts/test-opencode-v2-sandbox.sh`) is V2-only and rejects `--run v1`. The
-  exact 1.X host version the 1.6 line is exercised against end-to-end is
-  therefore **unverified**; the 1.X path is covered by the dependency pin
-  (`@opencode-ai/plugin` / `@opencode-ai/sdk` `1.18.33`), the generation-gate
-  unit tests and the installer end-to-end tests over emitted config.
+  `1.19.x` line on the matrix is therefore **supported and to test**, not a
+  line with historical runtime evidence; the V1 path is covered by the
+  dependency pin (`@opencode-ai/plugin` / `@opencode-ai/sdk` `1.18.33`), the
+  generation-gate unit tests and the installer end-to-end tests over emitted
+  config.
+- **`2.1.0` requires its own adoption/validation phase** (ADR-0014 Q2): the
+  host changed SDK, HTTP message/event and plugin contracts. Until that phase
+  produces a `PASS`, `2.1.0` is not claimed as verified.
 
 The full policy, including the verification table, is in the
 [README compatibility section](../README.md#compatibility-and-support-policy).
@@ -294,7 +312,7 @@ selected generation:
 | Selection | OpenCode key | Pantheon registration | Contract |
 |---|---|---|---|
 | `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: `hashline_edit` + goal/cost/model tools, board lifecycle, V1 events/tool hooks and V1 compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 unconditional tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`) plus up to 2 host-dependent ones (`vision_describe` when the host exposes its model catalog, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks, a read-only-enforcing tool `execute.before` hook, plus configuration transforms |
+| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 unconditional tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`) plus up to 2 host-dependent ones (`vision_describe` when the host exposes its model catalog, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks, a read-only-enforcing tool `execute.before` hook, a `permission.evaluate` delegation-matrix hook when the host exposes it, plus configuration transforms |
 
 The V2 plugin is now a **full orchestration plugin** — not just a configuration
 adapter. It registers 3 unconditional tools via `ctx.tool.transform()` plus up

@@ -96,7 +96,7 @@ failing-closed gates, but they are not the reviewer:
 |---|---|---|
 | Read-only sessions may not mutate | `tool.execute.before` throws | `src/pantheon/delegation-enforce.ts:181` (blocked-tool set), `src/plugin.ts:101` |
 | A child session may not delegate again | same guard, child-session branch | `src/pantheon/delegation-enforce.ts:353` |
-| Caller/target delegation matrix | same guard, `isDelegationAllowed` | `src/pantheon/delegation-enforce.ts:138` |
+| Caller/target delegation matrix | same guard, `isDelegationAllowed` (V1; V2 uses the permission hook — see [§3.5](#35-per-host-generation-what-you-can-rely-on)) | `src/pantheon/delegation-enforce.ts:138` |
 | The orchestrator may not read source | `zeusReadGuard` throws | `src/pantheon/delegation-enforce.ts:221` |
 | Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:138` |
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
@@ -603,51 +603,60 @@ Native delegation is available on both contracts — it is the host's engine.
 | Native delegation available | Yes | Yes |
 | Read-only agents blocked from mutating tools | Yes | Yes |
 | Depth-2 for read-only agents | Yes | Yes |
-| **Caller/target matrix enforced** | **Yes** | **No** |
+| **Caller/target matrix enforced** | **Yes** | **Conditional — Yes when the host exposes `ctx.permission.hook`; otherwise unavailable** |
 
-The V2 adapter builds its guard without `getSessionAgent`, `isRootSession` or
-`isChildSession` (`src/plugin-v2.ts:870`), for **two** independent reasons that are
-easy to conflate. Keeping them apart matters, because the one that sounds structural
-is not the one that denies:
+The V2 matrix is implemented by `registerV2PermissionHook`
+(`src/plugin-v2.ts:1379-1509`, registered best-effort at `src/plugin-v2.ts:1707`),
+which calls `evaluateV2Delegation`
+(`src/pantheon/v2-delegation-enforce.ts:170-213`). That decision is: Zeus may
+target any Pantheon agent; Athena and Hermes may target Apollo only; every other
+Pantheon caller is denied; a child session is denied. It is **not** implemented
+by `createEnforcementGuard`.
 
-1. **Missing `getSessionAgent` — wiring.** This is what would deny **every** `task()`
-   call in **every** session. V2 learns the active agent from the `execute.before`
-   event itself and keeps no session→agent map, so there is no lookup to hand the
-   guard: it would call `isDelegationAllowed(undefined, target)`, which returns `false`
-   for an undefined caller (`src/pantheon/delegation-enforce.ts:145`) and throw *caller
-   agent is unavailable*.
+The guard is built without `getSessionAgent`, `isRootSession` or
+`isChildSession` (`src/plugin-v2.ts:1138-1176`), for two reasons that are easy to
+conflate:
+
+1. **Missing `getSessionAgent` — wiring.** V2 learns the active agent from the
+   `execute.before` event itself and keeps no session→agent map, so there is no
+   lookup to hand the guard: it would call
+   `isDelegationAllowed(undefined, target)`, which returns `false` for an
+   undefined caller (`src/pantheon/delegation-enforce.ts:145`) and throw *caller
+   agent is unavailable*. This branch is skipped entirely when `isRootSession`
+   is undefined.
 2. **Unwired hierarchy — design.** `SessionHierarchyRegistry` gates exactly two
-   things, and nothing else: the depth-2 child deny and the root-session gate. Left
-   unseeded, `isChild` is `false` for every session, so depth-2 would never fire on a
-   genuine child, and a registry that cannot tell a child from a root is not
-   trustworthy input to either check.
+   things: the depth-2 child deny and the root-session gate. Left unseeded,
+   `isChild` is `false` for every session, so depth-2 would never fire on a
+   genuine child. An unseeded session reports as a *root*, and `true` **passes**
+   the root gate (`src/pantheon/delegation-enforce.ts:109-116`) — it does not deny.
 
-**The inference that is easy to get backwards.** The registry does report an unseeded
-session as a *root*, and `true` **passes** the root gate
-(`src/pantheon/delegation-enforce.ts:110`) — it does not deny. The deny in case 1 comes
-from the absent caller identity, not from the hierarchy.
+**Unwired, not impossible.** V2's `session.created` event carries
+`properties.info.parentID`, so live sessions could be seeded in
+`onSessionCreated`; what V2 lacks is V1's `client.session.list()` startup seed,
+because `PluginContext` exposes no `client`. Whether a live host populates
+`info.parentID` on that event is not measured by the repository.
 
-**Unwired, not impossible.** The V2 `session.created` event carries
-`properties.info: Session`, and `Session` declares `parentID?: string` — the same field
-V1 seeds from on that exact event, a superset of the two fields V1 reads there — so
-seeding V2's live sessions is one line in `onSessionCreated`
-(`src/plugin-v2.ts:513`). The real asymmetry is V1's *second* source: the fail-open
-`client.session.list()` startup seed covering sessions that predate plugin load, which
-has no V2 equivalent at all because the V2 `PluginContext` exposes no `client`
-(`src/plugin-v2.ts:531`). Whether a live host actually populates `info.parentID` on
-that event is **UNVERIFIED** — no measurement reads an event payload.
+The consequence is narrower than a missing matrix: the guard still denies
+mutating tools in a read-only session (`task` included), but it does not carry
+the caller→target policy. The matrix lives in the permission hook, and that hook
+exists only when the host exposes `ctx.permission.hook`. If the host lacks it or
+registration fails, `markUnsupported('permission-hook')`
+(`src/plugin-v2.ts:1386-1389`) and the matrix is **unavailable**; host
+permissions remain in control.
 
-Omitting all three predicates skips the branch entirely; the guard only enters it when
-`isRootSession` is defined. The consequence is stated plainly in the source: the
-caller/target matrix itself is **not** enforced on V2, and this is a known gap, not a
-covered case (`src/plugin-v2.ts:867`). The upgrade guide documents the same limitation
-from the user's side — see [Known limitation](UPGRADING.md).
+**Runtime evidence.** The F4A canary on OpenCode `v2.0.29` proves both sides:
+an allowed Zeus→Apollo root dispatch is admitted, while a matrix-valid
+Athena→Apollo call from a child is denied and creates no grandchild; an invalid
+Athena→Demeter root dispatch is denied without a child or extra model request
+([`bench/results/f4a-v229-admission-identity-2026-10-14.md`](../bench/results/f4a-v229-admission-identity-2026-10-14.md)).
+Reproduce with `bash tests/canary/run-v2-permission-proof.sh`.
 
 **What this means for planning:** on the V2 contract, the restriction "only the
-orchestrator and the two read-only scouts may delegate" is a **convention you are
-relying on other agents to honour, not a control**. The only delegation restriction
-still enforced is on the two read-only agents, and it holds only because the
-delegation tool is itself in their blocked-tool list.
+orchestrator and the two read-only scouts may delegate" is a **control when the
+host registers the permission hook**, and a **convention when it does not**.
+Read the install's unsupported markers and `doctor` output before relying on it;
+the remaining read-only restriction (apollo/gaia cannot delegate) holds because
+the delegation tool is in their blocked-tool list.
 
 #### The board: available on V1, absent on V2
 
@@ -771,26 +780,35 @@ authoritative — they are the stale side of a known disagreement, not a specifi
 
 ---
 
-## 5. Unverified, and the evidence that would settle it
+## 5. Unverified claims: classification and the evidence that settles each
 
-Each item is something this repository cannot settle, with the evidence that would.
+Each item below was previously listed as unverified. None remains silently
+`UNVERIFIED`: every row is either **verifiable in this release** with a named
+test/canary, or an explicit **Known Issue**. Rows that touch P0-5 (permission
+action names or allow/deny order) are **blockers**, never Known Issues
+(ADR-0014 Q4).
 
-| # | Claim | Why unverified here | Evidence that would settle it |
+| # | Claim | Classification | Resolution |
 |---|---|---|---|
-| 1 | Whether the host honours a `tools:` map entry by hiding the tool or by failing the call, and how `tools` and `permission` interact when both are present | The host's agent-config schema is not in this repository. The repo's own ambient declaration records that the agent-config surface is not typed here (`src/opencode.d.ts:4`) | The host's published agent configuration schema, or a host-emitted config after loading one agent that declares both |
-| 2 | Whether the host honours `mcp_tools`, `visible`, `skills` and `reasoning_effort` from agent frontmatter | No consumer in `src/` or `scripts/`; host behaviour unknown | Same as above |
-| 3 | Whether a 2.x host recognises the action names the converter emits (`read`, `grep`, `glob`, `task`, `webfetch`, `question`, `write`, `mcp`, …) as distinct actions | The V2 action vocabulary is not defined in this repository | The host's `permissions` schema for that generation |
-| 4 | Whether a nested glob deny and its wildcard sibling resolve last-match-wins, first-match-wins, or most-specific-wins | Ordering semantics live in the host | The host's permission resolution rules, plus a test config exercising both orders |
-| 5 | Whether the host applies the glob semantics the project assumes to a `permission.task` block — i.e. whether `"*": deny` plus one named allow actually permits only that one agent | The block reaches the installed config (verified), but the interpretation is the host's. The project's own glob implementation is real (`src/pantheon/permission-globs.ts:40`) and is **not** wired to it ([§3.2](#32-who-may-delegate-to-whom)), so it cannot be used as evidence of host behaviour | The host's `task` permission rules, or an end-to-end test: one agent whose frontmatter permits exactly one target, observed attempting a second |
-| 6 | Whether the host exposes a blocking status/wait tool on a given runtime | Host tool availability cannot be inferred from the repository. The user-reported Beta 10 Zeus root did not expose `task_status`; this is an observation, not a generation-wide API claim. | Inspect the active root tool registry and verify the tool schema and behavior |
-| 7 | Whether a background child's completion is observable on a given host build | Recorded in the source as an observation of one build, not a contract | A probe against the target build: dispatch a background child, observe which events fire |
-| 8 | The number of installed configs actually affected by the incomplete translation map | The defect's shape is verified; its population is not | Enumerating installed configs and counting permission keys absent from the map |
+| 1 | Whether the host honours a `tools:` map entry by hiding the tool or by failing the call, and how `tools` and `permission` interact when both are present | **Verifiable in this release** | Extend `tests/canary/plugin-v2-tool-canary.test.mjs` with one agent declaring both `tools` and `permission`; run on every matrix host (`1.19.x`, `2.0.22`, `2.0.29`, `2.0.30`, `2.1.0`) and record hide-vs-fail behaviour in the result table. |
+| 2 | Whether the host honours `mcp_tools`, `visible`, `skills` and `reasoning_effort` from agent frontmatter | **Verifiable in this release** | The same config-load canary, one key at a time, on every matrix host: assert the host-emitted config/behaviour rather than inferring from the repo. |
+| 3 | Whether a 2.x host recognises the action names the converter emits (`read`, `grep`, `glob`, `task`, `webfetch`, `question`, `write`, `mcp`, …) as distinct actions | **BLOCKER — P0-5** | `permission.evaluate` probe on every matrix host, plus inspection of the installed config. No GO while any emitted action name is unrecognised (ADR-0014 Q4). |
+| 4 | Whether a nested glob deny and its wildcard sibling resolve last-match-wins, first-match-wins, or most-specific-wins | **BLOCKER — P0-5** | A test config exercising both orders on every matrix host; the resolution order must be recorded and match the installed policy. |
+| 5 | Whether the host applies the glob semantics the project assumes to a `permission.task` block — i.e. `"*": deny` plus one named allow permits only that one agent | **BLOCKER — P0-5** | End-to-end canary: one agent whose frontmatter permits exactly one target attempts a second; the denial must be observed on every matrix host. |
+| 6 | Whether the host exposes a blocking status/wait tool on a given runtime | **Verifiable in this release** | Inspect the active root tool registry on each matrix host and record the presence/schema of `task_status`/`cancel_task`; the result is per-host, not generation-wide. |
+| 7 | Whether a background child's completion is observable on a given host build | **Verifiable in this release** | Probe each matrix build: dispatch a background child and record which completion events fire. |
+| 8 | The number of installed configs actually affected by the incomplete translation map | **Known Issue — accepted, non-blocking** (not one of the 11 P2; separately declared) | No host contract settles the population. Enumerate installed configs during the release field check; the P0-5 remediation requires re-running the installer on every affected config, so the population is covered by remediation rather than by a GO gate. |
 
-All eight are host-side or population-side questions. The one item this list previously
-carried that the repository *can* settle on its own — whether the routing validator runs
-in CI on every change — has been resolved and moved to [§1.2](#12-what-the-reviewer-enforces-and-what-it-does-not)
-as a dated fact: it is enforced per pull request, and ungated only for direct pushes to
-`main`.
+Rows 1, 2, 6 and 7 have a named test/canary that settles them in this release.
+Rows 3, 4 and 5 are the P0-5 security blockers and cannot be accepted as Known
+Issues. Row 8 is the only Known Issue among the eight, and it does not weaken
+P0-5: it is a population count, not a permission-name or ordering question.
+
+All eight are host-side or population-side questions. The one item this list
+previously carried that the repository *can* settle on its own — whether the
+routing validator runs in CI on every change — has been resolved and moved to
+[§1.2](#12-what-the-reviewer-enforces-and-what-it-does-not) as a dated fact: it
+is enforced per pull request, and ungated only for direct pushes to `main`.
 
 ---
 
@@ -802,7 +820,7 @@ Where another document is authoritative, this one defers to it:
 - Reviewer contract, layers, verdicts — the reviewer agent's own file
 - Delegation engine contract and its removal — [README](README.md)
 - Install, generation pinning, background delegation setup — [INSTALLATION](INSTALLATION.md)
-- Per-generation behaviour differences and the V2 enforcement gap — [UPGRADING](UPGRADING.md)
+- Per-generation behaviour differences and the V2 conditional enforcement — [UPGRADING](UPGRADING.md)
 - Design rationale for delegation, sync and memory tiers — [ARCHITECTURE](ARCHITECTURE.md)
 - Orchestrator protocol: timeouts, fallback chains, the subtask decision tree,
   session reuse — the orchestrator's instructions, consolidated into `AGENTS.global.md`

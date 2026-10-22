@@ -1,7 +1,7 @@
 # 🗺️ Pantheon Roadmap
 
 > **Charter updated:** 2026-10-20
-> **Previous header/status snapshot:** v1.6.0-beta.4 / 2026-10-05 — superseded by later entries in the body; the current readiness was reconciled on 2026-10-20 (beta.15 published and field-tested; beta.16 branch open).
+> **Previous header/status snapshot:** v1.6.0-beta.4 / 2026-10-05 — superseded by later entries in the body; the current readiness snapshot is from 2026-10-22, when ADR-0014 fixed the release decisions for the `1.6.0` stable.
 >
 > **Roadmap reativado.** O plano havia sido zerado em 2026-09-12 a partir de
 > validação de código. A validação runtime de 2026-10-04 provou que a
@@ -64,15 +64,15 @@ tarball, com `PASS` em cada gate aplicável. Evidência ausente ou marcada
 `NOT_TESTED`, `WARN`, `SKIP` ou `AMBIENTAL` não é `PASS`; riscos não resolvidos
 são blockers ou precisam ser aceitos explicitamente, nunca aprovados em silêncio.
 
-**Readiness atual: `beta.15` PUBLICADA; `beta.16` aberta, com source/docs e
-validação local final concluídos, mas `PR CI` pendente.** O NO-GO da alegação de
-prontidão stable com base no relatório beta.6 é precedente histórico; esta
-atualização não declara prontidão para release. A `v1.6.0-beta.15` (`fd22b0c`)
-está publicada e foi testada em campo contra `opencode v2.0.30`; a branch
-`feat-v1.6.0-beta.16` está aberta sobre ela, com as seis alterações de
-source/docs descritas na seção **Beta 16** concluídas. A validação final local
-passou sob Node `26.4.0` / npm `11.17.0`; a CI do PR continua pendente. O
-candidato beta.16 não está publicado nem é release-ready. Os contratos existentes em
+**Readiness atual: `1.6.0-beta.18` é a versão corrente (`package.json:3`),
+publicada no dist-tag `beta` do npm (`beta = 1.6.0-beta.18`); o canal `latest`
+ainda serve `1.5.2`.** As decisões de release da `1.6.0` stable estão fixadas no
+[ADR-0014](.pantheon/memory-bank/adr/0014-release-v1-6-0-stable-decisoes-e-matriz.md)
+(Q1–Q7). O escopo é a `1.6.0` stable, com 6 fases e caminho crítico
+1→2→4→5→6. **P0-5 é bloqueio absoluto (Q4).** O candidato **não está publicado
+nem é release-ready**; esta atualização não declara prontidão para release.
+Evidência ausente ou marcada `NOT_TESTED`, `WARN`, `SKIP` ou `AMBIENTAL` não é
+`PASS`. Os contratos existentes em
 [docs/RELEASE.md](docs/RELEASE.md),
 [docs/RELEASING.md](docs/RELEASING.md) e
 [docs/INSTALLATION.md](docs/INSTALLATION.md) continuam referenciados. Planos
@@ -152,7 +152,7 @@ ser pegos.
 
 ## 🔭 Próxima iteração
 
-Vinte e nove itens verificados, ordenados por severidade. Cada item carrega um
+Trinta e um itens verificados, ordenados por severidade. Cada item carrega um
 marcador `Status:` próprio — nenhum precisa ser inferido.
 
 **Legenda de status.** `CLOSED (doc)` — o defeito era de documentação e foi
@@ -185,11 +185,19 @@ isso ele ainda aparecia `OPEN` descrevendo um defeito morto. Esta rodada fecha
 reconcilia contrato, contagens e âncoras. Ver o registro em
 [Histórico](#histórico).
 
+**Decisões de release (2026-10-22).** A `v1.6.0` stable foi decidida pelo
+[ADR-0014](.pantheon/memory-bank/adr/0014-release-v1-6-0-stable-decisoes-e-matriz.md):
+publicar `1.6.0` stable novo (Q1); incluir OpenCode `2.1.0` na matriz com fase
+própria (Q2); manter Node `>=26.4.0` (Q3); tratar P0-5 como bloqueio absoluto de
+segurança (Q4); aceitar os 11 P2 como Known Issues (Q5); remover a tag npm
+`next` (Q6); e exigir GO assinado pelo usuário (Q7). O ADR é a fonte dessas
+decisões; este documento registra os itens, não as redecide.
+
 **Contagem.** Um **item** é um registro vivo — `OPEN` ou `CLOSED` (de qualquer
 tipo). O tombstone `WITHDRAWN` preserva o id e não conta como item, porque não
-descreve trabalho. São 30 registros: 29 itens (4 `CLOSED (doc)`, 2
-`CLOSED (code)` — P0-1 e P1-6 — e 23 `OPEN`) e 1 tombstone, **P0-2**, cuja
-alegação remanescente vive em **P2-10**.
+descreve trabalho. São 32 registros: 31 itens (4 `CLOSED (doc)`, 2
+`CLOSED (code)` — P0-1 e P1-6 —, 1 `CLOSED (runtime canary)` — P2-12 — e 24
+`OPEN`) e 1 tombstone, **P0-2**, cuja alegação remanescente vive em **P2-10**.
 
 **P0-1 — Regressão: uma run do installer desregistrou a entrada V2 que
 carregava.**
@@ -369,6 +377,12 @@ qualquer causa ainda recebe verde — inclusive a causa que P0-1 era, hoje
 corrigida por #202. Gate de saúde que dá falso verde é pior que gate
 ausente: mascara a ausência em vez de expô-la.
 
+**Owner:** @prometheus
+**Acceptance:** um teste que remova ou simule a ausência do registro de
+`pantheon_cost` na superfície e prove que o `doctor` emite `FAIL`, não `PASS`;
+o caso roda em `npm test`, e o `doctor` continua `PASS` quando backend e
+registro estão ambos presentes.
+
 **P0-4 — O catálogo de tools oscila dentro de uma mesma sessão.**
 **Status: OPEN — nunca diagnosticado.** Uma tool existente e depois ausente
 entre turnos torna qualquer verificação que dependa dela **inviável por
@@ -380,6 +394,12 @@ invalida o próprio instrumento de medição — e por isso precede tudo que dep
 de observação de catálogo, incluído o probe que originou P0-1. Sem diagnóstico:
 não se sabe se a causa é cache de catálogo, ciclo de vida de plugin, ou
 re-registro concorrente.
+
+**Owner:** @hermes
+**Acceptance:** uma run canário de N turnos na mesma sessão que registre o
+catálogo a cada turno e prove estabilidade (nenhuma transição completa↔parcial);
+a causa (cache, ciclo de vida ou re-registro) documentada e um teste de
+regressão que falhe se a oscilação voltar.
 
 **P0-5 — Nomes de ação de permissão desatualizados quebram o enforcement
 read-only em host V2.**
@@ -424,6 +444,15 @@ ramo `v1` não executa **nenhuma** dessa tradução
 (`scripts/install/opencode.mjs:1348-1350`); isso é correto num host V1, e o ponto
 do item é a cobertura do tradutor que roda no ramo `v2`.
 
+**Owner:** @hermes
+**Acceptance:** comportamento de permissões demonstrável no host da matriz:
+`bash: deny` e `task: deny` bloqueiam de fato, o `write` do `mnemosyne` fica
+restrito, e o tradutor emite apenas nomes de ação que o host reconhece; a
+ordem allow/deny é provada com um caso de conflito. Sem essa demonstração não
+há GO (ADR-0014 Q4) — o item não é aceitável como Known Issue.
+**Review:** @themis — a revisão de segurança e de comportamento de permissões
+deste item é do revisor, não do implementador.
+
 **P0-6 — A config grava um caminho absoluto para a árvore de instalação, e ele
 só é re-resolvido no `init`.**
 **Status: OPEN.**
@@ -460,6 +489,12 @@ durável, a instalação global estava uma versão atrás da cópia cacheada, e 
 marker de freshness existia só sob o cache. Esses números mudam; o defeito — um
 caminho absoluto para uma árvore de cache gravado na config, re-resolvido apenas
 no `init` — é do código.
+
+**Owner:** @prometheus
+**Acceptance:** upgrade por rota que não executa `init` (por exemplo
+`npm i -g`) deixa a config apontando para a árvore instalada nova, ou o
+`doctor` reporta o desvio; um teste de integração cobre a re-resolução e falha
+fechado quando o caminho não existe.
 
 **P1-1 — Contrato documentado de `memory_store` é rejeitado.**
 **Status: CLOSED (doc) — corrigido por esta reescrita.**
@@ -523,6 +558,12 @@ automaticamente. É o **único** erro de orquestração aqui que é detectável
 mecanicamente **hoje, sem mudança de código** — os outros gates do backlog
 (P2-4) dependem de um artefato que ainda não existe.
 
+**Owner:** @talos
+**Acceptance:** um gate no dispatch cruza o prompt/tarefa contra o bloco
+`permission` do agente alvo e recusa antes do envio quando a tarefa exige
+`edit`/`write`/`bash` negado; teste com um agente read-only e uma tarefa de
+edição prova a recusa, e um alvo compatível continua permitido.
+
 **P1-8 — Preservar a `sessionID` em dispatch abortado.**
 **Status: OPEN.**
 Um dispatch abortado devolveu erro sem `sessionID`; o agente perdeu todo o
@@ -563,6 +604,12 @@ só a tabela logo abaixo dele: o *Tool Reference* acima e as *Performance Tips*
 (`:478`, `truncate=True`) continuam anunciando a API morta. Defeito
 pré-existente em `origin/main`, em arquivo que este branch não toca — mesma
 classe de P1-1, outra página, mesmo fora de escopo que P1-6.
+
+**Owner:** @talos
+**Acceptance:** a *Tool Reference* de `docs/MEMORY.md` documenta exatamente
+`value, namespace, key, metadata` (sem `category`, `agent`, `session_id`,
+`importance`, `truncate`, `links`), e um `grep` no arquivo não encontra a
+assinatura retirada nem `truncate=True`.
 
 **P2-1 — Duplicação de sistemas de versão no installer.**
 **Status: OPEN.**
@@ -694,30 +741,50 @@ prefixo) e `:1325-1341` (defaults de `permission.mcp` por servidor MCP). O
 secret scanner é a camada errada para essa pergunta, porque a pergunta não é
 "esse texto é um segredo" e sim "esse caminho deveria poder ser lido".
 
-**P1-12 — A matriz caller/target de delegação não é replicada no contrato V2.**
+**P1-12 — Matriz caller/target no V2: enforçada pelo permission hook quando o
+host o registra; falta evidência nas linhas 1.19.x e 2.1.0.**
 **Status: OPEN.**
-O guard V2 é construído sem `getSessionAgent`, `isRootSession` e `isChildSession`
-(`src/plugin-v2.ts:870`), então a matriz é uma **convenção** e não um controle no
-V2. Duas causas independentes, e a distinção importa porque a que parece estrutural
-não é a que nega: (1) **falta `getSessionAgent`** — o V2 não mantém mapa
-session→agente, lendo o agente do próprio evento `execute.before`, e sem lookup o
-guard chamaria `isDelegationAllowed(undefined, target)` → `false`
-(`src/pantheon/delegation-enforce.ts:145`) e lançaria *caller agent is unavailable*
-em **toda** chamada `task()`; (2) **hierarquia não semeada** — o registry controla
-exatamente duas coisas (o deny de depth-2 e o gate de root) e, sem seed, `isChild` é
-`false` para toda sessão. Um `isRoot` não semeado devolve `true` e **`true` passa**
-o gate de root (`src/pantheon/delegation-enforce.ts:110`) — ele não nega. A causa foi
-**corrigida em 2026-10-04 no PR #204** (a cadeia invertida que este item carregava
-antes foi reescrita em `src/plugin-v2.ts`, `docs/UPGRADING.md` e no seed
-compartilhado); o que #204 **não** fechou é a lacuna, que ele declarou fora de
-escopo. **Bloqueado numa observação que só uma run beta pode fazer:** se o campo
-`agent` do evento `execute.before` é o agente **delegante** no meio do handoff de uma
-chamada `task()`. Nada no repositório mede isso — o canary registra
-`Object.keys(ctx)`, não payloads de evento
-(`tests/canary/plugin-v2-tool-canary.test.mjs:524`) — e a resposta decide se o
-`getSessionAgent` ausente tem substituto. Até essa run, o item não é
-implementável. Mapeado em
-[PERMISSIONS-QUALITY-DELEGATION.md](docs/PERMISSIONS-QUALITY-DELEGATION.md) §3.5.
+**Reconciliação de 2026-10-22 (evidência de código, não preferência).** A
+descrição anterior dizia que a matriz era **convenção, não controle**, porque o
+guard V2 é construído sem `getSessionAgent`, `isRootSession` e `isChildSession`
+(`src/plugin-v2.ts:1138-1176`). Isso descreve o guard read-only de tools, não a
+matriz: a matriz é aplicada por um segundo hook, `registerV2PermissionHook`
+(`src/plugin-v2.ts:1379-1509`), ligado em `src/plugin-v2.ts:1707`, e a decisão
+vive em `evaluateV2Delegation` (`src/pantheon/v2-delegation-enforce.ts:170-213`:
+Zeus→qualquer alvo Pantheon; Athena/Hermes→Apollo; demais chamadores negados;
+sessão filha negada). O hook só existe quando o host expõe
+`ctx.permission.hook`; se não expõe ou o registro falha, `markUnsupported`
+(`src/plugin-v2.ts:1386-1389`) e a matriz fica indisponível, com as permissões
+do host no controle. A evidência runtime é o canário F4A em OpenCode `v2.0.29`
+([bench/results/f4a-v229-admission-identity-2026-10-14.md](bench/results/f4a-v229-admission-identity-2026-10-14.md)):
+Zeus→Apollo root admitido e Athena→Apollo a partir de child negado.
+**O que permanece aberto:** a mesma prova nas linhas `1.19.x` e `2.1.0` da
+matriz, e o comportamento documentado para hosts sem o hook. O guard de tools
+continua sem a matriz; isso não é a fonte de enforcement.
+
+**Owner:** @hermes
+**Acceptance:** o canário de permissão passa nas cinco linhas da matriz
+(`1.19.x`, `2.0.22`, `2.0.29`, `2.0.30`, `2.1.0`) — allow root e deny
+child/edge inválida — e em host sem `ctx.permission.hook` o relatório declara
+`matrix unavailable` explicitamente, sem tratar a ausência como `PASS`.
+
+**P1-13 — O venv do installer usa o `python3` sem versão e não valida `>=3.11`.**
+**Status: OPEN — 2026-10-22.**
+O installer executa `spawnSync('python3', ['-m', 'venv', ...])`
+(`scripts/install/venv.mjs:78`) sem resolver uma versão nomeada e sem checar
+`sys.version_info` antes de criar o ambiente. Num host cujo `python3` é 3.10 ou
+3.9, o install conclui e os MCP servers quebram em runtime, contra a promessa
+`Python 3.11+` de [docs/INSTALLATION.md:21](docs/INSTALLATION.md). O preflight
+(`checkRuntimePrerequisites`, `scripts/install/shared.mjs:466-480`) só prova que
+`python3 --version` executa — não a versão.
+**Severidade P1:** quebra uma capacidade prometida (MCP servers) numa
+configuração comum, sem perda de dados ou exposição de segurança; não é P0
+porque falha na primeira execução, não corrompe estado.
+**Owner:** @hermes
+**Acceptance:** o installer resolve um interpretador `>=3.11` (por exemplo
+`python3.11+`, `python3` com probe de versão, ou `PANTHEON_PYTHON`) e falha
+fechado antes de criar `.venv` quando só há 3.10/3.9; teste com fake `python3`
+3.10 prova a recusa e não deixa `.venv` parcial.
 
 **P2-11 — Board e goal tools não existem no contrato V2, e a bridge que os
 carregaria nunca foi ligada.**
@@ -751,10 +818,27 @@ regressões correspondentes estão implementados e os testes passam; não há
 alteração de código pendente neste item. O canary scripted-provider local no host exato
 OpenCode `v2.0.30` (`V2 host replaces a no-text child result with an error and preserves completed status`, `tests/canary/plugin-v2-tool-canary.test.mjs`) passou: 19 passed, 0 failed, 3 optional skipped; filho sem texto → `EMPTY_TASK_ERROR`, status da tool do pai `completed`. Sem credenciais/chamadas reais de provedor; sem alegação de isolamento abrangente de egress.
 
-As cadeias restantes — `permission.evaluate`, `session.prompt` e compaction —
-seguem **fora de escopo**, declaradas em
+As cadeias restantes — `session.prompt` e compaction — seguem **fora de
+escopo**, declaradas em
 [PERMISSIONS-QUALITY-DELEGATION.md](docs/PERMISSIONS-QUALITY-DELEGATION.md) §3.5 e
-em [UPGRADING.md](docs/UPGRADING.md).
+em [UPGRADING.md](docs/UPGRADING.md). `permission.evaluate` é tratado em
+**P1-12**: é o hook que aplica a matriz quando o host o registra.
+
+**P2-13 — O hint de pré-requisito do installer diz `Python 3.10+`, mas a doc
+exige `3.11+`.**
+**Status: OPEN — 2026-10-22.**
+`checkRuntimePrerequisites` emite `install Python 3.10+
+(https://www.python.org/downloads/)` (`scripts/install/shared.mjs:469`) quando
+`python3` não executa, enquanto [docs/INSTALLATION.md:21](docs/INSTALLATION.md)
+e [docs/INSTALLATION.md:140](docs/INSTALLATION.md) declaram `Python 3.11+`.
+O texto é a primeira instrução que um host sem Python lê, e aponta para um piso
+que o próprio projeto rejeita.
+**Severidade P2:** é uma string de mensagem/doc divergente; não altera a
+capacidade por si, mas induz o usuário a instalar uma versão não suportada.
+**Owner:** @talos
+**Acceptance:** o hint passa a citar `Python 3.11+` e há um teste que compara a
+string do preflight com o piso documentado, de modo que os dois não divirjam
+de novo.
 
 ### Beta 11 — Runtime, governança, persistência e release
 
