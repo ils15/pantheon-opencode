@@ -7,6 +7,14 @@ dist/
 !src/plugins/tui/dist/**
 .venv/
 .pantheon/*
+# ADR series only: the decision records are versioned, the rest of the
+# memory bank (context, progress logs, task notes, legacy ADRs) stays local.
+# Git cannot descend into an excluded directory, so each level must be
+# re-included and the non-ADR remainder re-ignored to avoid exposing it.
+!.pantheon/memory-bank/
+.pantheon/memory-bank/*
+!.pantheon/memory-bank/adr/
+!.pantheon/memory-bank/adr/**
 # The code-mode payload ships inside the published tarball (package.json
 # `files` includes .pantheon/code-mode/**) and the installer seeds the
 # runtime scripts dir from it. It MUST be git-tracked: a fresh CI checkout
