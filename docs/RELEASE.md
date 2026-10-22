@@ -108,6 +108,13 @@ explícito bloqueia a publicação; WARN, SKIP, AMBIENTAL e NOT_TESTED nunca
 autorizam release evidence. Ausência de credencial, metadado ou tag é erro
 fatal, não degradação silenciosa.
 
+O job `validate` de `release.yml` executa seis gates — testes,
+compatibilidade de host, instalação, pacote, changelog e metadados — e cada um
+imprime `GATE <nome>: PASS` e grava `gate-evidence/<nome>.json`. Ausência de
+host, linha da matriz não medida ou artefato divergente reprova o gate; não há
+caminho de `SKIP` no release. A matriz de host e o contrato de cobertura estão
+em [`RELEASING.md`](RELEASING.md#six-release-gates).
+
 ## Evidência do artefato
 
 - Cada release cria exatamente um tarball `.tgz` do npm.

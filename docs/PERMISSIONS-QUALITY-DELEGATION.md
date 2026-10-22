@@ -210,7 +210,7 @@ one another, no layer validates against another at runtime, and they can disagre
 | 1 | Per-agent frontmatter | `src/agents/*.md` | A subset of keys reaches the installed config. The full block reaches the host only if the host reads the agent file. | **Partly** — see [§2.6](#26-which-layer-is-load-bearing) |
 | 2 | Routing matrix + permission keys | `src/routing.yml` | `presets:` and `presets.<n>.agents.<a>.model` are read at runtime. **Every permission and delegation key in it is decorative** — decorative here means *no code in this repository reads it*; it does **not** mean the host ignores it ([§2.6](#26-which-layer-is-load-bearing)). One narrow CI-time exception: the validator reads `delegation.zeus` ([§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not)). | **No** — see [§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not) |
 | 3 | Installed config the installer seeds | the user's `opencode.json` | The `agent.<name>.permission` blocks the host reads at session time. | **Yes** — see [§2.4](#24-layer-3-the-config-the-installer-seeds) |
-| 4 | V1→V2 translation map | `scripts/install/config-migration.mjs:33` | Only the V2 install path. Converts layer 3's shape; incomplete — see [§2.5](#25-layer-4-the-v1v2-translation-map). | **Yes, on the V2 path only** |
+| 4 | V1→V2 translation map | `scripts/install/config-migration.mjs:49-59` | Only the V2 install path. Converts layer 3's shape; keys outside the six-entry table still pass through — see [§2.5](#25-layer-4-the-v1v2-translation-map). | **Yes, on the V2 path only** |
 
 ### 2.2 Layer 1 — per-agent frontmatter
 
@@ -221,7 +221,7 @@ Selected examples, to show the shapes in use:
 |---|---|---|
 | `zeus` | flat allows plus `task: {"*": allow}` | `src/agents/zeus.md:5` |
 | `hermes` | flat allows plus `task: {"*": deny, apollo: allow}` | `src/agents/hermes.md:20` |
-| `mnemosyne` | scoped glob denies on `write` and `edit` | `src/agents/mnemosyne.md:39` |
+| `mnemosyne` | scoped glob denies on `write` and `edit` | `src/agents/mnemosyne.md:31-38` |
 | `iris` | nested command globs under `bash` | `src/agents/iris.md:9` |
 | `apollo` | flat denies **and** a separate `tools:` map | `src/agents/apollo.md:6` |
 
@@ -279,29 +279,40 @@ The verdict above is about the first; a reader who greps for the function name u
 
 This is the layer that reaches the host, and it is produced by a deliberately narrow
 extraction. The installer reads each agent file's frontmatter and copies **seven keys**
-into the installed config (`scripts/install/opencode.mjs:921`): colour, description,
-mode, hidden, temperature, the model-invocation flag, and `permission`
-(`scripts/install/opencode.mjs:948`). Those seven are the whole of what provably
-reaches an installed config.
+into the installed config: colour, description, mode, hidden, temperature, the
+model-invocation flag, and `permission` (`scripts/install/opencode.mjs:1840-1859`).
+Those seven are the whole of what provably reaches an installed config; six of them are
+listed in `MANAGED_FIELDS` (`:315-322`) and are overwritten on an existing agent, while
+`description` is written only for a new one (`:1894`).
 
 Everything else in an agent's frontmatter does not reach it. The installer extracts no
-`tools` map, no `mcp_tools`, no `skills`, no `reasoning_effort` and no `visible` flag,
-and a repo-wide search for a consumer of `mcp_tools` across `src/` and `scripts/`
-returns nothing.
+`tools` map, no `skills`, no `reasoning_effort` and no `visible` flag.
+
+`mcp_tools` is the exception, and it is not decorative. The installer reads it and folds
+it into the managed `permission` field instead of writing a key of its own
+(`scripts/install/opencode.mjs:1855-1859`). `deriveNativeMcpPermissions` (`:346-390`)
+emits one native rule per server: `<server>_*: deny` as the baseline for every server in
+the set, then `<server>_*: allow` when an entry is `all`, or `<server>_<tool>: allow` for
+each named tool (`:354-387`). A bundled server an agent never lists therefore keeps only
+the `deny` — unlisted means closed, which is the fail-closed default. MCP servers a user
+added outside the bundled five are not in the set and are untouched (`:324-330`,
+`:340-341`). The tests assert exactly this shape:
+`tests/install-e2e.test.mjs:404`, `:648`, `:691`, `:743`, `:771`, and
+`tests/install-opencode.test.mjs:55`.
 
 On top of the per-agent blocks, the installer seeds a small set of **top-level**
 defaults. These are declared in code rather than in a packaged template, with an
 explicit contract that nothing personal may be seeded there
-(`scripts/install/opencode.mjs:103`). What actually gets seeded, and the rule that
+(`scripts/install/opencode.mjs:281-295`). What actually gets seeded, and the rule that
 governs each:
 
 | Seeded value | Rule | Citation |
 |---|---|---|
-| `default_agent` | only if absent — a user's choice is kept | `scripts/install/opencode.mjs:104` |
-| `permission` as an object | only if absent | `scripts/install/opencode.mjs:1158` |
-| `permission.skill: {"*": allow}` | only if absent, and only when the skills component is installed | `scripts/install/opencode.mjs:1177` |
-| `permission.bash` dev allowlist | only if absent | `scripts/install/opencode.mjs:1203` |
-| `permission.mcp.<server>` defaults | per server, only if absent | `scripts/install/opencode.mjs:1327` |
+| `default_agent` | only if absent — a user's choice is kept | `scripts/install/opencode.mjs:1930-1931` |
+| `permission` as an object | only if absent | `scripts/install/opencode.mjs:2083` |
+| `permission.skill: {"*": allow}` | only if absent, and only when the skills component is installed | `scripts/install/opencode.mjs:2102-2103` |
+| `permission.bash` dev allowlist | only if absent | `scripts/install/opencode.mjs:2128-2135` |
+| `permission.mcp.<server>` defaults | per server, only if absent; on V2 `allow`/`deny` are translated to `<server>_*`, `ask` emits no rule and warns | `scripts/install/opencode.mjs:966-998` |
 
 Two properties of this layer matter for everything downstream:
 
@@ -310,36 +321,62 @@ Two properties of this layer matter for everything downstream:
   config, and a user value always survives an install.
 - **Per-agent permissions behave the opposite way.** The per-agent merge is not
   gap-filling: for an agent that already exists, the framework-managed fields are
-  overwritten from the canonical source (`scripts/install/opencode.mjs:974`). So the
+  overwritten from the canonical source (`scripts/install/opencode.mjs:1883-1887`). So the
   *agent-level* permissions are authoritative and the *top-level* ones defer to the
   user. Those two rules are different on purpose and it is worth knowing which side
   of the line a given setting falls on.
 
 For a **new** agent the seed is a fresh object, with one repair step: if the
 canonical permission block has no `bash` key, one is copied in
-(`scripts/install/opencode.mjs:998`). That branch is unreachable for any agent that
+(`scripts/install/opencode.mjs:1904-1909`). That branch is unreachable for any agent that
 already declares a `bash` entry, which is all of them.
 
 ### 2.5 Layer 4 — the V1→V2 translation map
 
 This layer runs only when the installer resolves the V2 generation
-(`scripts/install/opencode.mjs:1350`). It converts the V1-shaped config the merge
-produced into the V2 shape before writing.
+(`scripts/install/opencode.mjs:2188-2190`). It converts the V1-shaped config the
+merge produced into the V2 shape before writing.
 
-The permission-action map is four entries (`scripts/install/config-migration.mjs:33`):
+The permission-action map has **six** entries
+(`scripts/install/config-migration.mjs:49-59`):
 
-```
-bash → shell          skill → skill
-edit → edit           websearch → websearch
-```
+| V1 key | V2 action | Kind |
+|---|---|---|
+| `bash` | `shell` | rename |
+| `task` | `subagent` | rename |
+| `write` | `edit` | alias — collapses onto `edit` |
+| `edit` | `edit` | identity |
+| `skill` | `skill` | identity |
+| `websearch` | `websearch` | identity |
 
-Only the first is a rename. The other three are identity entries. **The map is
-incomplete**, and the module's own comment says unknown keys pass through
-(`scripts/install/config-migration.mjs:53`):
+`bash` and `task` are renames; `write` is an alias of `edit`. Every V2 host measured
+for P0-5 (`2.0.22`, `2.0.30`, `2.1.0`, `2.1.2`) evaluates a `write` tool call under
+the action name `edit`, so a rule emitted as `write` would never be the rule that
+decides the call — both V1 keys collapse onto `edit`, and a collision is resolved by
+effect restrictiveness rather than key order. The remaining three entries are
+identity mappings.
+
+Keys outside the table still pass through under their V1 spelling
+(`scripts/install/config-migration.mjs:425`):
 
 ```js
-const action = V1_PERMISSION_TO_ACTION[key] || key
+const action = Object.hasOwn(V1_PERMISSION_TO_ACTION, key) ? V1_PERMISSION_TO_ACTION[key] : key
 ```
+
+That passthrough is deliberate, not an oversight: only mappings confirmed against a
+host are in the table, and a key with no observed action is kept rather than renamed
+by guess (`scripts/install/config-migration.mjs:32-48`). `read` passes through as
+`read`, which coincides with the host action measured on `2.0.22`/`2.0.30`/`2.1.x`.
+For `webfetch`, `grep`, `glob` and `question` the host action was **observed and
+PASS**ed on all five action-name hosts (`2.0.29`, `2.0.30`, `2.1.0`, `2.1.2`,
+`2.1.3`), under the same spelling the converter emits
+(`evidence/action-names/EVIDENCE.md:16-20`). Two keys that used to be in the
+unverified list are now measured, and neither is an action name: `mcp` is a *server
+map* that the converter translates into `<server>_*` rules — the host never evaluates
+an action called `mcp` (see [MCP rules](#mcp-rules-the-form-the-host-evaluates)) — and
+`hashline_edit` is a Code Mode plugin tool for which the host emits no permission
+evaluation at all. `websearch` is the only key **not measured**, and no delivered
+config emits it, so nothing is pending on it; it is neither confirmed nor refuted.
 
 Current behaviour, verified by running the converter over the permission blocks this
 project actually writes:
@@ -347,38 +384,98 @@ project actually writes:
 | V1 key in the config | V2 action emitted |
 |---|---|
 | `bash` | `shell` |
-| `read`, `grep`, `glob`, `webfetch`, `question` | passes through unchanged |
-| `task` | passes through unchanged |
-| `write`, `edit`, `hashline_edit` | passes through unchanged |
-| `mcp` | passes through unchanged |
+| `task` | `subagent` |
+| `write`, `edit` | `edit` |
+| `read` | `read` (not a map entry; the passthrough name matches the measured action) |
+| `mcp` (server map) | one rule per server: `{action: "<server>_*", resource: "*"}`; `ask` emits no rule (see below) |
+| `hashline_edit` | `hashline_edit` (passthrough; the host emits no evaluation for this plugin tool) |
+| `webfetch`, `grep`, `glob`, `question` | the same name — identity passthrough, host action **observed, PASS** on all five hosts (`evidence/action-names/EVIDENCE.md:16-20`) |
 
-Two consequences, both verified by execution rather than reading:
+**Collisions and ordering are part of the guarantee, not a detail.** Two different
+questions, two different answers:
+
+- **Same action and same resource:** `deny > ask > allow`. An unrecognized effect
+  never replaces a known one and never downgrades a `deny`; a collision merges into
+  the existing entry instead of appending a contradiction
+  (`resolveEffects`, `scripts/install/config-migration.mjs:276-306`;
+  `pushPermission`, `:329-340`). This is why the `write`/`edit` aliasing cannot turn
+  a scoped `deny` into an `allow`.
+- **Different resources: specificity decides.** The converter emits least specific
+  first — `*` → glob → literal (`comparePermissions`,
+  `scripts/install/config-migration.mjs:111-123`) — and the host resolves overlapping
+  rules with `last-match-wins` (measured on all five hosts). The most specific rule
+  for a resource is therefore emitted last and wins. A scoped `allow` **survives** a
+  broader `deny` inside its own scope; outside that scope the broad `deny` still
+  applies. Restrictiveness (`allow` → `ask` → unrecognized → `deny`) only breaks ties
+  between rules of the *same* specificity, which is why `deny` is last within a
+  specificity class rather than last for the whole action.
+- **Top-level `permission` (V1) and `permissions` (V2) coexisting:** the V2 array is
+  the base and is never discarded, the converted V1 rules are merged into it, and a
+  conflict on the same action+resource resolves by restrictiveness
+  (`resolveTopLevelPermissions`, `scripts/install/config-migration.mjs:1109-1152`;
+  `mergePermissionArrays`, `:1014-1068`).
+
+This replaces an earlier description in this document ("`allow → ask → unrecognized →
+deny`, so `deny` is always emitted last for an action"). That ordering was wrong about
+which rule wins when resources differ: it emitted a broad `deny` after a scoped
+`allow` and concluded the scoped allow was dead. The five measured hosts do the
+opposite — the later, more specific rule wins — so the correct reading of, for
+example, `mnemosyne` is that its memory-bank allow is live.
+
+**Suppression is reported, but only when it crosses a source boundary.** A `deny`
+persisted in the V2 `permissions` array that an incoming V1 `allow` neutralizes in a
+narrower scope — or the reverse — produces a warning naming both rules
+(`warnSuppressedPermissions`, `scripts/install/config-migration.mjs:237-264`).
+Intentional scoping written in one source is silent: `mnemosyne`'s `"*": deny` plus
+its `allow` in the memory bank is the shipping example, and warning on it would fire
+for the product's own templates.
+
+**Residual gap — a V2 `permissions` array inside an `agents` block is still
+passthrough.** When the config already carries a V2 `agents` block, its per-agent
+`permissions` arrays are copied into the result **without reordering** and without
+the suppression warning (`mergeManagedAgents`,
+`scripts/install/config-migration.mjs:864-884`; the `agents` branch of
+`migrateV1toV2` is `:1197-1205`). The specificity ordering above therefore holds for
+top-level permissions and for an agent whose rules were converted from V1
+(`:1186-1189`), **not** for a pre-existing V2 agent block: the order there is
+whatever was on disk, and this repository does not re-sort it. Because the host
+honours the *last* matching rule, a hand-written block that puts `<literal>: deny`
+before `*: allow` will let the `allow` win; that is the one place where the emitted
+order is not the safety property.
+
+Two further consequences, both verified by execution rather than reading:
 
 1. **Resource granularity survives.** A nested V1 value becomes one rule per
    resource, so the orchestrator's `"*": allow` and the scoped denies do not
-   collapse. But the *action* name is whatever the V1 key was.
-2. **A nested glob deny keeps both halves.** The scoped write rule produces
-   `{action: "write", resource: "*", effect: "deny"}` **and**
-   `{action: "write", resource: ".pantheon/memory-bank/**", effect: "allow"}`. Which
-   of the two a host honours, and in what order, is a host-side question this
-   repository cannot answer — see [§5](#5-unverified-and-the-evidence-that-would-settle-it).
+   collapse into a single rule.
+2. **The `mnemosyne` template is enforced by scope, not by the broad deny alone.**
+   The scoped write/edit rules produce `{action: "edit", resource: "*",
+   effect: "deny"}` followed by `{action: "edit", resource:
+   ".pantheon/memory-bank/**", effect: "allow"}` and `{action: "edit", resource:
+   ".pantheon/deepwork/**", effect: "allow"}` (the same shape for `edit`) from
+   `src/agents/mnemosyne.md:31-38`. Under specificity ordering the two literal
+   allows are emitted last and are the rules that decide writes inside those
+   directories; every other path matches only the `*` deny. The template's intent
+   and the host's behaviour agree.
 
 **Framing, preserved deliberately.** This assessment was made as a **lower bound on
-blast radius, not an estimate**. What is established is the shape of the defect: the
-map covers one rename out of the action vocabulary the config uses, and every other
-key passes through unrenamed. What is *not* established is how many installed
-configs are affected or what a given host does with an unrecognised action — both
-require inspecting installed configs and host behaviour respectively. Treat the
-count of affected keys as a floor, never as a total.
+blast radius, not an estimate**. What is established is the shape of what remains:
+the table contains only mappings confirmed against a host, so keys outside it reach
+the host under their V1 spelling — `read` happens to coincide with a measured
+action, `mcp` has its own server-map translation, and the rest have no observed
+action at all. What is *not* established is how
+many installed configs carry those unobserved keys or what a given host does with an
+unrecognised action — both require inspecting installed configs and host behaviour
+respectively. Treat the count of affected keys as a floor, never as a total.
 
 **A second, documented gap on the same path.** The installer writes the V1 spelling
-`permission` (`scripts/install/opencode.mjs:128`) while V2 reads `permissions`. Both
+`permission` (`scripts/install/opencode.mjs:2083`) while V2 reads `permissions`. Both
 files record this as known debt rather than fixing it
-(`scripts/install/opencode.mjs:118`, `scripts/install/config-migration.mjs:330`),
-because choosing a winner changes what an install writes. The migration's own
-managed-field list uses the V2 name
-(`scripts/install/config-migration.mjs:340`), and a drift guard asserts the two
-managed-field lists match as sets (`scripts/install/config-migration.mjs:362`). So
+(`scripts/install/opencode.mjs:308-311`,
+`scripts/install/config-migration.mjs:798-802`), because choosing a winner changes
+what an install writes. The migration's own managed-field list uses the V2 name
+(`scripts/install/config-migration.mjs:804-812`), and a drift guard asserts the two
+managed-field lists match as sets (`scripts/install/config-migration.mjs:830-838`). So
 the *field lists* are kept in sync; the *spelling the installer writes* is not.
 
 Verified consequence: when the migration runs, the agent ends up with a single
@@ -388,6 +485,40 @@ framework-managed. The user's tightening does not survive an install. This is
 consistent with the managed-field contract, but it is the opposite of what "the
 installer's merge is additive" suggests.
 
+#### MCP rules: the form the host evaluates
+
+An MCP call is not evaluated under the action `mcp`. On every 2.x host measured for
+this round, the host synthesises the action **`<server>_<tool>`** and always passes
+`resource: ["*"]`. The consequences are not intuitive, so they are tabulated:
+
+| Form written in the config | What the 2.x host does |
+|---|---|
+| `{action: "<server>_*", resource: "*", effect: "deny"}` | **Blocks.** The tool disappears from the catalog; the model never sees it. |
+| `{action: "<server>_*", resource: "*", effect: "allow"}` | **Allows** — the same gate, opposite effect. |
+| `{action: "<server>_<tool>", resource: "*", effect: "deny" \| "allow"}` | Matches that one tool. This is what the installer emits from an agent's `mcp_tools` allowlist (`deriveNativeMcpPermissions`, `scripts/install/opencode.mjs:346-390`), alongside the `_*` form. |
+| `{action: "<server>_*", resource: "*", effect: "ask"}` | **Not a prompt.** The host hides the tool instead. `ask` is not expressible for MCP in 2.x. |
+| `permission.mcp.<server>: allow \| deny` (the V1 object shape) | **Inert to the host**, but the V2 converter rewrites it to `{action: "<server>_*", resource: "*"}` (`convertMcpPermissions`, `scripts/install/config-migration.mjs:371-401`). So the installed rule gates; the raw key alone would not. |
+| `permission.mcp.<server>: ask` (the V1 object shape) | **No rule is emitted**, with a warning (`:389-396`): translating `ask` would silently hide the tool. |
+| `{action: "mcp", resource: …, effect: …}` | **Inert.** The action name is never produced for an MCP call. |
+| Any `resource` other than `"*"` on an MCP rule | **Inert.** The host supplies `["*"]` itself. |
+
+The installer keeps its `permission.mcp.*` defaults for V1 compatibility
+(`scripts/install/opencode.mjs:966-998`). On V2, `allow` and `deny` defaults are
+translated into `<server>_*` rules, but the two servers whose default is `ask`
+(`pantheon-code-mode`, `pantheon-vision`) produce **no rule**: the user is warned
+that the default is unenforceable (`S.mcpAskNotEnforceable`,
+`scripts/install/strings.mjs:49-52`) instead of being given a silent gate. The
+enforceable form is `<server>_*` with `deny`, or disabling the server in the host's
+MCP config. This is why "`permission.mcp.*` protects the tools" is only true of
+`allow`/`deny`, and only because the converter rewrites them.
+
+Two plugin tools are outside this gate entirely. `hashline_edit` and
+`vision_describe` reach the model through Code Mode, and the host emits **no
+permission evaluation** for those calls — a `permissions` rule naming them decides
+nothing. Their protection is the plugin's own guard, not the host permission layer.
+`websearch` has not been measured; this document makes no claim about it in either
+direction.
+
 ### 2.6 Which layer is load-bearing
 
 Stated plainly, with the evidence.
@@ -396,7 +527,11 @@ Stated plainly, with the evidence.
 reads at session time, and it is built from the seven frontmatter keys in
 [§2.4](#24-layer-3-the-config-the-installer-seeds). Everything the installer does
 not extract is decorative *with respect to that config* — which, per §2.4, includes
-the `tools` map, `mcp_tools`, `skills`, `reasoning_effort` and `visible`.
+the `tools` map, `skills`, `reasoning_effort` and `visible`. `mcp_tools` is **not** on
+that list: it does reach the config, just never as a key of its own — it is translated
+into per-server `permission` rules by `deriveNativeMcpPermissions`
+(`scripts/install/opencode.mjs:346-390`, folded in at `:1855-1859`). What the host
+reads there is `permission`, not `mcp_tools`.
 
 **A qualification on "decorative", because it is easy to overread.** Decorative here
 means *no code in this repository reads it*. It does not mean the host ignores it.
@@ -521,7 +656,7 @@ Three layers again, and this time they do not all agree.
 
 | Layer | Says | Enforced by |
 |---|---|---|
-| Frontmatter `permission.task` | Orchestrator: `"*": allow`. `hermes`/`athena`: `"*": deny, apollo: allow`. All others: `"*": deny`. | The host, from the installed config. It reaches the config (verified, [§2.4](#24-layer-3-the-config-the-installer-seeds)); whether the host applies last-match-wins glob semantics to a `task` key is **UNVERIFIED** — see [§5](#5-unverified-and-the-evidence-that-would-settle-it) |
+| Frontmatter `permission.task` | Orchestrator: `"*": allow`. `hermes`/`athena`: `"*": deny, apollo: allow`. All others: `"*": deny`. | The host, from the installed config. It reaches the config (verified, [§2.4](#24-layer-3-the-config-the-installer-seeds)), and the host applies the assumed glob semantics — **measured, PASS** on all five hosts: D1 lets `apollo` complete with 1 child session, D2 denies `demeter` with 0 child sessions (`bench/results/p05-permission-matrix-2026-10-22.md:75-76`; [§5](#5-unverified-and-the-evidence-that-would-settle-it) row 5) |
 | Routing matrix (`agents.<a>.subagent_can_delegate_to`) | Same intent, per agent. Enforced as a consistency invariant by the repo validator (`scripts/validate-routing.mjs:236`) and `can_delegate` by `scripts/validate-routing.mjs:214`. | The validator, not the runtime |
 | Runtime matrix (`isDelegationAllowed`) | Orchestrator → anyone; `athena`/`hermes` → `apollo` only; **everything else denied** (`src/pantheon/delegation-enforce.ts:138`) | **The plugin's tool hook** |
 
@@ -768,59 +903,76 @@ Surfaced, not resolved. Each row names the layers and what each one says.
 
 | # | Layers | The disagreement |
 |---|---|---|
-| 1 | `routing.yml` global `permission.task` vs per-agent frontmatter | The routing file declares one global rule, `"*": allow` (`src/routing.yml:533`). Every agent's frontmatter declares `"*": deny` except the orchestrator's. The routing layer is decorative ([§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not)), but it reads as the global default. |
+| 1 | `routing.yml` global `permission.task` vs per-agent frontmatter | The routing file declares one global rule, `"*": allow` (`src/routing.yml:578-580`). Every agent's frontmatter declares `"*": deny` except the orchestrator's. The routing layer is decorative ([§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not)), but it reads as the global default. |
 | 2 | `routing.yml` `background_job_board` vs the shared-board factory | Same values, two sources. The YAML is not read. Changing the YAML silently no-ops. |
 | 3 | `routing.yml` `background_delegation` timeouts vs the instructions-file timeout table | Two independent timeout sources. Neither is code-enforced; the instructions table is the one the model sees. |
 | 4 | `permission:` block vs `tools:` map | Two mechanisms for the same restriction, on the same agents, with no validator comparing them and different failure modes. |
 | 5 | Installer writes `permission` (V1 spelling) vs V2 reads `permissions` | Recorded as known debt in both files and deliberately not fixed. Verified consequence: on the V2 path the installer's value overwrites a user's hand-written `permissions` on a managed agent. |
-| 6 | Translation map vs the action vocabulary the config uses | The map covers one rename out of many; all other keys pass through unrenamed ([§2.5](#25-layer-4-the-v1v2-translation-map)). Assessed as a lower bound on blast radius. |
-| 7 | `docs/INSTALLATION.md`'s V2 config example vs the migration output | The documented example shows a rule shape keyed on the tool with an allowed-agent list (`docs/INSTALLATION.md:179`); the converter emits a shape keyed on an action with a resource and an effect (`scripts/install/config-migration.mjs:33`). One of the two is stale. |
-| 8 | `docs/INSTALLATION.md`'s V2 MCP example vs the MCP converter | The example shows the wrapper form; the converter's own comment says the host rejects that wrapper and normalises it away (`scripts/install/config-migration.mjs:243`). The example contradicts the code. |
+| 6 | Translation map vs the action vocabulary the config uses | The table carries only mappings confirmed against a host: `bash` and `task` are renames, `write` is an alias of `edit`, and keys outside the table keep the V1 spelling with no observed host action ([§2.5](#25-layer-4-the-v1v2-translation-map)). Assessed as a lower bound on blast radius. |
+| 7 | `docs/INSTALLATION.md`'s V2 config example vs the migration output | The documented example shows a rule shape keyed on the tool with an allowed-agent list (`docs/INSTALLATION.md:405-410`); the converter emits a shape keyed on an action with a resource and an effect (`convertPermissionsV1toV2`, `scripts/install/config-migration.mjs:415-439`). One of the two is stale. |
+| 8 | `docs/INSTALLATION.md`'s V2 MCP example vs the MCP converter | The example shows the wrapper form; the converter's own comment says the host rejects that wrapper and normalises it away (`convertMcpV1toV2`, `scripts/install/config-migration.mjs:631-634`). The example contradicts the code. |
 | 9 | Routing matrix vs board path | The matrix is enforced on the native path only. The board path enforces a concurrency cap and no permissions ([§3.2](#32-who-may-delegate-to-whom)). |
 | 10 | Internal board concurrency cap vs root dispatch | The board caps mirrored running jobs **per agent** at three (`src/pantheon/shared-board.ts:25`; `getRunningCount(agent)`, `src/pantheon/background-job-board.ts:512`), and drops a mirror above the cap. The root has no board tool in the reported Beta 10 inventory, and active-runtime `subagent` concurrency is host-dependent; the internal cap is neither a root dispatch limit nor a reliable root tracker. Current Zeus instructions do not prescribe fixed-size waves or board tracking. |
 | 11 | Orchestrator's depth rule vs the plugin's depth rule | Two independent depth mechanisms: a key-value counter in the instructions (`src/agents/zeus.md:189`) and a parent-child session hierarchy in the plugin (`src/pantheon/delegation-enforce.ts:353`). The plugin's is the enforced one. |
 | 12 | `AGENTS.global.md` role table vs canonical agent files | Static generator string, not rendered from canonical definitions ([§2.7](#27-the-agent-table-in-agentsglobalmd)). |
 | 13 | Broad coverage report vs focused coverage gates | `npm run coverage` is report-only; Python MCP and V2 plugin coverage each have separate 80% CI gates. |
+| 14 | `permission.mcp.*` as documented vs what the host evaluates | The installer defaults and the docs present `permission.mcp.<server>` as the MCP gate. Measured on the 2.x matrix: the host has no `mcp` action and ignores the raw key; the gate is `<server>_<tool>` with `resource: ["*"]`, and it applies only because the V2 converter rewrites `allow`/`deny` into `<server>_*`. `ask` is not expressible — it hides the tool instead of prompting ([§2.5](#mcp-rules-the-form-the-host-evaluates)). |
 
 **Rows 7 and 8 name stale examples in a document this one does not fix.** Both were
 re-verified for this revision and are still stale as of `80bac52`: the `permissions`
-example (`docs/INSTALLATION.md:177-182`) is keyed on `tool` with an `allow` list, while
+example (`docs/INSTALLATION.md:405-410`) is keyed on `tool` with an `allow` list, while
 the converter emits `{action, resource, effect}`; and the `mcp.servers` wrapper
-(`docs/INSTALLATION.md:183-188`) is the form the converter's own comment says the host
-rejects (`scripts/install/config-migration.mjs:238`). **Correcting them belongs to a
+(`docs/INSTALLATION.md:411-416`) is the form the converter's own comment says the host
+rejects (`scripts/install/config-migration.mjs:631-634`). **Correcting them belongs to a
 follow-up that edits `docs/INSTALLATION.md`, not to this document.** Two consequences
 for the reader: do not treat this table as authorisation to edit that file as part of
 reading it, and until the follow-up lands do not treat those two examples as
 authoritative — they are the stale side of a known disagreement, not a specification.
+Row 14 is the one this round did act on: the enforceable MCP form is now stated
+explicitly in `README.md` and `docs/INSTALLATION.md` next to the `permission.mcp.*`
+defaults, without rewriting the two stale examples.
 
 ---
 
 ## 5. Unverified claims: classification and the evidence that settles each
 
 Each item below was previously listed as unverified. None remains silently
-`UNVERIFIED`: every row is either **verifiable in this release** with a named
-test/canary, or an explicit **Known Issue**. Rows that touch P0-5 (permission
-action names or allow/deny order) are **blockers**, never Known Issues
-(ADR-0014 Q4).
+`UNVERIFIED`: every row is either **measured**, **verifiable in this release** with a
+named test/canary, an explicit **Known Issue**, or — in one case — an explicitly
+declared **not measured**. Any *still-open* question that touches P0-5 (permission
+action names or allow/deny order) is a **blocker**, never a Known Issue
+(ADR-0014 Q4); where this round measured the answer, the row records the measurement
+and the item stays subject to its review gate.
 
 | # | Claim | Classification | Resolution |
 |---|---|---|---|
 | 1 | Whether the host honours a `tools:` map entry by hiding the tool or by failing the call, and how `tools` and `permission` interact when both are present | **Verifiable in this release** | Extend `tests/canary/plugin-v2-tool-canary.test.mjs` with one agent declaring both `tools` and `permission`; run on every matrix host (`1.19.x`, `2.0.29`, `2.0.30`, `2.1.x`) and record hide-vs-fail behaviour in the result table. |
-| 2 | Whether the host honours `mcp_tools`, `visible`, `skills` and `reasoning_effort` from agent frontmatter | **Verifiable in this release** | The same config-load canary, one key at a time, on every matrix host: assert the host-emitted config/behaviour rather than inferring from the repo. |
-| 3 | Whether a 2.x host recognises the action names the converter emits (`read`, `grep`, `glob`, `task`, `webfetch`, `question`, `write`, `mcp`, …) as distinct actions | **BLOCKER — P0-5** | `permission.evaluate` probe on every matrix host, plus inspection of the installed config. No GO while any emitted action name is unrecognised (ADR-0014 Q4). |
-| 4 | Whether a nested glob deny and its wildcard sibling resolve last-match-wins, first-match-wins, or most-specific-wins | **BLOCKER — P0-5** | A test config exercising both orders on every matrix host; the resolution order must be recorded and match the installed policy. |
-| 5 | Whether the host applies the glob semantics the project assumes to a `permission.task` block — i.e. `"*": deny` plus one named allow permits only that one agent | **BLOCKER — P0-5** | End-to-end canary: one agent whose frontmatter permits exactly one target attempts a second; the denial must be observed on every matrix host. |
+| 2 | Whether the host honours `mcp_tools`, `visible`, `skills` and `reasoning_effort` from agent frontmatter | **Verifiable in this release** | The same config-load canary, one key at a time, on every matrix host: assert the host-emitted config/behaviour rather than inferring from the repo. For `mcp_tools` the answer no longer changes what gates a call: the installer translates it into `<server>_*` / `<server>_<tool>` permission rules at install time ([§2.4](#24-layer-3-the-config-the-installer-seeds)), so the config carries `permission`, never `mcp_tools`. |
+| 3 | Whether a 2.x host recognises the action names the converter emits (`read`, `grep`, `glob`, `task`, `webfetch`, `question`, `skill`, `write`, `mcp`, …) as distinct actions | **Measured — P0-5; recorded** | Every name the product emits was observed and **PASS** on all five action-name hosts (`2.0.29`, `2.0.30`, `2.1.0`, `2.1.2`, `2.1.3`): `read`, `grep`, `glob`, `webfetch`, `question`, `skill`, `shell`, `edit`, `task`→`subagent` — action-name evidence artifact (`evidence/action-names/EVIDENCE.md:16-20`, `:25-26`) plus the `actionCoverage` matrix (`bench/results/p05-permission-matrix-2026-10-22.md:63-65`); no host is an exception. MCP is settled separately: the host evaluates a tool call as `<server>_<tool>` with `resource: ["*"]`; `action: "mcp"` is inert, and the raw `permission.mcp.*` key is rewritten by the converter to `<server>_*` (`allow`/`deny`) or dropped with a warning (`ask`); `<server>_*` with `deny` blocks and with `allow` permits ([§2.5](#mcp-rules-the-form-the-host-evaluates)). `websearch` is the only action name not measured, and no delivered config emits it, so nothing is pending on it (row 10). |
+| 4 | Whether a nested glob deny and its wildcard sibling resolve last-match-wins, first-match-wins, or most-specific-wins | **Measured — P0-5; recorded** | The measured resolution is last-match-wins across all five hosts, and the converter emits least specific first (`*` → glob → literal), so the most specific matching rule wins. A scoped `allow` therefore survives a broader `deny` inside its scope ([§2.5](#25-layer-4-the-v1v2-translation-map)). Remaining caveat: a pre-existing V2 `agents` block is not re-sorted, so on-disk order decides there. |
+| 5 | Whether the host applies the glob semantics the project assumes to a `permission.task` block — i.e. `"*": deny` plus one named allow permits only that one agent | **Measured — P0-5; recorded** (no longer a blocker) | Measured end-to-end on all five hosts: **D1** (`{"*": "deny", "apollo": "allow"}`) lets `apollo` complete with 1 child session and a `subagent/apollo allow` evaluation; **D2** denies `demeter` with `Permission denied: subagent` and 0 child sessions (`bench/results/p05-permission-matrix-2026-10-22.md:75-76`, raw values `:95-96`; the same `✔` at `v2.*.log:25`). The assumed semantics hold, so the row no longer carries blocker status. |
 | 6 | Whether the host exposes a blocking status/wait tool on a given runtime | **Verifiable in this release** | Inspect the active root tool registry on each matrix host and record the presence/schema of `task_status`/`cancel_task`; the result is per-host, not generation-wide. |
 | 7 | Whether a background child's completion is observable on a given host build | **Verifiable in this release** | Probe each matrix build: dispatch a background child and record which completion events fire. |
 | 8 | The number of installed configs actually affected by the incomplete translation map | **Known Issue — accepted, non-blocking** (not one of the 11 P2; separately declared) | No host contract settles the population. Enumerate installed configs during the release field check; the P0-5 remediation requires re-running the installer on every affected config, so the population is covered by remediation rather than by a GO gate. |
+| 9 | Whether `ask` can gate an MCP tool | **Known Issue — accepted, non-blocking, and warned** | It cannot on 2.x: `ask` hides the tool instead of prompting, so it is not the effect it names. The installer keeps the `ask` defaults for V1, emits no rule for them on V2, and prints an explicit "not enforceable" warning per server (`scripts/install/strings.mjs:49-52`). The enforceable alternative is `deny` on `<server>_*`, or disabling the server. |
+| 10 | Whether `websearch` is gated by the permission layer | **UNVERIFIED — not measured** | No measurement was taken in this round. This document neither claims support nor denies it; the evidence that would settle it is a `permission.evaluate` probe for a `websearch` call on every matrix host. |
 
 Rows 1, 2, 6 and 7 have a named test/canary that settles them in this release.
-Rows 3, 4 and 5 are the P0-5 security blockers and cannot be accepted as Known
-Issues. Row 8 is the only Known Issue among the eight, and it does not weaken
-P0-5: it is a population count, not a permission-name or ordering question.
+Rows 3, 4 and 5 now carry measured answers — action-name coverage, MCP action form and
+specificity ordering, and the `permission.task` glob — and are recorded in
+[§2.5](#25-layer-4-the-v1v2-translation-map). **No permission action name is a P0-5
+blocker: the count is zero.** What remains is Known Issues, not blockers: `ask` is not
+expressible for MCP on 2.x, so the installer warns per server instead of silently
+mis-gating (row 9); `hashline_edit` and `vision_describe` have no permission gate at all,
+because the host emits no evaluation for those calls; `websearch` is unmeasured and
+emitted by no delivered config (row 10, the one explicitly unmeasured item, stated as
+such rather than guessed); `2.0.22` is outside the action-name matrix for lack of the V2
+surface rather than by failure; and the pinned SDK type still diverges from the V1
+runtime (`type`/`pattern` vs `permission`/`patterns`). Row 8's population count is the
+remaining Known Issue of scope, covered by remediation rather than by a GO gate.
 
-All eight are host-side or population-side questions. The one item this list
-previously carried that the repository *can* settle on its own — whether the
+All ten are host-side, population-side, or product-limitation questions. The one item
+this list previously carried that the repository *can* settle on its own — whether the
 routing validator runs in CI on every change — has been resolved and moved to
 [§1.2](#12-what-the-reviewer-enforces-and-what-it-does-not) as a dated fact: it
 is enforced per pull request, and ungated only for direct pushes to `main`.

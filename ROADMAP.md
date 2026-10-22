@@ -69,8 +69,11 @@ publicada no dist-tag `beta` do npm (`beta = 1.6.0-beta.18`); o canal `latest`
 ainda serve `1.5.2`.** As decisões de release da `1.6.0` stable estão fixadas no
 [ADR-0014](.pantheon/memory-bank/adr/0014-release-v1-6-0-stable-decisoes-e-matriz.md)
 (Q1–Q7). O escopo é a `1.6.0` stable, com 6 fases e caminho crítico
-1→2→4→5→6. **P0-5 é bloqueio absoluto (Q4).** O candidato **não está publicado
-nem é release-ready**; esta atualização não declara prontidão para release.
+1→2→4→5→6. **Os três P0 que restavam fecharam em 2026-10-22, todos na
+modalidade `CLOSED (runtime evidence)` e com as ressalvas registradas no próprio
+item: P0-5, bloqueio absoluto de segurança (Q4); P0-6; e P0-3. Não resta P0
+aberto neste documento.** O candidato **não está publicado nem é
+release-ready**; esta atualização não declara prontidão para release.
 Evidência ausente ou marcada `NOT_TESTED`, `WARN`, `SKIP` ou `AMBIENTAL` não é
 `PASS`. Os contratos existentes em
 [docs/RELEASE.md](docs/RELEASE.md),
@@ -88,7 +91,7 @@ com três seções/workstreams; nenhum número de planos adicionais é presumido
 |---|---|
 | OpenCode V1 | `src/plugin.ts` preserva o plugin V1 **em código**: `hashline_edit`, as 3 goal tools, `pantheon_cost`, `pantheon_model`, BackgroundJobBoard, eventos/tool hooks e compaction hook. Sob um host V2 a entrada `.ts` que essa geração registra é rejeitada; sob um host V1 ela é a superfície. O caso que a derrubava — o seletor de geração escolhendo `v1` contra um host V2 — foi corrigido pelo PR #202 (P0-1, `CLOSED (code)`). |
 | OpenCode V2 | O host da série 2.x **rejeita caminhos de arquivo `.ts`** nas arrays de plugin e descarta a entrada. A recusa foi **medida em runtime** no host `2.0.22`, cujo log traz `configured plugin path must be a directory` — essa string é do **host**, não do repositório: código, testes e docs do repo citam apenas a paráfrase `must be a directory`. Arquivos dentro de um **diretório** `<configDir>/plugin/` ou `<configDir>/plugins/` são aceitos. As chaves singular `plugin` e plural `plugins` são ambas lidas — a normalização concatena a singular na plural. **A forma do lado V2 está correta e comprovadamente carrega**: `src/plugin-v2.ts:1078-1079` declara `plugin = define({` com `id: 'pantheon-opencode-v2'`, `:1081` define `async setup`, e `:1220` faz `export default`; `define` é identidade no SDK instalado, e `src/plugin-v2/` contém o `index.ts` que o resolver acha sem `package.json`. O que derrubava a superfície era o installer **remover** essa entrada, não ela ser inválida (P0-1, corrigido pelo PR #202). O adapter continua sem registrar Board nem compaction V1, e não é um adapter de paridade do runtime V1. |
-| Installer | Seleciona **uma única** geração (`v1`, `v2` ou `auto`). `v1` registra **arquivos** `.ts` sob a chave singular `plugin`; `v2` registra o **diretório** `src/plugin-v2` sob a chave plural `plugins`. `auto` é o **default** e resolve contra o host, na ordem: explícito > `OPENCODE_VERSION` > `OPENCODE_BIN` casando `/(?:^\|[\\/])opencode2(?:\.exe)?$/i` > probe de `--version` do host (major ≥ 2 → `v2`) > aviso e fallback `v1` (`scripts/install/opencode-version.mjs:213-288`). O default `'v1'` que curto-circuitava era o defeito de **P0-1**, corrigido pelo PR #202 (`80bac52`, 2026-10-04): `bin/pantheon-init.mjs:427`, `scripts/install/opencode.mjs:528` e a assinatura do resolver (`scripts/install/opencode-version.mjs:213`) passam `'auto'`. P0-5 e P0-6 são defeitos independentes do gate de geração e seguem `OPEN`. |
+| Installer | Seleciona **uma única** geração (`v1`, `v2` ou `auto`). `v1` registra **arquivos** `.ts` sob a chave singular `plugin`; `v2` registra o **diretório** `src/plugin-v2` sob a chave plural `plugins`. `auto` é o **default** e resolve contra o host, na ordem: explícito > `OPENCODE_VERSION` > `OPENCODE_BIN` casando `/(?:^\|[\\/])opencode2(?:\.exe)?$/i` > probe de `--version` do host (major ≥ 2 → `v2`) > aviso e fallback `v1` (`scripts/install/opencode-version.mjs:213-288`). O default `'v1'` que curto-circuitava era o defeito de **P0-1**, corrigido pelo PR #202 (`80bac52`, 2026-10-04): `bin/pantheon-init.mjs:427`, `scripts/install/opencode.mjs:528` e a assinatura do resolver (`scripts/install/opencode-version.mjs:213`) passam `'auto'`. P0-5 e P0-6 (ambos `CLOSED (runtime evidence)`, 2026-10-22) são defeitos independentes do gate de geração. |
 | MCP servers | Os 5 servidores rodam em MCP2.2 + FastMCP 4.0.10, com `httpx==0.28.1` pinado no runtime compartilhado. Fontes canônicas em `src/mcp/*.py`; o installer copia de lá. A cópia `scripts/memory_mcp_server.py` é **intencionalmente divergente** (contrato de memória leve, sem ferramentas de codemap) e essa assimetria é portada por `tests/test_mcp_scripts_sync.py` — é desenho, não drift. |
 | TUI | `pantheon-tui` é componente separado, registrado em `tui.json` somente quando `plugins` é instalado. Native tasks exigem origem, relação parent/child e status fornecidos explicitamente pelo host; ausência de Markdown não é autodetecção. |
 | Histórico e recuperação | `.pantheon/delegations/` guarda relatórios históricos do antigo engine V1 de delegação (removido em favor do `task()` nativo). Jobs antigos/running não são auto-retomados após restart. |
@@ -96,7 +99,7 @@ com três seções/workstreams; nenhum número de planos adicionais é presumido
 | Native tasks no painel | O mirror de children de `task(background=true)` no board compartilhado (singleton globalThis, à prova do double-load npm+repo) está implementado em `src/plugin.ts`, e o painel de Delegations o lê. É um recurso **V1-only**: sob V2 o `src/plugin.ts` não é a superfície, então **não tratar como entrega de paridade V2**. |
 | Painel de Delegations v2 | Atividade ao vivo por delegação (`↳ <tool> <resumo>` via message.part), estado `retry` distinto (⟳) e seção `Archived (n)` paginada para relatórios terminais antigos. |
 | Update e freshness | `pantheon-opencode update` instala o novo pacote pelo dist-tag e re-roda init; o postinstall sincroniza todos os artefatos de cópia; marker `install-state.json` + `doctor` detectam drift de versão; CI falha se o `dist/` da TUI commitada estiver stale. |
-| Installer resiliente | Pré-checagens de python3/npm antes de escrever; `opencode.json` atômico com `.bak`; venv falha → instalação completa sem entradas MCP (aviso); refs Pantheon de instalações antigas (node_modules de outros prefixes/caches npx) são podadas a cada init. A poda resolve refs *velhos*; não resolve ref *que aponta para a árvore de instalação errada* — a config grava um caminho absoluto re-resolvido só no `init` (P0-6). |
+| Installer resiliente | Pré-checagens de python3/npm antes de escrever; `opencode.json` atômico com `.bak`; venv falha → instalação completa sem entradas MCP (aviso); refs Pantheon de instalações antigas (node_modules de outros prefixes/caches npx) são podadas a cada init. A poda resolve refs *velhos*; não resolve ref *que aponta para a árvore de instalação errada* — a config grava um caminho absoluto re-resolvido só no `init`, e o `doctor` agora **detecta** esse ref (`plugin_path_missing` quando o caminho não existe, `drift` quando a árvore está antiga), sem mudar o formato de config (P0-6, `CLOSED (runtime evidence)`). |
 | Estado entregue | v1.6.0-beta.4 está em `main` (PR #197). O PR #196 (migração MCP2/FastMCP4) foi mergeado. |
 
 ### Limites que não são promessa de roadmap
@@ -142,8 +145,9 @@ para que a lista de defeitos abaixo não seja lida como "tudo quebra":
 Leitura: o que falta são **gates**, não agentes. Três dos cinco erros têm gate
 mecânico já mapeado no backlog — limite não autorizado → P1-7 (permissão),
 correção fora de escopo → P2-4 (grafo de propriedade declarado), resultado
-falso após descobrir que o harness media contra servidor stale → P0-4
-(catálogo oscilando). Os outros dois — pontuar um ataque que não se consegue
+falso após descobrir que o harness media contra servidor stale → P1-14
+(MCP morto sem reconexão; a atribuição anterior a P0-4 não se sustentou). Os
+outros dois — pontuar um ataque que não se consegue
 construir, e declarar uma medida que falha no próprio design — **não têm gate
 mecânico possível**; foram pegos por julgamento de agente, e é assim que têm de
 ser pegos.
@@ -152,16 +156,22 @@ ser pegos.
 
 ## 🔭 Próxima iteração
 
-Trinta e um itens verificados, ordenados por severidade. Cada item carrega um
+Trinta e dois itens verificados, ordenados por severidade. Cada item carrega um
 marcador `Status:` próprio — nenhum precisa ser inferido.
 
 **Legenda de status.** `CLOSED (doc)` — o defeito era de documentação e foi
 corrigido por esta reescrita; nada além do próprio texto depende dele.
 `CLOSED (code)` — o defeito foi resolvido por um **PR de código já mergeado**,
-não por esta reescrita; a referência nomeia o PR e é datada. `CLOSED (runtime)` — canary local passou; `OPEN` — o defeito
+não por esta reescrita; a referência nomeia o PR e é datada. `CLOSED (runtime)`
+— a evidência é de runtime medido, não de leitura de código: `CLOSED (runtime
+canary)` quando é um canary local (P2-12) e `CLOSED (runtime evidence)` quando a
+evidência passou pelo parecer de um revisor (P0-3, P0-5 e P0-6); `OPEN` — o defeito
 persiste e o item continua vivo. `WITHDRAWN` — a alegação do registro foi
 falsificada por auditoria posterior: o registro vira **tombstone**, preserva o
-id e o histórico, e não descreve mais defeito nenhum.
+id e o histórico, e não descreve mais defeito nenhum. `(rebaixado de P0 para P1
+em AAAA-MM-DD)` — marcador de **severidade**, não de status: o id histórico é
+preservado (não se renumera), o item continua `OPEN` e passa a contar na
+severidade nova.
 
 **Escopo desta mudança.** Nenhum defeito de **código** é corrigido neste branch:
 a mudança é exclusivamente de documentação. Os itens `CLOSED (doc)` são os
@@ -195,9 +205,12 @@ decisões; este documento registra os itens, não as redecide.
 
 **Contagem.** Um **item** é um registro vivo — `OPEN` ou `CLOSED` (de qualquer
 tipo). O tombstone `WITHDRAWN` preserva o id e não conta como item, porque não
-descreve trabalho. São 32 registros: 31 itens (4 `CLOSED (doc)`, 2
-`CLOSED (code)` — P0-1 e P1-6 —, 1 `CLOSED (runtime canary)` — P2-12 — e 24
-`OPEN`) e 1 tombstone, **P0-2**, cuja alegação remanescente vive em **P2-10**.
+descreve trabalho. São 33 registros: 32 itens (4 `CLOSED (doc)`, 2
+`CLOSED (code)` — P0-1 e P1-6 —, 1 `CLOSED (runtime canary)` — P2-12 —, 3
+`CLOSED (runtime evidence)` — P0-3, P0-5 e P0-6 — e 22 `OPEN`) e 1 tombstone,
+**P0-2**, cuja alegação remanescente vive em **P2-10**. Por severidade, os 22
+`OPEN` são **0 P0**, **10 P1** (P0-4, rebaixado, mais P1-5 e P1-7–P1-14) e **12
+P2**.
 
 **P0-1 — Regressão: uma run do installer desregistrou a entrada V2 que
 carregava.**
@@ -368,7 +381,14 @@ superfície viva.
 A parte que sobrevive é mais estreita e está em **P2-10**.
 
 **P0-3 — `doctor` dá verde ao backend de uma tool sem checar seu registro (OS-2).**
-**Status: OPEN.** `probeNodeSqlite` (`scripts/doctor.mjs:1810-1822`) importa
+**Status: CLOSED (runtime evidence) — parecer em 2026-10-22.**
+**Closed by:** o `doctor` passou a emitir um finding de **registro** independente
+do probe de backend — resolve as superfícies Pantheon registradas e **une** as
+gerações V1 e V2 (`src/plugin-v2.ts` e o legado `src/pantheon/v2-tools.ts`),
+aceita como sujeito só ref de identidade Pantheon e trata spec npm como
+`unverifiable` informativo, que nunca vira `PASS` nem erro bloqueante.
+
+`probeNodeSqlite` (`scripts/doctor.mjs:1810-1822`) importa
 `node:sqlite` num child process e `classifyNodeSqliteProbe` (`:1831-1842`) emite
 `pantheon_cost read-only backend supported` (L1835); `checkNodeRuntime`
 (`:1844-1855`) chama `pass()` nesse resultado. O probe valida o **backend**,
@@ -377,83 +397,214 @@ qualquer causa ainda recebe verde — inclusive a causa que P0-1 era, hoje
 corrigida por #202. Gate de saúde que dá falso verde é pior que gate
 ausente: mascara a ausência em vez de expô-la.
 
+**Verificação (parecer de 2026-10-22).** Os três bloqueadores foram confirmados
+por reprodução independente: (1) a posse é por **identidade Pantheon**, então um
+plugin de terceiro deixa de ser sujeito da checagem; (2) a superfície V2 da 1.5
+(`src/plugin-v2.ts`) é reconhecida — o legado `src/pantheon/v2-tools.ts` não é
+lido isoladamente; (3) spec npm vira `unverifiable` **informativo** — nunca
+`PASS`, nunca erro bloqueante. `node scripts/doctor.mjs` no repo: 29 pass /
+3 warn / **0 error**, exit 0. `npm run test:node`: 866 testes, 862 pass, 0 fail.
+
 **Owner:** @prometheus
 **Acceptance:** um teste que remova ou simule a ausência do registro de
 `pantheon_cost` na superfície e prove que o `doctor` emite `FAIL`, não `PASS`;
 o caso roda em `npm test`, e o `doctor` continua `PASS` quando backend e
 registro estão ambos presentes.
 
-**P0-4 — O catálogo de tools oscila dentro de uma mesma sessão.**
-**Status: OPEN — nunca diagnosticado.** Uma tool existente e depois ausente
-entre turnos torna qualquer verificação que dependa dela **inviável por
-construção**: não há medida confiável enquanto o instrumento muda. Numa sessão
-de validação o catálogo foi completo → parcial → completo → parcial → completo,
-cinco transições, e a oscilação causou uma falha de escrita real que só pôde
-ser contornada. Isso é pior que qualquer falha individual de tool, porque
-invalida o próprio instrumento de medição — e por isso precede tudo que dependa
-de observação de catálogo, incluído o probe que originou P0-1. Sem diagnóstico:
-não se sabe se a causa é cache de catálogo, ciclo de vida de plugin, ou
-re-registro concorrente.
+**Ressalvas registradas (não bloqueiam o fechamento).** (a) A **união** de
+superfícies pode dar `PASS` numa árvore híbrida em que um `v2-tools.ts`
+**obsoleto** ainda declare a tool: o que se prova é a **declaração**, não a
+execução. (b) O extrator V2 aceita qualquer `name: 'x'` do arquivo como
+declaração de tool — inofensivo hoje, porque o arquivo inspecionado é do próprio
+pacote e comentários são removidos antes da extração, mas ele não valida que a
+declaração é alcançável. (c) A geração é inferida pela **chave** do registro
+(`plugins` → V2, `plugin` → V1), então um path V1 sob `plugins` produziria um
+erro falso de registro; hoje o installer não emite esse formato. (d) A asserção
+de status/exit do caso de terceiro compara dois runs por igualdade
+(`tests/doctor-node-runtime.test.mjs:218-225`) e é **vacuamente verdadeira** no
+fixture: se ambos falharem pelo mesmo motivo não relacionado, a igualdade passa
+sem provar nada.
+
+**P0-4 (rebaixado para P1) — O catálogo de tools oscila dentro de uma mesma sessão.**
+**Status: OPEN (rebaixado de P0 para P1 em 2026-10-22 — ver decisão).**
+**Decisão de 2026-10-22: não reproduzido.** A alegação original era uma
+oscilação do catálogo numa sessão de validação — completo → parcial → completo →
+parcial → completo, **cinco transições** — com uma falha de escrita real causada
+por ela. Se fosse verdade, invalidaria o próprio instrumento de medição. Uma
+medição instrumentada nos cinco hosts da matriz **não reproduziu nenhuma
+transição completa↔parcial**, então o item foi rebaixado a P1 com a mitigação
+provada abaixo e o id histórico preservado.
+
+**O que foi medido.** Harness
+[`tests/canary/plugin-v2-catalog-stability.test.mjs`](tests/canary/plugin-v2-catalog-stability.test.mjs),
+com **4 turnos numa única sessão** em OpenCode `2.0.29`, `2.0.30`, `2.1.0`,
+`2.1.2` e `2.1.3`, medindo três superfícies independentes por turno:
+registry (`ctx.tool.list()`), lista model-facing (`request.tools`) e o sandbox do
+Code Mode.
+
+- **Registry:** **21** tools em `setup()` → **71** no primeiro tool call; daí em
+  diante **um único hash** em todos os turnos, nos cinco hosts. A única transição
+  é o registro lazy de plugins/built-ins caindo dentro do primeiro turno.
+- **Lista model-facing:** estável — 12 tools, 1 hash.
+- **`search()` do Code Mode é paginado por desenho:** devolve 10 itens com
+  `remaining: 4`; com `limit: 50` vêm os 14. Uma leitura "parcial" de `search()`
+  é paginação, não perda de tool.
+- **Corrida real no primeiro turno com MCP:** a tool entrou entre
+  `execute.before` e `execute.after`; numa rerun já estava presente no
+  `execute.before`. A fotografia do primeiro turno é instável.
+
+**Não reproduzido.** As cinco transições históricas — em nenhum dos cinco hosts,
+em nenhum turno após o primeiro. Hipóteses testadas e **refutadas**: double-load
+no mesmo path (o host deduplica por entrypoint), reload de plugin, troca de
+config e multi-sessão.
+
+**Explicação mais provável.** O que se leu como oscilação é a combinação de
+(a) a fotografia do **primeiro turno**, tirada antes de o registro lazy
+terminar, e (b) a leitura **paginada** de `search()` no Code Mode tomada como
+catálogo completo. As duas produzem "parcial" sem perda de tool — e explicam por
+que a medida não se repetia.
+
+**O que não foi absorvido por este rebaixamento.** A morte de um servidor MCP
+**remove tools de verdade** (72 → 71) e o host **não reconecta**; é um defeito
+distinto, medido no mesmo harness, e vive agora em **P1-14**.
+
+**Gate de regressão (mitigação provada).** O harness falha com **exit 1** se o
+registry mudar depois do primeiro turno, se a lista model-facing mudar em
+qualquer turno ou se o catálogo completo do Code Mode mudar. O **controle
+negativo** foi provado com `PANTHEON_CATALOG_ASSERT_SCENARIOS=mcp-kill`: o
+cenário que encolhe o catálogo de propósito derruba o gate.
+
+**Ressalva.** A medição usa um provedor scripted local — não um modelo real — e
+os MCPs do próprio cenário, não os 5 servidores Pantheon reais. **Falta uma run
+com modelo real e MCPs reais** antes de tratar o item como fechado.
 
 **Owner:** @hermes
-**Acceptance:** uma run canário de N turnos na mesma sessão que registre o
-catálogo a cada turno e prove estabilidade (nenhuma transição completa↔parcial);
-a causa (cache, ciclo de vida ou re-registro) documentada e um teste de
-regressão que falhe se a oscilação voltar.
+**Acceptance:** o harness passa nos cinco hosts da matriz e é o gate de
+regressão do catálogo (qualquer transição após o primeiro turno falha); uma run
+com modelo real e MCPs reais confirma a estabilidade medida aqui.
 
 **P0-5 — Nomes de ação de permissão desatualizados quebram o enforcement
 read-only em host V2.**
-**Status: OPEN.**
+**Status: CLOSED (runtime evidence) — parecer de segurança do @themis em 2026-10-22.**
+**Closed by:** a tabela de ações que o host reconhece, o colapso `write→edit`, o
+gate MCP em `<server>_*`, o read-only do V1 por config e a ordem
+`last-match-wins`, esta última medida em `edit` e por chamadas reais.
 **Independente de P0-1 (já corrigido):** este defeito é de **config gravada em
 disco**, então morde com o plugin carregando normalmente. P0-1 removia um módulo
 do processo; P0-5 remove um *deny*.
 
 **O que é entregue, não interno.** Os 14 templates em `src/agents/*.md` declaram
-`permission.bash` (14/14) e `permission.task` (14/14); `src/agents/mnemosyne.md:39`
-declara `permission.write`. `scripts/install/opencode.mjs:948-950` copia o bloco
+`permission.bash` (14/14) e `permission.task` (14/14); `src/agents/mnemosyne.md:31`
+declara `permission.write`. `scripts/install/opencode.mjs:1852-1854` copia o bloco
 `permission` do frontmatter **verbatim** para a config instalada, e
-`src/routing.yml:531-533` semeia um `permission.task` de topo. São regras
+`src/routing.yml:578-580` semeia um `permission.task` de topo. São regras
 entregues ao usuário.
 
-**O tradutor não conhece duas das três chaves.** No ramo `v2`,
-`scripts/install/config-migration.mjs:441-444` converte o `permission` de cada
-agente para `permissions` através de `convertPermissionsV1toV2`. O mapa
-`V1_PERMISSION_TO_ACTION` (`:33-39`) tem **quatro** entradas — `bash`, `skill`,
-`edit`, `websearch`. **`task` e `write` não estão nele**, e caem no passthrough
-`V1_PERMISSION_TO_ACTION[key] || key` (`:53`), que emite a chave V1 **como se já
-fosse um nome de ação V2**. O mapa reverso (`:75-80`) herda exatamente a mesma
-lacuna, então o drift também não é detectável na volta.
+**A nomenclatura está corrigida; o que resta são nomes não observados e o merge.**
+No ramo `v2`, `scripts/install/opencode.mjs:2216-2219` converte o `permission` de
+cada agente para `permissions` através de `convertPermissionsV1toV2`. O mapa
+`V1_PERMISSION_TO_ACTION` (`scripts/install/config-migration.mjs:49-59`) tem
+**seis** entradas: `bash→shell`, `task→subagent`, `write→edit`, `edit→edit`,
+`skill→skill`, `websearch→websearch`. As três chaves que os templates entregam
+estão todas cobertas: `task` resolve para `subagent` e `write` colapsa no alias
+`edit`, cuja ação de host foi medida em `2.0.29`/`2.0.30`/`2.1.0`/`2.1.2`/`2.1.3`. O mapa
+reverso (`convertPermissionsV2toV1`, `:450-490`) preserva `edit` como grafia canônica, então o drift deixou de
+ser invisível na volta.
 
-**A direção do mismatch não é resolvível a partir do repositório — e isso também
-é o defeito.** O mapa do repo afirma `bash → shell` (`:34`), enquanto a
-documentação de permissões do host, auditada em 2026-10-03, continua chaveando
-permissão por **nome de tool** (`bash`, `task`, com `write` coberto por `edit`).
-O repo não pode estar certo nas duas direções. O item é escrito assim de
-propósito: **quaisquer que sejam os nomes reais, `task` e `write` são as duas
-chaves que o tradutor do repo não conhece** — e a cobertura do tradutor é
-incompleta em relação às chaves que o próprio repo entrega. Auditoria datada da
-documentação do host; a lista de defaults do host também é propriedade de uma
-versão, não do repositório.
+**O que continua aberto não é a tabela — é o que o host faz com ela.** A
+nomenclatura está resolvida (`bash→shell`, `task→subagent`, `write→edit`,
+`edit→edit`, `skill→skill`, `websearch→websearch`) e o mapa reverso preserva
+`edit` como grafia canônica (`convertPermissionsV2toV1`, `:450-490`). O que mudou nesta
+rodada é que **a política de ordenação foi medida nos cinco hosts** e substitui
+a descrição anterior:
+
+- **Mesmo recurso** (mesma chave ação+recurso): `deny > ask > allow`; efeito
+  desconhecido nunca substitui um conhecido nem rebaixa `deny`
+  (`resolveEffects`, `scripts/install/config-migration.mjs:276-306`;
+  `pushPermission`, `:329-340`).
+- **Recursos distintos: especificidade decide.** A emissão é `*` → glob →
+  literal (`comparePermissions`, `:111-123`); como o host resolve por
+  `last-match-wins`, a regra **mais específica** é a última e vence. Um `allow`
+  escopado **sobrevive** a um `deny` amplo dentro do seu escopo; fora dele vale
+  o `deny`. Restritividade só desempata regras de mesma especificidade. A
+  afirmação anterior — "`allow → ask → desconhecido → deny`, então `deny` é
+  sempre a última regra da ação" — está **errada** e foi removida: ela concluía
+  que o `allow` escopado do `mnemosyne` era morto, quando o host o aplica.
+- **Coexistência `permission` (V1) + `permissions` (V2):** o array V2 é a base,
+  nunca descartado, e as regras V1 convertidas entram nele com conflito de mesma
+  ação+recurso resolvido por restritividade (`resolveTopLevelPermissions`,
+  `:1109-1152`; `mergePermissionArrays`, `:1014-1068`). O warning de supressão é
+  reservado a `deny` **persistido** que um `allow` de outra fonte neutraliza em
+  escopo mais estreito; escopo intencional na mesma fonte (o próprio template do
+  `mnemosyne`) não alerta (`warnSuppressedPermissions`, `:237-264`).
+
+**Consequência real no template do `mnemosyne`.** `src/agents/mnemosyne.md:31-38`
+declara `write`/`edit` com `"*": deny` e `allow` em
+`.pantheon/memory-bank/**` e `.pantheon/deepwork/**`. Com a ordem por
+especificidade, os dois literais são emitidos por último e decidem as escritas
+dentro desses diretórios; todo o resto casa apenas com o `deny` de `*`. O escopo
+que o template promete é o escopo que o host aplica.
+
+**Gate MCP (novo, medido).** O host não tem ação `mcp`: ele avalia uma tool MCP
+como **`<server>_<tool>`**, com `resource` sempre `["*"]`. Consequências:
+
+| Forma | Efeito no host 2.x |
+|---|---|
+| `{action: "<server>_*", effect: "deny"}` | **bloqueia** — a tool sai do catálogo |
+| `{action: "<server>_*", effect: "allow"}` | libera, mesmo gate |
+| `{action: "<server>_<tool>", effect: …}` | atinge uma tool só; é o que `deriveNativeMcpPermissions` emite a partir de `mcp_tools` (`scripts/install/opencode.mjs:346-390`) |
+| `{action: "<server>_*", effect: "ask"}` | **não pergunta**: esconde a tool. `ask` não é expressável para MCP em 2.x |
+| `{action: "mcp", …}` ou `resource` diferente de `"*"` | inerte |
+
+O conversor agora reescreve `permission.mcp.<server>` em `<server>_*` para
+`allow`/`deny` e **não emite regra** para `ask`, com warning
+(`convertMcpPermissions`, `scripts/install/config-migration.mjs:371-401`). O
+instalador mantém os defaults `ask` de `pantheon-code-mode` e `pantheon-vision`
+para compatibilidade V1, mas avisa que não são aplicáveis
+(`scripts/install/opencode.mjs:966-998`; `scripts/install/strings.mjs:49-52`) —
+nenhuma regra é emitida para eles. Isso é a **KI-1** da lista de A1.11 — Known Issue
+aceita e documentada com aviso, não gate silencioso: a alternativa enforçável é `deny`
+em `<server>_*` ou desativar o servidor no MCP do host.
+
+**Fora do gate de permissão.** `hashline_edit` e `vision_describe` são plugin
+tools via Code Mode; o host **não emite avaliação de permissão** para essas
+chamadas, então nenhuma regra as gate — a proteção vem do guard do plugin.
+**`websearch` não foi medido** nesta rodada; não se afirma suporte nem ausência
+de suporte.
 
 **Efeito líquido.** O enforcement read-only dos 14 agentes — `bash: deny`,
-`task: deny`, e o `write` restrito do `mnemosyne` — chega ao host V2 com `task` e
-`write` emitidos sob o nome da chave V1, que a documentação do host não lista
-como nome de ação. **O que o host faz com uma chave que não reconhece não é
-verificável a partir do repositório**, e por isso não é afirmado aqui. Nota: o
-ramo `v1` não executa **nenhuma** dessa tradução
-(`scripts/install/opencode.mjs:1348-1350`); isso é correto num host V1, e o ponto
-do item é a cobertura do tradutor que roda no ramo `v2`.
+`task: deny` e o `write` restrito do `mnemosyne` — chega ao host V2 com os nomes
+de ação corretos e com a ordem de emissão que o host medido honra. O gate MCP
+passou a ter forma provada (`<server>_*`) e o `ask` deixou de ser promessa
+silenciosa. **KI-6 da mesma lista:** um array `permissions` dentro de um bloco
+`agents` já em formato V2 continua passthrough **sem reordenação**
+(`mergeManagedAgents`, `:864-884`; ramo `agents` em `:1197-1205`), então ali a
+ordem é a do disco e a garantia de especificidade não vale. Nota: o ramo `v1`
+não executa **nenhuma** dessa tradução — `migrateV1toV2` só é chamado sob
+`version === 'v2'` (`scripts/install/opencode.mjs:2216-2219`). Isso é correto
+num host V1, onde o enforcement é **por config, não pelo hook**; o ponto do item
+é o tradutor do ramo `v2`.
 
 **Owner:** @hermes
 **Acceptance:** comportamento de permissões demonstrável no host da matriz:
 `bash: deny` e `task: deny` bloqueiam de fato, o `write` do `mnemosyne` fica
-restrito, e o tradutor emite apenas nomes de ação que o host reconhece; a
-ordem allow/deny é provada com um caso de conflito. Sem essa demonstração não
-há GO (ADR-0014 Q4) — o item não é aceitável como Known Issue.
+restrito **dentro** de `.pantheon/memory-bank/**` e `.pantheon/deepwork/**` e
+negado fora, e o tradutor emite apenas nomes de ação que o host reconhece; a
+ordem allow/deny é provada com um caso de conflito, incluindo um `allow`
+escopado sobrevivendo a um `deny` amplo; e o gate MCP é provado nas duas
+direções (`<server>_*` com `deny` remove a tool do catálogo, com `allow`
+libera). `ask` para MCP não é exigível em 2.x — a prova é o aviso do instalador,
+não um prompt. Sem essa demonstração não há GO (ADR-0014 Q4) — este resultado não é
+aceitável como Known Issue. As Known Issues aceitas **deste item** são as oito de
+A1.11 em [ADR-0014 Amendment 1](.pantheon/memory-bank/adr/0014-release-v1-6-0-stable-decisoes-e-matriz.md);
+essa é a lista autoritativa e este documento não a reenumera — `ask` para MCP é a
+KI-1, não a única.
 **Review:** @themis — a revisão de segurança e de comportamento de permissões
 deste item é do revisor, não do implementador.
 **Evidence:** matriz V2 pós-fix com zero `FAIL` em `2.0.29`, `2.0.30`, `2.1.0`,
-`2.1.2` e `2.1.3`; V1 medido em `1.19.4` em 2026-10-22 — o enforcement
+`2.1.2` e `2.1.3`; gate MCP medido nos mesmos hosts por
+`tests/canary/run-v2-mcp-gating-proof.sh` (action `<server>_<tool>`,
+`resource: ["*"]`, `mcp` inerte, `ask` esconde a tool); V1 medido em `1.19.4` em 2026-10-22 — o enforcement
 read-only é **por config** (`bash`/`write`/`edit: deny`, `read: allow`), e
 `permission.ask` não dispara nesse host (o probe V1 registrou 0 invocações do
 hook), com o pedido indo ao cliente (`permission.asked` + `GET /permission` +
@@ -464,12 +615,20 @@ enquanto o V2 avalia o pedido em `permission.evaluate` (provado pela matriz V2);
 [`bench/results/p05-permission-matrix-2026-10-22.md`](bench/results/p05-permission-matrix-2026-10-22.md)
 e rationale em
 [ADR-0014 Amendment 1](.pantheon/memory-bank/adr/0014-release-v1-6-0-stable-decisoes-e-matriz.md).
-**O `Status` continua `OPEN`:** falta a revisão de segurança do @themis, que é
-gate deste item (ADR-0014 Q4). A evidência acima não fecha o item.
+**Fechado pelo gate de review.** A revisão de segurança do @themis — gate deste
+item (ADR-0014 Q4) — foi emitida em 2026-10-22 e declarou o item **fechado**,
+com **0 bloqueadores de código**; a evidência acima, a documentação com âncoras
+corretas e os testes de regressão com discriminação provada por mutação são o
+que ela verificou.
 
 **P0-6 — A config grava um caminho absoluto para a árvore de instalação, e ele
 só é re-resolvido no `init`.**
-**Status: OPEN.**
+**Status: CLOSED (runtime evidence) — parecer em 2026-10-22.**
+**Closed by:** o `doctor` passou a **detectar** o caminho pendurado —
+`plugin_path_missing` (`error`, fail-closed) quando o registro não resolve e
+`drift` (`warn`) quando a árvore existe mas está uma versão atrás —, com um teste
+de integração que cobre a re-resolução e falha fechado quando o caminho não
+existe.
 Isto faz um upgrade **não ter efeito silenciosamente**, que é a classe de falha
 mais cara que existe: nada quebra, nada avisa, e a versão antiga continua
 rodando.
@@ -508,7 +667,22 @@ no `init` — é do código.
 **Acceptance:** upgrade por rota que não executa `init` (por exemplo
 `npm i -g`) deixa a config apontando para a árvore instalada nova, ou o
 `doctor` reporta o desvio; um teste de integração cobre a re-resolução e falha
-fechado quando o caminho não existe.
+fechado quando o caminho não existe. **Verificado item a item no parecer de
+2026-10-22:** a detecção separa os dois casos (`warn` de drift quando a árvore
+existe e está antiga, `error plugin_path_missing` quando sumiu), o teste de
+integração cobre a re-resolução, o fail-closed está coberto, refs de terceiros e
+spec npm são ignorados, e separadores Windows e refs relativos estão cobertos.
+`node scripts/doctor.mjs` no repo: 29 pass / 3 warn / 0 error.
+
+**Ressalvas registradas (não bloqueiam o fechamento).** (a) A decisão "só
+detecção, sem mudar o formato de config" ainda **não está num ADR** — será
+registrada à parte; este item não a promove a decisão arquitetural. (b)
+`isV2PluginRef` (`scripts/doctor.mjs:1559-1567`) lê `path`/`source`/`id`/`name`
+de um ref objeto e **ignora a chave `package`**, então o relato H4 imprime
+"nothing reduced" para o formato `{package: …}`: bug **pré-existente**, fora do
+escopo deste item. (c) Árvore presente com `package.json` **ilegível** classifica
+como `unknown` e cai em `skip` informativo em vez de erro — evita `warn` falso,
+e é o preço aceito por não haver versão para comparar.
 
 **P1-1 — Contrato documentado de `memory_store` é rejeitado.**
 **Status: CLOSED (doc) — corrigido por esta reescrita.**
@@ -552,8 +726,8 @@ de modelo é propriedade de uma **conta**, não do repositório: um achado de
 
 **P1-6 — `docs/INSTALLATION.md` anuncia `pantheon_cost` sem ressalva (OS-3).**
 **Status: CLOSED (code) — corrigido pelo PR #202 (`80bac52`, 2026-10-04).**
-`docs/INSTALLATION.md:125` lista `pantheon_cost` entre as 3 tools do plugin V2 e
-L127-131 repete a contagem. A ressalva que faltava era sobre a seleção default do
+`docs/INSTALLATION.md:341` lista `pantheon_cost` entre as 3 tools do plugin V2 e
+`:344` repete a contagem. A ressalva que faltava era sobre a seleção default do
 installer (`v1`, P0-1) deixar a tool desregistrada. O default passou a `auto`
 (`bin/pantheon-init.mjs:427`, `scripts/install/opencode.mjs:528`): num host 2.x
 ele resolve `v2`, que registra a tool; num host V1, `src/plugin.ts:407-417`
@@ -799,6 +973,34 @@ porque falha na primeira execução, não corrompe estado.
 `python3.11+`, `python3` com probe de versão, ou `PANTHEON_PYTHON`) e falha
 fechado antes de criar `.venv` quando só há 3.10/3.9; teste com fake `python3`
 3.10 prova a recusa e não deixa `.venv` parcial.
+
+**P1-14 — A morte de um servidor MCP remove as tools e o host não reconecta.**
+**Status: OPEN — 2026-10-22.**
+**Sintoma.** Quando um servidor MCP morre no meio de uma sessão, as tools dele
+saem do catálogo **permanentemente** (medido: 72 → 71) e não voltam: reiniciar
+**o processo do servidor não basta**, nem quando um supervisor devolve o processo
+com o mesmo argv. Só um reload/restart do **host** restaura a superfície.
+**Evidência.** Cenários `mcp-kill` e `mcp-restart` do harness
+[`tests/canary/plugin-v2-catalog-stability.test.mjs`](tests/canary/plugin-v2-catalog-stability.test.mjs),
+nos cinco hosts da matriz (`2.0.29`, `2.0.30`, `2.1.0`, `2.1.2`, `2.1.3`): o
+kill é observado no turno 3, o reinício do processo no turno 4, e nenhuma tool do
+servidor reaparece em nenhum turno seguinte. O gate do harness isenta esses dois
+cenários da asserção de estabilidade porque o encolhimento ali é a **evidência
+medida**, não uma falha do gate — a falha é a ausência de reconexão.
+**Impacto.** O agente perde uma capacidade prometida no meio da sessão e passa a
+receber `Unknown tool` para tools que existiam; o trabalho só é recuperado com
+restart do host, e **nada avisa** que a tool morreu em vez de nunca ter existido —
+a ausência é indistinguível de configuração.
+**Severidade P1:** quebra uma capacidade prometida e é contornável por restart,
+sem perda de dados nem exposição de segurança; não é P2 porque o usuário não
+recebe sinal nenhum da perda.
+**Owner:** @hermes — a correção vive no runtime (plugin/`doctor` e ciclo de vida
+dos servidores MCP em `src/mcp/`), não no empacotamento/CI de @prometheus.
+
+**Acceptance:** quando o processo do servidor volta, as tools reaparecem na mesma
+sessão **ou** a perda é detectada explicitamente com aviso ao usuário
+(`doctor`/plugin) e nunca reportada como `PASS`; um teste canário cobre morte e
+reinício do servidor e falha se a ausência passar em silêncio.
 
 **P2-11 — Board e goal tools não existem no contrato V2, e a bridge que os
 carregaria nunca foi ligada.**

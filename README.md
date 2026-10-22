@@ -147,7 +147,12 @@ The bundled Python MCP servers use the pinned MCP SDK 2.2.0 and standalone
 FastMCP 4.0.10 runtime; see the [MCP guide](docs/MCP.md).
 The installer also turns each agent's `mcp_tools` allowlist into native
 per-agent permissions for OpenCode V1 and V2; see the
-[agent MCP reference](docs/AGENT-MCP.md).
+[agent MCP reference](docs/AGENT-MCP.md). On OpenCode 2.x the gate the host
+actually applies is a `permissions` rule whose action is `<server>_*` (or
+`<server>_<tool>`) with effect `deny`/`allow`; the V1-shaped
+`permission.mcp.<server>` key is not an action the host evaluates — the installer
+translates `allow`/`deny` into the former, and `ask` is not expressible for MCP:
+it hides the tool instead of prompting, so the installer emits no rule and warns.
 
 ## A simple example
 
@@ -389,7 +394,7 @@ procedure.
 | V1 plugin + generation gate | The OpenCode **1.19.x** line — runtime measurement on `1.19.4` (2026-10-22). This package pins `@opencode-ai/plugin` and `@opencode-ai/sdk` to `1.18.33`; the highest published `opencode-ai` host package (the one shipping the `opencode` binary) is `1.19.4` (dist-tag `latest`, verified 2026-10-22) | Dependency pin (`package.json`); generation-gate unit tests over injected host banners; installer end-to-end tests asserting the emitted `opencode.json` shape; V1 permission probe on the real host |
 | V2 plugin tool surface | OpenCode v2.0.29 | `tests/canary/plugin-v2-tool-canary.test.mjs`, driving the real plugin through `opencode serve`; F4A permission canary passes 18/18 |
 | V2 native subagent admission | OpenCode v2.0.29 | `tests/canary/run-v2-permission-proof.sh`; identity, root/child checks and permission-before-child ordering are recorded in [`bench/results/f4a-v229-admission-identity-2026-10-14.md`](bench/results/f4a-v229-admission-identity-2026-10-14.md) |
-| V2 permission matrix (post-fix) | OpenCode **2.0.29**, **2.0.30** and **2.1.x** — floor `2.1.0` and newest `2.1.x` patch available at freeze | Post-fix rerun on 2026-10-22 with zero `FAIL` cells, registered in ADR-0014 Amendment 1; that evidence bundle lives outside this repository |
+| V2 permission matrix (post-fix) | OpenCode **2.0.29**, **2.0.30** and **2.1.x** — floor `2.1.0` and newest `2.1.x` patch available at freeze | Post-fix rerun on 2026-10-22 with zero `FAIL` cells, registered in ADR-0014 Amendment 1; the curated evidence is versioned at [`bench/results/p05-permission-matrix-2026-10-22.md`](bench/results/p05-permission-matrix-2026-10-22.md), and the raw per-host bundle stays under the disposable sandbox (`~/pantheon-sandbox/`), outside version control |
 | OpenCode 1.19.x runtime evidence | **Measured on OpenCode `1.19.4` on 2026-10-22.** With `bash`/`write`/`edit: deny` and `read: allow`, the host hides `bash` and `write`, produces no side effect and keeps `read` working — enforcement is **config-level**; the hook does not fire on that host (zero `permission.ask` invocations recorded by the probe) | `tests/canary/v1-permission-canary.test.mjs` via `tests/canary/run-v1-permission-proof.sh`; results in [`bench/results/p05-permission-matrix-2026-10-22.md`](bench/results/p05-permission-matrix-2026-10-22.md) |
 
 ## Delegation (root `subagent`; host/API `task()`)
@@ -407,7 +412,8 @@ Pantheon-specific delegation tool surface to configure. See
 historical engine contract.
 
 This beta.8 candidate combines native per-agent MCP permissions for OpenCode V1
-and V2, V2 delegation-permission alignment, simpler memory/compression
+(the V2 path translates them to the host's `<server>_*` gate), V2
+delegation-permission alignment, simpler memory/compression
 instructions, and a sandbox check that proves the installed package matches
 this checkout instead of silently accepting stale npm-cached code. The isolated
 sandbox launcher also pins the OpenCode background service to its dedicated
@@ -785,10 +791,12 @@ Two freshness guarantees back it up:
   repo-agnostic **global artifact** (`AGENTS.global.md`: agent table + shared
   rules), while each project's own `AGENTS.md` carries only project-specific
   setup — the two are carved to be disjoint (beta-10 latency work), so no rule
-  is paid for twice per session. Installs are conservative: content outside
-  the generated managed region (user house rules) is preserved verbatim, a
-  legacy fully-generated `AGENTS.md` upgrades in place, and any merge is
-  reported with a warning.
+  is paid for twice per session. `tests/agents-md-budget.test.mjs` pins the
+  per-artifact ceiling (9.5 KB / 140 lines global, 1.8 KB project) and fails
+  when a gate phrase appears in both artifacts. Installs are conservative:
+  content outside the generated managed region (user house rules) is preserved
+  verbatim, a legacy fully-generated `AGENTS.md` upgrades in place, and any
+  merge is reported with a warning.
 - **Drift detection** — the installer stamps the installed version in
   `.pantheon/install-state.json` and `doctor` warns when the package is newer
   than the last sync, pointing at `update`. `doctor` also detects **plugin
@@ -881,11 +889,16 @@ OpenCode V2 TUI entrypoints; `init` selects the entrypoint and sidebar slot API
 for the host generation in use.
 
 The native V2 sidebar shows the Pantheon version, active preset/source, git
-branch, session cost plus the context percentage (same token formula as the
-host), the current agent with its resolved model, and running delegations with
-`agent→model` and elapsed time. Everything is added with `append` claims: the
-native prompt footer keeps its own line, and Pantheon only appends
-`⚡<preset> · ✦<n> ativos` while delegations are running.
+state (`⎇ <branch>` plus `+N ±N −N` changed-file counts from
+`client.vcs.status`, revalidated on session events with a debounce), a
+`Context` block with thousands-separated tokens, `<percent>% used of <window>`
+(only the percentage is colour-banded) and `$<spent> spent` — same token
+formula as the host, so it stays the only source of that data when the native
+`opencode.sidebar.context` block is disabled — the current agent with its
+resolved model, and running delegations with `agent→model` and elapsed time.
+Everything is added with `append` claims: the native prompt footer keeps its
+own line, and Pantheon only appends `⚡<preset> · ✦<n> ativos` while
+delegations are running.
 
 ## Sandbox validation (V2)
 

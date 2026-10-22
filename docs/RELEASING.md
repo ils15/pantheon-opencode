@@ -45,7 +45,7 @@ node scripts/versioning.mjs changelog 1.6.0-beta.10
 node scripts/release-notes.mjs             # stable vX.Y.Z tags only
 node scripts/release-notes.mjs --draft     # last 30 commits, no tag lookup
 
-# CI-side consistency check (run in the version-check workflow job)
+# CI-side consistency check (run in the `validate` job of ci.yml)
 node scripts/version-check.mjs
 
 # Dry-run of the release payload (status + release notes + pack)
@@ -113,9 +113,10 @@ workflow-owned (see below).
    git push -u origin <branch>
    ```
 
-5. Wait for CI. The PR must pass `version-check` (package.json must be
-   **ahead** of the latest stable tag; pre-releases excluded) plus the other
-   required checks before merging.
+5. Wait for CI. The PR must pass `validate` (version manifests, engine,
+   packaging, sandbox), `test-suite`, `plugin-v2-ts-coverage`, `commitlint`,
+   `security-scan`, and `CodeQL` before merging. `ci.yml` also runs on pushes
+   to `main`, so the merged SHA carries its own CI evidence.
 
 > No tag is created locally. Merging an ordinary PR does **not** release. To
 > publish a stable version, use the explicit `Release` workflow dispatch after
@@ -256,6 +257,95 @@ The release evidence is fail-closed and has one artifact identity:
 Any `npm ci` failure blocks the run. There is no `npm install` fallback, and
 `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` is not part of the current contract.
 
+### Six release gates
+
+The `validate` job of `release.yml` runs six gates on the frozen `TARGET_SHA`.
+Each prints `GATE <name>: PASS` and writes a named evidence file to
+`$RUNNER_TEMP/gate-evidence/<name>.json`; the directory is uploaded as
+`release-gate-evidence-<run_id>` (90-day retention). There is no fallback: a
+command that cannot run, a missing artifact, an unsupported host, or a `SKIP`
+is a failed gate, and a failed gate aborts before the artifact upload and
+before any release credential is exposed.
+
+| Gate | Executed by | Fails when | Evidence |
+|---|---|---|---|
+| (a) tests | `scripts/release-gates.mjs tests`: pytest + `src/mcp` coverage ≥ 80, `test:node`, `test:ts`, `coverage:plugin-v2`, `test:install`; pytest runs in an isolated venv built from `src/mcp/requirements-mcp.txt` | any suite, coverage threshold, or the mandatory install tier fails; an unsatisfiable or unverified pin set fails the gate | `tests.json` |
+| (b) host compatibility | `scripts/release-gates.mjs host`: each supported host installed and exercised in an isolated sandbox (`1.19.4` through `run-v1-permission-proof.sh`; `2.0.29`, `2.0.30`, `2.1.0`, `2.1.3` through `test-opencode-v2-sandbox.sh`) | any row fails, a supported line has no row, or an unsupported host (`2.0.22`, `2.0.31`) is listed | `host.json` |
+| (c) install | `scripts/release-gates.mjs install`: the immutable `.tgz` installed globally, headless init, `validate-sandbox-install.mjs`, and a host-backed tool canary | install, init, source comparison, MCP/doctor checks, or canary fails or skips | `install.json`, `install-canary.log` |
+| (d) package | `scripts/release-gates.mjs package`: SHA-256 recomputed over the same `.tgz`, payload inspected, `package:validate` | the digest, name, version, target SHA, or payload disagree; no second `npm pack` is accepted | `package.json` |
+| (e) changelog | `scripts/release-gates.mjs changelog`: `changelog-extract.mjs` | the `[version]` section is missing or empty; recovery checks the tag instead | `changelog.json`, `changelog.md` |
+| (f) metadata | `scripts/release-gates.mjs metadata`: `version-check.mjs` + `validate-node-engine-policy.mjs` | manifests drift, the channel/version shape is wrong, or the SHA is not 40 hex | `metadata.json` |
+
+The host matrix is declared in `release.yml` (`PANTHEON_RELEASE_MATRIX`) and is
+validated by the gate, not trusted: every supported line must be covered, the
+`2.1.x` line must include both its `2.1.0` floor and the newest measured patch,
+and hosts ADR-0014 marks unsupported may not appear. A row that cannot run is a
+failure — the release path has no `SKIP`.
+
+#### Python test environment (gate a)
+
+The Python suite imports `fastmcp`/`mcp` at collection time, so its verdict only
+means something against the pins in `src/mcp/requirements-mcp.txt`. Gate (a)
+therefore does **not** use the runner's ambient interpreter:
+
+- the `validate` job creates `$RUNNER_TEMP/gate-venv` with `python3 -m venv`
+  from the interpreter pinned by `actions/setup-python`
+  (`python-version: '3.12'`, i.e. CPython 3.12.x on `ubuntu-latest`; the
+  package metadata declares `requires-python >= 3.11`), installs
+  `coverage pytest pyyaml`, `pytest-asyncio==1.3.0`, and
+  `-r src/mcp/requirements-mcp.txt -r src/mcp/requirements-vision.txt`;
+- `PANTHEON_PYTHON` is exported to that venv and `release-gates.mjs` resolves
+  every Python command through it. A set-but-missing or non-executable
+  `PANTHEON_PYTHON` is a hard failure, never a fallback to the ambient
+  `python3`;
+- `pip check` and an explicit assertion that every `==` pin in both
+  requirements files is installed at exactly that version run **before** pytest.
+  A failed venv creation, download, install, or pin assertion aborts the job
+  (fail-closed via `set -euo pipefail`); no failure is downgraded to a skip;
+- `actions/setup-python`'s `cache: pip` still applies: the venv's pip shares
+  `~/.cache/pip`, so the download cache is reused while the install itself
+  stays isolated;
+- the CI `test-suite` job builds the same venv (`$RUNNER_TEMP/ci-venv`) and
+  points `PANTHEON_PYTHON` at it, so CI and the release gate share one
+  environment contract;
+- `tests.json` records the interpreter path and `python --version` used for the
+  run.
+
+Local equivalent of the gate's Python step:
+
+```bash
+python3 -m venv /tmp/pantheon-gate-venv
+/tmp/pantheon-gate-venv/bin/python -m pip install -r src/mcp/requirements-mcp.txt -r src/mcp/requirements-vision.txt
+PANTHEON_PYTHON=/tmp/pantheon-gate-venv/bin/python \
+  node scripts/release-gates.mjs tests --evidence-dir /tmp/gate-evidence
+```
+
+Running `pytest` on an interpreter without these pins is not evidence: with
+`fastmcp 3.4.2` / `mcp 1.28.0` on `PATH`, `tests/test_persistence_goals.py`
+fails at **collection** by design, which is an environment defect, not a
+product defect.
+
+### Test tiers
+
+- **Default (developer loop):** `npm run test:node` runs `tests/*.mjs` and
+  `tests/pantheon/*.mjs` **excluding** `tests/install-opencode.test.mjs` and
+  `tests/install-e2e.test.mjs`. A bare `node --test` over those files skips
+  their cases with an explicit reason unless the tier is opted into.
+- **Heavy tier (optional locally, mandatory in release):**
+  `npm run test:install` sets `PANTHEON_RUN_INSTALL_TESTS=1` and runs both
+  real-install files. `npm test` / `test:all` does not include it, so the local
+  loop stays fast; gate (a) always includes it.
+
+### Coverage contract
+
+- **Required:** Python `src/mcp` branch coverage **≥ 80%**
+  (`coverage report --fail-under=80`) and the `src/plugin-v2.ts` line
+  measurement (`npm run coverage:plugin-v2`). Both run in gate (a).
+- **Not PASS:** Node coverage (`npm run coverage`) is report-only and enforces
+  no threshold; TypeScript under `src/` outside the plugin-v2 measurement is
+  unmeasured. Neither may be cited as evidence that a threshold passed.
+- No new threshold is introduced by this contract.
+
 ### Memory MCP packaging
 
 `src/mcp/memory_mcp.py` is the canonical Memory MCP server. The
@@ -348,25 +438,36 @@ npm deprecate pantheon-opencode@<ver> "reason: <why it should not be used>"
 
 ## Branch Protection (main)
 
-> **Status: ACTIVE as of Phase 5 (release-standardization).** `main` requires
-> a PR review plus 5 passing checks. Enabling required checks on an existing
-> `main` is effectively a one-way door — verify the pre-flight checklist
-> before applying changes.
+> **Configuration contract, not an applied state.** This document describes
+> the required checks that must exist; applying them is a **manual maintainer
+> action** through the GitHub API or UI. No workflow applies branch protection,
+> and an agent must not do it. Enabling required checks on an existing `main`
+> is effectively a one-way door — verify the pre-flight checklist first.
+
+### CI evidence for the released SHA
+
+`.github/workflows/ci.yml` runs on `pull_request` (main, develop) **and on
+`push` to `main`**. The push run is the evidence for the commit a release will
+dispatch on: the six release gates re-run on the frozen `TARGET_SHA`, but the
+required checks must also have passed on the merged `main` SHA itself. A PR-head
+SHA is not a substitute — a merge commit is a different SHA.
 
 ### Protection
 
 - `required_pull_request_reviews[required_approving_review_count]=1`
-- 5 required status checks: **`version-check`**, **`validate`**,
+- 6 required status checks, matching real workflow jobs:
+  **`validate`**, **`test-suite`**, **`plugin-v2-ts-coverage`**,
   **`commitlint`**, **`security-scan`**, **`CodeQL`**
 - `enforce_admins=false` initially (owner/admin bypass for release unblock)
 
-### Enable / verify
+### Enable / verify (manual, maintainer only)
 
 ```bash
 gh api -X PUT repos/ils15/pantheon-opencode/branches/main/protection \
   -F required_status_checks[strict]=true \
-  -f 'required_status_checks[checks][][context]=version-check' \
   -f 'required_status_checks[checks][][context]=validate' \
+  -f 'required_status_checks[checks][][context]=test-suite' \
+  -f 'required_status_checks[checks][][context]=plugin-v2-ts-coverage' \
   -f 'required_status_checks[checks][][context]=commitlint' \
   -f 'required_status_checks[checks][][context]=security-scan' \
   -f 'required_status_checks[checks][][context]=CodeQL' \
@@ -374,11 +475,13 @@ gh api -X PUT repos/ils15/pantheon-opencode/branches/main/protection \
   -F enforce_admins=false
 ```
 
-> GitHub reports checks by **job name** (or the name set by the action).
-> The contexts above map to: `validate` + `version-check` (jobs in
-> `.github/workflows/ci.yml`), `commitlint` (job in
+> GitHub reports checks by **job name** (or the name set by the action). The
+> contexts above map to: `validate`, `test-suite`, and
+> `plugin-v2-ts-coverage` (jobs in `.github/workflows/ci.yml` — these jobs have
+> no `name:` override, so the check name is the job id), `commitlint` (job in
 > `commit-lint.yml`), `security-scan` (job in `security-scan.yml`), and
 > `CodeQL` (analysis reported by `github/codeql-action` in `codeql.yml`).
+> `version-check` is **not** a check: that job was folded into `validate`.
 > Verify the exact reported names before enforcing:
 
 ```bash
@@ -391,11 +494,12 @@ gh api repos/ils15/pantheon-opencode/commits/HEAD/check-runs \
 If a required check never passes, **every** push to `main` is locked out,
 including the release pipeline. Confirm ALL of the following before the PUT:
 
-- [ ] **(a)** All 5 checks exist as workflow jobs: `ci.yml`
-      (`validate`, `version-check`), `commit-lint.yml` (`commitlint`),
+- [ ] **(a)** All 6 checks exist as workflow jobs: `ci.yml` (`validate`,
+      `test-suite`, `plugin-v2-ts-coverage`), `commit-lint.yml` (`commitlint`),
       `security-scan.yml` (`security-scan`), `codeql.yml` (`analyze`/CodeQL).
-- [ ] **(b)** They all PASS on current `main` (or a PR). If any fails, fix
-      the workflow first — never enable protection on a failing check.
+- [ ] **(b)** They all PASS on current `main` (or a PR), including the push run
+      on `main`. If any fails, fix the workflow first — never enable
+      protection on a failing check.
 - [ ] **(c)** ONLY then apply the PUT. After the fact, verify with:
       ```bash
       gh api repos/ils15/pantheon-opencode/branches/main/protection
@@ -435,8 +539,11 @@ Before cutting a release, verify:
 - [ ] `CHANGELOG.md` has a `## [X.Y.Z] - date` entry for the new version
 - [ ] Version manifests match: `package.json` == `plugin.json` ==
       `pyproject.toml` == `src/plugins/tui/package.json`
-- [ ] All required checks green on the bump PR (`version-check`, `validate`,
+- [ ] All required checks green on the bump PR **and on the push run for the
+      merged `main` SHA** (`validate`, `test-suite`, `plugin-v2-ts-coverage`,
       `commitlint`, `security-scan`, `CodeQL`)
+- [ ] The six release gates are expected to PASS for the frozen `TARGET_SHA`;
+      the dispatch's `validate` job is the authority (it re-runs all six)
 - [ ] `npm run release:dry-run` passes (status + pack)
 
 ---

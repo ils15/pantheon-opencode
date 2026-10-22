@@ -26,11 +26,22 @@
 
 ### 🔍 Required Status Checks
 
-Add these exact check names (they match the Pantheon CI workflows):
+Add these exact check names (they match real workflow jobs; GitHub reports the
+job id when a job has no `name:` override):
 
-- `CI / validate`
-- `PR Checks / label-by-title`
-- `PR Checks / recommend-version`
+- `validate`
+- `test-suite`
+- `plugin-v2-ts-coverage`
+- `commitlint`
+- `security-scan`
+- `CodeQL`
+
+> **`version-check` is not a check.** That job was folded into `validate`.
+> There is no `PR Checks` workflow in this repository; do not add
+> `PR Checks / label-by-title` or `PR Checks / recommend-version`.
+>
+> **Applying protection is a manual maintainer action.** No workflow changes
+> branch protection and an agent must not do it.
 
 > **Tip:** Type each name in the search box and select it. GitHub will auto-suggest
 > matching check names once the workflow has run at least once on `main`.
@@ -55,14 +66,17 @@ Click **Create** (or **Save changes**).
 If you prefer the command line, use the GitHub CLI to apply the same settings:
 
 ```bash
-gh api repos/:owner/:owner/branches/main/protection \
+gh api repos/:owner/:repo/branches/main/protection \
   --method PUT \
   --field required_status_checks='{
     "strict": true,
     "checks": [
-      {"context": "CI / validate"},
-      {"context": "PR Checks / label-by-title"},
-      {"context": "PR Checks / recommend-version"}
+      {"context": "validate"},
+      {"context": "test-suite"},
+      {"context": "plugin-v2-ts-coverage"},
+      {"context": "commitlint"},
+      {"context": "security-scan"},
+      {"context": "CodeQL"}
     ]
   }' \
   --field enforce_admins=true \
@@ -75,8 +89,11 @@ gh api repos/:owner/:owner/branches/main/protection \
   --field allow_deletions=false
 ```
 
-> **Note:** Replace `:owner` with your GitHub username or org (`ils15`).
-> You need `admin` or `write` permissions on the repo to run this command.
+> **Note:** Replace `:owner` with your GitHub username or org (`ils15`) and
+> `:repo` with `pantheon-opencode`. You need `admin` or `write` permissions on
+> the repo to run this command. Run it only after every required check has
+> passed on `main`; see the pre-flight checklist in
+> [`RELEASING.md`](RELEASING.md#mandatory-pre-flight-checklist).
 
 ---
 
@@ -85,15 +102,18 @@ gh api repos/:owner/:owner/branches/main/protection \
 After enabling protection, verify it's active:
 
 ```bash
-gh api repos/ils15/pantheon/branches/main/protection --jq '.required_status_checks.contexts'
+gh api repos/ils15/pantheon-opencode/branches/main/protection --jq '.required_status_checks.checks[].context'
 ```
 
 Expected output:
 ```json
 [
-  "CI / validate",
-  "PR Checks / label-by-title",
-  "PR Checks / recommend-version"
+  "validate",
+  "test-suite",
+  "plugin-v2-ts-coverage",
+  "commitlint",
+  "security-scan",
+  "CodeQL"
 ]
 ```
 
@@ -113,9 +133,10 @@ a green "Protection enabled" badge.
                                          ▼
                               ┌─────────────────────────────┐
                               │  Iris opens Draft PR        │
-                              │  → CI / validate runs       │
-                              │  → PR Checks / label,       │
-                              │    version-recommend        │
+                              │  → validate, test-suite,    │
+                              │    plugin-v2-ts-coverage,   │
+                              │    commitlint, security-scan│
+                              │  → CodeQL analysis          │
                               └──────────┬──────────────────┘
                                          │
                                          ▼

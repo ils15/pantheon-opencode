@@ -383,6 +383,14 @@ O installer V2 grava campos nativos V2 em vez de shims V1:
 - `permissions` — array de regras de permissão de tools (formato V2 nativo)
 - `mcp.servers` — registro de servidores MCP (formato V2 nativo)
 
+> **Permissões de MCP no host 2.x.** A ação que o host avalia é `<server>_<tool>`
+> com `resource: ["*"]`. A forma enforçável é
+> `{ "action": "<server>_*", "resource": "*", "effect": "deny" }` (ou o nome exato
+> da tool); `action: "mcp"` e a chave V1 `permission.mcp.<server>` não são
+> avaliadas pelo host — o instalador converte `allow`/`deny` para `<server>_*` e
+> **não emite regra** para `ask`, avisando que `ask` não é aplicável: nesse host
+> ele esconde a tool em vez de perguntar.
+
 Exemplo de `opencode.json` V2:
 
 ```json
