@@ -1,6 +1,6 @@
 # Pantheon for OpenCode
 
-Complete setup and usage guide for running Pantheon **v1.6.0-beta.17** in [OpenCode](https://opencode.ai) — the open-source AI coding agent for the terminal, desktop, and IDE.
+Complete setup and usage guide for running Pantheon **v1.6.0-beta.18** in [OpenCode](https://opencode.ai) — the open-source AI coding agent for the terminal, desktop, and IDE.
 
 ---
 
