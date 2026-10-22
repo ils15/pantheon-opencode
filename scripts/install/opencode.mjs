@@ -909,10 +909,11 @@ export function setupRuntimePhase(
  * config in place — the migration that makes the rename non-breaking.
  *
  * @param {object} config - full config object (mutated in place)
- * @param {{ runtimeTarget: string, venvPython: string }} ctx
- * @returns {{ healed: number }} number of stale path strings rewritten
+ * @param {{ runtimeTarget: string, venvPython: string, version?: 'v1' | 'v2' }} ctx
+ * @returns {{ healed: number, warnings: string[] }} number of stale path strings
+ *   rewritten, plus one warning per MCP permission the host cannot enforce
  */
-export function applyMcpServerEntries(config, { runtimeTarget, venvPython }) {
+export function applyMcpServerEntries(config, { runtimeTarget, venvPython, version = 'v2' }) {
   config.mcp = config.mcp || {}
   // MCP stays a flat named-server map for BOTH V1 and V2: OpenCode 1.18.x has
   // no `mcp.servers` wrapper and rejects one with "Missing key
@@ -962,7 +963,16 @@ export function applyMcpServerEntries(config, { runtimeTarget, venvPython }) {
     }
   }
 
-  // Default MCP permissions
+  // Default MCP permissions.
+  //
+  // WARNING: on OpenCode 2.x, `permission.mcp.<server>` is NOT enforced. The
+  // host evaluates an MCP call as the action `<server>_<tool>` with resources
+  // ["*"]; `permission.mcp.<server>` and `action:"mcp"` are inert (measured on
+  // 2.0.29–2.1.3). These defaults are kept for V1 compatibility, but `ask` does
+  // not prompt and `allow` grants nothing it did not already have — every `ask`
+  // server below is reported to the user as unenforced. The enforceable form is
+  // `{ action: "<server>_*", resource: "*", effect: "deny" }`; `ask` there
+  // HIDES the tool instead of asking, so it is never emitted as a default.
   config.permission = config.permission || {}
   config.permission.mcp = config.permission.mcp || {}
   if (!config.permission.mcp['pantheon-resources']) {
@@ -981,7 +991,18 @@ export function applyMcpServerEntries(config, { runtimeTarget, venvPython }) {
     config.permission.mcp['pantheon-vision'] = 'ask'
   }
 
-  return { healed }
+  // Report every `ask` entry, whether just seeded or left by a previous
+  // install: the config claims a gate the host does not apply. V1's MCP
+  // permission semantics were not measured, so the warning is V2-only.
+  const S = strings()
+  const warnings =
+    version === 'v2'
+      ? Object.entries(config.permission.mcp)
+          .filter(([, effect]) => effect === 'ask')
+          .map(([server]) => S.mcpAskNotEnforceable(server))
+      : []
+
+  return { healed, warnings }
 }
 
 /**
@@ -2175,10 +2196,18 @@ async function installPass(
     // Point the config at the venv even on a first install; setupVenv runs
     // later in this function and creates this path before OpenCode starts.
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
-    applyMcpServerEntries(config, {
+    const mcp = applyMcpServerEntries(config, {
       runtimeTarget,
       venvPython: venvPythonPath(target),
+      version,
     })
+    // `permission.mcp.<server>: ask` is inert on OpenCode 2.x. Never leave the
+    // user believing the default gated anything: report each unenforced entry
+    // and point at the enforceable form.
+    for (const message of mcp.warnings ?? []) {
+      warning(message)
+      stats.warnings += 1
+    }
   }
 
   // ── V2 native migration ──

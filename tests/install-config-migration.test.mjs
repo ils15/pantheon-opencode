@@ -19,7 +19,7 @@ import {
   migrateV1toV2,
   migrateV2toV1,
 } from '../scripts/install/config-migration.mjs'
-import { MANAGED_FIELDS } from '../scripts/install/opencode.mjs'
+import { applyMcpServerEntries, MANAGED_FIELDS } from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
 const MIGRATION_MODULE = join(ROOT, 'scripts', 'install', 'config-migration.mjs')
@@ -36,6 +36,57 @@ for (const field of USER_FIELDS) {
     !MANAGED_AGENT_FIELDS.includes(field),
     `USER_FIELDS must stay non-managed, or the gap-fill tests assert the wrong thing: ${field}`,
   )
+}
+
+/**
+ * Run `fn` while capturing console.warn output. Warnings are part of the
+ * migration contract — a permission conflict must be reported with what
+ * actually happened, so tests assert on the message, not only on the result.
+ */
+function withCapturedWarnings(fn) {
+  const original = console.warn
+  const warnings = []
+  console.warn = (...args) => warnings.push(args.map(String).join(' '))
+  try {
+    return { value: fn(), warnings }
+  } finally {
+    console.warn = original
+  }
+}
+
+/**
+ * Conservative glob matcher used to evaluate the emitted rules the way the
+ * host does (last-match-wins). `*` on its own is the catch-all; `**` crosses
+ * `/`; other `*` do not.
+ */
+function globMatches(pattern, resource) {
+  if (pattern === '*') return true
+  let source = '^'
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i]
+    if (char === '*') {
+      if (pattern[i + 1] === '*') {
+        source += '.*'
+        i++
+      } else {
+        source += '[^/]*'
+      }
+    } else if (char === '?') {
+      source += '[^/]'
+    } else {
+      source += char.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
+    }
+  }
+  return new RegExp(`${source}$`).test(resource)
+}
+
+/** Last rule that matches decides, exactly like the host measurement. */
+function effectiveEffect(permissions, action, resource) {
+  let effect
+  for (const rule of permissions) {
+    if (rule.action === action && globMatches(rule.resource, resource)) effect = rule.effect
+  }
+  return effect
 }
 
 // ---------------------------------------------------------------------------
@@ -113,8 +164,10 @@ const V1_WITH_VARIANT = {
 /**
  * Expected V2 output of migrateV1toV2(V1_CONFIG).
  *
- * Permission order follows V1 object key iteration:
- * skill → websearch → subagent → bash (shell entries).
+ * Permission order is the canonical emission order, not V1 key iteration:
+ * least specific first (* → globs → literal) so the most specific matching
+ * rule wins under last-match-wins; at equal specificity, least restrictive
+ * first (allow → ask → deny/unknown ordering), with code-unit tie-breaks.
  * MCP has no timeout since V1 had none.
  */
 const V2_EXPECTED = {
@@ -133,16 +186,16 @@ const V2_EXPECTED = {
   plugins: ['src/plugin-v2'],
   experimental: { subagent_depth: 2 },
   permissions: [
-    { action: 'skill', resource: '*', effect: 'allow' },
-    { action: 'websearch', resource: '*', effect: 'deny' },
-    { action: 'subagent', resource: '*', effect: 'allow' },
     { action: 'shell', resource: 'git *', effect: 'allow' },
     { action: 'shell', resource: 'npm *', effect: 'allow' },
     { action: 'shell', resource: 'npx *', effect: 'allow' },
-    { action: 'shell', resource: 'pytest *', effect: 'allow' },
-    { action: 'shell', resource: 'ruff *', effect: 'allow' },
     { action: 'shell', resource: 'pip *', effect: 'allow' },
+    { action: 'shell', resource: 'pytest *', effect: 'allow' },
     { action: 'shell', resource: 'python3 *', effect: 'allow' },
+    { action: 'shell', resource: 'ruff *', effect: 'allow' },
+    { action: 'skill', resource: '*', effect: 'allow' },
+    { action: 'subagent', resource: '*', effect: 'allow' },
+    { action: 'websearch', resource: '*', effect: 'deny' },
   ],
   mcp: {
     bifrost: {
@@ -155,11 +208,11 @@ const V2_EXPECTED = {
     talos: {
       permissions: [
         { action: 'edit', resource: '*', effect: 'allow' },
-        { action: 'edit', resource: '**/migrations/**', effect: 'deny' },
-        { action: 'edit', resource: '**/alembic/**', effect: 'deny' },
-        { action: 'edit', resource: '**/models/**', effect: 'deny' },
-        { action: 'edit', resource: '**/auth/**', effect: 'deny' },
         { action: 'edit', resource: '**/*.sql', effect: 'deny' },
+        { action: 'edit', resource: '**/alembic/**', effect: 'deny' },
+        { action: 'edit', resource: '**/auth/**', effect: 'deny' },
+        { action: 'edit', resource: '**/migrations/**', effect: 'deny' },
+        { action: 'edit', resource: '**/models/**', effect: 'deny' },
         { action: 'shell', resource: '*', effect: 'allow' },
         { action: 'shell', resource: 'alembic *', effect: 'deny' },
       ],
@@ -270,6 +323,470 @@ describe('config-migration', () => {
         { action: 'edit', resource: '*.md', effect: 'allow' },
         { action: 'edit', resource: '*.lock', effect: 'deny' },
       ])
+    })
+
+    // ── P0-5 security review: deny must never be demoted ───────────────────
+    it('never demotes deny to an unrecognized effect, in either order', () => {
+      const orders = [
+        { edit: 'deny', write: 'bogus' },
+        { write: 'bogus', edit: 'deny' },
+      ]
+      for (const permission of orders) {
+        const v2 = migrateV1toV2({ permission })
+        assert.deepEqual(
+          v2.permissions,
+          [{ action: 'edit', resource: '*', effect: 'deny' }],
+          `deny was lost for ${JSON.stringify(permission)}`,
+        )
+      }
+    })
+
+    it('never lets an unrecognized effect replace a known effect, in either order', () => {
+      const cases = [
+        { permission: { edit: 'allow', write: 'bogus' }, expected: 'allow' },
+        { permission: { write: 'bogus', edit: 'allow' }, expected: 'allow' },
+        { permission: { edit: 'ask', write: 'bogus' }, expected: 'ask' },
+        { permission: { write: 'bogus', edit: 'ask' }, expected: 'ask' },
+      ]
+      for (const { permission, expected } of cases) {
+        const { value: v2 } = withCapturedWarnings(() => migrateV1toV2({ permission }))
+        assert.deepEqual(
+          v2.permissions,
+          [{ action: 'edit', resource: '*', effect: expected }],
+          `wrong resolution for ${JSON.stringify(permission)}`,
+        )
+      }
+    })
+
+    it('keeps the first effect when both are unrecognized, and says so honestly', () => {
+      const { value: first, warnings } = withCapturedWarnings(() =>
+        migrateV1toV2({ permission: { write: 'bogus-a', edit: 'bogus-b' } }),
+      )
+      assert.deepEqual(first.permissions, [{ action: 'edit', resource: '*', effect: 'bogus-a' }])
+      assert.ok(
+        warnings.some((m) => m.includes('unrecognized') && m.includes('keeping the first')),
+        `warning must describe keeping the first: ${JSON.stringify(warnings)}`,
+      )
+
+      const { value: second } = withCapturedWarnings(() =>
+        migrateV1toV2({ permission: { edit: 'bogus-b', write: 'bogus-a' } }),
+      )
+      assert.deepEqual(second.permissions, [{ action: 'edit', resource: '*', effect: 'bogus-b' }])
+    })
+
+    it('describes an ignored unrecognized effect instead of claiming restrictiveness', () => {
+      const { warnings } = withCapturedWarnings(() =>
+        migrateV1toV2({ permission: { edit: 'deny', write: 'bogus' } }),
+      )
+      assert.ok(warnings.some((m) => m.includes('unrecognized') && m.includes('deny')))
+      assert.ok(
+        !warnings.some((m) => m.includes('more restrictive')),
+        `deny-vs-unknown must not be described as a restrictiveness win: ${JSON.stringify(warnings)}`,
+      )
+    })
+
+    // ── P0-5 security review: Object.prototype keys are not actions ────────
+    it('passes prototype-named V1 permission keys through as literal string actions', () => {
+      // JSON.parse creates own `__proto__`/`constructor`/`toString` keys that an
+      // object literal cannot. `map[key] || key` used to resolve the inherited
+      // values and emit entries with a missing or object-valued `action`.
+      const permission = JSON.parse('{"__proto__":"deny","constructor":"deny","toString":"deny"}')
+      const v2 = migrateV1toV2({ permission })
+      assert.equal(v2.permissions.length, 3)
+      for (const entry of v2.permissions) {
+        assert.equal(
+          typeof entry.action,
+          'string',
+          `action must be a string: ${JSON.stringify(entry)}`,
+        )
+      }
+      assert.deepEqual(v2.permissions.map((p) => p.action).sort(), [
+        '__proto__',
+        'constructor',
+        'toString',
+      ])
+    })
+
+    // ── P0-5 MCP gating: `permission.mcp.<server>` must become an action rule ──
+    // Measured on 2.0.29/2.0.30/2.1.0/2.1.2/2.1.3: the host evaluates an MCP
+    // tool call as `<server>_<tool>` with resources ["*"]. The V1 key
+    // `permission.mcp.<server>` (and `action:"mcp"`, and `resource`) is inert,
+    // so passing it through produced a config that protected nothing.
+    describe('permission.mcp translation (P0-5 MCP gating evidence)', () => {
+      it('translates permission.mcp.<server>: deny to the enforced <server>_* glob', () => {
+        const v2 = migrateV1toV2({
+          permission: { mcp: { 'pantheon-code-mode': 'deny' } },
+        })
+        assert.deepEqual(v2.permissions, [
+          { action: 'pantheon-code-mode_*', resource: '*', effect: 'deny' },
+        ])
+        assert.equal(
+          v2.permissions.some((rule) => rule.action === 'mcp'),
+          false,
+          'the inert `mcp` action must not be emitted',
+        )
+      })
+
+      it('translates permission.mcp.<server>: allow to an explicit allow glob', () => {
+        const v2 = migrateV1toV2({
+          permission: { mcp: { 'pantheon-memory': 'allow' } },
+        })
+        assert.deepEqual(v2.permissions, [
+          { action: 'pantheon-memory_*', resource: '*', effect: 'allow' },
+        ])
+      })
+
+      it('emits no rule for an invalid server name and says why (B7)', () => {
+        for (const server of ['*', 'my server']) {
+          const { value: v2, warnings } = withCapturedWarnings(() =>
+            migrateV1toV2({ permission: { mcp: { [server]: 'deny' } } }),
+          )
+          assert.deepEqual(
+            v2.permissions,
+            [],
+            `no rule for invalid server ${JSON.stringify(server)}`,
+          )
+          const message = warnings.join('\n')
+          assert.match(message, /invalid/i, `the warning must say the name is invalid: ${message}`)
+          assert.ok(
+            message.includes(server),
+            `the warning must name the invalid server: ${message}`,
+          )
+          assert.match(message, /no rule was emitted/i, message)
+        }
+      })
+
+      it('emits no rule for permission.mcp.<server>: ask and says why', () => {
+        const { value: v2, warnings } = withCapturedWarnings(() =>
+          migrateV1toV2({
+            permission: { mcp: { 'pantheon-vision': 'ask' } },
+          }),
+        )
+        assert.deepEqual(v2.permissions, [], 'ask must not become a rule at all')
+        const message = warnings.join('\n')
+        assert.match(message, /pantheon-vision/, `the server must be named: ${message}`)
+        assert.match(message, /ask/i)
+        assert.match(message, /not expressible/i)
+        assert.match(message, /remain/i, 'the warning must state the tool stays available')
+        assert.match(message, /deny/i, 'the warning must name the enforceable alternative')
+        assert.doesNotMatch(
+          message,
+          /translated|converted to "deny"/i,
+          `ask must not be described as converted: ${message}`,
+        )
+      })
+
+      it('is deterministic for the same permission.mcp in a different key order', () => {
+        const forward = {
+          'pantheon-vision': 'ask',
+          'pantheon-code-mode': 'deny',
+          'pantheon-memory': 'allow',
+        }
+        const reversed = {
+          'pantheon-memory': 'allow',
+          'pantheon-code-mode': 'deny',
+          'pantheon-vision': 'ask',
+        }
+        const first = withCapturedWarnings(() => migrateV1toV2({ permission: { mcp: forward } }))
+        const second = withCapturedWarnings(() => migrateV1toV2({ permission: { mcp: reversed } }))
+        assert.deepEqual(first.value.permissions, second.value.permissions)
+        assert.deepEqual(first.warnings, second.warnings)
+        assert.deepEqual(first.value.permissions, [
+          { action: 'pantheon-code-mode_*', resource: '*', effect: 'deny' },
+          { action: 'pantheon-memory_*', resource: '*', effect: 'allow' },
+        ])
+      })
+
+      it('leaves other MCP server effects and the rest of the V1 block untouched', () => {
+        const { value: v2, warnings } = withCapturedWarnings(() =>
+          migrateV1toV2({
+            permission: {
+              mcp: { 'pantheon-code-mode': 'deny', 'pantheon-vision': 'ask' },
+              read: 'allow',
+            },
+          }),
+        )
+        assert.deepEqual(v2.permissions, [
+          { action: 'pantheon-code-mode_*', resource: '*', effect: 'deny' },
+          { action: 'read', resource: '*', effect: 'allow' },
+        ])
+        assert.equal(warnings.length, 1, JSON.stringify(warnings))
+      })
+    })
+
+    // ── B2 (policy 2): specificity decides between distinct resources ───────
+    // `*` → glob → literal, so under last-match-wins the most specific rule
+    // wins. Within one specificity, allow → ask → unknown → deny (most
+    // restrictive last).
+    describe('permission rule ordering — specificity decides', () => {
+      const denyWildcardFirst = { write: 'deny', edit: { 'src/**': 'allow' } }
+      const allowNestedFirst = { edit: { 'src/**': 'allow' }, write: 'deny' }
+
+      it('produces the same canonical config regardless of V1 key order', () => {
+        const first = migrateV1toV2({ permission: denyWildcardFirst }).permissions
+        const second = migrateV1toV2({ permission: allowNestedFirst }).permissions
+        assert.deepEqual(first, second)
+        assert.deepEqual(first, [
+          { action: 'edit', resource: '*', effect: 'deny' },
+          { action: 'edit', resource: 'src/**', effect: 'allow' },
+        ])
+      })
+
+      it('lets the specific allow win inside the broad deny, in either order', () => {
+        // The trailing `src/**` allow overrides the catch-all deny for that
+        // scope; everything outside it stays denied.
+        for (const permission of [denyWildcardFirst, allowNestedFirst]) {
+          const rules = migrateV1toV2({ permission }).permissions
+          assert.equal(effectiveEffect(rules, 'edit', 'src/index.ts'), 'allow')
+          assert.equal(effectiveEffect(rules, 'edit', 'README.md'), 'deny')
+        }
+      })
+
+      it('resolves wildcard allow + nested-glob deny to deny, in either order', () => {
+        const orders = [
+          { write: 'allow', edit: { 'src/**': 'deny' } },
+          { edit: { 'src/**': 'deny' }, write: 'allow' },
+        ]
+        for (const permission of orders) {
+          const rules = migrateV1toV2({ permission }).permissions
+          assert.deepEqual(rules, [
+            { action: 'edit', resource: '*', effect: 'allow' },
+            { action: 'edit', resource: 'src/**', effect: 'deny' },
+          ])
+          assert.equal(effectiveEffect(rules, 'edit', 'src/index.ts'), 'deny')
+        }
+      })
+
+      it('does not warn for the intended scoped allow inside a broad deny', () => {
+        // The V1 resource map is the documented way to express an exception to
+        // a catch-all. Warning on it would fire for every mnemosyne-style
+        // template, so the decision is: same-source scoping is intentional.
+        const { warnings } = withCapturedWarnings(() =>
+          migrateV1toV2({ permission: denyWildcardFirst }),
+        )
+        assert.ok(
+          !warnings.some((m) => m.includes('does not apply')),
+          `unexpected suppression warning: ${JSON.stringify(warnings)}`,
+        )
+      })
+
+      it('warns when a persisted V2 deny is neutralised by a V1 allow in a scope', () => {
+        const merges = [
+          {
+            permission: { write: { 'src/generated/**': 'allow' } },
+            permissions: [{ action: 'edit', resource: '*', effect: 'deny' }],
+          },
+          {
+            permission: { write: { '*': 'deny' } },
+            permissions: [{ action: 'edit', resource: 'src/generated/**', effect: 'allow' }],
+          },
+        ]
+        for (const config of merges) {
+          const { warnings } = withCapturedWarnings(() => migrateV1toV2(config))
+          assert.ok(
+            warnings.some(
+              (m) =>
+                m.includes('does not apply') &&
+                m.includes('deny') &&
+                m.includes('src/generated/**'),
+            ),
+            `missing cross-source warning: ${JSON.stringify(warnings)}`,
+          )
+        }
+      })
+
+      it('is stable with three or more rules of mixed specificity', () => {
+        const orderA = { edit: { 'src/a.ts': 'allow', 'src/**': 'deny', '*': 'ask' } }
+        const orderB = { edit: { '*': 'ask', 'src/**': 'deny', 'src/a.ts': 'allow' } }
+        const first = migrateV1toV2({ permission: orderA }).permissions
+        const second = migrateV1toV2({ permission: orderB }).permissions
+        assert.deepEqual(first, second)
+        assert.deepEqual(first, [
+          { action: 'edit', resource: '*', effect: 'ask' },
+          { action: 'edit', resource: 'src/**', effect: 'deny' },
+          { action: 'edit', resource: 'src/a.ts', effect: 'allow' },
+        ])
+      })
+    })
+
+    // ── B2 (policy 2): the real mnemosyne template ──────────────────────────
+    describe('permission rule ordering — mnemosyne memory-bank scope', () => {
+      const MNEMOSYNE_PERMISSION = {
+        bash: 'deny',
+        read: 'allow',
+        grep: 'allow',
+        write: {
+          '*': 'deny',
+          '.pantheon/memory-bank/**': 'allow',
+          '.pantheon/deepwork/**': 'allow',
+        },
+        edit: {
+          '*': 'deny',
+          '.pantheon/memory-bank/**': 'allow',
+          '.pantheon/deepwork/**': 'allow',
+        },
+        task: { '*': 'deny' },
+      }
+
+      const convert = (permission) =>
+        migrateV1toV2({ agent: { mnemosyne: { permission } } }).agents.mnemosyne.permissions
+
+      it('keeps the memory-bank and deepwork write scopes usable, denying the rest', () => {
+        const rules = convert(MNEMOSYNE_PERMISSION)
+        assert.deepEqual(
+          rules.filter((rule) => rule.action === 'edit'),
+          [
+            { action: 'edit', resource: '*', effect: 'deny' },
+            { action: 'edit', resource: '.pantheon/deepwork/**', effect: 'allow' },
+            { action: 'edit', resource: '.pantheon/memory-bank/**', effect: 'allow' },
+          ],
+        )
+        assert.equal(
+          effectiveEffect(rules, 'edit', '.pantheon/memory-bank/01-active-context.md'),
+          'allow',
+        )
+        assert.equal(effectiveEffect(rules, 'edit', '.pantheon/deepwork/task.md'), 'allow')
+        assert.equal(effectiveEffect(rules, 'edit', 'src/index.ts'), 'deny')
+        assert.equal(effectiveEffect(rules, 'edit', 'README.md'), 'deny')
+        assert.equal(
+          rules.some((rule) => rule.action === 'write'),
+          false,
+          'write is the host edit action',
+        )
+      })
+
+      it('is deterministic for the same template in a different key order', () => {
+        const reordered = {
+          task: { '*': 'deny' },
+          edit: {
+            '.pantheon/memory-bank/**': 'allow',
+            '.pantheon/deepwork/**': 'allow',
+            '*': 'deny',
+          },
+          write: {
+            '.pantheon/deepwork/**': 'allow',
+            '*': 'deny',
+            '.pantheon/memory-bank/**': 'allow',
+          },
+          grep: 'allow',
+          read: 'allow',
+          bash: 'deny',
+        }
+        assert.deepEqual(convert(reordered), convert(MNEMOSYNE_PERMISSION))
+      })
+    })
+
+    // ── B6: never reorder a V2-only array into a weaker decision ────────────
+    describe('existing V2 permissions ordering (B6)', () => {
+      const literalDeny = [
+        { action: 'edit', resource: 'a.ts', effect: 'allow' },
+        { action: 'edit', resource: '*', effect: 'deny' },
+      ]
+      const globDeny = [
+        { action: 'edit', resource: 'src/generated/**', effect: 'allow' },
+        { action: 'edit', resource: '*', effect: 'deny' },
+      ]
+
+      it('does not reorder a V2-only array, so a literal deny stays deny', () => {
+        const { value: v2, warnings } = withCapturedWarnings(() =>
+          migrateV1toV2({ permissions: literalDeny }),
+        )
+        assert.deepEqual(v2.permissions, literalDeny, 'V2-only order must be preserved')
+        assert.equal(effectiveEffect(v2.permissions, 'edit', 'a.ts'), 'deny')
+        assert.ok(
+          !warnings.some((m) => /canonical order|reorder/i.test(m)),
+          JSON.stringify(warnings),
+        )
+      })
+
+      it('does not reorder a V2-only array, so a glob deny stays deny', () => {
+        const { value: v2, warnings } = withCapturedWarnings(() =>
+          migrateV1toV2({ permissions: globDeny }),
+        )
+        assert.deepEqual(v2.permissions, globDeny)
+        assert.equal(effectiveEffect(v2.permissions, 'edit', 'src/generated/client.ts'), 'deny')
+        assert.ok(
+          !warnings.some((m) => /canonical order|reorder/i.test(m)),
+          JSON.stringify(warnings),
+        )
+      })
+
+      it('does not treat an empty V1 block as a reason to reorder a pure V2 array', () => {
+        const cases = [
+          { input: literalDeny, resource: 'a.ts' },
+          { input: globDeny, resource: 'src/generated/client.ts' },
+        ]
+        for (const { input, resource } of cases) {
+          const { value: v2, warnings } = withCapturedWarnings(() =>
+            migrateV1toV2({ permission: {}, permissions: input }),
+          )
+          assert.deepEqual(v2.permissions, input, 'an empty V1 block must not touch the V2 array')
+          assert.equal(effectiveEffect(v2.permissions, 'edit', resource), 'deny')
+          assert.ok(
+            !warnings.some((m) => m.includes('canonical order')),
+            `no reorder warning expected: ${JSON.stringify(warnings)}`,
+          )
+          assert.ok(
+            !warnings.some((m) => m.includes('both "permission"')),
+            `an empty V1 block is not a merge: ${JSON.stringify(warnings)}`,
+          )
+        }
+      })
+
+      it('warns when a merge reorders a deny into an allow (literal)', () => {
+        const { value: v2, warnings } = withCapturedWarnings(() =>
+          migrateV1toV2({ permission: { read: 'allow' }, permissions: literalDeny }),
+        )
+        assert.equal(effectiveEffect(v2.permissions, 'edit', 'a.ts'), 'allow')
+        const message = warnings.find((m) => m.includes('canonical order'))
+        assert.ok(message, `missing ordering warning: ${JSON.stringify(warnings)}`)
+        assert.match(message, /a\.ts/)
+        assert.match(message, /deny/)
+        assert.match(message, /allow/)
+      })
+
+      it('warns when a merge reorders a deny into an allow (glob)', () => {
+        const { warnings } = withCapturedWarnings(() =>
+          migrateV1toV2({ permission: { read: 'allow' }, permissions: globDeny }),
+        )
+        assert.ok(
+          warnings.some(
+            (m) =>
+              m.includes('canonical order') && m.includes('src/generated/**') && m.includes('deny'),
+          ),
+          JSON.stringify(warnings),
+        )
+      })
+
+      it('does not warn when reordering leaves the effective effect unchanged', () => {
+        const disjoint = [
+          { action: 'edit', resource: 'x.ts', effect: 'allow' },
+          { action: 'edit', resource: 'src/**', effect: 'deny' },
+        ]
+        const { warnings } = withCapturedWarnings(() =>
+          migrateV1toV2({ permission: { read: 'allow' }, permissions: disjoint }),
+        )
+        assert.ok(!warnings.some((m) => m.includes('canonical order')), JSON.stringify(warnings))
+      })
+
+      it('does not throw on malformed entries and preserves them with a warning', () => {
+        const malformed = [null, { action: 'read', resource: '*', effect: 'allow' }]
+        const v2Only = withCapturedWarnings(() => migrateV1toV2({ permissions: malformed }))
+        assert.deepEqual(v2Only.value.permissions, malformed)
+        assert.ok(
+          v2Only.warnings.some((m) => /malformed/i.test(m)),
+          JSON.stringify(v2Only.warnings),
+        )
+
+        const merged = withCapturedWarnings(() =>
+          migrateV1toV2({ permission: { read: 'allow' }, permissions: malformed }),
+        )
+        assert.ok(merged.value.permissions.includes(null), 'malformed entry preserved')
+        assert.ok(
+          merged.warnings.some((m) => /malformed/i.test(m)),
+          JSON.stringify(merged.warnings),
+        )
+      })
     })
 
     it('should convert MCP format (enabled → disabled)', () => {
@@ -594,6 +1111,74 @@ describe('config-migration', () => {
     })
   })
 
+  // ── `permission` + `permissions` coexistence ─────────────────────────────
+  // A config can carry the V1 `permission` block and the V2 `permissions`
+  // array at the same time. Before, whichever key the object listed last
+  // replaced the other wholesale, so the converted V1 rules (or the existing
+  // V2 array) were silently dropped. The V2 array is the base; V1 rules are
+  // merged into it and conflicts resolve by restrictiveness, so both key
+  // orders produce the same result.
+  describe('migrateV1toV2 — permission and permissions coexist', () => {
+    const V1_PERMISSION = { edit: 'allow', bash: { 'git *': 'allow' } }
+    const V2_PERMISSIONS = [
+      { action: 'edit', resource: '*', effect: 'deny' },
+      { action: 'shell', resource: 'npm *', effect: 'allow' },
+    ]
+    const normalize = (permissions) =>
+      permissions.map((p) => `${p.action}\u0000${p.resource}\u0000${p.effect}`).sort()
+
+    it('produces the same merged permissions whichever key comes first', () => {
+      const orders = [
+        { permission: V1_PERMISSION, permissions: V2_PERMISSIONS },
+        { permissions: V2_PERMISSIONS, permission: V1_PERMISSION },
+      ]
+      const results = orders.map((config) => normalize(migrateV1toV2(config).permissions))
+      assert.deepEqual(results[0], results[1])
+      assert.deepEqual(
+        results[0],
+        normalize([
+          { action: 'edit', resource: '*', effect: 'deny' },
+          { action: 'shell', resource: 'npm *', effect: 'allow' },
+          { action: 'shell', resource: 'git *', effect: 'allow' },
+        ]),
+      )
+    })
+
+    it('never discards the existing V2 array', () => {
+      const orders = [
+        { permission: { edit: 'allow' }, permissions: V2_PERMISSIONS },
+        { permissions: V2_PERMISSIONS, permission: { edit: 'allow' } },
+      ]
+      for (const config of orders) {
+        const { value: v2 } = withCapturedWarnings(() => migrateV1toV2(config))
+        const rules = normalize(v2.permissions)
+        assert.ok(rules.includes('shell\u0000npm *\u0000allow'), 'V2-only rule survived')
+        assert.ok(rules.includes('edit\u0000*\u0000deny'), 'V2 deny survived')
+      }
+    })
+
+    it('never discards the rules converted from the V1 block', () => {
+      const orders = [
+        { permission: { bash: { 'git *': 'deny' } }, permissions: [] },
+        { permissions: [], permission: { bash: { 'git *': 'deny' } } },
+      ]
+      for (const config of orders) {
+        const v2 = migrateV1toV2(config)
+        assert.deepEqual(v2.permissions, [{ action: 'shell', resource: 'git *', effect: 'deny' }])
+      }
+    })
+
+    it('warns when the two blocks carry a real conflict', () => {
+      const { warnings } = withCapturedWarnings(() =>
+        migrateV1toV2({ permission: { edit: 'allow' }, permissions: V2_PERMISSIONS }),
+      )
+      assert.ok(
+        warnings.some((m) => m.includes('conflicting') && m.includes('more restrictive')),
+        `conflict must be reported: ${JSON.stringify(warnings)}`,
+      )
+    })
+  })
+
   describe('migrateV2toV1', () => {
     it('should reverse top-level renames', () => {
       const v1 = migrateV2toV1(V2_EXPECTED)
@@ -640,6 +1225,50 @@ describe('config-migration', () => {
         '**/auth/**': 'deny',
         '**/*.sql': 'deny',
       })
+    })
+
+    // ── P0-5 security review: the reverse map is not "last wins" ───────────
+    it('resolves duplicate V2 rules by restrictiveness, not array order', () => {
+      const orders = [
+        [
+          { action: 'edit', resource: '*', effect: 'deny' },
+          { action: 'edit', resource: '*', effect: 'allow' },
+        ],
+        [
+          { action: 'edit', resource: '*', effect: 'allow' },
+          { action: 'edit', resource: '*', effect: 'deny' },
+        ],
+      ]
+      for (const permissions of orders) {
+        const v1 = migrateV2toV1({ permissions })
+        assert.equal(v1.permission.edit, 'deny', JSON.stringify(permissions))
+      }
+    })
+
+    it('applies the same restrictiveness to resource-level collisions', () => {
+      const v1 = migrateV2toV1({
+        permissions: [
+          { action: 'edit', resource: 'src/**', effect: 'allow' },
+          { action: 'edit', resource: 'src/**', effect: 'deny' },
+        ],
+      })
+      assert.deepEqual(v1.permission.edit, { 'src/**': 'deny' })
+    })
+
+    it('keeps prototype-named V2 actions as literal own keys', () => {
+      const v1 = migrateV2toV1({
+        permissions: ['__proto__', 'constructor', 'toString'].map((action) => ({
+          action,
+          resource: '*',
+          effect: 'deny',
+        })),
+      })
+      for (const action of ['__proto__', 'constructor', 'toString']) {
+        assert.ok(Object.hasOwn(v1.permission, action), `${action} must be an own key`)
+        assert.equal(v1.permission[action], 'deny')
+      }
+      assert.equal(Object.getPrototypeOf(v1.permission), Object.prototype)
+      assert.equal(Object.hasOwn(v1.permission, '[object Object]'), false)
     })
 
     it('should reverse MCP format (disabled → enabled, no timeout passthrough)', () => {
@@ -848,5 +1477,71 @@ describe('config-migration', () => {
         'webfetch',
       ])
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Installer defaults: `permission.mcp.<server>: ask` is not enforceable
+// ---------------------------------------------------------------------------
+
+describe('applyMcpServerEntries — MCP ask warning', () => {
+  const context = { runtimeTarget: '/tmp/pantheon-runtime', venvPython: '/tmp/venv/bin/python3' }
+
+  it('keeps the ask defaults but warns that they do not gate the server', () => {
+    const config = {}
+    const { warnings } = applyMcpServerEntries(config, context)
+
+    assert.equal(config.permission.mcp['pantheon-code-mode'], 'ask')
+    assert.equal(config.permission.mcp['pantheon-vision'], 'ask')
+    assert.equal(warnings.length, 2, JSON.stringify(warnings))
+    for (const server of ['pantheon-code-mode', 'pantheon-vision']) {
+      const message = warnings.find((warning) => warning.includes(`permission.mcp.${server}`))
+      assert.ok(message, `no warning named ${server}: ${JSON.stringify(warnings)}`)
+      assert.match(message, /not enforceable/i)
+      assert.match(message, /remain available/i)
+      assert.match(message, new RegExp(`${server}_\\*`))
+    }
+  })
+
+  it('does not warn when the MCP permission map has no ask entry', () => {
+    const config = {
+      permission: { mcp: { 'pantheon-code-mode': 'deny', 'pantheon-vision': 'deny' } },
+    }
+    const { warnings } = applyMcpServerEntries(config, context)
+    assert.deepEqual(warnings, [])
+  })
+
+  it('does not warn for V1, where the MCP permission semantics were not measured', () => {
+    const config = {}
+    const { warnings } = applyMcpServerEntries(config, { ...context, version: 'v1' })
+    assert.deepEqual(warnings, [])
+    assert.equal(config.permission.mcp['pantheon-code-mode'], 'ask')
+  })
+
+  it('does not repeat the installer ask warning during a V2 install', () => {
+    const config = {}
+    const installer = applyMcpServerEntries(config, context)
+    assert.equal(installer.warnings.length, 2, 'the installer reports one per ask server')
+
+    const { warnings } = withCapturedWarnings(() => migrateV1toV2(config))
+    const duplicates = warnings.filter(
+      (message) => /ask/i.test(message) && /pantheon-(code-mode|vision)/.test(message),
+    )
+    assert.deepEqual(
+      duplicates,
+      [],
+      `the migration repeated the warning: ${JSON.stringify(warnings)}`,
+    )
+  })
+
+  it('still warns from the migration path when the installer did not run', () => {
+    const { warnings } = withCapturedWarnings(() =>
+      migrateV1toV2({ permission: { mcp: { 'custom-server': 'ask' } } }),
+    )
+    assert.equal(
+      warnings.filter((message) => message.includes('custom-server')).length,
+      1,
+      JSON.stringify(warnings),
+    )
   })
 })

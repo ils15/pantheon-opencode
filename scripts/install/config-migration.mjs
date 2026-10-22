@@ -64,11 +64,259 @@ const V1_PERMISSION_TO_ACTION = {
  */
 const EFFECT_RESTRICTIVENESS = { allow: 1, ask: 2, deny: 3 }
 
-/** Unrecognized effects are unranked: they are kept, never silently replaced. */
-const UNKNOWN_EFFECT_RANK = 4
+/**
+ * True only for effects this module understands. `Object.hasOwn` is required:
+ * an inherited key (`constructor`, `toString`, `__proto__`) is not an effect,
+ * and treating it as one would rank it above `deny`.
+ */
+function isKnownEffect(effect) {
+  return typeof effect === 'string' && Object.hasOwn(EFFECT_RESTRICTIVENESS, effect)
+}
 
-function effectRank(effect) {
-  return EFFECT_RESTRICTIVENESS[effect] ?? UNKNOWN_EFFECT_RANK
+/**
+ * Emission order (not restrictiveness rank) for rules that share a specificity.
+ * Unknown effects sit after the known non-deny effects and before `deny`, so at
+ * equal specificity `deny` is the most restrictive rule and comes last.
+ */
+const UNKNOWN_EFFECT_EMISSION_ORDER = 2.5
+
+/** Resource containing any glob metacharacter. */
+const GLOB_PATTERN = /[*?[\]{}]/
+
+function effectEmissionOrder(effect) {
+  return isKnownEffect(effect) ? EFFECT_RESTRICTIVENESS[effect] : UNKNOWN_EFFECT_EMISSION_ORDER
+}
+
+/** 0 = `*`, 1 = glob, 2 = literal resource. */
+function resourceSpecificity(resource) {
+  if (resource === '*') return 0
+  return GLOB_PATTERN.test(resource) ? 1 : 2
+}
+
+/**
+ * Canonical order for emitted permission rules.
+ *
+ * Specificity decides between DIFFERENT resources: the host resolves overlaps
+ * with `last-match-wins` (measured), so rules are emitted least specific first
+ * (`*` → glob → literal) and the most specific matching rule wins. Only when
+ * two rules share a specificity does restrictiveness break the tie
+ * (`allow` → `ask` → unknown → `deny`), keeping the more restrictive rule last.
+ *
+ * Same action+resource is not decided here: `resolveEffects` has already
+ * merged those with `deny > ask > allow` and the unknown-effect guard.
+ *
+ * Code-unit tie-breaks make the output independent of the V1 object's key
+ * iteration order.
+ */
+function comparePermissions(a, b) {
+  const actionA = String(a.action)
+  const actionB = String(b.action)
+  if (actionA !== actionB) return actionA < actionB ? -1 : 1
+  const resourceA = String(a.resource)
+  const resourceB = String(b.resource)
+  const bySpecificity = resourceSpecificity(resourceA) - resourceSpecificity(resourceB)
+  if (bySpecificity !== 0) return bySpecificity
+  const byEffect = effectEmissionOrder(a.effect) - effectEmissionOrder(b.effect)
+  if (byEffect !== 0) return byEffect
+  if (resourceA === resourceB) return 0
+  return resourceA < resourceB ? -1 : 1
+}
+
+/** A rule the converter can order: an object with string action+resource. */
+function isValidPermissionEntry(entry) {
+  return (
+    isPlainObject(entry) && typeof entry.action === 'string' && typeof entry.resource === 'string'
+  )
+}
+
+/**
+ * Report entries that are not rule objects. They cannot be compared, so they
+ * are preserved verbatim (never dropped) and excluded from ordering.
+ */
+function warnInvalidPermissionEntries(entries) {
+  const invalid = entries.filter((entry) => !isValidPermissionEntry(entry))
+  if (invalid.length === 0) return
+  console.warn(
+    `[config-migration] ${invalid.length} malformed permission ${invalid.length === 1 ? 'entry was' : 'entries were'} preserved without sorting: ${JSON.stringify(invalid)}`,
+  )
+}
+
+function sortPermissions(entries) {
+  const valid = entries.filter(isValidPermissionEntry)
+  const invalid = entries.filter((entry) => !isValidPermissionEntry(entry))
+  warnInvalidPermissionEntries(entries)
+  // Malformed entries keep their relative order at the end; they must not crash
+  // the comparator, and dropping them would hide a broken config.
+  return [...valid.sort(comparePermissions), ...invalid]
+}
+
+/**
+ * Conservative glob matcher for a literal resource. `**` crosses `/`, `*` and
+ * `?` do not; character classes are treated literally, which can only miss a
+ * warning — never invent one.
+ */
+function globMatchesLiteral(pattern, literal) {
+  if (pattern === '*') return true
+  let source = '^'
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i]
+    if (char === '*') {
+      if (pattern[i + 1] === '*') {
+        source += '.*'
+        i++
+      } else {
+        source += '[^/]*'
+      }
+    } else if (char === '?') {
+      source += '[^/]'
+    } else {
+      source += char.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
+    }
+  }
+  return new RegExp(`${source}$`).test(literal)
+}
+
+/** Last matching rule for one action+resource, the way the host decides. */
+function effectiveEffectAt(entries, action, resource) {
+  let effect
+  for (const entry of entries) {
+    if (!isValidPermissionEntry(entry)) continue
+    if (entry.action !== action) continue
+    if (globMatchesLiteral(entry.resource, resource)) effect = entry.effect
+  }
+  return effect
+}
+
+/**
+ * Warn when canonical ordering weakens an existing V2 decision.
+ *
+ * The V2 array is user state; sorting it is only done to make a V1+V2 merge
+ * deterministic. If reordering alone turns a `deny` into anything weaker for a
+ * resource named in that array, the user must hear about it — the config they
+ * installed gated that path before the merge. The warning is informational
+ * (the canonical order is still required for determinism), and only fires for
+ * deny → non-deny; tightening (allow → deny) is not noise.
+ */
+function warnOrderingChangesEffectiveEffect(before, after) {
+  // Probe each distinct resource string. A glob matches its own literal text
+  // (`src/**` matches the probe `src/**`), so this covers every rule's scope
+  // without inventing concrete paths.
+  const probes = new Set()
+  for (const entry of before) {
+    if (isValidPermissionEntry(entry)) probes.add(`${entry.action}\u0000${entry.resource}`)
+  }
+  for (const key of probes) {
+    const [action, resource] = key.split('\u0000')
+    const beforeEffect = effectiveEffectAt(before, action, resource)
+    const afterEffect = effectiveEffectAt(after, action, resource)
+    if (beforeEffect === 'deny' && afterEffect !== 'deny') {
+      console.warn(
+        `[config-migration] reordering the existing V2 permissions changes ${action} "${resource}" from "deny" to "${afterEffect}" under last-match-wins; the canonical order is kept, but the deny no longer applies to that resource`,
+      )
+    }
+  }
+}
+
+/**
+ * Warn when a deny loses force under the canonical specificity order.
+ *
+ * A scoped allow inside a broader deny is also how the V1 format expresses an
+ * intentional exception — `src/agents/mnemosyne.md` is the shipping example:
+ * `"*": deny` plus `allow` in the memory bank. Warning on every such pair would
+ * fire for the product's own templates and train users to ignore the warning,
+ * so same-source scoping is treated as intentional and stays silent.
+ *
+ * The warning is reserved for overrides that cross a source boundary: a deny
+ * already persisted in the V2 `permissions` array that an incoming V1 block
+ * neutralises in a narrower scope, or the reverse. There the two rules were not
+ * written together and the user may not realise the deny no longer applies.
+ *
+ * Two arbitrary globs share a specificity class, so the effect tie-break puts
+ * `deny` last and they cannot relax a deny; no glob-subsumption guess is needed.
+ */
+function warnSuppressedPermissions(entries, sourceByEntry) {
+  for (let i = 0; i < entries.length; i++) {
+    const earlier = entries[i]
+    if (!isValidPermissionEntry(earlier) || earlier.effect !== 'deny') continue
+    const earlierResource = String(earlier.resource)
+    const earlierSpecificity = resourceSpecificity(earlierResource)
+    for (let j = i + 1; j < entries.length; j++) {
+      const later = entries[j]
+      if (!isValidPermissionEntry(later)) continue
+      if (later.action !== earlier.action || later.effect === 'deny') continue
+      const laterResource = String(later.resource)
+      if (resourceSpecificity(laterResource) <= earlierSpecificity) continue
+
+      const earlierSource = sourceByEntry?.get(earlier)
+      const laterSource = sourceByEntry?.get(later)
+      if (sourceByEntry && earlierSource === laterSource) continue
+
+      // `*` overlaps everything; a glob only overlaps a literal it matches.
+      if (earlierResource !== '*' && !globMatchesLiteral(earlierResource, laterResource)) continue
+
+      const earlierOrigin = earlierSource ? `, ${earlierSource}` : ''
+      const laterOrigin = laterSource ? `, ${laterSource}` : ''
+      console.warn(
+        `[config-migration] permission rule ${earlier.action} "${earlierResource}" (${earlier.effect}${earlierOrigin}) is overridden for resources matching "${laterResource}" by the later ${later.action} "${laterResource}" (${later.effect}${laterOrigin}) under last-match-wins; the deny does not apply in that scope`,
+      )
+    }
+  }
+}
+
+/**
+ * Resolve two effects proposed for the same action+resource.
+ *
+ * Security bias: `deny` always wins, including against an unrecognized effect,
+ * and an unrecognized effect never silently replaces a known one. When both
+ * effects are unrecognized they cannot be ranked, so the first is kept and the
+ * warning says exactly that — it makes no restrictiveness claim.
+ *
+ * @returns {string} the effect to keep
+ */
+function resolveEffects(current, next, label) {
+  if (current === next) return current
+
+  const currentKnown = isKnownEffect(current)
+  const nextKnown = isKnownEffect(next)
+
+  if (!currentKnown && !nextKnown) {
+    console.warn(
+      `[config-migration] unrecognized effects for ${label}: "${current}" vs "${next}"; keeping the first "${current}"`,
+    )
+    return current
+  }
+  if (currentKnown && !nextKnown) {
+    console.warn(
+      `[config-migration] unrecognized effect "${next}" for ${label} cannot replace the known effect "${current}"; keeping "${current}"`,
+    )
+    return current
+  }
+  if (!currentKnown && nextKnown) {
+    console.warn(
+      `[config-migration] unrecognized effect "${current}" for ${label} was replaced by the known effect "${next}"; keeping "${next}"`,
+    )
+    return next
+  }
+
+  const winner = EFFECT_RESTRICTIVENESS[next] > EFFECT_RESTRICTIVENESS[current] ? next : current
+  console.warn(
+    `[config-migration] conflicting effects for ${label}: "${current}" vs "${next}"; keeping the more restrictive "${winner}"`,
+  )
+  return winner
+}
+
+/**
+ * Define an own enumerable property. Plain assignment is not enough for
+ * attacker-controlled keys: `obj['__proto__'] = value` mutates the prototype
+ * (or is dropped), producing a config with no key at all.
+ */
+function setOwn(target, key, value) {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
 }
 
 /**
@@ -88,26 +336,75 @@ function pushPermission(result, index, action, resource, effect) {
   }
   const current = result[existing]
   if (current.effect === effect) return
-  if (
-    effectRank(effect) === UNKNOWN_EFFECT_RANK &&
-    effectRank(current.effect) === UNKNOWN_EFFECT_RANK
-  ) {
-    // Cannot rank two unrecognized effects; keep both rather than drop a policy.
+  current.effect = resolveEffects(current.effect, effect, `${action} "${resource}"`)
+}
+
+/**
+ * Valid MCP server name. Mirrors `deriveNativeMcpPermissions`
+ * (install/opencode.mjs) so the `<server>_*` action emitted here is a name the
+ * host can actually produce; `*`, spaces or any other character would create an
+ * action no host evaluates — a gate that only looks enforced.
+ */
+const MCP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/
+
+/**
+ * Translate the V1 `permission.mcp` block.
+ *
+ * Measured on OpenCode 2.0.29–2.1.3 (P0-5 MCP gating): the host evaluates an
+ * MCP tool call as `<server>_<tool>` with `resources: ["*"]`. The V1 key
+ * `permission.mcp.<server>`, the action `mcp` and the `resource` field are all
+ * inert — passing them through emitted a config that enforced nothing.
+ *
+ *   deny  → { action: "<server>_*", resource: "*", effect: "deny" }
+ *   allow → { action: "<server>_*", resource: "*", effect: "allow" }
+ *   ask   → no rule + warning. `ask` on an action rule HIDES the tool instead of
+ *           prompting, so translating it would silently remove the tool; that is
+ *           not what the user asked for, and it must not be downgraded to deny
+ *           or upgraded to allow without saying so.
+ *
+ * An invalid server name gets the same treatment as `ask`: no rule and a
+ * warning, because an action the host never emits protects nothing.
+ *
+ * The glob gates every tool of the server and needs no `tools/list` discovery,
+ * which is why it is preferred over per-tool `<server>_<tool>` rules.
+ */
+function convertMcpPermissions(value, result, index, { suppressAskWarning = false } = {}) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     console.warn(
-      `[config-migration] unrankable conflicting effects for ${action} "${resource}": "${current.effect}" vs "${effect}"; keeping both`,
+      `[config-migration] permission.mcp must be an object of server → effect; got ${JSON.stringify(value)}. No MCP rule was emitted.`,
     )
-    result.push({ action, resource, effect })
     return
   }
-  const winner = effectRank(effect) > effectRank(current.effect) ? effect : current.effect
-  console.warn(
-    `[config-migration] conflicting effects for ${action} "${resource}": "${current.effect}" vs "${effect}"; keeping the more restrictive "${winner}"`,
-  )
-  current.effect = winner
+  for (const [server, effect] of Object.entries(value)) {
+    if (!MCP_SERVER_NAME_PATTERN.test(server)) {
+      console.warn(
+        `[config-migration] permission.mcp."${server}" is an invalid MCP server name (expected ${MCP_SERVER_NAME_PATTERN}): no rule was emitted.`,
+      )
+      continue
+    }
+    if (effect === 'deny' || effect === 'allow') {
+      pushPermission(result, index, `${server}_*`, '*', effect)
+      continue
+    }
+    if (effect === 'ask') {
+      if (!suppressAskWarning) {
+        console.warn(
+          `[config-migration] permission.mcp."${server}" is "ask", which is not expressible for MCP on OpenCode 2.x: no rule is emitted and the server's tools remain available. Use "deny" (action "${server}_*") to gate them, or disable the server in the host MCP config.`,
+        )
+      }
+      continue
+    }
+    console.warn(
+      `[config-migration] permission.mcp."${server}" has unsupported effect ${JSON.stringify(effect)}; no rule was emitted.`,
+    )
+  }
 }
 
 /**
  * Convert V1 permission object to V2 permissions array.
+ *
+ * Rules are emitted in the canonical order from `comparePermissions`, not in
+ * the V1 object's key order, because the host is last-match-wins.
  *
  * V1 shape:
  *   { bash: { "git *": "allow" }, edit: "allow", skill: { "*": "allow" }, websearch: "deny" }
@@ -115,11 +412,17 @@ function pushPermission(result, index, action, resource, effect) {
  * V2 shape:
  *   [ { action: "shell", resource: "git *", effect: "allow" }, ... ]
  */
-function convertPermissionsV1toV2(permObj) {
+function convertPermissionsV1toV2(permObj, options = {}) {
   const result = []
   const index = new Map()
   for (const [key, value] of Object.entries(permObj)) {
-    const action = V1_PERMISSION_TO_ACTION[key] || key
+    // `permission.mcp` is a server map, not an action name: it needs its own
+    // translation (see convertMcpPermissions).
+    if (key === 'mcp') {
+      convertMcpPermissions(value, result, index, options)
+      continue
+    }
+    const action = Object.hasOwn(V1_PERMISSION_TO_ACTION, key) ? V1_PERMISSION_TO_ACTION[key] : key
     if (typeof value === 'string') {
       // Simple: { edit: "allow" } → [{ action: "edit", resource: "*", effect: "allow" }]
       pushPermission(result, index, action, '*', value)
@@ -132,38 +435,56 @@ function convertPermissionsV1toV2(permObj) {
       console.warn(`[config-migration] Unexpected permission value for "${key}":`, value)
     }
   }
-  return result
+  return sortPermissions(result)
 }
 
 /**
  * Convert V2 permissions array back to V1 permission object.
+ *
+ * Rules that land on the same V1 key+resource are merged with the same
+ * restrictiveness policy as the forward map (`deny > ask > allow`, `deny`
+ * always wins, an unrecognized effect never replaces a known one). "Last wins"
+ * would let `[{edit,*,deny},{edit,*,allow}]` downgrade a deny to allow, which
+ * is the opposite of what the forward direction guarantees.
  */
 function convertPermissionsV2toV1(permArray) {
-  const result = {}
   // Reverse action mapping: V2 action → V1 key. Aliases collapse onto one action
   // (`write` and `edit` both → `edit`), so the FIRST key wins — the canonical
   // V1 spelling — instead of the alias that happens to be listed last.
-  const ACTION_TO_V1 = {}
+  // Null prototype + hasOwn: actions named like Object.prototype members
+  // (`__proto__`, `constructor`, `toString`) must pass through literally.
+  const ACTION_TO_V1 = Object.create(null)
   for (const [v1Key, action] of Object.entries(V1_PERMISSION_TO_ACTION)) {
-    if (!(action in ACTION_TO_V1)) ACTION_TO_V1[action] = v1Key
+    if (!Object.hasOwn(ACTION_TO_V1, action)) ACTION_TO_V1[action] = v1Key
   }
 
+  // Group by V1 key first, resolving collisions per resource, so the output
+  // shape (scalar for a lone "*" rule, object otherwise) does not depend on
+  // array order.
+  const byKey = new Map()
   for (const { action, resource, effect } of permArray) {
-    const v1Key = ACTION_TO_V1[action] || action
-    if (resource === '*') {
-      result[v1Key] = effect
-    } else {
-      if (!result[v1Key] || typeof result[v1Key] === 'string') {
-        // Convert scalar to object
-        if (typeof result[v1Key] === 'string') {
-          const prevEffect = result[v1Key]
-          result[v1Key] = { '*': prevEffect }
-        } else {
-          result[v1Key] = {}
-        }
-      }
-      result[v1Key][resource] = effect
+    const v1Key = Object.hasOwn(ACTION_TO_V1, action) ? ACTION_TO_V1[action] : action
+    let rules = byKey.get(v1Key)
+    if (rules === undefined) {
+      rules = new Map()
+      byKey.set(v1Key, rules)
     }
+    const label = `permission "${v1Key}" resource "${resource}"`
+    rules.set(
+      resource,
+      rules.has(resource) ? resolveEffects(rules.get(resource), effect, label) : effect,
+    )
+  }
+
+  const result = {}
+  for (const [v1Key, rules] of byKey) {
+    if (rules.size === 1 && rules.has('*')) {
+      setOwn(result, v1Key, rules.get('*'))
+      continue
+    }
+    const group = {}
+    for (const [resource, effect] of rules) setOwn(group, resource, effect)
+    setOwn(result, v1Key, group)
   }
   return result
 }
@@ -676,11 +997,170 @@ export function mergeContextSandboxBlocks(v2Explicit, legacy) {
 }
 
 // ---------------------------------------------------------------------------
+// Top-level permissions: V1 `permission` + V2 `permissions` coexistence
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge converted V1 rules into an existing V2 permissions array.
+ *
+ * The V2 array is the base and is never discarded. Incoming rules are appended
+ * when their action+resource is new, and merged with `resolveEffects` when they
+ * collide, so a deny already on disk cannot be downgraded by a later rule.
+ *
+ * Entries carry their source while merging so `warnSuppressedPermissions` can
+ * distinguish an intentional same-block scope (silent) from a cross-source
+ * override that neutralises a persisted deny (warned).
+ */
+function mergePermissionArrays(base, incoming) {
+  // Ordering is necessary for determinism once V1 rules join the array. Check
+  // whether that reorder alone weakens an existing V2 decision before applying
+  // it, so the change is never silent (B6).
+  const validBase = base.filter(isValidPermissionEntry)
+  warnOrderingChangesEffectiveEffect(validBase, sortPermissions(validBase))
+
+  const sources = new Map()
+  const result = base.map((entry) => {
+    const copy = isPlainObject(entry) ? { ...entry } : entry
+    sources.set(copy, 'V2 permissions')
+    return copy
+  })
+  const index = new Map()
+  result.forEach((entry, position) => {
+    if (
+      isPlainObject(entry) &&
+      typeof entry.action === 'string' &&
+      typeof entry.resource === 'string'
+    ) {
+      index.set(`${entry.action}\u0000${entry.resource}`, position)
+    }
+  })
+
+  for (const entry of incoming) {
+    if (
+      !isPlainObject(entry) ||
+      typeof entry.action !== 'string' ||
+      typeof entry.resource !== 'string'
+    ) {
+      // Preserve a shape we cannot merge rather than dropping the rule.
+      result.push(entry)
+      sources.set(entry, 'V1 permission')
+      continue
+    }
+    const key = `${entry.action}\u0000${entry.resource}`
+    const existing = index.get(key)
+    if (existing === undefined) {
+      const copy = { ...entry }
+      index.set(key, result.length)
+      result.push(copy)
+      sources.set(copy, 'V1 permission')
+      continue
+    }
+    result[existing].effect = resolveEffects(
+      result[existing].effect,
+      entry.effect,
+      `${entry.action} "${entry.resource}"`,
+    )
+  }
+
+  const sorted = sortPermissions(result)
+  warnSuppressedPermissions(sorted, sources)
+  return sorted
+}
+
+/**
+ * Servers `applyMcpServerEntries` seeds on every install. Their presence in
+ * `mcp` means the install path already ran and reported every `ask` entry via
+ * `S.mcpAskNotEnforceable`, so the migration must not repeat it: one warning
+ * per server. A standalone migration has no such markers and still warns here.
+ */
+const INSTALLER_MCP_SERVERS = Object.freeze([
+  'pantheon-resources',
+  'pantheon-code-mode',
+  'pantheon-memory',
+  'pantheon-persistence',
+  'pantheon-vision',
+])
+
+function isInstallerPrepared(config) {
+  if (!isPlainObject(config) || !isPlainObject(config.mcp)) return false
+  return INSTALLER_MCP_SERVERS.every((server) => Object.hasOwn(config.mcp, server))
+}
+
+/**
+ * Resolve top-level `permission` (V1) and `permissions` (V2) when both exist.
+ *
+ * Precedence is fixed and does NOT depend on the order the keys appear in the
+ * object:
+ *   1. the existing V2 `permissions` array is the base (it is the target
+ *      format and may already carry rules a previous install wrote);
+ *   2. the converted V1 `permission` rules are merged into it;
+ *   3. same action+resource conflicts resolve by restrictiveness
+ *      (`deny > ask > allow`), and an unrecognized effect never replaces a
+ *      known one — see `resolveEffects`.
+ *
+ * A V2 array with no V1 block is returned VERBATIM: reordering user state can
+ * turn a `deny` into an `allow` under last-match-wins (B6), so the pure V2 path
+ * never sorts. Ordering is only introduced by the merge, where determinism
+ * requires it, and a weakening reorder is reported.
+ *
+ * @param {object} config - deep-cloned input config
+ * @returns {{present: boolean, value: any}}
+ */
+function resolveTopLevelPermissions(config) {
+  const hasV1 = Object.hasOwn(config, 'permission')
+  const hasV2 = Object.hasOwn(config, 'permissions')
+  if (!hasV1 && !hasV2) return { present: false, value: undefined }
+
+  const v1 = hasV1 ? config.permission : undefined
+  const v2 = hasV2 ? config.permissions : undefined
+  const v1IsObject = isPlainObject(v1)
+  const convertOptions = { suppressAskWarning: isInstallerPrepared(config) }
+  const convertedV1 = v1IsObject ? convertPermissionsV1toV2(v1, convertOptions) : undefined
+  // A V1 block that converts to zero rules (`permission: {}`, or only entries
+  // that are not rules) is not a block to merge. Treating it as one used to
+  // reorder a pure V2 array, which can downgrade a deny under last-match-wins.
+  const hasV1Rules = Array.isArray(convertedV1) && convertedV1.length > 0
+
+  if (!hasV2) {
+    return { present: true, value: v1IsObject ? convertedV1 : v1 }
+  }
+  if (!Array.isArray(v2)) {
+    if (v1IsObject) {
+      console.warn(
+        '[config-migration] "permissions" is not an array; keeping the rules converted from the V1 "permission" block instead',
+      )
+      return { present: true, value: convertedV1 }
+    }
+    return { present: true, value: v2 }
+  }
+  if (!hasV1) {
+    warnInvalidPermissionEntries(v2)
+    return { present: true, value: v2 }
+  }
+  if (!v1IsObject) {
+    console.warn(
+      '[config-migration] both "permission" and "permissions" are present; the V1 "permission" value is not an object and was ignored, keeping the V2 "permissions" array',
+    )
+    return { present: true, value: v2 }
+  }
+  if (!hasV1Rules) return { present: true, value: v2 }
+
+  console.warn(
+    '[config-migration] both "permission" (V1) and "permissions" (V2) are present; merging the V1 rules into the existing V2 array',
+  )
+  return { present: true, value: mergePermissionArrays(v2, convertedV1) }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
  * Migrate a V1 opencode.json config to V2 format.
+ *
+ * When top-level `permission` (V1) and `permissions` (V2) coexist, the V2 array
+ * is the base and the V1 rules are merged into it — see
+ * `resolveTopLevelPermissions`.
  *
  * @param {object} config - V1 config object (not mutated)
  * @returns {object} V2 config object
@@ -688,12 +1168,17 @@ export function mergeContextSandboxBlocks(v2Explicit, legacy) {
 export function migrateV1toV2(config) {
   const c = deepClone(config)
   const result = {}
+  const topLevelPermissions = resolveTopLevelPermissions(c)
+  let permissionsEmitted = false
 
   for (const [key, value] of Object.entries(c)) {
     const v2Key = V1_TO_V2_RENAMES[key] || key
 
-    if (key === 'permission' && typeof value === 'object' && value !== null) {
-      result.permissions = convertPermissionsV1toV2(value)
+    if (key === 'permission' || key === 'permissions') {
+      if (topLevelPermissions.present && !permissionsEmitted) {
+        result.permissions = topLevelPermissions.value
+        permissionsEmitted = true
+      }
     } else if (key === 'agent' && typeof value === 'object' && value !== null) {
       const agents = {}
       for (const [agentName, agentConfig] of Object.entries(value)) {
