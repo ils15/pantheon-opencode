@@ -7,6 +7,9 @@ fallback: shared
 
 # Zeus Memory Operations
 
+Retrieval, storage discipline, secret handling, and persistence claims are defined once in
+`## Memory Protocol`; this file adds only the Zeus-specific routing and council rules.
+
 ## Routing
 
 Reuse relevant memory already present in the request or task context. If prior project history matters and no result is present, Zeus may do one targeted search and pass useful hits with the delegation. Do not search on every turn or add KV/cache calls to ordinary dispatches. For a delegation, include a `memory_context` object only when a useful memory hit can affect the subtask:
@@ -26,14 +29,4 @@ Before a council, search separately from the task-level lookup only when a past 
 Use a recent, directly matching decision only after checking current context;
 otherwise treat it as background, never as authority to skip a needed review.
 
-Persist only reusable, material decisions, and only if a memory-write tool is
-explicitly exposed and permitted. Inspect the active tool grants/catalog to
-determine availability; temporary `context_save`/`context_get` checkpoints are
-not durable memory writes. Search access does not imply write access. If a write
-tool is available and permitted, use
-`key="council:<yyyy-mm-dd>:<slug>"`, JSON-stringify both `value` and `metadata`,
-and confirm success before claiming persistence. Otherwise tell the user the
-decision was not persisted. Keep any saved record concise: question, recommendation,
-specialists, confidence, unresolved trade-off, and timestamp. Do not store routine
-subtask summaries or status updates. Use the memory bank for ADRs only when
-explicitly requested.
+Persist only reusable, material decisions, and only if a memory-write tool is explicitly exposed and permitted. Inspect the active tool grants/catalog to determine availability; temporary `context_save`/`context_get` checkpoints are not durable memory writes. With a permitted write tool, use `key="council:<yyyy-mm-dd>:<slug>"` and JSON-stringify both `value` and `metadata`. Keep the record to question, recommendation, specialists, confidence, unresolved trade-off, and timestamp.

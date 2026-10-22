@@ -6,7 +6,7 @@ agents: ["*"]
 
 # Agent Return Format
 
-All implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) MUST return results to Zeus in this format:
+Implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) MUST return results to Zeus in this format:
 
 ## subtask_summary
 **files_changed:** [list of file paths, one per line]
@@ -18,70 +18,25 @@ All implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) M
 **blockers:** [list any blockers or null]
 **memory_context:** {"refs":[{"namespace":"<safe namespace>","key":"<safe key>"}],"takeaway":"<concise relevant takeaway>"} (optional only if memory affected; non-sensitive refs/takeaway, no secrets or copied memory; only in this summary, not Apollo/Athena or council formats)
 
-For investigation agents (Apollo, Athena), return structured findings with:
-- Key findings as bullet points
-- File paths with line numbers
-- Relevant code snippets (max 3 lines each)
+For investigation agents (Apollo, Athena), return structured findings: key findings as bullets, file paths with line numbers, code snippets of max 3 lines.
 
 ### Athena Plan Handoff
 
-When Zeus delegates Athena through the root `subagent` dispatch, its final task
-result MUST contain the complete Markdown plan, not just a summary, artifact
-path, or approval question. Include the goal, scope and assumptions, actionable
-phases, affected files or areas, dependencies, verification, risks, open
-questions, and acceptance criteria; mark unknowns instead of guessing. This
-plan contract supersedes the generic structured-findings format above.
-Athena must not call `agent/askQuestions`, pause for user input, or ask for
-approval in the child session. Zeus must publish the returned full plan as a
-normal message in the main conversation before triggering any approval UI;
-the plan and approval question must not be bundled or reversed. If the runtime
-cannot guarantee this order, Zeus asks for approval in plain text after the
-plan and waits for the next user message. For direct Athena invocations, show
-the complete plan in the current conversation before requesting approval.
+When Zeus delegates Athena through the root `subagent` dispatch, its final task result MUST contain the complete Markdown plan (not a summary, artifact path, or approval question): goal, scope and assumptions, phases, affected files or areas, dependencies, verification, risks, open questions, acceptance criteria — unknowns marked, never guessed. This supersedes the structured-findings format. Athena must not call `agent/askQuestions`, pause for user input, or ask for approval in the child session. Zeus publishes the full plan as a normal message before any approval UI, never bundling plan and approval question; if the runtime cannot guarantee that order, Zeus asks for approval in plain text afterwards and waits for the next user message. Direct Athena invocations show the complete plan before requesting approval.
 
 ## Council Specialist Response Format
 
-When responding to a `/pantheon` council synthesis invocation, specialists MUST return this structured format. First-round specialists receive independent prompts without peer responses, whether dispatch is parallel or synchronous/sequential; they therefore cannot know actual peer positions. Do not guess them, claim agreement/disagreement with unseen peers, or self-reference in agreement signals. Omit `agreement_signals` or write `none` in the first round. In a rebuttal round, signals may reference only peer responses included in that round's prompt. Zeus derives agreement and disagreement during synthesis by comparing actual responses.
+On a `/pantheon` council invocation, specialists MUST return this format. First-round prompts are independent — whether dispatch is parallel or synchronous/sequential — so respond without peer responses: never guess peer positions or claim unseen agreement. Omit `agreement_signals` or write `none` in the first round and cite only peer responses visible in a rebuttal prompt. Zeus derives agreement by comparing actual responses.
 
 ```
 ## specialist_response
 **position:** <clear one-sentence position answering the question>
 **reasoning:** <2-4 sentences with logical chain>
-**trade_offs:** <what's gained vs lost, specific>
+**trade_offs:** <what's gained vs lost — at least one of each, specific>
 **risks:** <what could go wrong, max 3 items>
 **confidence:** High | Medium | Low
 **agreement_signals:** <omit or `none` in first round; rebuttal may cite only visible peer responses>
 **specific_claims:** <optional self-reported count; advisory only, not evidence>
 ```
 
-### Field Rules
-
-| Field | Required | Validation |
-|-------|----------|------------|
-| position | ✅ | Single sentence, must directly answer the question |
-| reasoning | ✅ | 2-4 sentences with logical chain |
-| trade_offs | ✅ | At least one gain and one loss, specific to context |
-| risks | ✅ | Max 3 bullet points |
-| confidence | ✅ | One of: High, Medium, Low |
-| agreement_signals | Optional | Omit or use `none` in the first round. In rebuttal, reference only peer responses visible in the prompt; never speculate or self-reference. Zeus derives synthesis positions from actual responses, not these signals. |
-| specific_claims | Optional | Self-reported integer count only; advisory and not independently validated. Do not treat the count alone as evidence or proof of confidence. |
-
-### Confidence Guidelines
-
-- **High**: Position backed by at least 3 verifiable claims supported by evidence in the response; a self-reported count alone does not qualify
-- **Medium**: Position backed by at least 1 verifiable claim supported by evidence in the response
-- **Low**: Position is opinion-based or speculative
-
-Equal self-reported counts (for example, several specialists each reporting 7) do not by themselves prove fabrication; assess whether the actual response contains verifiable, supported claims.
-
-### Example
-```
-## specialist_response
-**position:** Use a bounded local cache for the read-heavy endpoint.
-**reasoning:** The endpoint repeatedly reads the same reference data. A bounded cache reduces repeated lookups, while a short TTL limits staleness.
-**trade_offs:** Gain: fewer repeated reads. Lose: results may remain stale until the TTL expires.
-**risks:** Cache invalidation may lag after updates.
-**confidence:** Medium
-**agreement_signals:** none
-**specific_claims:** 2 (self-reported; advisory)
-```
+Required: position, reasoning, trade_offs, risks, confidence. Optional `agreement_signals` and `specific_claims` are advisory — never speculate or self-reference, and do not treat a self-reported count alone as evidence or proof of confidence. **High** needs ≥3 verifiable claims supported by evidence; **Medium** ≥1; **Low** is opinion-based or speculative. Equal self-reported counts do not by themselves prove fabrication; judge the actual claims.

@@ -107,70 +107,63 @@ function versionLine(artifact, git) {
 // ---------------------------------------------------------------------------
 const GLOBAL_HEADER = `# Pantheon Agent System — OpenCode
 
-This project uses the Pantheon multi-agent framework with 14 specialized agents.
-
 ## Available Agents
 
 | Agent | Role |
 |-------|------|
-| @aphrodite | Frontend specialist — React 19, TypeScript strict, WCAG accessibility, responsive design, TDD, modern API patterns, deprecated npm detection. Uses discovery/review proportionally to scope and risk. |
-| @apollo | Read-only investigation scout — 3–10 parallel searches across codebase, external docs, and GitHub. Called by: athena, zeus, hermes, aphrodite, demeter. No edits, no commands. |
-| @athena | Strategic planner & architect — research-first, plan-only, never implements. Plans include quality gates (ruff/Biome, dep detection, LTS policy). Calls apollo for discovery. |
-| @demeter | Database specialist — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, TDD migrations, modern DB libs. Preserves review gates for schema/data changes. |
-| @gaia | Remote sensing domain specialist — satellite image processing, spectral analysis, SAR, change detection, time series, ML/DL classification. Read-only analysis of geospatial data. |
-| @hephaestus | AI tooling & pipelines specialist — LangChain/LangGraph chains, RAG architecture, vector stores, embedding strategies. Forges AI infrastructure. Calls apollo, sends to themis. |
-| @hermes | Backend specialist — FastAPI, Python, async, TDD (RED→GREEN→REFACTOR), modern Python stdlib, obsolete lib detection. Uses discovery/review proportionally to scope and risk. |
-| @iris | GitHub operations specialist — branches, pull requests, issues, releases, tags. Called by zeus after review. Never pushes or merges without explicit human approval. Integrates with VS Code GitHub Pull Requests extension. |
-| @mnemosyne | Memory bank quality owner — initializes .pantheon/memory-bank/, writes ADRs and task records on explicit request. Called by zeus. Never invoked automatically after phases. |
-| @nyx | Observability & monitoring specialist — OpenTelemetry tracing, token/cost tracking, agent performance analytics, LangSmith integration. Calls apollo for discovery, sends to themis. |
-| @prometheus | Infrastructure + model provider specialist — Docker, CI/CD, multi-model routing, cost optimization, provider abstraction |
-| @talos | Hotfix express lane — direct fixes for small bugs, CSS, typos, minor logic. No TDD ceremony, no orchestration overhead. Standalone, no subagents. Escalates complex issues to zeus. |
-| @themis | Quality & security gate — ruff/Biome linting, dead/legacy code detection, OWASP Top 10, applicable coverage requirements, correctness, deprecation audit. Reviews material/sensitive changes. |
-| @zeus | Central orchestrator — never implements. Delegates to: athena, apollo, hermes, aphrodite, demeter, prometheus, themis, iris, mnemosyne, talos, hephaestus, nyx |
-
-Repository-specific setup and conventions live in each project's own AGENTS.md; this global file carries only the rules shared by every Pantheon session, so nothing is ever loaded twice.
+| @aphrodite | Frontend — React 19, strict TypeScript, WCAG, responsive design, deprecated npm detection. |
+| @apollo | Read-only investigation scout — 3–10 parallel searches (codebase, docs, GitHub). No edits, no commands. |
+| @athena | Planner/architect — research-first, plan-only, never implements. Plans carry quality gates (ruff/Biome, dep detection, LTS policy). |
+| @demeter | Database — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, migrations; preserves schema/data review gates. |
+| @gaia | Remote sensing — satellite/spectral analysis, SAR, change detection, time series, ML/DL classification; read-only. |
+| @hephaestus | AI pipelines — LangChain/LangGraph, RAG, vector stores, embeddings. |
+| @hermes | Backend — FastAPI, Python, async, modern stdlib, obsolete lib detection. |
+| @iris | GitHub ops — branches, PRs, issues, releases, tags; called by zeus after review. Never pushes or merges without explicit human approval. |
+| @mnemosyne | Memory bank — initializes .pantheon/memory-bank/; writes ADRs/task records only on explicit request. Called by zeus, never automatically. |
+| @nyx | Observability — OpenTelemetry tracing, token/cost tracking, agent analytics, LangSmith. |
+| @prometheus | Infrastructure + model providers — Docker, CI/CD, multi-model routing, cost optimization, provider abstraction. |
+| @talos | Hotfix lane — small bugs, CSS, typos, minor logic; no TDD ceremony, standalone, no subagents. Escalates complex issues to zeus. |
+| @themis | Quality/security gate — ruff/Biome, dead/legacy code, OWASP Top 10, coverage, correctness, deprecation audit. Reviews material/sensitive changes. |
+| @zeus | Central orchestrator — never implements. Delegates to: athena, apollo, hermes, aphrodite, demeter, prometheus, themis, iris, mnemosyne, talos, hephaestus, nyx. |
 `
 
 const PROJECT_HEADER = `# Pantheon — Repository Setup
 
-Shared Pantheon rules (agent table, return format, memory protocol, YAGNI,
-communication rules) live in the global \`~/.config/opencode/AGENTS.md\`; this
-file carries only repository-specific setup so no rule is loaded twice.
-
 ## OpenCode Setup
 
-See [INSTALLATION.md](docs/INSTALLATION.md) for setup instructions.
+Setup: [INSTALLATION.md](docs/INSTALLATION.md).
 
-- Build: \`npm test\`
-- Test: \`npm test\`
+- Build/Test: \`npm test\`
 - Lint: \`npm run lint\`
 
 ## Teste de Instalação Global (sandbox)
 
-Para validar a instalação global do pacote pantheon-opencode COMO UM USUÁRIO REAL, use o sandbox isolado em \`~/pantheon-sandbox/\` (fora do repo, HOME + prefix npm + venv próprios). O ambiente de dev mistura 3 instalações + config global + venv — NÃO serve para testar instalação/empacotamento.
+Valide a instalação global COMO UM USUÁRIO REAL no sandbox \`~/pantheon-sandbox/\` (fora do repo; HOME, prefix npm e venv próprios); o ambiente de dev NÃO serve para empacotamento.
 
-- Rodar: \`bash ~/pantheon-sandbox/run-test.sh\` (opencode mcp list 5/5 connected + doctor 0 erros + abre TUI isolado)
-- Regra para agentes: ao validar instalação global (npm pack, \`init\`, MCPs, hooks), usar o sandbox — NUNCA testar no ambiente de dev
+- Rodar: \`bash ~/pantheon-sandbox/run-test.sh\` (MCPs, doctor, TUI)
+- Regra para agentes: valide instalação global (npm pack, \`init\`, MCPs, hooks) no sandbox — NUNCA no ambiente de dev
 - Descarte: \`rm -rf ~/pantheon-sandbox\`
-- Detalhes: ver \`~/pantheon-sandbox/README.md\`
+- Detalhes: \`~/pantheon-sandbox/README.md\`
+
+## Worktrees
+
+- Nunca crie worktrees dentro do projeto principal; use \`<project-parent>/.pantheon-worktrees/<basename-do-repo>/<task>\`.
+- \`.pantheon/workflows/\` e \`.pantheon/worktrees/\` não são o padrão para worktrees.
 
 ## Conventions
 
 - TDD: RED→GREEN→REFACTOR for testable behavior; use focused checks for micro-edits
-- Honor repository coverage thresholds when relevant; preserve stronger auth/security/data-integrity gates
+- Stronger gates (auth, security, data-integrity, coverage) are canonical in the global \`Test Economy\` section
 - Async/await on all I/O
 - Type hints on all functions
-- PRs always update the README — every pull request must document newly added features, behaviors, env vars, or commands in the README before being opened.
+- PRs always update the README: document new features, behaviors, env vars, and commands before opening.
 `
 
 const INSTRUCTIONS_PREAMBLE = `---
 
 # Agent Instructions
 
-The following sections are consolidated from \`src/instructions/*.instructions.md\`
-so both OpenCode V1 (auto-loads AGENTS.md) and V2 (loads AGENTS.md, ignores the
-\`instructions\` config key) receive identical shared rules. Agent-scoped rules
-are rendered into only the matching installed agent prompts.`
+Shared rules from \`src/instructions/*.instructions.md\`, identical for OpenCode V1 and V2 (V2 ignores \`instructions\`). Repo-specific setup stays in that project's AGENTS.md, so no rule loads twice; agent-scoped rules live only in the matching prompt.`
 
 // ---------------------------------------------------------------------------
 // Frontmatter parsing (stdlib only — no yaml dependency)
@@ -267,11 +260,14 @@ export function generateGlobalAgentsMd(instructions, git = readGitInfo()) {
     '',
   ]
   for (const instr of sharedInstructions) {
+    // The section marker below already carries the title; drop a duplicated
+    // leading H1 from the instruction body (agent prompts keep it intact).
+    const body = instr.body.replace(/^\s*#\s[^\n]*\n+/, '')
     sections.push(
       `<!-- Source: src/instructions/${instr.file} -->`,
       `## ${instr.name}`,
       '',
-      instr.body.trimEnd(),
+      body.trimEnd(),
       '',
     )
   }
@@ -291,7 +287,7 @@ export function generateProjectAgentsMd(git = readGitInfo()) {
   const sections = [
     MANAGED_BEGIN,
     GENERATED_BY,
-    '<!-- Source of truth: the static project sections in scripts/build-agents-md.mjs. -->',
+    '<!-- Source of truth: project sections in scripts/build-agents-md.mjs. -->',
     versionLine('project', git),
     '',
     PROJECT_HEADER.trimEnd(),

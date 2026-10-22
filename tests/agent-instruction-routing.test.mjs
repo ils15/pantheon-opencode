@@ -34,7 +34,7 @@ test('applyTo remains a file glob and never acts as an agent selector', () => {
 
 test('shared global baseline excludes agent-scoped and language-specific instructions', () => {
   const baseline = generateGlobalAgentsMd(instructions)
-  assert.ok(baseline.includes('YAGNI Principles'))
+  assert.ok(baseline.includes("Don't add abstractions before the third repetition"))
   assert.ok(!baseline.includes('INLINE COUNCIL SYNTHESIS'))
   assert.ok(!baseline.includes('Backend Development Standards (Hermes)'))
   assert.ok(!baseline.includes('Frontend Development Standards (Aphrodite)'))
