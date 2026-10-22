@@ -468,7 +468,12 @@ try {
   )
 
   // A project that registers the plugin by relative/ROOT path (dev checkout)
-  // has no node_modules copy to compare and is skipped, never flagged.
+  // has no node_modules copy to compare and is skipped, never flagged. The
+  // referenced tree has to EXIST for that shape to be real: a relative ref that
+  // resolves nowhere is a dangling registration and the doctor fails closed on
+  // it (P0-6, tests/doctor-plugin-path-staleness.test.mjs).
+  mkdirSync(join(driftFixture, 'src', 'plugin-v2'), { recursive: true })
+  writeFileSync(join(driftFixture, 'src', 'plugin-v2', 'index.ts'), '// dev entry\n')
   writeFileSync(join(driftFixture, 'opencode.json'), JSON.stringify({ plugins: ['src/plugin-v2'] }))
   assert.equal(
     checkPluginVersionDrift({ target: driftFixture, env: { HOME: driftFixture } }),
