@@ -20,35 +20,310 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [v1.6.0] - 2026-10-22
 
+Consolidated summary of the 1.6 line against `v1.5.2`. The per-beta entries
+below are kept unchanged as the historical record; this section groups them by
+theme.
+
 ## 🆕 What's New
 
-- **Declared and measured host matrix:** OpenCode `1.19.x` (V1), `2.0.29`,
-  `2.0.30`, and the `2.1.x` line (`>=2.1.0 <2.2`, proven on `2.1.0` and on the
-  newest patch of the freeze). `2.0.22` and `2.0.31` are not supported.
-- **Real MCP gate:** `permission.mcp.<server>` translates to
-  `action:"<server>_*"`; `deny` and `allow` are enforced, while `ask` is not
-  expressible and now warns during migration and install.
-- **Versioned evidence** in
-  `bench/results/p05-permission-matrix-2026-10-22.md`.
-- **Context:** `AGENTS.global.md` reduced from 13,965 to 9,340 bytes (118 lines)
-  with no rule removed; per-artifact ceilings and gate-phrase exclusivity in CI.
-- **Release gate:** six executable gates with evidence, aligned required checks,
-  `push` on `main`, and `test:install` split out.
+### Plugin and runtime contract
+
+- **Two real generations, separately built:** independently compiled V1 and V2
+  loaders plus a TUI entry point that selects the bundle for the detected host
+  generation, instead of one contract and a V2 stub.
+- **A declared and measured host matrix:** OpenCode `1.19.x` (V1), `2.0.29`,
+  `2.0.30` and the `2.1.x` line (`>=2.1.0 <2.2`, proven on `2.1.0` and on the
+  newest patch of the freeze), with `2.0.22` and `2.0.31` unsupported.
+- **Generation selection defaults to `auto` and asks the host:** precedence is
+  an explicit flag, then `OPENCODE_VERSION`, then an `opencode2` basename, then
+  a `--version` probe, then one announced fallback to `v1`. A 2.x host keeps its
+  plugin entry and its tool surface, and an unreadable host fails loudly instead
+  of producing a silently tool-less install. Choosing a generation explicitly
+  also repairs a configuration an earlier `v1` install had corrupted.
+- **The smaller V2 surface is declared, not discovered:** installer and
+  `doctor` print the unsupported-feature list from a single source, and a V2
+  install is described as supported-but-smaller rather than broken.
+- **The V2 tools execute instead of announcing success,** and the host's
+  `output` biconditional is part of the `V2ToolDef` type, so an asymmetric tool
+  no longer compiles.
+- **Host domains the SDK does not type** (`tool`, `event`, `permission`,
+  `session`) sit behind one structural declaration and one documented cast,
+  replacing six casts that verified nothing.
+- **No native step ceiling is emitted:** `steps` is gone from the 14 managed
+  agents, the v2 installer deletes residual values from managed agents only, and
+  background tasks, `experimental.subagent_depth` and parallel independent
+  delegations replace what the ceiling was doing; the step-limit routing helpers
+  and their never-imported loader are removed.
+- **Image analysis on V2:** `vision_describe` resolves the live image-capable
+  model from the catalog under OpenCode Zen authentication, and relative image
+  paths resolve from the active project directory.
+- **Support policy in writing:** 1.6.x is the last line compatible with OpenCode
+  1.X and 1.7 targets OpenCode 2 only; OpenCode 2 support in 1.6 is documented
+  as partial, with the canary/host mismatch on
+  `/api/experimental/session/{id}/wait` and the absent V1 end-to-end leg stated
+  as the measured reasons.
+
+### Permissions and security
+
+- **Native MCP permissions per agent on both generations:** each agent's
+  `mcp_tools` allowlist becomes native rules that deny omitted Pantheon servers
+  by default, allow only declared tools, and leave third-party MCPs untouched;
+  on V2 the servers stay connected and the rules limit which tools an agent
+  sees.
+- **A server-wide gate the host can actually evaluate:**
+  `permission.mcp.<server>` translates to `action:"<server>_*"`, `deny` and
+  `allow` are enforced, and `ask` — inexpressible in the action form — now warns
+  at migration and install instead of being written inertly.
+- **Rules are emitted against the action the host evaluates:** a `write` rule
+  becomes `edit`, so a translated `write: deny` blocks writes.
+- **`deny` is never downgraded** by an unknown effect: a collision resolves by
+  restrictiveness on the same resource and by specificity across resources, and
+  an existing V2 rule array is not reordered.
+- **Read-only sessions are enforced inside the V2 plugin:** `apollo` and `gaia`
+  lose write access again, `pantheon_model` — which writes preset state — is in
+  the default blocked set, and `pantheon_cost` is deliberately not, because it
+  only reads.
+- **The high-confidence secret scan runs on V2** through `execute.before` (exit
+  2 blocks, exit 1 is advisory), with the script path verified from the
+  installed tarball rather than from the repo.
+- **Delegation is validated before the child session exists:** the native
+  `subagent` event's agent, session and target are correlated with the
+  permission evaluation's `source`; Zeus→Apollo is allowed from a root session,
+  and dispatches outside the matrix or issued from a child session are denied.
+- **`pantheon_bounded_read` for root Zeus sessions:** native per-file approval,
+  no persistent grant, caps on calls, files, lines and bytes, and a fail-closed
+  secret scanner.
+- **The Iris commit contract forbids hook bypass,** so a commit cannot skip the
+  gates that apply to it.
+- **The permission model is documented in one place:**
+  `docs/PERMISSIONS-QUALITY-DELEGATION.md` maps the quality gates, the four
+  permission layers and delegation in a single document that marks what is still
+  unverified, and the roadmap was rewritten with verified root causes instead of
+  assumed ones.
+
+### MCP and runtime
+
+- **Persistence MCP is a six-tool surface:** `context_save`, `context_get` and
+  the four `goal_*` tools; the twelve KV and context-management tools were
+  unregistered while internal SQLite KV helpers remain for checkpoint storage.
+  Goal tools are Zeus-only because goals are session-scoped and unreadable
+  across sessions.
+- **Goal storage is initialized and migrated deliberately:** a pristine project
+  database starts with both checkpoint and goal schemas, startup never adds goal
+  DDL to an existing database, and an absent schema makes the goal tools return
+  the exact migration command. Guidance is dry-run first, then a stopped
+  server, target confirmation and verified `0600` backups.
+- **The V1 `pantheon_goal_*` tools are soft-deprecated:** behavior unchanged,
+  stored legacy goals no longer continued automatically, the durable
+  replacement is the Persistence `goal_*` surface, and removal is deferred to a
+  future release under explicit human approval.
+- **The five Python MCP entrypoints no longer share one process name,** with an
+  install-time migration, so a broad `pkill -f server.py` cannot take down the
+  whole fleet.
+- **`pantheon_cost` reads whichever database family it finds** by table
+  presence and marks assistant turns by the `type` column on V2 rather than
+  `data.role`; `PANTHEON_OPENCODE_VERSION` only narrows an already-detected
+  schema and fails fast when the requested family is absent, and every report
+  states the time window it actually measured.
+- **One memory server implementation:** `scripts/memory_mcp.py` is a thin shim
+  over `src/mcp/memory_mcp.py`, and a sync test asserts both register the same
+  tool list.
+
+### Memory and context
+
+- **`memory_search` has an error contract:** an unreadable store returns a
+  typed, sanitized error, an empty result means nothing matched, and
+  all-stopword queries no longer fall back to a literal FTS match.
+- **Keyword retrieval only:** FTS5/BM25 and the `code_*` codemap tools are
+  preserved, and the legacy vector scripts plus the embedding/KNN/RRF path are
+  removed.
+- **Fewer automatic memory calls:** Zeus reuses its task-start search result,
+  the compression protocol stops recommending long automatic pipelines, and the
+  council protocol and persistence bounds are corrected.
+- **Delegation briefs can carry memory context safely:** minimized,
+  non-sensitive references and takeaways travel as untrusted context, with
+  return formats and discovery/review routing stated per role.
+- **Context payload cut on both axes:** duplicated global/project instructions
+  are emitted once on V2 (first-request context proxy −11.8% on interleaved
+  2.0.29 runs; total input and wall latency remain inconclusive), and
+  `AGENTS.global.md` drops from 13,965 to 9,340 bytes with no rule removed,
+  backed by per-artifact ceilings and gate-phrase exclusivity in CI.
+
+### Installer and distribution
+
+- **Model profiles:** Inherit, OpenCode Go (hybrid), OpenAI, Anthropic. Inherit
+  leaves the preset unset, OpenCode Go pairs the premium lineup for Zeus,
+  Athena, Themis and Hephaestus with the Go lineup elsewhere, and the legacy
+  `go-free`, `go-fast` and `go-premium` IDs still resolve. The Anthropic
+  profile names `ANTHROPIC_API_KEY`; the installer never collects or inspects
+  keys.
+- **Project-scoped V2 model overrides** set an agent's model without changing
+  another project.
+- **Apply is a reviewed operation:** dry-run previews the exact per-file change
+  set, apply requires explicit `--yes`, plan/apply drift is detected, the
+  backup set is exact and restorable, and failures are reported with
+  secret-safe output.
+- **Installation targets what the host reads:** V2 agents and project slash
+  commands go to the host's discovered directories, component state is marked
+  installed only after success, and the TUI picks the bundle for the right
+  generation.
+- **Sandbox and launcher:** the global test proves the installed package matches
+  this checkout and rejects stale npm references in active configs before
+  exercising the runtime, and `--prepare` writes `start-pantheon.sh` with
+  isolated HOME, XDG, project and database plus a fixed managed-service port
+  (`49376`) that refuses to start rather than killing services already bound.
+- **Interactive and headless setup:** Clack spinners on TTYs and readable
+  non-TTY output; cancel or an empty component selection exits without writes;
+  `--no-mcp` still excludes runtime; `--yes` does not override an explicit
+  decline; the setup summary and worktrees skill recommend an external worktree
+  location without creating one.
+- **Install progress is descriptive instead of decorative:** every `step`
+  reports how long it took, backup, config writes, migrations, state recording
+  and the TUI dependency install each have their own step, and one `[DRY-RUN]`
+  marker is applied by the UI layer so every preview line is labelled the same
+  way — the venv subprocess output included, which now says what it would do
+  rather than what it did.
+- **`init --doctor` reports its outcome and honors it:** the health check prints
+  its result and duration and propagates the doctor exit code, and `doctor`
+  prints how many checks passed in each section even without `--verbose`.
+- **Node floor 26.4.0** across package, CLI, installer and Node tooling (drops
+  22, 24 and 26.0–26.3), scoped as a package requirement rather than a host
+  runtime claim, with `node:sqlite` kept as a separate capability threshold
+  (>=22.5, optional `pantheon_cost` backend only).
+- **The published package no longer carries the maintainers' personal OpenCode
+  configuration;** `init` still generates the user's project config.
+
+### TUI
+
+- **A dedicated V2 entry point,** with `/pantheon-focus` for session focus where
+  the host has no goal tools.
+- **The interactive wizard is rebuilt on `@clack/prompts`** and keeps the
+  component, install-location, authorization and worktree choices.
+- **The packaged bundle is reproducible under a CI build,** and the shipped
+  `/pantheon-audit` carries its heuristic scanner and resolves the installed
+  copy before running the first layer; `/pantheon-consolidate` delegates to
+  Mnemosyne, the owner of memory-bank quality.
+
+### Agents, instructions and delegation
+
+- **Plans are visible before approval:** Zeus shows Athena's complete plan in
+  the main conversation, including for `/pantheon-deepwork`, and the approval
+  question is never bundled with it.
+- **Delegation is proportional by default:** bounded work goes straight to the
+  relevant specialist, and planning, broad discovery, review or parallel work
+  is requested only when uncertainty, dependencies or risk warrant it.
+- **An explicitly rooted specialist is a supported path on V2:** Talos started
+  as a root agent produced the requested artifact with no child session in the
+  pre-registered cohort (5/5), at a first-request context proxy of 9,675 tokens
+  against 13,009 for Zeus (−25.6%), with no total-input, wall, monetary or
+  general-routing claim.
+- **Host tool and background contracts, lean-flow guidance and cost wording are
+  aligned** across the shipped instructions.
+- **Test economy is a shared requirement:** one behavior gets one focused test,
+  heavy or network-dependent suites become opt-in, and a bug fix adds one
+  targeted regression test instead of a new suite — without weakening the auth,
+  security, data-integrity and coverage gates.
+
+### Release engineering and evidence
+
+- **Six executable release gates with recorded evidence,** required checks
+  aligned to them, `push` on `main`, and `test:install` split out of the main
+  suite; the OpenCode 2 V2-only sandbox validator is one of them.
+- **Every claim carries a versioned artifact:** the permission matrix
+  (`bench/results/p05-permission-matrix-2026-10-22.md`), the F1 interleaved
+  context run, F4A admission identity, F3a root-specialist, F3b bounded read and
+  the beta-10 integration runs all live under `bench/results/`.
+- **A host-backed canary drives `hashline_edit` through the real host loader**
+  and records `Object.keys(ctx)` from inside it: the first gate that drives a
+  Pantheon tool through an actual host.
+- **Zero collected tests fails the build,** with a subprocess-driven guard for
+  the guard itself, and the CI suite no longer sits on the install/packaging
+  critical path.
+- **Coverage work is deduplicated:** V2 plugin coverage measures one focused
+  TypeScript contract test at the required 80% line threshold, and the hook
+  canary has a single CI owner.
+- **Benchmarks can break tokens down by session** (root and descendants) when
+  session data is complete, and report incomplete data as unavailable instead
+  of zero.
 
 ## 🐞 Fixed
 
-- **`permission.write` → `edit`** (the action the host evaluates): a translated
-  `write: deny` did not block writes.
-- **`deny` is no longer downgraded** by an unknown effect; a collision resolves
-  by restrictiveness on the same resource and by specificity across resources;
-  an existing V2 array is not reordered.
-- **`doctor`:** the tool registry is checked independently of the backend; a
-  dangling plugin ref blocks with `plugin_path_missing`; third-party plugins and
-  npm specs no longer produce a false positive.
+- **Permission defects behind that gate:** a translated `write: deny` emitted an
+  action the host never evaluates, an unknown effect downgraded `deny`,
+  `hashline_edit` escaped `edit: deny` for the five read-restricted agents,
+  `pantheon_model` was writable from a read-only session, and both the V2
+  secret scan and the read-only guard lived in a V1-only plugin. Five comments
+  claiming that coverage was live were corrected.
+- **The V2 tools failed on every call, and the suite demanded the defect:**
+  `draft.add()` omitted `output` while `execute` resolved `{ output: string }`,
+  and the contract test asserted the failing shape against a mock that did not
+  reproduce the host's requirement. Both were rewritten to the symmetry
+  invariant.
+- **`pantheon_cost` answered `CORRUPT_DATA` on every call** against a 2.0.22
+  database because it required a `message` table that does not exist there;
+  detection is now by table presence, and the identical bug in
+  `scripts/cost.mjs` is gone.
+- **Version-banner parsing was quadratic:** an 11.1 s parse against a 5 s spawn
+  timeout, so a verbose host could outlive the guard. Parsing is now linear.
+- **The V2 `readOnlyRegistry` was never pruned** on `session.deleted`, so
+  entries for ended sessions accumulated process-wide.
+- **Agent and instruction files taught an MCP call shape that does not exist:**
+  positional `kv_get`, an invented `json()` helper, `session_id` omitted, and a
+  string `kv_store.value` treated as an integer. The call sites were corrected
+  and `namespace` stays mandatory, since a default would have written
+  coordination state into the wrong namespace silently.
+- **`migrateV1toV2` replaced instead of merging:** with `agent` and `agents`
+  coexisting, the shallow spread dropped a whole block, and in the real key
+  order the loser was the user's. The V2 block is now the base, V1 managed
+  fields override, user fields survive.
+- **`test:node` reported success after collecting zero tests,** and `tests/` was
+  missing from the package allow-list, so a consumer could receive that green.
+- **`doctor` checks the tool registry independently of the backend,** blocks a
+  dangling plugin reference with `plugin_path_missing`, and no longer
+  false-positives on third-party plugins or npm specs.
+- **Leftover versioned and alias plugin references are replaced** with the
+  correct local plugin path, without touching third-party plugins that merely
+  look similar.
+- **V2 install and sandbox:** project agents and slash commands land in the
+  host's discovered directories, the TUI selects the correct bundle, session
+  lookup and beta sandbox reuse are repaired, and the managed background
+  service uses its own port.
+- **An unsupported Node runtime no longer fails the install:** postinstall warns
+  and skips Node-dependent TUI/config sync, leaving the CLI to show the
+  Node >=26.4.0 gate and the upgrade instructions.
+- **Empty child dispatches surface as errors** instead of passing through as
+  normal results, and a disabled goal loop no longer suppresses idle
+  enforcement by presenting a stored legacy goal as active.
+- **`run-test.sh` defines its `mcp list` timeout before use** under `set -u` and
+  keeps the command output when the gate fails; validation stays fail-closed
+  with expanded doctor checks.
+- **Harness accounting:** an exception counts as `reject` only when the message
+  is a policy message, the deny fixture is isolated, and A2/B2 cases can no
+  longer disappear without failing.
 - **`pantheon-memory` loads on Python 3.11** (`typing_extensions.TypedDict`).
-- **Harness:** an exception counts as `reject` only when the message is a policy
-  message; isolated `deny` fixture; A2/B2 cases cannot disappear without
-  failing.
+- **The install dry-run stopped reporting defects that do not exist:** the
+  health check no longer runs on the plan pass, since a run that writes nothing
+  can only observe the pre-install tree, and the dry-run guard is evaluated
+  before the existence checks. The vision server is resolved in the package root
+  instead of the install target — the file is deployed *from* there, never kept
+  there — which removes the `[DRY-RUN] [ERROR] … NOT FOUND` lines and revives the
+  source-drift comparison that had been unreachable against a target-side path
+  that never existed.
+- **Preview and apply now produce the same MCP entries:** with the plan pass no
+  longer flipping `runtimeHealthy` to false, the previewed `opencode.json`
+  carries the entries the apply actually writes instead of omitting them.
+- **`--quiet` is honored by `success`/`warning`/`error`,** so a quiet run — and
+  with it `doctor`'s internal preflight — no longer leaks preview lines.
+- **TUI installation fails closed:** a missing bundle or entrypoint in the
+  package is an actionable error instead of a partial copy that left `tui.json`
+  pointing at nothing, and the copied plugin's `npm ci` runs with a sanitized
+  npm environment (an inherited `npm_config_global` aborted it with ECIGLOBAL
+  under a global install) bounded by a 180 s timeout that reports the timeout
+  instead of hanging.
+- **`doctor` checks the installed TUI plugin,** the one component whose failure
+  is otherwise silent: it verifies the copied payload and its `dist/`, the
+  `tui.json` registration on V1 and leftover references to a removed copy, each
+  with its own failure code and a fail-closed verdict.
 
 ## ⚠️ Known Issues
 
@@ -86,11 +361,55 @@ never silently.
   valid name character, so the literal rule comes last and wins under
   `last-match-wins`; safe in both directions today, open as maintenance.
 
+Carried over from the betas and still open:
+
+- **`pantheon_cost` dimensions:** V1 aggregates by agent and phase, V2 reports
+  the literal phase `unknown` — `metadata.phase` never existed in either schema
+  — and the shipped tool has no per-session, per-model, per-provider or USD
+  dimension. Its V2 database holds ~8.3 days of history here, and the ~96-day V1
+  history sits in a sibling epoch-named directory that is not discovered
+  automatically (`PANTHEON_COST_DB` points at it).
+- **An empty child result can arrive as a completed call:** the host supplies
+  the placeholder `Subagent completed without a text response.`; Pantheon
+  replaces the payload with its explicit error, while the host's completed
+  status is unchanged.
+- **A user `opencode.jsonc` can change the effective plugin set:** the host
+  merges it with `opencode.json` (scalars from `.jsonc` win, arrays are
+  unioned), and Pantheon registers its plugin only in `opencode.json`.
+- **Goal tools remain outside the supported V2 surface,** and `/pantheon-focus`
+  is not a substitute for a persistent, removable host goal tool.
+- **The V2 sidebar does not show Pantheon content** in a freshly opened session
+  before the first prompt; validating the interactive initial render is still an
+  open gate.
+- **The host-backed canary skips in CI** because the runner has no `opencode`
+  binary; the skip is visible as a `::notice` and the two hostless cases always
+  run.
+- **`postinstall` does not run `init`,** so a configuration corrupted by an
+  earlier `v1` install is only repaired when the installer runs again.
+- **`steps` semantics on managed agents:** a hand-set value is removed on every
+  v2 install, the installed agent `.md` is overwritten on the next sync, and a
+  legacy `permission` key can sit inert beside `permissions`.
+- **Scanner infrastructure failure is fail-open by decision:** a missing script
+  or a timeout does not block, because an infrastructure error should not deny
+  unrelated calls.
+- **An unreadable or contradictory host probe falls back to `v1`** after a
+  single warning, rather than risking a 1.x host with a `plugins` entry it would
+  ignore.
+
 ## ✅ Closed Issues
 
 - **P0-3, P0-5, P0-6 closed** with a recorded assessment; **P0-4 downgraded to
   P1** with a stability gate; **P1-14 recorded** (a dead MCP does not
   reconnect).
+- **Runtime-contract documentation drift:** `README.pt-BR.md` listed six V2
+  tools and the three goal tools, and `docs/platforms/README.md` carried a
+  14-row step-limit table where no row matched the agents. Both corrected, the
+  table removed.
+- **The justification for the absent V1→V2 delegation matrix** was wrong: the
+  real cause is the second V1 seed source (`client.session.list()`), which the
+  V2 `PluginContext` does not expose, not an absent seeding path.
+- **The ajv JSON-loader shim** installs, loads and restores at module level with
+  `finally`, so it can no longer leak between test files.
 
 ## [v1.6.0-beta.18] - 2026-10-22
 
