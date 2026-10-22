@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -45,6 +46,22 @@ def _require_supported_fastmcp(installed_version: str | None = None) -> None:
             "Persistence goal tests require fastmcp>=4.0.10 and mcp==2.2.0; "
             f"install the pinned dependencies from {FAST_MCP_PIN_FILE} "
             f"(installed fastmcp {installed})."
+        )
+
+
+def _seed_legacy_persistence_db(db_path: Path) -> None:
+    """Create a populated, pre-goal Persistence DB using only synthetic data."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as seed:
+        seed.execute(
+            "CREATE TABLE kv_store (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, "
+            "expires_at TEXT, deleted_at TEXT, created_at TEXT NOT NULL, "
+            "updated_at TEXT NOT NULL, UNIQUE(namespace, key))"
+        )
+        seed.execute(
+            "INSERT INTO kv_store(namespace, key, value, created_at, updated_at) "
+            "VALUES ('legacy', 'keep', 'value', 'then', 'then')"
         )
 
 
@@ -112,13 +129,6 @@ def persistence(tmp_path: Path) -> Iterator[tuple[ModuleType, Path]]:
             module = importlib.reload(module)
         project = module._project_db
         assert project is not None
-        assert (
-            project.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                "AND name = 'pantheon_goals'"
-            ).fetchone()
-            is None
-        )
         module.upgrade_goal_schema(project)
         try:
             yield module, fixture_dir
@@ -211,13 +221,13 @@ def test_fastmcp_version_guard_names_pinned_requirements_file() -> None:
     assert FAST_MCP_PIN_FILE in str(error.value)
 
 
-def test_startup_keeps_goal_schema_absent_and_goal_operation_fails_closed(
+def test_pristine_startup_creates_project_goals_and_keeps_global_kv_only(
     tmp_path: Path,
 ) -> None:
-    fixture_dir = tmp_path / "startup-no-goals"
+    fixture_dir = tmp_path / "startup-pristine"
     fixture_dir.mkdir()
     module = _load_isolated_module(
-        "persistence_startup_without_goals",
+        "persistence_startup_pristine",
         fixture_dir / "global.db",
         fixture_dir / "project.db",
     )
@@ -225,13 +235,31 @@ def test_startup_keeps_goal_schema_absent_and_goal_operation_fails_closed(
     assert project is not None
     assert (
         project.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-            "AND name = 'pantheon_goal_schema_migrations'"
+            "SELECT MAX(version) FROM pantheon_goal_schema_migrations"
+        ).fetchone()[0]
+        == module.GOAL_SCHEMA_VERSION
+    )
+    assert {
+        row[0]
+        for row in project.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' "
+            "AND tbl_name = 'pantheon_goals'"
+        )
+    } >= {
+        "uq_pantheon_goals_active_session",
+        "idx_pantheon_goals_session_history",
+    }
+    assert "revision" in {
+        row[1] for row in project.execute("PRAGMA table_info(kv_store)")
+    }
+    assert (
+        module._global_db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name GLOB 'pantheon_goal*'"
         ).fetchone()
         is None
     )
 
-    async def verify_non_goal_tool() -> None:
+    async def verify_tools() -> None:
         await module.context_save(
             "startup", "key", "value", session_id="startup-session"
         )
@@ -239,39 +267,623 @@ def test_startup_keeps_goal_schema_absent_and_goal_operation_fails_closed(
             await module.context_get("startup", "key", session_id="startup-session")
             == "value"
         )
+        context = SimpleNamespace(
+            request_context=SimpleNamespace(
+                meta={"ai.opencode/sessionID": "ses_pristine"}
+            )
+        )
+        created = await module.goal_create(title="Pristine goal", context=context)
+        assert created["goal"]["title"] == "Pristine goal"
 
-    asyncio.run(verify_non_goal_tool())
-    with pytest.raises(module.GoalSchemaNotInitializedError) as error:
-        module.create_goal(session_id="ses_uninitialized", title="Blocked")
-    assert "ask the user to run" in str(error.value).lower()
-    assert "human-approved" in str(error.value).lower()
-    guidance = module.GOAL_SCHEMA_MIGRATION_COMMAND_GUIDANCE
-    assert (
-        "<runtime>/.venv/bin/python3 <runtime>/scripts/mcp_persistence.py "
-        "--migrate-goals"
-    ) in guidance
-    assert (
-        "<project>/.venv/bin/python3 "
-        "<project>/.opencode/scripts/mcp_persistence.py --migrate-goals"
-    ) in guidance
-    assert "command[0] in opencode.json" in guidance
-    sqlite_error = module._goal_database_error(
-        sqlite3.OperationalError("no such table: pantheon_goals")
+    asyncio.run(verify_tools())
+
+
+def test_goal_schema_without_kv_fails_closed_without_changing_other_bootstrap(
+    tmp_path: Path,
+) -> None:
+    fixture_dir = tmp_path / "goal-schema-without-kv"
+    fixture_dir.mkdir()
+    seed_module = _load_isolated_module(
+        "persistence_inconsistent_schema_seed",
+        fixture_dir / "seed-global.db",
+        fixture_dir / "seed-project.db",
     )
-    assert guidance in str(error.value)
-    assert guidance in str(sqlite_error)
-    assert "ask the user" in str(sqlite_error).lower()
-    assert "human-approved" in str(sqlite_error).lower()
+    seeded_db = fixture_dir / "seed-project.db"
+    seed_connection = seed_module._project_db
+    assert seed_connection is not None
+    seed_connection.execute("DROP TABLE kv_store")
+    seed_connection.commit()
+    seed_connection.close()
+    seed_module._project_db = None
+
+    with pytest.raises(seed_module.GoalDatabaseInconsistentError) as migration_error:
+        seed_module.migrate_goal_schema_with_backup(seeded_db)
+    assert "KV schema is missing while goal schema is present" in str(
+        migration_error.value
+    )
+    assert "repair is required" in str(migration_error.value)
+    with sqlite3.connect(seeded_db) as seeded:
+        assert seeded.execute("SELECT COUNT(*) FROM pantheon_goals").fetchone()[0] == 0
+        assert (
+            seeded.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'kv_store'"
+            ).fetchone()
+            is None
+        )
+
+    module = _load_isolated_module(
+        "persistence_inconsistent_goal_schema",
+        fixture_dir / "global.db",
+        seeded_db,
+    )
+    project = module._project_db
+    assert project is not None
+    assert (
+        project.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store'"
+        ).fetchone()
+        is None
+    )
+
+    expected_message = "KV schema is missing while goal schema is present"
+    operations = (
+        lambda: module.create_goal(session_id="ses_inconsistent", title="Blocked"),
+        lambda: module.get_goal(session_id="ses_inconsistent"),
+        lambda: module.update_goal(
+            session_id="ses_inconsistent",
+            goal_id="missing",
+            expected_version=1,
+            title="Blocked",
+        ),
+        lambda: module.complete_goal(
+            session_id="ses_inconsistent",
+            goal_id="missing",
+            expected_version=1,
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(
+            module.GoalDatabaseInconsistentError, match=expected_message
+        ) as error:
+            operation()
+        assert "repair is required" in str(error.value)
+
+    with pytest.raises(module.GoalDatabaseInconsistentError, match=expected_message):
+        module.upgrade_goal_schema(project, seeded_db, explicit_project_db=True)
+    with pytest.raises(module.GoalDatabaseInconsistentError, match=expected_message):
+        module.migrate_goal_schema_with_backup(seeded_db)
+    assert project.execute("SELECT COUNT(*) FROM pantheon_goals").fetchone()[0] == 0
+
     context = SimpleNamespace(
         request_context=SimpleNamespace(
-            meta={"ai.opencode/sessionID": "ses_uninitialized"}
+            meta={"ai.opencode/sessionID": "ses_inconsistent"}
         )
     )
-    with pytest.raises(
-        ToolError,
-        match=re.compile(re.escape("ask the user to run"), re.IGNORECASE),
+
+    async def verify_goal_tools_fail_closed() -> None:
+        tool_calls = (
+            module.goal_create(title="Blocked", context=context),
+            module.goal_get(context=context),
+            module.goal_update(
+                context=context,
+                goal_id="missing",
+                expected_version=1,
+                title="Blocked",
+            ),
+            module.goal_done(context=context, goal_id="missing", expected_version=1),
+        )
+        for call in tool_calls:
+            with pytest.raises(ToolError, match=expected_message):
+                await call
+
+    asyncio.run(verify_goal_tools_fail_closed())
+    assert project.execute("SELECT COUNT(*) FROM pantheon_goals").fetchone()[0] == 0
+
+    unrelated_db = fixture_dir / "unrelated-user-table.db"
+    with sqlite3.connect(unrelated_db) as unrelated:
+        unrelated.execute("CREATE TABLE user_data (value TEXT NOT NULL)")
+        unrelated.execute("INSERT INTO user_data VALUES ('preserved')")
+    unrelated_module = _load_isolated_module(
+        "persistence_unrelated_table_bootstrap",
+        fixture_dir / "unrelated-global.db",
+        unrelated_db,
+    )
+    unrelated_connection = unrelated_module._project_db
+    assert unrelated_connection is not None
+    assert unrelated_connection.execute("SELECT value FROM user_data").fetchone() == (
+        "preserved",
+    )
+    assert unrelated_connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'kv_store'"
+    ).fetchone() == (1,)
+
+    for connection in (
+        project,
+        module._global_db,
+        unrelated_connection,
+        unrelated_module._global_db,
+        seed_module._global_db,
     ):
+        if connection is not None:
+            connection.close()
+
+
+def test_inconsistent_goal_database_survives_restart_without_kv_bootstrap(
+    tmp_path: Path,
+) -> None:
+    fixture_dir = tmp_path / "inconsistent-restart"
+    fixture_dir.mkdir()
+    project_db = fixture_dir / "project.db"
+    seed_module = _load_isolated_module(
+        "persistence_restart_inconsistent_seed",
+        fixture_dir / "global.db",
+        project_db,
+    )
+    seed_project = seed_module._project_db
+    assert seed_project is not None
+    seed_project.execute("DROP TABLE kv_store")
+    seed_project.commit()
+    seed_project.close()
+    assert seed_module._global_db is not None
+    seed_module._global_db.close()
+
+    first_start = _load_isolated_module(
+        "persistence_restart_inconsistent_first",
+        fixture_dir / "global.db",
+        project_db,
+    )
+    first_project = first_start._project_db
+    assert first_project is not None
+    with pytest.raises(first_start.GoalDatabaseInconsistentError):
+        first_start.create_goal(session_id="ses_restart", title="Blocked")
+    first_project.close()
+    assert first_start._global_db is not None
+    first_start._global_db.close()
+
+    restarted = _load_isolated_module(
+        "persistence_restart_inconsistent_second",
+        fixture_dir / "global.db",
+        project_db,
+    )
+    restarted_project = restarted._project_db
+    assert restarted_project is not None
+    for operation in (
+        lambda: restarted.create_goal(session_id="ses_restart", title="Blocked"),
+        lambda: restarted.get_goal(session_id="ses_restart"),
+    ):
+        with pytest.raises(restarted.GoalDatabaseInconsistentError):
+            operation()
+    with sqlite3.connect(project_db) as conn:
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store'"
+            ).fetchone()
+            is None
+        )
+    restarted_project.close()
+    assert restarted._global_db is not None
+    restarted._global_db.close()
+
+
+def test_history_only_goal_database_remains_inconsistent_after_restart(
+    tmp_path: Path,
+) -> None:
+    fixture_dir = tmp_path / "history-only-inconsistent-restart"
+    fixture_dir.mkdir()
+    project_db = fixture_dir / "project.db"
+    with sqlite3.connect(project_db) as seeded:
+        seeded.execute(
+            "CREATE TABLE pantheon_goal_schema_migrations ("
+            "version INTEGER PRIMARY KEY CHECK (version > 0), "
+            "applied_at TEXT NOT NULL)"
+        )
+        seeded.execute(
+            "INSERT INTO pantheon_goal_schema_migrations VALUES (1, 'synthetic')"
+        )
+
+    first_start = _load_isolated_module(
+        "persistence_history_only_first_start",
+        fixture_dir / "global.db",
+        project_db,
+    )
+    first_project = first_start._project_db
+    assert first_project is not None
+    assert (
+        first_project.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store'"
+        ).fetchone()
+        is None
+    )
+    for operation in (
+        lambda: first_start.create_goal(session_id="ses_history_only", title="Blocked"),
+        lambda: first_start.get_goal(session_id="ses_history_only"),
+    ):
+        with pytest.raises(first_start.GoalDatabaseInconsistentError):
+            operation()
+    first_project.close()
+    assert first_start._global_db is not None
+    first_start._global_db.close()
+
+    restarted = _load_isolated_module(
+        "persistence_history_only_restart",
+        fixture_dir / "global.db",
+        project_db,
+    )
+    restarted_project = restarted._project_db
+    assert restarted_project is not None
+    assert (
+        restarted_project.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store'"
+        ).fetchone()
+        is None
+    )
+    for operation in (
+        lambda: restarted.create_goal(session_id="ses_history_only", title="Blocked"),
+        lambda: restarted.get_goal(session_id="ses_history_only"),
+    ):
+        with pytest.raises(restarted.GoalDatabaseInconsistentError):
+            operation()
+    restarted_project.close()
+    assert restarted._global_db is not None
+    restarted._global_db.close()
+
+
+def test_concurrent_startup_keeps_inconsistent_goal_database_unrepaired(
+    tmp_path: Path,
+) -> None:
+    fixture_dir = tmp_path / "concurrent-inconsistent-startup"
+    fixture_dir.mkdir()
+    project_db = fixture_dir / "project.db"
+    seed_module = _load_isolated_module(
+        "persistence_concurrent_inconsistent_seed",
+        fixture_dir / "global.db",
+        project_db,
+    )
+    seed_project = seed_module._project_db
+    assert seed_project is not None
+    seed_project.execute("DROP TABLE kv_store")
+    seed_project.commit()
+    seed_project.close()
+    seed_module._project_db = None
+    if seed_module._global_db is not None:
+        seed_module._global_db.close()
+        seed_module._global_db = None
+
+    source = Path(__file__).resolve().parents[1] / "src/mcp/mcp_persistence.py"
+    child_code = """
+import importlib.util
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+source, global_db, project_db = sys.argv[1:]
+sys.path.insert(0, str(Path(source).parent))
+spec = importlib.util.spec_from_file_location('concurrent_persistence', source)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+with patch.object(
+    sys,
+    'argv',
+    ['test', '--global-db', global_db, '--project-db', project_db],
+):
+    spec.loader.exec_module(module)
+try:
+    module.create_goal(session_id='ses_concurrent', title='Must be blocked')
+except module.GoalDatabaseInconsistentError as exc:
+    print(f'REFUSED:{exc}')
+else:
+    print('ALLOWED')
+    raise SystemExit(4)
+"""
+    processes = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                child_code,
+                str(source),
+                str(fixture_dir / "global.db"),
+                str(project_db),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(2)
+    ]
+    results = [process.communicate(timeout=30) for process in processes]
+    assert [process.returncode for process in processes] == [0, 0], results
+    assert all(
+        "REFUSED:Persistence database is inconsistent" in stdout
+        and "repair is required" in stdout
+        for stdout, _stderr in results
+    )
+    with sqlite3.connect(project_db) as conn:
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store'"
+            ).fetchone()
+            is None
+        )
+
+
+def test_startup_refuses_pristine_global_database_for_project_goal_ddl(
+    tmp_path: Path,
+) -> None:
+    fixture_dir = tmp_path / "pristine-global-goal-guard"
+    fixture_dir.mkdir()
+    module = _load_isolated_module(
+        "persistence_pristine_global_guard",
+        fixture_dir / "global-root",
+        fixture_dir / "project.db",
+    )
+    pristine_global = fixture_dir / "separate-global.db"
+    module._global_db_path = pristine_global.resolve()
+
+    with pytest.raises(
+        module.GoalSchemaNotInitializedError, match="global Persistence database"
+    ):
+        module._init_db(pristine_global, project_db=True)
+
+    with sqlite3.connect(pristine_global) as conn:
+        assert (
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE substr(name, 1, 7) != 'sqlite_'"
+            ).fetchall()
+            == []
+        )
+
+
+def test_existing_populated_persistence_database_is_not_goal_upgraded(
+    tmp_path: Path,
+) -> None:
+    fixture_dir = tmp_path / "populated-startup"
+    fixture_dir.mkdir()
+    project_db = fixture_dir / "project.db"
+    with sqlite3.connect(project_db) as seed:
+        seed.execute(
+            "CREATE TABLE kv_store (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, "
+            "expires_at TEXT, deleted_at TEXT, created_at TEXT NOT NULL, "
+            "updated_at TEXT NOT NULL, UNIQUE(namespace, key))"
+        )
+        seed.execute(
+            "INSERT INTO kv_store(namespace, key, value, created_at, updated_at) "
+            "VALUES ('legacy', 'keep', 'value', 'then', 'then')"
+        )
+
+    module = _load_isolated_module(
+        "persistence_populated_startup", fixture_dir / "global.db", project_db
+    )
+    project = module._project_db
+    assert project is not None
+    assert (
+        project.execute(
+            "SELECT value FROM kv_store WHERE namespace = 'legacy' AND key = 'keep'"
+        ).fetchone()[0]
+        == "value"
+    )
+    assert (
+        project.execute(
+            "SELECT 1 FROM sqlite_master WHERE name GLOB 'pantheon_goal*'"
+        ).fetchone()
+        is None
+    )
+    with pytest.raises(module.GoalSchemaNotInitializedError):
+        module.create_goal(session_id="ses_legacy", title="Blocked")
+    context = SimpleNamespace(
+        request_context=SimpleNamespace(meta={"ai.opencode/sessionID": "ses_legacy"})
+    )
+    with pytest.raises(ToolError, match="Ask the user to run"):
         asyncio.run(module.goal_create(title="Blocked", context=context))
+
+
+@pytest.mark.parametrize("kind", ["zero-byte", "user-version", "sqlite-only"])
+def test_database_without_user_schema_objects_is_pristine(
+    tmp_path: Path, kind: str
+) -> None:
+    fixture_dir = tmp_path / f"empty-schema-{kind}"
+    fixture_dir.mkdir()
+    project_db = fixture_dir / "project.db"
+    if kind == "zero-byte":
+        project_db.touch()
+    elif kind == "user-version":
+        with sqlite3.connect(project_db) as seed:
+            seed.execute("PRAGMA user_version = 1")
+    else:
+        with sqlite3.connect(project_db) as seed:
+            seed.execute(
+                "CREATE TABLE discarded (id INTEGER PRIMARY KEY AUTOINCREMENT)"
+            )
+            seed.execute("DROP TABLE discarded")
+            assert seed.execute("SELECT name FROM sqlite_master").fetchall() == [
+                ("sqlite_sequence",)
+            ]
+
+    module = _load_isolated_module(
+        f"persistence_empty_schema_{kind}", fixture_dir / "global-root", project_db
+    )
+    project = module._project_db
+    assert project is not None
+    assert project.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'pantheon_goals'"
+    ).fetchone() == (1,)
+    assert project.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'kv_store'"
+    ).fetchone() == (1,)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "foreign-table",
+        "copied-legacy",
+        "malformed-goal-history",
+    ],
+)
+def test_nonpristine_project_databases_never_get_automatic_goal_ddl(
+    tmp_path: Path, kind: str
+) -> None:
+    fixture_dir = tmp_path / f"not-pristine-{kind}"
+    fixture_dir.mkdir()
+    project_db = fixture_dir / "project.db"
+    if kind == "foreign-table":
+        with sqlite3.connect(project_db) as seed:
+            seed.execute("CREATE TABLE foreign_data (id INTEGER PRIMARY KEY)")
+    elif kind == "copied-legacy":
+        source = fixture_dir / "legacy-source.db"
+        with sqlite3.connect(source) as seed:
+            seed.execute(
+                "CREATE TABLE kv_store (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, "
+                "expires_at TEXT, deleted_at TEXT, created_at TEXT NOT NULL, "
+                "updated_at TEXT NOT NULL, UNIQUE(namespace, key))"
+            )
+            seed.execute(
+                "INSERT INTO kv_store(namespace, key, value, created_at, updated_at) "
+                "VALUES ('old', 'key', 'value', 'then', 'then')"
+            )
+        shutil.copy2(source, project_db)
+    else:
+        with sqlite3.connect(project_db) as seed:
+            seed.execute(
+                "CREATE TABLE pantheon_goal_schema_migrations ("
+                "version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+            )
+            seed.execute(
+                "INSERT INTO pantheon_goal_schema_migrations VALUES (1, 'old')"
+            )
+
+    module = _load_isolated_module(
+        f"persistence_nonpristine_{kind}", fixture_dir / "global.db", project_db
+    )
+    project = module._project_db
+    assert project is not None
+    assert (
+        project.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'pantheon_goals'"
+        ).fetchone()
+        is None
+    )
+    assert project.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'pantheon_goal_schema_migrations'"
+    ).fetchone() == ((1,) if kind == "malformed-goal-history" else None)
+    if kind == "malformed-goal-history":
+        with pytest.raises(module.GoalDatabaseInconsistentError):
+            module.create_goal(session_id="ses_bad_history", title="Blocked")
+    else:
+        with pytest.raises(module.GoalSchemaNotInitializedError):
+            module.create_goal(session_id="ses_not_pristine", title="Blocked")
+
+
+def test_failed_first_init_rolls_back_and_retry_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture_dir = tmp_path / "interrupted-first-init"
+    fixture_dir.mkdir()
+    module = _load_isolated_module(
+        "persistence_interrupted_init",
+        fixture_dir / "global.db",
+        fixture_dir / "project.db",
+    )
+    retry_db = fixture_dir / "retry.db"
+    module._project_db_path = retry_db
+    module._project_db_explicit = True
+    original_timestamp = module._goal_timestamp
+
+    def fail_after_goal_ddl() -> str:
+        raise RuntimeError("synthetic interrupted goal migration")
+
+    monkeypatch.setattr(module, "_goal_timestamp", fail_after_goal_ddl)
+    with pytest.raises(RuntimeError, match="synthetic interrupted"):
+        module._init_db(retry_db, project_db=True)
+
+    with sqlite3.connect(retry_db) as reopened:
+        assert (
+            reopened.execute(
+                "SELECT name FROM sqlite_master WHERE substr(name, 1, 7) != 'sqlite_'"
+            ).fetchall()
+            == []
+        )
+
+    monkeypatch.setattr(module, "_goal_timestamp", original_timestamp)
+    retried = module._init_db(retry_db, project_db=True)
+    try:
+        assert (
+            retried.execute(
+                "SELECT MAX(version) FROM pantheon_goal_schema_migrations"
+            ).fetchone()[0]
+            == module.GOAL_SCHEMA_VERSION
+        )
+        assert (
+            retried.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'kv_store'"
+            ).fetchone()
+            is not None
+        )
+    finally:
+        retried.close()
+
+
+def test_concurrent_first_startup_is_serialized_and_complete(tmp_path: Path) -> None:
+    fixture_dir = tmp_path / "concurrent-first-startup"
+    fixture_dir.mkdir()
+    project_db = fixture_dir / "project.db"
+    global_root = fixture_dir / "global"
+    source = Path(__file__).resolve().parents[1] / "src/mcp/mcp_persistence.py"
+    command = [
+        sys.executable,
+        str(source),
+        "--global-db",
+        str(global_root),
+        "--project-db",
+        str(project_db),
+    ]
+    processes = [
+        subprocess.Popen(
+            command,
+            cwd=source.parents[2],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for _ in range(2)
+    ]
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=30)
+        assert process.returncode == 0, f"stdout={stdout}\nstderr={stderr}"
+
+    with sqlite3.connect(project_db) as project:
+        assert project.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert (
+            project.execute(
+                "SELECT COUNT(*) FROM pantheon_goal_schema_migrations"
+            ).fetchone()[0]
+            == 1
+        )
+        assert project.execute("SELECT 1 FROM kv_store").fetchone() is None
+        assert project.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name IN "
+            "('uq_pantheon_goals_active_session', "
+            "'idx_pantheon_goals_session_history')"
+        ).fetchall() == [(1,), (1,)]
+    with sqlite3.connect(global_root / "global.db") as global_conn:
+        assert (
+            global_conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'pantheon_goals'"
+            ).fetchone()
+            is None
+        )
+
+    module = _load_isolated_module(
+        "persistence_after_concurrent_startup",
+        fixture_dir / "second-global.db",
+        project_db,
+    )
+    assert module.create_goal(session_id="ses_after_concurrent", title="Ready")
+    asyncio.run(
+        module.context_save("concurrent", "key", "value", session_id="after-concurrent")
+    )
 
 
 def test_real_backup_verification_failure_cleans_backup_and_sidecars(
@@ -281,6 +893,7 @@ def test_real_backup_verification_failure_cleans_backup_and_sidecars(
     fixture_dir = tmp_path / "backup-failure"
     fixture_dir.mkdir()
     project_db = fixture_dir / "project.db"
+    _seed_legacy_persistence_db(project_db)
     module = _load_isolated_module(
         "persistence_backup_failure",
         fixture_dir / "global.db",
@@ -384,10 +997,12 @@ def test_backup_verification_rejects_wrong_version_and_non_persistence_store(
 ) -> None:
     fixture_dir = tmp_path / "backup-version-guard"
     fixture_dir.mkdir()
+    project_db = fixture_dir / "project.db"
+    _seed_legacy_persistence_db(project_db)
     module = _load_isolated_module(
         "persistence_backup_version_guard",
         fixture_dir / "global.db",
-        fixture_dir / "project.db",
+        project_db,
     )
     source = module._project_db
     assert source is not None
@@ -517,6 +1132,28 @@ def test_migrate_goals_cli_exit_codes_cover_success_failure_and_dry_run(
     assert failed == 1
     assert "Goal schema migration failed" in failure_output
     assert not missing_db.exists()
+
+
+def test_migrate_goals_cli_refuses_explicit_global_database(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    global_root = tmp_path / "global-root"
+    global_root.mkdir()
+    global_db = global_root / "global.db"
+    _seed_legacy_persistence_db(global_db)
+    before = global_db.read_bytes()
+
+    exit_code = _run_isolated_cli(
+        "persistence_cli_global_target",
+        global_root,
+        global_db,
+        "--migrate-goals",
+    )
+
+    assert exit_code == 1
+    assert "global Persistence database" in capsys.readouterr().err
+    assert global_db.read_bytes() == before
+    assert list(global_root.glob("*.goal-backup-*.sqlite3*")) == []
 
 
 def test_dry_run_unknown_file_state_returns_status_two(
@@ -1056,6 +1693,90 @@ def test_migration_guard_rejects_programmatic_target_misuse(
     assert list(fixture_dir.glob("*.goal-backup-*.sqlite3*")) == []
 
 
+def test_goal_schema_helpers_refuse_global_database_even_when_explicit(
+    tmp_path: Path,
+) -> None:
+    global_root = tmp_path / "global-root"
+    global_root.mkdir()
+    global_db = global_root / "global.db"
+    module = _load_isolated_module(
+        "persistence_global_helper_guard",
+        global_root,
+        tmp_path / "project.db",
+    )
+    assert module._global_db is not None
+    before = global_db.read_bytes()
+
+    with pytest.raises(
+        module.GoalSchemaNotInitializedError, match="global Persistence database"
+    ):
+        module.upgrade_goal_schema(
+            module._global_db,
+            expected_path=global_db,
+            explicit_project_db=True,
+        )
+    with pytest.raises(
+        module.GoalSchemaNotInitializedError, match="global Persistence database"
+    ):
+        module.migrate_goal_schema_with_backup(
+            global_db,
+            explicit_project_db=True,
+        )
+
+    assert global_db.read_bytes() == before
+    assert list(global_root.glob("*.goal-backup-*.sqlite3*")) == []
+
+
+def test_hard_link_alias_to_global_database_is_refused_by_all_goal_paths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    global_root = tmp_path / "global-root"
+    global_root.mkdir()
+    global_db = global_root / "global.db"
+    _seed_legacy_persistence_db(global_db)
+    alias_root = tmp_path / "project-alias"
+    alias_root.mkdir()
+    alias_db = alias_root / "project.db"
+    os.link(global_db, alias_db)
+
+    module = _load_isolated_module(
+        "persistence_global_hard_link_guard",
+        global_root,
+        tmp_path / "server-project.db",
+    )
+    assert module._project_db is not None
+
+    normal_project_db = tmp_path / "normal-project.db"
+    normal_project = module._init_db(normal_project_db, project_db=True)
+    try:
+        assert normal_project.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'pantheon_goals'"
+        ).fetchone() == (1,)
+    finally:
+        normal_project.close()
+
+    expected_error = "target resolves to the global database"
+    with pytest.raises(module.GoalSchemaNotInitializedError, match=expected_error):
+        module._init_db(alias_db, project_db=True)
+    with pytest.raises(module.GoalSchemaNotInitializedError, match=expected_error):
+        module.migrate_goal_schema_with_backup(
+            alias_db,
+            explicit_project_db=True,
+        )
+
+    exit_code = _run_isolated_cli(
+        "persistence_cli_global_hard_link_guard",
+        global_root,
+        alias_db,
+        "--migrate-goals",
+    )
+    assert exit_code == 1
+    assert expected_error in capsys.readouterr().err
+    assert list(alias_root.glob("*.goal-backup-*.sqlite3*")) == []
+    assert list(global_root.glob("*.goal-backup-*.sqlite3*")) == []
+
+
 def test_upgrade_failure_reports_verified_backup_retention(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1064,6 +1785,7 @@ def test_upgrade_failure_reports_verified_backup_retention(
     fixture_dir = tmp_path / "upgrade-failure"
     fixture_dir.mkdir()
     project_db = fixture_dir / "project.db"
+    _seed_legacy_persistence_db(project_db)
     module = _load_isolated_module(
         "persistence_upgrade_failure",
         fixture_dir / "global.db",
@@ -1091,6 +1813,7 @@ def test_post_upgrade_version_read_failure_reports_retained_backup(
     fixture_dir = tmp_path / "post-upgrade-version-failure"
     fixture_dir.mkdir()
     project_db = fixture_dir / "project.db"
+    _seed_legacy_persistence_db(project_db)
     module = _load_isolated_module(
         "persistence_post_upgrade_version_failure",
         fixture_dir / "global.db",

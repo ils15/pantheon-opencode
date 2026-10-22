@@ -28,22 +28,25 @@ tool. `pantheon-memory` is the separate FTS5-backed durable-knowledge service.
 
 ```
 pantheon-persistence MCP
-├── Global DB: ~/.config/opencode/persistence/global.db
-└── Project DB: .pantheon/persistence/project.db
+├── Global DB: <OpenCode user config>/persistence/global.db
+└── Project DB: <runtime>/.pantheon/persistence/project.db
 ```
 
 Resolution precedence: explicit `--project-db`, then `PANTHEON_PROJECT`, then
 the runtime target directory (the parent of the installed `scripts/` directory).
-An explicit relative `--project-db` is resolved against the runtime root;
-when `PANTHEON_PROJECT` is used, it must be absolute and a relative value is
-rejected.
-Without either override, the database is
+To resolve the same target as the server, inspect the `pantheon-persistence`
+entry in `opencode.json`: `command[0]` is its interpreter and `cwd` anchors a
+relative script argument such as `scripts/mcp_persistence.py`. An explicit
+relative `--project-db` is resolved against that runtime root; when
+`PANTHEON_PROJECT` is used, it must be an absolute project root and a relative
+value is rejected. Without either override, the database is
 `<runtime>/.pantheon/persistence/project.db` for a global install or
 `<project>/.opencode/.pantheon/persistence/project.db` for a project install.
-With `PANTHEON_PROJECT`, it is `<PANTHEON_PROJECT>/.pantheon/persistence/project.db`.
-Timestamped migration backups live beside the selected DB. For the runtime
-default, uninstall/reinstall may replace that runtime target directory, so move
-any backup you need outside it first.
+With `PANTHEON_PROJECT`, it is
+`<PANTHEON_PROJECT>/.pantheon/persistence/project.db`. Migration backups live
+beside the selected DB. For the runtime-default target, uninstall/reinstall may
+replace that runtime target directory, so move any backup you need outside it
+first.
 
 - **Global**: dados cross-projeto (cache de agentes, preferências)
 - **Project**: dados específicos do projeto atual
@@ -52,8 +55,9 @@ any backup you need outside it first.
 
 The server exposes exactly these six MCP tools. `scope` defaults to `"project"`;
 use `"global"` for checkpoint APIs. Manual goal tools have no scope or project
-argument and use the Persistence deployment DB. The SQLite KV table remains an
-internal implementation detail used by `context_save` and `context_get`; its
+argument and use the configured Persistence project DB, never `global.db`. The
+SQLite KV table is internal checkpoint storage used by `context_save` and
+`context_get`; its
 former management/search tools and the former context list/statistics/rehydration
 operations are not registered.
 
@@ -117,52 +121,57 @@ continuation, prompt reinjection, evaluator, loop, board, TUI/RPC integration,
 or `ctx.storage` use. The V2 plugin's own goal tools remain unsupported; this
 manual MCP surface is not V2 plugin parity.
 
-The goal schema is versioned and additive. Persistence startup creates the
-database file and bootstraps the existing KV schema, but performs **no
-goal-table DDL**. If the goal schema is absent, other Persistence tools remain
-available and goal operations fail closed until an explicit migration. Stop
-the Persistence MCP server before the authoritative dry-run and keep it stopped
-for the entire migration. A concurrent writer that interferes with backup or
-safety verification causes the check to abort; it does not proceed on uncertain
-state. Before opening SQLite, the dry-run reports the resolved DB path,
-existence, size (including WAL bytes), and whether `-wal`/`-shm` sidecars exist.
-If either sidecar already exists, it opens with plain read-only mode so committed
-WAL state is visible. If neither exists, it uses `immutable=1` so it cannot
-create sidecars beside the inspected DB, including when its directory is
-read-only. If it cannot determine the goal-table state, it prints `unknown`,
-exits with status 2, and says to stop and investigate; `unknown` is not a healthy
-result. The dry-run also warns to stop the server for an authoritative check.
+### Fresh databases and existing-database migration
 
-The command directory and interpreter depend on installation type. Preview a
-global install with
-`<runtime>/.venv/bin/python3 <runtime>/scripts/mcp_persistence.py --migrate-goals --dry-run`;
-preview a project install with
-`<project>/.venv/bin/python3 <project>/.opencode/scripts/mcp_persistence.py --migrate-goals --dry-run`.
-Remove `--dry-run` only after human approval. The simplest reliable source of
-truth for the interpreter is `command[0]` in `opencode.json` for
-`pantheon-persistence`. Relative `--project-db` paths are resolved against the
-runtime root; resolution precedence is explicit `--project-db`, then
-`PANTHEON_PROJECT`, then the runtime target directory, never the operator's
-shell cwd. The CLI cannot independently witness the server process's database
-binding, so the human must confirm the target (for example, by comparing it with
-the DB open in the server process) before approval. Stop the server before the
-authoritative dry-run and keep it stopped for the entire migration.
+A new/pristine Persistence **project** database is initialized with both the KV
+checkpoint schema and the manual goal schema when Persistence starts. If the
+project database already contains any user schema, startup performs **no
+goal-schema DDL** and does not alter its existing goal schema. The global DB is
+never goal-initialized. Users who do not use the manual goal tools do nothing;
+only users who want those tools on an existing project database need to run the
+explicit migration. When the schema is absent, the goal tools themselves fail
+closed and return the exact command
+`<venv-python> <installed-script> --migrate-goals`, with global-install and
+project-install command forms.
 
-Before changing schema, the command creates an adjacent, timestamped full copy
-of the Persistence DB using SQLite's backup API (including WAL state and all KV
-data), sets mode `0600`, flushes it, then compares it read-only with the source
-before applying DDL transactionally. An already-current schema creates no
-backup. Verification remains structural (SQLite integrity, page count, object
-names, row counts, and schema version); content-digest verification and backup
-retention automation are explicitly deferred. Until retention automation is
-implemented, the operator must prune backups manually. If a migration-history
-row exists but `pantheon_goals` is missing, stop the server and preserve the
-current DB. A human operator should
-restore a verified backup or recover the missing schema, reconcile any newer KV
-writes if needed, and only then approve rerunning the migration. The tests use
-synthetic temporary databases only; no real database was migrated. The schema
-downgrade helper refuses to drop populated goal data; preserve/export goals
-before any external teardown. An empty goal schema remains reversible.
+The migration target is the Persistence **project** DB only — never
+`global.db`, and never the V1 goal store at `.pantheon/goals/*.json`. The V1 JSON
+store is untouched and is not imported. If migration is skipped, goal tools
+return a clear fail-closed error while checkpoint tools continue working; no
+data is lost and no corruption is caused by leaving the goal schema absent.
+
+To migrate an existing DB safely:
+
+1. Stop the Persistence server and keep it stopped through both commands.
+2. Read the configured `pantheon-persistence` MCP entry. Use its `command[0]`
+   interpreter and resolve the script argument against `cwd`; preserve the same
+   `PANTHEON_PROJECT` value, if set. An explicit `--project-db` takes precedence
+   over `PANTHEON_PROJECT`, which takes precedence over the runtime target. A
+   relative `--project-db` is relative to the runtime root, and
+   `PANTHEON_PROJECT` must be absolute.
+3. First run a dry-run and confirm its resolved path is the intended project
+   DB. Add `--dry-run` to the exact command returned by the goal tools. For a
+   global install the command shape is
+   `<runtime>/.venv/bin/python3 <runtime>/scripts/mcp_persistence.py
+   --migrate-goals --dry-run`. For a project install it is
+   `<project>/.venv/bin/python3
+   <project>/.opencode/scripts/mcp_persistence.py --migrate-goals --dry-run`.
+   Use the actual configured interpreter from `command[0]`, and do not proceed
+   if the dry-run target differs from the server's project DB.
+4. After confirming the dry-run, run the same command with `--dry-run` removed.
+   This is a human-run migration step; startup applies the goal schema only to a
+   pristine database and never alters an existing goal schema.
+
+The migration is idempotent. Before changing schema it makes and verifies an
+adjacent, timestamped full copy of the Persistence DB (including KV data and WAL
+state) with mode `0600`; an already-current schema needs no backup. Backups live
+beside the selected DB. For a runtime-default target, uninstall/reinstall may
+replace that directory, so move any backup you need outside it. Backup
+retention is manual, so prune or move old backups yourself. If the schema is
+inconsistent (for example, a migration row without its table or a table missing
+an index), stop and recover from a verified backup rather than blindly
+rerunning the migration. The schema downgrade helper refuses to drop populated
+goal data; preserve/export goals before any external teardown.
 
 The `tests/test_persistence_goals.py` suite requires the pinned
 `fastmcp==4.0.10` and `mcp==2.2.0` runtime versions. Install those test

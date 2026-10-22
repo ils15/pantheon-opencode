@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **Persistence goal-schema initialization and migration guidance:** a pristine
+  project database now starts with both checkpoint and goal schemas; startup
+  does not add goal DDL to an existing database. Existing-DB migration is only
+  for users who want manual goal tools. When the schema is absent, the goal tools
+  themselves return the exact migration command. User-facing guidance covers
+  dry-run first, a stopped server, target confirmation, and verified `0600`
+  backups.
+
 ## [v1.6.0-beta.17] - 2026-10-21
 
 - **Persistence MCP reduced to six registered tools:** only `context_save`,

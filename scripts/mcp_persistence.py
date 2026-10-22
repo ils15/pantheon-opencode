@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
@@ -26,6 +27,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 from _pantheon_paths import pantheon_home
 from fastmcp import Context, FastMCP
@@ -96,39 +102,204 @@ mcp = FastMCP(
 
 _global_db: sqlite3.Connection | None = None
 _project_db: sqlite3.Connection | None = None
+_global_db_path: Path | None = None
 
 
-def _init_db(db_path: Path) -> sqlite3.Connection:
-    """Initialize a SQLite database with WAL mode and schema."""
+def _has_goal_schema_objects(conn: sqlite3.Connection) -> bool:
+    """Check for goal tables or indexes, including migration-history remnants."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name IN ("
+            "'pantheon_goals', 'uq_pantheon_goals_active_session', "
+            "'idx_pantheon_goals_session_history', "
+            "'pantheon_goal_schema_migrations') LIMIT 1"
+        ).fetchone()
+        is not None
+    )
+
+
+def _resolve_global_db_path(global_db: str | Path | None = None) -> Path:
+    """Resolve the global database path from its configured persistence root."""
+    root = (
+        Path(global_db).expanduser()
+        if global_db is not None
+        else pantheon_home() / "persistence"
+    )
+    return (root / "global.db").resolve()
+
+
+def _assert_not_global_goal_path(db_path: str | Path) -> None:
+    """Keep goal schema changes categorically away from the global database."""
+    target = Path(db_path).expanduser().resolve()
+    global_path = globals().get("_global_db_path") or _resolve_global_db_path()
+    resolves_to_global = target == global_path
+    if not resolves_to_global:
+        try:
+            target_stat = target.stat()
+            global_stat = global_path.stat()
+        except FileNotFoundError:
+            pass
+        else:
+            resolves_to_global = (target_stat.st_dev, target_stat.st_ino) == (
+                global_stat.st_dev,
+                global_stat.st_ino,
+            )
+
+    if resolves_to_global:
+        raise GoalSchemaNotInitializedError(
+            "goal schema migration and DDL are prohibited for the global "
+            f"Persistence database ({global_path}); the target resolves to the "
+            "global database; choose a separate project database with --project-db"
+        )
+
+
+def _init_db(db_path: Path, *, project_db: bool = False) -> sqlite3.Connection:
+    """Initialize the KV schema and goal schema only for a pristine project DB."""
+    if project_db:
+        _assert_not_global_goal_path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute("PRAGMA foreign_keys=ON")
-    # ── FTS5 Availability Check ──────────────────────────────────────────
-    # Check BEFORE schema creation. FTS5 is an optional internal index.
-    row = conn.execute("PRAGMA compile_options").fetchall()
-    if not any("ENABLE_FTS5" in r[0] for r in row):
-        print(
-            "WARNING: SQLite FTS5 unavailable; the internal full-text index "
-            "was not initialized.",
-            file=sys.stderr,
-        )
-        import re as _re  # noqa: PLC0415
+    lock_path = db_path.with_name(f".{db_path.name}.init.lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    lock_acquired = False
+    try:
+        # Serialize initialization across processes.
+        _acquire_init_lock(lock_fd)
+        lock_acquired = True
+        conn = _connect_or_create_database(db_path)
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA foreign_keys=ON")
+            fts_available = any(
+                "ENABLE_FTS5" in row[0]
+                for row in conn.execute("PRAGMA compile_options").fetchall()
+            )
+            if not fts_available:
+                print(
+                    "WARNING: SQLite FTS5 unavailable; the internal full-text index "
+                    "was not initialized.",
+                    file=sys.stderr,
+                )
 
-        _no_fts = _re.sub(
-            r"CREATE VIRTUAL TABLE IF NOT EXISTS kv_store_fts.*?;",
-            "",
-            CREATE_SQL,
-            flags=_re.DOTALL,
-        )
-        conn.executescript(_no_fts)
-    else:
-        conn.executescript(CREATE_SQL)
-    _ensure_revision_column(conn)
-    conn.commit()
+            # SQLite's writer lock serializes the schema inspection and every
+            # DDL statement. Never use executescript here: it commits implicitly.
+            conn.execute("BEGIN IMMEDIATE")
+            has_user_schema_objects = (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE substr(name, 1, 7) != 'sqlite_' LIMIT 1"
+                ).fetchone()
+                is not None
+            )
+            had_goal_schema_before_bootstrap = _has_goal_schema_objects(conn)
+            is_pristine = (
+                not has_user_schema_objects and not had_goal_schema_before_bootstrap
+            )
+            had_kv_store_before_bootstrap = (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'kv_store'"
+                ).fetchone()
+                is not None
+            )
+            skip_kv_bootstrap = (
+                project_db
+                and not had_kv_store_before_bootstrap
+                and had_goal_schema_before_bootstrap
+            )
 
+            schema_sql = CREATE_SQL
+            if not fts_available:
+                schema_sql = re.sub(
+                    r"CREATE VIRTUAL TABLE IF NOT EXISTS kv_store_fts.*?;",
+                    "",
+                    schema_sql,
+                    flags=re.DOTALL,
+                )
+            if not skip_kv_bootstrap:
+                _execute_sql_statements(conn, schema_sql)
+                _ensure_revision_column(conn)
+
+            # An empty DB has nothing to preserve, so initializing both schemas
+            # cannot destroy user data; any DB with user schema is never touched
+            # for goals. A rolled-back first init leaves no schema, so retry sees
+            # pristine again.
+            if project_db and is_pristine:
+                upgrade_goal_schema(
+                    conn,
+                    expected_path=db_path,
+                    explicit_project_db=globals().get("_project_db_explicit", False),
+                    _transaction_active=True,
+                )
+            conn.commit()
+            conn.execute("PRAGMA journal_mode=WAL")
+            return conn
+        except BaseException:
+            with suppress(sqlite3.Error):
+                conn.rollback()
+            conn.close()
+            raise
+    finally:
+        if lock_acquired:
+            _release_init_lock(lock_fd)
+        os.close(lock_fd)
+
+
+def _acquire_init_lock(lock_fd: int) -> None:
+    """Lock the per-database initializer gate across processes."""
+    if os.name != "nt":
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return
+
+    if os.fstat(lock_fd).st_size == 0:
+        os.write(lock_fd, b"\0")
+    os.lseek(lock_fd, 0, os.SEEK_SET)
+    while True:
+        try:
+            msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if exc.errno not in (errno.EACCES, errno.EDEADLOCK, errno.EAGAIN):
+                raise
+            time.sleep(0.05)
+
+
+def _release_init_lock(lock_fd: int) -> None:
+    """Release the per-database initializer gate."""
+    if os.name != "nt":
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        return
+    os.lseek(lock_fd, 0, os.SEEK_SET)
+    msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
+
+
+def _connect_or_create_database(db_path: Path) -> sqlite3.Connection:
+    """Open an existing database or create an empty SQLite file."""
+    database_uri = db_path.resolve().as_uri()
+    try:
+        conn = sqlite3.connect(
+            f"{database_uri}?mode=rw", uri=True, check_same_thread=False
+        )
+    except sqlite3.OperationalError as exc:
+        if "unable to open database file" not in str(exc).lower():
+            raise
+        conn = sqlite3.connect(
+            f"{database_uri}?mode=rwc", uri=True, check_same_thread=False
+        )
+        return conn
     return conn
+
+
+def _execute_sql_statements(conn: sqlite3.Connection, script: str) -> None:
+    """Execute a SQL script statement-by-statement without implicit commits."""
+    pending = ""
+    for line in script.splitlines(keepends=True):
+        pending += line
+        if sqlite3.complete_statement(pending):
+            if pending.strip():
+                conn.execute(pending)
+            pending = ""
+    if pending.strip():
+        raise sqlite3.ProgrammingError("incomplete SQL schema statement")
 
 
 # `revision` was added after `kv_store` shipped, so an existing database has the
@@ -213,6 +384,18 @@ class GoalSchemaNotInitializedError(GoalStoreError):
     """Raised when goal operations target a DB without the goal schema."""
 
 
+class GoalDatabaseInconsistentError(GoalSchemaNotInitializedError):
+    """Raised when the goal schema exists but the Persistence KV schema is absent."""
+
+
+_GOAL_DATABASE_INCONSISTENT_MESSAGE = (
+    "Persistence database is inconsistent: KV schema is missing while goal "
+    "schema is present; repair is required before goal operations. Stop the "
+    "server and restore a verified backup or have an administrator repair "
+    "the schema."
+)
+
+
 class GoalSchemaVersionError(GoalStoreError):
     """Raised for an unsupported or inconsistent goal schema migration version."""
 
@@ -265,6 +448,7 @@ def _assert_project_goal_connection(
         raise GoalSchemaNotInitializedError(
             "goal operations require this server's Persistence database"
         )
+    _assert_not_global_goal_path(expected_path)
     project_path = Path(expected_path).expanduser().resolve()
     if not explicit_project_db:
         server_path = _resolve_project_db_path()
@@ -285,12 +469,20 @@ def _assert_project_goal_connection(
             "goal operations are restricted to this server's Persistence database"
         )
     try:
-        has_kv_store = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store'"
+        has_kv_store, has_goal_schema = conn.execute(
+            "SELECT "
+            "EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'kv_store'), "
+            "EXISTS(SELECT 1 FROM sqlite_master WHERE name IN ("
+            "'pantheon_goals', 'uq_pantheon_goals_active_session', "
+            "'idx_pantheon_goals_session_history', "
+            "'pantheon_goal_schema_migrations'))"
         ).fetchone()
     except sqlite3.Error as exc:
         raise GoalStorageError("could not verify Persistence database schema") from exc
-    if has_kv_store is None:
+    if not has_kv_store and has_goal_schema:
+        raise GoalDatabaseInconsistentError(_GOAL_DATABASE_INCONSISTENT_MESSAGE)
+    if not has_kv_store:
         raise GoalSchemaNotInitializedError(
             "goal operations require an existing Pantheon Persistence database; "
             "ask the user to start the server once first"
@@ -335,6 +527,7 @@ def upgrade_goal_schema(
     expected_path: str | Path | None = None,
     *,
     explicit_project_db: bool | None = None,
+    _transaction_active: bool = False,
 ) -> None:
     """Apply goal schema upgrades to the explicitly supplied Persistence DB."""
     _assert_project_goal_connection(
@@ -347,44 +540,56 @@ def upgrade_goal_schema(
         ),
     )
     try:
-        with _goal_transaction(conn):
-            current = _inspect_goal_schema_version(conn)
-            if current == GOAL_SCHEMA_VERSION:
-                return
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS pantheon_goal_schema_migrations ("
-                "version INTEGER PRIMARY KEY CHECK (version > 0), "
-                "applied_at TEXT NOT NULL)"
-            )
-            conn.execute(
-                "CREATE TABLE pantheon_goals ("
-                "goal_id TEXT PRIMARY KEY NOT NULL, "
-                "session_id TEXT NOT NULL CHECK ("
-                "length(trim(session_id)) BETWEEN 1 AND 128 AND "
-                "session_id = trim(session_id)), "
-                "title TEXT NOT NULL CHECK ("
-                "length(title) BETWEEN 1 AND 512 AND length(trim(title)) > 0), "
-                "description TEXT CHECK (description IS NULL OR "
-                "length(description) <= 16384), "
-                "status TEXT NOT NULL CHECK (status IN ('active', 'done')), "
-                "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
-                "version INTEGER NOT NULL CHECK (version > 0))"
-            )
-            conn.execute(
-                "CREATE UNIQUE INDEX uq_pantheon_goals_active_session "
-                "ON pantheon_goals(session_id) WHERE status = 'active'"
-            )
-            conn.execute(
-                "CREATE INDEX idx_pantheon_goals_session_history "
-                "ON pantheon_goals(session_id, created_at DESC, goal_id DESC)"
-            )
-            conn.execute(
-                "INSERT INTO pantheon_goal_schema_migrations(version, applied_at) "
-                "VALUES (?, ?)",
-                (GOAL_SCHEMA_VERSION, _goal_timestamp()),
-            )
+        if _transaction_active:
+            if not conn.in_transaction:
+                raise GoalStorageError(
+                    "goal schema upgrade requires an active transaction"
+                )
+            _upgrade_goal_schema_in_transaction(conn)
+        else:
+            with _goal_transaction(conn):
+                _upgrade_goal_schema_in_transaction(conn)
     except sqlite3.Error as exc:
         raise GoalStorageError("could not upgrade Persistence goal schema") from exc
+
+
+def _upgrade_goal_schema_in_transaction(conn: sqlite3.Connection) -> None:
+    """Apply goal DDL using the caller's active transaction."""
+    current = _inspect_goal_schema_version(conn)
+    if current == GOAL_SCHEMA_VERSION:
+        return
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS pantheon_goal_schema_migrations ("
+        "version INTEGER PRIMARY KEY CHECK (version > 0), "
+        "applied_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE pantheon_goals ("
+        "goal_id TEXT PRIMARY KEY NOT NULL, "
+        "session_id TEXT NOT NULL CHECK ("
+        "length(trim(session_id)) BETWEEN 1 AND 128 AND "
+        "session_id = trim(session_id)), "
+        "title TEXT NOT NULL CHECK ("
+        "length(title) BETWEEN 1 AND 512 AND length(trim(title)) > 0), "
+        "description TEXT CHECK (description IS NULL OR "
+        "length(description) <= 16384), "
+        "status TEXT NOT NULL CHECK (status IN ('active', 'done')), "
+        "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+        "version INTEGER NOT NULL CHECK (version > 0))"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX uq_pantheon_goals_active_session "
+        "ON pantheon_goals(session_id) WHERE status = 'active'"
+    )
+    conn.execute(
+        "CREATE INDEX idx_pantheon_goals_session_history "
+        "ON pantheon_goals(session_id, created_at DESC, goal_id DESC)"
+    )
+    conn.execute(
+        "INSERT INTO pantheon_goal_schema_migrations(version, applied_at) "
+        "VALUES (?, ?)",
+        (GOAL_SCHEMA_VERSION, _goal_timestamp()),
+    )
 
 
 def downgrade_goal_schema(
@@ -868,6 +1073,7 @@ def migrate_goal_schema_with_backup(
 ) -> tuple[Path, Path | None, int, bool]:
     """Back up an existing Persistence DB, then migrate its goal schema."""
     db_path = Path(project_db_path).expanduser().resolve()
+    _assert_not_global_goal_path(db_path)
     if not db_path.is_file():
         raise GoalSchemaNotInitializedError(
             f"Persistence database does not exist at {db_path}; "
@@ -884,6 +1090,8 @@ def migrate_goal_schema_with_backup(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store'"
         ).fetchone()
         if has_kv_store is None:
+            if _has_goal_schema_objects(source):
+                raise GoalDatabaseInconsistentError(_GOAL_DATABASE_INCONSISTENT_MESSAGE)
             raise GoalSchemaNotInitializedError(
                 "target is not a Pantheon Persistence database: kv_store is missing; "
                 "ask the user to start the server once first"
@@ -1187,10 +1395,12 @@ if args.dry_run and not args.migrate_goals:
 
 _project_db_path: Path | None = None
 _project_db_explicit = args.project_db is not None
+_global_db_path = _resolve_global_db_path(args.global_db)
 if args.migrate_goals:
     _warn_if_symlinked_launcher()
     try:
         migration_db_path = _resolve_project_db_path(args.project_db)
+        _assert_not_global_goal_path(migration_db_path)
         if args.dry_run:
             raise SystemExit(_print_goal_migration_dry_run(migration_db_path))
         db_path, backup_path, version, already_current = (
@@ -1212,13 +1422,10 @@ if args.migrate_goals:
         print("Goal schema migration applied.")
     raise SystemExit(0)
 
-_global_root = (
-    Path(args.global_db) if args.global_db else pantheon_home() / "persistence"
-)
-_global_db = _init_db(_global_root / "global.db")
+_global_db = _init_db(_global_db_path)
 
 _project_db_path = _resolve_project_db_path(args.project_db)
-_project_db_instance = _init_db(_project_db_path)
+_project_db_instance = _init_db(_project_db_path, project_db=True)
 _project_db = _project_db_instance
 
 

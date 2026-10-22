@@ -316,47 +316,22 @@ plus effective-permission verification, not promised hot reload.
 
 These are manual records only: they do not replace or migrate the V1
 `src/pantheon/goal-store.ts` authority, write to it, or trigger continuation,
-reinjection, an evaluator, loop, board, TUI/RPC, or `ctx.storage`. The V2 plugin's
-own goal tools remain unsupported. Persistence startup creates the database file
-and bootstraps its existing KV schema, but performs no goal-table DDL; goal
-operations fail closed until an explicit migration. First compare the resolved
-target with `--migrate-goals --dry-run`. Resolution precedence is explicit
-`--project-db`, then `PANTHEON_PROJECT`, then the runtime target directory (the
-parent of the installed `scripts/` directory), never the operator's shell cwd.
-An explicit relative `--project-db` is resolved against that runtime root;
-when `PANTHEON_PROJECT` is used, it must be absolute or the command stops with
-an actionable error. The CLI cannot independently witness the Persistence
-server's database binding, so a human must confirm the selected target (for
-example, compare it with the database open in the server process) before
-approving migration.
-Stop the Persistence server before the authoritative dry-run and keep it stopped
-for the whole migration; a concurrent writer that interferes with the safety
-check causes it to abort rather than proceed. For a global install, preview
-with `<runtime>/.venv/bin/python3 <runtime>/scripts/mcp_persistence.py
---migrate-goals --dry-run`; for a project install, preview with
-`<project>/.venv/bin/python3
-<project>/.opencode/scripts/mcp_persistence.py --migrate-goals --dry-run`.
-The simplest reliable source of truth for the interpreter is `command[0]` in
-`opencode.json` for `pantheon-persistence`. The dry-run reports database size
-and `-wal`/`-shm` presence before opening the DB. If either sidecar exists, it
-uses plain read-only mode so committed WAL state is visible; if neither exists,
-it uses `immutable=1` to avoid creating sidecars, including in a read-only
-directory. If the goal-table state is `unknown`, the command exits with status
-2: stop and investigate, and do not treat it as a healthy result. Ask the user
-to approve before migration. The migration creates a timestamped
-adjacent full copy of the Persistence DB, including all KV data, with mode
-`0600`; backups live beside the selected DB. With the runtime-default target,
-uninstall/reinstall may replace that directory, so move any backup you need
-outside it first. Content-digest
-verification and backup-retention automation are deferred; for now the operator
-must prune old backups manually. An already-current schema creates no backup. If
-migration history exists but `pantheon_goals` is missing, stop and preserve the
-database; a human operator must restore a verified backup or recover the missing
-schema before approving another migration. The goal tests require the
-pinned `fastmcp==4.0.10` and `mcp==2.2.0` versions from
-`src/mcp/requirements-mcp.txt`. Tests use synthetic temporary databases only;
-no real DB or global configuration is changed, and rollout remains gated on
-Themis review and explicit user approval.
+reinjection, an evaluator, loop, board, TUI/RPC, or `ctx.storage`. The V1 JSON
+store at `.pantheon/goals/*.json` is untouched and not imported. The V2 plugin's
+own goal tools remain unsupported.
+
+Fresh/pristine Persistence project databases start with both checkpoint and goal
+schemas; startup performs no goal-schema DDL on an existing database containing
+user schema. Users who do not use manual goals need do nothing; only users who
+want the tools on an existing Persistence project DB need the explicit
+human-run migration. If the schema is absent, the goal tools fail closed and
+return the exact `<venv-python> <installed-script> --migrate-goals` command (with
+installation-specific command forms). Skipping migration leaves checkpoint
+tools working and goal tools unavailable, without data loss or corruption.
+Never migrate `global.db` or the V1 JSON goal store. See
+[Persistence migration guidance](docs/persistence-mcp.md#fresh-databases-and-existing-database-migration)
+for target resolution, dry-run confirmation, backups, and the stopped-server
+procedure.
 
 ### Verified against which OpenCode versions
 
