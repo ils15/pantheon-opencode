@@ -18,6 +18,80 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## ✅ Closed Issues
 
+## [v1.6.0] - 2026-10-22
+
+## 🆕 What's New
+
+- **Declared and measured host matrix:** OpenCode `1.19.x` (V1), `2.0.29`,
+  `2.0.30`, and the `2.1.x` line (`>=2.1.0 <2.2`, proven on `2.1.0` and on the
+  newest patch of the freeze). `2.0.22` and `2.0.31` are not supported.
+- **Real MCP gate:** `permission.mcp.<server>` translates to
+  `action:"<server>_*"`; `deny` and `allow` are enforced, while `ask` is not
+  expressible and now warns during migration and install.
+- **Versioned evidence** in
+  `bench/results/p05-permission-matrix-2026-10-22.md`.
+- **Context:** `AGENTS.global.md` reduced from 13,965 to 9,340 bytes (118 lines)
+  with no rule removed; per-artifact ceilings and gate-phrase exclusivity in CI.
+- **Release gate:** six executable gates with evidence, aligned required checks,
+  `push` on `main`, and `test:install` split out.
+
+## 🐞 Fixed
+
+- **`permission.write` → `edit`** (the action the host evaluates): a translated
+  `write: deny` did not block writes.
+- **`deny` is no longer downgraded** by an unknown effect; a collision resolves
+  by restrictiveness on the same resource and by specificity across resources;
+  an existing V2 array is not reordered.
+- **`doctor`:** the tool registry is checked independently of the backend; a
+  dangling plugin ref blocks with `plugin_path_missing`; third-party plugins and
+  npm specs no longer produce a false positive.
+- **`pantheon-memory` loads on Python 3.11** (`typing_extensions.TypedDict`).
+- **Harness:** an exception counts as `reject` only when the message is a policy
+  message; isolated `deny` fixture; A2/B2 cases cannot disappear without
+  failing.
+
+## ⚠️ Known Issues
+
+Authoritative list is ADR-0014 A1.11 (`KI-1` … `KI-8`), accepted explicitly and
+never silently.
+
+- **KI-1 `ask` is not expressible for MCP** and installer defaults are affected:
+  `effect:"ask"` on an MCP action hides the tool instead of asking, the
+  translator emits no rule and warns, and the two servers whose default is `ask`
+  (`pantheon-code-mode`, `pantheon-vision`) end up ungated on 2.x.
+- **KI-2 `hashline_edit` and `vision_describe` have no permission gate:** the
+  host emits no permission evaluation for plugin tools reachable only through
+  Code Mode, so the denial lives in the template and is enforced by the plugin
+  guard, not by the permission layer.
+- **KI-3 `websearch` is not measured and not emitted:** with no provider
+  configured the probe turn never settled and the run was killed past 300 s, so
+  the case was removed rather than left flaky; the product seeds no
+  `permission.websearch`.
+- **KI-4 `2.0.22` is outside the matrix for absence of surface,** not for a
+  permission failure: the A/B/D cells pass there, but `ctx.permission.assert`
+  and the V2 tools are missing from its catalog.
+- **KI-5 divergence between the pinned SDK type and the V1 runtime:** the pinned
+  `Permission` type declares `type`/`pattern`, while runtime `1.19.4` delivers
+  `permission`/`patterns`.
+- **KI-6 `permissions` in a V2 `agents` block is not reordered:** for an agent
+  present in both blocks the base array is replaced by the canonically sorted
+  converted value; passthrough without reordering holds only for an agent that
+  exists solely in the V2 block, which can fail open under `last-match-wins`.
+- **KI-7 the reverse map resolves by restrictiveness and is lossy:** entries
+  with the same key+resource collapse through `resolveEffects`, so an `allow`
+  can vanish without a warning; actions outside the table pass through as a
+  literal key.
+- **KI-8 `<server>_*` × `<server>_<tool>` order comes from lexical action
+  comparison,** not from a notion of specificity: `*` (0x2A) sorts before every
+  valid name character, so the literal rule comes last and wins under
+  `last-match-wins`; safe in both directions today, open as maintenance.
+
+## ✅ Closed Issues
+
+- **P0-3, P0-5, P0-6 closed** with a recorded assessment; **P0-4 downgraded to
+  P1** with a stability gate; **P1-14 recorded** (a dead MCP does not
+  reconnect).
+
 ## [v1.6.0-beta.18] - 2026-10-22
 
 - **Persistence goal-schema initialization and migration guidance:** a pristine

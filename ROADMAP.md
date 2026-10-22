@@ -64,9 +64,9 @@ tarball, com `PASS` em cada gate aplicável. Evidência ausente ou marcada
 `NOT_TESTED`, `WARN`, `SKIP` ou `AMBIENTAL` não é `PASS`; riscos não resolvidos
 são blockers ou precisam ser aceitos explicitamente, nunca aprovados em silêncio.
 
-**Readiness atual: `1.6.0-beta.18` é a versão corrente (`package.json:3`),
-publicada no dist-tag `beta` do npm (`beta = 1.6.0-beta.18`); o canal `latest`
-ainda serve `1.5.2`.** As decisões de release da `1.6.0` stable estão fixadas no
+**Readiness atual: `1.6.0` é a versão corrente (`package.json:3`); o último
+candidato publicado no dist-tag `beta` do npm foi `1.6.0-beta.18`, e o canal
+`latest` ainda serve `1.5.2`.** As decisões de release da `1.6.0` stable estão fixadas no
 [ADR-0014](.pantheon/memory-bank/adr/0014-release-v1-6-0-stable-decisoes-e-matriz.md)
 (Q1–Q7). O escopo é a `1.6.0` stable, com 6 fases e caminho crítico
 1→2→4→5→6. **Os três P0 que restavam fecharam em 2026-10-22, todos na
