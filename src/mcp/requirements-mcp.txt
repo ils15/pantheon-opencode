@@ -10,3 +10,8 @@ pydantic-settings==2.14.2
 pyyaml==6.0.3
 # Vision imports httpx; MCP 2.2.0 provides httpx2, a different package.
 httpx==0.28.1
+# memory_mcp uses typing_extensions.TypedDict for its typed error envelope:
+# pydantic only schemas typing.TypedDict on Python >= 3.12. Declared directly
+# (not inherited from pydantic's transitive resolution) as an exact pin, like
+# every other entry here, so the supported 3.11 runtime cannot lose the import.
+typing_extensions==4.16.0

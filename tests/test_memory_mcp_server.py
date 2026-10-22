@@ -1212,3 +1212,56 @@ class TestVectorRemoval:
         )
         assert run.returncode == 0, run.stderr
         assert "VECTOR_REMOVED_OK" in run.stdout
+
+
+# =============================================================================
+# Pre-3.12 runtime compatibility
+# =============================================================================
+# pydantic refuses to build a schema for typing.TypedDict below Python 3.12
+# (_SUPPORTS_TYPEDDICT is false there), and FastMCP builds the output schema
+# while @mcp.tool registers the function. The module therefore used to abort
+# on import on 3.11 — a supported interpreter. Forcing the flag off reproduces
+# that path on any interpreter, so this test is not version-dependent.
+
+
+class TestPre312RuntimeCompat:
+    def test_import_registers_memory_search_under_pre_312_typeddict_rules(
+        self, tmp_path: Path
+    ) -> None:
+        repo_root = Path(__file__).resolve().parent.parent
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            str(p)
+            for p in (repo_root, repo_root / "src" / "mcp", repo_root / "scripts")
+        )
+        env["PANTHEON_HOME"] = str(tmp_path / "pantheon-home")
+        script = textwrap.dedent(
+            """\
+            import asyncio
+            import json
+
+            import pydantic._internal._generate_schema as generate_schema
+
+            # Python < 3.12: typing.TypedDict has no pydantic schema support.
+            generate_schema._SUPPORTS_TYPEDDICT = False
+
+            import src.mcp.memory_mcp as m
+
+            tools = {tool.name: tool for tool in asyncio.run(m.mcp.list_tools())}
+            assert "memory_search" in tools, sorted(tools)
+            # The beta.17 typed error envelope must survive on 3.11 too.
+            schema = json.dumps(tools["memory_search"].output_schema)
+            assert "DatabaseUnavailableError" in schema, schema
+            print("PRE_312_IMPORT_OK")
+            """
+        )
+        run = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=300,
+            check=False,
+        )
+        assert run.returncode == 0, run.stderr
+        assert "PRE_312_IMPORT_OK" in run.stdout

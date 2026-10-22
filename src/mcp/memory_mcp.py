@@ -35,11 +35,12 @@ import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, Literal
 
 from _pantheon_paths import pantheon_home, trusted_project_root
 from fastmcp import FastMCP
 from pydantic import BeforeValidator, Field
+from typing_extensions import TypedDict
 
 try:
     import mcp_codemap_module as _codemap
@@ -124,6 +125,11 @@ mcp = FastMCP(
     ),
 )
 _LOGGER = logging.getLogger(__name__)
+
+# TypedDict comes from typing_extensions, not typing: pydantic only builds a
+# schema for typing.TypedDict on Python >= 3.12, and FastMCP builds the output
+# schema during @mcp.tool registration (see _SUPPORTS_TYPEDDICT in pydantic).
+# Using typing.TypedDict here aborted the import on the supported 3.11 range.
 
 
 class MemorySearchErrorDetail(TypedDict):

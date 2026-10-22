@@ -7,7 +7,11 @@ name = "pantheon"
 version = "1.6.0-beta.18"
 description = "Multi-agent orchestration framework"
 requires-python = ">=3.11"
-dependencies = []
+# Python sources under src/mcp/ import fastmcp/pydantic at runtime, but those
+# are installed from src/mcp/requirements-*.txt by the installer, not from this
+# metadata. typing_extensions is declared here because src/mcp/memory_mcp.py
+# imports it directly (TypedDict must come from typing_extensions on 3.11).
+dependencies = ["typing_extensions>=4.14.1"]
 
 [tool.pytest.ini_options]
 # `tests/` holds the main suite; the entry below is an orphaned test module
