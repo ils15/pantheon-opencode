@@ -57,14 +57,27 @@ run_canary() {
   local expected="$1"
   local admission="$2"
   local etc_mount="$3"
+  local matrix="${4:-0}"
+  local managed_deny="${5:-0}"
   local -a admission_env=()
   if [[ "$admission" == "1" ]]; then
     admission_env=(--setenv PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION 1)
+  else
+    admission_env=(--setenv PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION 0)
   fi
-  local -a matrix_env=()
-  if [[ "${PANTHEON_TOOL_CANARY_PERMISSION_MATRIX:-}" == "1" ]]; then
-    matrix_env=(--setenv PANTHEON_TOOL_CANARY_PERMISSION_MATRIX 1)
-  fi
+  # Every harness switch is SET explicitly, not merely added when wanted:
+  # bwrap inherits the parent environment, so an operator who exports
+  # PANTHEON_TOOL_CANARY_PERMISSION_MATRIX=1 would otherwise leak it into the
+  # deny-fixture run even if this wrapper never passes --setenv.
+  local -a matrix_env=(--setenv PANTHEON_TOOL_CANARY_PERMISSION_MATRIX "$matrix")
+  local -a fault_env=(
+    --setenv PANTHEON_TOOL_CANARY_PROBE_FAULT "${PANTHEON_TOOL_CANARY_PROBE_FAULT:-}"
+    --setenv PANTHEON_TOOL_CANARY_MATRIX_PROBE_FAULT "${PANTHEON_TOOL_CANARY_MATRIX_PROBE_FAULT:-}"
+    --setenv PANTHEON_TOOL_CANARY_PERMISSION_ASK ""
+    --setenv PANTHEON_TOOL_CANARY_BOUNDED_READ ""
+    --setenv PANTHEON_TOOL_CANARY_BOUNDED_READ_DENY ""
+    --setenv PANTHEON_TOOL_CANARY_MCP_GATING ""
+  )
 
   bwrap \
     --unshare-user --unshare-pid --unshare-net \
@@ -79,22 +92,25 @@ run_canary() {
     --setenv PANTHEON_TOOL_CANARY_BIN "$opencode_bin" \
     --setenv PANTHEON_TOOL_CANARY_PERMISSION_PROBE 1 \
     --setenv PANTHEON_TOOL_CANARY_PERMISSION_EXPECTED "$expected" \
+    --setenv PANTHEON_TOOL_CANARY_MANAGED_DENY_FIXTURE "$managed_deny" \
     --setenv npm_config_cache /tmp/npm-cache \
     "${admission_env[@]}" \
     "${matrix_env[@]}" \
+    "${fault_env[@]}" \
     -- npm run test:tool-canary
 }
 
 echo "Permission assertion: managed deny overrides project allow ($version)"
-run_canary reject '' "$fixture_root/deny/etc"
+run_canary reject '' "$fixture_root/deny/etc" 0 1
 
 echo "Permission assertion and F4A identity probe: project allow; invalid and valid-matrix subagent attempts ($version)"
-run_canary allow 1 "$fixture_root/allow/etc"
+run_canary allow 1 "$fixture_root/allow/etc" 0 0
 
 # P0-5 matrix probes (action-name coverage, nested-deny ordering, task glob).
-# Kept as its own run so the managed deny fixture above cannot confound the
-# project-level policies each scenario writes for itself.
+# Its own run AND its own clean /etc fixture: the managed deny fixture above is
+# applied only to the precedence run, so the action-name scenario sees exactly
+# the project config it writes.
 if [[ "${PANTHEON_TOOL_CANARY_PERMISSION_MATRIX:-}" == "1" ]]; then
   echo "P0-5 permission matrix probes: action names, deny ordering, task glob ($version)"
-  run_canary allow 0 "$fixture_root/allow/etc"
+  run_canary allow 0 "$fixture_root/allow/etc" 1 0
 fi

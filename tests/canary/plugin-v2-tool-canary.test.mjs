@@ -136,6 +136,16 @@ const TIMEOUT_MS = Number(process.env.PANTHEON_TOOL_CANARY_TIMEOUT_MS ?? 15000)
 const NO_OUTPUT_SCHEMA_ERROR = 'Tool result declared output without an output schema'
 const MISSING_OUTPUT_ERROR = 'Tool did not return its declared output'
 
+/**
+ * The only messages the host uses for an actual permission denial.
+ *
+ * The probe classifies an exception as `reject` only when this matches (the
+ * regex is mirrored inside the generated probe). Anything else — a TypeError
+ * from a changed `ctx.permission.assert` contract, for example — becomes
+ * `probe-error`, so a broken harness cannot masquerade as host policy.
+ */
+const POLICY_DENIAL_MESSAGE = /Permission denied|Blocked by configuration policy/i
+
 /** Config locations the host reads. All must point inside the sandbox. */
 const HOST_ENV_REDIRECTED = [
   'HOME',
@@ -203,6 +213,11 @@ function makeSandbox() {
     proofFile: join(root, 'tool-list.json'),
     permissionProofFile: join(root, 'permission-events.jsonl'),
     matrixProofFile: join(root, 'permission-matrix-events.jsonl'),
+    mcpServerFile: join(root, 'canary-mcp-server.cjs'),
+    mcpLogFile: join(root, 'canary-mcp-server.log'),
+    // A project-local skill gives the `skill` tool a real target without any
+    // network access. The host scans `<project>/.opencode/skills`.
+    skillFile: join(root, '.opencode', 'skills', 'canary-skill', 'SKILL.md'),
   }
   for (const dir of [
     sandbox.home,
@@ -317,6 +332,7 @@ async function startMockModel(scripts, { emptySubagentResultProbe = false } = {}
   let turn = 0
   let nestedAthenaChildCalled = false
   let emptyChildResponseRequests = 0
+  let lastToolNames = []
   const requestBodies = []
   const server = createServer((req, res) => {
     let requestBody = ''
@@ -399,7 +415,16 @@ async function startMockModel(scripts, { emptySubagentResultProbe = false } = {}
         model: 'canary-model',
       }
       const scripted = nestedAthenaChild || (turn % 2 === 1 && index < scripts.length)
-      const step = nestedAthenaChild
+      // A script entry may be a function of the tool names the HOST advertised
+      // to the model on this request. That is how the MCP coverage case finds
+      // the host-built name of a server tool without guessing the host's naming
+      // scheme. A function must always return a step: returning undefined would
+      // break the odd/even turn contract below.
+      const availableToolNames = (Array.isArray(request.tools) ? request.tools : [])
+        .map((tool) => (typeof tool?.function?.name === 'string' ? tool.function.name : undefined))
+        .filter(Boolean)
+      lastToolNames = availableToolNames
+      const rawStep = nestedAthenaChild
         ? {
             name: 'subagent',
             arguments: {
@@ -411,6 +436,7 @@ async function startMockModel(scripts, { emptySubagentResultProbe = false } = {}
         : scripted
           ? scripts[index]
           : undefined
+      const step = typeof rawStep === 'function' ? rawStep(availableToolNames) : rawStep
       const toolCall =
         typeof step === 'string' ? { name: 'execute', arguments: { code: step } } : step
       const chunks = scripted
@@ -463,6 +489,9 @@ async function startMockModel(scripts, { emptySubagentResultProbe = false } = {}
   return {
     baseURL: `http://127.0.0.1:${server.address().port}/v1`,
     turns: () => turn,
+    // The last tool list the HOST advertised to the model. This is how the
+    // matrix proves which name it actually invoked for an MCP server tool.
+    toolNames: () => lastToolNames,
     emptyChildResponseRequests: () => emptyChildResponseRequests,
     requestSummary: () =>
       requestBodies.map((body) => {
@@ -609,6 +638,7 @@ async function startHost(sandbox) {
     port,
     sessionID: created.data.id,
     diagnose,
+    request,
     async createSession(title = 'pantheon-tool-canary-followup') {
       const session = await request('POST', '/api/session', {
         title,
@@ -833,11 +863,18 @@ function writePlugins(
             '            source,',
             '          }',
             '          try {',
+            '            if (process.env.PANTHEON_TOOL_CANARY_PROBE_FAULT === "contract") {',
+            '              throw new TypeError("simulated host contract change: permission.assert rejected the request shape")',
+            '            }',
             '            await ctx.permission.assert(request)',
             '            permissionResults.push({ decision: "allow", request, session: sessionSummary })',
             '            return { output: JSON.stringify({ decision: "allow" }) }',
             '          } catch (error) {',
-            '            const result = { decision: "reject", error: String(error?.message ?? error), request, session: sessionSummary }',
+            '            const message = String(error?.message ?? error)',
+            '            // Only a host policy denial may become a `reject` verdict. A',
+            '            // TypeError/contract change is a broken probe, not a decision.',
+            '            const policy = /Permission denied|Blocked by configuration policy/i.test(message)',
+            '            const result = { decision: policy ? "reject" : "probe-error", errorKind: policy ? "policy" : "non-policy", error: message, request, session: sessionSummary }',
             '            permissionResults.push(result)',
             '            return { output: JSON.stringify(result) }',
             '          }',
@@ -887,10 +924,17 @@ function writePlugins(
             '            return { output: JSON.stringify({ decision: "not-applicable", reason: "ctx.permission.assert is not a function", request }) }',
             '          }',
             '          try {',
+            '            if (process.env.PANTHEON_TOOL_CANARY_MATRIX_PROBE_FAULT === "contract") {',
+            '              throw new TypeError("simulated host contract change: permission.assert rejected the matrix request shape")',
+            '            }',
             '            await ctx.permission.assert(request)',
             '            return { output: JSON.stringify({ decision: "allow", request }) }',
             '          } catch (error) {',
-            '            return { output: JSON.stringify({ decision: "reject", error: String(error?.message ?? error), request }) }',
+            '            const message = String(error?.message ?? error)',
+            '            // A policy denial is the ONLY reject. Any other exception is a',
+            '            // broken probe and must fail the case, not read as host policy.',
+            '            const policy = /Permission denied|Blocked by configuration policy/i.test(message)',
+            '            return { output: JSON.stringify({ decision: policy ? "reject" : "probe-error", errorKind: policy ? "policy" : "non-policy", error: message, request }) }',
             '          }',
             '        },',
             '      })',
@@ -1132,7 +1176,7 @@ function writeProjectConfig(
 function writePermissionMatrixConfig(
   sandbox,
   modelBaseURL,
-  { permissions, policies, agents, defaultAgent },
+  { permissions, policies, agents, defaultAgent, mcp },
 ) {
   writeFileSync(
     join(sandbox.projectDir, 'opencode.json'),
@@ -1144,6 +1188,7 @@ function writePermissionMatrixConfig(
         ...(defaultAgent ? { default_agent: defaultAgent } : {}),
         ...(agents ? { agents } : {}),
         ...(policies ? { policies } : {}),
+        ...(mcp ? { mcp } : {}),
         ...(permissions
           ? {
               // The host reads both spellings across generations; this probe
@@ -1365,6 +1410,15 @@ function toolParts(transcript, toolName) {
   return messages
     .flatMap((message) => message?.parts ?? message?.content ?? [])
     .filter((part) => part?.type === 'tool' && (part.tool ?? part.name) === toolName)
+}
+
+/** Every tool call in a transcript, whatever its name. */
+function allToolParts(transcript) {
+  const parsed = JSON.parse(transcript)
+  const messages = Array.isArray(parsed) ? parsed : (parsed?.data ?? [])
+  return messages
+    .flatMap((message) => message?.parts ?? message?.content ?? [])
+    .filter((part) => part?.type === 'tool')
 }
 
 /** Read the text returned by a completed native tool call from its host transcript. */
@@ -1697,10 +1751,231 @@ const MATRIX_ORDER_WILDCARD_FIRST = [
   { action: 'write', resource: '.pantheon/memory-bank/**', effect: 'allow' },
 ]
 
+/**
+ * The same two orderings in the namespace the host actually evaluates for a
+ * write call: `edit` (measured on every V2 host). The `write` rows above are
+ * kept as the historical probe; `edit` is the load-bearing one (D-2).
+ */
+const MATRIX_ORDER_NESTED_FIRST_EDIT = [
+  { action: 'edit', resource: '.pantheon/memory-bank/**', effect: 'allow' },
+  { action: 'edit', resource: '*', effect: 'deny' },
+]
+
+const MATRIX_ORDER_WILDCARD_FIRST_EDIT = [
+  { action: 'edit', resource: '*', effect: 'deny' },
+  { action: 'edit', resource: '.pantheon/memory-bank/**', effect: 'allow' },
+]
+
+/**
+ * Real-call order probes. They use a broad `.pantheon/**` deny/allow instead of
+ * the global `*` used by the assert probe: a global deny hides the write tool
+ * from the catalog before any path can be evaluated, which would make the
+ * real-call test vacuous. These three cover both directions of the overlap.
+ */
+const MATRIX_ORDER_REAL_DENY_BROAD_THEN_ALLOW = [
+  { action: 'edit', resource: '.pantheon/**', effect: 'deny' },
+  { action: 'edit', resource: '.pantheon/memory-bank/**', effect: 'allow' },
+]
+
+const MATRIX_ORDER_REAL_ALLOW_NESTED_THEN_DENY_BROAD = [
+  { action: 'edit', resource: '.pantheon/memory-bank/**', effect: 'allow' },
+  { action: 'edit', resource: '.pantheon/**', effect: 'deny' },
+]
+
+const MATRIX_ORDER_REAL_ALLOW_BROAD_THEN_DENY_NESTED = [
+  { action: 'edit', resource: '.pantheon/**', effect: 'allow' },
+  { action: 'edit', resource: '.pantheon/memory-bank/**', effect: 'deny' },
+]
+
+const MATRIX_ORDER_REAL_MEMORY = '.pantheon/memory-bank/00-index.md'
+const MATRIX_ORDER_REAL_OUTSIDE = '.pantheon/other.md'
+
 /** `permission.task: { "*": deny, apollo: allow }`, translated by the repo. */
 const MATRIX_TASK_GLOB_PERMISSIONS = migrateV1toV2({
   permission: { task: { '*': 'deny', apollo: 'allow' } },
 }).permissions
+
+/**
+ * One allow rule per action under test, plus the three already-proven names so
+ * the same host boot also exercises the baseline.
+ *
+ * These rules exist only to keep the tools runnable while the probe watches.
+ * The assertion compares the action the HOST evaluates with the action the repo
+ * translator emits; the names in this list are never used as the expectation.
+ */
+const MATRIX_ACTION_COVERAGE_ACTIONS = [
+  'shell',
+  'edit',
+  'read',
+  'grep',
+  'glob',
+  'webfetch',
+  'websearch',
+  'skill',
+  'hashline_edit',
+  'vision_describe',
+  'question',
+  'mcp',
+]
+
+const MATRIX_ACTION_COVERAGE_PERMISSIONS = MATRIX_ACTION_COVERAGE_ACTIONS.map((action) => ({
+  action,
+  resource: '*',
+  effect: 'allow',
+}))
+
+/**
+ * Code Mode script for the MCP case.
+ *
+ * The catalog entry proves the host built a tool for the configured server;
+ * the call uses the server and tool names the TEST owns (`canary`, `echo`), so
+ * it is not a guess about the host's naming scheme. `search` is the host's own
+ * catalog lookup, and the returned path is recorded as evidence.
+ */
+const MATRIX_MCP_CALL_SCRIPT = [
+  'const found = search({ query: "canary" });',
+  'const out = { paths: found.items.map((item) => item.path) };',
+  'try {',
+  '  out.result = await tools.canary.echo({ text: "action-coverage" });',
+  '} catch (err) {',
+  '  out.error = String(err && err.message ? err.message : err);',
+  '}',
+  'return JSON.stringify(out);',
+].join('\n')
+
+const MATRIX_MCP_CONFIG = (sandbox) => ({
+  canary: {
+    type: 'local',
+    command: [process.execPath, sandbox.mcpServerFile, sandbox.mcpLogFile],
+    enabled: true,
+  },
+})
+
+/**
+ * The smallest MCP server that proves the `mcp` action: stdio JSON-RPC 2.0,
+ * one tool, no network, no dependencies. It is written into the sandbox and
+ * launched by the HOST, so the call crosses the host's own MCP client path.
+ */
+const CANARY_MCP_SOURCE = `'use strict'
+const readline = require('node:readline')
+// Optional argv[2]: a log path inside the canary sandbox. It records the raw
+// stdio exchange, which is what distinguishes "the host never connected" from
+// "the server answered the wrong shape" without guessing.
+const logPath = process.argv[2]
+const log = (line) => {
+  if (!logPath) return
+  try {
+    require('node:fs').appendFileSync(logPath, line + '\\n')
+  } catch {
+    // Evidence only.
+  }
+}
+const send = (message) => {
+  const line = JSON.stringify(message)
+  log('OUT ' + line)
+  process.stdout.write(line + '\\n')
+}
+const reply = (id, result) => send({ jsonrpc: '2.0', id, result })
+const rl = readline.createInterface({ input: process.stdin })
+rl.on('line', (line) => {
+  if (!line.trim()) return
+  log('IN ' + line)
+  let message
+  try {
+    message = JSON.parse(line)
+  } catch {
+    return
+  }
+  // Notifications have no id and must not be answered.
+  if (message.id === undefined) return
+  const id = message.id
+  switch (message.method) {
+    case 'initialize':
+      reply(id, {
+        protocolVersion: (message.params && message.params.protocolVersion) || '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'canary-mcp', version: '1.0.0' },
+      })
+      break
+    case 'ping':
+      reply(id, {})
+      break
+    case 'tools/list':
+      reply(id, {
+        tools: [
+          {
+            name: 'echo',
+            description: 'Return the text it receives',
+            inputSchema: {
+              type: 'object',
+              properties: { text: { type: 'string' } },
+              required: ['text'],
+              additionalProperties: false,
+            },
+          },
+        ],
+      })
+      break
+    case 'tools/call':
+      reply(id, {
+        content: [
+          {
+            type: 'text',
+            text: 'CANARY-MCP-ECHO:' + String((message.params && message.params.arguments && message.params.arguments.text) || ''),
+          },
+        ],
+      })
+      break
+    case 'resources/list':
+      reply(id, { resources: [] })
+      break
+    default:
+      send({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32601, message: 'unsupported method ' + String(message.method) },
+      })
+  }
+})
+`
+
+function writeCanaryMcpServer(sandbox) {
+  writeFileSync(sandbox.mcpServerFile, CANARY_MCP_SOURCE)
+}
+
+function writeCanarySkill(sandbox) {
+  mkdirSync(dirname(sandbox.skillFile), { recursive: true })
+  writeFileSync(
+    sandbox.skillFile,
+    [
+      '---',
+      'name: canary-skill',
+      'description: Permission action coverage canary.',
+      '---',
+      '',
+      'CANARY-SKILL-BODY',
+      '',
+    ].join('\n'),
+  )
+}
+
+/**
+ * Local HTTP target for `webfetch`. Loopback only; `--unshare-net` still brings
+ * `lo` up, which is the same path the mocked model already uses.
+ */
+async function startWebFetchTarget() {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end('CANARY-WEBFETCH-BODY')
+  })
+  await new Promise((done) => server.listen(0, '127.0.0.1', done))
+  const address = server.address()
+  const port = typeof address === 'object' && address ? address.port : 0
+  return {
+    url: `http://127.0.0.1:${port}/canary.txt`,
+    close: () => server.close(),
+  }
+}
 
 const MATRIX_TASK_AGENTS = {
   zeus: {
@@ -1728,12 +2003,67 @@ const MATRIX_BASE_AGENTS = {
 }
 
 /** One nested-glob probe plus a control outside the allow glob. */
-function matrixOrderScript(resource, controlResource) {
+function matrixOrderScript(resource, controlResource, action = 'write') {
   return [
-    `const probe = await tools.permission_matrix_probe({ action: 'write', resources: [${JSON.stringify(resource)}] });`,
-    `const control = await tools.permission_matrix_probe({ action: 'write', resources: [${JSON.stringify(controlResource)}] });`,
+    `const probe = await tools.permission_matrix_probe({ action: ${JSON.stringify(action)}, resources: [${JSON.stringify(resource)}] });`,
+    `const control = await tools.permission_matrix_probe({ action: ${JSON.stringify(action)}, resources: [${JSON.stringify(controlResource)}] });`,
     'return JSON.stringify({ probe, control });',
   ].join('\n')
+}
+
+/** Seed both real-call targets with distinguishable original content. */
+function prepareOrderReal(sandbox) {
+  const memory = join(sandbox.projectDir, MATRIX_ORDER_REAL_MEMORY)
+  const outside = join(sandbox.projectDir, MATRIX_ORDER_REAL_OUTSIDE)
+  mkdirSync(dirname(memory), { recursive: true })
+  mkdirSync(dirname(outside), { recursive: true })
+  writeFileSync(memory, 'ORIGINAL-MEMORY\n')
+  writeFileSync(outside, 'ORIGINAL-OUTSIDE\n')
+}
+
+/** Two real `write` calls: one inside the nested scope, one outside. */
+function matrixOrderRealScripts(sandbox) {
+  return [
+    {
+      name: 'write',
+      arguments: {
+        path: join(sandbox.projectDir, MATRIX_ORDER_REAL_MEMORY),
+        content: 'CANARY-MEMORY-WRITE',
+      },
+    },
+    {
+      name: 'write',
+      arguments: {
+        path: join(sandbox.projectDir, MATRIX_ORDER_REAL_OUTSIDE),
+        content: 'CANARY-OUTSIDE-WRITE',
+      },
+    },
+  ]
+}
+
+/** Ground truth for a real-call order scenario: file bytes, not just status. */
+function summarizeOrderReal(observation) {
+  const memoryPath = join(observation.sandbox.projectDir, MATRIX_ORDER_REAL_MEMORY)
+  const outsidePath = join(observation.sandbox.projectDir, MATRIX_ORDER_REAL_OUTSIDE)
+  const read = (path) => (existsSync(path) ? readFileSync(path, 'utf8') : '')
+  return {
+    memoryWritten: read(memoryPath).includes('CANARY-MEMORY-WRITE'),
+    outsideWritten: read(outsidePath).includes('CANARY-OUTSIDE-WRITE'),
+    memoryContent: read(memoryPath).slice(0, 200),
+    outsideContent: read(outsidePath).slice(0, 200),
+    writeCalls: observation.nativeCalls.write.map((part) => ({
+      status: part.state?.status,
+      error: part.state?.error?.message,
+      input: part.state?.input,
+    })),
+    editEvaluations: (observation.matrixEvents ?? [])
+      .filter((event) => event.action === 'edit')
+      .map((event) => ({
+        action: event.action,
+        resources: event.resources,
+        effect: event.effect,
+      })),
+  }
 }
 
 /**
@@ -1748,12 +2078,22 @@ async function runPermissionMatrixScenario({
   policies,
   agents,
   defaultAgent,
+  mcp,
   scripts,
+  prepare,
   promptLabel,
+  // A `question` call does not resolve until a user answers, and this canary
+  // has no interactive client. The permission evaluation still happens before
+  // the tool blocks, so this mode drives the prompt, waits for the named
+  // action's evaluation, and then stops the host instead of awaiting a result.
+  awaitPrompt = true,
+  waitForAction,
 }) {
   const sandbox = makeSandbox()
   writeFileSync(sandbox.targetFile, TARGET_BODY)
+  prepare?.(sandbox)
   const steps = typeof scripts === 'function' ? scripts(sandbox) : scripts
+  const resolvedMcp = typeof mcp === 'function' ? mcp(sandbox) : mcp
   const model = await startMockModel(steps)
   writePlugins(sandbox, realPluginShim(), { matrixProbe: true })
   writePermissionMatrixConfig(sandbox, model.baseURL, {
@@ -1761,45 +2101,89 @@ async function runPermissionMatrixScenario({
     policies,
     agents,
     defaultAgent,
+    mcp: resolvedMcp,
   })
   const host = await startHost(sandbox)
   const observation = { name, sandbox, responses: [] }
-  try {
-    for (const [index] of steps.entries()) {
-      await host.prompt(`${promptLabel ?? 'permission matrix'} ${name} ${index}`)
-      observation.responses.push(executeTexts(await host.transcript()).at(-1) ?? '')
-    }
-    observation.transcript = await host.transcript()
-    observation.nativeCalls = {
-      shell: toolParts(observation.transcript, 'shell'),
-      bash: toolParts(observation.transcript, 'bash'),
-      write: toolParts(observation.transcript, 'write'),
-      read: toolParts(observation.transcript, 'read'),
-      subagent: toolParts(observation.transcript, 'subagent'),
-    }
-    observation.matrixEvents = existsSync(sandbox.matrixProofFile)
+  if (resolvedMcp) {
+    // Evidence, not an assertion: the host's own view of the MCP servers. A
+    // failed connection here is what makes the `mcp` case unobservable, and the
+    // report must say so instead of blaming the permission layer.
+    // The host connects MCP servers asynchronously; a snapshot taken right
+    // after `serve` is ready can legitimately be empty. Wait for the server to
+    // appear (bounded) and say exactly what the host reported either way.
+    observation.mcpStatus = await waitFor(
+      async () => {
+        const status = await host.request('GET', '/api/mcp').catch(() => null)
+        const rows = Array.isArray(status?.data) ? status.data : []
+        // `pending` is the host's startup state; the server tool is not in the
+        // catalog until the connection settles. Gate on a non-pending status so
+        // the MCP scripts are not racing process startup.
+        return rows.length > 0 && rows.every((row) => row?.status?.status !== 'pending')
+          ? status
+          : null
+      },
+      20_000,
+      'the host to finish connecting the canary MCP server',
+    ).catch(async (error) => ({
+      error: String(error),
+      last: await host.request('GET', '/api/mcp').catch((cause) => String(cause)),
+    }))
+  }
+  const readEvents = () =>
+    existsSync(sandbox.matrixProofFile)
       ? readFileSync(sandbox.matrixProofFile, 'utf8')
           .split('\n')
           .filter(Boolean)
           .map((line) => JSON.parse(line))
       : []
+  try {
+    if (awaitPrompt) {
+      for (const [index] of steps.entries()) {
+        await host.prompt(`${promptLabel ?? 'permission matrix'} ${name} ${index}`)
+        observation.responses.push(executeTexts(await host.transcript()).at(-1) ?? '')
+      }
+    } else {
+      host.prompt(`${promptLabel ?? 'permission matrix'} ${name} 0`).catch(() => {})
+      await waitFor(
+        () => readEvents().some((event) => event.action === waitForAction),
+        TIMEOUT_MS,
+        `a ${waitForAction} permission evaluation from ${name}`,
+      ).catch((error) => {
+        // Recorded, not swallowed: the test decides whether the absence is a
+        // structural NOT_APPLICABLE or a defect, and says so by name.
+        observation.waitError = String(error?.message ?? error)
+      })
+    }
+    observation.matrixEvents = readEvents()
     observation.permissionProof = existsSync(sandbox.permissionProofFile)
       ? readFileSync(sandbox.permissionProofFile, 'utf8')
       : ''
     observation.toolList = existsSync(sandbox.proofFile)
       ? (JSON.parse(readFileSync(sandbox.proofFile, 'utf8')).toolList ?? [])
       : []
-    observation.sessions = await host.sessions()
-    const sessionRows = Array.isArray(observation.sessions)
-      ? observation.sessions
-      : (observation.sessions?.data ?? [])
-    observation.childSessions = sessionRows.filter(
-      (session) => session?.parentID === host.sessionID,
-    )
-    observation.rootSessionID = host.sessionID
-    observation.sideEffects = {
-      shell: existsSync(join(sandbox.projectDir, 'shell-ran.txt')),
-      write: existsSync(join(sandbox.projectDir, 'write-ran.txt')),
+    observation.modelToolNames = model.toolNames()
+    if (awaitPrompt) {
+      observation.transcript = await host.transcript()
+      observation.nativeCalls = {
+        shell: toolParts(observation.transcript, 'shell'),
+        bash: toolParts(observation.transcript, 'bash'),
+        write: toolParts(observation.transcript, 'write'),
+        read: toolParts(observation.transcript, 'read'),
+        subagent: toolParts(observation.transcript, 'subagent'),
+      }
+      observation.sessions = await host.sessions()
+      const sessionRows = Array.isArray(observation.sessions)
+        ? observation.sessions
+        : (observation.sessions?.data ?? [])
+      observation.childSessions = sessionRows.filter(
+        (session) => session?.parentID === host.sessionID,
+      )
+      observation.rootSessionID = host.sessionID
+      observation.sideEffects = {
+        shell: existsSync(join(sandbox.projectDir, 'shell-ran.txt')),
+        write: existsSync(join(sandbox.projectDir, 'write-ran.txt')),
+      }
     }
   } finally {
     host.stop()
@@ -1832,6 +2216,13 @@ function summarizeMatrixObservation(observation) {
       .map(toolResultText)
       .join('\n')
       .slice(0, 200),
+    toolCalls: allToolParts(observation.transcript ?? '[]').map((part) => ({
+      name: part.tool ?? part.name,
+      id: part.id,
+      status: part.state?.status,
+      error: part.state?.error?.message,
+      output: toolResultText(part).slice(0, 400),
+    })),
   }
 }
 
@@ -1847,6 +2238,12 @@ function classifyResolution(nestedFirst, wildcardFirst) {
   // so the ordering question was not answered at all.
   if (decision(nestedFirst) === 'not-applicable' || decision(wildcardFirst) === 'not-applicable') {
     return 'not-applicable'
+  }
+  // A non-policy failure is a broken probe, not a resolution rule. Returning it
+  // makes the caller's allow-list assertion fail loudly instead of classifying
+  // an exception as `deny-precedence`.
+  if (decision(nestedFirst) === 'probe-error' || decision(wildcardFirst) === 'probe-error') {
+    return 'probe-error'
   }
   const allowed = (value) => decision(value) === 'allow'
   const nested = allowed(nestedFirst)
@@ -1865,6 +2262,9 @@ function classifyResolution(nestedFirst, wildcardFirst) {
  */
 async function runPermissionMatrix() {
   const scenarios = {}
+  // A loopback-only HTTP target for the webfetch case. The host fetches it
+  // from its own process, so the request crosses the host's webfetch path.
+  const webFetch = await startWebFetchTarget()
 
   scenarios.actionNames = await runPermissionMatrixScenario({
     name: 'action-names-permissive',
@@ -1928,6 +2328,44 @@ async function runPermissionMatrix() {
     scripts: [matrixOrderScript('.pantheon/memory-bank/00-index.md', '.pantheon/other.md')],
   })
 
+  // D-2: the host evaluates a real write as action `edit`. Run the same two
+  // orderings in that namespace; this is the evidence the sort policy needs.
+  scenarios.orderEditNestedFirst = await runPermissionMatrixScenario({
+    name: 'order-edit-nested-first',
+    permissions: MATRIX_ORDER_NESTED_FIRST_EDIT,
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    scripts: [matrixOrderScript('.pantheon/memory-bank/00-index.md', '.pantheon/other.md', 'edit')],
+  })
+  scenarios.orderEditWildcardFirst = await runPermissionMatrixScenario({
+    name: 'order-edit-wildcard-first',
+    permissions: MATRIX_ORDER_WILDCARD_FIRST_EDIT,
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    scripts: [matrixOrderScript('.pantheon/memory-bank/00-index.md', '.pantheon/other.md', 'edit')],
+  })
+
+  // Strongest form: real `write` calls under `edit` rules. The broad scope is
+  // `.pantheon/**`, not `*`, so the tool survives the catalog filter and the
+  // path can actually be evaluated.
+  const realOrderCases = {
+    'deny-broad-then-allow': MATRIX_ORDER_REAL_DENY_BROAD_THEN_ALLOW,
+    'allow-nested-then-deny-broad': MATRIX_ORDER_REAL_ALLOW_NESTED_THEN_DENY_BROAD,
+    'allow-broad-then-deny-nested': MATRIX_ORDER_REAL_ALLOW_BROAD_THEN_DENY_NESTED,
+  }
+  for (const [key, permissions] of Object.entries(realOrderCases)) {
+    scenarios[`orderReal:${key}`] = await runPermissionMatrixScenario({
+      name: `order-real-${key}`,
+      permissions,
+      policies: [{ action: 'tool.use', resource: 'write:*', effect: 'allow' }],
+      agents: MATRIX_BASE_AGENTS,
+      defaultAgent: 'zeus',
+      prepare: prepareOrderReal,
+      scripts: matrixOrderRealScripts,
+      promptLabel: `real write order ${key}`,
+    })
+  }
+
   for (const target of ['apollo', 'demeter']) {
     scenarios[`taskGlob:${target}`] = await runPermissionMatrixScenario({
       name: `task-glob-${target}`,
@@ -1948,21 +2386,206 @@ async function runPermissionMatrix() {
     })
   }
 
+  // Action-name coverage for the tools the installer and the agent templates
+  // can name but the matrix had never observed: mcp, webfetch, skill, websearch,
+  // grep, glob, hashline_edit, vision_describe. One host, one config, one
+  // scripted call per tool; the evaluate hook records what the HOST emits.
+  scenarios.actionCoverage = await runPermissionMatrixScenario({
+    name: 'action-coverage',
+    permissions: MATRIX_ACTION_COVERAGE_PERMISSIONS,
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    prepare: (sandbox) => {
+      writeCanaryMcpServer(sandbox)
+      writeCanarySkill(sandbox)
+    },
+    mcp: MATRIX_MCP_CONFIG,
+    scripts: (sandbox) => [
+      { name: 'grep', arguments: { pattern: 'CANARY-ALPHA', path: sandbox.projectDir } },
+      { name: 'glob', arguments: { pattern: '*.txt', path: sandbox.projectDir } },
+      { name: 'webfetch', arguments: { url: webFetch.url } },
+      // The host schema for the skill tool keys on `id`, not `name`.
+      { name: 'skill', arguments: { id: 'canary-skill' } },
+      // Plugin tools are NOT in the model's flat tool list; the host exposes
+      // them through the `execute` (Code Mode) tool. Calling them any other way
+      // reports "No tool named ..." and would make the case vacuously pass.
+      {
+        name: 'execute',
+        arguments: {
+          code: [
+            'const out = {};',
+            'try {',
+            `  out.result = await tools.hashline_edit({ file: ${JSON.stringify(sandbox.targetFile)}, edits: [{ op: 'replace', ref: ${JSON.stringify(BETA_REF)}, lines: ['CANARY-BETA-REPLACED'] }] });`,
+            '} catch (err) {',
+            '  out.error = String(err && err.message ? err.message : err);',
+            '}',
+            'return JSON.stringify(out);',
+          ].join('\n'),
+        },
+      },
+      {
+        name: 'execute',
+        arguments: {
+          code: [
+            'const out = {};',
+            'try {',
+            `  out.result = await tools.vision_describe({ path: ${JSON.stringify(VISION_IMAGE)}, prompt: 'Describe this canary image.' });`,
+            '} catch (err) {',
+            '  out.error = String(err && err.message ? err.message : err);',
+            '}',
+            'return JSON.stringify(out);',
+          ].join('\n'),
+        },
+      },
+      // MCP tools are not in the model's flat tool list; like the plugin tools
+      // they are reached through Code Mode. Discover the host-built path from
+      // the catalog instead of encoding a naming guess in the test.
+      { name: 'execute', arguments: { code: MATRIX_MCP_CALL_SCRIPT } },
+    ],
+    promptLabel: 'observe the extended action vocabulary',
+  })
+
+  // The installer writes `permission.mcp.<server>` and the repo translator
+  // passes the key through as the action `mcp`. These two scenarios differ in
+  // ONE rule — the installer's `mcp.canary` effect — so any difference in
+  // whether the server tool runs is attributable to that rule, not to boot
+  // timing or to the MCP server itself.
+  const mcpShapePermissions = (effect) => [
+    ...MATRIX_ACTION_COVERAGE_ACTIONS.filter((action) => action !== 'mcp').map((action) => ({
+      action,
+      resource: '*',
+      effect: 'allow',
+    })),
+    // The installer's legacy shape: action `mcp`, server in `resource`.
+    { action: 'mcp', resource: 'canary', effect },
+  ]
+
+  scenarios.mcpAllowShape = await runPermissionMatrixScenario({
+    name: 'mcp-installer-shape-allow',
+    permissions: mcpShapePermissions('allow'),
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    prepare: writeCanaryMcpServer,
+    mcp: MATRIX_MCP_CONFIG,
+    // The first chat turn builds the session tool/catalog snapshot BEFORE the
+    // lazy plugin/MCP registration for that turn lands (measured: a first-turn
+    // `search` finds no MCP path even with status "connected"). One warm-up
+    // read makes the MCP turn the same shape as the coverage scenario, and it
+    // is identical in the allow and deny runs, so the differential stays valid.
+    scripts: (sandbox) => [
+      { name: 'read', arguments: { path: sandbox.targetFile } },
+      { name: 'execute', arguments: { code: MATRIX_MCP_CALL_SCRIPT } },
+    ],
+    promptLabel: 'exercise the installer mcp allow shape',
+  })
+
+  scenarios.mcpRuleShape = await runPermissionMatrixScenario({
+    name: 'mcp-installer-shape-deny',
+    permissions: mcpShapePermissions('deny'),
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    prepare: writeCanaryMcpServer,
+    mcp: MATRIX_MCP_CONFIG,
+    scripts: (sandbox) => [
+      { name: 'read', arguments: { path: sandbox.targetFile } },
+      { name: 'execute', arguments: { code: MATRIX_MCP_CALL_SCRIPT } },
+    ],
+    promptLabel: 'exercise the installer mcp permission shape',
+  })
+
+  // `question` blocks on a human answer, which this canary has no client for.
+  // The permission evaluation precedes that block, so a bounded wait for the
+  // evaluation is enough; the run then stops without a tool result.
+  scenarios.questionAction = await runPermissionMatrixScenario({
+    name: 'question-action',
+    permissions: MATRIX_ACTION_COVERAGE_PERMISSIONS,
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    scripts: [
+      {
+        name: 'question',
+        arguments: {
+          questions: [
+            {
+              question: 'Canary question?',
+              header: 'Canary',
+              options: [{ label: 'A', description: 'canary option' }],
+            },
+          ],
+        },
+      },
+    ],
+    awaitPrompt: false,
+    waitForAction: 'question',
+    promptLabel: 'observe the question permission action',
+  })
+
+  webFetch.close()
+
   const nestedFirst = parseScriptResult(scenarios.orderNestedFirst.responses.at(-1) ?? '')
   const wildcardFirst = parseScriptResult(scenarios.orderWildcardFirst.responses.at(-1) ?? '')
+  const editNestedFirst = parseScriptResult(scenarios.orderEditNestedFirst.responses.at(-1) ?? '')
+  const editWildcardFirst = parseScriptResult(
+    scenarios.orderEditWildcardFirst.responses.at(-1) ?? '',
+  )
 
   const report = {
     host: {
       bin: BIN,
       version: spawnSync(BIN, ['--version'], { encoding: 'utf8' }).stdout?.trim() ?? '',
     },
+    isolation: {
+      // The wrapper applies the managed deny/etc fixture ONLY to the precedence
+      // run. `false` here proves the matrix scenarios ran against their own
+      // project config, not that fixture.
+      managedDenyFixture: process.env.PANTHEON_TOOL_CANARY_MANAGED_DENY_FIXTURE === '1',
+    },
     toolList: scenarios.orderNestedFirst.toolList.map((tool) => tool.name),
     translator: {
       entries: Object.fromEntries(
-        Object.keys(MATRIX_READ_ONLY_V1).map((key) => [key, translatorActionFor(key)]),
+        [...Object.keys(MATRIX_READ_ONLY_V1), ...MATRIX_ACTION_COVERAGE_ACTIONS].map((key) => [
+          key,
+          translatorActionFor(key),
+        ]),
       ),
     },
     actionNames: summarizeMatrixObservation(scenarios.actionNames),
+    actionCoverage: {
+      ...summarizeMatrixObservation(scenarios.actionCoverage),
+      observedActions: [
+        ...new Set(scenarios.actionCoverage.matrixEvents.map((event) => event.action)),
+      ].sort(),
+      // The exact host-built name of the MCP tool the model was offered, so
+      // the evidence says which tool was invoked, not just that "mcp" appeared.
+      mcpToolNames: scenarios.actionCoverage.toolList
+        .map((tool) => tool.name)
+        .filter((name) => /canary/i.test(name)),
+      mcpStatus: scenarios.actionCoverage.mcpStatus ?? null,
+      mcpServerLog: existsSync(scenarios.actionCoverage.sandbox.mcpLogFile)
+        ? readFileSync(scenarios.actionCoverage.sandbox.mcpLogFile, 'utf8').slice(-4000)
+        : null,
+      modelToolNames: scenarios.actionCoverage.modelToolNames ?? [],
+      toolCalls: allToolParts(scenarios.actionCoverage.transcript).map((part) => ({
+        name: part.tool ?? part.name,
+        id: part.id,
+        callID: part.callID,
+        status: part.state?.status,
+        error: part.state?.error?.message,
+        output: toolResultText(part).slice(0, 600),
+      })),
+    },
+    questionAction: {
+      evaluations: scenarios.questionAction.matrixEvents.map((event) => ({
+        action: event.action,
+        resources: event.resources,
+        effect: event.effect,
+      })),
+      waitError: scenarios.questionAction.waitError ?? null,
+    },
+    mcpShape: {
+      allow: summarizeMatrixObservation(scenarios.mcpAllowShape),
+      deny: summarizeMatrixObservation(scenarios.mcpRuleShape),
+    },
     readOnly: summarizeMatrixObservation(scenarios.readOnly),
     order: {
       nestedFirst: {
@@ -1977,6 +2600,25 @@ async function runPermissionMatrix() {
       },
       resolution: classifyResolution(nestedFirst.probe, wildcardFirst.probe),
     },
+    orderEdit: {
+      nestedFirst: {
+        policies: MATRIX_ORDER_NESTED_FIRST_EDIT,
+        probe: matrixDecision(editNestedFirst.probe),
+        control: matrixDecision(editNestedFirst.control),
+      },
+      wildcardFirst: {
+        policies: MATRIX_ORDER_WILDCARD_FIRST_EDIT,
+        probe: matrixDecision(editWildcardFirst.probe),
+        control: matrixDecision(editWildcardFirst.control),
+      },
+      resolution: classifyResolution(editNestedFirst.probe, editWildcardFirst.probe),
+    },
+    orderReal: Object.fromEntries(
+      Object.keys(realOrderCases).map((key) => [
+        key,
+        summarizeOrderReal(scenarios[`orderReal:${key}`]),
+      ]),
+    ),
     taskGlob: Object.fromEntries(
       ['apollo', 'demeter'].map((target) => {
         const observation = scenarios[`taskGlob:${target}`]
@@ -2012,6 +2654,371 @@ async function runPermissionMatrix() {
   return { scenarios, report }
 }
 
+// ─── P0-5 MCP action-name gating probe ───────────────────────────────────
+
+/**
+ * The host evaluates an MCP tool call with action `<server>_<tool>` and
+ * `resources: ["*"]`; the installer instead writes `permission.mcp.<server>`,
+ * which the differential above proves inert. This probe answers the narrower
+ * question — whether a rule whose `action` IS the emitted name blocks the call —
+ * and at what granularity, on every supported host.
+ *
+ * The emitted name is DISCOVERED from a permissive run and only then used to
+ * write the deny scenarios, so no host naming scheme is hard-coded here.
+ */
+const MCP_GATING_BASE_ACTIONS = [
+  'shell',
+  'edit',
+  'read',
+  'grep',
+  'glob',
+  'webfetch',
+  'websearch',
+  'skill',
+  'hashline_edit',
+  'vision_describe',
+  'question',
+]
+
+function mcpGatingPermissions(rule) {
+  return [
+    ...MCP_GATING_BASE_ACTIONS.map((action) => ({ action, resource: '*', effect: 'allow' })),
+    ...(rule ? [rule] : []),
+  ]
+}
+
+/**
+ * Catalog lookup + call in one Code Mode script.
+ *
+ * `paths` separates "the host removed the tool from the catalog" from "the host
+ * let the call through". The result text separates "the tool executed" from
+ * "the call was rejected"; the MCP server's own stdio log is the third,
+ * independent witness.
+ */
+function mcpGatingTraceScript(callExpression) {
+  return [
+    'const found = search({ query: "canary" });',
+    'const out = { paths: found.items.map((item) => item.path) };',
+    'try {',
+    `  out.result = await ${callExpression}({ text: "mcp-gating" });`,
+    '  out.executed = true;',
+    '} catch (err) {',
+    '  out.error = String(err && err.message ? err.message : err);',
+    '}',
+    'return JSON.stringify(out);',
+  ].join('\n')
+}
+
+function mcpGatingScripts(sandbox, { callExpression = 'tools.canary.echo' } = {}) {
+  // Turn 1 warms the session catalog: the host builds the tool snapshot before
+  // the lazy MCP registration for that turn lands (measured on 2.0.29). The
+  // allow control and every deny run use the same shape, so the differential is
+  // attributable to the one rule that differs.
+  return [
+    { name: 'read', arguments: { path: sandbox.targetFile } },
+    { name: 'execute', arguments: { code: mcpGatingTraceScript(callExpression) } },
+  ]
+}
+
+/** Everything needed to decide "blocked" without trusting a single surface. */
+function summarizeMcpGating(observation, rule, codeNeedle = 'tools.canary.echo') {
+  const part = matrixCodePart(observation, codeNeedle)
+  const text = part ? toolResultText(part) : ''
+  const parsed = parseScriptResult(text)
+  const event = matrixEventForPart(observation, part)
+  const log = existsSync(observation.sandbox.mcpLogFile)
+    ? readFileSync(observation.sandbox.mcpLogFile, 'utf8')
+    : ''
+  const executed = /CANARY-MCP-ECHO/.test(text)
+  return {
+    rule,
+    // `executed` is the positive fact; `blocked` is only claimed when the
+    // scripted `execute` itself completed, so a dead host or a host that lost
+    // the `execute` tool is reported as not-measured instead of as a block.
+    verdict: executed
+      ? 'executed'
+      : observation
+        ? part?.state?.status === 'completed'
+          ? 'blocked'
+          : 'not-measured'
+        : 'not-measured',
+    status: part?.state?.status ?? null,
+    toolPresentInCatalog: Array.isArray(parsed?.paths) ? parsed.paths.length > 0 : null,
+    catalogPaths: Array.isArray(parsed?.paths) ? parsed.paths : null,
+    executed,
+    literalMessage: part?.state?.error?.message ?? parsed?.error ?? event?.message ?? null,
+    evaluation: event
+      ? {
+          action: event.action,
+          resources: event.resources,
+          effect: event.effect,
+          message: event.message,
+        }
+      : null,
+    mcpServerToolCalls: (log.match(/"method":"tools\/call"/g) ?? []).length,
+    mcpStatus: observation?.mcpStatus ?? null,
+    scriptResult: parsed,
+  }
+}
+
+/** Run one scenario, recording a failed host boot as data instead of aborting. */
+async function runMcpGatingScenario(
+  name,
+  rule,
+  { mcp = MATRIX_MCP_CONFIG, callExpression = 'tools.canary.echo' } = {},
+) {
+  try {
+    const observation = await runPermissionMatrixScenario({
+      name,
+      permissions: mcpGatingPermissions(rule),
+      agents: MATRIX_BASE_AGENTS,
+      defaultAgent: 'zeus',
+      prepare: writeCanaryMcpServer,
+      mcp,
+      scripts: (sandbox) => mcpGatingScripts(sandbox, { callExpression }),
+      promptLabel: `mcp gating ${name}`,
+    })
+    return {
+      observation,
+      summary: summarizeMcpGating(observation, rule, callExpression),
+    }
+  } catch (error) {
+    return {
+      observation: null,
+      summary: {
+        rule,
+        verdict: 'not-measured',
+        error: String(error?.message ?? error),
+      },
+    }
+  }
+}
+
+/**
+ * Enumerate a local MCP server's tools WITHOUT an OpenCode host.
+ *
+ * This is the install-time prerequisite: if an installer is to emit a rule per
+ * tool (`<server>_<tool>`), it must learn the tool names before the host ever
+ * runs. A plain stdio client does that with `initialize` + `tools/list`. The
+ * cost and the failure modes are recorded with the result.
+ */
+function probeMcpToolsList(serverFile) {
+  const started = Date.now()
+  const requests = [
+    {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'installer-discovery-probe', version: '0' },
+      },
+    },
+    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+  ]
+  const child = spawnSync(process.execPath, [serverFile], {
+    input: `${requests.map((request) => JSON.stringify(request)).join('\n')}\n`,
+    encoding: 'utf8',
+    timeout: 5_000,
+  })
+  const replies = String(child.stdout ?? '')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+  const list = replies.find((reply) => reply.id === 2)
+  return {
+    tools: (list?.result?.tools ?? []).map((tool) => tool.name),
+    elapsedMs: Date.now() - started,
+    status: child.status,
+    timedOut: child.error?.code === 'ETIMEDOUT',
+    stderr: String(child.stderr ?? '').slice(0, 400),
+  }
+}
+
+/** The granularities the gating question needs, in the order they are asked. */
+function mcpGatingRules(actionName) {
+  return {
+    actionAllow: { action: actionName, resource: '*', effect: 'allow' },
+    actionDeny: { action: actionName, resource: '*', effect: 'deny' },
+    resourceToolDeny: { action: actionName, resource: 'echo', effect: 'deny' },
+    resourceEmittedDeny: { action: actionName, resource: actionName, effect: 'deny' },
+    resourceGlobDeny: { action: actionName, resource: 'canary_*', effect: 'deny' },
+    actionGlobDeny: { action: 'canary_*', resource: '*', effect: 'deny' },
+    serverNameActionDeny: { action: 'canary', resource: '*', effect: 'deny' },
+    legacyMcpServerDeny: { action: 'mcp', resource: 'canary', effect: 'deny' },
+    legacyMcpWildcardDeny: { action: 'mcp', resource: '*', effect: 'deny' },
+  }
+}
+
+/**
+ * `effect: "ask"` on the emitted action: does it prompt at call time, or hide
+ * the tool from the catalog? The pending permission request is the observable.
+ * The probe replies `reject`, then records what the host asked for. A bounded
+ * wait turns "no prompt" into `not-measured` instead of a hung suite.
+ */
+async function runMcpAskScenario(actionName) {
+  const sandbox = makeSandbox()
+  const rule = { action: actionName, resource: '*', effect: 'ask' }
+  const observation = { sandbox, matrixEvents: [], transcript: '[]', mcpStatus: null }
+  writeFileSync(sandbox.targetFile, TARGET_BODY)
+  writeCanaryMcpServer(sandbox)
+  const model = await startMockModel(mcpGatingScripts(sandbox))
+  writePlugins(sandbox, realPluginShim(), { matrixProbe: true })
+  writePermissionMatrixConfig(sandbox, model.baseURL, {
+    permissions: mcpGatingPermissions(rule),
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    mcp: MATRIX_MCP_CONFIG,
+  })
+  let host
+  try {
+    host = await startHost(sandbox)
+    observation.mcpStatus = await waitFor(
+      async () => {
+        const status = await host.request('GET', '/api/mcp').catch(() => null)
+        const rows = Array.isArray(status?.data) ? status.data : []
+        return rows.length > 0 && rows.every((row) => row?.status?.status !== 'pending')
+          ? status
+          : null
+      },
+      20_000,
+      'the host to finish connecting the canary MCP server',
+    ).catch((error) => ({ error: String(error) }))
+    // Warm-up turn, identical to the deny scenarios.
+    await host.prompt('mcp ask warmup')
+    const running = host.prompt('mcp ask probe').catch(() => {})
+    const pending = await waitFor(
+      async () => {
+        const result = await host.request('GET', `/api/session/${host.sessionID}/permission`)
+        return (result?.data ?? []).find((item) => String(item.action).startsWith('canary')) ?? null
+      },
+      TIMEOUT_MS,
+      'a pending ask for the MCP tool',
+    ).catch((error) => ({ error: String(error) }))
+    let reply = null
+    if (pending?.id) {
+      reply = 'reject'
+      await host.request('POST', `/api/session/${host.sessionID}/permission/${pending.id}/reply`, {
+        decision: reply,
+      })
+      await running
+    }
+    observation.transcript = await host.transcript()
+    observation.matrixEvents = existsSync(sandbox.matrixProofFile)
+      ? readFileSync(sandbox.matrixProofFile, 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+      : []
+    const summary = summarizeMcpGating(observation, rule)
+    return {
+      observation,
+      summary: {
+        ...summary,
+        verdict: pending?.id
+          ? 'prompted'
+          : summary.executed
+            ? 'not-gated'
+            : summary.verdict === 'blocked'
+              ? 'hidden'
+              : 'not-measured',
+        ask: pending?.id
+          ? {
+              action: pending.action,
+              resources: pending.resources,
+              message: pending.message,
+              reply,
+            }
+          : (pending ?? null),
+        // After a rejected ask the tool must not have run; this is the gate.
+        executedAfterReject: summary.executed,
+      },
+    }
+  } catch (error) {
+    return {
+      observation: null,
+      summary: { rule, verdict: 'not-measured', error: String(error?.message ?? error) },
+    }
+  } finally {
+    host?.stop()
+    model.close()
+  }
+}
+
+async function runMcpGatingProbe() {
+  const observations = {}
+  // Permissive discovery: allow the installer's current shape AND let the tool
+  // run. The permission evaluate event this call produces is the host's own
+  // spelling, which the deny scenarios then use.
+  const discovery = await runMcpGatingScenario('mcp-gating-discover-action', {
+    action: 'mcp',
+    resource: '*',
+    effect: 'allow',
+  })
+  if (discovery.observation) observations.discovery = discovery.observation
+  const emitted = discovery.summary.evaluation?.action
+  const actionDiscovered = typeof emitted === 'string' && emitted.length > 0 && emitted !== 'mcp'
+  const actionName = actionDiscovered ? emitted : 'canary_echo'
+
+  const scenarios = { discovery: discovery.summary }
+  const rules = mcpGatingRules(actionName)
+  for (const [key, rule] of Object.entries(rules)) {
+    const result = await runMcpGatingScenario(`mcp-gating-${key}`, rule)
+    if (result.observation) observations[key] = result.observation
+    scenarios[key] = result.summary
+  }
+
+  // A real Pantheon server name contains hyphens (`pantheon-code-mode`). A
+  // prefix glob in `action` is the cheapest install-time form, so it must be
+  // proven on a hyphenated name, not inferred from the all-lowercase canary.
+  const hyphenServer = 'canary-mcp'
+  const hyphen = await runMcpGatingScenario(
+    'mcp-gating-hyphenatedActionGlobDeny',
+    { action: `${hyphenServer}_*`, resource: '*', effect: 'deny' },
+    {
+      mcp: (sandbox) => ({
+        [hyphenServer]: {
+          type: 'local',
+          command: [process.execPath, sandbox.mcpServerFile, sandbox.mcpLogFile],
+          enabled: true,
+        },
+      }),
+      callExpression: `tools[${JSON.stringify(hyphenServer)}].echo`,
+    },
+  )
+  if (hyphen.observation) observations.hyphenDeny = hyphen.observation
+  scenarios.hyphenatedActionGlobDeny = hyphen.summary
+
+  // The installer writes `ask`, not `deny`. Whether `ask` prompts at CALL time
+  // (a usable gate) or hides the tool (same outcome, earlier) is a different
+  // observable, so it gets its own bounded run.
+  const ask = await runMcpAskScenario(actionName)
+  if (ask.observation) observations.ask = ask.observation
+  scenarios.askEffect = ask.summary
+
+  const report = {
+    host: {
+      bin: BIN,
+      version: spawnSync(BIN, ['--version'], { encoding: 'utf8' }).stdout?.trim() ?? '',
+    },
+    actionName,
+    actionDiscovered,
+    discoveryToolsList: discovery.observation
+      ? probeMcpToolsList(discovery.observation.sandbox.mcpServerFile)
+      : null,
+    scenarios,
+  }
+  return { observations, report }
+}
+
 // ─── state ───────────────────────────────────────────────────────────────
 
 let live = null
@@ -2024,12 +3031,14 @@ let identityGapLive = null
 let childBoundaryLive = null
 let emptyChildLive = null
 let permissionMatrix = null
+let mcpGating = null
 let rootsBefore = null
 const permissionProbeEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_PROBE === '1'
 const permissionAskProbeEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_ASK === '1'
 const boundedReadProbeEnabled = process.env.PANTHEON_TOOL_CANARY_BOUNDED_READ === '1'
 const boundedReadDenyProbeEnabled = process.env.PANTHEON_TOOL_CANARY_BOUNDED_READ_DENY === '1'
 const permissionMatrixEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_MATRIX === '1'
+const mcpGatingEnabled = process.env.PANTHEON_TOOL_CANARY_MCP_GATING === '1'
 
 before(
   async () => {
@@ -2080,8 +3089,11 @@ before(
     if (permissionMatrixEnabled) {
       permissionMatrix = await runPermissionMatrix()
     }
+    if (mcpGatingEnabled) {
+      mcpGating = await runMcpGatingProbe()
+    }
   },
-  { timeout: permissionMatrixEnabled ? 240_000 : 60_000 },
+  { timeout: permissionMatrixEnabled || mcpGatingEnabled ? 420_000 : 60_000 },
 )
 
 after(() => {
@@ -2099,8 +3111,18 @@ after(() => {
     permissionMatrix?.scenarios?.readOnly,
     permissionMatrix?.scenarios?.orderNestedFirst,
     permissionMatrix?.scenarios?.orderWildcardFirst,
+    permissionMatrix?.scenarios?.orderEditNestedFirst,
+    permissionMatrix?.scenarios?.orderEditWildcardFirst,
+    permissionMatrix?.scenarios?.['orderReal:deny-broad-then-allow'],
+    permissionMatrix?.scenarios?.['orderReal:allow-nested-then-deny-broad'],
+    permissionMatrix?.scenarios?.['orderReal:allow-broad-then-deny-nested'],
+    permissionMatrix?.scenarios?.actionCoverage,
+    permissionMatrix?.scenarios?.mcpAllowShape,
+    permissionMatrix?.scenarios?.mcpRuleShape,
+    permissionMatrix?.scenarios?.questionAction,
     permissionMatrix?.scenarios?.['taskGlob:apollo'],
     permissionMatrix?.scenarios?.['taskGlob:demeter'],
+    ...Object.values(mcpGating?.observations ?? {}),
   ]) {
     if (observation?.sandbox) rmSync(observation.sandbox.root, { recursive: true, force: true })
   }
@@ -2217,7 +3239,8 @@ test('ctx.permission.assert evaluates a real tool-origin request against host po
     `host permission decision differed from ${expectedDecision}: ${JSON.stringify(result)}`,
   )
   if (expectedDecision === 'reject') {
-    assert.match(result.error, /Blocked by configuration policy/i)
+    assert.match(result.error, POLICY_DENIAL_MESSAGE)
+    assert.equal(result.errorKind, 'policy', JSON.stringify(result))
   } else {
     assert.equal(result.error, undefined, 'an allowed request returned a rejection reason')
   }
@@ -2230,32 +3253,68 @@ test('ctx.permission.assert evaluates a real tool-origin request against host po
   assert.equal(typeof result.request.source.id, 'string')
 })
 
+test('P0-5 permission probe: only a policy denial is a reject verdict', () => {
+  // Mirrors the regex the generated probes use. A contract change (TypeError)
+  // must never be classified as host policy; that is the false-green the fault
+  // injection (`PANTHEON_TOOL_CANARY_*_PROBE_FAULT=contract`) reproduces.
+  const classify = (message) =>
+    POLICY_DENIAL_MESSAGE.test(String(message)) ? 'reject' : 'probe-error'
+  assert.equal(classify('Permission denied: write'), 'reject')
+  assert.equal(classify('Blocked by configuration policy'), 'reject')
+  assert.equal(
+    classify('simulated host contract change: permission.assert rejected the request shape'),
+    'probe-error',
+  )
+  assert.equal(classify('TypeError: Cannot read properties of undefined'), 'probe-error')
+})
+
 test('P0-5 action names: host evaluations match the repo translator', {
   skip: skipped || !permissionMatrixEnabled,
 }, () => {
   const scenario = permissionMatrix?.scenarios?.actionNames
   assert.ok(scenario, 'the action-name matrix scenario did not run')
+  assert.equal(
+    permissionMatrix.report.isolation?.managedDenyFixture,
+    false,
+    'the matrix run inherited the managed deny fixture, so its action-name evidence is confounded',
+  )
 
-  // The write tool must actually run so its evaluation is not a synthetic
-  // assert. Shell may be blocked by a host default gate before execution; its
-  // permission evaluation is still recorded, and that is the evidence used.
+  // The matrix run is isolated from the managed `deny/etc` fixture (the
+  // wrapper applies it only to the precedence run). Both permissions must
+  // actually execute here; a blocked shell is the symptom of the old
+  // contamination, not a host default.
   assert.equal(scenario.sideEffects.write, true, 'the probe write call did not run')
-
-  const eventFor = (needle) =>
-    scenario.matrixEvents.find((event) =>
-      (event.resources ?? []).some(
-        (resource) => typeof resource === 'string' && resource.includes(needle),
-      ),
-    )
+  assert.equal(
+    scenario.sideEffects.shell,
+    true,
+    `the matrix run inherited a deny policy and blocked shell (events=${JSON.stringify(scenario.matrixEvents)}, calls=${JSON.stringify(permissionMatrix.report.actionNames.calls.shell)})`,
+  )
 
   const checks = [
-    { key: 'bash', event: eventFor('CANARY-SHELL-RAN') },
-    { key: 'write', event: eventFor('write-ran.txt') },
-    { key: 'read', event: eventFor('target.txt') },
+    { key: 'bash', needle: 'CANARY-SHELL-RAN' },
+    { key: 'write', needle: 'write-ran.txt' },
+    { key: 'read', needle: 'target.txt' },
   ]
 
   for (const check of checks) {
-    if (!check.event) continue // absence is recorded as unobserved, not a guess
+    const event = scenario.matrixEvents.find((candidate) =>
+      (candidate.resources ?? []).some(
+        (resource) => typeof resource === 'string' && resource.includes(check.needle),
+      ),
+    )
+    check.event = event
+  }
+
+  // Every check is load-bearing: A2 is the only live proof of the `write→edit`
+  // mapping, so a missing evaluation must fail instead of collapsing into
+  // `checks.some(...)`. The hosts in this matrix all emit these events; if one
+  // structurally did not, the reason has to be stated explicitly rather than
+  // silently skipped.
+  for (const check of checks) {
+    assert.ok(
+      check.event,
+      `the host emitted no permission evaluation for "${check.key}" (${check.needle}); events=${JSON.stringify(scenario.matrixEvents)}`,
+    )
     const expected = translatorActionFor(check.key)
     assert.equal(
       check.event.action,
@@ -2263,16 +3322,278 @@ test('P0-5 action names: host evaluations match the repo translator', {
       `translator emits "${expected}" for permission.${check.key} but the host evaluated "${check.event.action}" (events=${JSON.stringify(scenario.matrixEvents)})`,
     )
   }
-  assert.ok(
-    checks.some((check) => check.event),
-    `the host emitted no permission evaluation for any scripted call: ${JSON.stringify(scenario.matrixEvents)}`,
-  )
 
   // The artifact must carry the observed vocabulary, not just the assertions.
   assert.ok(
     Array.isArray(permissionMatrix.report.actionNames.evaluations),
     'the matrix report omitted the host action-name evidence',
   )
+})
+
+/**
+ * One P0-5 acceptance check per action name the repo can emit but the matrix
+ * had never observed.
+ *
+ * `needle` pins the evaluation to the scripted call's own resource when the
+ * host exposes one; `action` is the fallback correlation. Absence of an
+ * evaluation is a FAILURE, never a silent pass: the criterion is that the host
+ * recognises the name the translator emits, and this file is the only place
+ * that can observe it.
+ */
+const MATRIX_ACTION_COVERAGE_CASES = [
+  { action: 'grep', needle: 'CANARY-ALPHA' },
+  { action: 'glob', needle: '*.txt' },
+  { action: 'webfetch', needle: 'canary.txt' },
+  { action: 'skill', needle: 'canary-skill' },
+  {
+    action: 'hashline_edit',
+    // Plugin tools are not host built-ins and are not in the model's flat tool
+    // list; the only path is `execute` (Code Mode). The script that calls it is
+    // the correlation key, so a missing event is about the permission layer,
+    // not about a call that never happened.
+    codeNeedle: 'tools.hashline_edit',
+    structural:
+      'plugin tools run inside `execute` (Code Mode); the host emitted no permission.evaluate event for the wrapped call',
+  },
+  {
+    action: 'vision_describe',
+    codeNeedle: 'tools.vision_describe',
+    structural:
+      'plugin tools run inside `execute` (Code Mode); the host emitted no permission.evaluate event for the wrapped call',
+  },
+  // `mcp` is deliberately NOT in this list: the host enforces it at the tool
+  // CATALOG layer (a deny removes the server's tools) and evaluates the call
+  // itself as `<server>_<tool>`. There is no evaluate event with action `mcp`
+  // to compare, so the dedicated differential test below covers it instead of
+  // inventing an equivalence.
+]
+
+/** The transcript part whose Code Mode script contains `needle`. */
+function matrixCodePart(scenario, needle) {
+  return allToolParts(scenario.transcript ?? '[]').find(
+    (part) => typeof part.state?.input?.code === 'string' && part.state.input.code.includes(needle),
+  )
+}
+
+/** The host permission evaluation raised by one tool-call part, if any. */
+function matrixEventForPart(scenario, part) {
+  return part
+    ? (scenario.matrixEvents ?? []).find((event) => event.source?.id === part.id)
+    : undefined
+}
+
+for (const { action, needle, codeNeedle, structural } of MATRIX_ACTION_COVERAGE_CASES) {
+  test(`P0-5 action name coverage: the host evaluates "${action}" and the translator emits it`, {
+    skip: skipped || !permissionMatrixEnabled,
+  }, (t) => {
+    const scenario = permissionMatrix?.scenarios?.actionCoverage
+    assert.ok(scenario, 'the action-coverage matrix scenario did not run')
+
+    const events = scenario.matrixEvents ?? []
+    const part = codeNeedle ? matrixCodePart(scenario, codeNeedle) : undefined
+    if (codeNeedle) {
+      assert.ok(part, `the ${action} scripted call never reached the transcript`)
+      assert.equal(
+        part.state?.status,
+        'completed',
+        `the ${action} scripted call did not complete: ${JSON.stringify(part.state)}`,
+      )
+    }
+
+    const event = codeNeedle
+      ? matrixEventForPart(scenario, part)
+      : ((needle
+          ? events.find((candidate) =>
+              (candidate.resources ?? []).some(
+                (resource) => typeof resource === 'string' && resource.includes(needle),
+              ),
+            )
+          : undefined) ?? events.find((candidate) => candidate.action === action))
+
+    if (!event && structural) {
+      // Never a pass: the tool ran, the host simply has no permission surface
+      // for it. The risk is stated in the report so it cannot be read as
+      // "the host accepts this name".
+      t.skip(`NOT_APPLICABLE: ${structural}; part=${JSON.stringify(part?.state?.status)}`)
+      return
+    }
+
+    assert.ok(
+      event,
+      `the host emitted no permission evaluation for "${action}" (${JSON.stringify(permissionMatrix.report.actionCoverage.toolCalls)}); events=${JSON.stringify(events)}`,
+    )
+    assert.equal(
+      event.action,
+      translatorActionFor(action),
+      `translator emits "${translatorActionFor(action)}" for permission.${action} but the host evaluated "${event.action}" (events=${JSON.stringify(events)})`,
+    )
+  })
+}
+
+test('P0-5 action name coverage: the host evaluates "question" and the translator emits it', {
+  skip: skipped || !permissionMatrixEnabled,
+}, (t) => {
+  const scenario = permissionMatrix?.scenarios?.questionAction
+  assert.ok(scenario, 'the question-action matrix scenario did not run')
+
+  const event = (scenario.matrixEvents ?? []).find((candidate) => candidate.action === 'question')
+  if (!event) {
+    // A timeout is not evidence that the host accepts a different name; it is
+    // evidence that this probe could not reach the permission layer before the
+    // tool blocked. Report NOT_APPLICABLE (a skip) with the concrete reason —
+    // never a pass, and never an invented equivalence.
+    t.skip(
+      `NOT_APPLICABLE: the host emitted no question permission evaluation before the tool blocked (${scenario.waitError ?? 'no event'}); events=${JSON.stringify(scenario.matrixEvents)}`,
+    )
+    return
+  }
+  assert.equal(event.action, translatorActionFor('question'))
+})
+
+test('P0-5 mcp: no permission.evaluate event carries the action name the translator emits', {
+  skip: skipped || !permissionMatrixEnabled,
+}, (t) => {
+  const scenario = permissionMatrix?.scenarios?.actionCoverage
+  assert.ok(scenario, 'the action-coverage matrix scenario did not run')
+  const part = matrixCodePart(scenario, 'tools.canary.echo')
+  assert.ok(part, 'the MCP scripted call never reached the transcript')
+  assert.equal(part.state?.status, 'completed', JSON.stringify(part.state))
+
+  // The installer's legacy shape, not a translator output: the translator no
+  // longer emits an `mcp` action at all (it emits `<server>_*`).
+  const emitted = 'mcp'
+  const event = matrixEventForPart(scenario, part)
+  assert.ok(
+    event,
+    'the MCP call produced no permission evaluation at all; the differential test below cannot run',
+  )
+  assert.notEqual(
+    event.action,
+    emitted,
+    `the host evaluated the MCP call as "${event.action}", so a permission.evaluate event for "${emitted}" should be asserted by this file instead of skipped`,
+  )
+  t.skip(
+    `NOT_APPLICABLE: the host resolves permission.mcp.<server> at the tool-catalog layer and evaluates the call as "${event.action}"; no evaluate event with action "${emitted}" exists to compare. Behaviour is proven by the differential allow/deny test below.`,
+  )
+})
+
+test('P0-5 mcp gating: <server>_* deny blocks, action "mcp" is inert, ask hides the tool', {
+  skip: skipped || !mcpGatingEnabled,
+}, () => {
+  assert.ok(mcpGating, 'the MCP gating probe did not run')
+  const { report } = mcpGating
+  assert.equal(report.actionDiscovered, true, JSON.stringify(report.scenarios.discovery))
+
+  // Positive control: the same server works when no rule denies it.
+  assert.equal(report.scenarios.actionAllow.verdict, 'executed')
+
+  // (a) The action rule is the gate. Both the exact `<server>_<tool>` and the
+  // `<server>_*` glob block every tool of the server, and they do it by
+  // removing it from the catalog: no execution, no `permission.evaluate`
+  // event, zero `tools/call` on the MCP server.
+  for (const key of ['actionDeny', 'actionGlobDeny', 'hyphenatedActionGlobDeny']) {
+    const scenario = report.scenarios[key]
+    assert.equal(scenario.verdict, 'blocked', `${key} did not block: ${JSON.stringify(scenario)}`)
+    assert.equal(scenario.toolPresentInCatalog, false, `${key} left the tool in the catalog`)
+    assert.equal(scenario.mcpServerToolCalls, 0, `${key} still called the MCP server`)
+    assert.equal(scenario.evaluation, null, `${key} emitted a permission evaluation`)
+    assert.match(String(scenario.literalMessage), /Unknown tool/i)
+  }
+
+  // (b) `action:"mcp"` (the installer's old shape) is inert, with either
+  // resource. This is the measured fact that invalidated the old assertion.
+  for (const key of ['legacyMcpServerDeny', 'legacyMcpWildcardDeny']) {
+    const scenario = report.scenarios[key]
+    assert.equal(
+      scenario.verdict,
+      'executed',
+      `${key} unexpectedly gated the tool: ${JSON.stringify(scenario)}`,
+    )
+    assert.equal(scenario.mcpServerToolCalls, 1)
+  }
+
+  // (c) `ask` is not a prompt: the host removes the tool from the catalog.
+  const ask = report.scenarios.askEffect
+  assert.equal(ask.rule.effect, 'ask')
+  assert.equal(ask.verdict, 'hidden', `ask did not hide the tool: ${JSON.stringify(ask)}`)
+  assert.equal(ask.toolPresentInCatalog, false)
+  assert.equal(ask.executed, false)
+  assert.equal(ask.ask?.id, undefined, `ask produced a real prompt: ${JSON.stringify(ask.ask)}`)
+  assert.equal(ask.mcpServerToolCalls, 0)
+})
+
+test('P0-5 mcp gating: the emitted action name is discovered and the allow control executes', {
+  skip: skipped || !mcpGatingEnabled,
+}, () => {
+  assert.ok(mcpGating, 'the MCP gating probe did not run')
+  const { report } = mcpGating
+  const discovery = report.scenarios.discovery
+  const allow = report.scenarios.actionAllow
+
+  assert.equal(
+    discovery.verdict,
+    'executed',
+    `the permissive discovery run did not execute the MCP tool, so no action name could be discovered: ${JSON.stringify(discovery)}`,
+  )
+  assert.equal(discovery.rule.action, 'mcp')
+  assert.ok(
+    report.actionName,
+    `the host exposed no permission evaluation for the MCP call: ${JSON.stringify(discovery)}`,
+  )
+  assert.equal(
+    report.actionDiscovered,
+    true,
+    `the host evaluation did not carry a <server>_<tool> action: ${JSON.stringify(discovery.evaluation)}`,
+  )
+  assert.equal(
+    allow.verdict,
+    'executed',
+    `the allow control for action "${report.actionName}" did not execute, so the deny rows would be vacuous: ${JSON.stringify(allow)}`,
+  )
+  assert.equal(
+    allow.evaluation?.action,
+    report.actionName,
+    'the allow control was evaluated under a different action than the deny rules use',
+  )
+
+  const table = Object.fromEntries(
+    Object.entries(report.scenarios).map(([key, value]) => [
+      key,
+      {
+        rule: value.rule,
+        verdict: value.verdict,
+        catalog: value.toolPresentInCatalog,
+        message: value.literalMessage,
+      },
+    ]),
+  )
+  console.log(`P0-5 mcp gating matrix (${report.host.version}): ${JSON.stringify(table)}`)
+
+  const reportPath = process.env.PANTHEON_TOOL_CANARY_MCP_GATING_REPORT
+  if (reportPath) {
+    writeFileSync(reportPath, JSON.stringify(report, null, 2))
+    console.log(`mcp gating report: ${reportPath}`)
+  }
+})
+
+test('P0-5 mcp gating: install-time tools/list discovery needs no host', {
+  skip: skipped || !mcpGatingEnabled,
+}, () => {
+  const sandbox = makeSandbox()
+  try {
+    writeCanaryMcpServer(sandbox)
+    const probe = probeMcpToolsList(sandbox.mcpServerFile)
+    assert.equal(probe.status, 0, `the discovery client failed: ${JSON.stringify(probe)}`)
+    assert.ok(
+      probe.tools.includes('echo'),
+      `tools/list did not enumerate the canary tool without a host: ${JSON.stringify(probe)}`,
+    )
+    console.log(
+      `MCP install-time discovery: tools=${JSON.stringify(probe.tools)} elapsedMs=${probe.elapsedMs}`,
+    )
+  } finally {
+    rmSync(sandbox.root, { recursive: true, force: true })
+  }
 })
 
 test('P0-5 read-only profile: host does not execute shell or write and still allows read', {
@@ -2293,20 +3614,27 @@ test('P0-5 read-only profile: host does not execute shell or write and still all
   )
   const shellCall = scenario.nativeCalls.shell.at(-1)
   const writeCall = scenario.nativeCalls.write.at(-1)
-  if (shellCall) {
-    assert.notEqual(
-      shellCall.state?.status,
-      'completed',
-      `the read-only profile completed a shell call: ${JSON.stringify(shellCall.state)}`,
-    )
-  }
-  if (writeCall) {
-    assert.notEqual(
-      writeCall.state?.status,
-      'completed',
-      `the read-only profile completed a write call: ${JSON.stringify(writeCall.state)}`,
-    )
-  }
+  // The scenario scripts both calls, so absence is a broken probe, not a pass:
+  // `if (writeCall)` used to let a read-only profile that never attempted the
+  // write look green.
+  assert.ok(
+    shellCall,
+    `the read-only scenario never attempted shell: ${JSON.stringify(scenario.transcript)}`,
+  )
+  assert.ok(
+    writeCall,
+    `the read-only scenario never attempted write: ${JSON.stringify(scenario.transcript)}`,
+  )
+  assert.notEqual(
+    shellCall.state?.status,
+    'completed',
+    `the read-only profile completed a shell call: ${JSON.stringify(shellCall.state)}`,
+  )
+  assert.notEqual(
+    writeCall.state?.status,
+    'completed',
+    `the read-only profile completed a write call: ${JSON.stringify(writeCall.state)}`,
+  )
 
   // Positive control: the same profile explicitly allows read.
   const readText = scenario.nativeCalls.read.map(toolResultText).join('\n')
@@ -2381,19 +3709,41 @@ test('P0-5 resolution order: both nested/wildcard orders are recorded and the wi
     wildcardProbe?.decision,
     `wildcard-first probe produced no decision: ${JSON.stringify(wildcard)}`,
   )
+  assert.notEqual(
+    nestedProbe?.decision,
+    'probe-error',
+    `nested-first probe failed with a non-policy error instead of a decision: ${JSON.stringify(nestedProbe)}`,
+  )
+  assert.notEqual(
+    wildcardProbe?.decision,
+    'probe-error',
+    `wildcard-first probe failed with a non-policy error instead of a decision: ${JSON.stringify(wildcardProbe)}`,
+  )
 
   // Repo policy (not a host-semantics guess): `*: deny` must deny a path
-  // outside the nested allow glob in BOTH orders.
-  assert.equal(
-    nestedControl?.decision,
-    'reject',
-    `wildcard deny did not apply outside the nested allow glob (nested-first): ${JSON.stringify(nestedControl)}`,
-  )
-  assert.equal(
-    wildcardControl?.decision,
-    'reject',
-    `wildcard deny did not apply outside the nested allow glob (wildcard-first): ${JSON.stringify(wildcardControl)}`,
-  )
+  // outside the nested allow glob in BOTH orders. A `reject` alone is not
+  // enough: a TypeError from a changed `assert` contract used to be reported
+  // as `reject`, so the denial message is part of the assertion.
+  for (const [label, control] of [
+    ['nested-first', nestedControl],
+    ['wildcard-first', wildcardControl],
+  ]) {
+    assert.equal(
+      control?.decision,
+      'reject',
+      `wildcard deny did not apply outside the nested allow glob (${label}): ${JSON.stringify(control)}`,
+    )
+    assert.match(
+      String(control?.error ?? ''),
+      POLICY_DENIAL_MESSAGE,
+      `the ${label} control rejected on a non-policy error: ${JSON.stringify(control)}`,
+    )
+    assert.equal(
+      control?.errorKind,
+      'policy',
+      `the ${label} control was not classified as a policy denial: ${JSON.stringify(control)}`,
+    )
+  }
 
   const resolution = permissionMatrix.report.order.resolution
   assert.ok(
@@ -2406,6 +3756,166 @@ test('P0-5 resolution order: both nested/wildcard orders are recorded and the wi
   // unknown being measured. The artifact records the answer.
   console.log(
     `P0-5 resolution order observed: ${resolution} (nested-first=${nestedProbe.decision}, wildcard-first=${wildcardProbe.decision})`,
+  )
+})
+
+test('P0-5 D-2: resolution order in the evaluated edit namespace matches write', {
+  skip: skipped || !permissionMatrixEnabled,
+}, (t) => {
+  const order = permissionMatrix?.report?.order
+  const orderEdit = permissionMatrix?.report?.orderEdit
+  assert.ok(order, 'the write-namespace order report did not run')
+  assert.ok(orderEdit, 'the edit-namespace order report did not run')
+
+  const writeResolution = order.resolution
+  const editResolution = orderEdit.resolution
+
+  if (writeResolution === 'not-applicable' || editResolution === 'not-applicable') {
+    t.skip(
+      `NOT_APPLICABLE: ctx.permission.assert is unavailable (write=${writeResolution}, edit=${editResolution})`,
+    )
+    return
+  }
+  assert.notEqual(writeResolution, 'probe-error', JSON.stringify(order))
+  assert.notEqual(editResolution, 'probe-error', JSON.stringify(orderEdit))
+
+  // C1/C2 in the namespace that actually decides a write: both controls are
+  // outside the nested allow glob and must be denied by host policy. A
+  // non-policy exception is not a denial (the D-1 hardening).
+  for (const [label, control] of [
+    ['edit nested-first', orderEdit.nestedFirst.control],
+    ['edit wildcard-first', orderEdit.wildcardFirst.control],
+  ]) {
+    assert.equal(control?.decision, 'reject', `${label} control: ${JSON.stringify(control)}`)
+    assert.equal(control?.errorKind, 'policy', `${label} control: ${JSON.stringify(control)}`)
+    assert.match(String(control?.error ?? ''), POLICY_DENIAL_MESSAGE)
+  }
+
+  // D-2: the `write` namespace was an inference. The class must be the same in
+  // `edit`, the action the host evaluates for a real write, or the sort policy
+  // rests on the wrong namespace. Equality is the closure condition.
+  assert.equal(
+    editResolution,
+    writeResolution,
+    `resolution class differs between write (${writeResolution}) and edit (${editResolution}): write=${JSON.stringify(order)} edit=${JSON.stringify(orderEdit)}`,
+  )
+  assert.ok(
+    ['most-specific-wins', 'first-match-wins', 'deny-precedence', 'last-match-wins'].includes(
+      editResolution,
+    ),
+    `edit namespace produced an unclassifiable result: ${JSON.stringify(orderEdit)}`,
+  )
+
+  // Record C3–C5 for both namespaces so the artifact answers the question even
+  // when the class is one the assertions do not pin.
+  console.log(
+    `P0-5 D-2 order: write=${writeResolution} (C3=${order.nestedFirst.probe?.decision}, C4=${order.wildcardFirst.probe?.decision}) edit=${editResolution} (C3=${orderEdit.nestedFirst.probe?.decision}, C4=${orderEdit.wildcardFirst.probe?.decision})`,
+  )
+})
+
+/** Find the real write call whose target path ends with `suffix`. */
+function realWriteCall(scenario, suffix) {
+  return (scenario?.writeCalls ?? []).find((call) =>
+    String(call?.input?.path ?? '').endsWith(suffix),
+  )
+}
+
+test('P0-5 D-2: real write calls obey edit rules and last-match-wins', {
+  skip: skipped || !permissionMatrixEnabled,
+}, (t) => {
+  const real = permissionMatrix?.report?.orderReal
+  assert.ok(real, 'the real write order report did not run')
+
+  const allCalls = Object.values(real).flatMap((scenario) => scenario.writeCalls ?? [])
+  assert.ok(
+    allCalls.length > 0,
+    `the real write scenarios produced no calls: ${JSON.stringify(real)}`,
+  )
+
+  // If the host hides `write` because of the rules, the real-call proof is not
+  // available. Say so with the host's own message; never claim the closure.
+  if (allCalls.every((call) => /No tool named/i.test(String(call.error ?? '')))) {
+    t.skip(
+      `NOT_APPLICABLE: the host hid the write tool under the edit rules (${allCalls[0]?.error}); D-2 remains assert-only`,
+    )
+    return
+  }
+
+  const expected = {
+    // broad deny first, specific allow last → the allowed path is written.
+    'deny-broad-then-allow': { memory: true, outside: false },
+    // specific allow first, broad deny last → the later deny wins for both.
+    'allow-nested-then-deny-broad': { memory: false, outside: false },
+    // broad allow first, specific deny last → only the outside path is written.
+    'allow-broad-then-deny-nested': { memory: false, outside: true },
+  }
+
+  for (const [key, sideEffects] of Object.entries(expected)) {
+    const scenario = real[key]
+    assert.ok(scenario, `the real write scenario "${key}" did not run`)
+    assert.equal(
+      scenario.memoryWritten,
+      sideEffects.memory,
+      `${key}: memory-bank write mismatch (calls=${JSON.stringify(scenario.writeCalls)})`,
+    )
+    assert.equal(
+      scenario.outsideWritten,
+      sideEffects.outside,
+      `${key}: outside write mismatch (calls=${JSON.stringify(scenario.writeCalls)})`,
+    )
+
+    const memoryCall = realWriteCall(scenario, MATRIX_ORDER_REAL_MEMORY)
+    const outsideCall = realWriteCall(scenario, MATRIX_ORDER_REAL_OUTSIDE)
+    assert.ok(memoryCall, `${key}: no write call for the memory-bank path`)
+    assert.ok(outsideCall, `${key}: no write call for the outside path`)
+
+    // The real denial is a host policy denial in the `edit` namespace, not a
+    // contract error and not a missing tool.
+    for (const [label, call, written] of [
+      ['memory-bank', memoryCall, sideEffects.memory],
+      ['outside', outsideCall, sideEffects.outside],
+    ]) {
+      if (written) {
+        assert.equal(
+          call.state?.status ?? call.status,
+          'completed',
+          `${key}: ${label} was written but the call did not complete: ${JSON.stringify(call)}`,
+        )
+        assert.equal(call.error, undefined, `${key}: ${label} completed with an error`)
+      } else {
+        assert.equal(
+          call.state?.status ?? call.status,
+          'error',
+          `${key}: ${label} was not written but the call did not fail: ${JSON.stringify(call)}`,
+        )
+        assert.match(
+          String(call.error ?? ''),
+          /Permission denied: edit/i,
+          `${key}: ${label} failed on something other than edit policy: ${JSON.stringify(call)}`,
+        )
+      }
+    }
+  }
+
+  // Every allowed write was evaluated under the action the host really uses.
+  const evaluatedActions = Object.values(real)
+    .flatMap((scenario) => scenario.editEvaluations ?? [])
+    .map((event) => event.action)
+  assert.ok(evaluatedActions.length > 0, 'no edit evaluation was recorded for the allowed writes')
+  assert.ok(
+    evaluatedActions.every((action) => action === 'edit'),
+    `real write evaluations used ${JSON.stringify([...new Set(evaluatedActions)])}, not edit`,
+  )
+
+  console.log(
+    `P0-5 D-2 real writes: ${JSON.stringify(
+      Object.fromEntries(
+        Object.entries(real).map(([key, scenario]) => [
+          key,
+          { memory: scenario.memoryWritten, outside: scenario.outsideWritten },
+        ]),
+      ),
+    )}`,
   )
 })
 
