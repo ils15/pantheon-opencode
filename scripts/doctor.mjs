@@ -151,8 +151,8 @@ function error(msg, metadata = {}) {
   emit('error', msg, metadata)
   exitCode = 2
 }
-function info(msg) {
-  emit('info', msg)
+function info(msg, metadata = {}) {
+  emit('info', msg, metadata)
 }
 
 function section(title) {
@@ -1961,11 +1961,20 @@ export function classifyNodeSqliteProbe(probe) {
  * from (or never added to) the surface still had a green doctor before P0-3.
  * These files are the surface the doctor already ships and can inspect without
  * importing or executing plugin code.
+ *
+ * The V2 generation has TWO surfaces: `src/pantheon/v2-tools.ts` from beta.3
+ * and the 1.5.0+ entry `src/plugin-v2.ts`, which declares the tools itself.
+ * Reading only the first reported a healthy 1.5 tree as "pantheon_cost is NOT
+ * declared", so every declared surface of the generation is inspected and their
+ * declarations are unioned.
  */
 const TOOL_SURFACE_FILES = Object.freeze({
-  v1: join('src', 'plugin.ts'),
-  v2: join('src', 'pantheon', 'v2-tools.ts'),
+  v1: Object.freeze([join('src', 'plugin.ts')]),
+  v2: Object.freeze([join('src', 'plugin-v2.ts'), join('src', 'pantheon', 'v2-tools.ts')]),
 })
+
+/** The published package name — the only package identity this installer owns. */
+const PANTHEON_PACKAGE_NAME = 'pantheon-opencode'
 
 /** Remove comments so a name mentioned only in prose never counts as a tool. */
 function stripSourceComments(source) {
@@ -1991,10 +2000,11 @@ function extractObjectLiteralBody(source, key) {
 /**
  * Tool names declared by a plugin-generation source file.
  *
- * V2 declares each tool as `name: 'x'` in `createV2ToolDefinitions`; V1 keys
- * the `tool:` object by tool name. Returns null when the generation's shape
- * cannot be located (unverifiable), which the classifier treats as a failure
- * rather than a pass: "cannot prove registration" is not "registered".
+ * V2 declares each tool as `name: 'x'` in `createV2ToolDefinitions`, or — from
+ * the 1.5.0 entry — as quoted elements of a `toolNames` array. V1 keys the
+ * `tool:` object by tool name. Returns null when the generation's shape cannot
+ * be located (unverifiable), which the classifier treats as a failure rather
+ * than a pass: "cannot prove registration" is not "registered".
  *
  * @param {string} source
  * @param {'v1'|'v2'} generation
@@ -2003,7 +2013,11 @@ function extractObjectLiteralBody(source, key) {
 export function readDeclaredToolNames(source, generation) {
   const body = stripSourceComments(source)
   if (generation === 'v2') {
-    return [...body.matchAll(/\bname:\s*['"]([A-Za-z0-9_-]+)['"]/g)].map((match) => match[1])
+    const names = new Set(
+      [...body.matchAll(/\bname:\s*['"]([A-Za-z0-9_-]+)['"]/g)].map((match) => match[1]),
+    )
+    for (const match of body.matchAll(/^\s*['"]([A-Za-z0-9_-]+)['"],?\s*$/gm)) names.add(match[1])
+    return [...names]
   }
   const toolBlock = extractObjectLiteralBody(body, 'tool')
   if (toolBlock === null) return null
@@ -2011,11 +2025,28 @@ export function readDeclaredToolNames(source, generation) {
 }
 
 /**
+ * Return the Pantheon package specifier a ref names, or null when it is not
+ * one. Covers `pantheon-opencode`, `pantheon-opencode@1.2.3` and an export
+ * subpath (`pantheon-opencode/plugin-v2`): the host resolves all of them
+ * through its own module graph, not from a path this process can inspect.
+ *
+ * @param {unknown} refPath
+ * @returns {string|null}
+ */
+export function pantheonPackageSpecifier(refPath) {
+  if (typeof refPath !== 'string' || refPath.length === 0) return null
+  if (isAbsolute(refPath) || refPath.startsWith('.') || refPath.includes('\\')) return null
+  return refPath.split('/')[0].split('@')[0] === PANTHEON_PACKAGE_NAME ? refPath : null
+}
+
+/**
  * Resolve the package root a registered plugin ref points into.
  *
  * Path-shaped refs resolve against the config that declares them, exactly as
- * the loader does. A bare package specifier cannot be located from here, so
- * the running package (ROOT) is used — it is the surface this doctor ships.
+ * the loader does. A bare package specifier cannot be located from here, so it
+ * resolves to null: the package the host loads is NOT necessarily the package
+ * running this doctor, and standing ROOT in for it validated a surface the host
+ * may never load (a false green, not evidence).
  *
  * @param {{path:string, configPath:string}} ref
  * @returns {string|null}
@@ -2029,8 +2060,6 @@ export function resolveRegisteredPluginRoot(ref) {
     absolute = refPath
   } else if (ref?.configPath && /[\\/]/.test(refPath)) {
     absolute = resolve(dirname(ref.configPath), refPath)
-  } else if (refPath.includes('pantheon')) {
-    return ROOT
   }
   if (!absolute) return null
 
@@ -2043,35 +2072,101 @@ export function resolveRegisteredPluginRoot(ref) {
 }
 
 /**
+ * Whether a registered ref belongs to Pantheon — the subject of this check.
+ *
+ * The same ownership criterion P0-6 uses: the plugin identity the installer
+ * writes (or a path inside an installed `pantheon-opencode` tree), or a
+ * `package.json` naming this package. Everything else belongs to the user, so a
+ * third-party plugin registered under `plugins` is ignored instead of being
+ * read as a Pantheon surface with a missing `src/pantheon/v2-tools.ts` (which
+ * failed a healthy installation as blocking).
+ *
+ * @param {{path:string, configPath:string}} ref
+ * @returns {boolean}
+ */
+export function isPantheonPluginRef(ref) {
+  const refPath = typeof ref === 'string' ? ref : ref?.path
+  if (typeof refPath !== 'string' || refPath.length === 0) return false
+  if (managedPluginPath(refPath) !== null) return true
+  if (pantheonPackageSpecifier(refPath) !== null) return true
+  const root = resolveRegisteredPluginRoot(ref)
+  if (!root) return false
+  return readJson(join(root, 'package.json'))?.name === PANTHEON_PACKAGE_NAME
+}
+
+/** Describe one registered surface for a finding message. */
+function describeSurface(surface) {
+  if (surface.files.length === 0) {
+    return `${surface.generation}: no tool surface under ${surface.root}`
+  }
+  return `${surface.generation}: ${surface.files.join(' + ')}`
+}
+
+/**
  * Inspect every registered Pantheon plugin and report the tool names its
- * declared surface contains. Non-Pantheon refs (no readable surface) are
- * ignored rather than failed: they are not this check's subject.
+ * declared surface contains. Non-Pantheon refs are ignored rather than failed:
+ * they are not this check's subject. An npm specifier is Pantheon's own subject
+ * but cannot be inspected, so it is carried as an explicit unverifiable surface
+ * instead of being skipped or passed against the running package.
  *
  * @param {{target:string, env?:object}} args
- * @returns {{generation:'v1'|'v2', root:string, file:string, declared:string[]|null}[]}
+ * @returns {{generation:'v1'|'v2'|null, root:string|null, files:string[], declared:string[]|null, unverifiable?:string}[]}
  */
 export function resolveRegisteredToolSurfaces(args) {
   const refs = collectRegisteredPluginRefs(collectMcpConfigs(args))
   const surfaces = []
   const seen = new Set()
   for (const ref of refs) {
+    if (!isPantheonPluginRef(ref)) continue
+
+    if (pantheonPackageSpecifier(ref.path) !== null) {
+      const key = `spec:${ref.path}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      surfaces.push({
+        generation: null,
+        root: null,
+        files: [],
+        declared: null,
+        unverifiable:
+          `"${ref.path}" is an npm specifier, not a path — the host resolves it through its own ` +
+          'module graph, so the surface it loads cannot be inspected from here',
+      })
+      continue
+    }
+
     const root = resolveRegisteredPluginRoot(ref)
     if (!root) continue
     const generation = ref.path?.includes('plugin-v2') || ref.key === 'plugins' ? 'v2' : 'v1'
-    const file = join(root, TOOL_SURFACE_FILES[generation])
-    if (seen.has(file)) continue
-    seen.add(file)
-    let source = null
-    try {
-      source = readFileSync(file, 'utf8')
-    } catch {
-      // Unreadable surface stays null so the classifier fails closed.
+    const key = `${generation}:${root}`
+    if (seen.has(key)) continue
+    seen.add(key)
+
+    const files = TOOL_SURFACE_FILES[generation]
+      .map((relative) => join(root, relative))
+      .filter((file) => existsSync(file))
+    const declared = new Set()
+    let readable = 0
+    for (const file of files) {
+      let source = null
+      try {
+        source = readFileSync(file, 'utf8')
+      } catch {
+        continue
+      }
+      const names = readDeclaredToolNames(source, generation)
+      if (names === null) continue
+      readable++
+      for (const name of names) declared.add(name)
     }
     surfaces.push({
       generation,
       root,
-      file,
-      declared: source === null ? null : readDeclaredToolNames(source, generation),
+      files,
+      // No readable surface stays null so the classifier fails closed. With
+      // several generation files present the declarations are unioned, so a
+      // tool any of them declares is never reported absent.
+      declared: readable === 0 ? null : [...declared],
     })
   }
   return surfaces
@@ -2080,13 +2175,15 @@ export function resolveRegisteredToolSurfaces(args) {
 /**
  * Decide the registration verdict for one tool. Backend availability is NOT an
  * input: this answers only "is the tool in the registered surface?". A missing
- * registration is a blocking error, never a warning (P0-3).
+ * registration is a blocking error, never a warning (P0-3). A registration that
+ * cannot be inspected (npm specifier) is an explicit informative finding — it
+ * is neither proof of registration nor a blocking defect.
  *
  * `lite` is the only profile where no registration is expected: it describes a
  * checkout, not a managed OpenCode install.
  *
- * @param {{profile:string, surfaces:{generation:string, file:string, declared:string[]|null}[], toolName:string}} input
- * @returns {{status:'skip'|'unregistered'|'missing'|'registered', level:'info'|'error'|'pass', message:string}}
+ * @param {{profile:string, surfaces:{generation:string|null, files:string[], root:string|null, declared:string[]|null, unverifiable?:string}[], toolName:string}} input
+ * @returns {{status:'skip'|'unregistered'|'missing'|'registered'|'unverifiable'|'partially-verified', level:'info'|'error'|'pass', message:string}}
  */
 export function classifyToolRegistration({ profile, surfaces, toolName }) {
   if (surfaces.length === 0) {
@@ -2104,11 +2201,15 @@ export function classifyToolRegistration({ profile, surfaces, toolName }) {
     }
   }
 
-  const missing = surfaces.filter(
+  const unverifiable = surfaces.filter((surface) => typeof surface.unverifiable === 'string')
+  const inspectable = surfaces.filter((surface) => typeof surface.unverifiable !== 'string')
+  const unverifiableDetail = unverifiable.map(({ unverifiable: reason }) => reason).join('; ')
+
+  const missing = inspectable.filter(
     (surface) => surface.declared === null || !surface.declared.includes(toolName),
   )
   if (missing.length > 0) {
-    const detail = missing.map(({ generation, file }) => `${generation} surface ${file}`).join(', ')
+    const detail = missing.map(describeSurface).join(', ')
     return {
       status: 'missing',
       level: 'error',
@@ -2116,7 +2217,23 @@ export function classifyToolRegistration({ profile, surfaces, toolName }) {
     }
   }
 
-  const detail = surfaces.map(({ generation, file }) => `${generation} ${file}`).join(', ')
+  if (inspectable.length === 0) {
+    return {
+      status: 'unverifiable',
+      level: 'info',
+      message: `${toolName} registration cannot be verified: ${unverifiableDetail} — this is NOT a registration pass`,
+    }
+  }
+
+  const detail = inspectable.map(describeSurface).join(', ')
+  if (unverifiable.length > 0) {
+    return {
+      status: 'partially-verified',
+      level: 'info',
+      message: `${toolName} is declared in the inspectable Pantheon tool surface (${detail}), but another registration cannot be verified: ${unverifiableDetail} — not a full registration pass`,
+    }
+  }
+
   return {
     status: 'registered',
     level: 'pass',
@@ -2186,6 +2303,16 @@ function checkNodeRuntime(args = {}) {
   } else if (registration.level === 'error') {
     error(registration.message, {
       code: 'tool_registration_missing',
+      classification: 'capability',
+    })
+  } else if (
+    registration.status === 'unverifiable' ||
+    registration.status === 'partially-verified'
+  ) {
+    // Never a registration PASS: an npm specifier names a package the host may
+    // resolve elsewhere, so reporting it as registered would be a false green.
+    info(registration.message, {
+      code: 'tool_registration_unverifiable',
       classification: 'capability',
     })
   } else {
