@@ -4,8 +4,31 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 opencode_bin="${PANTHEON_TOOL_CANARY_BIN:-$HOME/pantheon-sandbox/home/.npm-global/bin/opencode}"
 version="$($opencode_bin --version)"
-if [[ "$version" != *"v2.0.29"* ]]; then
-  printf 'Expected OpenCode v2.0.29, got: %s\n' "$version" >&2
+
+# Fail-closed version gate.
+#
+# The reference host is 2.0.29, but the P0-5 evidence matrix must run the same
+# probe on 1.19.x, 2.0.22, 2.0.29, 2.0.30 and 2.1.x. Accept a comma-separated
+# list of glob patterns instead of one hard-coded version. With no variable (or
+# an empty one) only the reference version passes, so an operator who forgets
+# to set the gate gets the old behaviour, not an open gate.
+accepted_versions="${PANTHEON_TOOL_CANARY_ACCEPTED_VERSIONS-v2.0.29}"
+matched=0
+IFS=',' read -ra version_patterns <<<"$accepted_versions"
+for pattern in "${version_patterns[@]}"; do
+  # Trim ASCII whitespace without external tools.
+  pattern="${pattern#"${pattern%%[![:space:]]*}"}"
+  pattern="${pattern%"${pattern##*[![:space:]]}"}"
+  [[ -n "$pattern" ]] || continue
+  # Unquoted RHS: the operator supplies globs (`v2.0.*`, `v1.19.*`, `2.1.*`).
+  # shellcheck disable=SC2053
+  if [[ "$version" == *$pattern* ]]; then
+    matched=1
+    break
+  fi
+done
+if [[ "$matched" -ne 1 ]]; then
+  printf 'Expected OpenCode version matching [%s], got: %s\n' "$accepted_versions" "$version" >&2
   exit 2
 fi
 command -v bwrap >/dev/null || { echo 'bwrap is required' >&2; exit 2; }
@@ -38,6 +61,10 @@ run_canary() {
   if [[ "$admission" == "1" ]]; then
     admission_env=(--setenv PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION 1)
   fi
+  local -a matrix_env=()
+  if [[ "${PANTHEON_TOOL_CANARY_PERMISSION_MATRIX:-}" == "1" ]]; then
+    matrix_env=(--setenv PANTHEON_TOOL_CANARY_PERMISSION_MATRIX 1)
+  fi
 
   bwrap \
     --unshare-user --unshare-pid --unshare-net \
@@ -54,6 +81,7 @@ run_canary() {
     --setenv PANTHEON_TOOL_CANARY_PERMISSION_EXPECTED "$expected" \
     --setenv npm_config_cache /tmp/npm-cache \
     "${admission_env[@]}" \
+    "${matrix_env[@]}" \
     -- npm run test:tool-canary
 }
 
@@ -62,3 +90,11 @@ run_canary reject '' "$fixture_root/deny/etc"
 
 echo "Permission assertion and F4A identity probe: project allow; invalid and valid-matrix subagent attempts ($version)"
 run_canary allow 1 "$fixture_root/allow/etc"
+
+# P0-5 matrix probes (action-name coverage, nested-deny ordering, task glob).
+# Kept as its own run so the managed deny fixture above cannot confound the
+# project-level policies each scenario writes for itself.
+if [[ "${PANTHEON_TOOL_CANARY_PERMISSION_MATRIX:-}" == "1" ]]; then
+  echo "P0-5 permission matrix probes: action names, deny ordering, task glob ($version)"
+  run_canary allow 0 "$fixture_root/allow/etc"
+fi

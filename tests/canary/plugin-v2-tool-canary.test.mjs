@@ -115,6 +115,11 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+// The repo's own V1→V2 translator. The P0-5 matrix probe compares the action
+// names it emits with the ones the host actually evaluates; importing the
+// module keeps the comparison anchored to shipped code instead of a copy.
+import { migrateV1toV2 } from '../../scripts/install/config-migration.mjs'
+
 const here = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(here, '..', '..')
 const REAL_PLUGIN_SRC = join(REPO_ROOT, 'src', 'plugin-v2.ts')
@@ -197,6 +202,7 @@ function makeSandbox() {
     targetFile: join(root, 'target.txt'),
     proofFile: join(root, 'tool-list.json'),
     permissionProofFile: join(root, 'permission-events.jsonl'),
+    matrixProofFile: join(root, 'permission-matrix-events.jsonl'),
   }
   for (const dir of [
     sandbox.home,
@@ -525,6 +531,7 @@ async function startHost(sandbox) {
       PANTHEON_VISION_MODEL: 'opencode-go/mimo-v2.6-flash',
       PANTHEON_OPENCODE_API_KEY: 'canary-key',
       PANTHEON_HOOK_CANARY_PERMISSION_PROOF: sandbox.permissionProofFile,
+      PANTHEON_TOOL_CANARY_MATRIX_PROOF: sandbox.matrixProofFile,
       ...(subagentAdmissionProbeEnabled
         ? { OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: 'true' }
         : {}),
@@ -697,13 +704,13 @@ async function startHost(sandbox) {
 function writePlugins(
   sandbox,
   pluginSource,
-  { permissionProbe = false, permissionAskProbe = false } = {},
+  { permissionProbe = false, permissionAskProbe = false, matrixProbe = false } = {},
 ) {
   writeFileSync(join(sandbox.projectDir, '.opencode', 'plugins', 'real', 'index.ts'), pluginSource)
   writeFileSync(
     join(sandbox.projectDir, '.opencode', 'plugins', 'probe', 'index.ts'),
     [
-      "import { readFileSync, writeFileSync } from 'node:fs'",
+      "import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'",
       'export default {',
       "  id: 'pantheon-tool-canary-probe',",
       '  async setup(ctx) {',
@@ -839,6 +846,57 @@ function writePlugins(
             '    })',
           ]
         : []),
+      ...(matrixProbe
+        ? [
+            '    await ctx.permission.hook("evaluate", async (event) => {',
+            '      const matrixProof = process.env.PANTHEON_TOOL_CANARY_MATRIX_PROOF',
+            '      if (!matrixProof) return',
+            '      try {',
+            '        appendFileSync(matrixProof, JSON.stringify({',
+            '          action: event?.action,',
+            '          resources: event?.resources,',
+            '          agent: event?.agent,',
+            '          sessionID: event?.sessionID,',
+            '          source: event?.source,',
+            '          effect: event?.effect,',
+            '          message: event?.message,',
+            '        }) + "\\n")',
+            '      } catch {',
+            '        // Evidence only; never affect the permission decision.',
+            '      }',
+            '    })',
+            '    await ctx.tool.transform((draft) => {',
+            '      draft.add({',
+            "        name: 'permission_matrix_probe',",
+            "        description: 'Evaluate one explicit V2 permission request and return the decision',",
+            "        input: { type: 'object', properties: { action: { type: 'string' }, resources: { type: 'array', items: { type: 'string' } } }, required: ['action', 'resources'], additionalProperties: false },",
+            "        output: { type: 'object', properties: { output: { type: 'string' } }, required: ['output'], additionalProperties: false },",
+            '        async execute(input, toolContext) {',
+            '          const request = {',
+            '            sessionID: toolContext.sessionID,',
+            '            agent: toolContext.agent,',
+            '            action: input.action,',
+            '            resources: input.resources,',
+            '            source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id },',
+            '          }',
+            '          if (typeof ctx.permission.assert !== "function") {',
+            '            // This case needs an API the host does not expose (2.0.22 has no',
+            '            // ctx.permission.assert). The question is unobservable here, so',
+            '            // report NOT_APPLICABLE — a TypeError caught below must never be',
+            '            // read as a policy "reject".',
+            '            return { output: JSON.stringify({ decision: "not-applicable", reason: "ctx.permission.assert is not a function", request }) }',
+            '          }',
+            '          try {',
+            '            await ctx.permission.assert(request)',
+            '            return { output: JSON.stringify({ decision: "allow", request }) }',
+            '          } catch (error) {',
+            '            return { output: JSON.stringify({ decision: "reject", error: String(error?.message ?? error), request }) }',
+            '          }',
+            '        },',
+            '      })',
+            '    })',
+          ]
+        : []),
       ...(permissionAskProbe
         ? [
             '    await ctx.tool.transform((draft) => {',
@@ -916,6 +974,54 @@ function writePlugins(
       '',
     ].join('\n'),
   )
+}
+
+/** Everything the host needs to run a turn against the local mock model. */
+function canaryProviderConfig(modelBaseURL) {
+  return {
+    provider: {
+      opencode: {
+        npm: '@ai-sdk/openai-compatible',
+        name: 'OpenCode Zen canary',
+        id: 'opencode',
+        options: { baseURL: modelBaseURL, apiKey: 'canary-key' },
+        models: {
+          'mimo-v2.6-flash-free': {
+            name: 'MiMo V2.6 Flash Free',
+            tool_call: true,
+            modalities: { input: ['text', 'image'], output: ['text'] },
+          },
+        },
+      },
+      'opencode-go': {
+        npm: '@ai-sdk/openai-compatible',
+        name: 'OpenCode Go canary',
+        id: 'opencode-go',
+        options: { baseURL: modelBaseURL, apiKey: 'canary-key' },
+        models: {
+          'mimo-v2.6-flash': {
+            name: 'MiMo V2.6 Flash',
+            tool_call: true,
+            modalities: { input: ['text', 'image'], output: ['text'] },
+          },
+        },
+      },
+      canary: {
+        npm: '@ai-sdk/openai-compatible',
+        name: 'canary',
+        id: 'canary',
+        options: { baseURL: modelBaseURL, apiKey: 'canary-key' },
+        models: {
+          'canary-model': {
+            name: 'canary-model',
+            tool_call: true,
+            modalities: { input: ['text', 'image'], output: ['text'] },
+          },
+        },
+      },
+    },
+    model: 'canary/canary-model',
+  }
 }
 
 function writeProjectConfig(
@@ -1008,48 +1114,43 @@ function writeProjectConfig(
               },
             }
           : {}),
-        provider: {
-          opencode: {
-            npm: '@ai-sdk/openai-compatible',
-            name: 'OpenCode Zen canary',
-            id: 'opencode',
-            options: { baseURL: modelBaseURL, apiKey: 'canary-key' },
-            models: {
-              'mimo-v2.6-flash-free': {
-                name: 'MiMo V2.6 Flash Free',
-                tool_call: true,
-                modalities: { input: ['text', 'image'], output: ['text'] },
-              },
-            },
-          },
-          'opencode-go': {
-            npm: '@ai-sdk/openai-compatible',
-            name: 'OpenCode Go canary',
-            id: 'opencode-go',
-            options: { baseURL: modelBaseURL, apiKey: 'canary-key' },
-            models: {
-              'mimo-v2.6-flash': {
-                name: 'MiMo V2.6 Flash',
-                tool_call: true,
-                modalities: { input: ['text', 'image'], output: ['text'] },
-              },
-            },
-          },
-          canary: {
-            npm: '@ai-sdk/openai-compatible',
-            name: 'canary',
-            id: 'canary',
-            options: { baseURL: modelBaseURL, apiKey: 'canary-key' },
-            models: {
-              'canary-model': {
-                name: 'canary-model',
-                tool_call: true,
-                modalities: { input: ['text', 'image'], output: ['text'] },
-              },
-            },
-          },
-        },
-        model: 'canary/canary-model',
+        ...canaryProviderConfig(modelBaseURL),
+      },
+      null,
+      2,
+    ),
+  )
+}
+
+/**
+ * Project config for one P0-5 matrix scenario.
+ *
+ * `permissions` is always the array the repo's own translator produces (or a
+ * deliberately ordered literal for the resolution-order probe). Nothing here
+ * guesses a host action name: the scenario observes what the host evaluates.
+ */
+function writePermissionMatrixConfig(
+  sandbox,
+  modelBaseURL,
+  { permissions, policies, agents, defaultAgent },
+) {
+  writeFileSync(
+    join(sandbox.projectDir, 'opencode.json'),
+    JSON.stringify(
+      {
+        $schema: 'https://opencode.ai/config.json',
+        plugins: ['./.opencode/plugins/real', './.opencode/plugins/probe'],
+        ...canaryProviderConfig(modelBaseURL),
+        ...(defaultAgent ? { default_agent: defaultAgent } : {}),
+        ...(agents ? { agents } : {}),
+        ...(policies ? { policies } : {}),
+        ...(permissions
+          ? {
+              // The host reads both spellings across generations; this probe
+              // targets the V2 key, matching the converter's output.
+              permissions,
+            }
+          : {}),
       },
       null,
       2,
@@ -1533,6 +1634,384 @@ async function runCanary(
   return observation
 }
 
+// ─── P0-5 permission matrix probes ───────────────────────────────────────
+
+/**
+ * What the repo translator emits for one V1 permission key.
+ *
+ * The comparison below is keyed by the V1 spelling the repo actually writes
+ * (`permission.bash`, `permission.task`, `permission.write`, …) so a rename in
+ * the host vocabulary cannot be mistaken for a test-side naming choice.
+ */
+function translatorActionFor(v1Key) {
+  const [rule] = migrateV1toV2({ permission: { [v1Key]: 'deny' } }).permissions ?? []
+  return rule?.action
+}
+
+/**
+ * The read-only profile the repo's agents declare, expressed in V1 and passed
+ * through the shipped translator. If the host still lets `bash` or `write`
+ * through this block, the declared profile is broken — that is a failure, not
+ * an observation.
+ */
+const MATRIX_READ_ONLY_V1 = {
+  bash: 'deny',
+  task: { '*': 'deny' },
+  write: { '*': 'deny' },
+  edit: { '*': 'deny' },
+  read: 'allow',
+  skill: { '*': 'deny' },
+  websearch: 'deny',
+}
+
+const MATRIX_READ_ONLY_PERMISSIONS = migrateV1toV2({ permission: MATRIX_READ_ONLY_V1 }).permissions
+
+/**
+ * Permissive superset used ONLY to observe the host's action vocabulary.
+ *
+ * Both candidate spellings are allowed so the host never asks or hides a tool
+ * while the probe watches; the assertion still compares the action the host
+ * EMITS with the translator's output, never this list.
+ */
+const MATRIX_ACTION_OBSERVATION_PERMISSIONS = [
+  'bash',
+  'shell',
+  'write',
+  'edit',
+  'read',
+  'task',
+  'subagent',
+  'skill',
+  'websearch',
+  'webfetch',
+].map((action) => ({ action, resource: '*', effect: 'allow' }))
+
+/** The two orderings of the nested-allow / wildcard-deny conflict. */
+const MATRIX_ORDER_NESTED_FIRST = [
+  { action: 'write', resource: '.pantheon/memory-bank/**', effect: 'allow' },
+  { action: 'write', resource: '*', effect: 'deny' },
+]
+
+const MATRIX_ORDER_WILDCARD_FIRST = [
+  { action: 'write', resource: '*', effect: 'deny' },
+  { action: 'write', resource: '.pantheon/memory-bank/**', effect: 'allow' },
+]
+
+/** `permission.task: { "*": deny, apollo: allow }`, translated by the repo. */
+const MATRIX_TASK_GLOB_PERMISSIONS = migrateV1toV2({
+  permission: { task: { '*': 'deny', apollo: 'allow' } },
+}).permissions
+
+const MATRIX_TASK_AGENTS = {
+  zeus: {
+    mode: 'primary',
+    system: 'Dispatch only the agent named in the task.',
+  },
+  apollo: {
+    mode: 'subagent',
+    description: 'Allowed task-glob target',
+    system: 'Reply with APOLLO-MATRIX-CHILD only.',
+  },
+  demeter: {
+    mode: 'subagent',
+    description: 'Second task-glob target',
+    system: 'Reply with DEMETER-MATRIX-CHILD only.',
+  },
+}
+
+/** The action-name and ordering scenarios only need the default caller. */
+const MATRIX_BASE_AGENTS = {
+  zeus: {
+    mode: 'primary',
+    system: 'Exercise the permission matrix probe.',
+  },
+}
+
+/** One nested-glob probe plus a control outside the allow glob. */
+function matrixOrderScript(resource, controlResource) {
+  return [
+    `const probe = await tools.permission_matrix_probe({ action: 'write', resources: [${JSON.stringify(resource)}] });`,
+    `const control = await tools.permission_matrix_probe({ action: 'write', resources: [${JSON.stringify(controlResource)}] });`,
+    'return JSON.stringify({ probe, control });',
+  ].join('\n')
+}
+
+/**
+ * Run one host against a config the scenario controls and return raw evidence.
+ *
+ * Nothing is asserted here: this function only drives the host and reads back
+ * what it did. The tests decide which observations contradict a repo policy.
+ */
+async function runPermissionMatrixScenario({
+  name,
+  permissions,
+  policies,
+  agents,
+  defaultAgent,
+  scripts,
+  promptLabel,
+}) {
+  const sandbox = makeSandbox()
+  writeFileSync(sandbox.targetFile, TARGET_BODY)
+  const steps = typeof scripts === 'function' ? scripts(sandbox) : scripts
+  const model = await startMockModel(steps)
+  writePlugins(sandbox, realPluginShim(), { matrixProbe: true })
+  writePermissionMatrixConfig(sandbox, model.baseURL, {
+    permissions,
+    policies,
+    agents,
+    defaultAgent,
+  })
+  const host = await startHost(sandbox)
+  const observation = { name, sandbox, responses: [] }
+  try {
+    for (const [index] of steps.entries()) {
+      await host.prompt(`${promptLabel ?? 'permission matrix'} ${name} ${index}`)
+      observation.responses.push(executeTexts(await host.transcript()).at(-1) ?? '')
+    }
+    observation.transcript = await host.transcript()
+    observation.nativeCalls = {
+      shell: toolParts(observation.transcript, 'shell'),
+      bash: toolParts(observation.transcript, 'bash'),
+      write: toolParts(observation.transcript, 'write'),
+      read: toolParts(observation.transcript, 'read'),
+      subagent: toolParts(observation.transcript, 'subagent'),
+    }
+    observation.matrixEvents = existsSync(sandbox.matrixProofFile)
+      ? readFileSync(sandbox.matrixProofFile, 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+      : []
+    observation.permissionProof = existsSync(sandbox.permissionProofFile)
+      ? readFileSync(sandbox.permissionProofFile, 'utf8')
+      : ''
+    observation.toolList = existsSync(sandbox.proofFile)
+      ? (JSON.parse(readFileSync(sandbox.proofFile, 'utf8')).toolList ?? [])
+      : []
+    observation.sessions = await host.sessions()
+    const sessionRows = Array.isArray(observation.sessions)
+      ? observation.sessions
+      : (observation.sessions?.data ?? [])
+    observation.childSessions = sessionRows.filter(
+      (session) => session?.parentID === host.sessionID,
+    )
+    observation.rootSessionID = host.sessionID
+    observation.sideEffects = {
+      shell: existsSync(join(sandbox.projectDir, 'shell-ran.txt')),
+      write: existsSync(join(sandbox.projectDir, 'write-ran.txt')),
+    }
+  } finally {
+    host.stop()
+    model.close()
+  }
+  return observation
+}
+
+/** Compact, secret-free evidence for one scenario's artifact entry. */
+function summarizeMatrixObservation(observation) {
+  return {
+    scenario: observation.name,
+    evaluations: observation.matrixEvents.map((event) => ({
+      action: event.action,
+      resources: event.resources,
+      effect: event.effect,
+    })),
+    calls: Object.fromEntries(
+      Object.entries(observation.nativeCalls).map(([tool, parts]) => [
+        tool,
+        parts.map((part) => ({
+          status: part?.state?.status,
+          error: part?.state?.error?.message,
+          input: part?.state?.input,
+        })),
+      ]),
+    ),
+    sideEffects: observation.sideEffects,
+    readOutput: toolParts(observation.transcript, 'read')
+      .map(toolResultText)
+      .join('\n')
+      .slice(0, 200),
+  }
+}
+
+/** Code Mode unwraps a tool's `output` to a JSON string; parse it back. */
+function matrixDecision(value) {
+  return typeof value === 'string' ? JSON.parse(value) : value
+}
+
+/** Classify the two-order evidence without assuming which rule the host uses. */
+function classifyResolution(nestedFirst, wildcardFirst) {
+  const decision = (value) => matrixDecision(value)?.decision
+  // `not-applicable` is not a decision: the host lacked the API the probe calls,
+  // so the ordering question was not answered at all.
+  if (decision(nestedFirst) === 'not-applicable' || decision(wildcardFirst) === 'not-applicable') {
+    return 'not-applicable'
+  }
+  const allowed = (value) => decision(value) === 'allow'
+  const nested = allowed(nestedFirst)
+  const wildcard = allowed(wildcardFirst)
+  if (nested && wildcard) return 'most-specific-wins'
+  if (nested && !wildcard) return 'first-match-wins'
+  if (!nested && !wildcard) return 'deny-precedence'
+  return 'last-match-wins'
+}
+
+/**
+ * Run every P0-5 scenario and build the artifact payload.
+ *
+ * Each scenario owns a host and a config, so action names are correlated with
+ * the scripted native call that produced them instead of with a guessed field.
+ */
+async function runPermissionMatrix() {
+  const scenarios = {}
+
+  scenarios.actionNames = await runPermissionMatrixScenario({
+    name: 'action-names-permissive',
+    permissions: MATRIX_ACTION_OBSERVATION_PERMISSIONS,
+    // Tool gating is a separate policy layer (`tool.use`); without an allow
+    // here a host with no managed config blocks shell before the permission
+    // layer this probe measures can be observed.
+    policies: [
+      { action: 'tool.use', resource: 'shell:*', effect: 'allow' },
+      { action: 'tool.use', resource: 'write:*', effect: 'allow' },
+      { action: 'tool.use', resource: 'edit:*', effect: 'allow' },
+      { action: 'tool.use', resource: 'read:*', effect: 'allow' },
+    ],
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    scripts: (sandbox) => [
+      { name: 'shell', arguments: { command: 'echo CANARY-SHELL-RAN > shell-ran.txt' } },
+      {
+        name: 'write',
+        arguments: {
+          path: join(sandbox.projectDir, 'write-ran.txt'),
+          content: 'CANARY-WRITE-RAN',
+        },
+      },
+      { name: 'read', arguments: { path: sandbox.targetFile } },
+    ],
+    promptLabel: 'observe the host action vocabulary',
+  })
+
+  scenarios.readOnly = await runPermissionMatrixScenario({
+    name: 'read-only-enforcement',
+    permissions: MATRIX_READ_ONLY_PERMISSIONS,
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    scripts: (sandbox) => [
+      { name: 'shell', arguments: { command: 'echo CANARY-SHELL-RAN > shell-ran.txt' } },
+      {
+        name: 'write',
+        arguments: {
+          path: join(sandbox.projectDir, 'write-ran.txt'),
+          content: 'CANARY-WRITE-RAN',
+        },
+      },
+      { name: 'read', arguments: { path: sandbox.targetFile } },
+    ],
+    promptLabel: 'exercise the read-only profile',
+  })
+
+  scenarios.orderNestedFirst = await runPermissionMatrixScenario({
+    name: 'order-nested-first',
+    permissions: MATRIX_ORDER_NESTED_FIRST,
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    scripts: [matrixOrderScript('.pantheon/memory-bank/00-index.md', '.pantheon/other.md')],
+  })
+  scenarios.orderWildcardFirst = await runPermissionMatrixScenario({
+    name: 'order-wildcard-first',
+    permissions: MATRIX_ORDER_WILDCARD_FIRST,
+    agents: MATRIX_BASE_AGENTS,
+    defaultAgent: 'zeus',
+    scripts: [matrixOrderScript('.pantheon/memory-bank/00-index.md', '.pantheon/other.md')],
+  })
+
+  for (const target of ['apollo', 'demeter']) {
+    scenarios[`taskGlob:${target}`] = await runPermissionMatrixScenario({
+      name: `task-glob-${target}`,
+      permissions: MATRIX_TASK_GLOB_PERMISSIONS,
+      agents: MATRIX_TASK_AGENTS,
+      defaultAgent: 'zeus',
+      scripts: [
+        {
+          name: 'subagent',
+          arguments: {
+            description: `task glob matrix ${target}`,
+            prompt: `Return ${target.toUpperCase()}-MATRIX-CHILD only.`,
+            agent: target,
+          },
+        },
+      ],
+      promptLabel: `dispatch the task-glob target ${target}`,
+    })
+  }
+
+  const nestedFirst = parseScriptResult(scenarios.orderNestedFirst.responses.at(-1) ?? '')
+  const wildcardFirst = parseScriptResult(scenarios.orderWildcardFirst.responses.at(-1) ?? '')
+
+  const report = {
+    host: {
+      bin: BIN,
+      version: spawnSync(BIN, ['--version'], { encoding: 'utf8' }).stdout?.trim() ?? '',
+    },
+    toolList: scenarios.orderNestedFirst.toolList.map((tool) => tool.name),
+    translator: {
+      entries: Object.fromEntries(
+        Object.keys(MATRIX_READ_ONLY_V1).map((key) => [key, translatorActionFor(key)]),
+      ),
+    },
+    actionNames: summarizeMatrixObservation(scenarios.actionNames),
+    readOnly: summarizeMatrixObservation(scenarios.readOnly),
+    order: {
+      nestedFirst: {
+        policies: MATRIX_ORDER_NESTED_FIRST,
+        probe: matrixDecision(nestedFirst.probe),
+        control: matrixDecision(nestedFirst.control),
+      },
+      wildcardFirst: {
+        policies: MATRIX_ORDER_WILDCARD_FIRST,
+        probe: matrixDecision(wildcardFirst.probe),
+        control: matrixDecision(wildcardFirst.control),
+      },
+      resolution: classifyResolution(nestedFirst.probe, wildcardFirst.probe),
+    },
+    taskGlob: Object.fromEntries(
+      ['apollo', 'demeter'].map((target) => {
+        const observation = scenarios[`taskGlob:${target}`]
+        const call = observation.nativeCalls.subagent.at(-1)
+        return [
+          target,
+          {
+            permissions: MATRIX_TASK_GLOB_PERMISSIONS,
+            status: call?.state?.status,
+            error: call?.state?.error?.message,
+            evaluations: observation.matrixEvents.map((event) => ({
+              action: event.action,
+              resources: event.resources,
+              effect: event.effect,
+            })),
+            childSessions: observation.childSessions.length,
+          },
+        ]
+      }),
+    ),
+  }
+
+  const reportPath = process.env.PANTHEON_TOOL_CANARY_MATRIX_REPORT
+  if (reportPath) {
+    try {
+      writeFileSync(reportPath, JSON.stringify(report, null, 2))
+      console.log(`permission matrix report: ${reportPath}`)
+    } catch (error) {
+      console.log(`permission matrix report could not be written: ${String(error)}`)
+    }
+  }
+  console.log(`permission matrix evidence: ${JSON.stringify(report)}`)
+  return { scenarios, report }
+}
+
 // ─── state ───────────────────────────────────────────────────────────────
 
 let live = null
@@ -1544,11 +2023,13 @@ let boundedReadDenyLive = null
 let identityGapLive = null
 let childBoundaryLive = null
 let emptyChildLive = null
+let permissionMatrix = null
 let rootsBefore = null
 const permissionProbeEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_PROBE === '1'
 const permissionAskProbeEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_ASK === '1'
 const boundedReadProbeEnabled = process.env.PANTHEON_TOOL_CANARY_BOUNDED_READ === '1'
 const boundedReadDenyProbeEnabled = process.env.PANTHEON_TOOL_CANARY_BOUNDED_READ_DENY === '1'
+const permissionMatrixEnabled = process.env.PANTHEON_TOOL_CANARY_PERMISSION_MATRIX === '1'
 
 before(
   async () => {
@@ -1596,8 +2077,11 @@ before(
     if (boundedReadDenyProbeEnabled) {
       boundedReadDenyLive = await runCanary(realPluginShim(), { boundedReadDenyProbe: true })
     }
+    if (permissionMatrixEnabled) {
+      permissionMatrix = await runPermissionMatrix()
+    }
   },
-  { timeout: 60_000 },
+  { timeout: permissionMatrixEnabled ? 240_000 : 60_000 },
 )
 
 after(() => {
@@ -1611,6 +2095,12 @@ after(() => {
     identityGapLive,
     childBoundaryLive,
     emptyChildLive,
+    permissionMatrix?.scenarios?.actionNames,
+    permissionMatrix?.scenarios?.readOnly,
+    permissionMatrix?.scenarios?.orderNestedFirst,
+    permissionMatrix?.scenarios?.orderWildcardFirst,
+    permissionMatrix?.scenarios?.['taskGlob:apollo'],
+    permissionMatrix?.scenarios?.['taskGlob:demeter'],
   ]) {
     if (observation?.sandbox) rmSync(observation.sandbox.root, { recursive: true, force: true })
   }
@@ -1738,6 +2228,238 @@ test('ctx.permission.assert evaluates a real tool-origin request against host po
   assert.equal(result.request.source.type, 'tool')
   assert.equal(typeof result.request.source.messageID, 'string')
   assert.equal(typeof result.request.source.id, 'string')
+})
+
+test('P0-5 action names: host evaluations match the repo translator', {
+  skip: skipped || !permissionMatrixEnabled,
+}, () => {
+  const scenario = permissionMatrix?.scenarios?.actionNames
+  assert.ok(scenario, 'the action-name matrix scenario did not run')
+
+  // The write tool must actually run so its evaluation is not a synthetic
+  // assert. Shell may be blocked by a host default gate before execution; its
+  // permission evaluation is still recorded, and that is the evidence used.
+  assert.equal(scenario.sideEffects.write, true, 'the probe write call did not run')
+
+  const eventFor = (needle) =>
+    scenario.matrixEvents.find((event) =>
+      (event.resources ?? []).some(
+        (resource) => typeof resource === 'string' && resource.includes(needle),
+      ),
+    )
+
+  const checks = [
+    { key: 'bash', event: eventFor('CANARY-SHELL-RAN') },
+    { key: 'write', event: eventFor('write-ran.txt') },
+    { key: 'read', event: eventFor('target.txt') },
+  ]
+
+  for (const check of checks) {
+    if (!check.event) continue // absence is recorded as unobserved, not a guess
+    const expected = translatorActionFor(check.key)
+    assert.equal(
+      check.event.action,
+      expected,
+      `translator emits "${expected}" for permission.${check.key} but the host evaluated "${check.event.action}" (events=${JSON.stringify(scenario.matrixEvents)})`,
+    )
+  }
+  assert.ok(
+    checks.some((check) => check.event),
+    `the host emitted no permission evaluation for any scripted call: ${JSON.stringify(scenario.matrixEvents)}`,
+  )
+
+  // The artifact must carry the observed vocabulary, not just the assertions.
+  assert.ok(
+    Array.isArray(permissionMatrix.report.actionNames.evaluations),
+    'the matrix report omitted the host action-name evidence',
+  )
+})
+
+test('P0-5 read-only profile: host does not execute shell or write and still allows read', {
+  skip: skipped || !permissionMatrixEnabled,
+}, () => {
+  const scenario = permissionMatrix?.scenarios?.readOnly
+  assert.ok(scenario, 'the read-only enforcement scenario did not run')
+
+  assert.equal(
+    scenario.sideEffects.shell,
+    false,
+    `a read-only profile still executed shell (events=${JSON.stringify(scenario.matrixEvents)}, calls=${JSON.stringify(permissionMatrix.report.readOnly.calls.shell)})`,
+  )
+  assert.equal(
+    scenario.sideEffects.write,
+    false,
+    `a read-only profile still wrote a file (events=${JSON.stringify(scenario.matrixEvents)}, calls=${JSON.stringify(permissionMatrix.report.readOnly.calls.write)})`,
+  )
+  const shellCall = scenario.nativeCalls.shell.at(-1)
+  const writeCall = scenario.nativeCalls.write.at(-1)
+  if (shellCall) {
+    assert.notEqual(
+      shellCall.state?.status,
+      'completed',
+      `the read-only profile completed a shell call: ${JSON.stringify(shellCall.state)}`,
+    )
+  }
+  if (writeCall) {
+    assert.notEqual(
+      writeCall.state?.status,
+      'completed',
+      `the read-only profile completed a write call: ${JSON.stringify(writeCall.state)}`,
+    )
+  }
+
+  // Positive control: the same profile explicitly allows read.
+  const readText = scenario.nativeCalls.read.map(toolResultText).join('\n')
+  assert.match(
+    readText,
+    /CANARY-ALPHA-LINE/,
+    `read was not allowed under the read-only profile: ${JSON.stringify(readText)}`,
+  )
+
+  // If the host evaluated rather than hid the denied tools, the emitted action
+  // must still match the translator's name for the repo key.
+  for (const [key, needle] of [
+    ['bash', 'CANARY-SHELL-RAN'],
+    ['write', 'write-ran.txt'],
+  ]) {
+    const event = scenario.matrixEvents.find((candidate) =>
+      (candidate.resources ?? []).some(
+        (resource) => typeof resource === 'string' && resource.includes(needle),
+      ),
+    )
+    if (!event) continue
+    assert.equal(
+      event.action,
+      translatorActionFor(key),
+      `translator emits "${translatorActionFor(key)}" for permission.${key} but the host evaluated "${event.action}"`,
+    )
+  }
+})
+
+test('P0-5 resolution order: both nested/wildcard orders are recorded and the wildcard deny still applies outside the allow glob', {
+  skip: skipped || !permissionMatrixEnabled,
+}, (t) => {
+  const nested = parseScriptResult(
+    permissionMatrix?.scenarios?.orderNestedFirst?.responses?.at(-1) ?? '',
+  )
+  const wildcard = parseScriptResult(
+    permissionMatrix?.scenarios?.orderWildcardFirst?.responses?.at(-1) ?? '',
+  )
+  const nestedProbe = matrixDecision(nested?.probe)
+  const wildcardProbe = matrixDecision(wildcard?.probe)
+  const nestedControl = matrixDecision(nested?.control)
+  const wildcardControl = matrixDecision(wildcard?.control)
+
+  // The host is missing `ctx.permission.assert` (2.0.22): every cell above is a
+  // caught TypeError, not a policy decision. Report NOT_APPLICABLE — a skip, so
+  // it can never be rendered as a pass — instead of classifying a missing API as
+  // `deny-precedence`.
+  const decisions = [nestedProbe, wildcardProbe, nestedControl, wildcardControl].map(
+    (decision) => decision?.decision,
+  )
+  if (decisions.includes('not-applicable')) {
+    assert.ok(
+      decisions.every((decision) => decision === 'not-applicable'),
+      `host exposes the assert API for only part of the ordering probe: ${JSON.stringify(decisions)}`,
+    )
+    assert.equal(
+      permissionMatrix.report.order.resolution,
+      'not-applicable',
+      `ordering was not observable but the report classified it: ${JSON.stringify(permissionMatrix.report.order)}`,
+    )
+    t.skip(
+      'NOT_APPLICABLE: this host does not expose ctx.permission.assert, so the resolution order is unobservable (not a pass)',
+    )
+    return
+  }
+
+  assert.ok(
+    nestedProbe?.decision,
+    `nested-first probe produced no decision: ${JSON.stringify(nested)}`,
+  )
+  assert.ok(
+    wildcardProbe?.decision,
+    `wildcard-first probe produced no decision: ${JSON.stringify(wildcard)}`,
+  )
+
+  // Repo policy (not a host-semantics guess): `*: deny` must deny a path
+  // outside the nested allow glob in BOTH orders.
+  assert.equal(
+    nestedControl?.decision,
+    'reject',
+    `wildcard deny did not apply outside the nested allow glob (nested-first): ${JSON.stringify(nestedControl)}`,
+  )
+  assert.equal(
+    wildcardControl?.decision,
+    'reject',
+    `wildcard deny did not apply outside the nested allow glob (wildcard-first): ${JSON.stringify(wildcardControl)}`,
+  )
+
+  const resolution = permissionMatrix.report.order.resolution
+  assert.ok(
+    ['most-specific-wins', 'first-match-wins', 'deny-precedence', 'last-match-wins'].includes(
+      resolution,
+    ),
+    `the two orders produced an unclassifiable result: ${JSON.stringify(permissionMatrix.report.order)}`,
+  )
+  // Deliberately no assertion on WHICH rule won: the host semantics are the
+  // unknown being measured. The artifact records the answer.
+  console.log(
+    `P0-5 resolution order observed: ${resolution} (nested-first=${nestedProbe.decision}, wildcard-first=${wildcardProbe.decision})`,
+  )
+})
+
+test('P0-5 permission.task glob: the named target passes and a second target is denied', {
+  skip: skipped || !permissionMatrixEnabled,
+}, () => {
+  const apollo = permissionMatrix?.scenarios?.['taskGlob:apollo']
+  const demeter = permissionMatrix?.scenarios?.['taskGlob:demeter']
+  assert.ok(apollo, 'the allowed task-glob target scenario did not run')
+  assert.ok(demeter, 'the denied task-glob target scenario did not run')
+
+  const apolloCall = apollo.nativeCalls.subagent.at(-1)
+  const demeterCall = demeter.nativeCalls.subagent.at(-1)
+  assert.ok(apolloCall, `the host transcript omitted the apollo dispatch: ${apollo.transcript}`)
+  assert.ok(demeterCall, `the host transcript omitted the demeter dispatch: ${demeter.transcript}`)
+
+  assert.notEqual(
+    apolloCall.state?.status,
+    'error',
+    `permission.task allowed target apollo was blocked: ${JSON.stringify(apolloCall.state)}`,
+  )
+  assert.ok(
+    apollo.childSessions.length >= 1,
+    `permission.task allowed target apollo created no child session: ${JSON.stringify(apollo.sessions)}`,
+  )
+
+  assert.equal(
+    demeterCall.state?.status,
+    'error',
+    `permission.task denied target demeter was not blocked: ${JSON.stringify(demeterCall.state)}`,
+  )
+  assert.match(
+    String(demeterCall.state?.error?.message ?? ''),
+    /permission|denied|blocked/i,
+    `the demeter denial did not come from a permission policy: ${JSON.stringify(demeterCall.state)}`,
+  )
+  assert.equal(
+    demeter.childSessions.length,
+    0,
+    `a denied task-glob target still created a child session: ${JSON.stringify(demeter.sessions)}`,
+  )
+
+  // The host's action for a real dispatch is compared with the translator's
+  // action for the `task` key. This is the P0-5 row-3 check on this path.
+  const apolloEvaluation = apollo.matrixEvents.find((event) =>
+    (event.resources ?? []).includes('apollo'),
+  )
+  if (apolloEvaluation) {
+    assert.equal(
+      apolloEvaluation.action,
+      translatorActionFor('task'),
+      `translator emits "${translatorActionFor('task')}" for permission.task but the host evaluated "${apolloEvaluation.action}"`,
+    )
+  }
 })
 
 test('V2 native ask/reply works and an empty save scope does not persist an always reply', {
