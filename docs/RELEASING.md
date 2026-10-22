@@ -436,6 +436,99 @@ npm deprecate pantheon-opencode@<ver> "reason: <why it should not be used>"
 
 ---
 
+## Rollback
+
+> **Manual step with human approval.** The release workflow never rolls back —
+> it publishes forward only. Re-pointing the npm `latest` tag is decided and
+> executed by a maintainer, outside the automated path.
+
+A rollback re-points the `latest` dist-tag. It does not delete the released
+artifact and it does not rewrite history.
+
+### Trigger
+
+Roll back when a blocking defect is discovered **after** the stable publication
+and `latest` carries a regression that prevents use — for example an installer
+that cannot complete, or a package that does not start on the supported OpenCode
+line. A defect that can wait for the next patch does not qualify: publish
+forward instead.
+
+### Restore the stable channel
+
+```bash
+npm dist-tag add pantheon-opencode@1.5.2 latest
+```
+
+Syntax: `npm dist-tag add <package-spec (with version)> [<tag>]`
+(`npm dist-tag --help`).
+
+`1.6.0` **remains published** on npm — only the `latest` pointer moves back to
+`1.5.2`. Consumers without a lockfile resolve `1.5.2` again, while the
+regressed version stays reachable by exact version. Nothing is re-tagged on
+git, and no workflow runs.
+
+### Do not
+
+- **Do not `npm unpublish`.** Unpublishing is destructive and irreversible: it
+  breaks every consumer whose lockfile pins the affected version, and it defeats
+  the `npm_check` idempotency gate. Versions are deprecated, never removed (see
+  [npm Policy](#npm-policy)).
+- **Do not rewrite the GitHub Release without a note.** The Release is the
+  published record of what shipped; editing or deleting it silently hides the
+  incident from everyone who reads the changelog later.
+
+### What a rollback does not undo
+
+- **Zenodo archival** — once the GitHub Release exists, the Zenodo integration
+  has deposited the record and version DOI. That deposit is irreversible.
+- **The git tag** — `v1.6.0` stays on its commit. The tag is immutable and is
+  not moved or deleted during a rollback.
+
+### Required record
+
+Log the rollback on the release (or the tracking issue) before or immediately
+after the command runs:
+
+- the defect that triggered it, with evidence;
+- the command executed, verbatim;
+- the resulting `npm view pantheon-opencode dist-tags` output.
+
+Without that record, a later reader cannot tell a rollback apart from a failed
+publication.
+
+---
+
+## Retiring the `next` dist-tag
+
+> **Manual step with human approval.** Not part of the automated release
+> workflow.
+
+`next` was the pre-stable preview channel. Once stable `v1.6.0` is published and
+verified it has no remaining purpose, and leaving it in place invites new
+releases to be tagged into a channel nobody resolves. It is removed exactly
+once.
+
+**Prerequisite:** the post-publication verification of the stable release
+passed — `npm view pantheon-opencode dist-tags` reports `latest` = `1.6.0`, and
+installing `pantheon-opencode@1.6.0` from the public registry works. Removing
+`next` before that check leaves consumers who follow `next` without a
+resolution target while the stable channel is still unproven.
+
+```bash
+# Only after the post-publication verification passed.
+npm dist-tag rm pantheon-opencode next
+
+# Prove the result: latest = 1.6.0, beta preserved, next absent.
+npm view pantheon-opencode dist-tags
+```
+
+Syntax: `npm dist-tag rm <package-spec> <tag>` (`npm dist-tag --help`).
+
+The removal only drops a tag — no published version is deleted. `beta`
+continues to point at the beta line and is **not** touched by this step.
+
+---
+
 ## Branch Protection (main)
 
 > **Configuration contract, not an applied state.** This document describes
