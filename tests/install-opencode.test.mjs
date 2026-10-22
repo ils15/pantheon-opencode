@@ -22,7 +22,7 @@ import {
 } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test as nodeTest } from 'node:test'
 import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
 import {
   applyContextSandboxToV2Plugins,
@@ -41,6 +41,16 @@ const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 const THIRD_PARTY_HOOKS = '/tmp/pantheon-opencode-vendor/src/plugins/pantheon-hooks.ts'
 const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
 const THIRD_PARTY_PANTHEON_PLUGIN = '/tmp/vendor/pantheon/src/plugin.ts'
+
+// Real-install tier: this file drives complete installs and is the slowest
+// suite in the repository, so `test:node` excludes it by path. The skip keeps a
+// bare `node --test tests/` run explicit instead of silently paying the cost;
+// `npm run test:install` opts in (the release gate always opts in).
+const INSTALL_TIER = process.env.PANTHEON_RUN_INSTALL_TESTS === '1'
+const SKIP_REASON = INSTALL_TIER
+  ? false
+  : 'install tier: run `npm run test:install` (PANTHEON_RUN_INSTALL_TESTS=1)'
+const test = (name, fn) => nodeTest(name, { skip: SKIP_REASON }, fn)
 
 test('mcp_tools metadata becomes fail-closed per-server V1 permission rules', () => {
   const permissions = deriveNativeMcpPermissions({

@@ -91,6 +91,47 @@ test('passes and does not false-positive when real tests are collected', () => {
   }
 })
 
+test('excludes an explicit glob without hiding the remaining files', () => {
+  const kept = scratchFile(
+    'kept.test.mjs',
+    "import { test } from 'node:test'\ntest('kept runs', () => {})\n",
+  )
+  writeFileSync(
+    join(kept.absDir, 'dropped.test.mjs'),
+    "import { test } from 'node:test'\ntest('dropped runs', () => {})\n",
+  )
+  const relDir = kept.glob.slice(0, kept.glob.lastIndexOf('/'))
+  try {
+    const { status, output } = runGuard([
+      '--label',
+      'selftest',
+      kept.glob,
+      '--exclude',
+      `${relDir}/dropped.test.mjs`,
+    ])
+
+    assert.equal(status, 0, `the kept file must still run: ${output}`)
+    assert.doesNotMatch(output, /zero-test-guard/, 'guard must stay quiet on a healthy run')
+  } finally {
+    rmSync(kept.absDir, { recursive: true, force: true })
+  }
+})
+
+test('fails closed when --exclude removes every matched file', () => {
+  const only = scratchFile(
+    'only.test.mjs',
+    "import { test } from 'node:test'\ntest('runs', () => {})\n",
+  )
+  try {
+    const { status, output } = runGuard(['--label', 'selftest', only.glob, '--exclude', only.glob])
+
+    assert.equal(status, 1, 'excluding everything must not certify an empty suite')
+    assert.match(output, /matched 0 test files/)
+  } finally {
+    rmSync(only.absDir, { recursive: true, force: true })
+  }
+})
+
 test('rejects an invocation with no glob at all', () => {
   const { status, output } = runGuard(['--label', 'selftest'])
 
@@ -112,7 +153,7 @@ test('every node test script routes through the guard', () => {
     }).stdout,
   )
 
-  const guarded = ['test:node', 'coverage', 'test:hooks', 'test:tool-canary']
+  const guarded = ['test:node', 'test:install', 'coverage', 'test:hooks', 'test:tool-canary']
   for (const name of guarded) {
     assert.match(
       pkg[name],

@@ -25,6 +25,12 @@ const allowedExclusions = [
   // Latency bench reports: same reason — generated data written by
   // bench/bin/bench.mjs on every run, never hand-edited source.
   '!bench/results/*.json',
+  // Local benchmark scratch output (`bench-run-A/`) and Promptfoo evaluation
+  // runs (`evals/`): both are gitignored runtime artifacts, not product code.
+  // Excluding them keeps `npm run lint` green in a dirty developer checkout
+  // without reformatting generated output.
+  '!bench-run-A',
+  '!evals',
 ]
 
 function exclusionMatchesPath(pattern, filePath) {

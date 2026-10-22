@@ -3,6 +3,12 @@ name: CI
 on:
   pull_request:
     branches: [main, develop]
+  # The SHA that can reach a release is the SHA on `main`. A release dispatch
+  # validates the checked-out commit; without a push run on `main`, a merge
+  # commit could be released with CI evidence that only ever existed on the PR
+  # head (which GitHub does not necessarily re-run after the merge).
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -176,8 +182,17 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v "${PANTHEON_TOOL_CANARY_BIN:-opencode}" >/dev/null 2>&1; then
-            echo "::notice title=Tool canary SKIPPED::no 'opencode' binary on PATH — the host-backed tool canary did NOT run here. The host-free guards in the previous step DID run."
-            echo "SKIPPED (visible): no 'opencode' binary on PATH, so src/plugin-v2.ts was NOT driven through a live host in this job."
+            echo "GATE tool-canary: SKIP (not PASS) — no host binary on PATH; this is a labelled skip, never release evidence."
+            {
+              echo '### Tool canary: SKIPPED (not PASS)'
+              echo 'No `opencode` binary on PATH. The host-backed canary did **not** run.'
+              echo 'This job is a development-loop signal, not release evidence; the release workflow runs its own fail-closed host gate.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Tool canary SKIPPED (not PASS)::no 'opencode' binary on PATH — the host-backed tool canary did NOT run here."
+            if [ "${PANTHEON_RELEASE_CONTEXT:-0}" = "1" ]; then
+              echo "::error::Release context requires a real host; a skipped canary is not a PASS."
+              exit 1
+            fi
             exit 0
           fi
           npm run test:tool-canary
@@ -218,7 +233,6 @@ jobs:
           bash scripts/test-opencode-v2-sandbox.sh --prepare --run v2
 
   test-suite:
-    name: Python, Node, and TypeScript tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -245,12 +259,54 @@ jobs:
             package-lock.json
             src/plugins/tui/package-lock.json
 
-      - name: Install test dependencies
+      - name: Install test dependencies (isolated venv for the pinned Python stack)
+        # Same contract as release gate (a): pytest imports fastmcp/mcp at
+        # collection time, so it must run against the exact pins in
+        # src/mcp/requirements-mcp.txt. A venv keeps ambient site-packages out
+        # of the result; its bin is prepended to GITHUB_PATH, so every later
+        # `python3` in this job is the pinned interpreter, and PANTHEON_PYTHON
+        # names it explicitly for scripts that honour the variable
+        # (scripts/doctor.mjs). Fail-closed: a broken install or an
+        # unsatisfied pin aborts here instead of turning the suite into an
+        # environment-only collection error.
         run: |
-          python3 -m pip install --quiet coverage pytest pyyaml
-          python3 -m pip install --quiet pytest-asyncio==1.3.0
-          python3 -m pip install --quiet -r src/mcp/requirements-mcp.txt
-          python3 -m pip install --quiet -r src/mcp/requirements-vision.txt
+          set -euo pipefail
+          GATE_VENV="$RUNNER_TEMP/ci-venv"
+          rm -rf "$GATE_VENV"
+          python3 -m venv "$GATE_VENV"
+          "$GATE_VENV/bin/python" -m pip install --quiet --upgrade pip
+          "$GATE_VENV/bin/python" -m pip install --quiet coverage pytest pyyaml
+          "$GATE_VENV/bin/python" -m pip install --quiet pytest-asyncio==1.3.0
+          "$GATE_VENV/bin/python" -m pip install --quiet -r src/mcp/requirements-mcp.txt -r src/mcp/requirements-vision.txt
+          "$GATE_VENV/bin/python" -m pip check
+          "$GATE_VENV/bin/python" - <<'PY'
+          import importlib.metadata as metadata
+          import pathlib
+          import sys
+
+          mismatches = []
+          for requirements in ('src/mcp/requirements-mcp.txt', 'src/mcp/requirements-vision.txt'):
+              for raw in pathlib.Path(requirements).read_text(encoding='utf-8').splitlines():
+                  line = raw.split('#', 1)[0].strip()
+                  if not line:
+                      continue
+                  name, _, pin = line.partition('==')
+                  if not pin:
+                      mismatches.append(f'{name}: not an exact pin')
+                      continue
+                  try:
+                      installed = metadata.version(name)
+                  except metadata.PackageNotFoundError:
+                      mismatches.append(f'{name}: not installed')
+                      continue
+                  if installed != pin:
+                      mismatches.append(f'{name}=={installed} (expected {pin})')
+          if mismatches:
+              sys.exit('pinned requirements are not satisfied: ' + '; '.join(mismatches))
+          PY
+          echo "$GATE_VENV/bin" >> "$GITHUB_PATH"
+          echo "PANTHEON_PYTHON=$GATE_VENV/bin/python" >> "$GITHUB_ENV"
+          "$GATE_VENV/bin/python" --version
           npm ci --ignore-scripts
 
       # Keep the full test suite off the packaging, audit, and live-sandbox
@@ -268,7 +324,6 @@ jobs:
         run: npm run test:ts
 
   plugin-v2-ts-coverage:
-    name: TypeScript plugin coverage
     runs-on: ubuntu-latest
     permissions:
       contents: read

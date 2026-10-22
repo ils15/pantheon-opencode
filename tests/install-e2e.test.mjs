@@ -27,10 +27,19 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test as nodeTest } from 'node:test'
 
 import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
+
+// Real-install tier: see tests/install-opencode.test.mjs. Excluded from
+// `test:node`, opted into by `npm run test:install` (mandatory in the release
+// gate).
+const INSTALL_TIER = process.env.PANTHEON_RUN_INSTALL_TESTS === '1'
+const SKIP_REASON = INSTALL_TIER
+  ? false
+  : 'install tier: run `npm run test:install` (PANTHEON_RUN_INSTALL_TESTS=1)'
+const test = (name, fn) => nodeTest(name, { skip: SKIP_REASON }, fn)
 
 // ---------------------------------------------------------------------------
 // Constants

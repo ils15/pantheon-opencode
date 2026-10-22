@@ -22,16 +22,23 @@
  * the TAP reporter is diverted to a scratch file that is read once and deleted.
  *
  * Usage:
- *   node scripts/run-node-tests.mjs [--label <name>] [-- <node flags...>] <glob>...
+ *   node scripts/run-node-tests.mjs [--label <name>] [--exclude <glob>]... \
+ *     [-- <node flags...>] <glob>...
+ *
+ * `--exclude` removes files from the expanded set before the runner starts. It
+ * exists so a heavy tier (the real-install tests) can be kept out of the default
+ * suite without turning the default glob into a hand-maintained file list: a
+ * newly added test file is still collected automatically.
  *
  * Examples:
  *   node scripts/run-node-tests.mjs 'tests/*.mjs' 'tests/pantheon/*.mjs'
+ *   node scripts/run-node-tests.mjs --exclude 'tests/install-e2e.test.mjs' 'tests/*.mjs'
  *   node scripts/run-node-tests.mjs -- --experimental-test-coverage 'tests/*.mjs'
  */
 import { spawnSync } from 'node:child_process'
 import { globSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, matchesGlob } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
@@ -39,12 +46,12 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 function usage(message) {
   console.error(`zero-test-guard: ${message}`)
   console.error(
-    'usage: node scripts/run-node-tests.mjs [--label <name>] [-- <node flags...>] <glob>...',
+    'usage: node scripts/run-node-tests.mjs [--label <name>] [--exclude <glob>]... [-- <node flags...>] <glob>...',
   )
   process.exit(1)
 }
 
-/** Parse `[--label <name>] [-- <node flags...>] <glob>...`. */
+/** Parse `[--label <name>] [--exclude <glob>]... [-- <node flags...>] <glob>...`. */
 function parseArgs(argv) {
   const separator = argv.indexOf('--')
   const own = separator === -1 ? argv : argv.slice(0, separator)
@@ -52,6 +59,7 @@ function parseArgs(argv) {
 
   let label = 'node tests'
   const globs = []
+  const excludes = []
   for (let i = 0; i < own.length; i++) {
     if (own[i] === '--label') {
       const value = own[i + 1]
@@ -60,11 +68,18 @@ function parseArgs(argv) {
       i += 1
       continue
     }
+    if (own[i] === '--exclude') {
+      const value = own[i + 1]
+      if (value === undefined) usage('--exclude requires a value')
+      excludes.push(value)
+      i += 1
+      continue
+    }
     if (own[i].startsWith('-')) usage(`unknown option ${own[i]}`)
     globs.push(own[i])
   }
   if (globs.length === 0) usage('at least one glob is required')
-  return { label, globs, nodeFlags }
+  return { label, globs, excludes, nodeFlags }
 }
 
 /**
@@ -72,7 +87,7 @@ function parseArgs(argv) {
  * Order follows the positional order of the globs so that the suite runs in the same order
  * as the shell used to; within a glob, matches are sorted for determinism.
  */
-function expand(globs) {
+function expand(globs, excludes = []) {
   const files = []
   const seen = new Set()
   for (const pattern of globs) {
@@ -81,6 +96,7 @@ function expand(globs) {
       .sort()
     for (const match of matches) {
       if (seen.has(match)) continue
+      if (excludes.some((exclude) => matchesGlob(match, exclude))) continue
       seen.add(match)
       files.push(match)
     }
@@ -136,8 +152,8 @@ function countCollectedTests(tapPath, files) {
   return collected
 }
 
-const { label, globs, nodeFlags } = parseArgs(process.argv.slice(2))
-const files = expand(globs)
+const { label, globs, excludes, nodeFlags } = parseArgs(process.argv.slice(2))
+const files = expand(globs, excludes)
 
 if (files.length === 0) {
   reportMissingFiles(label, globs)

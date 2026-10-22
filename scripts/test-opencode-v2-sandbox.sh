@@ -32,6 +32,11 @@
 #
 # Env overrides:
 #   PANTHEON_SANDBOX_ROOT    Sandbox root (default: ~/pantheon-sandbox)
+#   PANTHEON_SANDBOX_TARBALL Optional pre-built package tarball to install
+#                            instead of running `npm pack` in the checkout. The
+#                            release gate points this at its one immutable
+#                            artifact so the sandbox validates the exact bytes
+#                            that will be published.
 #   OPENCODE_V2_SPEC         npm spec providing the V2 binary
 #                            (default: @opencode/cli@latest). NOTE: this is an
 #                            install spec only — it is not a dependency of this
@@ -65,6 +70,12 @@ NPM_PREFIX="$SANDBOX_HOME/.npm-global"
 OPENCODE_V2_SPEC="${OPENCODE_V2_SPEC:-@opencode/cli@latest}"
 PANTHEON_SANDBOX_MODEL="${PANTHEON_SANDBOX_MODEL:-opencode-go/mimo-v2.5}"
 PANTHEON_PROMPT_TIMEOUT="${PANTHEON_PROMPT_TIMEOUT:-300}"
+
+# Optional pre-built package tarball. The release gate sets this to the ONE
+# immutable artifact it already packed and hashed, so the sandbox installs the
+# exact bytes that will be published instead of packing a second tarball. When
+# unset (developer use) --prepare keeps packing from the checkout.
+SANDBOX_TARBALL="${PANTHEON_SANDBOX_TARBALL:-}"
 
 V2_BIN="${OPENCODE_V2_BIN:-opencode2}"
 
@@ -1109,14 +1120,26 @@ cmd_reset() {
 }
 
 install_binaries() {
-  log "--- Installing pantheon-opencode (from repo tarball) ---"
-  cd "$REPO_DIR"
-  npm pack --ignore-scripts 2>/dev/null || die "npm pack failed"
-  local tgz
-  tgz=$(ls -t pantheon-opencode-*.tgz | head -1)
+  local tgz_path
+  if [ -n "$SANDBOX_TARBALL" ]; then
+    [ -f "$SANDBOX_TARBALL" ] \
+      || die "PANTHEON_SANDBOX_TARBALL does not exist: $SANDBOX_TARBALL"
+    tgz_path="$(cd "$(dirname "$SANDBOX_TARBALL")" && pwd)/$(basename "$SANDBOX_TARBALL")"
+    log "--- Installing pantheon-opencode (from supplied release tarball) ---"
+  else
+    log "--- Installing pantheon-opencode (from repo tarball) ---"
+    cd "$REPO_DIR"
+    npm pack --ignore-scripts 2>/dev/null || die "npm pack failed"
+    local tgz
+    tgz=$(ls -t pantheon-opencode-*.tgz | head -1)
+    tgz_path="$REPO_DIR/$tgz"
+  fi
   npm rm -g pantheon-opencode 2>/dev/null || true
-  npm install -g "$REPO_DIR/$tgz" || die "install of $tgz failed"
-  if ! git -C "$REPO_DIR" ls-files --error-unmatch -- "$tgz" >/dev/null 2>&1; then rm -f -- "$tgz"; fi
+  npm install -g "$tgz_path" || die "install of $(basename "$tgz_path") failed"
+  if [ -z "$SANDBOX_TARBALL" ] \
+    && ! git -C "$REPO_DIR" ls-files --error-unmatch -- "$tgz_path" >/dev/null 2>&1; then
+    rm -f -- "$tgz_path"
+  fi
   log "--- Installing OpenCode V2 ($OPENCODE_V2_SPEC) ---"
   npm install -g "$OPENCODE_V2_SPEC" || die "install of $OPENCODE_V2_SPEC failed"
 }

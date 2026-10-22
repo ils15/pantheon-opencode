@@ -15,7 +15,9 @@
       "!.pantheon/goals",
       "!logs",
       "!benchmarks/beta2/baseline-t1.json",
-      "!bench/results/*.json"
+      "!bench/results/*.json",
+      "!bench-run-A",
+      "!evals"
     ]
   },
   "linter": {
