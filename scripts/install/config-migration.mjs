@@ -29,14 +29,81 @@ function deepClone(obj) {
 // V1 → V2 helpers
 // ---------------------------------------------------------------------------
 
-/** Action name mapping for permissions (V1 key → V2 action), including task → subagent. */
+/**
+ * Action name mapping for permissions (V1 key → V2 action), including
+ * task → subagent.
+ *
+ * `write` is an alias of `edit`. Every V2 host measured for P0-5 (2.0.22,
+ * 2.0.30, 2.1.0, 2.1.2) evaluates a `write` tool call under the action name
+ * `edit`; a rule emitted as `write` is therefore never the rule that decides the
+ * call, and `permission.write: deny` would not block a write. Both keys collapse
+ * onto `edit`, and a collision is resolved by effect restrictiveness
+ * (deny > ask > allow), never by iteration order — see `pushPermission`.
+ *
+ * Only mappings confirmed against a host belong here: `bash → shell`, `task →
+ * subagent`, `read → read` and `write → edit` were observed on 2.0.22/2.0.30/
+ * 2.1.0/2.1.2. Identity entries (`skill`, `websearch`, `edit`) and keys left out
+ * of this table (`webfetch`, `mcp`, …) have no observed host action: they are
+ * kept as passthrough rather than renamed by guess.
+ */
 const V1_PERMISSION_TO_ACTION = {
   bash: 'shell',
   task: 'subagent',
   skill: 'skill',
+  // Listed before `write` so the reverse map resolves `edit` to the canonical
+  // V1 key instead of to the alias.
   edit: 'edit',
+  write: 'edit',
   websearch: 'websearch',
   // passthrough unknowns
+}
+
+/**
+ * Effect restrictiveness used when two V1 keys collapse onto one V2 action.
+ * `deny` is the most restrictive, so a deny from either alias wins.
+ */
+const EFFECT_RESTRICTIVENESS = { allow: 1, ask: 2, deny: 3 }
+
+/** Unrecognized effects are unranked: they are kept, never silently replaced. */
+const UNKNOWN_EFFECT_RANK = 4
+
+function effectRank(effect) {
+  return EFFECT_RESTRICTIVENESS[effect] ?? UNKNOWN_EFFECT_RANK
+}
+
+/**
+ * Emit one permission entry, merging with an existing entry for the same
+ * action+resource instead of appending a contradiction.
+ *
+ * `index` maps `action\0resource` → position in `result` and is owned by the
+ * caller for the duration of one conversion.
+ */
+function pushPermission(result, index, action, resource, effect) {
+  const key = `${action}\u0000${resource}`
+  const existing = index.get(key)
+  if (existing === undefined) {
+    index.set(key, result.length)
+    result.push({ action, resource, effect })
+    return
+  }
+  const current = result[existing]
+  if (current.effect === effect) return
+  if (
+    effectRank(effect) === UNKNOWN_EFFECT_RANK &&
+    effectRank(current.effect) === UNKNOWN_EFFECT_RANK
+  ) {
+    // Cannot rank two unrecognized effects; keep both rather than drop a policy.
+    console.warn(
+      `[config-migration] unrankable conflicting effects for ${action} "${resource}": "${current.effect}" vs "${effect}"; keeping both`,
+    )
+    result.push({ action, resource, effect })
+    return
+  }
+  const winner = effectRank(effect) > effectRank(current.effect) ? effect : current.effect
+  console.warn(
+    `[config-migration] conflicting effects for ${action} "${resource}": "${current.effect}" vs "${effect}"; keeping the more restrictive "${winner}"`,
+  )
+  current.effect = winner
 }
 
 /**
@@ -50,15 +117,16 @@ const V1_PERMISSION_TO_ACTION = {
  */
 function convertPermissionsV1toV2(permObj) {
   const result = []
+  const index = new Map()
   for (const [key, value] of Object.entries(permObj)) {
     const action = V1_PERMISSION_TO_ACTION[key] || key
     if (typeof value === 'string') {
       // Simple: { edit: "allow" } → [{ action: "edit", resource: "*", effect: "allow" }]
-      result.push({ action, resource: '*', effect: value })
+      pushPermission(result, index, action, '*', value)
     } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       // Nested: { bash: { "git *": "allow" } } → [{ action: "shell", resource: "git *", effect: "allow" }]
       for (const [resource, effect] of Object.entries(value)) {
-        result.push({ action, resource, effect })
+        pushPermission(result, index, action, resource, effect)
       }
     } else {
       console.warn(`[config-migration] Unexpected permission value for "${key}":`, value)
@@ -72,10 +140,13 @@ function convertPermissionsV1toV2(permObj) {
  */
 function convertPermissionsV2toV1(permArray) {
   const result = {}
-  // Reverse action mapping: V2 action → V1 key
-  const ACTION_TO_V1 = Object.fromEntries(
-    Object.entries(V1_PERMISSION_TO_ACTION).map(([k, v]) => [v, k]),
-  )
+  // Reverse action mapping: V2 action → V1 key. Aliases collapse onto one action
+  // (`write` and `edit` both → `edit`), so the FIRST key wins — the canonical
+  // V1 spelling — instead of the alias that happens to be listed last.
+  const ACTION_TO_V1 = {}
+  for (const [v1Key, action] of Object.entries(V1_PERMISSION_TO_ACTION)) {
+    if (!(action in ACTION_TO_V1)) ACTION_TO_V1[action] = v1Key
+  }
 
   for (const { action, resource, effect } of permArray) {
     const v1Key = ACTION_TO_V1[action] || action

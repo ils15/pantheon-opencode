@@ -220,6 +220,58 @@ describe('config-migration', () => {
       })
     })
 
+    it('maps V1 permission.write to the host action the V2 hosts evaluate (edit)', () => {
+      // P0-5 evidence: every V2 host (2.0.22, 2.0.30, 2.1.0, 2.1.2) evaluates a
+      // `write` tool call under the action name `edit`, so a rule emitted as
+      // `write` never decides that call — `permission.write: deny` must block
+      // writes, which only an `edit` rule does.
+      const v2 = migrateV1toV2({ permission: { write: 'deny' } })
+      assert.deepEqual(v2.permissions, [{ action: 'edit', resource: '*', effect: 'deny' }])
+    })
+
+    it('maps agent-level permission.write to edit as well', () => {
+      const v2 = migrateV1toV2({
+        agent: { hermes: { permission: { write: { 'src/**': 'deny' } } } },
+      })
+      assert.deepEqual(v2.agents.hermes.permissions, [
+        { action: 'edit', resource: 'src/**', effect: 'deny' },
+      ])
+    })
+
+    it('resolves a write+edit collision by restrictiveness, not iteration order', () => {
+      // Both V1 keys collapse onto `edit`. The winner must be deny regardless of
+      // which key the object happens to list first, and the collision must not
+      // emit two conflicting rules for the same action+resource.
+      const orders = [
+        { write: 'deny', edit: 'allow' },
+        { edit: 'allow', write: 'deny' },
+        { write: 'allow', edit: 'deny' },
+        { edit: 'deny', write: 'allow' },
+        { write: 'ask', edit: 'allow' },
+        { edit: 'allow', write: 'ask' },
+        { write: 'allow', edit: 'ask' },
+      ]
+      const expected = ['deny', 'deny', 'deny', 'deny', 'ask', 'ask', 'ask']
+      for (const [index, permission] of orders.entries()) {
+        const v2 = migrateV1toV2({ permission })
+        assert.deepEqual(
+          v2.permissions,
+          [{ action: 'edit', resource: '*', effect: expected[index] }],
+          `wrong resolution for ${JSON.stringify(permission)}`,
+        )
+      }
+    })
+
+    it('keeps non-colliding write/edit resource rules as separate edit entries', () => {
+      const v2 = migrateV1toV2({
+        permission: { write: { '*.md': 'allow' }, edit: { '*.lock': 'deny' } },
+      })
+      assert.deepEqual(v2.permissions, [
+        { action: 'edit', resource: '*.md', effect: 'allow' },
+        { action: 'edit', resource: '*.lock', effect: 'deny' },
+      ])
+    })
+
     it('should convert MCP format (enabled → disabled)', () => {
       const v2 = migrateV1toV2(V1_CONFIG)
       assert.ok(v2.mcp.bifrost, 'flat mcp.bifrost exists')
