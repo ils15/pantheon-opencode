@@ -452,6 +452,20 @@ ordem allow/deny é provada com um caso de conflito. Sem essa demonstração nã
 há GO (ADR-0014 Q4) — o item não é aceitável como Known Issue.
 **Review:** @themis — a revisão de segurança e de comportamento de permissões
 deste item é do revisor, não do implementador.
+**Evidence:** matriz V2 pós-fix com zero `FAIL` em `2.0.29`, `2.0.30`, `2.1.0`,
+`2.1.2` e `2.1.3`; V1 medido em `1.19.4` em 2026-10-22 — o enforcement
+read-only é **por config** (`bash`/`write`/`edit: deny`, `read: allow`), e
+`permission.ask` não dispara nesse host (o probe V1 registrou 0 invocações do
+hook), com o pedido indo ao cliente (`permission.asked` + `GET /permission` +
+`POST /permission/{id}/reply`); o que separa as gerações é o **mecanismo**, não
+a string — a forma exata `permission.ask` está ausente dos dois binários,
+enquanto o V2 avalia o pedido em `permission.evaluate` (provado pela matriz V2);
+`write → edit` corrigido em `scripts/install/config-migration.mjs`. Resultados em
+[`bench/results/p05-permission-matrix-2026-10-22.md`](bench/results/p05-permission-matrix-2026-10-22.md)
+e rationale em
+[ADR-0014 Amendment 1](.pantheon/memory-bank/adr/0014-release-v1-6-0-stable-decisoes-e-matriz.md).
+**O `Status` continua `OPEN`:** falta a revisão de segurança do @themis, que é
+gate deste item (ADR-0014 Q4). A evidência acima não fecha o item.
 
 **P0-6 — A config grava um caminho absoluto para a árvore de instalação, e ele
 só é re-resolvido no `init`.**

@@ -605,6 +605,21 @@ Native delegation is available on both contracts — it is the host's engine.
 | Depth-2 for read-only agents | Yes | Yes |
 | **Caller/target matrix enforced** | **Yes** | **Conditional — Yes when the host exposes `ctx.permission.hook`; otherwise unavailable** |
 
+The V1 cell is enforced by the V1 tool hook (`createEnforcementGuard`), not by
+the `permission.ask` hook. **`permission.ask` does not fire on OpenCode 1.19.x**:
+on `1.19.4` (measured 2026-10-22) the V1 probe recorded zero `permission.ask`
+invocations. The generations differ in the **mechanism**, not in the string: the
+exact `permission.ask` string is absent from both binaries, while V2 evaluates
+the request in `permission.evaluate` (proved by the V2 matrix). On that host the
+read-only guarantee is **config-level** — with `bash`/`write`/`edit: deny` and
+`read: allow`, the host makes `bash` and `write` unavailable and produces no side
+effect, while `read` keeps working. The permission request goes to the client
+instead (`permission.asked`, `GET /permission`,
+`POST /permission/{id}/reply`), where a client `reject` does block. The probe is
+`tests/canary/run-v1-permission-proof.sh` driving
+`tests/canary/v1-permission-canary.test.mjs`; results are in
+`bench/results/p05-permission-matrix-2026-10-22.md`.
+
 The V2 matrix is implemented by `registerV2PermissionHook`
 (`src/plugin-v2.ts:1379-1509`, registered best-effort at `src/plugin-v2.ts:1707`),
 which calls `evaluateV2Delegation`
@@ -790,7 +805,7 @@ action names or allow/deny order) are **blockers**, never Known Issues
 
 | # | Claim | Classification | Resolution |
 |---|---|---|---|
-| 1 | Whether the host honours a `tools:` map entry by hiding the tool or by failing the call, and how `tools` and `permission` interact when both are present | **Verifiable in this release** | Extend `tests/canary/plugin-v2-tool-canary.test.mjs` with one agent declaring both `tools` and `permission`; run on every matrix host (`1.19.x`, `2.0.22`, `2.0.29`, `2.0.30`, `2.1.0`) and record hide-vs-fail behaviour in the result table. |
+| 1 | Whether the host honours a `tools:` map entry by hiding the tool or by failing the call, and how `tools` and `permission` interact when both are present | **Verifiable in this release** | Extend `tests/canary/plugin-v2-tool-canary.test.mjs` with one agent declaring both `tools` and `permission`; run on every matrix host (`1.19.x`, `2.0.29`, `2.0.30`, `2.1.x`) and record hide-vs-fail behaviour in the result table. |
 | 2 | Whether the host honours `mcp_tools`, `visible`, `skills` and `reasoning_effort` from agent frontmatter | **Verifiable in this release** | The same config-load canary, one key at a time, on every matrix host: assert the host-emitted config/behaviour rather than inferring from the repo. |
 | 3 | Whether a 2.x host recognises the action names the converter emits (`read`, `grep`, `glob`, `task`, `webfetch`, `question`, `write`, `mcp`, …) as distinct actions | **BLOCKER — P0-5** | `permission.evaluate` probe on every matrix host, plus inspection of the installed config. No GO while any emitted action name is unrecognised (ADR-0014 Q4). |
 | 4 | Whether a nested glob deny and its wildcard sibling resolve last-match-wins, first-match-wins, or most-specific-wins | **BLOCKER — P0-5** | A test config exercising both orders on every matrix host; the resolution order must be recorded and match the installed policy. |

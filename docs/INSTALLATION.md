@@ -18,7 +18,7 @@ npm run setup
 npm run doctor
 ```
 
-- Requisitos: **Node.js >=26.4.0** para a CLI/instalador/ferramentas Node do Pantheon, **Python 3.11+** (opcional, MCP servers), e um host da matriz: **OpenCode 1.19.x** (contrato V1) ou **OpenCode 2.0.22 / 2.0.29 / 2.0.30 / 2.1.0** (contrato V2). **OpenCode 2.0.31 não é suportado** — não há evidência de runtime. Node 22, Node 24 e Node 26.0–26.3 estão fora da matriz.
+- Requisitos: **Node.js >=26.4.0** para a CLI/instalador/ferramentas Node do Pantheon, **Python 3.11+** (opcional, MCP servers), e um host da matriz: **OpenCode 1.19.x** (contrato V1) ou **OpenCode 2.0.29 / 2.0.30 / 2.1.x** (contrato V2). **OpenCode 2.0.22 e 2.0.31 não são suportados** — a 2.0.22 não expõe `ctx.permission.assert` nem `worktree_*`/`pantheon_bounded_read`; a 2.0.31 não tem evidência de runtime. Node 22, Node 24 e Node 26.0–26.3 estão fora da matriz.
 - Com a configuração padrão do npm, versões incompatíveis podem gerar `EBADENGINE` como aviso durante a instalação. O postinstall do Pantheon então pula a sincronização Node/config e permite que o pacote termine de instalar; a CLI bloqueia a configuração com uma mensagem explícita antes de gravar arquivos. `engine-strict=true` pode fazer o próprio npm interromper a instalação. Para atualizar sem instalação global/system-wide, use um gerenciador de Node do usuário:
 
   ```bash
@@ -135,7 +135,7 @@ inventário legível, não há limpeza automática.
 
 ## Prerequisites
 
-- **OpenCode 1.19.x**, or **2.0.22 / 2.0.29 / 2.0.30 / 2.1.0** — [Install OpenCode](https://opencode.ai/docs/). **OpenCode 2.0.31 is not supported** (no runtime evidence).
+- **OpenCode 1.19.x**, or **2.0.29 / 2.0.30 / 2.1.x** — [Install OpenCode](https://opencode.ai/docs/). **OpenCode 2.0.22 is not supported** (no `ctx.permission.assert`, no `worktree_*` / `pantheon_bounded_read`); **OpenCode 2.0.31 is not supported** (no runtime evidence).
 - **Node.js >=26.4.0** — for `npx pantheon-opencode init` and Node-based Pantheon tooling (`engines.node` = `>=26.4.0`). Node 22, Node 24, and Node 26.0–26.3 are unsupported. The optional `pantheon_cost` backend separately needs `node:sqlite` (Node >=22.5); this capability threshold does not lower package support. Official OpenCode V2.0.31 (not in this release's supported matrix) has a Bun runtime path and a separate Node build pinned to 26.4.0; no Bun minimum is implied.
 - **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
@@ -244,20 +244,30 @@ JavaScript coverage at all. Python coverage additionally requires
 ### Support boundary — 1.6.x is the last OpenCode 1.X line
 
 > **OpenCode 1.X support ends after the 1.6 line.** The 1.6.x line supports
-> OpenCode **1.19.x** (V1 plugin) and OpenCode **2.0.22, 2.0.29, 2.0.30 and
-> 2.1.0** (V2 plugin); **OpenCode 2.0.31 is not supported** (no runtime
-> evidence). From 1.7 onward the line drops the V1 contract and targets
-> OpenCode 2 only. Read this before installing or upgrading across the
-> 1.6 → 1.7 boundary.
+> OpenCode **1.19.x** (V1 plugin; read-only enforcement measured on `1.19.4` on
+> 2026-10-22) and OpenCode **2.0.29, 2.0.30 and 2.1.x** (V2 plugin);
+> **OpenCode 2.0.22 is not
+> supported** (the host exposes neither
+> `ctx.permission.assert` nor `worktree_*` / `pantheon_bounded_read`) and
+> **OpenCode 2.0.31 is not supported** (no runtime evidence). From 1.7 onward
+> the line drops the V1 contract and targets OpenCode 2 only. Read this before
+> installing or upgrading across the 1.6 → 1.7 boundary.
 
-| Linha Pantheon | OpenCode 1.19.x | OpenCode 2.0.22 / 2.0.29 / 2.0.30 | OpenCode 2.1.0 | OpenCode 2.0.31 |
-|---|---|---|---|---|
-| **1.6.x** | **Suportado — evidência pendente (Fase 5).** V1, selecionado automaticamente | **Suportado** — V2, superfície reduzida | **Suportado** — V2, com fase própria de validação | **Não suportado** — sem evidência de runtime |
-| **1.7 and later** | **Não suportado** — breaking change | **Alvo do trabalho 1.7+** — V2 only | **Alvo do trabalho 1.7+** — V2 only | **Não suportado** até haver evidência |
+| Linha Pantheon | OpenCode 1.19.x | OpenCode 2.0.29 / 2.0.30 | OpenCode 2.1.x (`>=2.1.0 <2.2`) | OpenCode 2.0.22 | OpenCode 2.0.31 |
+|---|---|---|---|---|---|
+| **1.6.x** | **Suportado — PASS: enforcement read-only por config.** V1, selecionado automaticamente; medido em `1.19.4`, onde `permission.ask` não dispara e a garantia vem de `bash`/`write`/`edit: deny` + `read: allow` na config | **Suportado — PASS medido.** V2, superfície reduzida; matriz de permissões pós-fix sem nenhuma célula `FAIL` | **Suportado — PASS medido** no piso `2.1.0` e no patch mais novo no congelamento (`2.1.3`). V2 | **Não suportado** — o host não expõe `ctx.permission.assert` nem `worktree_*`/`pantheon_bounded_read` | **Não suportado** — sem evidência de runtime |
+| **1.7 and later** | **Não suportado** — breaking change | **Alvo do trabalho 1.7+** — V2 only | **Alvo do trabalho 1.7+** — V2 only | **Não suportado** | **Não suportado** até haver evidência |
 
-Todas as cinco linhas da matriz (`1.19.x`, `2.0.22`, `2.0.29`, `2.0.30`,
-`2.1.0`) estão **suportadas e a testar**; a evidência é por host e um resultado
-`WARN`, `SKIP` ou `NOT_TESTED` não conta como `PASS`.
+As células suportadas da linha 1.6.x são afirmações **por host**, não um
+resultado único: `2.0.29`, `2.0.30` e `2.1.x` têm `PASS` medido pela matriz de
+permissões V2; `1.19.x` tem `PASS` medido por um mecanismo diferente —
+**enforcement read-only por config**, não o hook `permission.ask`, que não
+dispara nesse host. Uma linha ausente não é `PASS`, e `WARN`, `SKIP` ou
+`NOT_TESTED` também não contam como `PASS`. A `2.0.22` saiu da matriz por
+**evidência de runtime**, não por falta dela: sem `ctx.permission.assert` a
+ordem de avaliação de permissões não é observável nela, e o host também não
+oferece `worktree_*` nem `pantheon_bounded_read`; o `PASS` ali seria falso
+verde.
 
 The 1.6.x row carries different claims. The 1.19.x cell is the V1 plugin
 (`src/plugin.ts` + `src/plugins/pantheon-hooks.ts` under the singular `plugin`
@@ -275,29 +285,45 @@ registered together with the other.
 table as "OpenCode 2 is done":**
 
 - The V2 tool surface ships real `input`/`output` schemas and real enforcement
-  (`ctx.tool.transform()`, a read-only-enforcing `execute.before`), verified
-  against `opencode 2.0.22` by `tests/canary/plugin-v2-tool-canary.test.mjs`.
+  (`ctx.tool.transform()`, a read-only-enforcing `execute.before`), verified on
+  the supported V2 hosts by `tests/canary/plugin-v2-tool-canary.test.mjs`.
 - The v2.0.29 permission canary proves the matrix on both sides: an allowed
   Zeus→Apollo root dispatch is admitted, while an Athena→Apollo call from a
   child and an invalid Athena→Demeter root dispatch are denied
   (`bench/results/f4a-v229-admission-identity-2026-10-14.md`).
-- `2.0.22` is **not published on any npm channel**. Against the installable
-  `@opencode-ai/cli` the tool canary fails 12/12, because
-  `/api/experimental/session/{id}/wait` was promoted to
-  `/api/session/{id}/wait` (old path → 404) and `ctx.tool.list` is absent. With
-  only the route corrected, 10/12 pass on that host — so this is a
-  canary/host-generation mismatch, not a measured plugin regression. Tracked in
-  issue #216; the fail-closed CI step is PR #213.
-- **No V1 host leg exists yet for end-to-end validation.** The sandbox runner
-  (`scripts/test-opencode-v2-sandbox.sh`) is V2-only and rejects `--run v1`. The
-  `1.19.x` line on the matrix is therefore **supported and to test**, not a
-  line with historical runtime evidence; the V1 path is covered by the
-  dependency pin (`@opencode-ai/plugin` / `@opencode-ai/sdk` `1.18.33`), the
-  generation-gate unit tests and the installer end-to-end tests over emitted
-  config.
-- **`2.1.0` requires its own adoption/validation phase** (ADR-0014 Q2): the
-  host changed SDK, HTTP message/event and plugin contracts. Until that phase
-  produces a `PASS`, `2.1.0` is not claimed as verified.
+- `2.0.22` is **out of the matrix on runtime evidence**: the host does not expose
+  `ctx.permission.assert`, so permission-order cells are not observable and the
+  harness `✔` it printed was a false green, and it also lacks `worktree_*` and
+  `pantheon_bounded_read`. (It is also **not published on any npm channel**;
+  against the installable `@opencode-ai/cli` the older tool canary fails 12/12
+  because `/api/experimental/session/{id}/wait` was promoted to
+  `/api/session/{id}/wait`. Tracked in issue #216; the fail-closed CI step is
+  PR #213.)
+- **The V1 line has its own probe and its own measurement, and it does not use
+  the `permission.ask` hook.** The sandbox runner
+  (`scripts/test-opencode-v2-sandbox.sh`) stays V2-only and rejects `--run v1`;
+  the V1 row is measured by `tests/canary/run-v1-permission-proof.sh`, which runs
+  `tests/canary/v1-permission-canary.test.mjs` against the real host. On OpenCode
+  `1.19.4` (2026-10-22), with `bash`/`write`/`edit: deny` and `read: allow`, the
+  host makes `bash` and `write` unavailable, produces no side effect and keeps
+  `read` working. The guarantee is therefore **config-level**: the hook does not
+  fire on OpenCode `1.19.x` — the V1 probe recorded zero `permission.ask`
+  invocations — and the permission request goes to the client
+  (`permission.asked`, `GET /permission`, `POST /permission/{id}/reply`), where a
+  client `reject` does block. The generations differ in the **mechanism**, not in
+  the string: the exact `permission.ask` string is absent from both binaries,
+  while V2 evaluates the request in `permission.evaluate` (proved by the V2
+  matrix). Results are recorded in
+  `bench/results/p05-permission-matrix-2026-10-22.md`; the V1 path is also
+  covered by the dependency pin (`@opencode-ai/plugin` / `@opencode-ai/sdk`
+  `1.18.33`), the generation-gate unit tests and the installer end-to-end tests
+  over emitted config.
+- **`2.1.x` is proved as a line, not as a single patch** (ADR-0014 Amendment 1):
+  the matrix cell requires two measurements per release — the floor `2.1.0` and
+  the newest `2.1.x` patch published at freeze time (`2.1.3` when the matrix was
+  frozen on 2026-10-22) — both with the post-fix permission matrix in `PASS` and
+  no `FAIL` cell. If the registry publishes another `2.1.x` before the release
+  gate, the line is measured again against that patch.
 
 The full policy, including the verification table, is in the
 [README compatibility section](../README.md#compatibility-and-support-policy).

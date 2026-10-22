@@ -5,15 +5,21 @@
 > ### ⚠️ Before you upgrade: check the line boundary
 >
 > **1.6.x is the last Pantheon line that supports an OpenCode 1.X host.** The
-> 1.6.x line supports OpenCode **1.19.x** (V1 plugin) and OpenCode **2.0.22,
-> 2.0.29, 2.0.30 and 2.1.0** (V2 plugin); **OpenCode 2.0.31 is not supported**
-> (no runtime evidence). Node **>=26.4.0** is the package floor and Python
-> **>=3.11** is required for the optional MCP servers.
+> 1.6.x line supports OpenCode **1.19.x** (V1 plugin; read-only enforcement
+> measured on `1.19.4` — config-level; the hook does not fire there and the V1
+> probe recorded zero invocations) and OpenCode
+> **2.0.29, 2.0.30 and 2.1.x** (V2 plugin);
+> **OpenCode 2.0.22 is not supported** (the host
+> exposes neither `ctx.permission.assert` nor `worktree_*` /
+> `pantheon_bounded_read`) and **OpenCode 2.0.31 is not supported** (no runtime
+> evidence). Node **>=26.4.0** is the package floor and Python **>=3.11** is
+> required for the optional MCP servers.
 >
 > From **1.7 onward** the line drops the V1 contract and targets OpenCode 2
 > only. Upgrading from 1.6.x to 1.7+ therefore crosses a Pantheon support
 > boundary (1.X removed); OpenCode 2 support itself is already present in 1.6.x,
-> including 2.1.0 through its own validation phase. The policy, its support
+> including the `2.1.x` line, proved at the floor `2.1.0` and at the newest
+> `2.1.x` patch at freeze (ADR-0014 Amendment 1). The policy, its support
 > matrix and what is verified against which host are in the
 > [README compatibility section](../README.md#compatibility-and-support-policy)
 > and, in more detail, in

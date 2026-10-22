@@ -35,7 +35,7 @@ way to plan work, make progress, check results, and keep useful project context.
 ## Start in 2 minutes
 
 Requirements: [OpenCode](https://opencode.ai/docs/) **1.19.x**, or
-**2.0.22 / 2.0.29 / 2.0.30 / 2.1.0** — **2.0.31 is not supported**. Node.js
+**2.0.29 / 2.0.30 / 2.1.x** — **2.0.22 and 2.0.31 are not supported**. Node.js
 **>=26.4.0** for the Pantheon CLI, installer, and Node-based tooling (Node 22,
 24, and 26.0–26.3 are outside the matrix); Python **>=3.11** for the optional
 MCP servers. For which OpenCode generation each Pantheon release line supports,
@@ -212,29 +212,41 @@ services you choose to use. Check the
 
 > ### ⚠️ 1.6.x is the LAST line that supports OpenCode 1.X — and the first that supports 2.1
 >
-> **Supported hosts for the 1.6.x line:** OpenCode **1.19.x** (V1 plugin) and
-> OpenCode **2.0.22, 2.0.29, 2.0.30 and 2.1.0** (V2 plugin). **OpenCode 2.0.31 is
-> not supported**: there is no runtime evidence for it, and it is not part of the
-> matrix. Node **>=26.4.0** is the single package floor (Node 22, 24 and
-> 26.0–26.3 are outside the matrix); Python **>=3.11** is required for the
-> optional MCP servers.
+> **Supported hosts for the 1.6.x line:** OpenCode **1.19.x** (V1 plugin;
+> read-only enforcement measured on `1.19.4` on 2026-10-22) and OpenCode
+> **2.0.29, 2.0.30 and 2.1.x** (V2 plugin). **OpenCode 2.0.22 is not supported**:
+> the host does not expose
+> `ctx.permission.assert`, nor `worktree_*` / `pantheon_bounded_read`.
+> **OpenCode 2.0.31 is not supported**: there is no runtime evidence for it, and
+> it is not part of the matrix. Node **>=26.4.0** is the single package floor
+> (Node 22, 24 and 26.0–26.3 are outside the matrix); Python **>=3.11** is
+> required for the optional MCP servers.
 >
 > **OpenCode 1.X support ends after the 1.6 line.** From **1.7 onward** the line
 > drops the V1 contract and targets OpenCode 2 only — a Pantheon support
-> boundary, not a claim that 1.6 lacks OpenCode 2 support. OpenCode 2.1.0 is
-> already supported on 1.6.x through its own adoption/validation phase
-> (ADR-0014 Q2).
+> boundary, not a claim that 1.6 lacks OpenCode 2 support. The `2.1.x` line is
+> already supported on 1.6.x, with the required proof at the floor `2.1.0` and at
+> the newest `2.1.x` patch available at freeze (ADR-0014 Amendment 1).
 
-| Pantheon line | OpenCode 1.19.x | OpenCode 2.0.22 / 2.0.29 / 2.0.30 | OpenCode 2.1.0 | OpenCode 2.0.31 |
-|---|---|---|---|---|
-| **1.6.x** (current line) | **Supported — evidence pending (Phase 5).** V1 plugin contract | **Supported.** V2 contract | **Supported.** V2 contract, own validation phase | **Not supported.** No runtime evidence |
-| **1.7 and later** | **Not supported.** Breaking change | **Target of the 1.7+ work.** V2 only | **Target of the 1.7+ work.** V2 only | **Not supported** unless added by evidence |
+| Pantheon line | OpenCode 1.19.x | OpenCode 2.0.29 / 2.0.30 | OpenCode 2.1.x (`>=2.1.0 <2.2`) | OpenCode 2.0.22 | OpenCode 2.0.31 |
+|---|---|---|---|---|---|
+| **1.6.x** (current line) | **Supported — PASS: config-level read-only enforcement.** V1 plugin contract; measured on `1.19.4`, where `permission.ask` never fires and the guarantee comes from `bash`/`write`/`edit: deny` plus `read: allow` in config | **Supported — PASS measured.** V2 contract; post-fix permission matrix with zero `FAIL` cells | **Supported — PASS measured** at the floor `2.1.0` and at the newest patch at freeze (`2.1.3`). V2 contract | **Not supported.** Host lacks the required V2 API: no `ctx.permission.assert`, no `worktree_*` / `pantheon_bounded_read` | **Not supported.** No runtime evidence |
+| **1.7 and later** | **Not supported.** Breaking change | **Target of the 1.7+ work.** V2 only | **Target of the 1.7+ work.** V2 only | **Not supported** | **Not supported** unless added by evidence |
 
-Every 1.6.x host cell above is **supported and to test** in this release; a
-`WARN`, `SKIP`, `NOT_TESTED` or `AMBIENTAL` result is not a `PASS`
-([ROADMAP charter](ROADMAP.md#road-to-stable--charter)). The 1.6.x cells are
-different claims: read [the plugin contract](#opencode-v1v2--dual-version-160-beta1)
-for what each generation actually registers.
+The supported 1.6.x cells are per-host claims, not one blanket result.
+`2.0.29`, `2.0.30` and `2.1.x` carry a measured `PASS` from the V2 permission
+matrix; `1.19.x` carries a measured `PASS` from a different mechanism —
+**config-level read-only enforcement**, not the `permission.ask` hook, which does
+not fire on that host. A missing row is not a `PASS`, and a `WARN`, `SKIP`,
+`NOT_TESTED` or `AMBIENTAL` result is not a `PASS` either
+([ROADMAP charter](ROADMAP.md#road-to-stable--charter)).
+`2.0.22` left the matrix on runtime evidence rather than on absence of evidence:
+the host does not expose `ctx.permission.assert`, so permission-ordering
+behaviour is not observable on it, and it also lacks `worktree_*` and
+`pantheon_bounded_read`; its `PASS` would be a false green. The cells are also
+different contracts: read
+[the plugin contract](#opencode-v1v2--dual-version-160-beta1) for what each
+generation actually registers.
 
 ### Node runtime floor
 
@@ -267,6 +279,20 @@ the V1 compaction path. It is selected automatically: the generation gate
 (`--opencode-version`, else `OPENCODE_VERSION`, else a `OPENCODE_BIN` basename of
 `opencode2`, else a `--version` probe where major ≥ 2 selects V2) resolves a 1.X
 host to V1.
+
+That describes the contract. The 1.19.x row is now a **measurement**, not a
+pending item: on OpenCode `1.19.4` (2026-10-22), with `bash`, `write` and `edit`
+set to `deny` and `read` set to `allow`, the host makes `bash` and `write`
+unavailable, produces no side effect, and `read` still works. The proof is
+**config-level**, not hook-based: the hook does not fire on OpenCode `1.19.x` —
+the V1 probe recorded zero `permission.ask` invocations. On that host the
+permission request goes to the client instead (`permission.asked`,
+`GET /permission`, then `POST /permission/{id}/reply`), and a client `reject`
+does block the call. What separates the generations is the **mechanism**, not the
+string: the exact `permission.ask` string is absent from both binaries, while V2
+evaluates the request in `permission.evaluate` — proved by the V2 matrix. The
+probe is `tests/canary/v1-permission-canary.test.mjs`, driven by
+`tests/canary/run-v1-permission-proof.sh`.
 
 The two generations are exclusive. The installer strips Pantheon references from
 both config shapes and registers only the selected one, so a 1.X host never
@@ -302,12 +328,17 @@ read-only `execute.before` guard still denies mutating tools in read-only
 sessions. OpenCode v2.0.29 runtime evidence is in
 [`bench/results/f4a-v229-admission-identity-2026-10-14.md`](bench/results/f4a-v229-admission-identity-2026-10-14.md).
 
-**Partial, with the exercised host version made explicit.** The V2 tool canary
-started against `opencode 2.0.22`, a version that no npm channel publishes.
-The current F4A rerun now uses the installable **OpenCode v2.0.29** binary and
-passes 18/18 checks with permission probes: the real plugin registers and runs
+**Partial, with the exercised host version made explicit.** An earlier version of
+the V2 tool canary started against `opencode 2.0.22`, a build that no npm channel
+publishes and that is **not in the matrix**: it exposes neither
+`ctx.permission.assert` nor `worktree_*` / `pantheon_bounded_read`, so its
+permission-ordering cells cannot be observed. The current F4A rerun uses the
+installable **OpenCode v2.0.29** binary and passes 18/18 checks with permission
+probes: the real plugin registers and runs
 its tools, admits the valid Zeus→Apollo root dispatch, rejects an invalid edge
 before child creation, and rejects a matrix-valid dispatch from a child. The
+same post-fix permission matrix passes with zero `FAIL` cells on `2.0.30` and on
+the `2.1.x` line (floor `2.1.0` and newest patch at freeze). The
 remaining V2 surface still has unsupported goal tools and registration-only
 session/compaction hooks, so the 1.6 line is not full V2 feature parity.
 
@@ -355,10 +386,11 @@ procedure.
 
 | What | Verified against | How |
 |---|---|---|
-| V1 plugin + generation gate | The OpenCode **1.19.x** line (supported and to test in this release). This package pins `@opencode-ai/plugin` and `@opencode-ai/sdk` to `1.18.33`; the highest published `opencode-ai` host package (the one shipping the `opencode` binary) is `1.19.4` (dist-tag `latest`, verified 2026-10-22) | Dependency pin (`package.json`); generation-gate unit tests over injected host banners; installer end-to-end tests asserting the emitted `opencode.json` shape |
+| V1 plugin + generation gate | The OpenCode **1.19.x** line — runtime measurement on `1.19.4` (2026-10-22). This package pins `@opencode-ai/plugin` and `@opencode-ai/sdk` to `1.18.33`; the highest published `opencode-ai` host package (the one shipping the `opencode` binary) is `1.19.4` (dist-tag `latest`, verified 2026-10-22) | Dependency pin (`package.json`); generation-gate unit tests over injected host banners; installer end-to-end tests asserting the emitted `opencode.json` shape; V1 permission probe on the real host |
 | V2 plugin tool surface | OpenCode v2.0.29 | `tests/canary/plugin-v2-tool-canary.test.mjs`, driving the real plugin through `opencode serve`; F4A permission canary passes 18/18 |
 | V2 native subagent admission | OpenCode v2.0.29 | `tests/canary/run-v2-permission-proof.sh`; identity, root/child checks and permission-before-child ordering are recorded in [`bench/results/f4a-v229-admission-identity-2026-10-14.md`](bench/results/f4a-v229-admission-identity-2026-10-14.md) |
-| OpenCode 1.19.x runtime evidence | **Not yet measured.** No V1 host leg exists: the sandbox runner is V2-only and `--run v1` is rejected. `1.19.x` is therefore supported **and to test**, not a line with historical evidence | Fase 5 host leg required; a missing row is not a `PASS` |
+| V2 permission matrix (post-fix) | OpenCode **2.0.29**, **2.0.30** and **2.1.x** — floor `2.1.0` and newest `2.1.x` patch available at freeze | Post-fix rerun on 2026-10-22 with zero `FAIL` cells, registered in ADR-0014 Amendment 1; that evidence bundle lives outside this repository |
+| OpenCode 1.19.x runtime evidence | **Measured on OpenCode `1.19.4` on 2026-10-22.** With `bash`/`write`/`edit: deny` and `read: allow`, the host hides `bash` and `write`, produces no side effect and keeps `read` working — enforcement is **config-level**; the hook does not fire on that host (zero `permission.ask` invocations recorded by the probe) | `tests/canary/v1-permission-canary.test.mjs` via `tests/canary/run-v1-permission-proof.sh`; results in [`bench/results/p05-permission-matrix-2026-10-22.md`](bench/results/p05-permission-matrix-2026-10-22.md) |
 
 ## Delegation (root `subagent`; host/API `task()`)
 
@@ -726,8 +758,9 @@ Key order does not matter.
 
 > **Read [Compatibility and support policy](#compatibility-and-support-policy)
 > before upgrading across a line boundary.** 1.6.x is the last line that
-> supports an OpenCode 1.X host (**1.19.x**); it also supports OpenCode
-> **2.0.22, 2.0.29, 2.0.30 and 2.1.0** (2.0.31 is not supported). From 1.7
+> supports an OpenCode 1.X host (**1.19.x**; read-only enforced by config,
+> measured on `1.19.4`); it also supports OpenCode
+> **2.0.29, 2.0.30 and 2.1.x** (2.0.22 and 2.0.31 are not supported). From 1.7
 > onward the line drops the V1 contract and targets OpenCode 2 only. Within the
 > 1.6 line, `update` is the supported path.
 
@@ -846,6 +879,13 @@ checks every packaged `dist` artifact byte-for-byte against its checked-in
 version, including final newlines. The build includes separate V1 and native
 OpenCode V2 TUI entrypoints; `init` selects the entrypoint and sidebar slot API
 for the host generation in use.
+
+The native V2 sidebar shows the Pantheon version, active preset/source, git
+branch, session cost plus the context percentage (same token formula as the
+host), the current agent with its resolved model, and running delegations with
+`agent→model` and elapsed time. Everything is added with `append` claims: the
+native prompt footer keeps its own line, and Pantheon only appends
+`⚡<preset> · ✦<n> ativos` while delegations are running.
 
 ## Sandbox validation (V2)
 
