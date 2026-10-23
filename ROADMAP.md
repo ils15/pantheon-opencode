@@ -40,7 +40,7 @@ actually published.
   `execute.after` result chain. See [OpenCode V2](docs/opencode-v2.md) and
   [Architecture](docs/ARCHITECTURE.md).
 - **MCP servers on a pinned runtime.** Five local servers on MCP SDK 2.2.0 and
-  FastMCP 4.0.10, with isolated Python environments. See [MCP](docs/MCP.md).
+  FastMCP 4.1.2, with isolated Python environments. See [MCP](docs/MCP.md).
 - **Memory that stays bounded.** A 64 KiB per-entry cap, optional TTL, explicit
   purge, and an opt-in V2 injection path. See [Memory](docs/MEMORY.md).
 - **Cost that answers money questions.** USD by agent and phase, by model, and

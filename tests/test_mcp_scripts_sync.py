@@ -102,7 +102,7 @@ def test_mcp_servers_use_standalone_fastmcp_api(server_path: str) -> None:
 
 
 def test_mcp_requirement_manifests_pin_the_coordinated_major_versions() -> None:
-    expected = {"mcp": "2.2.0", "fastmcp": "4.0.10"}
+    expected = {"mcp": "2.2.0", "fastmcp": "4.1.2"}
     manifests = (
         REPO_ROOT / "src/mcp/requirements-mcp.txt",
         REPO_ROOT / "src/mcp/requirements-vision.txt",

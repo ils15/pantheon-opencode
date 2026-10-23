@@ -37,9 +37,10 @@
     "seroval": "1.6.8",
     "solid-js": "1.9.12",
     "rolldown": "1.2.7",
-    "toml": "5.0.1"
+    "toml": "5.0.1",
+    "zod": "4.6.6"
   },
-  "//overrides": "TUI production advisory fixes: Babel >=7.29.6 and Seroval >=1.6.3; Solid stays at 1.9.12 to satisfy OpenTUI's exact peer. Remove only after upstream ranges include fixed versions; Seroval compatibility is covered by the Solid serializer regression test.",
+  "//overrides": "TUI production advisory fixes: Babel >=7.29.6 and Seroval >=1.6.3; zod >=4.6.6 for GHSA-mrhx-c7xc-m3w5 (@opencode-ai/plugin pins zod 4.1.8 exactly, so the override is the only way to move it); Solid stays at 1.9.12 to satisfy OpenTUI's exact peer. Remove only after upstream ranges include fixed versions; Seroval compatibility is covered by the Solid serializer regression test.",
   "dependencies": {
     "@opencode-ai/plugin": "1.18.33",
     "@opencode/plugin": "2.0.26",

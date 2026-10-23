@@ -191,7 +191,7 @@ they do not add a V2 plugin proxy or another goal database. Canonical agent
 frontmatter grants them only to Zeus. All other agents are denied.
 
 Goals are partitioned by OpenCode session id inside the Persistence deployment
-database; in a global install, projects share that database. FastMCP 4.0.10
+database; in a global install, projects share that database. FastMCP 4.1.2
 handlers read the session id from
 `Context.request_context.meta["ai.opencode/sessionID"]`. Missing, malformed, or
 invalid metadata fails closed. The session id is a correlation/scope key, not
