@@ -206,13 +206,13 @@ or whole-file binary classification. The host-backed evidence is in
 
 `npm run coverage:plugin-v2` runs the `tests/pantheon/*.test.ts` suite with
 Node's source-mapped native coverage and enforces an 80% line-coverage minimum
-for `src/plugin-v2.ts` only. It requires Node `>=26.4.0`; branch and function
+for [`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts) only. It requires Node `>=26.4.0`; branch and function
 coverage are reported but are not gates. This is not a repository-wide coverage
 claim.
 
 ## Memory MCP source of truth
 
-`src/mcp/memory_mcp.py` is the canonical Memory MCP server and exposes the six
+[`src/mcp/memory_mcp.py`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/memory_mcp.py) is the canonical Memory MCP server and exposes the six
 `memory_*` tools plus three `code_*` codemap tools. `scripts/memory_mcp.py` is a
 source-tree compatibility entrypoint that delegates to it. The runtime installer
 copies the canonical source into the installed scripts directory, while

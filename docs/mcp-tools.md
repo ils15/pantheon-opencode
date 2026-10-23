@@ -48,7 +48,7 @@ read_mcp_resource(server="pantheon-resources", uri="pantheon://routing")
 ### pantheon-memory (persistent storage)
 
 Lexical memory with SQLite FTS5 (BM25). The canonical source,
-`src/mcp/memory_mcp.py`, registers **9 tools**: 6 `memory_*` tools for storing,
+[`src/mcp/memory_mcp.py`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/memory_mcp.py), registers **9 tools**: 6 `memory_*` tools for storing,
 searching, recalling, forgetting, listing, and inspecting entries, plus 3
 `code_*` codemap operations. `scripts/memory_mcp.py` is a compatibility
 entrypoint that delegates to this canonical implementation. The runtime
@@ -295,7 +295,7 @@ only, with the report saying so.
 ### Cost backend and attribution
 
 `pantheon_cost` prefers a read-only `node:sqlite` connection to the selected
-`opencode.db` (`src/pantheon/cost-command.ts`). When `node:sqlite` is
+`opencode.db` ([`src/pantheon/cost-command.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/cost-command.ts)). When `node:sqlite` is
 unavailable in the host runtime — for example under Bun — the tool falls back to
 spawning `node scripts/cost.mjs` as a read-only subprocess. The fallback
 resolves a real Node binary, `PANTHEON_NODE` first and then `node` on `PATH`,

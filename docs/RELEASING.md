@@ -57,7 +57,7 @@ npm run release:dry-run
 npm install --prefix src/plugins/tui && npm run build --prefix src/plugins/tui
 
 `apply` syncs the version manifests (`package.json`, `plugin.json`,
-`pyproject.toml`, `src/plugins/tui/package.json`) and promotes the
+`pyproject.toml`, [`src/plugins/tui/package.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json)) and promotes the
 `[Unreleased]` changelog section to a versioned entry. `apply --beta` (alias
 `beta`) does the same: it syncs the manifests to the next committed
 `X.Y.Z-beta.N` **and** promotes `[Unreleased]` to `## [vX.Y.Z-beta.N]`. Do not
@@ -66,7 +66,7 @@ edit `CHANGELOG.md` by hand. When the target version section already exists,
 and resets the template without advancing the package version or duplicating
 the release heading. Release validation also
 keeps the root pair (`package.json` + `package-lock.json`) and the TUI pair
-(`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`) in the
+([`src/plugins/tui/package.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json) + [`src/plugins/tui/package-lock.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package-lock.json)) in the
 same versioned inventory. The TUI is a root **workspace**, so CI installs both
 with a single `npm ci --ignore-scripts` at the root; the nested TUI lock is
 still versioned and still shipped because the user-facing postinstall syncs
@@ -83,7 +83,7 @@ workflow-owned (see below).
    node scripts/versioning.mjs apply minor   # or patch/major
    ```
    or edit `package.json` directly — the version is the release signal.
-   The TUI manifest (`src/plugins/tui/package.json`) carries the same version;
+   The TUI manifest ([`src/plugins/tui/package.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json)) carries the same version;
    `npm run version:check` fails when the two drift. `node_modules/` state is
    irrelevant here: the TUI is a root workspace, so one root `npm ci
    --ignore-scripts` installs it.
@@ -95,7 +95,7 @@ workflow-owned (see below).
    `versioning.mjs` and any release docs deliberately edited. The paths below
    are illustrative and incomplete; check the full diff rather than treating
    this list as exhaustive. In particular, **do not omit
-   `src/plugins/tui/dist/tui.js`**: the bundle embeds the package version and
+   [`src/plugins/tui/dist/tui.js`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/dist/tui.js)**: the bundle embeds the package version and
    CI checks TUI dist freshness. Leave unrelated changes and untracked RED
    tests out of the release commit.
 
@@ -170,7 +170,7 @@ npm run release:dry-run
 The script exits 0 whenever it can generate. stdout is markdown ready to
 paste into the `[Unreleased]` CHANGELOG section (diagnostics go to stderr).
 
-### Release body by channel
+## Release body by channel
 
 `release.yml` extracts the release body from the committed `CHANGELOG.md` for
 both dispatch channels; only the stable channel attaches it to a GitHub Release:
@@ -269,7 +269,7 @@ before any release credential is exposed.
 
 | Gate | Executed by | Fails when | Evidence |
 |---|---|---|---|
-| (a) tests | `scripts/release-gates.mjs tests`: pytest + `src/mcp` coverage ≥ 80, `test:node`, `test:ts`, `coverage:plugin-v2`, `test:install`; pytest runs in an isolated venv built from `src/mcp/requirements-mcp.txt` | any suite, coverage threshold, or the mandatory install tier fails; an unsatisfiable or unverified pin set fails the gate | `tests.json` |
+| (a) tests | `scripts/release-gates.mjs tests`: pytest + [`src/mcp`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp) coverage ≥ 80, `test:node`, `test:ts`, `coverage:plugin-v2`, `test:install`; pytest runs in an isolated venv built from [`src/mcp/requirements-mcp.txt`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt) | any suite, coverage threshold, or the mandatory install tier fails; an unsatisfiable or unverified pin set fails the gate | `tests.json` |
 | (b) host compatibility | `scripts/release-gates.mjs host`: each **measured** host installed and exercised in an isolated sandbox; the gate reports a supported family with no row as "supported, unmeasured" instead of failing it | a measured row fails, or a known-broken host is listed | `host.json` |
 | (c) install | `scripts/release-gates.mjs install`: the immutable `.tgz` installed globally, headless init, `validate-sandbox-install.mjs`, and a host-backed tool canary | install, init, source comparison, MCP/doctor checks, or canary fails or skips | `install.json`, `install-canary.log` |
 | (d) package | `scripts/release-gates.mjs package`: SHA-256 recomputed over the same `.tgz`, payload inspected, `package:validate` | the digest, name, version, target SHA, or payload disagree; no second `npm pack` is accepted | `package.json` |
@@ -287,7 +287,7 @@ has no `SKIP`.
 #### Python test environment (gate a)
 
 The Python suite imports `fastmcp`/`mcp` at collection time, so its verdict only
-means something against the pins in `src/mcp/requirements-mcp.txt`. Gate (a)
+means something against the pins in [`src/mcp/requirements-mcp.txt`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt). Gate (a)
 therefore does **not** use the runner's ambient interpreter:
 
 - the `validate` job creates `$RUNNER_TEMP/gate-venv` with `python3 -m venv`
@@ -327,7 +327,7 @@ Running `pytest` on an interpreter without these pins is not evidence: with
 fails at **collection** by design, which is an environment defect, not a
 product defect.
 
-### Test tiers
+## Test tiers
 
 - **Default (developer loop):** `npm run test:node` runs `tests/*.mjs` and
   `tests/pantheon/*.mjs` **excluding** `tests/install-opencode.test.mjs` and
@@ -340,17 +340,17 @@ product defect.
 
 ### Coverage contract
 
-- **Required:** Python `src/mcp` branch coverage **≥ 80%**
-  (`coverage report --fail-under=80`) and the `src/plugin-v2.ts` line
+- **Required:** Python [`src/mcp`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp) branch coverage **≥ 80%**
+  (`coverage report --fail-under=80`) and the [`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts) line
   measurement (`npm run coverage:plugin-v2`). Both run in gate (a).
 - **Not PASS:** Node coverage (`npm run coverage`) is report-only and enforces
-  no threshold; TypeScript under `src/` outside the plugin-v2 measurement is
+  no threshold; TypeScript under [`src/`](https://github.com/ils15/pantheon-opencode/tree/main/src) outside the plugin-v2 measurement is
   unmeasured. Neither may be cited as evidence that a threshold passed.
 - No new threshold is introduced by this contract.
 
-### Memory MCP packaging
+## Memory MCP packaging
 
-`src/mcp/memory_mcp.py` is the canonical Memory MCP server. The
+[`src/mcp/memory_mcp.py`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/memory_mcp.py) is the canonical Memory MCP server. The
 `scripts/memory_mcp.py` source-tree entrypoint delegates to it, and the runtime
 installer copies the canonical source into the installed scripts directory.
 `tests/test_mcp_scripts_sync.py` checks that the compatibility entrypoint exposes
@@ -546,7 +546,7 @@ Before cutting a release, verify:
       (`tag < pkg`)
 - [ ] `CHANGELOG.md` has a `## [X.Y.Z] - date` entry for the new version
 - [ ] Version manifests match: `package.json` == `plugin.json` ==
-      `pyproject.toml` == `src/plugins/tui/package.json`
+      `pyproject.toml` == [`src/plugins/tui/package.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json)
 - [ ] All required checks green on the bump PR **and on the push run for the
       merged `main` SHA** (`validate`, `test-suite`, `plugin-v2-ts-coverage`,
       `commitlint`, `security-scan`, `CodeQL`)
