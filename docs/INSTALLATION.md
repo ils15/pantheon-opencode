@@ -1,36 +1,43 @@
 # Pantheon Installation Guide — v1.6.0 (OpenCode 2)
 
-Pantheon v1.6.0 é **compatível com OpenCode 2**. `npx pantheon-opencode init` instala a geração selecionada. O seletor interativo V1 oferece **Inherit**, **OpenCode Go**, **OpenAI** e **Anthropic**; ele pergunta o escopo de gravação apenas para um perfil salvo e não é uma rota de modelo V2. No V2, `pantheon_model` oferece somente `status`, `show`, `set` e `reset` manuais, sem wizard de presets: o default do host fica intacto sem override explícito por agente; markers `preset` e `PANTHEON_MODEL_PRESET` são ignorados e preservados. Herança nativa para delegates: sem preset, os filhos herdam o modelo do chat pai no caminho V1. As tabelas dos presets abaixo são referência V1 legada e derivadas de `src/routing.yml` (sem hardcodar segredos: só nomes de variáveis e `baseURL`s).
+Pantheon v1.6.0 is **compatible with OpenCode 2**. `npx pantheon-opencode init` installs the selected generation. The interactive V1 selector offers **Inherit**, **OpenCode Go**, **OpenAI**, and **Anthropic**; it asks for the write scope only for a saved profile and is not a V2 model route. On V2, `pantheon_model` offers only manual `status`, `show`, `set`, and `reset`, with no preset wizard: the host default stays intact without an explicit per-agent override; `preset` markers and `PANTHEON_MODEL_PRESET` are ignored and preserved. Native inheritance for delegates: without a preset, children inherit the parent chat model on the V1 path. The preset tables below are legacy V1 reference and derived from [`src/routing.yml`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml) (no hardcoded secrets: only variable names and `baseURL`s).
 
 ## TL;DR (Quick Start)
 
 ```bash
-# Instalar agentes Pantheon globalmente (a seleção de presets é V1 legacy)
+# Install Pantheon agents globally (preset selection is V1 legacy)
 npx pantheon-opencode init
 
-# Headless (CI/scripts, usa defaults) — apply não-interativo exige --yes
+# Headless (CI/scripts, uses defaults) — non-interactive apply requires --yes
 npx pantheon-opencode init --headless --yes
 
-# (Opcional) Servidores MCP + skills + plugin TUI
+# (Optional) MCP servers + skills + TUI plugin
 npm run setup
 
-# Verificar instalação
+# Verify installation
 npm run doctor
 ```
 
-- Requisitos: **Node.js >=26.4.0** para a CLI/instalador/ferramentas Node do Pantheon, **Python 3.11+** (opcional, MCP servers), e um host suportado: **OpenCode 1.19.x** (contrato V1) ou **OpenCode 2.x** (contrato V2). **OpenCode 2.0.22 tem falha conhecida** — não expõe `ctx.permission.assert`. Node 22, Node 24 e Node 26.0–26.3 estão fora da faixa suportada.
-- Com a configuração padrão do npm, versões incompatíveis podem gerar `EBADENGINE` como aviso durante a instalação. O postinstall do Pantheon então pula a sincronização Node/config e permite que o pacote termine de instalar; a CLI bloqueia a configuração com uma mensagem explícita antes de gravar arquivos. `engine-strict=true` pode fazer o próprio npm interromper a instalação. Para atualizar sem instalação global/system-wide, use um gerenciador de Node do usuário:
+- **Requirements:** **Node.js >=26.4.0** for Pantheon's CLI/installer/Node tooling, **Python 3.11+** (optional, MCP servers), and a supported host: **OpenCode 1.19.x** (V1 contract) or **OpenCode 2.x** (V2 contract).
+- **Known broken:** OpenCode 2.0.22 does not expose `ctx.permission.assert`. Node 22, Node 24, and Node 26.0–26.3 are outside the supported range.
+- With npm's default configuration, mismatched versions can emit `EBADENGINE` as a warning during install. Pantheon's postinstall then skips Node/config sync and lets the package finish installing; the CLI blocks configuration with an explicit message before writing files.
+- `engine-strict=true` can make npm itself stop the install. To switch without a global/system-wide install, use a user-managed Node version manager:
 
   ```bash
   nvm install 26.4.0 && nvm use 26.4.0
-  # ou: fnm install 26.4.0 && fnm use 26.4.0
-  # ou: volta install node@26.4.0
+  # or: fnm install 26.4.0 && fnm use 26.4.0
+  # or: volta install node@26.4.0
   ```
-- Isso não pressupõe um runtime Node universal para o host OpenCode: o OpenCode 2.x oficial — um host suportado — tem um caminho de runtime Bun e um build Node separado fixado em Node 26.4.0, o que não altera o piso do pacote. Nenhum mínimo de Bun é declarado. `node:sqlite` >=22.5 é apenas um limite de capacidade do backend opcional `pantheon_cost`, não o requisito de suporte do pacote.
-- No resumo de uma configuração interativa em TTY, o instalador recomenda um local persistente externo para futuros worktrees: `<project-parent>/.pantheon-worktrees/<exact-repository-directory-basename>/<task>` (por exemplo, `/home/user/.pantheon-worktrees/My Project/feature-name`). Use o nome exato do diretório do projeto, incluindo espaços; não o normalize como slug. A recomendação é apenas orientação para agentes; o Pantheon não cria worktrees Git nem diretórios automaticamente.
-- A configuração interativa em TTY usa prompts Clack para selecionar componentes, escolher instalação global/projeto e confirmar a revisão antes de aplicar. Cancelar não altera a configuração. `--yes`, `--headless`, `--dry-run` e os caminhos sem TTY mantêm seus comportamentos.
-- Delegação e modo background dependem das ferramentas expostas pela versão/runtime do host. Na sessão Beta 10 reportada, Zeus tinha a ferramenta `subagent`, sem `task_status`/`cancel_task` ou garantia de acompanhamento/recuperação. Verifique o schema e a documentação do runtime; não presuma que `task()` ou background estejam disponíveis. A variável experimental abaixo só se aplica a hosts/versões que a documentem.
-- Passo a passo de 5 minutos: [QUICKSTART.md](QUICKSTART.md).
+- This does not assume a universal Node runtime for the OpenCode host: official OpenCode 2.x — a supported host — has a Bun runtime path and a separate Node build pinned to Node 26.4.0.
+- That host runtime does not change the package floor, and no Bun minimum is declared.
+- `node:sqlite` >=22.5 is only a capability threshold for the optional `pantheon_cost` backend, not the package's support requirement.
+- In an interactive TTY setup summary, the installer recommends a persistent external location for future worktrees: `<project-parent>/.pantheon-worktrees/<exact-repository-directory-basename>/<task>` (for example, `/home/user/.pantheon-worktrees/My Project/feature-name`). Use the project directory's exact basename, including spaces; do not normalize it into a slug.
+- The recommendation is guidance for agents only; Pantheon does not create Git worktrees or directories automatically.
+- Interactive TTY configuration uses Clack prompts to select components, choose a global/project install, and confirm the review before applying. Canceling changes nothing.
+- `--yes`, `--headless`, `--dry-run`, and non-TTY paths keep their existing behavior.
+- Delegation and background mode depend on the tools exposed by the host version/runtime. In the reported Beta 10 session, Zeus had the `subagent` tool, with no `task_status`/`cancel_task` or guarantee of tracking/recovery.
+- Check the runtime's schema and documentation; do not assume `task()` or background are available. The experimental variable below applies only to hosts/versions that document it.
+- 5-minute walkthrough: [QUICKSTART.md](QUICKSTART.md).
 
 ## Installer review, authorization, and recovery
 
@@ -141,7 +148,9 @@ readable inventory, there is no automatic cleanup.
 ## Prerequisites
 
 - **OpenCode 1.19.x**, or **2.x** — [Install OpenCode](https://opencode.ai/docs/). **OpenCode 2.0.22 is known broken** (no `ctx.permission.assert`).
-- **Node.js >=26.4.0** — for `npx pantheon-opencode init` and Node-based Pantheon tooling (`engines.node` = `>=26.4.0`). Node 22, Node 24, and Node 26.0–26.3 are unsupported. The optional `pantheon_cost` backend separately needs `node:sqlite` (Node >=22.5); this capability threshold does not lower package support. Official OpenCode 2.x — a supported host — has a Bun runtime path and a separate Node build pinned to 26.4.0; no Bun minimum is implied.
+- **Node.js >=26.4.0** — for `npx pantheon-opencode init` and Node-based Pantheon tooling (`engines.node` = `>=26.4.0`). Node 22, Node 24, and Node 26.0–26.3 are unsupported.
+- The optional `pantheon_cost` backend separately needs `node:sqlite` (Node >=22.5); this capability threshold does not lower package support.
+- Official OpenCode 2.x — a supported host — has a Bun runtime path and a separate Node build pinned to 26.4.0; no Bun minimum is implied.
 - **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
 
@@ -150,7 +159,7 @@ readable inventory, there is no automatic cleanup.
 The TUI plugin is a **root workspace**. `package.json` declares
 `"workspaces": ["src/plugins/tui"]`, and the root `package-lock.json` carries a
 `link: true` entry for `node_modules/pantheon-tui` resolving to
-`src/plugins/tui`. A single `npm ci --ignore-scripts` at the root installs the
+[`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui). A single `npm ci --ignore-scripts` at the root installs the
 root project **and** the TUI subpackage; there is no second install step, and
 `npm ci --prefix src/plugins/tui` is no longer part of any workflow.
 
@@ -171,7 +180,7 @@ Two lockfiles exist and both are committed, but they now serve **different**
 consumers, which is worth being explicit about:
 
 - **root `package-lock.json`** — what the workspace install and CI use.
-- **`src/plugins/tui/package-lock.json`** — a *published artifact*. It is
+- **[`src/plugins/tui/package-lock.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package-lock.json)** — a *published artifact*. It is
   copied by `scripts/sync-tui.mjs` into the user's live plugin dir, where
   `npm ci --omit=dev` runs against **it**, not the root one. A manifest/lock
   divergence there makes every end user's `npm install pantheon-opencode`
@@ -210,7 +219,7 @@ Two consequences a maintainer must know before touching it:
   gate. Update both overrides, regenerate both locks, rebuild `dist`, and
   review the generated diff together.
 
-### TUI production security overrides
+## TUI production security overrides
 
 The root and standalone TUI manifests override `@babel/core` to `7.29.7`
 (security floor `>=7.29.6`) and `seroval` to `1.6.8` (security floor
@@ -231,29 +240,29 @@ remains clear without them.
 
 `npm run coverage` runs `test:node` under Node's built-in
 `--experimental-test-coverage` and prints line/branch/function coverage for the
-`.mjs`/`.js` modules under `scripts/`, `src/` and `bin/`. It adds **no**
+`.mjs`/`.js` modules under `scripts/`, [`src/`](https://github.com/ils15/pantheon-opencode/tree/main/src) and `bin/`. It adds **no**
 dependencies and enforces **no** threshold — the repository has no established
 coverage floor, so a percentage gate would fail immediately on pre-existing
 untested code and block unrelated work. The number is a baseline to improve
 against, not a gate.
 
 What it does **not** cover: `test:ts` is a hand-rolled `tsx` loop with no
-`node --test` runner, so the 41 TypeScript files under `src/` and `bin/` are
+`node --test` runner, so the 41 TypeScript files under [`src/`](https://github.com/ils15/pantheon-opencode/tree/main/src) and `bin/` are
 entirely unmeasured by this command; `test:ci` is pytest and reports no
 JavaScript coverage at all. Python coverage additionally requires
 `pytest-cov`, which is not declared in any requirements file — see
-`src/mcp/requirements-mcp.txt`.
+[`src/mcp/requirements-mcp.txt`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt).
 
 ## OpenCode generation and plugin contract
 
-The installer selects exactly one plugin generation. V1 registers `src/plugin.ts`
-plus `src/plugins/pantheon-hooks.ts` under the singular `plugin` key. V2
+The installer selects exactly one plugin generation. V1 registers [`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts)
+plus [`src/plugins/pantheon-hooks.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts) under the singular `plugin` key. V2
 registers the `<installed>/src/plugin-v2` directory under the plural `plugins`
 key.
 
 | Selection | Key | Registration | Surface |
 |---|---|---|---|
-| `v1` | `plugin` | `src/plugin.ts` + `src/plugins/pantheon-hooks.ts` | Six tools, board lifecycle, V1 hooks and compaction |
+| `v1` | `plugin` | [`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts) + [`src/plugins/pantheon-hooks.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts) | Six tools, board lifecycle, V1 hooks and compaction |
 | `v2` | `plugins` | `<installed>/src/plugin-v2` | Host-native tools and hooks, read-only enforcement, optional delegation matrix |
 
 Choose explicitly when needed:
@@ -393,7 +402,7 @@ For V2, install the built plugin into `.opencode/plugins/pantheon-tui` so the
 directory contains the V2 `index.ts` and `tui.ts` entrypoints. TUI plugins load
 at process start, so restart OpenCode after each build.
 
-`.opencode/tui.json` is gitignored. Never add `src/plugins/tui` to
+`.opencode/tui.json` is gitignored. Never add [`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui) to
 `opencode.json`; that file is packaged and merged into user configs.
 
 ## Commands
@@ -405,68 +414,68 @@ Type these in the OpenCode chat:
 | `/pantheon` | Multi-perspective council synthesis via inline agents |
 | `/pantheon-audit` | 3-layer code audit: heuristic scan → Themis deep review → OWASP Top 10 |
 | `/pantheon-deepwork` | Heavy multi-phase task with persisted checkpoints and Themis review gates |
-| V1 `/pantheon-model` (wizard) e ações; V2 ferramenta `pantheon_model` (`status\|show\|set\|reset`) | Overrides manuais per-agent em `active-preset.json` (`overrides.agents[agent]`). V2: ações explícitas sem wizard de presets, project-only; `status` mostra overrides e warnings do projeto; `set` recebe `agent`, `model`, `effort` opcional e opcionalmente `scope: project`; `reset` recebe `agent` e opcionalmente `scope: project`. Arquivos globais não são lidos nem aplicados. Mutação global exige autorização humana explícita futura, indisponível nesta ferramenta; `scope=global` e flags de autorização são rejeitados. Escrita atômica `.bak`+lock; nunca escreve `.env` nem top-level `model`. O wizard sem argumentos é legado V1 apenas. |
+| V1 `/pantheon-model` (wizard) and actions; V2 `pantheon_model` tool (`status\|show\|set\|reset`) | Manual per-agent overrides in `active-preset.json` (`overrides.agents[agent]`). V2: explicit actions without a preset wizard, project-only; `status` shows project overrides and warnings; `set` takes `agent`, `model`, optional `effort`, and optionally `scope: project`; `reset` takes `agent` and optionally `scope: project`. Global files are neither read nor applied. Global mutation requires future explicit human authorization, unavailable in this tool; `scope=global` and authorization flags are rejected. Atomic write `.bak`+lock; never writes `.env` or top-level `model`. The wizard with no arguments is V1 legacy only. |
 | `/pantheon-optimize` | Project optimization: bloat scan, deepwork archive, cache migration, token report |
 | `/pantheon-consolidate` | Merge and deduplicate memory entries through the persistence MCP server |
 
-## Troubleshooting — Chaves e Presets
+## Troubleshooting — Keys and Presets
 
-> Esta seção descreve o caminho legado V1 de instalação e presets. No OpenCode
-> V2, `PANTHEON_MODEL_PRESET` e markers `preset` não ativam modelos; somente
-> overrides per-agent explícitos do projeto são aplicados, arquivos globais são
-> ignorados e sem override o modelo do host permanece intacto. Mutação global
-> requer autorização humana explícita futura e não é suportada pela ferramenta.
-> V1 continua inalterado até a decisão de compatibilidade.
+> This section describes the legacy V1 install and preset path. On OpenCode V2,
+> `PANTHEON_MODEL_PRESET` and `preset` markers do not activate models; only
+> explicit project per-agent overrides are applied, global files are ignored,
+> and without an override the host model stays intact. Global mutation requires
+> future explicit human authorization and is not supported by the tool. V1
+> remains unchanged until the compatibility decision.
 
-**Sem segredos hardcoded — só nomes de env vars + `baseURL`s abaixo.**
+**No hardcoded secrets — only env var names + `baseURL`s below.**
 
-### Diagnóstico rápido
+### Quick diagnosis
 
 ```bash
-# ver preset ativo (env vence arquivo)
+# see the active preset (env wins over the file)
 echo $PANTHEON_MODEL_PRESET
 cat .pantheon/active-preset.json 2>/dev/null || cat ~/.config/opencode/.pantheon/active-preset.json 2>/dev/null || echo "nenhum active-preset.json (herança nativa)"
 cat ~/.config/opencode/opencode.json | grep -A2 '"model"' || echo "sem model top-level (esperado no fluxo 1.5.0)"
 
-# status per-agent (sem segredos)
+# per-agent status (no secrets)
 /pantheon-model status
-# ou
+# or
 /pantheon-model show
 
-# validar preset defs
+# validate preset defs
 node scripts/validate-routing.mjs
-# ou
+# or
 node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePresetDefs(m.loadPresetDefs())))"
 ```
 
-### Environment variables por preset (nomes, sem valores)
+### Environment variables per preset (names, no values)
 
-| Preset | Provider | BaseURL | Key env (nome) | Alias de compatibilidade | Quando é exigido |
+| Preset | Provider | BaseURL | Key env (name) | Compatibility alias | When required |
 |---|---|---|---|---|---|
-| `go-free` (legacy) | `opencode` | `https://opencode.ai/zen/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Quando esse V1 profile é aplicado |
-| `go-fast` (legacy) | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Quando esse V1 profile é aplicado |
-| `go-premium` (legacy) | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Quando esse V1 profile é aplicado |
-| `go-hybrid` (OpenCode Go) | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | Quando esse V1 profile é aplicado |
-| `openai` | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | — | Quando esse V1 profile é aplicado |
-| `anthropic` | `anthropic` | `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` | — | Quando esse V1 profile é aplicado |
-| (sem preset) | — | — | — | — | Herança nativa — usa modelo do chat (`/model ...`) |
+| `go-free` (legacy) | `opencode` | `https://opencode.ai/zen/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | When that V1 profile is applied |
+| `go-fast` (legacy) | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | When that V1 profile is applied |
+| `go-premium` (legacy) | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | When that V1 profile is applied |
+| `go-hybrid` (OpenCode Go) | `opencode-go` | `https://opencode.ai/zen/go/v1` | `PANTHEON_OPENCODE_API_KEY` | `OPENCODE_GO_API_KEY` | When that V1 profile is applied |
+| `openai` | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | — | When that V1 profile is applied |
+| `anthropic` | `anthropic` | `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` | — | When that V1 profile is applied |
+| (no preset) | — | — | — | — | Native inheritance — uses the chat model (`/model ...`) |
 
-- Configure a variável adequada no ambiente antes de usar o profile. O wizard mostra apenas o nome da variável: não coleta nem valida chaves, não imprime valores secretos e não escreve `.env`.
-- A configuração do provider no runtime V1 continua usando a variável apropriada quando o preset está ativo. Logs de instalação informam nomes/estado, nunca valores de chave.
+- Configure the appropriate variable in the environment before using the profile. The wizard shows only the variable name: it does not collect or validate keys, print secret values, or write `.env`.
+- Provider configuration on the V1 runtime keeps using the appropriate variable when the preset is active. Install logs report names/state, never key values.
 
-### Erros comuns
+### Common errors
 
-| Sintoma | Causa | Solução |
+| Symptom | Cause | Solution |
 |---|---|---|
-| Provider sem credencial no runtime V1 | Profile Go/OpenAI/Anthropic ativo, mas a variável esperada não está disponível | Configure `PANTHEON_OPENCODE_API_KEY` (alias `OPENCODE_GO_API_KEY` para Go), `OPENAI_API_KEY` ou `ANTHROPIC_API_KEY`, conforme o profile |
-| `unknown agent "foo"` em `/pantheon-model set` | agente não canônico | Use um dos 14: `zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `prometheus`, `hephaestus`, `nyx`, `gaia`, `iris`, `mnemosyne`, `talos` |
-| `model must use provider/model-id format` | modelo sem barra ou com espaço/`..` | Use `provider/model-id` ex.: `openai/gpt-5.6-sol`, `opencode-go/kimi-k2.7-code` (valida `MODEL_REF_PATTERN`) |
-| No V1, `global set/reset requires explicit confirmation...` | `--scope global` sem confirmação | No V1, adicione `--confirm --authorize-global` (ou use `--scope project`, default seguro). Na ferramenta V2, global não é suportado. |
-| `.pantheon/active-preset.json has invalid JSON` | arquivo corrompido | Apague ou corrija JSON; `readActivePresetRaw` trata como ausência + log `warn` sem segredos; `write` preserva anterior se falhar |
-| `health-check: active-preset.json verification failed` | `writeActivePreset` gravou mas `preset` mismatch | Verifique permissões (`mode` default `600`, `O_NOFOLLOW`, `fsync` dir); wizard loga warning, não expõe chave |
-| `[pantheon-delegate] no model resolved for agent "X" — omitting model...` | sem preset e sem override, herança nativa | Normal em default (herança nativa); para pinar, `npx pantheon-opencode set-tier <preset>` ou `/pantheon-model set --agent X ...` |
-| Modelo `text-only` com `hasVision` warning | usou `big-pickle`/`kimi-k2.7-code` etc. para visão | Troque para multimodal (`mimo-v2.5*`, `gpt-5.6*`, `minimax-m3`) ou aceite limitação (`vision:false` no `CAPABILITY_TABLE`) |
-| `Presets defined: 6` falha em `validate-routing.mjs` | `routing.yml` corrompido | `node --check src/pantheon/presets.mjs` + `yamllint src/routing.yml` |
+| Provider without a credential on the V1 runtime | Go/OpenAI/Anthropic profile active, but the expected variable is unavailable | Configure `PANTHEON_OPENCODE_API_KEY` (alias `OPENCODE_GO_API_KEY` for Go), `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`, as the profile requires |
+| `unknown agent "foo"` in `/pantheon-model set` | non-canonical agent | Use one of the 14: `zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `prometheus`, `hephaestus`, `nyx`, `gaia`, `iris`, `mnemosyne`, `talos` |
+| `model must use provider/model-id format` | model without a slash, or with a space/`..` | Use `provider/model-id`, e.g. `openai/gpt-5.6-sol`, `opencode-go/kimi-k2.7-code` (validates `MODEL_REF_PATTERN`) |
+| On V1, `global set/reset requires explicit confirmation...` | `--scope global` without confirmation | On V1, add `--confirm --authorize-global` (or use `--scope project`, the safe default). The V2 tool does not support global. |
+| `.pantheon/active-preset.json has invalid JSON` | corrupted file | Delete or fix the JSON; `readActivePresetRaw` treats it as absent + logs `warn` without secrets; `write` preserves the previous file on failure |
+| `health-check: active-preset.json verification failed` | `writeActivePreset` wrote, but `preset` mismatched | Check permissions (`mode` default `600`, `O_NOFOLLOW`, `fsync` dir); the wizard logs a warning and does not expose the key |
+| `[pantheon-delegate] no model resolved for agent "X" — omitting model...` | no preset and no override, native inheritance | Normal on the default (native inheritance); to pin, `npx pantheon-opencode set-tier <preset>` or `/pantheon-model set --agent X ...` |
+| `text-only` model with a `hasVision` warning | used `big-pickle`/`kimi-k2.7-code` etc. for vision | Switch to a multimodal model (`mimo-v2.5*`, `gpt-5.6*`, `minimax-m3`) or accept the limitation (`vision:false` in the `CAPABILITY_TABLE`) |
+| `Presets defined: 6` fails in `validate-routing.mjs` | corrupted `routing.yml` | `node --check src/pantheon/presets.mjs` + `yamllint src/routing.yml` |
 
 ### Headless / CI (no TTY)
 
@@ -562,20 +571,20 @@ experimental background setting, export
 Verify delegation against the tools actually exposed to Zeus; do not infer
 completion tracking or recovery from a successful dispatch.
 
-**Instalação global isolada:** para testar o pacote instalado em um sandbox
-isolado (sem contaminar o ambiente de dev, que mistura várias instalações), use
-`~/pantheon-sandbox/` — rode `bash ~/pantheon-sandbox/run-test.sh` (mcp list 5/5
-+ doctor + TUI isolado). Esse gate cobre o sandbox preparado; não é uma alegação
-de suporte para todo host real. O runner instala o CLI estável atual de
-`@opencode/cli` por padrão; `OPENCODE_V2_SPEC` permite selecionar outro build.
-Descarte com `rm -rf ~/pantheon-sandbox`; detalhes
-em `~/pantheon-sandbox/README.md`.
+**Isolated global install:** to test the installed package in an isolated
+sandbox (without contaminating the dev environment, which mixes several
+installs), use `~/pantheon-sandbox/` — run
+`bash ~/pantheon-sandbox/run-test.sh` (mcp list 5/5 + doctor + isolated TUI).
+This gate covers the prepared sandbox; it is not a support claim for every real
+host. The runner installs the current stable `@opencode/cli` by default;
+`OPENCODE_V2_SPEC` lets you select another build. Discard with
+`rm -rf ~/pantheon-sandbox`; details in `~/pantheon-sandbox/README.md`.
 
-## Troubleshooting
+## TUI troubleshooting
 
 ### TUI runtime versus development build
 
-The installer treats `src/plugins/tui` as the single source of truth and always
+The installer treats [`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui) as the single source of truth and always
 copies it into the target config as `plugins/pantheon-tui` (the bundled `dist/`
 + `package.json`). OpenCode's TUI loader reads the copied `package.json` `exports`
 map (`./tui` → `dist/tui.js`, `./server` → `dist/server.js`), so users do not
@@ -587,7 +596,7 @@ repository, not post-install health checks; their failure in
 Every install (global or project) registers exactly ONE Pantheon TUI reference
 system-wide — the copied `plugins/pantheon-tui` directory in the installed
 config. Stale references from older installs (dist file paths, in-package
-`src/plugins/tui` dirs, bare `plugins/pantheon-tui` copies, npx paths) are
+[`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui) dirs, bare `plugins/pantheon-tui` copies, npx paths) are
 removed from all `tui.json` locations OpenCode reads: `~/.opencode/tui.json`,
 `~/.config/opencode/tui.json` and `<project>/.opencode/tui.json`.
 
@@ -605,16 +614,20 @@ removed from all `tui.json` locations OpenCode reads: `~/.opencode/tui.json`,
 | Plugin not loading | Ensure `<config>/plugins/pantheon-tui/dist/tui.js` exists (copied at install time) |
 | Health check fails | Run `npm run doctor` for detailed diagnostics |
 
+## MCP troubleshooting
+
+MCP startup and packaging failures are separate from TUI loading.
+
 ### Memory MCP packaging
 
-`src/mcp/memory_mcp.py` is the canonical Memory MCP server. The source-tree
+[`src/mcp/memory_mcp.py`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/memory_mcp.py) is the canonical Memory MCP server. The source-tree
 `scripts/memory_mcp.py` entrypoint delegates to it, and the runtime installer
 copies the canonical source into the installed scripts directory.
 `install-mcp.mjs` first resolves that installed copy and falls back to the
 source-tree entrypoint when running from a checkout. The script-sync test checks
 that both entrypoints expose the same tool list.
 
-### MCP servers e falha de spawn (ENOENT)
+### MCP servers and spawn failure (ENOENT)
 
 Pantheon's MCP servers (resources, code-mode, memory, persistence, vision) are
 spawned by OpenCode as local child processes. Two facts shape how spawn
