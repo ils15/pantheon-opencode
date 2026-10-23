@@ -1,4 +1,4 @@
-<!-- synced-from: README.md @ 13b61c5 -->
+<!-- synced-from: README.md @ 7359e4f -->
 # Pantheon
 
 **Uma forma mais clara de trabalhar com OpenCode em projetos de software
