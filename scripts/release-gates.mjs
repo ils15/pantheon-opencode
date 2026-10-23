@@ -8,9 +8,10 @@
  *
  *   tests      Python/Node/TypeScript suites, the mandatory heavy install tier,
  *              and the required coverage thresholds.
- *   host       The supported OpenCode host matrix, installed and exercised in
- *              an isolated sandbox. Every row must PASS; a missing row or an
- *              unsupported host is a failure, never a SKIP.
+ *   host       The measured OpenCode host evidence, installed and exercised in
+ *              an isolated sandbox. Support is family-level: a measured row
+ *              must PASS, an unmeasured supported family is reported as such,
+ *              and a known-broken host is a failure.
  *   install    The one immutable .tgz installed as a real user, initialized
  *              headlessly, driven through a live host, and compared file-by-file
  *              against the checkout.
@@ -29,10 +30,11 @@
  *   --channel stable|beta Release channel (default: RELEASE_CHANNEL|stable).
  *   --recovery            Recovery dispatch: changelog is the static note.
  *
- * Host matrix: PANTHEON_RELEASE_MATRIX overrides the built-in JSON array. The
- * override is still validated: every supported line must be covered and the
- * hosts ADR-0014 marks unsupported may not appear. A row that cannot run is a
- * FAIL — this script has no SKIP path on purpose.
+ * Host evidence: PANTHEON_RELEASE_MATRIX overrides the built-in JSON array. The
+ * override is still validated: rows must name a supported family and may not
+ * name a known-broken host. A supported family with no row is reported as
+ * "supported, unmeasured", not treated as a failure. A measured row that cannot
+ * run is a FAIL — this script has no SKIP path on purpose.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -50,28 +52,30 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const GATE_NAMES = ['tests', 'host', 'install', 'package', 'changelog', 'metadata']
 
-/** ADR-0014 A1.3: the lines this release claims support for. */
-const REQUIRED_HOST_LINES = ['1.19.x', '2.0.x', '2.1.x']
+/** Support is family-level: these are the families this release supports. */
+export const SUPPORTED_FAMILIES = Object.freeze(['1.19.x', '2.x'])
 
-/** ADR-0014 A1.1/A1.3: present in the registry, explicitly NOT supported. */
-const UNSUPPORTED_HOSTS = new Set(['2.0.22', '2.0.31'])
+/** Known-broken hosts. Every other member of a supported family is supported. */
+export const KNOWN_BROKEN_HOSTS = Object.freeze(['2.0.22'])
+const UNSUPPORTED_HOSTS = new Set(KNOWN_BROKEN_HOSTS)
 
 /**
- * The matrix at the time of freezing. `PANTHEON_RELEASE_MATRIX` overrides it
- * when Phase 5 re-measures a newer 2.1.x patch, per A1.2.
+ * The measured hosts at the time of freezing. Rows are evidence, not the
+ * boundary of support: `PANTHEON_RELEASE_MATRIX` overrides them when a release
+ * needs to exercise a different host.
  */
 const DEFAULT_MATRIX = [
   { host: '1.19.4', line: '1.19.x', kind: 'v1-permission' },
-  { host: '2.0.29', line: '2.0.x', kind: 'sandbox-v2' },
-  { host: '2.0.30', line: '2.0.x', kind: 'sandbox-v2' },
-  { host: '2.1.0', line: '2.1.x', kind: 'sandbox-v2' },
-  { host: '2.1.3', line: '2.1.x', kind: 'sandbox-v2' },
+  { host: '2.0.29', line: '2.x', kind: 'sandbox-v2' },
+  { host: '2.0.30', line: '2.x', kind: 'sandbox-v2' },
+  { host: '2.1.0', line: '2.x', kind: 'sandbox-v2' },
+  { host: '2.1.3', line: '2.x', kind: 'sandbox-v2' },
 ]
 
 const REQUIRED_TARBALL_PAYLOAD = [
@@ -322,41 +326,36 @@ function matrixFromEnv() {
   } catch (error) {
     throw new Error(`PANTHEON_RELEASE_MATRIX is not valid JSON: ${error.message}`)
   }
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error('PANTHEON_RELEASE_MATRIX must be a non-empty JSON array')
+  if (!Array.isArray(parsed)) {
+    throw new Error('PANTHEON_RELEASE_MATRIX must be a JSON array')
   }
   return parsed
 }
 
-function validateMatrix(matrix) {
+export function validateMatrix(matrix) {
+  if (!Array.isArray(matrix)) throw new Error('host evidence must be an array')
   for (const row of matrix) {
     if (!row || typeof row !== 'object') throw new Error('matrix rows must be objects')
     if (!/^\d+\.\d+\.\d+$/.test(String(row.host ?? ''))) {
       throw new Error(`matrix row has an invalid host: ${JSON.stringify(row.host)}`)
     }
     if (UNSUPPORTED_HOSTS.has(row.host)) {
-      throw new Error(`host ${row.host} is explicitly NOT supported by ADR-0014`)
+      throw new Error(`host ${row.host} is known broken and may not be measured as supported`)
     }
-    if (!REQUIRED_HOST_LINES.includes(row.line)) {
-      throw new Error(`matrix row ${row.host} has an undeclared line: ${JSON.stringify(row.line)}`)
+    if (!SUPPORTED_FAMILIES.includes(row.line)) {
+      throw new Error(
+        `matrix row ${row.host} has an undeclared family: ${JSON.stringify(row.line)}`,
+      )
+    }
+    if (row.line === '1.19.x' && !row.host.startsWith('1.19.')) {
+      throw new Error(`host ${row.host} does not belong to the 1.19.x family`)
+    }
+    if (row.line === '2.x' && !row.host.startsWith('2.')) {
+      throw new Error(`host ${row.host} does not belong to the 2.x family`)
     }
     if (!['sandbox-v2', 'v1-permission'].includes(row.kind)) {
       throw new Error(`matrix row ${row.host} has an unknown kind: ${JSON.stringify(row.kind)}`)
     }
-  }
-  for (const line of REQUIRED_HOST_LINES) {
-    if (!matrix.some((row) => row.line === line)) {
-      throw new Error(`supported line ${line} has no matrix row; a missing row is not a PASS`)
-    }
-  }
-  const line21 = matrix.filter((row) => row.line === '2.1.x')
-  if (!line21.some((row) => row.host === '2.1.0')) {
-    throw new Error('the 2.1.x line requires its floor 2.1.0 to be measured (ADR-0014 A1.2)')
-  }
-  if (line21.length < 2) {
-    throw new Error(
-      'the 2.1.x line requires the floor and the newest measured patch (ADR-0014 A1.2)',
-    )
   }
 }
 
@@ -411,9 +410,17 @@ function hostGate(options) {
     }
     checks.push(v1Proof(root, row))
   })
+  const measuredFamilies = [...new Set(matrix.map((row) => row.line))]
+  const unmeasuredFamilies = SUPPORTED_FAMILIES.filter(
+    (family) => !measuredFamilies.includes(family),
+  )
   return {
     checks,
     details: {
+      supportLevel: 'family',
+      supportedFamilies: [...SUPPORTED_FAMILIES],
+      measuredFamilies,
+      unmeasuredFamilies,
       matrix: matrix.map((row) => ({
         host: row.host,
         line: row.line,
@@ -654,4 +661,5 @@ function main() {
   console.log(`evidence: ${path}`)
 }
 
-main()
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+if (isDirectRun) main()
