@@ -115,6 +115,44 @@ async function main(): Promise<void> {
   assert.equal(BOUNDED_READ_MAX_LINES, 400)
   assert.equal(BOUNDED_READ_MAX_BYTES, 32 * 1024)
 
+  await testAsync(
+    'code roots are refused to root Zeus while docs stay readable (read-guard parity)',
+    async () => {
+      const scope = makeScope()
+      try {
+        for (const root of ['src', 'tests', 'scripts']) {
+          mkdirSync(join(scope.project, root), { recursive: true })
+          writeFileSync(join(scope.project, root, 'file.ts'), 'export const x = 1\n')
+        }
+        mkdirSync(join(scope.project, 'docs'), { recursive: true })
+        writeFileSync(join(scope.project, 'docs', 'guide.md'), 'the guide\n')
+
+        for (const root of ['src', 'tests', 'scripts']) {
+          const refused = await invoke(scope, `code-${root}`, {
+            path: `${root}/file.ts`,
+            offset: 1,
+            limit: 10,
+          })
+          assert.equal(
+            refused.output,
+            'PATH_DENIED',
+            `${root}/ must be refused: the read guard refuses the same tree, and this tool is root-Zeus-only`,
+          )
+        }
+        // Refusals happen before quota reservation, so the legitimate read still
+        // has its full budget.
+        const allowed = await invoke(scope, 'docs', {
+          path: 'docs/guide.md',
+          offset: 1,
+          limit: 10,
+        })
+        assert.equal(readResult(allowed).content, 'the guide\n')
+      } finally {
+        rmSync(scope.root, { recursive: true, force: true })
+      }
+    },
+  )
+
   await testAsync('returns only the requested lines after native permission approval', async () => {
     const scope = makeScope()
     try {

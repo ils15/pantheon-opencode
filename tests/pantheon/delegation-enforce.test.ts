@@ -212,6 +212,82 @@ async function main() {
     },
   )
 
+  // ─── Path-form bypasses (review round 2) ───────────────────────────────
+  // The patterns are anchored on `/`, so these spellings of the same source
+  // path used to pass. Normalizing them is a TIGHTENING: it can only deny more.
+
+  await testAsync(
+    'zeus read guard: `./src/index.ts` is the same source path → denied',
+    async () => {
+      assert.throws(
+        () => zeusReadGuard('read', { filePath: './src/index.ts' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+    },
+  )
+
+  await testAsync('zeus read guard: Windows separators (`src\\\\x`) → denied', async () => {
+    assert.throws(
+      () => zeusReadGuard('read', { filePath: 'src\\plugin.ts' }, 'zeus'),
+      /delegate to @apollo/,
+    )
+    assert.throws(
+      () => zeusReadGuard('read', { filePath: 'tests\\unit.test.ts' }, 'zeus'),
+      /delegate to @apollo/,
+    )
+  })
+
+  await testAsync('zeus read guard: absolute path into a source tree → denied', async () => {
+    assert.throws(
+      () => zeusReadGuard('read', { filePath: '/home/dev/repo/src/plugin.ts' }, 'zeus'),
+      /delegate to @apollo/,
+    )
+    assert.throws(
+      () =>
+        zeusReadGuard('read', { filePath: '/home/dev/repo/scripts/hooks/scan-secrets.sh' }, 'zeus'),
+      /delegate to @apollo/,
+    )
+  })
+
+  await testAsync(
+    'zeus read guard: `grep` with `path: "src"` and a harmless pattern → denied',
+    async () => {
+      // Before the fix only `pattern` was inspected, so the directory arg was
+      // never checked: the query looked benign while the read target was src/.
+      assert.throws(
+        () => zeusReadGuard('grep', { path: 'src', pattern: 'TODO' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+      assert.throws(
+        () => zeusReadGuard('grep', { path: './tests', pattern: 'unused' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+    },
+  )
+
+  await testAsync('zeus read guard: a glob of a bare code root → denied', async () => {
+    assert.throws(() => zeusReadGuard('glob', { pattern: 'src' }, 'zeus'), /delegate to @apollo/)
+    assert.throws(
+      () => zeusReadGuard('glob', { pattern: 'scripts' }, 'zeus'),
+      /delegate to @apollo/,
+    )
+  })
+
+  await testAsync(
+    'zeus read guard: a grep QUERY that merely says "src" is not a read → allowed',
+    async () => {
+      zeusReadGuard('grep', { pattern: 'src' }, 'zeus')
+      zeusReadGuard('grep', { path: 'docs', pattern: 'src' }, 'zeus')
+    },
+  )
+
+  await testAsync('zeus read guard: docs/config targets stay readable', async () => {
+    zeusReadGuard('read', { filePath: 'docs/PLAN.md' }, 'zeus')
+    zeusReadGuard('read', { filePath: 'pantheon.schema.json' }, 'zeus')
+    zeusReadGuard('glob', { pattern: 'docs/**/*.md' }, 'zeus')
+    zeusReadGuard('grep', { path: 'docs', pattern: 'delegation' }, 'zeus')
+  })
+
   // ═══════════════════════════════════════════════════════════════════════
   // Read-Only Registry Population (production path)
   // ═══════════════════════════════════════════════════════════════════════
