@@ -211,7 +211,9 @@ replace the V1 `GoalStore`. See
 
 ### pantheon-code-mode (script execution)
 
-Confined automation scripts from `.pantheon/code-mode/`. One tool, 30s timeout, `.sh` and `.py` only.
+Confined automation scripts from `.pantheon/code-mode/`. Two tools, 30s default
+timeout (override per script via YAML frontmatter `timeout`), `.sh` and `.py`
+only.
 
 The server also registers `pantheon://code-mode/scripts` and
 `pantheon://code-mode/scripts/{name}` resources; these are not part of
@@ -219,14 +221,22 @@ The server also registers `pantheon://code-mode/scripts` and
 
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
-| `execute_code_script` | `(script_name: str, args?: list[str])` | Run a script from `.pantheon/code-mode/` and return output | Agents with `bash: allow` (zeus, hermes, aphrodite, demeter, themis, prometheus, hephaestus, talos) |
+| `execute_code_script` | `(script_name: str, args?: list[str], json_output?: bool)` | Run an approved script from `.pantheon/code-mode/`. Returns a plain-text summary, or with `json_output=true` a structured dict with `stdout`, `stderr`, `exit_code`, `duration_ms`, `timed_out` and frontmatter metadata | Agents that grant `pantheon-code-mode: [execute_code_script]` |
+| `approve_code_script` | `(script_name: str, json_output?: bool)` | Record or refresh the script's SHA-256 in the approval manifest. Execution is opt-in: only approved scripts whose hash matches run | No bundled agent — see [Unreachable by any agent](#unreachable-by-any-agent) |
 
-**NOT available to:** athena, apollo, gaia, iris, nyx, mnemosyne (no bash access).
+**Agents granted:** `aphrodite`, `demeter`, `hephaestus`, `hermes`, `mnemosyne`, `nyx`, `prometheus`, `talos`, `themis`
 
-**Use cases by agent:**
+**Agents without a grant:** `apollo`, `athena`, `gaia`, `iris`, `zeus`
+
+These are exact `mcp_tools.pantheon-code-mode` frontmatter grants, not a bash
+permission: `mnemosyne` holds the grant while declaring `bash: deny`, and `iris`
+allows only the scoped commands `git *` and `gh *`. Zeus has no code-mode grant;
+its prompt records that `execute_code_script` was removed and that execution is
+delegated.
+
+**Use cases by agent** (illustrative, not exhaustive):
 | Agent | Typical scripts |
 |-------|----------------|
-| zeus | Orchestration sequences |
 | hermes | `pytest`, `ruff check`, `ruff format` |
 | aphrodite | `npm test`, `biome check` |
 | demeter | `alembic upgrade head && pytest` |
