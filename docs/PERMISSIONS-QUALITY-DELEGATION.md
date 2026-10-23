@@ -20,7 +20,7 @@ Three terms are used throughout, with fixed meanings:
 **Scope.** Behaviour of the OpenCode host itself is out of scope for verification:
 this repository does not vendor the host's source, and its own ambient type
 declaration records that the agent-config surface is not typed here
-(`src/opencode.d.ts:4`). Where the answer lives in the host, this document says so
+([`src/opencode.d.ts:4`](https://github.com/ils15/pantheon-opencode/blob/main/src/opencode.d.ts#L4)). Where the answer lives in the host, this document says so
 rather than guessing.
 
 ---
@@ -28,8 +28,11 @@ rather than guessing.
 ## Table of contents
 
 1. [Quality gates](#1-quality-gates)
+   - [When a review is required](#when-a-review-is-required)
 2. [Agent permissions: four layers at once](#2-agent-permissions-four-layers-at-once)
+   - [Which permission layer is load-bearing](#which-permission-layer-is-load-bearing)
 3. [Delegation](#3-delegation)
+   - [Delegation by host generation](#delegation-by-host-generation)
 4. [Disagreements between layers](#4-disagreements-between-layers)
 5. [Unverified, and the evidence that would settle it](#5-open-questions-and-known-issues)
 
@@ -39,7 +42,7 @@ rather than guessing.
 
 ### 1.1 What the reviewer role is
 
-The reviewer is the agent whose canonical definition is `src/agents/themis.md`. Its
+The reviewer is the agent whose canonical definition is [`src/agents/themis.md`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/themis.md). Its
 own file is the authoritative statement of the contract — read it there:
 [IntentGate, the post-delegation check, the three review layers, the quality-gate
 checklist and the four verdicts](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/themis.md) are all defined in that file
@@ -56,10 +59,10 @@ The single most important fact about the quality gate:
 > **No code path in this repository invokes the reviewer, and no code path reads a
 > review verdict.**
 
-A search for the reviewer role and for verdict identifiers across `src/` and
+A search for the reviewer role and for verdict identifiers across [`src/`](https://github.com/ils15/pantheon-opencode/tree/main/src) and
 `scripts/` returns: the agent-name list in the model-routing table
-(`src/pantheon/model-command.ts:41`), the agent-prefix map in the board
-(`src/pantheon/background-job-board.ts:154`), a model-tier map in a delegation hook
+([`src/pantheon/model-command.ts:41`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/model-command.ts#L41)), the agent-prefix map in the board
+([`src/pantheon/background-job-board.ts:154`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/background-job-board.ts#L154)), a model-tier map in a delegation hook
 (`scripts/hooks/on-subagent-delegation-start.sh:170`), the uninstall manifest, the
 canonical-file existence check in the routing validator, and the hard-coded agent table
 in the AGENTS.md builder. **Not one of those matches invokes the reviewer, and not one
@@ -94,10 +97,10 @@ failing-closed gates, but they are not the reviewer:
 
 | Gate | Mechanism | Where |
 |---|---|---|
-| Read-only sessions may not mutate | `tool.execute.before` throws | `src/pantheon/delegation-enforce.ts:181` (blocked-tool set), `src/plugin.ts:101` |
-| A child session may not delegate again | same guard, child-session branch | `src/pantheon/delegation-enforce.ts:353` |
-| Caller/target delegation matrix | same guard, `isDelegationAllowed` (V1; V2 uses the permission hook — see [§3.5](#35-per-host-generation-what-you-can-rely-on)) | `src/pantheon/delegation-enforce.ts:138` |
-| The orchestrator may not read source | `zeusReadGuard` throws | `src/pantheon/delegation-enforce.ts:221` |
+| Read-only sessions may not mutate | `tool.execute.before` throws | [`src/pantheon/delegation-enforce.ts:181`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L181) (blocked-tool set), [`src/plugin.ts:101`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L101) |
+| A child session may not delegate again | same guard, child-session branch | [`src/pantheon/delegation-enforce.ts:353`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L353) |
+| Caller/target delegation matrix | same guard, `isDelegationAllowed` (V1; V2 uses the permission hook — see [§3.5](#35-per-host-generation-what-you-can-rely-on)) | [`src/pantheon/delegation-enforce.ts:138`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L138) |
+| The orchestrator may not read source | `zeusReadGuard` throws | [`src/pantheon/delegation-enforce.ts:221`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L221) |
 | Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:138` |
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
 | Secrets | pre-commit gitleaks + CI scan | `.pre-commit-config.yaml:7` |
@@ -124,7 +127,7 @@ not a state transition.
 ### 1.3 Blocking versus non-blocking, in this project's terms
 
 The project uses four verdict strings, defined in the reviewer file
-(`src/agents/themis.md:153`). Grouped by what they actually do:
+([`src/agents/themis.md:153`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/themis.md#L153)). Grouped by what they actually do:
 
 | Verdict | Blocking? | Meaning in this project |
 |---|---|---|
@@ -134,7 +137,7 @@ The project uses four verdict strings, defined in the reviewer file
 | `PASS_WITH_NOTES` | **No** | Approved, with suggested improvements. |
 
 The same four terms are reused as an output schema in the orchestrator's instructions
-(`src/instructions/zeus-council-synthesis.instructions.md`), and `PASS_WITH_NOTES`
+([`src/instructions/zeus-council-synthesis.instructions.md`](https://github.com/ils15/pantheon-opencode/blob/main/src/instructions/zeus-council-synthesis.instructions.md)), and `PASS_WITH_NOTES`
 carries the same non-blocking weight there.
 
 Two non-obvious consequences of this vocabulary:
@@ -144,7 +147,7 @@ Two non-obvious consequences of this vocabulary:
   "feeds into" review, not whether review passed — see [§1.4](#14-full-task-versus-subtask-a-qualitative-risk-decision).
 - **The reviewer role itself has a separate, harder block, which is enforced.** The
   reviewer is denied `edit` at the permission layer
-  (`src/agents/themis.md:10`), so a reviewer physically cannot fix what it finds.
+  ([`src/agents/themis.md:10`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/themis.md#L10)), so a reviewer physically cannot fix what it finds.
   The `ABSOLUTE CONSTRAINT` at the top of that file ("REVIEWER ONLY") is therefore
   backed by a real permission, not only by instruction — this is the one place in
   the quality-gate system where the prompt contract and an enforcement mechanism
@@ -152,13 +155,18 @@ Two non-obvious consequences of this vocabulary:
 
 A third, different vocabulary exists for the orchestrator's session-level
 continuation and is unrelated to review verdicts: the injected "pending todos
-remain" prompt (`src/pantheon/todo-enforcer.ts:65`). Do not read it as a review
+remain" prompt ([`src/pantheon/todo-enforcer.ts:65`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/todo-enforcer.ts#L65)). Do not read it as a review
 outcome.
+
+## When a review is required
+
+The reviewer role defines *what* a review checks; this section defines *when* a
+review applies and how an escape hatch is recorded.
 
 ### 1.4 Full task versus subtask: a qualitative risk decision
 
 The current decision is in the orchestrator's instructions
-(`src/instructions/zeus-timeout-retry.instructions.md:76`). It has no file-count or
+([`src/instructions/zeus-timeout-retry.instructions.md:76`](https://github.com/ils15/pantheon-opencode/blob/main/src/instructions/zeus-timeout-retry.instructions.md#L76)). It has no file-count or
 line-count threshold. Choose the lightest route that safely meets the request by
 considering uncertainty, specialist domain, dependencies, risk, and verification:
 
@@ -178,7 +186,7 @@ planning/artifact work, separate discovery, council, and review when no such gat
 required. It does not remove required Themis or other risk-based gates. The result
 format depends on the role: implementation work uses `## subtask_summary`, while
 investigations, Athena plans, and council responses keep their own contracts in
-`src/instructions/agent-return-format.instructions.md`.
+[`src/instructions/agent-return-format.instructions.md`](https://github.com/ils15/pantheon-opencode/blob/main/src/instructions/agent-return-format.instructions.md).
 
 ### 1.5 Escape hatches, and what happens when they are used
 
@@ -187,10 +195,10 @@ use, which is not always what the hatch's name suggests.
 
 | Hatch | Where | Consequence on use |
 |---|---|---|
-| Classify as a subtask | `src/instructions/zeus-timeout-retry.instructions.md:92` | Reviewer is never invoked. Nothing downstream fails. The transcript contains no review verdict, and no code checks for one. **This is the widest hatch and the only one with no trace.** |
-| `PANTHEON_TODO_ENFORCER=off` | `src/pantheon/todo-enforcer.ts:80` | Session-level continuation stops. The routing-matrix mirror is explicitly *not* the switch — the env var is (`src/routing.yml:543` says so in a comment). Read once at plugin construction, so it takes effect on the next process start, not mid-session. |
-| `PANTHEON_HOOKS_LOG=1` | `src/pantheon/logger.ts:97`, `src/plugins/pantheon-hooks.ts:192` | Console echo of the file-only log. Does not change enforcement. |
-| `PANTHEON_TOASTS=off` | `src/plugins/pantheon-hooks.ts:76` | TUI notifications suppressed by category. Every suppressed toast is still written to the structured log and the hook log, so the trail stays auditable at any setting. |
+| Classify as a subtask | [`src/instructions/zeus-timeout-retry.instructions.md:92`](https://github.com/ils15/pantheon-opencode/blob/main/src/instructions/zeus-timeout-retry.instructions.md#L92) | Reviewer is never invoked. Nothing downstream fails. The transcript contains no review verdict, and no code checks for one. **This is the widest hatch and the only one with no trace.** |
+| `PANTHEON_TODO_ENFORCER=off` | [`src/pantheon/todo-enforcer.ts:80`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/todo-enforcer.ts#L80) | Session-level continuation stops. The routing-matrix mirror is explicitly *not* the switch — the env var is ([`src/routing.yml:543`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L543) says so in a comment). Read once at plugin construction, so it takes effect on the next process start, not mid-session. |
+| `PANTHEON_HOOKS_LOG=1` | [`src/pantheon/logger.ts:97`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/logger.ts#L97), [`src/plugins/pantheon-hooks.ts:192`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts#L192) | Console echo of the file-only log. Does not change enforcement. |
+| `PANTHEON_TOASTS=off` | [`src/plugins/pantheon-hooks.ts:76`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts#L76) | TUI notifications suppressed by category. Every suppressed toast is still written to the structured log and the hook log, so the trail stays auditable at any setting. |
 | `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` | documented in [QUICKSTART](QUICKSTART.md) and [INSTALLATION](INSTALLATION.md) | May enable background child sessions only on host versions that support and document this experimental setting; verify the active runtime rather than treating it as a general prerequisite or guarantee. In the reported Beta 10 Zeus-root inventory, `subagent` was callable but `task_status`/`cancel_task` were not exposed; no tracking or recovery guarantee follows. See [§3.1](#31-two-mechanisms-and-what-each-is-for). |
 | `--opencode-version v1\|v2`, `OPENCODE_VERSION`, `OPENCODE_BIN` | `scripts/install/opencode-version.mjs:213` | Pins the plugin generation. Precedence is argument, then env var, then an `opencode2` binary basename, then a `--version` probe, then a warned fallback to V1 (`scripts/install/opencode-version.mjs:223`, `scripts/install/opencode-version.mjs:288`). The fallback is the important one: it **warns and writes the V1 contract**, so an unrecognised 2.x host gets V1 plugins rather than none. |
 | `git commit --no-verify` | `.pre-commit-config.yaml:7` | Skips the secret gate. The config comment names this a security violation; nothing in the repo prevents it. |
@@ -207,23 +215,23 @@ one another, no layer validates against another at runtime, and they can disagre
 
 | # | Layer | Location | What it actually controls | Load-bearing? |
 |---|---|---|---|---|
-| 1 | Per-agent frontmatter | `src/agents/*.md` | A subset of keys reaches the installed config. The full block reaches the host only if the host reads the agent file. | **Partly** — see [§2.6](#26-which-layer-is-load-bearing) |
-| 2 | Routing matrix + permission keys | `src/routing.yml` | `presets:` and `presets.<n>.agents.<a>.model` are read at runtime. **Every permission and delegation key in it is decorative** — decorative here means *no code in this repository reads it*; it does **not** mean the host ignores it ([§2.6](#26-which-layer-is-load-bearing)). One narrow CI-time exception: the validator reads `delegation.zeus` ([§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not)). | **No** — see [§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not) |
+| 1 | Per-agent frontmatter | [`src/agents/*.md`](https://github.com/ils15/pantheon-opencode/tree/main/src/agents) | A subset of keys reaches the installed config. The full block reaches the host only if the host reads the agent file. | **Partly** — see [§2.6](#26-which-layer-is-load-bearing) |
+| 2 | Routing matrix + permission keys | [`src/routing.yml`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml) | `presets:` and `presets.<n>.agents.<a>.model` are read at runtime. **Every permission and delegation key in it is decorative** — decorative here means *no code in this repository reads it*; it does **not** mean the host ignores it ([§2.6](#26-which-layer-is-load-bearing)). One narrow CI-time exception: the validator reads `delegation.zeus` ([§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not)). | **No** — see [§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not) |
 | 3 | Installed config the installer seeds | the user's `opencode.json` | The `agent.<name>.permission` blocks the host reads at session time. | **Yes** — see [§2.4](#24-layer-3-the-config-the-installer-seeds) |
 | 4 | V1→V2 translation map | `scripts/install/config-migration.mjs:49-59` | Only the V2 install path. Converts layer 3's shape; keys outside the six-entry table still pass through — see [§2.5](#25-layer-4-the-v1v2-translation-map). | **Yes, on the V2 path only** |
 
 ### 2.2 Layer 1 — per-agent frontmatter
 
-Fourteen agent files under `src/agents/`. Each declares a `permission:` block.
+Fourteen agent files under [`src/agents/`](https://github.com/ils15/pantheon-opencode/tree/main/src/agents). Each declares a `permission:` block.
 Selected examples, to show the shapes in use:
 
 | Agent | Shape | Citation |
 |---|---|---|
-| `zeus` | flat allows plus `task: {"*": allow}` | `src/agents/zeus.md:5` |
-| `hermes` | flat allows plus `task: {"*": deny, apollo: allow}` | `src/agents/hermes.md:20` |
-| `mnemosyne` | scoped glob denies on `write` and `edit` | `src/agents/mnemosyne.md:31-38` |
-| `iris` | nested command globs under `bash` | `src/agents/iris.md:9` |
-| `apollo` | flat denies **and** a separate `tools:` map | `src/agents/apollo.md:6` |
+| `zeus` | flat allows plus `task: {"*": allow}` | [`src/agents/zeus.md:5`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/zeus.md#L5) |
+| `hermes` | flat allows plus `task: {"*": deny, apollo: allow}` | [`src/agents/hermes.md:20`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/hermes.md#L20) |
+| `mnemosyne` | scoped glob denies on `write` and `edit` | [`src/agents/mnemosyne.md:31-38`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/mnemosyne.md#L31-L38) |
+| `iris` | nested command globs under `bash` | [`src/agents/iris.md:9`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/iris.md#L9) |
+| `apollo` | flat denies **and** a separate `tools:` map | [`src/agents/apollo.md:6`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/apollo.md#L6) |
 
 The per-agent `delegation` intent lives in three more frontmatter-adjacent places,
 and they are three different layers again: `mode:` (`subagent` / `all` / `primary`),
@@ -232,13 +240,13 @@ and they are three different layers again: `mode:` (`subagent` / `all` / `primar
 
 ### 2.3 Layer 2 — `routing.yml`: what is read, and what is not
 
-`src/routing.yml` is a large file that reads like a specification. It is not one.
-Measured, per top-level block, by searching `src/` and `scripts/` for a consumer:
+[`src/routing.yml`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml) is a large file that reads like a specification. It is not one.
+Measured, per top-level block, by searching [`src/`](https://github.com/ils15/pantheon-opencode/tree/main/src) and `scripts/` for a consumer:
 
 | Block | Runtime consumer |
 |---|---|
-| `presets:` | **Read.** `src/pantheon/presets.mjs:185` |
-| `presets.<n>.agents.<a>.model` | **Read.** `applyPreset`, `src/pantheon/presets.mjs:493` (assignment at `:496`) |
+| `presets:` | **Read.** [`src/pantheon/presets.mjs:185`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/presets.mjs#L185) |
+| `presets.<n>.agents.<a>.model` | **Read.** `applyPreset`, [`src/pantheon/presets.mjs:493`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/presets.mjs#L493) (assignment at `:496`) |
 | `agents:` (roles, capabilities, skills, model mapping) | Partly — the validator reads it; the plugin does not |
 | `delegation:` | Partly — the validator reads it, in check G5b (`scripts/validate-routing.mjs:284`); the plugin does not |
 | `permission.task:` | **None** |
@@ -248,29 +256,29 @@ Measured, per top-level block, by searching `src/` and `scripts/` for a consumer
 | `background_job_board:` | **None** |
 | `background_delegation:` | Comment references only, plus one parity test |
 | `handoffs:` | Read by the validator, for referential integrity only |
-| `todo_enforcer:`, `hashline:`, `full_auto:` | **None** — each self-describes as a doc mirror (`src/routing.yml:543`, `src/routing.yml:549`, `src/routing.yml:556`) |
+| `todo_enforcer:`, `hashline:`, `full_auto:` | **None** — each self-describes as a doc mirror ([`src/routing.yml:543`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L543), [`src/routing.yml:549`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L549), [`src/routing.yml:556`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L556)) |
 
 Three of these deserve their own note.
 
 **`permission.task:` is decorative and its value contradicts the frontmatter.**
-`src/routing.yml:531` declares a single global rule, `"*": allow`. Every agent's
+[`src/routing.yml:531`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L531) declares a single global rule, `"*": allow`. Every agent's
 frontmatter instead declares `"*": deny` except the orchestrator's
 (`scripts/validate-routing.mjs:314`). The module that would read the routing block
-exists — `loadRoutingPermissionTask`, `src/pantheon/presets.mjs:226` — and has **no
-caller anywhere in `src/` or `scripts/`**, and no test. Editing it changes nothing.
+exists — `loadRoutingPermissionTask`, [`src/pantheon/presets.mjs:226`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/presets.mjs#L226) — and has **no
+caller anywhere in [`src/`](https://github.com/ils15/pantheon-opencode/tree/main/src) or `scripts/`**, and no test. Editing it changes nothing.
 
 **`background_job_board:` is decorative and its values are duplicated in code.**
-`src/routing.yml:511` declares `max_concurrent_per_agent: 3`, a signal directory and
+[`src/routing.yml:511`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L511) declares `max_concurrent_per_agent: 3`, a signal directory and
 a persistence path. The actual values are hard-coded in the shared-board factory
-(`src/pantheon/shared-board.ts:25`, `src/pantheon/shared-board.ts:26`, `src/pantheon/shared-board.ts:34`) — identical today, two sources.
+([`src/pantheon/shared-board.ts:25`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/shared-board.ts#L25), [`src/pantheon/shared-board.ts:26`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/shared-board.ts#L26), [`src/pantheon/shared-board.ts:34`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/shared-board.ts#L34)) — identical today, two sources.
 Changing the YAML changes nothing; changing the code changes everything.
 
 **The two functions that read `presets.<n>.agents.<a>.model` are not interchangeable.**
-The live reader is `applyPreset` (`src/pantheon/presets.mjs:472`), which walks
-`resolved.agents` at `src/pantheon/presets.mjs:493` and writes `config.agent[a].model`
+The live reader is `applyPreset` ([`src/pantheon/presets.mjs:472`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/presets.mjs#L472)), which walks
+`resolved.agents` at [`src/pantheon/presets.mjs:493`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/presets.mjs#L493) and writes `config.agent[a].model`
 at `:496`. It is reached from the plugin through `applyActivePresetToConfig`
-(`src/pantheon/presets.mjs:532`), called at `src/plugin.ts:385`. Its sibling
-`loadRoutingAgentModels` (`src/pantheon/presets.mjs:262`) performs the same read and
+([`src/pantheon/presets.mjs:532`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/presets.mjs#L532)), called at [`src/plugin.ts:385`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L385). Its sibling
+`loadRoutingAgentModels` ([`src/pantheon/presets.mjs:262`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/presets.mjs#L262)) performs the same read and
 **has no production caller anywhere** — only the test suite and documentation name it.
 The verdict above is about the first; a reader who greps for the function name used in
 `docs/INSTALLATION.md` lands on the dead one.
@@ -349,8 +357,8 @@ The permission-action map has **six** entries
 | `skill` | `skill` | identity |
 | `websearch` | `websearch` | identity |
 
-`bash` and `task` are renames; `write` is an alias of `edit`. Every V2 host measured
-for P0-5 (`2.0.22`, `2.0.30`, `2.1.0`, `2.1.2`) evaluates a `write` tool call under
+`bash` and `task` are renames; `write` is an alias of `edit`. Every measured V2
+host (`2.0.22`, `2.0.30`, `2.1.0`, `2.1.2`) evaluates a `write` tool call under
 the action name `edit`, so a rule emitted as `write` would never be the rule that
 decides the call — both V1 keys collapse onto `edit`, and a collision is resolved by
 effect restrictiveness rather than key order. The remaining three entries are
@@ -453,7 +461,7 @@ Two further consequences, both verified by execution rather than reading:
    effect: "deny"}` followed by `{action: "edit", resource:
    ".pantheon/memory-bank/**", effect: "allow"}` and `{action: "edit", resource:
    ".pantheon/deepwork/**", effect: "allow"}` (the same shape for `edit`) from
-   `src/agents/mnemosyne.md:31-38`. Under specificity ordering the two literal
+   [`src/agents/mnemosyne.md:31-38`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/mnemosyne.md#L31-L38). Under specificity ordering the two literal
    allows are emitted last and are the rules that decide writes inside those
    directories; every other path matches only the `*` deny. The template's intent
    and the host's behaviour agree.
@@ -519,6 +527,11 @@ nothing. Their protection is the plugin's own guard, not the host permission lay
 `websearch` has not been measured; this document makes no claim about it in either
 direction.
 
+## Which permission layer is load-bearing
+
+The four layers above can disagree. This section identifies which one decides
+behavior and how the generated agent table relates to the canonical files.
+
 ### 2.6 Which layer is load-bearing
 
 Stated plainly, with the evidence.
@@ -578,14 +591,14 @@ no permission in this repository prevents the call.
 
 The shared role table lives in the generated [global artifact](https://github.com/ils15/pantheon-opencode/blob/main/AGENTS.global.md),
 whose source is the static `GLOBAL_HEADER` string in
-`scripts/build-agents-md.mjs`. It is **not rendered from** `src/agents/*.md`; changing
+`scripts/build-agents-md.mjs`. It is **not rendered from** [`src/agents/*.md`](https://github.com/ils15/pantheon-opencode/tree/main/src/agents); changing
 an agent's frontmatter or body will not change the table. The build check verifies the
 artifact against the generator, so it detects a stale generated file but does not
 compare the table with canonical agent definitions. The project `AGENTS.md` is a
 separate generated artifact for repository setup and conventions.
 
 There is also a legacy generator, `scripts/install/agents-md.mjs`, whose dynamic
-frontmatter parser would omit Zeus because `src/agents/zeus.md` has no `name:` field.
+frontmatter parser would omit Zeus because [`src/agents/zeus.md`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/zeus.md) has no `name:` field.
 Repository search finds no importer or installer path for that script; it remains a
 packaged standalone script with its own CLI interface. The active build and installer use
 `scripts/build-agents-md.mjs`, which emits both project and global artifacts and keeps
@@ -619,12 +632,12 @@ prefer synchronous dispatch. Keep an explicit conversation checklist when no
 todo-write tool is exposed, and do not claim native todos were updated.
 
 **The background job board.** A pure-TypeScript state machine
-(`src/pantheon/background-job-board.ts:26`) with states
+([`src/pantheon/background-job-board.ts:26`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/background-job-board.ts#L26)) with states
 `running → completed | error | cancelled → reconciled` and a restricted transition
-table (`src/pantheon/background-job-board.ts:47`). **This mechanism does not
+table ([`src/pantheon/background-job-board.ts:47`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/background-job-board.ts#L47)). **This mechanism does not
 delegate anything.** It is a bookkeeping mirror, plus a concurrency counter. Its one
 runtime entry point is a best-effort post-hoc mirror of a native dispatch
-(`src/plugins/pantheon-hooks.ts:798`), and what the mirror is for is stated in the
+([`src/plugins/pantheon-hooks.ts:798`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts#L798)), and what the mirror is for is stated in the
 source: so the finalize path writes a terminal report and the TUI tracks the child
 end-to-end.
 
@@ -633,12 +646,12 @@ Three consequences a planner needs:
 1. **The board cannot start work.** There is no dispatch path through it. Planning a
    workflow "on the board" means planning on a mechanism that only observes.
 2. **The board's only admission control is concurrency** — a running-count cap per
-   agent (`src/pantheon/background-job-board.ts:507`), not a permissions check.
+   agent ([`src/pantheon/background-job-board.ts:507`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/background-job-board.ts#L507)), not a permissions check.
 3. **Its mirror failure is silent by design.** The mirror is fire-and-forget and its
-   rejection handler is an empty catch (`src/plugins/pantheon-hooks.ts:804`). When
+   rejection handler is an empty catch ([`src/plugins/pantheon-hooks.ts:804`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts#L804)). When
    the cap is reached the mirror throws and the catch discards it: the delegation
    still runs, and the job simply never appears on the board. Verified: the cap
-   check is at `src/pantheon/background-job-board.ts:259`, reached only from the
+   check is at [`src/pantheon/background-job-board.ts:259`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/background-job-board.ts#L259), reached only from the
    mirror.
 
 The board methods are internal APIs, not root tools. `waitForTerminal`,
@@ -656,14 +669,14 @@ Three layers again, and this time they do not all agree.
 
 | Layer | Says | Enforced by |
 |---|---|---|
-| Frontmatter `permission.task` | Orchestrator: `"*": allow`. `hermes`/`athena`: `"*": deny, apollo: allow`. All others: `"*": deny`. | The host, from the installed config. It reaches the config (verified, [§2.4](#24-layer-3-the-config-the-installer-seeds)), and the host applies the assumed glob semantics — **measured, PASS** on all five hosts: D1 lets `apollo` complete with 1 child session, D2 denies `demeter` with 0 child sessions (`bench/results/p05-permission-matrix-2026-10-22.md:75-76`; [§5](#5-open-questions-and-known-issues) row 5) |
+| Frontmatter `permission.task` | Orchestrator: `"*": allow`. `hermes`/`athena`: `"*": deny, apollo: allow`. All others: `"*": deny`. | The host, from the installed config. It reaches the config (verified, [§2.4](#24-layer-3-the-config-the-installer-seeds)), and the host applies the assumed glob semantics — **measured, PASS** on all five hosts: D1 lets `apollo` complete with 1 child session, D2 denies `demeter` with 0 child sessions ([`bench/results/p05-permission-matrix-2026-10-22.md:75-76`](https://github.com/ils15/pantheon-opencode/blob/main/bench/results/p05-permission-matrix-2026-10-22.md#L75-L76); [§5](#5-open-questions-and-known-issues) row 5) |
 | Routing matrix (`agents.<a>.subagent_can_delegate_to`) | Same intent, per agent. Enforced as a consistency invariant by the repo validator (`scripts/validate-routing.mjs:236`) and `can_delegate` by `scripts/validate-routing.mjs:214`. | The validator, not the runtime |
-| Runtime matrix (`isDelegationAllowed`) | Orchestrator → anyone; `athena`/`hermes` → `apollo` only; **everything else denied** (`src/pantheon/delegation-enforce.ts:138`) | **The plugin's tool hook** |
+| Runtime matrix (`isDelegationAllowed`) | Orchestrator → anyone; `athena`/`hermes` → `apollo` only; **everything else denied** ([`src/pantheon/delegation-enforce.ts:138`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L138)) | **The plugin's tool hook** |
 
 The runtime matrix is a hard-coded two-line function, not a table read from
 `routing.yml`. Its glob gate is dead in the plugin: the guard is constructed without
-the option that supplies the globs (`src/plugin.ts:101`), so the glob check
-short-circuits on its fail-open branch (`src/pantheon/permission-globs.ts:60`).
+the option that supplies the globs ([`src/plugin.ts:101`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L101)), so the glob check
+short-circuits on its fail-open branch ([`src/pantheon/permission-globs.ts:60`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/permission-globs.ts#L60)).
 
 **Where the two execution paths stand.** The native path and the board path do not
 share a permission source. The native path consults the runtime matrix; the board path
@@ -678,7 +691,7 @@ delegation.
 ### 3.3 The fallback chain
 
 Defined once, in the orchestrator's instructions
-(`src/instructions/zeus-timeout-retry.instructions.md:43`): a per-agent ordered list
+([`src/instructions/zeus-timeout-retry.instructions.md:43`](https://github.com/ils15/pantheon-opencode/blob/main/src/instructions/zeus-timeout-retry.instructions.md#L43)): a per-agent ordered list
 of substitutes, plus a per-role table of timeouts and retry counts, plus an
 escalation protocol.
 
@@ -687,17 +700,17 @@ escalation protocol.
 model-executed text. Two consequences:
 
 - **The timeouts in the routing file are decorative.** `background_delegation.timeout_ms`
-  (`src/routing.yml:516`) has no consumer; the table that is actually presented to the
+  ([`src/routing.yml:516`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L516)) has no consumer; the table that is actually presented to the
   orchestrator is in the instructions file. Where the two disagree, the instructions
   win because they are what the model reads.
 - **No chain step invokes anything.** Every entry is a decision the orchestrator
   makes, including the terminal ones. For the reviewer, the GitHub operator and the
   memory-bank owner the chain terminates at the orchestrator itself
-  (`src/routing.yml:475`, `src/routing.yml:487`, `src/routing.yml:489`), so those
+  ([`src/routing.yml:475`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L475), [`src/routing.yml:487`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L487), [`src/routing.yml:489`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L489)), so those
   three have no route out of the chain except a message to the user.
 
 One part of the chain has a code analogue, and it is worth not confusing the two:
-the empty-result guard (`src/pantheon/task-result-guard.ts:14`) converts an empty
+the empty-result guard ([`src/pantheon/task-result-guard.ts:14`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/task-result-guard.ts#L14)) converts an empty
 delegation result into an explicit error so the caller sees a failure rather than
 silence. That is a *failure detector*, not a fallback — it triggers no substitute
 agent.
@@ -705,15 +718,20 @@ agent.
 ### 3.4 Session reuse
 
 The reuse protocol is in the instructions
-(`src/instructions/zeus-timeout-retry.instructions.md:68`): before dispatching,
+([`src/instructions/zeus-timeout-retry.instructions.md:68`](https://github.com/ils15/pantheon-opencode/blob/main/src/instructions/zeus-timeout-retry.instructions.md#L68)): before dispatching,
 check for a prior session with that agent and continue it, passing the files already
 examined. The retention count is `background_delegation.session_max`
-(`src/routing.yml:520`) — **decorative**; no consumer. So the numeric bound is
+([`src/routing.yml:520`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml#L520)) — **decorative**; no consumer. So the numeric bound is
 whatever the instructions say, and the YAML value is not the limit.
 
 Two reuse mechanisms exist and are unrelated to each other: host-level session
 continuation for subagent conversations, and the persistence MCP's checkpoint store
 for orchestrator state. A planner should not assume reusing one reuses the other.
+
+## Delegation by host generation
+
+The delegation mechanics above apply to both contracts; what a planner can rely
+on depends on the host generation selected at install time.
 
 ### 3.5 Per host generation: what you can rely on
 
@@ -726,7 +744,7 @@ this is a genuine fork, not a preference.
 
 The V2 adapter maintains an explicit list of what it does not implement, seeded in a
 plain-`.mjs` module so the plugin, the installer and `doctor` all read the same
-strings (`src/pantheon/v2-unsupported.mjs:55`). Two of those entries decide what a
+strings ([`src/pantheon/v2-unsupported.mjs:55`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs#L55)). Two of those entries decide what a
 planner may rely on.
 
 #### Delegation: available on both contracts, but with a different enforcement floor
@@ -751,34 +769,34 @@ read-only guarantee is **config-level** — with `bash`/`write`/`edit: deny` and
 effect, while `read` keeps working. The permission request goes to the client
 instead (`permission.asked`, `GET /permission`,
 `POST /permission/{id}/reply`), where a client `reject` does block. The probe is
-`tests/canary/run-v1-permission-proof.sh` driving
-`tests/canary/v1-permission-canary.test.mjs`; results are in
-`bench/results/p05-permission-matrix-2026-10-22.md`.
+[`tests/canary/run-v1-permission-proof.sh`](https://github.com/ils15/pantheon-opencode/blob/main/tests/canary/run-v1-permission-proof.sh) driving
+[`tests/canary/v1-permission-canary.test.mjs`](https://github.com/ils15/pantheon-opencode/blob/main/tests/canary/v1-permission-canary.test.mjs); results are in the
+[permission-matrix evidence](https://github.com/ils15/pantheon-opencode/blob/main/bench/results/p05-permission-matrix-2026-10-22.md).
 
 The V2 matrix is implemented by `registerV2PermissionHook`
-(`src/plugin-v2.ts:1379-1509`, registered best-effort at `src/plugin-v2.ts:1707`),
+([`src/plugin-v2.ts:1379-1509`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts#L1379-L1509), registered best-effort at [`src/plugin-v2.ts:1707`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts#L1707)),
 which calls `evaluateV2Delegation`
-(`src/pantheon/v2-delegation-enforce.ts:170-213`). That decision is: Zeus may
+([`src/pantheon/v2-delegation-enforce.ts:170-213`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-delegation-enforce.ts#L170-L213)). That decision is: Zeus may
 target any Pantheon agent; Athena and Hermes may target Apollo only; every other
 Pantheon caller is denied; a child session is denied. It is **not** implemented
 by `createEnforcementGuard`.
 
 The guard is built without `getSessionAgent`, `isRootSession` or
-`isChildSession` (`src/plugin-v2.ts:1138-1176`), for two reasons that are easy to
+`isChildSession` ([`src/plugin-v2.ts:1138-1176`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts#L1138-L1176)), for two reasons that are easy to
 conflate:
 
 1. **Missing `getSessionAgent` — wiring.** V2 learns the active agent from the
    `execute.before` event itself and keeps no session→agent map, so there is no
    lookup to hand the guard: it would call
    `isDelegationAllowed(undefined, target)`, which returns `false` for an
-   undefined caller (`src/pantheon/delegation-enforce.ts:145`) and throw *caller
+   undefined caller ([`src/pantheon/delegation-enforce.ts:145`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L145)) and throw *caller
    agent is unavailable*. This branch is skipped entirely when `isRootSession`
    is undefined.
 2. **Unwired hierarchy — design.** `SessionHierarchyRegistry` gates exactly two
    things: the depth-2 child deny and the root-session gate. Left unseeded,
    `isChild` is `false` for every session, so depth-2 would never fire on a
    genuine child. An unseeded session reports as a *root*, and `true` **passes**
-   the root gate (`src/pantheon/delegation-enforce.ts:109-116`) — it does not deny.
+   the root gate ([`src/pantheon/delegation-enforce.ts:109-116`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L109-L116)) — it does not deny.
 
 **Unwired, not impossible.** V2's `session.created` event carries
 `properties.info.parentID`, so live sessions could be seeded in
@@ -791,14 +809,14 @@ mutating tools in a read-only session (`task` included), but it does not carry
 the caller→target policy. The matrix lives in the permission hook, and that hook
 exists only when the host exposes `ctx.permission.hook`. If the host lacks it or
 registration fails, `markUnsupported('permission-hook')`
-(`src/plugin-v2.ts:1386-1389`) and the matrix is **unavailable**; host
+([`src/plugin-v2.ts:1386-1389`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts#L1386-L1389)) and the matrix is **unavailable**; host
 permissions remain in control.
 
-**Runtime evidence.** The F4A canary on OpenCode `v2.0.29` proves both sides:
+**Runtime evidence.** The runtime canary on OpenCode `v2.0.29` proves both sides:
 an allowed Zeus→Apollo root dispatch is admitted, while a matrix-valid
 Athena→Apollo call from a child is denied and creates no grandchild; an invalid
 Athena→Demeter root dispatch is denied without a child or extra model request
-([`bench/results/f4a-v229-admission-identity-2026-10-14.md`](https://github.com/ils15/pantheon-opencode/blob/main/bench/results/f4a-v229-admission-identity-2026-10-14.md)).
+([the runtime admission evidence](https://github.com/ils15/pantheon-opencode/blob/main/bench/results/f4a-v229-admission-identity-2026-10-14.md)).
 Reproduce with `bash tests/canary/run-v2-permission-proof.sh`.
 
 **What this means for planning:** on the V2 contract, the restriction "only the
@@ -817,16 +835,16 @@ This is the part with no existing documentation, and the part whose absence is n
 the store and the client it needs are all reachable only from the V1 plugin, which
 the V2 contract does not register. The adapter lists the goal tooling as absent for
 exactly this reason: it needs a store, a loop client and a board, none of which the
-V2 plugin context exposes (`src/pantheon/v2-unsupported.mjs:71`).
+V2 plugin context exposes ([`src/pantheon/v2-unsupported.mjs:71`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs#L71)).
 
 The bridge that would carry them across exists and is never wired. The bridge factory
 and the context accessor are both implemented
-(`src/pantheon/v2-bridge.ts:89`, `src/pantheon/v2-bridge.ts:110`), and **no production code path calls the
+([`src/pantheon/v2-bridge.ts:89`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-bridge.ts#L89), [`src/pantheon/v2-bridge.ts:110`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-bridge.ts#L110)), and **no production code path calls the
 factory** — its only callers are in the test suite. So the V2 accessor returns null
 in every real configuration, and that null is handled by *not registering the
 dependent tools* rather than by registering them as non-functional. **Absent, not
 broken** still describes the board itself — but "absent" no longer means "unnoticed":
-the reduction carries a marker (`goal-tools`, `src/pantheon/v2-unsupported.mjs:76`),
+the reduction carries a marker (`goal-tools`, [`src/pantheon/v2-unsupported.mjs:76`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs#L76)),
 and two surfaces report it.
 
 | Board capability | V1 contract | V2 contract |
@@ -853,7 +871,7 @@ reduction instead of leaving a planner to infer it from silence:
   changes the exit code: a V2 install is a supported configuration, not a broken one.
 
 Both read the same frozen seed the plugin builds its live list from
-(`src/pantheon/v2-unsupported.mjs:55`), so the two surfaces cannot report a reduction
+([`src/pantheon/v2-unsupported.mjs:55`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs#L55)), so the two surfaces cannot report a reduction
 the plugin does not, or miss one it does. Neither surface helps a workflow *mid-flight*:
 the notice arrives before you depend on the board, not when a dispatch goes unrecorded.
 
@@ -861,13 +879,13 @@ Two V1-specific behaviours worth stating conditionally as well, since both are
 recorded as observations of specific host builds rather than as guarantees:
 
 - **Restart handling (not job recovery).** On restart, jobs left in `running` are marked errored
-  (`src/plugin.ts:55`). Old jobs are not resumed and child work is not restarted.
+  ([`src/plugin.ts:55`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L55)). Old jobs are not resumed and child work is not restarted.
   The persisted reports remain historical records. See
   [INSTALLATION](INSTALLATION.md).
 - **Background completion observability.** The finalize path is driven by an idle
   event plus a periodic scan. Whether a background child's completion is observable
   at all is recorded in the source as host-build-dependent
-  (`src/plugins/pantheon-hooks.ts:1359`). Plan completion detection on the idle path
+  ([`src/plugins/pantheon-hooks.ts:1359`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts#L1359)). Plan completion detection on the idle path
   and treat an absent completion as possible.
 
 **The reader's rule:** before planning on the job board, on goal tools, or on any
@@ -939,9 +957,10 @@ product limitations. They are not silently `UNVERIFIED`:
 - **Explicitly not measured:** whether `websearch` is gated. No delivered
   config emits it; a `permission.evaluate` probe would settle it.
 
-The full evidence bundle, per-host matrices, and measurement records live in
-`bench/results/` and the release evidence, not in this guide. The three closed
-holes and their fixes are in section 2.
+The full evidence bundle, per-host matrices, and measurement records live in the
+[benchmark evidence](https://github.com/ils15/pantheon-opencode/tree/main/bench/results)
+and the release evidence, not in this guide. The three closed holes and their
+fixes are in section 2.
 
 ## See also
 
