@@ -89,6 +89,14 @@ import type {
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
 import {
+  CONTEXT_PRUNER_CONFIG_KEYS,
+  describeContextPrunerConfigIssues,
+  type PruneSite,
+  type PruneStats,
+  pruneMessages,
+  resolveContextPrunerConfig,
+} from './pantheon/context-pruner.ts'
+import {
   createEnforcementGuard,
   readOnlyRegistry,
   syncReadOnlySession,
@@ -731,20 +739,101 @@ async function onSessionCompacted(_event: V2SessionEvent): Promise<void> {}
 // ─── V2 Session Hooks ───────────────────────────────────────────────────
 
 /**
+ * One-line prune stats entry through the existing hooks.log channel only when
+ * a pass actually rewrote something. Silent no-ops (below threshold, protected
+ * window, already-pruned) stay silent so a compaction does not add noise for
+ * every request.
+ */
+function logContextPrune(stats: PruneStats): void {
+  if (!stats.changed) return
+  appendV2HookLog(
+    `[context-pruner] site=${stats.site} messages=${stats.messagesTouched} ` +
+      `parts=${stats.partsPruned} est_tokens_saved=${stats.estimatedTokensSaved}`,
+  )
+}
+
+/**
+ * Fail-open diagnostics: at most ONE line per session, whatever the engine
+ * threw or however malformed the payload was. Bounded so a long-lived host
+ * cannot accumulate session ids forever.
+ */
+const pruneFailureSessions = new Set<string>()
+const PRUNE_FAILURE_SESSIONS_MAX = 256
+
+function logPruneFailureOnce(sessionID: unknown, site: PruneSite, error: unknown): void {
+  const session = typeof sessionID === 'string' && sessionID !== '' ? sessionID : ''
+  const key = session !== '' ? session : `${site}:unknown`
+  if (pruneFailureSessions.has(key)) return
+  if (pruneFailureSessions.size >= PRUNE_FAILURE_SESSIONS_MAX) pruneFailureSessions.clear()
+  pruneFailureSessions.add(key)
+  const message = error instanceof Error ? error.message : String(error)
+  appendV2HookLog(`[context-pruner] failed open site=${site} session=${key}: ${message}`)
+}
+
+/**
+ * A compaction payload whose `messages` is absent or misnamed is a shape drift,
+ * not a normal no-op: the feature is always-on at that site, so silence would
+ * hide the drift forever. Report `not-array`/`malformed` with the same
+ * once-per-session channel as a thrown failure. The `context` caller invokes
+ * this only when the feature is enabled.
+ */
+function logPruneShapeIssue(stats: PruneStats, sessionID: unknown, site: PruneSite): void {
+  if (stats.skipReason !== 'not-array' && stats.skipReason !== 'malformed') return
+  const detail =
+    stats.skipReason === 'not-array'
+      ? 'not-array: payload.messages is not an array; input left unchanged'
+      : 'malformed: unexpected message shape; input left unchanged'
+  logPruneFailureOnce(sessionID, site, new Error(detail))
+}
+
+/**
+ * Config typos are otherwise invisible: `keepTurn: 7` resolves to the default 4
+ * and the operator believes it applied. Warn ONCE per process, name the
+ * ignored keys and the accepted keys, and keep the fail-open resolution.
+ */
+let contextPrunerConfigWarned = false
+
+function warnContextPrunerConfigOnce(options: unknown): void {
+  if (contextPrunerConfigWarned) return
+  try {
+    const issues = describeContextPrunerConfigIssues(options)
+    if (issues.length === 0) return
+    contextPrunerConfigWarned = true
+    appendV2HookLog(
+      `[context-pruner] ignored invalid context_pruner config: ${issues.join('; ')}; ` +
+        `accepted keys: ${CONTEXT_PRUNER_CONFIG_KEYS.join(', ')}`,
+    )
+  } catch {
+    // A validator must never break setup; silence is the only safe fallback.
+    contextPrunerConfigWarned = true
+  }
+}
+
+/**
  * Register session hooks via V2 ctx.session.hook.
  *
  * The V2 session.hook API (when available) provides:
  *   ctx.session.hook("prompt", handler)  — message admission
  *   ctx.session.hook("context", handler) — system context injection
+ *   ctx.session.hook("compaction", handler) — registered in setup Phase 7
  *
  * Returns true if any hooks were registered.
  */
 async function registerV2SessionHooks(context: PluginContext): Promise<boolean> {
+  // Config validity is independent of hook availability; warn before the early
+  // return so a typo is visible even on a host that registers no session hook.
+  warnContextPrunerConfigOnce(context.options)
   const sessionCtx = hostDomains(context).session
 
   if (!sessionCtx?.hook) {
     return false
   }
+
+  // Resolved once, mirroring `resolveV2SandboxConfig(context.options)`: the
+  // per-request context prune is opt-in because it invalidates the provider
+  // prompt cache and has no measured cost baseline. The compaction site below
+  // applies the rules unconditionally.
+  const prunerConfig = resolveContextPrunerConfig(context.options)
 
   let registered = false
 
@@ -768,15 +857,32 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
         // string entries to `{ type: 'text', text }` parts and append the
         // policy as a part. Junk entries are ignored; a non-array,
         // non-string system is left untouched. Never throws (fail-open).
-        const ctx = event as { system?: unknown } | null | undefined
+        const ctx = event as
+          | { system?: unknown; messages?: unknown; sessionID?: unknown }
+          | null
+          | undefined
         if (ctx == null) return
         const normalized = normalizeSystemToParts(ctx.system)
-        if (normalized == null) return
-        // A bare string is replaced by its part array; an array is mutated in
-        // place (the host may read the original reference).
-        if (typeof ctx.system === 'string') ctx.system = normalized
-        if (!hasPolicyMarker(normalized)) {
-          normalized.push({ type: 'text', text: POLICY } satisfies SystemPart)
+        if (normalized != null) {
+          // A bare string is replaced by its part array; an array is mutated in
+          // place (the host may read the original reference).
+          if (typeof ctx.system === 'string') ctx.system = normalized
+          if (!hasPolicyMarker(normalized)) {
+            normalized.push({ type: 'text', text: POLICY } satisfies SystemPart)
+          }
+        }
+        // Opt-in DCP: same engine as the compaction site, but per-request
+        // pruning invalidates the prompt cache, so it runs only when
+        // `context_pruner.enabled` is explicitly true. Disabled = the hook is
+        // byte-for-byte the previous behaviour.
+        if (prunerConfig.enabled) {
+          try {
+            const stats = pruneMessages(ctx.messages, prunerConfig, 'context')
+            logContextPrune(stats)
+            logPruneShapeIssue(stats, ctx.sessionID, 'context')
+          } catch (error) {
+            logPruneFailureOnce(ctx.sessionID, 'context', error)
+          }
         }
       } catch {
         // Fail-open: never throw to the host.
@@ -1717,28 +1823,44 @@ export const plugin = define({
         // `compacting` is not a valid key: the registry accepts any string and
         // silently drops unknown names, so the old name was a permanent no-op.
         // Proven by the canary's negative control.
-        await compactionCtx.hook('compaction', (_event: unknown) => {
-          // Compaction context build — injects active goals, pending todos,
-          // and in-flight delegations. No V2-side implementation: that build
-          // lives in the V1 path, which is not loaded on a V2-only install.
-          // This registration is a real hook (the canary below proves it
-          // fires) with no V2 behaviour behind it.
-          //
-          // Opt-in lifetime proof for the host-backed hook canary
-          // (tests/pantheon/plugin-v2-hook-canary.test.mjs, MODE=real). It is
-          // inert unless PANTHEON_HOOK_CANARY_LIFETIME_PROOF is set, so
-          // production behaviour is unchanged. This exists because a rename to
-          // `compacting` was a silent no-op for an unknown length of time: the
-          // canary can now observe that THIS registration fired.
-          if (process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF) {
-            try {
-              appendFileSync(
-                process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF,
-                'plugin-v2:session.hook:compaction\n',
-              )
-            } catch {
-              // Proof is best-effort: never let instrumentation break the host.
+        await compactionCtx.hook('compaction', (event: unknown) => {
+          try {
+            // Opt-in lifetime proof for the host-backed hook canary
+            // (tests/pantheon/plugin-v2-hook-canary.test.mjs, MODE=real). It is
+            // inert unless PANTHEON_HOOK_CANARY_LIFETIME_PROOF is set, so
+            // production behaviour is unchanged. This exists because a rename to
+            // `compacting` was a silent no-op for an unknown length of time: the
+            // canary can now observe that THIS registration fired.
+            if (process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF) {
+              try {
+                appendFileSync(
+                  process.env.PANTHEON_HOOK_CANARY_LIFETIME_PROOF,
+                  'plugin-v2:session.hook:compaction\n',
+                )
+              } catch {
+                // Proof is best-effort: never let instrumentation break the host.
+              }
             }
+
+            // DCP dynamic context pruning (V2 only). This hook receives the
+            // provider-bound array exactly before the summarization request,
+            // and mutations are honored per request — the persisted session is
+            // untouched. Apply the rules by default: it only changes what feeds
+            // the summary. Never set `input.result`: the model must summarize
+            // the pruned history, not be replaced by a canned summary.
+            const payload = event as { sessionID?: unknown; messages?: unknown } | null | undefined
+            const prunerConfig = resolveContextPrunerConfig(context.options)
+            const stats = pruneMessages(payload?.messages, prunerConfig, 'compaction')
+            logContextPrune(stats)
+            logPruneShapeIssue(stats, payload?.sessionID, 'compaction')
+          } catch (error) {
+            // Fail-open: any unexpected shape or engine failure must not kill
+            // the compaction request. One diagnostic line per session maximum.
+            logPruneFailureOnce(
+              (event as { sessionID?: unknown } | null)?.sessionID,
+              'compaction',
+              error,
+            )
           }
         })
       } catch {
