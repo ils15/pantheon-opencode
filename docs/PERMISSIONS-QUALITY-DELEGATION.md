@@ -805,6 +805,19 @@ event's own `agent` field, so `read`/`glob`/`grep` of `src/`, `tests/` or
 case-varied `Zeus` identity too, because it normalizes the event agent before
 the exact-match predicate (issue #264).
 
+The guard also normalizes the path it is given and checks every path-bearing
+argument, not the first one it finds: `./src/x`, `src\x` and `/repo/src/x` are
+the same source tree as `src/x`, and `grep` with `path: "src"` plus a harmless
+`pattern` no longer slips through on the query. The V2-only
+`pantheon_bounded_read` tool applies the same restriction to its own targets
+(`src/`, `tests/`, `scripts/` are refused with `PATH_DENIED`) while keeping
+docs, config, the memory bank and `.pantheon/` readable — otherwise a
+root-Zeus-only tool would be a wider door than the `read` it replaces.
+Symlinks are **not** resolved by the predicate: it is pure and synchronous, and
+resolving them would add filesystem I/O to every tool call. `bounded_read`
+itself refuses any path or component that is a symlink, and the native `read`
+resolution is the host's.
+
 **Unwired, not impossible.** V2's `session.created` event carries
 `properties.info.parentID`, so live sessions could be seeded in
 `onSessionCreated`; what V2 lacks is V1's `client.session.list()` startup seed,
@@ -847,10 +860,15 @@ V2 plugin context exposes ([`src/pantheon/v2-unsupported.mjs`](https://github.co
 **The bridge is wired, and the board is still inert.** `createV2Bridge`/`injectBridge`
 are called from the V2 entry (`installV2Bridge`, [`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)), so
 `resolveBridge()` is no longer null and `session.idle` reaches the todo enforcer
-when the host's session domain supports it. What the injected board does **not**
-gain is a writer: the transitions below are driven from V1's event hook and from
-`pantheon-hooks.ts`, neither of which a V2-only install loads, and the reduction is
-declared as `board-transitions`.
+when the host's session domain supports it. When V1 loaded first, it publishes its
+own board+enforcer (`registerV2Bridge` in [`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts)) and V2 reuses that
+instance instead of building a second one — two enforcers would answer one idle
+with two continuation prompts. Construction is guarded: a throw degrades the run to
+a bridge-less plugin and appends the runtime marker `v1-bridge`, rather than
+rejecting `setup()` and taking the read guard, the secret scan and every tool with
+it. What the injected board does **not** gain is a writer: the transitions below are
+driven from V1's event hook and from `pantheon-hooks.ts`, neither of which a
+V2-only install loads, and the reduction is declared as `board-transitions`.
 
 | Board capability | V1 contract | V2 contract |
 |---|---|---|

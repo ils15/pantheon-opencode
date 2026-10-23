@@ -2150,11 +2150,16 @@ export function sanitizeVisionHistory(
 
       const raw = value as { type?: unknown; id?: unknown; mime?: unknown }
       const isImageUrl = raw.type === 'image_url'
+      // AI-SDK provider-bound parts use `{ type: 'image', ... }` rather than
+      // the `image_url`/`file` shapes; without this branch such a part reached
+      // the provider untouched, which is the failure this sanitizer exists to
+      // prevent.
+      const isImagePart = raw.type === 'image'
       const isImageFile =
         raw.type === 'file' &&
         typeof raw.mime === 'string' &&
         raw.mime.toLowerCase().startsWith('image/')
-      if (isImageUrl || isImageFile) {
+      if (isImageUrl || isImagePart || isImageFile) {
         const partID = typeof raw.id === 'string' ? raw.id : ''
         const text =
           descriptions?.get(partID) ??

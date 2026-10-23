@@ -19,10 +19,16 @@
  *                 the measured host may not expose, so the seed still declares
  *                 the reduction.
  *
- * The list is hardcoded on purpose: a diff computed from hook names alone
- * cannot tell an equivalent implementation from a stub, and this file must fail
- * when a mechanism is added to or removed from `src/plugin-v2.ts` without a
- * matching seed update.
+ * What is DERIVED and what is DECLARED, stated precisely (the earlier version of
+ * this file overclaimed): the mechanism list is declared, because only a reader
+ * can say whether two markers are the same behaviour. The set of REGISTRATION
+ * SITES is derived from `src/plugin-v2.ts` — every `ctx.<domain>.hook('<name>')`
+ * and the event/tool subscriptions are extracted from the source and compared
+ * with {@link V2_HOOK_OWNERS}. A new wiring point added to the V2 entry without
+ * an owner here therefore fails, and so does removing one; a mechanism whose
+ * BODY is broken while its call stays in place is not detectable by any text
+ * scan, and this file does not claim otherwise (the behavioural suites cover
+ * that).
  *
  * Run with: npx tsx tests/pantheon/v2-capability-seed.test.ts
  */
@@ -37,6 +43,7 @@ const V1_PLUGIN = read('src/plugin.ts')
 const V2_PLUGIN = read('src/plugin-v2.ts')
 const V1_HOOKS_PLUGIN = read('src/plugins/pantheon-hooks.ts')
 const V2_SHELL_HOOKS = read('src/pantheon/v2-shell-hooks.ts')
+const V1_DELEGATION_ENFORCE = read('src/pantheon/delegation-enforce.ts')
 
 type State = 'ported' | 'missing' | 'conditional'
 
@@ -63,9 +70,14 @@ const MECHANISMS: readonly Mechanism[] = [
   },
   {
     id: 'idle-dispatch (#265)',
-    state: 'ported',
+    // CONDITIONAL, not ported: the call site exists, but it can only reach an
+    // enforcer the measured host cannot construct (see the enforcer entry).
+    // Marking this "ported" would claim idle continuation works on every V2
+    // install, which is exactly the overstatement #267 exists to stop.
+    state: 'conditional',
     v1: /idleDispatcher\.onIdle\(/,
     v2: /todoEnforcer\.onIdle\(/,
+    seed: 'idle-todo-enforcer',
   },
   {
     id: 'idle-todo-enforcer (#265)',
@@ -105,6 +117,19 @@ const MECHANISMS: readonly Mechanism[] = [
     v2Source: V2_SHELL_HOOKS,
   },
   {
+    id: 'delegation-matrix (#264)',
+    state: 'ported',
+    v1: /isDelegationAllowed\(/,
+    v2: /evaluateV2Delegation\(/,
+    v1Source: V1_DELEGATION_ENFORCE,
+  },
+  {
+    id: 'prompt-admission (vision prompt context)',
+    state: 'ported',
+    v1: /'chat\.message':/,
+    v2: /sessionCtx\.hook\('prompt'/,
+  },
+  {
     id: 'tool-ceiling (#266)',
     state: 'missing',
     v1: /handleToolCeilingEvent\(/,
@@ -128,6 +153,53 @@ const MECHANISMS: readonly Mechanism[] = [
     seed: 'board-transitions',
   },
 ]
+
+/**
+ * Every registration site in `src/plugin-v2.ts`, mapped to its owner.
+ *
+ * The SCANNER derives this set from the source (hook names, transform and
+ * event-subscription sites); the test fails if the two disagree, so a wiring
+ * point added to the V2 entry without an owner here is caught. An owner is
+ * either the id of a {@link MECHANISMS} entry, or an `exempt:` note explaining
+ * why that site is out of this table's scope.
+ */
+const REGISTRATION_OWNERS: Readonly<Record<string, string>> = {
+  'hook:execute.before': 'zeus-read-guard (#264)',
+  'hook:execute.after': 'formatter (#266)',
+  'hook:evaluate': 'delegation-matrix (#264)',
+  'hook:context': 'vision-history-sanitization (#266)',
+  'hook:prompt': 'prompt-admission (vision prompt context)',
+  'hook:compaction': 'compaction-context (#266)',
+  'transform:agent':
+    'exempt: Phase 1 agent transform; its reductions are already seeded (agent-transform, agent-model-overrides)',
+  'transform:command':
+    'exempt: Phase 1 command transform; its reduction is already seeded (command-transform)',
+  'transform:reference': 'exempt: Phase 1 reference transform; static, no reduction',
+  'transform:tool': 'exempt: tool registration, covered by the tool-transform runtime marker',
+  'subscribe:event':
+    'exempt: the event subscription itself; each handled event is a behaviour, not a registration',
+}
+
+/**
+ * Extract the registration sites that actually execute — comment lines are
+ * skipped, because the module documents `permission.hook('evaluate')` in prose
+ * and a naive scan would count it twice.
+ */
+function scanV2Registrations(source: string): string[] {
+  const found: string[] = []
+  for (const line of source.split('\n')) {
+    const code = line.trim()
+    if (code.startsWith('*') || code.startsWith('//') || code.startsWith('/*')) continue
+    const hook = /\.hook\(\s*'([^']+)'/.exec(line)
+    if (hook?.[1] !== undefined) found.push(`hook:${hook[1]}`)
+    for (const match of line.matchAll(/context\.(agent|command|reference)\.transform\(/g)) {
+      if (match[1] !== undefined) found.push(`transform:${match[1]}`)
+    }
+    if (/toolCtx\.transform\(/.test(line)) found.push('transform:tool')
+    if (/eventCtx\.subscribe!?\(/.test(line)) found.push('subscribe:event')
+  }
+  return found.sort()
+}
 
 /**
  * Seed entries this table deliberately does not model: each is an adapter
@@ -211,6 +283,25 @@ function main(): void {
       )
     })
   }
+
+  test('the mechanism table covers every registration site derived from the V2 source', () => {
+    const derived = scanV2Registrations(V2_PLUGIN)
+    const declared = Object.keys(REGISTRATION_OWNERS).sort()
+    assert.deepEqual(
+      derived,
+      declared,
+      'a wiring point was added to or removed from src/plugin-v2.ts without an owner in ' +
+        'REGISTRATION_OWNERS — model the mechanism and update the seed, or record why it is exempt',
+    )
+    const mechanismIds = new Set(MECHANISMS.map((mechanism) => mechanism.id))
+    for (const [registration, owner] of Object.entries(REGISTRATION_OWNERS)) {
+      if (owner.startsWith('exempt: ')) continue
+      assert.ok(
+        mechanismIds.has(owner),
+        `${registration} is owned by "${owner}", which is not a mechanism in this table`,
+      )
+    }
+  })
 
   test('every seed entry is either modelled in the table or explicitly exempted', () => {
     const modelled = new Set(MECHANISMS.map((mechanism) => mechanism.seed).filter(Boolean))

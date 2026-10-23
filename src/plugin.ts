@@ -37,6 +37,7 @@ import {
 import { TodoPreserver } from './pantheon/todo-preserve.ts'
 import { handleToolCeilingEvent, type ToolCeilingResult } from './pantheon/tool-ceiling.ts'
 import { checkTuiVersionStaleness } from './pantheon/tui-version-check.ts'
+import { createV2Bridge, registerV2Bridge } from './pantheon/v2-bridge.ts'
 import { activePresetCandidates, createVisionHandler } from './pantheon/vision.ts'
 
 // ─── Background Job Board Singleton ────────────────────────────────────
@@ -315,6 +316,14 @@ const plugin: Plugin = async (input: PluginInput) => {
   })
   const goalTools = goalLoop.tools()
   const idleDispatcher = createIdleDispatcher({ goalLoop, todoEnforcer })
+
+  // Cross-generation bridge (issue #265 review): publish THESE singletons so a
+  // V2 plugin loaded in the same process reuses this enforcer instead of
+  // building a second one. Two enforcers would answer one `session.idle` twice
+  // — V1's dispatcher below and V2's `onSessionIdle` would each inject a
+  // continuation prompt. Registration is a no-op on a V1-only install: nothing
+  // in this process reads the registry unless a V2 entry resolves it.
+  registerV2Bridge(createV2Bridge({ board, todoEnforcer }))
 
   // Wave 2 (PR #46): hashline — tag-anchored edits. The read enhancer
   // (tool.execute.after) augments `read` output with per-line sha256 tags

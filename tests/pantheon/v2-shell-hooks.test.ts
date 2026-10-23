@@ -201,13 +201,50 @@ async function main(): Promise<void> {
     assert.equal(stop?.payload.agent_id, 'gaia')
   })
 
-  await testAsync('after without a prior start still writes a stop record', async () => {
+  await testAsync('an orphan STOP still carries a key (never an unkeyed record)', async () => {
     const { calls, run } = recorder()
     const hooks = createV2ShellHooks({ run })
     await hooks.after(afterEvent())
     const stop = calls.find((call) => call.script === DELEGATION_STOP_SCRIPT)
     assert.ok(stop, 'a missing start record must not suppress the stop record')
-    assert.equal(stop?.payload.delegation_id, undefined)
+    // A stop record with no key can never be joined to anything, so the audit
+    // log cannot close it. Synthesize a key instead of omitting the field.
+    assert.equal(typeof stop?.payload.delegation_id, 'string')
+    assert.notEqual(stop?.payload.delegation_id, '')
+  })
+
+  await testAsync(
+    'an event with no call id writes NEITHER record (no unclosable START)',
+    async () => {
+      const warnings: string[] = []
+      const { calls, run } = recorder()
+      const hooks = createV2ShellHooks({ run, onUnkeyed: (message) => warnings.push(message) })
+      await hooks.before(beforeEvent({ id: undefined }))
+      await hooks.after(afterEvent({ id: undefined }))
+      assert.deepEqual(
+        calls.map((call) => call.script),
+        [FORMATTER_SCRIPT],
+        'the formatter still runs; the audit pair is skipped because it cannot be joined',
+      )
+      assert.equal(
+        warnings.length,
+        1,
+        'the unkeyed case warns once per process, not once per event',
+      )
+      assert.match(warnings[0] ?? '', /no tool call id/)
+    },
+  )
+
+  await testAsync('a START and its STOP always share one non-empty key', async () => {
+    const { calls, run } = recorder()
+    const hooks = createV2ShellHooks({ run })
+    await hooks.before(beforeEvent())
+    await hooks.after(afterEvent())
+    const start = calls.find((call) => call.script === DELEGATION_START_SCRIPT)
+    const stop = calls.find((call) => call.script === DELEGATION_STOP_SCRIPT)
+    assert.equal(typeof start?.payload.delegation_id, 'string')
+    assert.notEqual(start?.payload.delegation_id, '')
+    assert.equal(stop?.payload.delegation_id, start?.payload.delegation_id)
   })
 
   await testAsync(

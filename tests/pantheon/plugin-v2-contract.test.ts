@@ -110,6 +110,8 @@ async function main(): Promise<void> {
     default: plugin,
     V2_UNSUPPORTED_FEATURES,
     getUnsupportedFeatures,
+    resetV2BridgeForTests,
+    setV2Bridge,
     setV2ShellRunnerForTests,
     v2Dispose,
   } = await import('../../src/plugin-v2.ts')
@@ -983,6 +985,7 @@ async function main(): Promise<void> {
     // `onSessionIdle` dispatches to the constructed enforcer, whose first
     // action is the todo lookup. A hand-injected bridge would hide exactly the
     // wiring under test (issue #265).
+    resetV2BridgeForTests()
     await plugin.setup(
       makeBaseContext({
         session: {
@@ -1062,6 +1065,7 @@ async function main(): Promise<void> {
   }
 
   test('plugin.setup injects the bridge (board + enforcer) instead of leaving it null', async () => {
+    resetV2BridgeForTests()
     const context = makeBaseContext({ session: idleSessionDomain({}) })
     await plugin.setup(context as never)
     const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
@@ -1074,6 +1078,7 @@ async function main(): Promise<void> {
   })
 
   test('session.idle reaches the enforcer and injects a continuation prompt', async () => {
+    resetV2BridgeForTests()
     const prompts: Array<Record<string, unknown>> = []
     const sessionID = 'ses-v2-idle-enforcer'
     let idleDelivered!: () => void
@@ -1106,7 +1111,68 @@ async function main(): Promise<void> {
     assert.equal(parts?.[0]?.text, TODO_CONTINUATION_PROMPT)
   })
 
+  test('a bridge registered by V1 in the same process is reused, never duplicated', async () => {
+    // Co-load case (#265 review): when the V1 plugin loaded first it publishes
+    // its own board+enforcer. Building a second enforcer here would make ONE
+    // `session.idle` produce two continuation prompts.
+    resetV2BridgeForTests()
+    const existingEnforcer = {
+      onIdle: async () => {},
+      listPendingTodos: async () => [],
+    }
+    const existingBridge = {
+      board: { list: () => [], get: () => undefined },
+      todoEnforcer: existingEnforcer,
+    }
+    setV2Bridge(existingBridge as never)
+    const context = makeBaseContext({
+      session: idleSessionDomain({ todos: [{ content: 'must not be used', status: 'pending' }] }),
+    })
+    await plugin.setup(context as never)
+    const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
+    assert.equal(
+      injected?.todoEnforcer,
+      existingEnforcer,
+      'the already-registered enforcer must be reused, not replaced by a second instance',
+    )
+    // The V1 side of the same contract: it publishes its singletons so the V2
+    // entry can find them. Asserted on the source because this suite drives the
+    // V2 entry only.
+    assert.match(
+      pluginV1Source,
+      /registerV2Bridge\(createV2Bridge\(\{ board, todoEnforcer \}\)\)/,
+      'src/plugin.ts must register its board+enforcer for the V2 entry',
+    )
+    resetV2BridgeForTests()
+  })
+
+  test('a failing bridge construction never rejects setup and is reported', async () => {
+    // `injectBridge` writes ctx.options. A read-only options object makes that
+    // write throw — the failure mode the guard exists for: before it, the throw
+    // rejected setup() and every later registration (read guard, secret scan,
+    // tools) silently disappeared with it.
+    resetV2BridgeForTests()
+    let before: ((event: unknown) => void | Promise<void>) | undefined
+    const context = makeBaseContext({
+      options: Object.freeze({}),
+      tool: {
+        hook: async (name: string, handler: (event: unknown) => void | Promise<void>) => {
+          if (name === 'execute.before') before = handler
+          return { dispose: async () => {} }
+        },
+      },
+    })
+    await plugin.setup(context as never)
+    assert.equal(typeof before, 'function', 'the execute.before guard must still be registered')
+    assert.ok(
+      getUnsupportedFeatures().includes('v1-bridge'),
+      'a run without a bridge must say so in the unsupported report',
+    )
+    resetV2BridgeForTests()
+  })
+
   test('a host without the session methods yields a bridge with no enforcer (declared reduction)', async () => {
+    resetV2BridgeForTests()
     const context = makeBaseContext({})
     await plugin.setup(context as never)
     const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
@@ -2256,6 +2322,7 @@ async function main(): Promise<void> {
   console.log('\n🧩 V1 Parity Tests (compaction context, vision history, shell hooks)')
 
   test('the compaction hook appends the V1 compaction-context blocks to payload.system', async () => {
+    resetV2BridgeForTests()
     const sessionID = 'ses-v2-compaction' // cspell:disable-line
     let compactionHandler: ((event: unknown) => void | Promise<void>) | undefined
     await plugin.setup(
@@ -2324,6 +2391,8 @@ async function main(): Promise<void> {
               filename: 'shot.png',
               url: 'data:image/png;base64,AA',
             },
+            // AI-SDK shape: the branch that used to slip through untouched.
+            { type: 'image', image: 'data:image/png;base64,BB' },
             { type: 'text', text: 'keep this text' },
           ],
         },
@@ -2337,7 +2406,12 @@ async function main(): Promise<void> {
       'Imagem removida do histórico antes do envio ao provedor textual.',
       'the placeholder is V1’s, not a V2 invention',
     )
-    assert.equal(content[1]?.text, 'keep this text', 'non-image parts are untouched')
+    assert.equal(
+      content[1]?.type,
+      'text',
+      "an AI-SDK `type: 'image'` part must be replaced too — it is the shape that slipped through",
+    )
+    assert.equal(content[2]?.text, 'keep this text', 'non-image parts are untouched')
   })
 
   test('execute.before/after run the delegation audit and formatter scripts through registration', async () => {

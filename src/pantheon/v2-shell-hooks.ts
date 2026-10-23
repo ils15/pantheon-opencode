@@ -141,13 +141,30 @@ export function delegationStatus(event: V2AfterEvent): string {
  *
  * `run` and `now` exist for tests; production uses `runHook` and `Date.now`.
  */
-export function createV2ShellHooks(options: { run?: V2ShellRunner; now?: () => number } = {}): {
+export function createV2ShellHooks(
+  options: {
+    run?: V2ShellRunner
+    now?: () => number
+    /** Diagnostic sink for the unkeyed-event case (wired to hooks.log). */
+    onUnkeyed?: (message: string) => void
+  } = {},
+): {
   before(event: unknown): Promise<void>
   after(event: unknown): Promise<void>
 } {
   const run = options.run ?? defaultRunner
   const now = options.now ?? Date.now
   const starts = new Map<string, DelegationStart>()
+  /** Set once: a host that never sends `id` must not flood the log. */
+  let unkeyedWarned = false
+  const warnUnkeyed = (phase: string): void => {
+    if (unkeyedWarned) return
+    unkeyedWarned = true
+    options.onUnkeyed?.(
+      `[delegation-audit] ${phase} event carries no tool call id; the audit record was skipped ` +
+        'because a START without a key can never be joined by its STOP',
+    )
+  }
 
   /** Fire and swallow: telemetry must never break the observed tool call. */
   const fire = async (script: string, payload: AuditPayload): Promise<void> => {
@@ -173,19 +190,25 @@ export function createV2ShellHooks(options: { run?: V2ShellRunner; now?: () => n
       const tool = text(event.tool)
       if (!V2_DELEGATION_TOOL_RE.test(tool)) return
       const callID = text(event.id)
+      if (callID === '') {
+        // A START record with no joinable key is a record that can never be
+        // closed: the after-event carries no id either, so the STOP would have
+        // to omit `delegation_id` and the audit log would hold an orphan line
+        // forever. Refuse to write it, and say so once.
+        warnUnkeyed('execute.before')
+        return
+      }
       const start: DelegationStart = {
         delegationId: randomUUID(),
         agent: delegationAgent(tool, event.input),
         startedAt: now(),
       }
-      if (callID !== '') {
-        while (starts.size >= MAX_PENDING_STARTS) {
-          const oldest = starts.keys().next().value
-          if (oldest === undefined) break
-          starts.delete(oldest)
-        }
-        starts.set(callID, start)
+      while (starts.size >= MAX_PENDING_STARTS) {
+        const oldest = starts.keys().next().value
+        if (oldest === undefined) break
+        starts.delete(oldest)
       }
+      starts.set(callID, start)
       await fire(DELEGATION_START_SCRIPT, {
         ...basePayload(event),
         agent_id: start.agent,
@@ -203,13 +226,24 @@ export function createV2ShellHooks(options: { run?: V2ShellRunner; now?: () => n
       await fire(FORMATTER_SCRIPT, payload)
       if (!V2_DELEGATION_TOOL_RE.test(tool)) return
       const callID = text(event.id)
-      const start = callID !== '' ? starts.get(callID) : undefined
-      if (callID !== '') starts.delete(callID)
+      if (callID === '') {
+        // Mirrors the before-hook: no key means no join, so no record.
+        warnUnkeyed('execute.after')
+        return
+      }
+      const start = starts.get(callID)
+      starts.delete(callID)
       const taskID = extractTaskID(event.result)
       await fire(DELEGATION_STOP_SCRIPT, {
         ...payload,
         ...(start === undefined
-          ? {}
+          ? {
+              // No BEFORE record (the call was rejected before the audit ran, or
+              // the record was evicted). The STOP still needs a key field to be a
+              // well-formed audit line, so it gets a fresh one — an orphan STOP,
+              // never an unkeyed one.
+              delegation_id: randomUUID(),
+            }
           : {
               // The BEFORE-time agent wins: the AFTER-time args may carry the
               // merged background result, which has no subagent_type.

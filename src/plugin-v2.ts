@@ -130,9 +130,11 @@ import {
 } from './pantheon/v2-bounded-read.ts'
 import {
   createV2Bridge,
+  getRegisteredV2Bridge,
   getV2BridgeFromContext,
   injectBridge,
   type PantheonV2Bridge,
+  registerV2Bridge,
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
 import {
@@ -246,6 +248,9 @@ function normalizeSystemToParts(system: unknown): unknown[] | null {
 
 /** Set once, so a payload without a `system` channel warns once per process. */
 let compactionChannelWarned = false
+
+/** Set once, so a failed bridge construction logs one line per process. */
+let bridgeFailureLogged = false
 
 /**
  * Append text blocks to a hook payload's `system` channel.
@@ -377,14 +382,23 @@ let v1Bridge: PantheonV2Bridge | null = null
  */
 export function setV2Bridge(bridge: PantheonV2Bridge): void {
   v1Bridge = bridge
+  // Also publish process-wide so a V1 load that registers FIRST and a V2 load
+  // that resolves SECOND converge on one bridge (see v2-bridge.ts).
+  registerV2Bridge(bridge)
 }
 
 /**
- * Get the V1 bridge, checking module-level first, then ctx.options.
+ * Get the V1 bridge, checking module-level first, then the process-wide
+ * registration, then ctx.options.
  * Returns null when no bridge is available (V2 standalone mode).
  */
 function resolveBridge(ctx?: V2ContextLike): PantheonV2Bridge | null {
   if (v1Bridge != null) return v1Bridge
+  const registered = getRegisteredV2Bridge()
+  if (registered != null) {
+    v1Bridge = registered
+    return registered
+  }
   if (ctx != null) return getV2BridgeFromContext(ctx)
   return null
 }
@@ -468,6 +482,16 @@ function createV2TodoEnforcerClient(
  * handler is V1-only.
  */
 function installV2Bridge(context: PluginContext): TodoEnforcer | undefined {
+  // Co-load guard (#265 review): a bridge with an enforcer may already exist —
+  // registered by V1 in this process, or by an earlier V2 setup. Building a
+  // second enforcer would answer the same `session.idle` twice (V1's dispatcher
+  // and this plugin each inject a continuation prompt). Reuse, never overwrite.
+  const existing = resolveBridge(context)
+  if (existing?.todoEnforcer !== undefined) {
+    injectBridge(context, existing)
+    return existing.todoEnforcer
+  }
+
   const todoClient = createV2TodoEnforcerClient(hostDomains(context).session)
   if (todoClient === undefined) markUnsupported('idle-todo-enforcer')
   const board = getSharedBoard()
@@ -1561,6 +1585,20 @@ export function setV2ShellRunnerForTests(runner: V2ShellRunner | null): void {
 let shellRunnerOverride: V2ShellRunner | undefined
 
 /**
+ * Test seam — clear the module-level bridge AND the process-wide registration.
+ *
+ * Exported only for tests/pantheon/plugin-v2-contract.test.ts. The co-load guard
+ * makes `installV2Bridge` reuse an existing bridge (so V1's enforcer is never
+ * duplicated), which means a test that asserts the CONSTRUCTION path has to
+ * start from "no bridge". Production has no caller: a process keeps its bridge
+ * for its lifetime.
+ */
+export function resetV2BridgeForTests(): void {
+  v1Bridge = null
+  registerV2Bridge(null)
+}
+
+/**
  * Register tool execution hooks via V2 ctx.tool.hook.
  *
  * The V2 tool.hook API (when available) provides:
@@ -1583,9 +1621,10 @@ async function registerV2ToolHooks(
   // V1 shell-hook parity (#266): formatter on every after-event, delegation
   // audit start/stop. Both scripts are environment-independent, so they are
   // invoked through the same runner the secret scan uses.
-  const shellHooks = createV2ShellHooks(
-    shellRunnerOverride === undefined ? {} : { run: shellRunnerOverride },
-  )
+  const shellHooks = createV2ShellHooks({
+    ...(shellRunnerOverride === undefined ? {} : { run: shellRunnerOverride }),
+    onUnkeyed: appendV2HookLog,
+  })
 
   let registered = false
   let beforeRegistered = false
@@ -2021,7 +2060,28 @@ export const plugin = define({
     // The returned enforcer (when the host session domain supports it) is the
     // single instance: Phase 7 asks it for pending todos and the idle path asks
     // it to continue, so there are never two.
-    const idleEnforcer = installV2Bridge(context)
+    //
+    // Guarded, because this phase is the only one that MUTATES the context:
+    // `injectBridge` writes `ctx.options`, and an unguarded throw here would
+    // reject `setup()` and remove every later registration with it — the read
+    // guard, the secret scan and all tools. A degraded run is far better than a
+    // plugin that registers nothing, and the degradation is reported (`v1-bridge`
+    // in the live unsupported list) instead of being invisible.
+    let idleEnforcer: TodoEnforcer | undefined
+    try {
+      idleEnforcer = installV2Bridge(context)
+    } catch (error) {
+      idleEnforcer = undefined
+      markUnsupported('v1-bridge')
+      if (!bridgeFailureLogged) {
+        bridgeFailureLogged = true
+        const reason = error instanceof Error ? error.message : String(error)
+        appendV2HookLog(
+          `[v1-bridge] construction failed; continuing without a bridge ` +
+            `(idle continuation and todo context unavailable): ${reason}`,
+        )
+      }
+    }
 
     // ─── Phase 1: V2 Transforms (isolated per-domain, best-effort) ────
     // Each transform registration is individually wrapped and settled via Promise.allSettled:

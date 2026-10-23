@@ -284,7 +284,12 @@ The V2 plugin reports these gaps through `getUnsupportedFeatures()`:
   idle reports, dispatch mirror — live in V1's event hook and
   `pantheon-hooks.ts`).
 
-Everything else the V1 plugin wires is on V2: the Zeus read guard, idle
-dispatch through the injected bridge, the compaction context, vision history
-sanitization, the post-write formatter, and the delegation audit trail
-(start/stop records joined on `delegation_id`).
+Everything else the V1 plugin wires is on V2: the Zeus read guard, the
+compaction context, vision history sanitization, the post-write formatter, and
+the delegation audit trail (start/stop records joined on `delegation_id`).
+Idle dispatch is wired but **conditional** — it reaches an enforcer only where
+`idle-todo-enforcer` is not in the seed, which is why that marker is listed
+above. `pantheon_bounded_read` applies the same code-root restriction as the
+read guard: `src/`, `tests/` and `scripts/` are refused; docs, config, the
+memory bank and `.pantheon/` remain readable. If bridge construction fails, the
+plugin keeps running without one and appends the runtime marker `v1-bridge`.
