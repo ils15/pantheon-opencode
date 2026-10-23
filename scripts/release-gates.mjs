@@ -353,10 +353,22 @@ export function validateMatrix(matrix) {
     if (row.line === '2.x' && !row.host.startsWith('2.')) {
       throw new Error(`host ${row.host} does not belong to the 2.x family`)
     }
+    if (row.line === '1.19.x' && row.kind !== 'v1-permission') {
+      throw new Error(`kind ${row.kind} cannot run on the 1.19.x family`)
+    }
+    if (row.line === '2.x' && row.kind !== 'sandbox-v2') {
+      throw new Error(`kind ${row.kind} cannot run on the 2.x family`)
+    }
     if (!['sandbox-v2', 'v1-permission'].includes(row.kind)) {
       throw new Error(`matrix row ${row.host} has an unknown kind: ${JSON.stringify(row.kind)}`)
     }
   }
+}
+
+export function hostEvidenceWarning(checks) {
+  return checks.length === 0
+    ? 'no measured hosts; supported families are reported as unmeasured'
+    : null
 }
 
 function v1Proof(root, row) {
@@ -641,6 +653,11 @@ function main() {
     const result = GATES[options.gate](options)
     record.checks = result.checks ?? []
     record.details = result.details ?? {}
+    const warning = options.gate === 'host' ? hostEvidenceWarning(record.checks) : null
+    if (warning) {
+      record.details.hostEvidenceWarning = warning
+      console.warn(`GATE host: WARNING — ${warning}`)
+    }
   } catch (error) {
     record.status = 'FAIL'
     record.error = error.message

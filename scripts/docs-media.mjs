@@ -14,7 +14,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -109,6 +109,12 @@ if (tapes.length === 0) {
 console.log(`docs:media: recording ${tapes.length} tape(s) from docs/assets/tui`)
 for (const tape of tapes) {
   console.log(`docs:media: vhs ${tape}`)
+  const declared = declaredArtifacts(tape)
+  if (declared.length === 0) {
+    console.error(`docs:media: ${tape} declares no Output or Screenshot`)
+    process.exit(1)
+  }
+  const runStartedAt = Date.now()
   const result = spawnSync('vhs', [tape], { cwd: ASSETS_DIR, stdio: 'inherit' })
   if (result.error) {
     console.error(`docs:media: could not run vhs for ${tape}: ${result.error.message}`)
@@ -118,9 +124,23 @@ for (const tape of tapes) {
     console.error(`docs:media: vhs exited ${result.status ?? 'unknown'} for ${tape}`)
     process.exit(result.status ?? 1)
   }
-  for (const artifact of declaredArtifacts(tape)) {
-    if (!existsSync(join(ASSETS_DIR, artifact.file))) {
-      console.error(`docs:media: ${tape} declares ${artifact.kind} ${artifact.file}, but vhs did not write it`)
+  for (const artifact of declared) {
+    const artifactPath = join(ASSETS_DIR, artifact.file)
+    if (!existsSync(artifactPath)) {
+      console.error(
+        `docs:media: ${tape} declares ${artifact.kind} ${artifact.file}, but vhs did not write it`,
+      )
+      process.exit(1)
+    }
+    const stat = statSync(artifactPath)
+    if (stat.size === 0) {
+      console.error(`docs:media: ${tape} wrote an empty ${artifact.kind} ${artifact.file}`)
+      process.exit(1)
+    }
+    if (stat.mtimeMs <= runStartedAt) {
+      console.error(
+        `docs:media: ${artifact.file} is stale — its mtime is not newer than this run's start`,
+      )
       process.exit(1)
     }
   }

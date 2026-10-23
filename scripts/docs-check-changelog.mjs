@@ -5,11 +5,13 @@
  * Fails on:
  *   - a version heading with the wrong shape;
  *   - an H3 outside {Added, Changed, Deprecated, Removed, Fixed, Security}
- *     inside the maintained sections ([Unreleased] and [v1.6.0]);
- *   - a bullet over 200 characters in those sections;
+ *     inside the maintained sections ([Unreleased] and the newest stable
+ *     version section);
+ *   - a bullet over 200 characters (including continuation lines) in those
+ *     sections;
  *   - an empty subsection under [Unreleased];
  *   - any `## 🆕|🐞|⚠️|✅` H2 anywhere;
- *   - a missing Deprecated or Removed block in [v1.6.0].
+ *   - a missing Deprecated or Removed block in the newest stable version.
  *
  * Historical sections are archived records: only their version-heading shape
  * and the emoji-H2 rule are enforced. The 200-character and H3 rules apply to
@@ -25,9 +27,9 @@ const CHANGELOG = process.argv[2] ? process.argv[2] : join(ROOT, 'CHANGELOG.md')
 const MAX_BULLET = 200
 const ALLOWED_H3 = new Set(['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security'])
 const EMOJI_H2 = /^##\s+(?:🆕|🐞|⚠️|✅)/
-const CURRENT_VERSION_HEADING = /^## \[v1\.6\.0\] - \d{4}-\d{2}-\d{2}$/
+const STABLE_VERSION_HEADING = /^## \[v?(\d+\.\d+\.\d+)\] - \d{4}-\d{2}-\d{2}$/
 // Historical headings may carry a pre-release suffix, a month-only date, or a
-// "(candidate)" marker. The current version above is held to the exact shape.
+// "(candidate)" marker.
 const HISTORICAL_VERSION_HEADING =
   /^## \[v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\](?: - \d{4}-\d{2}(?:-\d{2})?)?(?: \(candidate\))?$/
 const UNRELEASED_HEADING = /^## \[Unreleased\]$/
@@ -37,18 +39,48 @@ function charCount(text) {
   return [...text].length
 }
 
+function newestStableVersion(lines) {
+  for (const line of lines) {
+    const match = STABLE_VERSION_HEADING.exec(line)
+    if (match) return match[1]
+  }
+  return null
+}
+
 function main() {
   const lines = readFileSync(CHANGELOG, 'utf8').split(/\r?\n/)
   const findings = []
   const maintainedH3 = new Map() // section name -> Map<h3, empty>
+  const newest = newestStableVersion(lines)
+
+  if (newest === null) {
+    console.error('CHANGELOG.md: no stable version heading found')
+    process.exitCode = 1
+    return
+  }
 
   let section = null // { name, maintained }
   let currentH3 = null
   let currentH3Empty = false
+  let currentBullet = null // { lineNo, parts: string[] }
+  let inComment = false
 
   const headingsFor = (name) => {
     if (!maintainedH3.has(name)) maintainedH3.set(name, new Map())
     return maintainedH3.get(name)
+  }
+
+  const flushBullet = () => {
+    if (currentBullet === null) return
+    if (section?.maintained) {
+      const text = currentBullet.parts.join(' ')
+      if (charCount(text) > MAX_BULLET) {
+        findings.push(
+          `${currentBullet.lineNo}: bullet is ${charCount(text)} chars (max ${MAX_BULLET}): ${text.slice(0, 60)}…`,
+        )
+      }
+    }
+    currentBullet = null
   }
 
   const commitH3 = () => {
@@ -60,6 +92,7 @@ function main() {
   }
 
   const closeSection = () => {
+    flushBullet()
     commitH3()
     section = null
   }
@@ -80,9 +113,11 @@ function main() {
         headingsFor('Unreleased')
         continue
       }
-      if (CURRENT_VERSION_HEADING.test(line)) {
-        section = { name: '1.6.0', maintained: true }
-        headingsFor('1.6.0')
+      const stable = STABLE_VERSION_HEADING.exec(line)
+      if (stable) {
+        const name = stable[1]
+        section = { name, maintained: name === newest }
+        if (section.maintained) headingsFor(name)
         continue
       }
       if (HISTORICAL_VERSION_HEADING.test(line)) {
@@ -99,6 +134,7 @@ function main() {
 
     if (line.startsWith('### ')) {
       if (section?.maintained) {
+        flushBullet()
         commitH3()
         const name = line.slice(4).trim()
         currentH3 = name
@@ -110,16 +146,36 @@ function main() {
       continue
     }
 
-    if (section?.maintained && currentH3 !== null) {
-      const trimmed = line.trim()
-      if (trimmed && !trimmed.startsWith('<!--')) currentH3Empty = false
+    if (!section?.maintained) continue
+
+    if (inComment) {
+      if (line.includes('-->')) inComment = false
+      continue
+    }
+    if (line.includes('<!--')) {
+      if (!line.includes('-->')) inComment = true
+      continue
     }
 
-    if (section?.maintained && line.startsWith('- ') && charCount(line) > MAX_BULLET) {
-      findings.push(
-        `${lineNo}: bullet is ${charCount(line)} chars (max ${MAX_BULLET}): ${line.slice(0, 60)}…`,
-      )
+    if (line.trim() === '') {
+      flushBullet()
+      continue
     }
+
+    if (line.startsWith('- ')) {
+      flushBullet()
+      currentBullet = { lineNo, parts: [line] }
+      if (currentH3 !== null) currentH3Empty = false
+      continue
+    }
+
+    if (currentBullet !== null) {
+      currentBullet.parts.push(line.trim())
+      if (currentH3 !== null) currentH3Empty = false
+      continue
+    }
+
+    if (currentH3 !== null) currentH3Empty = false
   }
   closeSection()
 
@@ -127,9 +183,13 @@ function main() {
     if (empty) findings.push(`[Unreleased] has an empty "${heading}" subsection`)
   }
 
-  const v160 = headingsFor('1.6.0')
-  if (!v160.has('Deprecated')) findings.push('[v1.6.0] is missing the Deprecated block')
-  if (!v160.has('Removed')) findings.push('[v1.6.0] is missing the Removed block')
+  const newestHeadings = headingsFor(newest)
+  if (!newestHeadings.has('Deprecated')) {
+    findings.push(`[v${newest}] is missing the Deprecated block`)
+  }
+  if (!newestHeadings.has('Removed')) {
+    findings.push(`[v${newest}] is missing the Removed block`)
+  }
 
   if (findings.length === 0) {
     console.log(`docs:check-changelog OK — ${lines.length} lines, no findings.`)

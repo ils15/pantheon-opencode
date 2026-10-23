@@ -2,27 +2,36 @@
 /**
  * Documentation link checker.
  *
- * Validates every Markdown link inside `docs/`:
- *   - relative `.md` targets exist and stay inside `docs/` (a link that leaves
- *     `docs/` would 404 on the published site);
- *   - `#anchors` match a heading slug in the target file;
+ * Scans README.md and docs/**\/*.md and validates every Markdown link and
+ * image:
+ *   - relative targets exist;
+ *   - links inside docs/ stay inside docs/ (a link that leaves docs/ would 404
+ *     on the published site; use an absolute GitHub URL instead);
+ *   - `#anchors` match a heading slug in the target Markdown file;
+ *   - reference-style links resolve through their `[ref]: target` definition;
+ *   - image targets exist;
  *   - external URLs, mail links, and bare anchors are ignored.
  *
- * Exits 1 when any finding is reported, 0 otherwise.
+ * Exits 1 when any finding is reported, or when zero files were scanned.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
-const DOCS_ROOT = resolve(SCRIPT_DIR, '..', 'docs')
+const ROOT = resolve(SCRIPT_DIR, '..')
+const DOCS_ROOT = join(ROOT, 'docs')
+const README = join(ROOT, 'README.md')
 
-const LINK_PATTERN = /(?<!!)\[[^\]]*\]\(([^)]+)\)/g
+const INLINE_LINK = /(?<!!)\[([^\]]*)\]\(([^)]+)\)/g
+const INLINE_IMAGE = /!\[([^\]]*)\]\(([^)]+)\)/g
+const REFERENCE_LINK = /(?<!!)\[([^\]]*)\]\[([^\]]*)\]/g
+const REFERENCE_IMAGE = /!\[([^\]]*)\]\[([^\]]*)\]/g
+const REFERENCE_DEFINITION = /^\s{0,3}\[([^\]]+)\]:\s*(\S+)/
 const EXTERNAL = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/
 
-/** Collect Markdown files under docs/, skipping nothing by default. */
 function collectMarkdown(dir) {
   const out = []
   for (const entry of readdirSync(dir)) {
@@ -34,8 +43,13 @@ function collectMarkdown(dir) {
   return out
 }
 
-/** Remove fenced code blocks so examples are not parsed as links. */
-function stripFences(source) {
+function isInside(child, parent) {
+  const rel = relative(parent, child)
+  return rel === '' || (!rel.startsWith('..') && !rel.startsWith(`..${sep}`))
+}
+
+/** Remove fenced code blocks and inline code so examples are not parsed. */
+function stripCode(source) {
   const lines = source.split(/\r?\n/)
   let inFence = false
   let fence = ''
@@ -54,7 +68,7 @@ function stripFences(source) {
     }
     kept.push(inFence ? '' : line)
   }
-  return kept.join('\n')
+  return kept.join('\n').replace(/`[^`\n]*`/g, (match) => ' '.repeat(match.length))
 }
 
 /** Approximate the slug Python-Markdown/mkdocs produces for a heading. */
@@ -96,10 +110,7 @@ function anchorsOf(source) {
     const count = seen.get(base) ?? 0
     seen.set(base, count + 1)
     anchors.add(count === 0 ? base : `${base}-${count}`)
-    if (count > 0) {
-      // Accept the underscore variant too; renderers differ.
-      anchors.add(`${base}_${count}`)
-    }
+    if (count > 0) anchors.add(`${base}_${count}`)
   }
   return anchors
 }
@@ -111,16 +122,32 @@ function lineOf(source, index) {
 function normalizeTarget(raw) {
   let target = raw.trim()
   if (target.startsWith('<') && target.endsWith('>')) target = target.slice(1, -1)
-  // Drop an optional Markdown title: (path "title")
   target = target.replace(/\s+["'(].*$/, '')
   return target
 }
 
+function referenceDefinitions(source) {
+  const definitions = new Map()
+  for (const line of source.split(/\r?\n/)) {
+    const match = REFERENCE_DEFINITION.exec(line)
+    if (match) definitions.set(match[1].trim().toLowerCase(), match[2].trim())
+  }
+  return definitions
+}
+
 function main() {
-  const files = collectMarkdown(DOCS_ROOT)
+  const files = []
+  if (existsSync(README)) files.push(README)
+  if (existsSync(DOCS_ROOT)) files.push(...collectMarkdown(DOCS_ROOT))
+
+  if (files.length === 0) {
+    console.error('docs:lint failed — no Markdown files were scanned')
+    process.exitCode = 1
+    return
+  }
+
   const sourceCache = new Map()
   const anchorCache = new Map()
-
   const readCached = (file) => {
     if (!sourceCache.has(file)) sourceCache.set(file, readFileSync(file, 'utf8'))
     return sourceCache.get(file)
@@ -132,49 +159,93 @@ function main() {
 
   const findings = []
 
+  const checkTarget = (file, pathPart, fragment, line, kind) => {
+    const resolved = resolve(dirname(file), pathPart)
+    const display = relative(ROOT, file)
+
+    if (file !== README && !isInside(resolved, DOCS_ROOT)) {
+      findings.push(
+        `${display}:${line}: ${kind} leaves docs/: ${pathPart} ` +
+          '(use an absolute GitHub URL for repository files)',
+      )
+      return
+    }
+    if (file === README && !isInside(resolved, ROOT)) {
+      findings.push(`${display}:${line}: ${kind} leaves the repository: ${pathPart}`)
+      return
+    }
+
+    let stat
+    try {
+      stat = statSync(resolved)
+    } catch {
+      findings.push(`${display}:${line}: missing ${kind} target ${pathPart}`)
+      return
+    }
+
+    if (fragment && extname(resolved).toLowerCase() === '.md' && stat.isFile()) {
+      if (!anchorsCached(resolved).has(fragment)) {
+        findings.push(`${display}:${line}: missing anchor #${fragment} in ${pathPart}`)
+      }
+    }
+  }
+
   for (const file of files) {
     const raw = readCached(file)
-    const source = stripFences(raw)
-    for (const match of source.matchAll(LINK_PATTERN)) {
-      const target = normalizeTarget(match[1])
-      if (!target) continue
-      if (EXTERNAL.test(target)) continue
+    const source = stripCode(raw)
+    const definitions = referenceDefinitions(source)
 
+    // Inline links and images.
+    for (const match of source.matchAll(INLINE_LINK)) {
+      const target = normalizeTarget(match[2])
+      if (!target || EXTERNAL.test(target)) continue
       const [pathPart, fragment] = target.split('#')
       const line = lineOf(source, match.index)
-
       if (pathPart === '') {
         if (fragment && !anchorsCached(file).has(fragment)) {
-          findings.push(`${relative(process.cwd(), file)}:${line}: missing anchor #${fragment}`)
+          findings.push(`${relative(ROOT, file)}:${line}: missing anchor #${fragment}`)
         }
         continue
       }
+      checkTarget(file, pathPart, fragment, line, 'link')
+    }
 
-      const resolved = resolve(dirname(file), pathPart)
-      const relToDocs = relative(DOCS_ROOT, resolved)
-      if (relToDocs === '' || relToDocs.startsWith('..') || relToDocs.startsWith(`..${sep}`)) {
+    for (const match of source.matchAll(INLINE_IMAGE)) {
+      const target = normalizeTarget(match[2])
+      if (!target || EXTERNAL.test(target)) continue
+      const [pathPart] = target.split('#')
+      checkTarget(file, pathPart, undefined, lineOf(source, match.index), 'image')
+    }
+
+    // Reference-style links and images.
+    for (const match of source.matchAll(REFERENCE_LINK)) {
+      const label = (match[2].trim() || match[1].trim()).toLowerCase()
+      const rawTarget = definitions.get(label)
+      if (rawTarget === undefined) {
         findings.push(
-          `${relative(process.cwd(), file)}:${line}: link leaves docs/: ${pathPart} ` +
-            '(use an absolute GitHub URL for repository files)',
+          `${relative(ROOT, file)}:${lineOf(source, match.index)}: undefined reference [${label}]`,
         )
         continue
       }
+      const target = normalizeTarget(rawTarget)
+      if (!target || EXTERNAL.test(target)) continue
+      const [pathPart, fragment] = target.split('#')
+      checkTarget(file, pathPart, fragment, lineOf(source, match.index), 'link')
+    }
 
-      let stat
-      try {
-        stat = statSync(resolved)
-      } catch {
-        findings.push(`${relative(process.cwd(), file)}:${line}: missing target ${pathPart}`)
+    for (const match of source.matchAll(REFERENCE_IMAGE)) {
+      const label = (match[2].trim() || match[1].trim()).toLowerCase()
+      const rawTarget = definitions.get(label)
+      if (rawTarget === undefined) {
+        findings.push(
+          `${relative(ROOT, file)}:${lineOf(source, match.index)}: undefined image reference [${label}]`,
+        )
         continue
       }
-
-      if (fragment && extname(resolved).toLowerCase() === '.md' && stat.isFile()) {
-        if (!anchorsCached(resolved).has(fragment)) {
-          findings.push(
-            `${relative(process.cwd(), file)}:${line}: missing anchor #${fragment} in ${pathPart}`,
-          )
-        }
-      }
+      const target = normalizeTarget(rawTarget)
+      if (!target || EXTERNAL.test(target)) continue
+      const [pathPart] = target.split('#')
+      checkTarget(file, pathPart, undefined, lineOf(source, match.index), 'image')
     }
   }
 
