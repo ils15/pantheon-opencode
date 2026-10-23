@@ -1,4 +1,4 @@
-<!-- synced-from: docs/UPGRADING.md @ __SYNC_SHA__ -->
+<!-- synced-from: docs/UPGRADING.md @ 13b61c5 -->
 # Atualização do Pantheon
 
 [English](UPGRADING.md)
