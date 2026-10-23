@@ -104,6 +104,12 @@ import {
   type ToolExecuteBeforeOutput,
 } from './pantheon/delegation-enforce.ts'
 import {
+  applyMemoryInjection,
+  MemoryInjectionCache,
+  resolveMemoryInjectionConfig,
+  warnInvalidMemoryInjectionConfig,
+} from './pantheon/memory-context.ts'
+import {
   BOUNDED_READ_TOOL,
   createV2BoundedReadTool,
   type V2BoundedReadOriginRegistry,
@@ -716,6 +722,7 @@ async function onSessionDeleted(event: V2SessionEvent): Promise<void> {
     return
   }
   readOnlyRegistry.unregister(sessionID)
+  memoryInjectionCache.delete(sessionID)
 }
 
 /**
@@ -809,6 +816,17 @@ function warnContextPrunerConfigOnce(options: unknown): void {
   }
 }
 
+// ─── Ambient memory injection (opt-in, V2 context hook) ─────────────────
+
+/**
+ * One payload per session, computed on the session's first request. Bounded by
+ * `MEMORY_CACHE_MAX_SESSIONS` inside the cache (FIFO), so a long-lived host
+ * cannot grow it without limit. The payload is built, rendered and logged by
+ * `memory-context.ts`; this module only supplies the hook wiring and the
+ * `hooks.log` channel.
+ */
+const memoryInjectionCache = new MemoryInjectionCache()
+
 /**
  * Register session hooks via V2 ctx.session.hook.
  *
@@ -823,6 +841,7 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   // Config validity is independent of hook availability; warn before the early
   // return so a typo is visible even on a host that registers no session hook.
   warnContextPrunerConfigOnce(context.options)
+  warnInvalidMemoryInjectionConfig(context.options, appendV2HookLog)
   const sessionCtx = hostDomains(context).session
 
   if (!sessionCtx?.hook) {
@@ -834,6 +853,11 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   // prompt cache and has no measured cost baseline. The compaction site below
   // applies the rules unconditionally.
   const prunerConfig = resolveContextPrunerConfig(context.options)
+
+  // Ambient memory injection is opt-in and default OFF: with `enabled: false`
+  // this hook adds nothing, so `system` stays byte-identical to the policy-only
+  // output. Resolved here (not per request) for the same reason as the pruner.
+  const memoryConfig = resolveMemoryInjectionConfig(context.options)
 
   let registered = false
 
@@ -870,6 +894,23 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
           if (!hasPolicyMarker(normalized)) {
             normalized.push({ type: 'text', text: POLICY } satisfies SystemPart)
           }
+        }
+        // Opt-in ambient memory injection: the top-K memories relevant to the
+        // session's first user message, computed once per session and re-added
+        // verbatim on later requests. Deliberately OUTSIDE the block above: with
+        // `enabled: true` and no usable `system` there is nowhere to push, and
+        // the module reports `skip=no-system` once per session instead of the
+        // feature going silently inert. Off by default, so this is the only
+        // thing `enabled: false` skips.
+        if (memoryConfig.enabled) {
+          applyMemoryInjection(
+            normalized ?? ctx.system,
+            ctx.messages,
+            ctx.sessionID,
+            memoryConfig,
+            memoryInjectionCache,
+            appendV2HookLog,
+          )
         }
         // Opt-in DCP: same engine as the compaction site, but per-request
         // pruning invalidates the prompt cache, so it runs only when
