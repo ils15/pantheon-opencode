@@ -12,6 +12,11 @@ const allowedExclusions = [
   '!.pytest_cache',
   '!.ruff_cache',
   '!.venv',
+  // Local docs build artifacts: the mkdocs virtualenv and the generated site
+  // output are gitignored, non-source trees. Excluding them keeps a local
+  // `biome ci .` from scanning a ~150 MB virtualenv; CI has neither directory.
+  '!.venv-docs',
+  '!site',
   '!.opencode',
   '!.pantheon/autocontinue',
   '!.pantheon/board',
