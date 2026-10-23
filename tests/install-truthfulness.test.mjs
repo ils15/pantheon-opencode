@@ -19,14 +19,14 @@
  * Run: node --test tests/install-truthfulness.test.mjs
  */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { createInterruptHandler } from '../scripts/install/interrupt.mjs'
-import { installOpenCode } from '../scripts/install/opencode.mjs'
+import { installOpenCode, v2PluginEntryLoadability } from '../scripts/install/opencode.mjs'
 import {
   describeSharedState,
   resolveOpenCodeStatePath,
@@ -48,6 +48,44 @@ import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const CLI = join(REPO_ROOT, 'bin', 'pantheon-init.mjs')
 const SEED = listV2UnsupportedFeatures()
+const HAS_SCRIPT = spawnSync('script', ['--version'], { encoding: 'utf8' }).status === 0
+
+/** Count non-overlapping occurrences of `needle` in `haystack`. */
+function countOccurrences(haystack, needle) {
+  return haystack.split(needle).length - 1
+}
+
+/** A minimal EventEmitter stand-in for the interrupt handler's lifetime. */
+function fakeEmitter() {
+  const listeners = new Map()
+  return {
+    once(event, listener) {
+      listeners.set(event, listener)
+    },
+    removeListener(event, listener) {
+      if (listeners.get(event) === listener) listeners.delete(event)
+    },
+    emit(event) {
+      const listener = listeners.get(event)
+      if (listener === undefined) return
+      listeners.delete(event)
+      listener()
+    },
+    has(event) {
+      return listeners.has(event)
+    },
+  }
+}
+
+/** Sandboxed env for a spawned CLI run: never the real HOME/config. */
+function sandboxEnv(home, extra = {}) {
+  return {
+    ...process.env,
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, '.config'),
+    ...extra,
+  }
+}
 
 function scratchDir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix))
@@ -69,9 +107,10 @@ async function captureOutput(fn) {
 }
 
 /** A V2 install over an existing config, returning the written config. */
-async function installV2With(existingConfig) {
+async function installV2With(existingConfig, prepare = () => {}) {
   const target = scratchDir('pantheon-truthfulness-')
   try {
+    prepare(target)
     if (existingConfig !== null) {
       writeFileSync(join(target, 'opencode.json'), `${JSON.stringify(existingConfig, null, 2)}\n`)
     }
@@ -219,6 +258,53 @@ test('an interactive cancel names the step the user stopped at', async () => {
   }
 })
 
+test('a cancel after choosing the project target reports THAT target, not the global one', async () => {
+  // The review finding: the confirmation cancel returned no target, so the run
+  // record landed in ~/.config/opencode while the message claimed nothing was
+  // written — even when the user had picked "Current project".
+  const prompts = {
+    isCancel: () => false,
+    cancel: () => {},
+    intro: () => {},
+    multiselect: async () => ['agents'],
+    select: async () => 'project',
+    confirm: async () => false,
+  }
+  const { result } = await captureOutput(() =>
+    installOpenCode(undefined, false, false, ['agents'], {
+      interactive: true,
+      version: 'v1',
+      deps: { prompts, isTTY: true },
+    }),
+  )
+  assert.equal(result.reason, 'canceled')
+  assert.equal(result.cancelPoint, 'confirmation')
+  assert.equal(result.applied, false)
+  assert.equal(result.target, process.cwd(), 'the chosen project directory must be recorded')
+  assert.notEqual(result.target, join(process.env.HOME ?? '', '.config', 'opencode'))
+})
+
+test('a cancel before the location prompt reports the resolved default target', async () => {
+  const prompts = {
+    isCancel: () => false,
+    cancel: () => {},
+    intro: () => {},
+    multiselect: async () => ['agents'],
+    select: async () => 'global',
+    confirm: async () => false,
+  }
+  const { result } = await captureOutput(() =>
+    installOpenCode('/tmp/pantheon-cancel-target-probe', false, false, ['agents'], {
+      interactive: true,
+      version: 'v1',
+      global: true,
+      deps: { prompts, isTTY: true },
+    }),
+  )
+  assert.equal(result.reason, 'canceled')
+  assert.equal(result.target, '/tmp/pantheon-cancel-target-probe')
+})
+
 test('the run record distinguishes canceled, declined and applied', () => {
   const target = scratchDir('pantheon-run-record-')
   try {
@@ -281,6 +367,7 @@ test('Ctrl-C prints the one cancel line, records once, and exits 130', () => {
   const recorded = []
   const exits = []
   let closedLine = 0
+  const emitter = fakeEmitter()
   const handler = createInterruptHandler({
     message: 'Installation canceled at interrupt (Ctrl-C) — nothing was applied.',
     endGaugeLine: () => {
@@ -289,8 +376,10 @@ test('Ctrl-C prints the one cancel line, records once, and exits 130', () => {
     logStderr: (line) => printed.push(line),
     onInterrupt: () => recorded.push('record'),
     exit: (code) => exits.push(code),
+    emitter,
   })
 
+  assert.equal(emitter.has('SIGINT'), true, 'the handler registers itself')
   handler()
   handler() // a second Ctrl-C must not double-print or double-record
 
@@ -300,25 +389,107 @@ test('Ctrl-C prints the one cancel line, records once, and exits 130', () => {
   assert.equal(closedLine, 1, 'the progress gauge line is closed before printing')
 })
 
-test('Ctrl-C under --json writes the line to stderr, never stdout', () => {
+test('Ctrl-C under --json writes the line to stderr and never to stdout', () => {
   const stderr = []
   const stdout = []
   const original = console.log
   console.log = (...values) => stdout.push(values.join(' '))
   try {
-    const handler = createInterruptHandler({
+    const emitter = fakeEmitter()
+    createInterruptHandler({
       message: 'Installation canceled at interrupt (Ctrl-C).',
       json: true,
       writeStderr: (line) => stderr.push(line),
+      // If the JSON branch ever fell back to logStderr, this records the
+      // mistake instead of silently producing an "empty stdout" pass.
       logStderr: (line) => stdout.push(line),
       exit: () => {},
+      emitter,
     })
-    handler()
+    emitter.emit('SIGINT')
   } finally {
     console.log = original
   }
   assert.deepEqual(stderr, ['Installation canceled at interrupt (Ctrl-C).'])
-  assert.deepEqual(stdout, [])
+  assert.deepEqual(stdout, [], 'the line must not reach stdout through any fallback')
+})
+
+test('a deactivated handler ignores SIGINT so it cannot rewrite a finished run', () => {
+  const printed = []
+  const recorded = []
+  const exits = []
+  const emitter = fakeEmitter()
+  const handler = createInterruptHandler({
+    message: 'Installation canceled at interrupt (Ctrl-C).',
+    logStderr: (line) => printed.push(line),
+    onInterrupt: () => recorded.push('record'),
+    exit: (code) => exits.push(code),
+    emitter,
+  })
+
+  handler.deactivate()
+  assert.equal(emitter.has('SIGINT'), false, 'the listener is removed, not just flagged')
+  emitter.emit('SIGINT')
+
+  assert.deepEqual(printed, [])
+  assert.deepEqual(recorded, [])
+  assert.deepEqual(exits, [], 'a completed install must not be rewritten as canceled')
+})
+
+test('a real SIGINT during an interactive install exits 130 with one message', {
+  skip: !HAS_SCRIPT ? 'requires the `script` binary for a TTY' : false,
+}, async () => {
+  // A REAL child, a REAL signal, and a deterministic window: the child is
+  // parked on an interactive prompt (which awaits), so the signal cannot race
+  // the install. The prompt runs AFTER the handler is registered.
+  const root = scratchDir('pantheon-sigint-real-')
+  const home = join(root, 'home')
+  const project = join(root, 'project')
+  const pidFile = join(root, 'child.pid')
+  mkdirSync(home, { recursive: true })
+  mkdirSync(project, { recursive: true })
+  try {
+    const scriptCmd =
+      `exec sh -c 'echo $$ > ${pidFile}; exec ${process.execPath} ${CLI} ` +
+      "init --interactive --project --no-mcp --components agents --opencode-version v1'"
+    const child = spawn('script', ['-q', '-e', '-c', scriptCmd, '/dev/null'], {
+      cwd: project,
+      env: sandboxEnv(home, { OPENCODE_VERSION: 'v1' }),
+    })
+    let out = ''
+    child.stdout.on('data', (chunk) => {
+      out += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      out += chunk
+    })
+
+    // Wait for the child PID file, then give the prompt time to render. The
+    // prompt waits for input forever, so there is no upper race.
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    const childPid = Number(readFileSync(pidFile, 'utf8').trim())
+    process.kill(childPid, 'SIGINT')
+
+    const code = await new Promise((resolve, reject) => {
+      child.once('error', reject)
+      child.once('close', resolve)
+    })
+
+    assert.equal(code, 130, `Ctrl-C must exit 130; output:\n${out}`)
+    // The pty renders one byte per line in places; flatten before counting.
+    const flat = out.replace(/\r\n/g, '')
+    assert.equal(
+      countOccurrences(flat, 'Installation canceled at interrupt (Ctrl-C)'),
+      1,
+      `exactly one cancel line; output:\n${flat}`,
+    )
+    const record = readRunRecord(project)
+    assert.equal(record?.status, 'canceled')
+    assert.equal(record?.cancel_point, 'interrupt')
+    assert.equal(record?.applied, false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 // ─── #263: label the list, state the surface, carry it in --json ───────
@@ -362,16 +533,57 @@ test('the capability payload and the seed cannot drift', () => {
   assert.deepEqual(listV2UnsupportedFeatures(), SEED)
 })
 
-test('a V2 install prints the capability notice once, with the registered surface', async () => {
+test('a V2 install prints the capability notice exactly once', async () => {
   const run = await installV2With(null)
   try {
-    assert.match(run.output, /what this install registers/)
+    assert.equal(
+      countOccurrences(run.output, 'what this install registers'),
+      1,
+      `the registered-surface notice must appear once:\n${run.output}`,
+    )
+    assert.equal(countOccurrences(run.output, 'OpenCode V2 target'), 1)
     assert.match(run.output, /session context\/prompt\/compaction/)
     for (const feature of SEED) {
       assert.ok(run.output.includes(feature), `missing "${feature}"`)
     }
   } finally {
     run.cleanup()
+  }
+})
+
+test('an unauthorized V2 preview prints each notice exactly once (not twice)', () => {
+  // Reproduces the review finding: the gate's internal plan pass and the outer
+  // run share one output channel, so an ungated notice printed twice on
+  // `init` without --yes (exit 2, plan printed, nothing applied).
+  const home = scratchDir('pantheon-unauthorized-notice-')
+  const project = join(home, 'project')
+  mkdirSync(project, { recursive: true })
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [CLI, 'init', '--project', '--no-mcp', '--components', 'agents', '--opencode-version', 'v2'],
+      {
+        cwd: project,
+        encoding: 'utf8',
+        env: sandboxEnv(home, { OPENCODE_VERSION: 'v2' }),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
+    const output = `${result.stdout}\n${result.stderr}`
+    assert.equal(result.status, 2, `apply-without-authorization must exit 2:\n${output}`)
+    assert.equal(
+      countOccurrences(output, 'OpenCode V2 target'),
+      1,
+      `the state notice must appear once:\n${output}`,
+    )
+    assert.equal(
+      countOccurrences(output, 'what this install registers'),
+      1,
+      `the capability notice must appear once:\n${output}`,
+    )
+    assert.match(output, /re-run with --yes/i)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
   }
 })
 
@@ -505,16 +717,59 @@ test('options reachability reports the three installed shapes honestly', () => {
 
 // ─── #269: no third-party entry disappears silently ────────────────────
 
-test('a V1 third-party plugin entry is re-registered under the V2 plural key', async () => {
-  const run = await installV2With({
-    plugin: ['/vendor/acme/src/plugin.ts', 'acme-plugin'],
-    plugins: ['third-party-v2'],
-  })
+test('v2PluginEntryLoadability accepts only an existing directory', () => {
+  const dir = scratchDir('pantheon-loadability-')
   try {
-    assert.ok(run.config.plugins.includes('/vendor/acme/src/plugin.ts'))
-    assert.ok(run.config.plugins.includes('acme-plugin'))
-    assert.match(run.output, /V2 host ignores the singular "plugin" key/)
-    assert.match(run.output, /acme-plugin/)
+    const pluginDir = join(dir, 'vendor', 'acme-plugin')
+    mkdirSync(pluginDir, { recursive: true })
+    writeFileSync(join(pluginDir, 'index.ts'), 'export default {}\n')
+    const pluginFile = join(dir, 'vendor', 'single-file.ts')
+    writeFileSync(pluginFile, 'export default {}\n')
+
+    assert.deepEqual(v2PluginEntryLoadability('./vendor/acme-plugin', dir), {
+      loadable: true,
+      reason: 'directory',
+      resolved: pluginDir,
+    })
+    assert.equal(v2PluginEntryLoadability('./vendor/single-file.ts', dir).reason, 'file')
+    assert.equal(v2PluginEntryLoadability('./vendor/missing', dir).reason, 'missing')
+    assert.equal(v2PluginEntryLoadability('acme-plugin', dir).reason, 'npm-spec')
+    assert.equal(v2PluginEntryLoadability('@scope/acme', dir).reason, 'npm-spec')
+    assert.equal(v2PluginEntryLoadability('npm:@scope/acme', dir).reason, 'npm-spec')
+    assert.equal(v2PluginEntryLoadability({ package: 'acme' }, dir).reason, 'unverifiable')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('only a loadable third-party directory moves into the V2 plural key', async () => {
+  const run = await installV2With(
+    {
+      plugin: ['./vendor/acme-plugin', 'acme-plugin', './vendor/missing-plugin'],
+      plugins: ['third-party-v2'],
+    },
+    (target) => {
+      mkdirSync(join(target, 'vendor', 'acme-plugin'), { recursive: true })
+      writeFileSync(join(target, 'vendor', 'acme-plugin', 'index.ts'), 'export default {}\n')
+    },
+  )
+  try {
+    // The directory the V2 loader can actually load is re-registered…
+    assert.deepEqual(run.config.plugins.slice(0, 2), ['third-party-v2', './vendor/acme-plugin'])
+    assert.equal(pantheonEntries(run.config.plugins).length, 1)
+    // …the V1 list itself is the user's data and is left intact, so a downgrade
+    // still finds every entry; the two the host cannot load are never copied.
+    assert.deepEqual(run.config.plugin, [
+      './vendor/acme-plugin',
+      'acme-plugin',
+      './vendor/missing-plugin',
+    ])
+    // …and the warning names each entry with its exact failure mode.
+    assert.match(run.output, /also registered 1 third-party entry under "plugins"/)
+    assert.match(run.output, /acme-plugin is a package\/GitHub shorthand/)
+    assert.match(run.output, /NpmInstallFailedError/)
+    assert.match(run.output, /\.\/vendor\/missing-plugin does not exist/)
+    assert.match(run.output, /must be a directory|only accepts an existing directory/)
   } finally {
     run.cleanup()
   }
@@ -525,7 +780,7 @@ test('a Pantheon V1 path is never moved into the V2 list', async () => {
   const run = await installV2With({ plugin: [stalePantheon, 'acme-plugin'], plugins: [] })
   try {
     assert.ok(!run.config.plugins.includes(stalePantheon))
-    assert.ok(run.config.plugins.includes('acme-plugin'))
+    assert.ok(!run.config.plugins.includes('acme-plugin'))
     // The user's own V1 entry stays where they put it (a downgrade still finds
     // it); only Pantheon's stale path is removed from that list.
     assert.deepEqual(run.config.plugin, ['acme-plugin'])
@@ -534,16 +789,73 @@ test('a Pantheon V1 path is never moved into the V2 list', async () => {
   }
 })
 
-test('a sibling opencode.jsonc is reported and appears in the --json advisories', async () => {
-  const target = scratchDir('pantheon-jsonc-warning-')
+test('a provable relocated Pantheon install is retired, not registered twice', async () => {
+  // `managedPluginIdentity` recognizes a V2 entry inside any
+  // node_modules/pantheon-opencode copy, so the stale one is provably Pantheon:
+  // keeping both would run every hook twice.
+  const relocated = '/old/prefix/node_modules/pantheon-opencode/src/plugin-v2'
+  const run = await installV2With({ plugins: [relocated] })
   try {
-    writeFileSync(join(target, 'opencode.jsonc'), '{ // user config\n}\n')
-    const { output } = await captureOutput(() =>
-      installOpenCode(target, false, false, [], { yes: true, headless: true, version: 'v2' }),
-    )
-    assert.match(output, /Both .*opencode\.json and .*opencode\.jsonc exist/)
-    assert.match(output, /writes only opencode\.json/)
+    const entries = pantheonEntries(run.config.plugins)
+    assert.equal(entries.length, 1, 'exactly one Pantheon V2 entry may remain')
+    assert.equal(typeof entries[0], 'object')
+    assert.ok(entries[0].package.endsWith(join('src', 'plugin-v2')))
+    assert.ok(!run.config.plugins.includes(relocated), 'the stale copy is retired')
+    assert.doesNotMatch(run.output, /another copy of the Pantheon V2 plugin/)
   } finally {
-    rmSync(target, { recursive: true, force: true })
+    run.cleanup()
+  }
+})
+
+test('a Pantheon-lookalike this installer cannot prove it owns is kept and reported', async () => {
+  // Outside node_modules/pantheon-opencode the path is indistinguishable from a
+  // third-party plugin that happens to share the name. Deleting it would be
+  // destructive, so it stays — and the double-registration risk is announced.
+  const lookalike = '/old/install/src/plugin-v2'
+  const run = await installV2With({ plugins: [lookalike] })
+  try {
+    assert.ok(run.config.plugins.includes(lookalike))
+    assert.equal(pantheonEntries(run.config.plugins).length, 2)
+    assert.match(run.output, /another copy of the Pantheon V2 plugin/)
+    assert.match(run.output, /hooks would run twice/)
+  } finally {
+    run.cleanup()
+  }
+})
+
+test('a sibling opencode.jsonc is reported in the --json advisories', () => {
+  const root = scratchDir('pantheon-jsonc-json-')
+  const project = join(root, 'project')
+  mkdirSync(project, { recursive: true })
+  writeFileSync(join(project, 'opencode.jsonc'), '{ // user config\n}\n')
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        CLI,
+        'init',
+        '--dry-run',
+        '--json',
+        '--project',
+        '--no-mcp',
+        '--components',
+        'agents',
+        '--opencode-version',
+        'v2',
+      ],
+      {
+        cwd: project,
+        encoding: 'utf8',
+        env: sandboxEnv(root, { OPENCODE_VERSION: 'v2' }),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    const payload = JSON.parse(result.stdout)
+    const jsoncAdvisory = payload.advisories.find((entry) => entry.includes('opencode.jsonc'))
+    assert.ok(jsoncAdvisory, `--json must carry the .jsonc advisory; got ${payload.advisories}`)
+    assert.match(jsoncAdvisory, /writes only opencode\.json/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })

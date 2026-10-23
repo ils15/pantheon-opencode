@@ -143,7 +143,7 @@ test('v1 preserves config.plugins and third-party paths in config.plugin', async
   assert.ok(config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')))
 })
 
-test('v2 migrates third-party config.plugin entries and registers the shipped V2 entrypoint', async () => {
+test('v2 leaves an UNLOADABLE third-party config.plugin entry where it is', async () => {
   const config = await installConfig(
     {
       plugin: ['user-v1-plugin'],
@@ -152,11 +152,13 @@ test('v2 migrates third-party config.plugin entries and registers the shipped V2
     'v2',
   )
 
-  // The V2 host does not read the singular `plugin` key (issue #269): a
-  // third-party entry left there would stop loading silently, so it is also
-  // registered under `plugins`.
+  // `user-v1-plugin` is a package shorthand: the V2 loader would resolve it
+  // through npm install and fail (NpmInstallFailedError), so migrating it into
+  // `plugins` would turn "ignored" into "the config fails to load". It stays in
+  // the singular key, which the V2 host ignores.
   assert.equal(config.plugins[0], 'user-v2-plugin')
-  assert.ok(config.plugins.includes('user-v1-plugin'), 'the V1 list must not go dead')
+  assert.ok(!config.plugins.includes('user-v1-plugin'))
+  assert.deepEqual(config.plugin, ['user-v1-plugin'])
   assert.equal(v2EntryOf(config).package, V2_PLUGIN)
   assert.deepEqual(v2EntryOf(config).options, {}, 'the entry must be able to carry options')
   assert.ok(!config.plugins.includes(V2_EXPORT))
@@ -175,14 +177,12 @@ test('auto selects V2 and V1 during migrations without mixing Pantheon refs', as
       },
       'auto',
     )
-    assert.ok(
-      v2.plugins.includes('third-party-v1'),
-      'a V1 third-party entry must be re-registered under the plural key',
-    )
-    assert.ok(
-      v2.plugins.includes('/tmp/vendor/pantheon-opencode/src/plugin.ts'),
-      'the V1 third-party path must be re-registered under the plural key',
-    )
+    // Neither entry is a directory the V2 loader can load — one is a shorthand,
+    // the other a path that does not exist — so neither is migrated; both stay
+    // in the V1 list, which V2 ignores, instead of breaking the V2 config.
+    assert.ok(!v2.plugins.includes('third-party-v1'))
+    assert.ok(!v2.plugins.includes('/tmp/vendor/pantheon-opencode/src/plugin.ts'))
+    assert.deepEqual(v2.plugin, ['/tmp/vendor/pantheon-opencode/src/plugin.ts', 'third-party-v1'])
     assert.deepEqual(v2EntryOf(v2).options, {})
 
     process.env.OPENCODE_VERSION = 'v1'

@@ -25,10 +25,14 @@ const TABLE = {
       review: 'review prompt',
       interrupt: 'interrupt (Ctrl-C)',
     },
+    // "no configuration was changed", not "no files were written": a cancel
+    // does write `.pantheon/last-run.json` (that is the point of #262), so the
+    // stronger claim would be false.
     canceledAt: (point) =>
-      `Installation canceled at ${point} — nothing was applied; no files were changed.`,
+      `Installation canceled at ${point} — nothing was applied; no configuration was changed.`,
     declinedAt: (point) =>
-      `Installation declined at ${point} — nothing was applied; re-run init to review the plan again.`,
+      `Installation declined at ${point} — nothing was applied; no configuration was changed; ` +
+      're-run init to review the plan again.',
     previousRun: (summary) => `Previous run recorded on disk: ${summary}`,
     runRecordFailed: (msg) => `Could not write the run record: ${msg}`,
     installFailed: (msg) => `Installation failed: ${msg}`,
@@ -112,9 +116,10 @@ const TABLE = {
       interrupt: 'interrupção (Ctrl-C)',
     },
     canceledAt: (point) =>
-      `Instalação cancelada em ${point} — nada foi aplicado; nenhum arquivo foi alterado.`,
+      `Instalação cancelada em ${point} — nada foi aplicado; nenhuma configuração foi alterada.`,
     declinedAt: (point) =>
-      `Instalação recusada em ${point} — nada foi aplicado; rode init de novo para revisar o plano.`,
+      `Instalação recusada em ${point} — nada foi aplicado; nenhuma configuração foi alterada; ` +
+      'rode init de novo para revisar o plano.',
     previousRun: (summary) => `Execução anterior registrada em disco: ${summary}`,
     runRecordFailed: (msg) => `Não foi possível gravar o registro da execução: ${msg}`,
     installFailed: (msg) => `Instalação falhou: ${msg}`,

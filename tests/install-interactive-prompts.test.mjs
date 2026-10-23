@@ -23,7 +23,7 @@ const CANCEL = Symbol('cancel')
 
 /** The one-line cancel message the installer prints for a given point. */
 const canceledAt = (point) =>
-  `Installation canceled at ${point} — nothing was applied; no files were changed.`
+  `Installation canceled at ${point} — nothing was applied; no configuration was changed.`
 
 function fakePrompts({ components = ['agents'], target = 'global', confirmed = true } = {}) {
   const calls = []

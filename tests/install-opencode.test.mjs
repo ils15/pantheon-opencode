@@ -498,12 +498,17 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
   const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-plugins-'))
   try {
     const userPlugin = 'npm:@acme/my-plugin'
+    const v1Only = 'npm:@acme/v1-only'
     const config = await runInstall(
       target,
-      { plugins: [userPlugin, userPlugin], theme: 'user-theme' },
+      { plugin: [v1Only], plugins: [userPlugin, userPlugin], theme: 'user-theme' },
       'v2',
     )
-    assert.equal(config.plugin, undefined)
+    // A V1 entry the V2 loader cannot load (a package shorthand) is NOT copied
+    // into `plugins`: that would make the V2 config fail to load. It stays in
+    // the singular key, which the V2 host ignores.
+    assert.deepEqual(config.plugin, [v1Only])
+    assert.ok(!config.plugins.includes(v1Only))
     // V2 registers the plugin DIRECTORY inside the installed package
     // (<pkg>/src/plugin-v2, whose index.ts shim re-exports the real entry):
     // the beta loader rejects file paths ("must be a directory") and resolves

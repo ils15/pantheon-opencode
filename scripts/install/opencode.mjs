@@ -20,7 +20,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { copyAgentPrompts, writeAgentsMdManaged } from '../build-agents-md.mjs'
@@ -578,6 +578,78 @@ export function resolveInstalledPlugin(plugin) {
 
 function normalizePluginRef(ref) {
   return typeof ref === 'string' ? ref.replaceAll('\\', '/').replace(/\/$/, '') : ref
+}
+
+/**
+ * Whether a path-ish plugin ref is a filesystem path rather than a package spec.
+ *
+ * The V2 loader treats anything that is not an obvious path as an npm/GitHub
+ * spec and runs `npm install` on it — including `a/b`, which it reads as a
+ * GitHub repository and fails on (`NpmInstallFailedError`). A relative path is
+ * always spelled with `./` or `../`, so that spelling is the discriminator.
+ *
+ * @param {string} value
+ * @returns {boolean}
+ */
+function looksLikePluginPath(value) {
+  if (value.startsWith('.') || value.startsWith('/') || value.startsWith('~')) return true
+  return /^[A-Za-z]:[\\/]/.test(value)
+}
+
+/**
+ * Whether the OpenCode V2 loader can load a `plugins` entry EXACTLY as written.
+ *
+ * This is the gate for the V1→V2 migration: the V1 singular `plugin` list is
+ * ignored by the V2 host, but moving an entry there into `plugins` only helps
+ * when the loader accepts it. The loader's contract (documented on
+ * PANTHEON_V2_PLUGIN and proven by sandbox probes) is:
+ *   - a DIRECTORY containing a real index.ts/index.js loads;
+ *   - a file path is rejected ("must be a directory");
+ *   - a package shorthand is resolved through `npm install` and dies with
+ *     NpmInstallFailedError.
+ * Migrating a file path or a shorthand would therefore convert "silently
+ * ignored" into "config fails to load", which is worse than leaving it alone.
+ *
+ * @param {unknown} entry the `plugins`/`plugin` entry
+ * @param {string} configDir the config directory the loader resolves against
+ * @returns {{ loadable: boolean, reason: 'directory'|'file'|'missing'|'npm-spec'|'unverifiable', resolved: string|null }}
+ */
+export function v2PluginEntryLoadability(entry, configDir) {
+  if (typeof entry !== 'string' || entry.trim() === '') {
+    return { loadable: false, reason: 'unverifiable', resolved: null }
+  }
+  const value = entry.trim()
+  if (!looksLikePluginPath(value)) {
+    return { loadable: false, reason: 'npm-spec', resolved: null }
+  }
+  const resolved = isAbsolute(value) ? value : resolve(configDir, value)
+  if (!existsSync(resolved)) {
+    return { loadable: false, reason: 'missing', resolved }
+  }
+  try {
+    if (!statSync(resolved).isDirectory()) {
+      return { loadable: false, reason: 'file', resolved }
+    }
+  } catch {
+    return { loadable: false, reason: 'missing', resolved }
+  }
+  return { loadable: true, reason: 'directory', resolved }
+}
+
+/** Human explanation of a non-loadable entry, naming the exact failure mode. */
+const V2_LOAD_FAILURES = {
+  'npm-spec':
+    'is a package/GitHub shorthand, which the V2 loader resolves through `npm install` and fails on (NpmInstallFailedError)',
+  file: 'is a file, and the V2 loader only accepts a directory containing index.ts ("must be a directory")',
+  missing:
+    'does not exist, and the V2 loader only accepts an existing directory containing index.ts',
+  unverifiable:
+    'is not a path this installer can verify, so it was left untouched rather than guessed at',
+}
+
+/** Render a plugin entry for a warning without ever printing a bare object. */
+function describePluginEntry(entry) {
+  return typeof entry === 'string' ? entry : JSON.stringify(entry)
 }
 
 const PANTHEON_V1_PLUGIN = 'src/plugin.ts'
@@ -1511,7 +1583,13 @@ async function installPass(
     )
   }
   const versionAssumed = dryRun && versionFallback !== null
-  if (version === 'v2') {
+  // Both V2 notices belong to the run the USER started, not to the internal
+  // plan pass the gate spawns. That pass runs with the same output channel, so
+  // an ungated notice printed twice on the unauthorized-preview path (`init`
+  // without --yes: plan pass, then the outer apply pass, both loud). The
+  // sibling `warning()` for a sibling opencode.jsonc is gated the same way;
+  // a real --dry-run is not a plan pass, so it still prints them once.
+  if (version === 'v2' && !opts.planOnly) {
     // The notice states only what this installer actually does and what the
     // host actually reads. It previously claimed an isolated state database and
     // a dedicated service port: nothing in this package sets OPENCODE_DB, no
@@ -1555,6 +1633,13 @@ async function installPass(
       isTTY: opts.deps?.isTTY,
     })
 
+    // Resolve the location from the SELECTION before any cancel return: a
+    // cancel after the user picked "Current project" must record that
+    // directory, not the global default the caller would fall back to. The
+    // recorded target is where the user was installing, not where a file was
+    // written (nothing was written either way).
+    const selectedTarget = result.target === 'project' ? process.cwd() : target
+
     if (result.canceled) {
       // The named point is what makes the message explainable. The interactive
       // module already printed the single cancel line through the prompt
@@ -1566,6 +1651,7 @@ async function installPass(
         applied: false,
         reason: 'canceled',
         cancelPoint: result.cancelPoint ?? 'components',
+        target: selectedTarget,
       }
     }
 
@@ -1574,7 +1660,13 @@ async function installPass(
       // library's cancel channel, so nothing was printed yet: this is the one
       // message, and it names the point.
       notice(S.canceledAt(S.cancelPoints.confirmation))
-      return { ...stats, applied: false, reason: 'canceled', cancelPoint: 'confirmation' }
+      return {
+        ...stats,
+        applied: false,
+        reason: 'canceled',
+        cancelPoint: 'confirmation',
+        target: selectedTarget,
+      }
     }
 
     // Map target selection to actual path
@@ -1584,9 +1676,7 @@ async function installPass(
     componentSet.clear()
     for (const c of newComponents) componentSet.add(c)
 
-    if (result.target === 'project') {
-      target = process.cwd()
-    }
+    target = selectedTarget
   }
 
   // Product defaults live in code (PRODUCT_CONFIG_DEFAULTS). A repository-root
@@ -2478,33 +2568,48 @@ async function installPass(
   }
 
   if (version === 'v2') {
-    // V2 loads the plural `plugins` list. A third-party entry in the V1
-    // singular `plugin` list is DEAD on this host: the V2 config reader never
-    // looks at that key, so leaving the entry there silently stopped a plugin
-    // the user configured. Migrating a V1 config is exactly when that happens,
-    // so move those entries into `plugins` (deduplicated) and say so — the
-    // plugin will now load on V2, which is the behaviour the user asked for,
-    // but a V1-API-only plugin may need to be removed by hand.
+    // V2 loads the plural `plugins` list, and the singular `plugin` key is dead
+    // on this host. Migrating a V1 config therefore means deciding, entry by
+    // entry, whether the V2 loader can load it AT ALL: a directory can, a file
+    // path is rejected ("must be a directory") and a package shorthand dies in
+    // `npm install`. Copying every entry across would turn "silently ignored"
+    // into "config fails to load", so only loadable entries move; the rest stay
+    // where they are and the warning names the exact failure mode.
     if (Array.isArray(config.plugin)) {
       // Strip Pantheon refs FIRST, exactly as the V1 branch does: a stale V1
       // .ts path is not a registrable entry on this host and must not be moved.
       config.plugin = removePantheonPluginReferences(config.plugin)
-      const remaining = config.plugin
-      const movedThirdParty = []
       if (!Array.isArray(config.plugins)) config.plugins = []
-      for (const plugin of remaining) {
+      const migrated = []
+      const blocked = []
+      for (const plugin of config.plugin) {
+        const verdict = v2PluginEntryLoadability(plugin, target)
+        if (!verdict.loadable) {
+          blocked.push({ plugin, reason: verdict.reason })
+          continue
+        }
         if (!hasPluginReference(config.plugins, plugin)) {
           config.plugins.push(deepClone(plugin))
-          movedThirdParty.push(plugin)
+          migrated.push(plugin)
         }
       }
-      if (movedThirdParty.length > 0) {
+      if (migrated.length > 0) {
         warning(
-          `V2 host ignores the singular "plugin" key; also registered ${movedThirdParty.length} ` +
-            `third-party entr${movedThirdParty.length === 1 ? 'y' : 'ies'} under "plugins" so ` +
-            `they keep loading: ${movedThirdParty
-              .map((plugin) => (typeof plugin === 'string' ? plugin : JSON.stringify(plugin)))
-              .join(', ')}. Remove any that only support the V1 plugin API.`,
+          `V2 host ignores the singular "plugin" key; also registered ${migrated.length} ` +
+            `third-party entr${migrated.length === 1 ? 'y' : 'ies'} under "plugins" so ` +
+            `they keep loading: ${migrated.map(describePluginEntry).join(', ')}. ` +
+            'Remove any that only support the V1 plugin API.',
+        )
+      }
+      if (blocked.length > 0) {
+        warning(
+          'V2 host ignores the singular "plugin" key; these entries were left in it ' +
+            `because the V2 loader cannot load them, so they will NOT be active: ${blocked
+              .map(
+                ({ plugin, reason }) =>
+                  `${describePluginEntry(plugin)} ${V2_LOAD_FAILURES[reason]}`,
+              )
+              .join('; ')}.`,
         )
       }
       // Pantheon refs are already gone. An emptied array is not configuration:
@@ -2561,6 +2666,29 @@ async function installPass(
       package: resolvedV2,
       options: existingV2Options === null ? {} : deepClone(existingV2Options),
     })
+
+    // A path that LOOKS like a Pantheon V2 entry but is not one this package
+    // can prove it owns (managedPluginIdentity only recognizes installed copies
+    // and this package's own paths) would now be registered twice: the host
+    // would run both copies' hooks. Retiring it on a guess could delete a
+    // third-party plugin, so say what is happening instead of guessing.
+    const lookalikes = config.plugins.filter(
+      (ref) =>
+        !isPantheonPluginReference(ref) &&
+        pluginMetadataReferences(ref).some((reference) =>
+          /(^|\/)plugin-v2(?:\.ts)?$/.test(normalizePluginRef(reference)),
+        ),
+    )
+    if (lookalikes.length > 0) {
+      warning(
+        'This config also points at another copy of the Pantheon V2 plugin, which this ' +
+          'installer cannot prove it owns: ' +
+          `${lookalikes.map(describePluginEntry).join(', ')}. With the entry registered in ` +
+          'this install, BOTH copies would load and their hooks would run twice. Remove that ' +
+          'entry by hand if it is an older Pantheon installation; it is left alone because a ' +
+          'third-party plugin could share the path.',
+      )
+    }
   }
 
   // Report whether the entry the host will read can actually carry options.

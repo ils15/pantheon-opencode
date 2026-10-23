@@ -604,7 +604,6 @@ async function main() {
         }
       },
     })
-    process.once('SIGINT', onInterrupt)
 
     let installError = null
     try {
@@ -782,6 +781,11 @@ async function main() {
         applied: true,
         target: result?.target,
       })
+      // The interrupt handler describes an install that was in flight. It must
+      // not outlive it: `--doctor` runs AFTER this point, and a Ctrl-C there
+      // would otherwise rewrite a completed install as canceled/applied:false
+      // and print "nothing was applied".
+      onInterrupt.deactivate()
     }
 
     if (runDoctor && !isDryRun) {
