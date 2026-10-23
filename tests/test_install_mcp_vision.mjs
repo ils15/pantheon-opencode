@@ -85,18 +85,18 @@ try {
     writeFileSync(join(scriptsDir, name), '')
   }
   writeFileSync(join(sourceDir, 'pantheon_vision.py'), '')
-  writeFileSync(join(sourceDir, 'requirements-vision.txt'), 'mcp==2.2.0\nfastmcp==4.0.10\n')
+  writeFileSync(join(sourceDir, 'requirements-vision.txt'), 'mcp==2.2.0\nfastmcp==4.1.2\n')
   const fakePython = join(pythonDir, 'python3')
   writeFileSync(
     fakePython,
-    '#!/bin/sh\nif [ "$1" = "-c" ] && printf "%s" "$2" | grep -Fq "from fastmcp import FastMCP"; then\n  printf "mcp=2.2.0 fastmcp=4.0.10 fastmcp.server.server\\n"\nfi\nexit 0\n',
+    '#!/bin/sh\nif [ "$1" = "-c" ] && printf "%s" "$2" | grep -Fq "from fastmcp import FastMCP"; then\n  printf "mcp=2.2.0 fastmcp=4.1.2 fastmcp.server.server\\n"\nfi\nexit 0\n',
   )
   chmodSync(fakePython, 0o755)
 
   const health = healthCheck(healthTarget, { pythonTarget: healthTarget })
   const sdkCheck = health.passed.find(({ check }) => check === 'mcp-sdk')
   assert.ok(sdkCheck, 'the MCP SDK health check passes')
-  assert.match(sdkCheck.detail, /mcp=2\.2\.0 fastmcp=4\.0\.10/)
+  assert.match(sdkCheck.detail, /mcp=2\.2\.0 fastmcp=4\.1\.2/)
 } finally {
   rmSync(healthTarget, { recursive: true, force: true })
 }

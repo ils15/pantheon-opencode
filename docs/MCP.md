@@ -9,7 +9,7 @@ pins. Tool signatures live in [MCP Tools](mcp-tools.md); memory policy lives in
 ## Runtime pins
 
 The packaged runtime pins the MCP Python SDK to `mcp==2.2.0` and the standalone
-FastMCP server framework to `fastmcp==4.0.10`. Server code imports `FastMCP`
+FastMCP server framework to `fastmcp==4.1.2`. Server code imports `FastMCP`
 from `fastmcp`; MCP SDK v2 removed the old `mcp.server.fastmcp` re-export.
 Installation creates the isolated Python environment from the matching manifest
 in `src/mcp/`.

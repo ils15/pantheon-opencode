@@ -41,9 +41,9 @@ def _require_supported_fastmcp(installed_version: str | None = None) -> None:
     """Fail clearly when this suite is run outside its pinned MCP runtime."""
     installed = installed_version or package_version("fastmcp")
     match = re.match(r"^(\d+)\.(\d+)\.(\d+)", installed)
-    if match is None or tuple(map(int, match.groups())) < (4, 0, 10):
+    if match is None or tuple(map(int, match.groups())) < (4, 1, 2):
         raise RuntimeError(
-            "Persistence goal tests require fastmcp>=4.0.10 and mcp==2.2.0; "
+            "Persistence goal tests require fastmcp>=4.1.2 and mcp==2.2.0; "
             f"install the pinned dependencies from {FAST_MCP_PIN_FILE} "
             f"(installed fastmcp {installed})."
         )
@@ -216,7 +216,7 @@ def test_project_schema_is_versioned_restartable_and_reversible(persistence) -> 
 
 
 def test_fastmcp_version_guard_names_pinned_requirements_file() -> None:
-    with pytest.raises(RuntimeError, match=r"fastmcp>=4\.0\.10") as error:
+    with pytest.raises(RuntimeError, match=r"fastmcp>=4\.1\.2") as error:
         _require_supported_fastmcp("3.4.6")
     assert FAST_MCP_PIN_FILE in str(error.value)
 
