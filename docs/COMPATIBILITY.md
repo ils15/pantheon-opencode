@@ -74,18 +74,28 @@ a real host; the documented remedy is `--opencode-version`, not a heuristic.
 
 ## Config registration and the host's config merge
 
-Pantheon registers its plugin in `opencode.json`; the installer never writes
-`opencode.jsonc`. The OpenCode V2 host also loads a sibling `opencode.jsonc`
-from the same config directory when one exists, and merges the two files:
-scalars from `.jsonc` win, and arrays are unioned. A `plugin`/`plugins` entry in
-`.jsonc` therefore joins the effective plugin set instead of replacing the
-registration Pantheon wrote. The merge is silent, so a host can load a plugin
-that appears only in `.jsonc`.
+Pantheon registers its plugin in `opencode.json`. The installer reads and writes
+**only** that file — it never reads, writes, or edits a sibling
+`opencode.jsonc`.
 
-The installer strips Pantheon references from both config shapes and registers
-only the selected generation, so a 1.X host never loads the V2 plugin and a V2
-host never loads the V1 plugin. Forcing V2 on a 1.X host is an unsupported
-mixed/wrong-generation configuration, not a supported mode.
+An OpenCode V2 host also loads `opencode.jsonc` from the same config directory
+when one exists and merges the two files: scalars from the `.jsonc` win, and
+arrays are unioned. A `plugin`/`plugins` entry in `.jsonc` therefore joins the
+effective plugin set instead of replacing the registration Pantheon wrote, and
+the merge is silent. What the installer guarantees is narrower than "the
+effective set is correct": if both files exist, it **warns** and names both
+paths, because anything in the `.jsonc` — including a stale Pantheon entry — is
+outside what it can see. Resolve that by moving the entries you want into
+`opencode.json` and deleting the `.jsonc`.
+
+Within `opencode.json` the installer strips Pantheon references from both plugin
+keys and registers only the selected generation, so a 1.X host never loads the
+V2 plugin and a V2 host never loads the V1 plugin. On a V1→V2 migration a
+third-party entry found in the V1 singular `plugin` key is additionally
+registered under the V2 plural `plugins` key (and reported), because the V2 host
+does not read the singular key and the entry would otherwise stop loading
+silently. Forcing V2 on a 1.X host is an unsupported mixed/wrong-generation
+configuration, not a supported mode.
 
 ## What "supported on OpenCode 1.19.x" means
 

@@ -225,6 +225,12 @@ per-request pruning invalidates the provider prompt cache. `keepTurns`,
 `purgeAfterTurns`, `protectedTools`, `minSavingsTokens`, and `charsPerToken`
 tune it.
 
+`init` writes the entry in its object form (`{ "package": …, "options": { … } }`),
+so there is a place to put that key without guessing the syntax — a bare-string
+entry leaves the host with no options at all, and both opt-in features read
+`ctx.options`. The keys, their defaults, and the `memory_injection` counterpart
+are listed in the README's *V2 plugin options* table.
+
 ## Memory injection
 
 `pantheon-memory` is pull-only: an agent recalls an entry only when it calls
