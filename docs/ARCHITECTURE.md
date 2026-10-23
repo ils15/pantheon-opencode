@@ -123,8 +123,12 @@ infrastructure the V2 `PluginContext` does not expose. The gap is reported as
 V2 also wires five event subscriptions (`session.created`, `session.idle`,
 `session.deleted`, `session.error`, `session.compacted`), session hooks
 (`prompt`, `context`, `compaction`), a read-only-enforcing `execute.before`
-hook, an `execute.after` chain (`task-result-guard` → `context-sandbox` →
-`read-enhancer`), and a `permission.evaluate` hook when the host exposes it.
+hook (the same handler denies the orchestrator `read`/`glob`/`grep` of source,
+tests and scripts), an `execute.after` chain (`task-result-guard` →
+`context-sandbox` → `read-enhancer` → formatter + delegation audit), and a
+`permission.evaluate` hook when the host exposes it. The V1→V2 bridge is built
+in the V2 entry itself (`installV2Bridge`), so idle dispatch reaches the todo
+enforcer whenever the host's `session` domain supports it.
 
 ## Installer and config model
 

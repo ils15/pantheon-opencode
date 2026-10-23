@@ -269,5 +269,22 @@ recovery without an exposed, verified mechanism.
 ## Unsupported V2 features
 
 The V2 plugin reports these gaps through `getUnsupportedFeatures()`:
-`legacy-hooks` (the V1-specific hook surface), `catalog-transform`,
-`integration-transform`, `skill-transform`, and `goal-tools`.
+
+- Adapter scope choices: `legacy-hooks` (the V1-specific hook surface),
+  `catalog-transform`, `integration-transform`, `skill-transform`,
+  `goal-tools` (the goal loop needs V1 infrastructure the V2 context does not
+  expose).
+- Host-domain gaps: `idle-todo-enforcer` (the enforcer is constructed only when
+  the host's `session` domain exposes `todo`/`messages`/`children`/`promptAsync`;
+  the measured 2.x domain does not), `tool-ceiling` (no
+  `message.updated` producer for the host-reported budget, so the
+  `<tool_ceiling>` block is not injected), `todo-restore` (no todo API to
+  snapshot across compaction), and `board-transitions` (the shared board is
+  reachable through the injected bridge, but the writers — terminal audit,
+  idle reports, dispatch mirror — live in V1's event hook and
+  `pantheon-hooks.ts`).
+
+Everything else the V1 plugin wires is on V2: the Zeus read guard, idle
+dispatch through the injected bridge, the compaction context, vision history
+sanitization, the post-write formatter, and the delegation audit trail
+(start/stop records joined on `delegation_id`).

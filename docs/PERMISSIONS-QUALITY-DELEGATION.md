@@ -842,17 +842,15 @@ This is the part with no existing documentation, and the part whose absence is n
 the store and the client it needs are all reachable only from the V1 plugin, which
 the V2 contract does not register. The adapter lists the goal tooling as absent for
 exactly this reason: it needs a store, a loop client and a board, none of which the
-V2 plugin context exposes ([`src/pantheon/v2-unsupported.mjs:71`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs#L71)).
+V2 plugin context exposes ([`src/pantheon/v2-unsupported.mjs`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs)).
 
-The bridge that would carry them across exists and is never wired. The bridge factory
-and the context accessor are both implemented
-([`src/pantheon/v2-bridge.ts:89`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-bridge.ts#L89), [`src/pantheon/v2-bridge.ts:110`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-bridge.ts#L110)), and **no production code path calls the
-factory** — its only callers are in the test suite. So the V2 accessor returns null
-in every real configuration, and that null is handled by *not registering the
-dependent tools* rather than by registering them as non-functional. **Absent, not
-broken** still describes the board itself — but "absent" no longer means "unnoticed":
-the reduction carries a marker (`goal-tools`, [`src/pantheon/v2-unsupported.mjs:70-75`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs#L70-L75)),
-and two surfaces report it.
+**The bridge is wired, and the board is still inert.** `createV2Bridge`/`injectBridge`
+are called from the V2 entry (`installV2Bridge`, [`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)), so
+`resolveBridge()` is no longer null and `session.idle` reaches the todo enforcer
+when the host's session domain supports it. What the injected board does **not**
+gain is a writer: the transitions below are driven from V1's event hook and from
+`pantheon-hooks.ts`, neither of which a V2-only install loads, and the reduction is
+declared as `board-transitions`.
 
 | Board capability | V1 contract | V2 contract |
 |---|---|---|

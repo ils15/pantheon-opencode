@@ -395,10 +395,14 @@ function resolveBridge(ctx?: V2ContextLike): PantheonV2Bridge | null {
  * Declared structurally and checked at runtime instead of being added to
  * {@link V2SessionDomain} on faith: the measured 2.1.4 host exposes
  * `hook`/`get`/`list`/`create`/`remove`/`prompt`/`generate`/`interrupt` on that
- * domain, and whether it also exposes `todo`/`messages`/`children` is NOT
- * measured by the repository. A client built on a method that is absent would
- * throw inside the enforcer's fail-open guards and leave idle continuation
- * silently dead again — the exact defect this wiring closes.
+ * domain. Its `prompt` takes `{ sessionID, text }` and is a DIFFERENT call from
+ * V1's `promptAsync({ path, body: { agent?, model?, parts } })` — the enforcer's
+ * agent/model inheritance has no V2 counterpart — and whether it exposes
+ * `todo`/`messages`/`children` at all is not measured by the repository. The
+ * check below therefore requires the V1 shape exactly: a client built on a
+ * method that is absent (or on a same-named method with a different contract)
+ * would throw inside the enforcer's fail-open guards and leave idle
+ * continuation silently dead again — the exact defect this wiring closes.
  */
 interface V2TodoSessionMethods {
   todo?: (input: { path: { id: string } }) => Promise<unknown>
