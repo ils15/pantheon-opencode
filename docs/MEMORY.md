@@ -79,6 +79,68 @@ The installed source also exposes the optional `code_index`, `code_query`, and
 the canonical runtime source; the standalone `scripts/memory_mcp.py` copy is
 intentionally lighter. Keep their differences deliberate.
 
+## Ambient injection on V2 (opt-in, default off)
+
+On its own, this store is pull-only: an entry is recalled only when the agent
+decides to call `memory_search`. The OpenCode V2 plugin has a per-request
+`context` hook, so an install can have the top entries ride along instead. It is
+opt-in and **default `false`** — nothing changes until it is enabled in the V2
+plugin options:
+
+```json
+{
+  "plugins": [
+    { "package": "<installed>/src/plugin-v2", "options": { "memory_injection": { "enabled": true } } }
+  ]
+}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Opt in. Disabled means the hook's `system` output is byte-identical to the policy-only output |
+| `maxEntries` | `3` | Entries per payload (1–10) |
+| `maxChars` | `1200` | Total character budget for the injected part (100–8000) |
+| `namespace` | unset | Namespace filter. Unset means no filter, exactly like `memory_search(query)` without `namespace`; `"default"` narrows to the storage default |
+
+How it reads: `$PANTHEON_HOME/memory/memory.db` (`PANTHEON_HOME` →
+`$XDG_CONFIG_HOME/opencode` → `~/.config/opencode`) with `node:sqlite` in
+read-only mode. It writes no row and migrates nothing, and it does not open a
+second writer against the MCP server's store; the only filesystem effect is the
+`-shm`/`-wal` index sidecars SQLite itself creates for a read-only WAL
+connection.
+
+What it selects: entries ranked by FTS5 BM25 for the session's FIRST user
+message, using the same terms/stopwords/prefix rules as `memory_search`. Terms
+are quoted with embedded quotes doubled, so a prompt cannot inject query syntax.
+Expired entries are excluded; a store written before TTL support (no
+`expires_at` column) is read without that filter instead of being rejected. The
+budget is split evenly between the entries, so one long memory cannot starve the
+others, and a shortened entry ends with `…[truncated]`.
+
+Once per session: the payload is computed on the first request, cached
+(64 sessions), and re-added verbatim on later requests. The
+`<!-- pantheon-memory-context:v1 -->` marker keeps a second pass from
+duplicating it, so the system prompt does not grow per request.
+
+Fail-open: no `node:sqlite` in the runtime, a missing or unreadable database, an
+unexpected schema, no user message, no searchable term, or an empty result all
+mean "no injection" — never an error in the session. A broken store logs one
+line per session in `hooks.log`, and so does the one case that used to be
+invisible: the feature is enabled but the host sent no usable `system` array, so
+there is nothing to inject into (`skip=no-system`). An invalid
+`memory_injection` block is reported once per process, naming the ignored keys
+and the accepted ones, while the defaults apply.
+
+What that line may contain: for `skip=error` it carries only a stable
+classification (`code=ERR_SQLITE_ERROR`), never the message body — an FTS error
+echoes the failing statement, and that statement carries the `MATCH` expression
+built from your first message. Set `PANTHEON_MEMORY_INJECTION_DEBUG=1` to append
+the raw message when debugging locally; that is off by default because it can
+copy memory text and prompt fragments into the log file.
+
+Injection adds context, not authority: entries are data the model may read, and
+an injected entry never grants a permission.
+
 ## Low-call policy
 
 - Search only when project history could change the answer or implementation.

@@ -347,8 +347,9 @@ its tools, admits the valid Zeus→Apollo root dispatch, rejects an invalid edge
 before child creation, and rejects a matrix-valid dispatch from a child. The
 same post-fix permission matrix passes with zero `FAIL` cells on `2.0.30` and on
 the `2.1.x` line (floor `2.1.0` and newest patch at freeze). The
-remaining V2 surface still has unsupported goal tools and registration-only
-session/compaction hooks, so the 1.6 line is not full V2 feature parity.
+remaining V2 surface still has unsupported goal tools and no V2 rebuild of the
+V1 goal/todo context that the V1 compaction hook injects, so the 1.6 line is
+not full V2 feature parity.
 
 ### Manual goals are Persistence MCP tools, not V2 plugin tools
 
@@ -478,8 +479,39 @@ available.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PANTHEON_NODE` | `node` from `PATH` | Path to a Node.js >= 22.5 binary used only for the `node:sqlite` capability in the CLI fallback; this is not the Pantheon package support floor. An explicit path must exist and be executable, otherwise the tool fails fast instead of ignoring the override |
+| `PANTHEON_COST_OFFLINE` | unset | Set to `1` to forbid every network request, including `refreshPricing: true`: the report uses the cached catalog only, an explicit refresh is refused with a `Pricing: REFUSED` notice naming this variable instead of being ignored, and no socket is opened on any path |
 
-Tool interpretation matters: `pantheon_model status` reports configuration, not the model serving a completion. V2 manual model overrides are project-only; global override files are neither read nor applied, and global mutation is unsupported until a future surface can obtain separate explicit human authorization. V2 ignores static presets and applies only explicit per-agent project model/variant overrides, leaving the host default unchanged otherwise; V1 preset behavior remains legacy pending compatibility decisions. `pantheon_cost` is a rolling token aggregate, not a session-level or monetary cost report. See the [OpenCode plugin tool notes](docs/mcp-tools.md#opencode-plugin-tools) for details and measurement limits.
+### Money, models and sessions
+
+`pantheon_cost({ days?, session?, refreshPricing? })` reports the same tokens it
+always did, plus a USD column per row. Both host generations accept all three
+arguments: the V2 tool surface validates them against the same rules and forwards
+them to the same implementation, so a cost decision is not V1-only.
+
+- **Prices** come from the public `https://models.dev/api.json` catalog (USD per
+  1M tokens, `input`/`output`/`cache_read`/`cache_write`). The normalized catalog
+  is cached at `<configDir>/cache/models-dev.json`, where `<configDir>` follows
+  the repository convention — `PANTHEON_HOME`, else
+  `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`.
+- **No tool call waits on the network.** A call reads the cache; a cache that is
+  missing or older than 24 hours is refreshed in the background with a 3 s
+  timeout, and the report says the prices it used are stale. The one exception
+  is an explicit `refreshPricing: true`, which waits for that bounded refresh —
+  that is also how a user forces new prices (and how the first cache is created).
+  With `PANTHEON_COST_OFFLINE=1` that request is refused outright, before any
+  socket is opened, and the report says so.
+- **An unpriced row reads `—`.** An unknown model, an ambiguous model id, or a
+  cache token with no published cache rate makes the row unpriced, the row is
+  excluded from the total, and the total says `(partial)`. A model priced at a
+  real zero stays `$0.00` — an unknown model is never reported as free.
+- **Attribution** adds `## Cost by model` and `## Cost by session` tables to the
+  existing by-agent table. `session: <id>` scopes the whole report to that root
+  session plus every descendant found through the `parent_id` links in the
+  session tables, so a delegation tree is measured as one spend.
+- Costs are catalog list prices, not a provider invoice, and the CLI-fallback
+  path still reports tokens only: its section explicitly says so.
+
+Tool interpretation matters: `pantheon_model status` reports configuration, not the model serving a completion. V2 manual model overrides are project-only; global override files are neither read nor applied, and global mutation is unsupported until a future surface can obtain separate explicit human authorization. V2 ignores static presets and applies only explicit per-agent project model/variant overrides, leaving the host default unchanged otherwise; V1 preset behavior remains legacy pending compatibility decisions. `pantheon_cost` is a rolling aggregate: it reports tokens and catalog-priced USD by agent/phase, by model, and by session, and it never waits on the network for a price. See the [OpenCode plugin tool notes](docs/mcp-tools.md#opencode-plugin-tools) for details and measurement limits.
 
 
 ## Code-mode execution (explicit opt-in)
@@ -565,7 +597,7 @@ The V2 plugin provides 3 unconditional orchestration tools (`hashline_edit`,
 [Bounded workspace reads](#bounded-workspace-reads-f3b)) — 5 event
 subscriptions (`session.created`, `session.idle`,
 `session.deleted`, `session.error`, `session.compacted`), session hooks
-(`prompt`, `context`),
+(`prompt`, `context`, `compaction`),
 and a tool `execute.before` hook that enforces read-only sessions. The 3 goal
 tools are **not**
 registered on V2: the goal loop needs a `GoalStore`, a `GoalLoopClient` and a
@@ -676,6 +708,75 @@ edge before child creation; see the
 [`F4A evidence`](bench/results/f4a-v229-admission-identity-2026-10-14.md).
 V2 `execute.after` runs the completed-result chain:
 `task-result-guard` → `context-sandbox` → `read-enhancer`.
+
+The V2 `compaction` hook performs dynamic context pruning (DCP) on the
+provider-bound message array immediately before summarization, so old tool
+output is not re-summarized into the permanent context. It rewrites tool parts
+only: an invocation repeated with the same tool name and normalized arguments
+keeps its most recent result verbatim and every earlier successful body becomes
+a `[pantheon-prune:v1 …]` placeholder; error results are never rewritten, and a
+group is pruned only when its newest invocation carries a successful result —
+an interrupted call with no result yet, or a later identical retry that errored,
+leaves every older body intact. The arguments of failed calls are blanked
+after two turns while the error text stays visible; the last 4 turns and a
+protected tool list (`subagent`, `task`, `skill`) are never touched. The marker
+makes a second pass a no-op, and a pass estimated below 200 tokens (chars/4
+heuristic) does nothing, so no prompt cache is invalidated for nothing. The
+array is mutated in place: no message is deleted or reordered, `system` is
+untouched, and any unexpected shape fails open without throwing. Because the
+compaction site is always on, a missing/misnamed `messages` or malformed
+message is reported once per session rather than becoming a silent no-op; an
+invalid `context_pruner` block is likewise reported once per process, naming
+the ignored keys and the accepted ones, while resolution still falls back to
+the defaults. The same engine is available per request only when the Pantheon
+V2 plugin entry sets `options.context_pruner.enabled` to `true` (default
+`false`), because per-request pruning invalidates the provider prompt cache and
+has no measured cost baseline; `keepTurns`, `purgeAfterTurns`,
+`protectedTools`, `minSavingsTokens` and `charsPerToken` tune the same engine.
+
+The V2 `context` hook can also carry memory into the request. `pantheon-memory`
+is pull-only — an agent recalls an entry only when it calls `memory_search` —
+so `options.memory_injection.enabled` (default `false`) makes the same hook
+append the entries most relevant to the session's first user message:
+
+```json
+{
+  "plugins": [
+    { "package": "<installed>/src/plugin-v2", "options": { "memory_injection": { "enabled": true } } }
+  ]
+}
+```
+
+The block is read from `$PANTHEON_HOME/memory/memory.db` with `node:sqlite` in
+`readOnly` mode (the access path `pantheon_cost` uses); no row is written and no
+schema is migrated (a read-only WAL connection can still make SQLite create its
+`-shm`/`-wal` index sidecars, which are not memory writes). Ranking is the FTS5 `MATCH … ORDER BY rank` query the MCP
+tool runs, over terms extracted from that first message with the same stopword
+filter and 4-character prefix threshold as `_build_fts_query`; terms are quoted
+with embedded quotes doubled, so prompt text can never become query syntax.
+`maxEntries` (default 3, cap 10) and `maxChars` (default 1200, cap 8000) bound
+the result: the budget is split evenly between the entries, so one long memory
+cannot starve the others, and a shortened entry ends with `…[truncated]`.
+`namespace` narrows the search; it is unset by default, matching
+`memory_search`'s optional `namespace` argument (searches without a filter can
+return matches from any namespace), while `"namespace": "default"` restores the
+storage default. Expired entries (`expires_at` in the past) are excluded, and a
+pre-TTL store without that column is read without the filter rather than
+rejected. The payload is computed once per session (bounded 64-entry cache) and
+re-added verbatim on later requests; the `<!-- pantheon-memory-context:v1 -->`
+marker prevents a duplicate part, so the system prompt grows once, not per
+request. Every failure — no `node:sqlite` in the runtime, a missing or
+unreadable database, an unexpected schema, no user message, no searchable term,
+an empty result — injects nothing and never throws; a broken store logs one line
+per session through `hooks.log`, and an invalid `memory_injection` block is
+reported once per process with the ignored and accepted keys while the defaults
+apply. Enabled but unusable is never silent: a host that sends no `system` array
+gets a `skip=no-system` line instead of a feature that quietly does nothing, and
+an `error` skip logs only a stable classification (`code=ERR_SQLITE_ERROR`), not
+the message body, because an FTS error echoes the statement and the statement
+carries the `MATCH` expression built from the first message
+(`PANTHEON_MEMORY_INJECTION_DEBUG=1` opts into the raw message locally). With
+injection disabled the hook output is byte-identical to the policy-only output.
 
 Every V2 tool declares an `output` schema. OpenCode 2.0.x requires the
 declaration and the resolved result to agree in both directions, so an
@@ -1198,8 +1299,11 @@ or job recovery without an exposed, verified mechanism.
 
 The `pantheon-memory` MCP server needs no configuration: search is SQLite FTS5
 (BM25) only, all stdlib, with no embedding model, no vector index, and no
-`sqlite-vec`/`fastembed` dependency. Other environment variables are documented
-in the sections above.
+`sqlite-vec`/`fastembed` dependency. Entries are capped at 64 KiB serialized and
+can expire via `memory_store(ttl_seconds=...)`; the cap is the only optional
+knob, raised with `PANTHEON_MEMORY_MAX_ENTRY_BYTES=<bytes>`. Other environment
+variables are documented in the sections above. See
+[Memory usage](docs/MEMORY.md) for the write, expiry and purge rules.
 
 
 ## Documentation

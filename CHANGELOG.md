@@ -12,7 +12,181 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🆕 What's New
 
+- **`pantheon-memory` is no longer pull-only on V2: the most relevant entries
+  can ride along in `system`, opt-in and off by default.** An agent recalls
+  something only if it decides to call `memory_search`; with
+  `memory_injection.enabled` in the V2 plugin options, the per-request `context`
+  hook instead reads `$PANTHEON_HOME/memory/memory.db` read-only with
+  `node:sqlite` (same access path as `pantheon_cost`), ranks entries for the
+  session's FIRST user message with the same FTS5 BM25 query the MCP tool uses,
+  and appends the top 3 — under a 1200-character budget, split evenly between
+  the entries so one long memory cannot starve the others, each shortened with
+  an explicit `…[truncated]` suffix. Expired entries are excluded, namespace
+  filtering mirrors `memory_search` (no filter by default, `namespace` to
+  narrow), and every term is quoted with its quotes doubled, so prompting
+  `" OR value:secret` cannot become FTS5 syntax. The payload is computed once
+  per session (bounded 64-session cache) and re-added verbatim on later
+  requests; a `<!-- pantheon-memory-context:v1 -->` marker makes a second pass a
+  no-op, so `system` never grows duplicates. Defaults are
+  `{ enabled: false, maxEntries: 3, maxChars: 1200, namespace: null }`; with
+  injection off the hook output is byte-identical to the policy-only output.
+  Every failure path — no `node:sqlite` in the runtime, missing/unreadable
+  database, unexpected schema, no user message, no searchable term, empty
+  result — injects nothing and never throws; a broken store logs one line per
+  session and a typo in the block is reported once per process with the ignored
+  and accepted keys. Enabled-but-unusable is observable rather than silent: a
+  host that sends no usable `system` array logs `skip=no-system` once instead of
+  doing nothing without a trace. An `error` skip logs a stable classification
+  (`code=ERR_SQLITE_ERROR`) and never the message body, because an FTS error
+  echoes the statement and the statement carries the `MATCH` expression built
+  from the first message; `PANTHEON_MEMORY_INJECTION_DEBUG=1` opts into the raw
+  message for local debugging and is off by default. Measured on a 3,566-entry
+  store: 1,200 characters for 3 entries, and on `opencode v2.1.2` the block
+  arrives in the captured provider request body exactly once.
+
+- **V2 compaction now prunes dead tool context before the summary instead of
+  paying to summarize it again.** The OpenCode V2 `compaction` hook receives the
+  provider-bound message array and applies three bounded rules: an invocation
+  repeated with the same tool name and normalized arguments keeps its newest
+  result verbatim while earlier successful result bodies become a
+  `[pantheon-prune:v1 …]` placeholder — error results are never rewritten, and
+  a group is pruned only when its newest invocation carries a successful result:
+  an interrupted call with no result yet, or a later identical retry that
+  errored, leaves every older body intact; arguments of failed calls are
+  blanked after two turns while the error text stays visible; and the last four
+  turns plus `subagent`, `task` and `skill` results are never touched. The array
+  is mutated in place — no message is removed, reordered or role-changed, and
+  `system` is not modified — and any unexpected shape fails open with one log
+  line per session. Because this site is always on, a missing/misnamed
+  `messages` or a malformed message is reported once per session instead of
+  silently doing nothing, and a typo in the `context_pruner` block is reported
+  once per process with the ignored keys and the accepted keys while resolution
+  still falls back to defaults. Placeholders carry a stable marker so a second
+  pass is a no-op, and a pass estimated below 200 tokens (chars/4 heuristic, no
+  tokenizer or LLM call) mutates nothing, so a provider prompt cache is not
+  invalidated for nothing. On a probe session with 16 messages produced by real
+  `read` tool calls, the pass rewrote two parts and saved an estimated 5,772
+  tokens; the host still sent the summary request with the pruned history
+  instead of skipping it for a canned summary. The same engine is opt-in for the
+  per-request `context` hook through `context_pruner.enabled` in the V2 plugin
+  options — default `false`, because per-request pruning invalidates the
+  provider prompt cache and has no measured cost baseline yet.
+
+- **The V2 sidebar collapses its delegation data into one aggregated `Dispatch`
+  block.** The duplicated `◇ agentes` list and the estimated `⌗ Skills` block are
+  gone (the skill index is no longer read at all). In their place `Dispatch`
+  prints one row per live child — `⠸ <agent> $<cost> <duration>`, newest first,
+  three then `… +N rodando`, model dropped before cost — and rolls the finished
+  children up per agent instead of one row per session: `✓ <total> · $<sum> ·
+  <M> agentes` plus `· <F> falhas` when any child failed, up to three
+  `<agent> ×<count>  $<sum>` rows and `… +K  $<sum>` beyond, all inside eight
+  lines. The header sums every child, live or finished, and the block stays
+  hidden when the session has none (a failing `family` hides it rather than
+  falling back to the root). Each row is a single preformatted line, so the
+  narrow pane can no longer squeeze the cost, the count or the duration out of
+  the row — the failure mode that made the old per-agent rows render as a bare
+  name.
+
+- **`/dispatch` opens a full-width dispatch panel, built on the same collector as
+  the sidebar block.** The plugin registers the `pantheon.dispatch` content in
+  the host's `session.panel` slot (an additive claim; the host keeps focus,
+  `close` and `toggleFullscreen`) and exposes `Pantheon: Dispatch` in the
+  palette and `/dispatch` (alias `/pantheon-dispatch`) through an `app` claim
+  that renders nothing and only registers the keymap layer. The sidebar's
+  delegation collection moved into one `collectDispatch(context, sessionID)`
+  consumed by both views, which removes the class of bug that produced
+  duplicated rows when two collectors disagreed. The panel lists one row per
+  child session — `⠋ prometheus   plan   $0.09  14m34s`, running first, then most
+  recent activity, `✓`/`✗`/`○`/`?` per state — under
+  `◈ Dispatch — <session>` (+ `[fullscreen]`) and the tree's counters
+  (`2 rodando · 70 concluídos · 1 falha · $3.59`, a zero counter is omitted); the
+  selected child gets a two-to-four line detail (title or spawning description,
+  short id, model, in/out/reasoning/cache tokens, kind evidence, parent id, with
+  `—` for anything unpublished). ≥72 columns puts the detail beside the list,
+  narrower panels stack it and truncate per column; the list pages at ten rows
+  and the selection is held by session id, falling back to the first row when
+  the selected child disappears. Keys are namespaced and explicitly bound
+  (`k`/`up`, `j`/`down`, `home`, `end`, `pageup`, `pagedown`, `enter`, `f`,
+  `escape`/`q`) and live inside the panel claim, so they stay inert while the
+  panel is not focused. Opening requires an open session — otherwise Pantheon
+  toasts `Abra uma sessão para ver o Dispatch` instead of inventing a route. The
+  panel reads only host-cached state (no session sync, no child `message.list`,
+  no HTTP, no `session.metadata` write) and its 80 ms spinner tick exists only
+  while the panel is open with something running. Row click-through to the child
+  session is a documented TODO: no `session` router destination is verified for a
+  child id.
+
+- **`pantheon_cost` reports money, not just tokens, and can attribute spend to a
+  session tree.** Each row now carries a USD column priced from the public
+  `models.dev` catalog (input, output and cache tokens at their own rates), and
+  two additive tables break the same numbers down by model and by session. The
+  catalog is cached at `<configDir>/cache/models-dev.json`; a tool call reads
+  that cache and never waits on the network — a missing or >24 h cache is
+  refreshed in the background with a 3 s timeout and the report says its prices
+  are stale, while `refreshPricing: true` is the one call that waits and the way
+  to force new prices. An unknown or ambiguous model reads `—`, is excluded from
+  the total, and the total says `(partial)`; a model the catalog prices at zero
+  stays `$0.00`, because an unknown model is never reported as free. Passing
+  `session: <id>` scopes the whole report to that root session plus its
+  descendant sessions, using the `parent_id` links already in the database. The
+  no-argument output keeps its by-agent/by-phase table and rows; the CLI fallback
+  path still reports tokens only and says so. **The V2 host accepts, validates and
+  forwards all three arguments** (`days`, `session`, `refreshPricing`) instead of
+  dropping everything but `days`, and its tool description no longer claims the
+  report is money-free — a feature reachable on V1 only would have been a broken
+  feature. The shipped-output probe now asserts the cost column, the by-model and
+  by-session sections, `—` for an unpriceable row and the `(partial)` total, so a
+  report that silently loses its money side fails the probe.
+
+- **`pantheon-memory` bounds what one entry may cost and can expire entries
+  without a restart or a migration step.** `memory_store` now rejects an entry
+  whose serialized size (`value` + `metadata` + `namespace` + `key` as UTF-8)
+  exceeds 64 KiB — the same bound the Persistence MCP applies to checkpoint
+  content — with a message naming the actual size, the cap and
+  `PANTHEON_MEMORY_MAX_ENTRY_BYTES`, the environment variable that raises it.
+  Over-cap writes are rejected rather than truncated, because a shortened
+  memory is silent data loss. `memory_stats` keeps every existing field and adds
+  `total_bytes`, `max_entry_bytes`, `warning_threshold_bytes` (half the cap),
+  `oversized_entries` and the five `largest_entries` (namespace, key, bytes), so
+  an operator can see what to prune before the store grows unbounded.
+  `memory_store(ttl_seconds=...)` gives an entry a lifetime (1 s to 365 days);
+  `memory_search` hides expired entries by default and `include_expired=True`
+  shows them, while `memory_recall` still returns an expired entry by exact key
+  so "expired" stays distinguishable from "never existed". Nothing deletes an
+  expired row implicitly — `memory_forget(expired_only=True)` is the explicit
+  purge and reports the row count. An existing `memory.db` gains the
+  `expires_at` column on open behind a `PRAGMA table_info` guard, so a second
+  open is a no-op, no row is rewritten, and entries stored before this change
+  (NULL expiry) behave exactly as they did.
+
 ## 🐞 Fixed
+
+- **`PANTHEON_COST_OFFLINE=1` now forbids the network on every path, including
+  `refreshPricing: true`.** The offline gate sits on the fetch itself, so the lazy
+  background refresh is not scheduled and an explicit refresh is refused with a
+  `Pricing: REFUSED` notice that names `refreshPricing` and the variable — no
+  socket is opened, and the report stops recommending a call the host forbids.
+
+- **A scoped `pantheon_cost` over a session subtree with no token rows renders an
+  empty scoped report instead of `UNSUPPORTED`.** The "no readable token source"
+  diagnosis is reserved for an unscoped ledger that really carries no tokens; a
+  filter that matched nothing is not a fault in the user's database, and the
+  scope verdict (`root + N descendants`) is now printed on empty reports too.
+
+- **A priced sub-cent cost no longer displays as `$0.0000`.** Amounts below the
+  four-decimal resolution render as `< $0.0001`; a real zero stays `$0.00`.
+
+- **A `session`-scoped `pantheon_cost` request is refused on the CLI-fallback
+  path instead of silently returning an unscoped total.** The `scripts/cost.mjs`
+  mirror reports tokens only and carries no session ids, so the only faithful
+  answer to a scoped question there is `status: UNSUPPORTED` with the reason —
+  not a full-window number under a scoped heading.
+
+- **A cache-only assistant turn no longer makes `pantheon_cost` call the ledger
+  unreadable.** The diagnosis required a non-zero input/output token sum, so a
+  turn served entirely from cache (zero input/output, real cache-read count) was
+  reported as `UNSUPPORTED` even though its usage was measurable. Any cache
+  tokens now count as readable usage.
 
 ## ⚠️ Known Issues
 
