@@ -72,6 +72,8 @@ nav:
       - Model Routing: reference/model-routing.md
       - Environment Variables: reference/env-vars.md
       - Code Mode: reference/code-mode.md
-  - Release Process: RELEASING.md
+  - Release Process:
+      - Release Process: RELEASING.md
+      - v1.6.0 Release Notes: releases/v1.6.0.md
   - Branch Protection: BRANCH-PROTECTION.md
   - Contributing: https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md
