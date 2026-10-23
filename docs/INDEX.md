@@ -12,13 +12,11 @@
 | **Quick start / Install** | [INSTALLATION.md](INSTALLATION.md) |
 | **Which platform to pick** | [PLATFORMS.md](PLATFORMS.md) |
 | **What is enforced, and by which layer** | [PERMISSIONS-QUALITY-DELEGATION.md](PERMISSIONS-QUALITY-DELEGATION.md) |
-| **Agent reference** | [AGENTS.global.md](../AGENTS.global.md), [canonical agent files](../src/agents/) |
+| **Agent reference** | [canonical agent files](../src/agents/) |
 | **MCP tiers & tools** | [mcp-tools.md](mcp-tools.md), [mcp-user-guide.md](mcp-user-guide.md) |
 | **Release process** | [RELEASING.md](RELEASING.md) |
 | **Contributing** | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | **Changelog** | [CHANGELOG.md](../CHANGELOG.md) |
-| **MCP Tool Registry** | [mcp-tools.md](mcp-tools.md) |
-| **MCP User Guide** | [mcp-user-guide.md](mcp-user-guide.md) |
 | **MCP Tiers** | `.pantheon/tiers.json` |
 
 ---
@@ -28,7 +26,7 @@
 **Pantheon** replaces the single-agent coding trap with **specialized agents**:
 - **Zeus** orchestrates the workflow (plan → implement → review → deploy)
 - **Athena** plans architecture; **Apollo** discovers code; **Hermes/Aphrodite/Demeter/Prometheus** implement
-- **Themis** reviews every phase (mandatory quality gate); **Mnemosyne** documents decisions
+- **Themis** reviews material and sensitive changes on demand (quality gate); **Mnemosyne** documents decisions
 - **Iris** manages GitHub; **Talos** handles hotfixes; **Gaia** analyzes remote sensing
 
 All agents live as **canonical `.agent.md` files** in `src/agents/` and are deployed via the installer.
@@ -37,7 +35,7 @@ All agents live as **canonical `.agent.md` files** in `src/agents/` and are depl
 
 ## Platform Support
 
-Pantheon v1.0 is **OpenCode-only**. See [PLATFORMS.md](PLATFORMS.md) for details.
+Pantheon is **OpenCode-only**. See [PLATFORMS.md](PLATFORMS.md) for details.
 
 ---
 
@@ -46,7 +44,7 @@ Pantheon v1.0 is **OpenCode-only**. See [PLATFORMS.md](PLATFORMS.md) for details
 | Concern | Location |
 |---|---|
 | Agent definitions (edit here) | `src/agents/*.md` |
-| Shared skills | `skills/<name>/SKILL.md` |
+| Shared skills | `src/skills/<name>/SKILL.md` |
 | Standards & instructions | `instructions/*.instructions.md` |
 | Prompt templates | `prompts/*.prompt.md` |
 | GitHub Actions workflows | `.github/workflows/` |

@@ -45,7 +45,7 @@ User Request
      ├──► Hermes (backend, FastAPI)
      ├──► Aphrodite (frontend, React)
      ├──► Demeter (database, SQLAlchemy)
-     ├──► Themis (quality gate, mandatory review)
+     ├──► Themis (quality gate, on demand)
      └──► ...
 ```
 
@@ -57,7 +57,7 @@ User Request
 | Test coverage | 65–75% | **92%** |
 | TDD enforcement | Optional | **Enforced RED→GREEN→REFACTOR** |
 | Bugs reaching production | 3–5 per feature | **Near zero** |
-| Code review cadence | End of feature | **After every phase** |
+| Code review cadence | End of feature | **On material and sensitive changes** |
 
 The key insight: **specialization beats generalization at every layer.** Hermes knows
 FastAPI async patterns and nothing about React. Aphrodite knows WCAG accessibility and
@@ -73,7 +73,7 @@ Zeus uses explicit rules to decide whether to delegate or not:
 |-------|--------------|---------------------|
 | Athena | Feature >3 components, unknown codebase | Simple single-file change |
 | Apollo | Needs >3 parallel searches | Single known file location |
-| Themis | After any implementation phase | Hotfix (no code change) |
+| Themis | Material or sensitive change | Routine, cosmetic, or mechanical edit |
 
 ---
 
