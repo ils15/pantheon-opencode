@@ -34,6 +34,7 @@ npm run doctor
 - In an interactive TTY setup summary, the installer recommends a persistent external location for future worktrees: `<project-parent>/.pantheon-worktrees/<exact-repository-directory-basename>/<task>` (for example, `/home/user/.pantheon-worktrees/My Project/feature-name`). Use the project directory's exact basename, including spaces; do not normalize it into a slug.
 - The recommendation is guidance for agents only; Pantheon does not create Git worktrees or directories automatically.
 - Interactive TTY configuration uses Clack prompts to select components, choose a global/project install, and confirm the review before applying. Canceling changes nothing.
+- Every path that ends without applying prints exactly one line naming where it stopped (`canceled at the review prompt`, `declined at the review prompt`, `canceled at the install location`, …), and Ctrl-C is handled: it prints the same line and exits `130`. A cancel, a decline, or an apply is also written to `.pantheon/last-run.json` in the target (status, reason, cancel point, timestamp, version) so a later run can tell what the previous one did; `install-state.json` is still written only by an apply. The two gate refusals are exempt on purpose — a run refused before authorization (`2`) or after drift (`3`) keeps its documented guarantee of writing nothing, and reports itself in its message and exit code. A record that cannot be written is reported as a warning and never changes the exit code.
 - `--yes`, `--headless`, `--dry-run`, and non-TTY paths keep their existing behavior.
 - Delegation and background mode depend on the tools exposed by the host version/runtime. In the reported Beta 10 session, Zeus had the `subagent` tool, with no `task_status`/`cancel_task` or guarantee of tracking/recovery.
 - Check the runtime's schema and documentation; do not assume `task()` or background are available. The experimental variable below applies only to hosts/versions that document it.
@@ -68,7 +69,12 @@ A dry run resolves the generation with the same resolver as apply, including the
 2-second timeout, so the preview writes nothing. V1 is assumed only when the
 probe fails or is unreadable; the plan then says that it assumes V1 and may
 diverge, and `--json` adds an entry to its `advisories` array, while
-`--opencode-version v1|v2` pins the preview. The plan describes
+`--opencode-version v1|v2` pins the preview. A V2 preview also carries
+`v2_capabilities` (what the generation registers, plus the statically known
+not-registered seed and the scope of that list) and `plugin_options` (whether the
+written plugin entry can receive the opt-in `options`), so a machine sees the
+same facts the text notice prints. A sibling `opencode.jsonc` that the installer
+neither reads nor writes is reported in that same `advisories` array. The plan describes
 managed-file operations; it does not represent every bulk or external effect,
 such as creating or updating a Python environment. `postinstall`/`sync-tui` is
 also outside the `init` approval flow and may update TUI artifacts without a

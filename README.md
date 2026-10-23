@@ -90,6 +90,44 @@ contract and targets OpenCode 2 only.
 The support policy, the known-broken exception, and the verified-version
 evidence have exactly one home: [Compatibility](docs/COMPATIBILITY.md).
 
+### V2 plugin options (opt-in features)
+
+The OpenCode V2 host hands a plugin its `options` only from the object form of
+the entry, and two features — per-request context pruning and ambient memory
+injection — read exactly that bag. `init` therefore writes the object form, so
+enabling them is one edit away and nothing is on by default:
+
+```json
+{
+  "plugins": [
+    {
+      "package": "/path/to/pantheon-opencode/src/plugin-v2",
+      "options": {
+        "context_pruner": { "enabled": true },
+        "memory_injection": { "enabled": true }
+      }
+    }
+  ]
+}
+```
+
+Keep the `package` value `init` wrote and add keys inside `options`; any key you
+add by hand survives a re-run. Both features are off unless `enabled` is
+literally `true`.
+
+| Option | Default | Effect |
+|---|---|---|
+| `options.context_pruner.enabled` | `false` | Prune old turns from the request payload and at compaction. Off by default because per-request pruning invalidates the provider prompt cache. |
+| `options.memory_injection.enabled` | `false` | Ride the most relevant memory entries along on the session's first request, bounded by `maxEntries`/`maxChars`. |
+
+`context_pruner` also accepts `keepTurns`, `purgeAfterTurns`, `protectedTools`,
+`minSavingsTokens` and `charsPerToken`; `memory_injection` accepts `maxEntries`,
+`maxChars` and `namespace`. Unknown keys are ignored with a one-time warning in
+the hook log, so a typo cannot silently change behaviour. Run
+`npx pantheon-opencode doctor` to see whether the installed entry can receive
+options at all. Full rules: [OpenCode V2](docs/opencode-v2.md) and
+[Memory](docs/MEMORY.md).
+
 ## Delegation
 
 Pantheon delegates through the host's native child-session engine: `subagent`
