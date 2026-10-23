@@ -70,13 +70,15 @@ function packOnce(root, outputDir) {
   } catch (error) {
     fail(`npm pack returned malformed JSON: ${error.message}`)
   }
-  if (!Array.isArray(result) || result.length !== 1 || typeof result[0]?.filename !== 'string') {
+  // npm <=11 emits an array; npm 12 emits an object keyed by package name.
+  const entries = Array.isArray(result) ? result : Object.values(result ?? {})
+  if (entries.length !== 1 || typeof entries[0]?.filename !== 'string') {
     fail('npm pack must produce exactly one JSON result')
   }
   const tgzFiles = readdirSync(outputDir).filter((name) => name.endsWith('.tgz'))
   if (tgzFiles.length !== 1)
     fail(`package evidence requires exactly one .tgz, found ${tgzFiles.length}`)
-  if (tgzFiles[0] !== result[0].filename)
+  if (tgzFiles[0] !== entries[0].filename)
     fail('npm pack result does not identify the sole .tgz artifact')
   return join(outputDir, tgzFiles[0])
 }

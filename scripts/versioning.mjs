@@ -320,7 +320,7 @@ function prepareUnreleased(newVersion, dateStr, notesBody = null) {
   // injection when interpolated next to the template's HTML comment.
   const writtenBody = sanitizeCommentDelimiters(cleanedBody)
 
-  const newTemplate = `\n\n<!-- Add new changes here. Running \`node scripts/versioning.mjs apply\` will\n     move this section to a versioned entry and reset the template below. -->\n\n## 🆕 What's New\n\n## 🐞 Fixed\n\n## ⚠️ Known Issues\n\n## ✅ Closed Issues`
+  const newTemplate = `\n\n<!-- Add new changes here. Running \`node scripts/versioning.mjs apply\` will\n     move this section to a versioned entry and reset the template below. -->`
   const newVersionHeader = `## [v${newVersion}] - ${dateStr}`
 
   const before = content.slice(0, idx)

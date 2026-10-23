@@ -37,6 +37,7 @@
     "package:validate": "node scripts/validate-package.mjs && npm run engine:check",
     "lint": "biome ci .",
     "docs:lint": "node scripts/docs-link-check.mjs",
+    "docs:check-changelog": "node scripts/docs-check-changelog.mjs",
     "typecheck": "tsc --noEmit",
     "audit": "npm audit --audit-level=high",
     "secret-scan": "node scripts/secret-scan.mjs",
