@@ -111,13 +111,25 @@ import {
   resolveMemoryInjectionConfig,
   warnInvalidMemoryInjectionConfig,
 } from './pantheon/memory-context.ts'
+import { getSharedBoard } from './pantheon/shared-board.ts'
+import {
+  TODO_ENFORCER_DEFAULTS,
+  TodoEnforcer,
+  type TodoEnforcerChild,
+  type TodoEnforcerClient,
+  type TodoEnforcerMessage,
+  type TodoLike,
+  todoEnforcerEnabledFromEnv,
+} from './pantheon/todo-enforcer.ts'
 import {
   BOUNDED_READ_TOOL,
   createV2BoundedReadTool,
   type V2BoundedReadOriginRegistry,
 } from './pantheon/v2-bounded-read.ts'
 import {
+  createV2Bridge,
   getV2BridgeFromContext,
+  injectBridge,
   type PantheonV2Bridge,
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
@@ -345,6 +357,105 @@ function resolveBridge(ctx?: V2ContextLike): PantheonV2Bridge | null {
   if (v1Bridge != null) return v1Bridge
   if (ctx != null) return getV2BridgeFromContext(ctx)
   return null
+}
+
+/**
+ * The subset of the host's `session` domain a `TodoEnforcerClient` needs.
+ *
+ * Declared structurally and checked at runtime instead of being added to
+ * {@link V2SessionDomain} on faith: the measured 2.1.4 host exposes
+ * `hook`/`get`/`list`/`create`/`remove`/`prompt`/`generate`/`interrupt` on that
+ * domain, and whether it also exposes `todo`/`messages`/`children` is NOT
+ * measured by the repository. A client built on a method that is absent would
+ * throw inside the enforcer's fail-open guards and leave idle continuation
+ * silently dead again — the exact defect this wiring closes.
+ */
+interface V2TodoSessionMethods {
+  todo?: (input: { path: { id: string } }) => Promise<unknown>
+  messages?: (input: { path: { id: string } }) => Promise<unknown>
+  children?: (input: { path: { id: string } }) => Promise<unknown>
+  promptAsync?: (input: { path: { id: string }; body: Record<string, unknown> }) => Promise<unknown>
+}
+
+const V2_TODO_CLIENT_METHODS = ['todo', 'messages', 'children', 'promptAsync'] as const
+
+/**
+ * Adapt the host's `session` domain to the {@link TodoEnforcerClient} the V1
+ * enforcer instance expects, or `undefined` when the domain does not carry the
+ * four methods. The input shape is V1's (`{ path: { id } }`) because the
+ * enforcer is the V1 instance — this is an adapter, not a second enforcer.
+ */
+function createV2TodoEnforcerClient(
+  session: V2SessionDomain | undefined,
+): TodoEnforcerClient | undefined {
+  if (session === undefined) return undefined
+  const methods = session as V2TodoSessionMethods
+  for (const method of V2_TODO_CLIENT_METHODS) {
+    if (typeof methods[method] !== 'function') return undefined
+  }
+  // Every method is present: the guard above is the only place absence is
+  // tolerated, so the assertions below cannot fire at runtime.
+  const todo = methods.todo as NonNullable<V2TodoSessionMethods['todo']>
+  const messages = methods.messages as NonNullable<V2TodoSessionMethods['messages']>
+  const children = methods.children as NonNullable<V2TodoSessionMethods['children']>
+  const promptAsync = methods.promptAsync as NonNullable<V2TodoSessionMethods['promptAsync']>
+  return {
+    session: {
+      todo: (input) => todo.call(session, input) as Promise<TodoLike[]>,
+      messages: (input) => messages.call(session, input) as Promise<TodoEnforcerMessage[]>,
+      children: (input) => children.call(session, input) as Promise<TodoEnforcerChild[]>,
+      promptAsync: (input) => promptAsync.call(session, input),
+    },
+  }
+}
+
+/**
+ * Construct the V1→V2 bridge IN the V2 entry and publish it on both channels
+ * (issue #265).
+ *
+ * Before this, `setV2Bridge`/`injectBridge`/`createV2Bridge` had no production
+ * caller: `resolveBridge()` always returned null, so `onSessionIdle` reached a
+ * null enforcer and idle continuation never ran on any V2 install — including
+ * the V1+V2 co-load, because nothing had ever put a bridge in `ctx.options`
+ * either.
+ *
+ * What is genuinely constructible without a V1 `PluginInput`:
+ *
+ *   - `board` — a process-wide singleton (`getSharedBoard`), the same instance
+ *     V1 and the hooks plugin use.
+ *   - `todoEnforcer` — the V1 class, fed by an adapter over the host's session
+ *     domain. Present only when that domain exposes the four methods the
+ *     enforcer uses; otherwise the reduction is marked (`idle-todo-enforcer`)
+ *     and, because the marker is one a migrating user must be told about, it
+ *     is also part of the static seed.
+ *
+ * Files in the bridge that need a V1 `client` (goal loop, vision handler) stay
+ * out: `goal-tools` already declares the goal surface absent, and the vision
+ * handler is V1-only.
+ */
+function installV2Bridge(context: PluginContext): TodoEnforcer | undefined {
+  const todoClient = createV2TodoEnforcerClient(hostDomains(context).session)
+  if (todoClient === undefined) markUnsupported('idle-todo-enforcer')
+  const board = getSharedBoard()
+  const todoEnforcer =
+    todoClient === undefined
+      ? undefined
+      : new TodoEnforcer({
+          client: todoClient,
+          board,
+          options: { ...TODO_ENFORCER_DEFAULTS, enabled: todoEnforcerEnabledFromEnv() },
+        })
+  const bridge = createV2Bridge({ board, ...(todoEnforcer === undefined ? {} : { todoEnforcer }) })
+  // Two channels, both needed: `ctx.options` is what a handler holding the
+  // context reads (`resolveBridge(ctx)`), and the module-level reference is
+  // what the event handlers use, since they receive no context.
+  injectBridge(context, bridge)
+  setV2Bridge(bridge)
+  // Returned so the compaction hook can list the session's PENDING TODOS with
+  // the same instance — the `<todo_context>` half of V1's compaction blocks
+  // needs exactly `listPendingTodos`, and the host exposes no todo listing of
+  // its own.
+  return todoEnforcer
 }
 
 // ─── V2 Transform Functions ─────────────────────────────────────────────
@@ -658,10 +769,11 @@ async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
   // ever arrives. Implementing this safely needs V2-side session threading
   // first; until then it stays deferred rather than approximated.
   //
-  // Idle continuation — goal loop / todo enforcer dispatch. This one really
-  // does delegate: `bridge.todoEnforcer` is the V1 enforcer instance, reached
-  // only in a process that also loaded V1. On a V2-only install the bridge
-  // resolves to null and idle continuation does not run.
+  // Idle continuation — goal loop / todo enforcer dispatch. The bridge is
+  // constructed by THIS module in `installV2Bridge` (Phase 0) and holds the
+  // V1 TodoEnforcer instance when the host's session domain exposes the
+  // methods the enforcer uses. Before issue #265 nothing injected a bridge on
+  // the V2 path, so this call was a guaranteed no-op on every install.
   const sessionID = _event.properties?.sessionID as string | undefined
   if (!sessionID) return
   const bridge = resolveBridge()
@@ -1807,6 +1919,14 @@ export const plugin = define({
   id: 'pantheon-opencode-v2',
 
   async setup(context: PluginContext): Promise<void> {
+    // ─── Phase 0: V1→V2 bridge (issue #265) ────────────────────────────
+    // First, because the event subscription below can deliver `session.idle`
+    // as soon as it starts: a bridge installed after it would lose the first
+    // idle of the process. Constructing it here is what makes
+    // `resolveBridge()` non-null on a V2 install — before this, the factory
+    // and the injector had no production call site at all.
+    installV2Bridge(context)
+
     // ─── Phase 1: V2 Transforms (isolated per-domain, best-effort) ────
     // Each transform registration is individually wrapped and settled via Promise.allSettled:
     // a rejection marks only that transform unsupported

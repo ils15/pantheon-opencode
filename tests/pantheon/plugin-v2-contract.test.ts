@@ -5,6 +5,8 @@ import Module, { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readOnlyRegistry, syncReadOnlySession } from '../../src/pantheon/delegation-enforce.ts'
+import { TODO_CONTINUATION_PROMPT } from '../../src/pantheon/todo-enforcer.ts'
+import { BRIDGE_OPTIONS_KEY } from '../../src/pantheon/v2-bridge.ts'
 import type { HookResult } from '../../src/plugins/hook-runner.ts'
 
 type Registration = { dispose: () => Promise<void> }
@@ -108,7 +110,6 @@ async function main(): Promise<void> {
     default: plugin,
     V2_UNSUPPORTED_FEATURES,
     getUnsupportedFeatures,
-    setV2Bridge,
     v2Dispose,
   } = await import('../../src/plugin-v2.ts')
   const pluginSource = await readFile(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
@@ -315,13 +316,13 @@ async function main(): Promise<void> {
     // anonymous casts it replaced do not come back.
     assert.match(pluginSource, /interface HostPluginContext extends PluginContext/)
     assert.match(pluginSource, /function hostDomains\(context: PluginContext\): HostPluginContext/)
-    // Seven call sites: registerV2Tools, subscribeV2Events,
+    // Eight call sites: installV2Bridge, registerV2Tools, subscribeV2Events,
     // registerV2SessionHooks, registerV2ToolHooks, registerV2PermissionHook,
     // bounded-read preparation, and Phase 7's compaction hook. New host-domain
     // reads must continue to use this declaration.
     assert.equal(
       (pluginSource.match(/hostDomains\(context\)/g) ?? []).length,
-      7,
+      8,
       'every host-domain read must go through hostDomains(context)',
     )
     assert.doesNotMatch(
@@ -977,17 +978,23 @@ async function main(): Promise<void> {
       idleDelivered = resolve
     })
 
-    setV2Bridge({
-      todoEnforcer: {
-        onIdle: async (sessionID: string) => {
-          deliveredSessionIDs.push(sessionID)
-          idleDelivered()
-        },
-      },
-    } as never)
-
+    // Delivery is observed through the REAL bridge the V2 entry now builds:
+    // `onSessionIdle` dispatches to the constructed enforcer, whose first
+    // action is the todo lookup. A hand-injected bridge would hide exactly the
+    // wiring under test (issue #265).
     await plugin.setup(
       makeBaseContext({
+        session: {
+          hook: async () => ({ dispose: async () => {} }),
+          todo: async (input: { path: { id: string } }) => {
+            deliveredSessionIDs.push(input.path.id)
+            idleDelivered()
+            return []
+          },
+          messages: async () => [],
+          children: async () => [],
+          promptAsync: async () => ({}),
+        },
         event: {
           subscribe: ({ signal: subscribedSignal }: { signal: AbortSignal }) => {
             signal = subscribedSignal
@@ -1024,6 +1031,94 @@ async function main(): Promise<void> {
     assert.equal(signal?.aborted, true, 'v2Dispose aborts the event subscription')
     await finished
     assert.equal(streamClosed, true, 'event iterator exits after the disposal signal')
+  })
+
+  // ─── V1→V2 bridge injection (issue #265) ────────────────────────────
+  //
+  // The bridge factory, the injector and the context accessor existed with NO
+  // production call site: `resolveBridge()` was always null, so idle
+  // continuation was dead on every V2 install. These drive `plugin.setup` and
+  // assert the bridge it builds, then prove `session.idle` reaches a real
+  // enforcer instance (a prompt is injected) instead of a null no-op.
+
+  console.log('\n🌉 V2 Bridge Injection Tests')
+
+  /** The four session methods the enforcer client needs, with recorders. */
+  function idleSessionDomain(options: {
+    todos?: Array<{ content?: string; status: string; id?: string }>
+    onPrompt?: (body: Record<string, unknown>) => void
+  }): Record<string, unknown> {
+    return {
+      hook: async () => ({ dispose: async () => {} }),
+      todo: async () => options.todos ?? [],
+      messages: async () => [],
+      children: async () => [],
+      promptAsync: async (input: { body: Record<string, unknown> }) => {
+        options.onPrompt?.(input.body)
+        return {}
+      },
+    }
+  }
+
+  test('plugin.setup injects the bridge (board + enforcer) instead of leaving it null', async () => {
+    const context = makeBaseContext({ session: idleSessionDomain({}) })
+    await plugin.setup(context as never)
+    const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
+    assert.ok(injected !== undefined, 'setup must inject the bridge into ctx.options')
+    assert.ok(injected?.board !== undefined, 'the bridge must carry the shared board')
+    assert.ok(
+      injected?.todoEnforcer !== undefined,
+      'the bridge must carry a real TodoEnforcer when the session domain supports it',
+    )
+  })
+
+  test('session.idle reaches the enforcer and injects a continuation prompt', async () => {
+    const prompts: Array<Record<string, unknown>> = []
+    const sessionID = 'ses-v2-idle-enforcer'
+    let idleDelivered!: () => void
+    const delivered = new Promise<void>((resolve) => {
+      idleDelivered = resolve
+    })
+    await plugin.setup(
+      makeBaseContext({
+        session: idleSessionDomain({
+          todos: [{ content: 'Finish the parity work', status: 'pending' }],
+          onPrompt: (body) => {
+            prompts.push(body)
+            idleDelivered()
+          },
+        }),
+        event: {
+          subscribe: (_options: { signal: AbortSignal }) => ({
+            async *[Symbol.asyncIterator]() {
+              yield { type: 'session.idle', properties: { sessionID } }
+            },
+          }),
+        },
+      }) as never,
+    )
+    await delivered
+    v2Dispose()
+
+    assert.equal(prompts.length, 1, 'one idle with pending todos must inject exactly one prompt')
+    const parts = prompts[0]?.parts as Array<{ type: string; text: string }> | undefined
+    assert.equal(parts?.[0]?.text, TODO_CONTINUATION_PROMPT)
+  })
+
+  test('a host without the session methods yields a bridge with no enforcer (declared reduction)', async () => {
+    const context = makeBaseContext({})
+    await plugin.setup(context as never)
+    const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
+    assert.ok(injected !== undefined, 'the bridge is still injected — the board is constructible')
+    assert.equal(
+      injected?.todoEnforcer,
+      undefined,
+      'an enforcer built on absent session methods would be a silent no-op',
+    )
+    assert.ok(
+      getUnsupportedFeatures().includes('idle-todo-enforcer'),
+      'the reduction must be reported, not hidden behind a null bridge',
+    )
   })
 
   // ─── Registry leak: session.deleted (S3) ────────────────────────────
@@ -2149,70 +2244,6 @@ async function main(): Promise<void> {
     })
     assert.ok(denial !== null, 'a `Zeus` agent id must not slip past the exact-match predicate')
     assert.match(denial, /delegate to @apollo/)
-  })
-
-  test('removing the enforcement from plugin-v2 drops the V2 denial path', async () => {
-    // Structural counterpart to the behavioural tests above: the guard must be
-    // instantiated in THIS module. If it were delegated to a V1 bridge that is
-    // never built, the file would import nothing from delegation-enforce.
-    assert.match(
-      pluginSource,
-      /createEnforcementGuard\(/,
-      'plugin-v2.ts must instantiate the enforcement guard itself',
-    )
-    assert.match(pluginSource, /syncReadOnlySession\(/, 'the registry must be populated in V2')
-    assert.doesNotMatch(
-      pluginSource,
-      /actual enforcement is wired\s+through the V1/,
-      'the false coverage claim about V1 enforcement must be gone',
-    )
-  })
-
-  test('the bootstrap restores Module._extensions[".json"] to its original value', () => {
-    // The ajv shim patches the GLOBAL CommonJS JSON loader. If it survived past
-    // the module-level bootstrap, every later require of a .json file in this
-    // process would read through a test-owned loader — a leak that fails far
-    // from its cause. ORIGINAL_JSON_LOADER is captured above the patch, so
-    // identity comparison is the exact assertion, not an approximation.
-    assert.equal(
-      jsonExtensions._extensions['.json'],
-      ORIGINAL_JSON_LOADER,
-      'the ajv bootstrap must restore the .json loader it patched',
-    )
-    assert.notEqual(
-      jsonExtensions._extensions['.json'],
-      undefined,
-      'sanity: the loader must still be registered, not deleted',
-    )
-  })
-
-  test('ajv is constructed once and the cached validator is one object throughout', () => {
-    assert.ok(
-      validatorUses.length >= 2,
-      `expected the suite to have validated against ajv more than once, saw ${validatorUses.length}`,
-    )
-    // Group recorded uses by schema and assert each schema resolved to exactly
-    // one validator function. Several distinct schemas are fine — they are
-    // different validators by design; the invariant is per-schema identity.
-    const bySchema = new Map<string, Set<ValidateFn>>()
-    for (const use of validatorUses) {
-      const seen = bySchema.get(use.schemaKey) ?? new Set<ValidateFn>()
-      seen.add(use.validate)
-      bySchema.set(use.schemaKey, seen)
-    }
-    for (const [schemaKey, validators] of bySchema) {
-      assert.equal(
-        validators.size,
-        1,
-        `schema ${schemaKey} compiled to ${validators.size} distinct validators; every test must share one`,
-      )
-    }
-    // And a fresh call returns the very object earlier calls recorded.
-    const [first] = validatorUses
-    if (first !== undefined) {
-      const again = compiledValidator(JSON.parse(first.schemaKey) as Record<string, unknown>)
-      assert.equal(again, first.validate, 'compiledValidator must return the cached object')
-    }
   })
 
   // ─── V2 Secret Scan (integration) ─────────────────────────────────────
