@@ -178,7 +178,15 @@ test('memory documentation describes the current low-call policy and current API
 })
 
 test('memory docs and prompts state the current storage, privacy, and grant contracts', () => {
-  assert.match(memoryGuide, /SQLite `memory\.db`[\s\S]*entries have no TTL/i)
+  assert.match(
+    memoryGuide,
+    /SQLite `memory\.db`[\s\S]*capped at 64 KiB serialized[\s\S]*`ttl_seconds`/i,
+  )
+  assert.doesNotMatch(
+    memoryGuide,
+    /entries have no TTL/i,
+    'entries can now expire via ttl_seconds; the no-TTL claim is stale',
+  )
   assert.match(memoryGuide, /FTS5\/BM25[\s\S]*no embedding[\s\S]*model or vector search/i)
   assert.match(memoryGuide, /session-qualified context checkpoints default to 4h/i)
   assert.match(memoryGuide, /_tasks\/[`]? records may be Git-ignored/i)

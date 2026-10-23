@@ -10,6 +10,12 @@ half was compensating for a query bug rather than adding recall. See
 Recall is therefore purely lexical. A query that shares no token with a
 stored document will not retrieve it; there is no embedding to fall back on.
 
+Storage is bounded and optional-expiry: an entry larger than
+``PANTHEON_MEMORY_MAX_ENTRY_BYTES`` (default 64 KiB, the same bound the
+Persistence MCP applies to checkpoints) is rejected rather than truncated, and
+an entry stored with ``ttl_seconds`` is hidden from search once it expires until
+``memory_forget(expired_only=True)`` removes it explicitly.
+
 Tools:
     memory_store   — Store a value (auto-indexed into FTS5 by trigger)
     memory_search  — FTS5 BM25 keyword search with optional freshness decay
@@ -31,6 +37,7 @@ import contextlib
 import functools
 import json
 import logging
+import os
 import sqlite3
 import time
 from datetime import UTC, datetime
@@ -73,6 +80,17 @@ def _reset_test_state() -> None:
     _get_db.cache_clear()
 
 
+# ── Store Limits ─────────────────────────────────────────────────────────────
+# A memory entry is bounded on write: unlike a truncated value, a rejected one
+# is recoverable (store a summary, raise the cap, or keep the long text in a
+# file), so over-cap input is refused, never shortened. The default matches
+# MAX_CONTEXT_CONTENT_BYTES in mcp_persistence.py / docs/persistence-mcp.md so
+# the two stores agree on what "one entry" is allowed to cost.
+
+DEFAULT_MAX_ENTRY_BYTES = 64 * 1024
+MAX_ENTRY_BYTES_ENV = "PANTHEON_MEMORY_MAX_ENTRY_BYTES"
+MAX_TTL_SECONDS = 31_536_000  # 365 days, same ceiling as Persistence TTL
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +99,8 @@ CREATE TABLE IF NOT EXISTS memories (
     value TEXT NOT NULL,
     metadata TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_ns_key
@@ -148,6 +167,40 @@ class MemorySearchError(TypedDict):
 # ── Database ──────────────────────────────────────────────────────────────────
 
 
+def _ensure_entry_lifecycle_schema(conn: sqlite3.Connection) -> bool:
+    """Add the ``expires_at`` column to a pre-existing ``memories`` table.
+
+    Databases created before per-entry TTL have no ``expires_at`` column, and
+    ``CREATE TABLE IF NOT EXISTS`` does not add one. The ALTER is guarded by a
+    ``PRAGMA table_info`` read, so a second open — of the same connection or of
+    a database already migrated — is a no-op instead of an error, and no row is
+    rewritten or dropped. NULL means "never expires", which is exactly the
+    lifetime every existing row already had.
+
+    Args:
+        conn: Open connection with the current schema applied.
+
+    Returns:
+        True when the column was added by this call, False when it was already
+        present.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)")}
+    added = False
+    if "expires_at" not in columns:
+        try:
+            conn.execute("ALTER TABLE memories ADD COLUMN expires_at TEXT")
+            conn.commit()
+            added = True
+        except sqlite3.OperationalError:
+            # A concurrent server won the race; the column now exists.
+            _LOGGER.debug("expires_at column added by a concurrent open")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at)"
+    )
+    conn.commit()
+    return added
+
+
 @functools.cache
 def _get_db() -> sqlite3.Connection:
     """Get or create the SQLite connection singleton.
@@ -163,6 +216,7 @@ def _get_db() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA_SQL)
+    _ensure_entry_lifecycle_schema(conn)
     if _codemap is not None:
         with contextlib.suppress(Exception):
             _codemap.ensure_codemap_schema(conn)
@@ -373,6 +427,80 @@ def _parse_metadata(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+# ── Entry Size Accounting ─────────────────────────────────────────────────────
+# One size definition shared by the write guard and ``memory_stats``: the UTF-8
+# bytes of every stored text column. SQLite mirrors it in ``_ENTRY_BYTES_SQL``
+# with ``length(cast(x AS blob))``, which counts bytes rather than characters.
+
+_ENTRY_BYTES_SQL = (
+    "length(cast(coalesce(value, '') as blob))"
+    " + length(cast(coalesce(metadata, '') as blob))"
+    " + length(cast(coalesce(namespace, '') as blob))"
+    " + length(cast(coalesce(key, '') as blob))"
+)
+
+
+def _entry_size_bytes(
+    value: str,
+    namespace: str = "default",
+    key: str | None = None,
+    metadata: str = "{}",
+) -> int:
+    """Return the serialized size of an entry in UTF-8 bytes."""
+    return sum(
+        len(part.encode("utf-8"))
+        for part in (value, metadata or "{}", namespace or "", key or "")
+    )
+
+
+def _max_entry_bytes() -> int:
+    """Return the per-entry cap, honouring ``PANTHEON_MEMORY_MAX_ENTRY_BYTES``.
+
+    Read per call, not at import, so a changed environment takes effect without
+    a server restart. An unparseable or non-positive override falls back to the
+    default and logs once per call instead of failing the write path.
+    """
+    raw = os.environ.get(MAX_ENTRY_BYTES_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_ENTRY_BYTES
+    try:
+        cap = int(raw)
+    except ValueError:
+        _LOGGER.warning(
+            "%s=%r is not an integer; using the default %d bytes",
+            MAX_ENTRY_BYTES_ENV,
+            raw,
+            DEFAULT_MAX_ENTRY_BYTES,
+        )
+        return DEFAULT_MAX_ENTRY_BYTES
+    if cap <= 0:
+        _LOGGER.warning(
+            "%s=%r must be positive; using the default %d bytes",
+            MAX_ENTRY_BYTES_ENV,
+            raw,
+            DEFAULT_MAX_ENTRY_BYTES,
+        )
+        return DEFAULT_MAX_ENTRY_BYTES
+    return cap
+
+
+def _entry_size_violation(actual: int, cap: int) -> str:
+    """Describe an over-cap write so the caller can act without guessing."""
+    cap_label = (
+        f"{cap:,} bytes"
+        if cap < _BYTE_UNIT
+        else f"{cap:,} bytes ({cap // _BYTE_UNIT} KiB)"
+    )
+    return (
+        f"serialized entry is {actual:,} UTF-8 bytes "
+        f"(value + metadata + namespace + key); maximum is {cap_label}. "
+        f"Store a summary here and keep the full text elsewhere, or raise the "
+        f"cap by setting {MAX_ENTRY_BYTES_ENV}={actual:,} in the memory "
+        "server's environment (any positive integer). Over-cap entries are "
+        "rejected, never truncated."
+    )
+
+
 # ── Ranking ───────────────────────────────────────────────────────────────────
 
 
@@ -457,6 +585,53 @@ def _score_hits(
     return ranked[:top_k]
 
 
+def _search_candidates(
+    db: sqlite3.Connection,
+    fts_query: str,
+    namespace: str | None,
+    limit: int,
+    include_expired: bool,
+) -> list[tuple[int, float]]:
+    """Fetch the over-fetched FTS5 candidate list, expiry-filtered in SQL.
+
+    Args:
+        db: Active SQLite connection.
+        fts_query: FTS5 ``MATCH`` expression from ``_build_fts_query``.
+        namespace: Optional namespace filter.
+        limit: Candidate limit (callers over-fetch 2x ``top_k``).
+        include_expired: Keep entries whose ``expires_at`` has passed.
+
+    Returns:
+        ``(id, bm25)`` pairs, best first.
+    """
+    params: list[Any] = [fts_query]
+    filters = ""
+    if not include_expired:
+        # Lexicographic comparison of stored ISO-8601 UTC strings is
+        # chronological, so no date parsing is needed in SQL. Rows written
+        # before TTL support have expires_at NULL and stay visible.
+        filters += " AND (memories.expires_at IS NULL OR memories.expires_at > ?)"
+        params.append(_now_iso())
+    if namespace:
+        filters += " AND memories.namespace = ?"
+        params.append(namespace)
+    params.append(limit)
+    # ``rank`` is BM25 negated by FTS5 (lower = better), so -rank is the
+    # relevance score. It is selected explicitly so the value is available for
+    # scoring rather than only for ordering. The join to ``memories`` applies
+    # the expiry filter before LIMIT, so an expired entry cannot consume one of
+    # the candidate slots.
+    rows = db.execute(
+        f"""SELECT memories_fts.rowid AS rowid, -rank AS bm25
+            FROM memories_fts
+            JOIN memories ON memories.id = memories_fts.rowid
+            WHERE memories_fts MATCH ?{filters}
+            ORDER BY rank LIMIT ?""",
+        params,
+    ).fetchall()
+    return [(r["rowid"], r["bm25"]) for r in rows]
+
+
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
 # ── Argument Validation ─────────────────────────────────────────────────────────
@@ -504,11 +679,18 @@ def _metadata_must_be_json_string(value: Any) -> Any:
     )
 
 
-def _collect_store_violations(value: str, metadata: str) -> tuple[list[str], list[str]]:
+def _collect_store_violations(
+    value: str,
+    metadata: str,
+    namespace: str = "default",
+    key: str | None = None,
+    ttl_seconds: Any = None,
+) -> tuple[list[str], list[str]]:
     """Collect every in-body ``memory_store`` violation, plus any examples.
 
     Returns ``(violations, examples)`` so the caller reports all of them in one
     message instead of returning on the first problem it happens to notice.
+    The size check measures the stripped value, which is what gets stored.
     """
     violations: list[str] = []
     examples: list[str] = []
@@ -523,6 +705,25 @@ def _collect_store_violations(value: str, metadata: str) -> tuple[list[str], lis
                 f"(got invalid JSON: {exc})"
             )
             examples.append(METADATA_EXAMPLE)
+    if ttl_seconds is not None:
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int):
+            violations.append(
+                "ttl_seconds must be a positive integer number of seconds "
+                f"(got {_json_type_name(ttl_seconds)}); omit it for an entry "
+                "that never expires"
+            )
+            examples.append("ttl_seconds=86400")
+        elif not 1 <= ttl_seconds <= MAX_TTL_SECONDS:
+            violations.append(
+                f"ttl_seconds must be between 1 and {MAX_TTL_SECONDS:,} seconds "
+                f"(got {ttl_seconds:,}); omit it for an entry that never expires"
+            )
+            examples.append("ttl_seconds=86400")
+    if value and value.strip():
+        actual = _entry_size_bytes(value.strip(), namespace, key, metadata)
+        cap = _max_entry_bytes()
+        if actual > cap:
+            violations.append(_entry_size_violation(actual, cap))
     return violations, examples
 
 
@@ -542,7 +743,11 @@ def _format_store_violations(violations: list[str], examples: list[str]) -> str:
     "by database trigger. Returns the entry ID and status. "
     "metadata is a JSON object encoded as a STRING (not an object) and value "
     "must be non-empty; every invalid argument is reported together in one "
-    f"message. Example: {METADATA_EXAMPLE}",
+    "message. Entries larger than PANTHEON_MEMORY_MAX_ENTRY_BYTES (default "
+    "64 KiB serialized) are rejected, never truncated. Pass ttl_seconds to make "
+    "the entry expire: it is then hidden from memory_search (default) until "
+    "memory_forget(expired_only=True) removes it. "
+    f"Example: {METADATA_EXAMPLE}",
 )
 def memory_store(
     value: str = "",
@@ -557,6 +762,7 @@ def memory_store(
             'Example: \'{"type": "decision", "score": 0.9}\'.',
         ),
     ] = "{}",
+    ttl_seconds: int | None = None,
 ) -> dict[str, Any]:
     """Store a value and index it for FTS5 keyword search.
 
@@ -565,26 +771,38 @@ def memory_store(
         namespace: Namespace for isolation (default: "default").
         key: Optional unique key within namespace.
         metadata: Optional JSON object encoded as a string.
+        ttl_seconds: Optional lifetime in seconds. When set, the entry is
+            hidden from search after that moment; omit for no expiry.
 
     Returns:
-        Dict with id, namespace, key, status.
+        Dict with id, namespace, key, status, and expires_at (None when the
+        entry does not expire).
     """
-    violations, examples = _collect_store_violations(value, metadata)
+    violations, examples = _collect_store_violations(
+        value, metadata, namespace, key, ttl_seconds
+    )
     if violations:
         return {"error": _format_store_violations(violations, examples)}
 
     value = value.strip()
     db = _get_conn()
     now = _now_iso()
+    expires_at = (
+        None
+        if ttl_seconds is None
+        else time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + int(ttl_seconds))
+        )
+    )
 
     metadata_str = metadata if metadata else "{}"
 
     try:
         cur = db.execute(
             """INSERT INTO memories (namespace, key, value, metadata,
-             created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            [namespace, key, value, metadata_str, now, now],
+             created_at, updated_at, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [namespace, key, value, metadata_str, now, now, expires_at],
         )
         entry_id = cur.lastrowid
         db.commit()
@@ -595,7 +813,13 @@ def memory_store(
         db.rollback()
         return {"error": f"Failed to store memory: {e}"}
 
-    return {"id": entry_id, "namespace": namespace, "key": key, "status": "stored"}
+    return {
+        "id": entry_id,
+        "namespace": namespace,
+        "key": key,
+        "status": "stored",
+        "expires_at": expires_at,
+    }
 
 
 @mcp.tool(
@@ -604,7 +828,9 @@ def memory_store(
     "prefix-matched, so a query must share a token with the stored text — "
     "there is no semantic/vector retrieval. Optional decay_days applies a "
     "freshness half-life (2^(-days/decay_days)) so recent entries rank "
-    "higher; default None keeps the raw BM25 order. An empty result means "
+    "higher; default None keeps the raw BM25 order. Expired entries "
+    "(stored with ttl_seconds) are excluded by default; pass "
+    "include_expired=True to see them. An empty result means "
     "nothing matched; an error means the memory store could not be read.",
 )
 def memory_search(
@@ -612,6 +838,7 @@ def memory_search(
     namespace: str | None = None,
     top_k: int = 5,
     decay_days: float | None = None,
+    include_expired: bool = False,
 ) -> list[dict[str, Any]] | MemorySearchError:
     """Search memories with FTS5 BM25.
 
@@ -622,6 +849,9 @@ def memory_search(
         decay_days: Optional freshness half-life in days. When set, BM25
             scores are multiplied by ``2^(-days_since_created/decay_days)``
             so older entries rank lower. Default None = no decay.
+        include_expired: Include entries whose ``expires_at`` has passed.
+            Default False, so an expired entry stops appearing in search
+            results without any row being deleted.
 
     Returns:
         List of memory entries with a ``score`` (BM25, higher is better,
@@ -651,24 +881,9 @@ def memory_search(
         }
 
     try:
-        params: list[Any] = [fts_query]
-        namespace_clause = ""
-        if namespace:
-            namespace_clause = " AND namespace = ?"
-            params.append(namespace)
         # Over-fetch 2x: freshness decay can promote a candidate that BM25
         # ranked outside top_k, and ranking happens after the fetch.
-        params.append(top_k * 2)
-        # ``rank`` is BM25 negated by FTS5 (lower = better), so -rank is the
-        # relevance score. It is selected explicitly so the value is available
-        # for scoring rather than only for ordering.
-        rows = db.execute(
-            f"""SELECT rowid, -rank AS bm25 FROM memories_fts
-                WHERE memories_fts MATCH ?{namespace_clause}
-                ORDER BY rank LIMIT ?""",
-            params,
-        ).fetchall()
-        hits = [(r["rowid"], r["bm25"]) for r in rows]
+        hits = _search_candidates(db, fts_query, namespace, top_k * 2, include_expired)
         if not hits:
             return []
 
@@ -687,7 +902,8 @@ def memory_search(
             score_map = {doc_id: score for doc_id, score in ranked}
             placeholders = ",".join("?" * len(id_list))
             rows = db.execute(
-                f"""SELECT id, namespace, key, value, metadata, created_at
+                f"""SELECT id, namespace, key, value, metadata, created_at,
+                           expires_at
                     FROM memories WHERE id IN ({placeholders})""",
                 id_list,
             ).fetchall()
@@ -720,7 +936,10 @@ def memory_search(
 
 @mcp.tool(
     description="Recall a specific memory entry by its key within a namespace. "
-    "Returns the full entry including parsed metadata.",
+    "Returns the full entry including parsed metadata and expires_at. Recall "
+    "ignores expiry: an expired entry is still returned by exact key until "
+    "memory_forget(expired_only=True) removes it, because None would be "
+    "indistinguishable from an entry that never existed.",
 )
 def memory_recall(
     key: str,
@@ -733,15 +952,15 @@ def memory_recall(
         namespace: Namespace scope (default: "default").
 
     Returns:
-        The memory entry dict, or None if not found.
+        The memory entry dict (including ``expires_at``), or None if not found.
     """
     if not key or not key.strip():
         return None
 
     db = _get_conn()
     row = db.execute(
-        "SELECT id, namespace, key, value, metadata, created_at, updated_at "
-        "FROM memories WHERE namespace = ? AND key = ?",
+        "SELECT id, namespace, key, value, metadata, created_at, updated_at, "
+        "expires_at FROM memories WHERE namespace = ? AND key = ?",
         [namespace, key.strip()],
     ).fetchone()
 
@@ -752,28 +971,70 @@ def memory_recall(
     return _parse_metadata(entry)
 
 
+def _purge_expired(db: sqlite3.Connection) -> dict[str, Any]:
+    """Delete every entry whose TTL has passed, across all namespaces.
+
+    Expiry alone never deletes a row: search merely hides it. This is the
+    explicit reclamation step, and it is the only code path that removes
+    expired entries. Entries without a TTL are never touched.
+
+    Args:
+        db: Active SQLite connection.
+
+    Returns:
+        Dict with ``deleted``, ``purged`` (row count), and ``expired_only``.
+    """
+    try:
+        cur = db.execute(
+            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?",
+            [_now_iso()],
+        )
+        purged = cur.rowcount
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        return {"error": f"Failed to purge expired entries: {e}"}
+    return {"deleted": purged > 0, "purged": purged, "expired_only": True}
+
+
 @mcp.tool(
-    description="Delete a memory entry by ID or by key. "
+    description="Delete a memory entry by ID or by key, or remove every "
+    "expired entry with expired_only=True. Expiry only hides entries from "
+    "search; this is the explicit way to reclaim the space. "
     "The FTS5 index entry is removed automatically by trigger.",
 )
 def memory_forget(
     id: int | None = None,
     key: str | None = None,
     namespace: str = "default",
+    expired_only: bool = False,
 ) -> dict[str, Any]:
     """Delete a memory entry and its FTS5 index entry.
 
     Provide either ``id`` (exact rowid) or ``key`` (within namespace)
-    to identify the entry. The FTS sync trigger handles index cleanup.
+    to identify the entry, or ``expired_only=True`` to delete every entry
+    whose TTL has passed. The FTS sync trigger handles index cleanup.
 
     Args:
         id: Exact row ID of the entry to delete.
         key: Key of the entry to delete (requires namespace).
         namespace: Namespace scope when using key (default: "default").
+        expired_only: Delete all entries whose ``expires_at`` has passed,
+            across namespaces. Cannot be combined with id or key. Entries
+            without a TTL are never touched.
 
     Returns:
-        Dict with deleted status and entry identifier.
+        Dict with deleted status and entry identifier, or with ``purged`` (the
+        number of expired entries removed) when ``expired_only`` is used.
     """
+    if expired_only:
+        if id is not None or (key and key.strip()):
+            return {
+                "error": "expired_only cannot be combined with id or key; call "
+                "it alone to purge every expired entry"
+            }
+        return _purge_expired(_get_conn())
+
     if id is not None:
         identifier = id
         col = "id"
@@ -840,7 +1101,7 @@ def memory_list(
 
     try:
         rows = db.execute(
-            f"SELECT id, namespace, key, value, metadata, created_at "
+            f"SELECT id, namespace, key, value, metadata, created_at, expires_at "
             f"FROM memories WHERE {where} ORDER BY created_at DESC LIMIT ?",
             [*params, limit],
         ).fetchall()
@@ -857,15 +1118,21 @@ def memory_list(
 
 @mcp.tool(
     description="Memory database statistics: total entries, per-namespace "
-    "breakdown, and file size on disk.",
+    "breakdown, file size on disk, plus entry-payload size: total_bytes, the "
+    "per-entry cap and warning threshold in bytes, the count of entries over "
+    "the warning threshold, and the largest entries with namespace/key/size.",
 )
 def memory_stats() -> dict[str, Any]:
     """Return aggregate statistics about the memory database.
 
-    Includes total count, namespace breakdown, and file size on disk.
+    Includes total count, namespace breakdown, file size on disk, and payload
+    size accounting so an operator can see what to prune before the store grows
+    unbounded: the entry cap in force, how much of the store is payload, which
+    entries are largest, and how many are already over the warning threshold
+    (half the cap).
 
     Returns:
-        Dict with count, namespaces, and storage info.
+        Dict with count, namespaces, storage info, and size accounting.
     """
     db = _get_conn()
 
@@ -888,6 +1155,39 @@ def memory_stats() -> dict[str, Any]:
         ]
     except Exception:
         stats["namespaces"] = []
+
+    cap = _max_entry_bytes()
+    warning_threshold = max(1, cap // 2)
+    stats["max_entry_bytes"] = cap
+    stats["warning_threshold_bytes"] = warning_threshold
+
+    try:
+        stats["total_bytes"] = db.execute(
+            f"SELECT coalesce(sum({_ENTRY_BYTES_SQL}), 0) AS b FROM memories"
+        ).fetchone()["b"]
+    except Exception:
+        stats["total_bytes"] = 0
+
+    try:
+        over_rows = db.execute(
+            f"SELECT COUNT(*) AS c FROM memories WHERE ({_ENTRY_BYTES_SQL}) > ?",
+            [warning_threshold],
+        ).fetchone()
+        stats["oversized_entries"] = over_rows["c"]
+    except Exception:
+        stats["oversized_entries"] = 0
+
+    try:
+        largest = db.execute(
+            f"SELECT namespace, key, ({_ENTRY_BYTES_SQL}) AS bytes FROM memories "
+            "ORDER BY bytes DESC, id ASC LIMIT 5"
+        ).fetchall()
+        stats["largest_entries"] = [
+            {"namespace": r["namespace"], "key": r["key"], "bytes": r["bytes"]}
+            for r in largest
+        ]
+    except Exception:
+        stats["largest_entries"] = []
 
     try:
         db_size = DB_PATH.stat().st_size if DB_PATH.exists() else 0

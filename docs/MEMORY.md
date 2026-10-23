@@ -4,7 +4,7 @@ Pantheon has three separate context stores. Use the smallest one that fits:
 
 | Store | Lifetime | Use |
 |---|---|---|
-| `pantheon-memory` MCP | SQLite `memory.db`; entries have no TTL and remain until explicitly forgotten | Reusable project facts and decisions |
+| `pantheon-memory` MCP | SQLite `memory.db`; entries are capped at 64 KiB serialized by default and expire only when stored with `ttl_seconds` (expired entries are hidden from search and purged explicitly) | Reusable project facts and decisions |
 | `pantheon-persistence` MCP | Separate SQLite store; session-qualified context checkpoints default to 4h (heartbeat: 5m) | Explicit checkpoints and temporary key/value data |
 | `.pantheon/memory-bank/` | Project files in the working tree; Git tracking depends on repository ignore/commit policy | Human-reviewed project context and ADRs |
 
@@ -27,19 +27,48 @@ is on-demand, not auto-loaded.
 The server stores entries in SQLite and indexes them with FTS5/BM25. Retrieval
 is lexical: a query must share words with stored content; there is no embedding
 model or vector search. The default namespace is `default`; use a named
-namespace when entries have a distinct owner or purpose. Stored entries have no
-TTL; `decay_days` only changes search ranking and does not expire data.
+namespace when entries have a distinct owner or purpose.
 Namespace is an organizational/search filter, not an access-control boundary;
 searches without a namespace filter can return matches from any namespace.
 
+Two limits keep the store from growing without bound:
+
+- **Size.** A write is refused when the serialized entry — `value`, `metadata`,
+  `namespace` and `key` as UTF-8 — exceeds the per-entry cap: 65,536 bytes
+  (64 KiB) by default, the same bound the Persistence MCP applies to checkpoint
+  content. Over-cap entries are rejected, never truncated, because a shortened
+  memory is silent data loss; the error states the actual size, the cap, and the
+  environment variable that raises it. Set
+  `PANTHEON_MEMORY_MAX_ENTRY_BYTES=<bytes>` in the memory server's environment
+  to change the cap (read per write; any positive integer, and an invalid value
+  falls back to 64 KiB).
+  `memory_stats` reports `total_bytes`, `max_entry_bytes`,
+  `warning_threshold_bytes` (half the cap, minimum 1 byte),
+  `oversized_entries` (entries over that threshold) and up to
+  five `largest_entries` with namespace, key and bytes.
+- **Expiry.** `memory_store(ttl_seconds=...)` gives an entry a lifetime
+  (1 second to 365 days). Entries stored without it never expire, which is how
+  every older entry behaves. `memory_search` hides expired entries by default
+  (`include_expired=True` shows them); `memory_recall` still returns an expired
+  entry by exact key, because `None` would be indistinguishable from an entry
+  that never existed. `memory_list`, the maintenance view, also still shows
+  expired rows. Nothing deletes an expired row implicitly:
+  `memory_forget(expired_only=True)` is the explicit purge and reports how many
+  rows it removed. `decay_days` only changes search ranking; it does not expire
+  data.
+
+Opening an existing database adds the `expires_at` column automatically when it
+is missing; the `ALTER TABLE` is guarded by a column check, so a second open is a
+no-op and existing rows keep working (NULL means "never expires").
+
 | Tool | Use |
 |---|---|
-| `memory_search(query, namespace?, top_k?, decay_days?)` | Find relevant entries; use `top_k=2` for task context |
-| `memory_recall(key, namespace?)` | Fetch an entry when its exact key is already known |
-| `memory_store(value, namespace?, key?, metadata?)` | Store a concise, reusable fact or decision |
-| `memory_forget(id?, key?, namespace?)` | Remove an entry by ID or key |
+| `memory_search(query, namespace?, top_k?, decay_days?, include_expired?)` | Find relevant entries; use `top_k=2` for task context; expired entries are hidden unless `include_expired=True` |
+| `memory_recall(key, namespace?)` | Fetch an entry when its exact key is already known (ignores expiry) |
+| `memory_store(value, namespace?, key?, metadata?, ttl_seconds?)` | Store a concise, reusable fact or decision; `ttl_seconds` makes it expire |
+| `memory_forget(id?, key?, namespace?, expired_only?)` | Remove an entry by ID or key, or purge every expired entry with `expired_only=True` |
 | `memory_list(namespace?, prefix?, limit?)` | Inspect entries during explicit maintenance |
-| `memory_stats()` | Inspect counts and database size during explicit maintenance |
+| `memory_stats()` | Inspect counts, disk usage, payload bytes and the largest entries during explicit maintenance |
 
 `metadata` must be a JSON object encoded as a string, for example:
 `metadata='{"type":"decision"}'`. A key is unique within its namespace;
