@@ -239,6 +239,49 @@ mcp_tools:
 native `<server>_*` rule described above. Start with `ask` for a new server and
 downgrade to `allow` only after verifying read-only safety.
 
+### Worked example: GitHub MCP over stdio
+
+The installer's own servers use the local shape shown above: `type`, `command`
+as an array, optional `environment`, and `enabled`. A hand-added third-party
+server takes the same keys, with the provider's documented command:
+
+```json
+{
+  "mcp": {
+    "github": {
+      "type": "local",
+      "command": [
+        "docker",
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "environment": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "{env:GITHUB_PERSONAL_ACCESS_TOKEN}"
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+The GitHub server's documented stdio invocation is:
+
+```bash
+docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+```
+
+`-i` keeps stdin open for JSON-RPC, and the token reaches the container through
+the `environment` entry rather than being written into `opencode.json`. If the
+image or command differs in your setup, use whatever the provider documents —
+only the `type`/`command`/`environment`/`enabled` shape is Pantheon's. Note that
+the installer's own catalog configures GitHub as a remote server
+(`https://api.githubcopilot.com/mcp/`) with OAuth, so this stdio entry is for the
+cases where a local process is preferred; do not declare both under one name.
+
 Best practices: short lowercase server names (they become the tool prefix);
 declare only the tools the agent needs; keep the `mcp_tools` key identical to
 the server name; interpolate secrets as `{env:VAR}` instead of inlining them;

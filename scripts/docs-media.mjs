@@ -14,7 +14,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -115,6 +115,15 @@ for (const tape of tapes) {
     process.exit(1)
   }
   const runStartedAt = Date.now()
+  // Remove the artifacts this tape promises BEFORE recording, so existence and
+  // size afterwards prove this run wrote them. Without this, a previous run's
+  // file could satisfy both checks: filesystem mtime and Date.now() disagree by
+  // a few milliseconds here, so a fresh write may not look newer than the start.
+  // Trade-off: a failing vhs now leaves the artifact absent instead of stale,
+  // which the existence check below still reports as a failure.
+  for (const artifact of declared) {
+    rmSync(join(ASSETS_DIR, artifact.file), { force: true })
+  }
   const result = spawnSync('vhs', [tape], { cwd: ASSETS_DIR, stdio: 'inherit' })
   if (result.error) {
     console.error(`docs:media: could not run vhs for ${tape}: ${result.error.message}`)
@@ -137,9 +146,9 @@ for (const tape of tapes) {
       console.error(`docs:media: ${tape} wrote an empty ${artifact.kind} ${artifact.file}`)
       process.exit(1)
     }
-    if (stat.mtimeMs <= runStartedAt) {
+    if (stat.mtimeMs < runStartedAt - 1000) {
       console.error(
-        `docs:media: ${artifact.file} is stale — its mtime is not newer than this run's start`,
+        `docs:media: ${artifact.file} is stale — its mtime is older than this run's start`,
       )
       process.exit(1)
     }

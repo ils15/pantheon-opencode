@@ -108,10 +108,17 @@ For Zed, add this to `~/.config/zed/settings.json`:
 ```json
 {
   "agent_servers": {
-    "OpenCode": { "command": "opencode", "args": ["acp"] }
+    "OpenCode": {
+      "type": "custom",
+      "command": "opencode",
+      "args": ["acp"]
+    }
   }
 }
 ```
+
+`type: "custom"` is the field Zed's settings schema uses for a hand-configured
+agent server rather than a built-in one.
 
 ## Troubleshooting
 

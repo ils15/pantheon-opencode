@@ -59,8 +59,9 @@ TTY prompt). Saved plans with `--force`/`--clean` are not supported.
 A dry run resolves the generation with the same resolver as apply, including the
 `--version` probe. The probe runs in a throwaway HOME/XDG sandbox with a
 2-second timeout, so the preview writes nothing. V1 is assumed only when the
-probe fails or is unreadable; the plan then marks `versionAssumed` in text and
-`--json`, and `--opencode-version v1|v2` pins the preview. The plan describes
+probe fails or is unreadable; the plan then says that it assumes V1 and may
+diverge, and `--json` adds an entry to its `advisories` array, while
+`--opencode-version v1|v2` pins the preview. The plan describes
 managed-file operations; it does not represent every bulk or external effect,
 such as creating or updating a Python environment. `postinstall`/`sync-tui` is
 also outside the `init` approval flow and may update TUI artifacts without a
@@ -488,8 +489,9 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 - **OpenCode generation in the preview**: a dry run resolves the generation with
   the same resolver as apply, including the `--version` probe, which runs in a
   throwaway HOME/XDG sandbox with a 2-second timeout. V1 is assumed only when
-  the probe fails or is unreadable; the plan is then marked `versionAssumed` in
-  text and `--json`. Pass `--opencode-version v1` or `v2` to pin the preview.
+  the probe fails or is unreadable; the plan then says that it assumes V1 and
+  may diverge, and `--json` adds an entry to its `advisories` array. Pass
+  `--opencode-version v1` or `v2` to pin the preview.
 - **Preview limits**: the plan represents managed-file operations, not every
   bulk or external effect, such as Python environment setup.
   `postinstall`/`sync-tui` is outside the approval flow. It is not a transaction
