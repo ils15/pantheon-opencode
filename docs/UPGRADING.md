@@ -8,11 +8,12 @@
 > 1.6.x line supports OpenCode **1.19.x** (V1 plugin; read-only enforcement
 > measured on `1.19.4` — config-level; the hook does not fire there and the V1
 > probe recorded zero invocations) and OpenCode
-> **2.0.29, 2.0.30 and 2.1.x** (V2 plugin);
+> **2.0.29, 2.0.30, 2.0.31 and 2.1.x** (V2 plugin);
 > **OpenCode 2.0.22 is not supported** (the host
 > exposes neither `ctx.permission.assert` nor `worktree_*` /
-> `pantheon_bounded_read`) and **OpenCode 2.0.31 is not supported** (no runtime
-> evidence). Node **>=26.4.0** is the package floor and Python **>=3.11** is
+> `pantheon_bounded_read`) and **OpenCode 2.0.31 is supported** by maintainer
+> decision, without a measured permission-matrix row yet. Node **>=26.4.0** is
+> the package floor and Python **>=3.11** is
 > required for the optional MCP servers.
 >
 > From **1.7 onward** the line drops the V1 contract and targets OpenCode 2
@@ -253,10 +254,13 @@ v1.0 removes all multi-platform support. Pantheon now runs exclusively on OpenCo
 1. Uninstall old platform-specific configs
 2. Run `npx pantheon-opencode init` to install agents globally
 3. Run `npm run setup` for MCP servers + skills + TUI
-4. Only if the active host/runtime documents and requires this experimental
-   setting, set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` before
-   launch (or use Pantheon's `npm run start` launcher, which sets it). This is
-   not a general migration step.
+
+> **Optional, not a step:** `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`
+> only does anything on host versions that document it as an experimental gate,
+> so it is not a general prerequisite and not required for this upgrade. If your
+> host documents it, set it before launch, or use Pantheon's `npm run start`
+> launcher, which sets it. Background tool availability stays
+> runtime-dependent either way.
 
 ### Rollback
 For a rollback, use the previous Pantheon release tag that matches your deployment.
