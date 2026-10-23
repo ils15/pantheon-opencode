@@ -1,0 +1,6 @@
+# Terminal captures are recorded from committed VHS tapes. Keep the tapes free
+# of CRLF so a re-record on any host produces the same keystrokes, and mark the
+# rendered media binary so Git never tries to diff or normalize it.
+*.tape text eol=lf
+*.gif binary
+*.png binary
