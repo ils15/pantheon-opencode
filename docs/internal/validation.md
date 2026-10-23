@@ -218,3 +218,75 @@ source-tree compatibility entrypoint that delegates to it. The runtime installer
 copies the canonical source into the installed scripts directory, while
 `install-mcp.mjs` prefers that installed copy and falls back to the source-tree
 entrypoint when running from a checkout.
+
+## TUI media gap
+
+`docs/opencode-v2.md` reserves three media slots — the sidebar Dispatch block,
+the `/dispatch` panel, and the plan-approval turn. **No image has been produced
+for any of them.** The slots carry an explicit `illustrative, not a screenshot`
+marker and an "Illustrative layout — not a screenshot" caption; the three tapes
+under `docs/assets/tui/` are committed with an `UNVERIFIED` status header so the
+capture can be completed on a machine with VHS.
+
+Recorded on 2026-10-23 in the documentation environment (OpenCode `v2.1.2`).
+
+### Blockers
+
+1. **The recording toolchain is absent.** `npm run docs:media` checks for VHS
+   and its dependencies before recording anything:
+
+   ```console
+   $ npm run docs:media
+   docs:media: missing prerequisites: vhs, ttyd, ffmpeg
+
+   VHS records the tapes; it drives ttyd and encodes with ffmpeg.
+     - vhs: go install github.com/charmbracelet/vhs@latest
+     - ttyd: build/install ttyd — https://github.com/tsl0922/ttyd#installation
+     - ffmpeg: install ffmpeg (e.g. `apt install ffmpeg`)
+
+   No capture was produced. docs/assets/tui is unchanged.
+   ```
+
+   Direct probes confirm the same, and `go` is not installed either:
+
+   ```console
+   $ vhs --version
+   /bin/bash: line 1: vhs: command not found        # exit 127
+   $ ttyd --version
+   /bin/bash: line 1: ttyd: command not found       # exit 127
+   $ ffmpeg --version
+   /bin/bash: line 1: ffmpeg: command not found     # exit 127
+   ```
+
+   Installing them would change the developer environment, which the media task
+   explicitly forbids. The Node floor is also unmet for a sandbox install
+   (`node --version` → `v24.15.0`, `package.json` requires `>=26.4.0`).
+
+2. **The required UI state is produced by a real model run.** The sidebar block
+   renders only real children: `collectDispatch` reads host-cached
+   `SessionInfo` (`cost`, `updatedAt`, `state`), so a capture with a live row and
+   a finished roll-up needs a real fan-out. A staged or mocked session is
+   prohibited, and the capture brief also requires no network calls in the
+   recording path. Those two requirements cannot both hold for these three
+   flows, so no honest recording exists offline.
+
+3. **The TUI is not deterministically drivable from a tape.** Focus, panel
+   routing, and the presence of a running child depend on host state; the
+   spinner frame, duration, and cost are sampled at record time. Fixed sleeps
+   reduce the variance but do not remove it, and a flaky capture was ruled out.
+
+### Re-recording
+
+On a machine with the prerequisites and a sandbox credential:
+
+```bash
+scripts/test-opencode-v2-sandbox.sh --prepare   # isolated HOME + install
+npm run docs:media --check                       # all three binaries present
+npm run docs:media                               # records every *.tape
+```
+
+The harness runs each tape with `vhs` from `docs/assets/tui/`, then fails if a
+tape's declared `Output`/`Screenshot` file was not written. Replace each
+`illustrative` fence with the real image and drop the `status: pending` line in
+the same change; never commit media that does not correspond to a committed
+tape.

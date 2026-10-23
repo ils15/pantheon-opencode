@@ -73,6 +73,39 @@ no child. It is added with `append` claims: the native prompt footer keeps its
 own line, and Pantheon only appends `▸<preset> · ✦<n> ativos` while delegations
 are running.
 
+<!-- media: opencode-v2-dispatch-sidebar
+     alt: "Pantheon V2 sidebar with the aggregated Dispatch block: two live child rows and a finished roll-up"
+     source: docs/assets/tui/v2-sidebar.gif (recorded from docs/assets/tui/v2-sidebar.tape)
+     status: pending — no image committed; the fenced sketch below is illustrative
+-->
+
+<!-- illustrative, not a screenshot; real capture pending -->
+
+```text
+Pantheon v1.6.0
+▸ teampro · anthropic
+Sessão: MCP permission audit
+
+▤ Context
+142.6K tokens
+▰▰▰▰▰▰▰▰▱▱▱▱ 71% of 200K
+$4.12 spent
+cache 92% · 42.3 tok/s
+
+◈ Dispatch · 2 rodando · $3.49
+⠸ prometheus·plan $0.09 14m34s
+⠸ apollo·disc $0.03 1m12s
+✓ 70 · $3.40 · 9 agentes
+prometheus   × 12·plan   $1.20
+hermes       × 31        $1.44
+athena       ×  9·plan   $0.76
+```
+
+*Illustrative layout — not a screenshot.* Live children lead the block; finished
+children collapse into one roll-up per agent, never one row per session.
+
+*OpenCode 2.x · pantheon-opencode 1.6.0*
+
 ## `/dispatch` panel
 
 `/dispatch` (also in the palette as *Pantheon: Dispatch*) opens
@@ -102,10 +135,32 @@ Pantheon toasts `Abra uma sessão para ver o Dispatch` instead of inventing a
 route. Jumping from a row to the child session is a documented TODO: no
 `session` router destination is verified for a child id.
 
-<!-- media: opencode-v2-dispatch-sidebar
-     alt: "Pantheon V2 sidebar with an aggregated Dispatch block above the /dispatch panel"
-     source: TBD in Phase 4
+<!-- media: opencode-v2-dispatch-panel
+     alt: "Full-width /dispatch panel mid-run: child list, tree counters and the selected child's detail pane"
+     source: docs/assets/tui/dispatch-panel.gif (recorded from docs/assets/tui/dispatch-panel.tape)
+     status: pending — no image committed; the fenced sketch below is illustrative
 -->
+
+<!-- illustrative, not a screenshot; real capture pending -->
+
+```text
+◈ Dispatch — MCP permission audit
+2 rodando · 70 concluídos · 1 falha · $3.59
+──────────────────────────────────────────────────────────────────────
+▸ ⠋ prometheus   plan   $0.09  14m34s    MCP permission audit
+  ✓ hermes       oth    $0.44   2m10s    ses_ab12cd · anthropic/claude-sonnet-4.5
+  ✓ apollo       disc   $0.12   1m02s    in 12.4K · out 430 · r 120 · cache 8.0K/1.0K
+  ✗ athena       plan   $0.01     48s    kind plan (prefixo) · parent ses_9f31aa
+  ✓ zeus         plan   $0.07   3m21s
+  ✓ demeter      oth    $0.05   1m45s
+
+1-10 de 71 · k/up j/down mover · enter detalhe · f fullscreen · escape/q fechar
+```
+
+*Illustrative layout — not a screenshot.* Above 72 columns the detail sits beside
+the list; narrower panels stack it underneath and truncate per column.
+
+*OpenCode 2.x · pantheon-opencode 1.6.0*
 
 ## Plan before approval
 
@@ -113,6 +168,35 @@ When you ask for a plan or start `/pantheon-deepwork`, Athena returns the full
 plan to Zeus, who displays it in the main conversation before asking for
 approval. The approval prompt never points to a plan hidden in a child agent's
 conversation.
+
+<!-- media: opencode-v2-plan-approval
+     alt: "Plan-approval turn: the full plan rendered in the main conversation above the approval question"
+     source: docs/assets/tui/plan-approval.gif (recorded from docs/assets/tui/plan-approval.tape)
+     status: pending — no image committed; the fenced sketch below is illustrative
+-->
+
+<!-- illustrative, not a screenshot; real capture pending -->
+
+```text
+Zeus · teampro
+
+  ## Plan: MCP permission audit
+
+  1. Read every agent allowlist in src/agents/*.md
+  2. Compare it with the `permissions` rules pantheon-init emits
+  3. Report drift and update docs/MCP.md where a rule is undocumented
+  4. Verify with npm run test:node and npm run docs:lint
+
+  Files: docs/MCP.md, src/agents/*.md, scripts/install/*.mjs
+  Risks: an `ask` rule cannot be expressed for MCP on this host
+
+  Approve this plan? (yes / no)
+```
+
+*Illustrative layout — not a screenshot.* The plan is printed in the main
+conversation before the question, so approval never refers to a child's view.
+
+*OpenCode 2.x · pantheon-opencode 1.6.0*
 
 ## Context pruning
 

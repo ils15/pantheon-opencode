@@ -99,3 +99,32 @@ npm run docs:lint
 Tests that require a real install are opt-in via `npm run test:install`.
 Coverage is report-only except for the V2 plugin floor described in
 `docs/internal/validation.md`.
+
+## TUI media captures
+
+The OpenCode V2 page embeds terminal captures under `docs/assets/tui/`. They are
+recorded from committed VHS tapes — never mocked, retouched, or composed.
+
+Prerequisites: `vhs`, `ttyd`, and `ffmpeg` on `PATH`, plus an isolated sandbox
+install with a provider credential. Check and record:
+
+```bash
+npm run docs:media -- --check   # names every missing prerequisite
+scripts/test-opencode-v2-sandbox.sh --prepare
+npm run docs:media              # records every docs/assets/tui/*.tape
+npm run docs:media v2-sidebar   # or one tape
+```
+
+Rules:
+
+- One tape per flow, committed next to its output. A media slot in the docs must
+  name the tape that produces it; an image with no tape is a defect.
+- Every tape pins `Set Shell`, `Set FontSize`, `Set Width`/`Set Height`, the
+  theme, and explicit `Sleep` values. Do not race keystrokes.
+- Captures come from a real run: the Dispatch block only renders real child
+  sessions, so there is no offline fixture path.
+- `.gitattributes` keeps `*.tape` LF and marks `*.gif`/`*.png` binary.
+- Do not commit build output, frames, or scratch recordings; only the `.tape`
+  files and their declared `.gif`/`.png` outputs belong in the repository.
+
+The current status is recorded in `docs/internal/validation.md#tui-media-gap`.
