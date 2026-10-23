@@ -10,7 +10,6 @@ noted.
 |---|---|---|
 | `OPENCODE_VERSION` | unset | `v1` or `v2` selects the plugin generation. Overridden by an explicit `--opencode-version` flag. |
 | `OPENCODE_BIN` | `opencode` | Host binary used for the `--version` probe. A basename of `opencode2` selects V2 without probing. |
-| `OPENCODE_V1_SPEC` | `opencode-ai@1.18.18` | Sandbox spec for the V1 plugin. The V2-only sandbox runner does not consume it. |
 | `OPENCODE_V2_SPEC` | `@opencode/cli@latest` | Sandbox spec that provides the `opencode2` binary. |
 
 Generation resolution and fallback are described once in

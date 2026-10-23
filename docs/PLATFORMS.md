@@ -94,6 +94,25 @@ to Pantheon: `/init` captures project-level conventions, while Pantheon agents
 supply role behavior. If `AGENTS.md` already exists, `/init` improves it in
 place.
 
+## ACP (Agent Client Protocol)
+
+OpenCode can run as an ACP-compatible agent for editors such as Zed,
+JetBrains, or Neovim. Start the server with `opencode acp`; it communicates over
+JSON-RPC on stdio. ACP does not change the selected plugin contract: V1
+hook/delegate behavior still depends on V1 host events, and the V2 plugin
+remains its own surface. Verify the registration in `opencode.json` before
+relying on a feature.
+
+For Zed, add this to `~/.config/zed/settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "OpenCode": { "command": "opencode", "args": ["acp"] }
+  }
+}
+```
+
 ## Troubleshooting
 
 | Symptom | Check |

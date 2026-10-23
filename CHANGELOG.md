@@ -7,21 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-
-- Opt-in V2 memory injection puts the most relevant entries in the request context; off by default.
-- V2 compaction prunes repeated tool output before summarization, keeping the newest result and recent turns.
-
-### Changed
-
-- `pantheon_cost` offline mode refuses `refreshPricing` instead of opening a socket, and says why.
-- Scoped cost reports with no matching rows render empty instead of `UNSUPPORTED`.
-
-### Fixed
-
-- Sub-cent costs render as `< $0.0001`; a real zero stays `$0.00`.
-- Cache-only assistant turns count as readable cost usage.
-- A session-scoped cost request on the CLI fallback returns `UNSUPPORTED` instead of an unscoped total.
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
 
 ## [v1.6.0] - 2026-10-22
 
@@ -29,7 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - OpenCode 1.19.x and 2.x support with `auto` generation detection; OpenCode 2.0.22 is known broken.
 - Per-agent MCP permissions on both generations; omitted servers and undeclared tools are denied by default.
-- `pantheon_cost` now reports USD by agent, model and session, accepts `session` scope, and has a hard offline gate.
+- `pantheon_cost` now reports USD by agent, model and session, accepts `session` scope, and has a hard offline gate that refuses `refreshPricing`.
+- Opt-in V2 memory injection can add the most relevant entries to the request context; it is off by default.
+- V2 compaction prunes repeated tool output before summarization, keeping the newest result and recent turns.
 - The V2 sidebar aggregates child work in a `Dispatch` block, and `/dispatch` opens a full-width panel over the same data.
 - The installer previews each file before apply, detects drift, keeps an exact backup, and provides `restore`, `reconcile` and `uninstall`.
 - A pristine project database now starts with both checkpoint and goal schemas; startup never adds goal DDL to an existing database.
@@ -63,6 +52,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - V2 plugin tools now execute instead of reporting a false success, and every tool declares the `output` schema the host requires.
 - An empty child dispatch result is surfaced as an error instead of a silent completed call.
+- Scoped `pantheon_cost` reports with no matching rows render an empty report instead of `UNSUPPORTED`.
+- Sub-cent costs render as `< $0.0001`; a real zero stays `$0.00`.
+- Cache-only assistant turns count as readable cost usage.
+- A session-scoped cost request on the CLI fallback returns `UNSUPPORTED` instead of an unscoped total.
 
 ### Security
 

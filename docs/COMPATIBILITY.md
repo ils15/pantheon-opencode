@@ -13,7 +13,8 @@ minor does not need its own measurement to be supported.
 - **OpenCode 2.x** — supported with the V2 plugin. Every 2.x minor is supported,
   including minors released after this document was written.
 - **Known broken: OpenCode 2.0.22.** It does not expose
-  `ctx.permission.assert` (`src/plugin-v2.ts:1743-1744`), so Pantheon's V2
+  `ctx.permission.assert` (`src/plugin-v2.ts:1720-1727`;
+  `bench/results/p05-permission-matrix-2026-10-22.md:169`), so Pantheon's V2
   permission-ordering and bounded-read paths fail there. The V2 loader also
   requires the plugin entry to be a directory
   (`scripts/install/opencode.mjs:579-582`); the installer already writes that

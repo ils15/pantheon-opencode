@@ -508,4 +508,8 @@ latência total e wall de F1 segue inconclusivo.
 - **CI/release** — keep validation fail-closed; expand `doctor` checks and add
   the OpenCode 2 V2-only sandbox validator.
 
-> Archive note: no `v1.6.0-beta.16` tag or section exists in this repository; `v1.6.0-beta.14` has a section but no local tag. This archive holds 17 sections for the 15 local `v1.6.0-beta.*` tags.
+---
+
+## Archive notes
+
+No `v1.6.0-beta.16` tag or section exists in this repository. `v1.6.0-beta.14` has a section but no local tag. This archive holds 17 sections for the 16 local `v1.6.0-beta.*` tags.

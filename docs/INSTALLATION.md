@@ -32,109 +32,110 @@ npm run doctor
 - Delegação e modo background dependem das ferramentas expostas pela versão/runtime do host. Na sessão Beta 10 reportada, Zeus tinha a ferramenta `subagent`, sem `task_status`/`cancel_task` ou garantia de acompanhamento/recuperação. Verifique o schema e a documentação do runtime; não presuma que `task()` ou background estejam disponíveis. A variável experimental abaixo só se aplica a hosts/versões que a documentem.
 - Passo a passo de 5 minutos: [QUICKSTART.md](QUICKSTART.md).
 
-## Revisão, autorização e recuperação do instalador
+## Installer review, authorization, and recovery
 
-`init --dry-run` mostra as operações de arquivos gerenciados sem aplicá-las. Para
-revisar em uma execução e autorizar em outra, salve um plano versionado:
+`init --dry-run` shows the managed-file operations without applying them. To
+review in one invocation and authorize in another, save a versioned plan:
 
 ```bash
-# Preview legível ou JSON (somente no stdout)
+# Human-readable or JSON preview (stdout only)
 npx pantheon-opencode init --project --no-mcp --components agents --dry-run
 npx pantheon-opencode init --project --no-mcp --components agents --dry-run --json
 
-# Salvar e aplicar o plano revisado; sem --yes, uma sessão TTY pergunta
+# Save and apply the reviewed plan; without --yes, a TTY session asks
 npx pantheon-opencode init --project --no-mcp --components agents --dry-run \
   --save-plan .pantheon-install-plan.json
 npx pantheon-opencode init --apply-plan .pantheon-install-plan.json --yes
 ```
 
-O artefato é JSON versionado, gravado atomicamente com permissões `0600`; guarda
-identidades, opções, snapshots/fingerprints e operações, não o conteúdo dos
-arquivos gerados. Ele fica vinculado ao caminho original do artefato, ao alvo e
-à identidade do pacote. Na aplicação, o instalador recalcula o plano e compara a
-origem e os destinos; se houver drift, aborta antes de escrever (código de saída
-`3`). `--apply-plan` aceita somente o caminho do plano e autorização (`--yes`/
-`-y` ou prompt TTY). Planos salvos com `--force`/`--clean` não são suportados.
+The artifact is versioned JSON written atomically with `0600` permissions; it
+stores identities, options, snapshots/fingerprints, and operations, not the
+contents of generated files. It is bound to the plan's original path, target,
+and package identity. On apply, the installer recomputes the plan and compares
+source and destinations; on drift it aborts before writing (exit code `3`).
+`--apply-plan` accepts only the plan path and authorization (`--yes`/`-y` or a
+TTY prompt). Saved plans with `--force`/`--clean` are not supported.
 
-Para manter o preview livre de efeitos colaterais no host, `--dry-run` não
-executa `opencode --version`: sem um hint de versão configurado, assume V1 e
-informa isso como advisory. Use `--opencode-version v1` ou
-`--opencode-version v2` para selecionar a geração do preview e do plano salvo.
-O plano descreve operações de
-arquivos gerenciados; não representa integralmente efeitos em lote ou externos,
-como criar/atualizar um ambiente Python. `postinstall`/`sync-tui` também fica
-fora do fluxo de aprovação do `init` e pode atualizar artefatos TUI sem prompt.
-Não trate o preview como transação nem como promessa de rollback automático.
+A dry run resolves the generation with the same resolver as apply, including the
+`--version` probe. The probe runs in a throwaway HOME/XDG sandbox with a
+2-second timeout, so the preview writes nothing. V1 is assumed only when the
+probe fails or is unreadable; the plan then marks `versionAssumed` in text and
+`--json`, and `--opencode-version v1|v2` pins the preview. The plan describes
+managed-file operations; it does not represent every bulk or external effect,
+such as creating or updating a Python environment. `postinstall`/`sync-tui` is
+also outside the `init` approval flow and may update TUI artifacts without a
+prompt. Do not treat the preview as a transaction or as a promise of automatic
+rollback.
 
-Antes das primeiras gravações gerenciadas, `init` cria um backup exato em
-`.pantheon/backups/<timestamp>/` (diretório `0700`, arquivos `0600`, retenção das
-5 cópias mais recentes). Como o backup é byte a byte, pode conter credenciais já
-presentes nos arquivos; não o compartilhe. Para recuperar, use
-`npx pantheon-opencode restore [--project] [--yes]`. Uma falha/interrupção pode
-deixar alterações parciais; a recuperação é manual pelo comando `restore`, não
-um rollback automático.
+Before the first managed write, `init` creates an exact backup under
+`.pantheon/backups/<timestamp>/` (directory `0700`, files `0600`, retaining the
+5 most recent). Because the backup is byte-for-byte, it can contain credentials
+already present in your files; do not share it. To recover, use
+`npx pantheon-opencode restore [--project] [--yes]`. A failure or interruption
+may leave partial changes; recovery is manual through the `restore` command, not
+an automatic rollback.
 
-### Remoção e purge
+### Removal and purge
 
-O desinstalador também pode ser revisado antes de aplicar:
+The uninstaller can also be reviewed before applying:
 
 ```bash
 npx pantheon-opencode uninstall --project --dry-run
 npx pantheon-opencode uninstall --project --force
 ```
 
-Sem `--force`, a aplicação pede confirmação em TTY e falha fechada em ambiente
-não interativo. O desinstalador remove apenas itens identificados como do
-Pantheon, preserva symlinks e cria backup dos arquivos regulares que serão
-alterados/removidos; os backups não são apagados pelo uninstall. Em V2 global ele
-também desfaz a negação do Context nativo em `cli.json`, removendo só a diretiva
-`-opencode.sidebar.context` (e o arquivo inteiro quando foi o Pantheon que o
-criou), para o bloco Context nativo voltar a aparecer. `--purge-data`
-é mais restrito: só permite remover `.pantheon/install-state.json` quando for um
-arquivo regular e um estado schema-v2 verificável. Não é uma limpeza geral de
-`.pantheon` nem remove os backups. Primeiro revise com `--dry-run`; para aplicar
-purge em modo não interativo, combine `--purge-data --force`.
+Without `--force`, applying asks for confirmation on a TTY and fails closed in a
+non-interactive environment. The uninstaller removes only items identified as
+Pantheon's, preserves symlinks, and backs up regular files it will change or
+remove; backups are not deleted by uninstall. On V2 global installs it also
+undoes the native Context negation in `cli.json`, removing only the
+`-opencode.sidebar.context` directive (and the whole file when Pantheon created
+it), so the native Context block returns. `--purge-data` is narrower: it only
+allows removing `.pantheon/install-state.json` when it is a regular file and a
+verifiable schema-v2 state. It is not a general cleanup of `.pantheon` and does
+not remove backups. Review with `--dry-run` first; to apply purge
+non-interactively, combine `--purge-data --force`.
 
-### Revisar drift de arquivos instalados
+### Review drift in installed files
 
-Instalações novas mantêm um inventário versionado por arquivo regular gerenciado
-(caminho relativo exato, componente/layout, hash e modo; nenhum conteúdo é salvo).
-Use `reconcile` para identificar arquivos que saíram da fonte atual e permanecem
-idênticos à última gravação do instalador:
+New installs keep a versioned per-file inventory for regular managed files
+(exact relative path, component/layout, hash, and mode; no content is stored).
+Use `reconcile` to identify files that have left the current source and remain
+identical to the installer's last write:
 
 ```bash
-# Preview somente leitura; selecione --global ou --target PATH quando apropriado
+# Read-only preview; select --global or --target PATH when appropriate
 npx pantheon-opencode reconcile --project --dry-run
 npx pantheon-opencode reconcile --project --dry-run --components agents,skills
 npx pantheon-opencode reconcile --global --target /caminho/config-opencode --dry-run
 npx pantheon-opencode reconcile --target /caminho/projeto --dry-run
 
-# Plano revisável, aplicado em outra chamada com autorização explícita
+# Reviewable plan, applied in a separate invocation with explicit authorization
 npx pantheon-opencode reconcile --project --components agents --save-plan .pantheon-reconcile.json
 npx pantheon-opencode reconcile --apply-plan .pantheon-reconcile.json --yes
 
-# Alternativa: revisar e aplicar na mesma chamada
+# Alternative: review and apply in the same invocation
 npx pantheon-opencode reconcile --project --apply --yes
 ```
 
-O preview não grava nem remove arquivos. A aplicação revalida o inventário, os
-hashes e o conjunto exato de operações; qualquer drift cancela antes da remoção.
-Antes de apagar, cria um backup restaurável em `.pantheon/backups/`; use
-`pantheon-opencode restore` para recuperar. Somente arquivos regulares e exatos
-são removidos — diretórios nunca são apagados recursivamente. Componentes não
-selecionados permanecem fora da reconciliação.
+The preview writes or removes nothing. Apply revalidates the inventory, hashes,
+and exact operation set; any drift cancels before removal. Before deleting, it
+creates a restorable backup under `.pantheon/backups/`; use
+`pantheon-opencode restore` to recover. Only exact regular files are removed —
+directories are never deleted recursively. Unselected components remain outside
+reconciliation.
 
-Estados v1/v2 e instalações anteriores ao inventário migram para uma lista vazia:
-seus arquivos existentes são desconhecidos/ambíguos e nunca são inferidos como
-propriedade do Pantheon nem removidos automaticamente. Arquivos alterados,
-ausentes, symlinks, caminhos inválidos ou layouts incompatíveis também são
-preservados. `doctor` diferencia arquivos previamente gerenciados que foram
-modificados ou desapareceram; quando o payload atual não está disponível, informa
-que só verificou o hash registrado. `reconcile` aceita `--project`, `--global` ou
-`--target PATH`; um alvo explícito usa o layout de projeto por padrão. Combine
-`--global --target PATH` para indicar que um alvo global explícito usa o layout
-global plano. Essa escolha não é inferida nem reinterpretada pelo caminho. Sem
-inventário legível, não há limpeza automática.
+v1/v2 states and installs older than the inventory migrate to an empty list:
+their existing files are unknown/ambiguous and are never inferred as
+Pantheon-owned or removed automatically. Changed, missing, symlinked,
+invalid-path, or incompatible-layout files are also preserved. `doctor`
+distinguishes previously managed files that were modified or disappeared; when
+the current payload is unavailable, it reports that only the recorded hash was
+checked. `reconcile` accepts `--project`, `--global`, or `--target PATH`; an
+explicit target uses the project layout by default. Combine `--global --target
+PATH` to indicate that an explicit global target uses the flat global layout.
+This choice is neither inferred nor reinterpreted from the path. Without a
+readable inventory, there is no automatic cleanup.
 
 ## Prerequisites
 
@@ -466,64 +467,67 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 | Modelo `text-only` com `hasVision` warning | usou `big-pickle`/`kimi-k2.7-code` etc. para visão | Troque para multimodal (`mimo-v2.5*`, `gpt-5.6*`, `minimax-m3`) ou aceite limitação (`vision:false` no `CAPABILITY_TABLE`) |
 | `Presets defined: 6` falha em `validate-routing.mjs` | `routing.yml` corrompido | `node --check src/pantheon/presets.mjs` + `yamllint src/routing.yml` |
 
-### Headless / CI (sem TTY)
+### Headless / CI (no TTY)
 
-> **Apply não-interativo exige `--yes`.** Sem TTY, `init` imprime o plano e
-> **não altera nada** sem `--yes` (alias `-y`). Exit codes: `0` ok/plan-only
-> (nada aplicado) · `2` apply pedido sem autorização · `3` drift (um alvo
-> planejado mudou entre o plano e o apply) · `130` cancelado · `1` falha.
+> **A non-interactive apply requires `--yes`.** Without a TTY, `init` prints the
+> plan and **changes nothing** without `--yes` (alias `-y`). Exit codes: `0`
+> ok/plan-only (nothing applied) · `2` apply requested without authorization ·
+> `3` drift (a planned target changed between plan and apply) · `130` canceled ·
+> `1` failure.
 
-#### Backup, restore e fluxo de aprovação
+#### Backup, restore, and approval flow
 
-- **Preview**: `init --dry-run` imprime o plano e **não grava no alvo**. Para
-  revisão entre execuções, use `--save-plan <arquivo>`; para aplicar o artefato
-  revisado, use `--apply-plan <arquivo> --yes` (ou confirme no TTY). O plano
-  versionado é gravado com modo `0600`, inclui metadados/fingerprints e não
-  inclui conteúdo gerado. Está vinculado ao caminho original, alvo e pacote; o
-  apply recalcula operações e snapshots e aborta com código `3` se houver drift.
-  Planos salvos com `--force`/`--clean` não são aceitos.
-- **Geração OpenCode no preview**: para evitar efeitos colaterais, o dry-run não
-  executa `opencode --version`; sem um hint de versão configurado, assume V1 e
-  emite um aviso advisory. Passe `--opencode-version v1` ou `v2` para fixar a
-  geração.
-- **Limites do preview**: o plano representa operações de arquivos gerenciados,
-  não todos os efeitos em lote ou externos, como setup do ambiente Python.
-  `postinstall`/`sync-tui` fica fora do fluxo de aprovação. Não é uma transação
-  nem garante rollback automático.
-- **Backup exato**: antes da primeira escrita, `init` salva um conjunto exato em
-  `.pantheon/backups/<timestamp>/` (diretório `0700`, arquivos e manifest `0600`;
-  mantém os **5** mais recentes). É uma cópia byte-a-byte e, portanto, **também
-  contém quaisquer API keys/tokens já presentes nos seus arquivos** — por isso
-  nunca é impresso (nem seus hashes).
+- **Preview**: `init --dry-run` prints the plan and **does not write to the
+  target**. For review across invocations, use `--save-plan <file>`; to apply
+  the reviewed artifact, use `--apply-plan <file> --yes` (or confirm on the
+  TTY). The versioned plan is written with mode `0600`, includes
+  metadata/fingerprints, and does not include generated content. It is bound to
+  the original path, target, and package; apply recomputes operations and
+  snapshots and aborts with code `3` on drift. Saved plans with
+  `--force`/`--clean` are not accepted.
+- **OpenCode generation in the preview**: a dry run resolves the generation with
+  the same resolver as apply, including the `--version` probe, which runs in a
+  throwaway HOME/XDG sandbox with a 2-second timeout. V1 is assumed only when
+  the probe fails or is unreadable; the plan is then marked `versionAssumed` in
+  text and `--json`. Pass `--opencode-version v1` or `v2` to pin the preview.
+- **Preview limits**: the plan represents managed-file operations, not every
+  bulk or external effect, such as Python environment setup.
+  `postinstall`/`sync-tui` is outside the approval flow. It is not a transaction
+  and does not guarantee automatic rollback.
+- **Exact backup**: before the first write, `init` saves an exact set under
+  `.pantheon/backups/<timestamp>/` (directory `0700`, files and manifest `0600`;
+  keeps the **5** most recent). It is a byte-for-byte copy and therefore
+  **also contains any API keys/tokens already present in your files** — so it is
+  never printed (nor are its hashes).
 - **Restore**: `pantheon-opencode restore [--project] [--from <dir>] [--dry-run] [--yes]`.
-  Verifica a integridade do manifest e se recusa a restaurar um conjunto
-  adulterado; faz um backup do estado atual antes de reverter. Em execução não
-  interativa, exige `--yes`; num TTY pergunta (default **não**).
-- **Falha no meio do apply**: aborta as escritas restantes, limpa arquivos
-  temporários (`<arquivo>.tmp-<pid>`), lista os caminhos já aplicados (sem
-  conteúdo) e imprime a instrução de recuperação. **Não há rollback automático** —
-  o backup exato + `restore` é o caminho de recuperação (um apply interrompido é
-  recuperável do mesmo modo).
-- **Fora do fluxo de aprovação**: `postinstall`/`sync-tui` apenas ressincroniza
-  artefatos da TUI; não faz prompt nem passa pelo gate de `--yes`.
+  It verifies the manifest integrity and refuses to restore a tampered set; it
+  backs up the current state before reverting. In a non-interactive run it
+  requires `--yes`; on a TTY it asks (default **no**).
+- **Failure mid-apply**: it aborts the remaining writes, cleans temporary files
+  (`<file>.tmp-<pid>`), lists the paths already applied (without content), and
+  prints the recovery instruction. **There is no automatic rollback** — the
+  exact backup + `restore` is the recovery path (an interrupted apply is
+  recoverable the same way).
+- **Outside the approval flow**: `postinstall`/`sync-tui` only resynchronizes
+  TUI artifacts; it does not prompt or pass through the `--yes` gate.
 
 ```bash
-# Preset explícito pula o seletor interativo
+# Explicit preset skips the interactive selector
 PANTHEON_OPENCODE_API_KEY=... npx pantheon-opencode init --headless --yes --preset go-fast
 OPENAI_API_KEY=... npx pantheon-opencode init --headless --yes --preset openai --project
 
-# Env override (vence arquivo) — útil em CI
+# Env override (wins over the file) — useful in CI
 PANTHEON_MODEL_PRESET=go-premium opencode run "hello"
 
-# Nenhum preset (herança nativa) em CI
+# No preset (native inheritance) in CI
 PANTHEON_MODEL_PRESET=none opencode run "hello"
-# ou simplesmente não definir preset e não gravar active-preset.json
+# or simply do not define a preset and do not write active-preset.json
 
-# Per-agent override headless (via Node, sem TUI)
+# Per-agent override headless (via Node, no TUI)
 node -e "
 import('./src/pantheon/model-command.ts').then(m=>console.log('import ok'))
 "
-# ou no chat OpenCode (determinístico, backup .bak):
+# or in the OpenCode chat (deterministic, .bak backup):
 # /pantheon-model set --agent hermes --model opencode-go/gpt-5.6-terra --effort medium --scope project
 ```
 

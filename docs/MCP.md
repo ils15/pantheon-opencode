@@ -23,7 +23,7 @@ registers them at `:196-301`. Each entrypoint is a real script, not a shared
 | Server | Entrypoint | Tools | Resources |
 |---|---|---|---|
 | `pantheon-resources` | `scripts/mcp_resources.py` | — | 4 static + 6 templates |
-| `pantheon-code-mode` | `scripts/code_mode.py` | 1 | 1 static + 1 template |
+| `pantheon-code-mode` | `scripts/code_mode.py` | 2 | 1 static + 1 template |
 | `pantheon-memory` | `scripts/memory_mcp.py` | 9 | — |
 | `pantheon-persistence` | `scripts/mcp_persistence.py` | 6 | — |
 | `pantheon-vision` | `src/mcp/pantheon_vision.py` | 3 | — |
@@ -147,8 +147,10 @@ organizational filter, not an access-control boundary.
 ## pantheon-code-mode
 
 Confined script execution from `.pantheon/code-mode/`, with a 30-second
-timeout. The single tool is `execute_code_script(script_name)`. Resources list
-the available scripts and show one script's content.
+timeout. It exposes two tools: `execute_code_script(script_name)` runs an
+approved script, and `approve_code_script(script_name)` records or refreshes its
+SHA-256 in the manifest. Resources list the available scripts and show one
+script's content.
 
 Scripts run only when explicitly approved and recorded in the manifest with
 their SHA-256. See [Code Mode](reference/code-mode.md) for the approval
