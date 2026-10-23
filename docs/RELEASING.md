@@ -269,7 +269,7 @@ before any release credential is exposed.
 
 | Gate | Executed by | Fails when | Evidence |
 |---|---|---|---|
-| (a) tests | `scripts/release-gates.mjs tests`: pytest + [`src/mcp`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp) coverage ≥ 80, `test:node`, `test:ts`, `coverage:plugin-v2`, `test:install`; pytest runs in an isolated venv built from [`src/mcp/requirements-mcp.txt`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt) | any suite, coverage threshold, or the mandatory install tier fails; an unsatisfiable or unverified pin set fails the gate | `tests.json` |
+| (a) tests | `scripts/release-gates.mjs tests`: pytest + [`src/mcp`](https://github.com/ils15/pantheon-opencode/tree/main/src/mcp) coverage ≥ 80, `test:node`, `test:ts`, `coverage:plugin-v2`, `test:install`; pytest runs in an isolated venv built from [`src/mcp/requirements-mcp.txt`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt) | any suite, coverage threshold, or the mandatory install tier fails; an unsatisfiable or unverified pin set fails the gate | `tests.json` |
 | (b) host compatibility | `scripts/release-gates.mjs host`: each **measured** host installed and exercised in an isolated sandbox; the gate reports a supported family with no row as "supported, unmeasured" instead of failing it | a measured row fails, or a known-broken host is listed | `host.json` |
 | (c) install | `scripts/release-gates.mjs install`: the immutable `.tgz` installed globally, headless init, `validate-sandbox-install.mjs`, and a host-backed tool canary | install, init, source comparison, MCP/doctor checks, or canary fails or skips | `install.json`, `install-canary.log` |
 | (d) package | `scripts/release-gates.mjs package`: SHA-256 recomputed over the same `.tgz`, payload inspected, `package:validate` | the digest, name, version, target SHA, or payload disagree; no second `npm pack` is accepted | `package.json` |
@@ -340,7 +340,7 @@ product defect.
 
 ### Coverage contract
 
-- **Required:** Python [`src/mcp`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp) branch coverage **≥ 80%**
+- **Required:** Python [`src/mcp`](https://github.com/ils15/pantheon-opencode/tree/main/src/mcp) branch coverage **≥ 80%**
   (`coverage report --fail-under=80`) and the [`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts) line
   measurement (`npm run coverage:plugin-v2`). Both run in gate (a).
 - **Not PASS:** Node coverage (`npm run coverage`) is report-only and enforces

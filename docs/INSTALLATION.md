@@ -159,7 +159,7 @@ readable inventory, there is no automatic cleanup.
 The TUI plugin is a **root workspace**. `package.json` declares
 `"workspaces": ["src/plugins/tui"]`, and the root `package-lock.json` carries a
 `link: true` entry for `node_modules/pantheon-tui` resolving to
-[`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui). A single `npm ci --ignore-scripts` at the root installs the
+[`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/tree/main/src/plugins/tui). A single `npm ci --ignore-scripts` at the root installs the
 root project **and** the TUI subpackage; there is no second install step, and
 `npm ci --prefix src/plugins/tui` is no longer part of any workflow.
 
@@ -402,7 +402,7 @@ For V2, install the built plugin into `.opencode/plugins/pantheon-tui` so the
 directory contains the V2 `index.ts` and `tui.ts` entrypoints. TUI plugins load
 at process start, so restart OpenCode after each build.
 
-`.opencode/tui.json` is gitignored. Never add [`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui) to
+`.opencode/tui.json` is gitignored. Never add [`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/tree/main/src/plugins/tui) to
 `opencode.json`; that file is packaged and merged into user configs.
 
 ## Commands
@@ -584,7 +584,7 @@ host. The runner installs the current stable `@opencode/cli` by default;
 
 ### TUI runtime versus development build
 
-The installer treats [`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui) as the single source of truth and always
+The installer treats [`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/tree/main/src/plugins/tui) as the single source of truth and always
 copies it into the target config as `plugins/pantheon-tui` (the bundled `dist/`
 + `package.json`). OpenCode's TUI loader reads the copied `package.json` `exports`
 map (`./tui` → `dist/tui.js`, `./server` → `dist/server.js`), so users do not
@@ -596,7 +596,7 @@ repository, not post-install health checks; their failure in
 Every install (global or project) registers exactly ONE Pantheon TUI reference
 system-wide — the copied `plugins/pantheon-tui` directory in the installed
 config. Stale references from older installs (dist file paths, in-package
-[`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui) dirs, bare `plugins/pantheon-tui` copies, npx paths) are
+[`src/plugins/tui`](https://github.com/ils15/pantheon-opencode/tree/main/src/plugins/tui) dirs, bare `plugins/pantheon-tui` copies, npx paths) are
 removed from all `tui.json` locations OpenCode reads: `~/.opencode/tui.json`,
 `~/.config/opencode/tui.json` and `<project>/.opencode/tui.json`.
 
