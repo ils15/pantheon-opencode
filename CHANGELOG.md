@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- OpenCode 2 support with `auto` generation detection: 1.19.x, 2.0.29, 2.0.30, 2.0.31 and 2.1.x; 2.0.22 is not supported.
+- OpenCode 1.19.x and 2.x support with `auto` generation detection; OpenCode 2.0.22 is known broken.
 - Per-agent MCP permissions on both generations; omitted servers and undeclared tools are denied by default.
 - `pantheon_cost` now reports USD by agent, model and session, accepts `session` scope, and has a hard offline gate.
 - The V2 sidebar aggregates child work in a `Dispatch` block, and `/dispatch` opens a full-width panel over the same data.

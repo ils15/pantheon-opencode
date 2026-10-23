@@ -195,8 +195,9 @@ database; in a global install, projects share that database. FastMCP 4.0.10
 handlers read the session id from
 `Context.request_context.meta["ai.opencode/sessionID"]`. Missing, malformed, or
 invalid metadata fails closed. The session id is a correlation/scope key, not
-authentication. The supported trust boundary is OpenCode v2.0.30-mediated local
-stdio; do not expose the server over HTTP or another network transport.
+authentication. The supported trust boundary is OpenCode 2.x-mediated local
+stdio (measured on 2.0.30); do not expose the server over HTTP or another
+network transport.
 
 There is one active goal per session. A completed goal stays in history and a
 new one can be created after completion. Status, timestamps, and a monotonically

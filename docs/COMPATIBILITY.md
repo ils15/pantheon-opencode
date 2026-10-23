@@ -1,39 +1,46 @@
 # Compatibility and Support Policy
 
-This page is the only home of the support matrix, the OpenCode generation
+This page is the only home of the support policy, the OpenCode generation
 rules, the Node floor, and the known-issue list. Other pages state the support
 summary once and link here.
 
 ## Supported hosts
 
-The 1.6.x line supports OpenCode **1.19.x** with the V1 plugin, and OpenCode
-**2.0.29, 2.0.30, 2.0.31, and 2.1.x** with the V2 plugin. **OpenCode 2.0.22 is
-not supported.** Node.js **>=26.4.0** is the package floor; Python **>=3.11** is
-required for the optional MCP servers.
+Support is declared for an OpenCode **family**, not for individual minors. A
+minor does not need its own measurement to be supported.
 
-| Pantheon line | OpenCode 1.19.x | OpenCode 2.0.29 / 2.0.30 | OpenCode 2.1.x (`>=2.1.0 <2.2`) | OpenCode 2.0.22 | OpenCode 2.0.31 |
-|---|---|---|---|---|---|
-| **1.6.x** (current) | **Supported — PASS: config-level read-only enforcement.** V1 contract; measured on `1.19.4` | **Supported — PASS measured.** V2 contract; post-fix permission matrix with zero `FAIL` cells | **Supported — PASS measured** at floor `2.1.0` and the newest patch at freeze (`2.1.3`) | **Not supported.** Host lacks `ctx.permission.assert` and `worktree_*` / `pantheon_bounded_read` | **Supported** — V2 contract, by maintainer decision. No permission-matrix row yet |
-| **1.7 and later** | **Not supported.** Breaking change | **Target of 1.7+.** V2 only | **Target of 1.7+.** V2 only | **Not supported** | **Supported** — V2 only |
+- **OpenCode 1.19.x** — supported with the V1 plugin.
+- **OpenCode 2.x** — supported with the V2 plugin. Every 2.x minor is supported,
+  including minors released after this document was written.
+- **Known broken: OpenCode 2.0.22.** It does not expose
+  `ctx.permission.assert` (`src/plugin-v2.ts:1743-1744`), so Pantheon's V2
+  permission-ordering and bounded-read paths fail there. The V2 loader also
+  requires the plugin entry to be a directory
+  (`scripts/install/opencode.mjs:579-582`); the installer already writes that
+  form for every 2.x host, so it is not a 2.0.22-specific failure. Do not
+  install Pantheon on 2.0.22.
+- **Node.js >=26.4.0** is the package floor; Python **>=3.11** is required for
+  the optional MCP servers. The `node:sqlite` >=22.5 threshold for
+  `pantheon_cost` is a capability threshold, not the package floor.
 
-A missing row is not a `PASS`. `2.0.31` is supported without a measured
-permission-matrix row, so it is marked supported and not `PASS`. `2.0.29`,
-`2.0.30`, and `2.1.x` carry a measured `PASS` from the V2 permission matrix.
-`1.19.x` carries a measured `PASS` from a different mechanism — **config-level
-read-only enforcement**, not the `permission.ask` hook, which does not fire on
-that host.
+| Pantheon line | OpenCode 1.19.x | OpenCode 2.x | OpenCode 2.0.22 |
+|---|---|---|---|
+| **1.6.x** (current) | Supported — V1 plugin | Supported — V2 plugin | Known broken — not supported |
+| **1.7 and later** | Not supported | Supported — V2 plugin | Known broken — not supported |
 
-The `2.1.x` line is proved as a line: two measurements per release, the floor
-`2.1.0` and the newest `2.1.x` patch published at freeze.
+A missing measurement is not a support gap. The V2 plugin targets the OpenCode 2
+contract and degrades feature by feature when a host lacks an optional domain;
+it does not require a per-minor blessing. The evidence table below lists the
+hosts that happen to have a record in this repository.
 
 ## Node runtime floor
 
 Pantheon declares `engines.node` as `>=26.4.0`, its own alignment policy with
 the official OpenCode Node build that CI pins to exactly 26.4.0. Node 22, Node
-24, and Node 26.0–26.3 are outside the matrix.
+24, and Node 26.0–26.3 are outside the supported range.
 
 This package floor does not imply that every OpenCode host runs on Node.
-Official OpenCode V2.0.31 ships a Bun runtime path and a separate Node build
+Official OpenCode 2.x ships a Bun runtime path and a separate Node build
 pinned to Node 26.4.0, so the host runtime you choose does not move Pantheon's
 package floor. No Bun minimum is asserted.
 
@@ -105,15 +112,23 @@ remain unsupported and are reported as `goal-tools`. See
 [Architecture](ARCHITECTURE.md) for the contract and
 [OpenCode V2](opencode-v2.md) for user-facing behavior.
 
-## Verified against
+## Verified versions (evidence)
 
-| What | Verified against | How |
+This table is **evidence, not the boundary of support**. It lists only hosts
+with a measurement recorded in this repository. A 2.x minor absent here is still
+supported; it is simply unmeasured.
+
+| Host | Contract | Evidence |
 |---|---|---|
-| V1 plugin and generation gate | OpenCode 1.19.x line — runtime measurement on `1.19.4` (2026-10-22) | Generation-gate unit tests, installer end-to-end tests, V1 permission probe |
-| V2 plugin tool surface | OpenCode v2.0.29 | `tests/canary/plugin-v2-tool-canary.test.mjs` through `opencode serve`; F4A permission canary 18/18 |
-| V2 native subagent admission | OpenCode v2.0.29 | `tests/canary/run-v2-permission-proof.sh`; evidence in `bench/results/f4a-v229-admission-identity-2026-10-14.md` |
-| V2 permission matrix (post-fix) | OpenCode 2.0.29, 2.0.30, and 2.1.x (floor `2.1.0`, newest patch at freeze) | Post-fix rerun on 2026-10-22 with zero `FAIL` cells; curated evidence in `bench/results/p05-permission-matrix-2026-10-22.md` |
-| V1 runtime read-only enforcement | OpenCode `1.19.4` on 2026-10-22 | `tests/canary/v1-permission-canary.test.mjs` via `tests/canary/run-v1-permission-proof.sh` |
+| `1.19.4` | V1 | `tests/canary/run-v1-permission-proof.sh`; `bench/results/p05-permission-matrix-2026-10-22.md` |
+| `2.0.29` | V2 | `bench/results/p05-permission-matrix-2026-10-22.md`; `bench/results/f4a-v229-admission-identity-2026-10-14.md` |
+| `2.0.30` | V2 | `bench/results/p05-permission-matrix-2026-10-22.md` |
+| `2.1.0` | V2 | `bench/results/p05-permission-matrix-2026-10-22.md` |
+| `2.1.2` | V2 | `bench/results/p05-permission-matrix-2026-10-22.md`; `docs/internal/validation.md` |
+| `2.1.3` | V2 | `bench/results/p05-permission-matrix-2026-10-22.md` |
+
+The table above is a measurement record, not a release checklist. A new 2.x
+minor is supported on release day; measuring it is optional evidence work.
 
 ## End of life and known issues
 
@@ -121,10 +136,8 @@ remain unsupported and are reported as `goal-tools`. See
 1.7 onward the line drops the V1 contract and targets OpenCode 2 only. This is a
 Pantheon support boundary, not a claim that 1.6 lacks OpenCode 2 support.
 
-- **OpenCode 2.0.22 is not supported.** It exposes neither
-  `ctx.permission.assert` nor `worktree_*` / `pantheon_bounded_read`, so its
-  permission-ordering cells cannot be observed. It left the matrix on runtime
-  evidence, not on absence of evidence.
-- **2.0.31 is supported but unmeasured** for the permission matrix. Treat it as
-  supported, not as a `PASS`.
-- A `WARN`, `SKIP`, `NOT_TESTED`, or `AMBIENTAL` result is not a `PASS`.
+- **OpenCode 2.0.22 is known broken.** It does not expose
+  `ctx.permission.assert`, so the V2 permission-ordering and bounded-read paths
+  cannot run there. It is the only known-broken host in the supported families.
+- A supported host is not required to have a measurement row. The table above
+  is evidence; the supported families are the boundary.

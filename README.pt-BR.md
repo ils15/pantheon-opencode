@@ -36,11 +36,9 @@ o que importou. Você continua no controle de cada decisão e de cada merge.
 
 ## Comece em 2 minutos
 
-Requisitos: [OpenCode](https://opencode.ai/docs/) **1.19.x**, ou
-**2.0.29 / 2.0.30 / 2.0.31 / 2.1.x** — **2.0.22 não é suportado**. Node.js
-**>=26.4.0** para a CLI, o instalador e as ferramentas Node do Pantheon; Python
-**>=3.11** para os servidores MCP opcionais. A matriz completa, a evidência por
-host e as notas de runtime estão em [Compatibilidade](docs/COMPATIBILITY.md).
+Requisitos: [OpenCode](https://opencode.ai/docs/) **1.19.x** (V1) ou **OpenCode
+2.x** (V2), e Node.js **>=26.4.0** para a CLI e as ferramentas. **OpenCode 2.0.22
+tem falha conhecida**; veja [Compatibilidade](docs/COMPATIBILITY.md).
 
 No projeto onde você quer usar o Pantheon:
 
@@ -88,10 +86,12 @@ Veja [Memória](docs/MEMORY.md).
 
 ## Compatibilidade
 
-A linha 1.6.x suporta OpenCode **1.19.x** (plugin V1) e OpenCode
-**2.0.29, 2.0.30, 2.0.31 e 2.1.x** (plugin V2). **OpenCode 2.0.22 não é
-suportado.** A partir da 1.7, a linha abandona o contrato V1 e mira apenas o
-OpenCode 2.
+OpenCode **1.19.x** (plugin V1) e **OpenCode 2.x** (plugin V2) são suportados.
+**OpenCode 2.0.22 tem falha conhecida.** A partir da 1.7, a linha abandona o
+contrato V1 e mira apenas o OpenCode 2.
+
+A política de suporte, a exceção conhecida e a evidência de versões verificadas
+têm um único lar: [Compatibilidade](docs/COMPATIBILITY.md).
 
 A matriz de suporte, o piso de Node e as notas de host/build, as regras de
 geração OpenCode 1.x/2.x, a posição de fim de vida e os problemas conhecidos têm

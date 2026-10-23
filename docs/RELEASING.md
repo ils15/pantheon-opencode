@@ -270,17 +270,19 @@ before any release credential is exposed.
 | Gate | Executed by | Fails when | Evidence |
 |---|---|---|---|
 | (a) tests | `scripts/release-gates.mjs tests`: pytest + `src/mcp` coverage ≥ 80, `test:node`, `test:ts`, `coverage:plugin-v2`, `test:install`; pytest runs in an isolated venv built from `src/mcp/requirements-mcp.txt` | any suite, coverage threshold, or the mandatory install tier fails; an unsatisfiable or unverified pin set fails the gate | `tests.json` |
-| (b) host compatibility | `scripts/release-gates.mjs host`: each supported host installed and exercised in an isolated sandbox (`1.19.4` through `run-v1-permission-proof.sh`; `2.0.29`, `2.0.30`, `2.1.0`, `2.1.3` through `test-opencode-v2-sandbox.sh`) | any row fails, a supported line has no row, or an unsupported host (`2.0.22`) is listed | `host.json` |
+| (b) host compatibility | `scripts/release-gates.mjs host`: each **measured** host installed and exercised in an isolated sandbox; the gate reports a supported family with no row as "supported, unmeasured" instead of failing it | a measured row fails, or a known-broken host is listed | `host.json` |
 | (c) install | `scripts/release-gates.mjs install`: the immutable `.tgz` installed globally, headless init, `validate-sandbox-install.mjs`, and a host-backed tool canary | install, init, source comparison, MCP/doctor checks, or canary fails or skips | `install.json`, `install-canary.log` |
 | (d) package | `scripts/release-gates.mjs package`: SHA-256 recomputed over the same `.tgz`, payload inspected, `package:validate` | the digest, name, version, target SHA, or payload disagree; no second `npm pack` is accepted | `package.json` |
 | (e) changelog | `scripts/release-gates.mjs changelog`: `changelog-extract.mjs` | the `[version]` section is missing or empty; recovery checks the tag instead | `changelog.json`, `changelog.md` |
 | (f) metadata | `scripts/release-gates.mjs metadata`: `version-check.mjs` + `validate-node-engine-policy.mjs` | manifests drift, the channel/version shape is wrong, or the SHA is not 40 hex | `metadata.json` |
 
-The host matrix is declared in `release.yml` (`PANTHEON_RELEASE_MATRIX`) and is
-validated by the gate, not trusted: every supported line must be covered, the
-`2.1.x` line must include both its `2.1.0` floor and the newest measured patch,
-and hosts ADR-0014 marks unsupported may not appear. A row that cannot run is a
-failure — the release path has no `SKIP`.
+The host evidence matrix is declared in `release.yml` (`PANTHEON_RELEASE_MATRIX`)
+and is validated by the gate, not trusted. Support is family-level: the gate
+requires no row per family, reports a family with no row as "supported,
+unmeasured", and fails only when a measured row fails or a known-broken host is
+listed. See [Compatibility](COMPATIBILITY.md) for the support policy and the
+known-broken set. A measured row that cannot run is a failure — the release path
+has no `SKIP`.
 
 #### Python test environment (gate a)
 

@@ -119,9 +119,9 @@ choice between a legacy runtime plugin and a narrower, host-native adapter.
 ## Outlook: 1.6.x to 2.x
 
 From **1.7 onward** Pantheon drops the V1 contract and targets OpenCode 2 only.
-OpenCode 1.X hosts are not supported on 2.x. OpenCode 2 support, including the
-`2.1.x` line, is already present in 1.6.x, so the 2.x change is a removal of the
-V1 path rather than a new host requirement.
+OpenCode 1.X hosts are not supported on 2.x. OpenCode 2 support is already
+present in 1.6.x, so the 2.x change is a removal of the V1 path rather than a
+new host requirement.
 
 Prepare for 2.x by:
 

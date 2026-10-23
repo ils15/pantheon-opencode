@@ -122,9 +122,9 @@ entre um plugin de runtime legado e um adaptador mais estreito, nativo do host.
 ## Perspectiva: 1.6.x para 2.x
 
 A partir da **1.7**, o Pantheon abandona o contrato V1 e mira apenas o OpenCode
-2. Hosts OpenCode 1.X não são suportados na 2.x. O suporte a OpenCode 2,
-incluindo a linha `2.1.x`, já existe na 1.6.x, então a mudança da 2.x é a remoção
-do caminho V1, não um novo requisito de host.
+2. Hosts OpenCode 1.X não são suportados na 2.x. O suporte a OpenCode 2 já
+existe na 1.6.x, então a mudança da 2.x é a remoção do caminho V1, não um novo
+requisito de host.
 
 Prepare-se para a 2.x:
 
