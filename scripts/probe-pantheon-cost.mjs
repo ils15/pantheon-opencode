@@ -8,7 +8,7 @@
  * temporary synthetic opencode database. A missing fixture runtime is also
  * AMBIENTAL rather than a false PASS.
  */
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -70,6 +70,43 @@ function setEnvironment(values) {
  * is exactly how the stale V1 predicate in the CLI mirror stayed green — the
  * synthetic database agreed with the bug instead of contradicting it.
  */
+/** USD per 1M tokens, chosen so a 10-token row costs exactly $1.00. */
+const PRICE_PER_MTOK = 100_000
+
+/** Priced by the synthetic catalog below. */
+const PRICED_MODEL = { id: 'probe-model', providerID: 'probe' }
+
+/** In no catalog at all, so its row must read — and never $0.00. */
+const UNPRICED_MODEL = { id: 'ghost-model', providerID: 'ghost' }
+
+/**
+ * Translate a fixture descriptor into the payload the selected family stores.
+ *
+ * V1 keeps the model at the TOP LEVEL (`modelID`/`providerID`) and marks the
+ * assistant turn inside `data.role`; V2 nests the model in `model` and marks the
+ * turn with the `type` COLUMN. Writing one family's shape under the other
+ * family's name is how a fixture starts agreeing with the reader instead of with
+ * the host, so the translation lives in one place.
+ */
+function toLedgerPayload(row, version) {
+  const payload = { ...row }
+  const model = payload.model
+  delete payload.model
+  if (model !== undefined) {
+    if (version === 'v2') {
+      payload.model = model
+    } else {
+      payload.modelID = model.id
+      payload.providerID = model.providerID
+    }
+  }
+  if (version === 'v2') {
+    delete payload.role
+    delete payload.phase
+  }
+  return payload
+}
+
 function createSyntheticDb(DatabaseSync, path, rows) {
   const db = new DatabaseSync(path)
   if (requestedVersion === 'v2') {
@@ -80,9 +117,6 @@ function createSyntheticDb(DatabaseSync, path, rows) {
       'INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?,?,?,?,?,?,?)',
     )
     rows.forEach((row, index) => {
-      const payload = { ...row }
-      delete payload.role
-      delete payload.phase
       insert.run(
         `msg_${index + 1}`,
         'ses_probe',
@@ -90,13 +124,13 @@ function createSyntheticDb(DatabaseSync, path, rows) {
         index + 1,
         Date.now(),
         Date.now(),
-        JSON.stringify(payload),
+        JSON.stringify(toLedgerPayload(row, 'v2')),
       )
     })
   } else {
     db.exec('CREATE TABLE message (data TEXT NOT NULL, time_created INTEGER NOT NULL)')
     const insert = db.prepare('INSERT INTO message (data, time_created) VALUES (?, ?)')
-    for (const data of rows) insert.run(JSON.stringify(data), Date.now())
+    for (const row of rows) insert.run(JSON.stringify(toLedgerPayload(row, 'v1')), Date.now())
   }
   db.close()
 }
@@ -111,22 +145,41 @@ function requireOutput(output, fragment, label) {
   if (!output.includes(fragment)) throw new Error(`${label}: missing ${fragment}`)
 }
 
-function assertTokensOnly(output, expectedRows, total) {
-  requireOutput(output, 'Tokens In | Tokens Out | Tokens Total', 'tokens-only header')
+/**
+ * The money side of the report, asserted rather than trusted.
+ *
+ * Every assertion here is a way the cost feature can silently disappear: the
+ * column is dropped from the header, a row loses its cost cell, the two
+ * additive sections go away, the unpriced row is priced at zero, or the total
+ * stops saying it is partial. The unit suites cover the arithmetic; this probe
+ * covers the SHIPPED output shape of the installed package.
+ */
+function assertCostReport(output, expectedRows, total, expectedTotalCell) {
+  requireOutput(
+    output,
+    'Tokens In | Tokens Out | Tokens Total | Cost (USD) |',
+    'cost column in the by-agent header',
+  )
   for (const row of expectedRows) {
     requireOutput(
       output,
-      `| ${row.agent} | ${row.phase} | ${row.input} | ${row.output} | ${row.total} |`,
-      'token row',
+      `| ${row.agent} | ${row.phase} | ${row.input} | ${row.output} | ${row.total} | ${row.cost} |`,
+      'row with its cost cell',
     )
   }
   requireOutput(
     output,
-    `| **Total** | — | **${total.input}** | **${total.output}** | **${total.total}** |`,
-    'token total',
+    `| **Total** | — | **${total.input}** | **${total.output}** | **${total.total}** | ${expectedTotalCell} |`,
+    'total with its cost cell',
   )
-  if (/Cost \(USD\)|costUsd|\$\d|\bUSD\b/i.test(output)) {
-    throw new Error('tokens-only output contains a monetary value')
+  requireOutput(output, '## Cost by model', 'by-model section')
+  requireOutput(output, '## Cost by session', 'by-session section')
+  requireOutput(output, 'Pricing:', 'pricing provenance')
+  if (output.includes('999.99')) {
+    throw new Error('the payload `cost` field was published as if it were a price')
+  }
+  if (output.includes('$0.00') && expectedRows.some((row) => row.cost === '—')) {
+    throw new Error('an unpriced row was reported as free')
   }
 }
 
@@ -175,9 +228,35 @@ async function main() {
   const explicitDb = join(root, 'explicit.db')
   const incompatibleDb = join(root, 'incompatible.db')
   const checks = []
+  // Pricing is pinned into the temp root: the probe asserts the report's money
+  // semantics, not whether models.dev is reachable today or what the developer's
+  // real cache happens to contain.
+  const configHome = join(root, 'config')
+  const priceCache = join(configHome, 'cache', 'models-dev.json')
+  // A synthetic cache plus an offline host is the only combination that keeps
+  // this probe deterministic: it must never reach the network, and it must not
+  // inherit whatever prices the running machine has cached. Set OUTSIDE the try
+  // so the finally block can always restore it.
+  const previousPricingEnv = {
+    PANTHEON_HOME: process.env.PANTHEON_HOME,
+    PANTHEON_COST_OFFLINE: process.env.PANTHEON_COST_OFFLINE,
+  }
+  process.env.PANTHEON_HOME = configHome
+  process.env.PANTHEON_COST_OFFLINE = '1'
 
   try {
     mkdirSync(opencodeDir, { recursive: true })
+    mkdirSync(join(configHome, 'cache'), { recursive: true })
+    writeFileSync(
+      priceCache,
+      JSON.stringify({
+        version: 1,
+        fetchedAt: Date.now(),
+        providers: {
+          probe: { 'probe-model': { inputPerMTok: PRICE_PER_MTOK, outputPerMTok: PRICE_PER_MTOK } },
+        },
+      }),
+    )
     // These rows intentionally include a monetary-looking field to prove it is
     // ignored; only input/output/total tokens may appear in the report. Every
     // V2 phase reads back as `unknown` because the V2 reader emits that literal:
@@ -189,6 +268,7 @@ async function main() {
               role: 'assistant',
               agent: 'aphrodite',
               phase: 'plan',
+              model: PRICED_MODEL,
               cost: 999.99,
               tokens: { input: 7, output: 8 },
             },
@@ -196,6 +276,7 @@ async function main() {
               role: 'assistant',
               agent: 'aphrodite',
               phase: 'plan',
+              model: PRICED_MODEL,
               cost: 999.99,
               tokens: { input: 1, output: 2 },
             },
@@ -203,6 +284,7 @@ async function main() {
               role: 'assistant',
               agent: 'zeus',
               phase: 'audit',
+              model: UNPRICED_MODEL,
               cost: 999.99,
               tokens: { input: 4, output: 6 },
             },
@@ -212,6 +294,7 @@ async function main() {
               role: 'assistant',
               agent: 'hermes',
               phase: 'plan',
+              model: PRICED_MODEL,
               cost: 999.99,
               tokens: { input: 10, output: 20 },
             },
@@ -219,6 +302,7 @@ async function main() {
               role: 'assistant',
               agent: 'hermes',
               phase: 'plan',
+              model: PRICED_MODEL,
               cost: 999.99,
               tokens: { input: 3, output: 4 },
             },
@@ -226,6 +310,7 @@ async function main() {
               role: 'assistant',
               agent: 'athena',
               phase: 'review',
+              model: UNPRICED_MODEL,
               cost: 999.99,
               tokens: { input: 2, output: 5 },
             },
@@ -262,20 +347,30 @@ async function main() {
         {},
         { sessionID: 'cost-probe' },
       )
-      assertTokensOnly(
+      assertCostReport(
         selectedOutput,
         requestedVersion === 'v2'
           ? [
-              { agent: 'aphrodite', phase: 'unknown', input: 8, output: 10, total: 18 },
-              { agent: 'zeus', phase: 'unknown', input: 4, output: 6, total: 10 },
+              // 18 tokens × $0.10/token: priced from the synthetic catalog.
+              {
+                agent: 'aphrodite',
+                phase: 'unknown',
+                input: 8,
+                output: 10,
+                total: 18,
+                cost: '$1.80',
+              },
+              // In no catalog: — and excluded from the total, never $0.00.
+              { agent: 'zeus', phase: 'unknown', input: 4, output: 6, total: 10, cost: '—' },
             ]
           : [
-              { agent: 'hermes', phase: 'plan', input: 13, output: 24, total: 37 },
-              { agent: 'athena', phase: 'review', input: 2, output: 5, total: 7 },
+              { agent: 'hermes', phase: 'plan', input: 13, output: 24, total: 37, cost: '$3.70' },
+              { agent: 'athena', phase: 'review', input: 2, output: 5, total: 7, cost: '—' },
             ],
         requestedVersion === 'v2'
           ? { input: 12, output: 16, total: 28 }
           : { input: 15, output: 29, total: 44 },
+        requestedVersion === 'v2' ? '**$1.80** (partial)' : '**$3.70** (partial)',
       )
       checks.push('version-selected DB: PASS')
     } finally {
@@ -362,6 +457,10 @@ async function main() {
   } catch (error) {
     emit('FAIL', diagnostic(error), checks)
   } finally {
+    for (const [key, value] of Object.entries(previousPricingEnv)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
     rmSync(root, { recursive: true, force: true })
   }
 }

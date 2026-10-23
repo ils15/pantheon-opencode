@@ -1,9 +1,13 @@
 /**
- * Token Command — `pantheon_cost` structural tool: token visibility for
- * delegation traffic, straight from opencode.db.
+ * Cost Command — `pantheon_cost` structural tool: token AND money visibility
+ * for delegation traffic, straight from opencode.db.
  *
  * Reads the opencode session database READ-ONLY (sum tokens by agent and
- * phase over the last N days → markdown table). Zero new dependencies:
+ * phase over the last N days → markdown table) and prices those tokens with
+ * the models.dev catalog (see {@link module:model-pricing}), which is cached on
+ * disk and never awaited by a tool call unless `refreshPricing` asks for it. A
+ * session view attributes spend to a root session plus its descendant sessions
+ * using the parent ids already in the database. Zero new dependencies:
  *   - only path: node:sqlite (DatabaseSync, readOnly) — node ≥ 22.5;
  *   - missing/unreadable db → a diagnostic contract status as TEXT.
  *
@@ -37,6 +41,15 @@ import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import {
+  computeModelCost,
+  forceRefreshPricing,
+  loadPricing,
+  lookupModelPrice,
+  type PricingOptions,
+  type PricingSnapshot,
+  type UnpricedReason,
+} from './model-pricing.ts'
 import type { NativeTaskStatus } from './native-task-status.ts'
 import type { ToolContextLike } from './tool-context.ts'
 
@@ -50,6 +63,48 @@ export interface CostRow {
   tokensInput: number
   tokensOutput: number
   tokensTotal: number
+  /** USD for this row; absent when any contributing model is unpriced. */
+  costUsd?: number
+}
+
+/** One aggregated row per (agent, phase, provider, model). */
+export interface CostModelRow {
+  agent: string
+  phase: string
+  provider: string
+  model: string
+  tokensInput: number
+  tokensOutput: number
+  tokensCacheRead: number
+  tokensCacheWrite: number
+  tokensTotal: number
+  costUsd?: number
+  unpricedReason?: UnpricedReason
+}
+
+/** One aggregated row per session (a node of the session tree). */
+export interface CostSessionRow {
+  sessionId: string
+  title?: string
+  agents: string[]
+  tokensInput: number
+  tokensOutput: number
+  tokensCacheRead: number
+  tokensCacheWrite: number
+  tokensTotal: number
+  costUsd?: number
+  unpricedReason?: UnpricedReason
+}
+
+/** The session subtree a report was scoped to, when `session` was requested. */
+export interface CostSessionScope {
+  rootId: string
+  /** Root plus every descendant found in the session tables. */
+  ids: string[]
+  /** False when the root id has no row in the session tables. */
+  rootKnown: boolean
+  /** False when the database carries no session metadata table at all. */
+  hierarchy: boolean
 }
 
 /**
@@ -89,6 +144,12 @@ export interface CostCoverage {
 export interface CostQuery {
   rows: CostRow[]
   coverage: CostCoverage
+  /** Per-model breakdown. Absent on the CLI-fallback path, which reports tokens only. */
+  byModel?: CostModelRow[]
+  /** Per-session breakdown. Absent on the CLI-fallback path. */
+  bySession?: CostSessionRow[]
+  /** Set when the report was scoped to one session tree. */
+  sessionScope?: CostSessionScope
 }
 
 export interface CostCommandOptions {
@@ -98,6 +159,8 @@ export interface CostCommandOptions {
   sqliteLoader?: () => Promise<SqliteModule>
   /** Injectable CLI-fallback process boundary (tests / unusual runtimes). */
   cliFallback?: CliFallbackDeps
+  /** Pricing cache / fetch boundary (tests, air-gapped hosts). */
+  pricing?: PricingOptions
 }
 
 export type OpenCodeVersion = 'v1' | 'v2'
@@ -130,7 +193,23 @@ const costArgs = {
     .max(365)
     .optional()
     .describe('Number of rolling 24-hour days of history to include (default 7).'),
+  session: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Session id to scope the report to: the root session plus every descendant session in its subtree.',
+    ),
+  refreshPricing: z
+    .boolean()
+    .optional()
+    .describe(
+      'Await a models.dev price refresh (bounded by a short timeout) instead of using the cached catalog. This is the only path that waits on the network.',
+    ),
 } satisfies z.ZodRawShape
+
+/** Parsed arguments of the cost tool. */
+type CostArgs = z.infer<z.ZodObject<typeof costArgs>>
 
 /** The XDG state directory every real host installation writes its ledger to. */
 function defaultDbPath(): string {
@@ -215,61 +294,207 @@ function resolveSources(db: SqliteDatabase, requested: OpenCodeVersion | undefin
 }
 
 /**
- * Per-family aggregation.
+ * Per-family aggregation, grouped finely enough to price and to attribute.
  *
  * Aggregating in SQL instead of pulling `data` blobs into JS is not a
  * micro-optimisation: the host's own 7-day window is 271 MB across 26410
  * assistant rows, and the equivalent SQL finishes in 0.9 s over the
  * time_created index.
  *
- * Two correctness details are load-bearing:
+ * The grouping key is (agent, phase, provider, model, session): the first two
+ * keep the historical by-agent table, the middle two are what a price can be
+ * looked up for, and the last one is what a spend attribution needs. Cost is
+ * computed in JS from these groups, so there is exactly ONE set of token sums
+ * behind every table in the report.
+ *
+ * Three correctness details are load-bearing:
  *   - `json_valid(data)` gates every extraction, because `json_extract` and
  *     `->>` both RAISE on malformed JSON in node:sqlite's bundled SQLite. The
  *     inner CTE applies it before extracting anything, so the outer query can
  *     never see an unparseable payload whatever order SQLite evaluates terms in.
  *   - `COALESCE(SUM(...), 0)` — a group whose tokens are all NULL sums to NULL,
  *     and adding NULL into an accumulator would print NaN into the report.
+ *   - `session_id` is read only when the LEDGER table carries it. A real V1 and
+ *     V2 table both do, but a partial database (or a hand-built fixture) may
+ *     not, and selecting a missing column would fail the whole report instead
+ *     of dropping the session view.
  *
  * V1 marks assistant turns with `data.role`; V2 marks them with the `type`
  * COLUMN. V2 carries no `role` key, so the V1 predicate would match nothing.
  */
-const AGGREGATE_SQL: Record<CostSource, string> = {
-  message: `
+const COST_AGGREGATE_SQL: Record<CostSource, (sessionId: boolean) => string> = {
+  message: (sessionId) => `
     WITH valid AS (
       SELECT json_extract(data, '$.role') AS role,
              json_extract(data, '$.agent') AS agent,
-             json_extract(data, '$.phase') AS phase,
-             json_extract(data, '$.metadata.phase') AS metadataPhase,
+             COALESCE(NULLIF(json_extract(data, '$.phase'), ''),
+                      NULLIF(json_extract(data, '$.metadata.phase'), ''),
+                      'unknown') AS phase,
+             COALESCE(json_extract(data, '$.model.providerID'),
+                      json_extract(data, '$.providerID')) AS provider,
+             COALESCE(json_extract(data, '$.model.id'),
+                      json_extract(data, '$.modelID')) AS model,
+             ${sessionId ? 'session_id' : 'NULL'} AS sessionId,
              CAST(json_extract(data, '$.tokens.input') AS INTEGER) AS inTok,
-             CAST(json_extract(data, '$.tokens.output') AS INTEGER) AS outTok
+             CAST(json_extract(data, '$.tokens.output') AS INTEGER) AS outTok,
+             CAST(json_extract(data, '$.tokens.cache.read') AS INTEGER) AS cacheReadTok,
+             CAST(json_extract(data, '$.tokens.cache.write') AS INTEGER) AS cacheWriteTok
       FROM message
       WHERE time_created >= ? AND json_valid(data)
     )
     SELECT agent AS agent,
-           COALESCE(NULLIF(phase, ''), NULLIF(metadataPhase, ''), 'unknown') AS phase,
+           phase AS phase,
+           provider AS provider,
+           model AS model,
+           sessionId AS sessionId,
            COALESCE(SUM(inTok), 0) AS tokensInput,
            COALESCE(SUM(outTok), 0) AS tokensOutput,
-           COUNT(*) AS rows
+           COALESCE(SUM(cacheReadTok), 0) AS tokensCacheRead,
+           COALESCE(SUM(cacheWriteTok), 0) AS tokensCacheWrite
     FROM valid
     WHERE role = 'assistant'
-    GROUP BY 1, 2
+    GROUP BY agent, phase, provider, model, sessionId
     HAVING agent IS NOT NULL AND agent != ''`,
-  session_message: `
+  session_message: (sessionId) => `
     WITH valid AS (
       SELECT json_extract(data, '$.agent') AS agent,
+             'unknown' AS phase,
+             COALESCE(json_extract(data, '$.model.providerID'),
+                      json_extract(data, '$.providerID')) AS provider,
+             COALESCE(json_extract(data, '$.model.id'),
+                      json_extract(data, '$.modelID')) AS model,
+             ${sessionId ? 'session_id' : 'NULL'} AS sessionId,
              CAST(json_extract(data, '$.tokens.input') AS INTEGER) AS inTok,
-             CAST(json_extract(data, '$.tokens.output') AS INTEGER) AS outTok
+             CAST(json_extract(data, '$.tokens.output') AS INTEGER) AS outTok,
+             CAST(json_extract(data, '$.tokens.cache.read') AS INTEGER) AS cacheReadTok,
+             CAST(json_extract(data, '$.tokens.cache.write') AS INTEGER) AS cacheWriteTok
       FROM session_message
       WHERE time_created >= ? AND type = 'assistant' AND json_valid(data)
     )
     SELECT agent AS agent,
-           'unknown' AS phase,
+           phase AS phase,
+           provider AS provider,
+           model AS model,
+           sessionId AS sessionId,
            COALESCE(SUM(inTok), 0) AS tokensInput,
            COALESCE(SUM(outTok), 0) AS tokensOutput,
-           COUNT(*) AS rows
+           COALESCE(SUM(cacheReadTok), 0) AS tokensCacheRead,
+           COALESCE(SUM(cacheWriteTok), 0) AS tokensCacheWrite
     FROM valid
-    GROUP BY 1
+    GROUP BY agent, phase, provider, model, sessionId
     HAVING agent IS NOT NULL AND agent != ''`,
+}
+
+/** One row of the aggregated ledger query. */
+interface LedgerGroup {
+  agent?: unknown
+  phase?: unknown
+  provider?: unknown
+  model?: unknown
+  sessionId?: unknown
+  tokensInput?: unknown
+  tokensOutput?: unknown
+  tokensCacheRead?: unknown
+  tokensCacheWrite?: unknown
+}
+
+/** One session row from the metadata tables. */
+interface CostSessionInfo {
+  id: string
+  parentId?: string
+  title?: string
+}
+
+/** Session metadata of the whole database, plus the parent→children index. */
+interface CostSessionIndex {
+  nodes: Map<string, CostSessionInfo>
+  children: Map<string, string[]>
+  /** Metadata tables that were read. */
+  tables: string[]
+}
+
+/** Table families that carry session ids and parent ids. */
+const SESSION_TABLES: readonly string[] = ['session_v2', 'session']
+
+/** Column names of one table; empty when the table does not exist. */
+function tableColumns(db: SqliteDatabase, table: string): Set<string> {
+  // Interpolated names come from the module's own constant list, never from a
+  // caller or a payload, so no value can reach this string.
+  try {
+    const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: unknown }>
+    return new Set(rows.map((row) => String(row.name)))
+  } catch {
+    return new Set()
+  }
+}
+
+/**
+ * Read session metadata: ids, parent ids and titles.
+ *
+ * A migrated database carries BOTH families, and their id spaces are disjoint,
+ * so both are read and merged. Fields a family does not have are simply absent
+ * rather than fabricated.
+ */
+function readSessionIndex(db: SqliteDatabase): CostSessionIndex {
+  const nodes = new Map<string, CostSessionInfo>()
+  const children = new Map<string, string[]>()
+  const tables: string[] = []
+  for (const table of SESSION_TABLES) {
+    const columns = tableColumns(db, table)
+    if (columns.size === 0 || !columns.has('id')) continue
+    tables.push(table)
+    const parent = columns.has('parent_id') ? 'parent_id' : 'NULL'
+    const title = columns.has('title') ? 'title' : 'NULL'
+    const rows = db
+      .prepare(`SELECT id, ${parent} AS parentId, ${title} AS title FROM ${table}`)
+      .all() as Array<{
+      id?: unknown
+      parentId?: unknown
+      title?: unknown
+    }>
+    for (const row of rows) {
+      const id = String(row.id ?? '')
+      if (id === '') continue
+      const parentId =
+        row.parentId === null || row.parentId === undefined ? undefined : String(row.parentId)
+      const title = row.title === null || row.title === undefined ? undefined : String(row.title)
+      nodes.set(id, {
+        id,
+        ...(parentId === undefined ? {} : { parentId }),
+        ...(title === undefined ? {} : { title }),
+      })
+      if (parentId !== undefined) {
+        const bucket = children.get(parentId) ?? []
+        bucket.push(id)
+        children.set(parentId, bucket)
+      }
+    }
+  }
+  return { nodes, children, tables }
+}
+
+/**
+ * Root session plus every descendant, by parent id.
+ *
+ * A visited set bounds the walk: a database that (through a bug or a manual
+ * edit) contains a parent cycle must not hang a tool call.
+ */
+function resolveSessionTree(
+  index: CostSessionIndex,
+  rootId: string,
+): { ids: string[]; rootKnown: boolean } {
+  const ids = new Set<string>([rootId])
+  const queue: string[] = [rootId]
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor]
+    if (current === undefined) continue
+    for (const child of index.children.get(current) ?? []) {
+      if (ids.has(child)) continue
+      ids.add(child)
+      queue.push(child)
+    }
+  }
+  return { ids: [...ids], rootKnown: index.nodes.has(rootId) }
 }
 
 /**
@@ -310,6 +535,64 @@ function emptyCoverage(sources: CostSource[]): CostCoverage {
   return { sources, scanned: 0, assistantRows: 0 }
 }
 
+/** Options for one ledger read. */
+export interface CostQueryOptions {
+  /** Prices to apply. Absent ⇒ every cost is reported as unavailable. */
+  pricing?: PricingSnapshot
+  /** Session id to scope to: the root plus every descendant session. */
+  sessionRoot?: string
+}
+
+/** One model group while a report is being assembled. */
+interface ModelAccumulator {
+  agent: string
+  phase: string
+  provider: string
+  model: string
+  tokensInput: number
+  tokensOutput: number
+  tokensCacheRead: number
+  tokensCacheWrite: number
+  usd: number | undefined
+  unpriced: boolean
+  reason: UnpricedReason | undefined
+}
+
+/** One session group while a report is being assembled. */
+interface SessionAccumulator {
+  sessionId: string
+  agents: Set<string>
+  tokensInput: number
+  tokensOutput: number
+  tokensCacheRead: number
+  tokensCacheWrite: number
+  usd: number | undefined
+  unpriced: boolean
+  reason: UnpricedReason | undefined
+}
+
+/** A ledger label the catalog cannot know; never an empty string. */
+function ledgerLabel(value: unknown): string {
+  if (value === undefined || value === null) return 'unknown'
+  const text = String(value).trim()
+  return text === '' ? 'unknown' : text
+}
+
+/** Price one group, or explain why it cannot be priced. */
+function priceTokens(
+  pricing: PricingSnapshot | undefined,
+  provider: string,
+  model: string,
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number },
+): { usd: number } | { reason: UnpricedReason } {
+  if (pricing === undefined) return { reason: 'no-pricing' }
+  const lookup = lookupModelPrice(pricing, provider, model)
+  if (!lookup.ok) return { reason: lookup.reason }
+  const cost = computeModelCost(lookup.price, tokens)
+  if (!cost.ok) return { reason: cost.reason }
+  return { usd: cost.usd }
+}
+
 /**
  * Read the token ledger of one database, read-only.
  *
@@ -317,24 +600,51 @@ function emptyCoverage(sources: CostSource[]): CostCoverage {
  * the same answer in tests. The script cannot import this module: it runs on a
  * plain Node precisely because node:sqlite is missing from the plugin runtime.
  */
-export async function queryCostRows(dbPath: string, days: number): Promise<CostQuery> {
+export async function queryCostRows(
+  dbPath: string,
+  days: number,
+  options?: CostQueryOptions,
+): Promise<CostQuery> {
   const sqlite = (await import('node:sqlite')) as SqliteModule
-  return queryWithSqlite(dbPath, days, sqlite)
+  return queryWithSqlite(dbPath, days, sqlite, options)
 }
 
 /** Shared aggregation path for the in-process reader and queryCostRows. */
-function queryWithSqlite(dbPath: string, days: number, sqlite: SqliteModule): CostQuery {
+function queryWithSqlite(
+  dbPath: string,
+  days: number,
+  sqlite: SqliteModule,
+  options?: CostQueryOptions,
+): CostQuery {
   const db = new sqlite.DatabaseSync(dbPath, { readOnly: true })
   try {
     const sources = resolveSources(db, requestedVersion())
     const since = Date.now() - days * 86_400_000
-    const byAgentAndPhase = new Map<string, CostRow>()
     const coverage = emptyCoverage([])
+    const models = new Map<string, ModelAccumulator>()
+    const sessions = new Map<string, SessionAccumulator>()
 
     const note = (key: 'windowStart' | 'databaseStart', value: number | undefined): void => {
       if (value === undefined) return
       const current = coverage[key]
       coverage[key] = current === undefined ? value : Math.min(current, value)
+    }
+
+    // Session metadata is read once: the tree is needed both to scope a report
+    // and to label the rows of the session view.
+    const sessionIndex = readSessionIndex(db)
+    const sessionRoot = options?.sessionRoot
+    let sessionScope: CostSessionScope | undefined
+    let scopedIds: Set<string> | undefined
+    if (sessionRoot !== undefined) {
+      const tree = resolveSessionTree(sessionIndex, sessionRoot)
+      scopedIds = new Set(tree.ids)
+      sessionScope = {
+        rootId: sessionRoot,
+        ids: tree.ids,
+        rootKnown: tree.rootKnown,
+        hierarchy: sessionIndex.tables.length > 0,
+      }
     }
 
     for (const source of sources) {
@@ -353,38 +663,176 @@ function queryWithSqlite(dbPath: string, days: number, sqlite: SqliteModule): Co
         ),
       )
 
-      const groups = db.prepare(AGGREGATE_SQL[source]).all(since) as Array<{
-        agent?: unknown
-        phase?: unknown
-        tokensInput?: unknown
-        tokensOutput?: unknown
-      }>
+      const hasSessionColumn = tableColumns(db, source).has('session_id')
+      const groups = db
+        .prepare(COST_AGGREGATE_SQL[source](hasSessionColumn))
+        .all(since) as Array<LedgerGroup>
+
       for (const group of groups) {
         const agent = String(group.agent ?? '')
         if (agent === '') continue
-        const phase =
-          group.phase === undefined || group.phase === null ? 'unknown' : String(group.phase)
-        const tokensInput = numberOf(group.tokensInput) ?? 0
-        const tokensOutput = numberOf(group.tokensOutput) ?? 0
-        // Keyed on a NUL separator: agent names cannot contain it, so an agent
-        // whose name ends in the phase cannot collide with a phase-only row.
-        const key = `${agent}\u0000${phase}`
-        const acc = byAgentAndPhase.get(key) ?? {
+        const phase = ledgerLabel(group.phase)
+        const provider = ledgerLabel(group.provider)
+        const model = ledgerLabel(group.model)
+        const sessionId =
+          group.sessionId === undefined || group.sessionId === null
+            ? undefined
+            : String(group.sessionId)
+        // A scoped report keeps only rows inside the requested subtree. A row
+        // with no session id cannot be proven to belong to it, so it is out.
+        if (scopedIds !== undefined && (sessionId === undefined || !scopedIds.has(sessionId))) {
+          continue
+        }
+        const tokens = {
+          input: numberOf(group.tokensInput) ?? 0,
+          output: numberOf(group.tokensOutput) ?? 0,
+          cacheRead: numberOf(group.tokensCacheRead) ?? 0,
+          cacheWrite: numberOf(group.tokensCacheWrite) ?? 0,
+        }
+        const priced = priceTokens(options?.pricing, provider, model, tokens)
+
+        // Keyed on NUL separators: none of these labels can contain one, so no
+        // label ending in another label's text can collide with it.
+        const modelKey = `${agent}\u0000${phase}\u0000${provider}\u0000${model}`
+        const modelAcc = models.get(modelKey) ?? {
           agent,
           phase,
+          provider,
+          model,
           tokensInput: 0,
           tokensOutput: 0,
-          tokensTotal: 0,
+          tokensCacheRead: 0,
+          tokensCacheWrite: 0,
+          usd: 0,
+          unpriced: false,
+          reason: undefined,
         }
-        acc.tokensInput += tokensInput
-        acc.tokensOutput += tokensOutput
-        acc.tokensTotal += tokensInput + tokensOutput
-        byAgentAndPhase.set(key, acc)
+        modelAcc.tokensInput += tokens.input
+        modelAcc.tokensOutput += tokens.output
+        modelAcc.tokensCacheRead += tokens.cacheRead
+        modelAcc.tokensCacheWrite += tokens.cacheWrite
+        if ('usd' in priced && modelAcc.usd !== undefined) {
+          modelAcc.usd += priced.usd
+        } else {
+          modelAcc.unpriced = true
+          modelAcc.usd = undefined
+          modelAcc.reason = modelAcc.reason ?? ('reason' in priced ? priced.reason : undefined)
+        }
+        models.set(modelKey, modelAcc)
+
+        if (sessionId === undefined) continue
+        const sessionAcc = sessions.get(sessionId) ?? {
+          sessionId,
+          agents: new Set<string>(),
+          tokensInput: 0,
+          tokensOutput: 0,
+          tokensCacheRead: 0,
+          tokensCacheWrite: 0,
+          usd: 0,
+          unpriced: false,
+          reason: undefined,
+        }
+        sessionAcc.agents.add(agent)
+        sessionAcc.tokensInput += tokens.input
+        sessionAcc.tokensOutput += tokens.output
+        sessionAcc.tokensCacheRead += tokens.cacheRead
+        sessionAcc.tokensCacheWrite += tokens.cacheWrite
+        if ('usd' in priced && sessionAcc.usd !== undefined) {
+          sessionAcc.usd += priced.usd
+        } else {
+          sessionAcc.unpriced = true
+          sessionAcc.usd = undefined
+          sessionAcc.reason = sessionAcc.reason ?? ('reason' in priced ? priced.reason : undefined)
+        }
+        sessions.set(sessionId, sessionAcc)
       }
     }
 
-    const rows = [...byAgentAndPhase.values()].sort((a, b) => b.tokensTotal - a.tokensTotal)
-    return { rows, coverage }
+    // The by-agent table is derived from the model groups, so every table in
+    // the report is backed by exactly one set of token sums. `costUsd` is the
+    // only added field, and only when every contributing model was priced, so
+    // the historical row shape keeps its old keys.
+    const byAgentPhase = new Map<
+      string,
+      { row: CostRow; usd: number | undefined; unpriced: boolean }
+    >()
+    for (const acc of models.values()) {
+      const key = `${acc.agent}\u0000${acc.phase}`
+      const entry = byAgentPhase.get(key) ?? {
+        row: {
+          agent: acc.agent,
+          phase: acc.phase,
+          tokensInput: 0,
+          tokensOutput: 0,
+          tokensTotal: 0,
+        },
+        usd: 0,
+        unpriced: false,
+      }
+      entry.row.tokensInput += acc.tokensInput
+      entry.row.tokensOutput += acc.tokensOutput
+      entry.row.tokensTotal += acc.tokensInput + acc.tokensOutput
+      if (acc.unpriced || entry.usd === undefined) {
+        entry.unpriced = true
+        entry.usd = undefined
+      } else if (acc.usd !== undefined) {
+        entry.usd += acc.usd
+      }
+      byAgentPhase.set(key, entry)
+    }
+
+    const rows: CostRow[] = [...byAgentPhase.values()]
+      .map((entry) =>
+        entry.unpriced || entry.usd === undefined
+          ? { ...entry.row }
+          : { ...entry.row, costUsd: entry.usd },
+      )
+      .sort((a, b) => b.tokensTotal - a.tokensTotal)
+
+    const byModel: CostModelRow[] = [...models.values()]
+      .map((acc) => ({
+        agent: acc.agent,
+        phase: acc.phase,
+        provider: acc.provider,
+        model: acc.model,
+        tokensInput: acc.tokensInput,
+        tokensOutput: acc.tokensOutput,
+        tokensCacheRead: acc.tokensCacheRead,
+        tokensCacheWrite: acc.tokensCacheWrite,
+        // "Total" means input+output everywhere in the report; cache tokens are
+        // reported in their own columns rather than folded into this one, so two
+        // tables cannot disagree about what a total counts.
+        tokensTotal: acc.tokensInput + acc.tokensOutput,
+        ...(acc.usd === undefined ? {} : { costUsd: acc.usd }),
+        ...(acc.reason === undefined ? {} : { unpricedReason: acc.reason }),
+      }))
+      .sort((a, b) => b.tokensTotal - a.tokensTotal)
+
+    const bySession: CostSessionRow[] = [...sessions.values()]
+      .map((acc) => {
+        const info = sessionIndex.nodes.get(acc.sessionId)
+        return {
+          sessionId: acc.sessionId,
+          ...(info?.title === undefined ? {} : { title: info.title }),
+          agents: [...acc.agents].sort(),
+          tokensInput: acc.tokensInput,
+          tokensOutput: acc.tokensOutput,
+          tokensCacheRead: acc.tokensCacheRead,
+          tokensCacheWrite: acc.tokensCacheWrite,
+          tokensTotal: acc.tokensInput + acc.tokensOutput,
+          ...(acc.usd === undefined ? {} : { costUsd: acc.usd }),
+          ...(acc.reason === undefined ? {} : { unpricedReason: acc.reason }),
+        }
+      })
+      .sort((a, b) => b.tokensTotal - a.tokensTotal)
+
+    return {
+      rows,
+      coverage,
+      byModel,
+      bySession,
+      ...(sessionScope === undefined ? {} : { sessionScope }),
+    }
   } finally {
     db.close()
   }
@@ -443,7 +891,18 @@ function diagnoseUnreadableLedger(query: CostQuery, days: number): string | unde
       'database whose token layout this build understands.'
     )
   }
-  if (!query.rows.some((row) => row.tokensInput !== 0 || row.tokensOutput !== 0)) {
+  // A scoped report can legitimately be empty: the session filter, not the
+  // ledger layout, removed every row. Diagnosing the user's database from a
+  // filtered view reports a fault that does not exist, so the "no tokens"
+  // branch is reserved for an UNSCOPED read.
+  if (query.sessionScope !== undefined) return undefined
+  if (
+    !query.rows.some((row) => row.tokensInput !== 0 || row.tokensOutput !== 0) &&
+    // Cache-only usage is still usage: a turn whose whole payload was served
+    // from cache has zero input/output but a real cache-read count, and
+    // calling that "unreadable" would hide spend that this report can price.
+    !(query.byModel ?? []).some((row) => row.tokensCacheRead !== 0 || row.tokensCacheWrite !== 0)
+  ) {
     return (
       `no readable token source: ${assistantRows} assistant row(s) were found in ${tables} ` +
       'but none carried both an attributable agent and a token payload, so no usage can be ' +
@@ -453,39 +912,307 @@ function diagnoseUnreadableLedger(query: CostQuery, days: number): string | unde
   return undefined
 }
 
-/** Render the aggregate as a markdown table with a total row. */
-function renderMarkdown(query: CostQuery, days: number): string {
+/** Smallest amount the four-decimal rendering can show without claiming zero. */
+const MIN_DISPLAYABLE_USD = 0.0001
+
+/**
+ * Human money. `—` is "could not be priced", never "free".
+ *
+ * A real zero renders as `$0.00`, but a non-zero amount below the display
+ * resolution renders as `< $0.0001`: rounding $0.00004 to `$0.0000` would show a
+ * free model where the catalog charged for one, and this is the column a spend
+ * decision is read from.
+ */
+function formatUsd(usd: number | undefined): string {
+  if (usd === undefined) return '—'
+  if (usd === 0) return '$0.00'
+  if (usd < MIN_DISPLAYABLE_USD) return '< $0.0001'
+  return usd < 1 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`
+}
+
+/**
+ * A total row's cost cell.
+ *
+ * With no priced row at all the cell is `—`, not `$0.00`: a report that could
+ * not price anything has not measured zero spend, and this number is what a
+ * tier decision would be made on.
+ */
+function totalCostCell(pricedUsd: number, pricedRows: number, unpricedRows: number): string {
+  if (pricedRows === 0) return unpricedRows === 0 ? '**$0.00**' : '**—** (nothing priceable)'
+  const cell = `**${formatUsd(pricedUsd)}**`
+  return unpricedRows === 0 ? cell : `${cell} (partial)`
+}
+
+/** Session rows shown before the tail is summarised. */
+const MAX_SESSION_ROWS = 20
+
+/** Cut a session title to something that fits a markdown cell. */
+function shortTitle(title: string | undefined): string {
+  if (title === undefined) return '—'
+  const flat = title.replaceAll('|', '/').replaceAll('\n', ' ').trim()
+  return flat.length > 48 ? `${flat.slice(0, 47)}…` : flat === '' ? '—' : flat
+}
+
+/**
+ * Where the prices came from and how stale they are.
+ *
+ * This is a claim the report makes about its own numbers, so it is stated even
+ * when the answer is "no prices": a cost column full of `—` with no explanation
+ * reads as zero spend.
+ */
+function pricingNote(pricing: PricingSnapshot | undefined): string[] {
+  if (pricing === undefined) {
+    return [
+      'Pricing: unavailable for this run — every cost reads — and no model is treated as free.',
+    ]
+  }
+  if (pricing.refused === true) {
+    const detail = pricing.unavailableReason ?? 'a price refresh was refused'
+    const suffix =
+      pricing.index.size === 0
+        ? 'every cost reads — and no model is treated as free.'
+        : 'costs below use the cached catalog; nothing was fetched.'
+    return [`Pricing: REFUSED — ${detail}; ${suffix}`]
+  }
+  if (pricing.index.size === 0) {
+    const detail = pricing.unavailableReason ?? 'no cached catalog'
+    return [
+      `Pricing: unavailable (${detail}) — every cost reads — and unpriced models are EXCLUDED from totals, never priced at zero.`,
+      // Never recommend a call the host has forbidden: an offline report that
+      // says "run refreshPricing" is advice that cannot work.
+      pricing.offline === true
+        ? 'Pricing: this host is offline (PANTHEON_COST_OFFLINE=1); no catalog can be fetched until that is cleared.'
+        : 'Pricing: run pantheon_cost({ refreshPricing: true }) to fetch the models.dev catalog; that is the only path that waits on the network, bounded by a 3 s timeout.',
+    ]
+  }
+  const fetched = pricing.fetchedAt === undefined ? 'unknown date' : isoDay(pricing.fetchedAt)
+  const head = `Pricing: models.dev catalog (USD per 1M tokens), cached ${fetched}`
+  if (pricing.unavailableReason !== undefined) {
+    return [
+      `${head} — the requested refresh failed (${pricing.unavailableReason}); costs below use cached prices.`,
+    ]
+  }
+  if (pricing.refreshing) {
+    return [`${head} — stale, refreshing in the background; costs below use these cached prices.`]
+  }
+  if (pricing.stale) {
+    const why =
+      pricing.offline === true
+        ? 'offline, so no background refresh was scheduled'
+        : 'no background refresh was scheduled'
+    return [`${head} — stale, and ${why}; costs below use cached prices.`]
+  }
+  return [`${head}.`]
+}
+
+/** Model rows collapsed across agents: one line per provider/model pair. */
+function modelTotals(byModel: readonly CostModelRow[]): Array<{
+  provider: string
+  model: string
+  tokensInput: number
+  tokensOutput: number
+  tokensCacheRead: number
+  tokensCacheWrite: number
+  tokensTotal: number
+  costUsd: number | undefined
+}> {
+  const groups = new Map<
+    string,
+    {
+      provider: string
+      model: string
+      tokensInput: number
+      tokensOutput: number
+      tokensCacheRead: number
+      tokensCacheWrite: number
+      tokensTotal: number
+      usd: number | undefined
+      unpriced: boolean
+    }
+  >()
+  for (const row of byModel) {
+    const key = `${row.provider}\u0000${row.model}`
+    const acc = groups.get(key) ?? {
+      provider: row.provider,
+      model: row.model,
+      tokensInput: 0,
+      tokensOutput: 0,
+      tokensCacheRead: 0,
+      tokensCacheWrite: 0,
+      tokensTotal: 0,
+      usd: 0,
+      unpriced: false,
+    }
+    acc.tokensInput += row.tokensInput
+    acc.tokensOutput += row.tokensOutput
+    acc.tokensCacheRead += row.tokensCacheRead
+    acc.tokensCacheWrite += row.tokensCacheWrite
+    acc.tokensTotal += row.tokensTotal
+    if (row.costUsd === undefined || acc.usd === undefined) {
+      acc.unpriced = true
+      acc.usd = undefined
+    } else {
+      acc.usd += row.costUsd
+    }
+    groups.set(key, acc)
+  }
+  return [...groups.values()]
+    .map((acc) => ({
+      provider: acc.provider,
+      model: acc.model,
+      tokensInput: acc.tokensInput,
+      tokensOutput: acc.tokensOutput,
+      tokensCacheRead: acc.tokensCacheRead,
+      tokensCacheWrite: acc.tokensCacheWrite,
+      tokensTotal: acc.tokensTotal,
+      costUsd: acc.unpriced ? undefined : acc.usd,
+    }))
+    .sort((a, b) => b.tokensTotal - a.tokensTotal)
+}
+
+/** The `## Cost by model` section. */
+function renderModelSection(byModel: readonly CostModelRow[] | undefined, days: number): string[] {
+  const header = `## Cost by model (last ${days} days)`
+  if (byModel === undefined) {
+    return [header, '', 'Unavailable: this run reports tokens only (CLI fallback path).']
+  }
+  if (byModel.length === 0) return [header, '', 'No model rows in this window.']
+  const totals = modelTotals(byModel)
+  const pricedUsd = totals.reduce((sum, row) => sum + (row.costUsd ?? 0), 0)
+  const priced = totals.filter((row) => row.costUsd !== undefined).length
+  const unpriced = totals.length - priced
+  const totalCell = totalCostCell(pricedUsd, priced, unpriced)
+  return [
+    header,
+    '',
+    '| Provider | Model | Tokens In | Tokens Out | Cache Read | Cache Write | Cost (USD) |',
+    '|----------|-------|----------:|-----------:|-----------:|------------:|-----------:|',
+    ...totals.map(
+      (row) =>
+        `| ${row.provider} | ${row.model} | ${row.tokensInput} | ${row.tokensOutput} | ${row.tokensCacheRead} | ${row.tokensCacheWrite} | ${formatUsd(row.costUsd)} |`,
+    ),
+    `| **Total** | — | **${totals.reduce((sum, row) => sum + row.tokensInput, 0)}** | **${totals.reduce((sum, row) => sum + row.tokensOutput, 0)}** | **${totals.reduce((sum, row) => sum + row.tokensCacheRead, 0)}** | **${totals.reduce((sum, row) => sum + row.tokensCacheWrite, 0)}** | ${totalCell} |`,
+  ]
+}
+
+/** The `## Cost by session` section, scoped or global. */
+function renderSessionSection(query: CostQuery, days: number): string[] {
+  const scope = query.sessionScope
+  const header =
+    scope === undefined
+      ? `## Cost by session (last ${days} days)`
+      : `## Cost by session tree (last ${days} days) — root ${scope.rootId}`
+  if (query.bySession === undefined) {
+    return [header, '', 'Unavailable: this run reports tokens only (CLI fallback path).']
+  }
+  const lines = [header, '']
+  if (scope !== undefined) {
+    if (!scope.hierarchy) {
+      lines.push(
+        'Session hierarchy unavailable: this database has no session metadata table, so only rows whose session_id equals the root are counted.',
+        '',
+      )
+    } else if (!scope.rootKnown) {
+      lines.push(
+        'Root session not found in this database: only rows whose session_id equals it are counted, and no descendants can be resolved.',
+        '',
+      )
+    } else {
+      lines.push(`Scope: the root session plus ${scope.ids.length - 1} descendant session(s).`, '')
+    }
+  }
+  if (query.bySession.length === 0) {
+    lines.push('No session rows in this window.')
+    return lines
+  }
+  const shown = query.bySession.slice(0, MAX_SESSION_ROWS)
+  const hidden = query.bySession.length - shown.length
+  const pricedUsd = query.bySession.reduce((sum, row) => sum + (row.costUsd ?? 0), 0)
+  const priced = query.bySession.filter((row) => row.costUsd !== undefined).length
+  const unpriced = query.bySession.length - priced
+  const totalCell = totalCostCell(pricedUsd, priced, unpriced)
+  lines.push(
+    '| Session | Title | Agent | Tokens In | Tokens Out | Cache Read | Cache Write | Tokens Total | Cost (USD) |',
+    '|---------|-------|-------|----------:|-----------:|-----------:|------------:|-------------:|-----------:|',
+    ...shown.map(
+      (row) =>
+        `| ${row.sessionId} | ${shortTitle(row.title)} | ${row.agents.join(', ') || '—'} | ${row.tokensInput} | ${row.tokensOutput} | ${row.tokensCacheRead} | ${row.tokensCacheWrite} | ${row.tokensTotal} | ${formatUsd(row.costUsd)} |`,
+    ),
+    `| **${scope === undefined ? 'Total' : 'Root + descendants'}** | — | — | **${query.bySession.reduce((sum, row) => sum + row.tokensInput, 0)}** | **${query.bySession.reduce((sum, row) => sum + row.tokensOutput, 0)}** | **${query.bySession.reduce((sum, row) => sum + row.tokensCacheRead, 0)}** | **${query.bySession.reduce((sum, row) => sum + row.tokensCacheWrite, 0)}** | **${query.bySession.reduce((sum, row) => sum + row.tokensTotal, 0)}** | ${totalCell} |`,
+  )
+  if (hidden > 0) {
+    lines.push('', `_+${hidden} more session(s) not listed; the totals include them._`)
+  }
+  return lines
+}
+
+/** Render the aggregate as markdown tables with total rows. */
+function renderMarkdown(
+  query: CostQuery,
+  days: number,
+  pricing: PricingSnapshot | undefined,
+): string {
   const { rows, coverage } = query
-  const header = `## Token usage by agent and phase (last ${days} days)`
+  const header = `## Token and cost usage by agent and phase (last ${days} days)`
   const footer = [
     formatCoverage(coverage, days),
     'Window: rolling 24-hour days from query time (not calendar days or session boundaries).',
-    'Aggregation: per agent and phase; phase may be unknown on V2.',
-    'Limits: not grouped by session, task, model, or provider; tokens only (no dollar costs), so this cannot establish model-specific savings or deltas.',
+    'Aggregation: per agent and phase (phase may be unknown on V2), per model, and per session.',
+    'Attribution: a session row covers that session alone; passing session:<id> sums the root session and its descendant sessions.',
+    'Limits: costs are catalog list prices (USD per 1M tokens), not a provider invoice; a row mixing a priced and an unpriced model reads — and is excluded from the totals, because an unknown model is never priced at zero.',
+    ...pricingNote(pricing),
     `Source: opencode.db (read-only) — table families: ${coverage.sources.join(' + ')} — ${coverage.assistantRows} assistant row(s) scanned`,
   ].join('\n')
   if (rows.length === 0) {
-    return `${header}\n\nNo token records in the last ${days} days.\n\n${footer}`
+    // The scope sentence lives in the session section, so an empty report must
+    // still render that section — otherwise a valid empty subtree looks
+    // indistinguishable from a database that holds nothing.
+    const scope = query.sessionScope
+    const empty =
+      scope === undefined
+        ? `No token records in the last ${days} days.`
+        : `No token records in the last ${days} days for ${scope.rootId} or its descendant sessions.`
+    return [
+      header,
+      '',
+      empty,
+      '',
+      ...renderModelSection(query.byModel, days),
+      '',
+      ...renderSessionSection(query, days),
+      '',
+      footer,
+    ].join('\n')
   }
   const total = rows.reduce(
     (acc, r) => {
       acc.tokensInput += r.tokensInput
       acc.tokensOutput += r.tokensOutput
       acc.tokensTotal += r.tokensTotal
+      if (r.costUsd === undefined) acc.unpriced += 1
+      else {
+        acc.usd += r.costUsd
+        acc.priced += 1
+      }
       return acc
     },
-    { tokensInput: 0, tokensOutput: 0, tokensTotal: 0 },
+    { tokensInput: 0, tokensOutput: 0, tokensTotal: 0, usd: 0, unpriced: 0, priced: 0 },
   )
+  const totalCost = totalCostCell(total.usd, total.priced, total.unpriced)
   const lines = [
     header,
     '',
-    '| Agent | Phase | Tokens In | Tokens Out | Tokens Total |',
-    '|-------|-------|----------:|-----------:|-------------:|',
+    '| Agent | Phase | Tokens In | Tokens Out | Tokens Total | Cost (USD) |',
+    '|-------|-------|----------:|-----------:|-------------:|-----------:|',
     ...rows.map(
       (r) =>
-        `| ${r.agent} | ${r.phase} | ${r.tokensInput} | ${r.tokensOutput} | ${r.tokensTotal} |`,
+        `| ${r.agent} | ${r.phase} | ${r.tokensInput} | ${r.tokensOutput} | ${r.tokensTotal} | ${formatUsd(r.costUsd)} |`,
     ),
-    `| **Total** | — | **${total.tokensInput}** | **${total.tokensOutput}** | **${total.tokensTotal}** |`,
+    `| **Total** | — | **${total.tokensInput}** | **${total.tokensOutput}** | **${total.tokensTotal}** | ${totalCost} |`,
+    '',
+    ...renderModelSection(query.byModel, days),
+    '',
+    ...renderSessionSection(query, days),
     '',
     footer,
   ]
@@ -785,13 +1512,13 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
   }
 
   /** Run a query and turn its coverage into either a report or a diagnosis. */
-  const render = (query: CostQuery, days: number): string => {
+  const render = (query: CostQuery, days: number, pricing?: PricingSnapshot): string => {
     const unreadable = diagnoseUnreadableLedger(query, days)
     if (unreadable !== undefined) return failure('UNSUPPORTED', unreadable)
-    return `status: OK\n${renderMarkdown(query, days)}`
+    return `status: OK\n${renderMarkdown(query, days, pricing)}`
   }
 
-  const execute = async (args: { days?: number }, _ctx: ToolContextLike): Promise<string> => {
+  const execute = async (args: CostArgs, _ctx: ToolContextLike): Promise<string> => {
     const days = args?.days ?? 7
     try {
       const dbPath = findExistingDb(options?.dbPath)
@@ -802,6 +1529,16 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
           `opencode.db not found (expected at ${expected}). No token history is available until opencode has stored session data.`,
         )
       }
+      // Pricing never blocks a default call: `refreshPricing` is the only path
+      // that awaits the catalog, and it is bounded by a short timeout.
+      const pricing =
+        args?.refreshPricing === true
+          ? await forceRefreshPricing(options?.pricing)
+          : loadPricing(options?.pricing).snapshot
+      const queryOptions: CostQueryOptions = {
+        pricing,
+        ...(args?.session === undefined ? {} : { sessionRoot: args.session }),
+      }
       let sqlite: SqliteModule | undefined
       try {
         sqlite = await loadSqlite()
@@ -809,15 +1546,29 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
         // node:sqlite unavailable (e.g. Bun runtime) — fall back to CLI.
         const status = statusForError(loadErr)
         if (status === 'UNSUPPORTED') {
+          // The mirror reports tokens only and carries no session ids, so it
+          // cannot answer a scoped question. Rendering an unscoped total under a
+          // scoped question is exactly the plausible-but-wrong number this
+          // report exists to prevent, so the request is refused instead.
+          if (args?.session !== undefined) {
+            return failure(
+              'UNSUPPORTED',
+              `session scoping requires the node:sqlite backend, which this runtime does not provide (${diagnostic(loadErr)}). The CLI fallback reports tokens only and cannot resolve a session tree; re-run on Node.js >= ${NODE_SQLITE_MIN_VERSION} or drop "session".`,
+            )
+          }
           try {
-            return render(await queryWithCliFallback(dbPath, days, options?.cliFallback), days)
+            return render(
+              await queryWithCliFallback(dbPath, days, options?.cliFallback),
+              days,
+              pricing,
+            )
           } catch (cliErr: unknown) {
             return failure(statusForError(cliErr), diagnostic(cliErr))
           }
         }
         throw loadErr
       }
-      return render(queryWithSqlite(dbPath, days, sqlite), days)
+      return render(queryWithSqlite(dbPath, days, sqlite, queryOptions), days, pricing)
     } catch (err: unknown) {
       return failure(statusForError(err), diagnostic(err))
     }
@@ -826,7 +1577,7 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
   return {
     pantheon_cost: {
       description:
-        'Report input, output, and total token usage by agent and phase in a rolling N × 24-hour window from query time (read-only, no monetary values). It is not grouped by session, task, model, or provider; phase may be unknown on V2, so it cannot establish model-specific savings or deltas. The report states the coverage window it actually covers.',
+        'Report input, output, cache and total token usage together with USD cost, by agent and phase, by model, and by session, in a rolling N × 24-hour window from query time (read-only). Costs come from the models.dev catalog, cached on disk; a tool call reads the cache and never waits on the network unless refreshPricing is set. An unknown or unpriced model reads — and is excluded from the totals, never priced at zero, and the total says it is partial. Pass session:<id> to aggregate that root session plus its descendant sessions. Phase may be unknown on V2. Costs are catalog list prices, not an invoice. The report states the coverage window it actually covers and whether its prices are stale.',
       args: costArgs,
       execute,
     },

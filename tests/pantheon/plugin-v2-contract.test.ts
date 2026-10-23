@@ -1439,7 +1439,7 @@ async function main(): Promise<void> {
     // Spot-check that the schemas track the V1 args of the real tools.
     const byName = new Map(registered.map((t) => [t.name, t]))
     assert.deepEqual(propertyNames(byName, 'hashline_edit'), ['edits', 'file'])
-    assert.deepEqual(propertyNames(byName, 'pantheon_cost'), ['days'])
+    assert.deepEqual(propertyNames(byName, 'pantheon_cost'), ['days', 'refreshPricing', 'session'])
     assert.deepEqual(propertyNames(byName, 'pantheon_model'), [
       'action',
       'agent',

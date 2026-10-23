@@ -293,6 +293,17 @@ const COST_INPUT: Record<string, unknown> = {
       maximum: 365,
       description: 'Reporting window in days (default 7).',
     },
+    session: {
+      type: 'string',
+      minLength: 1,
+      description:
+        'Root session id. The report is scoped to that session plus every descendant session in its subtree.',
+    },
+    refreshPricing: {
+      type: 'boolean',
+      description:
+        'Await a models.dev price refresh (bounded by a short timeout) instead of using the cached catalog. This is the only path that waits on the network.',
+    },
   },
 }
 
@@ -305,6 +316,28 @@ function coerceDays(value: unknown): { ok: true; days?: number } | { ok: false; 
   return { ok: true, days: value }
 }
 
+/** Validate `session` exactly as the V1 zod schema does; absent means no scope. */
+function coerceSession(
+  value: unknown,
+): { ok: true; session?: string } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true }
+  if (typeof value !== 'string' || value.length === 0) {
+    return { ok: false, error: 'pantheon_cost: "session" must be a non-empty string' }
+  }
+  return { ok: true, session: value }
+}
+
+/** Validate `refreshPricing` exactly as the V1 zod schema does; absent means cached. */
+function coerceRefreshPricing(
+  value: unknown,
+): { ok: true; refreshPricing?: boolean } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true }
+  if (typeof value !== 'boolean') {
+    return { ok: false, error: 'pantheon_cost: "refreshPricing" must be a boolean' }
+  }
+  return { ok: true, refreshPricing: value }
+}
+
 const costCommand = createCostCommand()
 
 async function executeCost(
@@ -313,8 +346,23 @@ async function executeCost(
 ): Promise<V2ToolResult> {
   const days = coerceDays(input.days)
   if (!days.ok) return { output: days.error }
+  const session = coerceSession(input.session)
+  if (!session.ok) return { output: session.error }
+  const refreshPricing = coerceRefreshPricing(input.refreshPricing)
+  if (!refreshPricing.ok) return { output: refreshPricing.error }
+  // Every accepted option is forwarded: a schema the host validates but the
+  // wrapper drops would be a tool that silently ignores its own arguments.
   // The V1 tool already wraps its whole body and reports failures as text.
-  const output = await costCommand.pantheon_cost.execute({ days: days.days }, toolContext(context))
+  const output = await costCommand.pantheon_cost.execute(
+    {
+      ...(days.days === undefined ? {} : { days: days.days }),
+      ...(session.session === undefined ? {} : { session: session.session }),
+      ...(refreshPricing.refreshPricing === undefined
+        ? {}
+        : { refreshPricing: refreshPricing.refreshPricing }),
+    },
+    toolContext(context),
+  )
   return { output }
 }
 
@@ -403,8 +451,13 @@ export function createV2ToolDefinitions(visionRuntime?: V2VisionRuntime): V2Tool
     {
       name: 'pantheon_cost',
       description:
-        'Report input, output, and total token usage by agent and phase over the last N days, ' +
-        'read from opencode.db (read-only, no monetary values).',
+        'Report token usage and USD cost by agent and phase, by model, and by session, over the ' +
+        'last N days from opencode.db (read-only). Costs come from the models.dev catalog cached ' +
+        'on disk: a call reads that cache and never waits on the network unless refreshPricing is ' +
+        'set, a stale cache is refreshed in the background and the report says so, and an unpriced ' +
+        'model reads — and is excluded from the totals, which then say partial. Pass session=<root ' +
+        'session id> to aggregate that session plus its descendant sessions. Phase may be unknown ' +
+        'on V2; costs are catalog list prices, not an invoice.',
       input: COST_INPUT,
       output: {},
       execute: executeCost,

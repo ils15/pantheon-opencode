@@ -660,9 +660,13 @@ async function main() {
       assert.match(output, /not calendar days or session boundaries/i)
       assert.match(output, /per agent and phase/i)
       assert.match(output, /phase may be unknown on V2/i)
-      assert.match(output, /not grouped by session, task, model, or provider/i)
-      assert.match(output, /tokens only.*no dollar costs/i)
-      assert.match(output, /cannot establish model-specific savings or deltas/i)
+      // The report used to declare itself token-only and non-attributable. It
+      // now prices and attributes, so the honest caveats are about the price
+      // source and the unpriced-row rule instead.
+      assert.match(output, /Cost by model/i)
+      assert.match(output, /Cost by session/i)
+      assert.match(output, /models\.dev catalog|Pricing: unavailable/i)
+      assert.match(output, /never priced at zero/i)
       assert.match(output, /\| nyx \| unknown \|/)
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -795,6 +799,34 @@ async function main() {
           `expected status: OK, got: ${output.slice(0, 200)}`,
         )
         assert.ok(output.includes('cli-fallback-agent'), `expected agent name in output`)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  await testAsync(
+    'a session-scoped request is refused, not silently unscoped, on the CLI fallback',
+    async () => {
+      const dir = freshDir()
+      try {
+        const dbPath = join(dir, 'usage.db')
+        createDb(dbPath, true, 'cli-fallback-agent')
+        const output = await createCostCommand({
+          dbPath,
+          sqliteLoader: async () => {
+            throw new Error('Cannot find module node:sqlite')
+          },
+        }).pantheon_cost.execute({ session: 'ses_root' }, { sessionID: 'ses_root' })
+        // The mirror has no session ids, so the only honest answer to a scoped
+        // question is a refusal. A full-window total under a scoped request is a
+        // wrong number that looks right.
+        assert.ok(output.includes('status: UNSUPPORTED'), output.slice(0, 200))
+        assert.match(output, /session scoping requires the node:sqlite backend/)
+        assert.ok(
+          !output.includes('cli-fallback-agent'),
+          'an unscoped report was rendered for a scoped request',
+        )
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
@@ -1168,23 +1200,28 @@ async function main() {
     }
   })
 
-  await testAsync('pantheon_cost exposes zod days arg (default applied by caller)', async () => {
-    const command = createCostCommand({ dbPath: '/definitely/missing.db' })
-    const args = command.pantheon_cost.args
-    assert.ok(args.days, 'days arg schema present')
-    assert.match(
-      command.pantheon_cost.description,
-      /input, output, and total token usage/,
-      'description names the tokens-only report',
-    )
-    assert.ok(
-      command.pantheon_cost.description.includes('no monetary values'),
-      'description states that monetary values are excluded',
-    )
-  })
+  await testAsync(
+    'pantheon_cost exposes its zod args (days, session, refreshPricing)',
+    async () => {
+      const command = createCostCommand({ dbPath: '/definitely/missing.db' })
+      const args = command.pantheon_cost.args
+      assert.ok(args.days, 'days arg schema present')
+      assert.ok(args.session, 'session arg schema present')
+      assert.ok(args.refreshPricing, 'refreshPricing arg schema present')
+      assert.match(
+        command.pantheon_cost.description,
+        /token usage together with USD cost/,
+        'description names the cost-bearing report',
+      )
+      assert.ok(
+        command.pantheon_cost.description.includes('refreshPricing'),
+        'description names the only call that waits on the network',
+      )
+    },
+  )
 
   await testAsync(
-    'pantheon_cost reports tokens by agent/phase without monetary values',
+    'pantheon_cost adds catalog cost and ignores the payload cost field',
     async () => {
       const dir = freshDir()
       try {
@@ -1194,7 +1231,10 @@ async function main() {
           sessionID: 'ses_root',
         })
         assert.match(output, /token-agent \| green \| 10 \| 20 \| 30/)
-        assert.doesNotMatch(output, /Cost \(USD\)|\$1\.25|costUsd/i)
+        assert.match(output, /Cost \(USD\)/, 'the report now carries a money column')
+        // The fixture writes `cost: 1.25` into the payload; that is host data,
+        // not a price, and publishing it as the bill would be a fabricated number.
+        assert.ok(!output.includes('$1.25'), 'the payload cost field must not become the bill')
       } finally {
         rmSync(dir, { recursive: true, force: true })
       }
