@@ -2,7 +2,7 @@
 
 Reusable prompt templates for common development workflows. Each prompt specifies a target agent, required tools, and structured instructions.
 
-## Available Prompts (11)
+## Available Prompts (10)
 
 | Prompt | Agent | Purpose |
 |---|---|---|
@@ -14,6 +14,8 @@ Reusable prompt templates for common development workflows. Each prompt specifie
 | **focus** | Zeus | Pin a session goal to keep all work aligned with a single objective |
 | **sketch** | Athena | Interview a rough idea into a structured feature spec (3–5 questions) |
 | **subtask** | Zeus | Delegate a bounded child task to a specialist and receive a structured result |
+| **quick-discovery-large-codebase** | Apollo | Fast-path bounded discovery for large codebases (8-minute cap) |
+| **quick-plan-large-feature** | Athena | Fast-path bounded planning for large features (5-minute cap) |
 
 ## Usage
 

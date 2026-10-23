@@ -7,8 +7,8 @@ Installation guide for OpenCode.
 ## Quick Install
 
 ```bash
-git clone https://github.com/ils15/pantheon.git
-cd pantheon
+git clone https://github.com/ils15/pantheon-opencode.git
+cd pantheon-opencode
 
 npx pantheon-opencode init
 

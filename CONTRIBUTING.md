@@ -1,7 +1,5 @@
 # Contributing to Pantheon
 
-[English](README.md) · [Português (Brasil)](README.pt-BR.md)
-
 ## Git Flow
 
 ```
