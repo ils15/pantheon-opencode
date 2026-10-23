@@ -822,6 +822,10 @@ async function main() {
   await testAsync(
     'merge: native task() live rows keep per-call identity and match the child by taskID',
     async () => {
+      // One clock read for both rows: two Date.now() calls can straddle a
+      // millisecond, which makes the newer row sort first and flips the
+      // insertion-order assertion below (#276).
+      const startedAt = Date.now()
       const mkNative = (n: number): LiveDelegationEntry => ({
         callID: n === 1 ? 'call_A1b2C3d4e5' : 'call_Z9y8X7w6v5',
         partID: `part_task_${n}`,
@@ -832,7 +836,7 @@ async function main() {
         alias: null,
         taskID: null,
         state: 'running',
-        startedAt: Date.now(),
+        startedAt,
         updatedAt: null,
       })
       const twoNatives = mergeChildDelegationSources([], [mkNative(1), mkNative(2)])
