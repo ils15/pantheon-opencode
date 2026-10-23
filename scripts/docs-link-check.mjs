@@ -17,7 +17,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(SCRIPT_DIR, '..')
@@ -71,10 +71,61 @@ function stripCode(source) {
   return kept.join('\n').replace(/`[^`\n]*`/g, (match) => ' '.repeat(match.length))
 }
 
+/**
+ * Remove HTML tags in one pass.
+ *
+ * A single regex strip can leave a tag intact when the input nests angle
+ * brackets (`<scr<b>ipt>`), so this walks the string once:
+ *   - a `<` outside a tag opens one;
+ *   - a `>` outside quotes closes the innermost open tag;
+ *   - a `<` inside a tag opens a nested level, so a malformed construct is
+ *     dropped whole instead of leaving a fragment of its name behind;
+ *   - `>` inside a quoted attribute does not close the tag;
+ *   - an unbalanced `<` flushes the buffered text as literal input.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+export function stripTags(text) {
+  let output = ''
+  let tag = ''
+  let depth = 0
+  let quote = null
+
+  for (const char of text) {
+    if (depth === 0) {
+      if (char === '<') {
+        depth = 1
+        tag = '<'
+      } else {
+        output += char
+      }
+      continue
+    }
+
+    tag += char
+    if (quote !== null) {
+      if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+    } else if (char === '<') {
+      depth += 1
+    } else if (char === '>') {
+      depth -= 1
+      if (depth === 0) tag = ''
+    }
+  }
+
+  // No matching `>`: the buffered text was never a tag, so keep it literally.
+  if (depth > 0) output += tag
+  return output
+}
+
 /** Approximate the slug Python-Markdown/mkdocs produces for a heading. */
-function slugify(text) {
-  return text
-    .replace(/<[^>]+>/g, '')
+export function slugify(text) {
+  return stripTags(text)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/[`*_~]/g, '')
@@ -259,4 +310,5 @@ function main() {
   process.exitCode = 1
 }
 
-main()
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+if (isDirectRun) main()
