@@ -154,7 +154,7 @@ test('context_save guidance documents the object content contract', () => {
   assert.match(skill, /JSON\.stringify\(state\)/)
   assert.match(skill, /omit the key rather than passing a string/)
 
-  const persistence = read('../docs/persistence-mcp.md')
+  const persistence = read('../docs/MEMORY.md')
   assert.match(persistence, /JSON-encoded string/)
   assert.match(persistence, /`goal` is optional/)
   assert.match(persistence, /`tail` is an array/)

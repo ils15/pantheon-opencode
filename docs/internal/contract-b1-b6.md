@@ -1,3 +1,5 @@
+> Internal engineering record — not user guidance.
+
 # 📜 Contrato B1–B6 — congelado (W1)
 
 | Campo | Valor |

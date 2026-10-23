@@ -84,7 +84,7 @@ def _reset_test_state() -> None:
 # A memory entry is bounded on write: unlike a truncated value, a rejected one
 # is recoverable (store a summary, raise the cap, or keep the long text in a
 # file), so over-cap input is refused, never shortened. The default matches
-# MAX_CONTEXT_CONTENT_BYTES in mcp_persistence.py / docs/persistence-mcp.md so
+# MAX_CONTEXT_CONTENT_BYTES in mcp_persistence.py / docs/MEMORY.md so
 # the two stores agree on what "one entry" is allowed to cost.
 
 DEFAULT_MAX_ENTRY_BYTES = 64 * 1024

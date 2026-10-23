@@ -242,125 +242,19 @@ JavaScript coverage at all. Python coverage additionally requires
 `pytest-cov`, which is not declared in any requirements file — see
 `src/mcp/requirements-mcp.txt`.
 
-## OpenCode V1/V2 — contrato de plugin
+## OpenCode generation and plugin contract
 
-### Support boundary — 1.6.x is the last OpenCode 1.X line
+The installer selects exactly one plugin generation. V1 registers `src/plugin.ts`
+plus `src/plugins/pantheon-hooks.ts` under the singular `plugin` key. V2
+registers the `<installed>/src/plugin-v2` directory under the plural `plugins`
+key.
 
-> **OpenCode 1.X support ends after the 1.6 line.** The 1.6.x line supports
-> OpenCode **1.19.x** (V1 plugin; read-only enforcement measured on `1.19.4` on
-> 2026-10-22) and OpenCode **2.0.29, 2.0.30, 2.0.31 and 2.1.x** (V2 plugin);
-> **OpenCode 2.0.22 is not
-> supported** (the host exposes neither
-> `ctx.permission.assert` nor `worktree_*` / `pantheon_bounded_read`), and
-> **OpenCode 2.0.31 is supported** by maintainer decision, without a measured
-> permission-matrix row yet. From 1.7 onward
-> the line drops the V1 contract and targets OpenCode 2 only. Read this before
-> installing or upgrading across the 1.6 → 1.7 boundary.
-
-| Linha Pantheon | OpenCode 1.19.x | OpenCode 2.0.29 / 2.0.30 | OpenCode 2.1.x (`>=2.1.0 <2.2`) | OpenCode 2.0.22 | OpenCode 2.0.31 |
-|---|---|---|---|---|---|
-| **1.6.x** | **Suportado — PASS: enforcement read-only por config.** V1, selecionado automaticamente; medido em `1.19.4`, onde `permission.ask` não dispara e a garantia vem de `bash`/`write`/`edit: deny` + `read: allow` na config | **Suportado — PASS medido.** V2, superfície reduzida; matriz de permissões pós-fix sem nenhuma célula `FAIL` | **Suportado — PASS medido** no piso `2.1.0` e no patch mais novo no congelamento (`2.1.3`). V2 | **Não suportado** — o host não expõe `ctx.permission.assert` nem `worktree_*`/`pantheon_bounded_read` | **Suportado** — V2, por decisão do mantenedor. Sem linha medida: suportado, não `PASS` |
-| **1.7 and later** | **Não suportado** — breaking change | **Alvo do trabalho 1.7+** — V2 only | **Alvo do trabalho 1.7+** — V2 only | **Não suportado** | **Suportado** — V2 only |
-
-As células suportadas da linha 1.6.x são afirmações **por host**, não um
-resultado único: `2.0.29`, `2.0.30` e `2.1.x` têm `PASS` medido pela matriz de
-permissões V2; `1.19.x` tem `PASS` medido por um mecanismo diferente —
-**enforcement read-only por config**, não o hook `permission.ask`, que não
-dispara nesse host. Uma linha ausente não é `PASS`, e `WARN`, `SKIP` ou
-`NOT_TESTED` também não contam como `PASS`. A `2.0.22` saiu da matriz por
-**evidência de runtime**, não por falta dela: sem `ctx.permission.assert` a
-ordem de avaliação de permissões não é observável nela, e o host também não
-oferece `worktree_*` nem `pantheon_bounded_read`; o `PASS` ali seria falso
-verde.
-
-The 1.6.x row carries different claims. The 1.19.x cell is the V1 plugin
-(`src/plugin.ts` + `src/plugins/pantheon-hooks.ts` under the singular `plugin`
-key, 6 tools including the goal tools, board lifecycle, V1 hooks and the V1
-compaction path). The OpenCode 2 cells are the V2 plugin, which is a real
-orchestration surface and a **narrower** one: 3 unconditional tools plus up to
-2 host-dependent ones, no goal tools. The caller→target delegation matrix is
-enforced by the V2 permission hook **only when the host exposes
-`ctx.permission.hook`**; if the hook is absent or registration fails, the matrix
-is unavailable and host permissions remain in control (decision in
-`src/pantheon/v2-delegation-enforce.ts:170-213`). Neither generation is ever
-registered together with the other.
-
-**OpenCode 2 support on the 1.6 line is real but partial — do not read the
-table as "OpenCode 2 is done":**
-
-- The V2 tool surface ships real `input`/`output` schemas and real enforcement
-  (`ctx.tool.transform()`, a read-only-enforcing `execute.before`), verified on
-  the supported V2 hosts by `tests/canary/plugin-v2-tool-canary.test.mjs`.
-- The v2.0.29 permission canary proves the matrix on both sides: an allowed
-  Zeus→Apollo root dispatch is admitted, while an Athena→Apollo call from a
-  child and an invalid Athena→Demeter root dispatch are denied
-  (`bench/results/f4a-v229-admission-identity-2026-10-14.md`).
-- `2.0.22` is **out of the matrix on runtime evidence**: the host does not expose
-  `ctx.permission.assert`, so permission-order cells are not observable and the
-  harness `✔` it printed was a false green, and it also lacks `worktree_*` and
-  `pantheon_bounded_read`. (It is also **not published on any npm channel**;
-  against the installable `@opencode-ai/cli` the older tool canary fails 12/12
-  because `/api/experimental/session/{id}/wait` was promoted to
-  `/api/session/{id}/wait`. Tracked in issue #216; the fail-closed CI step is
-  PR #213.)
-- **The V1 line has its own probe and its own measurement, and it does not use
-  the `permission.ask` hook.** The sandbox runner
-  (`scripts/test-opencode-v2-sandbox.sh`) stays V2-only and rejects `--run v1`;
-  the V1 row is measured by `tests/canary/run-v1-permission-proof.sh`, which runs
-  `tests/canary/v1-permission-canary.test.mjs` against the real host. On OpenCode
-  `1.19.4` (2026-10-22), with `bash`/`write`/`edit: deny` and `read: allow`, the
-  host makes `bash` and `write` unavailable, produces no side effect and keeps
-  `read` working. The guarantee is therefore **config-level**: the hook does not
-  fire on OpenCode `1.19.x` — the V1 probe recorded zero `permission.ask`
-  invocations — and the permission request goes to the client
-  (`permission.asked`, `GET /permission`, `POST /permission/{id}/reply`), where a
-  client `reject` does block. The generations differ in the **mechanism**, not in
-  the string: the exact `permission.ask` string is absent from both binaries,
-  while V2 evaluates the request in `permission.evaluate` (proved by the V2
-  matrix). Results are recorded in
-  `bench/results/p05-permission-matrix-2026-10-22.md`; the V1 path is also
-  covered by the dependency pin (`@opencode-ai/plugin` / `@opencode-ai/sdk`
-  `1.18.33`), the generation-gate unit tests and the installer end-to-end tests
-  over emitted config.
-- **`2.1.x` is proved as a line, not as a single patch** (ADR-0014 Amendment 1):
-  the matrix cell requires two measurements per release — the floor `2.1.0` and
-  the newest `2.1.x` patch published at freeze time (`2.1.3` when the matrix was
-  frozen on 2026-10-22) — both with the post-fix permission matrix in `PASS` and
-  no `FAIL` cell. If the registry publishes another `2.1.x` before the release
-  gate, the line is measured again against that patch.
-
-The full policy, including the verification table, is in the
-[README compatibility section](../README.md#compatibility-and-support-policy).
-
-### Escolha de geração
-
-Pantheon 1.6.0-beta.1 does not load both Pantheon plugin generations in one
-installation. The ordinary OpenCode settings may be merged, but the installer
-removes Pantheon references from both config shapes before registering only the
-selected generation:
-
-| Selection | OpenCode key | Pantheon registration | Contract |
+| Selection | Key | Registration | Surface |
 |---|---|---|---|
-| `v1` | singular `plugin` | `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: `hashline_edit` + goal/cost/model tools, board lifecycle, V1 events/tool hooks and V1 compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 unconditional tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`) plus up to 2 host-dependent ones (`vision_describe` when the host exposes its model catalog, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks, a read-only-enforcing tool `execute.before` hook, a `permission.evaluate` delegation-matrix hook when the host exposes it, plus configuration transforms |
+| `v1` | `plugin` | `src/plugin.ts` + `src/plugins/pantheon-hooks.ts` | Six tools, board lifecycle, V1 hooks and compaction |
+| `v2` | `plugins` | `<installed>/src/plugin-v2` | Host-native tools and hooks, read-only enforcement, optional delegation matrix |
 
-The V2 plugin is now a **full orchestration plugin** — not just a configuration
-adapter. It registers 3 unconditional tools via `ctx.tool.transform()` plus up
-to 2 host-dependent ones — `vision_describe` when the host exposes its model
-catalog, and `pantheon_bounded_read` when the host exposes its permission and
-session APIs (root Zeus sessions only) — subscribes to 5
-session lifecycle events, and wires session hooks plus a tool `execute.before`
-hook that enforces read-only sessions (`apollo`/`gaia` are denied `edit`,
-`write`, `bash`, `task`, `hashline_edit` and `pantheon_model`). The 3 goal
-tools are
-not registered on V2 because the goal loop requires V1 infrastructure the V2
-context does not expose; `getUnsupportedFeatures()` reports this as
-`goal-tools`. The host-native child-session API (called `task()` in hosts that
-expose that API) is not a V2 Pantheon delegate API. Do not add the V1 plugin
-beside `plugin-v2` to try to restore V1-specific features: that is an
-unsupported mixed registration.
-
-Choose the target explicitly when needed:
+Choose explicitly when needed:
 
 ```bash
 npx pantheon-opencode init --opencode-version v1
@@ -368,460 +262,137 @@ npx pantheon-opencode init --opencode-version v2
 npx pantheon-opencode init --opencode-version auto
 ```
 
-`auto` is the default, so the flag is only needed to override it.
-`--version v1|v2` remains accepted after `init` as the legacy spelling.
-`auto` reads the generation from the host: `OPENCODE_VERSION=v1|v2` wins;
-otherwise an `OPENCODE_BIN` path ending in `opencode2` selects V2; otherwise
-the host binary is asked for its `--version` and a major of 2 or more selects
-V2. Any other case — an unreadable probe, an unparseable banner, or
-contradictory version tokens with no tool name to break the tie — warns once
-and selects V1. It never installs both Pantheon plugin generations. Third-party
-plugin entries are retained as third-party entries and are not converted by
-this selection.
+`auto` is the default. The resolution order and fallback behavior are documented
+once in [Compatibility](COMPATIBILITY.md#how-the-generation-is-selected). The
+exact tool list per generation is in
+[Architecture](ARCHITECTURE.md#what-each-generation-registers); user-facing V2
+behavior is in [OpenCode V2](opencode-v2.md).
 
-### Config nativo V2
+The installer removes Pantheon references from both config shapes before writing
+the selected one, so a host never loads both generations. Third-party entries
+are retained and not converted.
 
-O installer V2 grava campos nativos V2 em vez de shims V1:
+### V2 config fields
 
-- `providers` — configuração de provedores de modelo (formato V2 nativo)
-- `permissions` — array de regras de permissão de tools (formato V2 nativo)
-- `mcp.servers` — registro de servidores MCP (formato V2 nativo)
+The V2 installer writes native V2 fields instead of V1 shims: `providers`,
+`permissions`, and MCP entries under `mcp`. The enforceable MCP rule is
+`{ "action": "<server>_*", "resource": "*", "effect": "deny" }` (or the exact
+tool name). `action: "mcp"` and the V1 key `permission.mcp.<server>` are not
+evaluated by the host; the installer converts `allow`/`deny` and emits no rule
+for `ask`, because `ask` hides the tool instead of prompting.
 
-> **Permissões de MCP no host 2.x.** A ação que o host avalia é `<server>_<tool>`
-> com `resource: ["*"]`. A forma enforçável é
-> `{ "action": "<server>_*", "resource": "*", "effect": "deny" }` (ou o nome exato
-> da tool); `action: "mcp"` e a chave V1 `permission.mcp.<server>` não são
-> avaliadas pelo host — o instalador converte `allow`/`deny` para `<server>_*` e
-> **não emite regra** para `ask`, avisando que `ask` não é aplicável: nesse host
-> ele esconde a tool em vez de perguntar.
+## Interactive model setup (V1 legacy routing)
 
-Exemplo de `opencode.json` V2:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugins": ["<installed>/src/plugin-v2"],
-  "providers": {
-    "opencode": {
-      "baseURL": "https://opencode.ai/zen/v1"
-    }
-  },
-  "permissions": [
-    {
-      "tool": "task",
-      "allow": ["zeus", "athena"]
-    }
-  ],
-  "mcp": {
-    "servers": {
-      "pantheon-memory": { "command": "python", "args": ["-m", "pantheon.mcp.memory"] },
-      "pantheon-persistence": { "command": "python", "args": ["-m", "pantheon.mcp.persistence"] }
-    }
-  }
-}
-```
-
-Contrato: a entrada V2 do servidor é o diretório `<installed>/src/plugin-v2` (cujo `index.ts` re-exporta `src/plugin-v2.ts`). O TUI é um componente separado: V1 usa `tui.json`; V2 descobre `index.ts` + `tui.ts` no diretório local e usa `@opencode/plugin/tui`.
-
-Diferenças do V1:
-
-| Aspecto | V1 | V2 |
-|---|---|---|
-| Plugin registration | singular `plugin` | plural `plugins` |
-| Config shape | `plugin` array | `plugins` array + `providers` + `permissions` |
-| MCP servers | Via `scripts/hooks/` | Via `mcp.servers` nativo |
-| Tools | Via V1 tool hook API | Via `ctx.tool.transform()` |
-| Events | Via V1 event hook API | Via `ctx.event.subscribe()` |
-
-The TUI plugin is a separate component. Its host-specific entry is installed
-only when the installer component set includes `plugins`; the presence of the
-V2 TUI entry does not imply the V1 runtime was loaded.
-
-## Interactive Model Setup (V1 legacy routing)
-
-This model selector applies to the legacy V1 preset path only. V2 ignores static
-presets and `PANTHEON_MODEL_PRESET`; use `pantheon_model` for explicit
-per-agent overrides. In V1, **Inherit** is the default and writes no
+The TTY wizard applies to the legacy V1 preset path only. V2 ignores static
+presets and `PANTHEON_MODEL_PRESET`; use `pantheon_model` for explicit per-agent
+overrides. In V1, **Inherit** is the default and writes no
 `active-preset.json`, so delegates keep the parent chat model.
 
-The TTY wizard uses `@clack/prompts` and offers exactly these choices:
-
-| Visible choice | Saved preset | Provider / model | Environment variable |
+| Choice | Saved preset | Provider / model | Environment variable |
 |---|---|---|---|
 | Inherit | none | Current chat model | — |
-| OpenCode Go | `go-hybrid` | OpenCode Go; premium routes for Zeus, Athena, Themis, and Hephaestus; existing Go-fast routes for all others, including Demeter | `PANTHEON_OPENCODE_API_KEY` |
+| OpenCode Go | `go-hybrid` | OpenCode Go; premium routes for Zeus, Athena, Themis, Hephaestus | `PANTHEON_OPENCODE_API_KEY` |
 | OpenAI | `openai` | OpenAI profile | `OPENAI_API_KEY` |
-| Anthropic | `anthropic` | `anthropic/claude-sonnet-5-5` for every agent | `ANTHROPIC_API_KEY` |
+| Anthropic | `anthropic` | `anthropic/claude-sonnet-5-5` | `ANTHROPIC_API_KEY` |
 
-For a saved profile, the wizard asks whether to save project-local or global;
-**Inherit** skips that question and writes no active preset. It reports the
-required environment-variable **name only**: it does not read or validate API
-keys, print secret values, write `.env`, or contact a provider/catalog. Configure
-the appropriate key in the environment yourself before using a paid profile.
-
-The internal `go-free`, `go-fast`, and `go-premium` definitions are unchanged
-for old saved profiles and explicit CLI use, for example
-`pantheon-opencode init --preset go-fast`. The selected profile is persisted
-atomically via `writeActivePreset()` with backup and JSON health-check.
+The wizard reports the required variable **name only**. It does not read or
+validate keys, print values, write `.env`, or contact a catalog. Legacy
+`go-free`, `go-fast`, and `go-premium` presets remain for old settings and
+explicit `--preset` use.
 
 ```bash
-# Interativo padrão (TTY → wizard; pipe → plano, exige --yes para aplicar)
-npx pantheon-opencode init
-
-# Forçar o fluxo interativo quando houver um TTY
-npx pantheon-opencode init --interactive
-
-# Pular o seletor e ativar um preset explicitamente (V1)
-npx pantheon-opencode init --preset go-hybrid
-npx pantheon-opencode init --preset anthropic --project
-npx pantheon-opencode init --preset go-fast
-npx pantheon-opencode init --preset openai --project
-
-# Headless (sem perguntas, usa defaults; exige --yes para aplicar)
-npx pantheon-opencode init --headless --yes
-npx pantheon-opencode init --headless --yes --no-mcp  # sem Python/MCPs
+npx pantheon-opencode init                     # interactive in a TTY; plan-only without --yes
+npx pantheon-opencode init --interactive       # force the wizard
+npx pantheon-opencode init --preset go-hybrid  # explicit V1 preset
+npx pantheon-opencode init --headless --yes    # non-interactive defaults
+npx pantheon-opencode init --headless --yes --no-mcp  # no Python/MCP
 ```
 
-> Tabelas acima refletem `src/routing.yml` + `PRESET_PRICE` + `CAPABILITY_TABLE`.
+With no preset, V1 inherits the parent chat model: `resolveActivePreset()`
+returns `null`, no model is imposed on children, and `small_model` is never
+used. The child model resolves as: per-agent override in
+`.pantheon/active-preset.json`, then the active preset's agent model, then
+native inheritance. The installer removes legacy top-level `model`/
+`small_model` values from managed agents; `--model`/`--small-model` remain for
+an explicit override and validate `provider/model-id`.
 
-### Vision (opcional) — prompt pós-wizard
+### Optional vision step
 
-Após o wizard, uma sessão **TTY interativa** oferece um passo opcional de vision
-(`scripts/install/vision-prompt.mjs`), com três opções:
+After the wizard, an interactive TTY session offers an optional vision step:
+automatic discovery (default, writes nothing), pin a `provider/model` (merges
+`visionModel` into the global `opencode-vision.json` atomically with a `.bak`),
+or skip. Non-interactive flows never prompt and never write vision config.
+`/pantheon-vision` shows the resolved target and origin, and its picker applies
+`visionModel` with the same atomic merge. See
+[MCP](MCP.md#pantheon-vision) for model precedence and the degradation chain.
 
-1. **Descoberta automática** (default, Enter) — não grava nada; o modelo é resolvido no início da sessão (catálogo do host).
-2. **Pinar provider/modelo** — pede `provider/model` (ex. `opencode-go/mimo-v2.5`), valida o formato e grava `visionModel` no config **global** `~/.config/opencode/opencode-vision.json` via **merge** (chaves existentes preservadas; gravação atômica com `.bak`; diretório criado se faltar).
-3. **Pular** — não grava nada.
+## `/pantheon-model` (V1 legacy)
 
-Fluxos **não-interativos** (`--yes`, `--headless`, pipe/CI, sandbox automatizado)
-**nunca** perguntam e nunca gravam config de vision: a descoberta automática
-continua sendo o default em qualquer fluxo não-interativo. O passo não usa
-tokens/segredos e nunca exibe credenciais. O comando `/pantheon-vision` mostra o
-alvo resolvido + origem (env / config / preset / descoberta / default).
-
-O comando também traz um **picker de modelos**: `node scripts/vision-status.mjs
---list` enumera os candidatos image-capable (fonte marcada como `host catalog`
-quando o catálogo ao vivo está acessível, ou `heuristic` a partir de
-`opencode models`), com `free`/`paid` e **presença de credencial** por provider
-(sem nunca exibir o token); o usuário escolhe por número e o comando aplica via
-`node scripts/vision-status.mjs --set <provider/model> [--global|--project]`,
-que grava `visionModel` com o mesmo merge atômico do prompt de init.
-
-## Quick Install
-
-```bash
-# 1. Install Pantheon agents globally
-npx pantheon-opencode init --headless --yes
-
-# 2. (Optional) Install MCP servers + skills + TUI plugin
-npm run setup
-
-# 3. Launch OpenCode
-opencode
-```
-
-Only if the active OpenCode version/runtime documents support for and requires
-the experimental background setting, set it before launch (for example, in
-`~/.zshrc` or `~/.bashrc`):
-
-```bash
-export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
-opencode
-```
-
-This variable is not a general prerequisite and does not guarantee a background
-dispatch tool, status/cancel tools, completion tracking, or recovery.
-
-## Install Modes
-
-| Mode | Command | Installs | Time | Dependencies |
-|------|---------|----------|------|-------------|
-| **Interactive** 🎯 | `npx pantheon-opencode init` (default TTY) | seletor visual de componentes | ~variavel | Node.js >=26.4.0 |
-| **Minimal** 🟢 | `npx pantheon-opencode init --headless --yes --no-mcp` | agents + commands | ~2s | None |
-| **Full** 🔵 | `npx pantheon-opencode init --headless --yes` | agents + MCPs + skills + TUI | ~60s | Python 3.11+ |
-| **Runtime** 🟡 | `npm run setup` | MCP servers + venv | ~30s | Python 3.11+ |
-
-```bash
-# Minimal — just the agent rules, no Python dependencies (non-interactive)
-npx pantheon-opencode init --headless --yes --no-mcp
-
-# Full setup — agents + MCP servers (memory, persistence, resources, vision)
-npx pantheon-opencode init --headless --yes
-
-# Add MCP servers to an existing minimal install
-npm run setup
-```
-
-## Global vs Project-Local
-
-By default, `npx pantheon-opencode init` installs agents **globally** to `~/.config/opencode/agents/`. This makes Pantheon available in all your projects.
-
-For project-local installation (e.g., team-shared config):
-
-```bash
-npx pantheon-opencode init --project
-```
-
-This installs to `.opencode/agents/` in the current project directory.
-
-## Herança Nativa — sem `active-preset.json` (default)
-
-No caminho de instalação V1 desde **v1.5.0**, o instalador **não cria** `model`/`small_model` top-level em `opencode.json` e o seletor **não grava** `active-preset.json` quando o usuário escolhe **Inherit** (default). O fluxo V2 não ativa presets. Comportamento V1:
-
-- **Sem preset = herança nativa**: `resolveActivePreset()` retorna `null`; `loadRoutingAgentModels()` retorna `{}`; nenhum modelo é imposto aos filhos — o dispatch nativo do host (por exemplo, `task()` onde exposto) herda o modelo do chat pai conforme a semântica desse host. `small_model` nunca é usado.
-- **Ordem de resolução do modelo filho** (fontes sem hardcode de segredos, só nomes):
-  1. override per-agent em `.pantheon/active-preset.json` (via `/pantheon-model set --agent`)
-  2. `presets.<active>.agents[agent].model` (via `loadRoutingAgentModels`)
-  3. omitir → herança nativa (herda modelo atual da sessão pai)
-- O instalador **remove** `model`/`small_model` antigos de `config.agent[agentName]` durante `installOpencode()` (limpeza de legado), preservando apenas campos gerenciados (`MANAGED_FIELDS`). Flags `--model`/`--small-model` ainda existem para override explícito, mas **não são necessárias** para o fluxo padrão; se usadas, validam `provider/model-id` via `MODEL_REF_PATTERN` e nunca tocam o outro campo.
-- Provider/model disponibilidade **não** é inferida da string: deve existir no OpenCode e via conta/assinatura/endpoint configurado (`PANTHEON_OPENCODE_API_KEY` para `opencode`/`opencode-go`, `OPENAI_API_KEY` para `openai`, `ANTHROPIC_API_KEY` para `anthropic`). O seletor só informa o nome da variável; não lê nem valida chaves.
-
-```bash
-# Default (recomendado) — herda do chat, sem preset ativo
-npx pantheon-opencode init            # Inherit → sem active-preset.json
-opencode
-# /model opencode-go/gpt-5.6-sol  (no chat) → delegates herdam automaticamente
-
-# Com preset (quando precisa de pinagem por agente)
-npx pantheon-opencode init --preset go-fast
-# ou interativo: OpenCode Go/OpenAI/Anthropic → scope → grava active-preset.json
-
-# Override explícito pontual (sem preset, ou sobre preset)
-# via comando Pantheon (ver próxima seção) — nunca via top-level opencode.json
-```
-
-> **Nota:** A validação de `provider/model-id` usa `MODEL_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/` (em `src/pantheon/model-command.ts`, hint sem expor segredos). Model inválido → erro `model must use provider/model-id format`.
-
-## `/pantheon-model` — Per-agent Overrides em `active-preset.json` (V1 legacy)
-
-> Os comandos `/pantheon-model` e o wizard abaixo são o caminho legado V1. V2
-> expõe a ferramenta `pantheon_model` com ações explícitas `status`, `show`,
-> `set` e `reset`, sem wizard de rotas ou presets. No V2, só overrides manuais
-> project-scoped por agente são aplicados; arquivos globais não são lidos nem
-> aplicados. `set`/`reset` rejeitam `scope=global` e flags `confirm`/
-> `authorize_global`; a mesma chamada não é aprovação humana independente. O
-> suporte global futuro exigirá autorização explícita separada e não é suportado
-> nesta ferramenta. Markers `preset` e `PANTHEON_MODEL_PRESET` são ignorados,
-> não removidos, e o default do host fica intacto sem override.
-> Ambos os caminhos gravam overrides em `active-preset.json` e nunca escrevem
-> `.env` nem injetam `model`/`small_model` top-level em `opencode.json`.
-
-No V1, a delegação usa herança nativa (sem modelo → herda chat/preset); o
-caminho V2 não registra a API de delegação V1.
-
-O comando V1 é determinístico (`src/pantheon/model-command.ts`) — leitura/escrita local sem resolver providers externos, backup `.bak` + rename atômico + `O_NOFOLLOW` + lock por path. No V1, escopo default `project`; `global` exige `confirm` + `authorize_global` separados (`-y` não basta). A ferramenta V2 aceita apenas `project` e rejeita flags de autorização.
+Both paths write overrides to `active-preset.json` and never write `.env` or
+top-level `model`/`small_model`. V1 accepts `project` and (with separate
+`confirm` + `authorize-global`) `global`; V2 is project-only and rejects
+`scope=global` and authorization flags in the same call.
 
 ```text
-# status — lista 14 agentes canônicos com modelo/effort/origem (preset|override|env|none), sem segredos
-/pantheon-model status          # alias: show
-
-# V1 legacy only: wizard interativo (sem args) — via askQuestions:
-/pantheon-model                 # agente → modelo (provider/model-id) → effort (low/medium/high) → scope (project|global)
-/pantheon-model                 # valida agente ∈ {zeus, athena, apollo, hermes, aphrodite, demeter, themis, prometheus, hephaestus, nyx, gaia, iris, mnemosyne, talos}
-                               # valida modelo via CAPABILITY_TABLE capabilityEntry() + clamp via normalizeCapability()
-                               # avisa via hasVision() se modelo for text-only but solicitado para visão
-
-# set per-agent (persiste em overrides.agents[agent])
+/pantheon-model status
 /pantheon-model set --agent hermes --model opencode-go/gpt-5.6-terra --effort medium --scope project
-/pantheon-model set --agent apollo --model opencode/mimo-v2.5-free --effort low --scope project
-/pantheon-model set --agent zeus --model openai/gpt-5.6-sol --effort high --scope global  # requer confirm+authorize_global
-
-# reset — remove override
 /pantheon-model reset --agent hermes --scope project
-/pantheon-model reset --agent apollo --scope global
 ```
 
-**Validações (sem hardcodar segredos):**
+V1 also has an interactive wizard when called with no arguments. Validation
+errors name the accepted agents, require `provider/model-id`, reject an unknown
+model or invalid effort (a valid effort above the model ceiling is clamped with
+a warning), and warn when a text-only model is requested for vision. V2 exposes
+`pantheon_model` with explicit `status`, `show`, `set`, and `reset` actions and
+no wizard. See [MCP Tools](mcp-tools.md#opencode-plugin-tools).
 
-- Agente inválido → `unknown agent "X"; known agents: zeus, athena, apollo, hermes, aphrodite, demeter, themis, prometheus, hephaestus, nyx, gaia, iris, mnemosyne, talos`
-- Modelo sem `provider/model-id` (`MODEL_REF_PATTERN`) → `model must use provider/model-id format`
-- Modelo sem entrada em `CAPABILITY_TABLE` → erro de `capabilityEntry(model)` (ex.: modelo inexistente)
-- `effort` inválido → `effort must be one of low, medium, high`; se válido mas acima do teto (`maxEffort`), é **clamped** (`normalizeCapability` retorna `{variant, clamped:true}`) e loga aviso
-- `hasVision(model)` = false mas usado como visão → warning `hasVision` via logger (não bloqueia, mas avisa)
-- No V1, `--scope global` sem `--confirm --authorize-global` → `global set/reset requires explicit confirmation and separate global authorization; -y is not sufficient`
-- No V2, `scope=global`, `confirm` ou `authorize_global` → erro project-only; nenhuma escrita é feita
-- Modelo é apenas referência `provider/model-id` — provider/model disponibilidade depende de `opencode` config + credenciais (`PANTHEON_OPENCODE_API_KEY` ou `OPENAI_API_KEY`) + conta/assinatura/endpoint
-
-**Persistência:**
-
-- No V1, lê candidatos `active-preset.json` (`project` → `global` → legacy) via `readRegularFile` + `O_NOFOLLOW` + validação JSON; inválido → equivale a ausência (log warn, sem segredos). No V2, somente o arquivo do projeto é lido; arquivo global não contribui overrides nem warnings.
-- Escreve via `writeActivePresetAtomically(path, data, current)` — `mkdir -p`, backup `.bak` (se existia), `atomicReplace(path, JSON.stringify(data,null,2))` (`tmp`+`rename` + `fsync` dir), lock `pathLocks` por `path`, preserva `mode` (default `600`)
-- No V1, reinicie OpenCode após sucesso (sem hot-swap); V2 lê overrides em um próximo configuration load. `status` nunca exibe valores de chaves.
-
-**Histórico superseded (≤1.4.1):** antes manipulava `model`/`small_model` top-level em `opencode.json`; em 1.5.0 manipula apenas `overrides.agents`. Instrução em `commands/pantheon-model.md` usa `agent: zeus` + per-agent semantics.
-
-## OpenCode V2 `subagent` Tool and Runtime Delegation
+## Delegation on V2
 
 OpenCode V2 documents `subagent` as the child-session tool. It is a host tool,
-not a Pantheon-specific delegation API; verify that it is exposed in the active
-session. The following shows its V2 tool arguments, not a promise that other
-hosts or versions expose the same schema:
+not a Pantheon-specific API; availability, schema, background support, and
+completion observability depend on the active runtime. A foreground call waits
+for the result; with `background: true`, where the schema supports it, the call
+returns a `sessionID` and the parent is notified on completion. `task()` is
+host/API terminology, not a guaranteed root tool name.
 
-```json
-{
-  "agent": "apollo",
-  "description": "Find X",
-  "prompt": "Search the codebase for X."
-}
-```
+The brief, return contracts, retry rule, and the caller/target matrix are in
+[Architecture](ARCHITECTURE.md#delegation-mechanics). The installer does not
+register a Pantheon delegation tool.
 
-A foreground call waits for the child to finish and returns its result. To
-request background execution where the active tool schema supports it, add
-`"background": true`:
+## TUI installation
 
-```json
-{
-  "agent": "apollo",
-  "description": "Find X",
-  "prompt": "Search the codebase for X.",
-  "background": true
-}
-```
-
-In OpenCode V2, a background call returns immediately; its response includes a
-`sessionID` for continuing that child, and the parent is notified when the child
-finishes. The exact tool availability and behavior remain runtime-dependent.
-Some older or host-specific documentation uses `task()` to refer to native
-child-session dispatch; that name does not guarantee a root tool named `task`.
-Do not assume `task_status`, `cancel_task`, a Pantheon BackgroundJobBoard, or
-other status/recovery facilities are available in V2.
-
-The experimental environment variable below is a gate used by some supported
-runtime versions; it is not a universal prerequisite and does not install or
-guarantee a background tool. Pantheon's `npm run start` launcher sets it, but
-that launcher does not detect runtime support. Set it only when the active
-runtime documents and requires it:
-
-```bash
-export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
-opencode
-```
-
-The Pantheon launcher can be used for that same runtime-specific case:
-
-```bash
-npm run start
-```
-
-The reported Beta 10 Zeus-root toolset also exposed `subagent`; other runtimes
-may expose different tools or options. Follow the active schema and use
-background only when supported by that schema.
-
-**Suggested dispatch style (only when the active root schema supports it):**
-
-| Agent/task kind | Preference | Why |
-|-----------------|------------|-----|
-| Independent, long-running work (e.g. discovery or implementation) | Background only if explicitly supported and completion is observable | May benefit from concurrency |
-| Short, dependent, or context-sensitive work (e.g. plan or review handoff) | Synchronous | Keeps result and dependency visible |
-
-See the **Delegation (root `subagent`; host/API `task()`)** section in the
-[README](../README.md) for the runtime distinction and historical notes.
-
-V1 compaction carry-forward is implemented by
-`experimental.session.compacting`. It is not available through `plugin-v2`.
-When the V1 process restarts, running legacy board jobs are marked errored;
-old jobs are not auto-resumed and child work is not restarted automatically.
-The persisted Markdown reports remain historical V1 records. A native V2 task
-may be followed by the TUI only when OpenCode supplies explicit child origin,
-parent and status metadata; a missing Markdown report is not that metadata.
-
-## TUI Sidebar Plugin
-
-Pantheon includes an optional TUI sidebar plugin (reduced sidebar with a real-time
-Delegations panel) showing:
-
-```
-Pantheon v1.5.0
-⎇ main
-⚡ Preset: go-fast (file)      ← or "Preset: default" (herança nativa)
-────────────────────────────
-▼ Sessions (12)
-▼ Delegations (3)                 ← real-time panel
-  ⠋ [apo-1] apollo — WORKING — find X
-  ✓ [native-task] hermes — DONE (quando o host fornece origem explícita)
-```
-
-- **Header** — Pantheon version, current git branch, and the active model
-  preset (`⚡ Preset: <name> (source)`, or `Preset: default`).
-- **Sessions** — collapsible recent-sessions list (click a row to open).
-- **Delegations (real-time)** — the panel can follow children sourced from
-  `api.client.session.children`. Native `task()` children require explicit
-  origin, parent and status metadata from OpenCode; the panel must not infer a
-  native task from a missing Markdown report. Historical V1 board reports still
-  render from `.pantheon/delegations/`. Animated states
-  (DELEGATING / WORKING / READING RESULT / DONE / DONE (TIMED OUT) / ERROR /
-  CANCELLED) with a 140ms spinner; clicking a row navigates to the child
-  session. Also reads `.pantheon/delegations/` reports from all sessions, so
-  the full delegation history renders even without a focused session.
-  Diagnostics: every re-fetch logs `panel: children=N md=N events=N` to
-  `.pantheon/logs/hooks.log` (silence-by-default).
-
-The TUI plugin is installed by `npm run setup` or a selected install that
-includes the `plugins` component. The installer selects a host-specific entry:
-OpenCode V1 uses the legacy `tui.json` registration and V1 plugin API; OpenCode
-V2 discovers the local plugin's `index.ts` + `tui.ts` pair and uses the native
-`@opencode/plugin/tui` API. Without the `plugins` component, neither entry is
+The TUI is an optional component installed by `npm run setup` or an install that
+includes the `plugins` component. The installer selects the host-specific entry:
+OpenCode V1 uses `tui.json`; OpenCode V2 discovers the local plugin's
+`index.ts` + `tui.ts` pair. Without the `plugins` component, neither entry is
 installed.
 
-### TUI dev build (local development)
+On V2 the installer also cancels the host's builtin Context block by appending
+`-opencode.sidebar.context` to the global `~/.config/opencode/cli.json`
+`plugins` array. The negation is global-only: a project install neither creates
+nor edits `cli.json`, so the native Context block can appear duplicated.
+`uninstall` removes exactly that directive (and the file when Pantheon created
+it). A `cli.json` that is not valid JSON, or whose `plugins` is not an array, is
+never overwritten; the install warns and continues.
 
-To iterate on the TUI from a git checkout without publishing, build both host
-bundles:
+The sidebar block and `/dispatch` panel are documented in
+[OpenCode V2](opencode-v2.md#dispatch-sidebar-block).
+
+### TUI dev build
 
 ```bash
-# 1. Install the root workspace (including the TUI) + build the bundle
 npm ci --ignore-scripts --no-audit --no-fund
 npm run build --prefix src/plugins/tui
-
-# 2. For V1 only, register the repo path (merged into the array, not clobbered)
-node --input-type=module -e "import { registerPlugin } from './scripts/install/plugin.mjs'; registerPlugin('.opencode/tui.json', process.cwd() + '/src/plugins/tui')"
 ```
 
-For V2, install the built plugin into `.opencode/plugins/pantheon-tui` with the
-installer so the directory contains the V2 `index.ts` and `tui.ts` entrypoints.
-TUI plugins are loaded at process start, so restart OpenCode after each build.
+For V1, register the repo path with
+`registerPlugin('.opencode/tui.json', process.cwd() + '/src/plugins/tui')`.
+For V2, install the built plugin into `.opencode/plugins/pantheon-tui` so the
+directory contains the V2 `index.ts` and `tui.ts` entrypoints. TUI plugins load
+at process start, so restart OpenCode after each build.
 
-| Host | Discovery | Written by |
-|------|-----------|------------|
-| OpenCode V1 | `tui.json` → `<configDir>/plugins/pantheon-tui` | installer |
-| OpenCode V2 | local plugin `index.ts` + `tui.ts` under the config plugins directory | installer |
-| V1 development | `<repo>/src/plugins/tui` in project `tui.json` | manual `registerPlugin` (gitignored) |
-
-On V2 the installer also cancels the host's **builtin Context sidebar block**.
-Pantheon's TUI plugin renders its own Context block, so a global V2 install with
-the `plugins` component appends the exact negation `-opencode.sidebar.context`
-(never `-opencode.sidebar.*`, which would also disable the mcp and footer
-blocks) to the single global terminal-client config
-`~/.config/opencode/cli.json`. The merge touches only the `plugins` array: every
-other key, every existing entry (string or `{ package, options }`) and the array
-order are preserved, and a second `init` is a byte-for-byte no-op. The file is
-not patched in place, it is re-serialized with `JSON.stringify(config, null, 2)`
-plus a trailing newline, so keys, values and key order survive but the original
-byte layout does not — custom indentation, spacing and inline formatting are
-normalized, and the file is rewritten only when the `plugins` array actually
-changes. A `cli.json` that is not valid JSON — or whose `plugins` is not an
-array — is never overwritten; the install reports a warning and continues.
-`uninstall` undoes exactly this edit: it removes only that directive (and the
-whole file when Pantheon created it), so the native Context block comes back on.
-
-The negation is **global-only**, and this has a visible consequence for a
-project-scoped V2 install (`--project`): `cli.json` is a single global file with
-no project-local equivalent, so a project install neither creates nor edits it.
-The negation is therefore not applied, the host's native Context block keeps
-rendering, and the Context block can appear **duplicated** (native + Pantheon's).
-To de-duplicate, either run the installer globally, or add
-`"-opencode.sidebar.context"` to the `plugins` array of
-`~/.config/opencode/cli.json` by hand. The V1 path is untouched.
-
-Notes:
-
-- `.opencode/tui.json` is gitignored; it is machine-specific and must not be
-  committed.
-- **Never** add `src/plugins/tui` to `opencode.json`. That file is packaged and
-  merged into user configs by the installer, so a repo-relative path would leak
-  into third-party installs and fail the CI package gates.
-- While in dev mode, do **not** run `init` inside this repo: the installer treats
-  the repo path as a stale Pantheon TUI reference and removes it.
+`.opencode/tui.json` is gitignored. Never add `src/plugins/tui` to
+`opencode.json`; that file is packaged and merged into user configs.
 
 ## Commands
 

@@ -208,7 +208,7 @@ conventional-commit notes.
 
 ## Stable Release (manual dispatch)
 
-Dispatching [`.github/workflows/release.yml`](../.github/workflows/release.yml)
+Dispatching [`.github/workflows/release.yml`](https://github.com/ils15/pantheon-opencode/blob/main/.github/workflows/release.yml)
 without recovery inputs runs the stable release path:
 
 1. **Type**: channel=`stable`, npm dist-tag=`latest`.
@@ -529,99 +529,12 @@ continues to point at the beta line and is **not** touched by this step.
 
 ---
 
-## Branch Protection (main)
+## Branch protection (main)
 
-> **Configuration contract, not an applied state.** This document describes
-> the required checks that must exist; applying them is a **manual maintainer
-> action** through the GitHub API or UI. No workflow applies branch protection,
-> and an agent must not do it. Enabling required checks on an existing `main`
-> is effectively a one-way door — verify the pre-flight checklist first.
-
-### CI evidence for the released SHA
-
-`.github/workflows/ci.yml` runs on `pull_request` (main, develop) **and on
-`push` to `main`**. The push run is the evidence for the commit a release will
-dispatch on: the six release gates re-run on the frozen `TARGET_SHA`, but the
-required checks must also have passed on the merged `main` SHA itself. A PR-head
-SHA is not a substitute — a merge commit is a different SHA.
-
-### Protection
-
-- `required_pull_request_reviews[required_approving_review_count]=1`
-- 6 required status checks, matching real workflow jobs:
-  **`validate`**, **`test-suite`**, **`plugin-v2-ts-coverage`**,
-  **`commitlint`**, **`security-scan`**, **`CodeQL`**
-- `enforce_admins=false` initially (owner/admin bypass for release unblock)
-
-### Enable / verify (manual, maintainer only)
-
-```bash
-gh api -X PUT repos/ils15/pantheon-opencode/branches/main/protection \
-  -F required_status_checks[strict]=true \
-  -f 'required_status_checks[checks][][context]=validate' \
-  -f 'required_status_checks[checks][][context]=test-suite' \
-  -f 'required_status_checks[checks][][context]=plugin-v2-ts-coverage' \
-  -f 'required_status_checks[checks][][context]=commitlint' \
-  -f 'required_status_checks[checks][][context]=security-scan' \
-  -f 'required_status_checks[checks][][context]=CodeQL' \
-  -F 'required_pull_request_reviews[required_approving_review_count]=1' \
-  -F enforce_admins=false
-```
-
-> GitHub reports checks by **job name** (or the name set by the action). The
-> contexts above map to: `validate`, `test-suite`, and
-> `plugin-v2-ts-coverage` (jobs in `.github/workflows/ci.yml` — these jobs have
-> no `name:` override, so the check name is the job id), `commitlint` (job in
-> `commit-lint.yml`), `security-scan` (job in `security-scan.yml`), and
-> `CodeQL` (analysis reported by `github/codeql-action` in `codeql.yml`).
-> `version-check` is **not** a check: that job was folded into `validate`.
-> Verify the exact reported names before enforcing:
-
-```bash
-gh api repos/ils15/pantheon-opencode/commits/HEAD/check-runs \
-  --jq '.check_runs[].name' | sort -u
-```
-
-### MANDATORY pre-flight checklist
-
-If a required check never passes, **every** push to `main` is locked out,
-including the release pipeline. Confirm ALL of the following before the PUT:
-
-- [ ] **(a)** All 6 checks exist as workflow jobs: `ci.yml` (`validate`,
-      `test-suite`, `plugin-v2-ts-coverage`), `commit-lint.yml` (`commitlint`),
-      `security-scan.yml` (`security-scan`), `codeql.yml` (`analyze`/CodeQL).
-- [ ] **(b)** They all PASS on current `main` (or a PR), including the push run
-      on `main`. If any fails, fix the workflow first — never enable
-      protection on a failing check.
-- [ ] **(c)** ONLY then apply the PUT. After the fact, verify with:
-      ```bash
-      gh api repos/ils15/pantheon-opencode/branches/main/protection
-      ```
-
-### Admin bypass
-
-- **Initial:** `enforce_admins=false` — repo owner can push past failing
-  checks to unblock the release pipeline.
-- **After 2 stable releases:** remove the bypass:
-  ```bash
-  gh api -X PATCH repos/ils15/pantheon-opencode/branches/main/protection \
-    -F enforce_admins=true
-  ```
-
-### Grandfather policy
-
-Commitlint is enforced **from this point forward** on all new commits (local
-`.husky/commit-msg` hook + CI `commitlint` job). **All commits before
-2026-08 are grandfathered** — they are never rewritten or retroactively
-linted. Known example in current history:
-
-- `release: v1.2.1 (#13)` — type `release` is not a conventional type
-
-`git log -15 --format=%s | npx --no commitlint` will list such commits as
-violations; that output is expected and accepted. New commits must follow
-Conventional Commits (see `commitlint.config.js`).
-
----
+The `main` protection policy — required checks, admin bypass, and the manual
+enable/verify procedure — lives in [Branch Protection](BRANCH-PROTECTION.md).
+The release job still re-runs the six gates on the frozen `TARGET_SHA`;
+protection does not replace them.
 
 ## Pre-Release Checklist
 
@@ -678,7 +591,7 @@ Release. Only the stable channel creates a GitHub Release, so only stable
 versions are archived. Beta releases create a git tag and publish to npm but no
 Release, and are therefore intentionally absent from the Zenodo family.
 
-[`.zenodo.json`](../.zenodo.json) is the source of the deposited metadata
+[`.zenodo.json`](https://github.com/ils15/pantheon-opencode/blob/main/.zenodo.json) is the source of the deposited metadata
 (title, creators/ORCID, description, license, keywords, and related
 identifiers). `scripts/versioning.mjs` bumps its `version`, `publication_date`,
 and `url` alongside the other manifests on every release, so the file must stay
