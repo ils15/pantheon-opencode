@@ -32,6 +32,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `pantheon_cost` now reports USD by agent, model and session, accepts `session` scope, and has a hard offline gate.
 - The V2 sidebar aggregates child work in a `Dispatch` block, and `/dispatch` opens a full-width panel over the same data.
 - The installer previews each file before apply, detects drift, keeps an exact backup, and provides `restore`, `reconcile` and `uninstall`.
+- A pristine project database now starts with both checkpoint and goal schemas; startup never adds goal DDL to an existing database.
+- Migrating an existing database for the manual goal tools is an explicit step: dry-run first, server stopped, target confirmed, verified `0600` backup.
+- When the goal schema is absent, the goal tools return the exact migration command.
 
 ### Changed
 
