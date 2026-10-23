@@ -5,6 +5,8 @@ import Module, { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readOnlyRegistry, syncReadOnlySession } from '../../src/pantheon/delegation-enforce.ts'
+import { TODO_CONTINUATION_PROMPT } from '../../src/pantheon/todo-enforcer.ts'
+import { BRIDGE_OPTIONS_KEY } from '../../src/pantheon/v2-bridge.ts'
 import type { HookResult } from '../../src/plugins/hook-runner.ts'
 
 type Registration = { dispose: () => Promise<void> }
@@ -108,7 +110,9 @@ async function main(): Promise<void> {
     default: plugin,
     V2_UNSUPPORTED_FEATURES,
     getUnsupportedFeatures,
+    resetV2BridgeForTests,
     setV2Bridge,
+    setV2ShellRunnerForTests,
     v2Dispose,
   } = await import('../../src/plugin-v2.ts')
   const pluginSource = await readFile(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
@@ -315,13 +319,13 @@ async function main(): Promise<void> {
     // anonymous casts it replaced do not come back.
     assert.match(pluginSource, /interface HostPluginContext extends PluginContext/)
     assert.match(pluginSource, /function hostDomains\(context: PluginContext\): HostPluginContext/)
-    // Seven call sites: registerV2Tools, subscribeV2Events,
+    // Eight call sites: installV2Bridge, registerV2Tools, subscribeV2Events,
     // registerV2SessionHooks, registerV2ToolHooks, registerV2PermissionHook,
     // bounded-read preparation, and Phase 7's compaction hook. New host-domain
     // reads must continue to use this declaration.
     assert.equal(
       (pluginSource.match(/hostDomains\(context\)/g) ?? []).length,
-      7,
+      8,
       'every host-domain read must go through hostDomains(context)',
     )
     assert.doesNotMatch(
@@ -977,17 +981,24 @@ async function main(): Promise<void> {
       idleDelivered = resolve
     })
 
-    setV2Bridge({
-      todoEnforcer: {
-        onIdle: async (sessionID: string) => {
-          deliveredSessionIDs.push(sessionID)
-          idleDelivered()
-        },
-      },
-    } as never)
-
+    // Delivery is observed through the REAL bridge the V2 entry now builds:
+    // `onSessionIdle` dispatches to the constructed enforcer, whose first
+    // action is the todo lookup. A hand-injected bridge would hide exactly the
+    // wiring under test (issue #265).
+    resetV2BridgeForTests()
     await plugin.setup(
       makeBaseContext({
+        session: {
+          hook: async () => ({ dispose: async () => {} }),
+          todo: async (input: { path: { id: string } }) => {
+            deliveredSessionIDs.push(input.path.id)
+            idleDelivered()
+            return []
+          },
+          messages: async () => [],
+          children: async () => [],
+          promptAsync: async () => ({}),
+        },
         event: {
           subscribe: ({ signal: subscribedSignal }: { signal: AbortSignal }) => {
             signal = subscribedSignal
@@ -1024,6 +1035,157 @@ async function main(): Promise<void> {
     assert.equal(signal?.aborted, true, 'v2Dispose aborts the event subscription')
     await finished
     assert.equal(streamClosed, true, 'event iterator exits after the disposal signal')
+  })
+
+  // ─── V1→V2 bridge injection (issue #265) ────────────────────────────
+  //
+  // The bridge factory, the injector and the context accessor existed with NO
+  // production call site: `resolveBridge()` was always null, so idle
+  // continuation was dead on every V2 install. These drive `plugin.setup` and
+  // assert the bridge it builds, then prove `session.idle` reaches a real
+  // enforcer instance (a prompt is injected) instead of a null no-op.
+
+  console.log('\n🌉 V2 Bridge Injection Tests')
+
+  /** The four session methods the enforcer client needs, with recorders. */
+  function idleSessionDomain(options: {
+    todos?: Array<{ content?: string; status: string; id?: string }>
+    onPrompt?: (body: Record<string, unknown>) => void
+  }): Record<string, unknown> {
+    return {
+      hook: async () => ({ dispose: async () => {} }),
+      todo: async () => options.todos ?? [],
+      messages: async () => [],
+      children: async () => [],
+      promptAsync: async (input: { body: Record<string, unknown> }) => {
+        options.onPrompt?.(input.body)
+        return {}
+      },
+    }
+  }
+
+  test('plugin.setup injects the bridge (board + enforcer) instead of leaving it null', async () => {
+    resetV2BridgeForTests()
+    const context = makeBaseContext({ session: idleSessionDomain({}) })
+    await plugin.setup(context as never)
+    const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
+    assert.ok(injected !== undefined, 'setup must inject the bridge into ctx.options')
+    assert.ok(injected?.board !== undefined, 'the bridge must carry the shared board')
+    assert.ok(
+      injected?.todoEnforcer !== undefined,
+      'the bridge must carry a real TodoEnforcer when the session domain supports it',
+    )
+  })
+
+  test('session.idle reaches the enforcer and injects a continuation prompt', async () => {
+    resetV2BridgeForTests()
+    const prompts: Array<Record<string, unknown>> = []
+    const sessionID = 'ses-v2-idle-enforcer'
+    let idleDelivered!: () => void
+    const delivered = new Promise<void>((resolve) => {
+      idleDelivered = resolve
+    })
+    await plugin.setup(
+      makeBaseContext({
+        session: idleSessionDomain({
+          todos: [{ content: 'Finish the parity work', status: 'pending' }],
+          onPrompt: (body) => {
+            prompts.push(body)
+            idleDelivered()
+          },
+        }),
+        event: {
+          subscribe: (_options: { signal: AbortSignal }) => ({
+            async *[Symbol.asyncIterator]() {
+              yield { type: 'session.idle', properties: { sessionID } }
+            },
+          }),
+        },
+      }) as never,
+    )
+    await delivered
+    v2Dispose()
+
+    assert.equal(prompts.length, 1, 'one idle with pending todos must inject exactly one prompt')
+    const parts = prompts[0]?.parts as Array<{ type: string; text: string }> | undefined
+    assert.equal(parts?.[0]?.text, TODO_CONTINUATION_PROMPT)
+  })
+
+  test('a bridge registered by V1 in the same process is reused, never duplicated', async () => {
+    // Co-load case (#265 review): when the V1 plugin loaded first it publishes
+    // its own board+enforcer. Building a second enforcer here would make ONE
+    // `session.idle` produce two continuation prompts.
+    resetV2BridgeForTests()
+    const existingEnforcer = {
+      onIdle: async () => {},
+      listPendingTodos: async () => [],
+    }
+    const existingBridge = {
+      board: { list: () => [], get: () => undefined },
+      todoEnforcer: existingEnforcer,
+    }
+    setV2Bridge(existingBridge as never)
+    const context = makeBaseContext({
+      session: idleSessionDomain({ todos: [{ content: 'must not be used', status: 'pending' }] }),
+    })
+    await plugin.setup(context as never)
+    const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
+    assert.equal(
+      injected?.todoEnforcer,
+      existingEnforcer,
+      'the already-registered enforcer must be reused, not replaced by a second instance',
+    )
+    // The V1 side of the same contract: it publishes its singletons so the V2
+    // entry can find them. Asserted on the source because this suite drives the
+    // V2 entry only.
+    assert.match(
+      pluginV1Source,
+      /registerV2Bridge\(createV2Bridge\(\{ board, todoEnforcer \}\)\)/,
+      'src/plugin.ts must register its board+enforcer for the V2 entry',
+    )
+    resetV2BridgeForTests()
+  })
+
+  test('a failing bridge construction never rejects setup and is reported', async () => {
+    // `injectBridge` writes ctx.options. A read-only options object makes that
+    // write throw — the failure mode the guard exists for: before it, the throw
+    // rejected setup() and every later registration (read guard, secret scan,
+    // tools) silently disappeared with it.
+    resetV2BridgeForTests()
+    let before: ((event: unknown) => void | Promise<void>) | undefined
+    const context = makeBaseContext({
+      options: Object.freeze({}),
+      tool: {
+        hook: async (name: string, handler: (event: unknown) => void | Promise<void>) => {
+          if (name === 'execute.before') before = handler
+          return { dispose: async () => {} }
+        },
+      },
+    })
+    await plugin.setup(context as never)
+    assert.equal(typeof before, 'function', 'the execute.before guard must still be registered')
+    assert.ok(
+      getUnsupportedFeatures().includes('v1-bridge'),
+      'a run without a bridge must say so in the unsupported report',
+    )
+    resetV2BridgeForTests()
+  })
+
+  test('a host without the session methods yields a bridge with no enforcer (declared reduction)', async () => {
+    resetV2BridgeForTests()
+    const context = makeBaseContext({})
+    await plugin.setup(context as never)
+    const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
+    assert.ok(injected !== undefined, 'the bridge is still injected — the board is constructible')
+    assert.equal(
+      injected?.todoEnforcer,
+      undefined,
+      'an enforcer built on absent session methods would be a silent no-op',
+    )
+    assert.ok(
+      getUnsupportedFeatures().includes('idle-todo-enforcer'),
+      'the reduction must be reported, not hidden behind a null bridge',
+    )
   })
 
   // ─── Registry leak: session.deleted (S3) ────────────────────────────
@@ -2058,6 +2220,250 @@ async function main(): Promise<void> {
     assert.match(denial ?? '', /READ-ONLY/)
   })
 
+  // ─── Zeus Read Guard (issue #264, integration) ───────────────────────
+  //
+  // Same discipline as the read-only section above: the handler is the one
+  // `plugin.setup` registered, driven with the host's event shape. V1 wires
+  // `zeusReadGuard` from its `chat.params` session→agent map; V2 had no call
+  // site at all, so on a V2-only install Zeus could read `src/` directly while
+  // docs/PERMISSIONS-QUALITY-DELEGATION.md claimed the guard blocks it.
+  // Deleting the call from src/plugin-v2.ts must drop THESE tests.
+
+  console.log('\n🚫 Zeus Read Guard Tests')
+
+  /** Drive the registered handler and return the denial message, if any. */
+  async function readGuardDenial(
+    before: (event: unknown) => void | Promise<void>,
+    event: { tool: string; agent: string; input: Record<string, unknown> },
+  ): Promise<string | null> {
+    try {
+      await before({
+        tool: event.tool,
+        sessionID: 'ses_v2_read_guard',
+        agent: event.agent,
+        messageID: 'msg_read_guard',
+        id: 'call_read_guard',
+        input: event.input,
+      })
+      return null
+    } catch (err: unknown) {
+      return err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  test('Zeus is DENIED a `read` of src/ through the V2 registration path', async () => {
+    const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
+      tool: 'read',
+      agent: 'zeus',
+      input: { filePath: 'src/plugin-v2.ts' },
+    })
+    assert.ok(denial !== null, 'Zeus must not read source directly on V2 — delegate to @apollo')
+    assert.match(denial, /Zeus cannot read src\/plugin-v2\.ts — delegate to @apollo/)
+  })
+
+  test('Zeus is DENIED `glob` and `grep` of tests/ and scripts/', async () => {
+    for (const [tool, input] of [
+      ['glob', { pattern: 'tests/pantheon/*.test.ts' }],
+      ['grep', { pattern: 'scripts/hooks/scan-secrets.sh' }],
+    ] as const) {
+      const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
+        tool,
+        agent: 'zeus',
+        input,
+      })
+      assert.ok(denial !== null, `Zeus must not ${tool} over source, tests or scripts`)
+      assert.match(denial, /delegate to @apollo/)
+    }
+  })
+
+  test('the read guard exempts the paths Zeus legitimately reads', async () => {
+    for (const input of [
+      { filePath: 'README.md' },
+      { filePath: 'docs/PERMISSIONS-QUALITY-DELEGATION.md' },
+      { filePath: '.pantheon/routing.yml' },
+      { filePath: '.pantheon/memory-bank/memories/notes.md' },
+    ]) {
+      const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
+        tool: 'read',
+        agent: 'zeus',
+        input,
+      })
+      assert.equal(denial, null, `Zeus must keep reading ${JSON.stringify(input)}`)
+    }
+  })
+
+  test('the read guard is scoped to Zeus, not a blanket block on reads', async () => {
+    for (const agent of ['apollo', 'demeter', 'hermes', 'talos']) {
+      const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
+        tool: 'read',
+        agent,
+        input: { filePath: 'src/plugin-v2.ts' },
+      })
+      assert.equal(denial, null, `${agent} must keep reading source directly`)
+    }
+  })
+
+  test('the read guard denies a case-varied Zeus identity (fail-closed on casing)', async () => {
+    const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
+      tool: 'read',
+      agent: 'Zeus',
+      input: { filePath: 'src/plugin.ts' },
+    })
+    assert.ok(denial !== null, 'a `Zeus` agent id must not slip past the exact-match predicate')
+    assert.match(denial, /delegate to @apollo/)
+  })
+
+  // ─── V1 parity on V2 (#266) ──────────────────────────────────────────
+  //
+  // Three V1 behaviours ran only from V1's hooks, which a V2-only install never
+  // loads. These drive the handlers `plugin.setup` registered, so deleting the
+  // wiring drops them.
+
+  console.log('\n🧩 V1 Parity Tests (compaction context, vision history, shell hooks)')
+
+  test('the compaction hook appends the V1 compaction-context blocks to payload.system', async () => {
+    resetV2BridgeForTests()
+    const sessionID = 'ses-v2-compaction' // cspell:disable-line
+    let compactionHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        session: {
+          // The enforcer needs the todo listing; that is what makes V1's
+          // `<todo_context>` block constructible on V2 at all.
+          ...idleSessionDomain({
+            todos: [{ content: 'Ship the V2 parity fixes', status: 'in_progress' }],
+          }),
+          hook: async (name: string, handler: (event: unknown) => void | Promise<void>) => {
+            if (name === 'compaction') compactionHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(typeof compactionHandler, 'function')
+
+    // The host's compaction payload: the id lives on `session.id`, and the
+    // only text sink is `system`.
+    const payload = {
+      session: { id: sessionID },
+      agent: 'zeus',
+      system: [{ type: 'text', text: 'existing system prompt' }],
+      messages: [],
+    }
+    await compactionHandler?.(payload)
+    const system = payload.system as Array<{ type: string; text: string }>
+    const appended = system.slice(1).map((part) => part.text)
+    assert.ok(
+      appended.some((text) => text.includes('<pantheon-context')),
+      'the preservation directive must be injected — V1 does it from experimental.session.compacting',
+    )
+    assert.ok(
+      appended.some((text) => text.includes('Ship the V2 parity fixes')),
+      'pending todos must reach the summarized context (<todo_context>)',
+    )
+    assert.equal(system[0]?.text, 'existing system prompt', 'the host system prompt is kept')
+  })
+
+  test('the context hook replaces image parts with the V1 placeholder text', async () => {
+    let contextHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        session: {
+          hook: async (name: string, handler: (event: unknown) => void | Promise<void>) => {
+            if (name === 'context') contextHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(typeof contextHandler, 'function')
+
+    const payload = {
+      sessionID: 'ses-v2-vision-history',
+      system: [],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'file',
+              mime: 'image/png',
+              filename: 'shot.png',
+              url: 'data:image/png;base64,AA',
+            },
+            // AI-SDK shape: the branch that used to slip through untouched.
+            { type: 'image', image: 'data:image/png;base64,BB' },
+            { type: 'text', text: 'keep this text' },
+          ],
+        },
+      ],
+    }
+    await contextHandler?.(payload)
+    const content = (payload.messages[0]?.content ?? []) as Array<{ type: string; text?: string }>
+    assert.equal(content[0]?.type, 'text', 'an image part must not reach a text-only provider')
+    assert.equal(
+      content[0]?.text,
+      'Imagem removida do histórico antes do envio ao provedor textual.',
+      'the placeholder is V1’s, not a V2 invention',
+    )
+    assert.equal(
+      content[1]?.type,
+      'text',
+      "an AI-SDK `type: 'image'` part must be replaced too — it is the shape that slipped through",
+    )
+    assert.equal(content[2]?.text, 'keep this text', 'non-image parts are untouched')
+  })
+
+  test('execute.before/after run the delegation audit and formatter scripts through registration', async () => {
+    const invocations: Array<{ script: string; payload: Record<string, unknown> }> = []
+    setV2ShellRunnerForTests(async (script, payload) => {
+      invocations.push({ script, payload: payload as Record<string, unknown> })
+      return { code: 0, stdout: '', stderr: '', signal: null, timedOut: false }
+    })
+    try {
+      const captured = await setupCapturingToolHooks()
+      const before = captured.before as (e: unknown) => Promise<void>
+      const after = captured.after as (e: unknown) => Promise<void>
+      await before({
+        tool: 'subagent',
+        sessionID: 'ses-v2-audit',
+        agent: 'zeus',
+        messageID: 'msg_audit',
+        id: 'call_audit',
+        input: { agent: 'apollo' },
+      })
+      const start = invocations.find((call) => call.script === 'on-subagent-delegation-start.sh')
+      assert.ok(start !== undefined, 'the delegation START record must be written on V2')
+      assert.equal(start?.payload.agent_id, 'apollo')
+      assert.equal(typeof start?.payload.delegation_id, 'string')
+
+      await after({
+        tool: 'subagent',
+        sessionID: 'ses-v2-audit',
+        agent: 'zeus',
+        messageID: 'msg_audit',
+        id: 'call_audit',
+        input: { agent: 'apollo' },
+        status: 'completed',
+        result: { output: 'done' },
+      })
+      const stop = invocations.find((call) => call.script === 'on-subagent-delegation-stop.sh')
+      assert.ok(stop !== undefined, 'the delegation STOP record must be written on V2')
+      assert.equal(
+        stop?.payload.delegation_id,
+        start?.payload.delegation_id,
+        'start and stop join on the SAME delegation_id',
+      )
+      assert.equal(stop?.payload.status, 'success')
+      assert.ok(
+        invocations.some((call) => call.script === 'format-multi-language.sh'),
+        'the formatter must run on the V2 after-hook',
+      )
+    } finally {
+      setV2ShellRunnerForTests(null)
+    }
+  })
+
   test('removing the enforcement from plugin-v2 drops the V2 denial path', async () => {
     // Structural counterpart to the behavioural tests above: the guard must be
     // instantiated in THIS module. If it were delegated to a V1 bridge that is
@@ -2221,10 +2627,14 @@ async function main(): Promise<void> {
   test('an ordinary tool call is NOT denied by the secret scan', async () => {
     // The block must be specific. A scanner that denies everything is as broken
     // as one that denies nothing, and this is the test that says so.
+    //
+    // The path is a markdown file on purpose: the Zeus read guard now runs in
+    // the same handler, and `src/index.ts` would be denied by THAT guard, making
+    // this test pass or fail for a reason that has nothing to do with the scan.
     const denial = await secretScanDenial(
       scanCaptured.before as (e: unknown) => Promise<void>,
       'read',
-      { filePath: 'src/index.ts', content: 'export const answer = 42' },
+      { filePath: 'README.md', content: 'export const answer = 42' },
     )
     assert.equal(denial, null, 'a benign tool call must pass the secret scan')
   })

@@ -68,11 +68,39 @@ export const V2_UNSUPPORTED_FEATURE_SEED = Object.freeze([
   // transform, which a live 2.0.22 host does provide.
   'skill-transform',
   // Adapter limitation, not a host gap: the goal loop needs a GoalStore, a
-  // GoalLoopClient and a BackgroundJobBoard, none of which the V2
-  // PluginContext exposes, and the V1 bridge resolves to null outside V1.
-  // pantheon_goal_create/get/update are therefore absent from the V2 surface
-  // rather than registered as non-functional placeholders.
+  // GoalLoopClient and a BackgroundJobBoard. V2 has no `client` to build the
+  // loop's session calls, and the bridge the V2 entry injects deliberately
+  // carries the board and the todo enforcer only, so
+  // pantheon_goal_create/get/update stay absent from the V2 surface rather
+  // than being registered as non-functional placeholders.
   'goal-tools',
+  // CONDITIONAL reduction (issue #265/#267): the V2 entry DOES construct the
+  // V1 TodoEnforcer and inject it through the bridge, but only when the host's
+  // `session` domain exposes the four methods the enforcer uses (`todo`,
+  // `messages`, `children`, `promptAsync`). The measured 2.1.4 domain exposes
+  // `hook`/`get`/`list`/`create`/`remove`/`prompt`/`generate`/… and NOT the
+  // four, so on that host idle continuation does not run and the enforcer is
+  // not constructed — the limitation is announced here instead of being hidden
+  // behind a null bridge. V1 reaches those calls through `client.session`.
+  'idle-todo-enforcer',
+  // Todo preservation across compaction (`todo-preserve.ts`): V1 captures the
+  // session's todo list in `experimental.session.compacting`, activates the
+  // snapshot on `session.compacted` and rewrites the first post-compaction
+  // `todowrite`. V2 has no todo API to capture from, so the snapshot is absent
+  // and the first `todowrite` is not rewritten.
+  'todo-restore',
+  // The `<tool_ceiling>` block fed by `handleToolCeilingEvent` on V1
+  // (`message.updated`). V2's event route handles session.* events only, so
+  // there is no producer for the host-reported remaining context budget and
+  // the block is not injected into the compaction context.
+  'tool-ceiling',
+  // BackgroundJobBoard bookkeeping: the shared board INSTANCE is reachable on
+  // V2 through the injected bridge, but the transitions that make it useful
+  // (onTerminal audit line, terminal reports on session.idle, dispatch mirror
+  // for native background tasks) are driven from V1's event hook and from
+  // pantheon-hooks.ts, neither of which a V2-only install loads. The board is
+  // present; nothing on V2 writes to it.
+  'board-transitions',
 ])
 
 /**

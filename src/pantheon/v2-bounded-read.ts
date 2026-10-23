@@ -61,6 +61,12 @@ const DENIED_EXTENSIONS = new Set([
   '.db',
   '.sql',
 ])
+/**
+ * Top-level code roots denied for the same reason the Zeus read guard denies
+ * them (`ZEUS_READ_DENY_PATTERNS` in delegation-enforce.ts): `src/`, `tests/`,
+ * `scripts/`. Mirrors `/^(src\/|tests?\/|scripts?\/)/`.
+ */
+const DENIED_CODE_ROOTS = new Set(['src', 'test', 'tests', 'script', 'scripts'])
 const DENIED_MEDIA_EXTENSIONS = new Set([
   '.avif',
   '.bmp',
@@ -314,6 +320,14 @@ function sensitivePath(relativePath: string): boolean {
   const leaf = components.at(-1) ?? ''
   const extension = path.extname(leaf)
   return (
+    // Code roots are denied for the SAME reason the Zeus read guard denies
+    // `read`/`glob`/`grep` on them (issue #264): this tool is root-Zeus-only, so
+    // allowing `src/`, `tests/` or `scripts/` here would let the orchestrator
+    // read 2×400 lines of source through a first-class tool while the guarded
+    // `read` is refused — the documented "Zeus delegates code reads to @apollo"
+    // policy would hold only on paper. Docs, config, the memory bank and
+    // `.pantheon/` stay readable: that is what this tool exists for.
+    DENIED_CODE_ROOTS.has(components[0] ?? '') ||
     components.some(
       (component) =>
         DENIED_COMPONENTS.has(component) ||
@@ -499,7 +513,7 @@ export function createV2BoundedReadTool(dependencies: BoundedReadDependencies): 
   const definition: V2ToolDef = {
     name: BOUNDED_READ_TOOL,
     description:
-      'Read a small line range from one exact text file inside the current project. Root Zeus only; two files and 400 lines total per assistant message. Denies recognized sensitive scopes and known binary/media formats; returns only bounded valid UTF-8 text after secret scanning. No directories or fallback reading.',
+      'Read a small line range from one exact text file inside the current project. Root Zeus only; two files and 400 lines total per assistant message. Denies the code roots Zeus must delegate (src/, tests/, scripts/), recognized sensitive scopes, and known binary/media formats; returns only bounded valid UTF-8 text after secret scanning. No directories or fallback reading.',
     input: {
       type: 'object',
       additionalProperties: false,

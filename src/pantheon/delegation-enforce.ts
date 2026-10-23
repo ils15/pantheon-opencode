@@ -210,9 +210,84 @@ export const ZEUS_READ_DENY_PATTERNS: ReadonlyArray<RegExp> = [/^src\//, /^tests
 export const ALLOWED_PATHS: ReadonlyArray<RegExp> = [/\.md$/, /\.pantheon\//, /memories\//]
 
 /**
+ * Normalize a tool-supplied path before it meets the deny patterns.
+ *
+ * The patterns are anchored on `/`, so two spellings of the same source path
+ * used to pass: Windows separators (`src\\file.ts`) and a redundant dot prefix
+ * (`./src/file.ts`). Normalizing both is a TIGHTENING — it can only turn a
+ * previously allowed spelling into a denied one, never the reverse.
+ */
+function normalizeGuardPath(value: string): string {
+  let normalized = value.replace(/\\/g, '/')
+  while (normalized.startsWith('./')) normalized = normalized.slice(2)
+  return normalized
+}
+
+/** One path-bearing argument, and whether it names a target or a query. */
+interface GuardCandidate {
+  value: string
+  /** `filePath`/`path` name the read target; `pattern` may be a grep query. */
+  target: boolean
+}
+
+/**
+ * Path-bearing arguments of a read/glob/grep call.
+ *
+ * EVERY one is returned, not just the first: a `grep` call carries its
+ * directory in `path` and its query in `pattern`, so inspecting only `pattern`
+ * left `path: 'src'` unchecked. `pattern` is a TARGET for `glob` (it is the
+ * path pattern) but a QUERY for `grep` (it is the text to search for), so a
+ * bare `src` query is not a source read.
+ */
+function guardPathCandidates(tool: string, args: unknown): GuardCandidate[] {
+  if (args === null || typeof args !== 'object') return []
+  const record = args as Record<string, unknown>
+  const candidates: GuardCandidate[] = []
+  for (const key of ['filePath', 'path', 'pattern']) {
+    const value = record[key]
+    if (typeof value !== 'string' || value.trim() === '') continue
+    candidates.push({ value, target: key !== 'pattern' || tool === 'glob' })
+  }
+  return candidates
+}
+
+/**
+ * Whether a normalized path points AT or INTO a denied code root.
+ *
+ * A TARGET spelled without a trailing slash (`path: 'src'`) is a directory
+ * reference, so the slash form is tested too — `^src\\/` alone would miss it.
+ * A query (`pattern`) is only denied when it is path-shaped, so grepping for
+ * the literal word `src` stays allowed while `src/**` does not. Absolute paths
+ * are matched on every segment-boundary suffix, so `/abs/src/x` is the same
+ * source tree as `src/x`.
+ */
+function isDeniedReadPath(candidate: string, target: boolean): boolean {
+  const matches = (value: string): boolean =>
+    ZEUS_READ_DENY_PATTERNS.some((pattern) => pattern.test(value))
+  const test = (value: string): boolean => {
+    if (matches(value)) return true
+    return target && !value.endsWith('/') && matches(`${value}/`)
+  }
+  if (test(candidate)) return true
+  if (!candidate.startsWith('/')) return false
+  const segments = candidate.split('/').filter((segment) => segment !== '')
+  for (let index = 0; index < segments.length; index++) {
+    if (test(segments.slice(index).join('/'))) return true
+  }
+  return false
+}
+
+/**
  * Zeus read guard. When the active agent is Zeus, deny read/glob/grep calls
  * that target source code, tests, or scripts — Zeus must delegate those to
  * @apollo. Allowed paths (markdown, .pantheon/, memories/) are exempt.
+ *
+ * Every path-bearing argument is checked, and path spellings are normalized
+ * first. Both are tightenings: a call Zeus could make before with a
+ * `path: 'src'` directory plus a harmless `pattern`, or with `./src/x` /
+ * `src\\x`, is now denied. Symlink resolution is deliberately NOT attempted:
+ * this predicate is pure and synchronous, and resolving links would require
+ * filesystem I/O on every tool call.
  *
  * Non-Zeus sessions are never affected.
  *
@@ -222,24 +297,12 @@ export function zeusReadGuard(tool: string, args: unknown, agent: string | undef
   if (agent !== 'zeus') return
   if (tool !== 'read' && tool !== 'glob' && tool !== 'grep') return
 
-  const record = args as Record<string, unknown> | undefined
-  const filePath =
-    typeof record?.filePath === 'string'
-      ? record.filePath
-      : typeof record?.pattern === 'string'
-        ? record.pattern
-        : undefined
-
-  if (!filePath) return
-
-  for (const pattern of ZEUS_READ_DENY_PATTERNS) {
-    if (pattern.test(filePath)) {
-      // Check allowed-path exceptions before denying
-      for (const allowed of ALLOWED_PATHS) {
-        if (allowed.test(filePath)) return
-      }
-      throw new Error(`Zeus cannot read ${filePath} — delegate to @apollo`)
-    }
+  for (const candidate of guardPathCandidates(tool, args)) {
+    const normalized = normalizeGuardPath(candidate.value)
+    if (normalized === '') continue
+    if (!isDeniedReadPath(normalized, candidate.target)) continue
+    if (ALLOWED_PATHS.some((allowed) => allowed.test(normalized))) continue
+    throw new Error(`Zeus cannot read ${candidate.value} — delegate to @apollo`)
   }
 }
 

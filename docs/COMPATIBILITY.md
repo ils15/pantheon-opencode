@@ -107,9 +107,12 @@ to the client instead (`permission.asked`, `GET /permission`, then
 
 The V2 path is real, not inert: it registers tools with `input`/`output`
 schemas, event subscriptions, session hooks, a read-only-enforcing
-`execute.before` hook, and — when the host exposes it — a `permission.evaluate`
-delegation-matrix hook. It is not full V1 feature parity: the three goal tools
-remain unsupported and are reported as `goal-tools`. See
+`execute.before` hook (which also denies the orchestrator `read`/`glob`/`grep`
+of source, tests and scripts), and — when the host exposes it — a
+`permission.evaluate` delegation-matrix hook. It is not full V1 feature parity:
+the three goal tools remain unsupported and are reported as `goal-tools`, as are
+the host-domain gaps the seed names (`idle-todo-enforcer`, `tool-ceiling`,
+`todo-restore`, `board-transitions`). See
 [Architecture](ARCHITECTURE.md) for the contract and
 [OpenCode V2](opencode-v2.md) for user-facing behavior.
 

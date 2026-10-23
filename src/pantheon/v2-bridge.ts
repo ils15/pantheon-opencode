@@ -124,3 +124,30 @@ export function getV2BridgeFromContext(ctx: V2ContextLike): PantheonV2Bridge | n
 export function injectBridge(ctx: V2ContextLike, bridge: PantheonV2Bridge): void {
   ctx.options[BRIDGE_OPTIONS_KEY] = bridge
 }
+
+// ─── Process-wide registration (cross-generation) ──────────────────────
+
+/**
+ * The bridge registered by whichever plugin loaded first in this process.
+ *
+ * The module-level handle lives HERE rather than in `plugin-v2.ts` because V1
+ * must be able to publish its singletons WITHOUT importing the V2 plugin: a
+ * V1-only install never loads `plugin-v2.ts`, and importing it just to hand
+ * over a bridge would pull the V2 `define()` into that process.
+ *
+ * Why registration matters: in a process that loads both generations (npm +
+ * repo double load, or a mixed config), V1's idle dispatcher and the V2 entry
+ * would otherwise each build a TodoEnforcer and answer the same `session.idle`
+ * twice — two continuation prompts for one idle. V1 registers; V2 reuses.
+ */
+let registeredBridge: PantheonV2Bridge | null = null
+
+/** Publish (or, with `null`, clear) the process-wide bridge. */
+export function registerV2Bridge(bridge: PantheonV2Bridge | null): void {
+  registeredBridge = bridge
+}
+
+/** The bridge published by this process, or null. */
+export function getRegisteredV2Bridge(): PantheonV2Bridge | null {
+  return registeredBridge
+}

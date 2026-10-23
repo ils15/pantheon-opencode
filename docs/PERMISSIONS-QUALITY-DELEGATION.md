@@ -100,7 +100,7 @@ failing-closed gates, but they are not the reviewer:
 | Read-only sessions may not mutate | `tool.execute.before` throws | [`src/pantheon/delegation-enforce.ts:181`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L181) (blocked-tool set), [`src/plugin.ts:101`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L101) |
 | A child session may not delegate again | same guard, child-session branch | [`src/pantheon/delegation-enforce.ts:353`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L353) |
 | Caller/target delegation matrix | same guard, `isDelegationAllowed` (V1; V2 uses the permission hook — see [§3.5](#35-per-host-generation-what-you-can-rely-on)) | [`src/pantheon/delegation-enforce.ts:138`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L138) |
-| The orchestrator may not read source | `zeusReadGuard` throws | [`src/pantheon/delegation-enforce.ts:221`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L221) |
+| The orchestrator may not read source | `zeusReadGuard` throws | [`src/pantheon/delegation-enforce.ts:221`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L221), wired on V1 from the `chat.params` agent map ([`src/plugin.ts:482`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L482)) and on V2 from the `execute.before` event agent ([`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)) |
 | Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:138` |
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
 | Secrets | pre-commit gitleaks + CI scan | `.pre-commit-config.yaml:7` |
@@ -798,6 +798,26 @@ conflate:
    genuine child. An unseeded session reports as a *root*, and `true` **passes**
    the root gate ([`src/pantheon/delegation-enforce.ts:109-116`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L109-L116)) — it does not deny.
 
+Neither omission leaves the orchestrator able to read source. The Zeus read
+guard is a **separate call in the same `execute.before` handler**, fed from the
+event's own `agent` field, so `read`/`glob`/`grep` of `src/`, `tests/` or
+`scripts/` by Zeus throws on V2 exactly as on V1 — and V2 denies the
+case-varied `Zeus` identity too, because it normalizes the event agent before
+the exact-match predicate (issue #264).
+
+The guard also normalizes the path it is given and checks every path-bearing
+argument, not the first one it finds: `./src/x`, `src\x` and `/repo/src/x` are
+the same source tree as `src/x`, and `grep` with `path: "src"` plus a harmless
+`pattern` no longer slips through on the query. The V2-only
+`pantheon_bounded_read` tool applies the same restriction to its own targets
+(`src/`, `tests/`, `scripts/` are refused with `PATH_DENIED`) while keeping
+docs, config, the memory bank and `.pantheon/` readable — otherwise a
+root-Zeus-only tool would be a wider door than the `read` it replaces.
+Symlinks are **not** resolved by the predicate: it is pure and synchronous, and
+resolving them would add filesystem I/O to every tool call. `bounded_read`
+itself refuses any path or component that is a symlink, and the native `read`
+resolution is the host's.
+
 **Unwired, not impossible.** V2's `session.created` event carries
 `properties.info.parentID`, so live sessions could be seeded in
 `onSessionCreated`; what V2 lacks is V1's `client.session.list()` startup seed,
@@ -835,17 +855,20 @@ This is the part with no existing documentation, and the part whose absence is n
 the store and the client it needs are all reachable only from the V1 plugin, which
 the V2 contract does not register. The adapter lists the goal tooling as absent for
 exactly this reason: it needs a store, a loop client and a board, none of which the
-V2 plugin context exposes ([`src/pantheon/v2-unsupported.mjs:71`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs#L71)).
+V2 plugin context exposes ([`src/pantheon/v2-unsupported.mjs`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs)).
 
-The bridge that would carry them across exists and is never wired. The bridge factory
-and the context accessor are both implemented
-([`src/pantheon/v2-bridge.ts:89`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-bridge.ts#L89), [`src/pantheon/v2-bridge.ts:110`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-bridge.ts#L110)), and **no production code path calls the
-factory** — its only callers are in the test suite. So the V2 accessor returns null
-in every real configuration, and that null is handled by *not registering the
-dependent tools* rather than by registering them as non-functional. **Absent, not
-broken** still describes the board itself — but "absent" no longer means "unnoticed":
-the reduction carries a marker (`goal-tools`, [`src/pantheon/v2-unsupported.mjs:70-75`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs#L70-L75)),
-and two surfaces report it.
+**The bridge is wired, and the board is still inert.** `createV2Bridge`/`injectBridge`
+are called from the V2 entry (`installV2Bridge`, [`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)), so
+`resolveBridge()` is no longer null and `session.idle` reaches the todo enforcer
+when the host's session domain supports it. When V1 loaded first, it publishes its
+own board+enforcer (`registerV2Bridge` in [`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts)) and V2 reuses that
+instance instead of building a second one — two enforcers would answer one idle
+with two continuation prompts. Construction is guarded: a throw degrades the run to
+a bridge-less plugin and appends the runtime marker `v1-bridge`, rather than
+rejecting `setup()` and taking the read guard, the secret scan and every tool with
+it. What the injected board does **not** gain is a writer: the transitions below are
+driven from V1's event hook and from `pantheon-hooks.ts`, neither of which a
+V2-only install loads, and the reduction is declared as `board-transitions`.
 
 | Board capability | V1 contract | V2 contract |
 |---|---|---|

@@ -88,6 +88,7 @@ import type {
   ReferenceDraft,
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
+import { buildCompactionContext } from './pantheon/compaction-context.ts'
 import {
   CONTEXT_PRUNER_CONFIG_KEYS,
   describeContextPrunerConfigIssues,
@@ -98,25 +99,42 @@ import {
 } from './pantheon/context-pruner.ts'
 import {
   createEnforcementGuard,
+  normalizeDelegationAgent,
   readOnlyRegistry,
   syncReadOnlySession,
   type ToolExecuteBeforeInput,
   type ToolExecuteBeforeOutput,
+  zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
+import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import {
   applyMemoryInjection,
   MemoryInjectionCache,
   resolveMemoryInjectionConfig,
   warnInvalidMemoryInjectionConfig,
 } from './pantheon/memory-context.ts'
+import { getSharedBoard } from './pantheon/shared-board.ts'
+import {
+  TODO_ENFORCER_DEFAULTS,
+  TodoEnforcer,
+  type TodoEnforcerChild,
+  type TodoEnforcerClient,
+  type TodoEnforcerMessage,
+  type TodoLike,
+  todoEnforcerEnabledFromEnv,
+} from './pantheon/todo-enforcer.ts'
 import {
   BOUNDED_READ_TOOL,
   createV2BoundedReadTool,
   type V2BoundedReadOriginRegistry,
 } from './pantheon/v2-bounded-read.ts'
 import {
+  createV2Bridge,
+  getRegisteredV2Bridge,
   getV2BridgeFromContext,
+  injectBridge,
   type PantheonV2Bridge,
+  registerV2Bridge,
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
 import {
@@ -129,9 +147,11 @@ import {
 } from './pantheon/v2-delegation-enforce.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/v2-execute-after.ts'
 import { applyV2ModelOverrides, readV2ModelConfiguration } from './pantheon/v2-model-overrides.ts'
+import { createV2ShellHooks, type V2ShellRunner } from './pantheon/v2-shell-hooks.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.ts'
 import { V2_UNSUPPORTED_FEATURE_SEED } from './pantheon/v2-unsupported.mjs'
 import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/v2-vision.ts'
+import { sanitizeVisionHistory } from './pantheon/vision.ts'
 import { type HookPayload, type HookResult, runHook } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
@@ -224,6 +244,35 @@ function normalizeSystemToParts(system: unknown): unknown[] | null {
     }
   }
   return system
+}
+
+/** Set once, so a payload without a `system` channel warns once per process. */
+let compactionChannelWarned = false
+
+/** Set once, so a failed bridge construction logs one line per process. */
+let bridgeFailureLogged = false
+
+/**
+ * Append text blocks to a hook payload's `system` channel.
+ *
+ * Returns `false` when the payload carries no usable channel (absent, or a
+ * shape that is neither string nor array) — the caller decides whether that is
+ * worth a diagnostic. A bare-string `system` is replaced by its part array on
+ * the payload itself, because the host reads the property, not our copy.
+ *
+ * Used by the V2 compaction hook (#266) to inject the compaction context
+ * blocks V1 pushes into `output.context`.
+ */
+function appendSystemBlocks(
+  target: { system?: unknown } | null | undefined,
+  blocks: readonly string[],
+): boolean {
+  if (target == null || blocks.length === 0) return false
+  const normalized = normalizeSystemToParts(target.system)
+  if (normalized == null) return false
+  if (typeof target.system === 'string') target.system = normalized
+  for (const block of blocks) normalized.push({ type: 'text', text: block } satisfies SystemPart)
+  return true
 }
 
 /**
@@ -333,16 +382,138 @@ let v1Bridge: PantheonV2Bridge | null = null
  */
 export function setV2Bridge(bridge: PantheonV2Bridge): void {
   v1Bridge = bridge
+  // Also publish process-wide so a V1 load that registers FIRST and a V2 load
+  // that resolves SECOND converge on one bridge (see v2-bridge.ts).
+  registerV2Bridge(bridge)
 }
 
 /**
- * Get the V1 bridge, checking module-level first, then ctx.options.
+ * Get the V1 bridge, checking module-level first, then the process-wide
+ * registration, then ctx.options.
  * Returns null when no bridge is available (V2 standalone mode).
  */
 function resolveBridge(ctx?: V2ContextLike): PantheonV2Bridge | null {
   if (v1Bridge != null) return v1Bridge
+  const registered = getRegisteredV2Bridge()
+  if (registered != null) {
+    v1Bridge = registered
+    return registered
+  }
   if (ctx != null) return getV2BridgeFromContext(ctx)
   return null
+}
+
+/**
+ * The subset of the host's `session` domain a `TodoEnforcerClient` needs.
+ *
+ * Declared structurally and checked at runtime instead of being added to
+ * {@link V2SessionDomain} on faith: the measured 2.1.4 host exposes
+ * `hook`/`get`/`list`/`create`/`remove`/`prompt`/`generate`/`interrupt` on that
+ * domain. Its `prompt` takes `{ sessionID, text }` and is a DIFFERENT call from
+ * V1's `promptAsync({ path, body: { agent?, model?, parts } })` — the enforcer's
+ * agent/model inheritance has no V2 counterpart — and whether it exposes
+ * `todo`/`messages`/`children` at all is not measured by the repository. The
+ * check below therefore requires the V1 shape exactly: a client built on a
+ * method that is absent (or on a same-named method with a different contract)
+ * would throw inside the enforcer's fail-open guards and leave idle
+ * continuation silently dead again — the exact defect this wiring closes.
+ */
+interface V2TodoSessionMethods {
+  todo?: (input: { path: { id: string } }) => Promise<unknown>
+  messages?: (input: { path: { id: string } }) => Promise<unknown>
+  children?: (input: { path: { id: string } }) => Promise<unknown>
+  promptAsync?: (input: { path: { id: string }; body: Record<string, unknown> }) => Promise<unknown>
+}
+
+const V2_TODO_CLIENT_METHODS = ['todo', 'messages', 'children', 'promptAsync'] as const
+
+/**
+ * Adapt the host's `session` domain to the {@link TodoEnforcerClient} the V1
+ * enforcer instance expects, or `undefined` when the domain does not carry the
+ * four methods. The input shape is V1's (`{ path: { id } }`) because the
+ * enforcer is the V1 instance — this is an adapter, not a second enforcer.
+ */
+function createV2TodoEnforcerClient(
+  session: V2SessionDomain | undefined,
+): TodoEnforcerClient | undefined {
+  if (session === undefined) return undefined
+  const methods = session as V2TodoSessionMethods
+  for (const method of V2_TODO_CLIENT_METHODS) {
+    if (typeof methods[method] !== 'function') return undefined
+  }
+  // Every method is present: the guard above is the only place absence is
+  // tolerated, so the assertions below cannot fire at runtime.
+  const todo = methods.todo as NonNullable<V2TodoSessionMethods['todo']>
+  const messages = methods.messages as NonNullable<V2TodoSessionMethods['messages']>
+  const children = methods.children as NonNullable<V2TodoSessionMethods['children']>
+  const promptAsync = methods.promptAsync as NonNullable<V2TodoSessionMethods['promptAsync']>
+  return {
+    session: {
+      todo: (input) => todo.call(session, input) as Promise<TodoLike[]>,
+      messages: (input) => messages.call(session, input) as Promise<TodoEnforcerMessage[]>,
+      children: (input) => children.call(session, input) as Promise<TodoEnforcerChild[]>,
+      promptAsync: (input) => promptAsync.call(session, input),
+    },
+  }
+}
+
+/**
+ * Construct the V1→V2 bridge IN the V2 entry and publish it on both channels
+ * (issue #265).
+ *
+ * Before this, `setV2Bridge`/`injectBridge`/`createV2Bridge` had no production
+ * caller: `resolveBridge()` always returned null, so `onSessionIdle` reached a
+ * null enforcer and idle continuation never ran on any V2 install — including
+ * the V1+V2 co-load, because nothing had ever put a bridge in `ctx.options`
+ * either.
+ *
+ * What is genuinely constructible without a V1 `PluginInput`:
+ *
+ *   - `board` — a process-wide singleton (`getSharedBoard`), the same instance
+ *     V1 and the hooks plugin use.
+ *   - `todoEnforcer` — the V1 class, fed by an adapter over the host's session
+ *     domain. Present only when that domain exposes the four methods the
+ *     enforcer uses; otherwise the reduction is marked (`idle-todo-enforcer`)
+ *     and, because the marker is one a migrating user must be told about, it
+ *     is also part of the static seed.
+ *
+ * Files in the bridge that need a V1 `client` (goal loop, vision handler) stay
+ * out: `goal-tools` already declares the goal surface absent, and the vision
+ * handler is V1-only.
+ */
+function installV2Bridge(context: PluginContext): TodoEnforcer | undefined {
+  // Co-load guard (#265 review): a bridge with an enforcer may already exist —
+  // registered by V1 in this process, or by an earlier V2 setup. Building a
+  // second enforcer would answer the same `session.idle` twice (V1's dispatcher
+  // and this plugin each inject a continuation prompt). Reuse, never overwrite.
+  const existing = resolveBridge(context)
+  if (existing?.todoEnforcer !== undefined) {
+    injectBridge(context, existing)
+    return existing.todoEnforcer
+  }
+
+  const todoClient = createV2TodoEnforcerClient(hostDomains(context).session)
+  if (todoClient === undefined) markUnsupported('idle-todo-enforcer')
+  const board = getSharedBoard()
+  const todoEnforcer =
+    todoClient === undefined
+      ? undefined
+      : new TodoEnforcer({
+          client: todoClient,
+          board,
+          options: { ...TODO_ENFORCER_DEFAULTS, enabled: todoEnforcerEnabledFromEnv() },
+        })
+  const bridge = createV2Bridge({ board, ...(todoEnforcer === undefined ? {} : { todoEnforcer }) })
+  // Two channels, both needed: `ctx.options` is what a handler holding the
+  // context reads (`resolveBridge(ctx)`), and the module-level reference is
+  // what the event handlers use, since they receive no context.
+  injectBridge(context, bridge)
+  setV2Bridge(bridge)
+  // Returned so the compaction hook can list the session's PENDING TODOS with
+  // the same instance — the `<todo_context>` half of V1's compaction blocks
+  // needs exactly `listPendingTodos`, and the host exposes no todo listing of
+  // its own.
+  return todoEnforcer
 }
 
 // ─── V2 Transform Functions ─────────────────────────────────────────────
@@ -656,10 +827,11 @@ async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
   // ever arrives. Implementing this safely needs V2-side session threading
   // first; until then it stays deferred rather than approximated.
   //
-  // Idle continuation — goal loop / todo enforcer dispatch. This one really
-  // does delegate: `bridge.todoEnforcer` is the V1 enforcer instance, reached
-  // only in a process that also loaded V1. On a V2-only install the bridge
-  // resolves to null and idle continuation does not run.
+  // Idle continuation — goal loop / todo enforcer dispatch. The bridge is
+  // constructed by THIS module in `installV2Bridge` (Phase 0) and holds the
+  // V1 TodoEnforcer instance when the host's session domain exposes the
+  // methods the enforcer uses. Before issue #265 nothing injected a bridge on
+  // the V2 path, so this call was a guaranteed no-op on every install.
   const sessionID = _event.properties?.sessionID as string | undefined
   if (!sessionID) return
   const bridge = resolveBridge()
@@ -828,6 +1000,16 @@ function warnContextPrunerConfigOnce(options: unknown): void {
 const memoryInjectionCache = new MemoryInjectionCache()
 
 /**
+ * Empty description cache for {@link sanitizeVisionHistory}.
+ *
+ * V1 fills this from the vision handler (per-part text captured at
+ * `chat.message` time). V2 has no equivalent cache, so the sanitizer falls back
+ * to its own placeholder text for every image part — which is the contract that
+ * matters: an image never reaches the provider as image content.
+ */
+const V2_VISION_HISTORY_TEXT: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map()
+
+/**
  * Register session hooks via V2 ctx.session.hook.
  *
  * The V2 session.hook API (when available) provides:
@@ -911,6 +1093,24 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
             memoryInjectionCache,
             appendV2HookLog,
           )
+        }
+        // Vision history sanitization (V1
+        // `experimental.chat.messages.transform` parity, #266). Image parts are
+        // replaced with their cached description, or with the same placeholder
+        // V1 uses, BEFORE a text-only provider serializer can turn them into
+        // `image_url` content. The host's `context` payload carries the
+        // provider-bound `messages` array and honors mutations per request, so
+        // this is the same seam V1's transform occupies.
+        //
+        // The description map is empty on V2 by construction: descriptions are
+        // cached by the V1 vision handler, which has no V2 counterpart (V2
+        // materializes the image and asks the model to call `vision_describe`).
+        // Every image part therefore becomes the placeholder — the safety
+        // property V1's transform exists for — never a raw image.
+        try {
+          sanitizeVisionHistory({ messages: ctx.messages }, V2_VISION_HISTORY_TEXT)
+        } catch (error) {
+          logPruneFailureOnce(ctx.sessionID, 'context', error)
         }
         // Opt-in DCP: same engine as the compaction site, but per-request
         // pruning invalidates the prompt cache, so it runs only when
@@ -1316,9 +1516,20 @@ interface V2ToolExecuteBeforeEvent {
  *
  * Omitting all three skips the branch wholesale: the guard only enters it when
  * `options?.isRootSession !== undefined`. `task` is still denied inside a
- * read-only session via the blocked-tool list, so depth-2 holds for
- * apollo/gaia; the caller/target matrix itself is NOT enforced on V2. That is
- * a known gap, not a covered case.
+ * read-only session via the blocked-tool list, so the read-only half of depth-2
+ * holds for apollo/gaia.
+ *
+ * The caller/target half is NOT this guard's job on V2, and that is a division
+ * of labour rather than a gap: V2 delegates through the native `subagent` tool
+ * and its `permission.hook('evaluate')` handler, which calls
+ * `evaluateV2Delegation` — the matrix (zeus → anyone; athena/hermes → apollo)
+ * plus the same depth-2 rule, expressed as "a caller session that carries a
+ * `parentID` is denied". Both are proved in
+ * tests/pantheon/plugin-v2-contract.test.ts and
+ * tests/pantheon/v2-delegation-enforce.test.ts.
+ *
+ * The Zeus read guard is a SEPARATE call in the same `execute.before` handler
+ * (issue #264), fed from the same event `agent`; it is not part of this guard.
  */
 const v2EnforcementGuard = createEnforcementGuard({
   getReadOnlySessions: () => readOnlyRegistry.sessionIDs(),
@@ -1359,6 +1570,35 @@ function adaptV2ExecuteBeforeEvent(event: unknown): {
 }
 
 /**
+ * Test seam — override (or, with `null`, restore) the V2 shell-hook runner.
+ *
+ * Exported only for tests/pantheon/plugin-v2-contract.test.ts, which asserts
+ * that the REGISTERED `execute.before`/`execute.after` handlers invoke the
+ * formatter and the delegation audit scripts. Spawning the real scripts would
+ * make the assertion depend on the shell, not on the wiring; the scripts
+ * themselves are covered by tests/pantheon/v2-shell-hooks.test.ts.
+ */
+export function setV2ShellRunnerForTests(runner: V2ShellRunner | null): void {
+  shellRunnerOverride = runner ?? undefined
+}
+
+let shellRunnerOverride: V2ShellRunner | undefined
+
+/**
+ * Test seam — clear the module-level bridge AND the process-wide registration.
+ *
+ * Exported only for tests/pantheon/plugin-v2-contract.test.ts. The co-load guard
+ * makes `installV2Bridge` reuse an existing bridge (so V1's enforcer is never
+ * duplicated), which means a test that asserts the CONSTRUCTION path has to
+ * start from "no bridge". Production has no caller: a process keeps its bridge
+ * for its lifetime.
+ */
+export function resetV2BridgeForTests(): void {
+  v1Bridge = null
+  registerV2Bridge(null)
+}
+
+/**
  * Register tool execution hooks via V2 ctx.tool.hook.
  *
  * The V2 tool.hook API (when available) provides:
@@ -1377,6 +1617,14 @@ async function registerV2ToolHooks(
   if (!toolCtx?.hook) {
     return { registered: false, beforeRegistered: false }
   }
+
+  // V1 shell-hook parity (#266): formatter on every after-event, delegation
+  // audit start/stop. Both scripts are environment-independent, so they are
+  // invoked through the same runner the secret scan uses.
+  const shellHooks = createV2ShellHooks({
+    ...(shellRunnerOverride === undefined ? {} : { run: shellRunnerOverride }),
+    onUnkeyed: appendV2HookLog,
+  })
 
   let registered = false
   let beforeRegistered = false
@@ -1401,6 +1649,22 @@ async function registerV2ToolHooks(
         // and no session→agent map. A non-read-only (or absent) agent revokes the
         // registration, which also covers an in-session agent switch.
         syncReadOnlySession(readOnlyRegistry, input.sessionID, agent)
+        // Zeus read guard (issue #264). V1 wires this from its `chat.params`
+        // session→agent map (`src/plugin.ts`); V2 has no such map because the
+        // host puts the active agent on THIS event, so the guard is fed from
+        // the event's `agent` field — the same identity the read-only
+        // registry above already trusts.
+        //
+        // Fail-closed on casing: `zeusReadGuard` compares the agent with an
+        // exact `!== 'zeus'`, so a host that reports `Zeus` would silently
+        // disable the guard. Normalizing through the shared
+        // `normalizeDelegationAgent` keeps the comparison meaningful without
+        // changing the predicate V1 uses.
+        //
+        // Runs BEFORE the read-only guard, matching V1's chain order. Both
+        // throw to deny; neither is inside the scanner's try/catch, so a
+        // denial keeps propagating to the host.
+        zeusReadGuard(input.tool, output.args, normalizeDelegationAgent(agent))
         // Deliberately OUTSIDE the try/catch below: a read-only denial must keep
         // propagating to the host, not be swallowed as a scanner failure.
         await v2EnforcementGuard(input, output)
@@ -1469,6 +1733,10 @@ async function registerV2ToolHooks(
         if (origin !== undefined) {
           writeV2AdmissionProof('tool.execute.before', { ...origin })
         }
+        // Delegation audit START record (#266). Deliberately AFTER every guard
+        // and the secret scan: a denied call must not leave a start record with
+        // no matching stop. The formatter/stop halves run in `execute.after`.
+        await shellHooks.before(event)
       } finally {
         // BENCH instrumentation — observation only; runs on the deny paths too.
         logBenchHookTiming('before', event, benchStartedAt)
@@ -1499,6 +1767,10 @@ async function registerV2ToolHooks(
         subagentOrigins.forget(event)
         boundedReadOrigins?.forget(event)
         await v2ExecuteAfter(event)
+        // Formatter + delegation audit STOP (#266). Awaited for the same
+        // reason V1 awaits it: the log record should exist before the tool
+        // result is surfaced. Failures are swallowed inside the module.
+        await shellHooks.after(event)
       } finally {
         // BENCH instrumentation — observation only; the awaited call means the
         // duration covers the whole parity chain, not just its dispatch.
@@ -1778,6 +2050,39 @@ export const plugin = define({
   id: 'pantheon-opencode-v2',
 
   async setup(context: PluginContext): Promise<void> {
+    // ─── Phase 0: V1→V2 bridge (issue #265) ────────────────────────────
+    // First, because the event subscription below can deliver `session.idle`
+    // as soon as it starts: a bridge installed after it would lose the first
+    // idle of the process. Constructing it here is what makes
+    // `resolveBridge()` non-null on a V2 install — before this, the factory
+    // and the injector had no production call site at all.
+    //
+    // The returned enforcer (when the host session domain supports it) is the
+    // single instance: Phase 7 asks it for pending todos and the idle path asks
+    // it to continue, so there are never two.
+    //
+    // Guarded, because this phase is the only one that MUTATES the context:
+    // `injectBridge` writes `ctx.options`, and an unguarded throw here would
+    // reject `setup()` and remove every later registration with it — the read
+    // guard, the secret scan and all tools. A degraded run is far better than a
+    // plugin that registers nothing, and the degradation is reported (`v1-bridge`
+    // in the live unsupported list) instead of being invisible.
+    let idleEnforcer: TodoEnforcer | undefined
+    try {
+      idleEnforcer = installV2Bridge(context)
+    } catch (error) {
+      idleEnforcer = undefined
+      markUnsupported('v1-bridge')
+      if (!bridgeFailureLogged) {
+        bridgeFailureLogged = true
+        const reason = error instanceof Error ? error.message : String(error)
+        appendV2HookLog(
+          `[v1-bridge] construction failed; continuing without a bridge ` +
+            `(idle continuation and todo context unavailable): ${reason}`,
+        )
+      }
+    }
+
     // ─── Phase 1: V2 Transforms (isolated per-domain, best-effort) ────
     // Each transform registration is individually wrapped and settled via Promise.allSettled:
     // a rejection marks only that transform unsupported
@@ -1858,13 +2163,17 @@ export const plugin = define({
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────
     const compactionCtx = hostDomains(context).session
     if (compactionCtx?.hook) {
+      // File-based goal store, constructed once: the compaction context needs
+      // active goals per session, and the store needs no host API (same
+      // `.pantheon/goals` directory V1 uses).
+      const goalStore = new GoalStore({ dir: '.pantheon/goals' })
       try {
         // 2.0.16 `SessionHooks` key is `compaction` (the migration doc maps
         // `experimental.session.compacting` → `ctx.session.hook("compaction")`).
         // `compacting` is not a valid key: the registry accepts any string and
         // silently drops unknown names, so the old name was a permanent no-op.
         // Proven by the canary's negative control.
-        await compactionCtx.hook('compaction', (event: unknown) => {
+        await compactionCtx.hook('compaction', async (event: unknown) => {
           try {
             // Opt-in lifetime proof for the host-backed hook canary
             // (tests/pantheon/plugin-v2-hook-canary.test.mjs, MODE=real). It is
@@ -1889,11 +2198,68 @@ export const plugin = define({
             // untouched. Apply the rules by default: it only changes what feeds
             // the summary. Never set `input.result`: the model must summarize
             // the pruned history, not be replaced by a canned summary.
-            const payload = event as { sessionID?: unknown; messages?: unknown } | null | undefined
+            //
+            // The host's compaction payload is
+            // `{ session, agent, model, tools, system, messages, … }` — the id
+            // is on `session.id`, NOT top-level `sessionID` (measured against
+            // the 2.1.4 host; both spellings are accepted below).
+            const payload = event as {
+              sessionID?: unknown
+              session?: { id?: unknown }
+              messages?: unknown
+              system?: unknown
+            } | null
+            const sessionID =
+              typeof payload?.sessionID === 'string'
+                ? payload.sessionID
+                : typeof payload?.session?.id === 'string'
+                  ? payload.session.id
+                  : undefined
             const prunerConfig = resolveContextPrunerConfig(context.options)
             const stats = pruneMessages(payload?.messages, prunerConfig, 'compaction')
             logContextPrune(stats)
-            logPruneShapeIssue(stats, payload?.sessionID, 'compaction')
+            logPruneShapeIssue(stats, sessionID, 'compaction')
+
+            // Compaction context (V1 `experimental.session.compacting`
+            // parity, #266). The SAME builder V1 uses — directive +
+            // `<mission_context>` — pushed into the payload's `system` array,
+            // which is the only text sink the V2 compaction hook exposes
+            // (`context` is the session-hook name in V1, not a field here).
+            //
+            // The `<todo_context>` section is present only when the bridge
+            // built a real enforcer (host session domain exposes the todo
+            // listing), and `<tool_ceiling>` has no V2 producer at all — both
+            // reductions are declared in the capability seed instead of
+            // silently missing.
+            const blocks = await buildCompactionContext({
+              ...(sessionID === undefined ? {} : { sessionID }),
+              goals: {
+                // Same gate V1 uses: the goal loop is disabled in this build,
+                // so `<mission_context>` is omitted on both surfaces.
+                enabled: GOAL_LOOP_DEFAULTS.enabled,
+                list: (id: string) => goalStore.list(id),
+              },
+              ...(idleEnforcer === undefined
+                ? {}
+                : {
+                    todos: {
+                      // V1's own source: `TodoEnforcer.listPendingTodos`.
+                      enabled: todoEnforcerEnabledFromEnv(),
+                      list: (id: string) => idleEnforcer.listPendingTodos(id),
+                    },
+                  }),
+            })
+            if (blocks.length > 0 && !appendSystemBlocks(payload, blocks)) {
+              // The payload carried no usable `system`. Diagnostic once per
+              // process: a silent miss here would look like "no goals".
+              if (!compactionChannelWarned) {
+                compactionChannelWarned = true
+                appendV2HookLog(
+                  '[compaction-context] payload.system is not a string or array; ' +
+                    'compaction context could not be injected',
+                )
+              }
+            }
           } catch (error) {
             // Fail-open: any unexpected shape or engine failure must not kill
             // the compaction request. One diagnostic line per session maximum.
