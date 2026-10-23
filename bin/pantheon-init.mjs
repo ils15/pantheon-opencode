@@ -62,6 +62,7 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --dry-run --save-plan <file> # Save reviewed plan')
   console.log('  npx pantheon-opencode init --apply-plan <file> [--yes] # Apply reviewed plan')
   console.log('  npx pantheon-opencode init --dry-run --json # Versioned JSON preview')
+  console.log('  npx pantheon-opencode init --verbose      # Step-by-step install detail')
   console.log('  npx pantheon-opencode init --no-mcp       # Skip MCP + venv')
   console.log('  npx pantheon-opencode init --force        # Overwrite + recreate venv')
   console.log('  npx pantheon-opencode init --doctor       # Run health check after install')
@@ -393,6 +394,7 @@ async function main() {
           '--yes',
           '-y',
           '--json',
+          '--verbose',
         ].includes(bare)
       ) {
         console.error(`⚠️  Unknown option ignored: ${arg}`)
@@ -536,6 +538,7 @@ async function main() {
         noMcp: skipMCP,
         planTimestamp,
         quiet: isJson,
+        verbose: args.includes('--verbose') && !isJson,
       })
     } catch (err) {
       installError = err
@@ -612,6 +615,7 @@ async function main() {
       for (const file of files) {
         if (Object.hasOwn(totals, file.action)) totals[file.action] += 1
       }
+      const mcpServers = result.mcpServers ?? []
       process.stdout.write(
         `${JSON.stringify({
           schema_version: 1,
@@ -621,9 +625,14 @@ async function main() {
           target: result.target,
           open_code_version: result.openCodeVersion,
           advisories: result.versionAssumed
-            ? ['OpenCode host probe skipped to keep dry-run write-free; V1 was assumed.']
+            ? [
+                'The OpenCode host generation could not be detected; this plan assumes V1 ' +
+                  'and may diverge from the apply. Pass --opencode-version v1|v2 to pin it.',
+              ]
             : [],
           totals,
+          mcp_servers: mcpServers,
+          mcp_server_count: mcpServers.length,
           files: files.map(({ path: filePath, action, bytes }) => ({
             path: path.relative(result.target, filePath) || '.',
             action,

@@ -166,6 +166,7 @@ test('explicit --components does not add runtime to the CLI install plan', () =>
         '--project',
         '--headless',
         '--dry-run',
+        '--verbose',
         '--version',
         'v1',
         '--components',

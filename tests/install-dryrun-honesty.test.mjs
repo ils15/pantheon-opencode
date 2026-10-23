@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url'
 import { bullet, configure, error, info, success, warning } from '../scripts/install/cli-ui.mjs'
 import { healthCheck } from '../scripts/install/health-check.mjs'
 import { installOpenCode } from '../scripts/install/opencode.mjs'
+import { formatChangePlan } from '../scripts/install/plan.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -234,6 +235,183 @@ test('the previewed plan contains the same MCP entries the apply writes', async 
       'the planned opencode.json must be byte-identical to the applied one — the preview ' +
         'omitted the MCP entries the apply writes',
     )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 6. The plan never lists a path that exists in neither source nor target
+//
+// `removeLegacyFile()` used to record `unchanged` with `bytes: 0` for a legacy
+// path that is absent on both sides (the old `index.tsx` / `dist/tui.tsx`
+// copies, and the V1 `index.ts` shim). That is not an operation: the apply
+// skips it, and the preview invented an entry with `before.exists: false`.
+// ---------------------------------------------------------------------------
+
+function planGhosts(plan) {
+  const existsByPath = new Map((plan.snapshots ?? []).map((item) => [item.path, item.exists]))
+  return plan.files.filter(
+    (file) =>
+      file.action === 'unchanged' && file.bytes === 0 && existsByPath.get(file.path) === false,
+  )
+}
+
+test('a fresh-target plan has no phantom no-op operations for nonexistent paths', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-plan-ghosts-'))
+  try {
+    // Default component set: plugins is what emitted the phantom legacy paths.
+    const plan = await installOpenCode(target, true, false, undefined, {
+      yes: true,
+      headless: true,
+      version: 'v1',
+      quiet: true,
+      quietPlan: true,
+    })
+    assert.deepEqual(
+      planGhosts(plan).map((file) => file.path),
+      [],
+      'the plan must not contain a no-op operation for a path that exists nowhere',
+    )
+    assert.ok(
+      plan.files.some((file) => file.path.endsWith(join('pantheon-tui', 'tui.ts'))),
+      'the real TUI payload is still planned',
+    )
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 7. An unresolved generation makes the dry run PROBE, like the apply does
+//
+// The default dry run used to skip the host probe unconditionally, so a V2
+// host got the V1 plan (a target tui.json and a removed index.ts) while the
+// apply wrote index.ts and no tui.json.
+// ---------------------------------------------------------------------------
+
+function relativePlan(plan, target) {
+  return plan.files
+    .map((file) => ({
+      path: file.path.startsWith(target) ? file.path.slice(target.length + 1) : file.path,
+      action: file.action,
+      bytes: file.bytes,
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path))
+}
+
+test('default dry-run plan matches the pinned V2 plan on a V2 host', async () => {
+  // Equal-length temp roots keep path-embedded byte counts comparable.
+  const targetA = mkdtempSync(join(tmpdir(), 'pantheon-plan-a-'))
+  const targetB = mkdtempSync(join(tmpdir(), 'pantheon-plan-b-'))
+  const common = {
+    yes: true,
+    headless: true,
+    quiet: true,
+    quietPlan: true,
+    planTimestamp: '2026-01-01T00:00:00.000Z',
+  }
+  try {
+    const auto = await installOpenCode(targetA, true, false, ['agents', 'plugins'], {
+      ...common,
+      version: 'auto',
+      // The resolver only consults env when it is supplied; an empty env keeps
+      // the test independent of the machine running it.
+      env: {},
+      probe: () => ({ stdout: 'opencode v2.1.2\n', stderr: '' }),
+    })
+    const pinned = await installOpenCode(targetB, true, false, ['agents', 'plugins'], {
+      ...common,
+      version: 'v2',
+      env: {},
+    })
+    assert.equal(auto.openCodeVersion, 'v2', 'the probe must resolve the real host generation')
+    assert.equal(auto.versionAssumed, false, 'a successful probe is not an assumption')
+    assert.deepEqual(
+      relativePlan(auto, targetA),
+      relativePlan(pinned, targetB),
+      'the default plan must be the V2 plan when the host is V2',
+    )
+    const relative = relativePlan(auto, targetA).map((file) => file.path)
+    assert.ok(
+      relative.includes(join('.opencode', 'plugins', 'pantheon-tui', 'index.ts')),
+      `the V2 plan writes index.ts: ${relative.join(', ')}`,
+    )
+    assert.equal(
+      relative.includes(join('.opencode', 'tui.json')),
+      false,
+      'the V2 plan must not create tui.json',
+    )
+  } finally {
+    rmSync(targetA, { recursive: true, force: true })
+    rmSync(targetB, { recursive: true, force: true })
+  }
+})
+
+test('a failed host probe stays loud and says the plan assumes V1', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-plan-fallback-'))
+  try {
+    const plan = await installOpenCode(target, true, false, ['agents'], {
+      yes: true,
+      headless: true,
+      quiet: true,
+      quietPlan: true,
+      version: 'auto',
+      env: {},
+      probe: () => {
+        throw new Error('no such binary: opencode')
+      },
+    })
+    assert.equal(plan.openCodeVersion, 'v1')
+    assert.equal(plan.versionAssumed, true)
+    const text = formatChangePlan(target, plan)
+    assert.match(text, /assumes V1/)
+    assert.match(text, /may diverge/)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 8. The preview names the MCP servers the apply will configure
+// ---------------------------------------------------------------------------
+
+test('the plan summary lists the MCP servers in the order the apply writes them', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-plan-mcp-names-'))
+  try {
+    const plan = await installOpenCode(target, true, false, ['runtime'], {
+      yes: true,
+      headless: true,
+      version: 'v1',
+      quiet: true,
+      quietPlan: true,
+    })
+    assert.deepEqual(plan.mcpServers, [
+      'pantheon-resources',
+      'pantheon-code-mode',
+      'pantheon-memory',
+      'pantheon-persistence',
+      'pantheon-vision',
+    ])
+
+    const text = formatChangePlan(target, plan)
+    assert.match(text, /MCP servers \(5\): pantheon-resources, pantheon-code-mode, pantheon-memory/)
+    assert.match(text, /pantheon-persistence, pantheon-vision/)
+
+    // The claim is derived from the write path: the applied config must seed
+    // those exact names, in that exact order.
+    await installOpenCode(target, false, false, ['runtime'], {
+      yes: true,
+      headless: true,
+      version: 'v1',
+      quiet: true,
+      deps: {
+        setupVenv: () => {},
+        healthCheck: () => ({ passed: [], warnings: [], failed: [] }),
+      },
+    })
+    const applied = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+    assert.deepEqual(Object.keys(applied.mcp), plan.mcpServers)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

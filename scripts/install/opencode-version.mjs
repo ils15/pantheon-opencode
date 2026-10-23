@@ -1,6 +1,9 @@
 /** OpenCode major-version selection shared by the CLI and installer. */
 
 import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { warning } from './cli-ui.mjs'
 
@@ -32,26 +35,64 @@ function normalize(value) {
 }
 
 /**
+ * Budget for `opencode --version` during a real install. A hung host binary
+ * must not block the installer forever.
+ */
+const HOST_PROBE_TIMEOUT_MS = 5000
+
+/**
+ * Budget for the same probe during a DRY RUN. A preview is bounded: the dry
+ * run now probes the host (it used to skip the probe and assume V1, which made
+ * the plan describe a different generation than the apply), so its latency
+ * must stay small even on a host that hangs.
+ */
+export const DRY_RUN_PROBE_TIMEOUT_MS = 2000
+
+/**
  * Ask the host binary for its version. Throws on any spawn failure so the
  * caller can fail soft in one place.
+ *
+ * The probe RUNS THE HOST, and a host is not a pure function of its `--version`
+ * flag: OpenCode 2.x creates `~/.cache/opencode`, `~/.local/share/opencode/log`
+ * and `~/.local/state/opencode` before printing. A dry run promises "no files
+ * were written", so the probe runs inside a throwaway HOME/XDG sandbox that is
+ * deleted before returning. The same isolation is used for the install path:
+ * plan and apply must make the SAME decision, and a HOME-sensitive wrapper
+ * would otherwise let them disagree — the exact divergence the shared probe
+ * exists to prevent.
  *
  * stderr is captured alongside stdout. A host that prints its version banner to
  * stderr and nothing to stdout would otherwise soft-fail to V1 — a wrong
  * answer whose cause has nothing to do with the host's generation.
  * @param {string} binary
+ * @param {number} [timeoutMs=HOST_PROBE_TIMEOUT_MS]
  * @returns {{stdout: string, stderr: string}}
  */
-function probeHostVersion(binary) {
-  const result = spawnSync(binary, ['--version'], {
-    encoding: 'utf8',
-    timeout: 5000,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  if (result.error) throw result.error
-  if (result.status !== 0) {
-    throw new Error(`"${binary} --version" exited with status ${result.status}`)
+function probeHostVersion(binary, timeoutMs = HOST_PROBE_TIMEOUT_MS) {
+  const sandbox = mkdtempSync(join(tmpdir(), 'pantheon-host-probe-'))
+  const env = {
+    ...process.env,
+    HOME: sandbox,
+    XDG_CONFIG_HOME: join(sandbox, '.config'),
+    XDG_CACHE_HOME: join(sandbox, '.cache'),
+    XDG_DATA_HOME: join(sandbox, '.local', 'share'),
+    XDG_STATE_HOME: join(sandbox, '.local', 'state'),
   }
-  return { stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
+  try {
+    const result = spawnSync(binary, ['--version'], {
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    if (result.error) throw result.error
+    if (result.status !== 0) {
+      throw new Error(`"${binary} --version" exited with status ${result.status}`)
+    }
+    return { stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true })
+  }
 }
 
 // A version-SHAPED token: optional "v", a major, a dot, a minor. The lookbehind
@@ -204,10 +245,22 @@ function parseHostMajor(text) {
  * worse than the V1 default, which at least still works. The fallback is only
  * tolerable because it warns; a silent v1 is what made this a silent failure.
  *
+ * Every fallback also reports through `onFallback`, so a caller (the dry-run
+ * preview) can tell the user its plan ASSUMED V1 instead of detecting it. A
+ * probe that succeeds never reports: only an unknown host does.
+ *
+ * A dry run probes too. It used to pass `skipProbe` and assume V1, which made
+ * `init --dry-run` describe the V1 plan on a V2 host (a target `tui.json` and a
+ * removed `index.ts`) while the apply wrote `index.ts` and no `tui.json`. The
+ * probe is `opencode --version` run inside a throwaway state directory (see
+ * `probeHostVersion`), and `probeTimeoutMs` bounds it.
+ *
  * @param {'v1'|'v2'|'auto'|null|undefined} requested
  * @param {{env?: Record<string, string|undefined>, binary?: string,
  *          probe?: () => string|{stdout?: string, stderr?: string},
- *          warn?: (message: string) => void}} [options]
+ *          probeTimeoutMs?: number,
+ *          warn?: (message: string) => void,
+ *          onFallback?: (reason: 'probe-failed'|'unparseable'|'unreadable'|'ambiguous') => void}} [options]
  * @returns {'v1'|'v2'}
  */
 export function resolveOpenCodeVersion(requested = 'auto', options = {}) {
@@ -223,25 +276,26 @@ export function resolveOpenCodeVersion(requested = 'auto', options = {}) {
   const warn = options.warn ?? warning
   if (/(?:^|[\\/])opencode2(?:\.exe)?$/i.test(binary)) return 'v2'
 
-  if (options.skipProbe) {
-    warn(
-      'Dry-run skipped the OpenCode host version probe to avoid host-side writes; assuming V1. ' +
-        'Pass --opencode-version v2 (or v1) to review a specific generation.',
-    )
+  // One exit for every "we could not read the host" path: the warning and the
+  // caller notification can never drift apart.
+  const fallbackToV1 = (reason, message) => {
+    warn(message)
+    options.onFallback?.(reason)
     return 'v1'
   }
 
-  const probe = options.probe ?? (() => probeHostVersion(binary || 'opencode'))
+  const probe =
+    options.probe ?? (() => probeHostVersion(binary || 'opencode', options.probeTimeoutMs))
   let raw
   try {
     raw = probe()
   } catch (err) {
-    warn(
+    return fallbackToV1(
+      'probe-failed',
       `Could not read the host OpenCode version (${err.message}). Falling back to the V1 ` +
         `configuration; if this host is OpenCode 2.x re-run with --opencode-version v2 ` +
         `(or v1 to force V1).`,
     )
-    return 'v1'
   }
 
   // Accept both the real probe's {stdout, stderr} shape and a bare string, so a
@@ -260,38 +314,38 @@ export function resolveOpenCodeVersion(requested = 'auto', options = {}) {
     // A probe that RAN but whose output we cannot read is just as dangerous as
     // one that failed: silently landing on V1 is the bug this gate exists to
     // fix, so it gets the same visible warning.
-    warn(
+    return fallbackToV1(
+      'unparseable',
       `Could not parse the host OpenCode version from ` +
         `${JSON.stringify(`${streams.stdout}${streams.stderr}`.trim())}. ` +
         `Falling back to the V1 configuration; if this host is OpenCode 2.x re-run with ` +
         `--opencode-version v2 (or v1 to force V1).`,
     )
-    return 'v1'
   }
   if (parsed.unreadable !== undefined) {
     // The host named itself and reported a major this gate refuses to read (0,
     // or a calendar year). That is not noise like a trailing build date — it is
     // the host's own version, so letting a surviving runtime token decide would
     // be a silent guess. Say what we saw and fall back loudly.
-    warn(
+    return fallbackToV1(
+      'unreadable',
       `The host OpenCode version output reports major ${parsed.unreadable}, which is ` +
         `not a release number this gate can interpret (a prerelease placeholder or a ` +
         `calendar year). Falling back to the V1 configuration; pass --opencode-version v2 ` +
         `if this host is OpenCode 2.x (or v1 to force V1).`,
     )
-    return 'v1'
   }
   if (parsed.ambiguous) {
     // Version-shaped tokens that disagree, with no tool name to break the tie.
     // The reviewer accepted "wrong but loud" here; guessing silently is the
     // defect this branch exists to prevent.
-    warn(
+    return fallbackToV1(
+      'ambiguous',
       `The host OpenCode version output has contradictory versions ` +
         `(${parsed.ambiguous.map((major) => `major ${major}`).join(', ')}) and does not say ` +
         `which is the host's. Falling back to the V1 configuration; pass ` +
         `--opencode-version v2 if this host is OpenCode 2.x (or v1 to force V1).`,
     )
-    return 'v1'
   }
   return parsed.major >= 2 ? 'v2' : 'v1'
 }

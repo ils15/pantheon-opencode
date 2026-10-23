@@ -359,7 +359,17 @@ test('init --dry-run: prints the real plan and writes nothing', () => {
 
     const result = spawnSync(
       process.execPath,
-      [BIN, 'init', '--project', '--dry-run', '--yes', '--headless', '--version', 'v1'],
+      [
+        BIN,
+        'init',
+        '--project',
+        '--dry-run',
+        '--yes',
+        '--headless',
+        '--version',
+        'v1',
+        '--verbose',
+      ],
       {
         cwd: target,
         encoding: 'utf8',
@@ -482,7 +492,7 @@ test('cli: a re-run on an applied target previews as unchanged with no warning',
     })
     assert.equal(apply.status, 0, `apply must succeed:\n${apply.stdout}\n${apply.stderr}`)
 
-    const preview = spawnSync(process.execPath, [BIN, ...base, '--dry-run'], {
+    const preview = spawnSync(process.execPath, [BIN, ...base, '--dry-run', '--verbose'], {
       cwd: target,
       encoding: 'utf8',
       timeout: 120_000,
@@ -535,7 +545,7 @@ test('cli: an idempotent runtime re-run previews manifest.json as unchanged', ()
     })
     assert.equal(apply.status, 0, `apply must succeed:\n${apply.stdout}\n${apply.stderr}`)
 
-    const preview = spawnSync(process.execPath, [BIN, ...base, '--dry-run'], {
+    const preview = spawnSync(process.execPath, [BIN, ...base, '--dry-run', '--verbose'], {
       cwd: target,
       encoding: 'utf8',
       timeout: 120_000,

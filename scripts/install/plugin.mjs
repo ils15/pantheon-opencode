@@ -208,19 +208,15 @@ function removeLegacyFile(
 ) {
   assertSafeRemoval(rootDir, filePath)
   const present = existsSync(filePath)
+  // A legacy path absent from BOTH source and target is not an operation: the
+  // apply skips it silently, so the preview must not invent an entry for it.
+  // Recording `unchanged` here listed phantom paths (`index.tsx`,
+  // `dist/tui.tsx`, the V1 `index.ts` shim) with `before.exists: false`.
+  if (!present) return
   if (dryRun) {
-    recordChange(
-      {
-        path: filePath,
-        action: present ? ACTIONS.REMOVE : ACTIONS.UNCHANGED,
-        bytes: 0,
-        scored: false,
-      },
-      recorder,
-    )
+    recordChange({ path: filePath, action: ACTIONS.REMOVE, bytes: 0, scored: false }, recorder)
     return
   }
-  if (!present) return
 
   const normalizedPath = resolve(filePath)
   if (reviewedRemovals && !reviewedRemovals.has(normalizedPath)) {

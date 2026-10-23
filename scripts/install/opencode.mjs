@@ -27,8 +27,11 @@ import {
   bullet,
   colors,
   configure,
+  gauge as createGauge,
+  endGaugeLine,
   error,
   info,
+  notice,
   printSummary,
   printWorktreeGuidance,
   section,
@@ -46,7 +49,7 @@ import {
 import { componentForInstalledPath, updateFileInventory } from './file-inventory.mjs'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
-import { resolveOpenCodeVersion } from './opencode-version.mjs'
+import { DRY_RUN_PROBE_TIMEOUT_MS, resolveOpenCodeVersion } from './opencode-version.mjs'
 import {
   ACTIONS,
   createRecorder,
@@ -91,6 +94,43 @@ const COMPONENT_NAMES = [
   'plugins',
   'runtime',
 ]
+
+/**
+ * The ordered phases one install invocation really runs, derived from the
+ * FINAL component selection (the interactive wizard may have changed it) and
+ * from dry-run semantics. `gauge.total` must be this length — never a fixed
+ * guess — so the counter can never drift from the work.
+ *
+ *   * prerequisites run only on an apply with the runtime component;
+ *   * the backup is planned (dry run) or created (apply);
+ *   * venv setup runs in BOTH modes (a dry run reports what it would create);
+ *   * the health check and the install-state write are apply-only.
+ *
+ * @param {{ components: Iterable<string>, dryRun: boolean }} options
+ * @returns {string[]} phase labels, in execution order
+ */
+export function planInstallPhases({ components, dryRun }) {
+  const S = strings()
+  const selected = new Set(components)
+  const phases = []
+  if (selected.has('runtime') && !dryRun) phases.push(S.checkingPrerequisites)
+  phases.push(dryRun ? S.planningBackup : S.creatingBackup)
+  if (selected.has('agents')) phases.push(S.installingAgents)
+  if (selected.has('skills')) phases.push(S.installingSkills)
+  if (selected.has('instructions')) phases.push(S.installingInstructions)
+  if (selected.has('prompts')) phases.push(S.installingPrompts)
+  if (selected.has('commands')) phases.push(S.installingCommands)
+  if (selected.has('plugins')) phases.push(S.installingPlugins)
+  if (selected.has('runtime')) {
+    phases.push(S.installingRuntime)
+    phases.push(S.settingUpRuntime)
+    if (!dryRun) phases.push(S.runningHealthChecks)
+  }
+  phases.push(S.writingConfiguration)
+  if (selected.has('runtime')) phases.push(S.runningMigrations)
+  if (!dryRun) phases.push(S.recordingState)
+  return phases
+}
 
 /**
  * MCP server scripts the runtime component installs. Hoisted so the backup-set
@@ -321,13 +361,26 @@ export const MANAGED_FIELDS = Object.freeze([
   'disable_model_invocation',
 ])
 
-const PANTHEON_MCP_SERVERS = Object.freeze([
-  'pantheon-resources',
-  'pantheon-memory',
-  'pantheon-code-mode',
-  'pantheon-persistence',
-  'pantheon-vision',
+/**
+ * The five managed MCP servers, in the ORDER the installer writes them.
+ *
+ * This table is the single source for both the write (`applyMcpServerEntries`)
+ * and the dry-run preview: the preview names the servers this pass seeds, so
+ * reordering a server here changes both in lockstep. `script` is the runtime
+ * entrypoint, relative to the runtime directory.
+ *
+ * @type {readonly {name: string, script: string}[]}
+ */
+const PANTHEON_MCP_SERVER_ENTRIES = Object.freeze([
+  Object.freeze({ name: 'pantheon-resources', script: 'scripts/mcp_resources.py' }),
+  Object.freeze({ name: 'pantheon-code-mode', script: 'scripts/code_mode.py' }),
+  Object.freeze({ name: 'pantheon-memory', script: 'scripts/memory_mcp.py' }),
+  Object.freeze({ name: 'pantheon-persistence', script: 'scripts/mcp_persistence.py' }),
+  Object.freeze({ name: 'pantheon-vision', script: 'scripts/pantheon_vision.py' }),
 ])
+
+/** The managed server names, in write order. */
+const PANTHEON_MCP_SERVERS = Object.freeze(PANTHEON_MCP_SERVER_ENTRIES.map((entry) => entry.name))
 
 function normalizeMcpPermissionSegment(value) {
   return value.replace(/[^a-zA-Z0-9_]/g, '_')
@@ -863,7 +916,16 @@ export function syncTuiRegistration(
  */
 export function setupRuntimePhase(
   target,
-  { dryRun, clean, isGlobal, recorder = null, reviewedRemovals = null, reviewedSnapshots = null },
+  {
+    dryRun,
+    clean,
+    isGlobal,
+    recorder = null,
+    reviewedRemovals = null,
+    reviewedSnapshots = null,
+    onVenvDone = null,
+    onHealthDone = null,
+  },
   stats,
   deps = {},
 ) {
@@ -873,13 +935,19 @@ export function setupRuntimePhase(
   let stopProgress
   try {
     stopProgress = spinner(S.settingUpRuntime)
-    setup(target, {
-      dryRun,
-      force: clean,
-      recorder,
-      reviewedRemovals,
-      reviewedSnapshots,
-    })
+    try {
+      setup(target, {
+        dryRun,
+        force: clean,
+        recorder,
+        reviewedRemovals,
+        reviewedSnapshots,
+      })
+    } finally {
+      // Count the phase even when setup throws: it DID run (and failed). The
+      // failure is reported below as a warning, not as a missing phase.
+      onVenvDone?.()
+    }
     stopProgress(true)
     stopProgress = null
 
@@ -894,7 +962,12 @@ export function setupRuntimePhase(
     }
 
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
-    const health = check(runtimeTarget, { dryRun, pythonTarget: target })
+    let health
+    try {
+      health = check(runtimeTarget, { dryRun, pythonTarget: target })
+    } finally {
+      onHealthDone?.()
+    }
 
     section(S.healthSection)
     stopProgress = step(S.runningHealthChecks)
@@ -933,8 +1006,10 @@ export function setupRuntimePhase(
  *
  * @param {object} config - full config object (mutated in place)
  * @param {{ runtimeTarget: string, venvPython: string, version?: 'v1' | 'v2' }} ctx
- * @returns {{ healed: number, warnings: string[] }} number of stale path strings
- *   rewritten, plus one warning per MCP permission the host cannot enforce
+ * @returns {{ healed: number, warnings: string[], servers: string[] }} number of
+ *   stale path strings rewritten, one warning per MCP permission the host
+ *   cannot enforce, and the server names this call actually seeded (write
+ *   order) — the dry-run preview reports exactly these
  */
 export function applyMcpServerEntries(config, { runtimeTarget, venvPython, version = 'v2' }) {
   config.mcp = config.mcp || {}
@@ -944,46 +1019,17 @@ export function applyMcpServerEntries(config, { runtimeTarget, venvPython, versi
   // wrapper-shaped entries back to the flat map.
   const healed = migrateMcpEntrypointPaths(config.mcp)
 
-  // Only add if not already configured by user
-  if (!config.mcp['pantheon-resources']) {
-    config.mcp['pantheon-resources'] = {
+  // Only add if not already configured by user.
+  const servers = []
+  for (const entry of PANTHEON_MCP_SERVER_ENTRIES) {
+    if (config.mcp[entry.name]) continue
+    config.mcp[entry.name] = {
       type: 'local',
       cwd: runtimeTarget,
-      command: [venvPython, 'scripts/mcp_resources.py'],
+      command: [venvPython, entry.script],
       enabled: true,
     }
-  }
-  if (!config.mcp['pantheon-code-mode']) {
-    config.mcp['pantheon-code-mode'] = {
-      type: 'local',
-      cwd: runtimeTarget,
-      command: [venvPython, 'scripts/code_mode.py'],
-      enabled: true,
-    }
-  }
-  if (!config.mcp['pantheon-memory']) {
-    config.mcp['pantheon-memory'] = {
-      type: 'local',
-      cwd: runtimeTarget,
-      command: [venvPython, 'scripts/memory_mcp.py'],
-      enabled: true,
-    }
-  }
-  if (!config.mcp['pantheon-persistence']) {
-    config.mcp['pantheon-persistence'] = {
-      type: 'local',
-      cwd: runtimeTarget,
-      command: [venvPython, 'scripts/mcp_persistence.py'],
-      enabled: true,
-    }
-  }
-  if (!config.mcp['pantheon-vision']) {
-    config.mcp['pantheon-vision'] = {
-      type: 'local',
-      cwd: runtimeTarget,
-      command: [venvPython, 'scripts/pantheon_vision.py'],
-      enabled: true,
-    }
+    servers.push(entry.name)
   }
 
   // Default MCP permissions.
@@ -1025,7 +1071,7 @@ export function applyMcpServerEntries(config, { runtimeTarget, venvPython, versi
           .map(([server]) => S.mcpAskNotEnforceable(server))
       : []
 
-  return { healed, warnings }
+  return { healed, warnings, servers }
 }
 
 /**
@@ -1066,6 +1112,9 @@ function detectSnapshotDrift(snapshots) {
  * `undefined` (the default global install resolves to `~/.config/opencode`).
  */
 let _lastRun = null
+// The gauge of the install currently running (never the nested plan pass), so
+// an exception can close it with `✖ reason` instead of leaving a half line.
+let _activeGauge = null
 
 export async function installOpenCode(
   target,
@@ -1076,9 +1125,14 @@ export async function installOpenCode(
 ) {
   // Reset per-call so a stale run can never leak into a fresh failure report.
   if (!dryRun) _lastRun = null
+  // The installer is a PROGRESS surface: the gauge replaces per-step logs
+  // unless --verbose asks for them back. Doctor and the other CLIs never set
+  // verbose, so their output is untouched; restore it on the way out.
+  const previousUi = configure({ verbose: opts.verbose === true })
   try {
     return await installPass(target, dryRun, clean, components, opts)
   } catch (err) {
+    _activeGauge?.fail(err instanceof Error ? err.message : String(err))
     const run = dryRun ? null : _lastRun
     if (run) {
       const S = strings()
@@ -1093,6 +1147,13 @@ export async function installOpenCode(
       warning(run.backupDir ? S.restoreRecoveryHint(run.backupDir) : S.restoreNoBackup)
     }
     throw err
+  } finally {
+    // An early return (canceled/declined preview) leaves the gauge mid-line on
+    // a TTY; clear it without claiming completion. `done()`/`fail()` already
+    // set `finished`, so this is a no-op on every normal path.
+    if (_activeGauge && !_activeGauge.finished) _activeGauge.cancel()
+    _activeGauge = null
+    configure(previousUi)
   }
 }
 
@@ -1118,7 +1179,11 @@ async function installPass(
   // Number of planned changes, filled by a dry plan pass (used by the gate).
   let plannedChanges = 0
   let planFiles = []
+  let planTotals = null
   let removalPaths = []
+  // MCP servers this pass seeds into opencode.json, in write order. Filled by
+  // applyMcpServerEntries so the preview names exactly what the apply writes.
+  let mcpServers = []
   const planTimestamp = opts.planTimestamp ?? new Date().toISOString()
   let projectedState = null
   // Phase 4: planned-target snapshots from the plan pass, used for drift checks.
@@ -1167,9 +1232,22 @@ async function installPass(
   // the V1 branch writes .ts file paths that a 2.x host drops from the config.
   // `opts` is forwarded as the resolver's options bag so a caller (and CI) can
   // pin env/probe instead of spawning a real host binary.
+  //
+  // A DRY RUN probes the host too. It used to pass `skipProbe` and assume V1,
+  // so `init --dry-run` on a 2.x host previewed the V1 plan (target `tui.json`,
+  // removed `index.ts`) while the apply wrote `index.ts` and no `tui.json` —
+  // a preview that contradicted the apply. The probe runs in a throwaway state
+  // directory, and the dry run bounds it with the shorter
+  // DRY_RUN_PROBE_TIMEOUT_MS so a hanging host cannot stall a preview. When the
+  // probe still fails, V1 is assumed and `versionAssumed` marks the plan as
+  // such (text + --json).
+  let versionFallback = null
   const version = resolveOpenCodeVersion(opts.version ?? 'auto', {
     ...opts,
-    skipProbe: dryRun,
+    probeTimeoutMs: dryRun ? DRY_RUN_PROBE_TIMEOUT_MS : undefined,
+    onFallback: (reason) => {
+      versionFallback = reason
+    },
   })
   if (version === 'v2' && opts.preset) {
     throw new Error(
@@ -1177,14 +1255,9 @@ async function installPass(
         'Configure models using V2-native OpenCode configuration instead.',
     )
   }
-  const versionAssumed =
-    dryRun &&
-    (opts.version ?? 'auto') === 'auto' &&
-    process.env.OPENCODE_VERSION !== 'v1' &&
-    process.env.OPENCODE_VERSION !== 'v2' &&
-    !/(?:^|[\\/])opencode2(?:\.exe)?$/i.test(process.env.OPENCODE_BIN ?? '')
+  const versionAssumed = dryRun && versionFallback !== null
   if (version === 'v2') {
-    info(
+    notice(
       'OpenCode V2 target — shared config; state isolated via OPENCODE_DB ' +
         '(~/.local/share/opencode/opencode-v2.db), service port 49375',
     )
@@ -1199,7 +1272,7 @@ async function installPass(
     // built from (src/pantheon/v2-unsupported.mjs), so this notice cannot drift
     // from what the plugin reports. Advisory: a V2 install is a supported
     // configuration, not a failure.
-    info(
+    notice(
       `V2 plugin generation — reduced surface. Unsupported features: ${listV2UnsupportedFeatures().join(', ')}`,
     )
   }
@@ -1229,12 +1302,12 @@ async function installPass(
     })
 
     if (result.canceled) {
-      info('Installation canceled.')
+      notice('Installation canceled.')
       return { ...stats, applied: false, reason: 'canceled' }
     }
 
     if (!result.confirmed) {
-      info('Installation canceled.')
+      notice('Installation canceled.')
       return { ...stats, applied: false, reason: 'canceled' }
     }
 
@@ -1309,6 +1382,11 @@ async function installPass(
       // plan for the review / decline preview.
       planned = await installOpenCode(target, true, clean, [...componentSet], {
         ...opts,
+        // Hand the RESOLVED generation to the plan pass. Re-resolving would
+        // probe the host a second time and could land on a different answer
+        // (a transient probe failure), making the plan disagree with the
+        // apply it is about to authorize.
+        version,
         planTimestamp,
         planOnly: true,
         quiet: autoYes,
@@ -1349,15 +1427,15 @@ async function installPass(
           isTTY: opts.deps?.isTTY,
         })
         if (accepted === PROMPT_CANCELED) {
-          info(S.nothingApplied)
+          notice(S.nothingApplied)
           return { ...stats, applied: false, reason: 'canceled' }
         }
         if (!accepted) {
-          info(S.nothingApplied)
+          notice(S.nothingApplied)
           return { ...stats, applied: false, reason: 'declined' }
         }
       } else {
-        info(S.planOnlyNoYes)
+        notice(S.planOnlyNoYes)
         return { ...stats, applied: false, reason: 'not-authorized' }
       }
     }
@@ -1383,6 +1461,28 @@ async function installPass(
       (plannedSnapshots ?? []).map((before) => [resolve(before.path), before]),
     )
   }
+
+  // -----------------------------------------------------------------------
+  // Progress gauge: the user sees progress, not a log. The phase list is
+  // derived from the FINAL component selection, so total == work performed.
+  // `--verbose` keeps the old step-by-step output and draws no gauge; the
+  // internal plan pass (`planOnly`) never owns the terminal.
+  // -----------------------------------------------------------------------
+  const phases = planInstallPhases({ components: componentSet, dryRun })
+  let phaseCursor = 0
+  const progress =
+    opts.planOnly || opts.verbose === true ? null : createGauge({ total: phases.length })
+  if (progress) _activeGauge = progress
+  const advancePhase = (label) => {
+    const phase = label ?? phases[phaseCursor]
+    // Defensive: a phase that the code path skipped must not reprint the last
+    // label at the clamped counter.
+    if (phase === undefined) return
+    phaseCursor += 1
+    progress?.advance(1, phase)
+  }
+  // Prerequisites already ran above (apply + runtime only); account for it.
+  if (phases[0] === S.checkingPrerequisites) advancePhase()
 
   // -----------------------------------------------------------------------
   // 0. Exact backup (Beta 11 Setup phase 2): preserve the CURRENT state of
@@ -1447,8 +1547,11 @@ async function installPass(
     backupStep(true)
     if (_lastRun && _lastRun.target === target) _lastRun.backupDir = backupDir
     // Secret-safe: the path only. The exact wording is fixed (once per apply).
+    // Close the gauge line first: this notice must never be appended to it.
+    endGaugeLine()
     console.warn(backupWarning(backupDir))
   }
+  advancePhase()
 
   if (isGlobal) {
     info(S.globalLayout)
@@ -1506,6 +1609,7 @@ async function installPass(
       else stats.skipped++
     }
   }
+  if (componentSet.has('agents')) advancePhase()
 
   // -----------------------------------------------------------------------
   // 2. Install skills (--components skills)
@@ -1547,6 +1651,7 @@ async function installPass(
       skillStep(true)
     }
   }
+  if (componentSet.has('skills')) advancePhase()
 
   // -----------------------------------------------------------------------
   // 2.5 Install shared instructions: AGENTS.md (--components instructions)
@@ -1590,6 +1695,7 @@ async function installPass(
       }
     }
   }
+  if (componentSet.has('instructions')) advancePhase()
 
   // -----------------------------------------------------------------------
   // 2.6 Install prompts (--components prompts)
@@ -1613,6 +1719,7 @@ async function installPass(
       stats.skipped += promptsResult.skipped
     }
   }
+  if (componentSet.has('prompts')) advancePhase()
 
   // -----------------------------------------------------------------------
   // 2.7 Install commands (--components commands)
@@ -1640,6 +1747,7 @@ async function installPass(
       stats.skipped += cmdResult.skipped
     }
   }
+  if (componentSet.has('commands')) advancePhase()
 
   // -----------------------------------------------------------------------
   // -----------------------------------------------------------------------
@@ -1694,6 +1802,7 @@ async function installPass(
     if (tuiStatus === 'created') stats.created++
     else stats.skipped++
   }
+  if (componentSet.has('plugins')) advancePhase()
 
   // -----------------------------------------------------------------------
   // 2.10 Install runtime infrastructure (--components runtime)
@@ -1811,6 +1920,7 @@ async function installPass(
       else stats.skipped++
     }
   }
+  if (componentSet.has('runtime')) advancePhase()
 
   // -----------------------------------------------------------------------
   // 2.11 Setup virtual environment + health check (--components runtime)
@@ -1822,7 +1932,19 @@ async function installPass(
   if (componentSet.has('runtime')) {
     runtimeHealthy = setupRuntimePhase(
       target,
-      { dryRun, clean, isGlobal, recorder, reviewedRemovals, reviewedSnapshots },
+      {
+        dryRun,
+        clean,
+        isGlobal,
+        recorder,
+        reviewedRemovals,
+        reviewedSnapshots,
+        // Two distinct gauge phases share this one call: the venv setup and
+        // the health check. Hooks keep the gauge honest without leaking the
+        // UI object into the runtime module.
+        onVenvDone: () => advancePhase(S.settingUpRuntime),
+        onHealthDone: () => advancePhase(S.runningHealthChecks),
+      },
       stats,
       opts.deps,
     )
@@ -2231,6 +2353,7 @@ async function installPass(
       venvPython: venvPythonPath(target),
       version,
     })
+    mcpServers = mcp.servers
     // `permission.mcp.<server>: ask` is inert on OpenCode 2.x. Never leave the
     // user believing the default gated anything: report each unenforced entry
     // and point at the enforceable form.
@@ -2245,6 +2368,10 @@ async function installPass(
   // before writing. V1 path is untouched (zero regression).
   let configToWrite = config
   if (version === 'v2') {
+    // The V2 converters can emit raw console warnings (ambiguous legacy
+    // values). Close the gauge line first so they are not printed on top of it
+    // and then erased by the next `\r` clear.
+    endGaugeLine()
     info(S.v2Migrating)
     configToWrite = migrateV1toV2(config)
 
@@ -2299,6 +2426,7 @@ async function installPass(
   configStep(true)
   if (status === 'created') stats.created++
   else stats.skipped++
+  advancePhase()
 
   // -----------------------------------------------------------------------
   // 3.5 Run migrations (--components runtime)
@@ -2321,6 +2449,8 @@ async function installPass(
         }
       }
     }
+    // Counted even when there is nothing to migrate: the phase ran its check.
+    advancePhase()
   }
 
   if (opts.preset && dryRun) {
@@ -2339,6 +2469,12 @@ async function installPass(
   //      change set this same pass would apply. Paths + action + byte size
   //      ONLY — never file contents or hashes. Nothing was written.
   // -----------------------------------------------------------------------
+  // A dry run has finished every phase it runs at this point (no state write):
+  // close the gauge BEFORE the plan so the final line stands on its own.
+  if (dryRun) {
+    progress?.done()
+    if (preview) endGaugeLine()
+  }
   if (preview) {
     // Project the terminal state write using the plan's stable timestamp so
     // saved-plan apply can validate its exact output fingerprint.
@@ -2355,6 +2491,12 @@ async function installPass(
       setComponentState(state, component, componentVersion, componentStatus)
     }
     const stateContent = `${JSON.stringify(state, null, 2)}\n`
+    // NOTE: this fingerprint is the PROJECTED terminal state, not a byte-exact
+    // prediction of the state file an apply leaves behind. The apply writes
+    // `install-state.json` only after `updateFileInventory()` has added the
+    // verified-file entries, so the final bytes (and hash) differ from this
+    // preview by design. Do not "fix" the fingerprint to match the audit run:
+    // the inventory entries are an OUTPUT of the apply, not an input to it.
     recordChange(
       {
         path: join(target, '.pantheon', 'install-state.json'),
@@ -2366,7 +2508,13 @@ async function installPass(
       recorder,
     )
     const plan = summarizeChanges(preview.entries)
+    // The MCP section is derived from the write path: `mcpServers` holds the
+    // names `applyMcpServerEntries` seeded in THIS pass, in write order (empty
+    // when the runtime component is not selected or failed its prerequisites).
+    plan.mcpServers = mcpServers
+    plan.versionAssumed = versionAssumed
     planFiles = plan.files
+    planTotals = plan.totals
     plannedChanges = plan.totals.create + plan.totals.update + plan.totals.remove
     removalPaths = [
       ...new Set(
@@ -2397,22 +2545,27 @@ async function installPass(
           `${mismatch.unchanged} unchanged vs stats ${mismatch.recordedChanged}/${mismatch.recordedUnchanged}`,
       )
     }
-    // Tag the plan like every other dry-run line so the output reads uniformly.
+    // Dry-run surface: by default a SUMMARY (counts + MCP servers + "No files
+    // were written"), never one line per file — the gauge already answered
+    // "is it moving?" and per-file detail is opt-in via --verbose. `[DRY-RUN]`
+    // marks the header only; it no longer prefixes every line.
     // An internal snapshot pass on the apply path (`quietPlan`, e.g. an
-    // authorized `--yes` run) computes the plan and snapshots but must NOT echo
-    // it — a real apply is not a dry run.
+    // authorized `--yes` run) computes the plan and snapshots but must NOT
+    // echo it — a real apply is not a dry run.
     if (!opts.quietPlan) {
+      const verbose = opts.verbose === true
+      const planText = formatChangePlan(target, plan, { perFile: verbose })
+      const planLines = planText.split('\n')
       console.log('')
-      if (removalPaths.length > 0) {
+      if (verbose && removalPaths.length > 0) {
         console.log(tag(`Removal review — ${removalPaths.length} path(s):`))
         for (const filePath of removalPaths) {
-          console.log(tag(`  remove    ${displayPath(target, filePath)}`))
+          console.log(`  remove    ${displayPath(target, filePath)}`)
         }
         console.log('')
       }
-      for (const line of formatChangePlan(target, plan).split('\n')) {
-        console.log(tag(line))
-      }
+      console.log(tag(planLines[0]))
+      for (const line of planLines.slice(1)) console.log(line)
       console.log('')
     }
   }
@@ -2423,6 +2576,7 @@ async function installPass(
   // -----------------------------------------------------------------------
 
   if (interactive && !dryRun) {
+    endGaugeLine()
     const created = stats.created
     const skipped = stats.skipped
     const errors = stats.errors
@@ -2456,8 +2610,6 @@ async function installPass(
     )
     process.stdout.write('\n')
     printWorktreeGuidance({ projectRoot: process.cwd(), interactive: true })
-  } else if (!opts.planOnly) {
-    printSummary(target, ['opencode'], stats)
   }
 
   // -----------------------------------------------------------------------
@@ -2541,6 +2693,15 @@ async function installPass(
     })
     writeState(target, state, { updatedAt: planTimestamp })
     stateStep(true)
+    advancePhase()
+  }
+
+  // The apply gauge ends before the human summary; a dry run already closed it
+  // before its plan block (`done()` is idempotent). A preview must NOT print
+  // the installed banner: bin/pantheon-init prints the preview-only line.
+  progress?.done()
+  if (!interactive && !dryRun && !opts.planOnly) {
+    printSummary(target, ['opencode'], stats)
   }
 
   // Beta 11 Setup phase 3: report whether this call APPLIED, so the caller can
@@ -2554,6 +2715,8 @@ async function installPass(
         planned: plannedChanges,
         snapshots: plannedSnapshots,
         files: planFiles,
+        totals: planTotals,
+        mcpServers,
         removals: removalPaths,
         target,
         openCodeVersion: version,

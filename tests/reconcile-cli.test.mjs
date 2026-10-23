@@ -21,11 +21,17 @@ const INIT = join(process.cwd(), 'bin', 'pantheon-init.mjs')
 const DOCTOR = join(process.cwd(), 'scripts', 'doctor.mjs')
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
+// The seeded inventories below are project-v1 layouts. Pin the host generation
+// so the preview does not depend on which OpenCode binary is installed on the
+// machine running the tests (a V2 host would classify every owned path as a
+// layout mismatch).
+const BASE_ENV = { OPENCODE_VERSION: 'v1' }
+
 function run(args, cwd) {
   return spawnSync(process.execPath, [CLI, ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, HOME: cwd, XDG_CONFIG_HOME: join(cwd, '.config') },
+    env: { ...process.env, HOME: cwd, XDG_CONFIG_HOME: join(cwd, '.config'), ...BASE_ENV },
   })
 }
 
@@ -191,7 +197,12 @@ test('init records a versioned per-file inventory after verified writes', () => 
       {
         cwd: root,
         encoding: 'utf8',
-        env: { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, '.config') },
+        env: {
+          ...process.env,
+          HOME: root,
+          XDG_CONFIG_HOME: join(root, '.config'),
+          ...BASE_ENV,
+        },
       },
     )
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
@@ -226,7 +237,12 @@ test('doctor reports recorded-file drift distinctly without modifying the target
       {
         cwd: root,
         encoding: 'utf8',
-        env: { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, '.config') },
+        env: {
+          ...process.env,
+          HOME: root,
+          XDG_CONFIG_HOME: join(root, '.config'),
+          ...BASE_ENV,
+        },
       },
     )
     assert.ok([0, 2].includes(result.status), `${result.stdout}\n${result.stderr}`)

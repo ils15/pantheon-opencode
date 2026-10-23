@@ -223,24 +223,50 @@ export function displayPath(target, filePath) {
  * Render the secret-safe plan: paths + action + byte size ONLY. No contents,
  * no hashes.
  *
+ * Two non-file facts are printed when the caller supplies them, because a
+ * per-file plan alone does not answer "what will be configured?":
+ *   * `mcpServers` — the MCP servers this pass seeds into opencode.json, in
+ *     write order, with their count. Derived from the write path, never a
+ *     separate hand-maintained list.
+ *   * `versionAssumed` — the host generation could not be probed, so the plan
+ *     assumes V1 and may diverge from an apply on a 2.x host.
+ *
  * @param {string} target - install target (used to relativize paths)
- * @param {{ files: object[], totals: object }} plan
+ * @param {{ files: object[], totals: object, mcpServers?: string[], versionAssumed?: boolean }} plan
+ * @param {{ perFile?: boolean }} [options] - `perFile: false` renders the
+ *   summary (totals + MCP servers + "No files were written.") without the
+ *   per-file list. That is the DEFAULT dry-run surface; the per-file list is
+ *   opt-in via --verbose/--json.
  * @returns {string}
  */
-export function formatChangePlan(target, plan) {
+export function formatChangePlan(target, plan, { perFile = true } = {}) {
   const { files, totals } = plan
   const lines = []
   lines.push(`Change plan — ${target}`)
-  for (const file of files) {
-    const isWrite = file.action === ACTIONS.CREATE || file.action === ACTIONS.UPDATE
-    const size = isWrite ? `  (${formatBytes(file.bytes)})` : ''
-    lines.push(`  ${file.action.padEnd(9)} ${displayPath(target, file.path)}${size}`)
+  if (perFile) {
+    for (const file of files) {
+      const isWrite = file.action === ACTIONS.CREATE || file.action === ACTIONS.UPDATE
+      const size = isWrite ? `  (${formatBytes(file.bytes)})` : ''
+      lines.push(`  ${file.action.padEnd(9)} ${displayPath(target, file.path)}${size}`)
+    }
+    lines.push(`  ${'─'.repeat(28)}`)
   }
-  lines.push(`  ${'─'.repeat(28)}`)
   lines.push(
     `  ${totals.create} create · ${totals.update} update · ${totals.remove} remove · ` +
-      `${totals.unchanged} unchanged · ${totals.conflict} conflict`,
+      `${totals.conflict} conflict`,
   )
+  if (Array.isArray(plan.mcpServers)) {
+    const names = plan.mcpServers
+    const servers =
+      names.length === 0 ? 'none (already configured or runtime skipped)' : names.join(', ')
+    lines.push(`  MCP servers (${names.length}): ${servers}`)
+  }
+  if (plan.versionAssumed) {
+    lines.push(
+      '  OpenCode host generation unknown — this plan assumes V1 and may diverge from the ' +
+        'apply. Pass --opencode-version v1|v2 to pin it.',
+    )
+  }
   lines.push('  No files were written.')
   return lines.join('\n')
 }

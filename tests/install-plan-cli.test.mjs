@@ -18,11 +18,23 @@ import { test } from 'node:test'
 const CLI = join(process.cwd(), 'bin', 'pantheon-init.mjs')
 const HAS_SCRIPT = spawnSync('script', ['--version'], { encoding: 'utf8' }).status === 0
 
+// These fixtures model the V1 layout (.opencode/agents/...). Pin the host
+// generation so a preview never depends on which OpenCode binary happens to be
+// installed on the machine running the tests.
+function baseEnv(cwd) {
+  return {
+    ...process.env,
+    HOME: cwd,
+    XDG_CONFIG_HOME: join(cwd, '.config'),
+    OPENCODE_VERSION: 'v1',
+  }
+}
+
 function run(cwd, ...args) {
   return spawnSync(process.execPath, [CLI, 'init', ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, HOME: cwd, XDG_CONFIG_HOME: join(cwd, '.config') },
+    env: baseEnv(cwd),
   })
 }
 
@@ -30,7 +42,7 @@ function runWithEnv(cwd, env, ...args) {
   return spawnSync(process.execPath, [CLI, 'init', ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, HOME: cwd, XDG_CONFIG_HOME: join(cwd, '.config'), ...env },
+    env: { ...baseEnv(cwd), ...env },
   })
 }
 
@@ -38,7 +50,7 @@ function runAsync(cwd, ...args) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, 'init', ...args], {
       cwd,
-      env: { ...process.env, HOME: cwd, XDG_CONFIG_HOME: join(cwd, '.config') },
+      env: baseEnv(cwd),
     })
     let stdout = ''
     let stderr = ''
@@ -58,7 +70,7 @@ function runInteractiveInput(cwd, input, ...args) {
     const command = [process.execPath, CLI, 'init', ...args].map(shellQuote).join(' ')
     const child = spawn('script', ['-q', '-e', '-c', `exec ${command}`, '/dev/null'], {
       cwd,
-      env: { ...process.env, HOME: cwd, XDG_CONFIG_HOME: join(cwd, '.config') },
+      env: baseEnv(cwd),
     })
     let stdout = ''
     let stderr = ''
@@ -127,6 +139,115 @@ test('init dry-run JSON is stdout-only structured output and writes no target fi
     assert.ok(report.files.some((file) => file.path === '.opencode/agents/zeus.md'))
     assert.equal(existsSync(join(target, '.opencode')), false)
     assert.deepEqual(readdirSync(target), [])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('init dry-run JSON names the MCP servers the apply will configure', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-init-mcp-json-'))
+  const target = join(root, 'target')
+  try {
+    mkdirSync(target)
+    const result = run(target, '--project', '--components', 'runtime', '--dry-run', '--json')
+    assert.equal(result.status, 0, result.stderr)
+    const report = JSON.parse(result.stdout)
+    assert.deepEqual(report.mcp_servers, [
+      'pantheon-resources',
+      'pantheon-code-mode',
+      'pantheon-memory',
+      'pantheon-persistence',
+      'pantheon-vision',
+    ])
+    assert.equal(report.mcp_server_count, 5)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('init dry-run JSON reports no phantom no-op operations on a fresh target', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-init-ghost-json-'))
+  const target = join(root, 'target')
+  const planPath = join(root, 'plan.json')
+  try {
+    mkdirSync(target)
+    const result = run(
+      target,
+      '--project',
+      '--components',
+      'agents,plugins',
+      '--dry-run',
+      '--save-plan',
+      planPath,
+      '--json',
+    )
+    assert.equal(result.status, 0, result.stderr)
+    const report = JSON.parse(result.stdout)
+    const ghosts = report.files.filter((file) => file.action === 'unchanged' && file.bytes === 0)
+    assert.deepEqual(
+      ghosts.map((file) => file.path),
+      [],
+      'a plan must not list a no-op operation for a path that exists nowhere',
+    )
+    // The same invariant on the reviewed artifact, which carries `before`.
+    const artifact = JSON.parse(readFileSync(planPath, 'utf8'))
+    assert.deepEqual(
+      artifact.operations
+        .filter(
+          (operation) =>
+            operation.action === 'unchanged' &&
+            operation.bytes === 0 &&
+            operation.before.exists === false,
+        )
+        .map((operation) => operation.path),
+      [],
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('the default plan probes the host and matches an explicit V2 plan', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-init-probe-'))
+  const fakeBin = join(root, 'bin')
+  const target = join(root, 'target')
+  mkdirSync(fakeBin)
+  mkdirSync(target)
+  // A host that reports 2.x. The default dry run must USE this answer instead
+  // of assuming V1 — otherwise its plan describes tui.json/index.ts backwards.
+  writeFileSync(join(fakeBin, 'opencode'), '#!/bin/sh\necho "opencode v2.1.2"\n', {
+    mode: 0o755,
+  })
+  const invoke = (...args) => {
+    const env = baseEnv(target)
+    // This test is ABOUT resolving the host, so it must not inherit the V1 pin.
+    delete env.OPENCODE_VERSION
+    env.PATH = `${fakeBin}:${process.env.PATH}`
+    return spawnSync(
+      process.execPath,
+      [CLI, 'init', '--project', '--components', 'agents', '--dry-run', '--json', ...args],
+      { cwd: target, encoding: 'utf8', env },
+    )
+  }
+  // The reviewed-plan timestamp embeds the second it ran; a default and a
+  // pinned preview may straddle a second boundary.
+  const normalize = (files) => {
+    const relative = (filePath) =>
+      filePath.replace(/^\.pantheon\/backups\/[^/]+\//, '.pantheon/backups/<ts>/')
+    return files
+      .map((file) => ({ path: relative(file.path), action: file.action }))
+      .sort((left, right) => left.path.localeCompare(right.path))
+  }
+  try {
+    const auto = invoke()
+    const pinned = invoke('--opencode-version', 'v2')
+    assert.equal(auto.status, 0, auto.stderr)
+    assert.equal(pinned.status, 0, pinned.stderr)
+    const autoReport = JSON.parse(auto.stdout)
+    const pinnedReport = JSON.parse(pinned.stdout)
+    assert.equal(autoReport.open_code_version, 'v2', 'the default plan must use the probed host')
+    assert.deepEqual(autoReport.advisories, [], 'a successful probe is not an assumption')
+    assert.deepEqual(normalize(autoReport.files), normalize(pinnedReport.files))
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -390,6 +511,9 @@ test('saved plugin plan reviews legacy removals, detects drift, and preserves un
         HOME: target,
         XDG_CONFIG_HOME: join(target, '.config'),
         PATH: `${fakeBin}:${process.env.PATH}`,
+        // Legacy-removal semantics differ per generation: V1 drops the V2
+        // `index.ts` shim. Pin V1 rather than depend on the host binary.
+        OPENCODE_VERSION: 'v1',
       },
     })
 
@@ -400,6 +524,7 @@ test('saved plugin plan reviews legacy removals, detects drift, and preserves un
       '--components',
       'plugins',
       '--dry-run',
+      '--verbose',
       '--save-plan',
       plan,
     )
@@ -512,6 +637,7 @@ test('--dry-run --force lists plugin, agent, and skill subtree removals without 
       'plugins,agents,skills',
       '--dry-run',
       '--force',
+      '--verbose',
     )
 
     assert.equal(result.status, 0, result.stderr)
