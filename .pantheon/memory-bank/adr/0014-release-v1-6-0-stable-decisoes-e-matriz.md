@@ -1096,3 +1096,158 @@ seção **não reabre Q2** nem altera a matriz de hosts de A1.3.
 - `tests/agents-md-budget.test.mjs`: tetos por artefato `:42-54`; guarda de crescimento de
   `prompts/` `:56-76`; 15 frases-gate `:146-163`; teste de exclusividade `:167-181`;
   baselines `:19-21`.
+
+---
+
+## Amendment 2 — Family-level OpenCode support (2026-10-23)
+
+**Aditivo e datado.** O `Status: Accepted` do cabeçalho, as decisões **Q1–Q7**, a tabela
+"Matriz de host alvo", as Known Issues de Q5, o **Amendment 1** inteiro (A1.1–A1.19) e as
+referências acima **permanecem como escritos** — nada é reescrito nem apagado. Esta emenda
+registra a mudança de política de suporte decidida pelo mantenedor em **2026-10-23**, já
+implementada em código e documentação neste HEAD, e prevalece **apenas** nas colisões
+nomeadas em "O que esta emenda substitui".
+
+### Contexto
+
+A decisão original — e a leitura que A1.1–A1.3 mantiveram — tratava a matriz como uma
+**lista de versões medidas**: uma versão só entrava como suportada depois de ter evidência
+própria, e a linha `2.0.31`, membro da família 2.x, ficava declarada **não suportada** por
+não ter sido medida. O mantenedor rejeitou essa regra: exigir uma medição por host
+obrigaria a medir minor por minor, e a política de trabalho declarada é "não dá pra ficar
+testando versão minor por minor; em tese todas são suportadas".
+
+A medição continua sendo o que sustenta um `PASS`. O que muda é o **escopo da declaração de
+suporte**: ele é da família, não da versão. Uma versão suportada sem medição é
+**suportada e não medida** — registrada honestamente, não tratada como lacuna.
+
+### Decisão
+
+**D1 — O suporte é declarado por família.**
+
+| Família | Plugin | Estado |
+|---|---|---|
+| OpenCode **`1.19.x`** | V1 (`src/plugin.ts` + `src/plugins/pantheon-hooks.ts`) | **Suportado** |
+| OpenCode **`2.x`** | V2 (`src/plugin-v2.ts`) | **Suportado** — toda a linha, inclusive minors publicados depois deste documento |
+
+**D2 — Exceção nominal: `2.0.22`.** É o único host conhecido como quebrado dentro das
+famílias suportadas. O motivo é **ausência de superfície do host**, não falha de política de
+permissões: o registro do bounded-read exige `typeof permission?.assert !== 'function'` como
+uma das condições de disponibilidade e, quando falta, chama `markUnsupported('bounded-read')`
+e devolve `undefined` (`src/plugin-v2.ts:1720-1727`). Sem `ctx.permission.assert`, os
+caminhos V2 de ordenação de permissão e de bounded-read não se aplicam. A documentação
+pública repete o motivo e a proibição de instalar ali (`docs/COMPATIBILITY.md:15-22`).
+
+**D3 — Medição é evidência, não requisito de suporte.** A tabela `Verified versions` de
+`docs/COMPATIBILITY.md:116-132` (`1.19.4`, `2.0.29`, `2.0.30`, `2.1.0`, `2.1.2`, `2.1.3`)
+é **registro rastreável de evidência**, explicitamente "not the boundary of support"
+(`:118-120`). `2.0.31` é suportada por família e **não tem linha de medição** — isso é
+registrado como fato, não como lacuna. **Nenhum `PASS` é atribuído à `2.0.31`**: não existe
+artefato de medição dela, e esta emenda não inventa um.
+
+**D4 — Semântica do gate `host` (`scripts/release-gates.mjs`).**
+
+- `SUPPORTED_FAMILIES = ['1.19.x', '2.x']` (`:62`) e `KNOWN_BROKEN_HOSTS = ['2.0.22']`
+  (`:65`) são a fonte da política no código.
+- `validateMatrix` rejeita host conhecido quebrado (`:342-344`), família não declarada
+  (`:345-349`), host cuja versão não pertence à família declarada (`:350-355`) e `kind`
+  incompatível com a família (`:356-361`).
+- Família suportada sem linha medida sai em `unmeasuredFamilies` (`:425-428`) com
+  `supportLevel: 'family'` (`:432`): é **reportada**, não reprovada.
+- Matriz vazia emite **WARNING** (`hostEvidenceWarning`, `:368-372`; `console.warn` em
+  `:656-660`) e **ainda passa** — ausência de medição não é evidência de host quebrado.
+- Linha medida que não roda é `FAIL`; não existe caminho `SKIP` (`:36-37`).
+- A matriz default é o conjunto medido no congelamento (`:73-79`): `1.19.4`, `2.0.29`,
+  `2.0.30`, `2.1.0`, `2.1.3`. `PANTHEON_RELEASE_MATRIX` pode substituí-la, mas a substituta
+  é validada pelas mesmas regras.
+- Contratos fixados por teste em `tests/release-gates.test.mjs`: as duas listas
+  (`:11-13`); matriz vazia não lança (`:15-16`); um minor 2.x não listado é evidência válida
+  sem bênção por versão (`:18-22`); `2.0.22` e famílias não declaradas são rejeitados
+  (`:25-33`); zero hosts medidos é reportado como `unmeasured` sem reprovar o gate
+  (`:52-55`).
+
+**D5 — Um único lar para a matriz: `docs/COMPATIBILITY.md`.** Nenhuma outra página reafirma
+a matriz. `README.md:38-40`, `:86-91`, `docs/INSTALLATION.md:21`, `:143`,
+`docs/releases/v1.6.0.md:40` e `docs/RELEASING.md:283` resumem a política em uma linha e
+apontam para lá. As tabelas de host **deste ADR** passam a ser registro histórico da decisão,
+não a política vigente.
+
+**D6 — Fim de vida do V1 na linha 1.7.** `1.6.x` é a última linha Pantheon que suporta host
+OpenCode 1.X; da `1.7` em diante a linha mira apenas OpenCode 2.x
+(`docs/COMPATIBILITY.md:27-30`, `:136-138`). Isso é fronteira do Pantheon, não alegação de
+que a `1.6` não suporta 2.x.
+
+### O que esta emenda substitui
+
+1. **"Matriz de host alvo" (tabela da decisão original)** — substituída na íntegra como
+   política vigente. Especificamente: a linha `2.0.31` = "NÃO suportado" passa a
+   **suportado por família, sem medição**; as linhas `2.0.29` e `2.0.30` = "Suportado — a
+   testar" passam a **Suportado**, com PASS medido (A1.3/A1.4); `1.19.x` e `2.1.0` deixam de
+   exigir linha própria como condição de suporte; e a "Ressalva registrada" que tratava a
+   ausência de evidência em host 1.X como item a fechar **para o suporte** deixa de valer —
+   a evidência do `1.19.4` (A1.6) permanece como registro.
+2. **A1.3 — "Matriz de host final desta release"** — como política, cai por inteiro: as
+   linhas viram evidência. Em particular, a linha `2.0.31` = "NÃO suportado" e a citação a
+   `docs/INSTALLATION.md:21` como reafirmação dessa exclusão ficam **revogadas** (a página
+   hoje declara a família 2.x suportada). A linha `2.0.22` = "NÃO suportado" e o piso
+   `Node >=26.4.0` **não** são alterados.
+3. **A1.2 — "A célula `2.1.0` passa a ser a linha `2.1.x`"** — a exigência de **duas provas
+   por release** (piso + patch mais novo) deixa de ser condição de suporte. Permanece como
+   prática de evidência opcional; medição não é pré-requisito para declarar a família
+   suportada.
+4. **Q2 — fase própria de adoção/validação da 2.1** — a cláusula "Sem essa fase, a coluna
+   2.1 não é declarada suportada" não vale mais como condição de suporte: a 2.x é suportada
+   por família. A adoção do contrato 2.1 continua sendo trabalho de engenharia/release
+   (A1.19 permanece intacta), não um gate de declaração de suporte.
+5. **Justificativas que citam `2.0.31` como não suportado** — o item `Positive` da decisão
+   original ("`2.0.31` declarado não suportado em vez de implicitamente 'provavelmente ok'")
+   e a frase correlata de A1.3 passam a descrever o **estado anterior**; não descrevem a
+   política vigente.
+
+**Não substituídos:** Q1, Q3–Q7, A1.1, A1.4–A1.19 — incluindo a lista autoritativa
+KI-1…KI-8 (A1.11), a contagem vigente de bloqueios de A1.13 (**0** no escopo de
+código/evidência) e o gate de GO por parecer do `@themis` (Q4).
+
+### Consequências
+
+**Código.** A política vive em duas constantes exportadas e numa validação de matriz
+(D4); não há tabela de versões hardcoded como condição de suporte. Adicionar uma versão
+medida é adicionar uma linha de evidência, não editar uma allowlist.
+
+**Documentação.** `docs/COMPATIBILITY.md` é o único lar da política, das famílias, do piso
+de Node e da lista de known issues. Páginas que precisam citar suporte o fazem em uma linha
+com link (D5); duplicar a matriz em outro documento é regressão, não redundância.
+
+**Gate e processo de release.** O gate `host` pode **passar sem nenhum host medido**, com
+WARNING explícito no registro de evidência. Isso é decisão de projeto: uma release sem
+medição não é uma release com host quebrado — é uma release com evidência mais fraca, e o
+pacote de GO (formato exigido na decisão original) deve refletir exatamente o que foi medido.
+"Não há linha para a versão X" não é, por si, motivo de NO-GO nem declaração de não suporte.
+Uma linha para `2.0.22` **não pode** ser adicionada: o gate a rejeita por ser host conhecido
+quebrado.
+
+**Registro de evidência.** A tabela `Verified versions` permanece como o registro
+rastreável do que foi executado, com a ressalva de que a linha `2.0.31` está ausente de
+propósito. Medir `2.0.31` depois é trabalho opcional de evidência, não ato de suporte.
+
+### Não-consequências (o que esta emenda NÃO decide)
+
+- **Node:** o piso continua `>=26.4.0` (`package.json:143`); Node 22, 24 e 26.0–26.3
+  continuam fora da faixa suportada (Q3/A1.3).
+- **`2.0.22`:** continua conhecido como quebrado; não há reclassificação, waiver nem
+  "Known Issue de suporte".
+- **Nenhum `PASS` novo:** esta emenda não afirma que `2.0.31` — ou qualquer host não
+  medido — passou em teste algum. O item em aberto é registrado como tal: **`2.0.31` não
+  tem artefato de medição**.
+- **P0-5 e segurança:** nada muda em permissões, ordenação, MCP `ask`, KI-1…KI-8 ou no gate
+  de GO por parecer (Q4).
+- **Instalador, seleção de geração e SDK:** inalterados; o pin `1.18.33` e a decisão de não
+  subir o SDK na `1.6.0` (A1.19) permanecem.
+- **Famílias fora de escopo:** nenhum suporte a 3.x ou a qualquer família não declarada;
+  `validateMatrix` rejeita família não declarada (`scripts/release-gates.mjs:345-349`).
+- **Linha abandonada:** nada aqui depende de `release/1.6.0-stable`. Os 14 commits únicos
+  dessa linha existem como re-SHAs em `release/1.6.0-beta.7` (15 commits no total, incluindo
+  o de preparação) e estão registrados em `docs/internal/abandoned-lines.md:19`, `:30-52`,
+  `:54-72`.
+- **Edição de documentação:** esta emenda não altera `docs/COMPATIBILITY.md`; registra a
+  política que a página já declara.
