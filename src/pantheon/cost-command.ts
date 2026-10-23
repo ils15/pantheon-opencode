@@ -1051,8 +1051,8 @@ function pricingNote(pricing: PricingSnapshot | undefined): string[] {
  * priced report produces the SAME by-agent and by-model totals by construction.
  * The only legitimate difference is a model with no catalog price: its tokens
  * remain measured in both token columns and its cost is absent from both dollar
- * totals. Stating that once is what lets the reader trust the two `(partial)`
- * numbers instead of having to reconcile them by hand.
+ * totals. The exclusion clause is shared by both branches, so one line can
+ * never both claim agreement and name a difference for the same tokens.
  */
 function reconciliationNote(
   rows: readonly CostRow[],
@@ -1065,11 +1065,16 @@ function reconciliationNote(
   const modelUsd = byModel.reduce((sum, row) => sum + (row.costUsd ?? 0), 0)
   const totalTokens = byModel.reduce((sum, row) => sum + row.tokensTotal, 0)
   const unpricedTokens = unpriced.reduce((sum, row) => sum + row.tokensTotal, 0)
+  const pricedRows = byModel.length - unpriced.length
   const totals =
-    Math.abs(agentUsd - modelUsd) < 0.005
-      ? `by-agent and by-model priced totals agree at ${formatUsd(agentUsd)}`
-      : `by-agent ${formatUsd(agentUsd)} and by-model ${formatUsd(modelUsd)} differ by ${formatUsd(Math.abs(agentUsd - modelUsd))}`
-  return `Cost reconciliation: ${totals}; ${unpricedTokens} token(s) from ${unpriced.length} unpriced model row(s) stay in the token columns of both tables and are excluded from both dollar totals (${totalTokens - unpricedTokens} priced token(s) carry the money).`
+    pricedRows === 0
+      ? 'nothing in either table could be priced'
+      : Math.abs(agentUsd - modelUsd) < 0.005
+        ? `by-agent and by-model priced totals agree at ${formatUsd(agentUsd)}`
+        : `by-agent ${formatUsd(agentUsd)} and by-model ${formatUsd(modelUsd)} differ by ${formatUsd(Math.abs(agentUsd - modelUsd))}`
+  // The exclusion is stated once, in the same words in every branch: the count
+  // can never be read as applying to one total but not the other.
+  return `Cost reconciliation: ${totals}; ${unpricedTokens} token(s) from ${unpriced.length} unpriced model row(s) are counted in the token columns and excluded from both dollar totals (${totalTokens - unpricedTokens} priced token(s) carry the money).`
 }
 
 function modelTotals(byModel: readonly CostModelRow[]): Array<{
@@ -1081,6 +1086,7 @@ function modelTotals(byModel: readonly CostModelRow[]): Array<{
   tokensCacheWrite: number
   tokensTotal: number
   costUsd: number | undefined
+  unpricedModels?: number
 }> {
   const groups = new Map<
     string,
@@ -1092,8 +1098,9 @@ function modelTotals(byModel: readonly CostModelRow[]): Array<{
       tokensCacheRead: number
       tokensCacheWrite: number
       tokensTotal: number
-      usd: number | undefined
-      unpriced: boolean
+      usd: number
+      priced: number
+      unpricedModels: number
     }
   >()
   for (const row of byModel) {
@@ -1107,18 +1114,19 @@ function modelTotals(byModel: readonly CostModelRow[]): Array<{
       tokensCacheWrite: 0,
       tokensTotal: 0,
       usd: 0,
-      unpriced: false,
+      priced: 0,
+      unpricedModels: 0,
     }
     acc.tokensInput += row.tokensInput
     acc.tokensOutput += row.tokensOutput
     acc.tokensCacheRead += row.tokensCacheRead
     acc.tokensCacheWrite += row.tokensCacheWrite
     acc.tokensTotal += row.tokensTotal
-    if (row.costUsd === undefined || acc.usd === undefined) {
-      acc.unpriced = true
-      acc.usd = undefined
+    if (row.costUsd === undefined) {
+      acc.unpricedModels += 1
     } else {
       acc.usd += row.costUsd
+      acc.priced += 1
     }
     groups.set(key, acc)
   }
@@ -1131,7 +1139,13 @@ function modelTotals(byModel: readonly CostModelRow[]): Array<{
       tokensCacheRead: acc.tokensCacheRead,
       tokensCacheWrite: acc.tokensCacheWrite,
       tokensTotal: acc.tokensTotal,
-      costUsd: acc.unpriced ? undefined : acc.usd,
+      // Same rule as the by-agent table: a model bucket that spans several
+      // agent/phase groups is the SUM of its priced groups, and `unpricedModels`
+      // records how many groups had no usable price.
+      costUsd: acc.priced === 0 ? undefined : acc.usd,
+      ...(acc.priced === 0 || acc.unpricedModels === 0
+        ? {}
+        : { unpricedModels: acc.unpricedModels }),
     }))
     .sort((a, b) => b.tokensTotal - a.tokensTotal)
 }
@@ -1146,7 +1160,9 @@ function renderModelSection(byModel: readonly CostModelRow[] | undefined, days: 
   const totals = modelTotals(byModel)
   const pricedUsd = totals.reduce((sum, row) => sum + (row.costUsd ?? 0), 0)
   const priced = totals.filter((row) => row.costUsd !== undefined).length
-  const unpriced = totals.length - priced
+  const unpriced = totals.filter(
+    (row) => row.costUsd === undefined || (row.unpricedModels ?? 0) > 0,
+  ).length
   const totalCell = totalCostCell(pricedUsd, priced, unpriced)
   return [
     header,
@@ -1155,7 +1171,7 @@ function renderModelSection(byModel: readonly CostModelRow[] | undefined, days: 
     '|----------|-------|----------:|-----------:|-----------:|------------:|-----------:|',
     ...totals.map(
       (row) =>
-        `| ${row.provider} | ${row.model} | ${row.tokensInput} | ${row.tokensOutput} | ${row.tokensCacheRead} | ${row.tokensCacheWrite} | ${formatUsd(row.costUsd)} |`,
+        `| ${row.provider} | ${row.model} | ${row.tokensInput} | ${row.tokensOutput} | ${row.tokensCacheRead} | ${row.tokensCacheWrite} | ${rowCostCell(row.costUsd, row.unpricedModels)} |`,
     ),
     `| **Total** | — | **${totals.reduce((sum, row) => sum + row.tokensInput, 0)}** | **${totals.reduce((sum, row) => sum + row.tokensOutput, 0)}** | **${totals.reduce((sum, row) => sum + row.tokensCacheRead, 0)}** | **${totals.reduce((sum, row) => sum + row.tokensCacheWrite, 0)}** | ${totalCell} |`,
   ]

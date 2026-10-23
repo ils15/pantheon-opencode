@@ -511,6 +511,20 @@ await testAsync('an agent spanning several models is priced per model and summed
         `${testCase.name}: by-model total disagrees with the agent sum`,
       )
 
+      // The session view folds the same per-model costs into one row.
+      assert.ok(
+        output.includes(
+          `| ses_a | — | zeus | ${testCase.input} | ${testCase.output} | 0 | 0 | ${total} | $6.00${suffix} |`,
+        ),
+        `${testCase.name}: the session row must keep its numeric cost`,
+      )
+      assert.ok(
+        output.includes(
+          `| **Total** | — | — | **${testCase.input}** | **${testCase.output}** | **0** | **0** | **${total}** | **$6.00**${suffix} |`,
+        ),
+        `${testCase.name}: session total disagrees with the other two`,
+      )
+
       if (testCase.partial) {
         // The marker now means "a contributing model had no catalog price", and
         // the excluded tokens are stated once instead of left for the reader.
@@ -528,7 +542,10 @@ await testAsync('an agent spanning several models is priced per model and summed
           `${testCase.name}: the unpriced model must read —`,
         )
         // Criterion 4: never priced at 0 — or at the input rate, or at all.
-        assert.ok(!output.includes('$0.00'), `${testCase.name}: an unpriced model read as free`)
+        assert.ok(
+          !output.includes('mystery-model | 10000000 | 10000000 | 0 | 0 | $0.00'),
+          `${testCase.name}: the unpriced model row read as free`,
+        )
         assert.ok(!output.includes('$20.00'), `${testCase.name}: unpriced tokens were priced`)
       } else {
         assert.ok(!output.includes('(partial)'), `${testCase.name}: fully priced report is partial`)
@@ -540,6 +557,128 @@ await testAsync('an agent spanning several models is priced per model and summed
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  }
+})
+
+/**
+ * The by-model table has the same multi-group problem as the by-agent table:
+ * one `(provider, model)` bucket can span several agent/phase groups, and a
+ * group whose cache tokens have no catalog rate is unpriced (`missing-cache-price`
+ * in model-pricing.ts) while its sibling groups are not. The bucket must keep
+ * the priced dollars and report the gap, never collapse to `—`.
+ */
+await testAsync('a model bucket sums its priced groups when one lacks a cache rate', async () => {
+  const dir = freshDir()
+  try {
+    const dbPath = join(dir, 'opencode.db')
+    const cachePath = join(dir, 'prices.json')
+    writeCache(cachePath, Date.now())
+    buildDb(
+      dbPath,
+      [{ id: 'ses_a' }],
+      [
+        // nocache publishes input/output but no cache rates.
+        {
+          sessionId: 'ses_a',
+          agent: 'zeus',
+          provider: 'acme',
+          model: 'nocache',
+          tokens: { input: 1_000_000, output: 0 },
+        },
+        // Same model, same bucket, but cache-read tokens with no rate to bill.
+        {
+          sessionId: 'ses_a',
+          agent: 'hermes',
+          provider: 'acme',
+          model: 'nocache',
+          tokens: { input: 1_000_000, output: 0, cache: { read: 1_000_000 } },
+        },
+      ],
+    )
+
+    const output = await commandFor(dbPath, cachePath).pantheon_cost.execute({ days: 7 }, ctx)
+
+    // $1.00 from the priced group survives; the cache-less group is the gap.
+    assert.ok(
+      output.includes('| acme | nocache | 2000000 | 0 | 1000000 | 0 | $1.00 (partial) |'),
+      `the bucket dropped its priced dollars:\n${output}`,
+    )
+    assert.ok(
+      output.includes(
+        '| **Total** | — | **2000000** | **0** | **1000000** | **0** | **$1.00** (partial) |',
+      ),
+      'the by-model total must reconcile with the bucket',
+    )
+    assert.ok(
+      output.includes(
+        '| **Total** | — | **2000000** | **0** | **2000000** | **$1.00** (partial) |',
+      ),
+      'the by-agent total must agree with the by-model total',
+    )
+    assert.ok(
+      output.includes('| hermes | unknown | 1000000 | 0 | 1000000 | — |'),
+      'the fully unpriced group must still read —',
+    )
+
+    // Reconciliation names the excluded tokens exactly once, says the totals
+    // agree, and never claims a difference it does not have.
+    assert.equal(
+      output.split('1000000 token(s)').length - 1,
+      1,
+      'the excluded token count must be named once',
+    )
+    assert.match(
+      output,
+      /Cost reconciliation: by-agent and by-model priced totals agree at \$1\.00;/,
+    )
+    assert.ok(!output.includes('differ by'), 'a reconciling report claimed a difference')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await testAsync('a fully unpriced report says nothing priceable and never $0.00', async () => {
+  const dir = freshDir()
+  try {
+    const dbPath = join(dir, 'opencode.db')
+    const cachePath = join(dir, 'prices.json')
+    writeCache(cachePath, Date.now())
+    buildDb(
+      dbPath,
+      [{ id: 'ses_a' }],
+      [
+        {
+          sessionId: 'ses_a',
+          agent: 'ghost',
+          provider: 'ghost-provider',
+          model: 'mystery-model',
+          tokens: { input: 1_000_000, output: 1_000_000 },
+        },
+      ],
+    )
+
+    const output = await commandFor(dbPath, cachePath).pantheon_cost.execute({ days: 7 }, ctx)
+
+    assert.match(output, /\| ghost \| unknown \| 1000000 \| 1000000 \| 2000000 \| — \|/)
+    assert.match(
+      output,
+      /\| ghost-provider \| mystery-model \| 1000000 \| 1000000 \| 0 \| 0 \| — \|/,
+    )
+    // Agent, model and session totals all say the same thing.
+    assert.equal(
+      output.split('**—** (nothing priceable)').length - 1,
+      3,
+      `every total must say nothing was priceable:\n${output}`,
+    )
+    assert.match(output, /Cost reconciliation: nothing in either table could be priced;/)
+    assert.equal(
+      output.split('2000000 token(s)').length - 1,
+      1,
+      'the excluded token count must be named once',
+    )
+    assert.ok(!output.includes('$0.00'), 'an unpriced report must not report free usage')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
